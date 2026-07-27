@@ -1,0 +1,14 @@
+Vendored from the securacv_website repo — the canonical Witness Wall emulator.
+
+  witness.html      ← witness-wall.html, with the site header/footer, Google
+                      Fonts, css/site.css and js/site.js removed (this is an
+                      embedded view, not a site page). System fonts only.
+  tv-emulator.js    ← js/tv-emulator.js  (unchanged; exposes window.witnessWall
+                      + a postMessage 'witness:appear' / 'witness:connect' API)
+  highlight.js      ← js/highlight.js    (unchanged)
+  demo-fleet.json   ← demo-fleet.json    (unchanged)
+
+Keep in sync: when the website emulator changes, re-copy these four files and
+re-run the small transform in this repo's PR (see tvos/EMBED_IN_APPS.md). The
+Flasher shows this in the "Your Fleet" tab and, after a successful flash, posts
+{type:'witness:appear', name} so the just-flashed Canary appears on the wall.

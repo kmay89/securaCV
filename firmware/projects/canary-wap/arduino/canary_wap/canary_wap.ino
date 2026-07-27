@@ -65,6 +65,7 @@
 #include <ctype.h>
 #include <string.h>
 #include <stdlib.h>
+#include <sys/time.h>
 
 #include "esp_system.h"
 #include "esp_random.h"
@@ -128,6 +129,7 @@
 #include "log_level.h"
 #include "health_log.h"
 #include "sd_storage.h"
+#include "gnss_time.h"  // NMEA UTC date/time -> validated Unix epoch (GPS-derived system clock)
 #include "nvs_store.h"
 #include "api_auth.h"
 #include "wifi_provisioning_auth.h"  // WifiChangeAuth enum — must precede the
@@ -139,6 +141,7 @@
 #include <new>                       // placement-new for the PSRAM GPS ring
 #include "catchall_logic.h"          // pure, host-tested canary.local claim decisions
 #include "witness_store.h"           // pure, host-tested /WITNESS jsonl format + recovery
+#include "fleet_selfreport.h"        // shared /api/fleet body builder (parity by architecture)
 #include "camera_gate_logic.h"       // pure, host-tested camera standby/peek gating
 #include "power_gate_logic.h"        // pure, host-tested round-two power gate decisions
 #include "health_store_logic.h"      // pure, host-tested /HEALTH jsonl format
@@ -291,7 +294,7 @@ static volatile bool g_vault_test_pending = false;
 // ════════════════════════════════════════════════════════════════════════════
 
 static const char* DEVICE_TYPE        = "canary";
-static const char* FIRMWARE_VERSION   = "2.2.0-wap";  // Vision runtime config release train
+static const char* FIRMWARE_VERSION   = "2.3.0-wap";  // Vision runtime config release train
 static const char* RULESET_ID         = "securacv:canary:v1.0";
 static const char* PROTOCOL_VERSION   = "pwk:v0.3.0";
 static const char* CHAIN_ALGORITHM    = "sha256-domain-sep";
@@ -1021,6 +1024,70 @@ static void fix_init(GnssFix* f) {
 
 static void utc_init(GpsUtcTime* t) {
   memset(t, 0, sizeof(GpsUtcTime));
+}
+
+// Convert a fix's GpsUtcTime to a Unix epoch second, gated on RMC-derived
+// calendar validity (see gnss_time.h). Returns false — and leaves *out
+// untouched — if utc.valid is false or the calendar fields don't pass
+// gnss_calendar_valid(). Defense in depth: the RMC parser above already
+// screens this before setting valid=true.
+static bool gps_utc_to_epoch(const GpsUtcTime& utc, time_t* out) {
+  if (!utc.valid) return false;
+  return securacv::gnss::gnss_utc_to_unix(utc.year, utc.month, utc.day,
+                                           utc.hour, utc.minute, utc.second, out);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// GPS-DERIVED SYSTEM CLOCK
+// ════════════════════════════════════════════════════════════════════════════
+//
+// This sketch has no SNTP path — no WiFi-based time sync exists anywhere in
+// canary-wap. Without it the system clock never leaves its post-boot state,
+// so every wall-clock-gated feature (the NFPA-72 monthly self-test chirp's
+// waking-hours check, its 30-day NVS-persisted cadence) is silently dead: the
+// `time(nullptr) >= 1700000000` guard those features already use to mean
+// "clock is synced" can never pass. GPS is the one clock source this device
+// actually has that isn't derived from an untrusted network peer — the L76K
+// reports UTC directly from the satellite constellation. sync_clock_from_gps()
+// seeds the system clock from it once RMC carries a validated date/time, and
+// re-checks periodically to correct crystal drift over long uptimes — but
+// only ever moves the clock from a GPS fix that has already passed the RMC
+// status + calendar-validity gate above, and only steps the clock when it
+// disagrees by more than a second (so this isn't calling settimeofday() on
+// every check once the two clocks agree). g_gps_utc.valid latches true on
+// the first good RMC and is never cleared by a later void/stale sentence
+// (other diagnostics consumers rely on that latch), so this checks
+// last_seen_ms itself — a fix isn't "available" for a resync once GPS has
+// been lost, or this would keep replaying a stale epoch every 10 minutes
+// and freeze/rewind wall time after ordinary GNSS loss.
+static const time_t GPS_CLOCK_FLOOR = 1700000000;  // ~2023-11-14; below this, "unset"
+static const uint32_t GPS_CLOCK_RESYNC_INTERVAL_MS = 10UL * 60UL * 1000UL;
+static const uint32_t GPS_CLOCK_FIX_STALE_MS = 30UL * 1000UL;  // RMC arrives ~1 Hz
+
+static void sync_clock_from_gps() {
+  static uint32_t s_last_sync_attempt_ms = 0;
+  uint32_t now_ms = millis();
+
+  time_t sys_now = time(nullptr);
+  bool clock_set = (sys_now >= GPS_CLOCK_FLOOR);
+  if (clock_set && (now_ms - s_last_sync_attempt_ms) < GPS_CLOCK_RESYNC_INTERVAL_MS) {
+    return;  // already trustworthy and not due for a drift-correction check
+  }
+
+  if (!g_gps_utc.valid) return;
+  if ((now_ms - g_gps_utc.last_seen_ms) > GPS_CLOCK_FIX_STALE_MS) return;  // GPS lost
+
+  time_t gps_epoch;
+  if (!gps_utc_to_epoch(g_gps_utc, &gps_epoch)) return;
+  if (gps_epoch < GPS_CLOCK_FLOOR) return;  // receiver clock itself looks unset/wrong
+
+  s_last_sync_attempt_ms = now_ms;
+  if (clock_set && llabs((long long)(gps_epoch - sys_now)) < 2) return;
+
+  struct timeval tv = { .tv_sec = gps_epoch, .tv_usec = 0 };
+  settimeofday(&tv, nullptr);
+  Serial.printf("[CLOCK] system clock %s from GPS (epoch=%lld)\n",
+                clock_set ? "corrected" : "set", (long long)gps_epoch);
 }
 
 static float knots_to_mps(float knots) {
@@ -2608,38 +2675,50 @@ static void parse_nmea(char* line, GnssFix* fx) {
     char* speed = get_field(line, 7);
     char* course = get_field(line, 8);
     char* date_str = get_field(line, 9);
-    
-    if (speed && *speed) {
+
+    // Status 'A' = active/valid fix, 'V' = void (no fix, or a warm-up
+    // sentence the receiver emits before it has one). A void RMC can still
+    // carry a stale or all-zero time/date/speed/course — those fields must
+    // not be trusted, or presented as a fix, when status isn't 'A'.
+    bool rmc_active = status && *status == 'A';
+
+    if (rmc_active && speed && *speed) {
       fx->speed_knots = parse_double(speed, 0);
       fx->speed_kmh = knots_to_kmh(fx->speed_knots);
       float mps = knots_to_mps(fx->speed_knots);
       g_speed_ema = g_speed_ema * (1.0f - SPEED_EMA_ALPHA) + mps * SPEED_EMA_ALPHA;
     }
-    
-    if (course && *course) {
+
+    if (rmc_active && course && *course) {
       fx->course_deg = parse_double(course, 0);
     }
-    
-    // Parse UTC time
-    if (time_str && strlen(time_str) >= 6) {
-      g_gps_utc.hour = (time_str[0] - '0') * 10 + (time_str[1] - '0');
-      g_gps_utc.minute = (time_str[2] - '0') * 10 + (time_str[3] - '0');
-      g_gps_utc.second = (time_str[4] - '0') * 10 + (time_str[5] - '0');
-      if (strlen(time_str) > 7) {
-        g_gps_utc.centisecond = parse_int(time_str + 7, 0);
+
+    if (rmc_active && time_str && strlen(time_str) >= 6 &&
+        date_str && strlen(date_str) >= 6) {
+      int hour = (time_str[0] - '0') * 10 + (time_str[1] - '0');
+      int minute = (time_str[2] - '0') * 10 + (time_str[3] - '0');
+      int second = (time_str[4] - '0') * 10 + (time_str[5] - '0');
+      int centisecond = (strlen(time_str) > 7) ? parse_int(time_str + 7, 0) : 0;
+      int day = (date_str[0] - '0') * 10 + (date_str[1] - '0');
+      int month = (date_str[2] - '0') * 10 + (date_str[3] - '0');
+      int year = 2000 + (date_str[4] - '0') * 10 + (date_str[5] - '0');
+
+      // Guard against a corrupt-but-checksum-valid sentence, or a receiver
+      // that hasn't loaded ephemeris yet and emits all-zero fields, before
+      // this ever reaches g_gps_utc / a system-clock sync.
+      if (securacv::gnss::gnss_calendar_valid(year, month, day, hour, minute, second)) {
+        g_gps_utc.hour = hour;
+        g_gps_utc.minute = minute;
+        g_gps_utc.second = second;
+        g_gps_utc.centisecond = centisecond;
+        g_gps_utc.day = day;
+        g_gps_utc.month = month;
+        g_gps_utc.year = year;
+        g_gps_utc.valid = true;
+        g_gps_utc.last_seen_ms = millis();
       }
     }
-    
-    // Parse date
-    if (date_str && strlen(date_str) >= 6) {
-      g_gps_utc.day = (date_str[0] - '0') * 10 + (date_str[1] - '0');
-      g_gps_utc.month = (date_str[2] - '0') * 10 + (date_str[3] - '0');
-      int yy = (date_str[4] - '0') * 10 + (date_str[5] - '0');
-      g_gps_utc.year = 2000 + yy;
-      g_gps_utc.valid = true;
-      g_gps_utc.last_seen_ms = millis();
-    }
-    
+
     fx->last_rmc_ms = millis();
   }
   else if (strncmp(type, "GSA", 3) == 0) {
@@ -6446,6 +6525,45 @@ static esp_err_t handle_fleet_scan_auth(httpd_req_t* req) {
   return handle_fleet_scan(req);
 }
 
+/* GET /api/fleet — the coarse, UNAUTHENTICATED fleet presence/health contract
+ * (tvos/discovery/DISCOVERY.md). This is what the public Witness Wall emulator's
+ * "Connect your fleet" reads and what the Flasher's post-flash LAN discovery
+ * (witness_discover) hits to make a just-flashed Canary appear on the wall — no
+ * hub required, this single AP-fronting device answers for itself.
+ *
+ * The wire shape is built by the ONE shared builder (fleet_selfreport.h, in
+ * firmware/common, host-tested), so EVERY networked board answers byte-for-byte
+ * identically — a change to the shape is a change to that one header, never a
+ * per-board edit. Distinct from /api/fleet-scan above, which is the rich,
+ * Bearer-gated mDNS browser for the operator UI; this one is presence-only and
+ * carries no secrets and no media, safe to read anonymously.
+ */
+static esp_err_t handle_fleet(httpd_req_t* req) {
+  g_health.http_requests++;
+  FleetSelfDevice self{};
+  const char* nm = setup_wizard::get_device_name();
+  self.name    = (nm && nm[0]) ? nm : (const char*)g_device.device_id;
+  self.product = "canary-wap";
+  self.online  = 1;   // we are answering this request, so we are up
+  // Honest coarse chain state: OK unless tamper is latched or a witness record
+  // failed verification. No hashes, no seq internals leaked beyond the height.
+  self.chain_ok     = (!g_device.tamper_active && g_health.verify_failures == 0) ? 1 : 0;
+  self.chain_height = (int)(g_device.seq & 0x7fffffff);
+  char body[256];
+  fleet_selfreport_build(body, sizeof(body), &self);
+  return http_send_json(req, body);
+}
+
+/* OPTIONS /api/fleet — CORS preflight (DISCOVERY.md). A same-origin or simple
+ * cross-origin GET doesn't trigger a preflight, but answering it keeps stricter
+ * clients happy. http_send_json already sends Access-Control-Allow-Origin: *. */
+static esp_err_t handle_fleet_options(httpd_req_t* req) {
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "GET, OPTIONS");
+  httpd_resp_set_status(req, "204 No Content");
+  return httpd_resp_send(req, "", 0);
+}
+
 /* Pairing QR: SVG QR of the compact provisioning receipt, scanned by the
  * Canary Vision companion app's "Scan pairing QR" fallback.
  *
@@ -8051,12 +8169,13 @@ static void start_http_server() {
 #else
   const int ble_discovery_handlers = 0;
 #endif
+  const int fleet_handlers = 2;       // /api/fleet GET + OPTIONS (DISCOVERY.md)
   const int handler_headroom = 24;    // Reserve for future additions
   const int total_handlers = base_handlers + csi_handlers + wifi_presence_handlers
       + rf_presence_handlers + datamgmt_handlers + household_handlers
       + audible_chirp_handlers + audio_handlers + camera_handlers + qr_handlers
       + vault_handlers + mesh_handlers + chirp_handlers + bluetooth_handlers
-      + ble_discovery_handlers + handler_headroom;
+      + ble_discovery_handlers + fleet_handlers + handler_headroom;
 
   // ── Start HTTPS server (port 443) if TLS cert is available ──
 #if SECURACV_HAS_HTTPS_SERVER
@@ -8402,6 +8521,14 @@ register_extra_routes:
   // Bearer-gated from day one (see spec/beacon_channel_v0.md §10).
   beacon_api::register_routes(active_server, g_device.api_token_str);
 #endif
+
+  // Coarse, unauthenticated fleet presence — the DISCOVERY.md /api/fleet
+  // contract the Witness Wall + Flasher read. Discoverable at
+  // canary.local/api/fleet (this device already advertises canary.local).
+  httpd_uri_t fleet_get = { .uri = "/api/fleet", .method = HTTP_GET, .handler = handle_fleet };
+  httpd_register_uri_handler(active_server, &fleet_get);
+  httpd_uri_t fleet_opt = { .uri = "/api/fleet", .method = HTTP_OPTIONS, .handler = handle_fleet_options };
+  httpd_register_uri_handler(active_server, &fleet_opt);
 
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "API server started",
              g_tls_enabled ? "HTTPS port 443" : "HTTP port 80");
@@ -10954,6 +11081,12 @@ void loop() {
     got_valid_sentence = true;
   }
 
+  // No SNTP path exists in this sketch — GPS is the only wall-clock source
+  // available. Seed/correct the system clock from it once RMC has a
+  // validated date/time (cheap: bails out immediately once synced and not
+  // due for a drift-correction check).
+  sync_clock_from_gps();
+
   // Update GPS hardware state
   gps_update_state(gps_data_received, g_fix.valid);
 
@@ -11054,6 +11187,37 @@ void loop() {
   // Update BLE GATT status characteristics (rate-limited internally)
   #if FEATURE_BLE_STATUS
   ble_status::update();
+  #endif
+
+  // Feed live status into the fleet-link presence beacon (ble_opera applies it
+  // on its periodic refresh, and the chirp-restore path re-applies it too).
+  // Fail-safe: sources without a value keep their unknown sentinels (battery
+  // -1 -> 0xFF, flags default 0). Health has no 0..100 source on the WAP yet
+  // (ble_status omits it likewise), so it rides as unknown (0xFF). tamper /
+  // alert_active have no cheap WAP-side getter today — left 0 (follow-up).
+  #if FEATURE_BLE && FEATURE_BLE_OPERA
+  {
+    uint8_t beacon_flags = 0;
+    int beacon_battery = -1;
+    int beacon_health  = -1;
+    #if FEATURE_POWER_MONITOR
+    {
+      PowerState pwr;
+      if (power_monitor::get_state(&pwr)) {
+        beacon_battery = (pwr.soc_pct > 100) ? 100 : (int)pwr.soc_pct;
+      }
+    }
+    #endif
+    #if FEATURE_ACOUSTIC_EVENTS
+    if (audio_is_muted()) beacon_flags |= FLEET_BEACON_FLAG_MIC_MUTED;
+    #endif
+    #if FEATURE_SYS_MONITOR
+    if (sys_monitor::get_degrade_level() != sys_monitor::DEGRADE_NONE)
+      beacon_flags |= FLEET_BEACON_FLAG_DEGRADED;
+    #endif
+    if (WiFi.isConnected()) beacon_flags |= FLEET_BEACON_FLAG_ON_WIFI_STA;
+    ble_opera::setBeaconStatus(beacon_flags, beacon_battery, beacon_health);
+  }
   #endif
 
   // Update BLE Discovery (Opera/Chirp/Nearby)

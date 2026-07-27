@@ -12,7 +12,7 @@
 
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { extname, join, dirname, resolve } from "node:path";
+import { extname, join, dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), "../.."));
@@ -33,9 +33,10 @@ const server = createServer(async (req, res) => {
     const rel = decodeURIComponent(new URL(req.url, "http://x").pathname);
     if (rel === "/favicon.ico") { res.writeHead(204); return res.end(); }
     const p = resolve(join(ROOT, rel));
-    if (!p.startsWith(ROOT)) { res.writeHead(403); return res.end(); }
-    const body = await readFile(p.endsWith("/") ? join(p, "index.html") : p);
-    res.writeHead(200, { "content-type": TYPES[extname(p)] || "application/octet-stream" });
+    if (p !== ROOT && !p.startsWith(ROOT + sep)) { res.writeHead(403); return res.end(); }
+    const file = rel.endsWith("/") ? join(p, "index.html") : p;
+    const body = await readFile(file);
+    res.writeHead(200, { "content-type": TYPES[extname(file)] || "application/octet-stream" });
     res.end(body);
   } catch { res.writeHead(404); res.end("not found"); }
 }).listen(0);

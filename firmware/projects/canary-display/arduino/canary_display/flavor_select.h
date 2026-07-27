@@ -11,7 +11,7 @@
 // IDE's Tools->Board menu safe: you cannot build watch firmware for dash
 // hardware by forgetting a define (review catch).
 //
-// Overrides (for exotic boards): `./setup.sh arduino <watch|dash|playground>`
+// Overrides (for exotic boards): `./setup.sh arduino <watch|dash|playground|modes>`
 // writes the git-ignored flavor_local.h, or define CD_BUILD_DASH 0/1 (and
 // optionally CD_BOARD_DASH43B 1 / FEATURE_PLAYGROUND 1) there yourself. An
 // explicit override always wins over board inference.

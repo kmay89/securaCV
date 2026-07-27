@@ -64,6 +64,12 @@
   button.btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
   button.btn.primary:hover { filter:brightness(1.05); color:#fff; }
 
+  .keyopt { margin-top:14px; }
+  .keyopt input { width:100%; font-size:13px; padding:9px 11px; border:1px solid var(--line);
+                  border-radius:8px; background:var(--panel); color:var(--fg); outline:none; }
+  .keyopt input:focus { border-color:var(--accent); }
+  .keyopt .hint { text-align:center; }
+
   .trust { margin-top:22px; }
   .trust summary { cursor:pointer; font-weight:600; color:var(--muted); font-size:13px; padding:6px 0;
                    list-style:none; }
@@ -173,14 +179,22 @@
   <section id="intake">
     <div id="drop" role="button" tabindex="0" aria-label="Drop an evidence bundle or press Enter to choose a file">
       <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-      <div class="big">Drop an evidence bundle (.json) to verify</div>
+      <div class="big">Drop an evidence bundle or event export (.json) to verify</div>
       <div class="hint">or click to choose a file — nothing is uploaded, nothing is changed, and checking
-        can't hurt the file. Verification runs locally.</div>
+        can't hurt the file. Verification runs locally. Both bundle kinds are recognized automatically:
+        a full evidence envelope, or an event export from <span class="mono">export_events</span>.</div>
       <input type="file" id="file" accept="application/json,.json">
     </div>
     <div class="actions">
       <button class="btn primary" id="choose" type="button">Choose file…</button>
-      <button class="btn" id="sample" type="button">Try the sample bundle</button>
+      <button class="btn" id="sample" type="button">Try the sample envelope</button>
+      <button class="btn" id="samplebundle" type="button">Try the sample export</button>
+    </div>
+    <div class="keyopt">
+      <input id="trustkey" class="mono" type="text" spellcheck="false" autocomplete="off"
+             placeholder="Optional: expected device key (64 hex chars) — confirms who signed an event export">
+      <div class="hint">Leave blank to check integrity only. With the key the device owner published, the
+        result also confirms authorship.</div>
     </div>
 
     <details class="trust">
@@ -219,6 +233,7 @@
 <script>
 'use strict';
 const SAMPLE_ENVELOPE = /*__SAMPLE_ENVELOPE__*/ null;
+const SAMPLE_BUNDLE = /*__SAMPLE_BUNDLE__*/ null;
 const V = globalThis.SecuraCVVerify;
 const $ = (id) => document.getElementById(id);
 const out = $('out'), drop = $('drop'), fileInput = $('file');
@@ -241,7 +256,8 @@ const wait = (ms) => (REDUCED || ms <= 0) ? Promise.resolve() : new Promise((r) 
 drop.addEventListener('click', () => fileInput.click());
 drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } });
 $('choose').addEventListener('click', (e) => { e.stopPropagation(); fileInput.click(); });
-$('sample').addEventListener('click', (e) => { e.stopPropagation(); process(SAMPLE_ENVELOPE, 'sample bundle'); });
+$('sample').addEventListener('click', (e) => { e.stopPropagation(); process(SAMPLE_ENVELOPE, 'sample envelope'); });
+$('samplebundle').addEventListener('click', (e) => { e.stopPropagation(); process(SAMPLE_BUNDLE, 'sample event export'); });
 fileInput.addEventListener('change', (e) => { const f = e.target.files[0]; if (f) readFile(f); });
 ['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('hover'); }));
 ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('hover'); }));
@@ -275,6 +291,11 @@ function fmtBucket(tb) {
 // always available and can never drift apart in meaning.
 const CHECK_PLAIN = [
   [/^Envelope format and version/, 'This file is a genuine securaCV evidence bundle'],
+  [/^Export bundle structure recognized/, 'This file is a securaCV event export'],
+  [/^Bundle device key matches the trusted key/, 'The export names exactly the device key you supplied'],
+  [/^Export receipt entry hash recomputed/, 'The signed receipt recomputes from scratch — the record matches what was sealed'],
+  [/^Export receipt signature valid \(authorship confirmed/, 'This export was signed by the device you named — authorship confirmed'],
+  [/^Export receipt signature valid under the device key named/, 'This export carries a valid signature from the device key it names'],
   [/^Manifest matches the canonical/, 'The privacy rules travelled inside the bundle and match the official spec'],
   [/^Bundle fingerprint recomputed/, 'The bundle’s fingerprint recomputes from scratch — the file is exactly what was exported'],
   [/^Sealed-event hash chain intact/, 'Every event is chained to the one before it — nothing added, removed, or reordered'],
@@ -319,6 +340,12 @@ async function process(envelope, sourceLabel) {
   const stale = () => seq !== runSeq;
   out.innerHTML = '<section id="run"></section><section id="report"></section>';
   if (!envelope || typeof envelope !== 'object') return renderBad('That does not look like an evidence bundle.', '');
+
+  // An event export (ExportBundle from `export_events`) is a different shape
+  // from a full evidence envelope; route it to its own verify + report path.
+  if (V.looksLikeExportBundle(envelope) && !V.looksLikeEnvelope(envelope)) {
+    return processBundle(envelope, sourceLabel, stale);
+  }
 
   // Verify first (it takes milliseconds), then reveal the real results
   // check by check. Nothing shown is speculative.
@@ -392,6 +419,122 @@ async function process(envelope, sourceLabel) {
   html += actions(true);
   $('report').innerHTML = `<div class="fade-in">${html}</div>`;
   wire();
+}
+
+// Event-export path: same reveal machinery and verdict language as envelopes,
+// with panels for what an ExportBundle actually contains — the signed receipt
+// (the disclosure record), the device key, and the event timeline.
+async function processBundle(bundle, sourceLabel, stale) {
+  let report;
+  try {
+    report = await V.verifyExportBundle(bundle, { trustedDeviceKeyHex: $('trustkey').value });
+  } catch (e) { if (!stale()) renderBad('The verifier hit an unexpected error.', e.message); return; }
+  if (stale()) return;
+
+  await playChecks(report, stale);
+  await wait(300);
+  if (stale()) return;
+
+  if (report.status === 'inconclusive') return renderInconclusive(report, sourceLabel);
+
+  const cls = report.status === 'ok' ? 'ok' : report.status === 'valid_with_warnings' ? 'warn' : 'bad';
+  const icon = report.ok ? (report.warnings.length ? ICONS.warn : ICONS.ok) : ICONS.bad;
+  const title = report.ok ? (report.warnings.length ? 'Verified — with notes' : 'Verified — integrity intact') : 'Not verified — export rejected';
+  const sub = report.ok
+    ? 'Every cryptographic check above was recomputed locally on this device — and every one passed.'
+    : 'A check failed. Do not trust the contents of this export.';
+
+  let html = `<div class="banner ${cls}">${icon}<div>${title}<small>${esc(sub)}</small></div></div>`;
+  html += whatThisMeans(report.ok ? (report.warnings.length ? 'notes' : 'verified') : 'rejected');
+  html += metaPanel(sourceLabel, title);
+
+  if (!report.ok) {
+    html += `<div class="panel"><h2>What failed</h2>
+      <div class="hint">Raw error:</div><div class="mono" style="color:var(--bad)">${esc(report.error || 'unknown error')}</div></div>`;
+    html += provesPanel();
+    html += actions(true);
+    $('report').innerHTML = `<div class="fade-in">${html}</div>`;
+    wire();
+    return;
+  }
+
+  html += `<div class="panel"><h2>Device key (Ed25519)</h2>
+    <div class="finger"><code id="fp">${esc(report.device_public_key || '')}</code>
+      <button class="btn copy" id="copyfp" type="button">Copy</button></div>
+    <div class="hint">${report.authorship === 'trusted'
+      ? 'Matches the key you supplied — authorship confirmed.'
+      : 'Taken from the export itself. To confirm authorship, compare it against the key published by the device owner (or paste that key above and re-verify).'}</div></div>`;
+
+  html += `<div class="panel"><h2>Contents</h2><div class="stats">
+    ${stat(report.events, 'Verified events')}
+    ${stat(report.failures, 'Recorded gaps')}
+    ${stat(report.buckets, 'Time buckets')}
+    ${stat(report.batches, 'Batches')}
+  </div></div>`;
+
+  const r = bundle.receipt_entry.receipt;
+  html += `<div class="panel"><h2>Disclosure record — the signed export receipt</h2><dl class="kv">
+    <dt>Authorization</dt><dd>${esc(r.auth_mode || 'not recorded (legacy export)')}</dd>
+    <dt>Exported at</dt><dd>${fmtBucket(r.time_bucket)}</dd>
+    <dt>Window</dt><dd>${r.window
+      ? esc(new Date(r.window.start_epoch_s * 1000).toISOString().replace('.000Z', 'Z')) + ' → ' + esc(new Date(r.window.end_epoch_s * 1000).toISOString().replace('.000Z', 'Z'))
+      : 'full retained history'}</dd>
+    <dt>Events in batch</dt><dd>${esc(String(r.batch_size))}</dd>
+    <dt>Artifact hash</dt><dd class="mono">${esc(report.artifact_hash || '')}</dd>
+    <dt>Receipt entry hash</dt><dd class="mono">${esc(report.entry_hash || '')}</dd>
+  </dl>
+  <div class="hint">This export itself left a signed, hash-chained receipt on the device — disclosures
+    are auditable. On the device, <span class="mono">export_verify</span> can confirm this receipt sits
+    in the tamper-evident log (and check a C2PA Content Credentials sidecar, if one was issued).</div></div>`;
+
+  if (report.warnings.length) {
+    html += `<div class="panel"><h2>Notes</h2><ul class="warns">${report.warnings.map((w) => {
+      const hint = warningHint(w) || bundleWarningHint(w);
+      return `<li>${esc(w)}${hint ? `<div class="hint">${esc(hint)}</div>` : ''}</li>`;
+    }).join('')}</ul></div>`;
+  }
+
+  html += renderBundleTimeline(bundle);
+  html += `<div class="panel"><h2>Privacy coarsening (by design)</h2><div class="hint" style="margin-top:0">
+    Times are grouped into ${esc(String((bundle.artifact.batches[0] && bundle.artifact.batches[0].buckets[0] && bundle.artifact.batches[0].buckets[0].time_bucket.size_s / 60) || 10))}-minute buckets${bundle.artifact.jitter_s > 0 ? ` and jittered ±${esc(String(bundle.artifact.jitter_s))}s (step ${esc(String(bundle.artifact.jitter_step_s))}s)` : ''}
+    to protect bystanders — the export proves <em>what</em> was witnessed without exposing precise timing. See spec/event_contract.md.</div></div>`;
+  html += provesPanel();
+  html += actions(true);
+  $('report').innerHTML = `<div class="fade-in">${html}</div>`;
+  wire();
+}
+
+// One-line context for export-bundle-specific notes.
+function bundleWarningHint(w) {
+  if (/self-attested/.test(w)) {
+    return 'Integrity is fully proven either way — this note is only about which device signed it. The device owner can publish their key fingerprint, or hand you the C2PA trust anchor for the same export.';
+  }
+  return null;
+}
+
+function renderBundleTimeline(bundle) {
+  const rows = [];
+  for (const batch of bundle.artifact.batches || []) {
+    for (const bucket of batch.buckets || []) {
+      for (const e of bucket.events || []) {
+        rows.push(`<tr><td>${fmtBucket(e.time_bucket)}</td>
+          <td><span class="tag">${esc(typeof e.event_type === 'string' ? e.event_type : JSON.stringify(e.event_type))}</span></td>
+          <td>${esc(e.zone_id || '—')}</td><td>${typeof e.confidence === 'number' ? e.confidence.toFixed(2) : '—'}</td></tr>`);
+      }
+      for (const f of bucket.failures || []) {
+        rows.push(`<tr><td>${fmtBucket(f.time_bucket)}</td>
+          <td><span class="tag fail">${esc(typeof f.failure_type === 'string' ? f.failure_type : JSON.stringify(f.failure_type))}</span></td>
+          <td colspan="2">${esc(f.details || 'recorded gap')}</td></tr>`);
+      }
+    }
+  }
+  if (!rows.length) return `<div class="panel"><h2>Timeline</h2><div class="hint">No events in this export's window.</div></div>`;
+  return `<div class="panel"><h2>Timeline — verified events</h2>
+    <table><thead><tr><th>Time bucket (UTC)</th><th>Event</th><th>Zone</th><th>Conf.</th></tr></thead>
+    <tbody>${rows.join('')}</tbody></table>
+    <div class="hint">Rendered from the artifact that was just cryptographically bound to the signed
+      receipt — not from any unverified summary. Gaps (times the device could not observe) are shown
+      inline, never hidden.</div></div>`;
 }
 
 // Reveal the verifier's real, already-computed results one check at a time,

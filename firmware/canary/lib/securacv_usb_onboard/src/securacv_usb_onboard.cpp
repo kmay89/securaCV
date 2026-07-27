@@ -193,7 +193,17 @@ bool begin(const Config& cfg) {
       Serial.println("[usb-onboard] MSC not started (SD not mounted?) — HID only");
     }
   }
-  USB.productName("SecuraCV Canary");
+  // Branded USB identity — only reachable here because this build runs in
+  // USB-OTG/TinyUSB mode (ARDUINO_USB_MODE=0), where the descriptor strings are
+  // programmable. In the stock hwcdc profile (and on every C3/C6 board) the
+  // USB-Serial-JTAG descriptor is fixed in silicon and can't be rebranded (see
+  // docs/browser_flasher.md § "What the Canary is called over USB"). The
+  // AUTHORITATIVE source is the -DUSB_MANUFACTURER / -DUSB_PRODUCT build flags
+  // (platformio.ini env:usb-onboard): with CDC-on-boot, USB is begun before
+  // setup(), so these runtime calls only take effect on non-CDC-on-boot builds
+  // — they're kept as a matching fallback. Hyphenated to match the BLE GAP name.
+  USB.manufacturerName("SecuraCV");
+  USB.productName("SecuraCV-Canary");
   USB.begin();
   apply(step(State::Off, Event::Enable));   // Off → Idle
   s_begin_ms = millis();

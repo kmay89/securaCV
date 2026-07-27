@@ -1,0 +1,197 @@
+{
+  "$comment": "The canonical build-line spine for the SecuraCV Lab. ONE source of truth for every surface: the isometric room, the stage rail, the all-pages index, the site's /lab page, and the Mac app's stage tabs. Add a bench = add an entry here; see build-line.README.md.",
+  "version": 1,
+  "product": "SecuraCV Lab",
+  "app": {
+    "surface": "SecuraCV Lab (Tauri, macOS + Linux)",
+    "nav": "stage-tabs",
+    "note": "The desktop app renders the six stages below as a native toolbar tab bar; each tab shows that stage's benches. The isometric room is the default 'Overview' surface."
+  },
+  "$room_note": "Maps each isometric-room station (room.html) to the benches/site links it opens, by slug + emoji. The room reads this so its tool lists stay in lockstep with the manifest; it falls back to its own hardcoded tools if the manifest can't load. The room is ONE straight line, stations 1–6; stage 4 is a single options bench (camera + radar today, more senses later), never a fork.",
+  "room": {
+    "1": [{ "e": "🐦", "slug": "fleet" }, { "e": "🧭", "slug": "choose" }],
+    "2": [{ "e": "🧱", "slug": "workshop" }, { "e": "💎", "slug": "see-it-in-3d" }],
+    "3": [{ "e": "📌", "slug": "boards" }, { "e": "🎛️", "slug": "test-bench" }],
+    "4": [{ "e": "📷", "slug": "vision" }, { "e": "📡", "slug": "sense" }],
+    "5": [{ "e": "🏠", "slug": "hub" }, { "e": "🏡", "slug": "house" }],
+    "6": [{ "e": "🔐", "slug": "vault" }, { "e": "🧠", "slug": "how-it-works" }]
+  },
+  "onramp": {
+    "noun": "Get started",
+    "slug": "start",
+    "lab": "start.html",
+    "site": "/lab.html",
+    "desc": "Pick your path (Home Assistant, a spare Pi, Docker, or a soldering iron) and your OS; copy-paste your way in. The guided thread across stages 1–5."
+  },
+  "stages": [
+    {
+      "id": "choose", "n": 1, "name": "Choose", "verb": "which Canary",
+      "accent": "#f5b301", "icon": "compass",
+      "benches": [
+        { "noun": "Meet the fleet", "slug": "fleet", "lab": "fleet.html", "real": true, "kind": "firmware", "status": "promote",
+          "desc": "3D cards that boot each device's real firmware behind the glass.",
+          "depths": [
+            { "label": "What the mic hears (4.3C)", "lab": "dash-mic.html",
+              "desc": "The listening dash's decision core in the browser: alarm cadences, wake-on-sound, and the privacy barrier — what it does, and what it never does." }
+          ] },
+        { "noun": "Find your Canary", "slug": "choose", "lab": "choose.html", "real": false, "kind": "chooser", "status": "keep",
+          "desc": "Four questions → ranked device matches with honest release status." }
+      ],
+      "site": [
+        { "noun": "Do you need a computer?", "href": "/linux.html" },
+        { "noun": "Compare", "href": "/compare.html" },
+        { "noun": "Store", "href": "/store.html" }
+      ]
+    },
+    {
+      "id": "build", "n": 2, "name": "Build", "verb": "body & board",
+      "accent": "#f0762e", "icon": "wrench",
+      "benches": [
+        { "noun": "The Workshop", "slug": "workshop", "lab": "workshop.html", "real": false, "kind": "configurator", "status": "keep",
+          "desc": "Spec options and watch the print-validated enclosure respond in 3D." },
+        { "noun": "Boards", "slug": "boards", "lab": "boards.html", "real": false, "kind": "viewer", "status": "rename", "redirectFrom": "board-room",
+          "wasNamed": "The Board Room",
+          "desc": "Spin every real board in 3D; ‘Wire it’ stages the harness." }
+      ],
+      "site": [
+        { "noun": "See it in 3D", "slug": "see-it-in-3d", "href": "/showroom.html", "wasNamed": "Showroom" },
+        { "noun": "Print one", "slug": "print", "href": "/print.html" },
+        { "noun": "Test bench", "slug": "test-bench", "href": "/playground.html", "wasNamed": "Playground" },
+        { "noun": "Makers", "slug": "makers", "href": "/corps.html", "wasNamed": "Maker Corps" },
+        { "noun": "Gallery", "slug": "gallery", "href": "/gallery.html" }
+      ]
+    },
+    {
+      "id": "flash", "n": 3, "name": "Flash", "verb": "firmware on it",
+      "accent": "#8b5cf6", "icon": "bolt",
+      "benches": [
+        { "noun": "Flash over USB", "slug": "flash", "lab": "flash.html", "real": true, "kind": "hardware", "status": "keep",
+          "desc": "The real in-browser USB flasher — detect, back up, write signed image, verify. The canonical one." },
+        { "noun": "First boot", "slug": "first-boot", "lab": "wap.html", "real": false, "kind": "sim", "status": "rename", "redirectFrom": "wap",
+          "wasNamed": "The WAP", "desc": "Guided first boot: meet the board, watch it come up, drive the phone setup wizard." }
+      ],
+      "site": [
+        { "noun": "Download the app", "href": "/download.html" }
+      ]
+    },
+    {
+      "id": "sense", "n": 4, "name": "Sense", "verb": "pick its sense",
+      "accent": "#2563eb", "icon": "eye", "options": true,
+      "optionsNote": "Camera and radar are options at this one stage, not separate paths — pick the sense your Canary carries. More senses will dock here. The line runs straight on to Home.",
+      "tracks": [
+        {
+          "track": "vision", "label": "Camera", "accent": "#2563eb",
+          "benches": [
+            { "noun": "The Vision", "slug": "vision", "lab": "vision.html", "real": false, "kind": "sim", "status": "keep",
+              "desc": "On-device person detection — boxes, not pixels. SenseCraft model load + aim.",
+              "depths": [
+                { "label": "Through Canary eyes — your webcam", "lab": "eyes.html", "real": true,
+                  "desc": "Your webcam on the sensor side of the boundary: a stand-in motion sensor stages the boxes, and the real firmware wasm makes every presence, dwell and event call after it. Frames never leave the page." }
+              ] }
+          ]
+        },
+        {
+          "track": "radar", "label": "Radar", "accent": "#3b82f6",
+          "benches": [
+            { "noun": "The Sense", "slug": "sense", "lab": "sense.html", "real": false, "kind": "sim", "status": "keep",
+              "desc": "60 GHz presence. Drag people through the cone; watch the real FSM decide.",
+              "depths": [
+                { "label": "Basic — radar school", "lab": "sense.html" },
+                { "label": "Advanced — the deep lab", "lab": "senselab.html", "real": true, "wasNamed": "The Sense Lab", "status": "fold" }
+              ] }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "home", "n": 5, "name": "Home", "verb": "bring it home",
+      "accent": "#0d9488", "icon": "house",
+      "benches": [
+        { "noun": "The Hub", "slug": "hub", "lab": "homeassistant.html", "real": false, "kind": "setup", "status": "rename", "redirectFrom": "homeassistant",
+          "desc": "Home Assistant on a Pi — 3D build + a replayable setup terminal." },
+        { "noun": "The Canary House", "slug": "house", "lab": "house.html", "real": false, "kind": "sim", "status": "keep",
+          "desc": "The whole fleet at home, each device sensing its own way.",
+          "depths": [
+            { "label": "Watch it work", "lab": "scenes.html", "wasNamed": "Scenes", "status": "fold",
+              "desc": "Zoom into one witness doing its one honest thing." }
+          ] }
+      ],
+      "site": [
+        { "noun": "Why Canary", "slug": "why-canary", "href": "/watch-over.html", "wasNamed": "Watched over, never watched" },
+        { "noun": "Plug it in", "slug": "plug-it-in", "href": "/plugin.html" }
+      ]
+    },
+    {
+      "id": "prove", "n": 6, "name": "Prove", "verb": "evidence that holds",
+      "accent": "#059669", "icon": "shield-check",
+      "benches": [
+        { "noun": "The Vault", "slug": "vault", "lab": "vault.html", "real": true, "kind": "crypto", "status": "keep",
+          "desc": "Watch a frame get sealed, then break the glass yourself with real N-of-M approvals.",
+          "depths": [
+            { "label": "Understand it", "lab": "vault.html" },
+            { "label": "Set up break-glass", "lab": "operator.html", "wasNamed": "The Operator's Bench", "status": "fold",
+              "desc": "Stand up and rehearse a quorum vault in four commands." }
+          ] }
+      ],
+      "site": [
+        { "noun": "How it works", "slug": "how-it-works", "href": "/how-it-works.html" },
+        { "noun": "The evidence vault", "slug": "evidence-vault", "href": "/vault.html" },
+        { "noun": "Self-check", "slug": "self-check", "href": "/checkup.html", "wasNamed": "Canary Doctor" }
+      ]
+    }
+  ],
+  "siteNav": [
+    { "label": "How it works", "href": "/how-it-works.html" },
+    { "label": "The Lab", "href": "/lab.html" },
+    { "label": "Compare", "href": "/compare.html" },
+    { "label": "Build it yourself", "href": "/maker.html", "gathers": ["workshop", "boards", "first-boot", "test-bench", "print", "gallery", "makers"] },
+    { "label": "Store", "href": "/store.html" },
+    { "label": "Download", "href": "/download.html" }
+  ],
+  "footerNav": [
+    { "label": "Site map", "href": "/site-map.html" },
+    { "label": "Your Canary (help)", "href": "/canary.html" },
+    { "label": "Privacy", "href": "/privacy.html" },
+    { "label": "GitHub", "href": "https://github.com/kmay89/securaCV" }
+  ],
+  "$redirects_note": "Maps an old slug → the new canonical slug. Every target below is now defined as a `slug` on a bench (stages[].benches[]) or a site link (stages[].site[]), so a renderer can always resolve it.",
+  "redirects": {
+    "board-room": "boards", "wap": "first-boot", "homeassistant": "hub",
+    "showroom": "see-it-in-3d", "playground": "test-bench",
+    "corps": "makers", "checkup": "self-check", "watch-over": "why-canary"
+  },
+  "htmlDocumentation": {
+    "$comment": "All committed HTML documentation and support pages that are not primary Lab benches. Keep this inventory updated when adding standalone HTML so the sitemap and docs map do not miss it.",
+    "groups": [
+      {
+        "label": "Lab shell and compatibility",
+        "items": [
+          { "noun": "Lab shell", "href": "lab.html", "purpose": "Canonical adaptive Lab shell; iPad sidebar and phone tab bar come from the same bundle." },
+          { "noun": "Legacy Lab front door", "href": "index.html", "purpose": "Redirects old links to the Lab shell or fleet cards." },
+          { "noun": "Isometric room", "href": "room.html", "purpose": "Embedded workshop overview used by the Lab shell." },
+          { "noun": "Emulator harness", "href": "emulator/web/harness.html", "purpose": "Developer/CI boot harness for real display firmware compiled to WebAssembly." },
+          { "noun": "Kiri slicing fixture", "href": "tests/fixtures/kiri_harness.html", "purpose": "Offline test fixture for the enclosure/slicer bench." },
+          { "noun": "Canary Voice sound board", "href": "voice/index.html", "purpose": "Hear the display's acoustic signatures (boot, alerts, interactions) — generated from voice_score.h and CI-gated, so it never drifts from the firmware." }
+        ]
+      },
+      {
+        "label": "iPad and native app runbooks",
+        "items": [
+          { "noun": "iPad field guide", "href": "https://github.com/kmay89/securaCV/blob/main/desktop-lab/ipad-guide.html", "purpose": "Narrated architecture guide for making the same Lab bundle feel native on iPad." },
+          { "noun": "iPad setup runbook", "href": "https://github.com/kmay89/securaCV/blob/main/desktop-lab/ipad-setup.html", "purpose": "Step-by-step Mac/Xcode path for simulator, side-load, TestFlight, and App Store builds." }
+        ]
+      },
+      {
+        "label": "Evidence and operator HTML",
+        "items": [
+          { "noun": "Witness kernel explainer", "href": "https://github.com/kmay89/securaCV/blob/main/docs/witness-kernel.html", "purpose": "Standalone architectural explainer for the privacy witness kernel." },
+          { "noun": "Break-glass ceremony", "href": "https://github.com/kmay89/securaCV/blob/main/src/break_glass/breakglass.html", "purpose": "Local quorum unseal UI for raw-media access." },
+          { "noun": "Evidence viewer", "href": "https://github.com/kmay89/securaCV/blob/main/viewer/evidence_viewer.html", "purpose": "Offline verifier/viewer for exported witness evidence." },
+          { "noun": "Evidence viewer template", "href": "https://github.com/kmay89/securaCV/blob/main/viewer/template.html", "purpose": "Template used to package static evidence viewer exports." },
+          { "noun": "Privacy witness wizard", "href": "https://github.com/kmay89/securaCV/blob/main/privacy_witness_kernel/wizard/index.html", "purpose": "Standalone setup wizard for the privacy witness kernel prototype." }
+        ]
+      }
+    ]
+  }
+
+}

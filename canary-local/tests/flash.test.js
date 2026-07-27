@@ -25,6 +25,8 @@ test("flash.json: every product names a chip the chips map + esptool know", () =
     assert.ok(ESPTOOL_CHIPS.has(p.chip), `${p.id}: unknown esptool chip "${p.chip}"`);
     assert.ok(catalog.chips[p.chip], `${p.id}: chip "${p.chip}" absent from chips map`);
     assert.ok(p.asset_stem && p.name && p.tagline, `${p.id}: missing display fields`);
+    assert.ok(p.hatch && p.hatch.title && p.hatch.body, `${p.id}: missing hatch copy`);
+    assert.ok(Array.isArray(p.hatch.steps) && p.hatch.steps.length >= 2, `${p.id}: missing hatch steps`);
     assert.ok(catalog.chips[p.chip].download_mode, `${p.chip}: no download-mode copy`);
   }
 });
@@ -33,10 +35,47 @@ test("flash.json: fw_train is single-sourced from the registry", () => {
   assert.strictEqual(catalog.fw_train, registry.fw_train);
 });
 
+test("flash.json: hatch moments are privacy-safe and product-specific", () => {
+  for (const p of catalog.products) {
+    const copy = [p.hatch.kicker, p.hatch.title, p.hatch.body, ...p.hatch.steps]
+      .join(" ")
+      .toLowerCase();
+    assert.doesNotMatch(copy, /license plate|identity|recognition|re-id|embedding/, `${p.id}: hatch copy overclaims identity`);
+  }
+  const vision = catalog.products.find((p) => p.id === "securacv-canary-vision");
+  assert.match(vision.hatch.body, /presence only/);
+  assert.ok(vision.hatch.steps.some((s) => /Grove Vision AI V2/.test(s)), "Vision must remind users about the second port");
+
+  const sense = catalog.products.find((p) => p.id === "securacv-canary-sense");
+  assert.match(sense.hatch.body, /no camera, no mic/);
+
+  const wellbeing = catalog.products.find((p) => p.id === "securacv-canary-sense-wellbeing");
+  assert.ok(wellbeing.hatch.steps.some((s) => /breathing\/heartbeat/.test(s)), "Wellbeing gets its own settling instruction");
+});
+
+test("flash.json: live-receipt capability follows the firmware command", () => {
+  const receiptIds = catalog.products
+    .filter((p) => p.serial_receipt)
+    .map((p) => p.id)
+    .sort();
+  assert.deepStrictEqual(receiptIds, [
+    "securacv-canary",
+    "securacv-canary-vision",
+    "securacv-canary-vision-xiao-c3",
+    "securacv-canary-vision-xiao-s3",
+  ]);
+  for (const p of catalog.products) {
+    assert.strictEqual(typeof p.serial_receipt, "boolean", `${p.id}: capability missing`);
+  }
+});
+
 test("flash.json: the no-brick promise and recovery ladder are present", () => {
   assert.ok(catalog.no_brick && catalog.no_brick.headline && catalog.no_brick.points.length);
   assert.ok(Array.isArray(catalog.recovery) && catalog.recovery.length >= 2);
-  assert.strictEqual(catalog.manifest_url.includes("releases/latest/download"), true);
+  // Pinned to the firmware release TAG (fw-v<train>), never /latest/: the repo
+  // also ships the native app (app-v*), and GitHub's "latest" is the newest
+  // release of ANY kind, which would shadow the firmware manifest. See gen_flash.py.
+  assert.match(catalog.manifest_url, /\/releases\/download\/fw-v[\d.]+\/manifest-flash\.json$/);
 });
 
 // ── chip guard — a board is never offered another board's image ─────────────
@@ -89,6 +128,23 @@ test("parsePartitionTable finds app partitions and stops at padding", async () =
   const chosen = pickAppPartition(apps);
   assert.strictEqual(chosen.label, "ota_0", "ota_0 preferred for the version read");
   assert.strictEqual(chosen.offset, 0x20000);
+});
+
+test("pickBootedAppPartition follows otadata's active slot", async () => {
+  const { pickBootedAppPartition } = await core();
+  const factory = { type: 0, subtype: 0x00, label: "factory" };
+  const ota0 = { type: 0, subtype: 0x10, label: "ota_0" };
+  const ota1 = { type: 0, subtype: 0x11, label: "ota_1" };
+  const apps = [factory, ota0, ota1];
+  // No otadata read → the old preference order.
+  assert.strictEqual(pickBootedAppPartition(apps, null).label, "ota_0");
+  // Fresh otadata → the bootloader runs factory.
+  assert.strictEqual(pickBootedAppPartition(apps, { fresh: true, activeOta: 0 }).label, "factory");
+  // A board that OTA'd into ota_1 is judged by ota_1, not stale ota_0.
+  assert.strictEqual(pickBootedAppPartition(apps, { fresh: false, activeOta: 1 }).label, "ota_1");
+  // Missing slot degrades to the preference order rather than failing.
+  assert.strictEqual(pickBootedAppPartition([factory, ota0], { fresh: false, activeOta: 1 }).label, "ota_0");
+  assert.strictEqual(pickBootedAppPartition([], null), null);
 });
 
 test("pickAppPartition falls back factory → first app", async () => {
@@ -166,7 +222,7 @@ test("manifestEntry refuses a chip-mismatched image (defence in depth)", async (
 });
 
 // ── ?manifest= override (self-hosted / air-gapped, phishing-guarded) ────────
-test("manifestOverrideUrl: same-origin and private/LAN allowed, public refused", async () => {
+test("manifestOverrideUrl: same-origin and loopback allowed, LAN/public refused", async () => {
   const { manifestOverrideUrl } = await core();
   const origin = "https://kmay89.github.io";
   // No override → null.
@@ -179,21 +235,28 @@ test("manifestOverrideUrl: same-origin and private/LAN allowed, public refused",
   assert.strictEqual(
     manifestOverrideUrl("?manifest=custom/m.json", origin),
     "https://kmay89.github.io/custom/m.json");
-  // Private / LAN / localhost hosts → allowed (air-gapped self-host).
+  // Loopback (a same-machine manifest server) → allowed. This is the exact set
+  // the page's CSP connect-src can pin, so the code guard and the CSP agree —
+  // and loopback isn't mixed-content-blocked even on the hosted HTTPS Lab.
+  for (const u of [
+    "http://localhost:8000/m.json",
+    "https://localhost/m.json",
+    "http://127.0.0.1:8443/manifest-flash.json",
+  ]) assert.ok(manifestOverrideUrl("?manifest=" + encodeURIComponent(u), origin), "should allow " + u);
+  // Broader private/LAN hosts → refused now: a static CSP can't enumerate
+  // private-IP ranges, so the override no longer accepts hosts the browser
+  // would block at the CSP layer anyway (self-host same-origin or use a local
+  // file for those).
   for (const u of [
     "http://192.168.1.50:8443/manifest-flash.json",
     "http://10.0.0.2/m.json",
     "http://canary.local/m.json",
     "http://nas.lan/m.json",
-    "http://localhost:8000/m.json",
     "http://172.16.9.9/m.json",
-  ]) assert.ok(manifestOverrideUrl("?manifest=" + encodeURIComponent(u), origin), "should allow " + u);
+  ]) assert.strictEqual(manifestOverrideUrl("?manifest=" + encodeURIComponent(u), origin), null, "should refuse " + u);
   // Public third-party origin → refused (firmware-phishing guard).
   assert.strictEqual(
     manifestOverrideUrl("?manifest=https://evil.example.com/m.json", origin), null);
-  // 172.32 is outside the private 172.16/12 block → refused.
-  assert.strictEqual(
-    manifestOverrideUrl("?manifest=http://172.32.0.1/m.json", origin), null);
   // A bare relative ref stays same-origin (harmless — it just 404s).
   assert.strictEqual(manifestOverrideUrl("?manifest=%%%", origin), origin + "/%%%");
   // A malformed absolute URL → null, never throws.
@@ -233,6 +296,28 @@ test("planReadChunks covers the span exactly, in order, capped per chunk", async
   assert.strictEqual(odd[1].offset, 0x8000 + READ_CHUNK);
   assert.strictEqual(odd[1].size, 5);
   assert.deepStrictEqual(planReadChunks(0, 0), []);
+});
+
+// ── local-file factory-shape gate (Advanced → local .bin) ───────────────────
+// Everything installed from a local file is written at offset 0, so an
+// app-only build (which also starts 0xE9) would land on the bootloader.
+// The discriminator is the partition table at 0x8000 — same check, same
+// reason, as the desktop Flasher's flash_local_file.
+test("localImageShape refuses app-only builds and passes merged factory images", async () => {
+  const { localImageShape } = await core();
+  assert.strictEqual(localImageShape(new Uint8Array(0)).factory, false, "empty");
+  const appOnly = new Uint8Array(0x20000).fill(0xff);
+  appOnly[0] = 0xe9; // app image magic alone doesn't make a factory image
+  assert.strictEqual(localImageShape(appOnly).factory, false, "app-only, 0x8000-spanning");
+  assert.match(localImageShape(appOnly).reason, /partition table/);
+  const short = new Uint8Array(0x4000);
+  short[0] = 0xe9;
+  assert.strictEqual(localImageShape(short).factory, false, "shorter than 0x8000");
+  const factory = new Uint8Array(0x20000).fill(0xff);
+  factory[0] = 0xe9; // bootloader image magic at 0
+  ptEntry({ type: 1, subtype: 2, offset: 0x9000, size: 0x5000, label: "nvs" })
+    .copy(Buffer.from(factory.buffer), 0x8000);
+  assert.strictEqual(localImageShape(factory).factory, true, "merged factory image");
 });
 
 // ── partition kinds (board report vocabulary) ───────────────────────────────
@@ -589,6 +674,36 @@ test("channelFromSearch: only an explicit channel=dev switches; URL is a fixed c
   assert.ok(DEV_FLASH_MANIFEST_URL.startsWith("https://github.com/kmay89/securaCV/releases/download/fw-dev-latest/"));
 });
 
+test("releaseTagFromManifestUrl: names the pinned firmware tag, and only that", async () => {
+  const { releaseTagFromManifestUrl, DEV_FLASH_MANIFEST_URL } = await core();
+  // The catalog's own pin — the case that matters. A tag bumped but never
+  // released is why every product can read "unavailable"; the page says which.
+  assert.strictEqual(
+    releaseTagFromManifestUrl(catalog.manifest_url),
+    `fw-v${registry.fw_train}`,
+  );
+  assert.strictEqual(
+    releaseTagFromManifestUrl(
+      "https://github.com/kmay89/securaCV/releases/download/fw-v2.3.0/manifest-flash.json"),
+    "fw-v2.3.0");
+  assert.strictEqual(
+    releaseTagFromManifestUrl(
+      "https://github.com/kmay89/securaCV/releases/download/fw-v2.4.0-rc.1/manifest-flash.json"),
+    "fw-v2.4.0-rc.1");
+  // Not a pinned firmware release: the rolling dev pointer is a channel, not a
+  // version, and claiming it as one would misname what the page is showing.
+  assert.strictEqual(releaseTagFromManifestUrl(DEV_FLASH_MANIFEST_URL), null);
+  // Neither is an app release, a self-hosted override, or junk.
+  assert.strictEqual(
+    releaseTagFromManifestUrl(
+      "https://github.com/kmay89/securaCV/releases/download/flasher-v0.2.2/latest.json"),
+    null);
+  assert.strictEqual(releaseTagFromManifestUrl("http://canary.local/manifest-flash.json"), null);
+  assert.strictEqual(releaseTagFromManifestUrl(""), null);
+  assert.strictEqual(releaseTagFromManifestUrl(null), null);
+  assert.strictEqual(releaseTagFromManifestUrl(undefined), null);
+});
+
 // ── WiFi pre-provisioning (NVS image builder + QR payload) ──────────────────
 test("buildNvsWifiImage round-trips through the NVS parser with valid CRCs", async () => {
   const { buildNvsWifiImage, parseNvs, witnessSummary, crc32EspRom } = await core();
@@ -655,6 +770,61 @@ test("buildNvsWifiImage round-trips through the NVS parser with valid CRCs", asy
   assert.ok(parseNvs(open).find((i) => i.key === "wifi_pass"));
 });
 
+test("mqttProvisioningToNvs: maps the optional broker/identity fields to native's NVS keys", async () => {
+  const { mqttProvisioningToNvs } = await core();
+  // Full set → exactly the keys/values native's build_nvs writes.
+  const full = mqttProvisioningToNvs({
+    deviceId: "canary_vision_ab12", mqttHost: "homeassistant.local",
+    mqttPort: 1883, mqttUser: "canary", mqttPass: "broker-secret",
+  });
+  assert.deepStrictEqual(full.strings, {
+    dev_id: "canary_vision_ab12", mqtt_host: "homeassistant.local",
+    mqtt_user: "canary", mqtt_pass: "broker-secret",
+  });
+  assert.deepStrictEqual(full.u16, { mqtt_port: 1883 });
+
+  // Every field is optional — empty in, omitted out (no empty NVS keys written).
+  assert.deepStrictEqual(mqttProvisioningToNvs({}), { strings: {}, u16: {} });
+  assert.deepStrictEqual(mqttProvisioningToNvs({ deviceId: "just_me" }), { strings: { dev_id: "just_me" }, u16: {} });
+  // A broker host with no user/pass (open broker) still writes host + port.
+  assert.deepStrictEqual(
+    mqttProvisioningToNvs({ mqttHost: "10.0.0.2", mqttPort: 1883 }),
+    { strings: { mqtt_host: "10.0.0.2" }, u16: { mqtt_port: 1883 } });
+
+  // Validation mirrors native — bad values throw before anything is built.
+  assert.throws(() => mqttProvisioningToNvs({ mqttHost: "h", mqttPort: 0 }), /port/i);
+  assert.throws(() => mqttProvisioningToNvs({ mqttHost: "h", mqttPort: 70000 }), /port/i);
+  assert.throws(() => mqttProvisioningToNvs({ mqttHost: "x".repeat(64), mqttPort: 1 }), /host/i);
+  assert.throws(() => mqttProvisioningToNvs({ deviceId: "d".repeat(33) }), /Device ID/i);
+});
+
+test("buildNvsSeedImage bakes dev_id + MQTT the firmware reads back — same keys/types as native", async () => {
+  const { buildNvsSeedImage, mqttProvisioningToNvs, parseNvs } = await core();
+  const { strings, u16 } = mqttProvisioningToNvs({
+    deviceId: "canary_vision_ab12", mqttHost: "homeassistant.local",
+    mqttPort: 1883, mqttUser: "canary", mqttPass: "s3cret!!",
+  });
+  const img = buildNvsSeedImage(
+    { wifi: { ssid: "Bird House", pass: "correct horse" }, wifiScheme: "string", strings, u16 }, 0x5000);
+
+  // Read it back exactly as the firmware would (string keys allow-listed).
+  const items = parseNvs(img, ["wifi_ssid", "wifi_pass", "dev_id", "mqtt_host", "mqtt_user", "mqtt_pass"]);
+  const get = (k) => items.find((i) => i.namespace === "securacv" && i.key === k);
+  const strOf = (k) => Buffer.from(get(k).bytes).toString();
+  // Strings are ESP-IDF type 0x21 (Preferences getString), NUL stripped on read.
+  assert.strictEqual(get("dev_id").type, 0x21);
+  assert.strictEqual(strOf("dev_id"), "canary_vision_ab12");
+  assert.strictEqual(strOf("mqtt_host"), "homeassistant.local");
+  assert.strictEqual(strOf("mqtt_user"), "canary");
+  assert.strictEqual(strOf("mqtt_pass"), "s3cret!!");
+  assert.strictEqual(strOf("wifi_ssid"), "Bird House"); // string scheme, like usb-secrets boards
+  // mqtt_port is a u16 (Preferences putUShort → type 0x02), not a string.
+  assert.strictEqual(get("mqtt_port").type, 0x02);
+  assert.strictEqual(get("mqtt_port").value, 1883);
+  // Nothing bled past the one NVS page.
+  assert.ok(img.subarray(4096).every((b) => b === 0xff));
+});
+
 test("wifiQrString escapes the special characters and handles open networks", async () => {
   const { wifiQrString } = await core();
   assert.strictEqual(wifiQrString("MyWifi", "pass1234"), "WIFI:T:WPA;S:MyWifi;P:pass1234;;");
@@ -662,6 +832,48 @@ test("wifiQrString escapes the special characters and handles open networks", as
     wifiQrString('we;ird"ssid,x:', 'p\\ss;1234'),
     'WIFI:T:WPA;S:we\\;ird\\"ssid\\,x\\:;P:p\\\\ss\\;1234;;');
   assert.strictEqual(wifiQrString("open-net", ""), "WIFI:T:nopass;S:open-net;;");
+});
+
+test("wifiMemoryStatus: makes 'type once' visible, and honest about persistence", async () => {
+  const { wifiMemoryStatus } = await core();
+  // Nothing saved → no banner.
+  const none = wifiMemoryStatus(null, false);
+  assert.strictEqual(none.hasSaved, false);
+  assert.strictEqual(wifiMemoryStatus({ ssid: "" }, true).hasSaved, false);
+  assert.strictEqual(wifiMemoryStatus({ ssid: "   " }, false).hasSaved, false); // whitespace only
+
+  // Session-only → names the network + nudges persistence.
+  const sess = wifiMemoryStatus({ ssid: "HomeNet", pass: "x" }, false);
+  assert.strictEqual(sess.hasSaved, true);
+  assert.strictEqual(sess.persisted, false);
+  assert.strictEqual(sess.ssid, "HomeNet");
+  assert.match(sess.headline, /HomeNet/);
+  assert.match(sess.detail, /session/i);
+  assert.match(sess.detail, /Remember on this computer/i);
+
+  // Persisted → says it's kept on this computer, no persistence nudge.
+  const kept = wifiMemoryStatus({ ssid: "HomeNet", pass: "x" }, true);
+  assert.strictEqual(kept.persisted, true);
+  assert.match(kept.detail, /this computer/i);
+  assert.doesNotMatch(kept.detail, /Tick/i);
+});
+
+test("wifiBannerState: shows only while the fields still hold the saved network", async () => {
+  const { wifiBannerState } = await core();
+  const saved = { ssid: "HomeNet", pass: "s3cret" };
+  // Untouched fields (equal the saved) → banner shows and names the network.
+  const shown = wifiBannerState("HomeNet", "s3cret", saved, false);
+  assert.strictEqual(shown.show, true);
+  assert.strictEqual(shown.hasSaved, true);
+  assert.match(shown.headline, /HomeNet/);
+  // Editing the SSID or the password hides it — it must not claim a network the
+  // fields no longer carry.
+  assert.strictEqual(wifiBannerState("OtherNet", "s3cret", saved, false).show, false);
+  assert.strictEqual(wifiBannerState("HomeNet", "different", saved, false).show, false);
+  // Nothing saved → never shows.
+  assert.strictEqual(wifiBannerState("HomeNet", "s3cret", null, false).show, false);
+  // Open network (empty saved password) with the matching empty field → shows.
+  assert.strictEqual(wifiBannerState("Cafe", "", { ssid: "Cafe", pass: "" }, false).show, true);
 });
 
 test("formatters", async () => {
@@ -725,6 +937,21 @@ test("preferredProductId reads a safe product hint from the query string", async
   }
 });
 
+test("recommendedProduct leads with the flagship for the detected chip", async () => {
+  const { recommendedProduct, productsForChip } = await core();
+  // First catalog match per chip — the flagship, by authoring order.
+  for (const chip of ["ESP32-S3", "ESP32-C3", "ESP32-C6"]) {
+    const rec = recommendedProduct(catalog, chip);
+    assert.ok(rec, `no recommendation for ${chip}`);
+    assert.strictEqual(rec, productsForChip(catalog, chip)[0]);
+    assert.strictEqual(rec.chip, chip, "recommendation must fit the chip");
+  }
+  // The S3 flagship is the all-rounder Canary, not a variant.
+  assert.strictEqual(recommendedProduct(catalog, "ESP32-S3").id, "securacv-canary");
+  // Unknown silicon → no recommendation (the picker shows its empty state).
+  assert.strictEqual(recommendedProduct(catalog, "ESP32-Q9"), null);
+});
+
 // ── catalog guard: a malformed catalog degrades, never crashes the page ──────
 test("validateCatalog passes the shipped catalog and flags real breakage", async () => {
   const { validateCatalog } = await core();
@@ -738,4 +965,501 @@ test("validateCatalog passes the shipped catalog and flags real breakage", async
   // A product missing the chip the guard needs.
   const badProd = JSON.parse(JSON.stringify(catalog)); delete badProd.products[0].chip;
   assert.ok(validateCatalog(badProd).some((e) => /missing chip/.test(e)));
+  // Hatching copy is now first-class catalog metadata, not hardcoded UI copy.
+  const noHatch = JSON.parse(JSON.stringify(catalog)); delete noHatch.products[0].hatch;
+  assert.ok(validateCatalog(noHatch).some((e) => /missing hatch moment/.test(e)));
+});
+
+// ── self-healing: baud ladder, boot-log diagnosis, bridge detect, report ────
+test("FLASH_BAUDS: fastest-first ladder, distinct from the console list", async () => {
+  const { FLASH_BAUDS } = await core();
+  assert.deepStrictEqual(FLASH_BAUDS, [921600, 460800, 230400, 115200]);
+  // strictly descending — the connect flow steps down on failure
+  for (let i = 1; i < FLASH_BAUDS.length; i++) assert.ok(FLASH_BAUDS[i] < FLASH_BAUDS[i - 1]);
+});
+
+test("diagnoseBootLog: maps fatal signatures to fixes, else null", async () => {
+  const { diagnoseBootLog } = await core();
+  assert.strictEqual(diagnoseBootLog(""), null);
+  assert.strictEqual(diagnoseBootLog("Hello canary chirp, booting normally"), null);
+
+  const brown = diagnoseBootLog("rst:0x10 (RTCWDT_RTC_RST)\nBrownout detector was triggered\n");
+  assert.strictEqual(brown.signature, "brownout");
+  assert.strictEqual(brown.action, "power"); // NOT a reflash — a power problem
+
+  const panic = diagnoseBootLog("Guru Meditation Error: Core 0 panic'ed\nBacktrace: 0x400...");
+  assert.strictEqual(panic.signature, "panic");
+  assert.strictEqual(panic.action, "clean-install");
+
+  const noapp = diagnoseBootLog("invalid header: 0xffffffff\nno bootable app partitions");
+  assert.strictEqual(noapp.signature, "no-app");
+  assert.strictEqual(noapp.action, "clean-install");
+
+  // every diagnosis carries human means + fix text
+  for (const d of [brown, panic, noapp]) { assert.ok(d.means && d.fix); }
+});
+
+test("usbBridgeInfo: native USB → null, bridge chips → driver link", async () => {
+  const { usbBridgeInfo } = await core();
+  assert.strictEqual(usbBridgeInfo(0x303a, 0x1001), null); // Espressif native USB
+  assert.strictEqual(usbBridgeInfo(null, null), null);
+  assert.strictEqual(usbBridgeInfo(0xbeef, 0x1), null);    // unknown → no driver to chase
+  const cp = usbBridgeInfo(0x10c4, 0xea60);
+  assert.ok(cp && /CP210x/.test(cp.name) && /silabs\.com/.test(cp.driverUrl));
+  const ch = usbBridgeInfo(0x1a86, 0x7523);
+  assert.ok(ch && /CH340/.test(ch.name) && /wch/.test(ch.driverUrl));
+});
+
+test("buildDiagnosticReport: formats safe facts, omits empties, no secrets", async () => {
+  const { buildDiagnosticReport } = await core();
+  const r = buildDiagnosticReport({
+    browser: "Chrome", webSerial: true, chip: "ESP32-S3", mac: "AA:BB",
+    baud: 460800, error: "timed out", product: "canary-wap",
+    logTail: "line1\nline2\nBrownout detector was triggered",
+  });
+  assert.ok(r.includes("SecuraCV flasher diagnostic"));
+  assert.ok(r.includes("web serial: yes") && r.includes("connected baud: 460800"));
+  assert.ok(r.includes("chip: ESP32-S3") && r.includes("error: timed out"));
+  assert.ok(r.includes("Brownout")); // log tail included
+  // empty/missing fields are omitted, not rendered as blanks
+  assert.ok(!/platform:/.test(r) && !/flash size:/.test(r));
+  // never leaks a field we didn't pass (e.g. wifi/keys aren't inputs at all)
+  assert.ok(!/password|ssid|pubkey/i.test(r));
+});
+
+// ── post-flash proof: self-manifest read-back ───────────────────────────────
+test("parseSelfManifest: extracts the signed manifest from a noisy boot log", async () => {
+  const { parseSelfManifest, formatFingerprint } = await core();
+  const m = {
+    schema: "securacv.canary.manifest/v1", board: "xiao-esp32s3", firmware: "2.3.0-wap",
+    git: "abc1234", pubkey: "00112233", pubkey_fp: "aabbccddeeff0011", health: 100,
+    tamper: false, seq: 5, boots: 12,
+    features: ["ota", "ble"], commands: [{ key: "j", name: "self-manifest" }, { key: "h", name: "help" }],
+  };
+  // Real serial output: boot spam, then the JSON line, then more spam.
+  const buf = "rst:0x1 (POWERON)\nSecuraCV canary booting\n" + JSON.stringify(m) + "\nchirp\n";
+  const got = parseSelfManifest(buf);
+  assert.ok(got, "should find the manifest");
+  assert.strictEqual(got.firmware, "2.3.0-wap");
+  assert.strictEqual(got.pubkey_fp, "aabbccddeeff0011");
+  assert.strictEqual(got.health, 100);
+  // nested braces in commands[] must not fool the brace matcher
+  assert.strictEqual(got.commands.length, 2);
+  // no manifest present → null; partial line → null (waits for more bytes)
+  assert.strictEqual(parseSelfManifest("just boot text, no json"), null);
+  assert.strictEqual(parseSelfManifest('{"schema":"securacv.canary.manifest/v1","board":"xia'), null);
+  // a JSON object that isn't the manifest schema → null
+  assert.strictEqual(parseSelfManifest('{"schema":"something.else/v1"}'), null);
+  // fingerprint formatting
+  assert.strictEqual(formatFingerprint("aabbccddeeff0011"), "aa:bb:cc:dd:ee:ff:00:11");
+  assert.strictEqual(formatFingerprint("aabbccddeeff00112233"), "aa:bb:cc:dd:ee:ff:00:11…");
+  assert.strictEqual(formatFingerprint(""), "");
+});
+
+// ── the BLE offline console (Web Bluetooth "it's really on" test) ───────────
+test("BLE_CONSOLE UUIDs match the firmware + iOS contract", async () => {
+  const { BLE_CONSOLE } = await core();
+  // Console service/char — pinned to firmware .../ble_console.h.
+  assert.strictEqual(BLE_CONSOLE.serviceUuid, "8fc1cee0-b162-4401-9607-c8ac21383e90");
+  assert.strictEqual(BLE_CONSOLE.snapshotUuid, "8fc1cee1-b162-4401-9607-c8ac21383e90");
+  // Pairing service — what the board ADVERTISES (bluetooth_channel.h SERVICE_UUID);
+  // this is what the chooser filter matches, NOT the console UUID above.
+  assert.strictEqual(BLE_CONSOLE.pairingServiceUuid, "8fc1ceca-b162-4401-9607-c8ac21383e90");
+  assert.notStrictEqual(BLE_CONSOLE.serviceUuid, BLE_CONSOLE.pairingServiceUuid,
+    "console and pairing services are distinct — the reason v1's filter matched nothing");
+  // Web Bluetooth requires lower-case UUIDs.
+  assert.strictEqual(BLE_CONSOLE.serviceUuid, BLE_CONSOLE.serviceUuid.toLowerCase());
+  assert.strictEqual(BLE_CONSOLE.pairingServiceUuid, BLE_CONSOLE.pairingServiceUuid.toLowerCase());
+  // Branded GAP name, single-sourced from bluetooth_channel.cpp's default.
+  assert.strictEqual(BLE_CONSOLE.brandName, "SecuraCV-Canary");
+  assert.ok(BLE_CONSOLE.brandName.startsWith(BLE_CONSOLE.brandNamePrefix));
+  assert.ok(BLE_CONSOLE.maxPayloadBytes >= 200, "payload cap should leave MTU headroom");
+});
+
+test("bleRequestOptions: discovers by advertised identity, can reach the console", async () => {
+  const { bleRequestOptions, BLE_CONSOLE } = await core();
+  const opts = bleRequestOptions();
+  // The chooser must match what the firmware ADVERTISES: the branded name
+  // prefix, or the pairing service — never the console UUID (which isn't in the
+  // advert, so filtering on it left the chooser empty in v1).
+  const names = opts.filters.filter((f) => f.namePrefix).map((f) => f.namePrefix);
+  const svcs = opts.filters.filter((f) => f.services).flatMap((f) => f.services);
+  assert.ok(names.includes("SecuraCV"), "must match the branded name prefix");
+  assert.ok(svcs.includes(BLE_CONSOLE.pairingServiceUuid), "must match the advertised pairing service");
+  assert.ok(!svcs.includes(BLE_CONSOLE.serviceUuid),
+    "must NOT filter on the console service — it isn't advertised");
+  // …but the console service must be reachable once connected.
+  assert.ok(opts.optionalServices.includes(BLE_CONSOLE.serviceUuid),
+    "console service must be in optionalServices so getPrimaryService is allowed");
+});
+
+test("bleSupport: present entry point supported, absent → guided fallback copy", async () => {
+  const { bleSupport } = await core();
+  assert.strictEqual(bleSupport({ bluetooth: { requestDevice() {} } }).supported, true);
+  // Safari / Firefox / iOS: no navigator.bluetooth at all.
+  const none = bleSupport({});
+  assert.strictEqual(none.supported, false);
+  assert.match(none.reason, /Chromium|Chrome/);
+  // A bluetooth object without the real entry point is not enough.
+  assert.strictEqual(bleSupport({ bluetooth: {} }).supported, false);
+  assert.strictEqual(bleSupport(null).supported, false);
+});
+
+test("parseBleSnapshot: reads JSON from bytes, DataView, ArrayBuffer, string", async () => {
+  const { parseBleSnapshot } = await core();
+  const sample = '{"up":12345,"heap":154832,"wifi":"connected","wrssi":-55,' +
+    '"ctx":"home","owner_min":1,"hh":3,"ble":8421,"motion":12,"id":"3A4C","fw":"2.1.0"}';
+  const bytes = new TextEncoder().encode(sample);
+
+  const fromStr = parseBleSnapshot(sample);
+  assert.strictEqual(fromStr.raw.id, "3A4C");
+  assert.strictEqual(fromStr.raw.wrssi, -55);
+
+  assert.deepStrictEqual(parseBleSnapshot(bytes).raw, fromStr.raw);
+  assert.deepStrictEqual(parseBleSnapshot(bytes.buffer).raw, fromStr.raw);
+  // A DataView is exactly what Web Bluetooth's readValue() hands back.
+  assert.deepStrictEqual(
+    parseBleSnapshot(new DataView(bytes.buffer)).raw, fromStr.raw);
+});
+
+test("parseBleSnapshot: garbage / partial / non-object never throws, returns null", async () => {
+  const { parseBleSnapshot } = await core();
+  assert.strictEqual(parseBleSnapshot(null), null);
+  assert.strictEqual(parseBleSnapshot(""), null);
+  assert.strictEqual(parseBleSnapshot("not json"), null);
+  assert.strictEqual(parseBleSnapshot('{"up":123'), null);   // truncated read
+  assert.strictEqual(parseBleSnapshot("[1,2,3]"), null);     // array, not a snapshot
+  assert.strictEqual(parseBleSnapshot("42"), null);
+  assert.strictEqual(parseBleSnapshot(new Uint8Array([0xff, 0xfe])), null);
+});
+
+test("bleSnapshotRows: friendly rows, only present fields, minimal payload ok", async () => {
+  const { parseBleSnapshot, bleSnapshotRows, formatUptime } = await core();
+  const snap = parseBleSnapshot('{"up":90061,"heap":154832,"wifi":"connected",' +
+    '"wrssi":-55,"ctx":"home","ovr":true,"owner_min":2,"hh":3,"ble":8421,' +
+    '"ble_hh":4,"motion":12,"id":"3A4C","fw":"2.1.0"}');
+  const rows = bleSnapshotRows(snap);
+  const byLabel = Object.fromEntries(rows.map((r) => [r.label, r.value]));
+  assert.strictEqual(byLabel.Identity, "3A4C");
+  assert.strictEqual(byLabel.Firmware, "2.1.0");
+  assert.strictEqual(byLabel.Uptime, formatUptime(90061)); // "1d 1h"
+  assert.strictEqual(byLabel.WiFi, "connected (-55 dBm)");
+  assert.strictEqual(byLabel.Context, "home (override)");
+  assert.strictEqual(byLabel["BLE adverts seen"], "8421 (4 known)");
+
+  // A minimal snapshot (firmware drops optional fields under MTU pressure)
+  // renders only what's there — never invents a field, never throws.
+  const minimal = bleSnapshotRows(parseBleSnapshot(
+    '{"up":5,"heap":100000,"wifi":"portal","ctx":"away","hh":1}'));
+  assert.ok(minimal.length >= 3);
+  assert.ok(!minimal.some((r) => r.label === "Identity"));
+  assert.deepStrictEqual(bleSnapshotRows(null), []);
+});
+
+test("formatUptime: days/hours/minutes/seconds, human and bounded", async () => {
+  const { formatUptime } = await core();
+  assert.strictEqual(formatUptime(5), "5s");
+  assert.strictEqual(formatUptime(65), "1m 5s");
+  assert.strictEqual(formatUptime(3720), "1h 2m");
+  assert.strictEqual(formatUptime(90061), "1d 1h");
+  assert.strictEqual(formatUptime(-10), "0s");
+  assert.strictEqual(formatUptime("nonsense"), "0s");
+});
+
+// ── release signature verification (in-browser, pinned key) ─────────────────
+const nodeCrypto = require("node:crypto");
+function makeSignedImage() {
+  const { publicKey, privateKey } = nodeCrypto.generateKeyPairSync("ed25519");
+  const pubHex = publicKey.export({ type: "spki", format: "der" }).subarray(-32).toString("hex");
+  const image = Buffer.from("SecuraCV factory image bytes — test");
+  const sha = nodeCrypto.createHash("sha256").update(image).digest();
+  const msg = Buffer.concat([Buffer.from(new Uint32Array([image.length]).buffer), sha]); // uint32_le||sha256
+  const sigHex = nodeCrypto.sign(null, msg, privateKey).toString("hex");
+  return { pubHex, sigHex, size: image.length, sha: new Uint8Array(sha) };
+}
+
+test("verifyImageSignature: accepts a genuine signature, rejects tampering", async () => {
+  const { verifyImageSignature, ed25519Message, isRealPubkey, hexToBytes } = await core();
+  const { pubHex, sigHex, size, sha } = makeSignedImage();
+  assert.strictEqual(await verifyImageSignature(sigHex, pubHex, size, sha), true);
+  // wrong size, flipped signature byte, wrong hash, wrong key → all false
+  assert.strictEqual(await verifyImageSignature(sigHex, pubHex, size + 1, sha), false);
+  const flipped = hexToBytes(sigHex); flipped[0] ^= 1;
+  assert.strictEqual(await verifyImageSignature(Buffer.from(flipped).toString("hex"), pubHex, size, sha), false);
+  const otherSha = new Uint8Array(sha); otherSha[5] ^= 0xff;
+  assert.strictEqual(await verifyImageSignature(sigHex, pubHex, size, otherSha), false);
+  // the all-zero placeholder key never verifies (unprovisioned) — checksum-only
+  assert.strictEqual(isRealPubkey("00".repeat(32)), false);
+  assert.strictEqual(await verifyImageSignature(sigHex, "00".repeat(32), size, sha), false);
+  // no signature / malformed → false (caller falls back, doesn't crash)
+  assert.strictEqual(await verifyImageSignature("", pubHex, size, sha), false);
+  // message layout is exactly uint32_le(size) || sha256
+  const m = ed25519Message(0x04030201, sha);
+  assert.deepStrictEqual(Array.from(m.subarray(0, 4)), [0x01, 0x02, 0x03, 0x04]);
+  assert.strictEqual(m.length, 36);
+});
+
+test("manifestEntry passes the signature + key id through", async () => {
+  const { manifestEntry } = await core();
+  const m = goodManifest();
+  m.products["securacv-canary-wap"].signature = "ab".repeat(64);
+  m.products["securacv-canary-wap"].signing_key_id = "0011223344556677";
+  const wap = catalog.products.find((p) => p.id === "securacv-canary-wap");
+  const e = manifestEntry(m, wap, "ESP32-S3");
+  assert.strictEqual(e.signature, "ab".repeat(64));
+  assert.strictEqual(e.signingKeyId, "0011223344556677");
+});
+
+test("imageVerificationPolicy: fail-closed once a real key is pinned", async () => {
+  const { imageVerificationPolicy } = await core();
+  // Real key + signature → must verify.
+  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: true, selfHosted: false }), "verify");
+  // Real key + official manifest + NO signature → REFUSE (the P1 hole).
+  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: false, selfHosted: false }), "require-signature");
+  // Real key + self-hosted manifest without a signature → user opted in → checksum-only.
+  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: false, selfHosted: true }), "checksum-only");
+  // No key yet (pre-ceremony) → checksum-only regardless.
+  assert.strictEqual(imageVerificationPolicy({ keyReal: false, hasSignature: false, selfHosted: false }), "checksum-only");
+  assert.strictEqual(imageVerificationPolicy({ keyReal: false, hasSignature: true, selfHosted: false }), "checksum-only");
+});
+
+// ── supply-chain hardening: CSP + Subresource-Integrity on the flasher page ──
+// flash.html ships a strict Content-Security-Policy (only same-origin, vendored
+// code runs) and an import map carrying SRI hashes for the vendored third-party
+// modules. These are the drift gate: they recompute every hash from the real
+// bytes, so a vendored bump, an edited policy, or a new *unpinned* vendored
+// import fails CI instead of silently shipping.
+const { createHash } = require("node:crypto");
+const { dirname, relative, resolve } = require("node:path");
+
+const FLASH_HTML = readFileSync(join(ROOT, "flash.html"), "utf8");
+
+function cspContent(html) {
+  const m = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]*)"/);
+  return m ? m[1] : null;
+}
+function importmapText(html) {
+  const m = html.match(/<script type="importmap">([\s\S]*?)<\/script>/);
+  return m ? m[1] : null;
+}
+
+// ── post-flash: the "come to life" next step ────────────────────────────────
+test("postFlashNextStep: ap boards go to the phone portal, unless Wi-Fi was written", async () => {
+  const { postFlashNextStep } = await core();
+  const canary = { id: "securacv-canary", provisioning: "ap" };
+  assert.strictEqual(postFlashNextStep(canary).kind, "wifi-portal");
+  // Pre-provisioned the home Wi-Fi during the flash → it's already joining.
+  assert.strictEqual(postFlashNextStep(canary, { wifiJoined: true }).kind, "joining-wifi");
+});
+
+test("postFlashNextStep: usb-secrets boards go straight to proving themselves", async () => {
+  const { postFlashNextStep } = await core();
+  for (const id of ["securacv-canary-sense", "securacv-canary-sense-wellbeing", "securacv-canary-vision-xiao-s3"]) {
+    const step = postFlashNextStep({ id, provisioning: "usb-secrets" });
+    assert.strictEqual(step.kind, "prove-live");
+    assert.match(step.cta, /monitor/i);
+  }
+});
+
+test("postFlashNextStep: the prove-it hint is tailored to what the board senses", async () => {
+  const { postFlashNextStep } = await core();
+  assert.match(postFlashNextStep({ id: "securacv-canary-sense", provisioning: "usb-secrets" }).body, /presence|walk past/i);
+  assert.match(postFlashNextStep({ id: "securacv-canary-vision-xiao-s3", provisioning: "usb-secrets" }).body, /camera|sees/i);
+  assert.match(postFlashNextStep({ id: "securacv-canary-wap", provisioning: "ap" }, { wifiJoined: true }).body, /Wi-Fi field|move around/i);
+});
+
+test("postFlashNextStep: every catalog product yields a complete step (can't rot)", async () => {
+  const { postFlashNextStep } = await core();
+  for (const p of catalog.products) {
+    for (const wifiJoined of [false, true]) {
+      const s = postFlashNextStep(p, { wifiJoined });
+      assert.ok(s && s.kind && s.title && s.body && s.cta, `${p.id} (wifiJoined=${wifiJoined}) incomplete`);
+    }
+  }
+});
+
+test("healthVerdict: maps the self-test score to a plain verdict, never a false pass", async () => {
+  const { healthVerdict } = await core();
+  assert.strictEqual(healthVerdict(98).level, "ok");
+  assert.strictEqual(healthVerdict(80).level, "ok");     // boundary
+  assert.strictEqual(healthVerdict(79).level, "warn");
+  assert.strictEqual(healthVerdict(50).level, "warn");   // boundary
+  assert.strictEqual(healthVerdict(49).level, "attn");
+  assert.strictEqual(healthVerdict(0).level, "attn");
+  assert.strictEqual(healthVerdict(100).level, "ok");    // top of the valid range
+  // unknown / null / out-of-range health must be pending — never shown as a pass
+  for (const h of [-1, 101, 1000, null, undefined, NaN, "98"]) {
+    assert.strictEqual(healthVerdict(h).level, "pending", `health=${String(h)}`);
+  }
+  for (const h of [98, 65, 20, null]) {
+    const v = healthVerdict(h);
+    assert.ok(v.icon && v.label, `verdict for ${String(h)} missing icon/label`);
+  }
+});
+
+// ── two-port Vision: recognize each port, insist on both ────────────────────
+test("identifyPort: the WE2 camera module is recognized by its USB id", async () => {
+  const { identifyPort } = await core();
+  // The catalog's we2_module carries the module's USB vid/pid (a CH343).
+  const info = {
+    usbVendorId: parseInt(catalog.we2_module.usb_vid, 16),
+    usbProductId: parseInt(catalog.we2_module.usb_pid, 16),
+  };
+  assert.strictEqual(identifyPort(info, catalog), "we2");
+  // Anything else on the wire is the main ESP32 board (native S3, CP210x, unknown).
+  assert.strictEqual(identifyPort({ usbVendorId: 0x303a, usbProductId: 0x1001 }, catalog), "esp32");
+  assert.strictEqual(identifyPort({ usbVendorId: 0x10c4, usbProductId: 0xea60 }, catalog), "esp32");
+  assert.strictEqual(identifyPort({}, catalog), "esp32");
+  assert.strictEqual(identifyPort(null, catalog), "esp32");
+  // Critical: a CH340 ESP32 board shares the WE2's WCH vendor (0x1a86) but has a
+  // different product id — it must NOT be mistaken for the camera module.
+  assert.strictEqual(identifyPort({ usbVendorId: 0x1a86, usbProductId: 0x7523 }, catalog), "esp32");
+});
+
+test("visionCompletion: tracks the 2-of-2 so you can't walk away half-done", async () => {
+  const { visionCompletion } = await core();
+  const none = visionCompletion({});
+  assert.strictEqual(none.done, false);
+  assert.strictEqual(none.count, 0);
+  assert.deepStrictEqual(none.remaining, ["esp32", "we2"]);
+
+  const one = visionCompletion({ esp32: true });
+  assert.strictEqual(one.done, false);
+  assert.strictEqual(one.count, 1);
+  assert.deepStrictEqual(one.remaining, ["we2"]);
+  assert.match(one.nextLabel, /camera module/i);   // it points you at the other port
+
+  const both = visionCompletion({ esp32: true, we2: true });
+  assert.strictEqual(both.done, true);
+  assert.strictEqual(both.count, 2);
+  assert.strictEqual(both.nextLabel, null);
+});
+
+test("isVisionBoard: only the Vision boards are the two-port pair", async () => {
+  const { isVisionBoard } = await core();
+  assert.strictEqual(isVisionBoard({ id: "securacv-canary-vision" }), true);
+  assert.strictEqual(isVisionBoard({ id: "securacv-canary-vision-xiao-s3" }), true);
+  assert.strictEqual(isVisionBoard({ id: "securacv-canary-vision-xiao-c3" }), true);
+  // Non-Vision boards are single-port — no camera module to also flash.
+  assert.strictEqual(isVisionBoard({ id: "securacv-canary-sense" }), false);
+  assert.strictEqual(isVisionBoard({ id: "securacv-canary-wap" }), false);
+  assert.strictEqual(isVisionBoard({ id: "securacv-canary" }), false);
+  assert.strictEqual(isVisionBoard(null), false);
+  assert.strictEqual(isVisionBoard({}), false);
+});
+
+test("visionChecklistModel: one wording drives both done screens", async () => {
+  const { visionChecklistModel } = await core();
+  // Nothing flashed yet — two open rows.
+  const zero = visionChecklistModel({});
+  assert.strictEqual(zero.done, false);
+  assert.strictEqual(zero.count, 0);
+  assert.strictEqual(zero.rows.length, 2);
+  assert.strictEqual(zero.rows[0].done, false);
+  assert.strictEqual(zero.rows[1].done, false);
+
+  // ESP32 done → camera module is next; the firmware row is checked, camera open.
+  const esp = visionChecklistModel({ esp32: true });
+  assert.strictEqual(esp.done, false);
+  assert.strictEqual(esp.count, 1);
+  assert.strictEqual(esp.nextPart, "we2");
+  assert.strictEqual(esp.rows[0].done, true);
+  assert.strictEqual(esp.rows[1].done, false);
+  assert.match(esp.status, /1 of 2/);
+  assert.match(esp.status, /camera module/i);
+
+  // Camera module first → the ESP32 firmware is next.
+  const cam = visionChecklistModel({ we2: true });
+  assert.strictEqual(cam.nextPart, "esp32");
+  assert.match(cam.status, /ESP32 board/i);
+
+  // Both done → the celebration, no "next".
+  const both = visionChecklistModel({ esp32: true, we2: true });
+  assert.strictEqual(both.done, true);
+  assert.strictEqual(both.count, 2);
+  assert.strictEqual(both.nextPart, null);
+  assert.match(both.status, /fully set up/i);
+});
+
+test("flash.html: ships a strict, eval-free Content-Security-Policy", () => {
+  const csp = cspContent(FLASH_HTML);
+  assert.ok(csp, "no CSP <meta> in flash.html");
+  // Deny-all baseline; scripts + styles are same-origin only.
+  assert.match(csp, /default-src 'none'/);
+  assert.match(csp, /script-src 'self' 'sha256-[A-Za-z0-9+/=]+'/);
+  assert.match(csp, /style-src 'self'/);
+  // No <base> rewrite of our relative asset paths, no plugins, no form posts.
+  assert.match(csp, /base-uri 'none'/);
+  assert.match(csp, /object-src 'none'/);
+  assert.match(csp, /form-action 'none'/);
+  // Firmware fetches: our release host + its asset CDN, plus 'self' for the
+  // catalog / a same-origin manifest. No open wildcard host.
+  assert.match(csp, /connect-src[^;]*'self'/);
+  assert.match(csp, /connect-src[^;]*https:\/\/github\.com/);
+  assert.match(csp, /connect-src[^;]*https:\/\/\*\.githubusercontent\.com/);
+  // Loopback (a same-machine manifest server) is pinned to exact hosts, and
+  // there is NO open http:/https: scheme-source — the override guard in
+  // flash-core.js accepts exactly this set, so code and CSP can't disagree.
+  assert.match(csp, /connect-src[^;]*http:\/\/localhost:\*/);
+  assert.doesNotMatch(csp, /connect-src[^;]*\bhttps?:(?!\/\/)/);
+  // The whole point is defeated if inline/eval sneaks back in.
+  assert.doesNotMatch(csp, /'unsafe-inline'/);
+  assert.doesNotMatch(csp, /'unsafe-eval'/);
+  assert.doesNotMatch(csp, /'wasm-unsafe-eval'/);
+});
+
+test("flash.html: the CSP 'sha256-…' matches the inline import map's bytes", () => {
+  const csp = cspContent(FLASH_HTML);
+  const text = importmapText(FLASH_HTML);
+  assert.ok(text, "no import map in flash.html");
+  const want = "sha256-" + createHash("sha256").update(text, "utf8").digest("base64");
+  assert.ok(csp.includes("'" + want + "'"),
+    `CSP script-src must pin the import map with '${want}' (recompute if you edited the map)`);
+});
+
+test("flash.html: SRI hashes match the real vendored module bytes", () => {
+  const map = JSON.parse(importmapText(FLASH_HTML)).integrity;
+  assert.ok(map && Object.keys(map).length >= 4, "expected an integrity map for the vendored modules");
+  for (const [rel, pinned] of Object.entries(map)) {
+    const algo = pinned.split("-")[0];
+    assert.ok(["sha256", "sha384", "sha512"].includes(algo), `${rel}: unexpected SRI algorithm "${algo}"`);
+    const actual = algo + "-" + createHash(algo).update(readFileSync(join(ROOT, rel))).digest("base64");
+    assert.strictEqual(actual, pinned, `${rel}: SRI hash is stale — recompute it from the vendored file`);
+  }
+});
+
+test("flash.html: every vendored module the flasher imports is pinned", () => {
+  // Walk the flasher's module graph from its entry point and collect every
+  // ./vendor/* import. The set must equal the integrity map — a newly added
+  // unpinned vendored dependency (or a stale pin) fails right here.
+  const map = JSON.parse(importmapText(FLASH_HTML)).integrity;
+  const seen = new Set();
+  const vendored = new Set();
+  const queue = [join(ROOT, "assets/flash.js")];
+  const PATTERNS = [
+    /\bfrom\s*["']([^"']+)["']/g,               // import … from "x"
+    /\bimport\s*\(\s*["']([^"']+)["']/g,        // import("x")  — dynamic
+    /(?:^|[;{}\s])import\s+["']([^"']+)["']/g,  // import "x"   — side-effect
+  ];
+  while (queue.length) {
+    const file = queue.pop();
+    if (seen.has(file)) continue;
+    seen.add(file);
+    let src;
+    try { src = readFileSync(file, "utf8"); } catch { continue; }
+    for (const re of PATTERNS) {
+      for (const m of src.matchAll(re)) {
+        const spec = m[1];
+        if (!spec.startsWith(".")) continue; // the flasher has no bare specifiers
+        const rel = relative(ROOT, resolve(dirname(file), spec)).split("\\").join("/");
+        if (rel.startsWith("assets/vendor/")) vendored.add(rel);
+        else if (/\.m?js$/.test(rel)) queue.push(join(ROOT, rel)); // first-party: recurse
+      }
+    }
+  }
+  // Import-map integrity keys are URL-like ("./assets/…") so the browser
+  // resolves and matches them; compare against the graph on the bare path.
+  const norm = (s) => s.replace(/^\.\//, "");
+  assert.deepStrictEqual([...vendored].map(norm).sort(), Object.keys(map).map(norm).sort(),
+    "the flasher's vendored imports and the SRI integrity map have drifted apart");
 });

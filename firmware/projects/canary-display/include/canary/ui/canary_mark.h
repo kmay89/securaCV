@@ -36,8 +36,10 @@ enum class CanaryMood : uint8_t {
 enum class CanaryReact : uint8_t {
   Tilt,      // a verified pass just completed: brief curious head-tilt
   Startle,   // the glass was touched while the bird is on stage
-  Greeting,  // first wake of the day: slow wing stretch
-  Joyful,    // trust milestone (first clean week / month): the song
+  Greeting,   // first wake of the day: slow wing stretch
+  Joyful,     // trust milestone (first clean week / month): the song
+  Reassure,   // operator acknowledged a warn: small settling nod
+  Nestle,     // entering quiet hours: tuck in without a bedtime beep
 };
 
 // Builds the bird inside `parent` (size_px square). Recreating (e.g. on a

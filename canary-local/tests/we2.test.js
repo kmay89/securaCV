@@ -16,10 +16,50 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert");
+const { readFileSync } = require("node:fs");
+const { join } = require("node:path");
 
 const core = () => import("../assets/we2-core.js");
 
 // ── CRC + framing ──────────────────────────────────────────────────────────
+// ── live-preview detection formatting (the bench "wow") ─────────────────────
+test("formatDetections: labels SSCMA boxes with the class name + %", async () => {
+  const { formatDetections } = await core();
+  const d = formatDetections([[100, 80, 40, 60, 92, 0]]);
+  assert.strictEqual(d.length, 1);
+  assert.strictEqual(d[0].label, "person");
+  assert.strictEqual(d[0].text, "person · 92%");
+  assert.strictEqual(d[0].score, 92);
+  assert.deepStrictEqual([d[0].x, d[0].y, d[0].w, d[0].h], [100, 80, 40, 60]);
+  // unknown target → generic label, never a crash
+  assert.strictEqual(formatDetections([[0, 0, 1, 1, 50, 9]])[0].label, "object");
+  // score clamps to 0-100 and rounds
+  assert.strictEqual(formatDetections([[0, 0, 1, 1, 150.6, 0]])[0].score, 100);
+  assert.strictEqual(formatDetections([[0, 0, 1, 1, -5, 0]])[0].score, 0);
+  // garbage in → empty, no throw
+  assert.deepStrictEqual(formatDetections(null), []);
+  assert.deepStrictEqual(formatDetections([[1, 2, 3]]), []); // too short
+  assert.deepStrictEqual(formatDetections([["x", 0, 1, 1, 90, 0]]), []); // non-numeric geom
+  // A custom model (bench passes an empty class map when job.pinned is false)
+  // must NOT be labelled "person" — class 0 reads the generic "object".
+  const custom = formatDetections([[100, 80, 40, 60, 92, 0]], []);
+  assert.strictEqual(custom[0].label, "object");
+  assert.strictEqual(custom[0].text, "object · 92%");
+  // an explicit class map still names its own classes
+  assert.strictEqual(formatDetections([[0, 0, 1, 1, 90, 0]], ["cat"])[0].label, "cat");
+});
+
+test("detectionSummary: a clean pluralized readout with top confidence", async () => {
+  const { detectionSummary } = await core();
+  assert.match(detectionSummary([]), /watching/i);
+  assert.strictEqual(detectionSummary([[0, 0, 1, 1, 92, 0]]), "1 person · 92% confident");
+  assert.strictEqual(detectionSummary([[0, 0, 1, 1, 80, 0], [0, 0, 1, 1, 88, 0]]), "2 people · 88% confident");
+  // A custom model's readout stays honest — "object", never "person" — so the
+  // bench never gives a false "it sees you" for a model that isn't the pinned one.
+  assert.strictEqual(detectionSummary([[0, 0, 1, 1, 92, 0]], []), "1 object · 92% confident");
+  assert.strictEqual(detectionSummary([[0, 0, 1, 1, 80, 0], [0, 0, 1, 1, 88, 0]], []), "2 objects · 88% confident");
+});
+
 test("crc16xmodem matches the known-answer vector", async () => {
   const { crc16xmodem } = await core();
   const ascii = (s) => Uint8Array.from(s, (c) => c.charCodeAt(0));
@@ -269,4 +309,100 @@ test("modelInfoJson names exactly what we flash (person, one class)", async () =
   assert.deepStrictEqual(info.classes, ["person"]);
   assert.match(info.name, /Person Detection/);
   assert.strictEqual(info.sha256.length, 64);
+});
+
+// ── anti-rot: the catalog, the engine, and the release pipeline agree ───────
+// The burn address, USB ids and baud live in exactly one place — we2-core.js.
+// gen_flash.py copies them into flash.json (drift-gated in canary-local.yml)
+// and the release workflow reads flash.json to stamp the manifest. This test
+// slams the door on a hand-edit of flash.json that diverges from the engine:
+// if these disagree, the flasher would burn to an address the manifest never
+// promised. It also guards the address the workflow greps for.
+test("flash.json we2_module mirrors the engine's own constants", async () => {
+  const { WE2 } = await core();
+  const flash = JSON.parse(readFileSync(join(__dirname, "..", "devices", "flash.json"), "utf8"));
+  const m = flash.we2_module;
+  assert.ok(m, "flash.json lost its we2_module block");
+  const asHex = (n) => "0x" + n.toString(16);
+  assert.strictEqual(m.model_addr, asHex(WE2.MODEL_ADDR), "catalog burn address ≠ engine MODEL_ADDR");
+  assert.strictEqual(m.baud, WE2.BAUD, "catalog baud ≠ engine BAUD");
+  assert.strictEqual(m.usb_vid, asHex(WE2.USB_VID), "catalog USB vid ≠ engine USB_VID");
+  assert.strictEqual(m.usb_pid, asHex(WE2.USB_PID), "catalog USB pid ≠ engine USB_PID");
+  // the erase pass must clear the very slot we then burn (Seeed's flasher does)
+  assert.ok(WE2.ERASE_SLOTS.includes(WE2.MODEL_ADDR), "MODEL_ADDR not among ERASE_SLOTS");
+  // the flasher fetches the pinned model from the firmware release TAG
+  // (fw-v<train>), never /latest/ — a native-app release would shadow it
+  assert.match(m.manifest_url, /\/releases\/download\/fw-v[\d.]+\/manifest-vision-model\.json$/);
+});
+
+// The workflow that stamps the manifest must read the burn address FROM
+// flash.json (single source), not hardcode a second copy. Grep the workflow
+// so a future edit that reintroduces a literal 0x… address is caught here.
+test("the model-release workflow reads the burn address from flash.json", () => {
+  const wf = readFileSync(
+    join(__dirname, "..", "..", ".github", "workflows", "vision-model-release.yml"), "utf8");
+  assert.match(wf, /flash\.json/, "workflow must derive the burn address from flash.json");
+  assert.match(wf, /we2_module/, "workflow must read the we2_module block");
+  // no stray hardcoded burn address (0x400000) outside a comment line
+  for (const line of wf.split("\n")) {
+    const code = line.split("#")[0];
+    assert.ok(!/0x400000/.test(code),
+      "workflow hardcodes 0x400000 — read it from flash.json instead: " + line.trim());
+  }
+});
+
+// ── the bench upgrade: identity colors, the confidence meter, the guide ─────
+test("stylizeDetections: stable identity per box, band by confidence", async () => {
+  const { stylizeDetections } = await core();
+  const dets = stylizeDetections([
+    [100, 80, 40, 60, 92, 0],
+    [200, 90, 30, 50, 45, 0],
+    [50, 50, 20, 20, 20, 0],
+  ]);
+  assert.strictEqual(dets.length, 3, "multi-object is the normal case");
+  assert.deepStrictEqual(dets.map((d) => d.n), [1, 2, 3]);
+  assert.deepStrictEqual(dets.map((d) => d.band), ["ok", "soft", "faint"]);
+  // each box gets its own color; the strongest keeps the lead hue
+  assert.strictEqual(new Set(dets.map((d) => d.color)).size, 3);
+  for (const d of dets) {
+    assert.match(d.color, /^hsl\(/);
+    assert.match(d.fill, /^hsl\(/);
+    assert.ok(d.text.includes("person"));
+  }
+  assert.deepStrictEqual(await (async () => stylizeDetections(null))(), []);
+});
+
+test("meterModel: best score vs the module's reporting floor", async () => {
+  const { meterModel } = await core();
+  const m = meterModel([[0, 0, 10, 10, 92, 0], [0, 0, 10, 10, 61, 0]], undefined, 50);
+  assert.strictEqual(m.count, 2);
+  assert.strictEqual(m.top, 92);
+  assert.strictEqual(m.threshold, 50);
+  assert.strictEqual(m.margin, 42);
+  assert.strictEqual(m.level, "ok");
+  assert.ok(m.label.includes("2 people"), m.label);
+
+  const idle = meterModel([], undefined, 50);
+  assert.strictEqual(idle.count, 0);
+  assert.strictEqual(idle.margin, null);
+  assert.strictEqual(idle.level, "idle");
+
+  // threshold is clamped and survives garbage
+  assert.strictEqual(meterModel([], undefined, 250).threshold, 100);
+  assert.strictEqual(meterModel([], undefined, "nope").threshold, 0);
+});
+
+test("flash.json: the we2 bench guide ships steps, fixes, and honest defaults", () => {
+  const catalog = JSON.parse(readFileSync(join(__dirname, "..", "devices/flash.json"), "utf8"));
+  const bench = catalog.we2_module.bench;
+  assert.ok(bench, "we2_module.bench missing");
+  assert.ok(bench.steps.length >= 4, "a guide needs real steps");
+  assert.ok(bench.troubleshooting.length >= 4, "and the usual failures");
+  for (const f of bench.troubleshooting) assert.ok(f.when && f.fix);
+  // defaults come from the drift-gated vision lab data, not typed by hand
+  const vision = JSON.parse(readFileSync(join(__dirname, "..", "devices/vision.json"), "utf8"));
+  assert.strictEqual(bench.defaults.tscore, vision.model_load.wire.tscore_default);
+  assert.strictEqual(bench.defaults.tiou, vision.model_load.wire.tiou_default);
+  // the port rule — the single most common failure — is step one
+  assert.match(bench.steps[0], /MODULE/i);
 });

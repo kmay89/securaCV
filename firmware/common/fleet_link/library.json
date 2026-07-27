@@ -1,0 +1,9 @@
+{
+    "name": "fleet_beacon",
+    "version": "1.0.0",
+    "build": {
+        "srcFilter": ["+<*.cpp>"],
+        "includeDir": "..",
+        "srcDir": "."
+    }
+}

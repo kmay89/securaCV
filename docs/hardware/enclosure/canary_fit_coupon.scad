@@ -32,13 +32,13 @@ tol_hole  = 0.30;
 /* [Interface dims — mirror the case defaults] */
 stud_gap = 30.0;
 kh_head_d = 7.0;  kh_shank_d = 4.2;  kh_slot_l = 8.0;  kh_head_h = 3.5;  kh_face = 1.0;
-clip_w = 6.0;  clip_t = 1.5;  clip_hook = 0.8;  clip_hook_h = 1.2;  clip_clear = 0.25;
+clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;
 pcb_t = 1.2;  standoff_h = 3.0;
 screw_d = 1.6;  screw_head_d = 4.0;
 insert_d = 3.5;  insert_h = 4.0;
 mag_d = 6.0;  lp_d = 3.0;
 lip_t = 1.2;  lip_h = 4.0;
-gasket_w = 1.2;  gasket_groove = 1.0;  gasket_proud = 0.6;
+gasket_w = 1.6;  gasket_groove = 1.2;  gasket_proud = 0.3;   // matches the catalog gasket recipe (20 % squeeze, ~86 % fill)
 
 /* [Coupon] */
 base_t = 5.0;        // base thickness (pockets live in it)
@@ -53,7 +53,7 @@ echo(str("Canary fit coupon v0.1-dev — base ", bw, "x", bh, "  (IN DEVELOPMENT
 
 module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
 module lbl(x, y, s) { translate([x, y, base_t - label_depth]) linear_extrude(label_depth + 0.1)
-    text(s, size = 3.2, font = label_font, halign = "center", valign = "center"); }
+    text(s, size = 4.5, font = label_font, halign = "center", valign = "center"); }
 module keyhole_pocket(px, py) {         // blind, from the back (z=0 face)
     translate([px, py, 0]) union() {
         translate([0, -kh_slot_l/2, -0.1]) linear_extrude(kh_face + 0.1) {
@@ -79,7 +79,7 @@ module base() {
         difference() {
             linear_extrude(base_t) rrect2d(bw, bh, 4);
             // POCKET station: keyhole pocket pair for the mate's studs
-            keyhole_pocket(-24, -15 - stud_gap/2 + stud_gap);   // upper
+            keyhole_pocket(-24, -15 + stud_gap);                 // upper (gap = stud_gap, matches the mate)
             keyhole_pocket(-24, -15);                            // lower (gap = stud_gap)
             // SLIDE station: female channel for the mate's lip rib
             translate([2, 18, base_t - lip_h + 1]) linear_extrude(lip_h)
@@ -88,7 +88,7 @@ module base() {
             translate([2, 8, base_t - gasket_groove]) linear_extrude(gasket_groove + 0.1)
                 rrect2d(30, gasket_w, 0.3);
             // PRESS station: magnet pocket + light-pipe hole
-            translate([24, -4, base_t - 3.2]) cylinder(d = mag_d + 2*tol_press, h = 3.3);
+            translate([24, -4, base_t - 2.2]) cylinder(d = mag_d + 2*tol_press, h = 2.3);   // matches mag_h 2.2
             translate([32, -4, -0.1]) cylinder(d = lp_d + 2*tol_press, h = base_t + 0.2);
             // SCREW station: countersunk clearance hole (lid side of the joint)
             translate([16, -16, -0.1]) cylinder(d = screw_d + 2*tol_hole, h = base_t + 0.2);
@@ -133,7 +133,7 @@ module mate() {
 }
 
 module strip() {   // TPU gasket bar for the GROOVE station
-    linear_extrude(gasket_groove + gasket_proud) rrect2d(29.8, gasket_w - 0.1, 0.3);
+    linear_extrude(gasket_groove + gasket_proud) rrect2d(29.4, gasket_w - 0.5, 0.3);   // strip 0.5 narrower, like the case gaskets
 }
 
 if      (part == "base")  base();

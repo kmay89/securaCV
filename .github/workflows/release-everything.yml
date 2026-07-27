@@ -1,0 +1,306 @@
+# Update everything — one button, and it only does what actually needs doing.
+#
+# Press it any time. It looks at every target in `.github/release-targets.yml`
+# (all the apps, all the firmware, the site), compares each one's SOURCE version
+# to what has actually been released, and dispatches ONLY the ones that are
+# genuinely ahead. Pressing it twice in a row does nothing the second time —
+# that is the point, and it is what stops the button burning runners.
+#
+# What "needs doing" means, per target (the logic lives in
+# `.github/scripts/release_plan.py`, which is unit-tested — 43 cases — because
+# this decision is the whole product):
+#
+#   • source version NEWER than the newest tag  → release it (this is also what
+#     cuts the tag: tags are the control surface, so a bumped-but-untagged
+#     version IS "the tags need it")
+#   • nothing released yet                      → cut the first one
+#   • same version, but watched files changed   → say "bump the version first"
+#     and ship everything ELSE. Never re-ship a different tree under a version
+#     that is already published.
+#   • same version, nothing changed             → skip. ✅
+#   • the site's published pages changed since the last successful deploy
+#     → redeploy (this is the "the docs need it" case)
+#   • an Apple target whose ENABLE_*_BUILD variable is off → don't spend a
+#     macOS runner on a workflow that would no-op
+#
+# Why it doesn't go red for saying "bump the version": pressing this button is
+# always meant to be safe. A target needing a bump is INFORMATION — it is
+# reported loudly in the summary while every other target still ships. The run
+# fails only if something that was supposed to happen didn't (a dispatch call
+# erroring), which is the honest definition of a red run.
+#
+# Related, and narrower: `release-one-click.yml` runs a chosen set
+# unconditionally; `firmware-release-if-changed.yml` does this for firmware
+# alone. This is both of those generalized to every target.
+name: Update everything (only what needs it)
+run-name: >-
+  Update everything — ${{ inputs.plan_only && 'PLAN ONLY' || (inputs.publish && 'PUBLISH' || 'dev build') }}${{ inputs.only != 'all' && format(' [{0}]', inputs.only) || '' }} — @${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish real releases (unchecked = build-only smoke runs for the apps)"
+        type: boolean
+        default: false
+      only:
+        description: "Limit to one target (default: consider everything)"
+        type: choice
+        options: [all, firmware, flasher, lab, tvos, ios, web]
+        default: all
+      plan_only:
+        description: "Only show what WOULD happen — dispatch nothing"
+        type: boolean
+        default: false
+      force:
+        description: "Re-release even if it looks up to date: a target name, or 'all' (leave blank normally)"
+        type: string
+        default: ""
+
+# Dispatching other workflows needs actions: write. Nothing here touches
+# contents — each dispatched workflow elevates its own permissions.
+permissions:
+  actions: write
+  contents: read
+
+# One launcher per ref; a double-click queues rather than planning twice
+# against a half-dispatched world.
+concurrency:
+  group: release-everything-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: Work out what needs releasing, then release exactly that
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history AND tags: the plan diffs each target's watched paths
+          # against the tag it was last released from.
+          fetch-depth: 0
+
+      - name: Install PyYAML
+        run: python3 -m pip install --quiet pyyaml
+
+      # The engine is tested code, so test it here too. It costs a second, and
+      # it means a broken planner fails BEFORE it can dispatch anything.
+      - name: Self-test the decision engine
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -q
+
+      # Which commit the live site was last built from. Without this the site
+      # would either redeploy every single time (wasted compute) or never
+      # (stale docs) — neither is "only what needs it".
+      - name: Find the last successful Pages deploy
+        id: pages
+        uses: actions/github-script@v8
+        with:
+          script: |
+            try {
+              const runs = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'pages.yml',
+                status: 'success',
+                per_page: 1,
+              });
+              const sha = runs.data.workflow_runs?.[0]?.head_sha || '';
+              core.setOutput('sha', sha);
+              core.info(sha ? `Site last deployed from ${sha}` : 'No successful Pages deploy found — will treat the site as needing one.');
+            } catch (err) {
+              // Never let a bookkeeping lookup take the whole button down.
+              core.warning(`Could not read Pages history (${err.message}); treating the site as needing a deploy.`);
+              core.setOutput('sha', '');
+            }
+
+      - name: Is the OTA signing key ready?
+        # Firmware's gate. Reported here, before any dispatch, because the
+        # alternative is what actually happened: the button says "releasing
+        # firmware", a separate run dies 20s later on the key guard, and the
+        # consequence (flasher dark, nothing can update) is three inferences from
+        # the error. Both halves are needed and neither implies the other, so
+        # check both — and never print the secret, only whether it is set.
+        id: otakey
+        env:
+          HAS_SECRET: ${{ secrets.OTA_SIGNING_KEY_PEM != '' }}
+        run: |
+          set -euo pipefail
+          embedded=$(python3 firmware/scripts/ota_key_state.py --json \
+                     | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["embedded"]).lower())')
+          python3 firmware/scripts/ota_key_state.py
+          echo "OTA_SIGNING_KEY_PEM secret set: ${HAS_SECRET}"
+          if [ "$embedded" = "true" ] && [ "$HAS_SECRET" = "true" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Firmware is not releasable yet"
+              echo ""
+              echo "| half | state |"
+              echo "|---|---|"
+              echo "| public key committed in \`ota_release_key.h\` | $([ "$embedded" = true ] && echo 'present ✓' || echo '**all zeros — OTA hard-disabled**') |"
+              echo "| \`OTA_SIGNING_KEY_PEM\` secret | $([ "$HAS_SECRET" = true ] && echo 'set ✓' || echo '**not set**') |"
+              echo ""
+              echo "The firmware target is reported as gated below and nothing was"
+              echo "dispatched for it. See \`docs/RELEASE_BUTTONS.md\` §"
+              echo "\"Firmware will not release\"."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Build the plan
+        id: plan
+        env:
+          PUBLISH: ${{ inputs.publish }}
+          ONLY: ${{ inputs.only }}
+          FORCE: ${{ inputs.force }}
+          PAGES_SINCE: ${{ steps.pages.outputs.sha }}
+          # Gates are preconditions, and a gated target would only no-op (or
+          # fail), so there is no reason to spend a runner on it. Two kinds:
+          # repo VARIABLES for the Apple targets (a developer account someone
+          # has to set up), and one DERIVED gate for firmware — whether the
+          # release signing key actually exists, computed in the step above.
+          ENABLE_TVOS_BUILD: ${{ vars.ENABLE_TVOS_BUILD }}
+          ENABLE_IOS_BUILD: ${{ vars.ENABLE_IOS_BUILD }}
+          OTA_SIGNING_KEY_READY: ${{ steps.otakey.outputs.ready }}
+        run: |
+          set -euo pipefail
+
+          # "What has actually been cut" comes from TAGS, not from published
+          # releases: the Lab publishes a DRAFT release, and a draft would look
+          # unpublished forever and make this button re-cut it on every press.
+          # A tag exists the moment a release is cut, draft or not.
+          git tag -l | python3 -c 'import json,sys; json.dump([t.strip() for t in sys.stdin if t.strip()], sys.stdout)' > /tmp/tags.json
+          echo "tags found: $(python3 -c 'import json;print(len(json.load(open("/tmp/tags.json"))))')"
+
+          gates="$(python3 -c '
+          import json, os
+          print(json.dumps({
+              "ENABLE_TVOS_BUILD": os.environ.get("ENABLE_TVOS_BUILD") == "true",
+              "ENABLE_IOS_BUILD": os.environ.get("ENABLE_IOS_BUILD") == "true",
+              "OTA_SIGNING_KEY_READY": os.environ.get("OTA_SIGNING_KEY_READY") == "true",
+          }))')"
+
+          only_arg=""
+          if [ "$ONLY" != "all" ]; then only_arg="--only=$ONLY"; fi
+          publish_arg=""
+          if [ "$PUBLISH" = "true" ]; then publish_arg="--publish"; fi
+
+          # shellcheck disable=SC2086  # both args are deliberately word-split or empty
+          python3 .github/scripts/release_plan.py \
+            $publish_arg $only_arg \
+            --force="$FORCE" \
+            --gates="$gates" \
+            --pages-since="$PAGES_SINCE" \
+            < /tmp/tags.json > /tmp/plan.json
+
+          echo "── plan ──"
+          cat /tmp/plan.json
+
+      - name: Dispatch what needs releasing, and report the rest
+        uses: actions/github-script@v8
+        env:
+          PLAN_ONLY: ${{ inputs.plan_only }}
+          PUBLISH: ${{ inputs.publish }}
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = JSON.parse(fs.readFileSync('/tmp/plan.json', 'utf8'));
+            const planOnly = process.env.PLAN_ONLY === 'true';
+            const publish = process.env.PUBLISH === 'true';
+            const ref = context.ref.replace('refs/heads/', '').replace('refs/tags/', '');
+
+            const icons = {
+              release: '🚀', up_to_date: '✅', needs_bump: '✋',
+              behind: '⚠️', gated: '🔒', skipped: '·',
+            };
+
+            const actionable = plan.filter((d) => d.decision === 'release');
+            const started = [];
+            const failed = [];
+
+            for (const target of actionable) {
+              if (planOnly) {
+                core.info(`(plan only) would dispatch ${target.workflow} for ${target.name}`);
+                continue;
+              }
+              try {
+                await github.rest.actions.createWorkflowDispatch({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  workflow_id: target.workflow,
+                  ref,
+                  inputs: target.inputs,
+                });
+                started.push(target);
+                core.info(`Dispatched ${target.workflow} for ${target.label}`);
+              } catch (err) {
+                failed.push({ target, message: err.message });
+                core.error(`Failed to dispatch ${target.label}: ${err.message}`);
+              }
+            }
+
+            // ── the summary is the product: one table, every target, a reason ──
+            const summary = core.summary
+              .addHeading('Update everything')
+              .addRaw(
+                planOnly
+                  ? '**Plan only** — nothing was dispatched.'
+                  : publish
+                    ? '**Publishing real releases** for everything that needed it.'
+                    : '**Dev build-only smoke runs** for the apps (tick *publish* for real releases).'
+              )
+              .addBreak()
+              .addRaw(`**Ref:** \`${ref}\``)
+              .addTable([
+                [
+                  { data: 'Target', header: true },
+                  { data: '', header: true },
+                  { data: 'Source', header: true },
+                  { data: 'Released', header: true },
+                  { data: 'What happens', header: true },
+                ],
+                ...plan.map((d) => [
+                  d.label,
+                  icons[d.decision] || '',
+                  d.source_version || '—',
+                  d.latest_version || '—',
+                  d.reason,
+                ]),
+              ]);
+
+            const bumps = plan.filter((d) => d.decision === 'needs_bump');
+            if (bumps.length) {
+              summary
+                .addHeading('Needs a version bump before it can ship', 3)
+                .addRaw('These changed since their last release but still carry a published version number. Bump each one, then press the button again — everything else in this run already shipped.')
+                .addList(bumps.map((d) => `${d.label}${d.source_version ? ` (still ${d.source_version})` : ''}`));
+            }
+
+            await summary.write();
+
+            // Honest exit codes: only a dispatch that was SUPPOSED to happen
+            // and didn't makes this run red. "Needs a bump" and "up to date"
+            // are answers, not failures.
+            if (failed.length) {
+              core.setFailed(
+                `Some workflows could not be dispatched:\n` +
+                failed.map((f) => `  ${f.target.label} — ${f.message}`).join('\n')
+              );
+              return;
+            }
+
+            if (!actionable.length) {
+              core.notice(
+                bumps.length
+                  ? `Nothing to release. ${bumps.length} target(s) changed but still need a version bump — see the summary.`
+                  : 'Everything is already up to date. Nothing was dispatched, and nothing was wasted. ✅'
+              );
+              return;
+            }
+
+            core.notice(
+              planOnly
+                ? `Plan only: ${actionable.length} target(s) would have been released.`
+                : `Started ${started.length} release workflow(s): ${started.map((t) => t.name).join(', ')}. Watch the linked runs for progress.`
+            );

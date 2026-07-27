@@ -1,0 +1,1079 @@
+{
+  "schema": "securacv-board-facts-1",
+  "boards": {
+    "waveshare-esp32s3-lcd43": {
+      "vendor": "Waveshare",
+      "product": "ESP32-S3-Touch-LCD-4.3",
+      "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-4.3",
+      "source_note": "Facts transcribed from the vendor wiki (canonical). Waveshare owns the hardware and its documentation; this is our machine-readable snapshot of the pin map / silicon / parameters, refreshed by gen_board_facts.py so it can't go stale.",
+      "verified_utc": "2026-07-24",
+      "facts": {
+        "parameters": {
+          "SKU": "Product",
+          "25948": "ESP32-S3-Touch-LCD-4.3",
+          "30493": "ESP32-S3-LCD-4.3",
+          "Processor": "High-performance Xtensa 32-bit LX7 dual-core processor, up to 240 MHz",
+          "Wi-Fi/Bluetooth": "Supports 2.4 GHz Wi-Fi (802.11 b/g/n) and Bluetooth 5 (LE), onboard antenna",
+          "Embedded Memory": "512KB SRAM and 384KB ROM",
+          "Flash": "16MB Flash",
+          "PSRAM": "8MB PSRAM",
+          "Power Supply": "TypeC 5V",
+          "Resolution": "800 x 480",
+          "Display Colors": "65K colors",
+          "Display Interface": "RGB",
+          "Display Panel": "IPS",
+          "Viewing Angle": "160°",
+          "Brightness": "270 Cd/m²",
+          "Touch Type": "Capacitive",
+          "Touch Panel": "Tempered Glass",
+          "Touch Features": "Supports I2C interface control for capacitive touch (optional), 5-point touch, interrupt support",
+          "Communication Interfaces": "CAN, RS485, I2C, USB",
+          "USB": "Integrated full-speed USB",
+          "Power Consumption": "5V 450mA",
+          "Operating Temperature": "0℃ ~ 65℃",
+          "Dimensions (L×W)": "Non-touch version: 105.4×67.1mm Touch version: 106.1×67.8mm"
+        },
+        "onboard": [
+          {
+            "part": "ESP32-S3-WROOM-1-N16R8",
+            "role": "Wi-Fi/Bluetooth SoC module, 240MHz operating frequency — Stacked 8MB PSRAM and 16MB Flash"
+          },
+          {
+            "part": "SGM2212-3.3",
+            "role": "800mA low-noise LDO"
+          },
+          {
+            "part": "FSUSB42UMX",
+            "role": "For USB pin multiplexing"
+          },
+          {
+            "part": "Screen Touch Connector",
+            "role": "No touch, left floating"
+          },
+          {
+            "part": "USB TO UART Type-C Port",
+            "role": ""
+          },
+          {
+            "part": "USB Type-C Port",
+            "role": ""
+          },
+          {
+            "part": "TJA1051T/3/1J",
+            "role": "CAN interface chip"
+          },
+          {
+            "part": "CH422G",
+            "role": "IO expander chip"
+          },
+          {
+            "part": "BOOT Button",
+            "role": "Press and hold while powering on for program flashing"
+          },
+          {
+            "part": "RESET Button",
+            "role": "Press to reset the controller"
+          },
+          {
+            "part": "MP3302DJ-LF-Z",
+            "role": "Screen backlight boost chip"
+          },
+          {
+            "part": "4.3inch Display Panel Connector",
+            "role": ""
+          },
+          {
+            "part": "TF Card Slot",
+            "role": ""
+          },
+          {
+            "part": "Sensor terminal:",
+            "role": "Recommended to use the included HY2.0 3P to Dupont male 3P 10 cm cable"
+          },
+          {
+            "part": "CAN interface:",
+            "role": "Recommended to use the included HY2.0 2P to Dupont male 2P 10 cm cable"
+          },
+          {
+            "part": "I2C terminal:",
+            "role": "Recommended to use the included HY2.0 4P to Dupont male 4P 10 cm cable"
+          },
+          {
+            "part": "RS485 terminal:",
+            "role": "Recommended to use the included HY2.0 2P to Dupont male 2P 10 cm cable"
+          },
+          {
+            "part": "3.7V Single-cell Lithium Battery PH2.0 Header",
+            "role": ""
+          },
+          {
+            "part": "CAN Terminal Resistor Selection Interface",
+            "role": ""
+          },
+          {
+            "part": "RS485 Terminal Resistor Selection Interface",
+            "role": ""
+          },
+          {
+            "part": "CH343P",
+            "role": "USB to UART chip"
+          },
+          {
+            "part": "SP3485",
+            "role": "RS485 transceiver chip"
+          },
+          {
+            "part": "CS8501",
+            "role": "Lithium battery charging management chip"
+          },
+          {
+            "part": "Status Indicators",
+            "role": "PWR power indicator — CHG lithium battery charging indicator — DONE lithium battery charging complete indicator"
+          }
+        ],
+        "pins": {
+          "lcd": [
+            {
+              "pin": "GPIO0",
+              "signal": "G3",
+              "desc": "Green data bit 3"
+            },
+            {
+              "pin": "GPIO1",
+              "signal": "R3",
+              "desc": "Red data bit 3"
+            },
+            {
+              "pin": "GPIO2",
+              "signal": "R4",
+              "desc": "Red data bit 4"
+            },
+            {
+              "pin": "GPIO3",
+              "signal": "VSYNC",
+              "desc": "Vertical sync signal"
+            },
+            {
+              "pin": "GPIO5",
+              "signal": "DE",
+              "desc": "Data enable signal"
+            },
+            {
+              "pin": "GPIO7",
+              "signal": "PCLK",
+              "desc": "Pixel clock signal"
+            },
+            {
+              "pin": "GPIO10",
+              "signal": "B7",
+              "desc": "Blue data bit 7"
+            },
+            {
+              "pin": "GPIO14",
+              "signal": "B3",
+              "desc": "Blue data bit 3"
+            },
+            {
+              "pin": "GPIO17",
+              "signal": "B6",
+              "desc": "Blue data bit 6"
+            },
+            {
+              "pin": "GPIO18",
+              "signal": "B5",
+              "desc": "Blue data bit 5"
+            },
+            {
+              "pin": "GPIO21",
+              "signal": "G7",
+              "desc": "Green data bit 7"
+            },
+            {
+              "pin": "GPIO38",
+              "signal": "B4",
+              "desc": "Blue data bit 4"
+            },
+            {
+              "pin": "GPIO39",
+              "signal": "G2",
+              "desc": "Green data bit 2"
+            },
+            {
+              "pin": "GPIO40",
+              "signal": "R7",
+              "desc": "Red data bit 7"
+            },
+            {
+              "pin": "GPIO41",
+              "signal": "R6",
+              "desc": "Red data bit 6"
+            },
+            {
+              "pin": "GPIO42",
+              "signal": "R5",
+              "desc": "Red data bit 5"
+            },
+            {
+              "pin": "GPIO45",
+              "signal": "G4",
+              "desc": "Green data bit 4"
+            },
+            {
+              "pin": "GPIO46",
+              "signal": "HSYNC",
+              "desc": "Horizontal sync signal"
+            },
+            {
+              "pin": "GPIO47",
+              "signal": "G6",
+              "desc": "Green data bit 6"
+            },
+            {
+              "pin": "GPIO48",
+              "signal": "G5",
+              "desc": "Green data bit 5"
+            },
+            {
+              "pin": "CH422G",
+              "signal": "LCD",
+              "desc": "-"
+            },
+            {
+              "pin": "EXIO2",
+              "signal": "DISP",
+              "desc": "Backlight enable pin"
+            }
+          ],
+          "touch": [
+            {
+              "pin": "GPIO4",
+              "signal": "TP_IRQ",
+              "desc": "Touch interrupt pin"
+            },
+            {
+              "pin": "GPIO8",
+              "signal": "TP_SDA",
+              "desc": "Touch data pin (I2C)"
+            },
+            {
+              "pin": "GPIO9",
+              "signal": "TP_SCL",
+              "desc": "Touch clock pin (I2C)"
+            },
+            {
+              "pin": "CH422G",
+              "signal": "Touch",
+              "desc": "-"
+            },
+            {
+              "pin": "EXIO1",
+              "signal": "TP_RST",
+              "desc": "Touch reset pin"
+            }
+          ],
+          "usb": [
+            {
+              "pin": "GPIO19",
+              "signal": "USB_DN",
+              "desc": "Data line D-"
+            },
+            {
+              "pin": "GPIO20",
+              "signal": "USB_DP",
+              "desc": "Data line D+"
+            },
+            {
+              "pin": "CH422G",
+              "signal": "USB",
+              "desc": "-"
+            },
+            {
+              "pin": "EXIO5",
+              "signal": "USB_SEL",
+              "desc": "Pull low to set USB mode, otherwise CAN mode"
+            }
+          ],
+          "tf": [
+            {
+              "pin": "GPIO11",
+              "signal": "MOSI",
+              "desc": "TF card input pin"
+            },
+            {
+              "pin": "GPIO12",
+              "signal": "SCK",
+              "desc": "TF card clock pin"
+            },
+            {
+              "pin": "GPIO13",
+              "signal": "MISO",
+              "desc": "TF card output pin"
+            },
+            {
+              "pin": "CH422G",
+              "signal": "TF",
+              "desc": "-"
+            },
+            {
+              "pin": "EXIO4",
+              "signal": "SD_CS",
+              "desc": "TF card chip select, active low"
+            }
+          ],
+          "rs485": [
+            {
+              "pin": "GPIO16",
+              "signal": "RS485_RXD",
+              "desc": "Data input"
+            },
+            {
+              "pin": "GPIO15",
+              "signal": "RS485_TXD",
+              "desc": "Data output"
+            }
+          ],
+          "can": [
+            {
+              "pin": "GPIO15",
+              "signal": "CANTX",
+              "desc": "Data output"
+            },
+            {
+              "pin": "GPIO16",
+              "signal": "CANRX",
+              "desc": "Data input"
+            },
+            {
+              "pin": "CH422G",
+              "signal": "CAN",
+              "desc": "-"
+            },
+            {
+              "pin": "EXIO5",
+              "signal": "CAN_SEL",
+              "desc": "Pull high to set CAN mode, otherwise USB mode"
+            }
+          ],
+          "i2c": [
+            {
+              "pin": "GPIO8",
+              "signal": "SDA",
+              "desc": "I2C data pin"
+            },
+            {
+              "pin": "GPIO9",
+              "signal": "SCL",
+              "desc": "I2C clock pin"
+            }
+          ]
+        },
+        "content_hash": "sha256:d7dcbc798760a1b6ee3b95430cf78053c1971eb6c42ba34b1032f82e409729f5"
+      }
+    },
+    "waveshare-esp32s3-lcd43b": {
+      "vendor": "Waveshare",
+      "product": "ESP32-S3-Touch-LCD-4.3B",
+      "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-4.3B",
+      "source_note": "Facts transcribed from the vendor wiki (canonical). Waveshare owns the hardware and its documentation; this is our machine-readable snapshot of the pin map / silicon / parameters, refreshed by gen_board_facts.py so it can't go stale.",
+      "verified_utc": "2026-07-24",
+      "facts": {
+        "parameters": {
+          "SKU": "Product",
+          "27848": "ESP32-S3-Touch-LCD-4.3B",
+          "28141": "ESP32-S3-Touch-LCD-4.3B-BOX",
+          "Processor": "High-performance Xtensa 32-bit LX7 dual-core processor, up to 240 MHz",
+          "Wi-Fi/Bluetooth": "Supports 2.4 GHz Wi-Fi (802.11 b/g/n) and Bluetooth 5 (LE), onboard antenna",
+          "Embedded Memory": "512KB SRAM and 384KB ROM",
+          "Flash": "16MB Flash",
+          "PSRAM": "8MB PSRAM",
+          "Power Supply Range": "Type-C 5V / DC 7-36V",
+          "Resolution": "800 x 480",
+          "Display Colors": "65K colors",
+          "Display Interface": "RGB",
+          "Display Panel": "IPS",
+          "Viewing Angle": "160°",
+          "Brightness": "550 Cd/m²",
+          "Touch Type": "Capacitive",
+          "Touch Panel": "Tempered Glass",
+          "Touch Features": "Supports I2C interface control for capacitive touch, 5-point touch, interrupt support",
+          "Communication Interfaces": "CAN, RS485, I2C, USB",
+          "Digital Input": "5~36V, bidirectional optocoupler isolation, supports dry contact and wet contact (NPN or PNP) switch inputs",
+          "Digital Output": "5~36V, optocoupler isolation, output uses high-current transistor, sink current up to 450mA",
+          "USB": "Integrated full-speed USB",
+          "Power Consumption": "5V 450mA",
+          "Operating Temperature": "0℃ ~ 65℃",
+          "Dimensions (L×W)": "Standard Version: 112.4×75.1mm With Case Version: 116.3×79mm"
+        },
+        "onboard": [
+          {
+            "part": "ESP32-S3-WROOM-1-N16R8",
+            "role": "Wi-Fi/Bluetooth SoC module, 240MHz operating frequency — Stacked 8MB PSRAM and 16MB Flash"
+          },
+          {
+            "part": "TF Card Slot",
+            "role": "For connecting TF cards"
+          },
+          {
+            "part": "USB Type-C Port",
+            "role": "For power supply and program flashing"
+          },
+          {
+            "part": "BOOT Button",
+            "role": "Press and hold while powering on for program flashing"
+          },
+          {
+            "part": "RESET Button",
+            "role": "Press to reset the ESP32S3"
+          },
+          {
+            "part": "Optocoupler Isolation",
+            "role": "Isolates and protects I/O pins on the board"
+          },
+          {
+            "part": "Screen Touch Connector",
+            "role": "Connects the touch screen FPC"
+          },
+          {
+            "part": "4.3inch Screen Connector",
+            "role": "Connects the LCD display FPC"
+          },
+          {
+            "part": "CAN and RS485 Termination Resistor Switches",
+            "role": "Balance resistor switches for the bus, disabled by default"
+          },
+          {
+            "part": "Battery Connection Switch",
+            "role": "ON: Connect battery — OFF: Disconnect battery"
+          },
+          {
+            "part": "3.7V Single-Cell Lithium Battery 1.25 Interface",
+            "role": "MX1.25 interface, compatible with all 3.7V lithium batteries"
+          },
+          {
+            "part": "Status Indicators",
+            "role": "DONE: Lithium battery charging complete indicator — CHG: Lithium battery charging indicator — PWR: Power indicator — (When power is connected, but no battery is connected or the switch is off, CHG will blink, and DONE will light on)"
+          },
+          {
+            "part": "7-36V DC Power Supply",
+            "role": "Wide voltage input interface, supports 7-36V DC power"
+          },
+          {
+            "part": "I2C Interface",
+            "role": "VOUT outputs 5V/3.3V (switchable via onboard resistor, select one)"
+          },
+          {
+            "part": "CAN Interface",
+            "role": "CAN 2.0 compliant"
+          },
+          {
+            "part": "RS485 Terminal Block",
+            "role": "Supports 485 bus communication"
+          },
+          {
+            "part": "Digital Output",
+            "role": "5～36V, open-drain output, output load 450mA/channel (MAX)"
+          },
+          {
+            "part": "Input Signal Common Terminal",
+            "role": "Not connected (floating): Dry contact (passive) input — Connected to power positive: Low-level trigger, NPN-type wet contact (active) input, voltage 5V-36V DC — Connected to power negative: High-level trigger, PNP-type wet contact (active) input, voltage 5V-36V DC"
+          },
+          {
+            "part": "Digital Input",
+            "role": "5～36V, dry contact / wet contact (NPN or PNP type)"
+          },
+          {
+            "part": "RTC Battery Holder",
+            "role": "Specification: CR927"
+          }
+        ],
+        "pins": {
+          "lcd": [
+            {
+              "pin": "GPIO0",
+              "signal": "G3",
+              "desc": "Green data bit 3"
+            },
+            {
+              "pin": "GPIO1",
+              "signal": "R3",
+              "desc": "Red data bit 3"
+            },
+            {
+              "pin": "GPIO2",
+              "signal": "R4",
+              "desc": "Red data bit 4"
+            },
+            {
+              "pin": "GPIO3",
+              "signal": "VSYNC",
+              "desc": "Vertical sync signal"
+            },
+            {
+              "pin": "GPIO5",
+              "signal": "DE",
+              "desc": "Data enable signal"
+            },
+            {
+              "pin": "GPIO7",
+              "signal": "PCLK",
+              "desc": "Pixel clock signal"
+            },
+            {
+              "pin": "GPIO10",
+              "signal": "B7",
+              "desc": "Blue data bit 7"
+            },
+            {
+              "pin": "GPIO14",
+              "signal": "B3",
+              "desc": "Blue data bit 3"
+            },
+            {
+              "pin": "GPIO17",
+              "signal": "B6",
+              "desc": "Blue data bit 6"
+            },
+            {
+              "pin": "GPIO18",
+              "signal": "B5",
+              "desc": "Blue data bit 5"
+            },
+            {
+              "pin": "GPIO21",
+              "signal": "G7",
+              "desc": "Green data bit 7"
+            },
+            {
+              "pin": "GPIO38",
+              "signal": "B4",
+              "desc": "Blue data bit 4"
+            },
+            {
+              "pin": "GPIO39",
+              "signal": "G2",
+              "desc": "Green data bit 2"
+            },
+            {
+              "pin": "GPIO40",
+              "signal": "R7",
+              "desc": "Red data bit 7"
+            },
+            {
+              "pin": "GPIO41",
+              "signal": "R6",
+              "desc": "Red data bit 6"
+            },
+            {
+              "pin": "GPIO42",
+              "signal": "R5",
+              "desc": "Red data bit 5"
+            },
+            {
+              "pin": "GPIO45",
+              "signal": "G4",
+              "desc": "Green data bit 4"
+            },
+            {
+              "pin": "GPIO46",
+              "signal": "HSYNC",
+              "desc": "Horizontal sync signal"
+            },
+            {
+              "pin": "GPIO47",
+              "signal": "G6",
+              "desc": "Green data bit 6"
+            },
+            {
+              "pin": "GPIO48",
+              "signal": "G5",
+              "desc": "Green data bit 5"
+            },
+            {
+              "pin": "CH422G",
+              "signal": "LCD",
+              "desc": "-"
+            },
+            {
+              "pin": "EXIO2",
+              "signal": "DISP",
+              "desc": "Backlight enable pin"
+            }
+          ],
+          "touch": [
+            {
+              "pin": "GPIO4",
+              "signal": "TP_IRQ",
+              "desc": "Touch interrupt pin"
+            },
+            {
+              "pin": "GPIO8",
+              "signal": "TP_SDA",
+              "desc": "Touch data pin (I2C)"
+            },
+            {
+              "pin": "GPIO9",
+              "signal": "TP_SCL",
+              "desc": "Touch clock pin (I2C)"
+            },
+            {
+              "pin": "CH422G",
+              "signal": "Touch",
+              "desc": "-"
+            },
+            {
+              "pin": "EXIO1",
+              "signal": "TP_RST",
+              "desc": "Touch reset pin"
+            }
+          ],
+          "usb": [
+            {
+              "pin": "GPIO19",
+              "signal": "USB_DN",
+              "desc": "Data line D-"
+            },
+            {
+              "pin": "GPIO20",
+              "signal": "USB_DP",
+              "desc": "Data line D+"
+            }
+          ],
+          "tf": [
+            {
+              "pin": "GPIO11",
+              "signal": "MOSI",
+              "desc": "TF card input pin"
+            },
+            {
+              "pin": "GPIO12",
+              "signal": "SCK",
+              "desc": "TF card clock pin"
+            },
+            {
+              "pin": "GPIO13",
+              "signal": "MISO",
+              "desc": "TF card output pin"
+            },
+            {
+              "pin": "CH422G",
+              "signal": "TF",
+              "desc": "-"
+            },
+            {
+              "pin": "EXIO4",
+              "signal": "SD_CS",
+              "desc": "TF card chip select, active low"
+            }
+          ],
+          "rs485": [
+            {
+              "pin": "GPIO43",
+              "signal": "RS485_RXD",
+              "desc": "Data input"
+            },
+            {
+              "pin": "GPIO44",
+              "signal": "RS485_TXD",
+              "desc": "Data output"
+            }
+          ],
+          "can": [
+            {
+              "pin": "GPIO15",
+              "signal": "CANTX",
+              "desc": "Data output"
+            },
+            {
+              "pin": "GPIO16",
+              "signal": "CANRX",
+              "desc": "Data input"
+            }
+          ],
+          "rtc": [
+            {
+              "pin": "GPIO8",
+              "signal": "RTC_SDA",
+              "desc": "RTC Data Pin"
+            },
+            {
+              "pin": "GPIO9",
+              "signal": "RTC_SCL",
+              "desc": "RTC Clock Pin"
+            }
+          ],
+          "i2c": [
+            {
+              "pin": "GPIO8",
+              "signal": "SDA",
+              "desc": "I2C data pin"
+            },
+            {
+              "pin": "GPIO9",
+              "signal": "SCL",
+              "desc": "I2C clock pin"
+            }
+          ]
+        },
+        "content_hash": "sha256:956dd68df4c384079c2ab7c51b5a163381e160efd77c17dd522ea54cf0087f4e"
+      }
+    },
+    "waveshare-esp32s3-lcd43c": {
+      "vendor": "Waveshare",
+      "product": "ESP32-S3-Touch-LCD-4.3C",
+      "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-4.3C",
+      "source_note": "Facts transcribed from the vendor wiki (canonical). Waveshare owns the hardware and its documentation; this is our machine-readable snapshot of the pin map / silicon / parameters, refreshed by gen_board_facts.py so it can't go stale.",
+      "verified_utc": "2026-07-24",
+      "facts": {
+        "parameters": {
+          "SKU": "Product",
+          "33799": "ESP32-S3-Touch-LCD-4.3C (Without case)",
+          "33630": "ESP32-S3-Touch-LCD-4.3C (With plastic case)"
+        },
+        "onboard": [
+          {
+            "part": "Onboard PCF85063 RTC Real-Time Clock Chip",
+            "role": "Enables timekeeping during power loss and alarm functionality."
+          },
+          {
+            "part": "Onboard 4.3inch 800×480 Capacitive Touch LCD Screen",
+            "role": "Supports LVGL graphical interface display."
+          },
+          {
+            "part": "Onboard Isolation I/O Interface",
+            "role": "Provides 2 digital inputs (DI0, DI1) and 2 digital outputs (DO0, DO1) for safe, isolated interaction with external switch devices via the IO_EXTENSION."
+          },
+          {
+            "part": "Onboard TF Card Slot",
+            "role": "Uses the SD_MMC interface for accessing TF cards to store resources like images and music."
+          },
+          {
+            "part": "Onboard ES8311 Audio Amplifier Codec and ES7210 Quad-Channel Audio ADC",
+            "role": "Works in conjunction with the speaker and microphone interfaces."
+          },
+          {
+            "part": "Onboard USB Type-C Port",
+            "role": "Used for firmware downloading, serial log printing, and USB-related debugging. It is the main communication and download channel for Arduino and ESP-IDF examples."
+          },
+          {
+            "part": "Onboard BOOT and RST Functional Buttons",
+            "role": "Allow quick entry into download mode and resetting to run different firmware."
+          }
+        ],
+        "pins": {
+          "lcd": [
+            {
+              "pin": "GPIO0",
+              "signal": "G3",
+              "desc": "Green Data Bit 3"
+            },
+            {
+              "pin": "GPIO1",
+              "signal": "R3",
+              "desc": "Red Data Bit 3"
+            },
+            {
+              "pin": "GPIO2",
+              "signal": "R4",
+              "desc": "Red Data Bit 4"
+            },
+            {
+              "pin": "GPIO3",
+              "signal": "VSYNC",
+              "desc": "Vertical Sync Signal"
+            },
+            {
+              "pin": "GPIO5",
+              "signal": "DE",
+              "desc": "Data Enable Signal"
+            },
+            {
+              "pin": "GPIO7",
+              "signal": "PCLK",
+              "desc": "Pixel Clock Signal"
+            },
+            {
+              "pin": "GPIO10",
+              "signal": "B7",
+              "desc": "Blue Data Bit 7"
+            },
+            {
+              "pin": "GPIO14",
+              "signal": "B3",
+              "desc": "Blue Data Bit 3"
+            },
+            {
+              "pin": "GPIO17",
+              "signal": "B6",
+              "desc": "Blue Data Bit 6"
+            },
+            {
+              "pin": "GPIO18",
+              "signal": "B5",
+              "desc": "Blue Data Bit 5"
+            },
+            {
+              "pin": "GPIO21",
+              "signal": "G7",
+              "desc": "Green Data Bit 7"
+            },
+            {
+              "pin": "GPIO38",
+              "signal": "B4",
+              "desc": "Blue Data Bit 4"
+            },
+            {
+              "pin": "GPIO39",
+              "signal": "G2",
+              "desc": "Green Data Bit 2"
+            },
+            {
+              "pin": "GPIO40",
+              "signal": "R7",
+              "desc": "Red Data Bit 7"
+            },
+            {
+              "pin": "GPIO41",
+              "signal": "R6",
+              "desc": "Red Data Bit 6"
+            },
+            {
+              "pin": "GPIO42",
+              "signal": "R5",
+              "desc": "Red Data Bit 5"
+            },
+            {
+              "pin": "GPIO45",
+              "signal": "G4",
+              "desc": "Green Data Bit 4"
+            },
+            {
+              "pin": "GPIO46",
+              "signal": "HSYNC",
+              "desc": "Horizontal Sync Signal"
+            },
+            {
+              "pin": "GPIO47",
+              "signal": "G6",
+              "desc": "Green Data Bit 6"
+            },
+            {
+              "pin": "GPIO48",
+              "signal": "G5",
+              "desc": "Green Data Bit 5"
+            },
+            {
+              "pin": "IO EXTENSION",
+              "signal": "—",
+              "desc": "IO Extension Control"
+            },
+            {
+              "pin": "EXIO2",
+              "signal": "DISP",
+              "desc": "Backlight Enable Pin"
+            },
+            {
+              "pin": "EXIO_PWM",
+              "signal": "BL_PWM",
+              "desc": "Backlight Adjustment Pin"
+            }
+          ],
+          "touch": [
+            {
+              "pin": "GPIO4",
+              "signal": "G3",
+              "desc": "Touch Interrupt Pin"
+            },
+            {
+              "pin": "GPIO8",
+              "signal": "R3",
+              "desc": "I2C Data Pin (SDA)"
+            },
+            {
+              "pin": "GPIO9",
+              "signal": "R4",
+              "desc": "I2C Clock Pin (SCL)"
+            },
+            {
+              "pin": "IO EXTENSION",
+              "signal": "—",
+              "desc": "IO Extension Control"
+            },
+            {
+              "pin": "EXIO1",
+              "signal": "DISP",
+              "desc": "Touch Reset Pin"
+            }
+          ],
+          "usb": [
+            {
+              "pin": "GPIO19",
+              "signal": "USB_DN",
+              "desc": "Data Line D-"
+            },
+            {
+              "pin": "GPIO20",
+              "signal": "USB_DP",
+              "desc": "Data Line D+"
+            }
+          ],
+          "tf": [
+            {
+              "pin": "GPIO11",
+              "signal": "MOSI",
+              "desc": "TF Card Input Pin"
+            },
+            {
+              "pin": "GPIO12",
+              "signal": "SCK",
+              "desc": "TF Card Clock Pin"
+            },
+            {
+              "pin": "GPIO13",
+              "signal": "MISO",
+              "desc": "TF Card Output Pin"
+            },
+            {
+              "pin": "IO EXTENSION",
+              "signal": "—",
+              "desc": "IO Extension Control"
+            },
+            {
+              "pin": "EXIO4",
+              "signal": "SD_CS",
+              "desc": "TF Card Chip Select Pin"
+            }
+          ],
+          "rtc": [
+            {
+              "pin": "RTC IF",
+              "signal": "—",
+              "desc": "Direct Pin Definition"
+            },
+            {
+              "pin": "GPIO8",
+              "signal": "RTC_SDA",
+              "desc": "RTC Data Pin"
+            },
+            {
+              "pin": "GPIO9",
+              "signal": "RTC_SCL",
+              "desc": "RTC Clock Pin"
+            },
+            {
+              "pin": "IO EXTENSION",
+              "signal": "—",
+              "desc": "IO Extension Control"
+            },
+            {
+              "pin": "INT",
+              "signal": "RTC_INT",
+              "desc": "RTC Interrupt Pin"
+            }
+          ],
+          "i2c": [
+            {
+              "pin": "I2C IF",
+              "signal": "—",
+              "desc": "Direct Pin Definition"
+            },
+            {
+              "pin": "GPIO8",
+              "signal": "SDA",
+              "desc": "I2C Data Pin"
+            },
+            {
+              "pin": "GPIO9",
+              "signal": "SCL",
+              "desc": "I2C Clock Pin"
+            }
+          ],
+          "audio": [
+            {
+              "pin": "Audio Codec IF",
+              "signal": "—",
+              "desc": "Direct Pin Definition"
+            },
+            {
+              "pin": "GPIO6",
+              "signal": "I2S_MCLK",
+              "desc": "I2S Master Clock"
+            },
+            {
+              "pin": "GPIO8",
+              "signal": "Audio_SDA",
+              "desc": "I2C Data Line (SDA)"
+            },
+            {
+              "pin": "GPIO9",
+              "signal": "Audio_SCL",
+              "desc": "I2C Clock Line (SCL)"
+            },
+            {
+              "pin": "GPIO15",
+              "signal": "I2S_DSDIN",
+              "desc": "I2S Data Input"
+            },
+            {
+              "pin": "GPIO16",
+              "signal": "I2S_LRCK",
+              "desc": "Frame Sync / LR channel selection"
+            },
+            {
+              "pin": "GPIO43",
+              "signal": "I2S_ASDOUT",
+              "desc": "I2S Data Output"
+            },
+            {
+              "pin": "GPIO44",
+              "signal": "I2S_SCLK",
+              "desc": "I2S Serial Clock"
+            },
+            {
+              "pin": "IO EXTENSION",
+              "signal": "—",
+              "desc": "IO Extension Control"
+            },
+            {
+              "pin": "EXIO4",
+              "signal": "PA_CTRL",
+              "desc": "Power Amplifier Control"
+            }
+          ],
+          "isolation": [
+            {
+              "pin": "IO EXTENSION",
+              "signal": "DI / DO",
+              "desc": "Description"
+            },
+            {
+              "pin": "Isolation IO",
+              "signal": "—",
+              "desc": "IO Extension Control"
+            },
+            {
+              "pin": "EXIO0",
+              "signal": "DI0",
+              "desc": "Digital Input 0"
+            },
+            {
+              "pin": "EXIO5",
+              "signal": "DI1",
+              "desc": "Digital Input 1"
+            },
+            {
+              "pin": "EXIO6",
+              "signal": "DO0",
+              "desc": "Digital Output 0"
+            },
+            {
+              "pin": "EXIO7",
+              "signal": "DO1",
+              "desc": "Digital Output 1"
+            }
+          ]
+        },
+        "content_hash": "sha256:f7a40bdda5a6b2f236c8f0ac2b7636966780164672b9d34705ce4a954ec5f12e"
+      }
+    }
+  }
+}

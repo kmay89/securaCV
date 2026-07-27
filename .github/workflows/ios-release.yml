@@ -1,0 +1,201 @@
+# iOS release — build a signed .ipa of the native SecuraCV companion.
+#
+# Mirrors desktop-mobile-release.yml exactly where it matters: manual dispatch
+# ONLY (never blocks PR/CI), double-gated behind the ENABLE_IOS_BUILD repo
+# variable (green no-op until set), and signs with an App Store Connect API key
+# materialized from a base64 secret to a real .p8 on the runner ("a secret is a
+# string, so the key must be a file"). Reuses the SAME Apple secret names as the
+# desktop mobile pipeline so there is one signing story for the whole repo.
+#
+# House style honored (.github/CI.md): explicit permissions, timeout-minutes,
+# and a concurrency group that never cancels a publishing run mid-flight.
+name: iOS release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Upload to App Store Connect and tag the version (unchecked = build + export only)"
+        type: boolean
+        default: false
+      export_method:
+        description: "Signing destination (must be app-store-connect to publish)"
+        type: choice
+        options: [debugging, release-testing, app-store-connect]
+        default: debugging
+
+# `contents: write` so a publishing run can create its `ios-v*` tag. Before
+# this, the workflow only ever produced a build ARTIFACT — so the
+# Update-everything button would report iOS as released while users got
+# nothing, and, with no tag to see, would re-dispatch it on every press.
+permissions:
+  contents: write
+
+concurrency:
+  group: ios-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - name: Gate notice
+        if: vars.ENABLE_IOS_BUILD != 'true'
+        run: |
+          echo "::notice title=iOS release skipped::Set ENABLE_IOS_BUILD=true and the APPLE_* signing secrets to enable. Exiting green."
+
+      - uses: actions/checkout@v4
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        with:
+          fetch-depth: 0   # tags, to refuse re-publishing a shipped version
+
+      # Resolved once so every later step reads the same answer.
+      - name: Resolve the release plan
+        id: plan
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        env:
+          PUBLISH: ${{ inputs.publish }}
+          EXPORT_METHOD: ${{ inputs.export_method }}
+        run: |
+          set -euo pipefail
+          publish="${PUBLISH:-false}"
+          version=""
+          if [ "$publish" = "true" ]; then
+            if [ "$EXPORT_METHOD" != "app-store-connect" ]; then
+              echo "::error::publish needs export_method=app-store-connect (got '$EXPORT_METHOD')."
+              exit 1
+            fi
+            version="$(sed -n 's/^ *MARKETING_VERSION: *"\{0,1\}\([0-9][0-9.]*\)"\{0,1\} *$/\1/p' ios/project.yml | head -1)"
+            if [ -z "$version" ]; then
+              echo "::error::could not read MARKETING_VERSION from ios/project.yml."
+              exit 1
+            fi
+            if git rev-parse -q --verify "refs/tags/ios-v$version" >/dev/null; then
+              echo "::error::ios-v$version is already tagged, so that version has already shipped."
+              echo "Bump MARKETING_VERSION in ios/project.yml before publishing again."
+              exit 1
+            fi
+          fi
+          {
+            echo "publish=$publish"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+          echo "publish=$publish, version='${version:-(none)}'"
+
+      - name: Select Xcode
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        run: sudo xcode-select -s /Applications/Xcode_16.app || true
+
+      - name: Materialize App Store Connect API key
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        env:
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          # A secret is a string; the .p8 must exist as a file for signing.
+          mkdir -p "$RUNNER_TEMP/keys"
+          echo "$APPLE_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/keys/AuthKey_${APPLE_API_KEY}.p8"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/keys/AuthKey_${APPLE_API_KEY}.p8" >> "$GITHUB_ENV"
+
+      - name: Regenerate project
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        working-directory: ios
+        run: |
+          eval "$(bash scripts/stamp_build.sh)"
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Archive
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        working-directory: ios
+        env:
+          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          xcodebuild \
+            -project SecuraCV.xcodeproj \
+            -scheme SecuraCV \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/SecuraCV.xcarchive" \
+            DEVELOPMENT_TEAM="$APPLE_DEVELOPMENT_TEAM" \
+            SECURACV_BUILD_REV="${SECURACV_BUILD_REV:-dev}" \
+            SECURACV_FW_TRAIN="${SECURACV_FW_TRAIN:-0.x}" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$APPLE_API_KEY_PATH" \
+            -authenticationKeyID "$APPLE_API_KEY" \
+            -authenticationKeyIssuerID "$APPLE_API_ISSUER" \
+            archive
+
+      - name: Export .ipa
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        env:
+          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          EXPORT_METHOD: ${{ inputs.export_method }}
+        run: |
+          # Build ExportOptions.plist with PlistBuddy — no fragile heredoc.
+          PLIST="$RUNNER_TEMP/ExportOptions.plist"
+          /usr/libexec/PlistBuddy -c "Clear dict" "$PLIST" 2>/dev/null || printf '%s' '{}' > "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :method string $EXPORT_METHOD" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :teamID string $APPLE_DEVELOPMENT_TEAM" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :signingStyle string automatic" "$PLIST"
+
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/SecuraCV.xcarchive" \
+            -exportOptionsPlist "$PLIST" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$APPLE_API_KEY_PATH" \
+            -authenticationKeyID "$APPLE_API_KEY" \
+            -authenticationKeyIssuerID "$APPLE_API_ISSUER"
+
+      # Prove the .ipa exists rather than letting a later glob fail obscurely
+      # (RELEASE_LESSONS Principle 4).
+      - name: Locate the exported .ipa
+        id: ipa
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        run: |
+          set -euo pipefail
+          ipa="$(find "$RUNNER_TEMP/export" -name '*.ipa' -type f | head -1)"
+          if [ -z "$ipa" ] || [ ! -s "$ipa" ]; then
+            echo "::error::the export step produced no .ipa in $RUNNER_TEMP/export."
+            find "$RUNNER_TEMP/export" -maxdepth 2 -print || true
+            exit 1
+          fi
+          echo "path=$ipa" >> "$GITHUB_OUTPUT"
+          echo "exported: $ipa ($(wc -c < "$ipa" | tr -d ' ') bytes)"
+
+      # The actual publish. Shared with the Apple TV target so the validate +
+      # retry policy can't drift between them.
+      - name: Upload to App Store Connect
+        if: vars.ENABLE_IOS_BUILD == 'true' && steps.plan.outputs.publish == 'true'
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: bash .github/scripts/asc_publish.sh "${{ steps.ipa.outputs.path }}" ios
+
+      # Tag only after the upload succeeded — the tag is this repo's record
+      # that a version shipped, so it must not exist for a build that didn't.
+      - name: Tag the published version
+        if: vars.ENABLE_IOS_BUILD == 'true' && steps.plan.outputs.publish == 'true'
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "ios-v$VERSION" -m "SecuraCV companion $VERSION (uploaded to App Store Connect)"
+          git push origin "ios-v$VERSION"
+          echo "::notice::Tagged ios-v$VERSION — the Update-everything button now sees this version as shipped."
+
+      - name: Upload .ipa
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SecuraCV-ipa
+          path: ${{ runner.temp }}/export/*.ipa
+          if-no-files-found: warn

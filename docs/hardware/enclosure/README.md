@@ -19,7 +19,9 @@ screws per case. Then:
    every part below.
 2. **Pick your case** from the [variant gallery](#pick-your-variant) —
    released variants have committed STLs; slice and print (flat, open side
-   up, no supports — ever).
+   up, no supports — ever). New to slicing these? The
+   [PETG Cura guide](./printing_petg_cura.md) has a settings sheet and a
+   one-click profile.
 3. **Fit your boards** — every case uses the same snap-clip cradles: boards
    press in, no screws. Each device section below has its assembly steps.
 4. **Mount it** — print the wall bracket / plate for your case, or print a
@@ -29,11 +31,22 @@ Going **outdoors**? Read [Weather mode](#weather-mode-opt_seal) and the
 [Engineering & materials](#engineering--materials-security-build) section
 before printing — material choice and the gasket option matter out there.
 
+**No OpenSCAD installed?** The released cases can be tweaked and rendered
+**in the browser** at [securacv.com/builder](https://securacv.com/builder) —
+the same parametric sources with the common options as dropdowns, running
+OpenSCAD compiled to WebAssembly locally (nothing is uploaded). The page's
+manifest is generated from these files by
+[`gen_builder_manifest.py`](./gen_builder_manifest.py); CI fails if it
+drifts, and `./gen_builder_manifest.py --site <website-checkout>` refreshes
+the website's carried copies after a CAD change.
+
 ## Table of contents
 
 - [The complete file map](#the-complete-file-map) — every file, one line each
 - [Pick your variant](#pick-your-variant) — gallery with previews + 3D viewers
 - [Engineering & materials](#engineering--materials-security-build) — durability, materials, thermal kit, finish
+- [Best-practice printing tips](./printing_best_practices.md) — the *why* behind a good print: strength, fit, finish, durability (slicer-agnostic)
+- [Printing in PETG — Cura guide](./printing_petg_cura.md) — reasoned settings sheet, per-model cheat-sheet, importable profile
 - [Field & environmental ratings](./field_ratings.md) — what "IP67"/"MIL-SPEC" honestly means here, the CER ladder + home test protocols
 - Device deep-dives: [WAP](#canary-wap--enclosure-v07) · [Vision](#canary-vision--enclosure-v02) · [Doorbell](#canary-vision--doorbell-v01) · [Sense radome](#canary-sense--radome-enclosure-v01)
 
@@ -66,8 +79,9 @@ the `.scad`, no committed STLs; see the [dev gallery](#in-development)):
 | [`canary_mount_adapters.scad`](./canary_mount_adapters.scad) | **Mount adapters**: corner wedge, magnet plate, pole plate, drill template — all on the shared stud interface |
 | [`canary_field_case.scad`](./canary_field_case.scad) | **Field case**: GoPro-class rugged witness — O-ring sealed, no external ports, TPU impact boot; the only CER‑4 (IP67 + drop) intent design ([ratings](./field_ratings.md)) |
 | [`canary_dash_display.scad`](./canary_dash_display.scad) | **Dashboard display case** for the Waveshare 4.3" touch panel ([display research](../display_research.md) Option B): bezel frame, vented back with keyholes + 75 mm pair, desk stand |
-| [`canary_vehicle_mount.scad`](./canary_vehicle_mount.scad) | **Vehicle mounts**: VHB dash plate (10° riser) + air-vent louver clip, on the shared stud interface — USB power only, no batteries on a hot dash |
+| [`canary_vehicle_mount.scad`](./canary_vehicle_mount.scad) | **Vehicle mounts**: VHB dash plate (10° riser) + air-vent louver clip, on the shared stud interface — USB power only, no batteries on a hot dash. Pairs with [Canary Vehicle](../canary_vehicle_can.md)'s passive CAN bus witness (arrival/departure claims) |
 | [`canary_wear_clip.scad`](./canary_wear_clip.scad) | **Body-worn carry**: belt leaf-spring clip + MOLLE/PALS adapter for the field case (or any keyhole case) |
+| [`canary_vision_pro_mount.scad`](./canary_vision_pro_mount.scad) | **Vision Pro mount**: bridges a reCamera Pro onto the shared stud interface — keyhole back, 1/4"-20 tripod counterbore and/or magnet pocket front (reCamera's confirmed mount options) |
 
 **Workshop tools** (print/use alongside any build):
 
@@ -137,6 +151,7 @@ measurements welcome.
 | **7″ touch dashboard case** — Waveshare **ESP32-S3-Touch-LCD-7** (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on moulded M3 standoffs and screws to four **gusseted** outboard M3 corner ears (webbed into the shell — no thin necks). Big convection grille (~52 cm² back + side chimney vents — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots, optional 20° desk cradle. Connector centres are NOMINAL — measure yours | glass drops in, bezel lip 3.0, M3 corners | <img src="./preview_dev_lcd7.png" width="230"> | [`canary_s3_lcd7.scad`](./canary_s3_lcd7.scad) |
 | **Vehicle mount kit** — VHB-taped dash plate with a 10° stud riser + an air-vent louver clip (extruded spring prongs snap over one blade). ⚠️ cabins exceed +60 °C: USB power only, ASA, light colors | set `stud_gap` per case (36 = field) | <img src="./preview_dev_veh.png" width="230"> | [`canary_vehicle_mount.scad`](./canary_vehicle_mount.scad) |
 | **Body-worn clips** — belt leaf-spring clip (prints on its side: flex stays in-plane) + MOLLE/PALS weave plate, both on the two-stud interface; made for the field case's floor keyholes | check local recording law; pair with the sign | <img src="./preview_dev_wear.png" width="230"> | [`canary_wear_clip.scad`](./canary_wear_clip.scad) |
+| **Vision Pro mount** — bridges a Seeed reCamera Pro onto the shared stud interface: keyhole pockets on the back (hangs on any existing stud surface in this catalog), 1/4"-20 tripod counterbore and/or magnet pocket on the front (reCamera's confirmed mount options, [Canary Vision Pro doc](../canary_vision_pro_recamera.md)). No confirmed body dimensions yet — mounting interface only | measure your screw/nut; no bench unit yet | <img src="./preview_dev_visionpro.png" width="230"> | [`canary_vision_pro_mount.scad`](./canary_vision_pro_mount.scad) |
 | **Universal fit coupon** — ONE ~25 min print that calibrates every fit in the catalog: clip, keyhole+stud, slide, gasket, press, screw, insert — each station labelled with the parameter it tunes | **print this before any case** | <img src="./preview_dev_coupon.png" width="230"> | [`canary_fit_coupon.scad`](./canary_fit_coupon.scad) |
 | **Bench bring-up fixture** — labelled stations for XIAO + BZ1/DLED1/SW1/SW2 with a sliding magnet carriage for repeatable tamper tests (companion to [bench_bringup.md](../bench_bringup.md)) | wire channels per §5 pin map | <img src="./preview_dev_fixture.png" width="230"> | [`canary_bench_fixture.scad`](./canary_bench_fixture.scad) |
 | **Fleet provisioning dock** — N numbered reclined bays for bare XIAOs beside a USB hub (v1 runbook fleet flashing) | `n_bays` parametric | <img src="./preview_dev_dock.png" width="230"> | [`canary_dock.scad`](./canary_dock.scad) |
@@ -241,7 +256,13 @@ label gets ~90 % of the consumer look for ~0 % extra work.
 5 top/bottom layers, **30 % gyroid** infill, ~30 % infill/perimeter overlap,
 +5–10 °C over the material's default for interlayer adhesion, minimal cooling
 on ASA/PC. Anneal PETG/PC parts (65 °C / 90 °C, 1 h, supported flat) for a
-further ~20 % creep and stiffness margin if you have an oven.
+further ~20 % creep and stiffness margin if you have an oven. For the full
+reasoning — every Cura setting with its *why*, a per-model orientation
+cheat-sheet, PETG stringing/sealing notes, and a one-click importable profile —
+see [**Printing in PETG — Cura guide**](./printing_petg_cura.md) (with a
+one-click [importable Cura profile](./profiles/README.md)). For the reasoning
+behind it all — where strength comes from, fits, finish, durability — see
+[**Best-practice printing tips**](./printing_best_practices.md).
 
 **Mass budget** (solid-volume upper bounds from the rendered STLs; PETG at
 1.27 g/cm³ — multiply by 0.84 for ASA): WAP compact ≈ 12 g/pair, WAP battery
@@ -289,8 +310,8 @@ The three committed example presets:
 | Preset | Outer size (rendered) | What's on it |
 |--------|----------------------|--------------|
 | **battery_full** | **104.7 × 39 × 17.2 mm** | camera + buzzer + LED + LiPo bay + GPS bay + tamper |
-| **compact_plain** | **33.7 × 37.6 × 13.7 mm** | plain board (no camera), buzzer + LED, USB-powered |
-| **battery_weather** | **106.3 × 40.6 × 20.2 mm** | battery_full **+ gasket seal + drip-edge lid + keyhole mounts** |
+| **compact_plain** | **33.7 × 36.6 × 13.7 mm** | plain board (no camera), buzzer + LED, USB-powered |
+| **battery_weather** | **107.1 × 41.4 × 20.2 mm** | battery_full **+ gasket seal + drip-edge lid + keyhole mounts** |
 
 > Corner posts always sit in **true corners beside the board** — that's why even
 > the compact case isn't as tiny as the bare-board reference. The board is always
@@ -338,7 +359,9 @@ What `opt_seal = true` adds:
 
 - **Perimeter gasket groove** in the base rim (walls auto-thicken to host it)
   and a matching **printable TPU gasket** (`part = "gasket"`). The gasket stands
-  0.6 mm proud and squeezes ~35 % under the lid screws.
+  0.3 mm proud and squeezes ~20 % under the lid screws (the ring prints 0.5
+  narrower than the groove — ~86 % fill — so the incompressible TPU has room
+  to flow instead of propping the lid open).
 - **Drip-edge lid**: the lid grows a 3 mm skirt that overlaps the base wall, so
   water sheds off the seam instead of sitting on it.
 - **USB plug recess**: a shallow recess frames the USB-C opening so a flanged
@@ -396,7 +419,7 @@ These dimensions were reconciled against **Seeed's official spec** and a
 |---------|-------|--------|
 | Board cradle + frame | base | always (standoffs + perimeter frame, PCB `standoff_h` off the floor) |
 | **Board snap clips** | base, long edges | `board_clips` — 4 tabs hook over the PCB, **clicks in, no screws** |
-| **USB-C port** | base, −X wall | always (10.5 × 6.5 mm, PCB-top height; board parked at this wall) |
+| **USB-C port** | base, −X wall | always (12 × 6.5 mm, centred on the connector axis; board parked at this wall) |
 | Battery bay + **wire channel** | base | `opt_battery` (lead notch in the ribs: `batt_wire_w`) |
 | GPS module bay | base | `opt_gps` |
 | Antenna bulkhead | base, +X wall | `opt_antenna` |
@@ -441,8 +464,8 @@ openscad --export-format binstl -o coupon.stl -D 'part="coupon"' canary_wap_encl
 | `batt_l/w/h`, `gps_l/w/h` | — | Match **your** cell / GPS module. Keep `batt_h` ≥ 1 mm over the nominal cell — LiPos swell; **scrap any swollen cell** (build plan §6.5) |
 | `cam_dx/dy`, `lp_dx/dy`, `vent_dx/dy`, `mag_dx/dy`, `touch_dx/dy` | — | Feature positions **from board centre** — set from a real measurement |
 | `cam_disc_d/t` | 12.0 / 1.0 | Clear-disc seat on the lid face (0 = bare hole) |
-| `usb_w/h/z` | 10.5/6.5/0 | Align to your USB-C cable boot |
-| `clip_t` / `clip_hook` / `clip_clear` | 1.5 / 0.8 / 0.25 | Tab flex vs. grip — tune on the **coupon** first |
+| `usb_w/h/z` | 12/6.5/−1.65 | Align to your USB-C cable boot (z centres the opening on the plug axis) |
+| `clip_t` / `clip_hook` / `clip_clear` | 1.0 / 0.5 / 0.25 | Tab flex vs. grip — tune on the **coupon** first |
 | `lid_edge`, `label_text` | 0.8 / `""` | Lid edge chamfer; debossed label text |
 | `mount_style`, `kh_*`, `tab_*` | keyhole | Match your screws / wall plugs |
 
@@ -479,7 +502,7 @@ openscad --export-format binstl -o coupon.stl -D 'part="coupon"' canary_wap_encl
 ## Build history
 
 **v0.2:** `board_w` corrected 17.8 → **17.5 mm** (Seeed official); USB-C opening
-widened to **10.5 × 6.5 mm** to clear a real cable boot (the connector body is
+sized **12 × 6.5 mm** and centred on the plug AXIS to clear a real cable boot (the connector body is
 ~8.9 × 3.2 mm); added the **compact** variant.
 
 **v0.3 — printability & connected structure:** the four corner **screw posts are
@@ -679,7 +702,7 @@ the fin round-overs self-supporting). Gasket in TPU 90–95A.
 
 The stacked-XIAO Vision build in a **video-doorbell form factor**
 ([`canary_vision_doorbell.scad`](./canary_vision_doorbell.scad)): a slim
-vertical pill, **31.8 × 113.2 × 24 mm** — the Ring Wired is 98 × 46 × 22, the
+vertical pill, **32.6 × 114 × 24 mm** — the Ring Wired is 98 × 46 × 22, the
 Wyze 93 × 41 × 22 — with the OV5647 behind a sealed disc at the top, the
 module + stacked XIAO in the middle, and a **12 mm illuminated momentary
 button** (short body, IP65, wired to the multifunction input; its LED ring
@@ -711,11 +734,15 @@ face, no side openings at all — the only penetrations are the sealed lens
 disc, the IP65 button, and the rear exit against the wall. Same honest ~IP54
 rating; a porch or doorway soffit is its natural habitat.
 
-**Assembly:** camera to the face posts + bond the disc → seat the XIAO in the
-module (**USB-Cs same direction!**) and click the stack into the rails →
-mount the button through the face, wire button/LED to the XIAO → gasket in
-the groove, face on, 4 × M2 (black-oxide looks best) → plate on the frame,
-cable through, hang the body on the studs, drive the security screw.
+**Assembly:** camera to the face posts + bond the disc → **stick an adhesive
+GORE/ePTFE membrane patch over the vent cluster on the face's INNER side**
+(the default face has the vent holes — without the membrane they defeat the
+seal; a Ø1.5 weep at the cavity's low point drains any condensate) → seat
+the XIAO in the module (**USB-Cs same direction!**) and click the stack into
+the rails → mount the button through the face, wire button/LED to the XIAO →
+gasket in the groove, face on, 4 × M2 (black-oxide looks best) → plate on
+the frame, cable through, hang the body on the studs, drive the security
+screw.
 
 | Param | Default | Why you'd change it |
 |-------|--------:|---------------------|
@@ -724,7 +751,7 @@ cable through, hang the body on the studs, drive the security screw.
 | `stack_sock_h`, `lens_dx/dy` | 11.5 / 0, 2.5 | **measure** your stack and lens, as with the Vision case |
 | `usb_exit_*` | 12×7 oval | cable exit size/position (guarded against the stud pocket) |
 | `sec_screw_d` | 2.2 | security screw — use a Torx/security drive |
-| `opt_vent` | false | GORE vent cluster for wet climates |
+| `opt_vent` | **true** | vent/sound cluster on the face — **an adhesive GORE/ePTFE membrane over it (inner face) is REQUIRED**: unmembraned holes defeat the seal; a membraned vent is what stops day/night thermal cycling from pumping moist air past it |
 | engineering trio | on | `lid_ribs`, `foot_cham`, `screw_insert` as on the other cases |
 
 > ⚠️ **v0.1 — verify before printing.** Same rules as the Vision case: measure
@@ -745,9 +772,11 @@ blind keyholes, bracket and knob (print those from the Vision file).
 ![canary-sense — back, radome front, bracket and knob](./preview_sense.png)
 
 **The radome rule** — 60 GHz must pass through the front, so the window over
-the antenna zone is a **thin, flat, uniform membrane** (`radome_t`, default
-1.0 mm; ~1.5 mm ≈ a half-wave in plastic, also low-loss) with nothing
-crossing it: the rib ring, label, gasket path and all features auto-clear it.
+the antenna zone is a **flat, uniform membrane** (`radome_t`, default
+**1.5 mm ≈ a half-wave in PETG/ASA** — the low-reflection optimum; avoid
+0.7–1.1 mm, the quarter-wave band that reflects up to ~20 % of the beam back
+into the antenna) with nothing crossing it: the rib ring, label, gasket path
+and all features auto-clear it.
 Use **unfilled PETG/ASA only** — carbon-filled filament, foil labels or paint
 with metallic pigment in front of the antenna will blind the radar. The
 **antenna-to-radome air gap is computed and asserted** (`rad_gap`, echoed at
@@ -762,7 +791,7 @@ exits the bottom wall (`xiao_usb_z` — measure the seated stack).
 
 | Param | Default | Why you'd change it |
 |-------|--------:|---------------------|
-| `radome_t` | 1.0 | radar window thickness; 1.5 ≈ half-wave alternative |
+| `radome_t` | 1.5 | radar window thickness; 1.5 ≈ half-wave in PETG/ASA (optimum) — avoid 0.7–1.1 (quarter-wave reflection band) |
 | `rad_win_x/y`, `rad_dx/dy` | 24×24 / 0, 6 | window size/position over the antenna — **measure** |
 | `vm_l/vm_w`, `stack_sock_h`, `xiao_usb_z` | 44×36 / 11.5 / 4.0 | carrier + seated-stack dimensions — **measure** |
 | `lux_dx/dy`, `lp_dx/dy` | — | sensor/LED positions from the board centre |
@@ -774,6 +803,8 @@ exits the bottom wall (`xiao_usb_z` — measure the seated stack).
 > check the radome window lands over the antenna array.
 
 ## Links
+- [Best-practice printing tips](./printing_best_practices.md) — the *why*: strength, fit, finish, durability (slicer-agnostic)
+- [Printing in PETG — Cura guide](./printing_petg_cura.md) — settings sheet, per-model cheat-sheet, importable profile
 - [Field & environmental ratings](./field_ratings.md) — hardware limits, the CER ladder, home test protocols
 - [Peripheral Build Plan & BOM](../canary_peripheral_build_plan.md) — parts, wiring, climate/IP guidance
 - [Canary Sense design doc](../../canary_sense_mr60bha2_design.md) — the radar witness this houses

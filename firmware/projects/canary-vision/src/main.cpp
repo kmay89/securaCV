@@ -9,6 +9,7 @@
 */
 
 #include <Arduino.h>
+#include <Preferences.h>
 #include <WiFi.h>
 #include <esp_task_wdt.h>
 #include <esp_random.h>  // esp_random() for reconnect jitter
@@ -19,6 +20,8 @@
 #include "canary/topics.h"
 #include "canary/types.h"
 #include "boot/boot_banner.h"
+#include "attest/self_manifest.h"
+#include "identity/device_signature.h"
 #include "identity/device_pseudonym.h"  // salted, MAC-free device handle (Invariant III)
 
 #include "canary/runtime_config.h"
@@ -31,7 +34,14 @@
 #include "canary/net/mdns_mgr.h"
 #include "canary/net/mqtt_mgr.h"
 #include "canary/net/ota_mgr.h"
+#if defined(FEATURE_FLEET_BEACON) && FEATURE_FLEET_BEACON
+#include "canary/net/fleet_beacon_adv.h"  // advertise-only BLE presence beacon
+#endif
+#if defined(FEATURE_FLEET_ROSTER) && FEATURE_FLEET_ROSTER
+#include "canary/net/fleet_roster_scan.h" // RX twin: track the other Canaries
+#endif
 #include "canary/vision/vision_mgr.h"
+#include "canary/vision/optical_features.h"  // coarse posture/proximity/occupancy names
 #include "canary/state/presence_fsm.h"
 
 static Topics TOPICS;
@@ -40,6 +50,7 @@ static canary::state::PresenceFSM fsm;
 static char last_event_name[48] = "boot";
 static uint32_t last_invoke_ms = 0;
 static uint32_t last_heartbeat_ms = 0;
+static uint32_t g_boot_count = 0;
 
 // Broker reconnect schedule (canary-sense parity): a broker outage must
 // never pin the loop — each bounded connect attempt happens at most once
@@ -212,7 +223,11 @@ static void publish_event_json(
         "\"dwell_ms\":%lu,"
         "\"confidence\":%d,"
         "\"voxel\":{\"rows\":%u,\"cols\":%u,\"r\":%d,\"c\":%d},"
-        "\"bbox\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d}"
+        "\"bbox\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},"
+        "\"occupancy\":\"%s\","
+        "\"posture\":\"%s\","
+        "\"proximity\":\"%s\","
+        "\"occ_mask\":%u"
         "%s"
       "}",
       canary::cfg::get().device_id, DEVICE_TYPE,
@@ -227,6 +242,10 @@ static void publish_event_json(
       snap.confidence,
       snap.voxel.rows, snap.voxel.cols, snap.voxel.r, snap.voxel.c,
       snap.bbox.x, snap.bbox.y, snap.bbox.w, snap.bbox.h,
+      canary::vision::optical::occupancy_name(snap.person_count),
+      canary::vision::optical::posture_name(snap.posture),
+      canary::vision::optical::proximity_name(snap.proximity),
+      (unsigned)snap.voxel_mask,
       sig_env
     );
   } else {
@@ -246,7 +265,11 @@ static void publish_event_json(
         "\"dwell_ms\":%lu,"
         "\"confidence\":%d,"
         "\"voxel\":{\"rows\":%u,\"cols\":%u,\"r\":%d,\"c\":%d},"
-        "\"bbox\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d}"
+        "\"bbox\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},"
+        "\"occupancy\":\"%s\","
+        "\"posture\":\"%s\","
+        "\"proximity\":\"%s\","
+        "\"occ_mask\":%u"
         "%s"
       "}",
       canary::cfg::get().device_id, DEVICE_TYPE,
@@ -261,6 +284,10 @@ static void publish_event_json(
       snap.confidence,
       snap.voxel.rows, snap.voxel.cols, snap.voxel.r, snap.voxel.c,
       snap.bbox.x, snap.bbox.y, snap.bbox.w, snap.bbox.h,
+      canary::vision::optical::occupancy_name(snap.person_count),
+      canary::vision::optical::posture_name(snap.posture),
+      canary::vision::optical::proximity_name(snap.proximity),
+      (unsigned)snap.voxel_mask,
       sig_env
     );
   }
@@ -273,6 +300,105 @@ static void publish_event_json(
 
 static void vision_serial_write(const char* str) {
   canary::dbg_serial().print(str);
+}
+
+static uint32_t increment_boot_count() {
+  Preferences prefs;
+  if (!prefs.begin("securacv", /*readOnly=*/false)) return 0;
+  uint32_t boots = prefs.getULong("boots", 0);
+  if (boots != UINT32_MAX) ++boots;
+  prefs.putULong("boots", boots);
+  prefs.end();
+  return boots;
+}
+
+static void hex32(const uint8_t* bytes, char out[65]) {
+  static const char HEX_DIGITS[] = "0123456789abcdef";
+  for (size_t i = 0; i < 32; ++i) {
+    out[i * 2] = HEX_DIGITS[(bytes[i] >> 4) & 0x0f];
+    out[i * 2 + 1] = HEX_DIGITS[bytes[i] & 0x0f];
+  }
+  out[64] = '\0';
+}
+
+// `j` is the app-facing print receipt. It is public-only and remains available
+// when Wi-Fi/MQTT are absent, which is exactly when first-boot diagnosis needs
+// it most.
+static void emit_self_manifest() {
+  const char* features[] = {
+    "vision", "mqtt", "home_assistant", "ota", "diagnostics",
+#if defined(FEATURE_FLEET_BEACON) && FEATURE_FLEET_BEACON
+    "fleet_beacon",
+#endif
+#if defined(FEATURE_FLEET_ROSTER) && FEATURE_FLEET_ROSTER
+    "fleet_roster",
+#endif
+  };
+  const manifest::Cmd commands[] = {
+    {'h', "help"},
+    {'j', "self_manifest"},
+  };
+  char chain_head[65];
+  hex32(canary::witness::chain_head(), chain_head);
+  const int health = (canary::vision::ready() ? 70 : 0) +
+                     (canary::witness::ready() ? 30 : 0);
+
+  manifest::Facts facts{};
+  facts.board = DEVICE_TYPE;
+  facts.firmware = CANARY_FW_VERSION;
+#ifdef FIRMWARE_GIT_HASH
+  facts.git = FIRMWARE_GIT_HASH;
+#else
+  facts.git = "not-embedded";
+#endif
+  facts.protocol = "pwk:v0.3.0";
+  facts.device_id = canary::cfg::get().device_id;
+  facts.pubkey_hex = device_signature::pubkey_hex();
+  facts.pubkey_fp_hex = device_signature::fingerprint_hex();
+  facts.chain_head_hex = chain_head;
+  facts.seq = canary::witness::chain_length();
+  facts.boots = g_boot_count;
+  facts.health = health;
+  facts.tamper = false;
+  facts.features = features;
+  facts.feature_count = sizeof(features) / sizeof(features[0]);
+  facts.commands = commands;
+  facts.command_count = sizeof(commands) / sizeof(commands[0]);
+  facts.fleet = nullptr;
+  facts.fleet_count = 0;
+  facts.help_url = "https://securacv.com/canary";
+
+  char output[1600];
+  const size_t n = manifest::build(facts, output, sizeof(output));
+  canary::dbg_serial().println();
+  if (n) canary::dbg_serial().println(output);
+  else canary::dbg_serial().println("{\"error\":\"manifest overflow\"}");
+
+  // A separate additive record keeps the shared manifest schema stable while
+  // giving the native flasher a hard, live gate for the two-board Vision unit.
+  canary::dbg_serial().printf(
+      "{\"schema\":\"securacv.vision.proof/v1\","
+      "\"module_id\":%d,\"i2c_ready\":%s,\"witness_ready\":%s,"
+      "\"wifi_configured\":%s,\"wifi_connected\":%s,\"mqtt_connected\":%s}\n",
+      canary::vision::module_id(),
+      canary::vision::ready() ? "true" : "false",
+      canary::witness::ready() ? "true" : "false",
+      canary::net::wifi_configured() ? "true" : "false",
+      canary::net::wifi_connected() ? "true" : "false",
+      canary::net::mqtt_connected() ? "true" : "false");
+}
+
+static void handle_serial_commands() {
+  while (canary::dbg_serial().available()) {
+    const char command = (char)canary::dbg_serial().read();
+    if (command == 'j' || command == 'J') {
+      emit_self_manifest();
+    } else if (command == 'h' || command == 'H' || command == '?') {
+      canary::dbg_serial().println("\n=== Commands ===");
+      canary::dbg_serial().println("  j - print machine-readable install receipt");
+      canary::dbg_serial().println("  h - this help");
+    }
+  }
 }
 
 // Apply runtime detection settings written by HA's number entities. The
@@ -317,6 +443,8 @@ static void drain_detect_cfg_commands() {
 void setup() {
   canary::dbg_serial().begin(115200);
   delay(600);
+
+  g_boot_count = increment_boot_count();
 
   boot_set_output(vision_serial_write);
 
@@ -409,10 +537,20 @@ void setup() {
     boot_kv("Witness", "signing unavailable (events publish unsigned)");
   }
 
+#if defined(FEATURE_FLEET_BEACON) && FEATURE_FLEET_BEACON
+  // Fleet-link BLE presence beacon: WiFi STA is up (they coexist on the C3/C6
+  // shared radio) and the witness fingerprint is available, so a canary-display
+  // can find this witness directly over BLE — broker-free and WiFi-free.
+  // Fail-safe: a stack that can't come up degrades to a no-op.
+  canary::net::fleet_beacon_begin(canary::ms_now());
+#endif
+
   // Bounded boot attempt: if the broker is down at boot the device still
   // finishes setup — the loop's backoff supervisor brings the link (and
   // every retained surface, discovery included) up when the broker returns.
-  if (canary::net::mqtt_connect_attempt()) {
+  if (canary::net::wifi_connected() &&
+      canary::cfg::mqtt_credentials_configured() &&
+      canary::net::mqtt_connect_attempt()) {
     canary::net::ha_discovery_publish_once(TOPICS);
 
     // Broker link is up — gossip it on the fleet advert so a display or a
@@ -423,9 +561,15 @@ void setup() {
     canary::net::publish_health_retained(TOPICS);   // carries public_key (TOFU)
     canary::net::publish_chain_retained(TOPICS);    // retained signed head
   } else {
-    canary::log_line("MQTT",
-                     "Broker unreachable at boot — continuing; the loop's "
-                     "backoff supervisor owns the retry.");
+    if (!canary::cfg::mqtt_credentials_configured()) {
+      canary::log_line("MQTT", "Provisioning required — broker settings are placeholders; continuing offline.");
+    } else if (!canary::net::wifi_connected()) {
+      canary::log_line("MQTT", "WiFi is offline — broker connect deferred to the reconnect supervisor.");
+    } else {
+      canary::log_line("MQTT",
+                       "Broker unreachable at boot — continuing; the loop's "
+                       "backoff supervisor owns the retry.");
+    }
   }
 
   // Signed pull-OTA: arm the engine (validation already ran right after
@@ -487,10 +631,29 @@ void loop() {
   esp_task_wdt_reset();
 #endif
 
+  // Always service USB proof before any network-dependent early return.
+  handle_serial_commands();
+
   // STA supervision first: backoff reconnects, outage reboot (S3 parity).
   canary::net::wifi_loop(canary::ms_now());
   canary::net::mdns_loop(canary::ms_now());  // drain deferred re-announce
   canary::diag::loop(canary::ms_now());
+
+#if defined(FEATURE_FLEET_BEACON) && FEATURE_FLEET_BEACON
+  // Refresh the BLE presence beacon every pass (internally rate-limited to
+  // ~5 s). Placed before the broker/WiFi early-returns below so it keeps
+  // advertising through an MQTT outage — that broker-free reach is the point.
+  canary::net::fleet_beacon_tick(canary::ms_now());
+#endif
+
+#if defined(FEATURE_FLEET_ROSTER) && FEATURE_FLEET_ROSTER
+  // Low-duty passive scan that hears the OTHER Canaries and keeps this
+  // witness's own fleet roster (last-heartbeat + status). Broker-independent
+  // like the beacon; also before the early-returns so it keeps tracking peers
+  // through an MQTT/WiFi outage (continuous scan when fully off-grid).
+  canary::net::fleet_roster_scan_tick(canary::ms_now(),
+                                      canary::net::wifi_connected());
+#endif
 
   if (!canary::net::mqtt_connected()) {
     if (!canary::net::wifi_connected()) {

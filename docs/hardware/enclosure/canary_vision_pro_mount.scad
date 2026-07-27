@@ -1,0 +1,124 @@
+// ============================================================================
+//  Canary — VISION PRO MOUNT  ⚠️ IN DEVELOPMENT (v0.1-dev)
+//  Bridges a Seeed reCamera Pro (or any reCamera-family unit) onto the
+//  shared T-stud wall ecosystem. The BACK carries two BLIND KEYHOLE
+//  POCKETS — identical geometry to every Canary case's back
+//  (canary_wap_enclosure.scad's keyhole_pocket()) — so this plate hangs
+//  on any existing stud surface already in the catalog: a bare wall
+//  bracket, canary_mount_adapters.scad's corner/magnet/pole plates, or
+//  canary_vehicle_mount.scad's dash plate. The FRONT carries the
+//  camera's own confirmed mounting interface — reCamera's "magnetic and
+//  1/4" thread mount" (Seeed reCamera hardware wiki; see
+//  docs/hardware/canary_vision_pro_recamera.md) — as a 1/4"-20 tripod
+//  screw counterbore and/or a magnet disc pocket.
+//
+//  ⚠️ No confirmed reCamera Pro BODY dimensions exist in this repo yet —
+//  no bench unit has been measured. This plate only carries the MOUNTING
+//  interface, not a body-hugging shell. The 1/4"-20 screw geometry is a
+//  universal camera-tripod standard (safe to model without guessing
+//  vendor dimensions); MEASURE your actual screw/washer stack before
+//  printing if it differs from the defaults below.
+//
+//  Aiming/tilt is deliberately NOT built into this plate — pair it with
+//  whichever host surface already provides angle (a tilted bracket, the
+//  vehicle dash's riser, canary_mount_adapters.scad's corner wedge).
+//
+//  ⚠️ DEV STATUS: render/mesh-verified only — NOT print- or bench-validated.
+//  See docs/hardware/canary_vision_pro_recamera.md for the integration
+//  story this hardware serves (webhook sensor adapter, no new firmware).
+// ============================================================================
+
+/* [What to render] */
+part = "plate";       // ["plate"]
+
+/* [Device-facing interface] — reCamera's confirmed mount options */
+mount = "both";        // ["tripod","magnet","both"]
+
+/* [Tripod interface — 1/4"-20 UNC, universal camera-mount standard] */
+tripod_shaft_d = 6.6;  // clearance for a 1/4"-20 screw shank (6.35 mm major dia)
+tripod_head_d  = 12.0; // counterbore for the screw head — MEASURE your screw
+tripod_head_h  = 3.5;  // counterbore depth
+
+/* [Magnet interface — matches canary_mount_adapters.scad's magnet plate] */
+mag_d = 20.0;   // Ø20 x 3 neodymium disc pocket
+mag_t = 3.0;
+
+/* [Plate] */
+plate_w = 50.0;
+plate_h = 64.0;
+plate_t = 7.0;
+plate_r = 4.0;     // corner rounding
+
+/* [T-stud keyhole interface — matches canary_wap_enclosure.scad exactly] */
+kh_head_d  = 7.0;   // screw-head pass hole (fits the catalog's Ø6.6 stud head)
+kh_shank_d = 4.2;   // slot width (fits the catalog's Ø4 stud stem)
+kh_slot_l  = 8.0;   // slot travel
+kh_head_h  = 3.5;   // total pocket depth (face web + head cavity)
+kh_face    = 1.0;   // face web thickness the stud head grips behind
+kh_x       = 12.0;  // keyhole pair spacing (± from centre)
+kh_y       = 22.0;  // keyhole row offset from centre, toward the TOP edge
+
+/* [Quality] */
+$fa = 3; $fs = 0.4;
+
+echo(str("Canary Vision Pro mount v0.1-dev — mount=", mount,
+         "  (IN DEVELOPMENT — measure your screw/nut before printing!)"));
+assert(plate_t > kh_head_h, "plate_t must exceed the keyhole pocket depth");
+assert(plate_t > tripod_head_h + 1.5, "plate_t must clear the tripod counterbore + a solid wall");
+assert(mag_t < plate_t, "mag_t must be shallower than plate_t");
+assert(kh_x * 2 + kh_head_d < plate_w, "keyhole pair too wide for plate_w");
+assert(kh_y + kh_slot_l/2 + kh_head_d/2 < plate_h/2, "keyhole row too close to the top edge");
+
+module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
+
+// Blind keyhole pocket, opening on the BACK face (z=0) and cutting +Z into
+// the plate. Slot runs along Y (vertical) so the plate slides DOWN onto a
+// stud pair to lock — same convention as every wall-hung Canary case.
+module keyhole_pocket(xc, yc) {
+    y0 = yc - kh_slot_l/2;
+    y1 = yc + kh_slot_l/2;
+    translate([xc, 0, 0]) union() {
+        linear_extrude(kh_face + 0.1) {
+            translate([0, y0]) circle(d = kh_head_d);
+            hull() {
+                translate([0, y0]) circle(d = kh_shank_d);
+                translate([0, y1]) circle(d = kh_shank_d);
+            }
+        }
+        translate([0, 0, kh_face]) linear_extrude(kh_head_h - kh_face)
+            hull() {
+                translate([0, y0]) circle(d = kh_head_d + 0.6);
+                translate([0, y1]) circle(d = kh_head_d + 0.6);
+            }
+    }
+}
+
+// Tripod screw: shank clears straight through; the head seats in a
+// counterbore on the BACK (away from the camera) so the threaded tip
+// protrudes from the FRONT to catch the camera's 1/4"-20 socket.
+module tripod_hole(xc, yc) {
+    translate([xc, yc, -0.1]) {
+        cylinder(d = tripod_shaft_d, h = plate_t + 0.2);
+        cylinder(d = tripod_head_d, h = tripod_head_h + 0.1);
+    }
+}
+
+// Magnet disc pocket, recessed into the FRONT face (the disc glues in
+// flush and mates with the camera's own magnetic mount).
+module magnet_pocket(xc, yc) {
+    translate([xc, yc, plate_t - mag_t]) cylinder(d = mag_d, h = mag_t + 0.1);
+}
+
+module plate() {
+    tripod_x = (mount == "both") ? -12 : 0;
+    magnet_x = (mount == "both") ?  12 : 0;
+    difference() {
+        linear_extrude(plate_t) rrect2d(plate_w, plate_h, plate_r);
+        keyhole_pocket(-kh_x, kh_y);
+        keyhole_pocket( kh_x, kh_y);
+        if (mount == "tripod" || mount == "both") tripod_hole(tripod_x, -16);
+        if (mount == "magnet" || mount == "both") magnet_pocket(magnet_x, -16);
+    }
+}
+
+if (part == "plate") plate();

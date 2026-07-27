@@ -7,10 +7,37 @@
 // You Can Come Home To (visible reset that spares the calibration), Night Is
 // a Mode (schedule + glow + look + peek travel together).
 #include <config.h>
+// Nightstand borrows the watch's small-portrait modal rendering (see
+// splash.cpp for the rationale); the standing face is portrait_ui.cpp.
+#if defined(CD_FLAVOR_NIGHTSTAND) && !defined(CD_FLAVOR_WATCH)
+#define CD_FLAVOR_WATCH 1
+#endif
 #include <Arduino.h>
 #include <lvgl.h>
 #include <stdio.h>
 #include <time.h>
+#if (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE) ||       \
+    (defined(FEATURE_DEMO_MODE) && FEATURE_DEMO_MODE) ||   \
+    (defined(FEATURE_DEBUG_MODE) && FEATURE_DEBUG_MODE) || \
+    (defined(FEATURE_ARCADE) && FEATURE_ARCADE)
+// The modes doorway (docs/hardware/display_modes.md): Settings lists the
+// non-fleet gears this build carries; entering one is a confirm-gated
+// latch-and-reboot through the mode glue (which owns the NVS grammar).
+#define CD_SET_MODES 1
+#include "canary/mode/mode_glue.h"
+#endif
+// Arcade is dash-first (mode_glue compiles its gear on the dash only);
+// the Settings row must not offer a gear the dispatcher can't enter.
+#if defined(FEATURE_ARCADE) && FEATURE_ARCADE && defined(CD_FLAVOR_DASH)
+#define CD_SET_ROW_ARCADE 1
+#endif
+// The mic-bearing dash (4.3C, display_mic_variant.md): the opt-in listening
+// toggle rides Settings exactly like the siren arm — off by default, NVS'd.
+#if defined(FEATURE_MIC_ALARM) && FEATURE_MIC_ALARM && \
+    defined(HAS_MICROPHONE) && HAS_MICROPHONE
+#define CD_SET_MIC 1
+#include "canary/io/mic_alarm.h"
+#endif
 
 #include "canary/ui/settings_ui.h"
 #include "canary/ui/commission_ui.h"
@@ -18,6 +45,10 @@
 #include "canary/ui/character.h"
 #include "canary/glass_settings.h"
 #include "canary/hal/display.h"
+#include "pins.h"                    // HAS_ISOLATED_IO (board -I path)
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+#include "canary/io/field_io.h"      // siren arm/disarm — 4.3B isolated output
+#endif
 
 namespace canary::ui {
 
@@ -49,6 +80,13 @@ enum class Page {
   EditHours,
   EditLook,
   EditScreen,
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+  EditSiren,   // 4.3B: arm/disarm the isolated siren output (DO0)
+#endif
+#ifdef CD_SET_MIC
+  EditMic,     // 4.3C: the mic opt-in (alarm-pattern listening, default off)
+  EditMicSens, // 4.3C: the room sensitivity preset (quiet/standard/noisy)
+#endif
   EditStyle,   // the Character ring picker
   CalIntro,    // watch only — the black-point wizard
   CalDescend,
@@ -57,6 +95,10 @@ enum class Page {
   CalWarn,
   CalDone,
   ResetConfirm,
+#ifdef CD_SET_MODES
+  ModesList,    // the non-fleet gears this build carries
+  ModeConfirm,  // confirm-gated: latch the chosen gear + reboot into it
+#endif
 };
 
 // Tap-zone ids. Zones are the built objects themselves — hit-testing reads
@@ -65,6 +107,16 @@ enum : int {
   IT_BACK = 1,
   IT_ROW_DAY, IT_ROW_NIGHT, IT_ROW_HOURS, IT_ROW_LOOK, IT_ROW_SCREEN,
   IT_ROW_STYLE, IT_ROW_CAL, IT_ROW_RESET, IT_ROW_ADD,
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+  IT_ROW_SIREN,
+#endif
+#ifdef CD_SET_MIC
+  IT_ROW_MIC, IT_ROW_MIC_SENS, IT_ROW_MIC_WAKE, IT_OPT_C,
+#endif
+#ifdef CD_SET_MODES
+  IT_ROW_DEV,   // the root doorway row ("modes" / "dev mode")
+  IT_ROW_MBENCH, IT_ROW_MDEMO, IT_ROW_MDEBUG, IT_ROW_MARCADE,
+#endif
   IT_MINUS, IT_PLUS, IT_OPT_A, IT_OPT_B, IT_PEEK, IT_GO,
   IT_YES, IT_NO,
 };
@@ -78,7 +130,17 @@ lv_obj_t* s_prev = nullptr;   // the face to return to
 lv_obj_t* s_scr = nullptr;    // our own screen while open
 lv_obj_t* s_host = nullptr;   // content parent (screen on watch, sheet on dash)
 Page s_page = Page::Root;
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+// The 4.3B dash root can carry both the dev-mode row and the siren row on top
+// of the shared rows, each two objects (name+value) — 16 clears the worst case.
+Item s_items[16];
+#elif defined(CD_SET_MIC)
+// The 4.3C dash root carries the microphone row (+ the modes doorway):
+// two more hit zones than the plain dash worst case.
+Item s_items[14];
+#else
 Item s_items[12];
+#endif
 int s_item_n = 0;
 bool s_owns_backlight = false;
 uint32_t s_last_touch_ms = 0;
@@ -267,8 +329,13 @@ void build_root() {
   char v[24];
 #ifdef CD_FLAVOR_WATCH
   // Nine rows since the style row joined — the editor spacing would run
-  // off the round glass, so the root alone packs tighter.
+  // off the round glass, so the root alone packs tighter. (Ten with the
+  // modes doorway: tighter still, and the last row stays clear of the rim.)
+#ifdef CD_SET_MODES
+  const int y0 = 32, step = 20;
+#else
   const int y0 = 36, step = 22;
+#endif
 #else
   const int y0 = ROOT_Y0, step = ROW_H;
 #endif
@@ -294,6 +361,21 @@ void build_root() {
   y += step;
   mk_row(y, "style", character_name(active_character()), IT_ROW_STYLE);
   y += step;
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+  // 4.3B only: arm the wired siren (DO0). Disarmed by default — opt-in.
+  mk_row(y, "siren", canary::io::field_io_armed() ? "armed" : "off",
+         IT_ROW_SIREN);
+  y += step;
+#endif
+#ifdef CD_SET_MIC
+  // 4.3C only: the mic opt-in. The row IS part of the always-know contract:
+  // it states the live state in the same words the chip and console use.
+  mk_row(y, "microphone",
+         !canary::io::mic_pins_ok() ? "pins unset"
+         : canary::io::mic_listening() ? "listening" : "off",
+         IT_ROW_MIC);
+  y += step;
+#endif
 #ifdef CD_FLAVOR_WATCH
   mk_row(y, "find the black point", nullptr, IT_ROW_CAL);
   y += step;
@@ -303,6 +385,18 @@ void build_root() {
   y += step;
 #endif
   mk_row(y, "reset", nullptr, IT_ROW_RESET);
+#ifdef CD_SET_MODES
+  // The glass has gears (display_modes.md): the doorway to the non-fleet
+  // modes this build carries. One gear keeps the familiar dev-mode row.
+  y += step;
+#if (defined(FEATURE_DEMO_MODE) && FEATURE_DEMO_MODE) ||   \
+    (defined(FEATURE_DEBUG_MODE) && FEATURE_DEBUG_MODE) || \
+    (defined(FEATURE_ARCADE) && FEATURE_ARCADE)
+  mk_row(y, "modes", nullptr, IT_ROW_DEV);
+#else
+  mk_row(y, "dev mode", "bench", IT_ROW_DEV);
+#endif
+#endif
 }
 
 void build_edit_day() {
@@ -392,6 +486,26 @@ void build_edit_screen() {
   lv_label_set_text(cap, "an alert always lights the glass");
   lv_obj_align(cap, LV_ALIGN_TOP_MID, 0, y + 6);
 }
+
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+// Siren arming (4.3B): one decision, two options — same shape as "night look".
+// The alert always shows on the glass; this only governs the wired output, so
+// the caption says so plainly (silence must never be mistaken for safety).
+void build_edit_siren() {
+  mk_back("siren");
+  const bool armed = canary::io::field_io_armed();
+  int y = ROOT_Y0 + ROW_H / 2;
+  mk_row(y, "armed", armed ? "on" : nullptr, IT_OPT_A, armed);
+  y += ROW_H;
+  mk_row(y, "silent", !armed ? "on" : nullptr, IT_OPT_B, !armed);
+  y += ROW_H;
+  lv_obj_t* cap = mk_label(s_host, font_caption(), col_faint());
+  lv_label_set_text(cap,
+                    "drives the wired siren on an unacked\n"
+                    "alert - the glass shows it either way");
+  lv_obj_align(cap, LV_ALIGN_TOP_MID, 0, y + 6);
+}
+#endif
 
 // The Character picker (display_character.md §7): a flip-through, not a
 // swatch grid. The screen IS the preview — by the time this builds, the
@@ -560,6 +674,131 @@ void build_reset_confirm() {
   add_item(no, IT_NO);
 }
 
+#ifdef CD_SET_MIC
+// Mic opt-in (4.3C): one decision, two options — the siren page's shape.
+// The caption carries the whole contract in the fewest honest words: what
+// listening means, and how you always know.
+void build_edit_mic() {
+  mk_back("microphone");
+  const bool pins = canary::io::mic_pins_ok();
+  const bool on = canary::io::mic_armed();
+  int y = ROOT_Y0 + ROW_H / 2;
+  mk_row(y, "listening", (pins && on) ? "on" : nullptr, IT_OPT_A, pins && on);
+  y += ROW_H;
+  mk_row(y, "off", !(pins && on) ? "on" : nullptr, IT_OPT_B, !(pins && on));
+  y += ROW_H;
+  // The room preset — how loud a sound must be to count as a beep. Detection
+  // cadence is standards-fixed; this only sets the noise-floor margin.
+  mk_row(y, "sensitivity", canary::io::mic_sensitivity_name(), IT_ROW_MIC_SENS);
+  y += ROW_H;
+  // Opt-in: a loud sound (a door close) wakes the screen. Same envelope the
+  // alarm uses — never speech, nothing recorded. Off by default.
+  mk_row(y, "wake on sound", canary::io::mic_wake_on_sound() ? "on" : "off",
+         IT_ROW_MIC_WAKE, canary::io::mic_wake_on_sound());
+  y += ROW_H;
+  lv_obj_t* cap = mk_label(s_host, font_caption(), col_faint());
+  lv_label_set_text(cap,
+      pins ? "hears alarm patterns - and, with wake on,\n"
+             "loud sounds (a door) to light the screen.\n"
+             "never speech; nothing recorded, nothing\n"
+             "leaves this board. amber chip = listening;\n"
+             "off is a real mute (driver uninstalled)."
+           : "audio pins are unset (VERIFY in pins.h) -\n"
+             "the mics are provably un-driven until the\n"
+             "bench fills them. see the board README.");
+  lv_obj_align(cap, LV_ALIGN_TOP_MID, 0, y + 6);
+}
+
+// Sensitivity preset picker (landing IS choosing). Tuned for the room, not
+// the alarm: quiet = bedroom (most sensitive), standard = living areas,
+// noisy = kitchen/workshop (least twitchy). The cadence match is unchanged.
+void build_edit_mic_sens() {
+  mk_back("sensitivity");
+  const uint8_t cur = canary::io::mic_sensitivity();
+  int y = ROOT_Y0 + ROW_H / 2;
+  mk_row(y, "quiet", cur == 0 ? "on" : nullptr, IT_OPT_A, cur == 0);
+  y += ROW_H;
+  mk_row(y, "standard", cur == 1 ? "on" : nullptr, IT_OPT_B, cur == 1);
+  y += ROW_H;
+  mk_row(y, "noisy", cur == 2 ? "on" : nullptr, IT_OPT_C, cur == 2);
+  y += ROW_H;
+  lv_obj_t* cap = mk_label(s_host, font_caption(), col_faint());
+  lv_label_set_text(cap,
+      "quiet: a bedroom - catches a faint or\n"
+      "distant alarm. noisy: a kitchen/workshop -\n"
+      "ignores clatter. it adapts to the room\n"
+      "either way; this sets the margin.");
+  lv_obj_align(cap, LV_ALIGN_TOP_MID, 0, y + 6);
+}
+#endif
+
+#ifdef CD_SET_MODES
+// Which gear is awaiting its confirm tap (ModesList -> ModeConfirm).
+canary::mode::Mode s_pending_mode = canary::mode::Mode::Fleet;
+
+void build_modes_list() {
+  mk_back("modes");
+#ifdef CD_FLAVOR_WATCH
+  const int y0 = 48, step = 26;
+#else
+  const int y0 = ROOT_Y0, step = ROW_H;
+#endif
+  int y = y0;
+#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
+  mk_row(y, "bench", "peripheral test", IT_ROW_MBENCH);
+  y += step;
+#endif
+#if defined(FEATURE_DEMO_MODE) && FEATURE_DEMO_MODE
+  mk_row(y, "demo", "scripted fleet", IT_ROW_MDEMO);
+  y += step;
+#endif
+#if defined(FEATURE_DEBUG_MODE) && FEATURE_DEBUG_MODE
+  mk_row(y, "debug", "diagnostics", IT_ROW_MDEBUG);
+  y += step;
+#endif
+#ifdef CD_SET_ROW_ARCADE
+  mk_row(y, "arcade", "touch QA", IT_ROW_MARCADE);
+  y += step;
+#endif
+  (void)y;
+}
+
+void build_mode_confirm() {
+  using canary::mode::Mode;
+  const char* title = canary::mode::mode_token(s_pending_mode);
+  const char* blurb = "";
+  switch (s_pending_mode) {
+    case Mode::Bench:
+      blurb = "Enter dev mode?\nReboots into the peripheral\nbench - no fleet, no network.";
+      break;
+    case Mode::Demo:
+      blurb = "Enter demo mode?\nA scripted household plays on\nthis glass - no fleet, no network.";
+      break;
+    case Mode::Debug:
+      blurb = "Enter debug mode?\nOn-glass diagnostics - network\nup, no updates, read-mostly.";
+      break;
+    case Mode::Arcade:
+      blurb = "Enter arcade mode?\nCanary Catch, the touch QA\nround - no fleet, no network.";
+      break;
+    default:
+      break;
+  }
+  mk_back(title);
+  lv_obj_t* body = mk_label(s_host, font_body(), col_text());
+  lv_label_set_text(body, blurb);
+  lv_obj_set_style_text_align(body, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(body, LV_ALIGN_CENTER, 0, -26);
+  lv_obj_t* yes = mk_label(s_host, font_body(), col_signed());
+  lv_label_set_text(yes, "enter");
+  lv_obj_align(yes, LV_ALIGN_CENTER, -52, 44);
+  add_item(yes, IT_YES);
+  lv_obj_t* no = mk_label(s_host, font_body(), col_muted());
+  lv_label_set_text(no, "stay");
+  lv_obj_align(no, LV_ALIGN_CENTER, 52, 44);
+  add_item(no, IT_NO);
+}
+#endif
+
 void build(Page pg) {
   clear_host();
   set_owns_backlight(false);
@@ -571,6 +810,13 @@ void build(Page pg) {
     case Page::EditHours:    build_edit_hours(); break;
     case Page::EditLook:     build_edit_look(); break;
     case Page::EditScreen:   build_edit_screen(); break;
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+    case Page::EditSiren:    build_edit_siren(); break;
+#endif
+#ifdef CD_SET_MIC
+    case Page::EditMic:      build_edit_mic(); break;
+    case Page::EditMicSens:  build_edit_mic_sens(); break;
+#endif
     case Page::EditStyle:    build_edit_style(); break;
     case Page::CalIntro:     build_cal_intro(); break;
     case Page::CalDescend:   build_cal_descend(); break;
@@ -579,6 +825,10 @@ void build(Page pg) {
     case Page::CalWarn:      build_cal_warn(); break;
     case Page::CalDone:      build_cal_done(); break;
     case Page::ResetConfirm: build_reset_confirm(); break;
+#ifdef CD_SET_MODES
+    case Page::ModesList:    build_modes_list(); break;
+    case Page::ModeConfirm:  build_mode_confirm(); break;
+#endif
   }
 }
 
@@ -660,6 +910,12 @@ void dispatch(int id) {
         case IT_ROW_HOURS:  s_hours_sel = 0; build(Page::EditHours); return;
         case IT_ROW_LOOK:   build(Page::EditLook); return;
         case IT_ROW_SCREEN: build(Page::EditScreen); return;
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+        case IT_ROW_SIREN:  build(Page::EditSiren); return;
+#endif
+#ifdef CD_SET_MIC
+        case IT_ROW_MIC:    build(Page::EditMic); return;
+#endif
         case IT_ROW_STYLE:  build(Page::EditStyle); return;
         case IT_ROW_CAL:    build(Page::CalIntro); return;
         case IT_ROW_RESET:  build(Page::ResetConfirm); return;
@@ -667,6 +923,11 @@ void dispatch(int id) {
           close_instant();
           commission_ui_open();
           return;
+#ifdef CD_SET_MODES
+        case IT_ROW_DEV:
+          build(Page::ModesList);
+          return;
+#endif
       }
       return;
 
@@ -709,6 +970,47 @@ void dispatch(int id) {
         build(Page::EditScreen);
       }
       return;
+
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+    case Page::EditSiren:
+      if (id == IT_BACK) { build(Page::Root); return; }
+      if (id == IT_OPT_A || id == IT_OPT_B) {
+        // Landing IS choosing (like night look): persist the arm state to NVS
+        // through field_io, then rebuild so the row reflects it immediately.
+        canary::io::field_io_set_armed(id == IT_OPT_A);
+        build(Page::EditSiren);
+      }
+      return;
+#endif
+#ifdef CD_SET_MIC
+    case Page::EditMic:
+      if (id == IT_BACK) { build(Page::Root); return; }
+      if (id == IT_ROW_MIC_SENS) { build(Page::EditMicSens); return; }
+      if (id == IT_ROW_MIC_WAKE) {
+        // Toggle-on-tap: flip the opt-in and redraw the row's on/off value.
+        canary::io::mic_set_wake_on_sound(!canary::io::mic_wake_on_sound());
+        build(Page::EditMic);
+        return;
+      }
+      if (id == IT_OPT_A || id == IT_OPT_B) {
+        // Landing IS choosing. mic_set_armed persists to NVS and performs
+        // the gate action in the same call — driver AND the amber chip
+        // together; with pins unset the gate refuses regardless of choice.
+        canary::io::mic_set_armed(id == IT_OPT_A);
+        build(Page::EditMic);
+      }
+      return;
+    case Page::EditMicSens:
+      if (id == IT_BACK) { build(Page::EditMic); return; }
+      if (id == IT_OPT_A || id == IT_OPT_B || id == IT_OPT_C) {
+        // Landing IS choosing: persist the preset and re-seed the floor.
+        canary::io::mic_set_sensitivity(id == IT_OPT_A ? 0
+                                        : id == IT_OPT_B ? 1
+                                                         : 2);
+        build(Page::EditMicSens);
+      }
+      return;
+#endif
 
     case Page::EditStyle:
       if (id == IT_BACK) { build(Page::Root); return; }
@@ -791,6 +1093,49 @@ void dispatch(int id) {
       }
       build(Page::Root);
       return;
+
+#ifdef CD_SET_MODES
+    case Page::ModesList:
+      switch (id) {
+        case IT_BACK: build(Page::Root); return;
+#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
+        case IT_ROW_MBENCH:
+          s_pending_mode = canary::mode::Mode::Bench;
+          build(Page::ModeConfirm);
+          return;
+#endif
+#if defined(FEATURE_DEMO_MODE) && FEATURE_DEMO_MODE
+        case IT_ROW_MDEMO:
+          s_pending_mode = canary::mode::Mode::Demo;
+          build(Page::ModeConfirm);
+          return;
+#endif
+#if defined(FEATURE_DEBUG_MODE) && FEATURE_DEBUG_MODE
+        case IT_ROW_MDEBUG:
+          s_pending_mode = canary::mode::Mode::Debug;
+          build(Page::ModeConfirm);
+          return;
+#endif
+#ifdef CD_SET_ROW_ARCADE
+        case IT_ROW_MARCADE:
+          s_pending_mode = canary::mode::Mode::Arcade;
+          build(Page::ModeConfirm);
+          return;
+#endif
+      }
+      return;
+
+    case Page::ModeConfirm:
+      if (id == IT_YES) {
+        // Latch the chosen gear for the NEXT boot and reboot into it. The
+        // glue owns the NVS grammar (token + the legacy devmode bool for
+        // the bench); every gear's own 3 s long-press exits back here.
+        canary::mode::mode_request(s_pending_mode);  // does not return
+        return;
+      }
+      build(Page::ModesList);  // "stay" / back
+      return;
+#endif
   }
 }
 

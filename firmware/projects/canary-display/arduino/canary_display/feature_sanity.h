@@ -36,6 +36,16 @@
   #error "FEATURE_SD_STORAGE=1 but this board has no SD slot (HAS_SD_CARD=0). Disable FEATURE_SD_STORAGE in your configs/<app>/<config>/config.h, or select a board with an SD slot (see firmware/boards/boards.json)."
 #endif
 
+// ─── Fieldbus ───────────────────────────────────────────────────────────
+
+#if defined(FEATURE_RS485) && FEATURE_RS485 && defined(HAS_CAN_RS485) && !HAS_CAN_RS485
+  #error "FEATURE_RS485=1 but this board has no RS485 transceiver (HAS_CAN_RS485=0). Disable FEATURE_RS485 in your config, or select a board with the RS485/CAN terminal (e.g. waveshare-esp32s3-lcd43b; see firmware/boards/boards.json)."
+#endif
+
+#if defined(FEATURE_CAN) && FEATURE_CAN && defined(HAS_CAN_RS485) && !HAS_CAN_RS485
+  #error "FEATURE_CAN=1 but this board has no CAN/TWAI transceiver (HAS_CAN_RS485=0). Disable FEATURE_CAN in your config, or select a board with the RS485/CAN terminal (e.g. waveshare-esp32s3-lcd43b; see firmware/boards/boards.json)."
+#endif
+
 // ─── Camera ─────────────────────────────────────────────────────────────
 
 #if defined(FEATURE_CAMERA_PEEK) && FEATURE_CAMERA_PEEK && defined(HAS_CAMERA) && !HAS_CAMERA
@@ -109,15 +119,51 @@
 // mode must not build — failing loud beats a bench build whose DI/DO
 // stations silently drive the wrong expander bits.
 
-#if defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND
+// FEATURE_DEVMODE reboots into that same peripheral bench from Settings, so it
+// carries the identical board contract — the terminal block is still the whole
+// safety story. Both flags are gated here together.
+#if (defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND) || \
+    (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE)
   #if !defined(HAS_ISOLATED_IO) || !HAS_ISOLATED_IO
-    #error "FEATURE_PLAYGROUND=1 requires a board with isolated DI/DO (HAS_ISOLATED_IO=1 — the Waveshare ESP32-S3-Touch-LCD-4.3B, boards/waveshare-esp32s3-lcd43b). Build the canary-display-playground env, or in the Arduino IDE pick the 'Waveshare ESP32-S3-Touch-LCD-4.3B' board (see docs/hardware/dev_playground_43b.md)."
+    #error "FEATURE_PLAYGROUND / FEATURE_DEVMODE require a board with isolated DI/DO (HAS_ISOLATED_IO=1 — the Waveshare ESP32-S3-Touch-LCD-4.3B, boards/waveshare-esp32s3-lcd43b). Build the canary-display-playground or canary-display-dash-b env, or in the Arduino IDE pick the 'Waveshare ESP32-S3-Touch-LCD-4.3B' board (see docs/hardware/dev_playground_43b.md)."
   #endif
   #if defined(HAS_DISPLAY) && !HAS_DISPLAY
-    #error "FEATURE_PLAYGROUND=1 but this board has no display (HAS_DISPLAY=0) — the playground is a guided on-glass mode. Select the 4.3B display board."
+    #error "FEATURE_PLAYGROUND / FEATURE_DEVMODE but this board has no display (HAS_DISPLAY=0) — the bench is a guided on-glass mode. Select the 4.3B display board."
   #endif
   #if defined(HAS_TOUCH) && !HAS_TOUCH
-    #error "FEATURE_PLAYGROUND=1 but this board has no touch controller (HAS_TOUCH=0) — the playground's station cards are tap-driven. Select the 4.3B display board."
+    #error "FEATURE_PLAYGROUND / FEATURE_DEVMODE but this board has no touch controller (HAS_TOUCH=0) — the bench's station cards are tap-driven. Select the 4.3B display board."
+  #endif
+#endif
+
+// ─── On-glass modes: demo / debug / arcade ──────────────────────────────
+//
+// The bench's siblings (docs/hardware/display_modes.md) are tap-driven
+// full-screen faces: they need glass and touch, nothing more — the
+// isolated-IO contract belongs to the bench pair above, not here. These
+// follow the standard both-sides-defined convention (adoption-safe on
+// boards that predate the flags).
+#if (defined(FEATURE_DEMO_MODE) && FEATURE_DEMO_MODE) ||   \
+    (defined(FEATURE_DEBUG_MODE) && FEATURE_DEBUG_MODE) || \
+    (defined(FEATURE_ARCADE) && FEATURE_ARCADE)
+  #if defined(HAS_DISPLAY) && !HAS_DISPLAY
+    #error "FEATURE_DEMO_MODE / FEATURE_DEBUG_MODE / FEATURE_ARCADE but this board has no display (HAS_DISPLAY=0) — the modes are full-screen faces. Build a canary-display modes env (see docs/hardware/display_modes.md), or drop the mode flag."
+  #endif
+  #if defined(HAS_TOUCH) && !HAS_TOUCH
+    #error "FEATURE_DEMO_MODE / FEATURE_DEBUG_MODE / FEATURE_ARCADE but this board has no touch controller (HAS_TOUCH=0) — every mode is tap-driven and exits by long-press. Pick a touch display board, or drop the mode flag."
+  #endif
+#endif
+
+// ─── Acoustic alarm listener (the mic-bearing dash) ─────────────────────
+//
+// FEATURE_MIC_ALARM is the 4.3C's alarm-pattern listener. It deliberately
+// breaks the "both sides defined" convention the same way the playground
+// does: an UNDEFINED HAS_MICROPHONE means the selected board never declared
+// a mic, and a listening feature must not build on silence about the one
+// capability that IS the privacy surface — failing loud beats a mic build
+// landing on a board whose map never admitted to microphones.
+#if defined(FEATURE_MIC_ALARM) && FEATURE_MIC_ALARM
+  #if !defined(HAS_MICROPHONE) || !HAS_MICROPHONE
+    #error "FEATURE_MIC_ALARM=1 but this board declares no microphone (HAS_MICROPHONE=1 required — the Waveshare ESP32-S3-Touch-LCD-4.3C, boards/waveshare-esp32s3-lcd43c). Build the canary-display-dash-mic env, or drop the flag (see docs/hardware/display_mic_variant.md)."
   #endif
 #endif
 

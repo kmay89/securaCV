@@ -133,10 +133,23 @@ static void emit_event(vision_event_type_t type, uint8_t confidence, uint8_t zon
 // JPEG → GRAYSCALE DECODE
 // ════════════════════════════════════════════════════════════════════════════
 
-// RGB888 temporary buffer — allocated for max expected frame (VGA).
-// Larger frames (XGA+) are skipped to avoid excessive PSRAM use.
+// RGB888 temporary buffer for the motion/tamper decode path.
+//
+// BUGFIX: the ceiling was VGA (640x480), but the camera's tiered init settles
+// at XGA (1024x768) on a PSRAM board (securacv_camera.cpp begin() ladder). Any
+// frame larger than the ceiling makes decode_and_downsample() hard-return
+// false, so at the *default* running resolution Layers 2 and 3 (block-motion,
+// scene-tamper, object-removal, and the TFLite person detector, which consumes
+// this same gray buffer) silently never ran. Raising the ceiling to XGA makes
+// them functional at the default resolution. The buffer is lazy-allocated in
+// PSRAM (2.25 MB at XGA) only when a decode is first attempted, i.e. only in
+// FEATURE_VISION_DETECT builds — no cost to the shipping images that leave
+// vision off. Frames above XGA (e.g. a user who bumps peek to UXGA) still skip
+// the software decode; the real fix for those is a sensor-side small
+// grayscale/RGB565 capture for the vision path (tracked as a follow-up), which
+// also removes the full-frame JPEG decode entirely.
 static uint8_t* s_rgb_buf = nullptr;
-#define RGB_BUF_MAX_PIXELS (640 * 480)
+#define RGB_BUF_MAX_PIXELS (1024 * 768)
 #define RGB_BUF_SIZE (RGB_BUF_MAX_PIXELS * 3)
 
 static bool decode_and_downsample(camera_fb_t* fb, uint8_t* gray,

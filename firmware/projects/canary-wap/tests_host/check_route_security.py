@@ -49,6 +49,12 @@ PUBLIC_ALLOWLIST = {
     ("GET", "/manifest.webmanifest"): "PWA manifest (sense dashboard)",
     ("GET", "/sw.js"): "service worker (sense dashboard)",
     ("GET", "/sense"): "permanent 301 redirect to /",
+    # Coarse fleet presence/health is deliberately public — the DISCOVERY.md
+    # contract the Witness Wall emulator + Flasher read. Presence + a coarse
+    # chain-OK flag only; no secrets, no media, no evidence (that stays behind
+    # the Bearer-gated /api/fleet-scan and the break-glass evidence paths).
+    ("GET", "/api/fleet"): "public coarse fleet presence/health (DISCOVERY.md); no secrets/media",
+    ("OPTIONS", "/api/fleet"): "CORS preflight for the public /api/fleet contract",
     # Device identity is deliberately public (pubkey + fingerprint).
     ("GET", "/api/device/enroll"): "public device identity (pubkey/fingerprint)",
     ("GET", "/enroll"): "human-readable enroll page for the same data",

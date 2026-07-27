@@ -135,6 +135,9 @@
 #ifndef FEATURE_TEST_CONSOLE
   #define FEATURE_TEST_CONSOLE     0   // Serial DEMO/MUTATE test commands (camera peek, mic beep, BLE advertise, pairing…). OFF in every shipping image: the console's 't' run-all is read-only (Tier::Diag) and always available, but the powerful demo/mutating commands are dev/test-only and never in a production binary (security + flash). See docs/design/test_console.md.
 #endif
+#ifndef FEATURE_CONSOLE_THEME
+  #define FEATURE_CONSOLE_THEME    1   // The themed serial console: the 'l' identity banner (device fingerprint as drunken-bishop randomart) via the host-tested scene engine (common/ui/*). Safe by default — probes the terminal (ESC[6n) and stays 7-bit ASCII unless it answers, so it never becomes garbage. Small flash cost (pure header composition); compile out if the budget is tight. See docs/design/serial_console_theming.md.
+#endif
 
 // ════════════════════════════════════════════════════════════════
 // DEBUG FLAG DEFAULTS
@@ -161,7 +164,7 @@
 // ════════════════════════════════════════════════════════════════
 
 #define DEVICE_TYPE           "canary"
-#define FIRMWARE_VERSION      "2.2.0"
+#define FIRMWARE_VERSION      "2.3.0"
 
 // Optional build-time provenance for the 'f' fingerprint command. CI/PlatformIO
 // can inject the short commit with -DFIRMWARE_GIT_HASH=\"abc1234\"; when it
@@ -274,6 +277,19 @@
 #define AP_CHANNEL           1
 #define AP_MAX_CONNECTIONS   1    // Hardened: max 1 client for security isolation
 
+// Radio defaults applied once at network bring-up. Pinning the PHY to HT20 +
+// 11bgn keeps the WiFi-CSI subcarrier count constant — an HT40 association or
+// rate renegotiation would change it and destabilize the fixed 32-dim CSI
+// feature vector. The country code sets the correct regulatory channel set / TX
+// ceiling; with 802.11d enabled the STA adapts it to the associated AP, so the
+// world-safe "01" default never blocks a router on ch 12/13.
+#ifndef CANARY_WIFI_COUNTRY
+  #define CANARY_WIFI_COUNTRY  "01"   // world-safe; 802.11d adapts to the AP
+#endif
+#ifndef CANARY_WIFI_TX_QDBM
+  #define CANARY_WIFI_TX_QDBM  78     // quarter-dBm (~19.5 dBm); ESP32-S3 range 8..84
+#endif
+
 // ════════════════════════════════════════════════════════════════
 // BLE DEFAULTS
 // ════════════════════════════════════════════════════════════════
@@ -329,9 +345,21 @@
 // ════════════════════════════════════════════════════════════════
 // SD CARD SPI SPEEDS
 // ════════════════════════════════════════════════════════════════
-
-#define SD_SPI_FAST              4000000   // 4 MHz
-#define SD_SPI_SLOW              1000000   // 1 MHz fallback
+//
+// FAST is the normal operating clock; the storage driver falls back to SLOW
+// (and retries the whole SD.begin ladder) if a card fails to init at FAST, so
+// a card that can't sustain FAST degrades gracefully rather than failing to
+// mount. 20 MHz is well within SD-SPI limits on the short XIAO-Sense expansion
+// traces (SPI mode tops out at 25 MHz per the SD spec) and cuts the
+// synchronous per-record FAT-append window on the loop task ~5x vs the old
+// 4 MHz. Hardware bench validation across a range of cards is recommended
+// before treating 20 MHz as verified — see firmware/CONFIG_CHANGES.md.
+#ifndef SD_SPI_FAST
+  #define SD_SPI_FAST            20000000  // 20 MHz normal operation
+#endif
+#ifndef SD_SPI_SLOW
+  #define SD_SPI_SLOW            1000000   // 1 MHz init/recovery fallback
+#endif
 
 // ════════════════════════════════════════════════════════════════
 // WIFI PROVISIONING

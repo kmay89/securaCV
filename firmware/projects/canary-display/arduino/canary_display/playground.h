@@ -19,6 +19,8 @@
 //   ToF        I2C — VL53L0X (0x29); mm ranging + trip-threshold counter
 //   Cap touch  I2C — MPR121 (0x5A); 12-electrode bitmap + sensitivity
 //                    presets for the printed shell-thickness test piece
+//   RS485      A/B — Modbus RTU probe of a slave's holding register
+//   CAN bus    H/L — CAN 2.0 / TWAI: transmit a test frame, count RX
 //   I2C census — live bus scan with reserved-address warnings
 //
 // Serial protocol (PG1 — see the playground doc §Comms):
@@ -72,12 +74,29 @@ struct I2cCensus {
   uint8_t addrs[16] = {0};
 };
 
+struct Rs485State {
+  bool     ready = false;     // Serial1 brought up on A/B
+  uint32_t polls = 0;         // PROBE requests sent
+  uint32_t replies = 0;       // valid Modbus responses parsed
+  uint16_t last_val = 0;      // last holding-register value read
+  bool     last_ok = false;   // last probe got a good reply
+};
+
+struct CanState {
+  bool     ready = false;     // TWAI installed + started on H/L
+  uint32_t tx = 0;            // test frames transmitted
+  uint32_t rx = 0;            // frames received
+  uint32_t last_id = 0;       // id of the last received frame
+};
+
 struct PgState {
   DiChannel di0, di1;
   DoChannel do0, do1;
   LightState light;
   TofState   tof;
   PadState   pad;
+  Rs485State rs485;
+  CanState   can;
   I2cCensus  bus;
   bool       display_ok = false;
 };
@@ -89,6 +108,8 @@ void action_do_pulse(int ch);         // 0/1: bounded 1.5 s pulse
 void action_do_latch_toggle(int ch);  // 0/1: latch with 30 s safety auto-off
 void action_pad_cycle_preset();       // contact -> 2 mm -> 4 mm -> max gain
 void action_tof_cycle_trip();         // 50 -> 100 -> 200 -> 400 mm
+void action_rs485_probe();            // Modbus RTU: read holding reg 0 of slave 1
+void action_can_send();               // transmit one CAN test frame
 
 const char* pad_preset_name(uint8_t idx);
 const char* i2c_device_name(uint8_t addr);  // known-address lookup, "" unknown

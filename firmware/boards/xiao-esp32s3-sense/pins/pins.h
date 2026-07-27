@@ -100,8 +100,12 @@
 #define SD_PIN_MISO             8     // SPI data in (shared with D9)
 #define SD_PIN_MOSI             9     // SPI data out (shared with D10)
 
-// SD card SPI configuration
-#define SD_SPI_FREQ_FAST        4000000   // 4 MHz normal operation
+// SD card SPI configuration.
+// NOTE: the canary firmware's SD driver uses SD_SPI_FAST/SD_SPI_SLOW from
+// canary/include/canary_config.h, not these board macros — keep the values in
+// sync. 20 MHz is within the SD-SPI 25 MHz ceiling on the short expansion
+// traces; the driver falls back to the slow clock if a card can't sustain it.
+#define SD_SPI_FREQ_FAST        20000000  // 20 MHz normal operation
 #define SD_SPI_FREQ_SLOW        1000000   // 1 MHz for init/recovery
 
 // ============================================================================

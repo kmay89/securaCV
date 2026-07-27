@@ -13,7 +13,7 @@
 
 ## What This Device Does
 
-SecuraCV Canary is a witness device. It creates tamper-proof records of
+SecuraCV Canary is a witness device. It creates tamper-evident records of
 events — nearby wireless devices, GPS location, environmental changes —
 and chains them together cryptographically so that any alteration or
 deletion is detectable.
@@ -56,6 +56,10 @@ The device records only:
 - **Device health data** — memory, storage, battery status
 - **User-triggered events** — camera preview snapshots (on demand only)
 - **Environmental changes** — motion state transitions (stationary/moving)
+- **Coarse optical signals** (vision Canary) — occupancy as a bucket
+  (none/one/two/several), a posture class (upright/ambiguous/horizontal), and a
+  proximity band (far/mid/near), derived on-device from person bounding-box
+  geometry. Ordinals only — never coordinates, gait, or identity
 
 ---
 
@@ -67,6 +71,10 @@ The device does not and cannot collect:
 - Device identifiers — MAC addresses are hashed before any storage and
   the originals are immediately discarded
 - Audio or continuous video recording
+- Skeletons, keypoints, gait, or body measurements — the vision Canary emits
+  coarse ordinals derived from bounding boxes, never a biometric
+- Exact per-person counts or occupancy histories — occupancy is a coarse
+  bucket, not a running tally
 - Browsing history or app data from nearby devices
 - Any data from your phone when connected to the dashboard
 - Usage analytics, telemetry, or crash reports
@@ -166,8 +174,8 @@ from established, audited libraries.
 The witness chain is append-only:
 
 - **Records can be added** — each new record extends the chain
-- **Records cannot be modified** — changing any record breaks the chain
-- **Records cannot be deleted** — missing sequence numbers are detectable
+- **Records cannot be modified undetectably** — changing any record breaks the chain
+- **Records cannot be deleted undetectably** — missing sequence numbers are detectable
 - **The chain break itself is evidence** — tampering is visible to anyone
   who checks
 

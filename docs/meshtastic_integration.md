@@ -82,7 +82,10 @@ Routing detail: claims route on the payload's `from` field (the originating sens
 topic's trailing `!nodeid` — that identifies the *gateway* that uplinked the packet.
 
 Allowed claim kinds are deliberately minimal — what a GPIO LoRa node can plausibly assert:
-`presence_in_restricted_zone`, `contact_state_change`, `acoustic_impulse_in_zone`.
+`presence_in_restricted_zone`, `contact_state_change`, `acoustic_impulse_in_zone`,
+`vehicle_arrival_departure` (added for [Canary Car Mode](hardware/canary_car_mode.md) — a GPIO
+reading a vehicle's ignition-switched power rail is exactly the same "binary state, asserted
+while active" shape as a PIR or contact switch).
 
 ### Privacy analysis (per invariant)
 
@@ -185,6 +188,16 @@ math.
 
 ## Risks and open questions
 
+- **The Detection Sensor Module's OFF transition is not reliable on all firmware versions.**
+  [meshtastic/firmware#8977](https://github.com/meshtastic/firmware/issues/8977) reports the
+  module "repeatedly sends ON and does not send OFF" — and separately, LOW→HIGH detections are
+  not always sent immediately, only after `minimum_broadcast_interval` expires. **Do not design
+  any feature around an instant, reliable state-transition packet** (inbound or a future
+  outbound design) — this adapter already doesn't: `state_broadcast_state()` only ever asserts on
+  an *active* heartbeat, never an inactive one, so "presence ended" is always inferred from
+  absence (a consumer-side timeout — the same pattern Home Assistant's own presence entities
+  use), never from trusting a transition packet arrived. Pin and bench-test the firmware version
+  actually deployed before relying on transition timing for anything time-sensitive.
 - **Replay across buckets** (inbound): a captured detection packet replayed in a later bucket
   forges at most one coarse event. Accepted for v0 and documented; a small ring buffer of recent
   Meshtastic packet `id`s in the adapter is a cheap follow-up if it matters in practice.

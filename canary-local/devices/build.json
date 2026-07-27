@@ -5,6 +5,11 @@
   "source": "sbom/README.md",
   "link": "https://github.com/kmay89/securaCV/actions/workflows/sbom.yml"
  },
+ "pricing": {
+  "source": "docs/hardware/pricing.json",
+  "as_of": "2026-07-27T12:36:35Z",
+  "note": "Nightly distributor snapshot (scripts/bom_pricing.py); rows without a live match keep the CSV's indicative price."
+ },
  "devices": {
   "canary-wap": {
    "bom": {
@@ -18,8 +23,15 @@
       "desc": "XIAO ESP32-S3 Sense (ESP32-S3, 8MB flash, 8MB PSRAM, OV2640 camera, PDM mic)",
       "mpn": "102010469",
       "mfr": "Seeed Studio",
-      "usd": 14.9,
-      "notes": "Main controller; onboard LiPo charger (BAT pads); operating -40 to +65 C; verified Mouser/DigiKey SKU"
+      "usd": 13.99,
+      "notes": "Main controller; onboard LiPo charger (BAT pads); operating -40 to +65 C; verified Mouser/DigiKey SKU. Seeed/DigiKey list $13.99 (mid-2026)",
+      "orderable": true,
+      "live": {
+       "unit_usd": 15.9,
+       "stock": 1847,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/102010469/16652896"
+      }
      },
      {
       "ref": "CBL1",
@@ -30,7 +42,8 @@
       "mpn": "USB-C-DATA-1M",
       "mfr": "Generic",
       "usd": 3.5,
-      "notes": "Required for flashing and 5V power"
+      "notes": "Required for flashing and 5V power",
+      "orderable": false
      },
      {
       "ref": "SD1",
@@ -41,7 +54,8 @@
       "mpn": "SDSQQNR-032G-GN6IA",
       "mfr": "SanDisk",
       "usd": 8.5,
-      "notes": "High Endurance line (or MAX Endurance SDSQQVR for heaviest duty); temperature-proof/waterproof; NOT a consumer card"
+      "notes": "High Endurance line (or MAX Endurance SDSQQVR for heaviest duty); temperature-proof/waterproof; NOT a consumer card",
+      "orderable": true
      },
      {
       "ref": "BZ1",
@@ -52,7 +66,14 @@
       "mpn": "CPT-9019S-SMT-TR",
       "mfr": "CUI Devices",
       "usd": 0.55,
-      "notes": "CHIRP_GPIO=GPIO2 (D1); LEDC PWM 2kHz/8-bit. For outdoor use a sealed IP67 piezo OR mount behind GORE vent (VENT1). Piezo preferred over magnetic (moisture/coil wear)"
+      "notes": "CHIRP_GPIO=GPIO2 (D1); LEDC PWM 2kHz/8-bit. For outdoor use a sealed IP67 piezo OR mount behind GORE vent (VENT1). Piezo preferred over magnetic (moisture/coil wear)",
+      "orderable": true,
+      "live": {
+       "unit_usd": 2.2,
+       "stock": 6285,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/same-sky-formerly-cui-devices/CPT-9019S-SMT-TR/6012432"
+      }
      },
      {
       "ref": "Q1",
@@ -63,7 +84,14 @@
       "mpn": "2N7002",
       "mfr": "onsemi",
       "usd": 0.1,
-      "notes": "Magnetic buzzers draw 30-50mA and are moisture-susceptible; not needed for the recommended piezo BZ1"
+      "notes": "Magnetic buzzers draw 30-50mA and are moisture-susceptible; not needed for the recommended piezo BZ1",
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.16,
+       "stock": 49700,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/diotec-semiconductor/2N7002/13163336"
+      }
      },
      {
       "ref": "Dfb1",
@@ -74,7 +102,14 @@
       "mpn": "1N4148",
       "mfr": "onsemi",
       "usd": 0.05,
-      "notes": "Clamps inductive spike to protect Q1 when driving a MAGNETIC buzzer; not needed for piezo BZ1"
+      "notes": "Clamps inductive spike to protect Q1 when driving a MAGNETIC buzzer; not needed for piezo BZ1",
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.1,
+       "stock": 966863,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/onsemi/1N4148/458603"
+      }
      },
      {
       "ref": "R1",
@@ -85,7 +120,14 @@
       "mpn": "RC0805FR-07100RL",
       "mfr": "Yageo",
       "usd": 0.02,
-      "notes": "Series with buzzer"
+      "notes": "Series with buzzer",
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.1,
+       "stock": 178718,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-07100RL/727543"
+      }
      },
      {
       "ref": "DLED1",
@@ -96,7 +138,8 @@
       "mpn": "WS2812B",
       "mfr": "Worldsemi",
       "usd": 0.15,
-      "notes": "EXT_LED_PIN_DEFAULT=GPIO3 (D2), active HIGH. FIRMWARE: pin defined but NOT driven by canary-wap today (active indicator is LED_BUILTIN GPIO21) - needs RGB driver code. Conformal-coat for humid/outdoor"
+      "notes": "EXT_LED_PIN_DEFAULT=GPIO3 (D2), active HIGH. FIRMWARE: pin defined but NOT driven by canary-wap today (active indicator is LED_BUILTIN GPIO21) - needs RGB driver code. Conformal-coat for humid/outdoor",
+      "orderable": true
      },
      {
       "ref": "R2",
@@ -107,7 +150,14 @@
       "mpn": "RC0805FR-07330RL",
       "mfr": "Yageo",
       "usd": 0.02,
-      "notes": "In series with WS2812 DIN"
+      "notes": "In series with WS2812 DIN",
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.1,
+       "stock": 471734,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-07330RL/727866"
+      }
      },
      {
       "ref": "C1",
@@ -118,7 +168,14 @@
       "mpn": "CL21B104KBCNNNC",
       "mfr": "Samsung",
       "usd": 0.02,
-      "notes": "Local bypass at pixel V+/GND; X7R good over temp"
+      "notes": "Local bypass at pixel V+/GND; X7R good over temp",
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.1,
+       "stock": 7250640,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/samsung-electro-mechanics/CL21B104KBCNNNC/3886661"
+      }
      },
      {
       "ref": "SW2",
@@ -129,7 +186,8 @@
       "mpn": "59140-1-S-02-A",
       "mfr": "Littelfuse",
       "usd": 1.8,
-      "notes": "TAMPER_PIN_DEFAULT=GPIO4 (D3), INPUT_PULLUP active LOW. FIRMWARE: FEATURE_TAMPER_GPIO defined but NOT yet consumed - needs firmware support, OR use securacv_touch enclosure-tamper mode. GPIO4 shared with touch default (see build plan 5.1). Hermetic glass = wide-temp, near-zero idle current"
+      "notes": "TAMPER_PIN_DEFAULT=GPIO4 (D3), INPUT_PULLUP active LOW. FIRMWARE: FEATURE_TAMPER_GPIO defined but NOT yet consumed - needs firmware support, OR use securacv_touch enclosure-tamper mode. GPIO4 shared with touch default (see build plan 5.1). Hermetic glass = wide-temp, near-zero idle current",
+      "orderable": true
      },
      {
       "ref": "SW2-ALT",
@@ -140,7 +198,14 @@
       "mpn": "AH3572-P-B",
       "mfr": "Diodes Inc",
       "usd": 0.45,
-      "notes": "Alternative to reed; draws continuous quiescent current (reed preferred for battery devices)"
+      "notes": "Alternative to reed; draws continuous quiescent current (reed preferred for battery devices)",
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.0,
+       "stock": 0,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/diodes-incorporated/AH3572-P-B/9649753"
+      }
      },
      {
       "ref": "MAG1",
@@ -151,7 +216,8 @@
       "mpn": "NEO-6X3-NI",
       "mfr": "Generic",
       "usd": 0.4,
-      "notes": "Lid-mounted; separates from SW2 when enclosure opens. Ni/epoxy coat for corrosion; NdFeB max ~80C, use SmCo if hot"
+      "notes": "Lid-mounted; separates from SW2 when enclosure opens. Ni/epoxy coat for corrosion; NdFeB max ~80C, use SmCo if hot",
+      "orderable": false
      },
      {
       "ref": "SW1",
@@ -162,7 +228,14 @@
       "mpn": "B3F-1000",
       "mfr": "Omron",
       "usd": 0.12,
-      "notes": "Parallel to BOOT/GPIO0; hold>=2000ms. NOT sealed - for outdoor use SW1-ALT or just reuse onboard BOOT"
+      "notes": "Parallel to BOOT/GPIO0; hold>=2000ms. NOT sealed - for outdoor use SW1-ALT or just reuse onboard BOOT",
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.35,
+       "stock": 40981,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/aratas-america-llc/B3F-1000/33150"
+      }
      },
      {
       "ref": "SW1-ALT",
@@ -173,7 +246,8 @@
       "mpn": "PTS645Sama (sealed) / panel dome",
       "mfr": "C&K",
       "usd": 1.5,
-      "notes": "Use instead of B3F-1000 if button must be exposed outdoors; or prefer cap-touch TP1 through sealed wall"
+      "notes": "Use instead of B3F-1000 if button must be exposed outdoors; or prefer cap-touch TP1 through sealed wall",
+      "orderable": false
      },
      {
       "ref": "TP1",
@@ -184,7 +258,8 @@
       "mpn": "CU-FOIL-PAD",
       "mfr": "Generic",
       "usd": 0.2,
-      "notes": "securacv_touch TOUCH_PIN_NUM default=GPIO4 (D3). FIRMWARE: lib wired into firmware/canary build (not canary-wap .ino) - integrate to use. To coexist with tamper on GPIO4, set -DTOUCH_PIN_NUM=5 and wire to D4/GPIO5. Senses THROUGH sealed wall = best weatherproof input"
+      "notes": "securacv_touch TOUCH_PIN_NUM default=GPIO4 (D3). FIRMWARE: lib wired into firmware/canary build (not canary-wap .ino) - integrate to use. To coexist with tamper on GPIO4, set -DTOUCH_PIN_NUM=5 and wire to D4/GPIO5. Senses THROUGH sealed wall = best weatherproof input",
+      "orderable": false
      },
      {
       "ref": "R6",
@@ -195,7 +270,14 @@
       "mpn": "RC0805FR-071KL",
       "mfr": "Yageo",
       "usd": 0.02,
-      "notes": "Series with touch electrode"
+      "notes": "Series with touch electrode",
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.1,
+       "stock": 497231,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-071KL/727444"
+      }
      },
      {
       "ref": "BT1",
@@ -206,7 +288,8 @@
       "mpn": "LP-503450-1100-PCM",
       "mfr": "Generic",
       "usd": 7.5,
-      "notes": "SAFETY-CRITICAL - see build plan section 6.5/9.2. Use only certified protected cells (IEC 62133/UL). INDOOR/mild only: LiPo cannot charge <0C, swells in heat. Charges off XIAO onboard charger"
+      "notes": "SAFETY-CRITICAL - see build plan section 6.5/9.2. Use only certified protected cells (IEC 62133/UL). INDOOR/mild only: LiPo cannot charge <0C, swells in heat. Charges off XIAO onboard charger",
+      "orderable": false
      },
      {
       "ref": "BT1-ALT1",
@@ -217,7 +300,8 @@
       "mpn": "LIFEPO4-14500-PCM+CTRL",
       "mfr": "Generic",
       "usd": 9.0,
-      "notes": "SAFETY-CRITICAL. Tolerates heat better; STILL no charge below cell spec. XIAO LiPo charger will NOT correctly charge LiFePO4 (4.2 vs 3.6V) - needs chemistry-matched external charger + thermistor/BMS"
+      "notes": "SAFETY-CRITICAL. Tolerates heat better; STILL no charge below cell spec. XIAO LiPo charger will NOT correctly charge LiFePO4 (4.2 vs 3.6V) - needs chemistry-matched external charger + thermistor/BMS",
+      "orderable": false
      },
      {
       "ref": "BT1-ALT2",
@@ -228,7 +312,8 @@
       "mpn": "TL-5903",
       "mfr": "Tadiran",
       "usd": 6.0,
-      "notes": "SAFETY-CRITICAL. -40 to +85C, long shelf life; PRIMARY (do NOT charge). Add reverse/charge protection; follow datasheet/UN38.3"
+      "notes": "SAFETY-CRITICAL. -40 to +85C, long shelf life; PRIMARY (do NOT charge). Add reverse/charge protection; follow datasheet/UN38.3",
+      "orderable": true
      },
      {
       "ref": "R4,R5",
@@ -239,7 +324,14 @@
       "mpn": "RC0805FR-07100KL",
       "mfr": "Yageo",
       "usd": 0.04,
-      "notes": "VBAT->R4->GPIO1(A0)->R5->GND; VBAT_DIVIDER_RATIO=2.0"
+      "notes": "VBAT->R4->GPIO1(A0)->R5->GND; VBAT_DIVIDER_RATIO=2.0",
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.1,
+       "stock": 648711,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-07100KL/727544"
+      }
      },
      {
       "ref": "M1",
@@ -250,7 +342,8 @@
       "mpn": "L76K",
       "mfr": "Quectel/Seeed",
       "usd": 15.9,
-      "notes": "UART 9600 on D6/D7 (GPIO43/44); FEATURE_GNSS"
+      "notes": "UART 9600 on D6/D7 (GPIO43/44); FEATURE_GNSS",
+      "orderable": true
      },
      {
       "ref": "ENC1",
@@ -261,7 +354,14 @@
       "mpn": "1554F2GYCL",
       "mfr": "Hammond",
       "usd": 18.0,
-      "notes": "-40 to +110C, IK08 impact, UL listed. Clear-lid variant doubles as camera window. ABS 1551 (prior pick) was INDOOR-ONLY - corrected"
+      "notes": "-40 to +110C, IK08 impact, UL listed. Clear-lid variant doubles as camera window. ABS 1551 (prior pick) was INDOOR-ONLY - corrected",
+      "orderable": true,
+      "live": {
+       "unit_usd": 26.29,
+       "stock": 86,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/hammond-manufacturing/1554F2GYCL/2359947"
+      }
      },
      {
       "ref": "VENT1",
@@ -272,7 +372,8 @@
       "mpn": "GORE PMF (adhesive series)",
       "mfr": "W. L. Gore",
       "usd": 3.0,
-      "notes": "Lets buzzer sound out + pressure equalization while maintaining IP67/68; use in front of BZ1 in sealed enclosure"
+      "notes": "Lets buzzer sound out + pressure equalization while maintaining IP67/68; use in front of BZ1 in sealed enclosure",
+      "orderable": false
      },
      {
       "ref": "LP1",
@@ -283,7 +384,14 @@
       "mpn": "PLP1-250",
       "mfr": "Bivar",
       "usd": 0.45,
-      "notes": "Carries DLED1 to enclosure face; gasketed press-fit keeps IP rating"
+      "notes": "Carries DLED1 to enclosure face; gasketed press-fit keeps IP rating",
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.78,
+       "stock": 3148,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/bivar-inc/PLP1-250/586454"
+      }
      },
      {
       "ref": "ANT1",
@@ -294,7 +402,8 @@
       "mpn": "2.4G-UFL-WHIP",
       "mfr": "Generic",
       "usd": 2.2,
-      "notes": "Optional; XIAO has onboard antenna. Outdoor mount needs IP-rated bulkhead/SMA"
+      "notes": "Optional; XIAO has onboard antenna. Outdoor mount needs IP-rated bulkhead/SMA",
+      "orderable": false
      },
      {
       "ref": "SCR3",
@@ -305,7 +414,8 @@
       "mpn": "M2X8-ST-CSK",
       "mfr": "Generic",
       "usd": 0.2,
-      "notes": "For the 3D-printed enclosure corner posts (enclosure/ v0.7) - the lid seats are countersink cones, so use flat-head. Max ~0.3 N-m or the printed posts strip"
+      "notes": "For the 3D-printed enclosure corner posts (enclosure/ v0.7) - the lid seats are countersink cones, so use flat-head. Max ~0.3 N-m or the printed posts strip",
+      "orderable": false
      },
      {
       "ref": "CW1",
@@ -316,7 +426,8 @@
       "mpn": "DISC-PMMA-12X1",
       "mfr": "Generic",
       "usd": 0.6,
-      "notes": "Seats in the printed lid's recessed camera seat (enclosure/ v0.7 weather mode); keep untinted"
+      "notes": "Seats in the printed lid's recessed camera seat (enclosure/ v0.7 weather mode); keep untinted",
+      "orderable": false
      },
      {
       "ref": "ADH1",
@@ -327,7 +438,8 @@
       "mpn": "SIL-NEUTRAL-CLR",
       "mfr": "Generic",
       "usd": 6.0,
-      "notes": "Bonds CW1 + beds LP1 + seals ANT1 bulkhead. Acid-cure (acetoxy) attacks polycarbonate - do not substitute"
+      "notes": "Bonds CW1 + beds LP1 + seals ANT1 bulkhead. Acid-cure (acetoxy) attacks polycarbonate - do not substitute",
+      "orderable": false
      },
      {
       "ref": "PLUG1",
@@ -338,7 +450,8 @@
       "mpn": "USBC-PLUG-FLG",
       "mfr": "Generic",
       "usd": 0.5,
-      "notes": "Seats in the printed enclosure's USB recess (weather mode); remove to charge/flash"
+      "notes": "Seats in the printed enclosure's USB recess (weather mode); remove to charge/flash",
+      "orderable": false
      },
      {
       "ref": "SCR4",
@@ -349,7 +462,8 @@
       "mpn": "M3.5-PAN-ANCHOR",
       "mfr": "Generic",
       "usd": 0.6,
-      "notes": "For the printed enclosure's blind keyhole mounts (opt_mount); head <= 7mm dia, <= 2.5mm tall"
+      "notes": "For the printed enclosure's blind keyhole mounts (opt_mount); head <= 7mm dia, <= 2.5mm tall",
+      "orderable": false
      },
      {
       "ref": "FIL1",
@@ -360,7 +474,8 @@
       "mpn": "TPU-95A",
       "mfr": "Generic",
       "usd": 0.2,
-      "notes": "Printed perimeter gasket for enclosure/ weather mode; 2 perimeters, 100% infill, slow"
+      "notes": "Printed perimeter gasket for enclosure/ weather mode; 2 perimeters, 100% infill, slow",
+      "orderable": false
      },
      {
       "ref": "INS1",
@@ -371,11 +486,38 @@
       "mpn": "M2-HSI-3.5X4",
       "mfr": "Generic",
       "usd": 0.4,
-      "notes": "Service-grade lid threads: set screw_insert=true in the enclosure (posts auto-fatten), install at 220-240C (PETG) / 240-260C (ASA), use M2 machine screws instead of SCR3 self-tappers"
+      "notes": "Service-grade lid threads: set screw_insert=true in the enclosure (posts auto-fatten), install at 220-240C (PETG) / 240-260C (ASA), use M2 machine screws instead of SCR3 self-tappers",
+      "orderable": false
      }
     ],
-    "required_usd": 26.9,
-    "full_usd": 102.89
+    "required_usd": 25.99,
+    "full_usd": 101.98,
+    "required_usd_live": 27.9,
+    "full_usd_live": 114.53,
+    "pricing_as_of": "2026-07-27T12:36:35Z",
+    "recipes": [
+     {
+      "label": "Required-only",
+      "refs": [],
+      "usd": 25.99,
+      "note": "Bench bring-up"
+     },
+     {
+      "label": "Printed-enclosure weather kit",
+      "refs": [
+       "SCR3",
+       "CW1",
+       "ADH1",
+       "PLUG1",
+       "SCR4",
+       "FIL1",
+       "VENT1",
+       "LP1"
+      ],
+      "usd": 11.55,
+      "note": "Splash-resistant (~IP54) printed case, enclosure/ v0.7 - NOT a substitute for ENC1 outdoors"
+     }
+    ]
    },
    "assembly": {
     "source": "docs/hardware/enclosure/README.md §Assembly",
@@ -401,7 +543,14 @@
       "mpn": "ESP32-C3-DevKitM-1",
       "mfr": "Espressif",
       "usd": 8.0,
-      "notes": "Vision controller (Grove-cable host flavor); NO onboard LiPo charger; operating -40 to +85 C"
+      "notes": "Vision controller (Grove-cable host flavor); NO onboard LiPo charger; operating -40 to +85 C",
+      "orderable": true,
+      "live": {
+       "unit_usd": 8.0,
+       "stock": 0,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/espressif-systems/ESP32-C3-DEVKITM-1/13684315"
+      }
      },
      {
       "ref": "U1-ALT",
@@ -412,7 +561,8 @@
       "mpn": "XIAO-ESP32C3 / XIAO-ESP32S3",
       "mfr": "Seeed Studio",
       "usd": 5.5,
-      "notes": "Stacked-host flavor (canary-vision-xiao-c3/-s3 build envs; device guide section 3) - zero wiring, replaces U1+CBL2. USB-Cs must face the same direction when seating. Printed enclosure ENC2 host=xiao targets this"
+      "notes": "Stacked-host flavor (canary-vision-xiao-c3/-s3 build envs; device guide section 3) - zero wiring, replaces U1+CBL2. USB-Cs must face the same direction when seating. Printed enclosure ENC2 host=xiao targets this",
+      "orderable": false
      },
      {
       "ref": "U2",
@@ -420,10 +570,17 @@
       "required": true,
       "category": "Sensor",
       "desc": "Grove Vision AI V2 (Himax WiseEye2 HX6538, Arm Cortex-M55 + Ethos-U55)",
-      "mpn": "101021040",
+      "mpn": "101021112",
       "mfr": "Seeed Studio",
-      "usd": 29.0,
-      "notes": "I2C on GPIO4 (SDA) / GPIO5 (SCL); Seeed product 5851. Camera (e.g. OV5647) sold separately on some SKUs"
+      "usd": 15.99,
+      "notes": "I2C on GPIO4 (SDA) / GPIO5 (SCL); Seeed product 5851, SKU 101021112 = the HX6538 V2. NOT the older HX6537-A V1 (SKU 101021040 / DigiKey 114992866, OV2640) — those were wrong here. Camera sold separately on some SKUs. Board-only list $15.99 (verified mid-2026)",
+      "orderable": true,
+      "live": {
+       "unit_usd": 15.99,
+       "stock": 148,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/101021112/22469630"
+      }
      },
      {
       "ref": "CBL2",
@@ -434,7 +591,14 @@
       "mpn": "110990210",
       "mfr": "Seeed Studio",
       "usd": 1.2,
-      "notes": "Usually ships with U2; connects U2 to U1"
+      "notes": "Usually ships with U2; connects U2 to U1",
+      "orderable": true,
+      "live": {
+       "unit_usd": 2.0,
+       "stock": 597,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/110990210/5482570"
+      }
      },
      {
       "ref": "CBL1",
@@ -445,7 +609,8 @@
       "mpn": "USB-C-DATA-1M",
       "mfr": "Generic",
       "usd": 3.5,
-      "notes": "Power + flashing"
+      "notes": "Power + flashing",
+      "orderable": false
      },
      {
       "ref": "DLED1",
@@ -456,7 +621,8 @@
       "mpn": "WS2812B",
       "mfr": "Worldsemi",
       "usd": 0.15,
-      "notes": "EXT_LED=GPIO3; onboard LED_BUILTIN=GPIO8"
+      "notes": "EXT_LED=GPIO3; onboard LED_BUILTIN=GPIO8",
+      "orderable": true
      },
      {
       "ref": "R2",
@@ -467,7 +633,14 @@
       "mpn": "RC0805FR-07330RL",
       "mfr": "Yageo",
       "usd": 0.02,
-      "notes": "In series with WS2812 DIN"
+      "notes": "In series with WS2812 DIN",
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.1,
+       "stock": 471734,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-07330RL/727866"
+      }
      },
      {
       "ref": "C1",
@@ -478,7 +651,14 @@
       "mpn": "CL21B104KBCNNNC",
       "mfr": "Samsung",
       "usd": 0.02,
-      "notes": "Local bypass at DLED1 V+/GND; recommended close to WS2812B power pins"
+      "notes": "Local bypass at DLED1 V+/GND; recommended close to WS2812B power pins",
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.1,
+       "stock": 7250640,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/samsung-electro-mechanics/CL21B104KBCNNNC/3886661"
+      }
      },
      {
       "ref": "SW1",
@@ -489,7 +669,14 @@
       "mpn": "B3F-1000",
       "mfr": "Omron",
       "usd": 0.12,
-      "notes": "Parallel to BOOT/GPIO9; or reuse onboard BOOT. Indoor; see WAP BOM SW1-ALT for outdoor"
+      "notes": "Parallel to BOOT/GPIO9; or reuse onboard BOOT. Indoor; see WAP BOM SW1-ALT for outdoor",
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.35,
+       "stock": 40981,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/aratas-america-llc/B3F-1000/33150"
+      }
      },
      {
       "ref": "BZ1",
@@ -500,7 +687,14 @@
       "mpn": "CPT-9019S-SMT-TR",
       "mfr": "CUI Devices",
       "usd": 0.0,
-      "notes": "BUZZER_PIN_DEFAULT=GPIO2; requires firmware fork (FEATURE_AUDIBLE_CHIRP off on Vision)"
+      "notes": "BUZZER_PIN_DEFAULT=GPIO2; requires firmware fork (FEATURE_AUDIBLE_CHIRP off on Vision)",
+      "orderable": true,
+      "live": {
+       "unit_usd": 2.2,
+       "stock": 6285,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/same-sky-formerly-cui-devices/CPT-9019S-SMT-TR/6012432"
+      }
      },
      {
       "ref": "BT1",
@@ -511,7 +705,8 @@
       "mpn": "LIFEPO4-PCM+CTRL or LiPo-PCM+TP4056",
       "mfr": "Generic",
       "usd": 11.0,
-      "notes": "SAFETY-CRITICAL - see build plan section 6.5/9.2. Certified protected cells only (IEC 62133/UL); temperature-gated charger. Indoor: LiPo. Outdoor: LiFePO4 w/ temp cutoff or Li-SOCl2 primary"
+      "notes": "SAFETY-CRITICAL - see build plan section 6.5/9.2. Certified protected cells only (IEC 62133/UL); temperature-gated charger. Indoor: LiPo. Outdoor: LiFePO4 w/ temp cutoff or Li-SOCl2 primary",
+      "orderable": false
      },
      {
       "ref": "ENC1",
@@ -522,7 +717,14 @@
       "mpn": "1554F2GYCL",
       "mfr": "Hammond",
       "usd": 18.0,
-      "notes": "UV-stabilized IP66/NEMA4X, -40 to +110C. Clear lid = camera aperture for Grove Vision AI V2; keep optically clear (no smoke tint)"
+      "notes": "UV-stabilized IP66/NEMA4X, -40 to +110C. Clear lid = camera aperture for Grove Vision AI V2; keep optically clear (no smoke tint)",
+      "orderable": true,
+      "live": {
+       "unit_usd": 26.29,
+       "stock": 86,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/hammond-manufacturing/1554F2GYCL/2359947"
+      }
      },
      {
       "ref": "CAM1",
@@ -533,7 +735,8 @@
       "mpn": "OV5647-62",
       "mfr": "Seeed/Generic",
       "usd": 8.0,
-      "notes": "Required for the printed-enclosure path (mounts to the front-face posts); -62/-67/-160 FOV variants supported by U2; some U2 kit SKUs include it"
+      "notes": "Required for the printed-enclosure path (mounts to the front-face posts); -62/-67/-160 FOV variants supported by U2; some U2 kit SKUs include it",
+      "orderable": true
      },
      {
       "ref": "ENC2",
@@ -544,7 +747,8 @@
       "mpn": "canary_vision_enclosure.scad",
       "mfr": "SecuraCV",
       "usd": 1.5,
-      "notes": "Parametric OpenSCAD in docs/hardware/enclosure/; GoPro-compatible adjustable hinge with detent teeth; weather preset is ~IP54 splash-resistant - NOT an ENC1 substitute for harsh exposure"
+      "notes": "Parametric OpenSCAD in docs/hardware/enclosure/; GoPro-compatible adjustable hinge with detent teeth; weather preset is ~IP54 splash-resistant - NOT an ENC1 substitute for harsh exposure",
+      "orderable": false
      },
      {
       "ref": "SCR5",
@@ -555,7 +759,8 @@
       "mpn": "M2X8-ST-MIX",
       "mfr": "Generic",
       "usd": 0.4,
-      "notes": "4x 6mm PAN for the OV5647 posts. Front corners: FLAT/countersunk head on the Vision case (cone seats), PAN head on the doorbell face (flat counterbores). Max ~0.3 N-m"
+      "notes": "4x 6mm PAN for the OV5647 posts. Front corners: FLAT/countersunk head on the Vision case (cone seats), PAN head on the doorbell face (flat counterbores). Max ~0.3 N-m",
+      "orderable": false
      },
      {
       "ref": "SCR6",
@@ -566,7 +771,8 @@
       "mpn": "M5X25+NUT",
       "mfr": "Generic",
       "usd": 1.2,
-      "notes": "Hinge clamp; the printed knob part captures a standard M5 nut"
+      "notes": "Hinge clamp; the printed knob part captures a standard M5 nut",
+      "orderable": false
      },
      {
       "ref": "SCR7",
@@ -577,7 +783,8 @@
       "mpn": "M4-CSK-ANCHOR",
       "mfr": "Generic",
       "usd": 1.2,
-      "notes": "Bracket wall mounting; or hang on the bracket's keyhole slots"
+      "notes": "Bracket wall mounting; or hang on the bracket's keyhole slots",
+      "orderable": false
      },
      {
       "ref": "NUT1",
@@ -588,7 +795,8 @@
       "mpn": "NUT-1/4-20",
       "mfr": "Generic",
       "usd": 0.15,
-      "notes": "Drops into the bracket's rear pocket; any standard tripod stud threads in"
+      "notes": "Drops into the bracket's rear pocket; any standard tripod stud threads in",
+      "orderable": false
      },
      {
       "ref": "CW2",
@@ -599,7 +807,8 @@
       "mpn": "DISC-PMMA-14X1",
       "mfr": "Generic",
       "usd": 0.6,
-      "notes": "Bond into the front-face seat with NEUTRAL-CURE silicone (acid-cure attacks PC). For sealing also see WAP BOM items 23-26 (silicone, USB plug, TPU, GORE vent)"
+      "notes": "Bond into the front-face seat with NEUTRAL-CURE silicone (acid-cure attacks PC). For sealing also see WAP BOM items 23-26 (silicone, USB plug, TPU, GORE vent)",
+      "orderable": false
      },
      {
       "ref": "INS1",
@@ -610,7 +819,8 @@
       "mpn": "M2-HSI-3.5X4",
       "mfr": "Generic",
       "usd": 0.4,
-      "notes": "Service-grade front threads: set screw_insert=true (posts auto-fatten), install at 220-240C (PETG) / 240-260C (ASA), use M2 machine screws for the front corners"
+      "notes": "Service-grade front threads: set screw_insert=true (posts auto-fatten), install at 220-240C (PETG) / 240-260C (ASA), use M2 machine screws for the front corners",
+      "orderable": false
      },
      {
       "ref": "BTN2",
@@ -621,7 +831,8 @@
       "mpn": "PBM12-LED-IP65",
       "mfr": "Generic",
       "usd": 2.5,
-      "notes": "Doorbell enclosure face (canary_vision_doorbell.scad): switch to the multifunction input (GPIO9), LED ring to the status LED pin; body+terminals <= 18mm behind panel (btn_body_l is assert-checked)"
+      "notes": "Doorbell enclosure face (canary_vision_doorbell.scad): switch to the multifunction input (GPIO9), LED ring to the status LED pin; body+terminals <= 18mm behind panel (btn_body_l is assert-checked)",
+      "orderable": false
      },
      {
       "ref": "SCR8",
@@ -632,7 +843,8 @@
       "mpn": "M2X10-SEC-TX",
       "mfr": "Generic",
       "usd": 0.3,
-      "notes": "Doorbell anti-theft lock: drives up through the wall plate's foot into the body's blind boss - tool-only removal, Ring-style"
+      "notes": "Doorbell anti-theft lock: drives up through the wall plate's foot into the body's blind boss - tool-only removal, Ring-style",
+      "orderable": false
      },
      {
       "ref": "GRM1",
@@ -643,11 +855,37 @@
       "mpn": "GROMMET-12X7",
       "mfr": "Generic",
       "usd": 0.4,
-      "notes": "Doorbell rear cable exit; pair with a right-angle USB-C plug"
+      "notes": "Doorbell rear cable exit; pair with a right-angle USB-C plug",
+      "orderable": false
      }
     ],
-    "required_usd": 41.7,
-    "full_usd": 93.16
+    "required_usd": 28.69,
+    "full_usd": 80.15,
+    "required_usd_live": 29.49,
+    "full_usd_live": 91.83,
+    "pricing_as_of": "2026-07-27T12:36:35Z",
+    "recipes": [
+     {
+      "label": "Required-only",
+      "refs": [],
+      "usd": 28.69,
+      "note": "Core Vision device (Grove AI V2 now $15.99)"
+     },
+     {
+      "label": "Printed camera unit",
+      "refs": [
+       "CAM1",
+       "ENC2",
+       "SCR5",
+       "SCR6",
+       "SCR7",
+       "NUT1",
+       "CW2"
+      ],
+      "usd": 41.74,
+      "note": "Wall/tripod-mountable unit with adjustable hinge; add WAP weather-kit items for sealing"
+     }
+    ]
    },
    "assembly": {
     "source": "docs/hardware/enclosure/README.md §Assembly",
@@ -658,6 +896,146 @@
      "(weather) Seat the TPU gasket in the rim groove.",
      "Close the front (lip nests into the back) and drive the 4 × M2 corner screws — snug diagonally, then final quarter-turns.",
      "Screw the bracket to the wall (or a tripod plate via the 1/4-20 nut), slot the case prongs into it, set the angle, tighten the M5 thumbscrew."
+    ]
+   }
+  },
+  "canary-sense": {
+   "bom": {
+    "source": "docs/hardware/bom_canary_sense.csv",
+    "rows": [
+     {
+      "ref": "U1",
+      "qty": "1",
+      "required": true,
+      "category": "MCU Board",
+      "desc": "MR60BHA2 60GHz mmWave kit (radar module + XIAO ESP32-C6, onboard BH1750 lux + WS2812 LED)",
+      "mpn": "MR60BHA2",
+      "mfr": "Seeed Studio",
+      "usd": 24.9,
+      "notes": "The whole Sense front end in one kit: radar IQ never leaves the module's own DSP (privacy chokepoint); UART 115200 GPIO16/17, I2C GPIO22/23. Ships ESPHome-preflashed — reflash with firmware/projects/canary-sense. Seeed list $24.90 (2026-07)",
+      "orderable": true
+     },
+     {
+      "ref": "CBL1",
+      "qty": "1",
+      "required": true,
+      "category": "Cable",
+      "desc": "USB-C cable, data-capable (not charge-only)",
+      "mpn": "USB-C-DATA-1M",
+      "mfr": "Generic",
+      "usd": 3.5,
+      "notes": "Required for flashing and 5V power",
+      "orderable": false
+     },
+     {
+      "ref": "PSU1",
+      "qty": "1",
+      "required": true,
+      "category": "Power",
+      "desc": "USB-C PSU 5V/2A wall adapter (UL/ETL listed)",
+      "mpn": "5V2A-USBC-UL",
+      "mfr": "Generic",
+      "usd": 8.0,
+      "notes": "Always-on appliance — use a listed adapter (same guidance as the Display BOM)",
+      "orderable": false
+     },
+     {
+      "ref": "SW2",
+      "qty": "1",
+      "required": false,
+      "category": "Sensor",
+      "desc": "Reed switch, SPST normally-closed (tamper), hermetic glass",
+      "mpn": "59140-1-S-02-A",
+      "mfr": "Littelfuse",
+      "usd": 1.8,
+      "notes": "Enclosure-level tamper for the printed radome; wire to a free GPIO. FIRMWARE: no FEATURE_TAMPER flag in canary-sense yet — the P0 tamper signal is BH1750 lights-out corroboration (design doc §tamper enrichment)",
+      "orderable": true
+     },
+     {
+      "ref": "MAG1",
+      "qty": "1",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "Magnet, Ni-coated neodymium disc for tamper",
+      "mpn": "NEO-6X3-NI",
+      "mfr": "Generic",
+      "usd": 0.4,
+      "notes": "Lid-mounted; separates from SW2 when the radome opens. Ni/epoxy coat for corrosion",
+      "orderable": false
+     },
+     {
+      "ref": "SCR3",
+      "qty": "4",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "M2 self-tapping screw, FLAT (countersunk) head, 8-10mm (printed-enclosure lid)",
+      "mpn": "M2X8-ST-CSK",
+      "mfr": "Generic",
+      "usd": 0.2,
+      "notes": "For the printed Sense enclosure posts (canary_sense_enclosure.scad); max ~0.3 N-m or the printed posts strip",
+      "orderable": false
+     },
+     {
+      "ref": "INS1",
+      "qty": "4",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "M2 brass heat-set insert, short series 3.5mm OD x 4.0mm",
+      "mpn": "M2-HSI-3.5X4",
+      "mfr": "Generic",
+      "usd": 0.4,
+      "notes": "Service-grade lid threads: set screw_insert=true (posts auto-fatten), install at 220-240C (PETG) / 240-260C (ASA), use M2 machine screws instead of SCR3 self-tappers",
+      "orderable": false
+     },
+     {
+      "ref": "SCR4",
+      "qty": "2",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "#6 / M3.5 pan-head screw + wall anchor (keyhole mount)",
+      "mpn": "M3.5-PAN-ANCHOR",
+      "mfr": "Generic",
+      "usd": 0.6,
+      "notes": "For the printed enclosure's keyhole mounts (opt_mount); head <= 7mm dia, <= 2.5mm tall",
+      "orderable": false
+     },
+     {
+      "ref": "FIL1",
+      "qty": "1",
+      "required": false,
+      "category": "Material",
+      "desc": "TPU filament 90-95A (printed gasket), ~5g per gasket",
+      "mpn": "TPU-95A",
+      "mfr": "Generic",
+      "usd": 0.2,
+      "notes": "Printed perimeter gasket for the sealed radome preset (opt_seal); 2 perimeters, 100% infill, slow. Radar sees through plastic — no window, no vent needed",
+      "orderable": false
+     }
+    ],
+    "required_usd": 36.4,
+    "full_usd": 40.0,
+    "required_usd_live": 36.4,
+    "full_usd_live": 40.0,
+    "pricing_as_of": "2026-07-27T12:36:35Z",
+    "recipes": [
+     {
+      "label": "Required-only",
+      "refs": [],
+      "usd": 36.4,
+      "note": "Shelf/desk presence witness — kit + cable + wall power"
+     },
+     {
+      "label": "Wall-mounted sealed build",
+      "refs": [
+       "SW2",
+       "MAG1",
+       "SCR3",
+       "SCR4",
+       "FIL1"
+      ],
+      "usd": 39.6,
+      "note": "Printed radome + tamper + keyhole mount; INS1 optional service threads extra"
+     }
     ]
    }
   },
@@ -674,7 +1052,14 @@
       "mpn": "113991114",
       "mfr": "Seeed Studio",
       "usd": 7.49,
-      "notes": "Seats in W-U2's back socket, zero wiring (same stack pattern as Vision/Sense). Plain, NOT Sense: a display needs no camera/mic, and their absence is a privacy feature. Seeed list $7.49; 3-pack ~$5.97/pc; street (Amazon) $9-12"
+      "notes": "Seats in W-U2's back socket, zero wiring (same stack pattern as Vision/Sense). Plain, NOT Sense: a display needs no camera/mic, and their absence is a privacy feature. Seeed list $7.49; 3-pack ~$5.97/pc; street (Amazon) $9-12",
+      "orderable": true,
+      "live": {
+       "unit_usd": 7.49,
+       "stock": 6040,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/113991114/19285530"
+      }
      },
      {
       "ref": "W-U2",
@@ -685,7 +1070,8 @@
       "mpn": "104040143",
       "mfr": "Seeed Studio",
       "usd": 18.0,
-      "notes": "ORDERED 2026-07 (bench validation unit). Seeed list $18.00 (street $24-26). Firmware: canary-display-watch. Backlight on D6/GPIO43 is PWM-dimmable = bedside night floor. VERIFY pin map against board revision (docs/../boards/xiao-esp32s3-round)"
+      "notes": "ORDERED 2026-07 (bench validation unit). Seeed list $18.00 (street $24-26). Firmware: canary-display-watch. Backlight on D6/GPIO43 is PWM-dimmable = bedside night floor. VERIFY pin map against board revision (docs/../boards/xiao-esp32s3-round)",
+      "orderable": true
      },
      {
       "ref": "W-ENC1",
@@ -696,7 +1082,8 @@
       "mpn": "canary_watch_station.scad",
       "mfr": "SecuraCV",
       "usd": 1.0,
-      "notes": "docs/hardware/enclosure/canary_watch_station.scad (v0.2-dev, not print-validated). Bore/bezel sized to the measured vendor CAD (Ø43.0 disc); bezel snaps into wall slots, no fasteners. Prints flat, no supports; wall-mounts via blind keyhole without the stand"
+      "notes": "docs/hardware/enclosure/canary_watch_station.scad (v0.2-dev, not print-validated). Bore/bezel sized to the measured vendor CAD (Ø43.0 disc); bezel snaps into wall slots, no fasteners. Prints flat, no supports; wall-mounts via blind keyhole without the stand",
+      "orderable": false
      },
      {
       "ref": "W-BT1",
@@ -707,7 +1094,8 @@
       "mpn": "ADA-1317-CLASS",
       "mfr": "Adafruit/Generic",
       "usd": 5.95,
-      "notes": "SAFETY: protected (PCM) cells only. VERIFY JST 1.25 polarity against the display board before plugging — vendor pigtails vary. Fits the drum's opt_batt fence rails. Bulk 10+: $1-2.20/cell"
+      "notes": "SAFETY: protected (PCM) cells only. VERIFY JST 1.25 polarity against the display board before plugging — vendor pigtails vary. Fits the drum's opt_batt fence rails. Bulk 10+: $1-2.20/cell",
+      "orderable": true
      },
      {
       "ref": "W-BZ1",
@@ -718,7 +1106,14 @@
       "mpn": "CPT-9019S-SMT-TR",
       "mfr": "CUI Devices",
       "usd": 0.0,
-      "notes": "Reserved: display_ux_design.md sound spec (IEC 60601-1-8-informed tiers, falling all-clear tone). No firmware support yet"
+      "notes": "Reserved: display_ux_design.md sound spec (IEC 60601-1-8-informed tiers, falling all-clear tone). No firmware support yet",
+      "orderable": true,
+      "live": {
+       "unit_usd": 2.2,
+       "stock": 6285,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/same-sky-formerly-cui-devices/CPT-9019S-SMT-TR/6012432"
+      }
      },
      {
       "ref": "CBL1",
@@ -729,7 +1124,8 @@
       "mpn": "USB-C-DATA-1M",
       "mfr": "Generic",
       "usd": 1.5,
-      "notes": "Power + flashing. Both builds. 10-packs ~$1.30-1.60/cable"
+      "notes": "Power + flashing. Both builds. 10-packs ~$1.30-1.60/cable",
+      "orderable": false
      },
      {
       "ref": "PSU1",
@@ -740,11 +1136,15 @@
       "mpn": "5V2A-USBC-UL",
       "mfr": "Generic",
       "usd": 8.0,
-      "notes": "Both builds; always-on appliance — use a listed adapter. Bulk 100+: $0.60-1.50 landed (certified, Alibaba)"
+      "notes": "Both builds; always-on appliance — use a listed adapter. Bulk 100+: $0.60-1.50 landed (certified, Alibaba)",
+      "orderable": false
      }
     ],
     "required_usd": 34.99,
-    "full_usd": 41.94
+    "full_usd": 41.94,
+    "required_usd_live": 34.99,
+    "full_usd_live": 44.14,
+    "pricing_as_of": "2026-07-27T12:36:35Z"
    }
   },
   "canary-display-dash": {
@@ -760,7 +1160,8 @@
       "mpn": "ESP32-S3-Touch-LCD-4.3",
       "mfr": "Waveshare",
       "usd": 33.0,
-      "notes": "ORDERED 2026-07 as the 4.3B with-case SKU (bench unit; pin-identical + CAN/RS485 terminals, mic-free, bundled case replaces D-ENC1/D-SCR1). Plain ~$28-33; 4.3B $36.99. Firmware: canary-display-dash. Backlight is ON/OFF only (CH422G) — night mode is dark theme + backlight-off. VERIFY RGB timings/expander bits per board revision"
+      "notes": "ORDERED 2026-07 as the 4.3B with-case SKU (bench unit; pin-identical + CAN/RS485 terminals, mic-free, bundled case replaces D-ENC1/D-SCR1). Plain ~$28-33; 4.3B $36.99. Firmware: canary-display-dash. Backlight is ON/OFF only (CH422G) — night mode is dark theme + backlight-off. VERIFY RGB timings/expander bits per board revision",
+      "orderable": true
      },
      {
       "ref": "D-U1-ALT",
@@ -771,7 +1172,8 @@
       "mpn": "ESP32-S3-Touch-LCD-4.3C-BOX",
       "mfr": "Waveshare",
       "usd": 0.0,
-      "notes": "Expected firmware-compatible (same RGB control pins/data GPIOs, GT911, CH422G; VERIFY ST7701 timings + extra LCD_RST expander bit at bench). Included case replaces D-ENC1/D-SCR1. CAVEAT: onboard dual-MIC array + ES8311 codec — inert (firmware never inits I2S) but physically present, so the no-mic-by-construction privacy posture does not hold on this SKU. Its speaker path is a v0.2 chime candidate"
+      "notes": "Expected firmware-compatible (same RGB control pins/data GPIOs, GT911, CH422G; VERIFY ST7701 timings + extra LCD_RST expander bit at bench). Included case replaces D-ENC1/D-SCR1. CAVEAT: onboard dual-MIC array + ES8311 codec — inert (firmware never inits I2S) but physically present, so the no-mic-by-construction privacy posture does not hold on this SKU. Its speaker path is a v0.2 chime candidate",
+      "orderable": true
      },
      {
       "ref": "D-ENC1",
@@ -782,7 +1184,8 @@
       "mpn": "canary_dash_display.scad",
       "mfr": "SecuraCV",
       "usd": 2.5,
-      "notes": "docs/hardware/enclosure/canary_dash_display.scad (v0.1-dev, not print-validated). Back carries 2x keyholes + 75mm horizontal M4 pair. MEASURE your panel before printing"
+      "notes": "docs/hardware/enclosure/canary_dash_display.scad (v0.1-dev, not print-validated). Back carries 2x keyholes + 75mm horizontal M4 pair. MEASURE your panel before printing",
+      "orderable": false
      },
      {
       "ref": "D-SCR1",
@@ -793,7 +1196,8 @@
       "mpn": "M2X8-ST",
       "mfr": "Generic",
       "usd": 0.2,
-      "notes": "Generic M2 self-tap stock (the watch drum is fastener-free since v0.2)"
+      "notes": "Generic M2 self-tap stock (the watch drum is fastener-free since v0.2)",
+      "orderable": false
      },
      {
       "ref": "D-SCR2",
@@ -804,7 +1208,8 @@
       "mpn": "M4X10",
       "mfr": "Generic",
       "usd": 0.3,
-      "notes": "Only for wall mounting; desk stand needs no hardware"
+      "notes": "Only for wall mounting; desk stand needs no hardware",
+      "orderable": false
      },
      {
       "ref": "CBL1",
@@ -815,7 +1220,8 @@
       "mpn": "USB-C-DATA-1M",
       "mfr": "Generic",
       "usd": 1.5,
-      "notes": "Power + flashing. Both builds. 10-packs ~$1.30-1.60/cable"
+      "notes": "Power + flashing. Both builds. 10-packs ~$1.30-1.60/cable",
+      "orderable": false
      },
      {
       "ref": "PSU1",
@@ -826,15 +1232,16 @@
       "mpn": "5V2A-USBC-UL",
       "mfr": "Generic",
       "usd": 8.0,
-      "notes": "Both builds; always-on appliance — use a listed adapter. Bulk 100+: $0.60-1.50 landed (certified, Alibaba)"
+      "notes": "Both builds; always-on appliance — use a listed adapter. Bulk 100+: $0.60-1.50 landed (certified, Alibaba)",
+      "orderable": false
      }
     ],
     "required_usd": 42.5,
-    "full_usd": 45.5
+    "full_usd": 45.5,
+    "required_usd_live": 42.5,
+    "full_usd_live": 45.5,
+    "pricing_as_of": "2026-07-27T12:36:35Z"
    }
-  },
-  "canary-sense": {
-   "bom_note": "Sense BOM pending — parts list lives in firmware/projects/canary-sense/README.md."
   }
  }
 }

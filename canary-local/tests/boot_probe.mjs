@@ -60,7 +60,7 @@ page.on("pageerror", (e) => errors.push(String(e)));
 
 await page.goto(`http://localhost:${port}/canary-local/emulator/web/harness.html?hour=10`);
 await page.waitForFunction("window.__ready === true", null, { timeout: 90000 });
-await page.waitForTimeout(6500); // splash + face
+await new Promise((res) => setTimeout(res, 6500)); // splash + face
 
 const st = await page.evaluate(() => ({
   flushes: window.__state.flushes,

@@ -1,0 +1,574 @@
+#!/usr/bin/env python3
+"""Generate the web *enclosure builder* manifest from the OpenSCAD sources.
+
+The securacv.com "builder" page lets people tweak the released Canary cases
+with simple dropdowns and render STLs in the browser (OpenSCAD compiled to
+WebAssembly). This script is the single source of truth for what that page
+shows: it parses the Customizer annotations already present in the curated
+.scad files (groups, option lists, ranges, per-parameter help text) and
+emits a JSON manifest, plus — with --site — the carried copies for the
+website repo (js/builder-data.js and byte-identical /scad sources,
+sha256-pinned so the site's CI can detect drift from these sources).
+
+Usage:
+  ./gen_builder_manifest.py                 # (re)write builder_manifest.json
+  ./gen_builder_manifest.py --check         # CI: fail if manifest is stale
+  ./gen_builder_manifest.py --site DIR      # also write the website carries
+                                            # (DIR = website checkout root)
+
+Parsing rules (mirrors the OpenSCAD Customizer):
+  * only top-level `name = <literal>;` assignments count (numbers, strings,
+    true/false); computed values like `e_seal = opt_seal;` are skipped
+  * scanning stops at the first top-level `module` definition
+  * `/* [Group] */` starts a group; a `[Hidden]` group is skipped
+  * a trailing `// comment` is the parameter's help text; a final
+    `// ["a","b"]` or `// [min:step:max]` bracket is its options/range
+  * `$fa`-style special variables are skipped (the builder's quality
+    dropdown handles those itself)
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import shutil
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+MANIFEST = HERE / "builder_manifest.json"
+
+# ---------------------------------------------------------------------------
+# Curation: which cases the web builder offers, and which parameters are
+# front-and-centre ("simple") vs. tucked into the Advanced accordion.
+# Parameters not listed in `simple` still appear, grouped, under Advanced.
+# `preset_controls` are greyed out while the preset dropdown != "custom"
+# (the .scad's preset table overrides those checkboxes — same as desktop).
+#
+# The microcopy fields keep the page self-explanatory; all are validated
+# against the parsed sources so they can't name things that don't exist:
+#   about      — 1-2 sentences shown when the case is selected
+#   print_plan — what to actually print, and in which material
+#   part_info  — one line per part option (must cover every option)
+#   labels     — friendly display names for the simple controls
+#   hints      — help text overriding a source comment that's too terse
+#   choices    — plain-language text for raw enum values (value stays as-is)
+#   units      — display unit for sliders when it isn't millimetres
+# ---------------------------------------------------------------------------
+
+CURATED = [
+    {
+        "id": "wap",
+        "file": "canary_wap_enclosure.scad",
+        "name": "Canary WAP",
+        "tagline": "The pocket witness case — XIAO ESP32-S3, optional camera, "
+                   "battery, GPS and weather sealing.",
+        "about": "A pocket-sized box for the XIAO ESP32-S3 witness build. "
+                 "Tick only the peripherals actually on your bench — each one "
+                 "adds its bay, port or window, and the case grows or shrinks "
+                 "to fit.",
+        "print_plan": "Print the Base and Lid in PETG. Going outdoors? Pick "
+                      "the Outdoor preset, then also print the Gasket in TPU "
+                      "— plus the Shield and Tray if it will sit in the sun.",
+        "simple": ["part", "preset", "opt_camera", "opt_buzzer", "opt_led",
+                   "opt_battery", "opt_gps", "opt_tamper", "opt_touch",
+                   "opt_antenna", "opt_seal", "opt_mount", "mount_style",
+                   "lid_edge"],
+        "preset_param": "preset",
+        "preset_controls": ["opt_camera", "opt_buzzer", "opt_led",
+                            "opt_battery", "opt_gps", "opt_tamper",
+                            "opt_touch", "opt_antenna", "opt_seal",
+                            "opt_mount"],
+        "part_labels": {
+            "all": "Assembled preview (not for printing)",
+            "base": "Base — the tub",
+            "lid": "Lid",
+            "coupon": "Clip-fit coupon (print first)",
+            "gasket": "Gasket ring — print in TPU",
+            "shield": "Solar radiation shield",
+            "tray": "Desiccant tray",
+        },
+        "part_info": {
+            "all": "Every part in place, for looking around — pick a single "
+                   "part when you want an STL to print.",
+            "base": "The tub the boards and battery clip into. Prints flat, "
+                    "open side up, no supports.",
+            "lid": "Snaps onto the base; prints face-down. Your options "
+                   "carve its windows, vents and ports.",
+            "coupon": "A one-clip fit tester for this case — print it before "
+                      "a full lid to dial in the snap.",
+            "gasket": "The soft seal ring for weather builds — print in TPU, "
+                      "and switch Weather seal ON first or there is nothing "
+                      "to render.",
+            "shield": "A sun shield that sits over sealed outdoor builds and "
+                      "keeps direct sun off the case.",
+            "tray": "A little desiccant tray for sealed builds — silica gel "
+                    "keeps the inside dry through the seasons.",
+        },
+        "labels": {
+            "part": "Part to print", "preset": "Quick preset",
+            "opt_camera": "Camera (XIAO Sense)", "opt_buzzer": "Buzzer",
+            "opt_led": "Status LED", "opt_battery": "Battery bay",
+            "opt_gps": "GPS module", "opt_tamper": "Tamper magnet",
+            "opt_touch": "Touch pad", "opt_antenna": "External antenna",
+            "opt_seal": "Weather seal", "opt_mount": "Wall mount",
+            "mount_style": "Mount style", "lid_edge": "Lid edge chamfer",
+        },
+        "hints": {},
+        "choices": {
+            "preset": {
+                "custom": "Custom — pick the options yourself",
+                "battery_full": "Battery build — camera, GPS, buzzer, the lot (indoor)",
+                "compact_plain": "Compact — smallest case, buzzer + LED only",
+                "battery_weather": "Outdoor — battery build, sealed and wall-mounted",
+            },
+            "mount_style": {
+                "keyhole": "Keyholes — screws in the wall, case slots on",
+                "tabs": "Screw tabs — four ears, screwed straight down",
+                "both": "Both — keyholes and tabs",
+            },
+        },
+        "units": {"lid_edge": "mm"},
+    },
+    {
+        "id": "vision",
+        "file": "canary_vision_enclosure.scad",
+        "name": "Canary Vision",
+        "tagline": "The camera case — Grove Vision AI V2 or DevKit host, "
+                   "GoPro-compatible hinge, optional rain hood.",
+        "about": "The camera witness for a wall or eave: Grove Vision AI V2 "
+                 "with a stacked XIAO (recommended) or a Grove-cabled DevKit. "
+                 "The GoPro-style hinge aims it; the options weather it.",
+        "print_plan": "Print the Back and Front in PETG — plus the Bracket "
+                      "and Knob if you use the hinge mount. The Outdoor "
+                      "preset adds a rain hood and the TPU Gasket.",
+        "simple": ["part", "preset", "host", "opt_led", "opt_vent",
+                   "opt_tamper", "opt_hood", "opt_seal", "opt_mount",
+                   "mount_style"],
+        "preset_param": "preset",
+        "preset_controls": ["opt_led", "opt_buzzer", "opt_vent", "opt_tamper",
+                            "opt_hood", "opt_seal", "opt_mount",
+                            "mount_style"],
+        "part_labels": {
+            "all": "Assembled preview (not for printing)",
+            "back": "Back shell",
+            "front": "Front face",
+            "gasket": "Gasket ring — print in TPU",
+            "bracket": "Wall bracket",
+            "knob": "Hinge knob",
+        },
+        "part_info": {
+            "all": "Every part in place, for looking around — pick a single "
+                   "part when you want an STL to print.",
+            "back": "The wall-side shell. Boards clip in; the hinge knuckle "
+                    "or keyholes grow from its back.",
+            "front": "The face with the lens aperture and clear-disc seat — "
+                     "screws into the back with 4× M2.",
+            "gasket": "The soft seal ring for weather builds — print in TPU; "
+                      "switch Weather seal ON first.",
+            "bracket": "The wall bracket the hinge clicks into — four screws "
+                       "into the wall, then aim and lock.",
+            "knob": "The thumbscrew that locks the hinge at your angle.",
+        },
+        "labels": {
+            "part": "Part to print", "preset": "Quick preset",
+            "host": "Brain board", "opt_led": "Status LED",
+            "opt_vent": "GORE vent", "opt_tamper": "Tamper magnet",
+            "opt_hood": "Rain & glare hood", "opt_seal": "Weather seal",
+            "opt_mount": "Mounting", "mount_style": "Mount style",
+        },
+        "hints": {},
+        "choices": {
+            "preset": {
+                "custom": "Custom — pick the options yourself",
+                "vision_indoor": "Indoor — LED and hinge, no sealing",
+                "vision_weather": "Outdoor — sealed, vented and hooded",
+            },
+            "host": {
+                "xiao": "Stacked XIAO (recommended)",
+                "devkit": "DevKitM-1 over a Grove cable",
+            },
+            "mount_style": {
+                "hinge": "GoPro-style hinge — aim it after mounting",
+                "keyhole": "Keyholes — flat and flush on the wall",
+                "both": "Both — hinge and keyholes",
+            },
+        },
+        "units": {},
+    },
+    {
+        "id": "doorbell",
+        "file": "canary_vision_doorbell.scad",
+        "name": "Canary Vision Doorbell",
+        "tagline": "Wyze/Ring form factor for the Vision stack — sealed by "
+                   "default, wedge plates for aiming down the approach.",
+        "about": "The Vision stack in a Ring/Wyze-sized doorbell: camera, "
+                 "lit button, hidden security screw. It ships sealed by "
+                 "default — doorbells live outside.",
+        "print_plan": "Print the Body, Face and Plate in PETG and the Gasket "
+                      "in TPU. Aiming down a porch or across a corner? Set "
+                      "the wedge angles before you print the Plate.",
+        "simple": ["part", "opt_seal", "opt_vent", "opt_led", "opt_tamper",
+                   "plate_wedge", "plate_wedge_x"],
+        "preset_param": None,
+        "preset_controls": [],
+        "part_labels": {
+            "all": "Assembled preview (not for printing)",
+            "body": "Body",
+            "face": "Face",
+            "plate": "Wall plate",
+            "gasket": "Gasket ring — print in TPU",
+        },
+        "part_info": {
+            "all": "Every part in place, for looking around — pick a single "
+                   "part when you want an STL to print.",
+            "body": "The main shell the module stack lives in — it hangs on "
+                    "the plate's T-studs and locks with the hidden screw.",
+            "face": "The visible front: lens aperture, button hole, and the "
+                    "gasket groove behind.",
+            "plate": "The wall plate with the T-studs. The wedge angles live "
+                     "here — the case aims wherever the plate points.",
+            "gasket": "The soft TPU ring that seals face to body against "
+                      "the weather.",
+        },
+        "labels": {
+            "part": "Part to print", "opt_seal": "Weather seal",
+            "opt_vent": "GORE vent", "opt_led": "Extra light pipe",
+            "opt_tamper": "Tamper magnet",
+            "plate_wedge": "Aim down", "plate_wedge_x": "Aim left / right",
+        },
+        "hints": {
+            "plate_wedge": "Tilts the whole case downward — porches and "
+                           "walk-ups. 15° is the safe maximum.",
+            "plate_wedge_x": "Turns the case toward the approach — corner "
+                             "installs. Negative aims left.",
+        },
+        "choices": {},
+        "units": {"plate_wedge": "°", "plate_wedge_x": "°"},
+    },
+    {
+        "id": "sense",
+        "file": "canary_sense_enclosure.scad",
+        "name": "Canary Sense",
+        "tagline": "The 60 GHz radar radome case — MR60BHA2/FDA2 kit with a "
+                   "stacked XIAO C6. The front window stays thin and flat.",
+        "about": "The radar witness — Seeed's MR60 kit with a stacked XIAO "
+                 "C6 behind a thin, flat radome window the 60 GHz beam "
+                 "passes through. Nothing may sit in front of the antenna: "
+                 "no labels, no ribs, no metal.",
+        "print_plan": "Print the Back and Front in PETG — the Front IS the "
+                      "radome, so keep its window one clean membrane. "
+                      "Fall-detection builds mount flat on the ceiling via "
+                      "keyholes; add the TPU Gasket only for sealed builds.",
+        "simple": ["part", "radar", "opt_led", "opt_lux", "opt_vent",
+                   "opt_tamper", "opt_seal", "opt_mount", "mount_style",
+                   "radome_t"],
+        "preset_param": None,
+        "preset_controls": [],
+        "part_labels": {
+            "all": "Assembled preview (not for printing)",
+            "back": "Back shell",
+            "front": "Front face — the radome",
+            "gasket": "Gasket ring — print in TPU",
+            "bracket": "Wall bracket",
+            "knob": "Hinge knob",
+        },
+        "part_info": {
+            "all": "Every part in place, for looking around — pick a single "
+                   "part when you want an STL to print.",
+            "back": "The mounting shell — the radar carrier clips in with "
+                    "the XIAO hanging beneath it.",
+            "front": "The radome face. The window over the antenna stays "
+                     "thin, flat and empty — that's the physics working.",
+            "gasket": "The soft TPU seal ring — switch Weather seal ON "
+                      "first; indoor ceilings rarely need it.",
+            "bracket": "Wall bracket for the hinge mount — same part the "
+                       "Vision case uses.",
+            "knob": "The hinge thumbscrew — same part the Vision case uses.",
+        },
+        "labels": {
+            "part": "Part to print", "radar": "Radar kit",
+            "opt_led": "Status LED", "opt_lux": "Light-sensor window",
+            "opt_vent": "GORE vent", "opt_tamper": "Tamper magnet",
+            "opt_seal": "Weather seal", "opt_mount": "Mounting",
+            "mount_style": "Mount style", "radome_t": "Radome thickness",
+        },
+        "hints": {
+            "radome_t": "The membrane the beam passes through: 1.0 mm is "
+                        "the proven default; 1.5 mm is a half-wave wall "
+                        "(also low-loss) if you want a tougher face.",
+        },
+        "choices": {
+            "radar": {
+                "bha2": "MR60BHA2 — breathing & presence (wall or bedside)",
+                "fda2": "MR60FDA2 — fall detection (flat on the ceiling)",
+            },
+            "mount_style": {
+                "hinge": "GoPro-style hinge — aim the beam",
+                "keyhole": "Keyholes — flush on the wall or ceiling",
+                "both": "Both — hinge and keyholes",
+            },
+        },
+        "units": {"radome_t": "mm"},
+    },
+    {
+        "id": "coupon",
+        "file": "canary_fit_coupon.scad",
+        "name": "Fit coupon",
+        "tagline": "The ~25-minute calibration print. Every fit used across "
+                   "the fleet's cases, as labelled test stations — print "
+                   "this first, tune the three tolerances, reuse everywhere.",
+        "about": "Every fit the fleet's cases use, gathered on one small "
+                 "test plate: snap clips, keyholes, magnet and light-pipe "
+                 "pockets, insert bores, the lid lip. A tight or loose "
+                 "station tells you which number to change — once, for "
+                 "every case after.",
+        "print_plan": "Print the Base in PETG first (~25 minutes). The Mate "
+                      "tests the keyholes and slide rib against it; the "
+                      "Strip is the TPU gasket-squeeze test. Adjust the "
+                      "three tolerances and reprint until stations fit.",
+        "simple": ["part", "tol_slide", "tol_press", "tol_hole"],
+        "preset_param": None,
+        "preset_controls": [],
+        "part_labels": {
+            "all": "Base + mate + strip",
+            "base": "Base plate (rigid)",
+            "mate": "Mate — studs + slide rib",
+            "strip": "Gasket bar — print in TPU",
+        },
+        "part_info": {
+            "all": "Base, mate and strip laid out together — in practice "
+                   "print them separately (the strip is TPU).",
+            "base": "The station plate: clip, pocket and bore tests, each "
+                    "labelled with the parameter it exercises.",
+            "mate": "T-studs and a slide rib that mate into the base's "
+                    "keyhole and groove stations.",
+            "strip": "A soft TPU bar for the gasket groove — tests the "
+                     "squeeze that seals the weather builds.",
+        },
+        "labels": {
+            "part": "Part to print", "tol_slide": "Sliding fits",
+            "tol_press": "Press fits", "tol_hole": "Screw holes",
+        },
+        "hints": {
+            "tol_slide": "Parts that slide or snap: lid lips, board clips, "
+                         "keyholes. Loose station → smaller number.",
+            "tol_press": "Parts pushed in to stay: magnets, light pipes. "
+                         "They should seat firmly by thumb.",
+            "tol_hole": "Self-tapping M2 pilots: threads should bite "
+                        "without splitting the post.",
+        },
+        "choices": {},
+        "units": {"tol_slide": "mm", "tol_press": "mm", "tol_hole": "mm"},
+    },
+]
+
+# ---------------------------------------------------------------------------
+# .scad Customizer parsing
+# ---------------------------------------------------------------------------
+
+GROUP_RE = re.compile(r"/\*\s*\[([^\]]+)\]")  # trailing text/newlines allowed
+ASSIGN_RE = re.compile(
+    r"(?:^|;)\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
+    r"(\"(?:[^\"\\]|\\.)*\"|true|false|-?\d+\.?\d*)\s*(?=;)"
+)
+ENUM_RE = re.compile(r"\[\s*\"[^\]]*\]")          # ["a","b",...]
+RANGE_RE = re.compile(r"\[\s*(-?\d+\.?\d*)\s*:\s*(-?\d+\.?\d*)"
+                      r"(?:\s*:\s*(-?\d+\.?\d*))?\s*\]")  # [min:step:max]
+
+
+def _num(s: str):
+    f = float(s)
+    return int(f) if f.is_integer() and "." not in s else f
+
+
+def parse_scad(path: Path) -> list[dict]:
+    """Return the file's Customizer groups with their literal parameters."""
+    groups: list[dict] = []
+    group = {"name": "Parameters", "params": []}
+    in_block_comment = False
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        if re.match(r"^module\s", raw):
+            break
+        line = raw
+        if in_block_comment:
+            if "*/" not in line:
+                continue
+            line = line.split("*/", 1)[1]
+            in_block_comment = False
+        m = GROUP_RE.search(line)
+        if m:
+            if group["params"]:
+                groups.append(group)
+            group = {"name": m.group(1).strip(), "params": []}
+            if "*/" not in line[m.end():]:
+                in_block_comment = True
+            continue
+        if "/*" in line:
+            before, after = line.split("/*", 1)
+            if "*/" in after:
+                line = before + after.split("*/", 1)[1]
+            else:
+                in_block_comment = True
+                line = before
+        code, comment = (line.split("//", 1) + [""])[:2]
+        if group["name"].strip().lower() == "hidden":
+            continue
+        assigns = ASSIGN_RE.findall(" ;" + code.replace(";", "; ;"))
+        # (the padding lets the regex anchor every `name =` after a `;`)
+        if not assigns:
+            continue
+        for name, value in assigns:
+            if name.startswith("$"):
+                continue
+            param: dict = {"name": name}
+            if value in ("true", "false"):
+                param["type"] = "bool"
+                param["default"] = value == "true"
+            elif value.startswith('"'):
+                param["type"] = "string"
+                param["default"] = json.loads(value)
+            else:
+                param["type"] = "number"
+                param["default"] = _num(value)
+            if len(assigns) == 1 and comment.strip():
+                desc = comment.strip()
+                em = ENUM_RE.search(desc)
+                if em and param["type"] == "string":
+                    try:
+                        opts = json.loads(em.group(0).replace("'", '"'))
+                        param["options"] = opts
+                        desc = (desc[:em.start()] + desc[em.end():]).strip()
+                    except ValueError:
+                        pass
+                else:
+                    rm = None
+                    for rm_c in RANGE_RE.finditer(desc):
+                        rm = rm_c            # use the LAST bracket on the line
+                    if rm and param["type"] == "number":
+                        a, b, c = rm.group(1), rm.group(2), rm.group(3)
+                        param["min"] = _num(a)
+                        if c is None:
+                            param["max"] = _num(b)
+                        else:
+                            param["step"] = _num(b)
+                            param["max"] = _num(c)
+                        desc = (desc[:rm.start()] + desc[rm.end():]).strip()
+                    desc = re.sub(r"\s*//\s*$", "", desc)  # bracket left a bare //
+                param["desc"] = re.sub(r"\s+", " ", desc).strip(" -—")
+            group["params"].append(param)
+    if group["params"]:
+        groups.append(group)
+    return groups
+
+
+def build_manifest() -> dict:
+    models = []
+    for spec in CURATED:
+        src = HERE / spec["file"]
+        groups = parse_scad(src)
+        by_name = {p["name"]: p for g in groups for p in g["params"]}
+        for want in spec["simple"] + spec["preset_controls"]:
+            if want not in by_name:
+                sys.exit(f"{spec['file']}: curated parameter '{want}' "
+                         f"not found — update gen_builder_manifest.py")
+        part_options = by_name["part"].get("options", [])
+        for part in spec["part_labels"]:
+            if part not in part_options:
+                sys.exit(f"{spec['file']}: part label '{part}' is not a "
+                         f"part option — update gen_builder_manifest.py")
+        # microcopy must cover every part and only name real things
+        for part in part_options:
+            if part not in spec["part_info"]:
+                sys.exit(f"{spec['file']}: part '{part}' has no part_info "
+                         f"line — every option needs one")
+        for field in ("labels", "hints", "units"):
+            for name in spec[field]:
+                if name not in by_name:
+                    sys.exit(f"{spec['file']}: {field} names unknown "
+                             f"parameter '{name}'")
+        for name, mapping in spec["choices"].items():
+            opts = by_name.get(name, {}).get("options")
+            if not opts:
+                sys.exit(f"{spec['file']}: choices for '{name}' but it has "
+                         f"no option list")
+            for value in mapping:
+                if value not in opts:
+                    sys.exit(f"{spec['file']}: choices for '{name}' name "
+                             f"unknown value '{value}'")
+        models.append({
+            **{k: spec[k] for k in ("id", "file", "name", "tagline", "about",
+                                    "print_plan", "simple", "preset_param",
+                                    "preset_controls", "part_labels",
+                                    "part_info", "labels", "hints",
+                                    "choices", "units")},
+            "sha256": hashlib.sha256(src.read_bytes()).hexdigest(),
+            "groups": groups,
+        })
+    return {
+        "comment": "GENERATED by gen_builder_manifest.py — do not edit. "
+                   "Drives the securacv.com enclosure builder page.",
+        "quality": {
+            "note": "the builder's draft mode overrides the sources' "
+                    "$fa=3/$fs=0.4 for faster preview renders",
+            "draft": {"$fa": 8, "$fs": 1.2},
+        },
+        "models": models,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Website carries
+# ---------------------------------------------------------------------------
+
+SITE_HEADER = """\
+/* GENERATED FILE — DO NOT EDIT BY HAND.
+ * Canary enclosure builder manifest, generated from the parametric OpenSCAD
+ * sources in the main repo (securaCV: docs/hardware/enclosure) by
+ * gen_builder_manifest.py --site. Regenerate there — local edits will be
+ * overwritten. The byte-identical .scad carries live in /scad and are
+ * sha256-pinned here so tests/builder-facts.test.mjs can detect drift.
+ */
+"""
+
+
+def write_site(manifest: dict, site: Path) -> None:
+    scad_dir = site / "scad"
+    scad_dir.mkdir(exist_ok=True)
+    for model in manifest["models"]:
+        shutil.copyfile(HERE / model["file"], scad_dir / model["file"])
+    data = SITE_HEADER + "export const BUILDER = " + \
+        json.dumps(manifest, indent=2, ensure_ascii=False) + ";\n"
+    (site / "js" / "builder-data.js").write_text(data, encoding="utf-8")
+    print(f"wrote {site / 'js' / 'builder-data.js'} and "
+          f"{len(manifest['models'])} .scad carries to {scad_dir}")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--check", action="store_true",
+                    help="verify builder_manifest.json is up to date (CI)")
+    ap.add_argument("--site", metavar="DIR", type=Path,
+                    help="also write the website carries into checkout DIR")
+    args = ap.parse_args()
+
+    manifest = build_manifest()
+    text = json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
+    if args.check:
+        if not MANIFEST.exists() or MANIFEST.read_text(encoding="utf-8") != text:
+            sys.exit("builder_manifest.json is stale — rerun "
+                     "gen_builder_manifest.py")
+        print("builder_manifest.json is up to date")
+    else:
+        MANIFEST.write_text(text, encoding="utf-8")
+        print(f"wrote {MANIFEST}")
+    if args.site:
+        if not (args.site / "js").is_dir():
+            sys.exit(f"{args.site} does not look like the website checkout")
+        write_site(manifest, args.site)
+
+
+if __name__ == "__main__":
+    main()

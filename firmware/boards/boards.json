@@ -9,8 +9,12 @@
     "pio_board": "seeed_xiao_esp32s3",
     "tier": "verified",
     "tier_evidence": "docs/hardware/v1_bench_validation_runbook.md",
-    "used_by": ["canary", "canary-wap"],
-    "notes": "Primary witness board: camera, PDM mic, microSD, 8 MB octal PSRAM."
+    "used_by": [
+      "canary",
+      "canary-wap"
+    ],
+    "notes": "Primary witness board: camera, PDM mic, microSD, 8 MB octal PSRAM. External u.FL antenna required — WiFi and BLE (pairing + offline console) need it seated; without it Bluetooth may not work at all.",
+    "thermal_notes": "Camera PEEK + Wi-Fi bursts are the heat sources; sustained capture warms the sensor (image noise). Runtime gauge is the die-temp watchdog (FEATURE_DIAGNOSTICS). In enclosures, give the camera ribbon and u.FL antenna airspace and derate PEEK cadence before the watchdog throttles."
   },
   {
     "id": "xiao-esp32s3",
@@ -22,8 +26,11 @@
     "pio_board": "seeed_xiao_esp32s3",
     "tier": "verified",
     "tier_evidence": "docs/hardware/canary_vision_getting_started.md",
-    "used_by": ["canary-vision"],
-    "notes": "Grove Vision AI V2 Kit pairing; external u.FL antenna required."
+    "used_by": [
+      "canary-vision"
+    ],
+    "notes": "Grove Vision AI V2 Kit pairing; external u.FL antenna required.",
+    "thermal_notes": "Light duty — inference runs on the Vision AI module, not this host. Die-temp watchdog covers it; no special measures."
   },
   {
     "id": "xiao-esp32c3",
@@ -35,8 +42,11 @@
     "pio_board": "seeed_xiao_esp32c3",
     "tier": "verified",
     "tier_evidence": "docs/hardware/canary_vision_getting_started.md",
-    "used_by": ["canary-vision"],
-    "notes": "Stacks directly on the Grove Vision AI V2 XIAO socket; external u.FL antenna required."
+    "used_by": [
+      "canary-vision"
+    ],
+    "notes": "Stacks directly on the Grove Vision AI V2 XIAO socket; external u.FL antenna required.",
+    "thermal_notes": "C3 at Vision-host duty runs cool; no special measures."
   },
   {
     "id": "esp32-c3",
@@ -48,8 +58,11 @@
     "pio_board": "esp32-c3-devkitm-1",
     "tier": "compile-tested",
     "tier_evidence": "",
-    "used_by": ["canary-vision"],
-    "notes": "Generic C3 devkit wired to the Vision AI over a Grove cable (device guide §5). Promote with a hardware test report."
+    "used_by": [
+      "canary-vision"
+    ],
+    "notes": "Generic C3 devkit wired to the Vision AI over a Grove cable (device guide §5). Promote with a hardware test report.",
+    "thermal_notes": "Open-air devkit at Grove-cable duty; negligible."
   },
   {
     "id": "xiao-esp32c6-mr60",
@@ -61,8 +74,11 @@
     "pio_board": "seeed_xiao_esp32c6",
     "tier": "compile-tested",
     "tier_evidence": "",
-    "used_by": ["canary-sense"],
-    "notes": "60 GHz FMCW radar witness host. Radar decoder + FSMs are host-tested; end-to-end bench validation pending."
+    "used_by": [
+      "canary-sense"
+    ],
+    "notes": "60 GHz FMCW radar witness host. Radar decoder + FSMs are host-tested; end-to-end bench validation pending.",
+    "thermal_notes": "The MR60 radar dissipates on its own PCB; keep the radome off hot surfaces and out of appliance exhaust — the radar noise floor rises with temperature."
   },
   {
     "id": "xiao-esp32s3-round",
@@ -74,8 +90,11 @@
     "pio_board": "seeed_xiao_esp32s3",
     "tier": "compile-tested",
     "tier_evidence": "",
-    "used_by": ["canary-display"],
-    "notes": "Watch-puck fleet display: GC9A01 240x240 round LCD, CST816S touch, PCF8563 RTC, battery. Bench validation pending — run docs/hardware/display_bench_bringup.md Track W to promote."
+    "used_by": [
+      "canary-display"
+    ],
+    "notes": "Watch-puck fleet display: GC9A01 240x240 round LCD, CST816S touch, PCF8563 RTC, battery. External u.FL antenna required for reliable WiFi/BLE (the BLE 5 long-range fleet scan needs it seated). Bench validation pending — run docs/hardware/display_bench_bringup.md Track W to promote.",
+    "thermal_notes": "Backlight + battery charging share one small puck; charging warms the PCF8563 crystal (clock drift). Dim the panel while charging."
   },
   {
     "id": "waveshare-esp32s3-lcd43",
@@ -87,8 +106,11 @@
     "pio_board": "esp32-s3-devkitc-1",
     "tier": "compile-tested",
     "tier_evidence": "",
-    "used_by": ["canary-display"],
-    "notes": "Dash fleet display: 800x480 RGB565 parallel panel, GT911 5-point touch, CH422G IO expander. Bench validation pending — run docs/hardware/display_bench_bringup.md Track D to promote."
+    "used_by": [
+      "canary-display"
+    ],
+    "notes": "Dash fleet display: 800x480 RGB565 parallel panel, GT911 5-point touch, CH422G IO expander. Bench validation pending — run docs/hardware/display_bench_bringup.md Track D to promote.",
+    "thermal_notes": "The 800x480 backlight dominates the budget; full brightness in a case raises die temp — night dimming doubles as the thermal relief valve."
   },
   {
     "id": "waveshare-esp32s3-lcd43b",
@@ -100,7 +122,116 @@
     "pio_board": "esp32-s3-devkitc-1",
     "tier": "compile-tested",
     "tier_evidence": "",
-    "used_by": ["canary-display"],
-    "notes": "Industrial-IO dash SKU + dev playground host: same 800x480 panel/GT911/CH422G as the 4.3, plus isolated DI0/DI1 + DO0/DO1, RS485, dedicated CAN, I2C sensor header, 6-36 V supply. Playground bring-up doc: docs/hardware/dev_playground_43b.md."
+    "used_by": [
+      "canary-display"
+    ],
+    "notes": "Industrial-IO dash SKU + dev playground host: same 800x480 panel/GT911/CH422G as the 4.3, plus isolated DI0/DI1 + DO0/DO1, RS485, dedicated CAN, I2C sensor header, 6-36 V supply. Playground bring-up doc: docs/hardware/dev_playground_43b.md.",
+    "thermal_notes": "Same panel thermals as the 4.3, plus the isolated DI/DO, RS485, and CAN transceivers add standing dissipation from the 6-36 V supply — ventilate the enclosure."
+  },
+  {
+    "id": "waveshare-esp32s3-lcd43c",
+    "name": "Waveshare ESP32-S3-Touch-LCD-4.3C",
+    "vendor": "Waveshare",
+    "mcu": "ESP32-S3",
+    "flash_mb": 16,
+    "psram_mb": 8,
+    "pio_board": "esp32-s3-devkitc-1",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": [
+      "canary-display"
+    ],
+    "notes": "The mic-bearing 'AI voice' dash sibling (sold as 4.3C-BOX, cased, mic grille on top): same 800x480 panel family (ST7701 controller - VERIFY init) + GT911 + CH422G, plus an ES8311/ES7210 audio stack fronting a dual-MIC array, a PCF85063 RTC (register map differs from the family PCF8563 - driver follow-up), and a BOX-edition terminal strip with functions to VERIFY. A DISTINCT privacy surface: own env (canary-display-dash-mic), own OTA product, mic off by default, alarm-pattern scalars only, hard mute = driver uninstalled, on-glass indicator while listening. Contract: docs/hardware/display_mic_variant.md.",
+    "thermal_notes": "Cased BOX edition traps heat from the backlight + ES8311/ES7210 audio stack. Hold brightness headroom so the on-glass mic indicator stays readable, and ventilate the case."
+  },
+  {
+    "id": "xiao-esp32c6-sentinel",
+    "name": "Seeed Studio XIAO ESP32-C6 (Sentinel Standard head)",
+    "vendor": "Seeed Studio",
+    "mcu": "ESP32-C6",
+    "flash_mb": 4,
+    "psram_mb": 0,
+    "pio_board": "seeed_xiao_esp32c6",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": [],
+    "notes": "Canary Sentinel Standard/Heavy sensor head: MR60BHA2 60 GHz radar + PIR + BH1750 lux, WiFi-RF/CSI + BLE on the onboard radio. Phase 0 — the board-agnostic fusion core is host-tested (firmware/common/fusion, firmware/tests_host); the on-device PlatformIO build + bench validation are pending (see firmware/projects/canary-sentinel), so not yet in flavors.json and used_by is empty until it phases in like canary-sense.",
+    "thermal_notes": "PIR needs thermal stability — mount the sensor head clear of the C6's own warmth and of drafts; the radar noise floor rises with temperature."
+  },
+  {
+    "id": "xiao-esp32c3-sentinel-lite",
+    "name": "Seeed Studio XIAO ESP32-C3 (Sentinel Lite)",
+    "vendor": "Seeed Studio",
+    "mcu": "ESP32-C3",
+    "flash_mb": 4,
+    "psram_mb": 0,
+    "pio_board": "seeed_xiao_esp32c3",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": [],
+    "notes": "Canary Sentinel Lite: PIR + BH1750 lux, WiFi-RF + BLE on the onboard radio, NO radar/CSI (honest low-cost tier limit). Phase 0 — fusion core host-tested; on-device build + bench pending (firmware/projects/canary-sentinel), so not yet in flavors.json and used_by is empty.",
+    "thermal_notes": "PIR needs thermal stability — keep the sensor stalk clear of the MCU and out of drafts."
+  },
+  {
+    "id": "waveshare-esp32c6-lcd147",
+    "name": "Waveshare ESP32-C6-LCD-1.47",
+    "vendor": "Waveshare",
+    "mcu": "ESP32-C6",
+    "flash_mb": 4,
+    "psram_mb": 0,
+    "pio_board": "esp32-c6-devkitc-1",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": [
+      "canary-display"
+    ],
+    "notes": "Nightstand Line display: ST7789 172x320 SPI (34-px column offset) + 1x WS2812 ambient LED (GPIO8, RMT), single-core C6, NO PSRAM (lean single-buffer). Wired as the canary-display 'nightstand' flavor on the core-3.x display base (env canary-display-nightstand-c6: pioarduino platform + GFX 1.6.6 / LVGL 9.x / NimBLE 2.x — the same core-3 library row the Arduino CI proves): display_1in47.cpp HAL + portrait_ui.cpp + ambient_led.cpp. Bench validation pending (docs/hardware/display_nightstand_line.md §7).",
+    "thermal_notes": "Coolest display in the fleet: single-core C6 + a 1.47\" backlight. Nightstand duty is thermally trivial, and night dimming already floors what little there is."
+  },
+  {
+    "id": "waveshare-esp32c6-lcd169",
+    "name": "Waveshare ESP32-C6-LCD-1.69",
+    "vendor": "Waveshare",
+    "mcu": "ESP32-C6",
+    "flash_mb": 4,
+    "psram_mb": 0,
+    "pio_board": "esp32-c6-devkitc-1",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": [],
+    "notes": "Nightstand Line candidate (battery/pocket glance node): ST7789V2 240x280 SPI (20-px ROW offset), QMI8658 IMU + PCF85063 RTC on a shared I2C bus, 3.7 V MX1.25 battery with onboard charging, and a vendor-marketed 'AI speech' path (ES8311 codec + mic — treat as MIC-BEARING, mic off by default, until the schematic proves otherwise; same posture as the 4.3C). PARTIAL pin map: the vendor wiki was unreachable from the CI sandbox, so pins.h commits only chip facts + the family-shared ST7789 block and marks the rest -1 VERIFY (boards/waveshare-esp32c6-lcd169/README.md). Not in any build env yet.",
+    "thermal_notes": "Battery charging warms the PCB next to the PCF85063 crystal (clock drift) and the QMI8658 (bias) — charge with the backlight dimmed and don't calibrate the IMU mid-charge. Die-temp watchdog is the runtime gauge."
+  },
+  {
+    "id": "waveshare-esp32s3-lcd147",
+    "name": "Waveshare ESP32-S3-LCD-1.47",
+    "vendor": "Waveshare",
+    "mcu": "ESP32-S3",
+    "flash_mb": 16,
+    "psram_mb": 8,
+    "pio_board": "esp32-s3-devkitc-1",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": [
+      "canary-display"
+    ],
+    "notes": "Nightstand Line display (USB-A stick): SAME ST7789 172x320 panel as the C6 sibling but every display pin differs; 1x WS2812 ambient LED (GPIO38, RMT), dual-core S3 with 8 MB PSRAM, native USB. Wired as the canary-display 'nightstand' flavor (env canary-display-nightstand-s3): display_1in47.cpp HAL + portrait_ui.cpp + ambient_led.cpp. Bench validation pending (docs/hardware/display_nightstand_line.md).",
+    "thermal_notes": "USB-A stick body: S3 + octal PSRAM heat-soak into a small stick that plugs into an already-warm port. The double-buffered animation budget is the throttle knob; die-temp watchdog is the gauge."
+  },
+  {
+    "id": "waveshare-esp32s3-lcd7",
+    "name": "Waveshare ESP32-S3-Touch-LCD-7",
+    "vendor": "Waveshare",
+    "mcu": "ESP32-S3",
+    "flash_mb": 16,
+    "psram_mb": 8,
+    "pio_board": "esp32-s3-devkitc-1",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": [
+      "canary-display"
+    ],
+    "notes": "Nightstand Line big glass: 7\" 800x480 RGB565 parallel + GT911 5-point touch + CH422G IO expander (backlight + touch-reset) — electrically the 4.3\" Canary Dash at 7\", so it reuses the dash RGB HAL/GT911/CH422G. Requires the 8 MB octal PSRAM for the 768 KB framebuffer. Wired as the canary-display 'dash7' flavor (env canary-display-dash7): dash config + pins only, same HAL/UI. Full 5-point touch gestures + bench validation pending (docs/hardware/display_nightstand_line.md).",
+    "thermal_notes": "The hottest board in the fleet: a 7\" backlight plus continuous 800x480 RGB refresh out of octal PSRAM. Backlight duty (via the CH422G) is the main relief valve and the die-temp watchdog (FEATURE_DIAGNOSTICS) the gauge; keep the GT911 glass out of direct sun — capacitive touch drifts when hot."
   }
 ]

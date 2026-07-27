@@ -584,7 +584,7 @@ function renderDetails(p) {
   const a1 = html("a", "primary small door", "find this one in the chooser →");
   a1.href = "choose.html" + chooserHash(p.answers);
   const a2 = html("a", "door", "meet it live →");
-  a2.href = `index.html#${info.device}`;
+  a2.href = `fleet.html#${info.device}`;
   const a3 = html("a", "door", "spec it →");
   a3.href = `workshop.html#${info.device}`;
   const a4 = html("a", "door", "enclosure (.scad)");
@@ -625,11 +625,15 @@ function feed(text, tone) {
   while (feedList.children.length > 6) feedList.lastChild.remove();
 }
 
+// Illustrative feed lines — what a witness event reads like. The claims are
+// signed on the device; this overview page shows the shape, not a live
+// verification. To watch a claim get signed and verified for real (and try to
+// forge it), see scenes.html. So: "signed on-device", not a bare "verified ✓".
 const PINGS = {
-  camera: "person: yes · 0.93 · ✓ signed — no image left the device",
-  wifi: "presence: yes · field disturbance · ✓ signed",
-  radar: "presence: yes · range 2.1 m · ✓ signed",
-  breath: "breathing: steady · 14/min · ✓ signed",
+  camera: "person: yes · 0.93 · signed on-device — no image left the device",
+  wifi: "presence: yes · field disturbance · signed on-device",
+  radar: "presence: yes · range 2.1 m · signed on-device",
+  breath: "breathing: steady · 14/min · signed on-device",
   display: "new witness event on the glass",
   lora: "relaying signed claims onward →",
 };

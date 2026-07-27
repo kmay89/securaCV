@@ -5,7 +5,7 @@ use crate::detect::backends::motion::FrameHashMotion;
 use crate::detect::result::DetectionResult;
 
 /// Stub backend for testing. Uses frame-difference motion detection
-/// (see [`FrameHashMotion`]); shares its implementation with [`super::CpuBackend`].
+/// (via the shared frame-hash motion engine); shares its implementation with [`super::CpuBackend`].
 #[derive(Default)]
 pub struct StubBackend {
     motion: FrameHashMotion,

@@ -9,6 +9,8 @@
  */
 
 #include <Arduino.h>
+#include <sys/time.h>
+#include <cstdlib>
 #include "canary_config.h"
 #include "log_level.h"
 
@@ -102,6 +104,12 @@ static_assert(sizeof(csi_features_t) == 36,
 #include "securacv_power_policy.h"
 #endif
 
+// Power-event resilience: boot-lineage classification + the durable outage log,
+// feeding the shared host-tested core (firmware/common/power/power_events.h).
+// Unconditional — the "when did the power go out" record isn't gated on the
+// battery monitor. See docs/design/power_events.md.
+#include "canary_power_events.h"
+
 #if FEATURE_SETUP_WIZARD
 #include "securacv_setup.h"
 #include <WiFi.h>
@@ -133,6 +141,33 @@ static_assert(sizeof(csi_features_t) == 36,
 // Pure, board-agnostic test-console policy + BLE bring-up ladder (no deps).
 // Used by the read-only 't' run-all command below.
 #include "health/test_console.h"
+
+// Pure, host-tested device self-manifest builder: the machine-readable JSON the
+// 'j' command emits (public-only) so a browser can read this unit over WebSerial
+// — draw the same randomart from the pubkey, and show exactly the tools it has.
+#include "attest/self_manifest.h"
+
+#if FEATURE_CONSOLE_THEME
+// Pure, host-tested console scene engine: the 'l' identity banner (key
+// fingerprint as randomart). ASCII-safe by default; see docs/design/serial_console_theming.md.
+#include "ui/randomart.h"
+#include "ui/console_theme.h"
+#include "ui/console_scenes.h"
+#include "ui/console_wake.h"
+static void print_boot_welcome();   // the friendly char-box hello on connect
+#endif
+
+// The fleet view: the 'n' nearby-fleet card (needs the console engine) AND the
+// pure roster->peer helpers (fleet_peer_from_entry / fleet_fmt_flags) that the
+// 'j' manifest's fleet[] reuses. Pull it in whenever EITHER the console card
+// (FEATURE_CONSOLE_THEME) or the manifest fleet[] (FEATURE_BLE_SCAN) needs it;
+// fleet_view.h is self-contained (it includes the console engine it depends on).
+#if FEATURE_CONSOLE_THEME || (defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN)
+#include "ui/fleet_view.h"
+#endif
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+#include "fleet_roster_feed.h"        // the live roster the 'n' card + fleet[] read
+#endif
 
 // Optional ESP-IDF provenance APIs for the 'f' fingerprint command. Guarded by
 // __has_include so a toolchain without them still builds — the fields just show
@@ -178,6 +213,59 @@ static_assert(sizeof(csi_features_t) == 36,
 
 static GpsManager s_gps;
 static uint32_t g_last_record_ms = 0;
+
+// ════════════════════════════════════════════════════════════════════════════
+// GPS-DERIVED SYSTEM CLOCK
+// ════════════════════════════════════════════════════════════════════════════
+//
+// This project has no SNTP path — no WiFi-based time sync exists anywhere in
+// canary/canary-wap firmware. Without it the system clock never leaves its
+// post-boot state, so wall-clock seconds since 1970 stay meaninglessly small
+// (well under WALL_CLOCK_FLOOR) for the device's entire life. GPS is the one
+// clock source these devices actually have that isn't derived from an
+// untrusted network peer: the L76K reports UTC directly from the satellite
+// constellation. syncClockFromGps() seeds the system clock from it once a
+// fix carries a validated RMC date/time, and re-checks periodically to correct
+// crystal drift over long uptimes. GpsUtcTime.valid latches true on the first
+// good RMC and is never cleared by a later void/stale sentence (other
+// diagnostics consumers rely on that latch), so this checks last_seen_ms
+// itself — a fix isn't "available" for a resync once GPS has been lost, or
+// this would keep replaying a stale epoch every 10 minutes and freeze/rewind
+// wall time after ordinary GNSS loss.
+static const time_t WALL_CLOCK_FLOOR = 1700000000;  // ~2023-11-14; below this, "unset"
+static const uint32_t CLOCK_RESYNC_INTERVAL_MS = 10UL * 60UL * 1000UL;  // drift correction
+static const uint32_t GPS_FIX_STALE_MS = 30UL * 1000UL;  // RMC arrives ~1 Hz
+
+static void syncClockFromGps() {
+  static uint32_t s_last_sync_attempt_ms = 0;
+  uint32_t now_ms = millis();
+
+  time_t sys_now = time(nullptr);
+  bool clock_set = (sys_now >= WALL_CLOCK_FLOOR);
+  if (clock_set && (now_ms - s_last_sync_attempt_ms) < CLOCK_RESYNC_INTERVAL_MS) {
+    return;  // already trustworthy and not due for a drift-correction check
+  }
+
+  const GpsUtcTime& utc = s_gps.getUtcTime();
+  if (!utc.valid) return;
+  if ((now_ms - utc.last_seen_ms) > GPS_FIX_STALE_MS) return;  // GPS lost
+
+  time_t gps_epoch;
+  if (!gps_utc_to_epoch(utc, &gps_epoch)) return;
+  if (gps_epoch < WALL_CLOCK_FLOOR) return;  // receiver clock itself looks unset/wrong
+
+  s_last_sync_attempt_ms = now_ms;
+
+  // First sync, or periodic drift correction: only step the clock when GPS
+  // disagrees by more than a second, so this isn't calling settimeofday()
+  // on every 10-minute tick once the two clocks agree.
+  if (clock_set && llabs((long long)(gps_epoch - sys_now)) < 2) return;
+
+  struct timeval tv = { .tv_sec = gps_epoch, .tv_usec = 0 };
+  settimeofday(&tv, nullptr);
+  Serial.printf("[CLOCK] system clock %s from GPS (epoch=%lld)\n",
+                clock_set ? "corrected" : "set", (long long)gps_epoch);
+}
 
 #if FEATURE_HA_MQTT
 static uint32_t g_last_mqtt_status_ms = 0;
@@ -533,6 +621,12 @@ void setup() {
                  "Abnormal reset detected", rst_name);
     }
   }
+
+  // Power-event lineage: classify how the last power session ended (brownout /
+  // clean reboot / restored outage / fault) and append it to the durable log —
+  // the honest "when did the power go out" record. Runs here, before risky
+  // init, so an outage is recorded even if a later stage faults.
+  canary_pe::on_boot();
 
   // Initialize battery/power monitoring (ADC on GPIO 1 or software inference)
 #if FEATURE_POWER_MONITOR
@@ -1182,6 +1276,10 @@ void setup() {
     Serial.printf("[OK] Boot attestation: seq=%u\n", boot_rec.seq);
   }
 
+  // Sign a witness record if THIS boot followed a real power incident (a
+  // restored outage or a brownout), now that the device is provisioned.
+  canary_pe::witness_incident();
+
   // Log boot event
   log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM, "Device boot complete", FIRMWARE_VERSION);
 
@@ -1275,8 +1373,17 @@ void setup() {
   }
 #endif
 
-  // Enable WiFi modem sleep when running on battery to save ~20 mA
-#if FEATURE_WIFI_AP && FEATURE_POWER_MONITOR
+  // Enable WiFi modem sleep when running on battery to save ~20 mA.
+  //
+  // Only when NEITHER the power policy engine NOR CSI is compiled in:
+  //   • With FEATURE_POWER_POLICY, the policy engine OWNS wifi power-save and
+  //     is now CSI-aware (it forces PS off while CSI is capturing), so a manual
+  //     boot-time enable here would just fight it.
+  //   • With FEATURE_CSI (and no policy), CSI needs every RX frame, so modem
+  //     sleep must stay off regardless of battery state.
+  // This removes the old unconditional boot-time MIN_MODEM that silently
+  // collapsed CSI capture on battery.
+#if FEATURE_WIFI_AP && FEATURE_POWER_MONITOR && !FEATURE_POWER_POLICY && !FEATURE_CSI
   {
     power_state_t pwr_ps;
     if (power_get_state(&pwr_ps) &&
@@ -1335,6 +1442,12 @@ void setup() {
   Serial.println("║  Commands: h=help, i=identity, s=status, g=gps, r=data       ║");
   Serial.println("║  BOOT: short=info, 5s hold=factory reset                     ║");
   Serial.println("╚══════════════════════════════════════════════════════════════╝");
+#if FEATURE_CONSOLE_THEME
+  // The warm hello: the canary greets whoever just plugged in and points them
+  // to the site that explains everything. Boot already succeeded (FR-8) — this
+  // only prints; ASCII-safe, no terminal probe at boot.
+  print_boot_welcome();
+#endif
   Serial.println();
 }
 
@@ -1395,6 +1508,12 @@ void loop() {
 
   // Update GPS
   s_gps.update();
+
+  // No SNTP path exists in this project — GPS is the only wall-clock source
+  // available. Seed/correct the system clock from it once RMC has a
+  // validated date/time (cheap: bails out immediately once synced and not
+  // due for a drift-correction check).
+  syncClockFromGps();
 
   // Update state machine
   const GnssFix& fix = s_gps.getFix();
@@ -1534,6 +1653,11 @@ void loop() {
   }
 #endif
 
+  /* Persist the power-event liveness heartbeat (bounds the next outage's
+   * lower-bound duration). Cheap: skips the write unless the wall clock is set,
+   * so a clock-less board never writes it. */
+  canary_pe::heartbeat(now);
+
 #if FEATURE_THERMAL_WATCHDOG
   thermal_wd_process();  /* rate-limits internally (30 s sample, 10 min persist) */
 #endif
@@ -1541,6 +1665,7 @@ void loop() {
 #if FEATURE_POWER_POLICY
   policy_process();
 
+#if FEATURE_DEEP_SLEEP
   if (policy_should_deep_sleep() && !power_is_charging()) {
     uint32_t sleep_sec = policy_get_sleep_duration_sec();
     {
@@ -1567,7 +1692,19 @@ void loop() {
   } else if (policy_should_deep_sleep()) {
     policy_ack_deep_sleep();
   }
-#endif
+#else
+  /* FEATURE_DEEP_SLEEP=0 — "compiled in but never sleeps" (canary_config.h).
+   * Honor the policy's sleep bookkeeping so it does not spin re-requesting a
+   * sleep that never happens, but never actually enter deep sleep. This is the
+   * documented contract of the flag; the previous code gated this block on
+   * FEATURE_POWER_POLICY alone, so a default (FEATURE_DEEP_SLEEP=0) build would
+   * still deep-sleep on a LOW_POWER duty cycle. Critical-battery deep-sleep
+   * protection likewise requires FEATURE_DEEP_SLEEP=1 (securacv_power.cpp). */
+  if (policy_should_deep_sleep()) {
+    policy_ack_deep_sleep();
+  }
+#endif  /* FEATURE_DEEP_SLEEP */
+#endif  /* FEATURE_POWER_POLICY */
 
 #if FEATURE_DIAGNOSTICS
   diag_process();
@@ -2072,6 +2209,7 @@ static void mqtt_publish_sensing_update() {
 // (reboot, onboarding launch) are not part of this diagnostic contract.
 static const testcon::Command kConsoleCommands[] = {
   { 'i', "identity",     testcon::Tier::Diag, false, false, false },
+  { 'j', "manifest",     testcon::Tier::Diag, false, false, false },
   { 's', "status",       testcon::Tier::Diag, false, false, false },
   { 'g', "gps",          testcon::Tier::Diag, false, false, false },
   { 'b', "battery",      testcon::Tier::Diag, false, false, false },
@@ -2082,6 +2220,15 @@ static const testcon::Command kConsoleCommands[] = {
   { 'f', "fingerprint",  testcon::Tier::Diag, false, false, false },
   { 'e', "explain-boot", testcon::Tier::Diag, false, false, false },
   { 'w', "tamper-log",   testcon::Tier::Diag, false, false, false },
+#if FEATURE_CONSOLE_THEME
+  { 'l', "identity-banner", testcon::Tier::Diag, false, false, false },
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+  { 'n', "nearby",          testcon::Tier::Diag, false, false, false },
+#endif
+#if FEATURE_DIAGNOSTICS
+  { 'a', "wake-selftest",   testcon::Tier::Diag, false, false, false },
+#endif
+#endif
 };
 static const size_t kConsoleCommandCount =
     sizeof(kConsoleCommands) / sizeof(kConsoleCommands[0]);
@@ -2132,6 +2279,341 @@ static size_t read_line_arg(char* buf, size_t cap) {
   return len;
 }
 
+#if FEATURE_CONSOLE_THEME
+// The scene engine composes text and pushes it here one chunk at a time.
+static void theme_emit(void*, const char* s) { Serial.print(s); }
+
+// The boot hello — the canary greeting whoever just plugged in, and the one URL
+// that explains everything. ASCII-safe (no probe at boot; the terminal may not
+// be attached yet). Forward-declared up top so setup() can call it.
+static void print_boot_welcome() {
+  scene::Renderer r{theme_emit, nullptr, scene::caps_ascii()};
+  Serial.print("\r\n");
+  scene::welcome_card(r, witness_get_device().device_id, SECURACV_HELP_URL_BASE);
+}
+
+// Probe the terminal ONCE before drawing: emit a cursor-position report request
+// (ESC[6n) and see if it answers with ESC[row;colR. An answer ⇒ the terminal
+// speaks ANSI ⇒ we light up colour + Unicode. Silence (a dumb monitor — or our
+// own flasher's garbage-averse parser) ⇒ we stay on the 7-bit ASCII floor, so
+// the banner never turns into escape-code garbage. Bounded to ~200 ms.
+static scene::Caps console_probe() {
+  while (Serial.available()) Serial.read();          // clear pending input
+  Serial.print("\x1b[6n");
+  uint32_t deadline = millis() + 200;
+  bool ansi = false;
+  while (millis() < deadline) {
+    while (Serial.available()) {
+      if ((char)Serial.read() == 'R') { ansi = true; deadline = 0; break; }
+    }
+    if (deadline == 0) break;
+  }
+  return ansi ? scene::caps_full(80, 24) : scene::caps_ascii();
+}
+
+// 'l' — the identity banner: the device's verifiable trust card, with its
+// public-key fingerprint drawn as drunken-bishop randomart. Read-only.
+// Build the trust card from live device state and render it via `r` (whose caps
+// were already chosen — by a fresh probe, or reused from the wake sequence).
+static void render_trust_card(const scene::Renderer& r) {
+  DeviceIdentity& dev = witness_get_device();
+  char fp[17];
+  for (int i = 0; i < 8; ++i) snprintf(fp + i * 2, 3, "%02x", dev.pubkey_fp[i]);
+  char ch[9];
+  for (int i = 0; i < 4; ++i) snprintf(ch + i * 2, 3, "%02x", dev.chain_head[i]);
+  int health = -1;
+#if FEATURE_DIAGNOSTICS
+  selftest_report_t st;
+  if (diag_get_selftest(&st)) health = (int)st.health_score;
+#endif
+  scene::TrustInfo t{};
+  t.device_id = dev.device_id;
+  t.firmware = FIRMWARE_VERSION;
+  t.git = FIRMWARE_GIT_HASH;
+  t.built = __DATE__;
+  t.chain_head_hex = ch;
+  t.key_fp_hex = fp;
+  t.seq = dev.seq;
+  t.boots = dev.boot_count;
+  t.health = health;
+  t.tamper = dev.tamper_active;
+  t.key_bytes = dev.pubkey;
+  t.key_len = 32;
+
+  Serial.print("\r\n");
+  scene::trust_card(r, t);
+}
+
+static void show_identity_banner() {
+  scene::Renderer r{theme_emit, nullptr, console_probe()};
+  render_trust_card(r);
+}
+
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+// 'n' — nearby: the fleet roster (which OTHER Canaries this one has heard over
+// BLE), rendered as the width-aligned fleet card. Read-only. Presence is
+// UNSIGNED — liveness, never a verified trust claim (the card says so). Snapshot
+// the shared roster, project each entry to a view peer at `now`, then render.
+static void show_fleet_nearby() {
+  DeviceIdentity& dev = witness_get_device();
+  char self_fp4[5];
+  snprintf(self_fp4, sizeof self_fp4, "%02x%02x", dev.pubkey_fp[6], dev.pubkey_fp[7]);
+
+  static FleetRosterEntry entries[FLEET_ROSTER_MAX];
+  scene::FleetPeer peers[FLEET_ROSTER_MAX];
+  const int nn = fleet_roster_feed::snapshot(entries, FLEET_ROSTER_MAX);
+  const uint32_t now = millis();
+  for (int i = 0; i < nn; ++i) peers[i] = scene::fleet_peer_from_entry(entries[i], now);
+
+  scene::FleetView v{};
+  v.self_id  = dev.device_id;
+  v.self_fp4 = self_fp4;
+  v.peers    = peers;
+  v.count    = (size_t)(nn < 0 ? 0 : nn);
+  v.capacity = FLEET_ROSTER_MAX;
+
+  scene::Renderer r{theme_emit, nullptr, console_probe()};
+  Serial.print("\r\n");
+  scene::fleet_card(r, v);
+}
+#endif
+
+#if FEATURE_DIAGNOSTICS
+// 'a' — the animated wake: the 10 self-test probes light up [..] -> [OK]/[!!]
+// as they report (real per-probe results), then it settles into the identity
+// card. On a confirmed ANSI terminal the fixed-height block repaints in place;
+// on the plain ASCII floor there's no cursor control, so it prints the finished
+// checklist once. Press any key to skip the reveal. Read-only (Tier::Diag).
+static void run_wake() {
+  scene::Caps caps = console_probe();
+  scene::Renderer r{theme_emit, nullptr, caps};
+  Serial.print("\r\nWaking - running self-test...\r\n");
+  diag_run_selftest();                 // the real run (~2-5s), fills the report
+  selftest_report_t st;
+  if (!diag_get_selftest(&st)) { render_trust_card(r); return; }
+
+  int n = st.total_count;
+  if (n > SELFTEST_COUNT) n = SELFTEST_COUNT;
+  scene::WakeProbe probes[SELFTEST_COUNT];
+  for (int i = 0; i < n; ++i) {
+    probes[i].label = st.tests[i].name;
+    probes[i].state = scene::ProbeState::Pending;
+    probes[i].ms = st.tests[i].duration_ms;
+  }
+
+  if (!caps.ansi) {
+    // ASCII floor: no cursor control — reveal all and print the block once.
+    for (int i = 0; i < n; ++i)
+      probes[i].state = st.tests[i].passed ? scene::ProbeState::Pass
+                                           : scene::ProbeState::Fail;
+    scene::wake_frame(r, scene::TRUST_INNER, probes, n, st.health_score, true);
+  } else {
+    scene::hide_cursor(r);
+    scene::wake_frame(r, scene::TRUST_INNER, probes, n, st.health_score, false);
+    bool skipped = false;
+    for (int i = 0; i < n && !skipped; ++i) {
+      probes[i].state = st.tests[i].passed ? scene::ProbeState::Pass
+                                           : scene::ProbeState::Fail;
+      scene::cursor_up(r, scene::wake_height(n));
+      scene::wake_frame(r, scene::TRUST_INNER, probes, n, st.health_score, i == n - 1);
+      uint32_t until = millis() + 180;
+      while (millis() < until) {
+        if (Serial.available()) { Serial.read(); skipped = true; break; }
+      }
+    }
+    if (skipped) {
+      for (int j = 0; j < n; ++j)
+        probes[j].state = st.tests[j].passed ? scene::ProbeState::Pass
+                                             : scene::ProbeState::Fail;
+      scene::cursor_up(r, scene::wake_height(n));
+      scene::wake_frame(r, scene::TRUST_INNER, probes, n, st.health_score, true);
+    }
+    scene::show_cursor(r);
+  }
+  render_trust_card(r);
+}
+#endif  // FEATURE_DIAGNOSTICS
+#endif  // FEATURE_CONSOLE_THEME
+
+// 'j' — the machine-readable self-manifest: a compact JSON line describing this
+// unit to a *program* (public info only — the same facts as the trust card,
+// plus the enabled feature set). A browser reads it over WebSerial to draw the
+// matching randomart from the pubkey and show exactly the tools this device
+// has. Read-only, leaks no secret (Tier::Diag). Always available.
+static void emit_self_manifest() {
+  DeviceIdentity& dev = witness_get_device();
+
+  char pk[65], fp[17], ch[65];
+  for (int i = 0; i < 32; ++i) snprintf(pk + i * 2, 3, "%02x", dev.pubkey[i]);
+  for (int i = 0; i < 8;  ++i) snprintf(fp + i * 2, 3, "%02x", dev.pubkey_fp[i]);
+  for (int i = 0; i < 32; ++i) snprintf(ch + i * 2, 3, "%02x", dev.chain_head[i]);
+
+  // Enabled capabilities — the compile-time FEATURE_* flags ARE the source of
+  // truth, so the manifest can never claim a feature the image doesn't carry.
+  const char* feats[40];
+  size_t nf = 0;
+  #define CV_ADD_FEAT(name) do { \
+      if (nf < sizeof(feats) / sizeof(feats[0])) feats[nf++] = (name); } while (0)
+#if FEATURE_SD_STORAGE
+  CV_ADD_FEAT("sd_storage");
+#endif
+#if FEATURE_WIFI_AP
+  CV_ADD_FEAT("wifi_ap");
+#endif
+#if FEATURE_HTTP_SERVER
+  CV_ADD_FEAT("http_server");
+#endif
+#if FEATURE_CAMERA_PEEK
+  CV_ADD_FEAT("camera_peek");
+#endif
+#if FEATURE_GNSS
+  CV_ADD_FEAT("gnss");
+#endif
+#if FEATURE_WATCHDOG
+  CV_ADD_FEAT("watchdog");
+#endif
+#if FEATURE_OTA_UPDATE
+  CV_ADD_FEAT("ota");
+#endif
+#if FEATURE_OTA_PULL
+  CV_ADD_FEAT("ota_pull");
+#endif
+#if FEATURE_HA_MQTT
+  CV_ADD_FEAT("mqtt");
+#endif
+#if FEATURE_MESH_NETWORK
+  CV_ADD_FEAT("mesh");
+#endif
+#if FEATURE_BLE
+  CV_ADD_FEAT("ble");
+#endif
+#if FEATURE_BLE_STATUS
+  CV_ADD_FEAT("ble_status");
+#endif
+#if FEATURE_CSI
+  CV_ADD_FEAT("csi");
+#endif
+#if FEATURE_VISION_DETECT
+  CV_ADD_FEAT("vision");
+#endif
+#if FEATURE_POWER_MONITOR
+  CV_ADD_FEAT("power_monitor");
+#endif
+#if FEATURE_POWER_POLICY
+  CV_ADD_FEAT("power_policy");
+#endif
+#if FEATURE_THERMAL_WATCHDOG
+  CV_ADD_FEAT("thermal_watchdog");
+#endif
+#if FEATURE_DIAGNOSTICS
+  CV_ADD_FEAT("diagnostics");
+#endif
+#if FEATURE_DATA_MGMT
+  CV_ADD_FEAT("data_mgmt");
+#endif
+#if FEATURE_SETUP_WIZARD
+  CV_ADD_FEAT("setup_wizard");
+#endif
+#if FEATURE_USB_ONBOARD
+  CV_ADD_FEAT("usb_onboard");
+#endif
+#if FEATURE_CONSOLE_THEME
+  CV_ADD_FEAT("console_theme");
+#endif
+  #undef CV_ADD_FEAT
+
+  int health = -1;
+#if FEATURE_DIAGNOSTICS
+  selftest_report_t st;
+  if (diag_get_selftest(&st)) health = (int)st.health_score;   // last score; no fresh run
+#endif
+
+  // The interactive keys THIS image answers — straight from the one command
+  // registry (kConsoleCommands), so the manifest can't list a key the device
+  // doesn't actually handle.
+  manifest::Cmd cmds[kConsoleCommandCount + 1];
+  size_t nc = 0;
+  for (size_t i = 0; i < kConsoleCommandCount; ++i) {
+    cmds[nc].key = kConsoleCommands[i].key;
+    cmds[nc].name = kConsoleCommands[i].name;
+    nc++;
+  }
+
+  // The fleet roster THIS unit has heard over the air — the machine-readable
+  // twin of the 'n' card, for the browser /fleet page. Public-only and UNSIGNED.
+  // Empty unless FEATURE_BLE_SCAN feeds the roster; single-sourced from the same
+  // snapshot + host-tested projection (fleet_peer_from_entry) the card uses, so
+  // the page shows the live truth. (null + 0 → "fleet":[] on non-scan builds.)
+  const manifest::Peer* fleet_ptr = nullptr;
+  size_t nfleet = 0;
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+  static manifest::Peer   fleetbuf[FLEET_ROSTER_MAX];
+  static FleetRosterEntry rent[FLEET_ROSTER_MAX];
+  static char             flagbufs[FLEET_ROSTER_MAX][40];
+  const int rn = fleet_roster_feed::snapshot(rent, FLEET_ROSTER_MAX);
+  const uint32_t rnow = millis();
+  for (int i = 0; i < rn && nfleet < FLEET_ROSTER_MAX; ++i) {
+    const scene::FleetPeer vp = scene::fleet_peer_from_entry(rent[i], rnow);
+    scene::fleet_fmt_flags(vp.flags, flagbufs[nfleet], sizeof flagbufs[nfleet]);
+    fleetbuf[nfleet].fp      = vp.fp4;
+    fleetbuf[nfleet].age_s   = vp.age_s;
+    fleetbuf[nfleet].health  = vp.health_pct;
+    fleetbuf[nfleet].battery = vp.battery_pct;
+    fleetbuf[nfleet].chain   = vp.chain_lo;
+    // "" for a clean peer (fleet_fmt_flags renders that as "ok" for the console).
+    fleetbuf[nfleet].flags   = (vp.flags == 0) ? "" : flagbufs[nfleet];
+    nfleet++;
+  }
+  fleet_ptr = fleetbuf;
+#endif
+
+  manifest::Facts f{};
+  f.board          = DEVICE_TYPE;
+  f.firmware       = FIRMWARE_VERSION;
+  f.git            = FIRMWARE_GIT_HASH;
+  f.protocol       = PROTOCOL_VERSION;
+  f.device_id      = dev.device_id;
+  f.pubkey_hex     = pk;
+  f.pubkey_fp_hex  = fp;
+  f.chain_head_hex = ch;
+  f.seq            = dev.seq;
+  f.boots          = dev.boot_count;
+  f.health         = health;
+  {
+    // Heat, from the shared thermal provider (never Arduino's temperatureRead()
+    // — the envsens tamper detector owns the sensor; see securacv_thermal.h).
+    float die_c = 0.0f;
+    if (thermal_read_die_c(&die_c)) {
+      f.temp_c = (int)(die_c + (die_c >= 0.0f ? 0.5f : -0.5f));
+    }
+  }
+  f.tamper         = dev.tamper_active;
+  f.features       = feats;
+  f.feature_count  = nf;
+  f.commands       = cmds;
+  f.command_count  = nc;
+  f.fleet          = fleet_ptr;
+  f.fleet_count    = nfleet;
+  f.help_url       = SECURACV_HELP_URL_BASE;
+
+  // Only the scan build carries a fleet[]; size it for the WORST case so a full,
+  // maximally-flagged roster never overflows to {"error":...} exactly when it's
+  // most interesting. Worst peer — max age (uint32) + every status word —
+  // serialises to ~119B; FLEET_ROSTER_MAX (16) of them ≈ 1.9KB, plus the base
+  // manifest (full command set + features + 64-hex keys) ≈ 1.4KB → ~3.3KB. 4KB
+  // clears that with headroom. Non-scan builds keep the small buffer (their
+  // fleet[] is always empty), so RAM doesn't regress there.
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+  static char buf[4096];
+#else
+  static char buf[1600];
+#endif
+  size_t n = manifest::build(f, buf, sizeof buf);
+  Serial.println();
+  if (n) Serial.println(buf);
+  else   Serial.println("{\"error\":\"manifest overflow\"}");
+}
+
 static void handle_serial_commands() {
   if (!Serial.available()) return;
 
@@ -2143,6 +2625,7 @@ static void handle_serial_commands() {
       Serial.println("\n=== Commands ===");
       Serial.println("  h - This help");
       Serial.println("  i - Device identity");
+      Serial.println("  j - Self-manifest (machine-readable JSON for the app)");
       Serial.println("  s - Status");
       Serial.println("  g - GPS info");
 #if FEATURE_DATA_MGMT
@@ -2168,6 +2651,15 @@ static void handle_serial_commands() {
       Serial.println("  k - Unseal guide");
 #endif
       Serial.println("  t - Run all tests (self-test + feature health + Bluetooth)");
+#if FEATURE_CONSOLE_THEME
+      Serial.println("  l - Identity banner (key fingerprint as randomart)");
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+      Serial.println("  n - Nearby Canaries (the fleet this one hears)");
+#endif
+#if FEATURE_DIAGNOSTICS
+      Serial.println("  a - Animated wake (watch the self-test run live)");
+#endif
+#endif
       Serial.println("  c - Attest chain (sign a nonce + chain head: c <nonce>)");
       Serial.println("  f - Fingerprint / provenance (version, secure-boot, keys)");
       Serial.println("  e - Explain last boot (reset reason + recent faults)");
@@ -2186,6 +2678,11 @@ static void handle_serial_commands() {
       Serial.println("\n");
       break;
     }
+
+    case 'j':
+    case 'J':
+      emit_self_manifest();
+      break;
 
     case 's':
     case 'S':
@@ -2580,6 +3077,27 @@ static void handle_serial_commands() {
       Serial.println();
       break;
     }
+
+#if FEATURE_CONSOLE_THEME
+    // 'l' — the identity banner: verifiable trust card + key-fingerprint
+    // randomart. Read-only; ASCII-safe unless the terminal answers the probe.
+    case 'l':
+    case 'L':
+      show_identity_banner();
+      break;
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+    case 'n':
+    case 'N':
+      show_fleet_nearby();
+      break;
+#endif
+#if FEATURE_DIAGNOSTICS
+    case 'a':
+    case 'A':
+      run_wake();
+      break;
+#endif
+#endif
 
     case 'x':
     case 'X':

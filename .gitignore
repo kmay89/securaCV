@@ -1,5 +1,6 @@
-# Rust build artifacts
+# Rust build artifacts (root and nested crates, e.g. desktop/hub-io/target/)
 /target/
+**/target/
 **/*.rs.bk
 
 # IDE
@@ -78,3 +79,13 @@ docs/hardware/enclosure/dev_*.stl
 boards/vendor/*.step
 canary-local/boards/*.tmp.glb
 canary-local/boards/*.src.step
+
+# Generated Xcode projects. Both Apple targets generate their project from a
+# committed XcodeGen spec on every build (ios/project.yml,
+# tvos/WitnessWall/project.yml) precisely so it can't rot — a committed
+# .pbxproj would be the thing that drifts.
+*.xcodeproj/
+*.xcworkspace/
+
+# Apple build output: staged Rust core slices, archives, exported .ipa.
+tvos/build/

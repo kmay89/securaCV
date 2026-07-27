@@ -52,6 +52,19 @@ expect err "display on, no panel"       FEATURE_DISPLAY=1 HAS_DISPLAY=0
 expect err "touch on, no controller"    FEATURE_TOUCH=1 HAS_TOUCH=0
 expect err "dim on, on/off backlight"   FEATURE_BACKLIGHT_DIM=1 HAS_BACKLIGHT_PWM=0
 expect ok  "dim off, on/off backlight"  FEATURE_BACKLIGHT_DIM=0 HAS_BACKLIGHT_PWM=0
+# Acoustic alarm listener (4.3C): the mic capability must be DECLARED —
+# an undefined HAS_MICROPHONE fails loud (the privacy surface can't be
+# implicit), and a declared-mic board builds clean.
+expect err "mic alarm, cap undefined"   FEATURE_MIC_ALARM=1
+expect err "mic alarm, no mic"          FEATURE_MIC_ALARM=1 HAS_MICROPHONE=0
+expect ok  "mic alarm on the 4.3C"      FEATURE_MIC_ALARM=1 HAS_MICROPHONE=1
+expect ok  "mic alarm off, no mic"      FEATURE_MIC_ALARM=0 HAS_MICROPHONE=0
+# On-glass modes (demo/debug/arcade): glass + touch, nothing more.
+expect err "demo on, no panel"          FEATURE_DEMO_MODE=1 HAS_DISPLAY=0 HAS_TOUCH=1
+expect err "debug on, no touch"         FEATURE_DEBUG_MODE=1 HAS_DISPLAY=1 HAS_TOUCH=0
+expect ok  "arcade on, glass + touch"   FEATURE_ARCADE=1 HAS_DISPLAY=1 HAS_TOUCH=1
+expect ok  "modes on, HAS undefined"    FEATURE_DEMO_MODE=1
+expect ok  "modes off, no panel"        FEATURE_DEBUG_MODE=0 HAS_DISPLAY=0
 
 # Real-world matrix: every shipped Vision host board's pins.h against the
 # REAL vision default flavor config (not simulated -D flags — the same pair

@@ -1,0 +1,150 @@
+# Apple TV CI — the DEV half of the tvOS pipeline.
+#
+# The release workflow (tvos-release.yml) is the PROD half: it signs and
+# uploads, and it needs an Apple Developer account, so it stays gated behind
+# ENABLE_TVOS_BUILD. That gate would leave the app itself completely untested
+# until someone buys a developer account — which is how a "wired" pipeline rots
+# into a broken one.
+#
+# So this workflow tests everything that does NOT need Apple's permission, on
+# every PR that touches the TV:
+#
+#   • the Rust witness core, on Linux — including the anti-drift check that
+#     pins its chain math to the KERNEL'S OWN fixtures (tvos/witness-core/
+#     tests/vectors.rs). This is the gate that stops the Apple TV from ever
+#     verifying a different chain than the source of truth, and it needs no Mac.
+#   • the SwiftUI app, built and unit-tested on the tvOS SIMULATOR — no
+#     signing, no secrets, no account. This is what proves the app compiles and
+#     the FFI wrapper owns its pointers correctly.
+#
+# Result: a broken Witness Wall fails the PR that broke it, whether or not the
+# release pipeline is enabled.
+name: tvOS CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tvos/**"
+      - "tests/fixtures/envelope/domain_separation_vectors.json"
+      - ".github/workflows/tvos.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "tvos/**"
+      - "tests/fixtures/envelope/domain_separation_vectors.json"
+      - ".github/workflows/tvos.yml"
+
+permissions:
+  contents: read
+
+# Superseded PR runs are cancelled; main is never cancelled (repo convention —
+# full signal per main commit).
+concurrency:
+  group: tvos-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # ── The core, on a cheap Linux runner ──────────────────────────────────────
+  # Runs on EVERY PR that touches the TV, with no Mac minutes and no secrets.
+  # The vectors test here is the load-bearing one.
+  core:
+    name: Witness core (chain math + anti-drift vectors)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tvos/witness-core -> target
+          key: tvos-core
+
+      - name: Format
+        working-directory: tvos/witness-core
+        run: cargo fmt --check
+
+      - name: Clippy (warnings are errors)
+        working-directory: tvos/witness-core
+        run: cargo clippy --all-targets -- -D warnings
+
+      # The whole reason a second implementation is allowed to exist: it is
+      # checked against the kernel's own domain-separation fixtures.
+      - name: Test — including the kernel-agreement vectors
+        working-directory: tvos/witness-core
+        run: cargo test --all-targets
+
+      # The tvOS asset catalog is generated and committed (tvOS icons are
+      # layered image stacks). Without it, App Store Connect rejects the
+      # archive — so checking here beats altool failing minutes later.
+      #
+      # Deliberately a STRUCTURAL check, not a byte-diff against a regenerated
+      # copy. The icon composites brands/logo_512x512.png through Pillow, and
+      # Pillow's resampling output can differ between versions — a byte-diff
+      # would go red because a runner image bumped a dependency, which is
+      # exactly the kind of spurious failure this pipeline must not have. What
+      # actually matters is that every required image exists at the exact size
+      # Apple demands, and that is what this asserts.
+      - name: App icon catalog is complete and correctly sized
+        run: python3 tvos/scripts/check_app_icon.py
+
+  # ── The app, on the tvOS simulator ─────────────────────────────────────────
+  # No signing (CODE_SIGNING_ALLOWED=NO) and no secrets, so this runs on forks
+  # and on every PR — the app is verified long before anyone has an Apple
+  # Developer account.
+  app:
+    name: Witness Wall (simulator build + unit tests)
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Rust (+ tvOS simulator core target)
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tvos/witness-core -> target
+          key: tvos-sim
+
+      # Only the simulator slice — the device slice needs no verification here
+      # and doubles the tier-3 build-std cost.
+      - name: Build the witness core (simulator slice)
+        working-directory: tvos
+        env:
+          TVOS_SLICES: simulator
+        run: bash scripts/build-witness-core.sh
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate the Xcode project
+        working-directory: tvos/WitnessWall
+        run: xcodegen generate
+
+      # Log what the runner actually has, so a future "no such destination"
+      # failure is one scroll from its own answer.
+      - name: Show available tvOS simulators
+        run: xcrun simctl list devices available
+
+      # `OS=latest,name=Apple TV` rather than a pinned tvOS version: Apple
+      # removes old runtimes from the images, and a pinned one breaks CI with
+      # no change on our side (Principle 2 — don't track something that moves
+      # without saying so). "Apple TV" is present in every tvOS runtime.
+      - name: Build & test on the simulator
+        working-directory: tvos/WitnessWall
+        run: |
+          xcodebuild test \
+            -project WitnessWall.xcodeproj \
+            -scheme WitnessWall \
+            -destination 'platform=tvOS Simulator,OS=latest,name=Apple TV' \
+            CODE_SIGNING_ALLOWED=NO

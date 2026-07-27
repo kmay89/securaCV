@@ -1,0 +1,300 @@
+<title>Canary Voice — acoustic signatures</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  Hand-written UI template for the Canary Voice sound preview.
+  The sound DATA is injected at the marker below by
+  canary-local/tools/gen_voice_preview.mjs, which renders it from the firmware
+  header (firmware/projects/canary-display/include/canary/hal/voice_score.h)
+  via tests_host/dump_voice_score.cpp. Edit the UI here; never edit the
+  generated index.html by hand — a CI drift gate regenerates and compares it.
+-->
+<style>
+  :root {
+    --bg:#F1ECE1; --panel:#FBF8F1; --panel2:#F4EFE4; --ink:#1E1A14;
+    --muted:#6B6252; --faint:#9A9080; --line:#E2DACB;
+    --accent:#B27C1B; --accent-ink:#7A5410; --accent-soft:rgba(178,124,27,.12);
+    --alert:#C6483C; --interaction:#3E8B7E; --ambient:#5A63A0; --wake:#C6743F; --notice:#B27C1B;
+    --scope-bg:#EFE8DA; --scope-line:#B27C1B; --scope-grid:rgba(30,26,20,.06);
+    --shadow:0 1px 2px rgba(30,26,20,.06),0 8px 24px -12px rgba(30,26,20,.18);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#12100D; --panel:#1B1813; --panel2:#221E18; --ink:#EDE7DA;
+      --muted:#A79E8C; --faint:#6E6656; --line:#2E2A22;
+      --accent:#E9B44C; --accent-ink:#F2C978; --accent-soft:rgba(233,180,76,.14);
+      --alert:#E5675B; --interaction:#6FB3A6; --ambient:#8891C4; --wake:#E79A6B; --notice:#E9B44C;
+      --scope-bg:#0D0B08; --scope-line:#E9B44C; --scope-grid:rgba(237,231,218,.06);
+      --shadow:0 1px 2px rgba(0,0,0,.4),0 12px 32px -14px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="light"] {
+    --bg:#F1ECE1; --panel:#FBF8F1; --panel2:#F4EFE4; --ink:#1E1A14;
+    --muted:#6B6252; --faint:#9A9080; --line:#E2DACB;
+    --accent:#B27C1B; --accent-ink:#7A5410; --accent-soft:rgba(178,124,27,.12);
+    --alert:#C6483C; --interaction:#3E8B7E; --ambient:#5A63A0; --wake:#C6743F; --notice:#B27C1B;
+    --scope-bg:#EFE8DA; --scope-line:#B27C1B; --scope-grid:rgba(30,26,20,.06);
+    --shadow:0 1px 2px rgba(30,26,20,.06),0 8px 24px -12px rgba(30,26,20,.18);
+  }
+  :root[data-theme="dark"] {
+    --bg:#12100D; --panel:#1B1813; --panel2:#221E18; --ink:#EDE7DA;
+    --muted:#A79E8C; --faint:#6E6656; --line:#2E2A22;
+    --accent:#E9B44C; --accent-ink:#F2C978; --accent-soft:rgba(233,180,76,.14);
+    --alert:#E5675B; --interaction:#6FB3A6; --ambient:#8891C4; --wake:#E79A6B; --notice:#E9B44C;
+    --scope-bg:#0D0B08; --scope-line:#E9B44C; --scope-grid:rgba(237,231,218,.06);
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 12px 32px -14px rgba(0,0,0,.6);
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    line-height:1.5; -webkit-font-smoothing:antialiased; }
+  .mono { font-family:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace; }
+  .wrap { max-width:1080px; margin:0 auto; padding:clamp(20px,4vw,48px) clamp(16px,4vw,32px) 72px; }
+  header { display:flex; flex-direction:column; gap:14px; margin-bottom:8px; }
+  .brandrow { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  .mark { width:30px; height:30px; flex:none; border-radius:50%;
+    background:radial-gradient(circle at 38% 34%, var(--accent-ink), var(--accent) 55%, transparent 72%);
+    box-shadow:0 0 0 1px var(--line), 0 0 18px -4px var(--accent); }
+  .eyebrow { text-transform:uppercase; letter-spacing:.22em; font-size:11px; color:var(--muted); font-weight:600; }
+  h1 { font-size:clamp(30px,5.4vw,50px); line-height:1.02; margin:0; font-weight:660; letter-spacing:-.02em; text-wrap:balance; }
+  h1 em { font-style:normal; color:var(--accent); }
+  .lede { max-width:62ch; color:var(--muted); font-size:clamp(14.5px,1.7vw,16.5px); margin:4px 0 0; }
+  .lede b { color:var(--ink); font-weight:600; }
+  .console { margin-top:26px; background:var(--panel); border:1px solid var(--line); border-radius:16px; box-shadow:var(--shadow); overflow:hidden; }
+  .scopewrap { position:relative; background:var(--scope-bg); }
+  canvas#scope { display:block; width:100%; height:150px; }
+  .nowplaying { position:absolute; left:16px; top:14px; display:flex; align-items:baseline; gap:10px; pointer-events:none; }
+  .np-name { font-size:14px; font-weight:640; letter-spacing:.01em; }
+  .np-sub { font-size:12px; color:var(--muted); }
+  .scope-tag { position:absolute; right:14px; top:13px; font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--faint); }
+  .controls { display:flex; align-items:center; gap:22px 28px; flex-wrap:wrap; padding:16px 18px; border-top:1px solid var(--line); background:var(--panel2); }
+  .ctl { display:flex; align-items:center; gap:12px; }
+  .ctl-label { font-size:11px; text-transform:uppercase; letter-spacing:.14em; color:var(--muted); font-weight:600; }
+  .seg { display:inline-flex; background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:3px; gap:2px; }
+  .seg button { appearance:none; border:0; background:transparent; color:var(--muted); font:inherit; font-size:12.5px; font-weight:600; padding:6px 11px; border-radius:7px; cursor:pointer; transition:background .15s,color .15s; }
+  .seg button:hover { color:var(--ink); }
+  .seg button[aria-pressed="true"] { background:var(--accent); color:#1a1508; }
+  .toggle { appearance:none; border:1px solid var(--line); background:var(--bg); color:var(--ink); font:inherit; font-size:13px; font-weight:600; padding:8px 14px; border-radius:10px; cursor:pointer; display:inline-flex; align-items:center; gap:8px; transition:border-color .15s,background .15s; }
+  .toggle:hover { border-color:var(--accent); }
+  .toggle .dot { width:9px; height:9px; border-radius:50%; background:var(--wake); box-shadow:0 0 8px var(--wake); }
+  .toggle[data-night="true"] .dot { background:var(--ambient); box-shadow:0 0 8px var(--ambient); }
+  .hint { font-size:12.5px; color:var(--faint); flex:1 1 200px; min-width:180px; text-align:right; }
+  section { margin-top:38px; }
+  .sec-head { display:flex; align-items:baseline; gap:12px; margin:0 2px 14px; border-bottom:1px solid var(--line); padding-bottom:9px; }
+  .sec-head h2 { font-size:15px; margin:0; font-weight:660; letter-spacing:.01em; }
+  .sec-head p { margin:0; font-size:12.5px; color:var(--muted); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(268px,1fr)); gap:12px; }
+  .card { position:relative; background:var(--panel); border:1px solid var(--line); border-radius:13px; padding:15px 15px 13px; display:flex; flex-direction:column; gap:10px;
+    text-align:left; cursor:pointer; font:inherit; color:inherit; width:100%; transition:border-color .16s, transform .16s, box-shadow .16s; }
+  .card::before { content:""; position:absolute; left:0; top:13px; bottom:13px; width:3px; border-radius:3px; background:var(--cat); opacity:.85; }
+  .card:hover { border-color:var(--cat); transform:translateY(-1px); box-shadow:var(--shadow); }
+  .card:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .card.playing { border-color:var(--cat); box-shadow:0 0 0 1px var(--cat), var(--shadow); }
+  .card.silent { opacity:.62; }
+  .card-top { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; padding-left:8px; }
+  .card-name { font-size:15.5px; font-weight:640; letter-spacing:.01em; }
+  .cat-tag { font-size:9.5px; text-transform:uppercase; letter-spacing:.13em; font-weight:700; color:var(--cat); white-space:nowrap; padding-top:3px; }
+  .card-desc { font-size:12.8px; color:var(--muted); padding-left:8px; min-height:2.4em; }
+  .card-spec { font-size:11px; color:var(--faint); padding-left:8px; letter-spacing:.01em; display:flex; align-items:center; gap:6px; }
+  .meter-row { display:flex; align-items:center; gap:9px; padding-left:8px; margin-top:2px; }
+  .meter { flex:1; height:5px; border-radius:3px; background:var(--bg); overflow:hidden; border:1px solid var(--line); }
+  .meter i { display:block; height:100%; width:0; background:var(--cat); border-radius:3px; transition:width .25s ease; }
+  .duty { font-size:10.5px; color:var(--muted); min-width:66px; text-align:right; letter-spacing:.02em; }
+  .play-ic { width:14px; height:14px; flex:none; opacity:.6; }
+  footer { margin-top:44px; padding-top:18px; border-top:1px solid var(--line); color:var(--faint); font-size:12.5px; }
+  footer b { color:var(--muted); font-weight:600; }
+  footer .prov { margin-top:10px; font-size:11.5px; }
+  a { color:var(--accent); text-decoration:none; }
+  .themebtn { position:fixed; top:14px; right:14px; z-index:5; width:38px; height:38px; border-radius:50%; border:1px solid var(--line); background:var(--panel); color:var(--ink); cursor:pointer; font-size:16px; display:grid; place-items:center; box-shadow:var(--shadow); }
+  @media (prefers-reduced-motion:reduce){ *{transition:none!important;} }
+  @media (max-width:520px){ .hint{display:none;} .controls{gap:16px;} }
+</style>
+
+<button class="themebtn" id="themebtn" aria-label="Toggle light or dark theme">◐</button>
+
+<div class="wrap">
+  <header>
+    <div class="brandrow"><span class="mark" aria-hidden="true"></span><span class="eyebrow">securaCV · canary display</span></div>
+    <h1>The Canary has a <em>voice</em>.</h1>
+    <p class="lede">Every alert and interaction on the display is one square-wave piezo — but shaped so a note can
+      <b>breathe, chirp, and trill</b>. These are its acoustic signatures, drawn from a warm pentatonic so they're a
+      family, with the intruder alarm held deliberately apart. The pad isn't populated on hardware yet, so
+      <b>this is the first place anyone can hear them</b> — and every sound here is <b>generated from the firmware</b>,
+      not hand-copied, so it can't drift.</p>
+  </header>
+
+  <div class="console">
+    <div class="scopewrap">
+      <canvas id="scope" width="1040" height="150" aria-hidden="true"></canvas>
+      <div class="nowplaying"><span class="np-name" id="npName">Ready</span><span class="np-sub" id="npSub">tap a signature to hear it</span></div>
+      <span class="scope-tag mono">piezo · square</span>
+    </div>
+    <div class="controls">
+      <div class="ctl"><span class="ctl-label">Volume</span>
+        <div class="seg" id="volseg" role="group" aria-label="Volume level">
+          <button data-v="0">Off</button><button data-v="1">Soft</button><button data-v="2">Low</button><button data-v="3">Med</button><button data-v="4">Full</button>
+        </div>
+      </div>
+      <button class="toggle" id="nightBtn" data-night="false" aria-pressed="false"><span class="dot"></span><span id="nightLbl">Daytime</span></button>
+      <span class="hint" id="hint">The volume model runs live — watch each duty meter change.</span>
+    </div>
+  </div>
+
+  <section><div class="sec-head"><h2>Alerts</h2><p>the safety grammar — a dead battery must never sound like an intruder</p></div><div class="grid" id="grid-alerts"></div></section>
+  <section><div class="sec-head"><h2>Identity</h2><p>our voice — the bird you learn to recognize</p></div><div class="grid" id="grid-identity"></div></section>
+  <section><div class="sec-head"><h2>Interactions</h2><p>optional feedback — quiet by construction, silent at night</p></div><div class="grid" id="grid-interactions"></div></section>
+
+  <footer>
+    <p>Faithful to the firmware by construction: every frame you hear and every duty on the meters is rendered from
+    <span class="mono">voice_score.h</span> by the real compiler, then played back verbatim — the preview owns no audio
+    math of its own. Interaction and ambient voices go silent at night; the alarm keeps a floor at every volume,
+    <b>including Off</b>. The browser adds a gentle low-pass where the piezo's own physics would; the exact timbre waits
+    for the bench.</p>
+    <p class="prov mono" id="prov"></p>
+  </footer>
+</div>
+
+<script>
+/* __VOICE_DATA__ */
+(() => {
+  "use strict";
+  const D = window.VOICE_DATA;
+  const CAT_VAR = ["--interaction","--ambient","--notice","--wake","--alert"];
+
+  // UI copy (human-facing prose; the SOUND is all from VOICE_DATA).
+  const META = {
+    Alarm:{name:"Alarm", desc:"Alert / Tamper. Re-voices every 30 s until acknowledged.", spec:"10 pulses · 2.6/3.1 kHz · IEC"},
+    Warn:{name:"Warn", desc:"A fault — witness lost, chain failed. Not the intruder shape.", spec:"3 slow pulses · 1.8 kHz"},
+    AllClear:{name:"All-clear", desc:"The worst state falls back to quiet. Resolution has a sound.", spec:"falling · 1.3 → 0.9 kHz"},
+    Boot:{name:"Boot", desc:"Power-on — “the canary wakes.” Our startup signature.", spec:"C6→E6 · G6→C7 · warble"},
+    JoinSuccess:{name:"Joined", desc:"You're in the fleet. Earned once, at onboarding.", spec:"C6·E6·G6·C7 arpeggio"},
+    Sunrise:{name:"Sunrise", desc:"The gentle wake chirp. Sounds through the night by design.", spec:"C6→E6 → E6→G6 · warble"},
+    Heartbeat:{name:"Heartbeat", desc:"Once-a-minute, all-verified. Felt more than heard.", spec:"C6 · 420 ms swell"},
+    AckConfirm:{name:"Acknowledge", desc:"Long-press registered — a warm nod that resolves.", spec:"C6 → G6 · perfect fifth"},
+    PageTurn:{name:"Page turn", desc:"Paging through your Canaries on the watch.", spec:"E6 · A6 · light pips"},
+    MuteOn:{name:"Mute on", desc:"Silencing one witness. Falling = going quiet.", spec:"G6 → D6 · descending"},
+    MuteOff:{name:"Mute off", desc:"The mute lifts. The mirror of muting — ascending.", spec:"D6 → G6 · ascending"},
+    Tap:{name:"Tap", desc:"The lightest “heard you.” In the palette; not auto-wired.", spec:"A6 · 42 ms pluck"},
+  };
+  const GROUPS = {
+    "grid-alerts":["Alarm","Warn","AllClear"],
+    "grid-identity":["Boot","JoinSuccess","Sunrise","Heartbeat"],
+    "grid-interactions":["AckConfirm","PageTurn","MuteOn","MuteOff","Tap"],
+  };
+  const PLAY_SVG = '<svg class="play-ic" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 3l9 5-9 5V3z" fill="currentColor"/></svg>';
+
+  let volume = 3, night = false;
+  const cards = {};
+
+  function peakFor(id){ return D.peak[D.voices[id].cat][volume][night?1:0]; }
+
+  function buildCards(){
+    for(const [gid, ids] of Object.entries(GROUPS)){
+      const grid = document.getElementById(gid);
+      for(const id of ids){
+        if(!D.voices[id]) continue;
+        const cat = D.voices[id].cat, m = META[id] || {name:id, desc:"", spec:""};
+        const btn = document.createElement("button");
+        btn.className = "card"; btn.type = "button";
+        btn.style.setProperty("--cat", `var(${CAT_VAR[cat]})`);
+        btn.setAttribute("aria-label", `Play ${m.name}`);
+        btn.innerHTML =
+          `<div class="card-top"><span class="card-name">${m.name}</span><span class="cat-tag">${D.catNames[cat]}</span></div>`+
+          `<div class="card-desc">${m.desc}</div>`+
+          `<div class="card-spec mono">${PLAY_SVG}<span>${m.spec}</span></div>`+
+          `<div class="meter-row"><span class="meter"><i></i></span><span class="duty mono"></span></div>`;
+        btn.addEventListener("click", () => play(id, btn));
+        grid.appendChild(btn);
+        cards[id] = { btn, fill: btn.querySelector(".meter i"), duty: btn.querySelector(".duty") };
+      }
+    }
+    refreshMeters();
+  }
+  function refreshMeters(){
+    for(const id in cards){
+      const d = peakFor(id);
+      cards[id].fill.style.width = (d/128*100) + "%";
+      cards[id].duty.textContent = d===0 ? "silent" : `duty ${d}/128`;
+      cards[id].btn.classList.toggle("silent", d===0);
+    }
+  }
+
+  // ── Audio: play firmware-rendered frames verbatim ──────────────────────
+  let ac=null, master=null, analyser=null, active=0, rafId=0;
+  const STEP = 0.006;  // frames are emitted at the firmware's 6 ms control tick
+  function ensureAudio(){
+    if(ac) return;
+    ac = new (window.AudioContext||window.webkitAudioContext)();
+    master = ac.createGain(); master.gain.value = 0.16;
+    const lp = ac.createBiquadFilter(); lp.type="lowpass"; lp.frequency.value=5600; lp.Q.value=0.4;
+    analyser = ac.createAnalyser(); analyser.fftSize = 2048;
+    master.connect(lp); lp.connect(analyser); analyser.connect(ac.destination);
+  }
+  function play(id, btn){
+    ensureAudio(); if(ac.state==="suspended") ac.resume();
+    const peak = peakFor(id);
+    setNowPlaying(id, peak);
+    if(peak===0){ btn.animate([{opacity:.62},{opacity:1},{opacity:.62}],{duration:420}); return; }
+    const frames = D.voices[id].frames, gscale = peak/128;
+    const osc = ac.createOscillator(); osc.type="square";
+    const g = ac.createGain(); g.gain.value = 0;
+    osc.connect(g); g.connect(master);
+    const t0 = ac.currentTime + 0.02;
+    for(let i=0;i<frames.length;i++){
+      const at = t0 + i*STEP, f = frames[i][0], a = frames[i][1];
+      if(f>0){ osc.frequency.setValueAtTime(f, at); g.gain.setValueAtTime(Math.max(0, gscale*a/256), at); }
+      else { g.gain.setValueAtTime(0, at); }
+    }
+    const end = t0 + frames.length*STEP;
+    g.gain.setValueAtTime(0, end);
+    osc.start(t0); osc.stop(end + 0.02);
+    active++; btn.classList.add("playing"); startScope();
+    osc.onended = () => { active=Math.max(0,active-1); btn.classList.remove("playing"); if(active===0) resetNowPlaying(); };
+  }
+
+  const npName=document.getElementById("npName"), npSub=document.getElementById("npSub");
+  function setNowPlaying(id, peak){
+    npName.textContent = (META[id]||{}).name || id;
+    npName.style.color = `var(${CAT_VAR[D.voices[id].cat]})`;
+    npSub.textContent = peak===0 ? (night?"silenced at night":"silent at this volume")
+      : `${D.catNames[D.voices[id].cat].toLowerCase()} · duty ${peak}/128${night?" · night":""}`;
+  }
+  function resetNowPlaying(){ npName.textContent="Ready"; npName.style.color=""; npSub.textContent="tap a signature to hear it"; }
+
+  // ── Oscilloscope ───────────────────────────────────────────────────────
+  const cv=document.getElementById("scope"), cx=cv.getContext("2d");
+  const reduce = matchMedia("(prefers-reduced-motion:reduce)").matches;
+  const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  function fitCanvas(){ const r=cv.getBoundingClientRect(), dpr=Math.min(2,devicePixelRatio||1); cv.width=Math.round(r.width*dpr); cv.height=Math.round(r.height*dpr); cx.setTransform(dpr,0,0,dpr,0,0); }
+  function drawScope(){
+    const w=cv.getBoundingClientRect().width, h=cv.getBoundingClientRect().height;
+    cx.clearRect(0,0,w,h);
+    cx.strokeStyle=css("--scope-grid"); cx.lineWidth=1; cx.beginPath(); cx.moveTo(0,h/2); cx.lineTo(w,h/2); cx.stroke();
+    if(!analyser) return;
+    const buf=new Uint8Array(analyser.fftSize); analyser.getByteTimeDomainData(buf);
+    cx.lineWidth=2; cx.strokeStyle=css("--scope-line"); cx.lineJoin="round"; cx.beginPath();
+    for(let i=0;i<buf.length;i++){ const x=i/(buf.length-1)*w, y=h/2+(buf[i]-128)/128*(h*0.42); i?cx.lineTo(x,y):cx.moveTo(x,y); }
+    cx.stroke(); cx.shadowBlur=10; cx.shadowColor=css("--scope-line"); cx.stroke(); cx.shadowBlur=0;
+  }
+  function startScope(){ if(rafId||reduce){ if(reduce) drawScope(); return; } const loop=()=>{ drawScope(); if(active>0) rafId=requestAnimationFrame(loop); else { rafId=0; setTimeout(drawScope,60);} }; rafId=requestAnimationFrame(loop); }
+
+  // ── Controls ───────────────────────────────────────────────────────────
+  const volseg=document.getElementById("volseg");
+  function setVol(v){ volume=v; [...volseg.children].forEach(b=>b.setAttribute("aria-pressed",(+b.dataset.v===v)?"true":"false")); refreshMeters(); }
+  volseg.addEventListener("click", e=>{ const b=e.target.closest("button"); if(b) setVol(+b.dataset.v); });
+  const nightBtn=document.getElementById("nightBtn"), nightLbl=document.getElementById("nightLbl"), hint=document.getElementById("hint");
+  nightBtn.addEventListener("click", ()=>{ night=!night; nightBtn.dataset.night=night; nightBtn.setAttribute("aria-pressed",night);
+    nightLbl.textContent=night?"Quiet hours":"Daytime";
+    hint.textContent=night?"At night the gentle voices fall silent — only Wake and Alert sound.":"The volume model runs live — watch each duty meter change.";
+    refreshMeters(); });
+  document.getElementById("themebtn").addEventListener("click", ()=>{
+    const cur=document.documentElement.getAttribute("data-theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");
+    document.documentElement.setAttribute("data-theme", cur==="dark"?"light":"dark");
+    if(active===0) setTimeout(drawScope,0);
+  });
+
+  document.getElementById("prov").textContent = "generated from firmware/projects/canary-display/include/canary/hal/voice_score.h · "
+    + Object.keys(D.voices).length + " signatures · CI-gated";
+  buildCards(); setVol(3); fitCanvas(); drawScope();
+  addEventListener("resize", ()=>{ fitCanvas(); if(active===0) drawScope(); });
+})();
+</script>

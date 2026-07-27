@@ -8,6 +8,7 @@
 // setup path. Everything works offline; nothing phones anywhere.
 
 import { DeviceScene, BUILDERS } from "./scene3d.js";
+import { buildFinishPicker, startFinishShowcase, hasUserChoice } from "./finishes.js";
 import { fmtLen, UNIT_MODES } from "./assembly-rules.js";
 import { upgradeRealShape } from "./real-shapes.js";
 import { buildEnclosureLab } from "./enclosure-lab.js";
@@ -16,6 +17,7 @@ import { buildBoardLab } from "./board-lab.js";
 import { buildAssemblyLab } from "./assembly-lab.js";
 import { CanaryEmulator, demoFleet } from "../emulator/web/emu-shell.js";
 import { BenchPower, romBanner } from "../emulator/web/bench.js";
+import { DEMO, beatsBetween } from "./mode-sim.js";
 import {
   DISPLAY_TOUR,
   DISPLAY_FIXES,
@@ -57,11 +59,29 @@ async function main() {
     .then((r) => r.json())
     .catch(() => null);
   $("#fw-train").textContent = `firmware train ${state.registry.fw_train}`;
+  mountFinishPicker();
   renderCards();
-  // Deep link from the chooser: index.html#<device-id> opens its sheet.
+  // The models cross-fade to the active finish live (role-tagged shell parts
+  // read it per-frame — no rebuild). On a first visit, run the ambient
+  // showcase: a slow, calm cycle through the palette that demos customisation
+  // until the visitor picks a swatch. Honour a saved choice and reduced motion.
+  if (!hasUserChoice() && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    startFinishShowcase();
+  }
+  // Deep link from the chooser: fleet.html#<device-id> opens its sheet.
   const target = decodeURIComponent(location.hash.slice(1));
   const dev = state.registry.devices.find((d) => d.id === target);
   if (dev) openSheet(dev);
+}
+
+// the finish picker rides in the hero, above the fineprint line
+function mountFinishPicker() {
+  const hero = $("#hero");
+  if (!hero || hero.querySelector(".finish-bar")) return;
+  const bar = el("div", "finish-bar");
+  bar.append(el("span", "finish-bar-cap", "Finish"), buildFinishPicker());
+  const fine = hero.querySelector(".fineprint");
+  hero.insertBefore(bar, fine || null);
 }
 
 function renderCards() {
@@ -73,6 +93,7 @@ function renderCards() {
     const cv = el("canvas", "card-3d");
     const name = el("div", "card-name", dev.name);
     const tag = el("div", "card-tag", dev.tagline);
+    const persona = dev.persona ? el("div", "card-persona", `${dev.persona.name} · ${dev.persona.specialty}`) : null;
     const chips = el("div", "card-chips");
     chips.append(
       el("span", "chip", dev.kind === "display" ? "shows"
@@ -81,14 +102,16 @@ function renderCards() {
     );
     if (dev.emulator) chips.append(el("span", "chip chip-live", "live firmware"));
     if (dev.kind === "concept") chips.append(el("span", "chip chip-soon", "coming soon"));
-    card.append(cv, name, tag, chips);
+    card.append(cv, name, tag);
+    if (persona) card.append(persona);
+    card.append(chips);
     grid.append(card);
 
     const scene = new DeviceScene(cv, null);
     (BUILDERS[dev.id] || BUILDERS["canary-wap"])(scene);
     upgradeRealShape(scene, dev.id);
     scene.start();
-    state.cards.set(dev.id, { scene });
+    state.cards.set(dev.id, { scene, dev });
 
     card.addEventListener("click", () => openSheet(dev));
   }
@@ -163,7 +186,21 @@ function buildConceptSheet(ctx, side) {
     return a;
   };
 
+  // Tab labels and the plan panel's intro/link default to the original
+  // Fence Guard copy (unchanged for that entry) but are overridable per
+  // concept — "The radio" and a firmware stub link are mesh-specific and
+  // don't fit e.g. a camera concept with no firmware stub at all.
+  const radioTabLabel = c.radio_tab_label || "The radio";
+  const planTabLabel = c.plan_tab_label || "Firmware plan";
+  const planIntro = c.plan_intro ||
+    "Staged as a pending stub in the firmware tree — requirements first, code later, honestly labeled.";
+  const planDoc = c.plan_doc || {
+    label: "read the stub → firmware/projects/canary-fence-guard",
+    url: "https://github.com/kmay89/securaCV/blob/main/firmware/projects/canary-fence-guard/README.md",
+  };
+
   const views = {
+    Persona: () => personaView(dev),
     "The idea": () => {
       const w = el("div");
       w.append(el("p", "body", c.idea || dev.tagline));
@@ -177,7 +214,7 @@ function buildConceptSheet(ctx, side) {
       w.append(requestDoor());
       return w;
     },
-    "The radio": () => {
+    [radioTabLabel]: () => {
       const w = el("div", "specs");
       const dl = el("dl");
       for (const r of c.radio || []) dl.append(el("dt", null, r.k), el("dd", null, r.v));
@@ -196,15 +233,14 @@ function buildConceptSheet(ctx, side) {
       }
       return w;
     },
-    "Firmware plan": () => {
+    [planTabLabel]: () => {
       const w = el("div");
-      w.append(el("p", "muted",
-        "Staged as a pending stub in the firmware tree — requirements first, code later, honestly labeled."));
+      w.append(el("p", "muted", planIntro));
       const ol = el("ol", "concept-plan");
       for (const step of c.plan || []) ol.append(el("li", null, step));
       w.append(ol);
-      const a = el("a", null, "read the stub → firmware/projects/canary-fence-guard");
-      a.href = "https://github.com/kmay89/securaCV/blob/main/firmware/projects/canary-fence-guard/README.md";
+      const a = el("a", null, planDoc.label);
+      a.href = planDoc.url;
       a.target = "_blank";
       a.rel = "noopener";
       w.append(el("p", "muted"), a);
@@ -267,22 +303,72 @@ async function buildDisplaySheet(ctx, side, stage) {
   const wireLog = el("div", "wirelog");
   const noteLine = el("div", "note");
 
-  // Web Audio chime (created lazily on first gesture per autoplay rules).
-  let audio = null;
-  const tone = (f) => {
-    if (f <= 0) return;
+  // Web Audio chime — a persistent square "piezo" voice whose frequency AND
+  // gain follow the firmware's real per-control-tick writes (onTone), so the
+  // in-browser display reproduces the actual Canary Voice envelope, glissando,
+  // warble, and volume model — not a flat beep. Created lazily on first gesture
+  // (autoplay policy); muteable and remembered across visits.
+  let audio = null, voiceOsc = null, voiceGain = null;
+  let soundMuted = false;
+  try { soundMuted = localStorage.getItem("canary-sound") === "off"; } catch {}
+  const audioResume = () => { try { if (audio && audio.state === "suspended") audio.resume(); } catch {} };
+  const ensureVoice = () => {
+    if (!audio) audio = new AudioContext();
+    if (!voiceOsc) {
+      voiceOsc = audio.createOscillator();
+      voiceOsc.type = "square";
+      voiceGain = audio.createGain();
+      voiceGain.gain.value = 0;
+      const lp = audio.createBiquadFilter();
+      lp.type = "lowpass"; lp.frequency.value = 5600; lp.Q.value = 0.4;
+      voiceOsc.connect(voiceGain).connect(lp).connect(audio.destination);
+      voiceOsc.start();
+    }
+  };
+  // onTone(freqHz, gain0to1): frequency + the note's duty-derived level. freq 0
+  // is a rest/end (silence). MASTER keeps the square wave civil next to real
+  // audio; a short gain ramp de-zips the per-tick updates.
+  const MASTER = 0.22;
+  const tone = (f, gain) => {
+    if (soundMuted) return;
     try {
-      audio ||= new AudioContext();
-      const o = audio.createOscillator();
-      const g = audio.createGain();
-      o.frequency.value = f;
-      o.type = "square";
-      g.gain.value = 0.03;
-      o.connect(g).connect(audio.destination);
-      o.start();
-      o.stop(audio.currentTime + 0.09);
+      ensureVoice(); audioResume();
+      const t = audio.currentTime;
+      if (f > 0) {
+        voiceOsc.frequency.setValueAtTime(f, t);
+        voiceGain.gain.setTargetAtTime(Math.max(0, Math.min(1, gain || 0)) * MASTER, t, 0.003);
+      } else {
+        voiceGain.gain.setTargetAtTime(0, t, 0.004);
+      }
     } catch {}
   };
+  const setSound = (on) => {
+    soundMuted = !on;
+    try { localStorage.setItem("canary-sound", on ? "on" : "off"); } catch {}
+    if (!on && voiceGain) { try { voiceGain.gain.setTargetAtTime(0, audio.currentTime, 0.01); } catch {} }
+  };
+  // A small, unobtrusive corner toggle — the chime is meaningful and infrequent
+  // (boot, alerts, the touch you make), but the room is yours.
+  (() => {
+    if (document.getElementById("canary-sound-toggle")) return;
+    const st = document.createElement("style");
+    st.textContent = "#canary-sound-toggle{position:fixed;right:14px;bottom:14px;z-index:60;width:40px;height:40px;"
+      + "border-radius:50%;border:1px solid rgba(140,140,150,.4);background:rgba(20,20,24,.72);color:#f2f2f2;"
+      + "font-size:17px;cursor:pointer;display:grid;place-items:center;backdrop-filter:blur(6px);"
+      + "box-shadow:0 4px 14px rgba(0,0,0,.3);transition:transform .15s,border-color .15s}"
+      + "#canary-sound-toggle:hover{transform:translateY(-1px);border-color:#e9b44c}"
+      + "#canary-sound-toggle:focus-visible{outline:2px solid #e9b44c;outline-offset:2px}";
+    document.head.append(st);
+    const btn = el("button", null);
+    btn.id = "canary-sound-toggle";
+    btn.type = "button";
+    btn.title = "Display sound";
+    btn.setAttribute("aria-label", "Toggle display sound");
+    const paint = () => { btn.textContent = soundMuted ? "🔇" : "🔊"; btn.setAttribute("aria-pressed", String(!soundMuted)); };
+    btn.addEventListener("click", () => { setSound(soundMuted); paint(); if (!soundMuted) { ensureVoice(); audioResume(); } });
+    paint();
+    document.body.append(btn);
+  })();
 
   const factory = window[dev.emulator.factory];
   const serialAppend = (t) => {
@@ -318,6 +404,9 @@ async function buildDisplaySheet(ctx, side, stage) {
   };
   const bootInner = async (opts = {}) => {
     setShade(null);
+    // Boot is a user gesture; prime the audio voice now so the firmware's
+    // power-on chirp isn't swallowed by a still-suspended AudioContext.
+    if (!soundMuted) { try { ensureVoice(); audioResume(); } catch {} }
     ctx.emu = new CanaryEmulator(factory, {
       canvas: glass,
       onSerial: serialAppend,
@@ -472,12 +561,13 @@ async function buildDisplaySheet(ctx, side, stage) {
   });
 
   const views = {
+    Persona: () => personaView(dev),
     Tour: () => tourView(guideProxy, DISPLAY_TOUR, noteLine),
     "Fix it": () => fixView(guideProxy, DISPLAY_FIXES, noteLine),
     "Try it": () => tryView(guideProxy, noteLine),
     ...(ctx.bench ? { Bench: () => benchView(ctx, guideProxy, noteLine) } : {}),
     Wire: () => wireView(serialLog, wireLog),
-    Enclosure: () => buildEnclosureLab(state.enclosures, dev.id),
+    Enclosure: () => buildEnclosureLab(state.enclosures, dev.id, state.build),
     ...(state.boards?.device_board?.[dev.id]
       ? { Board: () => buildBoardLab(state.boards, dev.id) } : {}),
     ...(state.assembly?.devices?.[dev.id]
@@ -619,8 +709,64 @@ function tryView(ctx, noteLine) {
   styleWrap.append(mk("meet the bird again (first boot)",
     () => ctx.meetAgain?.(), "primary"));
 
+  // ── The storyline (display_modes.md §demo): the mode system's scripted
+  // household, played through THIS page's staged witnesses into the real
+  // firmware — the same beats, seconds and severities the on-device demo
+  // gear feeds its own faces (the table is drift-locked to the firmware in
+  // tests/mode.test.js). Shown at 6× wall speed; here the events even ride
+  // signed chains where the browser has Ed25519, because the staged
+  // witnesses really sign. Cast mapping is presentational: the beats'
+  // front door / garage land on their namesakes, the indoor stirs on the
+  // nursery.
+  // The player state rides ctx (not this closure): the view can be rebuilt
+  // mid-story, and a rebuilt button must find — and be able to stop — the
+  // running lap instead of stacking a second one.
+  ctx.story ||= { timer: null, clock: 0 };
+  const STORY_CAST = [0, 1, 2, 1]; // beat witness -> staged fleet index
+  const stopStory = () => {
+    if (ctx.story.timer) clearInterval(ctx.story.timer);
+    ctx.story.timer = null;
+    ctx.story.clock = 0;
+    ctx.emu.witnessTamper(ctx.fleet[2], false); // never leave a staged tamper
+    storyBtn.textContent = "▶ play the demo storyline";
+  };
+  const storyBtn = mk("▶ play the demo storyline", () => {
+    if (ctx.story.timer) {
+      stopStory();
+      noteLine.textContent = "storyline stopped — the household is yours again.";
+      return;
+    }
+    storyBtn.textContent = "⏸ storyline playing (6×) — tap to stop";
+    ctx.story.timer = setInterval(() => {
+      const prev = ctx.story.clock;
+      ctx.story.clock = (ctx.story.clock + 1) % DEMO.LOOP_S;
+      for (const i of beatsBetween(prev, ctx.story.clock)) {
+        const b = DEMO.BEATS[i];
+        const w = ctx.fleet[STORY_CAST[b.witness]];
+        if (b.intent === "tamper") {
+          ctx.emu.witnessTamper(w, true, "tamper_contact");
+        } else if (b.event === "cleared") {
+          ctx.emu.witnessTamper(w, false);
+          ctx.emu.witnessEvent(w, "cleared");
+        } else {
+          ctx.emu.witnessEvent(w, b.event);
+        }
+        noteLine.textContent =
+          `storyline ${b.atS}s — ${w.name}: ${b.event.replaceAll("_", " ")}` +
+          ` [${b.intent}]` +
+          (b.intent === "alert" || b.intent === "tamper"
+            ? " — hold the glass to acknowledge"
+            : "");
+      }
+    }, 1000 / 6);
+  }, "primary");
+  if (ctx.story.timer) {
+    storyBtn.textContent = "⏸ storyline playing (6×) — tap to stop";
+  }
+
   const grid = el("div", "try-grid");
   grid.append(
+    storyBtn,
     mk("Wi-Fi down", () => ctx.emu.setWifi(false)),
     mk("Wi-Fi up", () => ctx.emu.setWifi(true)),
     mk("broker down", () => ctx.emu.setBroker(false)),
@@ -845,6 +991,36 @@ function wireView(serialLog, wireLog) {
   return wrap;
 }
 
+function personaView(dev) {
+  const p = dev.persona || {};
+  const wrap = el("div", "persona-view");
+  const hero = el("div", "persona-hero");
+  if (p.accent) hero.style.setProperty("--persona-accent", p.accent_color || "var(--canary)");
+  hero.append(
+    el("p", "persona-kicker", p.specialty || "Canary"),
+    el("h3", null, p.name || dev.name),
+    el("p", "persona-story", p.story || dev.tagline)
+  );
+  wrap.append(hero);
+  if (p.shape || p.accent) {
+    const look = el("p", "persona-look");
+    look.append(
+      el("strong", null, "How to recognize this bird: "),
+      document.createTextNode([p.shape, p.accent ? `accent: ${p.accent}` : ""].filter(Boolean).join(" · "))
+    );
+    wrap.append(look);
+  }
+  if (p.good_for?.length) {
+    const list = el("ul", "persona-goodfor");
+    for (const item of p.good_for) list.append(el("li", null, item));
+    wrap.append(el("h4", null, "What this canary is good at"), list);
+  }
+  if (p.catchphrase) wrap.append(el("p", "persona-quote", `“${p.catchphrase}”`));
+  wrap.append(el("p", "muted",
+    "Designed to be memorable, not manipulative: each character explains the real sensing boundary in plain language and keeps the privacy promise visible."));
+  return wrap;
+}
+
 function specsView(dev) {
   const wrap = el("div", "specs");
   const dl = el("dl");
@@ -904,6 +1080,7 @@ function buildWitnessSheet(ctx, side) {
   side.append(tabs, panel);
 
   const views = {
+    Persona: () => personaView(dev),
     "Lights": () => {
       const w = el("div");
       w.append(el("p", "muted",
@@ -943,7 +1120,7 @@ function buildWitnessSheet(ctx, side) {
       w.append(list);
       return w;
     },
-    Enclosure: () => buildEnclosureLab(state.enclosures, dev.id),
+    Enclosure: () => buildEnclosureLab(state.enclosures, dev.id, state.build),
     ...(state.boards?.device_board?.[dev.id]
       ? { Board: () => buildBoardLab(state.boards, dev.id) } : {}),
     ...(state.assembly?.devices?.[dev.id]

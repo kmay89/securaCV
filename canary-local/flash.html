@@ -2,11 +2,54 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <!--
+    Supply-chain hardening (see docs/browser_flasher.md § Trust model): a strict
+    Content-Security-Policy so only this site's own vendored code can run, and
+    the page can only fetch firmware from our signed GitHub releases.
+      · script-src / style-src 'self' — no inline, no eval; every module is
+        same-origin and vendored (esptool-js, md5, ed25519, qrcode).
+      · the 'sha256-…' pins the inline import map below, which carries the
+        Subresource-Integrity hashes for those vendored modules.
+      · connect-src — our signed release host + its asset CDN, plus loopback
+        (localhost / 127.0.0.1) for a same-machine manifest server. That is the
+        exact set the ?manifest= override accepts (flash-core.js), so the code
+        guard and this policy agree; broader private/LAN hosts can't be spelled
+        as a static CSP allowlist, so those self-host same-origin or use a local
+        file.
+      · base-uri / object-src / form-action 'none' — no <base> rewrite of our
+        relative asset paths, no plugins, no form posts.
+    frame-ancestors is omitted on purpose: it is ignored in a <meta> CSP, and
+    the OS/browser serial chooser can't be spoofed from inside a frame anyway.
+    tests/flash.test.js is the drift gate for the 'sha256-…' and the SRI hashes.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-EktR3SFf0lLCbyovl7Zr3tGJNxikCFvtZ3djuXGsas0='; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://github.com https://*.githubusercontent.com http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'none'" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Flash a Canary — in your browser · canary.local</title>
+  <title>The Canary Nursery — flash &amp; first flight · canary.local</title>
   <meta name="description" content="Flash SecuraCV Canary firmware straight from a Chromium browser over USB-C — no Arduino, no PlatformIO, no terminal. It detects your ESP32 chip, backs the board up automatically before writing, flashes a signed release image, and verifies it against the chip's own checksum. It's a triage bench too: a read-only health check reports firmware slots, update history, crash dumps and witness-chain state, and a built-in serial monitor talks to the firmware's console. Built so you can't pick the wrong image and can't brick the board: the ESP32's bootloader is mask ROM. Works offline; the flashing engine is served from this site, nothing phones anywhere." />
   <link rel="stylesheet" href="assets/canary-local.css" />
   <link rel="stylesheet" href="assets/flash.css" />
+
+  <!--
+    Subresource-Integrity for the vendored third-party modules the flasher
+    imports (esptool-js, md5, ed25519, qrcode). A tampered vendored file no
+    longer loads: its hash won't match and the browser refuses the module.
+    First-party app code (flash.js, flash-core.js, we2-*) is left unpinned by
+    design — it's same-origin (already constrained by script-src 'self') and
+    changes too often to hash by hand. tests/flash.test.js recomputes every
+    hash here from the real files (and the CSP 'sha256-…' from this map's text)
+    and fails CI on any drift. Enforced on Chromium ≥127; older engines ignore
+    the integrity keys and load the same same-origin modules, so nothing breaks.
+  -->
+  <script type="importmap">
+  {
+    "integrity": {
+      "./assets/vendor/esptool-js/bundle.js": "sha384-Gp/Yl7Y7m9qaoDj9xbD5mb2FcpfQlqemsrun4ezVApnzUBdo77IhT5w9D4vZIJ7E",
+      "./assets/vendor/md5/md5.js": "sha384-nTJVtDIe2cQok3jlbNMqFicv2lW+iWFtrtq03JP3yWXKk5Hkzr6elQfuxd5rxbL2",
+      "./assets/vendor/ed25519/ed25519.mjs": "sha384-TTqxRhoQYuK4G8/juEEFIIQckgqZi21+TAKdfSRmKS0hXaOHYATAvi6sIxK3B6TE",
+      "./assets/vendor/qrcode/qrcode.mjs": "sha384-xHtsZTi0cOhTiha4kloGDUR5e5A8ixkKsF1Mmpqq3tkDpAhkA4YOKIDua/Tc0Ecd"
+    }
+  }
+  </script>
 </head>
 <body>
   <header id="hero" class="hub-hero">
@@ -20,16 +63,18 @@
         <path d="M15 36 q-7 1 -9 6 q6 0 10 -2 z" fill="#E3B33C"/>
       </svg>
     </div>
-    <h1>Flash a Canary, right here</h1>
+    <h1>The Canary Nursery <span class="nursery-sub">— where Canaries hatch</span></h1>
     <p class="lede">
-      “Flashing” is just the word for loading firmware — the board's built-in
-      software — onto it. First-time setup of a brand-new Canary or an update
-      later: same two clicks, right here in the browser. No Arduino, no
-      PlatformIO, no terminal. It backs the board up by itself, installs a
-      signed image, and checks every byte against the chip. Built so you
+      Every Canary starts here: plug a bare board in and it leaves with a
+      name, a voice, and a job. “Flashing” is just the word for loading
+      firmware — the board's built-in software — and the Nursery does it in
+      two clicks, right in the browser. No Arduino, no PlatformIO, no
+      terminal. It backs the board up by itself, installs a signed image,
+      checks every byte against the chip, bakes in your WiFi and room dials,
+      and then makes the newborn <em>prove itself</em> — live. Built so you
       <em>can't</em> pick the wrong firmware, and <em>can't</em> brick the
-      board. It's a workbench too: run a health check or open a serial monitor
-      without leaving the page.
+      board. Raising a whole batch? The Nursery keeps the roster so you never
+      lose your place.
     </p>
     <div id="flash-versions" aria-live="polite"></div>
     <p class="fineprint">
@@ -58,6 +103,10 @@
       engine is <a href="https://github.com/espressif/esptool-js">esptool-js</a>,
       vendored into this site — not loaded from a CDN. Nothing about your board
       leaves this page.
+    </p>
+    <p>
+      <button type="button" id="foot-settings" class="ghost small"
+        hidden>⚙︎ about &amp; settings — version · legal · sound · memory</button>
     </p>
   </footer>
 

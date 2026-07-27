@@ -23,6 +23,13 @@ import { ESPLoader, Transport } from "./vendor/esptool-js/bundle.js";
 import { md5Raw } from "./vendor/md5/md5.js";
 import * as core from "./flash-core.js";
 import { phaseModule } from "./we2-flash.js";
+import { wifiMemory } from "./wifi-memory.js";
+import { visionSession } from "./vision-session.js";
+import { visionChecklistCard } from "./vision-checklist.js";
+import { mintCertificate } from "./hatchery.js";
+import { chirp, chirpToggle } from "./chirp.js";
+import { mountBoardIdentity } from "./board-identity.js";
+import * as intake from "./intake.js";
 
 const GH = "https://github.com/kmay89/securaCV/blob/main/";
 const LESSON = "wap.html"; // the guided BOOT/RESET + PlatformIO/Arduino path
@@ -36,8 +43,20 @@ const el = (tag, cls, text) => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// ── the Nursery roster: the session's hatchlings, so a batch never loses
+// its place. sessionStorage only (gone when the tab closes), public facts
+// only (product, version, preset names, MAC) — never credentials.
+const ROSTER_KEY = "nursery.roster.v1";
+function loadRoster() {
+  try { return JSON.parse(sessionStorage.getItem(ROSTER_KEY)) || []; } catch { return []; }
+}
+function saveRoster(list) {
+  try { sessionStorage.setItem(ROSTER_KEY, JSON.stringify(list)); } catch { /* private mode */ }
+}
+
 const state = {
   catalog: null,
+  roster: loadRoster(),   // this session's hatchlings
   manifest: null,       // release manifest, or {__missing:true}
   session: null,        // { port, transport, esploader }
   chip: null,           // "ESP32-S3"
@@ -48,6 +67,26 @@ const state = {
   backup: null,         // { bytes, name, mac } once taken this session
   report: null,         // last health-check result
   busy: false,
+  ble: null,            // { device, characteristic } while a BLE console is open
+  // Which manifest the picker is reading. `devChannel` is STICKY session state,
+  // not a re-read of the URL: `?channel=dev` only seeds it (boot), and the
+  // Advanced toggle owns it from then on — the Lab app has no address bar, so
+  // a URL-only dev channel is unreachable there (see onDevChannelToggle).
+  devChannel: false,
+  manifestOverride: false, // a ?manifest= self-hosted URL is in force
+  advancedOpen: false,     // keep Advanced open across a picker re-render
+  // Customs, for a board we've never met (see intake.js). `heldBoot` is what
+  // the user told us on the connect card, not something we measured — on a
+  // native-USB board the ROM and a stock firmware present the same descriptor,
+  // so the port genuinely can't tell us.
+  heldBoot: false,
+  intake: null,            // the read-only intake scan, once connected
+  ptRead: null,            // "ok" | "failed" — did the partition sector read at all
+  // The user's explicit "this board is already mine, keep its data". The ONLY
+  // thing besides our own session roster that waives the first-contact erase;
+  // the board's own claim about what firmware it runs never does, because on
+  // an untrusted board that claim is attacker-controlled.
+  ownerClaimed: false,
 };
 
 // ── boot ───────────────────────────────────────────────────────────────────
@@ -112,7 +151,19 @@ async function boot() {
   const flow = el("div", "flash-flow");
   flow.id = "flash-flow";
   mount.append(flow);
+  mountJourney(flow);
   mount.append(renderReassurance());
+
+  // The footer's opener stays hidden until the catalog (and its about block)
+  // actually loaded — a dead settings button would be worse than none.
+  const footBtn = $("#foot-settings");
+  if (footBtn && state.catalog && state.catalog.about) {
+    footBtn.hidden = false;
+    footBtn.addEventListener("click", openSettings);
+  }
+
+  // `?channel=dev` SEEDS the channel; the Advanced toggle owns it afterwards.
+  state.devChannel = core.channelFromSearch(location.search) === "dev";
 
   renderVersionStrip();
   setPhase(phaseConnect());
@@ -131,12 +182,183 @@ function renderVersionStrip() {
   strip.append(pill("engine", "esptool-js (vendored, offline)"));
 }
 
+// ── the journey bar: where am I on the path? ────────────────────────────────
+// Five calm waypoints above the flow. Phases opt in via node.dataset.step;
+// a phase without one (sub-cards, tools, the module flow) keeps the bar
+// where it was — the bar never guesses.
+const JOURNEY = ["Connect", "Meet it", "Choose", "Install", "First flight"];
+let journeyEl = null;
+function renderJourney(step) {
+  if (!journeyEl) return;
+  journeyEl.querySelectorAll(".flash-journey-step").forEach((n, i) => {
+    n.classList.toggle("flash-journey-on", i + 1 === step);
+    n.classList.toggle("flash-journey-done", i + 1 < step);
+    n.setAttribute("aria-current", i + 1 === step ? "step" : "false");
+  });
+}
+function mountJourney(before) {
+  journeyEl = el("nav", "flash-journey");
+  journeyEl.setAttribute("aria-label", "Nursery progress");
+  JOURNEY.forEach((label, i) => {
+    if (i) journeyEl.append(el("span", "flash-journey-sep", "·"));
+    const s = el("span", "flash-journey-step");
+    s.append(el("span", "flash-journey-dot"), document.createTextNode(label));
+    journeyEl.append(s);
+  });
+  const side = el("span", "flash-journey-side");
+  side.append(chirpToggle());
+  const gear = el("button", "flash-settings-open", "⚙︎");
+  gear.type = "button";
+  gear.title = "About & settings — version, legal, sound, and what this page remembers";
+  gear.setAttribute("aria-label", "About and settings");
+  gear.addEventListener("click", openSettings);
+  side.append(gear);
+  const jh = helpDot("journey");
+  if (jh) side.append(jh);
+  journeyEl.append(side);
+  before.parentNode.insertBefore(journeyEl, before);
+  renderJourney(1);
+}
+
+// ── the settings & about panel: one tidy home for the meta ─────────────────
+// Version, provenance, legal, sound, lessons, and the page's local memory —
+// everything that isn't the flashing itself, in one native <dialog>. Facts
+// come from catalog.about (parsed from LICENSE + vendor provenance at
+// generation time), so the credits can't drift from the files of record.
+function openSettings() {
+  const about = (state.catalog && state.catalog.about) || null;
+  if (!about) return;
+  const old = $("#nursery-settings");
+  if (old) old.remove(); // rebuild fresh each open — toggles reflect NOW
+  const dlg = el("dialog", "flash-settings");
+  dlg.id = "nursery-settings";
+  dlg.setAttribute("aria-label", "About & settings");
+
+  const head = el("div", "flash-settings-head");
+  head.append(el("h2", null, "⚙︎ About & settings"));
+  const close = el("button", "ghost small", "close ✕");
+  close.addEventListener("click", () => dlg.close());
+  head.append(close);
+  dlg.append(head);
+
+  const sec = (title) => {
+    const s = el("section", "flash-settings-sec");
+    s.append(el("h3", null, title));
+    dlg.append(s);
+    return s;
+  };
+
+  // ── about ──
+  const sAbout = sec("The Nursery");
+  sAbout.append(el("p", "muted", about.product + " — where Canaries hatch: " +
+    "first flash, updates, triage, and the live benches, all in the browser."));
+  sAbout.append(el("p", "fineprint", about.privacy));
+  const src = el("p", "fineprint");
+  const srcA = el("a", null, "source & issues on GitHub →");
+  srcA.href = about.source; srcA.target = "_blank"; srcA.rel = "noopener";
+  src.append(srcA);
+  sAbout.append(src);
+
+  // ── versions & provenance ──
+  const sVer = sec("Versions & provenance");
+  const facts = el("div", "flash-facts");
+  facts.append(fact("Firmware train", state.catalog.fw_train));
+  const engine = (about.vendors || []).find((v) => v.name === "esptool-js");
+  if (engine) facts.append(fact("Flashing engine", engine.package + " (vendored, offline)"));
+  sVer.append(facts);
+  sVer.append(el("p", "fineprint",
+    "The device catalog on this page is generated from the firmware tree " +
+    "(tools/gen_flash.py) and drift-checked in CI — the facts here can’t be " +
+    "typed wrong, only parsed wrong loudly."));
+
+  // ── sound & lessons ──
+  const sPref = sec("Sound & lessons");
+  const prefRow = el("div", "flash-row");
+  prefRow.append(chirpToggle());
+  if (coachDismissed()) {
+    const coachBtn = el("button", "ghost small", "☕ bring back the lessons");
+    coachBtn.addEventListener("click", () => {
+      try { sessionStorage.removeItem(COACH_KEY); } catch { /* private mode */ }
+      coachBtn.textContent = "☕ lessons will ride the next install ✓";
+      coachBtn.disabled = true;
+    });
+    prefRow.append(coachBtn);
+  } else {
+    prefRow.append(el("span", "fineprint", "☕ lessons ride every install (hide them with the × on the card)"));
+  }
+  sPref.append(prefRow);
+  sPref.append(el("p", "fineprint",
+    "Motion follows your system’s reduce-motion setting automatically — " +
+    "nothing to configure here."));
+
+  // ── this page's memory ──
+  const sData = sec("What this page remembers");
+  const dataRow = el("div", "flash-row");
+  const forget = el("button", "ghost small", "forget saved WiFi");
+  forget.addEventListener("click", () => {
+    wifiMemory.forget();
+    forget.textContent = "saved WiFi forgotten ✓";
+    forget.disabled = true;
+  });
+  const clearRoster = el("button", "ghost small",
+    state.roster.length ? `clear the session roster (${state.roster.length})` : "session roster is empty");
+  clearRoster.disabled = !state.roster.length;
+  clearRoster.addEventListener("click", () => {
+    state.roster = [];
+    saveRoster(state.roster);
+    clearRoster.textContent = "roster cleared ✓";
+    clearRoster.disabled = true;
+  });
+  dataRow.append(forget, clearRoster);
+  sData.append(dataRow);
+  sData.append(el("p", "fineprint",
+    "Both live only in this browser: the WiFi copy so a batch provisions " +
+    "without retyping, the roster so a batch keeps its place (public facts " +
+    "only — never credentials). Neither ever leaves this page."));
+
+  // ── legal ──
+  const sLegal = sec("Legal");
+  sLegal.append(el("p", "muted", `${about.copyright} · ${about.license.name}`));
+  const legalList = el("div", "flash-settings-vendors");
+  (about.vendors || []).forEach((v) => {
+    const row = el("div", "flash-knob");
+    const lab = el("span", "flash-knob-label");
+    const a = el("a", null, v.package);
+    a.href = v.file; a.target = "_blank"; a.rel = "noopener";
+    lab.append(a);
+    row.append(lab, el("span", "flash-knob-val", v.license));
+    legalList.append(row);
+  });
+  sLegal.append(legalList);
+  sLegal.append(el("p", "fineprint",
+    "Vendored into this site on purpose — no CDNs, no third-party requests. " +
+    "Each credit links its provenance file; the whole page ships under " +
+    `${about.license.name} (LICENSE in the repository).`));
+
+  dlg.addEventListener("click", (ev) => { if (ev.target === dlg) dlg.close(); });
+  document.body.append(dlg);
+  dlg.showModal();
+}
+
+// One check, used everywhere motion is decorative rather than informative.
+function prefersCalm() {
+  try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; }
+}
+
 // The flow is a single swappable panel; the reassurance strip persists below.
 function setPhase(node) {
   const flow = $("#flash-flow");
   flow.innerHTML = "";
   flow.append(node);
-  flow.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  if (node.dataset && node.dataset.step) renderJourney(Number(node.dataset.step));
+  // Land screen-reader / keyboard focus on the new phase's heading, so a
+  // phase change is announced instead of silently swapping content.
+  const h = node.querySelector("h2, h3");
+  if (h) {
+    h.setAttribute("tabindex", "-1");
+    try { h.focus({ preventScroll: true }); } catch { /* older engines */ }
+  }
+  flow.scrollIntoView({ behavior: prefersCalm() ? "auto" : "smooth", block: "nearest" });
 }
 
 // ── the persistent "you can't mess up" strip (compact, below the flow) ──────
@@ -173,6 +395,20 @@ function renderReassurance() {
   lessonP.append(a);
   help.append(lessonP);
   wrap.append(help);
+
+  // Already have a Canary running? Prove it's on over the air — a Bluetooth
+  // check that stands apart from flashing (it writes nothing), reachable any
+  // time, not just after a flash.
+  const bt = el("details", "flash-card flash-ble-entry");
+  bt.append(el("summary", null, "🔵 Already have a Canary? Test it over Bluetooth →"));
+  bt.append(el("p", "muted",
+    "Skip the cable: connect to a running Canary’s Bluetooth console and read " +
+    "its live snapshot — proof it’s powered, healthy, and reachable even when " +
+    "WiFi is down. Chromium browser on a computer or Android."));
+  const btBtn = el("button", "ghost small", "Open the Bluetooth check");
+  btBtn.addEventListener("click", () => setPhase(phaseBluetoothCheck()));
+  bt.append(btBtn);
+  wrap.append(bt);
 
   wrap.append(renderTrustCard());
 
@@ -412,15 +648,84 @@ function modeBadge(mode) {
   return b;
 }
 
+// ── cold start: the gesture that keeps an unknown board off your desktop ────
+// This is deliberately BEFORE the Connect button, because it is the only
+// control here that has to happen before the cable goes in. Everything else
+// the flasher does is a check after the fact; this one prevents.
+//
+// It asks rather than detects, and says so: the ROM's download mode and a
+// stock hwcdc firmware present the SAME USB descriptor on a native-USB board
+// (docs/browser_flasher.md § What the Canary is called over USB), so there is
+// nothing to measure. Claiming otherwise would be a comforting lie.
+function coldStartCard() {
+  const card = el("section", "flash-coldstart");
+  card.append(el("h3", null, "🛡 New board from a shop or marketplace? Do this first"));
+  card.append(el("p", null,
+    "It arrives running somebody else's firmware, and these chips have native " +
+    "USB — so that firmware can introduce itself to your computer as anything " +
+    "it likes, including a keyboard, the moment you plug it in. No web page can " +
+    "step in front of that; your operating system finishes with the device " +
+    "before this page even learns it exists."));
+  card.append(el("p", null,
+    "One move stops it, and it's the chip's own silicon doing the stopping:"));
+
+  const ol = el("ol", "flash-steps flash-coldstart-steps");
+  const li1 = el("li");
+  li1.append(document.createTextNode("Unplug the board, if it's plugged in."));
+  const li2 = el("li");
+  li2.append(document.createTextNode("Press and hold "), kbd("BOOT"),
+    document.createTextNode(" (marked B)."));
+  const li3 = el("li");
+  li3.append(document.createTextNode("Still holding it, plug the USB-C cable in. Then let go."));
+  ol.append(li1, li2, li3);
+  card.append(ol);
+  card.append(el("p", "fineprint",
+    "The chip comes up in its mask-ROM download mode and the firmware it shipped " +
+    "with never runs a single instruction. That's not a promise this page is " +
+    "making — it's unerasable ROM, the same property that makes the board " +
+    "impossible to brick from here."));
+
+  // What the user did — carried into the intake report, honestly labelled as
+  // their answer rather than our measurement.
+  const note = el("p", "fineprint flash-coldstart-note", "");
+  const row = el("div", "flash-row flash-coldstart-row");
+  const held = el("button", "ghost small", "✓ I held BOOT while plugging in");
+  const hot = el("button", "ghost small", "It's already plugged in");
+  const mark = (isCold) => {
+    state.heldBoot = isCold;
+    held.classList.toggle("flash-chosen", isCold);
+    hot.classList.toggle("flash-chosen", !isCold);
+    note.textContent = isCold
+      ? "Good — its own firmware never got to run."
+      : "Noted. Whatever shipped on the chip has already booted once; the erase " +
+        "below still removes it, but next time hold BOOT on the way in.";
+  };
+  held.addEventListener("click", () => mark(true));
+  hot.addEventListener("click", () => mark(false));
+  row.append(held, hot);
+  card.append(row, note);
+  return card;
+}
+
 // ── phase: connect ──────────────────────────────────────────────────────────
 function phaseConnect() {
   const box = el("section", "flash-card flash-connect");
+  box.dataset.step = "1";
   box.append(el("div", "flash-big-emoji flash-plug", "🔌"));
   box.append(el("h2", null, "Plug in your Canary, then let’s meet it"));
   box.append(el("p", "muted",
     "Connect the board to this computer with a USB-C data cable. When you " +
     "click Connect, your browser asks which device — pick the one that " +
     "appears (often “USB JTAG/serial” or “USB Serial”)."));
+
+  // ── the one move that actually protects the computer ──
+  // A board bought unflashed arrives running somebody else's firmware, and an
+  // ESP32-S3 has native USB: in TinyUSB mode that firmware can enumerate as a
+  // KEYBOARD and type at the desktop the instant the cable goes in. No page
+  // can intercept that — the OS finishes enumerating before Web Serial exists.
+  // Holding BOOT is what stops it, in mask ROM: the chip lands in download
+  // mode and the resident image never executes an instruction.
+  box.append(coldStartCard());
 
   const btn = el("button", "primary flash-connect-btn", "Connect your Canary");
   btn.addEventListener("click", onConnect);
@@ -461,6 +766,150 @@ function phaseConnect() {
   return box;
 }
 
+// Sync the ROM and open an esptool session on an already-granted port —
+// the baud ladder from the original connect flow, extracted so the live
+// voice can hand the port back to the bootloader without a new chooser.
+// statusCb narrates ("Trying a gentler speed…"); throws the last error.
+async function openEsptool(port, statusCb) {
+  const top = state.catalog.flash_baud || core.FLASH_BAUDS[0];
+  // Start at the ceiling — lowered a rung by any prior write-time failure so
+  // the retry's large transfer runs at a gentler speed — and step down. Keep
+  // the slowest rung so the list is never empty.
+  const ceil = state.baudCeiling || top;
+  const baudList = [top, ...core.FLASH_BAUDS.filter((b) => b !== top)].filter((b) => b <= ceil);
+  if (!baudList.length) baudList.push(core.FLASH_BAUDS[core.FLASH_BAUDS.length - 1]);
+  let esploader = null, transport = null, lastErr = null;
+  for (let i = 0; i < baudList.length; i++) {
+    const baud = baudList[i];
+    if (i > 0 && statusCb) statusCb(`Trying a gentler speed (${baud})…`);
+    transport = new Transport(port, false);
+    esploader = new ESPLoader({
+      transport, baudrate: baud,
+      romBaudrate: state.catalog.console_baud || 115200,
+      terminal: makeTerminal(),
+    });
+    try {
+      state.chipDesc = await esploader.main();
+      state.usedBaud = baud;
+      lastErr = null;
+      break;
+    } catch (e) {
+      lastErr = e;
+      esploader = null;
+      try { await transport.disconnect(); } catch {}
+    }
+  }
+  if (!esploader) throw lastErr || new Error("could not connect");
+  return { esploader, transport };
+}
+
+// ── the live voice: the board's own serial console, before anything is
+// written ─────────────────────────────────────────────────────────────────
+// When the connect reads find real firmware on the board, the flasher lets
+// it BOOT and streams its console right on the hello card — the board talks
+// first, flashing comes second. Any bootloader action (install, health
+// check, backup, rescue) calls ensureSession(), which quietly hands the
+// port back to the bootloader. No chooser, no gestures.
+async function startVoice(consoleEl, onIdentity) {
+  // Re-entering the connected phase while a voice is already running (e.g.
+  // "not yet" from the confirm card): re-bind the LIVE stream to the fresh
+  // console element instead of leaving it talking to a detached node.
+  if (state.voice) {
+    const v0 = state.voice;
+    v0.consoleEl = consoleEl;
+    v0.onIdentity = onIdentity;
+    consoleEl.textContent = v0.buf || "listening…";
+    if (v0.identity && onIdentity) onIdentity(v0.identity);
+    return;
+  }
+  if (!state.session) return;
+  const { port } = state.session;
+  // Claim the voice slot SYNCHRONOUSLY, before any await — a concurrent
+  // second call must see it and take the re-bind path above, not race the
+  // port open.
+  const v = { port, alive: true, reader: null, writer: null, identity: null,
+              buf: "", consoleEl, onIdentity };
+  state.voice = v;
+  try { await state.session.esploader.after("hard_reset"); } catch {}
+  try { await state.session.transport.disconnect(); } catch {}
+  state.session = null;
+  if (state.voice !== v || !v.alive) return; // stopVoice won the race — it owns cleanup
+  try {
+    await port.open({ baudRate: state.catalog.console_baud || 115200 });
+    if (state.voice !== v || !v.alive) { // superseded mid-open: nothing may own this port
+      try { await port.close(); } catch {}
+      return;
+    }
+    v.reader = port.readable.getReader();
+    try { v.writer = port.writable.getWriter(); } catch { /* read-only is fine */ }
+  } catch (e) {
+    // Never strand an owner-less open port: close it so ensureSession (or a
+    // fresh Connect) can take it back.
+    try { v.reader && v.reader.releaseLock(); } catch {}
+    try { await port.close(); } catch {}
+    state.voice = null;
+    v.consoleEl.textContent = "(the console didn’t open — " + String(e.message || e) +
+      " — installing still works)";
+    return;
+  }
+  // Ask for the signed self-manifest once the app settles: health, boots,
+  // temperature — the live story, before a byte is written. Twice, in case
+  // the first lands mid-boot.
+  const ask = () => {
+    if (!state.voice || v.identity || !v.writer) return;
+    try { v.writer.write(new TextEncoder().encode("j\n")); } catch { /* quiet build */ }
+  };
+  setTimeout(ask, 900);
+  setTimeout(ask, 2600);
+  const dec = new TextDecoder();
+  (async () => {
+    try {
+      for (;;) {
+        const { value, done } = await v.reader.read();
+        if (done || !v.alive) break;
+        // Everything goes through v.* so a phase re-render can re-bind the
+        // console element and identity callback mid-stream.
+        v.buf = (v.buf + dec.decode(value, { stream: true })).slice(-8000);
+        v.consoleEl.textContent = v.buf;
+        v.consoleEl.scrollTop = v.consoleEl.scrollHeight;
+        if (!v.identity) {
+          const m = core.parseSelfManifest(v.buf);
+          if (m) { v.identity = m; if (v.onIdentity) v.onIdentity(m); }
+        }
+      }
+    } catch { /* unplug/re-enumeration — ensureSession or reconnect recovers */ }
+  })();
+}
+
+async function stopVoice() {
+  const v = state.voice;
+  if (!v) return null;
+  state.voice = null;
+  v.alive = false;
+  try { v.reader && await v.reader.cancel(); } catch {}
+  try { v.reader && v.reader.releaseLock(); } catch {}
+  try { v.writer && v.writer.releaseLock(); } catch {}
+  try { await v.port.close(); } catch {}
+  return v.port;
+}
+
+// Guarantee an esptool session for a bootloader action. If the live voice
+// holds the port, it is closed and the SAME port re-synced — the flasher
+// flips the board back into download mode itself, no gesture needed.
+async function ensureSession(statusCb) {
+  if (state.session) return true;
+  const port = await stopVoice();
+  if (!port) return false;
+  try {
+    const { esploader, transport } = await openEsptool(port, statusCb);
+    esploader.FLASH_READ_TIMEOUT = 15000;
+    state.session = { port, transport, esploader };
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function onConnect() {
   if (state.busy || state.connecting) return;
   state.connecting = true;   // synchronous guard: a double-click can't open two choosers
@@ -475,6 +924,7 @@ async function onConnect() {
   state.connecting = false;
   state.busy = true;
   const box = el("section", "flash-card flash-working");
+  box.dataset.step = "1";
   box.append(el("div", "flash-spinner", ""));
   const status = el("h2", null, "Waking up your Canary…");
   const detail = el("p", "muted", "Reaching the board’s bootloader. This takes a few seconds.");
@@ -488,16 +938,27 @@ async function onConnect() {
   setPhase(box);
   const nudgeTimer = setTimeout(() => nudge.classList.remove("flash-hidden"), 6000);
 
-  const transport = new Transport(port, false);
-  const esploader = new ESPLoader({
-    transport,
-    baudrate: state.catalog.flash_baud || 921600,
-    romBaudrate: state.catalog.console_baud || 115200,
-    terminal: makeTerminal(),
-  });
+  // The USB identity, read once — used for a driver hint if it won't connect.
+  state.portInfo = (port.getInfo && port.getInfo()) || {};
+
+  // Baud ladder: try the fast speed, and step down automatically on failure.
+  // esptool syncs the ROM at 115200 and only then switches to the flash speed;
+  // flaky cables, unpowered hubs, and long USB runs sync fine but choke the
+  // high-speed transfer. Walking down heals "it won't connect" silently
+  // instead of dead-ending.
+  let opened;
+  try {
+    opened = await openEsptool(port, (t) => { detail.textContent = t; });
+  } catch (e) {
+    clearTimeout(nudgeTimer);
+    state.busy = false;
+    setPhase(connectFailed(e || new Error("could not connect"), state.portInfo));
+    return;
+  }
+  clearTimeout(nudgeTimer);
+  const { esploader, transport } = opened;
 
   try {
-    state.chipDesc = await esploader.main();
     state.chip = esploader.chip.CHIP_NAME;
     // A stalled read should fail fast and retry (we read in small chunks),
     // not sit out esptool-js's default 100 s silence window per packet.
@@ -508,20 +969,24 @@ async function onConnect() {
       state.flashBytes = kb ? kb * 1024 : null;
     } catch { state.flashBytes = null; }
     state.session = { port, transport, esploader };
-    clearTimeout(nudgeTimer);
     state.busy = false;
+    // Escalation from a failed install: reconnect, then jump straight to the
+    // clean-install rescue flow the user asked for.
+    if (state.resumeRescue) { state.resumeRescue = false; setPhase(phaseRescue()); return; }
     await readCurrentFirmware();     // best-effort; never throws out
+    await readPassport();            // the counters worth showing at hello
+    await runIntake();               // customs — read-only, before anything is written
     ensureManifest();                // kick off (async) manifest load
+    chirp("hello");                  // the Nursery says hi (only if invited)
     setPhase(phaseConnected());
   } catch (e) {
-    clearTimeout(nudgeTimer);
     state.busy = false;
     try { await transport.disconnect(); } catch {}
-    setPhase(connectFailed(e));
+    setPhase(connectFailed(e, state.portInfo));
   }
 }
 
-function connectFailed(e) {
+function connectFailed(e, pinfo) {
   const v = core.classifyFlashError(e);
   const box = errorBox(
     v.title || "Couldn’t reach the board",
@@ -529,15 +994,44 @@ function connectFailed(e) {
       ? "That almost always means it isn’t in download mode yet — no harm done."
       : v.hint,
     false);
+  // The commonest *confusing* failure: the Vision's CAMERA MODULE plugged into
+  // the ESP32 flow. It's a different chip (WE2 behind a CH343) that never speaks
+  // esptool, so the sync "fails" — recognize it by its USB id and hand the user
+  // to the right engine instead of dead-ending on generic download-mode advice.
+  // identifyPort matches vid AND pid, so a CH340 ESP32 board (same WCH vendor,
+  // different product) is never mistaken for the module. Host-tested.
+  if (core.identifyPort(pinfo || state.portInfo, state.catalog) === "we2" &&
+      state.catalog.we2_module) {
+    const card = el("div", "flash-note flash-note-soft");
+    card.append(el("strong", null, "📷 That’s the Vision’s camera module — not an ESP32 board."));
+    card.append(el("p", null,
+      "Nothing’s wrong: it flashes a different way (its own engine, over the " +
+      "module’s USB-C port). Let’s load its person-detection model instead."));
+    box.append(card);
+    const row = el("div", "flash-row");
+    const go = el("button", "primary", "Load the camera module’s model →");
+    go.addEventListener("click", () => setPhase(phaseModule({
+      catalog: state.catalog, setPhase, back: () => setPhase(phaseConnect()),
+    })));
+    const back = el("button", "ghost", "Back");
+    back.addEventListener("click", () => setPhase(phaseConnect()));
+    row.append(go, back);
+    box.append(row);
+    return box; // skip the generic download-mode / driver advice — wrong for the module
+  }
   // For a genuine "not in download mode" show the gesture; for a specific cause
   // (port busy, permissions, cable) the hint above already says what to do.
   if (v.kind === "not-in-download" || v.kind === "unknown") {
     box.append(downloadModeSteps());
     box.append(el("p", "muted", "Then click “Try again”."));
   }
+  // If it's a bridge-chip board that may be missing its driver, link it.
+  appendDriverHint(box, pinfo || state.portInfo);
+  const row = el("div", "flash-row");
   const retry = el("button", "primary", "Try again");
   retry.addEventListener("click", () => setPhase(phaseConnect()));
-  box.append(retry);
+  row.append(retry, diagnosticReportButton(() => ({ stage: "connect", error: String(e && e.message ? e.message : e) })));
+  box.append(row);
   const raw = el("details", "flash-rawerr");
   raw.append(el("summary", null, "Technical details"));
   raw.append(el("pre", null, String(e && e.message ? e.message : e)));
@@ -553,6 +1047,70 @@ function makeTerminal() {
     writeLine(data) { if (logSink) { logSink.textContent += data + "\n"; logSink.scrollTop = logSink.scrollHeight; } },
     write(data) { if (logSink) { logSink.textContent += data; logSink.scrollTop = logSink.scrollHeight; } },
   };
+}
+
+// ── self-healing: the "I'm stuck" escape hatch ──────────────────────────────
+// One click turns a stuck moment into a paste-able report for Discussions.
+// Public-only by construction (buildDiagnosticReport takes safe facts only —
+// never WiFi credentials or keys).
+const hex4 = (n) => (n == null ? null : "0x" + n.toString(16).padStart(4, "0"));
+
+function gatherDiagnostics(extra = {}) {
+  const b = core.detectBrowser(navigator.userAgent || "", navigator.maxTouchPoints || 0);
+  const pi = state.portInfo || {};
+  let usb;
+  if (pi.usbVendorId != null) {
+    const bridge = core.usbBridgeInfo(pi.usbVendorId, pi.usbProductId);
+    usb = `${hex4(pi.usbVendorId)}:${hex4(pi.usbProductId) || "?"} ` +
+      (bridge ? `(${bridge.name})` : "(native USB)");
+  }
+  let logTail;
+  try { logTail = (logSink && logSink.textContent) || undefined; } catch {}
+  return core.buildDiagnosticReport({
+    browser: b.label,
+    platform: navigator.platform || undefined,
+    webSerial: "serial" in navigator,
+    catalogVersion: state.catalog && state.catalog.fw_train,
+    chip: state.chip,
+    chipDesc: state.chipDesc,
+    mac: state.mac ? core.formatMac(state.mac) : undefined,
+    flashBytes: state.flashBytes || undefined,
+    usb,
+    baud: state.usedBaud,
+    logTail,
+    ...extra,
+  });
+}
+
+function diagnosticReportButton(extra) {
+  const btn = el("button", "ghost small flash-report-btn", "Copy a diagnostic report");
+  btn.addEventListener("click", async () => {
+    const report = gatherDiagnostics(typeof extra === "function" ? extra() : (extra || {}));
+    try {
+      await navigator.clipboard.writeText(report);
+      btn.textContent = "Copied ✓ — paste it into a Discussion for help";
+    } catch {
+      // No clipboard permission — show it to select by hand.
+      const ta = el("textarea", "flash-report-ta");
+      ta.value = report; ta.readOnly = true; ta.rows = 12;
+      btn.replaceWith(ta); ta.focus(); ta.select();
+    }
+  });
+  return btn;
+}
+
+// Add a bridge-chip driver hint to an error card when the board uses a
+// USB-serial bridge that may be missing its OS driver (native-USB boards
+// return null → nothing shown).
+function appendDriverHint(box, pinfo) {
+  const bridge = pinfo && core.usbBridgeInfo(pinfo.usbVendorId, pinfo.usbProductId);
+  if (!bridge) return;
+  const d = el("p", "flash-note flash-note-soft");
+  d.append(document.createTextNode(bridge.note + " "));
+  const a = el("a", "start-link", `Get the ${bridge.name} driver →`);
+  a.href = bridge.driverUrl; a.target = "_blank"; a.rel = "noopener noreferrer";
+  d.append(a);
+  box.append(d);
 }
 
 // ── chunked flash reads (the stall fix) ─────────────────────────────────────
@@ -590,11 +1148,32 @@ async function readFlashChunked(esploader, offset, size, onProgress) {
 // ── read what firmware is already on the board (best-effort) ────────────────
 async function readCurrentFirmware() {
   state.current = null;
+  state.pt = null;
+  // Did the partition sector actually come off the chip? "ok" means we got
+  // bytes (whatever was in them); "failed" means the read threw. The intake
+  // check needs these apart — an unread chip must never render as an empty
+  // one, or missing evidence becomes the cleanest verdict on the page.
+  state.ptRead = "failed";
   const { esploader } = state.session;
   try {
     const ptBytes = await readFlashChunked(esploader, 0x8000, 0xc00);
-    const { apps } = core.parsePartitionTable(ptBytes);
-    const app = core.pickAppPartition(apps);
+    state.ptRead = "ok";
+    const { entries, apps } = core.parsePartitionTable(ptBytes);
+    // An erased chip reads back as 0xFF with no valid table — that's a
+    // successfully-read blank, not a partition map, so leave state.pt null.
+    if (entries && entries.length) state.pt = { entries, apps };
+    // The verdict must judge the slot the bootloader actually runs, so read
+    // otadata (best-effort) before choosing which descriptor to trust.
+    let otadata = null;
+    try {
+      const otaPart = entries.find(core.isOtaDataPart);
+      const otaSlots = apps.filter((a) => a.subtype >= 0x10 && a.subtype < 0x20);
+      if (otaPart && otaSlots.length) {
+        const ob = await readFlashChunked(esploader, otaPart.offset, Math.min(otaPart.size, 0x2000));
+        otadata = core.parseOtaData(ob, otaSlots.length);
+      }
+    } catch {}
+    const app = core.pickBootedAppPartition(apps, otadata);
     if (!app) { state.current = { unknown: true }; return; }
     const desc = await readFlashChunked(esploader, app.offset + core.APP_DESC_OFFSET, 256);
     const d = core.parseAppDescriptor(desc);
@@ -605,15 +1184,126 @@ async function readCurrentFirmware() {
       projectName: d.projectName,
       productName: product ? product.name : null,
       date: d.date,
+      built: d.date ? `${d.date} ${d.time || ""}`.trim() : null,
+      idf: d.idfVer || null,
     };
   } catch (e) {
     state.current = { unknown: true };
   }
 }
 
+// ── customs: the read-only intake check, before a byte is written ───────────
+// Everything here is a READ. The eFuse pass is a plain register read at
+// block 0 — the flasher still never issues a burn, which is what the
+// un-brickable promise rests on. Any probe may fail (an old board, a chip
+// with no verified table, a flaky cable); a probe that fails is reported as
+// "not checked" and never as "checked and clean".
+async function runIntake() {
+  state.intake = null;
+  if (!state.session) return;
+  const { esploader } = state.session;
+  const macStr = state.mac ? core.formatMac(state.mac) : null;
+  const rosterHit = core.rosterFind(state.roster, macStr);
+
+  // 1. Security eFuses — the one thing a full erase can never undo, because
+  //    eFuses are one-way. A previous owner's lockdown lives here.
+  let efuses = null;
+  try {
+    const base = esploader.chip && esploader.chip.EFUSE_BASE;
+    if (Number.isFinite(base)) {
+      const words = [];
+      for (const addr of intake.efuseBlock0Addrs(base)) {
+        words.push(await esploader.readReg(addr));
+      }
+      efuses = intake.readSecurityEfuses(state.chip, words);
+    }
+  } catch { efuses = null; }
+
+  // 2. Is the flash the size its SPI id claims? A relabelled part wraps its
+  //    address lines, so reading AT a candidate capacity returns offset zero
+  //    again. Probing "declared − 4 KB" would not do it: on a 4 MB die
+  //    pretending to be 16 MB that address wraps to 0x3FF000, the top of the
+  //    real part, which holds something other than the head.
+  let alias = { level: "unknown", label: "Flash size not checked" };
+  try {
+    const declared = state.flashBytes;
+    if (declared && declared > 0x2000) {
+      const head = await readFlashChunked(esploader, 0, 0x1000);
+      const probes = [];
+      for (const at of intake.flashAliasCandidates(declared)) {
+        probes.push({ atBytes: at, bytes: await readFlashChunked(esploader, at, 0x1000) });
+      }
+      alias = intake.flashAliasVerdict({ declaredBytes: declared, head, probes });
+    }
+  } catch { /* leave it "not checked" — never invent a clean result */ }
+
+  const cold = intake.coldBootVerdict({
+    heldBoot: state.heldBoot,
+    hadResidentFirmware: !!(state.current && !state.current.unknown),
+  });
+  const shipped = intake.shippedWith({
+    projectName: state.current && state.current.projectName,
+    // A partition sector we READ and found empty is a blank chip; one we
+    // couldn't read at all is unknown. state.ptRead keeps those apart —
+    // `!state.pt` alone would call a failed read the cleanest possible result.
+    blank: state.ptRead === "ok" && !state.pt,
+    read: state.ptRead,
+  });
+  const mac = intake.macChecks(macStr);
+  const dup = intake.duplicateMacCheck(state.roster, macStr);
+  // Only OUR history waives the mandatory erase — never the board's own
+  // account of itself, which an untrusted image controls. `ownerClaimed` is
+  // the user's explicit "this is my board" on the confirm card.
+  const firstContact = intake.isFirstContact({ rosterHit, ownerClaimed: state.ownerClaimed });
+
+  const findings = [cold, shipped, mac, dup, alias, ...intake.efuseFindings(efuses)];
+  state.intake = {
+    efuses, alias, cold, shipped, mac, dup, firstContact,
+    verdict: intake.intakeVerdict(findings),
+  };
+}
+
+// ── the rest of the board's passport (read-only, best-effort, seconds) ──────
+// The same probes the full health check runs, trimmed to the counters worth
+// showing the moment the board says hello: how many updates it has seen, its
+// lifetime boots, the witness-record count, the tamper flag, and whether it
+// has ever hard-crashed. Every read is optional — a brand-new board simply
+// has no story yet.
+async function readPassport() {
+  state.passport = null;
+  if (!state.pt || !state.session) return;
+  const { esploader } = state.session;
+  const { entries, apps } = state.pt;
+  const passport = {};
+  try {
+    const otaPart = entries.find(core.isOtaDataPart);
+    const otaSlots = apps.filter((a) => a.subtype >= 0x10 && a.subtype < 0x20);
+    if (otaPart) {
+      const ob = await readFlashChunked(esploader, otaPart.offset, Math.min(otaPart.size, 0x2000));
+      passport.otadata = core.parseOtaData(ob, otaSlots.length);
+    }
+  } catch {}
+  try {
+    const cd = entries.find(core.isCoredumpPart);
+    if (cd) {
+      const cb = await readFlashChunked(esploader, cd.offset, 16);
+      passport.coredump = core.parseCoredumpHeader(cb, cd.size);
+    }
+  } catch {}
+  try {
+    const nvs = entries.find(core.isNvsPart);
+    if (nvs) {
+      const nb = await readFlashChunked(esploader, nvs.offset, nvs.size);
+      passport.witness = core.witnessSummary(core.parseNvs(nb));
+    }
+  } catch {}
+  state.passport = passport;
+}
+
 // ── phase: connected — chip card + firmware picker ──────────────────────────
 function phaseConnected() {
   const wrap = el("div", "flash-connected");
+  wrap.dataset.step = "2";
 
   // The chip hello card.
   const info = core.chipInfo(state.catalog, state.chip) || {};
@@ -631,18 +1321,63 @@ function phaseConnected() {
     cur.append(el("span", "flash-current-dot flash-dot-ok", "●"));
     const name = state.current.productName || state.current.projectName || "firmware";
     const ver = state.current.version ? ` ${state.current.version}` : "";
-    cur.append(document.createTextNode(`Looks like it’s running ${name}${ver} right now.`));
+    const built = state.current.built ? ` (built ${state.current.built})` : "";
+    cur.append(document.createTextNode(`Looks like it’s running ${name}${ver}${built} right now.`));
   }
   ht.append(cur);
+  // Batch guard: if THIS exact board already hatched this session, say so
+  // before anything else — the repeated-actions trap is plugging in a board
+  // you already did and not being sure.
+  const prev = core.rosterFind(state.roster, state.mac ? core.formatMac(state.mac) : null);
+  if (prev) {
+    const again = el("p", "flash-role flash-already");
+    again.append(document.createTextNode(
+      `🐣 Already hatched this session — #${prev.n}, ${prev.product}` +
+      `${prev.version ? " v" + prev.version : ""}` +
+      `${prev.preset ? ", dialed " + prev.preset : ""}. ` +
+      `Plug in the next board, or reflash this one freely.`));
+    ht.append(again);
+  }
+  const role = renderRoleLine();
+  if (role) ht.append(role);
   ht.append(modeBadge("download"));
   head.append(ht);
   hello.append(head);
 
   const facts = el("div", "flash-facts");
-  facts.append(fact("Chip", state.chipDesc || state.chip));
-  if (state.mac) facts.append(fact("ID (MAC)", core.formatMac(state.mac)));
-  if (state.flashBytes) facts.append(fact("Flash", core.formatBytes(state.flashBytes)));
+  facts.append(fact("Chip", state.chipDesc || state.chip, "chip"));
+  if (state.mac) facts.append(fact("ID (MAC)", core.formatMac(state.mac), "mac"));
+  if (state.flashBytes) facts.append(fact("Flash", core.formatBytes(state.flashBytes), "flash_size"));
   hello.append(facts);
+
+  // The passport strip: the board's story so far, read without changing a
+  // byte while we said hello — updates seen, lifetime boots, witness records,
+  // crash history. A brand-new board simply has no rows yet.
+  const story = core.passportRows(state.passport || {});
+  if (story.length) {
+    const strip = el("div", "flash-passport flash-passport-stagger");
+    const HELP_FOR = { updates: "updates_seen", boots: "boots", seq: "witness_records",
+                       tamper: "tamper_flag", crash: "crash_record" };
+    story.forEach((r) => {
+      const chip = el("span", `flash-passport-chip flash-passport-${r.tone || "ok"}`);
+      chip.append(el("strong", null, r.label + " "));
+      chip.append(document.createTextNode(r.value));
+      const hd = HELP_FOR[r.id] && helpDot(HELP_FOR[r.id]);
+      if (hd) chip.append(hd);
+      strip.append(chip);
+    });
+    hello.append(strip);
+  }
+  if (state.current && !state.current.unknown) {
+    const feel = el("p", "fineprint flash-feel");
+    feel.append(document.createTextNode(
+      "Those counters were read cold, without booting it. For the live story — " +
+      "its self-check score and how it’s feeling right now — "));
+    const ask = el("button", "ghost small", "🩺 ask the board itself");
+    ask.addEventListener("click", () => openMonitor({ proveIdentity: true }));
+    feel.append(ask);
+    hello.append(feel);
+  }
 
   const tools = el("div", "flash-row flash-tools");
   const health = el("button", "ghost", "🩺 Health check");
@@ -654,7 +1389,8 @@ function phaseConnected() {
   const rescue = el("button", "ghost", "🚑 Rescue");
   rescue.title = "Board acting wrong? Wipe it and write the newest signed firmware — back to known-good.";
   rescue.addEventListener("click", () => setPhase(phaseRescue()));
-  tools.append(health, mon, rescue);
+  tools.append(health, helpDot("health_check") || "", mon, helpDot("serial_monitor") || "",
+               rescue, helpDot("rescue") || "");
   hello.append(tools);
   const toolsNote = el("p", "fineprint",
     "Health check reads the board’s story without changing a byte. The serial " +
@@ -663,8 +1399,89 @@ function phaseConnected() {
   hello.append(toolsNote);
   wrap.append(hello);
 
+  // Customs: what the read-only intake check found, before anything is written.
+  const customs = renderIntakeCard();
+  if (customs) wrap.append(customs);
+
+  // The live voice: a board that carries real firmware BOOTS and talks,
+  // right here, before anything is written. (A brand-new board has nothing
+  // to say — the bootloader keeps the port and this card doesn't appear.)
+  if (state.current && !state.current.unknown) {
+    const voice = el("section", "flash-card flash-voice");
+    voice.append(el("h3", null, "🎙 Its live voice — before anything is written"));
+    voice.append(el("p", "fineprint",
+      "The flasher let the board boot; this is its own serial console, live " +
+      "over the cable. Install below whenever you’re ready — the flasher " +
+      "flips it back into download mode by itself."));
+    const idSlot = el("div", "flash-voice-id");
+    voice.append(idSlot);
+    const vcon = el("pre", "flash-console flash-voice-console", "listening…");
+    voice.append(vcon);
+    // A Sense on the wire gets its bench one click away — the console is its
+    // voice, but the radar bench is its senses.
+    const curProd = core.matchProjectToProduct(state.catalog, state.current.projectName);
+    const curRole = curProd && core.productRole(curProd.id);
+    if (curRole === "sense") {
+      const rb = el("button", "ghost small", "👋 open the radar bench — feel it sense");
+      rb.addEventListener("click", () => openSenseBench(curProd));
+      voice.append(rb);
+    } else if (curRole === "wap") {
+      const rb = el("button", "ghost small", "🌊 open the field bench — feel the room");
+      rb.addEventListener("click", () => openWapBench(curProd));
+      voice.append(rb);
+    }
+    wrap.append(voice);
+    startVoice(vcon, (m) => {
+      idSlot.innerHTML = "";
+      const chips = el("div", "flash-passport");
+      const hv = core.healthVerdict(m.health);
+      const scored = typeof m.health === "number" && Number.isFinite(m.health);
+      const hchip = el("span", `flash-passport-chip flash-passport-${hv.level === "ok" ? "ok" : "warn"}`);
+      hchip.append(el("strong", null, "Self-check "),
+        document.createTextNode(scored ? `${hv.icon} ${m.health}/100` : hv.label));
+      const hHelp = helpDot("self_check");
+      if (hHelp) hchip.append(hHelp);
+      chips.append(hchip);
+      if (typeof m.temp_c === "number" && Number.isFinite(m.temp_c) &&
+          m.temp_c > -40 && m.temp_c < 150) {
+        const warm = m.temp_c >= 70;
+        const tchip = el("span", `flash-passport-chip${warm ? " flash-passport-warn" : ""}`);
+        tchip.append(el("strong", null, "Heat "),
+          document.createTextNode(`${Math.round(m.temp_c)} °C${warm ? " — give it air" : ""}`));
+        const tHelp = helpDot("temperature");
+        if (tHelp) tchip.append(tHelp);
+        chips.append(tchip);
+      }
+      if (m.tamper) {
+        chips.append(el("span", "flash-passport-chip flash-passport-warn",
+          "tamper flag raised"));
+      }
+      idSlot.append(chips);
+    });
+  }
+
   // Firmware picker (chip-guarded).
   wrap.append(renderPicker());
+
+  // "Which board am I holding?" — a labelled identity panel for each product
+  // this chip can be, drawn from the honest boards/enclosures catalogs so the
+  // user can match the board in their hand and see the product it becomes.
+  const idWrap = el("div", "flash-identity-wrap");
+  wrap.append(idWrap);
+  try {
+    const forChip = (state.catalog.products || []).filter((p) => p.chip === state.chip);
+    const seen = new Set();
+    for (const p of forChip) {
+      const key = core.shortName ? core.shortName(p.id) : p.id;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      mountBoardIdentity(idWrap, p); // async, best-effort; no-op on any miss
+    }
+  } catch { /* identity is a nicety — never block the flow */ }
+
+  // The session's progression — a batch never loses its place.
+  const roster = renderRosterStrip();
+  if (roster) wrap.append(roster);
 
   const disconnect = el("button", "ghost small flash-disconnect", "disconnect");
   disconnect.addEventListener("click", onDisconnect);
@@ -672,11 +1489,218 @@ function phaseConnected() {
   return wrap;
 }
 
-function fact(label, val) {
+// ── the intake report ───────────────────────────────────────────────────────
+// One card, in the order that matters: the verdict, then only the findings
+// worth a sentence. A board where nothing looks wrong gets a single quiet
+// line — the report has to stay cheap to read, or people stop reading it.
+function renderIntakeCard() {
+  const it = state.intake;
+  if (!it) return null;
+  const v = it.verdict;
+
+  const card = el("section", `flash-card flash-intake flash-intake-${v.level}`);
+  const head = el("div", "flash-intake-head");
+  head.append(el("span", "flash-intake-icon",
+    v.level === "stop" ? "⛔" : v.level === "attention" ? "⚠️" : "✅"));
+  head.append(el("h3", null, v.headline));
+  card.append(head);
+  card.append(el("p", "fineprint",
+    "Customs — read off the board without changing a byte: its security fuses, " +
+    "whether the flash is the size it claims, and what it arrived running."));
+
+  for (const f of v.findings) {
+    const row = el("div", `flash-intake-finding flash-intake-${f.level}`);
+    row.append(el("strong", null, f.label));
+    if (f.detail) row.append(el("span", "flash-intake-detail", f.detail));
+    card.append(row);
+  }
+
+  if (v.level === "stop") {
+    card.append(el("p", "flash-intake-verdict",
+      "Every one of those is a state a full erase cannot fix — eFuses burn one " +
+      "way only. This board can't become a Canary. If you bought it as new, " +
+      "that is worth a refund request: someone used it before you."));
+  } else if (v.level === "clear") {
+    card.append(el("p", "flash-intake-verdict",
+      "Nothing we can check looks wrong. That isn't the same as proven safe — " +
+      "no read over USB can see a modified circuit board — but the security " +
+      "fuses are untouched, so nobody has locked this chip before you."));
+  }
+
+  // The eFuse table itself, folded away: the evidence behind the verdict, for
+  // anyone who wants to see the reading rather than trust the summary.
+  if (it.efuses && it.efuses.supported && Array.isArray(it.efuses.fields) && it.efuses.fields.length) {
+    const det = el("details", "flash-intake-efuses");
+    det.append(el("summary", null,
+      it.efuses.virgin
+        ? "Security fuses: all clear — show the reading"
+        : "Security fuses: show the reading"));
+    const list = el("div", "flash-intake-efuse-list");
+    for (const f of it.efuses.fields) {
+      const r = el("div", `flash-intake-efuse${f.burned ? " flash-intake-burned" : ""}`);
+      r.append(el("span", "flash-intake-efuse-key", f.key));
+      r.append(el("span", "flash-intake-efuse-val", f.burned ? `burned (${f.value})` : "not set"));
+      list.append(r);
+    }
+    det.append(list);
+    det.append(el("p", "fineprint",
+      "Read straight out of eFuse block 0. Nothing here is ever written — the " +
+      "flasher issues no burn command at all, which is why you cannot ruin a " +
+      "board from this page."));
+    det.append(el("p", "fineprint",
+      "A factory-fresh chip reads every one of these as unset. Espressif does " +
+      "program fuses at the factory, but in other blocks — so anything set here " +
+      "was set by a person."));
+    card.append(det);
+  } else if (it.efuses && !it.efuses.supported) {
+    card.append(el("p", "fineprint",
+      `We don't have a verified fuse map for ${state.chip}, so that check was ` +
+      "skipped rather than guessed at."));
+  } else if (!it.efuses) {
+    card.append(el("p", "fineprint",
+      "The security fuses couldn't be read this time — reported as unchecked, " +
+      "not as clean."));
+  }
+
+  return card;
+}
+
+function fact(label, val, topicId) {
   const f = el("div", "flash-fact");
-  f.append(el("span", "flash-fact-label", label));
+  const lab = el("span", "flash-fact-label", label);
+  if (topicId) {
+    const hd = helpDot(topicId);
+    if (hd) lab.append(hd);
+  }
+  f.append(lab);
   f.append(el("span", "flash-fact-val", val));
   return f;
+}
+
+// ── per-setting help: the ⓘ that teaches (catalog-driven) ───────────────────
+// One small button per setting; a tap opens a calm card: what it is, when to
+// touch it, what the default means. Copy comes from catalog.settings_help
+// (generated from the firmware's own values), looked up via core.helpTopic —
+// so a control without a topic simply has no dot, never a broken one.
+// Only one ⓘ open at a time; Escape and any outside click close it —
+// pro-grade popover manners, wired up once, lazily.
+let openHelp = null; // { pop, btn }
+function closeHelp() {
+  if (!openHelp) return;
+  openHelp.pop.classList.add("flash-hidden");
+  openHelp.btn.setAttribute("aria-expanded", "false");
+  openHelp = null;
+}
+let helpManagersInstalled = false;
+function installHelpManagers() {
+  if (helpManagersInstalled) return;
+  helpManagersInstalled = true;
+  document.addEventListener("click", (ev) => {
+    if (openHelp && !ev.target.closest(".flash-help")) closeHelp();
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") closeHelp();
+  });
+}
+
+function helpDot(topicId) {
+  const t = core.helpTopic(state.catalog, topicId);
+  if (!t) return null;
+  installHelpManagers();
+  const wrap = el("span", "flash-help");
+  const btn = el("button", "flash-help-dot", "?");
+  btn.type = "button";
+  btn.setAttribute("aria-label", `About: ${t.label}`);
+  btn.setAttribute("aria-expanded", "false");
+  const pop = el("span", "flash-help-pop flash-hidden");
+  pop.setAttribute("role", "note");
+  pop.append(el("strong", "flash-help-title", t.label));
+  pop.append(el("span", "flash-help-what", t.what));
+  if (t.when) {
+    const w = el("span", "flash-help-when");
+    w.append(el("em", null, "When to touch it: "), document.createTextNode(t.when));
+    pop.append(w);
+  }
+  if (t.default) {
+    const d = el("span", "flash-help-default");
+    d.append(el("em", null, "Default: "), document.createTextNode(t.default));
+    pop.append(d);
+  }
+  btn.addEventListener("click", (ev) => {
+    // The dot often lives inside a <label>: stop the click from toggling the
+    // checkbox the label wraps.
+    ev.preventDefault();
+    ev.stopPropagation();
+    const wasOpen = openHelp && openHelp.pop === pop;
+    closeHelp();
+    if (!wasOpen) {
+      pop.classList.remove("flash-hidden");
+      btn.setAttribute("aria-expanded", "true");
+      openHelp = { pop, btn };
+    }
+  });
+  wrap.append(btn, pop);
+  return wrap;
+}
+
+// ── the Nursery roster strip: the session's progression, at a glance ────────
+function renderRosterStrip() {
+  if (!state.roster.length) return null;
+  const sec = el("details", "flash-roster");
+  if (state.roster.length <= 3) sec.open = true;
+  const plural = state.roster.length === 1 ? "hatchling" : "hatchlings";
+  const sum = el("summary", null,
+    `🐣 This session’s nursery — ${state.roster.length} ${plural} so far`);
+  const rh = helpDot("roster");
+  if (rh) sum.append(rh);
+  sec.append(sum);
+  const list = el("div", "flash-roster-list");
+  core.rosterLines(state.roster, Date.now()).forEach((l) => {
+    const row = el("div", "flash-roster-row");
+    row.append(el("span", "flash-roster-n", `#${l.n}`));
+    const main = el("span", "flash-roster-main");
+    main.append(el("strong", null, l.label));
+    if (l.mac) main.append(document.createTextNode(` ${l.mac}`));
+    if (l.extras) main.append(el("span", "flash-roster-extras", ` · ${l.extras}`));
+    row.append(main);
+    row.append(el("span", "flash-roster-ago", l.ago));
+    list.append(row);
+  });
+  sec.append(list);
+  sec.append(el("p", "fineprint",
+    "Kept for this tab only, and only public facts — which firmware, which " +
+    "dials, whether WiFi was baked (never the network itself)."));
+  return sec;
+}
+
+// ── role: what this board IS, read from what it RUNS ────────────────────────
+function renderRoleLine() {
+  const cur = state.current;
+  if (!cur || cur.unknown) return null;
+  // A display build read off the wire: name it and offer the live glass.
+  if (core.looksLikeDisplayProject(cur.projectName)) {
+    const d = core.displayFor(state.catalog, cur.projectName) || core.displaysIn(state.catalog)[0];
+    const p = el("p", "flash-role flash-role-display");
+    p.append(el("span", null,
+      `🖼 This board is a display — it SHOWS${d ? `. It looks like the ${d.name}.` : "."} `));
+    if (d) {
+      const b = el("button", "ghost small", "see its screen, live →");
+      b.addEventListener("click", () => setPhase(phaseDisplayBench(d, phaseConnected)));
+      p.append(b);
+    }
+    return p;
+  }
+  const prod = core.matchProjectToProduct(state.catalog, cur.projectName);
+  if (!prod) return null;
+  const role = prod.role || core.productRole(prod.id);
+  const verb = {
+    vision: "senses people through its camera — on-device, never raw video",
+    sense: "senses presence by 60 GHz radar — no camera, no mic",
+    wap: "senses presence in the WiFi field itself",
+    canary: "senses, witnesses, and bridges to Home Assistant",
+    display: "shows",
+  }[role];
+  return el("p", "flash-role", `🧭 A ${prod.name} — it ${verb}.`);
 }
 
 // ── the safety copy (runs automatically before every flash) ─────────────────
@@ -702,9 +1726,19 @@ async function takeBackup(box) {
 
 async function onBackup() {
   if (state.busy || !state.flashBytes) return;
-  state.busy = true;
+  state.busy = true; // BEFORE the slow re-sync — a second click must bounce off
+  if (!state.session && !(await ensureSession())) {
+    state.busy = false;
+    setPhase(errorRetry("Couldn’t reach the bootloader for the backup",
+      new Error("the board didn’t re-enter download mode — unplug, replug, then Connect again"),
+      phaseConnect));
+    return;
+  }
   const box = progressCard("Backing up your Canary", "Reading every byte off the board. Nothing is changed.");
   setPhase(box.card);
+  // Name the stage so the coach deals its safety-copy lessons here too, not
+  // only during an install's embedded backup step.
+  box.stage("Saving a safety copy — reading every byte off the board. Nothing is changed.");
   try {
     await takeBackup(box);
     state.busy = false;
@@ -717,38 +1751,84 @@ async function onBackup() {
 
 function renderPicker() {
   const card = el("section", "flash-card flash-picker");
-  card.append(el("h3", null, "Choose the firmware to install"));
+  card.append(el("h3", null, "Install firmware — one click"));
 
   const matches = core.productsForChip(state.catalog, state.chip);
   const info = core.chipInfo(state.catalog, state.chip) || {};
   card.append(el("p", "muted",
-    `Installing firmware over USB is what “flashing” means — same thing, two ` +
-    `words. Only firmware built for your ${info.label || state.chip} is shown ` +
-    `— the flasher won’t offer an image meant for a different board.`));
+    `Pick your firmware below and press Install this. That's the whole job — ` +
+    `we back the board up first, write the new firmware, and check every byte ` +
+    `landed, all on their own. Only firmware built for your ` +
+    `${info.label || state.chip} is shown, so you can't pick a wrong one.`));
 
   const manifestState = el("div", "flash-manifest-state");
   manifestState.id = "flash-manifest-state";
   card.append(manifestState);
 
-  // Arrived from the checkup page with a board already in mind (?product=…)?
-  // Lead with just that one — the chip guard still limits the set, so this only
-  // ever narrows within what's valid, never widens it.
-  const preferredId = core.preferredProductId(location.search);
-  const focus = preferredId ? matches.find((p) => p.id === preferredId) : null;
+  // Selection is detection-led (the Arduino-IDE lesson, minus the 400-board
+  // dropdown): everything the flasher can READ — the chip, the measured
+  // flash size, the firmware already on the board, a ?product= ask — picks
+  // the ONE right card and says why in plain words. The full line hides
+  // behind a click, grouped by family with one plain-language question per
+  // variant axis, so ten products never read as a wall of SKUs.
+  const pick = core.smartPick(state.catalog, {
+    chip: state.chip,
+    chipLabel: info.label,
+    flashBytes: state.flashBytes,
+    currentProject: state.current && !state.current.unknown
+      ? state.current.projectName : null,
+    preferredId: core.preferredProductId(location.search),
+  });
+  const focus = pick && pick.product;
 
   const list = el("div", "flash-products");
-  const rows = matches.map((p) => { const r = productRow(p); list.append(r); return r; });
+  const rows = [];
+  const headers = [];
+  const fams = core.familiesIn(state.catalog);
+  const grouped = new Set();
+  for (const fam of fams) {
+    const inFam = matches.filter((p) => p.family === fam.id);
+    if (!inFam.length) continue;
+    const head = el("div", "flash-family");
+    head.append(el("div", "flash-family-name", fam.name));
+    head.append(el("div", "flash-family-pitch muted", fam.pitch));
+    if (inFam.length > 1 && fam.pick) {
+      head.append(el("div", "flash-family-pick fineprint", fam.pick));
+    }
+    headers.push(head);
+    list.append(head);
+    for (const p of inFam) {
+      grouped.add(p.id);
+      const r = productRow(p);
+      rows.push(r);
+      list.append(r);
+    }
+  }
+  // Defensive: a product outside every family still renders (catalog drift
+  // must degrade to "ungrouped", never to "invisible").
+  for (const p of matches.filter((x) => !grouped.has(x.id))) {
+    const r = productRow(p);
+    rows.push(r);
+    list.append(r);
+  }
   if (!matches.length) {
     list.append(el("p", "muted", "No published SecuraCV product targets this chip yet."));
   }
   if (focus && matches.length > 1) {
     // Hide the others, but keep their rows in the DOM so refreshManifestState
-    // still fills every version; one click reveals them.
+    // still fills every version; one click reveals the grouped browse.
     rows.forEach((r) => { if (r.dataset.id !== focus.id) r.style.display = "none"; });
+    headers.forEach((h) => { h.style.display = "none"; });
     const note = el("p", "fineprint flash-focus-note");
-    note.append(document.createTextNode(`Showing ${focus.name} — the firmware you picked. `));
-    const more = el("button", "ghost small", `show the other ${matches.length - 1} for this chip`);
-    more.addEventListener("click", () => { rows.forEach((r) => { r.style.display = ""; }); note.remove(); });
+    note.append(el("span", null,
+      (pick.kind === "picked" ? "" : "🪄 ") + pick.why + " "));
+    const more = el("button", "ghost small",
+      `show all ${matches.length} for this chip (developer)`);
+    more.addEventListener("click", () => {
+      rows.forEach((r) => { r.style.display = ""; });
+      headers.forEach((h) => { h.style.display = ""; });
+      note.remove();
+    });
     note.append(more);
     card.append(note);
   }
@@ -766,14 +1846,53 @@ function renderPicker() {
     card.append(bk);
   }
 
-  // Advanced: local file, erase toggle, skip-backup, restore.
+  // Advanced: dev channel, local file, erase toggle, skip-backup, restore.
   const adv = el("details", "flash-advanced");
-  adv.append(el("summary", null, "Advanced"));
+  // The dev toggle below re-renders the whole picker, which would otherwise
+  // snap Advanced shut under the user's cursor. Remember whether it was open.
+  adv.open = !!state.advancedOpen;
+  adv.addEventListener("toggle", () => { state.advancedOpen = adv.open; });
+  adv.append(el("summary", null, "Advanced options — you can skip all of this"));
+
+  // Dev channel — the same Advanced control the desktop Flasher has had
+  // (desktop/src/index.html #adv-dev). Parity is not cosmetic here: the Lab
+  // app renders this page in a webview with NO address bar, so `?channel=dev`
+  // was unreachable for every Lab user — the dev channel existed and could
+  // not be switched on. The toggle can only ever mean DEV_FLASH_MANIFEST_URL;
+  // it is not a way to point at an arbitrary manifest.
+  const devWrap = el("label", "flash-erase");
+  const devBox = el("input");
+  devBox.type = "checkbox";
+  devBox.id = "flash-dev-channel";
+  devBox.checked = !!state.devChannel;
+  // A ?manifest= override already replaced the manifest; offering a channel
+  // switch that the override would silently outrank would be a lie.
+  devBox.disabled = !!state.manifestOverride;
+  devBox.addEventListener("change", () => onDevChannelToggle(devBox.checked));
+  devWrap.append(devBox);
+  devWrap.append(el("span", null,
+    " Use the dev channel — install from the rolling " +
+    "fw-dev-latest prerelease instead of the pinned stable release. Dev " +
+    "images are cut ahead of stable and checked exactly the same way (chip " +
+    "guard, SHA-256 against the manifest, and the release signature once the " +
+    "signing ceremony lands). It's also where a board shows up first: a " +
+    "product with no stable release yet is often already on dev."));
+  adv.append(devWrap);
+  // A disabled checkbox with no reason beside it reads as a broken control.
+  if (devBox.disabled) {
+    adv.append(el("p", "fineprint",
+      "The dev channel is unavailable while this page is pointed at a " +
+      "self-hosted manifest (?manifest=). Drop that from the address to use it."));
+  }
+
   const local = el("div", "flash-local");
-  local.append(el("p", "muted",
+  const localP = el("p", "muted",
     "Install a firmware file from your computer (a .bin you built, or one for " +
     "an air-gapped setup). We can’t check a personal file’s signature, but " +
-    "the board still can’t be bricked, and we verify the write against the chip."));
+    "the board still can’t be bricked, and we verify the write against the chip.");
+  const localHelp = helpDot("local_file");
+  if (localHelp) localP.append(localHelp);
+  local.append(localP);
   const fileBtn = el("input");
   fileBtn.type = "file";
   fileBtn.accept = ".bin";
@@ -789,7 +1908,11 @@ function renderPicker() {
   eraseWrap.append(erase);
   eraseWrap.append(el("span", null,
     " Erase the entire chip first — an extra-clean start that also clears any " +
-    "leftover data from a previous firmware. Use it if a board is misbehaving."));
+    "leftover data from a previous firmware. Use it if a board is misbehaving. " +
+    "(On a board the flasher is meeting for the first time this happens anyway, " +
+    "ticked or not.)"));
+  const eraseHelp = helpDot("erase_all");
+  if (eraseHelp) eraseWrap.append(eraseHelp);
   adv.append(eraseWrap);
 
   if (state.flashBytes) {
@@ -802,6 +1925,8 @@ function renderPicker() {
       " Skip the automatic safety copy this time. Only worth it if you’re " +
       "reflashing a board you already backed up — the copy is what lets you " +
       "put everything back exactly as it was."));
+    const skipHelp = helpDot("skip_backup");
+    if (skipHelp) skipWrap.append(skipHelp);
     adv.append(skipWrap);
   }
 
@@ -817,9 +1942,12 @@ function renderPicker() {
   }
 
   const restoreFile = el("div", "flash-local");
-  restoreFile.append(el("p", "muted",
+  const restoreP = el("p", "muted",
     "Restore a backup file saved earlier (canary-…-backup.bin) — rewinds the " +
-    "board to that exact moment, works with backups from any version."));
+    "board to that exact moment, works with backups from any version.");
+  const restoreHelp = helpDot("restore_backup");
+  if (restoreHelp) restoreP.append(restoreHelp);
+  restoreFile.append(restoreP);
   const rf = el("input");
   rf.type = "file";
   rf.accept = ".bin";
@@ -828,7 +1956,593 @@ function renderPicker() {
   restoreFile.append(rf);
   adv.append(restoreFile);
   card.append(adv);
+
+  const displays = displaysTeaser();
+  if (displays) card.append(displays);
   return card;
+}
+
+// ── the displays: boards that SHOW, previewed by their own firmware ─────────
+// The display products ARE installable rows now (they ride the release train
+// like everything else — build_flash_manifest.py packages all six). This
+// teaser is the extra thing only a screen can offer: booting the REAL
+// firmware in the browser (the same WASM build fleet.html runs) so the glass
+// is seen before it exists. 1:1 — framebuffer out, touch in, LVGL and all.
+
+function displaysTeaser() {
+  // Both display hosts are ESP32-S3 boards — on other silicon the teaser
+  // would only be a detour.
+  if (core.normalizeChip(state.chip) !== core.normalizeChip("ESP32-S3")) return null;
+  const displays = core.displaysIn(state.catalog);
+  if (!displays.length) return null;
+  const sec = el("details", "flash-displays");
+  const sum = el("summary", null, "Building a Canary with a screen? Meet the displays");
+  sec.append(sum);
+  const intro = el("p", "muted",
+    "Two of the family SHOW instead of sense — and both flash right here " +
+    "(they’re in the picker above, chip-guarded like everything else). " +
+    "Before you commit, the REAL firmware boots in your browser, 1:1: try " +
+    "the glass first.");
+  const hd = helpDot("display_emulator");
+  if (hd) intro.append(hd);
+  sec.append(intro);
+  displays.forEach((d) => {
+    const row = el("div", "flash-product");
+    const left = el("div", "flash-product-main");
+    left.append(el("div", "flash-product-name", d.name));
+    left.append(el("div", "flash-product-tag muted", `${d.tagline} · ${d.panel}`));
+    row.append(left);
+    const btn = el("button", "primary small", "boot its screen");
+    btn.addEventListener("click", () => setPhase(phaseDisplayBench(d, phaseConnected)));
+    row.append(btn);
+    sec.append(row);
+  });
+  return sec;
+}
+
+// Where the glass actually boots: fleet.html#<id> opens that display's sheet
+// and powers the WASM firmware there. It does NOT boot inside flash.html on
+// purpose — this page ships a deliberately strict CSP with no wasm-unsafe-eval
+// (pinned by tests/flash.test.js), and weakening the flasher's policy for a
+// preview would be the wrong trade. One tab away, same 1:1 truth.
+function displayBenchUrl(d) {
+  return `fleet.html#${encodeURIComponent(d.id)}`;
+}
+
+function phaseDisplayBench(d, back) {
+  const box = el("section", "flash-card flash-displaybench");
+  box.dataset.step = "2";
+  box.append(el("h2", null, `${d.name} — a board that SHOWS`));
+  const sub = el("p", "muted",
+    `${d.tagline} Its firmware (v${d.emulator.fw_version}, LVGL ${d.emulator.lvgl}) ` +
+    `is compiled to run in the browser too — real C++, real LVGL, the exact pixels ` +
+    `the ${d.panel} will show, with touch. That’s the honest preview: not a mockup, ` +
+    `the firmware itself.`);
+  const hd = helpDot("display_emulator");
+  if (hd) sub.append(hd);
+  box.append(sub);
+
+  const facts = el("div", "flash-facts");
+  facts.append(fact("Board", d.board));
+  facts.append(fact("Panel", d.panel));
+  if (d.shows && d.shows.length) facts.append(fact("It shows", d.shows.join(" · ")));
+  box.append(facts);
+
+  box.append(el("p", "fineprint", d.build_note +
+    " (The emulator boots on the fleet page — the Nursery itself runs under a " +
+    "stricter security policy that deliberately can’t execute it. Flashing the " +
+    "real board happens right here: it’s in the picker.)"));
+
+  const row = el("div", "flash-row");
+  const go = el("a", "primary flash-go", "boot its screen — live, 1:1 →");
+  go.href = displayBenchUrl(d);
+  go.target = "_blank";
+  go.rel = "noopener";
+  const done = el("button", "ghost", "← back");
+  done.addEventListener("click", () => setPhase(back()));
+  row.append(go, done);
+  box.append(row);
+  return box;
+}
+
+// ── the radar bench: feel a freshly-hatched Sense sensing, live ─────────────
+// The moment after the flash IS the product: walk past and presence flips,
+// step through the bands and the aura follows, sit statue-still and the
+// clear timeout breathes out. Everything drawn here comes off the board's
+// own console lines ([sense]/[presence]/[vitals] — coarse fields only, the
+// same ones MQTT carries). The wellbeing senses render as a clearly-labeled
+// preview on the presence-only build — what's POSSIBLE, never faked as live.
+
+async function openConsoleBench(product, makePhase) {
+  if (state.busy || state.opening) return;
+  state.opening = true; // synchronous — see openMonitor
+  try {
+    let port = state.session && state.session.port;
+    if (!port && state.voice) port = await stopVoice();
+    if (state.session) {
+      try { await state.session.esploader.after("hard_reset"); } catch {}
+      try { await state.session.transport.disconnect(); } catch {}
+      state.session = null;
+    }
+    if (!port) { setPhase(phaseConnect()); return; }
+    setPhase(makePhase(port, product));
+  } finally {
+    state.opening = false;
+  }
+}
+const openSenseBench = (product) => openConsoleBench(product, phaseSenseBench);
+const openWapBench = (product) => openConsoleBench(product, phaseWapBench);
+
+function phaseSenseBench(port, product) {
+  const wellbeing = /wellbeing/.test((product && product.id) || "");
+  const box = el("section", "flash-card flash-sensebench");
+  box.dataset.step = "5";
+  const senseH = el("h2", null, "👋 The radar bench — hold still, then don’t");
+  const shd = helpDot("radar_bench");
+  if (shd) senseH.append(shd);
+  box.append(senseH);
+  box.append(el("p", "muted",
+    "This is the radar’s own senses, live off the USB cable — the same coarse " +
+    "truths it publishes (present/clear, 0/1/2+, near/mid/far), never raw " +
+    "centimetres. Walk past it. Stand in each band. Then sit statue-still and " +
+    "feel the clear timeout breathe out."));
+
+  const status = el("div", "flash-sense-status", "listening for the radar…");
+  status.setAttribute("role", "status");
+  box.append(status);
+  const calm = prefersCalm(); // decorative motion politely sits out
+
+  const aura = document.createElement("canvas");
+  aura.className = "flash-sense-aura";
+  aura.width = 640; aura.height = 340;
+  box.append(aura);
+
+  // The wellbeing senses: LIVE numbers on the wellbeing build, an explicit
+  // possibility preview on presence-only — the user asked to SEE what this
+  // hardware can feel, so show it, labeled for exactly what it is.
+  const vit = el("div", "flash-sense-vitals");
+  const vitHead = el("div", "flash-sense-vitals-head");
+  const vitBadge = el("span", "flash-passport-chip", wellbeing ? "waiting for a lock…" : "PREVIEW — simulated");
+  vitBadge.setAttribute("role", "status");
+  vitHead.append(el("strong", null, "Breathing & heartbeat"), vitBadge);
+  vit.append(vitHead);
+  const wave = document.createElement("canvas");
+  wave.className = "flash-sense-wave";
+  wave.width = 640; wave.height = 110;
+  vit.append(wave);
+  vit.append(el("p", "fineprint", wellbeing
+    ? "The Wellbeing build senses breathing (6–30 bpm) and heart rate (40–130 bpm) " +
+      "by radar — no camera, no mic, no contact. Vitals lock only when exactly ONE " +
+      "person is present: sit alone in the near band, settle, and watch it latch."
+    : "This build watches presence only — but the SAME radar underneath can feel " +
+      "breathing and heartbeat. The waves below are a simulated preview of what the " +
+      "Canary Sense · Wellbeing firmware senses here; flash that build and they go live."));
+  box.append(vit);
+
+  const script = el("div", "flash-nextstep");
+  script.append(el("div", "flash-nextstep-title", "Make it magic — the 60-second tour"));
+  const ol = el("ol", "we2-guide-steps");
+  [
+    "Walk past it — presence flips to “someone’s here” within about a second, and the aura lights.",
+    "Step closer, then away: near → mid → far, the ring follows you.",
+    "Bring a friend — the count climbs to 2+ (and vitals politely refuse: one person only).",
+    wellbeing ? "Sit alone, still, a couple of meters away — breathing locks, then the numbers appear."
+              : "Sit statue-still — presence holds through the debounce, then clears when you leave.",
+    "Everything you just felt publishes the same way to Home Assistant — this bench is the radar’s honest voice.",
+  ].forEach((s) => ol.append(el("li", null, s)));
+  script.append(ol);
+  box.append(script);
+
+  const conWrap = el("details", "flash-displaybench-serial");
+  conWrap.append(el("summary", null, "the raw console under the magic"));
+  const con = el("pre", "flash-console");
+  conWrap.append(con);
+  box.append(conWrap);
+
+  const row = el("div", "flash-row");
+  const back = el("button", "ghost", "← back to the Nursery");
+  row.append(back);
+  const senseTwin = twinLink(product);
+  if (senseTwin) row.append(senseTwin);
+  box.append(row);
+
+  // ── the live model, fed by the console lines ──
+  const model = {
+    presence: "unknown", count: "0", range: "unknown",
+    breath: null, heart: null, locked: false,
+    lastSeenMs: 0, frameErrs: null, alive: true,
+  };
+
+  function setStatus() {
+    const p = model.presence;
+    status.className = "flash-sense-status flash-sense-" + p;
+    status.textContent =
+      p === "present"
+        ? `● someone’s here — ${model.count === "2+" ? "two or more" : model.count === "1" ? "one person" : "movement"} · ${model.range}`
+        : p === "clear" ? "○ clear — the room is empty"
+        : "◌ listening for the radar…";
+  }
+
+  // reader loop (the voice engine pattern — attended bench, no supervisor)
+  let reader = null;
+  (async () => {
+    try {
+      await port.open({ baudRate: state.catalog.console_baud || 115200 });
+      if (!model.alive) { try { await port.close(); } catch {} return; } // back won the race
+      reader = port.readable.getReader();
+      if (!model.alive) {
+        try { reader.releaseLock(); } catch {}
+        try { await port.close(); } catch {}
+        return;
+      }
+    } catch (e) {
+      status.textContent = "The console didn’t open (" + String(e.message || e) + ") — unplug, replug, reconnect.";
+      return;
+    }
+    const dec = new TextDecoder();
+    let buf = "", tail = "";
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done || !model.alive) break;
+        const text = dec.decode(value, { stream: true });
+        buf = (buf + text).slice(-8000);
+        con.textContent = buf;
+        con.scrollTop = con.scrollHeight;
+        tail += text;
+        const lines = tail.split("\n");
+        tail = lines.pop() || "";
+        for (const line of lines) {
+          const ev = core.parseSenseLine(line);
+          if (!ev) continue;
+          model.lastSeenMs = performance.now();
+          if (ev.kind === "sense") {
+            if (ev.presence === "present" && model.presence !== "present") chirp("found");
+            model.presence = ev.presence; model.count = ev.count; model.range = ev.range;
+          } else if (ev.kind === "presence") {
+            if (ev.presence === "present" && model.presence !== "present") chirp("found");
+            model.presence = ev.presence;
+          } else if (ev.kind === "bpm") {
+            model.breath = ev.breath; model.heart = ev.heart; model.locked = true;
+            vitBadge.textContent = `LIVE · breathing ${ev.breath} bpm · heart ${ev.heart} bpm`;
+            vitBadge.className = "flash-passport-chip flash-passport-ok";
+          } else if (ev.kind === "vitals") {
+            model.locked = ev.locked;
+            if (!ev.locked && wellbeing) {
+              vitBadge.textContent = "lock lost — settle again";
+              vitBadge.className = "flash-passport-chip";
+            }
+          } else if (ev.kind === "health") {
+            model.frameErrs = ev.frame_errs;
+          }
+          setStatus();
+        }
+      }
+    } catch { /* unplugged — the back button is right there */ }
+  })();
+
+  // ── the aura: bands, sweep, and the target ──
+  const actx = aura.getContext("2d");
+  const wctx = wave.getContext("2d");
+  let raf = 0, t0 = performance.now();
+  const BAND_R = { near: 0.36, mid: 0.62, far: 0.88, unknown: 0.62 };
+  let targetR = 0, targetA = 0; // eased radius/alpha of the presence blob
+
+  function draw(now) {
+    if (!model.alive) return;
+    // Under prefers-reduced-motion the informative state still renders and
+    // updates — only the decorative time-based motion freezes.
+    const t = calm ? 0 : (now - t0) / 1000;
+    const W = aura.width, H = aura.height;
+    const cx = W / 2, cy = H - 14, R = H - 40;
+    actx.clearRect(0, 0, W, H);
+    const present = model.presence === "present";
+    const stale = model.lastSeenMs && now - model.lastSeenMs > 15000;
+
+    // band arcs
+    for (const [name, r] of [["near", BAND_R.near], ["mid", BAND_R.mid], ["far", BAND_R.far]]) {
+      const active = present && model.range === name;
+      actx.beginPath();
+      actx.arc(cx, cy, r * R, Math.PI, 2 * Math.PI);
+      actx.lineWidth = active ? 5 : 1.5;
+      actx.strokeStyle = active
+        ? `hsl(140 90% 62% / ${0.75 + 0.25 * Math.sin(t * 4)})`
+        : "rgba(160,180,200,0.25)";
+      actx.stroke();
+      actx.font = "600 11px ui-monospace, Menlo, monospace";
+      actx.fillStyle = active ? "#7CFF9B" : "rgba(160,180,200,0.5)";
+      actx.fillText(name, cx + r * R - 26, cy - 8);
+    }
+    // the sweep — a quiet metronome when clear, eager when someone's there
+    const sweepT = (t * (present ? 0.55 : 0.22)) % 1;
+    const sweepR = sweepT * R;
+    actx.beginPath();
+    actx.arc(cx, cy, sweepR, Math.PI, 2 * Math.PI);
+    actx.lineWidth = 2;
+    actx.strokeStyle = `hsl(${present ? 140 : 205} 80% 60% / ${0.5 * (1 - sweepT)})`;
+    actx.stroke();
+    // the emitter
+    actx.beginPath();
+    actx.arc(cx, cy, 6, 0, 2 * Math.PI);
+    actx.fillStyle = stale ? "#f0a860" : present ? "#7CFF9B" : "#7db8e8";
+    actx.fill();
+    // the target blob — eases into its band, breathes gently
+    const wantR = present ? (BAND_R[model.range] || BAND_R.mid) * R : 0;
+    targetR += (wantR - targetR) * 0.08;
+    targetA += ((present ? 1 : 0) - targetA) * 0.1;
+    if (targetA > 0.02) {
+      const bob = Math.sin(t * 2.2) * 4;
+      const tx = cx, ty = cy - targetR + bob;
+      const glow = actx.createRadialGradient(tx, ty, 2, tx, ty, 26);
+      glow.addColorStop(0, `hsl(140 90% 66% / ${0.9 * targetA})`);
+      glow.addColorStop(1, "hsl(140 90% 66% / 0)");
+      actx.fillStyle = glow;
+      actx.beginPath(); actx.arc(tx, ty, 26, 0, 2 * Math.PI); actx.fill();
+      actx.fillStyle = `hsl(140 90% 70% / ${targetA})`;
+      actx.beginPath(); actx.arc(tx, ty, 7, 0, 2 * Math.PI); actx.fill();
+      if (model.count === "2+") {
+        actx.fillStyle = `hsl(140 90% 70% / ${0.8 * targetA})`;
+        actx.beginPath(); actx.arc(tx + 22, ty + 6, 5, 0, 2 * Math.PI); actx.fill();
+        actx.font = "700 12px ui-monospace, Menlo, monospace";
+        actx.fillText("2+", tx + 32, ty + 10);
+      }
+    }
+    if (stale) {
+      actx.font = "600 12px ui-monospace, Menlo, monospace";
+      actx.fillStyle = "#f0a860";
+      actx.fillText("no radar lines lately — is it still plugged in?", 14, 18);
+    }
+
+    // ── the vitals waves ──
+    const WW = wave.width, WH = wave.height;
+    wctx.clearRect(0, 0, WW, WH);
+    const live = wellbeing && model.locked && model.breath;
+    const breathBpm = live ? model.breath : 14;
+    const heartBpm = live ? model.heart : 64;
+    const alpha = live ? 0.95 : 0.5;
+    // breath: a slow full-height sine
+    wctx.beginPath();
+    for (let x = 0; x < WW; x++) {
+      const ph = (t - (WW - x) / 90) * (breathBpm / 60) * 2 * Math.PI;
+      const y = WH * 0.32 - Math.sin(ph) * WH * 0.2;
+      x ? wctx.lineTo(x, y) : wctx.moveTo(x, y);
+    }
+    wctx.lineWidth = 2.5;
+    wctx.strokeStyle = `hsl(175 80% 60% / ${alpha})`;
+    wctx.stroke();
+    // heart: a sharp pulse train
+    wctx.beginPath();
+    for (let x = 0; x < WW; x++) {
+      const ph = ((t - (WW - x) / 90) * (heartBpm / 60)) % 1;
+      const spike = ph < 0.08 ? Math.sin((ph / 0.08) * Math.PI) : ph < 0.16 ? -0.35 * Math.sin(((ph - 0.08) / 0.08) * Math.PI) : 0;
+      const y = WH * 0.78 - spike * WH * 0.17;
+      x ? wctx.lineTo(x, y) : wctx.moveTo(x, y);
+    }
+    wctx.lineWidth = 2;
+    wctx.strokeStyle = `hsl(345 85% 64% / ${alpha})`;
+    wctx.stroke();
+    wctx.font = "600 11px ui-monospace, Menlo, monospace";
+    wctx.fillStyle = `hsl(175 80% 60% / ${alpha})`;
+    wctx.fillText(`breath ${live ? model.breath : "~" + breathBpm} bpm`, 10, 16);
+    wctx.fillStyle = `hsl(345 85% 64% / ${alpha})`;
+    wctx.fillText(`heart ${live ? model.heart : "~" + heartBpm} bpm`, 10, WH - 10);
+
+    raf = requestAnimationFrame(draw);
+  }
+  raf = requestAnimationFrame(draw);
+  setStatus();
+
+  back.addEventListener("click", async () => {
+    model.alive = false;
+    cancelAnimationFrame(raf);
+    try { reader && await reader.cancel(); } catch {}
+    try { reader && reader.releaseLock(); } catch {}
+    try { await port.close(); } catch {}
+    setPhase(phaseConnect());
+  });
+  return box;
+}
+
+// ── the field bench: feel a freshly-hatched WAP feel the room ───────────────
+// The WAP senses presence in the WiFi field itself — no camera, no mic, no
+// radar module. Its console prints one coarse line per RF transition
+// ([wap] … devices/confidence/dwell/stir); the bench turns that into a
+// living field: ripples on every event, a stir meter for the CSI motion
+// score, and the honest vocabulary underneath. Same attended-USB posture
+// as the radar bench.
+function phaseWapBench(port, product) {
+  const box = el("section", "flash-card flash-sensebench");
+  box.dataset.step = "5";
+  const wapH = el("h2", null, "🌊 The field bench — the room’s WiFi, felt");
+  const whd2 = helpDot("field_bench");
+  if (whd2) wapH.append(whd2);
+  box.append(wapH);
+  box.append(el("p", "muted",
+    "This Canary reads the WiFi field itself: phones announcing themselves, " +
+    "and the way a moving body stirs the radio reflections (CSI). Below is " +
+    "its live verdict off the USB cable — the same coarse vocabulary it " +
+    "publishes: an event name, a device count, a confidence word, a dwell " +
+    "class. Never a MAC, never a raw signal."));
+
+  const status = el("div", "flash-sense-status", "listening for the field…");
+  status.setAttribute("role", "status");
+  box.append(status);
+  const calm = prefersCalm();
+
+  const field = document.createElement("canvas");
+  field.className = "flash-sense-aura";
+  field.width = 640; field.height = 300;
+  box.append(field);
+
+  // The stir meter: the CSI motion score, decaying between events.
+  const meter = el("div", "we2-meter");
+  const track = el("div", "we2-meter-track");
+  const fill = el("div", "we2-meter-fill");
+  track.append(fill);
+  const meterLabel = el("div", "we2-meter-label", "field stir — how much a body is moving the radio");
+  meter.append(track, meterLabel);
+  box.append(meter);
+
+  const script = el("div", "flash-nextstep");
+  script.append(el("div", "flash-nextstep-title", "Make it magic — the 60-second tour"));
+  const ol = el("ol", "we2-guide-steps");
+  [
+    "Walk into the room with your phone in your pocket — an arrival event fires and the field ripples.",
+    "Leave the phone outside and walk back in: the CSI stir meter still moves — the field feels the BODY, not the phone.",
+    "Stand statue-still and watch the stir settle; linger a couple of minutes and the dwell class climbs to “sustained”.",
+    "Bring a second phone — the device count follows, as a count, never an identity.",
+    "Everything here publishes the same way to Home Assistant — this bench is the field’s honest voice.",
+  ].forEach((s) => ol.append(el("li", null, s)));
+  script.append(ol);
+  box.append(script);
+
+  const conWrap = el("details", "flash-displaybench-serial");
+  conWrap.append(el("summary", null, "the raw console under the magic"));
+  const con = el("pre", "flash-console");
+  conWrap.append(con);
+  box.append(conWrap);
+
+  const row = el("div", "flash-row");
+  const back = el("button", "ghost", "← back to the Nursery");
+  row.append(back);
+  const wapTwin = twinLink(product);
+  if (wapTwin) row.append(wapTwin);
+  box.append(row);
+
+  const model = {
+    present: false, devices: 0, confidence: null, dwell: null,
+    stir: 0, lastEvent: null, lastSeenMs: 0, alive: true,
+  };
+  const ripples = []; // {born, strength}
+
+  function setStatus() {
+    status.className = "flash-sense-status " +
+      (model.present ? "flash-sense-present" : "flash-sense-clear");
+    status.textContent = model.present
+      ? `● someone stirs the field — ${model.devices} device${model.devices === 1 ? "" : "s"} heard` +
+        `${model.confidence ? ` · ${model.confidence} confidence` : ""}${model.dwell ? ` · ${model.dwell}` : ""}`
+      : model.lastEvent ? "○ the field is calm again"
+      : "◌ listening for the field…";
+  }
+
+  let reader = null;
+  (async () => {
+    try {
+      await port.open({ baudRate: state.catalog.console_baud || 115200 });
+      if (!model.alive) { try { await port.close(); } catch {} return; } // back won the race
+      reader = port.readable.getReader();
+      if (!model.alive) {
+        try { reader.releaseLock(); } catch {}
+        try { await port.close(); } catch {}
+        return;
+      }
+    } catch (e) {
+      status.textContent = "The console didn’t open (" + String(e.message || e) + ") — unplug, replug, reconnect.";
+      return;
+    }
+    const dec = new TextDecoder();
+    let buf = "", tail = "";
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done || !model.alive) break;
+        const text = dec.decode(value, { stream: true });
+        buf = (buf + text).slice(-8000);
+        con.textContent = buf;
+        con.scrollTop = con.scrollHeight;
+        tail += text;
+        const lines = tail.split("\n");
+        tail = lines.pop() || "";
+        for (const line of lines) {
+          const ev = core.parseWapLine(line);
+          if (!ev) continue;
+          model.lastSeenMs = performance.now();
+          model.lastEvent = ev.event;
+          model.devices = ev.devices;
+          model.confidence = ev.confidence;
+          model.dwell = ev.dwell;
+          model.stir = Math.max(model.stir, ev.stir);
+          if (ev.present && !model.present) chirp("found");
+          if (ev.present) model.present = true;
+          if (ev.departed) model.present = false;
+          ripples.push({ born: performance.now(), strength: Math.max(0.35, ev.stir / 100) });
+          if (ripples.length > 8) ripples.shift();
+          setStatus();
+        }
+      }
+    } catch { /* unplugged — the back button is right there */ }
+  })();
+
+  const fctx = field.getContext("2d");
+  let raf = 0, t0 = performance.now(), lastFrame = t0;
+  function draw(now) {
+    if (!model.alive) return;
+    // dt-based decay: the stir reading is INFORMATIVE, so it must drain at
+    // the same rate on every display — 60 Hz, 144 Hz, or reduced-motion.
+    const dt = Math.min(0.1, Math.max(0, (now - lastFrame) / 1000));
+    lastFrame = now;
+    const t = calm ? 0 : (now - t0) / 1000;
+    const W = field.width, H = field.height, cx = W / 2, cy = H / 2;
+    fctx.clearRect(0, 0, W, H);
+    // the ambient field: faint standing rings, breathing very slightly
+    for (let i = 1; i <= 4; i++) {
+      fctx.beginPath();
+      fctx.arc(cx, cy, i * 34 + Math.sin(t * 0.8 + i) * 2, 0, 2 * Math.PI);
+      fctx.lineWidth = 1;
+      fctx.strokeStyle = `hsl(205 60% 55% / ${model.present ? 0.18 : 0.1})`;
+      fctx.stroke();
+    }
+    // event ripples: expanding, fading, strength-scaled
+    const nowMs = performance.now();
+    for (const r of ripples) {
+      const age = (nowMs - r.born) / 1000;
+      if (age > 3) continue;
+      const p = calm ? 0.6 : age / 3;
+      fctx.beginPath();
+      fctx.arc(cx, cy, 20 + p * (H / 2 - 10), 0, 2 * Math.PI);
+      fctx.lineWidth = 2.5 * r.strength;
+      fctx.strokeStyle = `hsl(${model.present ? 140 : 205} 85% 62% / ${(1 - p) * 0.8 * r.strength})`;
+      fctx.stroke();
+    }
+    // the emitter
+    fctx.beginPath();
+    fctx.arc(cx, cy, 6, 0, 2 * Math.PI);
+    fctx.fillStyle = model.present ? "#7CFF9B" : "#7db8e8";
+    fctx.fill();
+    // device count chips orbiting when present
+    if (model.present && model.devices > 0) {
+      for (let i = 0; i < Math.min(model.devices, 5); i++) {
+        const a = (i / Math.min(model.devices, 5)) * 2 * Math.PI + t * 0.4;
+        fctx.beginPath();
+        fctx.arc(cx + Math.cos(a) * 60, cy + Math.sin(a) * 60, 4, 0, 2 * Math.PI);
+        fctx.fillStyle = "hsl(140 90% 70% / 0.9)";
+        fctx.fill();
+      }
+    }
+    const stale = model.lastSeenMs && nowMs - model.lastSeenMs > 30000;
+    if (stale) {
+      fctx.font = "600 12px ui-monospace, Menlo, monospace";
+      fctx.fillStyle = "#f0a860";
+      fctx.fillText("no field lines lately — the WAP only speaks on transitions; walk past it", 14, 18);
+    }
+    // the stir meter, decaying gently between events (~9%/second everywhere)
+    model.stir = Math.max(0, model.stir - 9 * dt);
+    fill.style.width = Math.round(model.stir) + "%";
+    fill.dataset.level = model.stir >= 55 ? "ok" : model.stir >= 25 ? "soft" : "faint";
+    raf = requestAnimationFrame(draw);
+  }
+  raf = requestAnimationFrame(draw);
+  setStatus();
+
+  back.addEventListener("click", async () => {
+    model.alive = false;
+    cancelAnimationFrame(raf);
+    try { reader && await reader.cancel(); } catch {}
+    try { reader && reader.releaseLock(); } catch {}
+    try { await port.close(); } catch {}
+    setPhase(phaseConnect());
+  });
+  return box;
 }
 
 function productRow(p) {
@@ -853,26 +2567,59 @@ function productRow(p) {
 function activeManifestUrl() {
   // `?manifest=<url>` lets a self-hosted / air-gapped user point at their own
   // manifest — but only if it's same-origin or a private/LAN host (see
-  // manifestOverrideUrl). `?channel=dev` switches to the rolling dev
-  // prerelease manifest (a fixed first-party URL, never user-supplied).
-  // Otherwise: the signed stable release.
+  // manifestOverrideUrl); it outranks the channel. Otherwise the channel
+  // decides: state.devChannel (seeded by `?channel=dev`, then owned by the
+  // Advanced toggle) reads the rolling dev prerelease — a fixed first-party
+  // URL, never user-supplied — and the default is the stable release.
   const override = core.manifestOverrideUrl(location.search, location.origin);
   state.manifestOverride = !!override;
-  state.devChannel = !override && core.channelFromSearch(location.search) === "dev";
-  if (override) return override;
+  if (override) { state.devChannel = false; return override; }
   return state.devChannel ? core.DEV_FLASH_MANIFEST_URL : state.catalog.manifest_url;
 }
 
+// Every manifest fetch carries a generation stamp. Switching channels starts a
+// second fetch without cancelling the first, and the two can land in either
+// order — a slow stable response arriving after a fast dev one would repaint
+// the picker with the versions, SHA-256s and Install targets of the channel the
+// UI says is OFF. That is the silent-wrong case this whole toggle exists to
+// avoid, so a late response from a superseded generation is discarded outright.
+let manifestGeneration = 0;
+
 function ensureManifest() {
   if (state.manifest) { refreshManifestState(); return; }
+  const gen = ++manifestGeneration;
+  const stale = () => gen !== manifestGeneration;
   fetch(activeManifestUrl(), { cache: "no-store" })
     .then((r) => (r.ok ? r.json() : Promise.reject(new Error("no release manifest (HTTP " + r.status + ")"))))
     .then((m) => {
+      if (stale()) return;
       const errs = core.validateManifest(m);
       state.manifest = errs.length ? { __invalid: errs } : m;
     })
-    .catch(() => { state.manifest = { __missing: true }; })
-    .finally(refreshManifestState);
+    // Keep WHY it's missing. "No release yet" and "the release this page is
+    // pinned to was never cut" look identical to a user otherwise, and the
+    // second one is a maintainer bug that hid for a whole release cycle.
+    .catch((err) => {
+      if (stale()) return;
+      state.manifest = { __missing: true, why: String((err && err.message) || err) };
+    })
+    .finally(() => { if (!stale()) refreshManifestState(); });
+}
+
+// Advanced → dev channel. Switching channels invalidates the loaded manifest
+// wholesale (versions, SHA-256s and availability all belong to the OTHER
+// release), so drop it and re-render the picker from scratch rather than
+// leaving stale versions on rows the new channel may not even carry.
+function onDevChannelToggle(on) {
+  if (state.busy) return;              // never re-point mid-write
+  state.devChannel = !!on;
+  state.manifest = null;
+  // Bump the generation before re-rendering: an in-flight fetch for the
+  // previous channel is now stale, and must not repaint over the new one
+  // whichever order the two responses arrive in (see ensureManifest).
+  manifestGeneration++;
+  setPhase(phaseConnected());          // repaints with "Checking…" in the banner
+  ensureManifest();
 }
 
 function refreshManifestState() {
@@ -889,8 +2636,20 @@ function refreshManifestState() {
     const note = el("p", "flash-note flash-note-soft");
     note.textContent = m.__invalid
       ? "The published release manifest didn’t validate, so official images are hidden. You can still install a local file under Advanced."
-      : "No signed firmware release is published yet. When the maintainer cuts one, the official images appear here automatically. Until then, use Advanced → install a local file.";
+      : state.devChannel
+        ? "The dev channel has nothing published yet — no rolling prerelease has been cut. Turn the dev channel off under Advanced for the stable release, or install a local file."
+        : "No signed firmware release is published yet. When the maintainer cuts one, the official images appear here automatically. Until then, try Advanced → dev channel (products often land there first), or install a local file.";
     banner.append(note);
+    // Name the release we were pinned to. Every product reading "unavailable"
+    // because a tag was bumped but never released is indistinguishable from
+    // "no releases exist" without this line.
+    const pinned = m.__missing && core.releaseTagFromManifestUrl(activeManifestUrl());
+    if (pinned) {
+      banner.append(el("p", "fineprint",
+        `This page is pinned to firmware release ${pinned}` +
+        (m.why ? ` — ${m.why}.` : ".") +
+        " If that release exists, the images will appear on reload."));
+    }
     return;
   }
   // Manifest present. Note when it's a self-hosted override, not the release.
@@ -901,9 +2660,35 @@ function refreshManifestState() {
   }
   if (state.devChannel) {
     const note = el("p", "flash-note flash-note-soft");
-    note.textContent = "DEV CHANNEL — these images come from the rolling dev prerelease, signed with the same key but not yet promoted to stable. Remove ?channel=dev from the address bar to go back to release firmware.";
+    // Say what's actually true of THESE images. Claiming "signed" while the
+    // signing ceremony hasn't happened would be the one lie this banner exists
+    // to prevent — the per-image line below reports the real verification.
+    note.textContent = core.isRealPubkey(state.catalog.release_pubkey)
+      ? "DEV CHANNEL — these images come from the rolling dev prerelease, signed with the same key but not yet promoted to stable. Turn it off under Advanced to go back to release firmware."
+      : "DEV CHANNEL — these images come from the rolling dev prerelease, ahead of stable. No release signing key is in force yet, so they're verified by SHA-256 against the manifest, not by signature. Turn it off under Advanced to go back to release firmware.";
     banner.append(note);
   }
+  // The headline answer, before any list: should THIS board be updated?
+  // Compares what the board runs against the release for that same product.
+  if (state.current && !state.current.unknown) {
+    const curProd = core.matchProjectToProduct(state.catalog, state.current.projectName);
+    const entry = curProd && core.manifestEntry(m, curProd, state.chip);
+    if (entry && !entry.error) {
+      const v = installVerdictFor(curProd, entry.version);
+      const text =
+        v.kind === "update"
+          ? `⬆ An update is waiting — ${curProd.name} ${state.current.version} → ${entry.version}. One click below installs it.`
+          : v.kind === "same"
+            ? `✓ Up to date — this board already runs the latest ${curProd.name} (${entry.version}).`
+            : v.kind === "downgrade"
+              ? `This board runs ${curProd.name} ${state.current.version} — newer than the published ${entry.version}. Probably a dev build; installing the release would be a downgrade.`
+              : null;
+      if (text) {
+        banner.append(el("p", `flash-headline flash-verdict-line flash-verdict-${v.kind}`, text));
+      }
+    }
+  }
+
   // Fill versions + enable buttons for available products.
   document.querySelectorAll(".flash-product").forEach((row) => {
     const id = row.dataset.id;
@@ -912,7 +2697,16 @@ function refreshManifestState() {
     const verEl = row.querySelector('[data-for="' + id + '"].flash-product-ver, .flash-product-ver');
     const btn = row.querySelector(".flash-pick");
     if (entry && !entry.error) {
-      if (verEl) verEl.textContent = `v${entry.version} · ${core.formatBytes(entry.size)}`;
+      if (verEl) {
+        verEl.textContent = `v${entry.version} · ${core.formatBytes(entry.size)}`;
+        // The verdict chip: what would installing THIS mean for THIS board —
+        // an update, a downgrade, a reinstall, a role switch. Said up front,
+        // not discovered after.
+        const v = installVerdictFor(product, entry.version);
+        if (v && v.kind !== "fresh" && v.kind !== "unknown") {
+          verEl.append(" ", el("span", `flash-verdict flash-verdict-${v.kind}`, `${v.icon} ${v.label}`));
+        }
+      }
       if (btn) btn.disabled = false;
     } else {
       if (verEl) verEl.textContent = "not in this release";
@@ -922,6 +2716,14 @@ function refreshManifestState() {
 }
 
 // ── pick → confirm → flash ──────────────────────────────────────────────────
+// The verdict for installing `product` at `version` on the board in hand.
+function installVerdictFor(product, version) {
+  const currentProduct = state.current && !state.current.unknown
+    ? core.matchProjectToProduct(state.catalog, state.current.projectName)
+    : null;
+  return core.installVerdict({ current: state.current, currentProduct, product, version });
+}
+
 function onPick(product) {
   const entry = core.manifestEntry(state.manifest, product, state.chip);
   if (!entry || entry.error) {
@@ -937,15 +2739,64 @@ async function onLocalFile(ev) {
   const skip = $("#flash-skip-backup") && $("#flash-skip-backup").checked;
   const buf = await file.arrayBuffer();
   const bytes = new Uint8Array(buf);
-  startFlash({ localBytes: bytes, label: file.name, isLocal: true, skipBackup: skip });
+  // Factory-shape gate (core.localImageShape): everything here is written at
+  // offset 0, so an app-only build would land on the bootloader and the
+  // board wouldn't boot until a USB re-flash. Same refusal, same words, as
+  // the desktop Flasher.
+  const shape = core.localImageShape(bytes);
+  if (!shape.factory) {
+    ev.target.value = ""; // let the corrected file re-fire the picker
+    setPhase(errorRetry("That file isn’t a factory image",
+      new Error(`${shape.reason}. The flasher writes whole factory images at offset 0, so an app-only .bin would overwrite the bootloader and the board wouldn't boot. Merge one with firmware/scripts/make_factory.py or use dev_flash.sh <env> -f.`),
+      phaseConnected));
+    return;
+  }
+  // Advanced → local file goes straight to startFlash without passing through
+  // phaseConfirm, so it has to apply the first-contact erase itself. It is
+  // exactly the same board and exactly the same leftover partitions; picking
+  // your own .bin isn't a statement about the board's history.
+  startFlash({ localBytes: bytes, label: file.name, isLocal: true, skipBackup: skip,
+    eraseAll: !!(state.intake && state.intake.firstContact) });
 }
 
 function phaseConfirm(product, entry) {
   // Read the Advanced toggles while the picker is still in the DOM.
-  const eraseOn = $("#flash-erase-all") && $("#flash-erase-all").checked;
   const skipBackup = $("#flash-skip-backup") && $("#flash-skip-backup").checked;
+  // First contact with a board forces the full erase, toggle or no toggle. A
+  // normal install writes only the regions it needs, so anything a previous
+  // owner left in a partition we don't touch would ride straight through onto
+  // a board the user now believes is theirs. This is the one case where the
+  // Advanced checkbox isn't the user's to decide.
+  const forcedErase = !!(state.intake && state.intake.firstContact);
+  const eraseOn = forcedErase || !!($("#flash-erase-all") && $("#flash-erase-all").checked);
 
   const box = el("section", "flash-card flash-confirm");
+  box.dataset.step = "3";
+
+  // Customs said stop. Every "stop" is an eFuse a previous owner burned, and
+  // eFuses only burn one way — so this is a dead end, not a warning to click
+  // past. Say what it is and offer the way back, not a disabled button with
+  // no explanation.
+  if (state.intake && state.intake.verdict.level === "stop") {
+    box.classList.add("flash-confirm-blocked");
+    box.append(el("h2", null, "This board can't take firmware"));
+    for (const f of state.intake.verdict.findings.filter((x) => x.level === "stop")) {
+      const row = el("div", "flash-intake-finding flash-intake-stop");
+      row.append(el("strong", null, f.label));
+      if (f.detail) row.append(el("span", "flash-intake-detail", f.detail));
+      box.append(row);
+    }
+    box.append(el("p", "flash-intake-verdict",
+      "Nothing this page can do reaches that — eFuses burn one way only, and the " +
+      "flasher never burns one. Writing firmware here would either be refused by " +
+      "the chip or come back unreadable. If this board was sold to you as new, " +
+      "it wasn't."));
+    const back = el("button", "ghost", "← back");
+    back.addEventListener("click", () => setPhase(phaseConnected()));
+    box.append(back);
+    return box;
+  }
+
   box.append(el("h2", null, `Install ${product.name}?`));
   box.append(el("p", "muted", state.current && state.current.unknown
     ? "This is the one-time first setup — after it, the board is a Canary."
@@ -954,8 +2805,27 @@ function phaseConfirm(product, entry) {
   sum.append(fact("Firmware", `${product.name} · v${entry.version}`));
   sum.append(fact("For chip", entry.chipFamily));
   sum.append(fact("Size", core.formatBytes(entry.size)));
-  sum.append(fact("Verified by", "SHA-256 before · chip MD5 after"));
+  const vpolicy = core.imageVerificationPolicy({
+    keyReal: core.isRealPubkey(state.catalog.release_pubkey),
+    hasSignature: !!entry.signature,
+    selfHosted: !!state.manifestOverride,
+  });
+  sum.append(fact("Verified by",
+    vpolicy === "verify" ? "Ed25519 signature + SHA-256 · chip MD5 after"
+      : vpolicy === "require-signature" ? "⚠ unsigned build — this will be refused"
+        : "SHA-256 before · chip MD5 after"));
   box.append(sum);
+
+  // The verdict, in plain words: what this install IS for this board.
+  const verdict = installVerdictFor(product, entry.version);
+  if (verdict) {
+    const vline = el("p", `flash-verdict-line flash-verdict-${verdict.kind}`);
+    vline.append(el("strong", null, `${verdict.icon} ${verdict.label}. `));
+    vline.append(document.createTextNode(verdict.detail));
+    const vh = helpDot("verdict");
+    if (vh) vline.append(vh);
+    box.append(vline);
+  }
 
   const willBackup = state.flashBytes && !skipBackup && !haveBackupForThisBoard();
   const isSensor = product && product.provisioning === "usb-secrets";
@@ -975,25 +2845,83 @@ function phaseConfirm(product, entry) {
     " Safe to interrupt at any point: unplug mid-flash and nothing breaks, you just run it again."));
   box.append(promise);
 
-  // WiFi (optional): fill it in and it's baked into the chip during the
-  // install; leave it empty and nothing changes. Either way the setup
-  // network is the safety net.
-  let wifiUI = null;
-  if (product && product.provisioning === "ap") {
-    wifiUI = renderWifiFields(box);
+  // Say WHY the erase isn't optional here, rather than silently ticking a box
+  // the user can see is unticked in Advanced.
+  if (forcedErase) {
+    const why = el("div", "flash-reassure flash-forced-erase");
+    const line = el("p");
+    line.append(el("span", "flash-shield", "🧹"));
+    line.append(document.createTextNode(
+      "The full erase isn't optional this time: this is a board we haven't " +
+      "written before, so we wipe the whole chip rather than only the parts " +
+      "we're about to write. A normal install leaves untouched partitions " +
+      "alone — fine for a Canary you already own, wrong for one that arrived " +
+      "carrying somebody else's firmware."));
+    why.append(line);
+    // The board saying "I'm already a Canary" is NOT enough to skip this — on
+    // an untrusted board that claim lives in writable flash. A human saying it
+    // is, so this is the one way out, and it's a deliberate click.
+    if (state.current && !state.current.unknown) {
+      const claim = el("p", "fineprint");
+      claim.append(document.createTextNode(
+        "It reports itself as " +
+        (state.current.productName || state.current.projectName || "SecuraCV firmware") +
+        ", but that text sits in flash the board controls, so it can't be the thing " +
+        "that decides. If this is genuinely your own Canary and you want to keep its " +
+        "identity key and settings, say so: "));
+      const mine = el("button", "ghost small", "it's mine — keep its data");
+      mine.addEventListener("click", () => {
+        state.ownerClaimed = true;
+        if (state.intake) state.intake.firstContact = false;
+        setPhase(phaseConfirm(product, entry));
+      });
+      claim.append(mine);
+      why.append(claim);
+    }
+    box.append(why);
   }
+
+  // WiFi (optional) — for EVERY board now: fill it in and it's baked into
+  // the chip's settings region during the install, in whichever NVS scheme
+  // this firmware actually reads (catalog wifi_nvs, derived from the
+  // firmware source). Leave it empty and nothing changes.
+  let wifiUI = null;
+  if (product) {
+    wifiUI = renderWifiFields(box, product);
+  }
+
+  // Flash-time dials (Vision): pick the room, or fine-tune — the same four
+  // numbers Home Assistant tunes live later, baked in before first boot.
+  let dialsUI = null;
+  const dials = core.detectDials(state.catalog, product);
+  if (dials) dialsUI = renderDetectDials(box, dials);
+
+  // Flash-time reflexes (Sense): room presets + fine-tune for the radar's
+  // seven NVS-backed live numbers — same posture as the Vision dials.
+  let reflexUI = null;
+  if (product && product.reflexes) reflexUI = renderReflexes(box, product);
 
   const row = el("div", "flash-row");
   const go = el("button", "primary flash-go", `Install it${eraseOn ? " (with full erase)" : ""}`);
   go.addEventListener("click", () => {
-    let wifi = null;
+    // Double-click guard: a second pass would re-read the now-cleared
+    // password field and remember an empty one over the real network.
+    if (state.busy) return;
+    go.disabled = true;
+    let wifi = null, mqtt = null;
     if (wifiUI) {
       const r = wifiUI.credentials();
-      if (!r.ok) return; // invalid input — the field showed why
-      wifi = r.wifi;
+      if (!r.ok) { go.disabled = false; return; } // invalid input — the field showed why
+      wifi = r.wifi; mqtt = r.mqtt;
       wifiUI.clear();    // never leave the password sitting in the DOM
     }
-    startFlash({ entry, product, eraseAll: !!eraseOn, skipBackup: !!skipBackup, wifi });
+    const dialSel = dialsUI ? dialsUI.selection() : null;
+    const reflexSel = reflexUI ? reflexUI.selection() : null;
+    startFlash({ entry, product, eraseAll: !!eraseOn, skipBackup: !!skipBackup, wifi, mqtt,
+      detect: dialSel ? dialSel.values : null,
+      detectPreset: dialSel ? dialSel.presetTitle : null,
+      reflex: reflexSel ? reflexSel.values : null,
+      reflexPreset: reflexSel ? reflexSel.presetTitle : null });
   });
   const cancel = el("button", "ghost", "not yet");
   cancel.addEventListener("click", () => setPhase(phaseConnected()));
@@ -1002,15 +2930,256 @@ function phaseConfirm(product, entry) {
   return box;
 }
 
+// ── flash-time dials (Vision): room presets + fine-tune ─────────────────────
+// The four runtime detection numbers (confidence floor, lost timeout, dwell
+// threshold, target class) are NVS-backed in the firmware and tunable from
+// Home Assistant later — so baking a room preset here is genuinely the same
+// write, just earlier. Presets and bounds come from the catalog (which parsed
+// them out of the firmware); "as it ships" writes nothing at all.
+function renderDetectDials(box, dials) {
+  const sec = el("div", "flash-dials");
+  sec.append(el("h3", null, "Dial it in for its room (optional)"));
+  sec.append(el("p", "fineprint", dials.note));
+
+  const chosen = { preset: "ships", values: { ...dials.defaults } };
+  const fmtS = (ms) => (ms / 1000) % 1 ? (ms / 1000).toFixed(2) + "s" : (ms / 1000) + "s";
+
+  const grid = el("div", "flash-preset-grid");
+  const cards = [];
+  dials.presets.forEach((pr) => {
+    const b = el("button", "flash-preset");
+    b.type = "button";
+    b.append(el("span", "flash-preset-icon", pr.icon));
+    b.append(el("span", "flash-preset-title", pr.title));
+    b.append(el("span", "flash-preset-blurb", pr.blurb));
+    b.append(el("span", "flash-preset-vals",
+      `confidence ${pr.values.score} · lost ${fmtS(pr.values.lost_ms)} · dwell ${fmtS(pr.values.dwell_ms)}`));
+    b.addEventListener("click", () => {
+      chosen.preset = pr.id;
+      chosen.values = { ...dials.defaults, ...pr.values };
+      sync();
+    });
+    grid.append(b);
+    cards.push([b, pr]);
+  });
+  sec.append(grid);
+
+  // Fine-tune: the same three numbers as sliders, each with its ⓘ.
+  const adv = el("details", "flash-dials-adv");
+  adv.append(el("summary", null, "fine-tune the dials"));
+  const sliders = {};
+  const mkSlider = (key, topic, unitFmt, step) => {
+    const [lo, hi] = dials.bounds[key];
+    const row = el("div", "flash-dial-row");
+    const lab = el("span", "flash-dial-label");
+    const t = core.helpTopic(state.catalog, topic);
+    lab.append(document.createTextNode((t && t.label) || key));
+    const hd = helpDot(topic);
+    if (hd) lab.append(hd);
+    const val = el("span", "flash-dial-val");
+    const input = el("input");
+    input.type = "range";
+    input.min = String(lo); input.max = String(hi); input.step = String(step);
+    input.addEventListener("input", () => {
+      chosen.values[key] = Number(input.value);
+      chosen.preset = "custom";
+      sync({ skipSlider: key });
+    });
+    row.append(lab, input, val);
+    adv.append(row);
+    sliders[key] = { input, val, unitFmt };
+  };
+  mkSlider("score", "det_score", (v) => `${v} / 100`, 1);
+  mkSlider("lost_ms", "det_lost", fmtS, 250);
+  mkSlider("dwell_ms", "det_dwell", fmtS, 1000);
+  sec.append(adv);
+
+  function sync(opts = {}) {
+    for (const [b, pr] of cards) {
+      const on = chosen.preset === pr.id;
+      b.classList.toggle("flash-preset-on", on);
+      b.setAttribute("aria-pressed", String(on));
+    }
+    for (const [key, s] of Object.entries(sliders)) {
+      if (opts.skipSlider !== key) s.input.value = String(chosen.values[key]);
+      s.val.textContent = s.unitFmt(chosen.values[key]);
+    }
+  }
+  sync();
+
+  box.append(sec);
+  return {
+    selection() {
+      // Exactly the shipped defaults → write nothing; the firmware IS that.
+      const same = Object.entries(dials.defaults).every(([k, v]) => chosen.values[k] === v);
+      if (same) return null;
+      const pr = dials.presets.find((p) => p.id === chosen.preset);
+      return {
+        values: { ...chosen.values },
+        presetTitle: pr && pr.id !== "ships" ? pr.title : null,
+      };
+    },
+  };
+}
+
+// ── the radar build's reflexes (Sense): room presets + fine-tune ────────────
+// The same posture as the Vision dials: seven NVS-backed live numbers, room
+// presets first, sliders one click deeper, "as it ships" writes nothing —
+// and Home Assistant can retune every knob later.
+function renderReflexes(box, product) {
+  const r = core.reflexDials(state.catalog, product) || product.reflexes;
+  const runtime = r.applies === "runtime" && Array.isArray(r.presets);
+  const sec = el("div", "flash-dials");
+  sec.append(el("h3", null, runtime
+    ? "Dial its reflexes for the room (optional)"
+    : "This build’s reflexes — how it judges presence"));
+  const note = el("p", "fineprint", r.note);
+  const fh = helpDot("sense_flavor");
+  if (fh) note.append(fh);
+  sec.append(note);
+
+  // Static fallback for an old catalog: the read-only knob list.
+  if (!runtime) {
+    r.knobs.forEach((k) => {
+      const t = core.helpTopic(state.catalog, k.id);
+      const row = el("div", "flash-knob");
+      const lab = el("span", "flash-knob-label", (t && t.label) || k.id);
+      const hd = helpDot(k.id);
+      if (hd) lab.append(hd);
+      row.append(lab, el("span", "flash-knob-val", `${k.value} ${k.unit}`));
+      sec.append(row);
+    });
+    box.append(sec);
+    return null;
+  }
+
+  const defaults = r.presets[0].values; // "ships" leads by construction
+  const chosen = { preset: "ships", values: { ...defaults } };
+  const fmtVal = (k, v) => k.unit === "ms"
+    ? ((v / 1000) % 1 ? (v / 1000).toFixed(2) + "s" : (v / 1000) + "s")
+    : `${v} ${k.unit}`;
+
+  const grid = el("div", "flash-preset-grid");
+  const cards = [];
+  r.presets.forEach((pr) => {
+    const b = el("button", "flash-preset");
+    b.type = "button";
+    b.append(el("span", "flash-preset-icon", pr.icon));
+    b.append(el("span", "flash-preset-title", pr.title));
+    b.append(el("span", "flash-preset-blurb", pr.blurb));
+    const deb = r.knobs.find((k) => k.id === "present_debounce_ms");
+    const clr = r.knobs.find((k) => k.id === "clear_timeout_ms");
+    b.append(el("span", "flash-preset-vals",
+      `debounce ${fmtVal(deb, pr.values.present_debounce_ms)} · clear ${fmtVal(clr, pr.values.clear_timeout_ms)}`));
+    b.addEventListener("click", () => {
+      chosen.preset = pr.id;
+      chosen.values = { ...defaults, ...pr.values };
+      sync();
+    });
+    grid.append(b);
+    cards.push([b, pr]);
+  });
+  sec.append(grid);
+
+  const adv = el("details", "flash-dials-adv");
+  adv.append(el("summary", null, "fine-tune the reflexes"));
+  const sliders = {};
+  r.knobs.forEach((k) => {
+    const [lo, hi] = k.bounds;
+    const t = core.helpTopic(state.catalog, k.id);
+    const row = el("div", "flash-dial-row");
+    const lab = el("span", "flash-dial-label");
+    lab.append(document.createTextNode((t && t.label) || k.id));
+    const hd = helpDot(k.id);
+    if (hd) lab.append(hd);
+    const val = el("span", "flash-dial-val");
+    const input = el("input");
+    input.type = "range";
+    input.min = String(lo); input.max = String(hi);
+    input.step = String(k.unit === "cm" ? 10 : 50);
+    input.addEventListener("input", () => {
+      chosen.values[k.id] = Number(input.value);
+      chosen.preset = "custom";
+      sync({ skipSlider: k.id });
+    });
+    row.append(lab, input, val);
+    adv.append(row);
+    sliders[k.id] = { input, val, knob: k };
+  });
+  sec.append(adv);
+
+  const lb = el("p", "fineprint");
+  lb.append(document.createTextNode("Want to feel these live before committing? "));
+  const a = el("a", null, "Open the Sense Lab →");
+  a.href = r.lab;
+  lb.append(a);
+  sec.append(lb);
+
+  function sync(opts = {}) {
+    for (const [b, pr] of cards) {
+      const on = chosen.preset === pr.id;
+      b.classList.toggle("flash-preset-on", on);
+      b.setAttribute("aria-pressed", String(on));
+    }
+    for (const [id, s] of Object.entries(sliders)) {
+      if (opts.skipSlider !== id) s.input.value = String(chosen.values[id]);
+      s.val.textContent = fmtVal(s.knob, chosen.values[id]);
+    }
+  }
+  sync();
+
+  box.append(sec);
+  return {
+    selection() {
+      const same = Object.entries(defaults).every(([k, v]) => chosen.values[k] === v);
+      if (same) return null;
+      const pr = r.presets.find((p) => p.id === chosen.preset);
+      return {
+        values: { ...chosen.values },
+        presetTitle: pr && pr.id !== "ships" ? pr.title : null,
+      };
+    },
+  };
+}
+
 // ── optional WiFi fields (confirm card) ─────────────────────────────────────
-function renderWifiFields(box) {
+function renderWifiFields(box, product) {
   const sec = el("div", "flash-wifi");
-  sec.append(el("h3", null, "WiFi (optional)"));
+  const wh = el("h3", null, "WiFi (optional)");
+  const whd = helpDot("wifi_bake");
+  if (whd) wh.append(whd);
+  sec.append(wh);
+
+  // A visible "you already typed this" banner so remembering is OBVIOUS — not a
+  // silent pre-fill the user re-types board after board out of doubt. (Its
+  // refresh is defined once the fields exist, below, so it can hide the moment
+  // they're edited away from the saved network — never claiming the wrong one.)
+  const savedBanner = el("div", "flash-wifi-saved flash-hidden");
+  sec.append(savedBanner);
 
   const ssid = el("input"), pass = el("input");
   ssid.type = "text"; ssid.placeholder = "network name (SSID)"; ssid.autocomplete = "off";
   pass.type = "password"; pass.placeholder = "password";
   pass.autocomplete = "new-password";
+  // Remember-across-boards: pre-fill from the home Wi-Fi we already know — this
+  // tab's session, or a copy saved on this computer if the user opted in — so a
+  // whole batch of Canaries provisions without re-typing it into each one.
+  const savedWifi = wifiMemory.recall();
+  if (savedWifi) { ssid.value = savedWifi.ssid; pass.value = savedWifi.pass; }
+  // The banner claims "using your saved Wi-Fi X" only while the fields still hold
+  // exactly that network; edit either field and it hides (returns if you undo the
+  // edit), so it can never contradict what will actually be provisioned.
+  const refreshBanner = () => {
+    const bs = core.wifiBannerState(ssid.value, pass.value, wifiMemory.recall(), wifiMemory.isPersisted());
+    savedBanner.classList.toggle("flash-hidden", !bs.show);
+    savedBanner.textContent = "";
+    if (bs.show) {
+      savedBanner.append(el("span", "flash-wifi-saved-i", "✓"),
+        el("strong", null, bs.headline), document.createTextNode(" — " + bs.detail));
+    }
+  };
+  ssid.addEventListener("input", refreshBanner);
+  pass.addEventListener("input", refreshBanner);
   const showBtn = el("button", "ghost small", "show");
   showBtn.addEventListener("click", () => {
     pass.type = pass.type === "password" ? "text" : "password";
@@ -1022,12 +3191,53 @@ function renderWifiFields(box) {
 
   const err = el("p", "flash-note flash-note-soft flash-hidden");
   sec.append(err);
-  sec.append(el("p", "fineprint",
-    "Fill this in and it’s written into the chip during the install, so the " +
-    "Canary joins your WiFi on its very first boot. If it can’t connect — " +
-    "or you leave this empty — it simply broadcasts its own setup network " +
-    "to connect to and finish setup there. What you type stays on this " +
-    "page and goes only to the chip over the cable."));
+  const prov = (product && product.provisioning) || "usb-secrets";
+  sec.append(el("p", "fineprint", {
+    "ap":
+      "Fill this in and it’s written into the chip during the install, so the " +
+      "Canary joins your WiFi on its very first boot. If it can’t connect — " +
+      "or you leave this empty — it simply broadcasts its own setup network " +
+      "to connect to and finish setup there. What you type stays on this " +
+      "page and goes only to the chip over the cable.",
+    "on-glass":
+      "Fill this in and it’s written into the chip’s settings region during " +
+      "the install — the glass then skips its WiFi wizard and goes straight " +
+      "to meeting your Canaries. Leave it empty and the on-screen wizard " +
+      "walks you through it on first boot. What you type stays on this page " +
+      "and goes only to the chip over the cable.",
+    "usb-secrets":
+      "Fill this in and it’s written into the chip’s settings region during " +
+      "the install — the signed generic release then joins YOUR network on " +
+      "first boot, no custom build needed. Leave it empty and the firmware " +
+      "keeps its compiled defaults. What you type stays on this page and " +
+      "goes only to the chip over the cable.",
+  }[prov] || ""));
+
+  // Type it once, provision a whole batch. By default the network is kept in
+  // memory for this tab only (gone when you close it, never written to disk);
+  // ticking "remember" also saves it in THIS browser on THIS computer so it
+  // survives — local-only, never sent anywhere, Forget clears it instantly.
+  const remRow = el("div", "flash-wifi-remember");
+  const remLabel = el("label", "flash-wifi-remember-label");
+  const rememberChk = el("input"); rememberChk.type = "checkbox";
+  rememberChk.checked = wifiMemory.isPersisted();
+  remLabel.append(rememberChk, document.createTextNode(" Remember on this computer"));
+  const forgetBtn = el("button", "ghost small", "Forget saved Wi-Fi");
+  const refreshForget = () => forgetBtn.classList.toggle("flash-hidden", !wifiMemory.recall());
+  forgetBtn.addEventListener("click", () => {
+    wifiMemory.forget();
+    ssid.value = ""; pass.value = ""; rememberChk.checked = false;
+    refreshForget(); refreshBanner();
+  });
+  // Ticking/unticking persists (or un-persists) immediately when a network is
+  // already typed, so the checkbox is honest about what's saved right now.
+  rememberChk.addEventListener("change", () => {
+    if (ssid.value) { wifiMemory.remember({ ssid: ssid.value, pass: pass.value }, rememberChk.checked); }
+    refreshForget(); refreshBanner();
+  });
+  remRow.append(remLabel, forgetBtn);
+  sec.append(remRow);
+  refreshForget(); refreshBanner();
 
   // Bonus for camera Canaries: the same fields can mint a standard WiFi QR
   // (generated right here, nothing sent anywhere) to show the lens later.
@@ -1059,19 +3269,75 @@ function renderWifiFields(box) {
   qrRow.append(qrBtn);
   sec.append(qrRow, qrOut);
 
+  // Home Assistant / MQTT + a device id — the SAME NVS keys the native app bakes
+  // (desktop provisioning.rs), so a usb-secrets board flashed here is addressable
+  // on your broker out of the box instead of Wi-Fi-only. Optional; nothing leaves
+  // this page. Only for usb-secrets boards (Vision/Sense learn this from the flash).
+  let mqttUI = null;
+  if (prov === "usb-secrets") {
+    const ha = el("div", "flash-mqtt");
+    ha.append(el("h3", null, "Home Assistant / MQTT (optional)"));
+    ha.append(el("p", "fineprint",
+      "Bake in your broker and a device id and the Canary reports to Home Assistant on " +
+      "its first boot — no extra setup. Leave blank to configure later. Written into the " +
+      "chip’s settings exactly the way the native app does; it goes only to the chip."));
+    const mk = (ph, type) => {
+      const i = el("input"); i.type = type || "text"; i.placeholder = ph;
+      i.autocomplete = type === "password" ? "new-password" : "off";
+      return i;
+    };
+    const devId = mk("device id (e.g. canary_vision_ab12)");
+    // Auto-suggest a stable per-family id, like the native app's onProductChosen.
+    if (product && product.id) {
+      const fam = /vision/.test(product.id) ? "canary_vision"
+        : /sense/.test(product.id) ? "canary_sense" : "canary";
+      const sfx = Array.from(crypto.getRandomValues(new Uint8Array(2)),
+        (b) => b.toString(16).padStart(2, "0")).join("");
+      devId.value = `${fam}_${sfx}`;
+    }
+    const host = mk("broker host"); host.value = "homeassistant.local";
+    const port = mk("1883"); port.value = "1883"; port.inputMode = "numeric";
+    const user = mk("username (optional)");
+    const mpass = mk("password (optional)", "password");
+    const row1 = el("div", "flash-wifi-inputs"); row1.append(devId);
+    const row2 = el("div", "flash-wifi-inputs"); row2.append(host, port);
+    const row3 = el("div", "flash-wifi-inputs"); row3.append(user, mpass);
+    ha.append(row1, row2, row3);
+    sec.append(ha);
+    mqttUI = { values: () => ({
+      deviceId: devId.value, mqttHost: host.value,
+      mqttPort: port.value ? Number(port.value) : 1883,
+      mqttUser: user.value, mqttPass: mpass.value,
+    }) };
+  }
+
   box.append(sec);
   return {
     credentials() {
       err.classList.add("flash-hidden");
-      if (!ssid.value) return { ok: true, wifi: null }; // optional — skipped
+      // Optional broker/identity (usb-secrets only) — validate up front so a bad
+      // value stops the flash with a clear message, like the Wi-Fi fields do.
+      let mqtt = null;
+      if (mqttUI) {
+        mqtt = mqttUI.values();
+        try { core.mqttProvisioningToNvs(mqtt); }
+        catch (e) {
+          err.textContent = String(e.message || e);
+          err.classList.remove("flash-hidden");
+          return { ok: false, wifi: null, mqtt: null };
+        }
+      }
+      if (!ssid.value) return { ok: true, wifi: null, mqtt }; // wifi optional — skipped
       try {
         // The builder validates lengths; run it small just for the checks.
         core.buildNvsWifiImage(ssid.value, pass.value, 4096);
-        return { ok: true, wifi: { ssid: ssid.value, pass: pass.value } };
+        // Remember it for the next board (session always; disk if opted in).
+        wifiMemory.remember({ ssid: ssid.value, pass: pass.value }, rememberChk.checked);
+        return { ok: true, wifi: { ssid: ssid.value, pass: pass.value }, mqtt };
       } catch (e) {
         err.textContent = String(e.message || e);
         err.classList.remove("flash-hidden");
-        return { ok: false, wifi: null };
+        return { ok: false, wifi: null, mqtt: null };
       }
     },
     clear() { pass.value = ""; },
@@ -1082,11 +3348,23 @@ function renderWifiFields(box) {
 async function startFlash(opts) {
   if (state.busy) return;
   state.busy = true;
+  // The live voice may hold the port — hand it back to the bootloader first.
+  if (!state.session) {
+    const okSession = await ensureSession();
+    if (!okSession) {
+      state.busy = false;
+      setPhase(errorRetry("Couldn’t reach the bootloader again",
+        new Error("the board didn’t re-enter download mode — unplug, replug, reconnect"),
+        phaseConnect));
+      return;
+    }
+  }
   const { esploader } = state.session;
   const eraseAll = !!opts.eraseAll;
   const label = opts.product ? `${opts.product.name} v${opts.entry.version}` : opts.label;
 
   const box = progressCard(`Installing ${label}`, "Getting the image ready…");
+  box.card.dataset.step = "4";
   setPhase(box.card);
 
   // The layers tour rides along for the whole install — backup included —
@@ -1126,7 +3404,7 @@ async function startFlash(opts) {
     }
 
     // 1) Obtain the image bytes.
-    let bytes, shaHex = null, shaSigned = false;
+    let bytes, shaHex = null, shaSigned = false, sigVerified = false, sigChecked = false;
     if (opts.localBytes) {
       bytes = opts.localBytes;
       // Fingerprint the local file too, so the receipts can name exactly
@@ -1151,6 +3429,32 @@ async function startFlash(opts) {
       }
       shaHex = got.toLowerCase();
       shaSigned = true;
+      // 2b) Fail closed: once a REAL release key is pinned, an official manifest
+      // MUST carry a valid Ed25519 signature. Verifying only "if a signature is
+      // present" would let a tampered manifest strip the signature and re-point
+      // an updated SHA-256 at a malicious image — the exact substitution this
+      // check exists to stop. (imageVerificationPolicy encodes the fail-closed
+      // rule; checksum-only is reserved for pre-key and self-hosted manifests.)
+      const policy = core.imageVerificationPolicy({
+        keyReal: core.isRealPubkey(state.catalog.release_pubkey),
+        hasSignature: !!opts.entry.signature,
+        selfHosted: !!state.manifestOverride,
+      });
+      if (policy === "require-signature") {
+        throw new Error("This official release is missing its Ed25519 signature, but a " +
+          "signing key is in force — refusing to flash it. A stripped signature can mean " +
+          "a tampered release manifest. Nothing was written.");
+      } else if (policy === "verify") {
+        sigChecked = true;
+        sigVerified = await core.verifyImageSignature(
+          opts.entry.signature, state.catalog.release_pubkey,
+          bytes.length, new Uint8Array(digest));
+        if (!sigVerified) {
+          throw new Error("This image isn’t signed by the SecuraCV release key — " +
+            "refusing to flash it. Nothing was written. (To flash a build you " +
+            "trust anyway, use Advanced → flash a local file.)");
+        }
+      }
     }
     imageBytesRef.bytes = bytes;
     state.lastImage = bytes; // lets the done card replay the tour with real hex
@@ -1167,24 +3471,40 @@ async function startFlash(opts) {
       } catch { diff = null; }
     }
 
-    // 2.7) WiFi pre-provisioning: build a minimal valid NVS image carrying
-    // the typed credentials and write it into the image's own settings
-    // region, in the same pass as the firmware. If we can't locate that
-    // region, the install continues and the setup network takes over —
-    // never block a flash on a convenience.
-    let wifiFile = null, wifiSsid = null;
-    if (opts.wifi && !opts.isBackup) {
+    // 2.7) Settings pre-provisioning: one minimal valid NVS image can carry
+    // the typed WiFi credentials and/or the chosen detection dials (the same
+    // det_* keys Home Assistant tunes later), written into the image's own
+    // settings region in the same pass as the firmware. If we can't locate
+    // that region, the install continues — never block a flash on a
+    // convenience.
+    let wifiFile = null, wifiSsid = null, seededDials = null, seededReflex = null, bakedDeviceId = "";
+    if ((opts.wifi || opts.mqtt || opts.detect || opts.reflex) && !opts.isBackup) {
       try {
         const { entries } = core.parsePartitionTable(
           bytes.subarray(0x8000, Math.min(0x8c00, bytes.length)));
         const nvs = entries.find(core.isNvsPart);
         if (!nvs) throw new Error("no settings region in this image");
-        const nvsImg = core.buildNvsWifiImage(opts.wifi.ssid, opts.wifi.pass, nvs.size);
+        const dials = opts.detect ? core.detectDials(state.catalog, opts.product) : null;
+        const dInts = opts.detect ? core.detectValuesToNvs(opts.detect, dials) : { u8: {}, u32: {} };
+        const reflexes = opts.reflex ? core.reflexDials(state.catalog, opts.product) : null;
+        const rInts = opts.reflex ? core.reflexValuesToNvs(opts.reflex, reflexes) : { u32: {} };
+        // Broker + device id (usb-secrets) → the same NVS keys the native app writes.
+        const prov = opts.mqtt ? core.mqttProvisioningToNvs(opts.mqtt) : { strings: {}, u16: {} };
+        const nvsImg = core.buildNvsSeedImage(
+          { wifi: opts.wifi || null,
+            wifiScheme: (opts.product && opts.product.wifi_nvs) || "blob",
+            strings: prov.strings, u16: prov.u16,
+            u8: dInts.u8, u32: { ...dInts.u32, ...rInts.u32 } }, nvs.size);
         wifiFile = { data: core.bytesToBinaryString(nvsImg), address: nvs.offset };
-        wifiSsid = opts.wifi.ssid;
+        wifiSsid = opts.wifi ? opts.wifi.ssid : null;
+        seededDials = opts.detect || null;
+        seededReflex = opts.reflex || null;
+        // Only a device id that was actually written to NVS may appear as the
+        // certificate's Ring ID (this line is reached only on a successful bake).
+        bakedDeviceId = prov.strings.dev_id || "";
       } catch (e) {
-        box.stage("Couldn’t bake the WiFi (" + String(e.message || e) +
-          ") — continuing; use the setup network instead");
+        box.stage("Couldn’t bake the settings (" + String(e.message || e) +
+          ") — continuing; everything is still tunable after boot");
         await sleep(1200);
       }
     }
@@ -1195,7 +3515,7 @@ async function startFlash(opts) {
       nextStep("erasing the whole chip");
       await esploader.eraseFlash();
     }
-    nextStep(wifiFile ? "writing firmware + your WiFi settings" : "writing firmware");
+    nextStep(wifiFile ? "writing firmware + your settings" : "writing firmware");
     const liveMap = diff ? box.attachMap(diff.rows, bytes.length, state.flashBytes || bytes.length) : null;
     const data = core.bytesToBinaryString(bytes);
     const eta = core.makeEtaTracker(bytes.length);
@@ -1222,15 +3542,45 @@ async function startFlash(opts) {
     try { await esploader.after("hard_reset"); } catch {}
 
     state.busy = false;
+    state.baudCeiling = null; // this speed worked — don't carry a cap forward
+    // Two-port Vision: this ESP32 half is now flashed — record it (once, here at
+    // the completion transition, not in the render) so the done screen and the
+    // camera-module flow can insist on both ports.
+    if (opts.product && !opts.isBackup && core.isVisionBoard(opts.product)) {
+      visionSession.markDone("esp32");
+    }
+    // The Nursery roster: one hatchling per successful install, so a batch
+    // session always knows which boards are done and what they got.
+    if (opts.product && !opts.isBackup && !opts.isLocal) {
+      state.roster = core.rosterAdd(state.roster, {
+        t: Date.now(),
+        mac: state.mac ? core.formatMac(state.mac) : null,
+        product: opts.product.name,
+        version: opts.entry ? opts.entry.version : null,
+        preset: opts.detectPreset || opts.reflexPreset || null,
+        wifi: !!wifiSsid,
+      });
+      saveRoster(state.roster);
+    }
     setPhase(phaseDone({ ...opts, backupName, backupFailed, diff, settings,
-      shaHex, shaSigned, bytesWritten: bytes.length, wifiSsid, wifi: null }));
+      shaHex, shaSigned, sigVerified, sigChecked, bytesWritten: bytes.length,
+      wifiSsid, seededDials, seededReflex, provDeviceId: bakedDeviceId, wifi: null }));
   } catch (e) {
     state.busy = false;
+    // Self-heal write-time failures too: a flaky cable can sync at 921600 but
+    // time out mid-write. Lower the baud ceiling a rung so the retry's connect
+    // ladder writes at a gentler speed (the ladder alone only covers connect).
+    const k = core.classifyFlashError(e).kind;
+    if (state.usedBaud && ["not-in-download", "read-stall", "device-lost", "unknown"].includes(k)) {
+      const lower = core.FLASH_BAUDS.find((b) => b < state.usedBaud);
+      if (lower) state.baudCeiling = lower;
+    }
     setPhase(flashError(e, opts));
   }
 }
 
 function flashError(e, opts) {
+  chirp("oops"); // one low, round note — never an alarm
   const msg = String(e && e.message ? e.message : e);
   const v = core.classifyFlashError(e);
   const box = errorBox(v.title || "The install didn’t complete",
@@ -1255,6 +3605,22 @@ function flashError(e, opts) {
     setPhase(phaseConnect());
   });
   row.append(retry);
+  // Escalate: if a plain install failed, offer a full-erase clean install as
+  // the next self-heal step (reconnect → the rescue flow, which also restores
+  // a backup if one exists). Skip when we're already erasing/rescuing.
+  if (!opts.rescue && !opts.eraseAll) {
+    const clean = el("button", "ghost", "Clean install (full erase) →");
+    clean.addEventListener("click", async () => {
+      await onDisconnect(true);
+      state.resumeRescue = true;
+      // Carry the product being installed so the rescue can't default to the
+      // wrong firmware (the reconnect clears the read-back identity).
+      state.resumeRescuePrefer = opts.product || null;
+      setPhase(phaseConnect());
+    });
+    row.append(clean);
+  }
+  row.append(diagnosticReportButton(() => ({ stage: "install", error: msg })));
   box.append(row);
   const raw = el("details", "flash-rawerr");
   raw.append(el("summary", null, "Technical details"));
@@ -1263,13 +3629,103 @@ function flashError(e, opts) {
   return box;
 }
 
+// ── the Hatchery: a whimsical name + birth certificate, like the native app ──
+// One shared spec (devices/hatch.json — the same file the native app embeds),
+// fetched once; the assembly is the pure, host-tested hatchery.js. Names are
+// whimsy — the device keeps its functional id. Never throws into the flash flow.
+let _hatchSpec;                 // undefined = untried, null = unavailable, obj = loaded
+const _hatchUsed = new Set();   // base names spent this session (so names stay fresh)
+const _hatchFleet = [];         // this session's hatches, for the "Nth of its name" ordinal
+async function loadHatchSpec() {
+  if (_hatchSpec !== undefined) return _hatchSpec;
+  try {
+    _hatchSpec = await fetch("devices/hatch.json", { cache: "force-cache" })
+      .then((r) => (r.ok ? r.json() : null));
+  } catch { _hatchSpec = null; }
+  return _hatchSpec;
+}
+async function renderHatchCert(slot, opts) {
+  try {
+    const spec = await loadHatchSpec();
+    if (!spec) return;
+    let cert = mintCertificate(spec, {
+      product: opts.product, deviceId: opts.deviceId,
+      fleet: _hatchFleet, usedBases: _hatchUsed, now: Date.now(),
+    });
+    if (!cert) return;
+    _hatchUsed.add(cert.base);
+    _hatchFleet.unshift({ base: cert.base, ringId: cert.ringId });
+
+    const c = (spec.certificate) || {};
+    const paint = () => {
+      slot.textContent = "";
+      const fig = el("figure", "flash-cert");
+      fig.append(el("div", "flash-cert-kicker", c.kicker || "Certificate of Hatching"));
+      if (c.intro) fig.append(el("p", "flash-cert-intro", c.intro));
+      fig.append(el("div", "flash-cert-name", cert.name));
+      fig.append(el("div", "flash-cert-lineage", cert.lineage));
+      const meta = el("div", "flash-cert-meta");
+      meta.append(el("span", null, "Species · " + cert.species),
+                  el("span", null, "Ring · " + cert.ringId));
+      fig.append(meta);
+      if (cert.motto) fig.append(el("div", "flash-cert-motto", "“" + cert.motto + "”"));
+      if (cert.craft) fig.append(el("div", "flash-cert-craft", cert.craft));
+      if (c.foot) fig.append(el("div", "flash-cert-foot", c.foot));
+      const reroll = el("button", "ghost small flash-cert-reroll", "🎲 new name");
+      reroll.addEventListener("click", () => {
+        const next = mintCertificate(spec, {
+          product: opts.product, deviceId: opts.deviceId,
+          fleet: _hatchFleet, usedBases: _hatchUsed, avoidBase: cert.base, now: cert.ts,
+        });
+        if (!next) return;
+        next.ringId = cert.ringId;                 // same bird, new whimsy
+        // Record the accepted base and replace (not stack) this hatch's fleet
+        // entry, so a further reroll can't repeat a name and the next board
+        // can't reuse this base while still calling itself "the First".
+        _hatchUsed.add(next.base);
+        if (_hatchFleet[0]) _hatchFleet[0] = { base: next.base, ringId: cert.ringId };
+        cert = next;
+        paint();
+      });
+      fig.append(reroll);
+      slot.append(fig);
+    };
+    paint();
+  } catch { /* the certificate is a delight, never a requirement */ }
+}
+
 // ── phase: done — celebration + watch it boot ───────────────────────────────
 function phaseDone(opts) {
   const box = el("section", "flash-card flash-done");
+  box.dataset.step = "5";
   confettiBurst();
-  box.append(el("div", "flash-done-bird", "🎉"));
+  chirp("hatch");
+  // The hatch: egg wiggles, cracks, and the chick appears. Pure CSS
+  // (flash-hatch-* keyframes); under prefers-reduced-motion the chick
+  // simply IS — the celebration stays, the motion politely doesn't.
+  const hatch = el("div", "flash-hatch");
+  hatch.setAttribute("aria-hidden", "true");
+  hatch.append(el("span", "flash-hatch-egg", "🥚"),
+               el("span", "flash-hatch-cracked", "🐣"),
+               el("span", "flash-hatch-chick", "🐤"));
+  box.append(hatch);
+  const hatchNo = !opts.isBackup && !opts.isLocal && opts.product && state.roster.length
+    ? state.roster[state.roster.length - 1].n : null;
   box.append(el("h2", null, opts.isBackup ? "Restored — your Canary is back to that copy"
+    : hatchNo ? `Hatchling #${hatchNo} — your Canary is awake`
     : "Installed — your Canary is awake"));
+
+  // A whimsical name + birth certificate for a real, fresh hatch — the same one
+  // the native app mints. Async: the done card renders now; the certificate
+  // appears once the shared hatch.json spec loads (or quietly not at all).
+  if (hatchNo && opts.product && !opts.isBackup && !opts.isLocal) {
+    const certSlot = el("div", "flash-cert-slot");
+    box.append(certSlot);
+    renderHatchCert(certSlot, {
+      product: opts.product,
+      deviceId: opts.provDeviceId || "", // only the id actually written to NVS becomes the Ring ID
+    });
+  }
 
   const product = opts.product;
   if (opts.wifiSsid) {
@@ -1279,11 +3735,56 @@ function phaseDone(opts) {
       ` Your WiFi is baked in — the Canary should join “${opts.wifiSsid}” on its very first boot. ` +
       `No setup network needed (it still appears if the join fails, as the fallback).`));
     box.append(w);
-  } else if (product) {
-    const note = state.catalog.products.find((p) => p.id === product.id);
-    const p = el("p", "muted", note ? note.provisioning_note : "");
-    box.append(p);
-  } else {
+  }
+  if (opts.seededDials) {
+    const d = opts.seededDials;
+    const fmtS = (ms) => (ms / 1000) % 1 ? (ms / 1000).toFixed(2) + "s" : (ms / 1000) + "s";
+    const line = el("p", "muted");
+    line.append(el("span", "flash-check", "✓"));
+    line.append(document.createTextNode(
+      ` Dialed in${opts.detectPreset ? ` for ${opts.detectPreset}` : ""} — ` +
+      `confidence ${d.score}, lost ${fmtS(d.lost_ms)}, dwell ${fmtS(d.dwell_ms)} are ` +
+      `baked into its settings. Home Assistant can retune all of them live, any time.`));
+    box.append(line);
+  }
+  if (opts.seededReflex) {
+    const rv = opts.seededReflex;
+    const fmtS = (ms) => (ms / 1000) % 1 ? (ms / 1000).toFixed(2) + "s" : (ms / 1000) + "s";
+    const line = el("p", "muted");
+    line.append(el("span", "flash-check", "✓"));
+    line.append(document.createTextNode(
+      ` Reflexes dialed in${opts.reflexPreset ? ` for ${opts.reflexPreset}` : ""} — ` +
+      `debounce ${fmtS(rv.present_debounce_ms)}, clear ${fmtS(rv.clear_timeout_ms)}, ` +
+      `bands ${rv.range_near_cm}/${rv.range_mid_cm} cm — baked into its settings. ` +
+      `Home Assistant can retune every one of them live.`));
+    box.append(line);
+  }
+  // The ONE obvious next step for THIS board — tailored to how it sets up and
+  // what it senses, so "it's alive" leads somewhere instead of dead-ending.
+  if (product && !opts.isBackup && core.isVisionBoard(product)) {
+    // A Vision is two ports. The generic "watch it prove itself" is premature
+    // until the camera module has its model too — so here the two-port checklist
+    // IS the next step: it shows what's done, what's left, and routes to the
+    // other port. (visionSession was marked at the completion transition above.)
+    box.append(visionChecklistCard(visionSession.parts(), {
+      onFlashOther: async () => {
+        // Release the ESP32 port first — the module flow opens its own transport,
+        // and leaving state.session open would lock the host port until reload.
+        await onDisconnect(true);
+        setPhase(phaseModule({
+          catalog: state.catalog,
+          setPhase,
+          back: () => setPhase(phaseConnect()),
+        }));
+      },
+    }));
+  } else if (product && !opts.isBackup) {
+    const step = core.postFlashNextStep(product, { wifiJoined: !!opts.wifiSsid });
+    const ns = el("div", "flash-nextstep");
+    ns.append(el("div", "flash-nextstep-title", `Next — ${step.title}`));
+    ns.append(el("p", "flash-nextstep-body", step.body));
+    box.append(ns);
+  } else if (!product) {
     box.append(el("p", "muted", "It rebooted into the firmware you just wrote. If it doesn’t light up, tap the RESET button once."));
   }
 
@@ -1342,6 +3843,17 @@ function phaseDone(opts) {
       list.append(el("p", "fineprint", opts.shaSigned
         ? "Computed in your browser from the downloaded bytes and matched against the fingerprint published in the signed release — before anything was written. You can recompute it yourself: download the same release asset and run sha256sum."
         : "Computed in your browser from your local file, so you can pin down exactly what was written. We can't vouch for a personal file's origin — that part is on you."));
+      if (opts.sigChecked) {
+        list.append(reportRow("Ed25519 release signature", el("span", "flash-check", "✓ verified"), "ok"));
+        list.append(el("p", "fineprint",
+          "Verified in your browser against the release public key pinned in this " +
+          "page — the same key the device checks. A swapped or tampered image would " +
+          "have been refused before a single byte was written."));
+      } else if (opts.shaSigned) {
+        list.append(el("p", "fineprint",
+          "This release isn't Ed25519-signed yet (the signing-key ceremony hasn't " +
+          "happened), so it was verified by checksum only."));
+      }
     }
     if (opts.bytesWritten) {
       list.append(reportRow("Written and read back",
@@ -1360,11 +3872,46 @@ function phaseDone(opts) {
     box.append(rec);
   }
 
+  // The radar wow: a freshly-hatched Sense proves itself on the live bench —
+  // presence, bands, and the wellbeing senses — not in a text console.
+  const doneRole = opts.product && !opts.isBackup ? core.productRole(opts.product.id) : null;
+
+  // The session's progression, right where the next board gets plugged in.
+  const rosterStrip = renderRosterStrip();
+  if (rosterStrip) box.append(rosterStrip);
+
+  // Prove it, two ways — the SAME shape for every Canary (parity is a
+  // tested guarantee): one real proof over the cable/glass, one emulated
+  // twin a click away. The catalog's prove block owns both.
+  const proveSpec = opts.product && !opts.isBackup
+    ? ((state.catalog.products.find((p) => p.id === opts.product.id) || {}).prove || null)
+    : null;
+  const proveReal = () => {
+    const kind = proveSpec ? proveSpec.real.kind : "monitor";
+    if (kind === "bench-radar") return openSenseBench(opts.product);
+    if (kind === "bench-field") return openWapBench(opts.product);
+    if (kind === "bench-camera") {
+      // The camera bench lives on the MODULE's port — route through the
+      // module flow (same hand-off the two-port checklist uses).
+      return onDisconnect(true).then(() => setPhase(phaseModule({
+        catalog: state.catalog, setPhase, back: () => setPhase(phaseConnect()),
+      })));
+    }
+    // "glass" and "monitor": the console is the honest window either way.
+    return openMonitor({ celebrate: true, skipReset: true, proveIdentity: true });
+  };
+
   const row = el("div", "flash-row");
-  const watch = el("button", "primary", "Watch it boot →");
-  watch.addEventListener("click", () => openMonitor({ celebrate: true, skipReset: true }));
+  const watch = el("button", "primary",
+    proveSpec ? proveSpec.real.label : "Watch it boot & prove itself →");
+  if (proveSpec) watch.title = proveSpec.real.how;
+  watch.addEventListener("click", proveReal);
   const again = el("button", "ghost", "Set up another board");
-  again.addEventListener("click", () => onDisconnect().then(() => setPhase(phaseConnect())));
+  // A new board is a new bring-up: drop any in-progress two-port Vision pair so a
+  // half-done Vision can't carry a stale flag into the next board (else its other
+  // half could later read as "both done"). Guided continuation uses the checklist
+  // CTA above, not this button, so it's unaffected.
+  again.addEventListener("click", () => onDisconnect().then(() => { visionSession.reset(); setPhase(phaseConnect()); }));
   const tour = el("button", "ghost", "replay the layers tour");
   let tourEl = null;
   tour.addEventListener("click", () => {
@@ -1372,8 +3919,214 @@ function phaseDone(opts) {
     tourEl = installStory(() => state.lastImage);
     box.append(tourEl);
   });
-  row.append(watch, again, tour);
+  row.append(watch);
+  if (proveSpec) {
+    const twin = el("a", "ghost flash-twin", proveSpec.emulated.label);
+    twin.href = proveSpec.emulated.href;
+    twin.target = "_blank";
+    twin.rel = "noopener";
+    twin.title = proveSpec.emulated.how;
+    row.append(twin);
+  }
+  // AP-based Canaries (canary / WAP) run the read-only Bluetooth console, so
+  // offer the over-the-air "it's on" check right after the USB flash — the same
+  // proof, on the path that survives a WiFi outage.
+  const p = opts.product;
+  const bleCapable = p && !opts.isBackup &&
+    (core.productRole(p) === "wap" || p.provisioning === "ap");
+  if (bleCapable) {
+    const bt = el("button", "ghost", "Check over Bluetooth →");
+    bt.title = "Reach this Canary's read-only Bluetooth console and read its live snapshot";
+    bt.addEventListener("click", () => setPhase(phaseBluetoothCheck(() => setPhase(phaseDone(opts)))));
+    row.append(bt);
+  }
+  row.append(again, tour);
   box.append(row);
+  return box;
+}
+
+// The emulated-twin link for a product, wherever a bench wants to offer it.
+function twinLink(product) {
+  const spec = product &&
+    ((state.catalog.products.find((p) => p.id === product.id) || {}).prove || null);
+  if (!spec) return null;
+  const a = el("a", "ghost small flash-twin", spec.emulated.label);
+  a.href = spec.emulated.href;
+  a.target = "_blank";
+  a.rel = "noopener";
+  a.title = spec.emulated.how;
+  return a;
+}
+
+// ── the Bluetooth check: prove a Canary is really on and talking, over the air
+// The flash channel is USB (Web Serial); this is its companion — the same
+// "prove it's alive" idea, but over Bluetooth. A Canary's WAP firmware runs a
+// read-only BLE console (one GATT service, one snapshot characteristic; see
+// flash-core.js BLE_CONSOLE + firmware .../ble_console.h), the very path that
+// keeps working when WiFi is down. This phase answers three plain questions:
+// is Bluetooth on, can the browser reach a Canary, and what is it reporting —
+// no flashing, nothing written to the board.
+async function stopBle() {
+  const b = state.ble;
+  state.ble = null;
+  if (!b) return;
+  try { b.characteristic && await b.characteristic.stopNotifications(); } catch { /* already gone */ }
+  try {
+    if (b.device && b.device.gatt && b.device.gatt.connected) b.device.gatt.disconnect();
+  } catch { /* already gone */ }
+}
+
+function phaseBluetoothCheck(back) {
+  const goBack = back || (() => setPhase(phaseConnect()));
+  const box = el("section", "flash-card flash-ble");
+  box.append(el("div", "flash-big-emoji", "🔵"));
+  box.append(el("h2", null, "Is it on? Reach a Canary over Bluetooth"));
+  box.append(el("p", "muted",
+    "A separate check from flashing: a Canary keeps a read-only Bluetooth " +
+    "“console” alive even when WiFi is down. This asks your browser to find " +
+    "one, connect, and read its live snapshot — proof it’s on and talking. " +
+    "Nothing is written to the board."));
+
+  const status = el("p", "flash-ble-status muted", "");
+  box.append(status);
+
+  const support = core.bleSupport(navigator);
+  if (!support.supported) {
+    // Same shape as the Web Serial fallback: Chromium desktop / Android only.
+    status.classList.remove("muted");
+    box.append(errorBox("This browser can’t do Bluetooth here", support.reason));
+    const native = el("p", "fineprint",
+      "On iPhone or iPad, the SecuraCV app talks to a Canary over Bluetooth " +
+      "natively — Safari has no Web Bluetooth. On a computer, use a Chromium " +
+      "browser (Chrome, Edge, Brave).");
+    box.append(native);
+    const backBtn = el("button", "ghost", "← back");
+    backBtn.addEventListener("click", () => stopBle().then(goBack));
+    box.append(backBtn);
+    return box;
+  }
+
+  const result = el("div", "flash-ble-result");
+  box.append(result);
+
+  const connectBtn = el("button", "primary", "Find & connect a Canary");
+  const backBtn = el("button", "ghost", "← back");
+  const row = el("div", "flash-row");
+  row.append(connectBtn, backBtn);
+  box.append(row);
+  backBtn.addEventListener("click", () => stopBle().then(goBack));
+
+  let connectedName = null;   // the board's advertised (branded) BLE name
+  const renderSnapshot = (snap, live) => {
+    result.innerHTML = "";
+    const card = el("div", "flash-card flash-ble-card");
+    card.append(el("h3", null,
+      connectedName
+        ? `✓ Connected to ${connectedName} — it’s on and talking`
+        : "✓ Connected — your Canary is on and talking"));
+    const rows = core.bleSnapshotRows(snap);
+    if (rows.length) {
+      const facts = el("div", "flash-facts");
+      rows.forEach((r) => facts.append(fact(r.label, r.value)));
+      card.append(facts);
+    } else {
+      card.append(el("p", "muted",
+        "Connected, but the snapshot was empty — the board is reachable over " +
+        "Bluetooth even so."));
+    }
+    card.append(el("p", "fineprint",
+      live
+        ? "Live — this updates on its own as the board pushes new snapshots."
+        : "A single read. Reconnect for live updates."));
+    result.append(card);
+  };
+
+  // Report whether the radio itself is switched on before asking for a device —
+  // getAvailability() is the honest "is Bluetooth on" signal Web Serial lacks.
+  const reportRadio = async () => {
+    status.textContent = "Checking Bluetooth…";
+    let available = true;
+    try {
+      if (navigator.bluetooth.getAvailability) {
+        available = await navigator.bluetooth.getAvailability();
+      }
+    } catch { available = true; /* some engines don't implement it — don't block */ }
+    status.textContent = available
+      ? "Bluetooth is available on this device. Click below and pick your Canary."
+      : "Bluetooth looks switched off (or blocked). Turn it on, then try again.";
+    return available;
+  };
+  reportRadio();
+
+  const connect = async () => {
+    connectBtn.disabled = true;
+    result.innerHTML = "";
+    status.textContent = "Opening the Bluetooth chooser…";
+    try {
+      await stopBle(); // drop any prior console first
+      // Discover by the Canary's ADVERTISED identity (branded name + pairing
+      // service); the console service is reached over the connection. See
+      // core.bleRequestOptions.
+      const device = await navigator.bluetooth.requestDevice(core.bleRequestOptions());
+      connectedName = device.name || null;
+      status.textContent = `Connecting to ${connectedName || "the Canary"}…`;
+      device.addEventListener("gattserverdisconnected", () => {
+        if (state.ble && state.ble.device === device) {
+          state.ble = null;
+          status.textContent = "The Canary disconnected. Click to reconnect.";
+          connectBtn.disabled = false;
+          connectBtn.textContent = "Reconnect";
+        }
+      });
+      const server = await device.gatt.connect();
+      const service = await server.getPrimaryService(core.BLE_CONSOLE.serviceUuid);
+      const chr = await service.getCharacteristic(core.BLE_CONSOLE.snapshotUuid);
+      state.ble = { device, characteristic: chr };
+
+      // One read now, then subscribe for the board's periodic pushes.
+      const first = await chr.readValue();
+      renderSnapshot(core.parseBleSnapshot(first), false);
+      try {
+        await chr.startNotifications();
+        chr.addEventListener("characteristicvaluechanged", (ev) => {
+          const snap = core.parseBleSnapshot(ev.target.value);
+          if (snap) renderSnapshot(snap, true);
+        });
+        status.textContent = "Live — reading your Canary’s snapshot over Bluetooth.";
+      } catch {
+        status.textContent = "Connected (single read — live updates weren’t available).";
+      }
+      connectBtn.disabled = false;
+      connectBtn.textContent = "Reconnect";
+    } catch (e) {
+      connectBtn.disabled = false;
+      const name = (e && e.name) || "";
+      if (name === "NotFoundError") {
+        // User dismissed the chooser, or no Canary was advertising. On the XIAO
+        // ESP32-S3 the #1 physical cause of "nothing shows up" is the external
+        // u.FL antenna not being seated — Seeed is explicit that BLE may not
+        // work at all without it — so name it before blaming range/power.
+        status.textContent =
+          "No Canary picked. Make sure it’s powered and nearby, and that its " +
+          "external antenna is seated (on the XIAO ESP32-S3 the u.FL WiFi/BT " +
+          "antenna must be attached or Bluetooth may not work at all). Its " +
+          "console advertises for a bonded phone; pick it from the list.";
+      } else if (name === "SecurityError" || name === "NotAllowedError") {
+        result.innerHTML = "";
+        result.append(errorBox("The console is bonded-only",
+          "The board answered but its snapshot is readable by paired devices " +
+          "only (that’s deliberate — same trust as the WiFi token). Pair this " +
+          "device with the Canary in your OS Bluetooth settings, then try again."));
+      } else {
+        result.innerHTML = "";
+        result.append(errorBox("Bluetooth connect failed",
+          (e && e.message) || "Couldn’t reach the Canary. Check the external " +
+          "antenna is seated (required for BLE on the XIAO ESP32-S3), move " +
+          "closer, power-cycle it, and retry."));
+      }
+    }
+  };
+  connectBtn.addEventListener("click", connect);
   return box;
 }
 
@@ -1386,6 +4139,7 @@ function phaseDone(opts) {
 // image for the chip in hand.
 function phaseRescue() {
   const box = el("section", "flash-card flash-rescue");
+  box.dataset.step = "3";
   box.append(el("h2", null, "Rescue this board"));
   box.append(el("p", "muted",
     "For a Canary that’s acting wrong and you just want it back to known-good. " +
@@ -1396,7 +4150,13 @@ function phaseRescue() {
     "fetches the latest signed image for the silicon in hand."));
 
   const matches = core.productsForChip(state.catalog, state.chip);
-  const preferred = core.pickRescueProduct(
+  // A clean-install escalation from a failed flash carries the product the user
+  // was installing — state.current is cleared by the reconnect, so without this
+  // a WAP / Vision rescue would silently default to plain canary. Consume it.
+  const carried = (state.resumeRescuePrefer &&
+    matches.find((p) => p.id === state.resumeRescuePrefer.id)) || null;
+  state.resumeRescuePrefer = null;
+  const preferred = carried || core.pickRescueProduct(
     state.catalog, state.chip, state.current && state.current.projectName);
 
   let chosen = preferred || matches[0] || null;
@@ -1417,7 +4177,9 @@ function phaseRescue() {
     });
     box.append(list);
     if (preferred) box.append(el("p", "fineprint",
-      `${preferred.name} is pre-selected because that’s what the board says it was running.`));
+      carried
+        ? `${preferred.name} is pre-selected — it’s the firmware you were installing.`
+        : `${preferred.name} is pre-selected because that’s what the board says it was running.`));
   } else if (chosen) {
     box.append(el("p", "flash-current", `Firmware: ${chosen.name} — ${chosen.tagline}`));
   }
@@ -1477,8 +4239,15 @@ async function onRestoreFile(ev) {
 
 // ── the health check (triage without changing a byte) ───────────────────────
 async function runHealthCheck() {
-  if (state.busy || !state.session) return;
-  state.busy = true;
+  if (state.busy) return;
+  state.busy = true; // BEFORE the slow re-sync — a second click must bounce off
+  if (!state.session && !(await ensureSession())) {
+    state.busy = false;
+    setPhase(errorRetry("Couldn’t reach the bootloader for the health check",
+      new Error("the board didn’t re-enter download mode — unplug, replug, then Connect again"),
+      phaseConnect));
+    return;
+  }
   const { esploader } = state.session;
   const box = progressCard("Reading your board’s story", "Partition map, firmware slots, crash dumps, witness chain — read-only, nothing is changed.");
   setPhase(box.card);
@@ -1596,6 +4365,7 @@ function reportRow(label, value, tone) {
 
 function renderReport(r) {
   const box = el("section", "flash-card flash-report");
+  box.dataset.step = "2";
   box.append(el("h2", null, "Board report"));
   box.append(el("p", "muted", "Read straight off the flash — nothing was changed, and nothing left this page."));
 
@@ -1828,13 +4598,18 @@ function renderReport(r) {
 // full menu). We reboot the board out of download mode, reopen the port at
 // console baud, and give the user a live console with a send box.
 const MONITOR_CMDS = [
-  ["h", "help"], ["i", "identity"], ["s", "status"], ["t", "time"],
-  ["w", "wifi"], ["m", "system"], ["b", "battery"],
+  ["h", "help"], ["j", "self-manifest"], ["i", "identity"], ["s", "status"],
+  ["t", "time"], ["w", "wifi"], ["m", "system"], ["b", "battery"],
 ];
 
 async function openMonitor(opts = {}) {
-  if (state.busy) return;
+  if (state.busy || state.opening) return;
+  state.opening = true; // synchronous — a double-click can't spawn two port consumers
+  try { return await openMonitorInner(opts); } finally { state.opening = false; }
+}
+async function openMonitorInner(opts = {}) {
   let port = state.session && state.session.port;
+  if (!port && state.voice) port = await stopVoice(); // hand the voice's port to the full monitor
   if (state.session) {
     // Leave the bootloader: reset into the app, then let go of the port.
     if (!opts.skipReset) { try { await state.session.esploader.after("hard_reset"); } catch {} }
@@ -1846,6 +4621,7 @@ async function openMonitor(opts = {}) {
 
 function phaseMonitor(port, opts = {}) {
   const box = el("section", "flash-card flash-monitor");
+  box.dataset.step = "5";
   box.append(el("h2", null, "Serial monitor"));
   box.append(modeBadge("running"));
   box.append(el("p", "muted",
@@ -1858,6 +4634,79 @@ function phaseMonitor(port, opts = {}) {
 
   const con = el("pre", "flash-console flash-console-tall");
   box.append(con);
+
+  // Boot-log diagnosis: when a fatal signature scrolls past (brownout, panic,
+  // no bootable app…), translate it into a plain-language cause + fix instead
+  // of leaving the user to read raw panic text. Informational — the fix text
+  // says what to do, and the "back to the flasher" button below re-flashes.
+  const diagPanel = el("div", "flash-diag flash-hidden");
+  box.append(diagPanel);
+  let diagnosedSig = null;
+  function maybeDiagnose(text) {
+    const d = core.diagnoseBootLog(text);
+    if (!d || d.signature === diagnosedSig) return;
+    diagnosedSig = d.signature;
+    diagPanel.innerHTML = "";
+    diagPanel.classList.remove("flash-hidden");
+    diagPanel.append(el("div", "flash-diag-emoji", d.action === "power" ? "🔌" : "🩺"));
+    diagPanel.append(el("h3", null, d.means));
+    diagPanel.append(el("p", "muted", d.fix));
+  }
+
+  // Post-flash proof: when the firmware answers `j` with its signed
+  // self-manifest, render a verified-identity card — the flash proven from the
+  // board's own mouth (the same self-verify as securacv.com/canary).
+  const idCard = el("div", "flash-identity flash-hidden");
+  box.append(idCard);
+  let identityShown = false;
+  function maybeIdentity(text) {
+    if (identityShown) return;
+    const m = core.parseSelfManifest(text);
+    if (!m) return;
+    identityShown = true;
+    const signed = !!(m.pubkey || m.pubkey_fp);
+    idCard.innerHTML = "";
+    idCard.classList.remove("flash-hidden");
+    idCard.append(el("div", "flash-identity-head",
+      (signed ? "✓ " : "") + "Your Canary just proved itself"));
+    // The self-check verdict, front and centre — so a headless board (no screen)
+    // SHOWS you it works instead of being a silent dud. Health IS its self-test.
+    {
+      // Always show the verdict — including "Self-check pending" when health is
+      // null/unknown — so a headless board never falls back to no status at all.
+      const v = core.healthVerdict(m.health);
+      const scored = typeof m.health === "number" && Number.isFinite(m.health) &&
+                     m.health >= 0 && m.health <= 100;
+      const vb = el("div", `flash-selfcheck flash-selfcheck-${v.level}`);
+      vb.append(el("span", "flash-selfcheck-icon", v.icon));
+      vb.append(el("span", null, scored ? `${v.label} · ${m.health}/100` : v.label));
+      idCard.append(vb);
+    }
+    const facts = el("div", "flash-facts");
+    if (m.board) facts.append(fact("board", m.board));
+    if (m.firmware) facts.append(fact("firmware", m.firmware));
+    const fp = core.formatFingerprint(m.pubkey_fp || m.pubkey);
+    if (fp) facts.append(fact("key fingerprint", fp));
+    if (typeof m.boots === "number") facts.append(fact("boots", String(m.boots)));
+    // Heat, straight from the chip's own sensor — firmwares that report
+    // temp_c in the manifest get a live reading; older ones simply don't.
+    if (typeof m.temp_c === "number" && Number.isFinite(m.temp_c) &&
+        m.temp_c > -40 && m.temp_c < 150) {
+      const warm = m.temp_c >= 70;
+      facts.append(fact("temperature",
+        `${Math.round(m.temp_c)} °C${warm ? " — running hot; give it air" : ""}`));
+    }
+    idCard.append(facts);
+    if (m.tamper) {
+      idCard.append(el("p", "flash-note flash-note-soft",
+        "⚠ The board reports a tamper flag — expected if you’ve opened it; look into it if not."));
+    }
+    idCard.append(el("p", "fineprint", signed
+      ? "Read straight from the running firmware over the cable — the same signed " +
+        "identity securacv.com/canary shows. Nothing was sent anywhere."
+      : "Read from the running firmware over the cable."));
+    setStatus("✓ Identity confirmed — it’s running and answering.");
+  }
 
   const chips = el("div", "flash-mon-chips");
   MONITOR_CMDS.forEach(([ch, label]) => {
@@ -1907,53 +4756,146 @@ function phaseMonitor(port, opts = {}) {
     "(or: hold BOOT, tap RESET, release BOOT)."));
 
   // — wire it up —
-  const mon = { alive: true, port: null, reader: null, writer: null, manualBaud: false, session: 0 };
+  //
+  // A PERSISTENT console. ESP32-S3 boards run native USB, so a reset (or the
+  // firmware rebooting itself) makes the chip vanish and re-enumerate as a
+  // fresh USB device — the old port handle goes dead. We never leave the user
+  // staring at a frozen "connected" screen: when bytes stop we say so plainly
+  // and grab the board again automatically the moment it reappears (the
+  // `serial` connect event), and a one-tap reconnect is always in reach.
+  const mon = {
+    alive: true, port: null, reader: null, writer: null,
+    manualBaud: false, session: 0, everByted: false,
+    lastPort: null, forced: null, reopenSame: false, waiting: null,
+  };
   let celebrated = !opts.celebrate;
+  let quietTimer = null;
+
+  function setStatus(t) { status.textContent = t; }
 
   function send(text) {
     if (!mon.writer || !text) return;
     mon.writer.write(new TextEncoder().encode(text)).catch(() => {});
   }
 
+  // A reconnect button that lives right under the status line — hidden while
+  // the stream is healthy, shown (persistently) whenever we're waiting.
+  const reconnectBtn = el("button", "ghost small flash-hidden", "reconnect the board →");
+  reconnectBtn.addEventListener("click", async () => {
+    let np;
+    try { np = await navigator.serial.requestPort(); } catch { return; }
+    reconnectBtn.classList.add("flash-hidden");
+    mon.everByted = false;
+    if (mon.waiting) { mon.waiting(np); }              // we were waiting → use it now
+    else { mon.forced = np; mon.session++; await stopStreams(); }  // interrupt & switch
+  });
+  status.after(reconnectBtn);
+
   async function stopStreams() {
+    if (quietTimer) { clearTimeout(quietTimer); quietTimer = null; }
     try { mon.reader && await mon.reader.cancel(); } catch {}
     try { mon.reader && mon.reader.releaseLock(); } catch {}
     try { mon.writer && mon.writer.releaseLock(); } catch {}
     mon.reader = mon.writer = null;
     try { mon.port && await mon.port.close(); } catch {}
+    mon.port = null;
   }
 
-  // One open-read session at a given baud. Resolves "garbage" if the first
-  // stretch of output doesn't decode as text (wrong baud), "ended" otherwise.
+  // Re-find a granted port (no user gesture needed — only requestPort() is
+  // gesture-gated; getPorts()/open() are not). Prefer the same board.
+  async function reacquire() {
+    try {
+      const ports = await navigator.serial.getPorts();
+      if (!ports.length) return null;
+      if (mon.lastPort && ports.includes(mon.lastPort)) return mon.lastPort;
+      return ports[0];
+    } catch { return null; }
+  }
+
+  // Resolve once the board is physically back: the `connect` event fires on
+  // re-enumeration; a slow poll confirms by actually opening the port (a
+  // granted-but-unplugged port still shows up in getPorts(), so we must test).
+  function waitForPort(msg) {
+    setStatus(msg);
+    reconnectBtn.classList.remove("flash-hidden");
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (p) => {
+        // Always tear down — guarding on mon.alive here used to leak the
+        // 1 Hz poll (which OPENS the port to test it) forever after leaving
+        // the monitor mid-wait, fighting every later connect for the port.
+        if (settled) return;
+        settled = true; clearInterval(poll);
+        navigator.serial.removeEventListener("connect", tryGrant);
+        mon.waiting = null;
+        resolve(mon.alive ? p : null);
+      };
+      const tryGrant = async () => {
+        if (settled) return;
+        const p = await reacquire();
+        if (!p) return;
+        try { await p.open({ baudRate: Number(baudSel.value) }); await p.close(); finish(p); } catch {}
+      };
+      const poll = setInterval(tryGrant, 1000);
+      navigator.serial.addEventListener("connect", tryGrant);
+      mon.waiting = finish;   // the reconnect button hands us a port directly
+      tryGrant();
+    });
+  }
+
+  // One open-read session at a given baud. Returns "garbage" (wrong baud),
+  // "ended" (stream closed), or "error" (port went away).
   async function pumpOnce(p, baud) {
     const mySession = ++mon.session;
     await p.open({ baudRate: baud });
-    mon.port = p;
+    mon.port = mon.lastPort = p;
     try { mon.writer = p.writable.getWriter(); } catch {}
     mon.reader = p.readable.getReader();
-    status.textContent = `Connected at ${baud} — the board is talking. Press a command, or h for its menu.`;
-    const dec = new TextDecoder();
-    let buf = "", sample = "", judged = false;
-    while (mon.alive && mySession === mon.session) {
-      const { value, done: fin } = await mon.reader.read();
-      if (fin) break;
-      const text = dec.decode(value, { stream: true });
-      if (!judged) {
-        sample = (sample + text).slice(0, 600);
-        if (core.looksLikeGarbage(sample)) {
-          if (!mon.manualBaud) { await stopStreams(); return "garbage"; }
-          judged = true; // user chose this baud on purpose; show it raw
-        } else if (sample.length >= 600) judged = true;
-      }
-      buf = (buf + text).slice(-16000);
-      con.textContent = buf;
-      con.scrollTop = con.scrollHeight;
-      if (!celebrated && /securacv|canary|chirp|witness|boot/i.test(buf)) {
-        celebrated = true;
-        status.textContent = "✓ It’s talking — your Canary is alive.";
-        confettiBurst();
-      }
+    reconnectBtn.classList.add("flash-hidden");
+    setStatus(`Connected at ${baud} — the board is talking. Press a command, or h for its menu.`);
+    // Post-flash proof: ask the firmware to prove its signed identity (`j`).
+    // Read-only and harmless; sent twice in case the first lands mid-boot.
+    if (opts.proveIdentity && !mon.askedManifest) {
+      mon.askedManifest = true;
+      const ask = () => { if (mon.alive && !identityShown) send("j\n"); };
+      setTimeout(ask, 600);
+      setTimeout(ask, 2000);
     }
+    // If nothing arrives soon, explain why (many builds stay silent until
+    // asked) — but keep the connection; don't tear it down.
+    if (quietTimer) clearTimeout(quietTimer);
+    if (!mon.everByted) quietTimer = setTimeout(() => {
+      if (!mon.everByted && mon.alive)
+        setStatus("Connected, but quiet so far — many builds only speak when asked: press h for the menu. (If the board just reset, I'll reconnect on my own.)");
+    }, 4000);
+    const dec = new TextDecoder();
+    let buf = con.textContent || "", sample = "", judged = false;
+    try {
+      while (mon.alive && mySession === mon.session) {
+        const { value, done: fin } = await mon.reader.read();
+        if (fin) return "ended";
+        mon.everByted = true;
+        if (quietTimer) { clearTimeout(quietTimer); quietTimer = null; }
+        const text = dec.decode(value, { stream: true });
+        if (!judged) {
+          sample = (sample + text).slice(0, 600);
+          if (core.looksLikeGarbage(sample)) {
+            if (!mon.manualBaud) { await stopStreams(); return "garbage"; }
+            judged = true; // user chose this baud on purpose; show it raw
+          } else if (sample.length >= 600) judged = true;
+        }
+        buf = (buf + text).slice(-16000);
+        con.textContent = buf;
+        con.scrollTop = con.scrollHeight;
+        if (!celebrated && /securacv|canary|chirp|witness|boot/i.test(buf)) {
+          celebrated = true;
+          setStatus("✓ It’s talking — your Canary is alive.");
+          confettiBurst();
+        }
+        maybeDiagnose(buf);   // fatal signature → plain-language cause + fix
+        maybeIdentity(buf);   // `j` self-manifest → verified-identity card
+      }
+    } catch { return "error"; }
     return "ended";
   }
 
@@ -1965,55 +4907,65 @@ function phaseMonitor(port, opts = {}) {
     for (;;) {
       tried.add(baud);
       const verdict = await pumpOnce(p, baud);
-      if (verdict !== "garbage" || !mon.alive) return;
+      if (verdict !== "garbage" || !mon.alive) return verdict;
       const next = core.CONSOLE_BAUDS.find((b) => !tried.has(b));
       if (!next) {
-        status.textContent = "None of the usual speeds decoded as clean text — showing it raw at " + defaultBaud + ".";
+        setStatus("None of the usual speeds decoded as clean text — showing it raw at " + defaultBaud + ".");
         mon.manualBaud = true; // stop re-judging
         baudSel.value = String(defaultBaud);
-        await pumpOnce(p, defaultBaud);
-        return;
+        return await pumpOnce(p, defaultBaud);
       }
-      status.textContent = `That didn’t look like text at ${baud} — trying ${next}…`;
+      setStatus(`That didn’t look like text at ${baud} — trying ${next}…`);
       con.textContent = "";
       baudSel.value = String(next);
       baud = next;
     }
   }
 
+  // The supervisor: keep the console alive across resets & re-enumerations.
+  async function supervise(initialPort) {
+    let p = initialPort;
+    while (mon.alive) {
+      if (mon.forced) { p = mon.forced; mon.forced = null; }
+      if (!p) p = await waitForPort("Board reset — reconnecting automatically… (normal for these chips)");
+      if (!mon.alive || !p) return;
+      reconnectBtn.classList.add("flash-hidden");
+      try { await pump(p); } catch {}
+      if (!mon.alive) return;
+      await stopStreams();
+      p = mon.reopenSame ? p : null;   // a deliberate baud change keeps the same port
+      mon.reopenSame = false;
+      await sleep(150);
+    }
+  }
+
+  // A USB unplug / re-enumeration of the CURRENT port: cancel the read so the
+  // supervisor drops straight into reconnect instead of hanging.
+  const onDisconnect = () => {
+    if (!mon.alive) return;
+    mon.session++;
+    try { mon.reader && mon.reader.cancel(); } catch {}
+  };
+  navigator.serial.addEventListener("disconnect", onDisconnect);
+
   baudSel.addEventListener("change", async () => {
     mon.manualBaud = true;
-    const p = mon.port || port;
-    await stopStreams();
+    mon.everByted = false;
+    mon.reopenSame = true;   // same port, new baud — no "reset" detour
+    mon.session++;
     con.textContent = "";
-    try { await pumpOnce(p, Number(baudSel.value)); } catch {}
+    await stopStreams();     // cancels the blocked read so supervise reopens now
   });
 
   done.addEventListener("click", async () => {
     mon.alive = false;
+    if (mon.waiting) mon.waiting(null);
+    navigator.serial.removeEventListener("disconnect", onDisconnect);
     await stopStreams();
     setPhase(phaseConnect());
   });
 
-  (async () => {
-    try {
-      if (!port) throw new Error("no port");
-      await pump(port);
-    } catch (e) {
-      if (!mon.alive) return;
-      // Native-USB boards re-enumerate after reset — offer a fresh pick.
-      status.textContent = "The board reconnected as a new USB device (normal for these chips).";
-      const b = el("button", "ghost small", "pick it again to keep watching →");
-      b.addEventListener("click", async () => {
-        b.remove();
-        try {
-          const np = await navigator.serial.requestPort();
-          await pump(np);
-        } catch {}
-      });
-      status.after(b);
-    }
-  })();
+  supervise(port);
 
   return box;
 }
@@ -2268,6 +5220,91 @@ function installStory(getBytes) {
 }
 
 // ── shared UI bits ──────────────────────────────────────────────────────────
+// The coach: optional micro-lessons that ride every long wait. Stage-aware
+// (a backup teaches backups, a write teaches NVS and slots), one lesson at
+// a time, auto-advancing gently (never under prefers-reduced-motion), and
+// dismissible for the session — learning is offered, never imposed.
+const COACH_KEY = "nursery.coach";
+function coachDismissed() {
+  try { return sessionStorage.getItem(COACH_KEY) === "off"; } catch { return false; }
+}
+function attachCoach(card, afterEl) {
+  if (coachDismissed() || !state.catalog || !Array.isArray(state.catalog.lessons) ||
+      !state.catalog.lessons.length) return null;
+  const box = el("aside", "flash-coach");
+  box.setAttribute("aria-label", "Optional lesson while you wait");
+  const head = el("div", "flash-coach-head");
+  head.append(el("span", "flash-coach-kicker", "☕ while it works — a 20-second lesson"));
+  const close = el("button", "flash-coach-close", "×");
+  close.type = "button";
+  close.title = "Hide the lessons for this session";
+  close.setAttribute("aria-label", "Hide lessons for this session");
+  head.append(close);
+  box.append(head);
+  const titleEl = el("div", "flash-coach-title");
+  const bodyEl = el("p", "flash-coach-body");
+  box.append(titleEl, bodyEl);
+  const controls = el("div", "flash-coach-controls");
+  const next = el("button", "ghost small", "another →");
+  controls.append(next);
+  box.append(controls);
+  afterEl.after(box);
+
+  const shown = [];
+  let stageText = "";
+  let timer = null;
+  let alive = true;
+  function show(lesson) {
+    if (!lesson) { next.disabled = true; next.textContent = "that’s the deck ✓"; return; }
+    shown.push(lesson.id);
+    box.classList.remove("flash-coach-swap");
+    void box.offsetWidth; // restart the swap animation
+    box.classList.add("flash-coach-swap");
+    titleEl.textContent = lesson.title;
+    bodyEl.textContent = lesson.body;
+  }
+  function advance() {
+    // Detachment retires the coach: setPhase() swaps cards without telling
+    // us, and an immortal 14 s timer chain per progress card would pile up
+    // fast in a batch session. A dry deck stops the chain too.
+    if (!alive || !box.isConnected) {
+      alive = false;
+      if (timer) clearTimeout(timer);
+      return;
+    }
+    const lesson = core.pickLesson(state.catalog, stageText, shown);
+    show(lesson);
+    if (lesson) arm();
+  }
+  function arm() {
+    if (timer) clearTimeout(timer);
+    // Auto-advance is decorative pacing — calm users page by hand.
+    if (!prefersCalm()) timer = setTimeout(advance, 14000);
+  }
+  next.addEventListener("click", advance);
+  close.addEventListener("click", () => {
+    alive = false;
+    if (timer) clearTimeout(timer);
+    try { sessionStorage.setItem(COACH_KEY, "off"); } catch { /* private mode */ }
+    box.remove();
+  });
+  advance();
+  return {
+    stage(s) {
+      // A new stage brings its own lesson — but only if it actually has one
+      // unseen; mid-lesson churn for nothing helps nobody.
+      stageText = s || "";
+      const staged = core.pickLesson(state.catalog, stageText, shown);
+      if (staged && staged.stage !== "any" &&
+          stageText.toLowerCase().includes(staged.stage)) {
+        show(staged);
+        arm();
+      }
+    },
+    retire() { alive = false; if (timer) clearTimeout(timer); },
+  };
+}
+
 function progressCard(title, subtitle) {
   const card = el("section", "flash-card flash-progress");
   card.append(el("h2", null, title));
@@ -2282,6 +5319,7 @@ function progressCard(title, subtitle) {
   const reassure = el("p", "flash-reassure-lite fineprint",
     "Safe to interrupt — you can’t brick it. If anything stops, just start again.");
   card.append(reassure);
+  const coach = attachCoach(card, reassure);
   // expose esptool log
   const log = el("details", "flash-log");
   log.append(el("summary", null, "show technical log"));
@@ -2291,7 +5329,10 @@ function progressCard(title, subtitle) {
   card.append(log);
   return {
     card,
-    stage(s) { stageEl.textContent = s; },
+    stage(s) {
+      stageEl.textContent = s;
+      if (coach) coach.stage(s);
+    },
     set(frac, metaText) {
       const pct = Math.max(0, Math.min(1, frac || 0)) * 100;
       fill.style.width = pct.toFixed(1) + "%";
@@ -2383,12 +5424,17 @@ function errorRetry(title, e, backPhase) {
 }
 
 async function onDisconnect(silent) {
+  try { await stopVoice(); } catch {}
+  try { await stopBle(); } catch {}
   try { if (state.session) await state.session.transport.disconnect(); } catch {}
   state.session = null;
   state.chip = state.mac = state.flashBytes = state.current = null;
   state.report = null;
   state.busy = false;
-  if (!silent) { /* caller decides next phase */ }
+  // A fresh board (non-silent) starts from the top baud again; a silent
+  // disconnect (retry / clean-install escalation) keeps any lowered ceiling so
+  // the retry writes at the gentler speed that a write-time failure implied.
+  if (!silent) { state.baudCeiling = null; /* caller decides next phase */ }
 }
 
 // ── helpers: downloads, stamps, confetti ────────────────────────────────────
@@ -2410,6 +5456,7 @@ function macStamp() {
 }
 
 function confettiBurst() {
+  if (prefersCalm()) return; // celebration stays; the motion politely doesn't
   const layer = el("div", "flash-confetti");
   document.body.append(layer);
   const bits = ["🐤", "✨", "🎉", "🟡", "💛"];

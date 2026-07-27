@@ -1,57 +1,158 @@
 name: Flasher Factory Images
 
-# Build the browser-flasher factory images + manifest-flash.json for an
-# EXISTING firmware tag and attach them to its GitHub Release. Manual
-# (workflow_dispatch) on purpose — this is the out-of-band path:
+# Build the browser-flasher factory images + manifest-flash.json and attach
+# them to a GitHub Release. Manual (workflow_dispatch) on purpose — this is the
+# out-of-band path, and it has two channels:
 #
-#   • Rebuild button — regenerate the flasher assets for a tag without cutting
-#     a new version (e.g. after a make_factory.py / packaging fix). The firmware
-#     built is still the tag's; only the packaging tooling is today's (overlay
-#     below), so a builder fix reaches already-cut tags.
-#   • Pre-key / no-key publishing — the browser flasher's integrity rests on
-#     SHA-256 + same-origin (docs/browser_flasher.md § Trust model), NOT the
-#     Ed25519 OTA release key. So these assets can go out before the OTA key
-#     ceremony: if firmware-release.yml hard-stops for a missing
-#     OTA_SIGNING_KEY_PEM, run THIS for the tag and the flasher lights up
-#     anyway (it will create the Release if one doesn't exist yet).
+#   • channel: release — an EXISTING fw-v* tag.
+#     - Rebuild button: regenerate the flasher assets for a tag without cutting
+#       a new version (e.g. after a make_factory.py / packaging fix). The
+#       firmware built is still the tag's; only the packaging tooling is
+#       today's (overlay below), so a builder fix reaches already-cut tags.
+#     - Pre-key publishing for a tag that exists but whose signed release
+#       hard-stopped on the missing OTA_SIGNING_KEY_PEM.
+#
+#   • channel: dev — the rolling `fw-dev-latest` prerelease, built from the
+#     DISPATCH REF's HEAD. No tag, no version bump, no OTA signing key. This is
+#     the answer to "a board is wired up and I need to flash it TODAY": the
+#     flasher's dev channel (Advanced → dev channel, or ?channel=dev) reads
+#     exactly this release, so one dispatch makes every product — displays
+#     included — installable without touching the version ceremony.
+#
+# Why either can ship without the Ed25519 key: the browser flasher's integrity
+# rests on SHA-256 + same-origin (docs/browser_flasher.md § Trust model), NOT
+# the OTA release key. Unsigned images are published honestly — the manifest
+# carries no `signature`, `imageVerificationPolicy()` resolves to
+# "checksum-only" while `release_pubkey` is the all-zero placeholder, and the
+# flasher says so on the receipt. Once the ceremony lands, the same manifest
+# gains signatures and the policy tightens on its own.
 #
 # On a normal signed release, firmware-release.yml already builds these in the
 # same run — via the SAME firmware/scripts/build_flash_manifest.py, so the two
 # paths can't drift. Dispatch-only here avoids racing that workflow to publish.
+#
+# One asset-layout difference to know about, on the dev channel only:
+# firmware-release.yml mirrors ONLY the manifests to fw-dev-latest, because its
+# binaries live at the real fw-v*-dev.* tag. This workflow has no such tag, so
+# it uploads the binaries to fw-dev-latest too and points the manifest there.
+# Both are self-consistent; whichever ran last owns that release's
+# manifest-flash.json, and each names its own binaries by absolute URL.
 
 on:
   workflow_dispatch:
     inputs:
+      channel:
+        description: "release = attach to an existing fw-v* tag · dev = publish this branch's HEAD to the rolling fw-dev-latest prerelease (no tag, no signing key)"
+        type: choice
+        options:
+          - release
+          - dev
+        default: release
       tag:
-        description: "Existing fw-v* release tag to (re)build flasher assets for (e.g. fw-v2.3.0)"
-        required: true
+        description: "channel=release only. Existing fw-v* release tag to (re)build flasher assets for (e.g. fw-v2.3.0). Blank = the latest published release."
+        required: false
         type: string
+        default: ""
 
 permissions:
   contents: write
+
+# One rebuild per target release at a time; never cancel mid-upload — a second
+# dispatch for the same target queues behind the first. The channel is part of
+# the key: a dev publish and a tag rebuild touch different releases and must not
+# serialize behind each other.
+concurrency:
+  group: flasher-release-${{ inputs.channel }}-${{ inputs.tag }}
+  cancel-in-progress: false
 
 jobs:
   factory-images:
     name: Build + attach browser-flasher factory images
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
-      - name: Resolve the target tag
+      - name: Resolve the target release
         id: tag
         env:
+          CHANNEL: ${{ inputs.channel }}
           TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+          if [ "$CHANNEL" = "dev" ]; then
+            # The dev channel has ONE stable address, matching the constant all
+            # three flasher frontends pin (flash-core.js / lib.rs / app.js —
+            # drift-gated by desktop_parity.test.js). It is a rolling pointer,
+            # not a version, so there is no tag to resolve and nothing to check
+            # out but the ref this workflow was dispatched from.
+            if [ -n "$TAG" ]; then
+              echo "::error::channel=dev publishes the rolling fw-dev-latest prerelease from this branch's HEAD — it takes no tag. Drop the tag input, or switch to channel=release."
+              exit 1
+            fi
+            {
+              echo "tag=fw-dev-latest"
+              echo "ref=${GITHUB_SHA}"
+              echo "prerelease=true"
+            } >> "$GITHUB_OUTPUT"
+            echo "Dev channel — publishing ${GITHUB_SHA} to the rolling fw-dev-latest prerelease."
+            exit 0
+          fi
+          if [ -z "$TAG" ]; then
+            # Blank = the stable channel's releases/latest — the exact URL the
+            # flasher's release channel polls (the API excludes prereleases and
+            # drafts). One-click "refresh the flasher for what's live".
+            TAG="$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name 2>/dev/null || true)"
+            if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+              echo "::error::no published (non-prerelease) release found to refresh. Pass an explicit fw-v* tag, cut a release first, or use channel=dev to publish this branch's HEAD to fw-dev-latest without a tag."
+              exit 1
+            fi
+            echo "No tag given — using the latest release: ${TAG}"
+          fi
           case "$TAG" in
             fw-v*) ;;
             *) echo "::error::expected a fw-v* tag, got '$TAG'"; exit 1 ;;
           esac
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=${TAG#fw-v}" >> "$GITHUB_OUTPUT"
+          # This path checks the tag OUT, so it must already exist. Say so here
+          # rather than letting actions/checkout fail with a bare git error —
+          # "the tag isn't cut yet" is the single most likely reason to be here.
+          if ! gh api "repos/${{ github.repository }}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
+            echo "::error::tag '${TAG}' does not exist. This channel rebuilds an already-cut tag. To publish flashable images with no tag and no signing key, re-run with channel=dev (it publishes this branch's HEAD to the rolling fw-dev-latest prerelease)."
+            exit 1
+          fi
+          {
+            echo "tag=$TAG"
+            echo "ref=$TAG"
+            echo "prerelease=false"
+          } >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v7
         with:
-          ref: ${{ steps.tag.outputs.tag }}
+          ref: ${{ steps.tag.outputs.ref }}
+
+      - name: Resolve the version being published
+        id: ver
+        # On the release channel the version IS the tag (fw-v2.3.0 → 2.3.0).
+        # On the dev channel there is no tag, so the version is the firmware
+        # train the checked-out tree actually compiles as — registry.json is
+        # its committed single source of truth (gen_flash.py mirrors it into
+        # flash.json as fw_train, drift-gated in CI). Getting this wrong is not
+        # silent: build_flash_manifest.py greps every built image for this
+        # exact string and refuses to publish a manifest that misstates it.
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "$CHANNEL" = "dev" ]; then
+            VERSION="$(jq -er .fw_train canary-local/devices/registry.json)"
+          else
+            VERSION="${TAG#fw-v}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing firmware version ${VERSION} to ${TAG}."
 
       - name: Overlay current flasher tooling onto the tagged firmware
+        if: inputs.channel != 'dev'
         # `ref: <tag>` above gives us the firmware source AS TAGGED — correct,
         # the flasher must ship the tagged firmware. But the *packaging* tooling
         # (make_factory.py, build_flash_manifest.py, and the flash.json catalog)
@@ -64,6 +165,9 @@ jobs:
           ref: ${{ github.ref }}
           path: _tooling
       - name: Apply the tooling overlay
+        # Skipped on the dev channel for the same reason it exists here: the
+        # checkout IS the dispatch ref, so the tooling is already today's.
+        if: inputs.channel != 'dev'
         run: |
           cp _tooling/firmware/scripts/make_factory.py firmware/scripts/make_factory.py
           cp _tooling/firmware/scripts/build_flash_manifest.py firmware/scripts/build_flash_manifest.py
@@ -72,14 +176,18 @@ jobs:
           rm -rf _tooling
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
       - name: Install build tools
         run: |
           python -m pip install --upgrade pip
-          pip install --upgrade platformio
+          # cryptography is what build_flash_manifest.py --signing-key needs
+          # (via ota_release.py). Installed unconditionally: whether this run
+          # signs depends on a secret, and discovering a missing dependency
+          # after a 40-minute build would be the worst possible moment.
+          pip install --upgrade platformio cryptography
           # esptool 4.11 imports intelhex without declaring it (same workaround
           # as the release workflow); esptool<5 keeps `merge_bin` stable for
           # make_factory.py.
@@ -134,19 +242,13 @@ jobs:
           HEADER
           pio run -e canary-sense-default -e canary-sense-wellbeing
 
-      - name: Install Arduino CLI
-        uses: arduino/setup-arduino-cli@v2
-
-      - name: Configure Arduino CLI + libraries
-        run: |
-          arduino-cli config init
-          arduino-cli config add board_manager.additional_urls \
-            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
-          arduino-cli core update-index
-          arduino-cli core install esp32:esp32
-          arduino-cli lib install "Crypto"
-          arduino-cli lib install "ArduinoJson"
-          arduino-cli lib install "NimBLE-Arduino"
+      - name: Install Arduino CLI + ESP32 core (cached)
+        uses: ./.github/actions/setup-arduino-esp32
+        with:
+          libraries: |
+            Crypto
+            ArduinoJson
+            NimBLE-Arduino
 
       - name: Build canary-wap (arduino-cli)
         run: |
@@ -157,30 +259,188 @@ jobs:
             --output-dir /tmp/wap-build \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
+      - name: Build canary-display watch + dash + modes (arduino-cli, profile-pinned)
+        # Same profile builds as firmware-release.yml (sketch.yaml pins the
+        # platform + libs; profiles install their own isolated core). Without
+        # this step the out-of-band rebuild would silently drop the display
+        # products from the flasher — build_flash_manifest only packages the
+        # build dirs that exist. Non-blocking for the same reason as there —
+        # and tolerant of OLDER TAGS: this workflow checks out an existing
+        # fw-v* tag, which may predate the display sketch or a given profile;
+        # a missing dir or profile is a warning, never a failed rebuild.
+        run: |
+          if [ ! -d firmware/projects/canary-display/arduino/canary_display ]; then
+            echo "::warning::this tag predates the display sketch — display products absent from this rebuild"
+            exit 0
+          fi
+          cd firmware/projects/canary-display/arduino/canary_display
+          for P in watch dash modes; do
+            # `modes` needs its gear flags staged: the profile pins the 4.3B
+            # board only, and CD_GEARS_COMPILED_IDENTITY (what makes the image
+            # a dash-modes product rather than plain dash) is derived from
+            # FEATURE_DEVMODE/DEMO_MODE/DEBUG_MODE/ARCADE in the git-ignored
+            # flavor_local.h. Unstaged, this ships a GEARLESS DASH image as the
+            # dash-modes factory image, so flashing "modes" would quietly give
+            # you plain dash. Older tags may predate the subcommand — fall back
+            # to skipping modes rather than packaging the wrong bytes.
+            if [ "$P" = modes ]; then
+              if ! ../../setup.sh flavor modes 2>/dev/null; then
+                echo "::warning::this tag's setup.sh has no 'flavor' subcommand — skipping dash-modes rather than packaging a gearless dash image as modes"
+                continue
+              fi
+            else
+              rm -f flavor_local.h
+            fi
+            if ! arduino-cli compile --profile "$P" \
+                --output-dir "/tmp/display-${P}-build" canary_display.ino; then
+              echo "::warning::canary-display '${P}' build failed — absent from the browser flasher this rebuild"
+            fi
+          done
+          rm -f flavor_local.h
+          cd "$GITHUB_WORKSPACE"
+
+      - name: Build canary-display board envs (PlatformIO, non-blocking)
+        # The Nightstand Line boards (dash7 / nightstand-s3 / nightstand-c6)
+        # release from their PlatformIO envs — same step as
+        # firmware-release.yml, same older-tag tolerance as the profile builds
+        # above: a tag whose ini predates an env just warns that env away
+        # (build_flash_manifest only packages the build dirs that exist). The
+        # C6 env gets its own PLATFORMIO_CORE_DIR — it rides the pioarduino
+        # core-3.x platform, which cannot share a core dir with the
+        # espressif32 platform the sibling envs use.
+        run: |
+          if [ ! -d firmware/projects/canary-display ]; then
+            echo "::warning::this tag predates canary-display — board-env products absent from this rebuild"
+            exit 0
+          fi
+          cd firmware/projects/canary-display
+          mkdir -p secrets
+          cat > secrets/secrets.h << 'HEADER'
+          #pragma once
+          // Generic factory build. Real credentials live in device NVS.
+          #define WIFI_SSID "ci-placeholder"
+          #define WIFI_PASS "ci-placeholder"
+          #define MQTT_HOST "127.0.0.1"
+          #define MQTT_PORT 1883
+          #define MQTT_USER nullptr
+          #define MQTT_PASS nullptr
+          HEADER
+          for E in canary-display-dash7 canary-display-nightstand-s3; do
+            if ! pio run -e "$E"; then
+              echo "::warning::${E} build failed (or this tag predates the env) — absent from the browser flasher this rebuild"
+            fi
+          done
+          if ! PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-canary-display-nightstand-c6" \
+              pio run -e canary-display-nightstand-c6; then
+            echo "::warning::canary-display-nightstand-c6 build failed (or this tag predates the env) — absent from the browser flasher this rebuild"
+          fi
+          cd "$GITHUB_WORKSPACE"
+
       - name: Build factory images + manifest-flash.json
         env:
-          VERSION: ${{ steps.tag.outputs.version }}
+          VERSION: ${{ steps.ver.outputs.version }}
           TAG: ${{ steps.tag.outputs.tag }}
+          OTA_SIGNING_KEY_PEM: ${{ secrets.OTA_SIGNING_KEY_PEM }}
         run: |
+          set -euo pipefail
+          # Sign IF AND ONLY IF a key is in force — and refuse to publish a
+          # manifest the flashers would reject.
+          #
+          # imageVerificationPolicy() (flash-core.js) is fail-closed: once the
+          # catalog pins a REAL release_pubkey, an official manifest with no
+          # signature returns "require-signature" and both flashers refuse
+          # every image in it. So "checksum-only" is correct only while the key
+          # is the all-zero placeholder. Publishing unsigned after the ceremony
+          # would overwrite a good manifest with one nothing can install — and
+          # on the dev channel it would do that to the rolling release every
+          # bring-up run. Three states, one decision:
+          #
+          #   placeholder key            → publish unsigned (checksum-only, honest)
+          #   real key + secret present  → sign, same scheme as the OTA path
+          #   real key + secret MISSING  → stop. Do not replace a signed
+          #                                manifest with a refusable one.
+          SIGN_ARGS=()
+          if python3 firmware/scripts/ota_key_state.py --json | jq -e '.embedded' >/dev/null; then
+            if [ -z "${OTA_SIGNING_KEY_PEM}" ]; then
+              echo "::error::A real OTA release key is pinned in the catalog, but OTA_SIGNING_KEY_PEM is not set. An unsigned manifest would be REFUSED by both flashers (imageVerificationPolicy → require-signature), so publishing it would break the channel rather than fill it. Add the secret (docs/RELEASE_BUTTONS.md § Firmware will not release) and re-run."
+              exit 1
+            fi
+            printf '%s' "$OTA_SIGNING_KEY_PEM" > /tmp/releaser.pem
+            chmod 600 /tmp/releaser.pem
+            SIGN_ARGS=(--signing-key /tmp/releaser.pem)
+            echo "Release key is in force — factory images will be signed."
+          else
+            echo "No release signing key pinned yet — publishing checksum-only images (the flasher verifies SHA-256 and reports them as unsigned)."
+          fi
           NOTES="$(awk "/^## \[${VERSION}\]/{f=1;next} /^## \[/{if(f)exit} f{print}" CHANGELOG.md | head -c 400 || true)"
           python3 firmware/scripts/build_flash_manifest.py \
             --version "$VERSION" \
             --repo "${{ github.repository }}" \
             --tag "$TAG" \
             --out-dir /tmp/release \
-            --notes "$NOTES"
+            --notes "$NOTES" \
+            "${SIGN_ARGS[@]+"${SIGN_ARGS[@]}"}"
+          rm -f /tmp/releaser.pem
           # Checksum file scoped to what this workflow publishes (the signed
           # release, when it exists, ships its own full sha256sums.txt).
           ( cd /tmp/release && { sha256sum manifest-flash.json; sha256sum ./*-factory.bin 2>/dev/null || true; } > flasher-sha256sums.txt )
           ls -la /tmp/release
 
+      # No build-provenance attestation on THIS path on purpose. It is a manual
+      # (workflow_dispatch) rebuild that compiles a *tagged* firmware with
+      # *today's* packaging tooling (the overlay above), so the workflow run's
+      # source ref (the dispatch commit) doesn't equal the firmware's tag — a
+      # single SLSA statement can't honestly name one source. The normal signed
+      # release (firmware-release.yml) builds the SAME factory images from the
+      # tag itself and attests them accurately; this out-of-band path keeps the
+      # SHA-256 + same-origin trust it always had (docs/browser_flasher.md
+      # § Trust model, docs/supply_chain_transparency.md § Scope).
+      # Two publish steps, not one with conditional inputs: passing an empty
+      # `body` to action-gh-release would blank an existing release's notes,
+      # and the release channel's whole contract is that it ADDS flasher assets
+      # to a release someone else wrote. So the tag path passes no name/body at
+      # all (preserving both), and the dev path — which owns its rolling
+      # release outright — sets them every run.
       - name: Attach to the release
+        if: inputs.channel != 'dev'
         # Adds/updates the flasher assets on the tag's release, creating the
         # release if it doesn't exist yet (the pre-key path). Existing release
         # notes and OTA assets are preserved.
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
+          files: |
+            /tmp/release/*-factory.bin
+            /tmp/release/manifest-flash.json
+            /tmp/release/flasher-sha256sums.txt
+
+      - name: Publish the rolling dev-channel release
+        if: inputs.channel == 'dev'
+        # `prerelease: true` is load-bearing, not cosmetic: `releases/latest` is
+        # the URL every fielded Canary polls for OTA, and it must stay on a
+        # stable fw-v* release. A prerelease is never returned by GitHub's
+        # getLatestRelease — and `fw-dev-latest` doesn't match the `^fw-v` test
+        # in .github/actions/keep-firmware-latest either. Both deliberate.
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Canary Firmware — dev channel (rolling)
+          prerelease: true
+          body: |
+            Rolling **dev channel** build of the browser-flasher factory
+            images, cut straight from `${{ github.sha }}` — no version tag and
+            no OTA signing key, so these images are verified by **SHA-256
+            against this manifest**, not by an Ed25519 release signature. The
+            flasher says exactly that on the receipt.
+
+            Currently carrying firmware **${{ steps.ver.outputs.version }}**.
+
+            Reach it from the flasher's **Advanced → dev channel** toggle (or
+            `?channel=dev`). Devices and flashers on the release channel never
+            see this: their URL rides `releases/latest`, which GitHub never
+            points at a prerelease.
+
+            See `docs/RELEASE_BUTTONS.md` § Flasher Factory Images.
           files: |
             /tmp/release/*-factory.bin
             /tmp/release/manifest-flash.json

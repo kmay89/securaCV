@@ -16,6 +16,8 @@ on:
       - 'config.example.toml'
       - 'adapter_host.example.toml'
       - 'integrations/ha_frigate_mqtt/**'
+      - 'docs/witness-kernel.html'
+      - 'tools/gen_kernel_status.py'
       - '.github/workflows/rust.yml'
   pull_request:
     branches: [ "main" ]
@@ -29,6 +31,8 @@ on:
       - 'config.example.toml'
       - 'adapter_host.example.toml'
       - 'integrations/ha_frigate_mqtt/**'
+      - 'docs/witness-kernel.html'
+      - 'tools/gen_kernel_status.py'
       - '.github/workflows/rust.yml'
 
 env:
@@ -49,6 +53,7 @@ jobs:
   build:
 
     runs-on: ubuntu-latest
+    timeout-minutes: 40
 
     steps:
     - uses: actions/checkout@v7
@@ -71,10 +76,16 @@ jobs:
       run: cargo check --features pqc-signatures,pqc-vault,pqc-tls
     - name: Test with PQC features
       run: cargo test --features pqc-signatures,pqc-vault
+    # c2pa-export tests actually execute here (not just compile-gate): the
+    # sidecar sign/verify round-trip and tamper rejection are security
+    # behavior, same rationale as the adapter job.
+    - name: Test with C2PA export feature
+      run: cargo test --features c2pa-export
 
   adapters:
     name: Adapters (behavioral tests, all features)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
     - uses: actions/checkout@v7
     - uses: Swatinem/rust-cache@v2
@@ -86,11 +97,12 @@ jobs:
     # adapter_cannot_bypass_enforcer suite and the parser fuzz-lite — compile
     # under the clippy-only optional-features job but never execute.
     - name: Test with all adapter features
-      run: cargo test --verbose --features adapter-frigate,adapter-mqtt-sensor,adapter-webhook,adapter-webhook-tls,adapter-ble-presence,adapter-meshtastic,adapter-sandbox
+      run: cargo test --verbose --features adapter-frigate,adapter-mqtt-sensor,adapter-webhook,adapter-webhook-tls,adapter-ble-presence,adapter-meshtastic,adapter-can-bus,adapter-sandbox
 
   ingest-ffmpeg:
     name: Ingest (ffmpeg file decode)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
     - uses: actions/checkout@v7
     # Cache cargo registry + target dir, keyed per job. Cuts re-runs (e.g.
@@ -112,6 +124,7 @@ jobs:
   ingest-rtsp:
     name: Ingest (rtsp end-to-end)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       # Pinned MediaMTX (RTSP server) used to serve the fixture over RTSP.
       MEDIAMTX_VERSION: v1.9.3
@@ -146,6 +159,7 @@ jobs:
   frigate-mqtt-e2e:
     name: Frigate MQTT (live broker)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
     - uses: actions/checkout@v7
     # Cache cargo registry + target dir, keyed per job. Cuts re-runs (e.g.
@@ -166,6 +180,7 @@ jobs:
   optional-features:
     name: Optional feature build gate
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Compile-gates the pure-Rust optional features that have no dedicated job, so a
     # dependency bump that isn't migrated in-source (e.g. ureq for ingest-esp32, tract
     # for backend-tract) fails CI instead of silently breaking an off-by-default feature.
@@ -183,15 +198,18 @@ jobs:
     - name: Clippy (ingest-esp32)
       run: cargo clippy --all-targets --features ingest-esp32 -- -D warnings
     - name: Clippy (adapters)
-      run: cargo clippy --all-targets --features adapter-frigate,adapter-mqtt-sensor,adapter-webhook,adapter-webhook-tls,adapter-ble-presence,adapter-meshtastic,adapter-sandbox -- -D warnings
+      run: cargo clippy --all-targets --features adapter-frigate,adapter-mqtt-sensor,adapter-webhook,adapter-webhook-tls,adapter-ble-presence,adapter-meshtastic,adapter-can-bus,adapter-sandbox -- -D warnings
     - name: Clippy (backend-tract)
       run: cargo clippy --all-targets --features backend-tract -- -D warnings
     - name: Clippy (ingest-v4l2)
       run: cargo clippy --all-targets --features ingest-v4l2 -- -D warnings
+    - name: Clippy (c2pa-export)
+      run: cargo clippy --all-targets --features c2pa-export -- -D warnings
 
   ingest-gstreamer:
     name: Ingest (gstreamer rtsp)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Compile-gate for the rtsp-gstreamer feature, which needs the GStreamer dev
     # libraries and so cannot live in the optional-features job above.
     steps:
@@ -206,3 +224,22 @@ jobs:
           libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
     - name: Clippy (rtsp-gstreamer)
       run: cargo clippy --all-targets --features rtsp-gstreamer -- -D warnings
+
+  status-grid:
+    name: witness-kernel status grid matches the code
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@v7
+    # The public "Implementation status" grid in docs/witness-kernel.html is a
+    # computed artifact: tools/gen_kernel_status.py inspects the source and
+    # stamps each tile done/wip/planned. Re-run it and fail if the committed
+    # HTML no longer matches the code — so the "verify by inspecting the code"
+    # promise can't silently rot.
+    - name: Status grid drift (stamped from the code)
+      run: |
+        python3 tools/gen_kernel_status.py
+        if ! git diff --exit-code -- docs/witness-kernel.html; then
+          echo "::error::docs/witness-kernel.html status grid is out of date — run 'python3 tools/gen_kernel_status.py' and commit (the kernel's implementation status changed)"
+          exit 1
+        fi

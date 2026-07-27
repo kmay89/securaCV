@@ -1,10 +1,11 @@
 {
   "$generated_by": "canary-local/tools/gen_flash.py — do not edit by hand",
   "$doc": "Browser flasher catalog. Live binaries come from manifest_url (the signed release); this file supplies the chip guard and the human copy, and is honest even before a release exists.",
-  "fw_train": "2.2.0",
+  "fw_train": "2.3.0",
   "repo": "kmay89/securaCV",
-  "release_latest": "https://github.com/kmay89/securaCV/releases/latest/download",
-  "manifest_url": "https://github.com/kmay89/securaCV/releases/latest/download/manifest-flash.json",
+  "release_download": "https://github.com/kmay89/securaCV/releases/download/fw-v2.3.0",
+  "manifest_url": "https://github.com/kmay89/securaCV/releases/download/fw-v2.3.0/manifest-flash.json",
+  "release_pubkey": "ae123a5c220c5499e579dc449e66392d83d5ad70d100747574eb7b2bac49b244",
   "flash_baud": 921600,
   "console_baud": 115200,
   "chips": {
@@ -24,78 +25,1547 @@
       "download_mode": "Hold the BOOT (B) button, tap RESET (R), then let go of BOOT."
     }
   },
+  "families": [
+    {
+      "id": "canary",
+      "name": "Canary",
+      "pitch": "The all-rounder witness — full sensing plus the Home Assistant bridge.",
+      "pick": null
+    },
+    {
+      "id": "wap",
+      "name": "Canary WAP",
+      "pitch": "Feels presence through the WiFi field itself — no camera.",
+      "pick": null
+    },
+    {
+      "id": "vision",
+      "name": "Canary Vision",
+      "pitch": "Person detection on the camera module itself — events, never video.",
+      "pick": "Which board is yours? (It's printed on the silkscreen.)"
+    },
+    {
+      "id": "sense",
+      "name": "Canary Sense",
+      "pitch": "Radar-native presence on 60 GHz mmWave — no camera, no mic.",
+      "pick": "Which sensing? Wellbeing adds breathing/heartbeat — a distinct privacy surface."
+    },
+    {
+      "id": "display",
+      "name": "Canary Display",
+      "pitch": "The fleet's face — it shows, it never watches.",
+      "pick": "Which glass is in your hands?"
+    }
+  ],
   "products": [
     {
       "id": "securacv-canary",
       "name": "Canary",
       "tagline": "The all-rounder witness — full sensing plus the Home Assistant bridge.",
+      "family": "canary",
+      "board_label": "Seeed XIAO ESP32-S3",
       "chip": "ESP32-S3",
+      "flash_mb": 8,
       "board": "seeed_xiao_esp32s3",
       "asset_stem": "canary",
       "provisioning": "ap",
-      "provisioning_note": "When it boots it hands you a WiFi network of its own — join it and a setup page opens automatically. Nothing to type here; no secrets ever touch the browser."
+      "provisioning_note": "When it boots it hands you a WiFi network of its own — join it and a setup page opens automatically. Nothing to type here; no secrets ever touch the browser.",
+      "wifi_nvs": "blob",
+      "hatch": {
+        "kicker": "Canary hatched",
+        "title": "Your Canary is on its perch.",
+        "body": "The magical first proof is local and physical: join its setup network, open the dashboard, then make one harmless signal it can witness.",
+        "steps": [
+          "Join the SecuraCV-XXXX Wi-Fi network it creates and open canary.local.",
+          "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
+          "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test."
+        ]
+      },
+      "serial_receipt": true,
+      "role": "canary",
+      "prove": {
+        "real": {
+          "kind": "monitor",
+          "label": "Watch it boot & prove itself →",
+          "how": "The live monitor: boot log, the signed self-manifest (j), health score and temperature — from the board's own mouth."
+        },
+        "emulated": {
+          "href": "homeassistant.html",
+          "label": "🧪 the emulated twin — its Home Assistant life",
+          "how": "The Hub lab: the exact entities, cards and automations this Canary raises, simulated from the same generated data."
+        }
+      }
     },
     {
       "id": "securacv-canary-wap",
       "name": "Canary WAP",
       "tagline": "Feels presence through the WiFi field itself — no camera. Sets itself up from a phone.",
+      "family": "wap",
+      "board_label": "Seeed XIAO ESP32-S3",
       "chip": "ESP32-S3",
+      "flash_mb": 8,
       "board": "seeed_xiao_esp32s3",
       "asset_stem": "canary-wap",
       "provisioning": "ap",
-      "provisioning_note": "When it boots it hands you a WiFi network of its own — join it and a setup page opens automatically. Nothing to type here; no secrets ever touch the browser."
+      "provisioning_note": "When it boots it hands you a WiFi network of its own — join it and a setup page opens automatically. Nothing to type here; no secrets ever touch the browser.",
+      "wifi_nvs": "blob",
+      "hatch": {
+        "kicker": "Canary hatched",
+        "title": "Your Canary is on its perch.",
+        "body": "The magical first proof is local and physical: join its setup network, open the dashboard, then make one harmless signal it can witness.",
+        "steps": [
+          "Join the SecuraCV-XXXX Wi-Fi network it creates and open canary.local.",
+          "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
+          "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test."
+        ]
+      },
+      "serial_receipt": false,
+      "role": "wap",
+      "prove": {
+        "real": {
+          "kind": "bench-field",
+          "label": "🌊 Feel the field — the live WiFi bench →",
+          "how": "The field bench: RF events, device counts, and the CSI stir meter, live off the USB console."
+        },
+        "emulated": {
+          "href": "wap.html",
+          "label": "🧪 the emulated twin — the guided WAP walkthrough",
+          "how": "The WAP lab: the same sensing pipeline and first-boot story, simulated from the firmware's own facts."
+        }
+      }
     },
     {
       "id": "securacv-canary-vision",
       "name": "Canary Vision",
       "tagline": "Person detection on the camera module itself — only “someone is here” ever leaves the board.",
+      "family": "vision",
+      "board_label": "ESP32-C3 DevKit",
       "chip": "ESP32-C3",
+      "flash_mb": 4,
       "board": "esp32-c3-devkitm-1",
       "asset_stem": "canary-vision",
       "provisioning": "usb-secrets",
-      "provisioning_note": "This sensor learns your WiFi from the firmware you flash. The signed release carries safe placeholders; to bake in your own network, build it once with your secrets (the guide shows how) — every later update inherits it from the device’s memory."
+      "provisioning_note": "Fill in WiFi during the install and it’s written straight into the chip’s settings region — the signed generic release then joins YOUR network on first boot, no custom build needed. (Leave it empty and the firmware falls back to its compiled defaults, exactly as before.)",
+      "wifi_nvs": "string",
+      "hatch": {
+        "kicker": "Vision Canary hatched",
+        "title": "Your Vision Canary is waking up.",
+        "body": "Give it one visible, privacy-safe thing to notice immediately: presence only, no faces and no saved frames.",
+        "steps": [
+          "If you have not flashed the Grove Vision AI V2 module yet, move the USB-C cable to the module port and flash the pinned model.",
+          "Put the board where it can see a doorway, then walk through once.",
+          "Open Home Assistant and watch the presence entity flip to detected, then clear."
+        ]
+      },
+      "serial_receipt": true,
+      "role": "vision",
+      "prove": {
+        "real": {
+          "kind": "bench-camera",
+          "label": "👁 See through it — the camera bench →",
+          "how": "The module bench (the camera's OWN USB-C port): live frames, boxes, the confidence meter and the two on-module dials."
+        },
+        "emulated": {
+          "href": "vision.html",
+          "label": "🧪 the emulated twin — firmware-backed detection",
+          "how": "The Vision lab: the real detection math compiled for the browser, running on a staged scene."
+        }
+      },
+      "pick_label": "ESP32-C3 DevKitM-1",
+      "detect": {
+        "note": "These are the SAME four numbers Home Assistant tunes live later (cfg/*/set → NVS). Baking a preset here just means the Canary is already dialed for its room on first boot — nothing is locked in.",
+        "nvs": {
+          "namespace": "securacv",
+          "keys": {
+            "target": "det_target",
+            "score": "det_score",
+            "lost_ms": "det_lost",
+            "dwell_ms": "det_dwell"
+          }
+        },
+        "defaults": {
+          "target": 0,
+          "score": 70,
+          "lost_ms": 1500,
+          "dwell_ms": 10000
+        },
+        "bounds": {
+          "score": [
+            0,
+            100
+          ],
+          "target": [
+            0,
+            255
+          ],
+          "lost_ms": [
+            250,
+            60000
+          ],
+          "dwell_ms": [
+            1000,
+            600000
+          ]
+        },
+        "presets": [
+          {
+            "id": "ships",
+            "icon": "🐤",
+            "title": "As it ships",
+            "blurb": "The firmware’s own defaults — balanced for a first bring-up. Pick nothing and this is what you get.",
+            "values": {
+              "target": 0,
+              "score": 70,
+              "lost_ms": 1500,
+              "dwell_ms": 10000
+            }
+          },
+          {
+            "id": "entry",
+            "icon": "🚪",
+            "title": "Entryway / front door",
+            "blurb": "Presence at the door is the event; nobody dwells in a doorway. Fast lost timeout, short dwell — the voxel column tells you in/out of the frame.",
+            "values": {
+              "score": 75,
+              "lost_ms": 1000,
+              "dwell_ms": 5000
+            }
+          },
+          {
+            "id": "living",
+            "icon": "🛋️",
+            "title": "Living room / shared space",
+            "blurb": "Occupancy is the question, not motion. Longer lost timeout rides through stillness (reading, TV); dwelling becomes the useful signal.",
+            "values": {
+              "score": 70,
+              "lost_ms": 4000,
+              "dwell_ms": 30000
+            }
+          },
+          {
+            "id": "hall",
+            "icon": "🚶",
+            "title": "Hallway / corridor",
+            "blurb": "People transit fast — a low dwell would never latch anyway. Default score, snappy lost timeout, dwell long so a lingerer stands out.",
+            "values": {
+              "score": 70,
+              "lost_ms": 1000,
+              "dwell_ms": 60000
+            }
+          },
+          {
+            "id": "workshop",
+            "icon": "🧰",
+            "title": "Garage / workshop",
+            "blurb": "Harsh light and clutter: raise the score floor to shrug off shadows and shapes; dwell marks a real work session.",
+            "values": {
+              "score": 80,
+              "lost_ms": 3000,
+              "dwell_ms": 60000
+            }
+          },
+          {
+            "id": "office",
+            "icon": "💻",
+            "title": "Home office",
+            "blurb": "A monitor is in frame by definition — raise the threshold, trust dwell. Screen-people flicker below it; you at the desk persist above it.",
+            "values": {
+              "score": 85,
+              "lost_ms": 5000,
+              "dwell_ms": 15000
+            }
+          }
+        ]
+      }
     },
     {
       "id": "securacv-canary-vision-xiao-c3",
       "name": "Canary Vision · XIAO C3",
       "tagline": "The Vision witness on a Seeed XIAO ESP32-C3.",
+      "family": "vision",
+      "board_label": "Seeed XIAO ESP32-C3",
       "chip": "ESP32-C3",
+      "flash_mb": 4,
       "board": "seeed_xiao_esp32c3",
       "asset_stem": "canary-vision-xiao-c3",
       "provisioning": "usb-secrets",
-      "provisioning_note": "This sensor learns your WiFi from the firmware you flash. The signed release carries safe placeholders; to bake in your own network, build it once with your secrets (the guide shows how) — every later update inherits it from the device’s memory."
+      "provisioning_note": "Fill in WiFi during the install and it’s written straight into the chip’s settings region — the signed generic release then joins YOUR network on first boot, no custom build needed. (Leave it empty and the firmware falls back to its compiled defaults, exactly as before.)",
+      "wifi_nvs": "string",
+      "hatch": {
+        "kicker": "Vision Canary hatched",
+        "title": "Your Vision Canary is waking up.",
+        "body": "Give it one visible, privacy-safe thing to notice immediately: presence only, no faces and no saved frames.",
+        "steps": [
+          "If you have not flashed the Grove Vision AI V2 module yet, move the USB-C cable to the module port and flash the pinned model.",
+          "Put the board where it can see a doorway, then walk through once.",
+          "Open Home Assistant and watch the presence entity flip to detected, then clear."
+        ]
+      },
+      "serial_receipt": true,
+      "role": "vision",
+      "prove": {
+        "real": {
+          "kind": "bench-camera",
+          "label": "👁 See through it — the camera bench →",
+          "how": "The module bench (the camera's OWN USB-C port): live frames, boxes, the confidence meter and the two on-module dials."
+        },
+        "emulated": {
+          "href": "vision.html",
+          "label": "🧪 the emulated twin — firmware-backed detection",
+          "how": "The Vision lab: the real detection math compiled for the browser, running on a staged scene."
+        }
+      },
+      "pick_label": "XIAO ESP32-C3",
+      "detect": {
+        "note": "These are the SAME four numbers Home Assistant tunes live later (cfg/*/set → NVS). Baking a preset here just means the Canary is already dialed for its room on first boot — nothing is locked in.",
+        "nvs": {
+          "namespace": "securacv",
+          "keys": {
+            "target": "det_target",
+            "score": "det_score",
+            "lost_ms": "det_lost",
+            "dwell_ms": "det_dwell"
+          }
+        },
+        "defaults": {
+          "target": 0,
+          "score": 70,
+          "lost_ms": 1500,
+          "dwell_ms": 10000
+        },
+        "bounds": {
+          "score": [
+            0,
+            100
+          ],
+          "target": [
+            0,
+            255
+          ],
+          "lost_ms": [
+            250,
+            60000
+          ],
+          "dwell_ms": [
+            1000,
+            600000
+          ]
+        },
+        "presets": [
+          {
+            "id": "ships",
+            "icon": "🐤",
+            "title": "As it ships",
+            "blurb": "The firmware’s own defaults — balanced for a first bring-up. Pick nothing and this is what you get.",
+            "values": {
+              "target": 0,
+              "score": 70,
+              "lost_ms": 1500,
+              "dwell_ms": 10000
+            }
+          },
+          {
+            "id": "entry",
+            "icon": "🚪",
+            "title": "Entryway / front door",
+            "blurb": "Presence at the door is the event; nobody dwells in a doorway. Fast lost timeout, short dwell — the voxel column tells you in/out of the frame.",
+            "values": {
+              "score": 75,
+              "lost_ms": 1000,
+              "dwell_ms": 5000
+            }
+          },
+          {
+            "id": "living",
+            "icon": "🛋️",
+            "title": "Living room / shared space",
+            "blurb": "Occupancy is the question, not motion. Longer lost timeout rides through stillness (reading, TV); dwelling becomes the useful signal.",
+            "values": {
+              "score": 70,
+              "lost_ms": 4000,
+              "dwell_ms": 30000
+            }
+          },
+          {
+            "id": "hall",
+            "icon": "🚶",
+            "title": "Hallway / corridor",
+            "blurb": "People transit fast — a low dwell would never latch anyway. Default score, snappy lost timeout, dwell long so a lingerer stands out.",
+            "values": {
+              "score": 70,
+              "lost_ms": 1000,
+              "dwell_ms": 60000
+            }
+          },
+          {
+            "id": "workshop",
+            "icon": "🧰",
+            "title": "Garage / workshop",
+            "blurb": "Harsh light and clutter: raise the score floor to shrug off shadows and shapes; dwell marks a real work session.",
+            "values": {
+              "score": 80,
+              "lost_ms": 3000,
+              "dwell_ms": 60000
+            }
+          },
+          {
+            "id": "office",
+            "icon": "💻",
+            "title": "Home office",
+            "blurb": "A monitor is in frame by definition — raise the threshold, trust dwell. Screen-people flicker below it; you at the desk persist above it.",
+            "values": {
+              "score": 85,
+              "lost_ms": 5000,
+              "dwell_ms": 15000
+            }
+          }
+        ]
+      }
     },
     {
       "id": "securacv-canary-vision-xiao-s3",
       "name": "Canary Vision · XIAO S3",
       "tagline": "The Vision witness on a Seeed XIAO ESP32-S3.",
+      "family": "vision",
+      "board_label": "Seeed XIAO ESP32-S3",
       "chip": "ESP32-S3",
+      "flash_mb": 8,
       "board": "seeed_xiao_esp32s3",
       "asset_stem": "canary-vision-xiao-s3",
       "provisioning": "usb-secrets",
-      "provisioning_note": "This sensor learns your WiFi from the firmware you flash. The signed release carries safe placeholders; to bake in your own network, build it once with your secrets (the guide shows how) — every later update inherits it from the device’s memory."
+      "provisioning_note": "Fill in WiFi during the install and it’s written straight into the chip’s settings region — the signed generic release then joins YOUR network on first boot, no custom build needed. (Leave it empty and the firmware falls back to its compiled defaults, exactly as before.)",
+      "wifi_nvs": "string",
+      "hatch": {
+        "kicker": "Vision Canary hatched",
+        "title": "Your Vision Canary is waking up.",
+        "body": "Give it one visible, privacy-safe thing to notice immediately: presence only, no faces and no saved frames.",
+        "steps": [
+          "If you have not flashed the Grove Vision AI V2 module yet, move the USB-C cable to the module port and flash the pinned model.",
+          "Put the board where it can see a doorway, then walk through once.",
+          "Open Home Assistant and watch the presence entity flip to detected, then clear."
+        ]
+      },
+      "serial_receipt": true,
+      "role": "vision",
+      "prove": {
+        "real": {
+          "kind": "bench-camera",
+          "label": "👁 See through it — the camera bench →",
+          "how": "The module bench (the camera's OWN USB-C port): live frames, boxes, the confidence meter and the two on-module dials."
+        },
+        "emulated": {
+          "href": "vision.html",
+          "label": "🧪 the emulated twin — firmware-backed detection",
+          "how": "The Vision lab: the real detection math compiled for the browser, running on a staged scene."
+        }
+      },
+      "pick_label": "XIAO ESP32-S3",
+      "detect": {
+        "note": "These are the SAME four numbers Home Assistant tunes live later (cfg/*/set → NVS). Baking a preset here just means the Canary is already dialed for its room on first boot — nothing is locked in.",
+        "nvs": {
+          "namespace": "securacv",
+          "keys": {
+            "target": "det_target",
+            "score": "det_score",
+            "lost_ms": "det_lost",
+            "dwell_ms": "det_dwell"
+          }
+        },
+        "defaults": {
+          "target": 0,
+          "score": 70,
+          "lost_ms": 1500,
+          "dwell_ms": 10000
+        },
+        "bounds": {
+          "score": [
+            0,
+            100
+          ],
+          "target": [
+            0,
+            255
+          ],
+          "lost_ms": [
+            250,
+            60000
+          ],
+          "dwell_ms": [
+            1000,
+            600000
+          ]
+        },
+        "presets": [
+          {
+            "id": "ships",
+            "icon": "🐤",
+            "title": "As it ships",
+            "blurb": "The firmware’s own defaults — balanced for a first bring-up. Pick nothing and this is what you get.",
+            "values": {
+              "target": 0,
+              "score": 70,
+              "lost_ms": 1500,
+              "dwell_ms": 10000
+            }
+          },
+          {
+            "id": "entry",
+            "icon": "🚪",
+            "title": "Entryway / front door",
+            "blurb": "Presence at the door is the event; nobody dwells in a doorway. Fast lost timeout, short dwell — the voxel column tells you in/out of the frame.",
+            "values": {
+              "score": 75,
+              "lost_ms": 1000,
+              "dwell_ms": 5000
+            }
+          },
+          {
+            "id": "living",
+            "icon": "🛋️",
+            "title": "Living room / shared space",
+            "blurb": "Occupancy is the question, not motion. Longer lost timeout rides through stillness (reading, TV); dwelling becomes the useful signal.",
+            "values": {
+              "score": 70,
+              "lost_ms": 4000,
+              "dwell_ms": 30000
+            }
+          },
+          {
+            "id": "hall",
+            "icon": "🚶",
+            "title": "Hallway / corridor",
+            "blurb": "People transit fast — a low dwell would never latch anyway. Default score, snappy lost timeout, dwell long so a lingerer stands out.",
+            "values": {
+              "score": 70,
+              "lost_ms": 1000,
+              "dwell_ms": 60000
+            }
+          },
+          {
+            "id": "workshop",
+            "icon": "🧰",
+            "title": "Garage / workshop",
+            "blurb": "Harsh light and clutter: raise the score floor to shrug off shadows and shapes; dwell marks a real work session.",
+            "values": {
+              "score": 80,
+              "lost_ms": 3000,
+              "dwell_ms": 60000
+            }
+          },
+          {
+            "id": "office",
+            "icon": "💻",
+            "title": "Home office",
+            "blurb": "A monitor is in frame by definition — raise the threshold, trust dwell. Screen-people flicker below it; you at the desk persist above it.",
+            "values": {
+              "score": 85,
+              "lost_ms": 5000,
+              "dwell_ms": 15000
+            }
+          }
+        ]
+      }
     },
     {
       "id": "securacv-canary-sense",
       "name": "Canary Sense",
       "tagline": "Radar-native presence on 60 GHz mmWave — no camera, no mic.",
+      "family": "sense",
+      "board_label": "Seeed XIAO ESP32-C6",
       "chip": "ESP32-C6",
+      "flash_mb": 4,
       "board": "seeed_xiao_esp32c6",
       "asset_stem": "canary-sense",
       "provisioning": "usb-secrets",
-      "provisioning_note": "This sensor learns your WiFi from the firmware you flash. The signed release carries safe placeholders; to bake in your own network, build it once with your secrets (the guide shows how) — every later update inherits it from the device’s memory."
+      "provisioning_note": "Fill in WiFi during the install and it’s written straight into the chip’s settings region — the signed generic release then joins YOUR network on first boot, no custom build needed. (Leave it empty and the firmware falls back to its compiled defaults, exactly as before.)",
+      "wifi_nvs": "string",
+      "hatch": {
+        "kicker": "Sense Canary hatched",
+        "title": "Your Sense Canary is listening with radar.",
+        "body": "The first satisfying test is motion in empty air: no camera, no mic, just the mmWave witness waking up.",
+        "steps": [
+          "Power it from the room where it will live and wait for Home Assistant discovery.",
+          "Stand still for a breath, then walk past it at normal speed.",
+          "Watch presence flip in Home Assistant."
+        ]
+      },
+      "serial_receipt": false,
+      "role": "sense",
+      "prove": {
+        "real": {
+          "kind": "bench-radar",
+          "label": "👋 Feel it sense — the live radar bench →",
+          "how": "The radar bench: presence, bands, count — and on Wellbeing, live breathing and heart rate — off the USB console."
+        },
+        "emulated": {
+          "href": "senselab.html",
+          "label": "🧪 the emulated twin — the Sense Lab bench",
+          "how": "The Sense Lab: the real presence/vitals FSMs ported to the browser, with every reflex on a slider."
+        }
+      },
+      "pick_label": "presence only",
+      "reflexes": {
+        "applies": "runtime",
+        "nvs": {
+          "namespace": "securacv",
+          "keys": {
+            "present_debounce_ms": "sns_debounce",
+            "clear_timeout_ms": "sns_clear",
+            "stall_timeout_ms": "sns_stall",
+            "range_near_cm": "sns_near",
+            "range_mid_cm": "sns_mid"
+          }
+        },
+        "note": "These are live numbers now: they persist in the chip’s settings region and Home Assistant can retune every one of them later (cfg/*/set). Baking a preset here just means the Canary is already dialed for its room on first boot — nothing is locked in.",
+        "lab": "senselab.html",
+        "knobs": [
+          {
+            "id": "present_debounce_ms",
+            "macro": "CS_PRESENT_DEBOUNCE_MS",
+            "unit": "ms",
+            "value": 300,
+            "nvs": "sns_debounce",
+            "bounds": [
+              0,
+              3000
+            ]
+          },
+          {
+            "id": "clear_timeout_ms",
+            "macro": "CS_CLEAR_TIMEOUT_MS",
+            "unit": "ms",
+            "value": 1500,
+            "nvs": "sns_clear",
+            "bounds": [
+              200,
+              10000
+            ]
+          },
+          {
+            "id": "stall_timeout_ms",
+            "macro": "CS_RADAR_STALL_MS",
+            "unit": "ms",
+            "value": 5000,
+            "nvs": "sns_stall",
+            "bounds": [
+              1000,
+              20000
+            ]
+          },
+          {
+            "id": "range_near_cm",
+            "macro": "CS_RANGE_NEAR_CM",
+            "unit": "cm",
+            "value": 150,
+            "nvs": "sns_near",
+            "bounds": [
+              50,
+              400
+            ]
+          },
+          {
+            "id": "range_mid_cm",
+            "macro": "CS_RANGE_MID_CM",
+            "unit": "cm",
+            "value": 350,
+            "nvs": "sns_mid",
+            "bounds": [
+              100,
+              600
+            ]
+          }
+        ],
+        "presets": [
+          {
+            "id": "ships",
+            "icon": "🐤",
+            "title": "As it ships",
+            "blurb": "The firmware’s own reflexes — balanced for a first bring-up. Pick nothing and this is what you get.",
+            "values": {
+              "present_debounce_ms": 300,
+              "clear_timeout_ms": 1500,
+              "stall_timeout_ms": 5000,
+              "range_near_cm": 150,
+              "range_mid_cm": 350
+            }
+          },
+          {
+            "id": "bedside",
+            "icon": "🛏",
+            "title": "Bedside / sleep watch",
+            "blurb": "Slow to alarm, steady through stillness. Longer debounce and clear ride out turning-over; tighter bands match a bed two steps away; vitals lock waits for a genuinely settled signal.",
+            "values": {
+              "present_debounce_ms": 500,
+              "clear_timeout_ms": 5000,
+              "stall_timeout_ms": 5000,
+              "range_near_cm": 100,
+              "range_mid_cm": 250
+            }
+          },
+          {
+            "id": "living",
+            "icon": "🛋",
+            "title": "Living room / shared space",
+            "blurb": "Occupancy over motion: a long clear timeout rides through reading and TV stillness; wider bands cover the whole room.",
+            "values": {
+              "present_debounce_ms": 300,
+              "clear_timeout_ms": 4000,
+              "stall_timeout_ms": 5000,
+              "range_near_cm": 200,
+              "range_mid_cm": 450
+            }
+          },
+          {
+            "id": "hall",
+            "icon": "🚶",
+            "title": "Hallway / corridor",
+            "blurb": "People transit fast — a short debounce catches them, a snappy clear frees the room the moment they’re gone.",
+            "values": {
+              "present_debounce_ms": 200,
+              "clear_timeout_ms": 800,
+              "stall_timeout_ms": 5000,
+              "range_near_cm": 150,
+              "range_mid_cm": 350
+            }
+          },
+          {
+            "id": "workshop",
+            "icon": "🧰",
+            "title": "Garage / workshop",
+            "blurb": "Machinery shakes the air: a longer debounce shrugs off vibration phantoms; a far mid band covers the long room.",
+            "values": {
+              "present_debounce_ms": 600,
+              "clear_timeout_ms": 2000,
+              "stall_timeout_ms": 5000,
+              "range_near_cm": 150,
+              "range_mid_cm": 500
+            }
+          }
+        ]
+      }
     },
     {
       "id": "securacv-canary-sense-wellbeing",
       "name": "Canary Sense · Wellbeing",
       "tagline": "The mmWave witness with breathing/heartbeat sensing — a distinct privacy surface.",
+      "family": "sense",
+      "board_label": "Seeed XIAO ESP32-C6",
       "chip": "ESP32-C6",
+      "flash_mb": 4,
       "board": "seeed_xiao_esp32c6",
       "asset_stem": "canary-sense-wellbeing",
       "provisioning": "usb-secrets",
-      "provisioning_note": "This sensor learns your WiFi from the firmware you flash. The signed release carries safe placeholders; to bake in your own network, build it once with your secrets (the guide shows how) — every later update inherits it from the device’s memory."
+      "provisioning_note": "Fill in WiFi during the install and it’s written straight into the chip’s settings region — the signed generic release then joins YOUR network on first boot, no custom build needed. (Leave it empty and the firmware falls back to its compiled defaults, exactly as before.)",
+      "wifi_nvs": "string",
+      "hatch": {
+        "kicker": "Wellbeing Canary hatched",
+        "title": "Your Sense Wellbeing Canary is listening with radar.",
+        "body": "Prove ordinary presence first, then let the gentler wellbeing signal settle before trusting breathing/heartbeat tiles.",
+        "steps": [
+          "Power it from the room where it will live and wait for Home Assistant discovery.",
+          "Walk past it once and watch presence flip in Home Assistant.",
+          "Sit still after the presence card is stable; then watch the wellbeing tile settle into its first breathing/heartbeat reading."
+        ]
+      },
+      "serial_receipt": false,
+      "role": "sense",
+      "prove": {
+        "real": {
+          "kind": "bench-radar",
+          "label": "👋 Feel it sense — the live radar bench →",
+          "how": "The radar bench: presence, bands, count — and on Wellbeing, live breathing and heart rate — off the USB console."
+        },
+        "emulated": {
+          "href": "senselab.html",
+          "label": "🧪 the emulated twin — the Sense Lab bench",
+          "how": "The Sense Lab: the real presence/vitals FSMs ported to the browser, with every reflex on a slider."
+        }
+      },
+      "pick_label": "with wellbeing (breathing/heartbeat)",
+      "reflexes": {
+        "applies": "runtime",
+        "nvs": {
+          "namespace": "securacv",
+          "keys": {
+            "present_debounce_ms": "sns_debounce",
+            "clear_timeout_ms": "sns_clear",
+            "stall_timeout_ms": "sns_stall",
+            "range_near_cm": "sns_near",
+            "range_mid_cm": "sns_mid",
+            "vitals_lock_ms": "sns_vlock",
+            "vitals_lost_ms": "sns_vlost"
+          }
+        },
+        "note": "These are live numbers now: they persist in the chip’s settings region and Home Assistant can retune every one of them later (cfg/*/set). Baking a preset here just means the Canary is already dialed for its room on first boot — nothing is locked in.",
+        "lab": "senselab.html",
+        "knobs": [
+          {
+            "id": "present_debounce_ms",
+            "macro": "CS_PRESENT_DEBOUNCE_MS",
+            "unit": "ms",
+            "value": 300,
+            "nvs": "sns_debounce",
+            "bounds": [
+              0,
+              3000
+            ]
+          },
+          {
+            "id": "clear_timeout_ms",
+            "macro": "CS_CLEAR_TIMEOUT_MS",
+            "unit": "ms",
+            "value": 1500,
+            "nvs": "sns_clear",
+            "bounds": [
+              200,
+              10000
+            ]
+          },
+          {
+            "id": "stall_timeout_ms",
+            "macro": "CS_RADAR_STALL_MS",
+            "unit": "ms",
+            "value": 5000,
+            "nvs": "sns_stall",
+            "bounds": [
+              1000,
+              20000
+            ]
+          },
+          {
+            "id": "range_near_cm",
+            "macro": "CS_RANGE_NEAR_CM",
+            "unit": "cm",
+            "value": 150,
+            "nvs": "sns_near",
+            "bounds": [
+              50,
+              400
+            ]
+          },
+          {
+            "id": "range_mid_cm",
+            "macro": "CS_RANGE_MID_CM",
+            "unit": "cm",
+            "value": 350,
+            "nvs": "sns_mid",
+            "bounds": [
+              100,
+              600
+            ]
+          },
+          {
+            "id": "vitals_lock_ms",
+            "macro": "CS_VITALS_LOCK_MS",
+            "unit": "ms",
+            "value": 4000,
+            "nvs": "sns_vlock",
+            "bounds": [
+              500,
+              15000
+            ]
+          },
+          {
+            "id": "vitals_lost_ms",
+            "macro": "CS_VITALS_LOST_MS",
+            "unit": "ms",
+            "value": 6000,
+            "nvs": "sns_vlost",
+            "bounds": [
+              1000,
+              20000
+            ]
+          }
+        ],
+        "presets": [
+          {
+            "id": "ships",
+            "icon": "🐤",
+            "title": "As it ships",
+            "blurb": "The firmware’s own reflexes — balanced for a first bring-up. Pick nothing and this is what you get.",
+            "values": {
+              "present_debounce_ms": 300,
+              "clear_timeout_ms": 1500,
+              "stall_timeout_ms": 5000,
+              "range_near_cm": 150,
+              "range_mid_cm": 350,
+              "vitals_lock_ms": 4000,
+              "vitals_lost_ms": 6000
+            }
+          },
+          {
+            "id": "bedside",
+            "icon": "🛏",
+            "title": "Bedside / sleep watch",
+            "blurb": "Slow to alarm, steady through stillness. Longer debounce and clear ride out turning-over; tighter bands match a bed two steps away; vitals lock waits for a genuinely settled signal.",
+            "values": {
+              "present_debounce_ms": 500,
+              "clear_timeout_ms": 5000,
+              "stall_timeout_ms": 5000,
+              "range_near_cm": 100,
+              "range_mid_cm": 250,
+              "vitals_lock_ms": 6000,
+              "vitals_lost_ms": 8000
+            }
+          },
+          {
+            "id": "living",
+            "icon": "🛋",
+            "title": "Living room / shared space",
+            "blurb": "Occupancy over motion: a long clear timeout rides through reading and TV stillness; wider bands cover the whole room.",
+            "values": {
+              "present_debounce_ms": 300,
+              "clear_timeout_ms": 4000,
+              "stall_timeout_ms": 5000,
+              "range_near_cm": 200,
+              "range_mid_cm": 450,
+              "vitals_lock_ms": 4000,
+              "vitals_lost_ms": 6000
+            }
+          },
+          {
+            "id": "hall",
+            "icon": "🚶",
+            "title": "Hallway / corridor",
+            "blurb": "People transit fast — a short debounce catches them, a snappy clear frees the room the moment they’re gone.",
+            "values": {
+              "present_debounce_ms": 200,
+              "clear_timeout_ms": 800,
+              "stall_timeout_ms": 5000,
+              "range_near_cm": 150,
+              "range_mid_cm": 350,
+              "vitals_lock_ms": 4000,
+              "vitals_lost_ms": 6000
+            }
+          },
+          {
+            "id": "workshop",
+            "icon": "🧰",
+            "title": "Garage / workshop",
+            "blurb": "Machinery shakes the air: a longer debounce shrugs off vibration phantoms; a far mid band covers the long room.",
+            "values": {
+              "present_debounce_ms": 600,
+              "clear_timeout_ms": 2000,
+              "stall_timeout_ms": 5000,
+              "range_near_cm": 150,
+              "range_mid_cm": 500,
+              "vitals_lock_ms": 4000,
+              "vitals_lost_ms": 6000
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "securacv-canary-display-watch",
+      "name": "Canary Watch Station",
+      "tagline": "The bedside glance — your whole fleet on one calm round glass.",
+      "family": "display",
+      "board_label": "XIAO ESP32-S3 + Seeed Round Display",
+      "chip": "ESP32-S3",
+      "flash_mb": 8,
+      "board": "seeed_xiao_esp32s3",
+      "asset_stem": "canary-display-watch",
+      "provisioning": "on-glass",
+      "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
+      "wifi_nvs": "string",
+      "hatch": {
+        "kicker": "Display hatched",
+        "title": "Your glass is waking up.",
+        "body": "First light is the whole setup: the display guides you from its own screen — no app, no account, and it never reboot-loops on a fresh network.",
+        "steps": [
+          "Watch the splash land, then the hello: a fresh display shows a join QR on its own glass (a device-unique setup network).",
+          "Scan the QR with your phone — the setup page opens by itself; pick your home Wi-Fi and you're done typing.",
+          "The fleet face fades in and every Canary on your broker appears on its own — retained topics, no pairing, ever."
+        ]
+      },
+      "serial_receipt": false,
+      "role": "display",
+      "prove": {
+        "real": {
+          "kind": "glass",
+          "label": "Watch the glass — it comes alive",
+          "how": "The proof is the screen itself: splash, then the face, then the on-glass wizard. Touch works."
+        },
+        "emulated": {
+          "href": "fleet.html#canary-display-watch",
+          "label": "🧪 the 1:1 twin — the same firmware, in the browser",
+          "how": "The fleet page boots the REAL display firmware compiled to WASM — the pixels here are the pixels the glass shows. The listening 4.3C variant gets its own does/doesn't mic bench at dash-mic.html — same decision core, drift-locked."
+        }
+      },
+      "pick_label": "Watch Station — the round puck"
+    },
+    {
+      "id": "securacv-canary-display-dash",
+      "name": "Canary Dash",
+      "tagline": "The wall glass — quiet 4.3″ 800×480 truth for the whole house.",
+      "family": "display",
+      "board_label": "Waveshare 4.3 panel module",
+      "chip": "ESP32-S3",
+      "flash_mb": 16,
+      "board": "waveshare_esp32s3_lcd43",
+      "asset_stem": "canary-display-dash",
+      "provisioning": "on-glass",
+      "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
+      "wifi_nvs": "string",
+      "hatch": {
+        "kicker": "Display hatched",
+        "title": "Your glass is waking up.",
+        "body": "First light is the whole setup: the display guides you from its own screen — no app, no account, and it never reboot-loops on a fresh network.",
+        "steps": [
+          "Watch the splash land, then the hello: a fresh display shows a join QR on its own glass (a device-unique setup network).",
+          "Scan the QR with your phone — the setup page opens by itself; pick your home Wi-Fi and you're done typing.",
+          "The fleet face fades in and every Canary on your broker appears on its own — retained topics, no pairing, ever."
+        ]
+      },
+      "serial_receipt": false,
+      "role": "display",
+      "prove": {
+        "real": {
+          "kind": "glass",
+          "label": "Watch the glass — it comes alive",
+          "how": "The proof is the screen itself: splash, then the face, then the on-glass wizard. Touch works."
+        },
+        "emulated": {
+          "href": "fleet.html#canary-display-dash",
+          "label": "🧪 the 1:1 twin — the same firmware, in the browser",
+          "how": "The fleet page boots the REAL display firmware compiled to WASM — the pixels here are the pixels the glass shows. The listening 4.3C variant gets its own does/doesn't mic bench at dash-mic.html — same decision core, drift-locked."
+        }
+      },
+      "pick_label": "Dash — the plain 4.3 wall panel"
+    },
+    {
+      "id": "securacv-canary-display-dash-modes",
+      "name": "Canary Dash · Modes",
+      "tagline": "The 4.3B multi-tool — the fleet face plus the bench, demo, debug and arcade gears.",
+      "family": "display",
+      "board_label": "Waveshare 4.3B panel module",
+      "chip": "ESP32-S3",
+      "flash_mb": 16,
+      "board": "waveshare_esp32s3_lcd43",
+      "asset_stem": "canary-display-dash-modes",
+      "provisioning": "on-glass",
+      "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
+      "wifi_nvs": "string",
+      "hatch": {
+        "kicker": "Display hatched — with gears",
+        "title": "Your glass is waking up, and it's a multi-tool.",
+        "body": "Same first light as any display — plus four extra gears a reboot away, each with a 3-second hold to come home.",
+        "steps": [
+          "Watch the splash land, then the hello: a fresh display shows a join QR on its own glass (a device-unique setup network).",
+          "Scan the QR with your phone — the setup page opens by itself; pick your home Wi-Fi and the fleet face fades in.",
+          "Open Settings → modes to find the gears: the peripheral bench, the scripted demo, on-glass diagnostics, and the arcade. Hold the glass 3 s in any of them to return to the fleet face."
+        ]
+      },
+      "serial_receipt": false,
+      "role": "display",
+      "prove": {
+        "real": {
+          "kind": "glass",
+          "label": "Watch the glass — it comes alive",
+          "how": "The proof is the screen itself: splash, then the face, then the on-glass wizard. Touch works."
+        },
+        "emulated": {
+          "href": "fleet.html#canary-display-dash-modes",
+          "label": "🧪 the 1:1 twin — the same firmware, in the browser",
+          "how": "The fleet page boots the REAL display firmware compiled to WASM — the pixels here are the pixels the glass shows. The listening 4.3C variant gets its own does/doesn't mic bench at dash-mic.html — same decision core, drift-locked."
+        }
+      },
+      "pick_label": "Dash · Modes — the 4.3B multi-tool"
+    },
+    {
+      "id": "securacv-canary-display-dash7",
+      "name": "Canary Dash 7",
+      "tagline": "The 4.3″ Dash grown to 7″ — same quiet truth, room-scale glass.",
+      "family": "display",
+      "board_label": "Waveshare 7″ panel module",
+      "chip": "ESP32-S3",
+      "flash_mb": 16,
+      "board": "esp32-s3-devkitc-1",
+      "asset_stem": "canary-display-dash7",
+      "provisioning": "on-glass",
+      "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
+      "wifi_nvs": "string",
+      "hatch": {
+        "kicker": "Display hatched",
+        "title": "Your glass is waking up.",
+        "body": "First light is the whole setup: the display guides you from its own screen — no app, no account, and it never reboot-loops on a fresh network.",
+        "steps": [
+          "Watch the splash land, then the hello: a fresh display shows a join QR on its own glass (a device-unique setup network).",
+          "Scan the QR with your phone — the setup page opens by itself; pick your home Wi-Fi and you're done typing.",
+          "The fleet face fades in and every Canary on your broker appears on its own — retained topics, no pairing, ever."
+        ]
+      },
+      "serial_receipt": false,
+      "role": "display",
+      "prove": {
+        "real": {
+          "kind": "glass",
+          "label": "Watch the glass — it comes alive",
+          "how": "The proof is the screen itself: splash, then the face, then the on-glass wizard. Touch works."
+        },
+        "emulated": {
+          "href": "fleet.html#canary-display-dash7",
+          "label": "🧪 the 1:1 twin — the same firmware, in the browser",
+          "how": "The fleet page boots the REAL display firmware compiled to WASM — the pixels here are the pixels the glass shows. The listening 4.3C variant gets its own does/doesn't mic bench at dash-mic.html — same decision core, drift-locked."
+        }
+      },
+      "pick_label": "Dash 7 — the 7″ big glass"
+    },
+    {
+      "id": "securacv-canary-display-nightstand-s3",
+      "name": "Canary Nightstand",
+      "tagline": "The 1.47″ portrait glance with an ambient light — plugs straight into a USB port.",
+      "family": "display",
+      "board_label": "Waveshare ESP32-S3-LCD-1.47 (USB-A stick)",
+      "chip": "ESP32-S3",
+      "flash_mb": 16,
+      "board": "esp32-s3-devkitc-1",
+      "asset_stem": "canary-display-nightstand-s3",
+      "provisioning": "on-glass",
+      "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
+      "wifi_nvs": "string",
+      "hatch": {
+        "kicker": "Display hatched",
+        "title": "Your glass is waking up.",
+        "body": "First light is the whole setup: the display guides you from its own screen — no app, no account, and it never reboot-loops on a fresh network.",
+        "steps": [
+          "Watch the splash land, then the hello: a fresh display shows a join QR on its own glass (a device-unique setup network).",
+          "Scan the QR with your phone — the setup page opens by itself; pick your home Wi-Fi and you're done typing.",
+          "The fleet face fades in and every Canary on your broker appears on its own — retained topics, no pairing, ever."
+        ]
+      },
+      "serial_receipt": false,
+      "role": "display",
+      "prove": {
+        "real": {
+          "kind": "glass",
+          "label": "Watch the glass — it comes alive",
+          "how": "The proof is the screen itself: splash, then the face, then the on-glass wizard. Touch works."
+        },
+        "emulated": {
+          "href": "fleet.html#canary-display-nightstand-s3",
+          "label": "🧪 the 1:1 twin — the same firmware, in the browser",
+          "how": "The fleet page boots the REAL display firmware compiled to WASM — the pixels here are the pixels the glass shows. The listening 4.3C variant gets its own does/doesn't mic bench at dash-mic.html — same decision core, drift-locked."
+        }
+      },
+      "pick_label": "Nightstand — the 1.47″ USB-A stick"
+    },
+    {
+      "id": "securacv-canary-display-nightstand-c6",
+      "name": "Canary Nightstand C6",
+      "tagline": "The 1.47″ portrait glance on the Wi-Fi 6 pin-header board — breadboard-friendly.",
+      "family": "display",
+      "board_label": "Waveshare ESP32-C6-LCD-1.47 (pin-header)",
+      "chip": "ESP32-C6",
+      "flash_mb": 4,
+      "board": "esp32-c6-devkitc-1",
+      "asset_stem": "canary-display-nightstand-c6",
+      "provisioning": "on-glass",
+      "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
+      "wifi_nvs": "string",
+      "hatch": {
+        "kicker": "Display hatched",
+        "title": "Your glass is waking up.",
+        "body": "First light is the whole setup: the display guides you from its own screen — no app, no account, and it never reboot-loops on a fresh network.",
+        "steps": [
+          "Watch the splash land, then the hello: a fresh display shows a join QR on its own glass (a device-unique setup network).",
+          "Scan the QR with your phone — the setup page opens by itself; pick your home Wi-Fi and you're done typing.",
+          "The fleet face fades in and every Canary on your broker appears on its own — retained topics, no pairing, ever."
+        ]
+      },
+      "serial_receipt": false,
+      "role": "display",
+      "prove": {
+        "real": {
+          "kind": "glass",
+          "label": "Watch the glass — it comes alive",
+          "how": "The proof is the screen itself: splash, then the face, then the on-glass wizard. Touch works."
+        },
+        "emulated": {
+          "href": "fleet.html#canary-display-nightstand-c6",
+          "label": "🧪 the 1:1 twin — the same firmware, in the browser",
+          "how": "The fleet page boots the REAL display firmware compiled to WASM — the pixels here are the pixels the glass shows. The listening 4.3C variant gets its own does/doesn't mic bench at dash-mic.html — same decision core, drift-locked."
+        }
+      },
+      "pick_label": "Nightstand C6 — the 1.47″ pin-header board"
     }
   ],
+  "displays": [
+    {
+      "id": "canary-display-watch",
+      "name": "Canary Watch Station",
+      "tagline": "The bedside glance — a fleet on one calm ring.",
+      "board": "XIAO ESP32-S3 + Seeed Round Display",
+      "match": "display",
+      "panel": "GC9A01 1.28\" IPS · 240×240 round",
+      "glass": {
+        "w": 240,
+        "h": 240,
+        "round": true
+      },
+      "shows": [
+        "witness halo",
+        "living canary",
+        "proof QR",
+        "night floor"
+      ],
+      "emulator": {
+        "module": "emulator/dist/canary-display-watch.js",
+        "factory": "createCanaryEmuWatch",
+        "fw_version": "2.3.0",
+        "lvgl": "v8.4.0"
+      },
+      "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
+      "flash_product": "securacv-canary-display-watch"
+    },
+    {
+      "id": "canary-display-dash",
+      "name": "Canary Dash",
+      "tagline": "The household poster — every witness, one wall.",
+      "board": "Waveshare ESP32-S3-Touch-LCD-4.3",
+      "match": "display",
+      "panel": "4.3\" 800×480 IPS (parallel RGB) · 800×480",
+      "glass": {
+        "w": 800,
+        "h": 480,
+        "round": false
+      },
+      "shows": [
+        "witness cards",
+        "event timeline",
+        "proof sheets",
+        "roll call"
+      ],
+      "emulator": {
+        "module": "emulator/dist/canary-display-dash.js",
+        "factory": "createCanaryEmuDash",
+        "fw_version": "2.3.0",
+        "lvgl": "v8.4.0"
+      },
+      "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
+      "flash_product": "securacv-canary-display-dash"
+    }
+  ],
+  "settings_help": {
+    "erase_all": {
+      "label": "Erase the entire chip first",
+      "what": "Wipes every byte — firmware, settings, stored WiFi, witness history — then writes fresh. A factory reset and an install in one pass.",
+      "when": "A board that misbehaves in ways an ordinary reinstall doesn’t fix, or one you’re handing to someone else.",
+      "default": "Off — a normal install only touches the regions the new firmware needs."
+    },
+    "skip_backup": {
+      "label": "Skip the automatic safety copy",
+      "what": "Normally every byte on the board is saved to your downloads before anything is written — that file is your undo button.",
+      "when": "Only when you already backed this exact board up this session and want to save the minute.",
+      "default": "Off — the copy happens by itself."
+    },
+    "wifi_bake": {
+      "label": "WiFi at install time",
+      "what": "Typed here, your network is written into the chip’s settings region in the same pass as the firmware — the Canary joins it on first boot. It never leaves this page except over the USB cable.",
+      "when": "Always worth it if you know the network; leave it empty and the board raises its own setup WiFi instead.",
+      "default": "Empty — the setup network is the fallback either way."
+    },
+    "local_file": {
+      "label": "Install a local file",
+      "what": "Flashes a .bin you built or downloaded yourself. Signatures can’t be checked for a personal file, but the write is still verified against the chip and the board still can’t be bricked.",
+      "when": "Your own builds, air-gapped setups, or restoring someone’s shared image."
+    },
+    "restore_backup": {
+      "label": "Restore a backup",
+      "what": "Rewinds the board to the exact moment a backup file was taken — firmware, settings, identity, everything.",
+      "when": "After an experiment, a downgrade gone odd, or to clone a known-good state back onto the same board."
+    },
+    "dev_channel": {
+      "label": "Dev channel",
+      "what": "?channel=dev in the address bar switches to the rolling prerelease — signed with the same key, newer, less soaked.",
+      "when": "You’re testing a fix the maintainer just cut. Remove the parameter to return to stable.",
+      "default": "Stable release."
+    },
+    "flash_speed": {
+      "label": "Flash speed",
+      "what": "How fast bytes move over USB (921600 baud first). The flasher steps down by itself when a cable can’t keep up — speed never costs correctness, every byte is verified after.",
+      "default": "Automatic — no setting to get wrong."
+    },
+    "det_score": {
+      "label": "Confidence floor",
+      "what": "How sure the camera must be before “someone is here” counts (0–100). Higher shrugs off shadows and screen-people; lower catches more at the cost of false alarms.",
+      "when": "Raise it in rooms with monitors or glare; lower it if real people go unnoticed.",
+      "default": "70 — the shipped balance."
+    },
+    "det_lost": {
+      "label": "Lost timeout",
+      "what": "How long with no person in frame before presence flips back to “clear”. Short feels snappy; long rides through someone sitting still.",
+      "when": "Short for doorways and hallways, long for sofas and desks.",
+      "default": "1500 ms."
+    },
+    "det_dwell": {
+      "label": "Dwell threshold",
+      "what": "How long someone must stay before it counts as dwelling — the difference between passing through and being there.",
+      "when": "Short where any stop matters (an entryway), long where lingering is the signal (a hallway at night).",
+      "default": "10000 ms."
+    },
+    "det_target": {
+      "label": "What it looks for",
+      "what": "The model class treated as “person”. With the pinned person-detection model this stays 0 — it exists so a future model swap can’t strand the firmware.",
+      "when": "Only with a custom model whose person class sits elsewhere.",
+      "default": "0 — person, for the pinned model."
+    },
+    "tscore": {
+      "label": "Module confidence (TSCORE)",
+      "what": "The camera module’s own reporting floor — below it, the module doesn’t even mention a box. Lives on the module, set over the bench wire, separate from the firmware’s confidence floor.",
+      "default": "50 — the model zoo default."
+    },
+    "tiou": {
+      "label": "Module overlap (TIOU)",
+      "what": "How much two candidate boxes may overlap before the module merges them into one person instead of reporting two.",
+      "default": "45 — the model zoo default."
+    },
+    "sense_flavor": {
+      "label": "Which Sense build",
+      "what": "Canary Sense watches presence only. Sense · Wellbeing adds breathing and heart-rate sensing — a genuinely different privacy surface, which is why it’s a separate firmware, not a toggle.",
+      "when": "Wellbeing only where vitals are wanted (a bedside); presence-only everywhere else."
+    },
+    "present_debounce_ms": {
+      "label": "Presence debounce",
+      "what": "How long the radar must keep seeing a target before “someone is here” is announced — the guard against blinks and noise.",
+      "default": "300 ms in this build."
+    },
+    "clear_timeout_ms": {
+      "label": "Clear timeout",
+      "what": "How long with no target before the room reads empty again.",
+      "default": "1500 ms in this build."
+    },
+    "stall_timeout_ms": {
+      "label": "Radar stall alarm",
+      "what": "No frames at all from the radar for this long means the sensor link itself is in trouble — state becomes “unknown”, never a silent guess.",
+      "default": "5000 ms in this build."
+    },
+    "range_near_cm": {
+      "label": "Near band",
+      "what": "Inside this distance counts as “near”. Only the coarse band ever leaves the device — raw centimetres stay on the board.",
+      "default": "150 cm in this build."
+    },
+    "range_mid_cm": {
+      "label": "Mid band",
+      "what": "Between near and this is “mid”; beyond it, “far”. Three honest buckets instead of a tracking dot.",
+      "default": "350 cm in this build."
+    },
+    "vitals_lock_ms": {
+      "label": "Vitals lock",
+      "what": "Breathing must hold steady this long before the Wellbeing build trusts it — and vitals are suppressed entirely unless exactly one person is in view.",
+      "default": "4000 ms in the Wellbeing build."
+    },
+    "vitals_lost_ms": {
+      "label": "Vitals lost",
+      "what": "How long without a plausible breathing signal before the lock is dropped rather than guessed at.",
+      "default": "6000 ms in the Wellbeing build."
+    },
+    "chip": {
+      "label": "Chip",
+      "what": "The exact silicon on this board, read from its mask ROM — the one fact the chip guard trusts. Only firmware built for this chip is ever offered."
+    },
+    "mac": {
+      "label": "ID (MAC)",
+      "what": "The chip's factory hardware address — how the Nursery tells boards apart on a bench. It stays on this page; the firmware itself never broadcasts it (devices go by salted pseudonyms on the network)."
+    },
+    "flash_size": {
+      "label": "Flash",
+      "what": "How much storage the chip carries. The safety copy reads all of it; the install only touches the regions the new firmware needs."
+    },
+    "updates_seen": {
+      "label": "Updates seen",
+      "what": "How many firmware updates this board has taken in its life, read from the chip's own update ledger (otadata). A brand-new board says nothing at all."
+    },
+    "boots": {
+      "label": "Lifetime boots",
+      "what": "How many times this board has ever powered up, from its witness counters. A high number is a life well lived, not a problem."
+    },
+    "witness_records": {
+      "label": "Witness records",
+      "what": "How many entries this Canary's tamper-evident hash chain holds — its sealed diary. The chain rides through reflashes untouched."
+    },
+    "tamper_flag": {
+      "label": "Tamper flag",
+      "what": "The firmware's own 'something opened me' marker. Expected if you've had the enclosure apart; worth a look if you haven't."
+    },
+    "crash_record": {
+      "label": "Crash record",
+      "what": "Whether the chip holds a saved crash dump — proof of a past hard fault. One dump isn't alarming; repeated ones are worth a Rescue."
+    },
+    "self_check": {
+      "label": "Self-check score",
+      "what": "The running firmware's own 0-100 health verdict, straight from its mouth over the cable — sensors, storage, radio, chain, all rolled into one honest number."
+    },
+    "temperature": {
+      "label": "Temperature",
+      "what": "The chip's internal die temperature. Warm is normal (they run 30-60 °C); past ~70 °C give it airflow or shade."
+    },
+    "health_check": {
+      "label": "Health check",
+      "what": "A deep, read-only tour of the board's story: partition map, both firmware slots, update history, crash dumps, witness counters. Changes nothing — ever."
+    },
+    "serial_monitor": {
+      "label": "Serial monitor",
+      "what": "The board's live voice over USB: watch it think, send its single-key commands. Nothing typed here can break it."
+    },
+    "rescue": {
+      "label": "Rescue",
+      "what": "The back-to-known-good lever: safety copy (attempted), full wipe, newest signed firmware. For a board that's misbehaving in ways a plain reinstall doesn't cure."
+    },
+    "verdict": {
+      "label": "The install verdict",
+      "what": "What this install IS for this board: an update (newer), a downgrade (older — allowed, never silent), a reinstall (same version, byte-for-byte fresh), or a role switch (a different kind of Canary)."
+    },
+    "journey": {
+      "label": "The journey bar",
+      "what": "Where you are on the path: Connect → Meet it → Choose → Install → First flight. Tools and side-quests never move it — only the main road does."
+    },
+    "roster": {
+      "label": "The session roster",
+      "what": "Every board hatched in this tab, in order — so a batch never loses its place. Public facts only (which firmware, which dials, a MAC tail), kept only until the tab closes."
+    },
+    "chirps": {
+      "label": "Chirps",
+      "what": "Tiny synthesized birdsong at the big moments — hello, hatch, first sight. Off until you invite it; the choice sticks to this browser.",
+      "default": "Off — sound is invited, never sprung."
+    },
+    "radar_bench": {
+      "label": "The radar bench",
+      "what": "The Sense's live senses off the USB cable: presence, the near/mid/far band, the 0/1/2+ count — the same coarse truths it publishes, never raw centimetres."
+    },
+    "field_bench": {
+      "label": "The field bench",
+      "what": "The WAP's live verdict on the room: RF events, a device count (never an identity), a confidence word, and the CSI stir score — how much a moving body bends the radio."
+    },
+    "display_emulator": {
+      "label": "The 1:1 emulator",
+      "what": "The real display firmware — same C++, same LVGL — compiled to run in the browser. The pixels you see are the pixels the glass will show, framebuffer out, touch in. It boots on the fleet page; the flasher itself runs a stricter security policy on purpose.",
+      "when": "Before building a Watch Station or Dash: try the face, the touch, the night floor, without hardware."
+    }
+  },
+  "lessons": [
+    {
+      "id": "backup-undo",
+      "stage": "safety copy",
+      "title": "This copy is your undo button",
+      "body": "Right now every byte on the chip — firmware, settings, identity key, witness diary — is being read into one file in your downloads. Restore it any time from Advanced and the board rewinds to this exact moment."
+    },
+    {
+      "id": "backup-harmless",
+      "stage": "safety copy",
+      "title": "Reading can’t hurt anything",
+      "body": "A backup only reads. The witness chain, your settings, the firmware — all untouched. That’s why the Nursery does it automatically: all upside."
+    },
+    {
+      "id": "dl-layers",
+      "stage": "download",
+      "title": "One file, three layers",
+      "body": "A factory image is really three things fused together: a tiny second-stage bootloader, a partition table (the chip’s floor plan), and the firmware itself. The release pipeline merges them so a blank chip boots from zero."
+    },
+    {
+      "id": "dl-pinned",
+      "stage": "download",
+      "title": "Pinned, never “latest”",
+      "body": "The flasher fetches from the exact release tag for this firmware train — never from “latest”, which any newer release of anything could shadow. Reproducible today, reproducible in five years."
+    },
+    {
+      "id": "verify-sha",
+      "stage": "authentic",
+      "title": "The checksum handshake",
+      "body": "Your browser just computed the download’s SHA-256 and compared it against the fingerprint published in the release — before writing a single byte. After the write, the chip computes its own MD5 over what actually landed."
+    },
+    {
+      "id": "verify-sig",
+      "stage": "authentic",
+      "title": "A signature that can’t be stripped",
+      "body": "Once a release key is in force, an official image without a valid Ed25519 signature is refused outright — because a tampered manifest could always strip a signature. Failing closed is the whole point."
+    },
+    {
+      "id": "erase-what",
+      "stage": "erase",
+      "title": "What a full erase really is",
+      "body": "Every flash cell returns to its blank state (all ones). Settings, WiFi, witness history — gone by design. On first boot the firmware mints a fresh identity key and starts a brand-new diary."
+    },
+    {
+      "id": "write-nobrick",
+      "stage": "writ",
+      "title": "Why you can’t brick it",
+      "body": "The chip’s first-stage bootloader lives in mask ROM — etched at the factory, physically unwritable. Whatever happens to the flash, the ROM can always drop back into download mode and take a fresh image."
+    },
+    {
+      "id": "write-nvs",
+      "stage": "writ",
+      "title": "NVS — the chip’s settings drawer",
+      "body": "One small region holds key-value settings: WiFi, the detection dials, the radar reflexes. It’s exactly where your choices from the confirm card are being baked right now, in the same pass as the firmware."
+    },
+    {
+      "id": "write-ab",
+      "stage": "writ",
+      "title": "Two slots, zero drama",
+      "body": "The floor plan keeps two firmware slots. Over-the-air updates write the spare slot and only flip when it verifies — a failed update just boots the old one. The update counter you saw at hello counts those flips."
+    },
+    {
+      "id": "write-witness",
+      "stage": "writ",
+      "title": "The diary and the deep install",
+      "body": "This Canary keeps a tamper-evident hash diary. Over-the-air updates never touch it — they swap firmware slots and nothing else. A USB factory install like this one is deeper: on some boards the diary’s chain state rides the settings region and starts fresh here. Visible by design — a new chain reads as a new chain, never as silently missing evidence."
+    },
+    {
+      "id": "any-chip-board",
+      "stage": "any",
+      "title": "Chip vs. board",
+      "body": "The CHIP is the silicon (ESP32-S3, -C3, -C6); the BOARD is the little PCB it sits on (a XIAO, a Waveshare). The chip guard reads the silicon itself, so a board can never be handed another chip’s firmware."
+    },
+    {
+      "id": "any-baud",
+      "stage": "any",
+      "title": "Why the speed varies",
+      "body": "Bytes move at the fastest rate your cable can carry — the Nursery starts quick and steps down by itself if the link stumbles. Speed never costs correctness: every byte is verified after, at any speed."
+    },
+    {
+      "id": "any-manifest",
+      "stage": "any",
+      "title": "The board can prove itself",
+      "body": "After the install, press the monitor’s “self-manifest” key (j): the running firmware answers with a signed statement of what it is — version, identity, health score, even its temperature."
+    }
+  ],
+  "about": {
+    "product": "The Canary Nursery — the SecuraCV browser flasher",
+    "copyright": "© 2026 Errer Labs / SecuraCV",
+    "license": {
+      "name": "Apache-2.0",
+      "file": "LICENSE"
+    },
+    "source": "https://github.com/kmay89/securaCV",
+    "privacy": "Everything on this page runs locally: firmware images come from the pinned signed release, and nothing about you or your board is sent anywhere. What this page remembers (an optional saved WiFi, the session roster, the chirps choice) lives only in this browser and is yours to clear below.",
+    "vendors": [
+      {
+        "name": "esptool-js",
+        "package": "esptool-js@0.5.4",
+        "license": "Apache-2.0",
+        "file": "assets/vendor/esptool-js/PROVENANCE.txt"
+      },
+      {
+        "name": "md5",
+        "package": "blueimp JavaScript-MD5",
+        "license": "MIT",
+        "file": "assets/vendor/md5/md5.js"
+      },
+      {
+        "name": "ed25519",
+        "package": "@noble/ed25519@2.1.0",
+        "license": "MIT",
+        "file": "assets/vendor/ed25519/PROVENANCE.txt"
+      },
+      {
+        "name": "qrcode",
+        "package": "qrcode-generator@2.0.4",
+        "license": "MIT",
+        "file": "assets/vendor/qrcode/PROVENANCE.txt"
+      }
+    ]
+  },
   "we2_module": {
     "name": "Grove Vision AI V2 — the Vision’s camera module",
     "chip": "Himax HX6538 (WiseEye2) · Ethos-U55 NPU · CH343 USB-serial",
@@ -103,7 +1573,7 @@
     "usb_pid": "0x55d3",
     "baud": 921600,
     "model_addr": "0x400000",
-    "manifest_url": "https://github.com/kmay89/securaCV/releases/latest/download/manifest-vision-model.json",
+    "manifest_url": "https://github.com/kmay89/securaCV/releases/download/fw-v2.3.0/manifest-vision-model.json",
     "model": {
       "name": "Person Detection",
       "arch": "Swift-YOLO (tiny) · 192×192×3 RGB · compiled for the Ethos-U55",
@@ -114,7 +1584,47 @@
     "persistence": "The model lives in the module’s own 16 MB flash and persists across power cycles and every future host reflash.",
     "no_brick": "The burn menu lives in the HX6538’s ROM bootloader — an interrupted transfer just means reset and flash again. And a bricked module bootloader is still recoverable through the host over I2C (we2_iic_bootloader_recover — device guide §7).",
     "engine": "SecuraCV WE2 engine (assets/we2-core.js) — XMODEM/CRC-16 at 921600 over WebSerial, the same wire protocol Seeed’s open-source flasher speaks, clean-room implemented and pinned by tests/we2.test.js.",
-    "docs": "docs/hardware/grove_vision_ai_v2_guide.md"
+    "docs": "docs/hardware/grove_vision_ai_v2_guide.md",
+    "bench": {
+      "defaults": {
+        "tscore": 50,
+        "tiou": 45
+      },
+      "steps": [
+        "Plug the MODULE’s own USB-C port into this computer — the big port on the camera carrier board, next to the Grove connector. The XIAO’s port can’t reach the camera.",
+        "Click Connect and pick “USB Single Serial” (the CH343). If the model isn’t on the module yet, burn it first — one click, verified.",
+        "Press “Start live preview”. Frames appear within a second or two, with a box and a confidence score on everything the model finds.",
+        "Aim and light it like the real spot: face the camera, two to four meters, light on you rather than behind you. Watch the meter climb.",
+        "Tune if needed: Confidence (TSCORE) is the module’s reporting floor — raise it to shrug off weak phantoms, lower it to catch more. IoU (TIOU) merges overlapping boxes of the same object.",
+        "Press Stop when done. Day-to-day aiming stays boxes-only over MQTT — the video stream exists only on this attended bench."
+      ],
+      "troubleshooting": [
+        {
+          "when": "No port shows up in the picker",
+          "fix": "Wrong port (the XIAO’s instead of the module’s), a charge-only cable, or Linux missing the one udev rule — device guide §7. Unplug, replug into the module’s port, use a data cable."
+        },
+        {
+          "when": "Connected, but Start shows no frames",
+          "fix": "The module may still be in its bootloader — power-cycle it (unplug/replug), reconnect, start again. If it persists, the module might run non-SSCMA firmware; reflash the model here."
+        },
+        {
+          "when": "Frames, but never a box",
+          "fix": "Check the model is burned (the header above says so), then step back — Swift-YOLO wants the whole person in frame, not a face filling it. Try more light, or lower Confidence a notch."
+        },
+        {
+          "when": "The image is black or very dark",
+          "fix": "Peel the lens film if it’s still on, add light in front of the camera, and give the sensor a second to auto-expose."
+        },
+        {
+          "when": "Boxes flicker or split in two",
+          "fix": "Raise IoU (TIOU) slightly so overlapping candidates merge, or raise Confidence so marginal duplicates drop."
+        },
+        {
+          "when": "Scores feel low",
+          "fix": "Confidence is a reporting floor, not a grade — a steady 60-80% on a well-lit person is normal and plenty. Chase framing and light before chasing 99%."
+        }
+      ]
+    }
   },
   "no_brick": {
     "headline": "You cannot brick your Canary from here.",

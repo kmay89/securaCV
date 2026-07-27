@@ -181,6 +181,9 @@
 
 #define CAN_PIN_TX              15
 #define CAN_PIN_RX              16
+// Recommended default bit rate (bit/s). 500k is the common industrial/vehicle
+// rate; the TWAI driver also presets 125k/250k/1M. VERIFY against your bus.
+#define CAN_BITRATE_DEFAULT     500000
 
 // ============================================================================
 // I2C SENSOR HEADER — VOUT / GND / SDA / SCL on the terminal block

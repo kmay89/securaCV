@@ -275,3 +275,78 @@ export function modelInfoJson({ version, sha256 }) {
     source: "securacv.com/lab — vendored from Seeed SSCMA model zoo",
   };
 }
+
+// ── live-preview detection formatting (the bench "wow") ─────────────────────
+// The pinned Vision model detects one class; single source for the label map so
+// the bench preview reads "person · 92%", not "class 0 · 85".
+export const WE2_CLASSES = ["person"];
+
+// Normalize an SSCMA detection box — [x, y, w, h, score, target] — into a
+// labelled object the preview draws. `score` is already 0-100 (a percent).
+// Unknown targets get a generic label instead of breaking; garbage is dropped.
+// Pure + host-tested (tests/we2.test.js).
+export function formatDetections(boxes, classes = WE2_CLASSES) {
+  const out = [];
+  for (const b of boxes || []) {
+    if (!Array.isArray(b) || b.length < 6) continue;
+    const [x, y, w, h, score, target] = b;
+    if (![x, y, w, h].every((n) => typeof n === "number" && Number.isFinite(n))) continue;
+    const label = (classes && classes[target]) || "object";
+    const pct = Math.max(0, Math.min(100, Math.round(Number(score) || 0)));
+    out.push({ x, y, w, h, score: pct, label, text: `${label} · ${pct}%` });
+  }
+  return out;
+}
+
+// Per-detection paint for the bench canvas: a stable identity color per box
+// index (so two people stay visually distinct frame to frame) and a confidence
+// band (ok ≥ 60, soft 35-59, faint < 35) that picks stroke weight/glow. Pure —
+// the canvas code just applies it. Host-tested (tests/we2.test.js).
+const PREVIEW_HUES = [140, 45, 200, 320, 20, 260, 80, 175]; // green first — the pinned person model leads with it
+export function stylizeDetections(boxes, classes = WE2_CLASSES) {
+  return formatDetections(boxes, classes).map((d, i) => {
+    const hue = PREVIEW_HUES[i % PREVIEW_HUES.length];
+    const band = d.score >= 60 ? "ok" : d.score >= 35 ? "soft" : "faint";
+    return {
+      ...d,
+      n: i + 1,
+      band,
+      color: `hsl(${hue} 90% ${band === "ok" ? 66 : 58}%)`,
+      fill: `hsl(${hue} 65% 14% / ${band === "ok" ? 0.92 : 0.85})`,
+    };
+  });
+}
+
+// The confidence-meter model: what the meter under the preview shows. `top` is
+// the best score in frame, `threshold` the module's own reporting floor
+// (AT+TSCORE) rendered as a tick — a box below it never even arrives, which is
+// exactly what the meter teaches. Pure + host-tested.
+export function meterModel(boxes, classes = WE2_CLASSES, threshold = 50) {
+  const dets = formatDetections(boxes, classes);
+  const top = dets.reduce((m, d) => Math.max(m, d.score), 0);
+  const thr = Math.max(0, Math.min(100, Math.round(Number(threshold) || 0)));
+  return {
+    count: dets.length,
+    top,
+    threshold: thr,
+    // margin: how far the best hit clears the floor (negative never happens on
+    // the wire — the module already filtered — but the math stays honest).
+    margin: dets.length ? top - thr : null,
+    level: !dets.length ? "idle" : top >= 60 ? "ok" : top >= 35 ? "soft" : "faint",
+    label: detectionSummary(boxes, classes),
+  };
+}
+
+// A one-line readout of what it sees right now — pluralized, with the top
+// confidence — for the "it sees you!" moment. "watching…" when nothing's found.
+export function detectionSummary(boxes, classes = WE2_CLASSES) {
+  const dets = formatDetections(boxes, classes);
+  if (!dets.length) return "watching… nothing yet";
+  const counts = {};
+  let top = 0;
+  for (const d of dets) { counts[d.label] = (counts[d.label] || 0) + 1; if (d.score > top) top = d.score; }
+  const pluralize = (word, n) =>
+    n === 1 ? word : word === "person" ? "people" : word.endsWith("s") ? word : word + "s";
+  const parts = Object.entries(counts).map(([label, n]) => `${n} ${pluralize(label, n)}`);
+  return `${parts.join(", ")} · ${top}% confident`;
+}

@@ -95,8 +95,10 @@ for (const build of wiring.builds) {
     const { resolvePin } = await room();
     const b = boards.boards[build.board];
     assert.ok(b, `build names unknown board ${build.board}`);
-    assert.ok(boards.device_board[build.device] === build.board,
-      `build device ${build.device} does not map to ${build.board} in device_board`);
+    const mapped = boards.device_board[build.device];
+    const list = Array.isArray(mapped) ? mapped : mapped ? [mapped] : [];
+    assert.ok(list.includes(build.board),
+      `build device ${build.device} does not map to ${build.board} in device_board (${list.join(", ")})`);
 
     const periIds = new Set();
     for (const pp of build.peripherals) {

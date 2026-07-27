@@ -461,6 +461,94 @@
   #endif
   ```
 
+### A shared `common/` module whose .cpp nothing compiles
+- **What happened:** The nightstand look engine landed as
+  `firmware/common/color/{color_engine,look_engine}.{h,cpp}`. Host tests passed,
+  review passed, the headers resolved everywhere — and
+  `canary-display-nightstand-s3` failed at LINK with an undefined reference to
+  `canary::color::wash_stops`.
+- **Root cause:** nothing compiled the two translation units. The
+  `-I${PROJECT_DIR}/../../common` in the env still resolved the *headers*, which
+  is exactly what hides the problem at compile time. **A header resolving is not
+  evidence that its .cpp is built.**
+- **Two wrong fixes first, and why they were wrong — this is the real lesson.**
+  1. *Add a `library.json` so the LDF picks the library up.* Reasonable by
+     analogy with `common/boot` and `common/fleet_link`, which have one. It did
+     not change the error at all.
+  2. *The manifest must be malformed, then.* The first one carried registry
+     metadata including a `headers` list, which the LDF resolves relative to
+     `includeDir` — so `headers: ["look_engine.h"]` beside `includeDir: ".."`
+     pointed at a nonexistent `common/look_engine.h`. Plausible, checkable,
+     also not it: reducing the manifest to `boot`'s exact shape produced the
+     same link error a third time.
+  The actual cause is upstream of the manifest. These projects inherit
+  **`lib_ldf_mode = deep+`** from `common.ini`, and deep+ **evaluates
+  preprocessor conditionals** while scanning for libraries. Both callers reach
+  the engine from inside a guard — `portrait_ui.cpp` behind
+  `#ifdef CD_FLAVOR_NIGHTSTAND`, `ambient_led.cpp` behind `FEATURE_AMBIENT_LED
+  && HAS_RGBLED` — and those symbols are **not defined during the LDF scan**.
+  The LDF therefore judges both includes inactive and never looks at
+  `common/color` at all. **A manifest only matters for a library the LDF has
+  already decided to look at.** `common/boot` works through the LDF purely
+  because `boot/boot_banner.h` is included UNCONDITIONALLY from `main.cpp` —
+  that difference, not the manifest, is why one linked and the other didn't.
+- **Fix:** the repo's own established pattern, which `canary-sense.ini` already
+  documented for exactly this reason ("our shared common/ modules … are not
+  reliably mapped to LDF libraries — so compile them directly"): name the
+  sources in the consuming env's `build_src_filter`. The nightstand-s3 env now
+  lists `common/color/{color_engine,look_engine}.cpp`, and the manifest was
+  removed so the TUs cannot be compiled twice.
+- **The rule:** prefer `build_src_filter` — naming a file is deterministic.
+  Reach for a `library.json` only when the header is included unconditionally.
+  Never satisfy both routes for one file (duplicate symbols at link).
+- **A third independent attempt made the same mistake.** #1229 landed on main
+  while this was in flight and removed only the `headers` key, keeping the
+  manifest — the same remedy as attempt 2 above. Main built again and failed
+  again with the identical `wash_stops` undefined reference (run 30123437737 on
+  `ff7cc04`). Two people reasoning carefully from `boot_banner` reached the same
+  wrong conclusion, which is the strongest argument for writing the real
+  distinction down: `boot_banner`'s include is UNCONDITIONAL, and that — not its
+  manifest shape — is why it links.
+- **Process lesson:** three CI rounds were spent because each attempt
+  pattern-matched a precedent (`boot` has a manifest, so add a manifest) without
+  first checking *why* the precedent works. The distinguishing fact —
+  unconditional vs. conditional include under deep+ LDF — was one grep away and
+  was already written down in `canary-sense.ini`. **Read the working example's
+  reason, not just its shape.**
+- **Regression check:** `firmware/scripts/check_common_build_reachability.py`
+  (Regression Guards). Every non-test .cpp under `common/` must be reachable by
+  a `build_src_filter` entry, a working manifest, or a staged Arduino copy —
+  and a manifest must actually work (parse, and any declared `headers` must
+  resolve, against an explicit `includeDir` or PlatformIO's `include/` →
+  `srcDir` → root fallback, which is how `common/csi` resolves its `src/`-hosted
+  headers). The guard's advice orders `build_src_filter` first and spells out
+  the deep+ conditional trap, so the next person does not repeat the three
+  rounds. It also surfaced a pre-existing orphan,
+  `common/bluetooth/ble_debug_beacon.cpp`, waived with a written reason rather
+  than silently ignored.
+- **Date learned:** 2026-07
+
+### A host test cannot pin the target's preprocessor
+- **What happened:** `common/fleet_selfreport/fleet_selfreport.h` declared a
+  local `static const char* HEX` for its `\u00XX` escape path. The host suite
+  passed; the entire firmware CI matrix went red — both Arduino display builds
+  on both cores, the Arduino WAP build, both PlatformIO builds, the CSI
+  feature-disabled builds, and the DRAM symbol ranking.
+- **Root cause:** Arduino's `cores/esp32/Print.h` does `#define HEX 16` before
+  any sketch include is reached, so on device that line expands to
+  `static const char* 16 = ...`. Plain g++ on the host has no such macro, so the
+  test suite could not see the collision. Same shape as the `DEC`/`OCT`/`BIN`
+  macros, and the reason board code avoids those names.
+- **Fix:** Renamed to `fsr__hex`, matching the file's existing `fsr__` prefix
+  convention for internal helpers.
+- **Regression check:** `test_fleet_selfreport.cpp` now `#define`s Arduino's
+  `HEX`/`DEC`/`OCT`/`BIN` immediately above the include, so the host build fails
+  the same way the device build would. Verified both directions: it fails with
+  the pre-fix header and passes with the fixed one. **When a shared header ships
+  to Arduino, its host test should reproduce Arduino's macro namespace — a test
+  that cannot see the target's preprocessor cannot pin the target's compile.**
+- **Date learned:** 2026-07
+
 ---
 
 ## Security Architecture Principles

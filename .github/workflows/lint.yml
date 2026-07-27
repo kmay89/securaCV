@@ -21,6 +21,7 @@ jobs:
   scripts:
     name: scripts/lint_*.sh
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       # Conformance + hygiene lints that previously had no CI gate.
@@ -32,11 +33,34 @@ jobs:
         run: bash scripts/lint_feature_flags.sh
       - name: Version lockstep (kernel / integration / add-on)
         run: bash scripts/lint_version_sync.sh
+      - name: Desktop apps state ONE version (tauri.conf = package.json = Cargo.toml)
+        # Each Tauri app carries its version in three files. tauri.conf.json
+        # names the release TAG; Cargo.toml is what the running app shows the
+        # USER in its footer. They drifted — the Flasher shipped as 0.2.2 with a
+        # footer reading v0.1.0 — so a bug report named a version that was never
+        # released. All three, both apps, checked on every PR.
+        run: python3 desktop/scripts/check_app_versions.py
+      - name: OTA release key state (reported, never gating)
+        # Prints whether the release signing public key is embedded or still all
+        # zeros (OTA hard-disabled). Informational on purpose: a repo without the
+        # key is a legitimate state — a SILENT one was the problem, since it
+        # makes every product read "unavailable" in the flasher with no clue why.
+        run: python3 firmware/scripts/ota_key_state.py
       - name: Witness Dictionary sync (Rust / Python / JS / firmware)
         run: python3 scripts/lint_dictionary_sync.py
+      - name: Vehicle DBC signal math (golden vectors)
+        run: python3 scripts/dbc_signal_resolve.py selftest
+      - name: Vehicle profiles match their vendored DBC excerpts
+        run: python3 scripts/dbc_signal_resolve.py check-profiles
       - name: Docs index — no stragglers, no dead links
         run: python3 scripts/lint_docs_index.py
       - name: Build matrix matches platformio.ini + config.h
         run: python3 scripts/lint_build_matrix.py
+      - name: common/ library manifests are LDF-consistent
+        run: python3 scripts/lint_common_lib_manifests.py
+      - name: BOM CSVs — schema-clean and wired into the generator
+        run: python3 scripts/lint_bom.py
+      - name: BOM pricing engine — contract tests
+        run: python3 scripts/tests/test_bom_pricing.py
       - name: verify_pipeline.sh false-pass regression tests
         run: bash integrations/ha_frigate_mqtt/tests/test_verify_pipeline.sh

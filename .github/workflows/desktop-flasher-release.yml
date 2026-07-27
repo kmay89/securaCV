@@ -1,0 +1,568 @@
+name: Desktop Flasher — build & release
+
+# Builds the native SecuraCV Flasher (Tauri) and publishes a GitHub release
+# with a universal macOS .dmg, Linux .AppImage/.deb, and the self-update
+# manifest. This is the "generates itself" half of the app: tag a version and
+# the installers appear, signed, on the release page.
+#
+#   • push a tag `flasher-v0.1.0`     → build + publish a release
+#   • Actions ▸ Run workflow (default) → build only, artifacts on the run
+#   • Run workflow with dry_run=false  → build + publish a dev release
+
+on:
+  push:
+    tags:
+      - "flasher-v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build only, don't publish a release"
+        type: boolean
+        default: true
+
+# Tag pushes and dry_run=false dispatches PUBLISH a release — never cancel
+# those mid-upload; they queue. Only build-only smoke runs (dispatch with
+# dry_run left at its true default) supersede each other.
+concurrency:
+  group: desktop-flasher-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run != false }}
+
+# Least privilege by default; the build job elevates to contents: write
+# because it publishes the release and uploads the installers.
+permissions:
+  contents: read
+
+env:
+  # esptool's Rust sibling. Pinned so a board is only ever written by a flash
+  # engine we chose on purpose. Bump deliberately.
+  ESPFLASH_VERSION: "3.3.0"
+  # raspberrypi/usbboot ref for the rpiboot sidecar + mass-storage gadget.
+  # Honest-before-pin (same posture as the hub image): empty tracks upstream's
+  # default branch until the Pi-over-USB-C path is validated on real hardware —
+  # that session MUST replace this with the exact tag it validated, and each
+  # build logs the resolved commit SHA so a working build is reproducible.
+  USBBOOT_REF: ""
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+            rust-targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+          - platform: ubuntu-22.04
+            args: ""
+            rust-targets: ""
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 90
+
+    # tauri-action creates the GitHub release and uploads the installers.
+    permissions:
+      contents: write
+
+    # Signing vars default from repo secrets; the "Ensure updater signing key"
+    # step overrides them (via $GITHUB_ENV) when it mints an ephemeral key.
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Decide whether to publish
+        id: plan
+        shell: bash
+        run: |
+          # All THREE version files must agree before we build a release out of
+          # them. The first version of this check compared two of the three and
+          # missed Cargo.toml — the one the app shows the user in its footer — so
+          # 0.2.2 shipped reporting itself as v0.1.0. One script now, both apps,
+          # also run on every PR by lint.yml.
+          python3 desktop/scripts/check_app_versions.py
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="${GITHUB_REF_NAME}"; publish=true
+          elif [[ "${{ github.event.inputs.dry_run }}" == "false" ]]; then
+            # Publish the app's actual version (from tauri.conf.json), so the
+            # "Run workflow" button cuts a real release, not a dev stub.
+            ver=$(python3 -c "import json;print(json.load(open('desktop/src-tauri/tauri.conf.json'))['version'])")
+            tag="flasher-v${ver}"; publish=true
+          else
+            tag=""; publish=false
+          fi
+          # Mark as a pre-release when the version (after the `flasher-v` prefix)
+          # carries a suffix like -rc.1 / -dev.N — so first/test builds don't
+          # look like a blessed stable release.
+          ver="${tag#flasher-v}"
+          if [[ "$ver" == *-* ]]; then prerelease=true; else prerelease=false; fi
+          {
+            echo "tag=${tag}"
+            echo "publish=${publish}"
+            echo "prerelease=${prerelease}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libgtk-3-dev \
+            libssl-dev \
+            libudev-dev \
+            pkg-config \
+            build-essential \
+            file wget curl unzip
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Install Tauri CLI
+        working-directory: desktop
+        run: npm install
+
+      # ── the bundled flash engine ───────────────────────────────────────────
+      # Fetch the prebuilt espflash for each arch and drop it where Tauri looks
+      # for a sidecar: binaries/espflash-<target-triple>. A universal macOS build
+      # needs ALL THREE: the per-arch sidecars (aarch64 + x86_64) while it
+      # compiles each slice, AND a lipo'd universal one at bundle time. Falls
+      # back to `cargo install` if the release asset naming ever changes, so the
+      # pipeline can't silently break.
+      - name: Bundle espflash sidecar (macOS universal)
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://github.com/esp-rs/espflash/releases/download/v${ESPFLASH_VERSION}"
+          bin=desktop/src-tauri/binaries
+          mkdir -p "$bin"
+          fetch() {
+            local triple="$1" out="$bin/espflash-$1"
+            if curl -fL "$base/espflash-$triple.zip" -o e.zip 2>/dev/null; then
+              rm -rf ex && unzip -q e.zip -d ex
+              cp "$(find ex -type f -name espflash | head -n1)" "$out"
+            else
+              echo "prebuilt for $triple not found; cargo install fallback"
+              cargo install espflash --version "$ESPFLASH_VERSION" --locked --target "$triple" --root "cargo-$triple"
+              cp "cargo-$triple/bin/espflash" "$out"
+            fi
+            chmod +x "$out"
+          }
+          fetch aarch64-apple-darwin
+          fetch x86_64-apple-darwin
+          # Universal slice for the bundle step.
+          lipo -create -output "$bin/espflash-universal-apple-darwin" \
+            "$bin/espflash-aarch64-apple-darwin" "$bin/espflash-x86_64-apple-darwin"
+          chmod +x "$bin/espflash-universal-apple-darwin"
+          file "$bin"/espflash-*
+
+      - name: Bundle espflash sidecar (Linux x86_64)
+        if: matrix.platform == 'ubuntu-22.04'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://github.com/esp-rs/espflash/releases/download/v${ESPFLASH_VERSION}"
+          triple="x86_64-unknown-linux-gnu"
+          out="desktop/src-tauri/binaries/espflash-$triple"
+          mkdir -p desktop/src-tauri/binaries
+          if curl -fL "$base/espflash-$triple.zip" -o e.zip 2>/dev/null; then
+            unzip -q e.zip -d ex
+            cp "$(find ex -type f -name espflash | head -n1)" "$out"
+          else
+            cargo install espflash --version "$ESPFLASH_VERSION" --locked --root cargo-linux
+            cp cargo-linux/bin/espflash "$out"
+          fi
+          chmod +x "$out"
+          file "$out"
+
+      # ── the Pi USB-boot on-ramp (design doc §7 step 6) ─────────────────────
+      # Build Raspberry Pi's official rpiboot host tool and vendor its signed
+      # mass-storage-gadget payload from ONE pinned usbboot checkout. rpiboot
+      # turns a Pi connected over USB-C (power button held) into an ordinary
+      # USB disk, so the hub writer needs no card reader. macOS note: the
+      # runner is arm64 and brew has no cross libusb, so the sidecar is
+      # arm64-only lipo'd into the "universal" slot — Intel Macs keep every
+      # other flow and get a clear error from this one. The libusb dylib is
+      # bundled into Resources and the binary re-pointed at it, so the app
+      # never depends on a user's Homebrew.
+      - name: Bundle rpiboot sidecar + gadget (macOS)
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install libusb pkg-config
+          git clone --depth 1 ${USBBOOT_REF:+--branch "$USBBOOT_REF"} \
+            https://github.com/raspberrypi/usbboot usbboot-src
+          # Surface the resolved commit rather than burying it in build output —
+          # USBBOOT_REF is empty, so this tracks upstream's default branch
+          # (RELEASE_LESSONS Principle 2). The session that finally pins it needs
+          # the SHA of a build it watched work; read it off here.
+          usbboot_sha=$(cd usbboot-src && git rev-parse HEAD)
+          echo "::notice title=usbboot resolved::${usbboot_sha} (USBBOOT_REF='${USBBOOT_REF:-<upstream default branch>}') — pin USBBOOT_REF to this once validated on real hardware"
+          echo "- \`usbboot\` @ \`${usbboot_sha}\` (ref: \`${USBBOOT_REF:-upstream default branch}\`)" >> "$GITHUB_STEP_SUMMARY"
+          (cd usbboot-src && make rpiboot)
+          bin=desktop/src-tauri/binaries
+          res=desktop/src-tauri/resources/mass-storage-gadget64
+          mkdir -p "$bin" "$res"
+          cp usbboot-src/rpiboot "$bin/rpiboot-aarch64-apple-darwin"
+          # -L dereferences symlinks: upstream ships bootfiles.bin as a symlink
+          # into ../firmware/, which a plain -R copies as a dangling link that
+          # Tauri's resource bundler then rejects ("resource path … doesn't exist").
+          cp -RL usbboot-src/mass-storage-gadget64/. "$res/"
+          # Make the sidecar self-contained: ship libusb in Resources and
+          # point the binary at it relative to the app bundle.
+          libusb=$(otool -L "$bin/rpiboot-aarch64-apple-darwin" | awk '/libusb/ {print $1}')
+          cp "$libusb" desktop/src-tauri/resources/libusb-1.0.0.dylib
+          # tauri.macos.conf.json bundles the dylib as a signed FRAMEWORK at
+          # Contents/Frameworks/libusb-1.0.0.dylib; sidecars live in Contents/MacOS,
+          # one level below Contents/Frameworks. Bundling it as a framework (not a
+          # plain resource) is what lets Tauri code-sign it with our Developer ID —
+          # notarization rejects any unsigned nested Mach-O, and a dylib parked in
+          # Resources/ would be exactly that. (RELEASE_LESSONS 2026-07-25.)
+          install_name_tool -change "$libusb" \
+            "@executable_path/../Frameworks/libusb-1.0.0.dylib" \
+            "$bin/rpiboot-aarch64-apple-darwin"
+          lipo -create -output "$bin/rpiboot-universal-apple-darwin" "$bin/rpiboot-aarch64-apple-darwin"
+          cp "$bin/rpiboot-aarch64-apple-darwin" "$bin/rpiboot-x86_64-apple-darwin"
+          chmod +x "$bin"/rpiboot-*
+          file "$bin"/rpiboot-*
+
+      - name: Bundle rpiboot sidecar + gadget (Linux x86_64)
+        if: matrix.platform == 'ubuntu-22.04'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq libusb-1.0-0-dev
+          git clone --depth 1 ${USBBOOT_REF:+--branch "$USBBOOT_REF"} \
+            https://github.com/raspberrypi/usbboot usbboot-src
+          # Surface the resolved commit rather than burying it in build output —
+          # USBBOOT_REF is empty, so this tracks upstream's default branch
+          # (RELEASE_LESSONS Principle 2). The session that finally pins it needs
+          # the SHA of a build it watched work; read it off here.
+          usbboot_sha=$(cd usbboot-src && git rev-parse HEAD)
+          echo "::notice title=usbboot resolved::${usbboot_sha} (USBBOOT_REF='${USBBOOT_REF:-<upstream default branch>}') — pin USBBOOT_REF to this once validated on real hardware"
+          echo "- \`usbboot\` @ \`${usbboot_sha}\` (ref: \`${USBBOOT_REF:-upstream default branch}\`)" >> "$GITHUB_STEP_SUMMARY"
+          (cd usbboot-src && make rpiboot)
+          bin=desktop/src-tauri/binaries
+          res=desktop/src-tauri/resources/mass-storage-gadget64
+          mkdir -p "$bin" "$res"
+          cp usbboot-src/rpiboot "$bin/rpiboot-x86_64-unknown-linux-gnu"
+          # -L dereferences symlinks: upstream ships bootfiles.bin as a symlink
+          # into ../firmware/, which a plain -R copies as a dangling link that
+          # Tauri's resource bundler then rejects ("resource path … doesn't exist").
+          cp -RL usbboot-src/mass-storage-gadget64/. "$res/"
+          chmod +x "$bin/rpiboot-x86_64-unknown-linux-gnu"
+          file "$bin/rpiboot-x86_64-unknown-linux-gnu"
+
+      # ── app icons ──────────────────────────────────────────────────────────
+      - name: Generate app icons
+        working-directory: desktop
+        # source.png (the branded Canary mascot badge) is committed; derive the
+        # .icns/.ico/png set the bundler needs from it. Regenerating the source
+        # itself needs Pillow + the brand asset, so it's done offline, not in CI.
+        run: npx --yes @tauri-apps/cli icon src-tauri/icons/source.png
+
+      # ── signing key for self-update ────────────────────────────────────────
+      # If the repo has a persistent signing key, use it (self-update works
+      # across releases). If not, mint an ephemeral one so the build still
+      # succeeds and produces valid installers — and patch the app's embedded
+      # public key to match, so that build is internally consistent.
+      - name: Ensure updater signing key
+        working-directory: desktop
+        shell: bash
+        env:
+          SECRET_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -n "${SECRET_KEY:-}" ]; then
+            echo "Using repository signing key."
+          else
+            echo "::warning::No TAURI_SIGNING_PRIVATE_KEY secret set — minting an EPHEMERAL key so this build succeeds. Cross-release self-update needs a persistent key; see desktop/INSTALL.md."
+            npx --yes @tauri-apps/cli signer generate -w "$RUNNER_TEMP/flasher.key" --password ""
+            # The Tauri private key is a single base64 line; $(cat) strips the
+            # trailing newline so a plain assignment is safe (a heredoc here
+            # fails when the file lacks a final newline — the closing delimiter
+            # glues onto the key and GitHub can't find it).
+            echo "TAURI_SIGNING_PRIVATE_KEY=$(cat "$RUNNER_TEMP/flasher.key")" >> "$GITHUB_ENV"
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=" >> "$GITHUB_ENV"
+            python3 -c 'import json,sys; p="src-tauri/tauri.conf.json"; c=json.load(open(p)); c["plugins"]["updater"]["pubkey"]=sys.argv[1].strip(); json.dump(c,open(p,"w"),indent=2); print("patched embedded pubkey for ephemeral build")' "$(cat "$RUNNER_TEMP/flasher.key.pub")"
+          fi
+
+      # ── the hub catalog must be verifiable before we ship it ──────────────
+      # Home Assistant publishes no checksum of its own, so an UNPINNED catalog
+      # makes the hub flasher dead-end at 100% (it downloads the image, then has
+      # nothing to verify it against and refuses to write). That must never
+      # reach a user: fail the release loudly here, with the fix, instead of
+      # shipping a flasher that can't flash. Dev/CI-check builds are unaffected —
+      # this guard runs only on the release path.
+      - name: Guard — hub image catalog is pinned
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, sys
+          cat = json.load(open("canary-local/devices/hub_image.json"))
+          base = cat["base_os"]
+          boards = base.get("boards", [])
+          bad = [b["id"] for b in boards if not b.get("sha256")]
+          if not base.get("pinned") or bad or not boards:
+              sys.exit(
+                  "hub_image.json is not pinned"
+                  + (f" (boards missing sha256: {bad})" if bad else "")
+                  + " — Home Assistant ships no checksum to fall back on, so this build would "
+                  "dead-end at 100%. Run the pin ceremony and commit:\n"
+                  "    python3 canary-local/tools/pin_hub_image.py"
+              )
+          print(f"hub catalog pinned for HAOS {base['version']}: {len(boards)} boards, all with sha256")
+          PY
+
+      # Apple code-signing + notarization is OPT-IN via the ENABLE_MACOS_SIGNING
+      # repository variable (Settings → Secrets and variables → Actions →
+      # Variables), the same switch the Lab uses (desktop-release.yml). Two steps
+      # on purpose: tauri's macOS bundler treats APPLE_CERTIFICATE as "sign me"
+      # whenever the env key is DEFINED AT ALL — even empty — then fails importing
+      # it. So the default (unsigned) build must define NO APPLE_* env keys. Turn
+      # signing on by setting the variable to `true` once the Developer ID cert +
+      # the APPLE_* secrets are in place — see desktop/SIGNING.md. On Linux the
+      # APPLE_* env is inert, so one gate drives both matrix legs.
+      - name: Build & release (unsigned)
+        if: vars.ENABLE_MACOS_SIGNING != 'true'
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # TAURI_SIGNING_PRIVATE_KEY / _PASSWORD come from job-level env
+          # (repo secrets, or the ephemeral key written to $GITHUB_ENV above).
+        with:
+          projectPath: desktop
+          tagName: ${{ steps.plan.outputs.tag }}
+          releaseName: "SecuraCV Flasher __VERSION__"
+          releaseBody: |
+            The SecuraCV Lab as a native app — flash a Canary with no browser and no terminal.
+
+            **macOS:** unless this build is signed & notarized, first launch needs one
+            command — see `desktop/INSTALL.md`. Universal build: one download for Apple
+            Silicon and Intel.
+
+            **Linux:** grab the `.AppImage` (self-updating) or the `.deb`.
+          releaseDraft: false
+          prerelease: ${{ steps.plan.outputs.prerelease }}
+          includeUpdaterJson: true
+          args: ${{ matrix.args }}
+
+      - name: Build & release (signed + notarized macOS)
+        if: vars.ENABLE_MACOS_SIGNING == 'true'
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Developer ID signing + notarization. Tauri imports APPLE_CERTIFICATE
+          # (base64 .p12), signs the .app + the espflash/rpiboot sidecars + the
+          # libusb framework with APPLE_SIGNING_IDENTITY under the hardened
+          # runtime, then notarizes with the Apple ID + app-specific password and
+          # staples the ticket. Inert on Linux. Setup: desktop/SIGNING.md.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: desktop
+          tagName: ${{ steps.plan.outputs.tag }}
+          releaseName: "SecuraCV Flasher __VERSION__"
+          releaseBody: |
+            The SecuraCV Lab as a native app — flash a Canary with no browser and no terminal.
+
+            **macOS:** signed & notarized — just open it. Universal build: one download
+            for Apple Silicon and Intel.
+
+            **Linux:** grab the `.AppImage` (self-updating) or the `.deb`.
+          releaseDraft: false
+          prerelease: ${{ steps.plan.outputs.prerelease }}
+          includeUpdaterJson: true
+          args: ${{ matrix.args }}
+
+      # ── self-heal a flaky upload ───────────────────────────────────────────
+      # GitHub's asset-upload endpoint 5xx's from time to time; tauri-action has
+      # no retry, so one hiccup fails the whole publish with the installers
+      # half-uploaded. Runs on the publish path even if the step above failed:
+      # reconcile every built bundle + signature against the release, uploading
+      # (with backoff) only what's missing. Idempotent — a clean run is a no-op.
+      - name: Reconcile release assets (retry missing uploads)
+        if: always() && steps.plan.outputs.publish == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          set -uo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG not present yet — nothing to reconcile"; exit 0
+          fi
+          root=desktop/src-tauri/target
+          have=$(gh release view "$TAG" --json assets -q '.assets[].name' 2>/dev/null || true)
+          fail=0
+          found=0
+          # while-read (not mapfile) so this also runs on macOS's bash 3.2.
+          while IFS= read -r f; do
+            found=1
+            # GitHub renames spaces to dots in asset names; match on that form.
+            ghname=$(basename "$f" | tr ' ' '.')
+            if grep -qxF "$ghname" <<<"$have"; then continue; fi
+            echo "missing on release: $ghname — uploading"
+            ok=0
+            for i in 1 2 3 4 5; do
+              if gh release upload "$TAG" "$f" --clobber; then ok=1; break; fi
+              echo "  upload failed (attempt $i) — retrying in $((i*6))s"; sleep $((i*6))
+            done
+            [ "$ok" -eq 1 ] || { echo "::error::could not upload $ghname after retries"; fail=1; }
+          done < <(find "$root" -type f \
+            \( -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' \
+               -o -name '*.app.tar.gz' -o -name '*.sig' \) 2>/dev/null | sort -u)
+          [ "$found" -eq 1 ] || echo "no bundles on disk"
+          exit $fail
+
+      - name: Upload build artifacts (dry run)
+        if: steps.plan.outputs.publish == 'false'
+        uses: actions/upload-artifact@v7
+        with:
+          name: flasher-${{ matrix.platform }}
+          if-no-files-found: warn
+          path: |
+            desktop/src-tauri/target/**/release/bundle/**/*.dmg
+            desktop/src-tauri/target/**/release/bundle/**/*.app
+            desktop/src-tauri/target/**/release/bundle/**/*.AppImage
+            desktop/src-tauri/target/**/release/bundle/**/*.deb
+
+  # ── one authoritative writer for the updater manifest ────────────────────────
+  # The matrix jobs each write latest.json and rely on merge-with-existing, and
+  # tauri-action fills it with asset-ID URLs that die on any re-upload — so a
+  # re-run or a half-failed job can leave self-update pointing at deleted assets
+  # or carrying a stale signature (fresh INSTALLS are unaffected; only the
+  # in-app updater breaks). This job runs ONCE after both builds and rewrites
+  # latest.json to be durable: stable name-based URLs + signatures read from the
+  # .sig files the release actually carries. Then it refuses to finish unless
+  # every updater URL resolves — an inconsistent release fails loudly here
+  # instead of silently breaking updates. Publish path only.
+  finalize:
+    name: Finalize updater manifest (stable URLs + consistency guard)
+    needs: build
+    if: github.ref_type == 'tag' || github.event.inputs.dry_run == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve tag + version
+        id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            ver=$(python3 -c "import json;print(json.load(open('desktop/src-tauri/tauri.conf.json'))['version'])")
+            tag="flasher-v${ver}"
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#flasher-v}" >> "$GITHUB_OUTPUT"
+
+      - name: Rewrite latest.json with stable URLs + fresh signatures
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          VER: ${{ steps.plan.outputs.version }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" >/dev/null
+          work="$(mktemp -d)"
+          # The current manifest gives us the platform key set (tauri-action's
+          # own scheme); the .sig assets give us the authoritative signatures.
+          gh release download "$TAG" -p latest.json -D "$work" --clobber
+          for f in \
+            "SecuraCV.Flasher_${VER}_amd64.AppImage.sig" \
+            "SecuraCV.Flasher_${VER}_amd64.deb.sig" \
+            "SecuraCV.Flasher_${VER}_universal.app.tar.gz.sig"; do
+            gh release download "$TAG" -p "$f" -D "$work" --clobber
+          done
+          python3 desktop/scripts/harden_updater_manifest.py \
+            "$work/latest.json" "$OWNER" "$REPO" "$TAG" "$VER" "$work"
+          ok=0
+          for i in 1 2 3 4 5; do
+            if gh release upload "$TAG" "$work/latest.json" --clobber; then ok=1; break; fi
+            echo "latest.json upload failed (attempt $i) — retrying in $((i*6))s"; sleep $((i*6))
+          done
+          [ "$ok" -eq 1 ] || { echo "::error::could not upload latest.json after retries"; exit 1; }
+          echo "MANIFEST=$work/latest.json" >> "$GITHUB_ENV"
+
+      - name: Consistency guard — every updater URL must resolve
+        shell: bash
+        env:
+          MANIFEST: ${{ env.MANIFEST }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r url; do
+            code=$(curl -sSL -o /dev/null -w '%{http_code}' "$url")
+            if [ "$code" != "200" ]; then
+              echo "::error::updater URL does not resolve ($code): $url"; fail=1
+            else
+              echo "ok $code  $url"
+            fi
+          done < <(python3 -c "import json,sys;[print(p['url']) for p in json.load(open('$MANIFEST'))['platforms'].values()]" | sort -u)
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::release $TAG has a broken updater manifest — self-update would fail"; exit 1
+          fi
+          echo "updater manifest is self-consistent"
+
+  # ── give the fleet its update URL back ──────────────────────────────────────
+  # Publishing this app release makes it GitHub's `releases/latest`, which is the
+  # URL every Canary in the field polls for its OTA manifest (config.h
+  # SECURACV_OTA_MANIFEST_URL). Left alone, the whole fleet 404s on its next
+  # check and quietly stops seeing updates.
+  #
+  # Its own job, under `always()`, and NOT gated on `build` succeeding: with
+  # `fail-fast: false`, one matrix leg can publish the release and upload its
+  # installers while the other fails — and a job with `needs:` but no `always()`
+  # is skipped outright when a dependency fails, so a step-level `if: always()`
+  # inside `finalize` would never run. That partial publish is the case that
+  # needs the repair MOST: the release exists, it has taken `latest`, and being
+  # CI-created it fires no `release:` event for release-latest-guard.yml to
+  # catch. `always()` also covers cancellation, for the same reason.
+  keep-latest:
+    name: Keep releases/latest on the firmware
+    needs: build
+    if: always() && (github.ref_type == 'tag' || github.event.inputs.dry_run == 'false')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/keep-firmware-latest
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          context: >-
+            ${{ github.ref_type == 'tag' && github.ref_name || 'flasher' }} publish
+            (build ${{ needs.build.result }})

@@ -5,6 +5,11 @@
 // carries zero onboarding baggage at steady state — the WebServer, the DNS
 // socket, and the scan cache all free on return.
 #include "flavor_config.h"
+// Nightstand borrows the watch's small-portrait rendering (see splash.cpp for
+// the rationale); the standing face is portrait_ui.cpp.
+#if defined(CD_FLAVOR_NIGHTSTAND) && !defined(CD_FLAVOR_WATCH)
+#define CD_FLAVOR_WATCH 1
+#endif
 
 // Library includes live ABOVE the feature gate on purpose: PlatformIO's LDF
 // (deep+ mode) evaluates preprocessor conditionals using build flags only —
@@ -26,6 +31,7 @@
 #include "provision.h"
 #include "provision_core.h"
 #include "runtime_config.h"
+#include "chime.h"
 #include "display.h"
 #include "onboard_ui.h"
 #include "log.h"
@@ -558,6 +564,10 @@ void provision_run(bool glass_ok) {
           ctx.phone_acked = false;
           enter(St::Success, now);
           ui_stage(canary::ui::ObStage::Success, nullptr);
+#if defined(FEATURE_CHIME) && FEATURE_CHIME
+          // You're in the fleet — the one unabashedly happy sound, earned once.
+          canary::hal::voice_play(canary::hal::Voice::JoinSuccess);
+#endif
           log_header("SETUP");
           canary::dbg_serial().printf("Joined \"%s\"  IP=%s\n", ctx.join_ssid,
                                       WiFi.localIP().toString().c_str());

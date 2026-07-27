@@ -6,7 +6,8 @@ name: Firmware Release
 #
 # Produces a GitHub Release carrying, for each supported variant
 # (canary, canary-wap, canary-vision incl. xiao-c3/xiao-s3, canary-sense
-# incl. wellbeing — 7 products total):
+# incl. wellbeing, canary-display watch/dash/dash-modes — 10 products; the
+# display three are best-effort, see the display steps below):
 #   - the firmware binary           (<variant>-<ver>.bin)
 #   - a signed per-variant manifest (manifest-<variant>.json)
 #   - a variant index               (manifest-index.json)
@@ -26,30 +27,100 @@ name: Firmware Release
 #   loudly if they drift, because devices would reject every artifact.
 
 on:
+  # Path A — the git-tag ceremony (unchanged): push a fw-v* tag and this cuts
+  # the release for exactly that tag/commit.
   push:
     tags:
       - 'fw-v*'
+  # Path B — one-click from the Actions tab (or the whole-pipeline launcher).
+  # Same build, same signing, same guards; it just creates the tag for you
+  # from the version you pick, so the tag and the commit can never disagree.
+  # The channel is a safety cross-check against the version's grammar
+  # (release = a clean triple; dev = a -dev.N / -rc.N suffix) — see
+  # docs/RELEASE_PROCESS.md.
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Channel: release (stable, latest moves) or dev (prerelease, dev channel only)"
+        type: choice
+        options:
+          - release
+          - dev
+        default: release
+      version:
+        description: "Version to cut, e.g. 2.3.0 (release) or 2.3.0-dev.1 (dev). Blank = read the triple from source (release only). Must match the bumped FIRMWARE_VERSION / CANARY_FW_VERSION in every variant."
+        type: string
+        default: ""
 
 permissions:
   contents: write
+  id-token: write      # OIDC identity used to sign the build-provenance attestation
+  attestations: write  # upload the signed provenance to this repo's attestation store
+
+# One release build per tag; NEVER cancel a run mid-publish (half-uploaded
+# release assets) — concurrent runs queue instead.
+concurrency:
+  group: firmware-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build-sign-release:
     name: Build, sign, and publish firmware
     runs-on: ubuntu-latest
+    timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@v7
 
-      - name: Derive version + channel from tag
+      - name: Derive version, tag, and channel
         id: ver
+        env:
+          # workflow_dispatch inputs (empty on a tag push)
+          IN_CHANNEL: ${{ inputs.channel }}
+          IN_VERSION: ${{ inputs.version }}
         run: |
-          VERSION="${GITHUB_REF_NAME#fw-v}"
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # One-click path: derive VERSION + TAG from the inputs. The source
+            # triple (canary's FIRMWARE_VERSION) is the fallback for a release.
+            SRC_TRIPLE="$(grep -E '#define[[:space:]]+FIRMWARE_VERSION' firmware/canary/include/canary_config.h | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+            VERSION="${IN_VERSION#fw-v}"     # tolerate a pasted fw-v* tag
+            if [ -z "$VERSION" ]; then
+              if [ "$IN_CHANNEL" = "dev" ]; then
+                echo "::error::dev channel needs an explicit -dev.N / -rc.N version (e.g. ${SRC_TRIPLE}-dev.1) — the binary must carry that exact string. Bump the version headers and enter it here."
+                exit 1
+              fi
+              VERSION="$SRC_TRIPLE"
+            fi
+            # Safety cross-check: the picked channel must match the version's
+            # grammar, so a typo can't publish a dev build as stable (or vice
+            # versa) — the two would then disagree about releases/latest.
+            case "$VERSION" in
+              *-dev.*|*.dev.*|*-rc.*|*.rc.*) VER_KIND=dev ;;
+              *)                             VER_KIND=release ;;
+            esac
+            if [ "$VER_KIND" != "$IN_CHANNEL" ]; then
+              echo "::error::channel '${IN_CHANNEL}' disagrees with version '${VERSION}' (that version looks like '${VER_KIND}'). A dev build needs a -dev.N / -rc.N suffix; a release must have none."
+              exit 1
+            fi
+            TAG="fw-v${VERSION}"
+            # Refuse to clobber an already-published tag — bump the version.
+            if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+              echo "::error::tag ${TAG} already exists. Bump FIRMWARE_VERSION / CANARY_FW_VERSION in every variant (and the CHANGELOG) to the next version first."
+              exit 1
+            fi
+            echo "Firmware ${IN_CHANNEL}-channel release ${VERSION} (one-click) → will create tag ${TAG} at ${GITHUB_SHA}"
+          else
+            # Tag-push path (unchanged): the tag is the control surface.
+            TAG="${GITHUB_REF_NAME}"
+            VERSION="${TAG#fw-v}"
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          # Channel gating happens HERE, not in any client: a dev/rc tag is a
-          # GitHub prerelease, so releases/latest — the URL every default
-          # device polls — never moves for it. Release-channel devices are
-          # structurally unable to see dev builds (docs/RELEASE_PROCESS.md).
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # Channel gating happens HERE, not in any client: a dev/rc version is a
+          # GitHub prerelease, so releases/latest — the URL every default device
+          # polls — never moves for it. Release-channel devices are structurally
+          # unable to see dev builds (docs/RELEASE_PROCESS.md).
           case "$VERSION" in
             *-dev.*|*.dev.*|*-rc.*|*.rc.*)
               echo "prerelease=true"  >> "$GITHUB_OUTPUT"
@@ -62,7 +133,7 @@ jobs:
           esac
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
@@ -178,19 +249,13 @@ jobs:
           HEADER
           pio run -e canary-sense-default -e canary-sense-wellbeing
 
-      - name: Install Arduino CLI
-        uses: arduino/setup-arduino-cli@v2
-
-      - name: Configure Arduino CLI + libraries
-        run: |
-          arduino-cli config init
-          arduino-cli config add board_manager.additional_urls \
-            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
-          arduino-cli core update-index
-          arduino-cli core install esp32:esp32
-          arduino-cli lib install "Crypto"
-          arduino-cli lib install "ArduinoJson"
-          arduino-cli lib install "NimBLE-Arduino"
+      - name: Install Arduino CLI + ESP32 core (cached)
+        uses: ./.github/actions/setup-arduino-esp32
+        with:
+          libraries: |
+            Crypto
+            ArduinoJson
+            NimBLE-Arduino
 
       - name: Build canary-wap (arduino-cli)
         run: |
@@ -205,11 +270,96 @@ jobs:
             --output-dir /tmp/wap-build \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
+      - name: Build canary-display watch + dash + modes (arduino-cli, profile-pinned)
+        # The display flavors build from the committed sketch.yaml profiles —
+        # platform + library pins live THERE (arduino-esp32 2.0.17, the
+        # PlatformIO-matched row firmware.yml proves on every push), and
+        # profiles auto-install their own isolated core + libs, so no
+        # --fqbn/--libraries here. The flavor dispatchers infer watch/dash
+        # from each profile's board (fqbn esp32:esp32:XIAO_ESP32S3 -> watch,
+        # esp32:esp32:esp32s3 -> dash).
+        #
+        # `modes` is the exception, and it bites: the profile pins the 4.3B
+        # board and libraries but carries NO build flags. The gear flags
+        # (FEATURE_DEVMODE / DEMO_MODE / DEBUG_MODE / ARCADE) live in the
+        # git-ignored flavor_local.h, and CD_GEARS_COMPILED_IDENTITY — which is
+        # what makes the image identify as dash-modes instead of plain dash —
+        # is derived from them (config.h). Compile `--profile modes` without
+        # staging and you get a GEARLESS DASH binary labelled dash-modes:
+        # flashing it strips the modes build, and OTA-ing it onto a real modes
+        # unit cross-grades that unit down and leaves it polling as plain dash.
+        # `setup.sh flavor` writes only that one gitignored file, so the flag
+        # list has exactly one home.
+        #
+        # Non-blocking on purpose: a display build hiccup only drops those
+        # products from the browser flasher (build_flash_manifest warns
+        # per-variant) — it must never sink the signed OTA release around it.
+        run: |
+          cd firmware/projects/canary-display/arduino/canary_display
+          for P in watch dash modes; do
+            if [ "$P" = modes ]; then
+              ../../setup.sh flavor modes
+            else
+              # No override: let board inference pick watch vs dash. Explicit
+              # so the loop is order-independent and a re-run can't inherit a
+              # stale staging.
+              rm -f flavor_local.h
+            fi
+            if ! arduino-cli compile --profile "$P" \
+                --output-dir "/tmp/display-${P}-build" canary_display.ino; then
+              echo "::warning::canary-display '${P}' build failed — absent from the browser flasher this release"
+            fi
+          done
+          rm -f flavor_local.h
+
+      - name: Build canary-display board envs (PlatformIO, non-blocking)
+        working-directory: firmware/projects/canary-display
+        # The Nightstand Line boards (dash7 / nightstand-s3 / nightstand-c6)
+        # release from their PlatformIO envs — the same envs firmware.yml
+        # compiles on every push — because each board's pins and flash
+        # geometry live in the env, not in a sketch profile: there is no
+        # flavor_local.h staging to get wrong (the trap the `modes` profile
+        # comment above documents), and SECURACV_OTA_PRODUCT is compiled in
+        # per env so the product-string guard below stays meaningful.
+        #
+        # Non-blocking, like the profile builds above: a failed env drops
+        # those products from this release instead of sinking the signed OTA
+        # release around it.
+        #
+        # The C6 env rides the pioarduino core-3.x platform while the rest of
+        # this project is on espressif32@6.9.0 — give it its own
+        # PLATFORMIO_CORE_DIR, exactly as firmware.yml isolates it (the two
+        # platforms ship framework-arduinoespressif32 at incompatible
+        # versions and corrupt each other's core dir).
+        run: |
+          # Generic release build: placeholder secrets ON PURPOSE — same
+          # NVS-backed runtime-config scheme as canary-vision above.
+          mkdir -p secrets
+          cat > secrets/secrets.h << 'HEADER'
+          #pragma once
+          // Generic OTA release build. Real credentials live in device NVS.
+          #define WIFI_SSID "ci-placeholder"
+          #define WIFI_PASS "ci-placeholder"
+          #define MQTT_HOST "127.0.0.1"
+          #define MQTT_PORT 1883
+          #define MQTT_USER nullptr
+          #define MQTT_PASS nullptr
+          HEADER
+          for E in canary-display-dash7 canary-display-nightstand-s3; do
+            if ! pio run -e "$E"; then
+              echo "::warning::${E} build failed — its product is absent from this release"
+            fi
+          done
+          if ! PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-canary-display-nightstand-c6" \
+              pio run -e canary-display-nightstand-c6; then
+            echo "::warning::canary-display-nightstand-c6 build failed — its product is absent from this release"
+          fi
+
       - name: Assemble, sign, and verify release artifacts
         env:
           VERSION: ${{ steps.ver.outputs.version }}
           REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ steps.ver.outputs.tag }}
         run: |
           set -euo pipefail
           mkdir -p /tmp/release
@@ -285,7 +435,86 @@ jobs:
               "/tmp/release/canary-sense${SUFFIX}-${VERSION}.bin"
           done
 
-          # Variant index (tooling + future variants)
+          # canary-display (watch / dash / dash-modes) — the flavors CI builds
+          # above. Without these, every display board polls a manifest URL that
+          # no release carries (config.h SECURACV_OTA_MANIFEST_URL): USB-flashable
+          # but structurally unable to self-update.
+          #
+          # Non-blocking, for the same reason the display BUILD step is: a flavor
+          # that didn't compile is left OUT of the release rather than sinking the
+          # signed OTA release around it. A flavor whose binary doesn't carry THIS
+          # version is also left out — publishing that manifest would have devices
+          # install the image, boot reporting the old version, witness it as a
+          # rollback, and be offered the same update forever.
+          #
+          # The other flavors in config.h (watch-modes, nightstand, bare
+          # canary-display) have no sketch.yaml profile, so they have no published
+          # channel yet — declared, not accidental: check_ota_channels.py holds
+          # that list and fails if a NEW flavor appears with neither.
+          # Stage the PlatformIO board-env display builds (the Nightstand
+          # Line: dash7 / nightstand-s3 / nightstand-c6) into the same
+          # /tmp/display-<name>-build layout the profile builds use, so ONE
+          # loop below applies the version-string and product-string guards
+          # to every display flavor identically. A missing .pio build (its
+          # env failed above) simply stages nothing and the loop's existing
+          # "produced no binary" warning covers it.
+          for E in dash7 nightstand-s3 nightstand-c6; do
+            SRC="firmware/projects/canary-display/.pio/build/canary-display-${E}/firmware.bin"
+            if [ -s "$SRC" ]; then
+              mkdir -p "/tmp/display-${E}-build"
+              cp "$SRC" "/tmp/display-${E}-build/canary_display.ino.bin"
+            fi
+          done
+
+          DISPLAY_INDEX=""
+          for D in "watch:watch" "dash:dash" "dash-modes:modes" "dash7:dash7" "nightstand-s3:nightstand-s3" "nightstand-c6:nightstand-c6"; do
+            NAME="${D%%:*}"; DIR="${D##*:}"
+            SRC="/tmp/display-${DIR}-build/canary_display.ino.bin"
+            OUT="/tmp/release/canary-display-${NAME}-${VERSION}.bin"
+            if [ ! -s "$SRC" ]; then
+              echo "::warning::canary-display ${NAME} produced no binary — absent from this OTA release (it cannot self-update until the next release carries it)"
+              continue
+            fi
+            cp "$SRC" "$OUT"
+            if ! strings "$OUT" | grep -qFx "${VERSION}"; then
+              echo "::warning::canary-display ${NAME} binary does not carry the version string '${VERSION}' — skipping its OTA manifest (bump CANARY_FW_VERSION in firmware/projects/canary-display/arduino/canary_display/version.h)"
+              rm -f "$OUT"
+              continue
+            fi
+            # The binary must AGREE that it is this product. SECURACV_OTA_PRODUCT
+            # is compiled in, and for `modes` it is derived from the gear flags —
+            # so a modes build that didn't get flavor_local.h staged reports
+            # "securacv-canary-display-dash" and this catches it. Publishing a
+            # manifest whose product the image doesn't claim is how you
+            # cross-grade a modes unit down to gearless dash: the engine's
+            # product check passes (it trusts the manifest), the gears vanish,
+            # and the device polls as plain dash forever after.
+            if ! strings "$OUT" | grep -qFx "securacv-canary-display-${NAME}"; then
+              echo "::warning::canary-display ${NAME} binary does not identify as 'securacv-canary-display-${NAME}' — skipping its OTA manifest rather than publishing a mislabelled image (a modes build needs 'setup.sh flavor modes' staged before compiling)"
+              rm -f "$OUT"
+              continue
+            fi
+            python firmware/scripts/ota_release.py manifest \
+              --private-key /tmp/releaser.pem \
+              --product "securacv-canary-display-${NAME}" \
+              --version "${VERSION}" \
+              --url "${DL}/canary-display-${NAME}-${VERSION}.bin" \
+              --release-notes "$NOTES" \
+              --release-url "$RELURL" \
+              --out "/tmp/release/manifest-canary-display-${NAME}.json" \
+              "$OUT"
+            python firmware/scripts/ota_release.py verify \
+              --pubkey firmware/common/ota/src/ota_release_key.h \
+              --manifest "/tmp/release/manifest-canary-display-${NAME}.json" \
+              "$OUT"
+            DISPLAY_INDEX="${DISPLAY_INDEX} securacv-canary-display-${NAME}=${DL}/manifest-canary-display-${NAME}.json"
+            echo "canary-display ${NAME}: signed and verified for OTA."
+          done
+
+          # Variant index (tooling + future variants). $DISPLAY_INDEX is
+          # deliberately unquoted — it word-splits into one arg per display
+          # flavor that actually built, and is empty when none did.
+          # shellcheck disable=SC2086
           python firmware/scripts/ota_release.py index \
             "securacv-canary=${DL}/manifest-canary.json" \
             "securacv-canary-wap=${DL}/manifest-canary-wap.json" \
@@ -294,6 +523,7 @@ jobs:
             "securacv-canary-vision-xiao-s3=${DL}/manifest-canary-vision-xiao-s3.json" \
             "securacv-canary-sense=${DL}/manifest-canary-sense.json" \
             "securacv-canary-sense-wellbeing=${DL}/manifest-canary-sense-wellbeing.json" \
+            ${DISPLAY_INDEX} \
             --out /tmp/release/manifest-index.json
 
           # Verify every signature against the COMMITTED public key before
@@ -380,9 +610,10 @@ jobs:
           python3 firmware/scripts/build_flash_manifest.py \
             --version "$VERSION" \
             --repo "${{ github.repository }}" \
-            --tag "${{ github.ref_name }}" \
+            --tag "${{ steps.ver.outputs.tag }}" \
             --out-dir /tmp/release \
-            --notes "$NOTES"
+            --notes "$NOTES" \
+            --signing-key /tmp/releaser.pem
           # sha256sums.txt was written by the assemble step BEFORE these assets
           # existed; regenerate it so the advertised checksum set covers the
           # factory images and manifest-flash.json too (nothing published here
@@ -390,9 +621,44 @@ jobs:
           (cd /tmp/release && sha256sum ./*.bin ./*.json > sha256sums.txt)
           ls -la /tmp/release/*-factory.bin /tmp/release/manifest-flash.json || true
 
+      - name: Attest build provenance (SLSA) for the published artifacts
+        # Sign an in-toto provenance statement binding every published .bin /
+        # manifest / checksum to THIS workflow run + commit via GitHub's OIDC
+        # identity, and log it to the Sigstore Rekor public transparency log.
+        # This complements — doesn't replace — the two integrity checks already
+        # here: the Ed25519 OTA signature devices verify, and sha256sums.txt.
+        # What it adds is a public, tamper-evident record of *who built what,
+        # from which commit, in which workflow* — verifiable by anyone with
+        #   gh attestation verify <file> --repo ${{ github.repository }}
+        # See docs/supply_chain_transparency.md.
+        id: attest
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            /tmp/release/*.bin
+            /tmp/release/*.json
+            /tmp/release/sha256sums.txt
+
+      - name: Stage the provenance bundle for offline verification
+        # Ship the Sigstore bundle as a release asset too, so an air-gapped user
+        # can verify provenance with no network (--bundle instead of --repo):
+        #   gh attestation verify <file> \
+        #     --bundle provenance-firmware-${{ steps.ver.outputs.version }}.sigstore.jsonl
+        run: cp "${{ steps.attest.outputs.bundle-path }}" "/tmp/release/provenance-firmware-${{ steps.ver.outputs.version }}.sigstore.jsonl"
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          # On a tag push this is the pushed tag; on the one-click path it
+          # creates this tag. target_commitish pins the created tag to the
+          # exact commit we checked out and BUILT (github.sha) — without it the
+          # create-release API defaults the new tag to the repo's default
+          # branch, so a dispatch from another ref (or main advancing during
+          # the ~90-min build) could point the tag/source archive at a
+          # different commit than the binaries + attestation. Ignored by the
+          # API when the tag already exists, so the tag-push path is unchanged.
+          tag_name: ${{ steps.ver.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           name: "Canary Firmware ${{ steps.ver.outputs.version }}${{ steps.ver.outputs.prerelease == 'true' && ' (dev channel)' || '' }}"
           prerelease: ${{ steps.ver.outputs.prerelease }}
           body_path: /tmp/release_notes.md
@@ -406,6 +672,8 @@ jobs:
             /tmp/release/canary-vision-xiao-s3-${{ steps.ver.outputs.version }}.bin
             /tmp/release/canary-sense-${{ steps.ver.outputs.version }}.bin
             /tmp/release/canary-sense-wellbeing-${{ steps.ver.outputs.version }}.bin
+            /tmp/release/canary-display-*-${{ steps.ver.outputs.version }}.bin
+            /tmp/release/manifest-canary-display-*.json
             /tmp/release/manifest-canary.json
             /tmp/release/manifest-canary-wap.json
             /tmp/release/manifest-canary-vision.json
@@ -415,6 +683,7 @@ jobs:
             /tmp/release/manifest-canary-sense-wellbeing.json
             /tmp/release/manifest-index.json
             /tmp/release/sha256sums.txt
+            /tmp/release/provenance-firmware-${{ steps.ver.outputs.version }}.sigstore.jsonl
 
       # The dev channel's stable address. Only the MANIFESTS are mirrored —
       # each manifest's binary URL points at the real fw-v*-dev.* tag's
@@ -444,5 +713,6 @@ jobs:
             /tmp/release/manifest-canary-vision-xiao-s3.json
             /tmp/release/manifest-canary-sense.json
             /tmp/release/manifest-canary-sense-wellbeing.json
+            /tmp/release/manifest-canary-display-*.json
             /tmp/release/manifest-index.json
             /tmp/release/sha256sums.txt

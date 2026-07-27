@@ -2,9 +2,20 @@
  "generated_by": "canary-local/tools/gen_boards.py",
  "note": "Vendor board CAD (boards/vendor/*.step) tessellated to a committed GLB by cascadio; geometry facts recomputed from the committed mesh by the page's own loader (tools/glb_facts.mjs \u2192 assets/glb.js). See boards/vendor/README.md for provenance and licence.",
  "device_board": {
-  "canary-wap": "seeed_xiao_esp32s3_sense",
-  "canary-vision": "seeed_grove_vision_ai_v2",
-  "canary-display-watch": "seeed_round_display_xiao"
+  "canary-wap": [
+   "seeed_xiao_esp32s3_sense",
+   "quectel_l76k_gnss"
+  ],
+  "canary-vision": [
+   "seeed_grove_vision_ai_v2"
+  ],
+  "canary-display-watch": [
+   "seeed_round_display_xiao",
+   "seeed_xiao_esp32s3"
+  ],
+  "canary-display-dash": [
+   "waveshare_4_3b"
+  ]
  },
  "boards": {
   "seeed_xiao_esp32s3_sense": {
@@ -306,12 +317,12 @@
    "glb": "boards/seeed_grove_vision_ai_v2.glb",
    "source_step": "boards/vendor/seeed_grove_vision_ai_v2.step.gz",
    "dims_mm": [
-    41.5,
-    15.71,
-    20.0
+    22.48,
+    4.46,
+    17.78
    ],
-   "triangles": 23590,
-   "parts": 10,
+   "triangles": 22126,
+   "parts": 9,
    "materials": [
     {
      "color": "#e7c863",
@@ -332,10 +343,6 @@
     {
      "color": "#020202",
      "triangles": 2086
-    },
-    {
-     "color": "#97a3da",
-     "triangles": 1464
     },
     {
      "color": "#f6f4e9",
@@ -364,35 +371,40 @@
      "label": "Grove I2C",
      "pin": "SDA / SCL",
      "gpio": "varies by host",
-     "use": "Sensor bus to the host \u2014 the GPIOs depend on the host board: DevKit-C3 4/5, XIAO-C3 6/7 (D4/D5), XIAO-S3 5/6 (D4/D5)."
+     "use": "Result bus (labels/boxes, addr 0x62) on the 4-pin Grove port \u2014 GND \u00b7 VCC \u00b7 SDA(white) \u00b7 SCL(yellow). Host GPIOs: DevKit-C3 4/5, XIAO-C3 6/7 (D4/D5), XIAO-S3 5/6 (D4/D5). The 4-pin Grove connector isn't discretely modeled in the vendor demo-stand STEP, so this row stays table-only."
     },
     {
      "label": "Camera",
      "pin": "CSI FPC",
      "gpio": "\u2014",
-     "use": "OV5647 / OV-series over the flex",
+     "use": "OV5647 / OV-series camera ribbon into the wide flat FPC connector on the module's edge",
      "anchor": [
-      -17.8,
-      6.3,
+      -18.3,
+      5.8,
       4.0
      ]
     },
     {
-     "label": "USB-C",
+     "label": "USB-C (model port)",
      "pin": "\u2014",
      "gpio": "\u2014",
-     "use": "Model flashing (SenseCraft), power"
+     "use": "The module's own USB-C: load/preview the AI model in SenseCraft and update Himax firmware. Cannot see the ESP32 \u2014 that's the XIAO's port.",
+     "anchor": [
+      -20.6,
+      6.3,
+      3.0
+     ]
     },
     {
      "label": "Power",
      "pin": "VCC / GND",
      "gpio": "\u2014",
-     "use": "3V3 / 5 V from the Grove cable"
+     "use": "3V3 / 5 V from the Grove cable or the XIAO socket rail"
     }
    ],
-   "blurb": "Himax WiseEye2 HX6538 (Arm Cortex-M55 + Ethos-U55 NPU) with a XIAO host stacked on its socket. Talks to the host over I2C on the Grove connector; the OV5647 camera hangs on the CSI flex and is placed by each device model (it is not rigid to the board). Mount parts and the loose camera from the source assembly are filtered out.",
+   "blurb": "Himax WiseEye2 HX6538 (Arm Cortex-M55 + Ethos-U55 NPU) that runs the vision model on-board and hands the host only labels + boxes over I2C (address 0x62) \u2014 no pixels cross the wire. A XIAO seats in the module's XIAO-footprint socket (I2C + UART, zero wiring) and runs canary-vision; the module's own USB-C is the model/SenseCraft port, the XIAO's USB-C is the firmware port. The OV5647 rides the CSI flex and is posed per-device by the models (it is not rigid to the board). The vendor demo stand + loose camera from the source assembly are stripped, leaving just the module.",
    "doc": "https://wiki.seeedstudio.com/grove_vision_ai_v2/",
-   "provenance": "Seeed Studio CAD (STEP) supplied with a printable stand + camera shroud + adapter and a posed OV5647 camera. The generator drops the mount parts AND the loose camera by name (mounting_plate, camera_mounting_shroud, adapter, rpi cam) \u2014 the camera rides a flex and is posed per-device by the models, not welded to the board. Verify Seeed's licence terms before external redistribution."
+   "provenance": "Seeed Studio CAD (STEP) supplied with a printable stand + camera shroud + adapter and a posed OV5647 camera. The generator strips all of that so only the board remains: the loose camera drops by name (rpi cam), and the printed stand/mount drops by a Y-plane cut (drop_below_y) \u2014 merge_primitives fuses the stand's solids into unnamed material buckets, so a name match can't reach them, but the stand sits entirely below the board with a clean air gap. The OV5647 rides a flex and is posed per-device by the models, not welded to the board. Verify Seeed's licence terms before external redistribution."
   },
   "seeed_round_display_xiao": {
    "name": "Seeed Round Display for XIAO",
@@ -490,6 +502,788 @@
    "blurb": "\u00d8 43.0 mm PCB disc (the \u201c39 mm\u201d in marketing copy is the glass), 1.28-in GC9A01 (240x240) with CST816S touch, PCF8563 RTC, microSD and a LiPo charger; it seats a XIAO on its back socket. The backlight on D6/GPIO43 is PWM-dimmable \u2014 that is the bedside night floor.",
    "doc": "https://wiki.seeedstudio.com/get_start_round_display/",
    "provenance": "Seeed Studio CAD (SolidWorks STEP export). This export did not carry per-solid colours through the tessellator, so materials are assigned by geometry (dark PCB + grey glass); the shape is the vendor's exact model. Verify Seeed's licence terms before external redistribution."
+  },
+  "seeed_xiao_esp32s3": {
+   "name": "Seeed XIAO ESP32-S3",
+   "vendor": "Seeed Studio",
+   "mpn": "113991114",
+   "devices": [
+    "canary-display-watch"
+   ],
+   "glb": "boards/seeed_xiao_esp32s3.glb",
+   "source_step": "boards/vendor/seeed_xiao_esp32s3.step.gz",
+   "dims_mm": [
+    22.64,
+    4.42,
+    17.78
+   ],
+   "triangles": 36142,
+   "parts": 9,
+   "materials": [
+    {
+     "color": "#e59833",
+     "triangles": 9364
+    },
+    {
+     "color": "#020202",
+     "triangles": 9225
+    },
+    {
+     "color": "#f6f4e9",
+     "triangles": 6523
+    },
+    {
+     "color": "#121212",
+     "triangles": 6014
+    },
+    {
+     "color": "#5a5a5a",
+     "triangles": 2364
+    },
+    {
+     "color": "#e7c863",
+     "triangles": 2336
+    },
+    {
+     "color": "#0d0d0d",
+     "triangles": 196
+    },
+    {
+     "color": "#7f8e98",
+     "triangles": 96
+    },
+    {
+     "color": "#131313",
+     "triangles": 24
+    }
+   ],
+   "pose": {
+    "rx": 0.6,
+    "ry": 0.7,
+    "dist_factor": 2.7
+   },
+   "pads": {
+    "_comment": "Same 2x7 castellations as the Sense, but this vendor STEP sits in its own frame: USB-C at +X (x=13.8), +Y component side. Pad centres are render-verified against the committed mesh. Names follow the XIAO ESP32-S3 footprint the same way the Sense entry documents its own: D0 sits at the USB end (so the +X pad of each row), and \u2014 this being the identical board to the Sense \u2014 the D0\u2013D6 edge is the one that lands on the Sense's D-row under the same component-up/USB-forward chirality, here the z=-14.4 edge. The z=+2.4 edge carries the 5V/GND/3V3/D10\u2013D7 rail.",
+    "D0": [
+     8.24,
+     0.4,
+     -14.4
+    ],
+    "D1": [
+     5.7,
+     0.4,
+     -14.4
+    ],
+    "D2": [
+     3.16,
+     0.4,
+     -14.4
+    ],
+    "D3": [
+     0.62,
+     0.4,
+     -14.4
+    ],
+    "D4": [
+     -1.92,
+     0.4,
+     -14.4
+    ],
+    "D5": [
+     -4.46,
+     0.4,
+     -14.4
+    ],
+    "D6": [
+     -7.0,
+     0.4,
+     -14.4
+    ],
+    "5V": [
+     8.24,
+     0.4,
+     2.4
+    ],
+    "GND": [
+     5.7,
+     0.4,
+     2.4
+    ],
+    "3V3": [
+     3.16,
+     0.4,
+     2.4
+    ],
+    "D10": [
+     0.62,
+     0.4,
+     2.4
+    ],
+    "D9": [
+     -1.92,
+     0.4,
+     2.4
+    ],
+    "D8": [
+     -4.46,
+     0.4,
+     2.4
+    ],
+    "D7": [
+     -7.0,
+     0.4,
+     2.4
+    ]
+   },
+   "pinout": [
+    {
+     "label": "Display SPI",
+     "pin": "D8 / D9 / D10",
+     "gpio": "GPIO7/8/9",
+     "use": "SCK / MISO / MOSI to the Round Display GC9A01 (through the socket)",
+     "anchors": [
+      [
+       -4.46,
+       0.4,
+       2.4
+      ],
+      [
+       -1.92,
+       0.4,
+       2.4
+      ],
+      [
+       0.62,
+       0.4,
+       2.4
+      ]
+     ]
+    },
+    {
+     "label": "Backlight",
+     "pin": "D6",
+     "gpio": "GPIO43",
+     "use": "PWM-dimmable panel backlight (the bedside night floor)",
+     "anchor": [
+      -7.0,
+      0.4,
+      -14.4
+     ]
+    },
+    {
+     "label": "Touch / RTC I2C",
+     "pin": "D4 / D5",
+     "gpio": "GPIO5/6",
+     "use": "CST816S touch + PCF8563 RTC share the I2C bus",
+     "anchors": [
+      [
+       -1.92,
+       0.4,
+       -14.4
+      ],
+      [
+       -4.46,
+       0.4,
+       -14.4
+      ]
+     ]
+    },
+    {
+     "label": "Chime",
+     "pin": "D3",
+     "gpio": "GPIO4",
+     "status": "planned",
+     "use": "Passive piezo for the future severity-tiered chime \u2014 UNPOPULATED in v0.1 firmware.",
+     "anchor": [
+      0.62,
+      0.4,
+      -14.4
+     ]
+    },
+    {
+     "label": "Battery",
+     "pin": "BAT+ / BAT-",
+     "gpio": "\u2014",
+     "use": "JST-PH LiPo pads on the underside (not modeled as distinct gold in this STEP, so table-only)"
+    },
+    {
+     "label": "Power",
+     "pin": "5V / 3V3 / GND",
+     "gpio": "\u2014",
+     "use": "USB-C 5 V in; 3V3 rail out",
+     "anchors": [
+      [
+       8.24,
+       0.4,
+       2.4
+      ],
+      [
+       3.16,
+       0.4,
+       2.4
+      ],
+      [
+       5.7,
+       0.4,
+       2.4
+      ]
+     ]
+    }
+   ],
+   "blurb": "21 x 17.8 mm. The plain XIAO ESP32-S3 (ESP32-S3, 8 MB flash / 8 MB PSRAM, onboard LiPo charger) with no Sense expansion \u2014 the same 2x7 castellated footprint that seats in the Round Display's socket for the Watch Station. The Watch build (canary-display-watch) runs on this host; the display's SPI/backlight/touch/RTC/microSD all come through the socket.",
+   "doc": "https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/",
+   "provenance": "Seeed Studio open-hardware CAD (STEP) for the plain XIAO ESP32-S3 \u2014 the same base module as the Sense, without the stacked camera/mic daughterboard. Redistributed here as the board's source of truth for the local viewer; see boards/vendor/README.md. Verify Seeed's licence terms before external redistribution."
+  },
+  "quectel_l76k_gnss": {
+   "name": "L76K GNSS Module for XIAO",
+   "vendor": "Seeed Studio",
+   "mpn": null,
+   "devices": [
+    "canary-wap"
+   ],
+   "glb": "boards/quectel_l76k_gnss.glb",
+   "source_step": "boards/vendor/quectel_l76k_gnss.step.gz",
+   "dims_mm": [
+    37.29,
+    8.32,
+    48.74
+   ],
+   "triangles": 22861,
+   "parts": 14,
+   "materials": [
+    {
+     "color": "#989898",
+     "triangles": 9434
+    },
+    {
+     "color": "#e7c863",
+     "triangles": 4204
+    },
+    {
+     "color": "#ff9f37",
+     "triangles": 3255
+    },
+    {
+     "color": "#392d1d",
+     "triangles": 1660
+    },
+    {
+     "color": "#ffe070",
+     "triangles": 1235
+    },
+    {
+     "color": "#020202",
+     "triangles": 999
+    },
+    {
+     "color": "#004500",
+     "triangles": 660
+    },
+    {
+     "color": "#ff8847",
+     "triangles": 514
+    },
+    {
+     "color": "#ffffff",
+     "triangles": 270
+    },
+    {
+     "color": "#5a5a5a",
+     "triangles": 164
+    },
+    {
+     "color": "#83807d",
+     "triangles": 152
+    },
+    {
+     "color": "#f6f4e9",
+     "triangles": 149
+    },
+    {
+     "color": "#00ff00",
+     "triangles": 125
+    },
+    {
+     "color": "#ffe7c2",
+     "triangles": 40
+    }
+   ],
+   "pose": {
+    "rx": 0.5,
+    "ry": 0.7,
+    "dist_factor": 2.6
+   },
+   "pads": {
+    "_comment": "The carrier's 2x7 castellations land on the identical XIAO footprint the Sense uses \u2014 pin_anchors (#e7c863) puts every pad at the SAME raw-mm coordinate as the committed Sense map (z=+1.76 D-row, z=-13.98 power/D7 row, x -5.88..9.36 at 2.54 mm). So the names transfer verbatim from the Sense's verified map; a XIAO stacked here mates pin-for-pin.",
+    "D0": [
+     -5.88,
+     0.37,
+     1.76
+    ],
+    "D1": [
+     -3.34,
+     0.37,
+     1.76
+    ],
+    "D2": [
+     -0.8,
+     0.37,
+     1.76
+    ],
+    "D3": [
+     1.74,
+     0.37,
+     1.76
+    ],
+    "D4": [
+     4.28,
+     0.37,
+     1.76
+    ],
+    "D5": [
+     6.82,
+     0.37,
+     1.76
+    ],
+    "D6": [
+     9.36,
+     0.37,
+     1.76
+    ],
+    "5V": [
+     -5.88,
+     0.37,
+     -13.98
+    ],
+    "GND": [
+     -3.34,
+     0.37,
+     -13.98
+    ],
+    "3V3": [
+     -0.8,
+     0.37,
+     -13.98
+    ],
+    "D10": [
+     1.74,
+     0.37,
+     -13.98
+    ],
+    "D9": [
+     4.28,
+     0.37,
+     -13.98
+    ],
+    "D8": [
+     6.82,
+     0.37,
+     -13.98
+    ],
+    "D7": [
+     9.36,
+     0.37,
+     -13.98
+    ]
+   },
+   "pinout": [
+    {
+     "label": "UART",
+     "pin": "TX / RX",
+     "gpio": "9600 baud",
+     "use": "GNSS NMEA out (module TX, on the D7 pad \u2192 host RX) / config in (module RX, on the D6 pad \u2192 host TX)",
+     "anchors": [
+      [
+       9.36,
+       0.37,
+       -13.98
+      ],
+      [
+       9.36,
+       0.37,
+       1.76
+      ]
+     ]
+    },
+    {
+     "label": "PPS",
+     "pin": "PPS",
+     "gpio": "\u2014",
+     "use": "One-pulse-per-second time strobe (optional) \u2014 not broken out to a confidently-identifiable pad in this STEP"
+    },
+    {
+     "label": "Power",
+     "pin": "VCC / GND",
+     "gpio": "\u2014",
+     "use": "3V3 from the host rail",
+     "anchors": [
+      [
+       -0.8,
+       0.37,
+       -13.98
+      ],
+      [
+       -3.34,
+       0.37,
+       -13.98
+      ]
+     ]
+    },
+    {
+     "label": "Antenna",
+     "pin": "patch",
+     "gpio": "\u2014",
+     "use": "Ceramic GNSS patch \u2014 needs open sky",
+     "anchor": [
+      2.3,
+      5.75,
+      -33.4
+     ]
+    }
+   ],
+   "blurb": "The L76K GNSS module (Quectel L76K receiver + ceramic patch antenna) on a XIAO-footprint carrier. In the WAP field build it talks to the XIAO over UART at 9600 baud: the module's TX crosses to the board's RX (D7) and its RX to the board's TX (D6). The patch antenna wants a clear view of the sky \u2014 that is why the WAP goes outdoors.",
+   "doc": "https://wiki.seeedstudio.com/Get_Started_with_L76K_GNSS_Module_for_XIAO/",
+   "provenance": "Seeed Studio open-hardware CAD (STEP) for the L76K GNSS Module for XIAO \u2014 a Quectel L76K receiver + ceramic patch antenna on a XIAO-footprint carrier. Redistributed here as the board's source of truth for the local viewer; see boards/vendor/README.md. Verify Seeed's licence terms before external redistribution."
+  },
+  "raspberry_pi_5": {
+   "name": "Raspberry Pi 5",
+   "vendor": "Raspberry Pi Ltd",
+   "mpn": "SC1111",
+   "devices": [],
+   "glb": "boards/raspberry_pi_5.glb",
+   "source_step": "boards/vendor/raspberry_pi_5.step.gz",
+   "dims_mm": [
+    89.04,
+    20.84,
+    57.19
+   ],
+   "triangles": 81866,
+   "parts": 7,
+   "materials": [
+    {
+     "color": "#b8bac2",
+     "triangles": 44588
+    },
+    {
+     "color": "#1c1c21",
+     "triangles": 15854
+    },
+    {
+     "color": "#0d0d0f",
+     "triangles": 11864
+    },
+    {
+     "color": "#d4ab45",
+     "triangles": 5396
+    },
+    {
+     "color": "#0d331a",
+     "triangles": 4164
+    }
+   ],
+   "pose": {
+    "rx": 0.5,
+    "ry": 0.7,
+    "dist_factor": 2.2
+   },
+   "pinout": [
+    {
+     "label": "40-pin GPIO",
+     "pin": "2x20",
+     "gpio": "0.1in header",
+     "use": "The Canary hub barely touches this \u2014 the fleet talks over the network, not wires"
+    },
+    {
+     "label": "USB / Ethernet",
+     "pin": "USB-A / RJ45",
+     "gpio": "\u2014",
+     "use": "Power, storage, and the wired network path to the Canaries' broker"
+    },
+    {
+     "label": "Power",
+     "pin": "USB-C",
+     "gpio": "5V/5A",
+     "use": "27 W USB-C PD in"
+    }
+   ],
+   "blurb": "85 x 56 mm. The Raspberry Pi 5 that runs Home Assistant as the fleet's hub \u2014 the Canaries report to it over the network (MQTT), so almost nothing wires to its GPIO. Shown here for completeness: the 40-pin GPIO header, the stacked USB-A / Ethernet cluster, dual micro-HDMI, and the USB-C power in.",
+   "doc": "https://www.raspberrypi.com/documentation/computers/raspberry-pi.html",
+   "provenance": "Raspberry Pi Ltd mechanical CAD (STEP). Redistributed here as the board's source of truth for the local viewer; see boards/vendor/README.md. The STEP carried no per-solid colours, so materials are assigned by the vendor's own part names (PCB green, metal shells on the USB/Ethernet/HDMI shields, gold on the GPIO header, black silicon) \u2014 the shape is the vendor's exact model, only the colour is ours. The Pi 5 is the Home Assistant hub the Canary fleet reports to (docs / homeassistant.html), not a Canary device board \u2014 it lives in the Board Room only, tessellated coarser (tol 0.35 mm) to keep the committed mesh reasonable."
+  },
+  "waveshare_4_3b": {
+   "name": "Waveshare ESP32-S3-Touch-LCD-4.3B",
+   "vendor": "Waveshare",
+   "mpn": "ESP32-S3-Touch-LCD-4.3B",
+   "devices": [
+    "canary-display-dash"
+   ],
+   "glb": "boards/waveshare_4_3b.glb",
+   "dims_mm": [
+    118,
+    38.9,
+    79
+   ],
+   "triangles": 2432,
+   "parts": 11,
+   "materials": [
+    {
+     "color": "#d4ab45",
+     "triangles": 1024
+    },
+    {
+     "color": "#0e0f11",
+     "triangles": 456
+    },
+    {
+     "color": "#282a2e",
+     "triangles": 352
+    },
+    {
+     "color": "#1b1c1f",
+     "triangles": 144
+    },
+    {
+     "color": "#0f131a",
+     "triangles": 92
+    },
+    {
+     "color": "#b2b2ab",
+     "triangles": 76
+    },
+    {
+     "color": "#47b857",
+     "triangles": 64
+    },
+    {
+     "color": "#db9e2e",
+     "triangles": 64
+    },
+    {
+     "color": "#d13d38",
+     "triangles": 64
+    },
+    {
+     "color": "#3e8d35",
+     "triangles": 60
+    },
+    {
+     "color": "#b8bac2",
+     "triangles": 36
+    }
+   ],
+   "pose": {
+    "rx": -0.3,
+    "ry": 0.06,
+    "dist_factor": 1.9
+   },
+   "pads": {
+    "_comment": "The 16 screw terminals laid down by build_waveshare_4_3b at 3.81 mm pitch on the REAR (\u2212Y) face near the bottom (\u2212Z) edge \u2014 opposite the screen, as on the real board \u2014 the same geometry the anchors below read from. Order is the rear silk, VIN end (\u2212X) to DI1 end (+X); CAN is L,H and RS485 is B,A per firmware/boards/waveshare-esp32s3-lcd43b. The three grounds are group-qualified (the Isolated I/O side is opto-isolated, NOT common with the 6-36 V or I2C ground) so wiring targets stay unambiguous.",
+    "VIN": [
+     -28.575,
+     -13.0,
+     -25.9
+    ],
+    "GND-pwr": [
+     -24.765,
+     -13.0,
+     -25.9
+    ],
+    "VOUT": [
+     -20.955,
+     -13.0,
+     -25.9
+    ],
+    "GND-i2c": [
+     -17.145,
+     -13.0,
+     -25.9
+    ],
+    "SDA": [
+     -13.335,
+     -13.0,
+     -25.9
+    ],
+    "SCL": [
+     -9.525,
+     -13.0,
+     -25.9
+    ],
+    "L": [
+     -5.715,
+     -13.0,
+     -25.9
+    ],
+    "H": [
+     -1.905,
+     -13.0,
+     -25.9
+    ],
+    "B": [
+     1.905,
+     -13.0,
+     -25.9
+    ],
+    "A": [
+     5.715,
+     -13.0,
+     -25.9
+    ],
+    "DO0": [
+     9.525,
+     -13.0,
+     -25.9
+    ],
+    "DO1": [
+     13.335,
+     -13.0,
+     -25.9
+    ],
+    "DI COM": [
+     17.145,
+     -13.0,
+     -25.9
+    ],
+    "GND-io": [
+     20.955,
+     -13.0,
+     -25.9
+    ],
+    "DI0": [
+     24.765,
+     -13.0,
+     -25.9
+    ],
+    "DI1": [
+     28.575,
+     -13.0,
+     -25.9
+    ]
+   },
+   "pinout": [
+    {
+     "label": "6-36 V power in",
+     "pin": "VIN / GND-pwr",
+     "gpio": "isolated DC",
+     "use": "Terminal supply, board silk \u201c6~36V\u201d (product page says 7-36 V \u2014 stay \u22657 V). Or power over USB-C.",
+     "anchors": [
+      [
+       -28.575,
+       -13.0,
+       -25.9
+      ],
+      [
+       -24.765,
+       -13.0,
+       -25.9
+      ]
+     ]
+    },
+    {
+     "label": "I2C sensor header",
+     "pin": "VOUT / GND-i2c / SDA / SCL",
+     "gpio": "GPIO8/9",
+     "use": "The dev-playground sensor port \u2014 shares the GT911 touch + CH422G expander bus; VOUT is 5 V or 3V3 by resistor option (default 5 V).",
+     "anchors": [
+      [
+       -20.955,
+       -13.0,
+       -25.9
+      ],
+      [
+       -17.145,
+       -13.0,
+       -25.9
+      ],
+      [
+       -13.335,
+       -13.0,
+       -25.9
+      ],
+      [
+       -9.525,
+       -13.0,
+       -25.9
+      ]
+     ]
+    },
+    {
+     "label": "CAN",
+     "pin": "H / L",
+     "gpio": "GPIO15/16",
+     "use": "Dedicated TWAI transceiver; jumper-selectable 120\u03a9 terminator.",
+     "anchors": [
+      [
+       -1.905,
+       -13.0,
+       -25.9
+      ],
+      [
+       -5.715,
+       -13.0,
+       -25.9
+      ]
+     ]
+    },
+    {
+     "label": "RS485",
+     "pin": "A / B",
+     "gpio": "GPIO43/44",
+     "use": "Auto-direction \u2014 shares the CH343 UART console pins, so logging and RS485 are mutually exclusive.",
+     "anchors": [
+      [
+       5.715,
+       -13.0,
+       -25.9
+      ],
+      [
+       1.905,
+       -13.0,
+       -25.9
+      ]
+     ]
+    },
+    {
+     "label": "Isolated I/O",
+     "pin": "DO0 / DO1 / DI COM / GND-io / DI0 / DI1",
+     "gpio": "CH422G",
+     "use": "Optocoupled: DO0/DO1 open-drain sink \u2264450 mA (external supply); DI0/DI1 read 5-36 V referenced to DI COM, never board GND.",
+     "anchors": [
+      [
+       9.525,
+       -13.0,
+       -25.9
+      ],
+      [
+       13.335,
+       -13.0,
+       -25.9
+      ],
+      [
+       17.145,
+       -13.0,
+       -25.9
+      ],
+      [
+       20.955,
+       -13.0,
+       -25.9
+      ],
+      [
+       24.765,
+       -13.0,
+       -25.9
+      ],
+      [
+       28.575,
+       -13.0,
+       -25.9
+      ]
+     ]
+    }
+   ],
+   "blurb": "4.3\" 800x480 IPS touch panel in a boxed ESP32-S3 with a field-wiring terminal block \u2014 no raw GPIO is broken out, so every wire lands on an isolated, buffered or bused interface (isolated DI/DO, RS485, CAN, an I2C sensor header, 6-36 V in). That is what makes it the Canary Dash / dev-playground host. This is a reverse-engineered dimensional model (no vendor CAD); the 16-terminal block matches the firmware silk exactly.",
+   "doc": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-4.3B",
+   "provenance": "Reverse-engineered DIMENSIONAL MODEL \u2014 not vendor CAD (Waveshare publishes no STEP for this board). Built procedurally by tools/gen_boards.py (build_waveshare_4_3b): a rounded ABS shell with a boolean-cut screen pocket and edge I/O, a glossy off 4.3in IPS panel, and the green 16-position pluggable terminal. Proportions and the exposed-feature layout follow MaffooClock's published shell for the 5in sibling (ESP32-S3-Touch-LCD-5/5B, CC-BY-NC-SA) used as a DIMENSIONAL REFERENCE ONLY \u2014 no third-party mesh is copied or redistributed \u2014 scaled to the 4.3B and cross-checked against firmware/boards/waveshare-esp32s3-lcd43b and the owner's photos. The terminal pitch (3.81 mm), silk order and group labels are exact to the firmware silk; the case and screen are measured approximations. Honest about what it is, like the Round Display's geometry-assigned materials."
   }
  }
 }

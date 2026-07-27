@@ -39,6 +39,27 @@
 #define FEATURE_PLAYGROUND 0
 #endif
 
+// FEATURE_DEVMODE keeps that same peripheral test suite in the SHIPPED 4.3B
+// dash firmware, reachable on-glass from Settings -> "dev mode": it sets an NVS
+// flag and reboots into the very same network-silent playground, and an
+// on-glass "exit dev mode" clears the flag and reboots back to the fleet face.
+// So one binary is BOTH a fleet witness and a bench/test device — without ever
+// letting the bench UI coexist with a live network stack. Off by default; the
+// canary-display-dash-b env sets it. 4.3B (isolated DI/DO) only, exactly like
+// FEATURE_PLAYGROUND — feature_sanity enforces the board contract.
+#ifndef FEATURE_DEVMODE
+#define FEATURE_DEVMODE 0
+#endif
+
+// NOTE: the "compile the peripheral bench" guard and the dev-mode NVS latch are
+// written out INLINE at each use site, NOT as macros here — the playground and
+// settings translation units include the flavor <config.h>, not this
+// composition header, so a macro defined here wouldn't be visible to them (and
+// the linker would silently drop the bench). The guard everywhere is:
+//     ((FEATURE_PLAYGROUND) || (FEATURE_DEVMODE)) [&& CD_FLAVOR_DASH]
+// — both are -D command-line flags, so they resolve in every TU — and the latch
+// is Preferences("securacv").{get,put}Bool("devmode", ...).
+
 // -------------------- Identity --------------------
 static constexpr const char* DEVICE_TYPE   = CD_DEVICE_TYPE;
 static constexpr const char* DEVICE_ID     = CD_DEVICE_ID;  // first-boot seed only
@@ -129,23 +150,52 @@ static constexpr uint32_t HEAP_HYSTERESIS      = 5000;
 // build, which has no per-env flags), derive them from the flavor macro so a
 // watch never polls/accepts a dash image and vice versa. The flavor config is
 // already included above, so CD_FLAVOR_* is known here.
+// A gear-carrying image must never identify as a plain flavor: the plain
+// image has no gears (and, on the 4.3B, a different pin map), so accepting
+// its OTA would silently strip both. When the build system passes no
+// explicit product (the Arduino path — including the release train's
+// `--profile modes` build), derive the modes identity from the gear flags
+// themselves. flavor_local.h always defines them as 0/1, and #if treats an
+// undefined macro as 0, so this is safe on every path.
+#if (FEATURE_DEVMODE || FEATURE_DEMO_MODE || FEATURE_DEBUG_MODE || FEATURE_ARCADE)
+#  define CD_GEARS_COMPILED_IDENTITY 1
+#endif
 #ifndef SECURACV_OTA_PRODUCT
-#  if defined(CD_FLAVOR_WATCH)
+#  if defined(CD_FLAVOR_WATCH) && defined(CD_GEARS_COMPILED_IDENTITY)
+     // CI-compile flavor, never released: polls a manifest that does not
+     // exist, so it can never cross-grade to the gearless watch image.
+#    define SECURACV_OTA_PRODUCT "securacv-canary-display-watch-modes"
+#  elif defined(CD_FLAVOR_WATCH)
 #    define SECURACV_OTA_PRODUCT "securacv-canary-display-watch"
+#  elif defined(CD_FLAVOR_DASH) && defined(CD_GEARS_COMPILED_IDENTITY)
+#    define SECURACV_OTA_PRODUCT "securacv-canary-display-dash-modes"
 #  elif defined(CD_FLAVOR_DASH)
 #    define SECURACV_OTA_PRODUCT "securacv-canary-display-dash"
+#  elif defined(CD_FLAVOR_NIGHTSTAND)
+     // The two nightstand boards (c6/s3) each get a board-specific product
+     // via the PlatformIO env -D; this is the Arduino-path fallback only.
+#    define SECURACV_OTA_PRODUCT "securacv-canary-display-nightstand"
 #  else
 #    define SECURACV_OTA_PRODUCT "securacv-canary-display"
 #  endif
 #endif
 static constexpr const char* OTA_PRODUCT = SECURACV_OTA_PRODUCT;
 #ifndef SECURACV_OTA_MANIFEST_URL
-#  if defined(CD_FLAVOR_WATCH)
+#  if defined(CD_FLAVOR_WATCH) && defined(CD_GEARS_COMPILED_IDENTITY)
+#    define SECURACV_OTA_MANIFEST_URL \
+  "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-display-watch-modes.json"
+#  elif defined(CD_FLAVOR_WATCH)
 #    define SECURACV_OTA_MANIFEST_URL \
   "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-display-watch.json"
+#  elif defined(CD_FLAVOR_DASH) && defined(CD_GEARS_COMPILED_IDENTITY)
+#    define SECURACV_OTA_MANIFEST_URL \
+  "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-display-dash-modes.json"
 #  elif defined(CD_FLAVOR_DASH)
 #    define SECURACV_OTA_MANIFEST_URL \
   "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-display-dash.json"
+#  elif defined(CD_FLAVOR_NIGHTSTAND)
+#    define SECURACV_OTA_MANIFEST_URL \
+  "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-display-nightstand.json"
 #  else
 #    define SECURACV_OTA_MANIFEST_URL \
   "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-display.json"

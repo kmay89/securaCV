@@ -97,6 +97,12 @@
       "note": "60 GHz radar presence board. No camera / SD / CSI / BLE. USB-Serial console only; end-to-end bench validation pending."
     }
   ],
+  "recommended": {
+    "_comment": "What the /checkup page and the flasher pick BY DEFAULT so the user doesn't have to. `default` is the pick when nothing is known (no board plugged in): the verified S3 all-rounder on the shipping channel. `forChip` is the pick once the flasher detects the silicon in hand. The board×level matrix stays available as a developer/education option. Pinned by lint_build_matrix.py.",
+    "default": { "product": "canary", "level": "release" },
+    "forChip": { "ESP32-S3": "canary", "ESP32-C3": "canary-vision", "ESP32-C6": "canary-sense" },
+    "why": "The all-rounder witness — full sensing plus the Home Assistant bridge — on the verified S3, shipping channel. If you're not sure, this is the one."
+  },
   "downloadBase": "https://github.com/kmay89/securaCV/releases/latest",
   "flasher": {
     "url": "https://kmay89.github.io/securaCV/canary-local/flash.html",

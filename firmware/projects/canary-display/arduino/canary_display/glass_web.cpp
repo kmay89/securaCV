@@ -10,11 +10,13 @@
 #include "glass_web.h"
 #include "wifi_mgr.h"
 #include "mirror_html.h"
+#include "tv_html.h"
 #include "character.h"
 #include "glass_settings.h"
 #include "runtime_config.h"
 #include "version.h"
 #include "log.h"
+#include "fleet_selfreport.h"  // shared /api/fleet body builder
 
 namespace canary {
 // The browser serial monitor's hook (declared in log.h).
@@ -101,6 +103,15 @@ void handle_root() {
   s_server->send_P(200, "text/html", MIRROR_HTML);
 }
 
+// The television surface: the same /api/glass snapshot, laid out for a
+// 10-foot glance instead of a phone in the hand. A TV on the home WiFi
+// pointed at http://<canary>.local/tv is a conformant Open Ambient Security
+// Display with no hub in the loop. Self-contained, same LAN promise as the
+// mirror. See tv/index.html (its source) and docs/hardware/tv_display_design.md.
+void handle_tv() {
+  s_server->send_P(200, "text/html", TV_HTML);
+}
+
 void handle_glass() {
   // 16 witnesses (~90 B each) + the voiced/palette head (~420 B) peaked
   // near the old 2048 — headroom so bappend's clamp (safe but truncating)
@@ -108,8 +119,10 @@ void handle_glass() {
   static char body[2688];
   size_t o = 0;
   const size_t C = sizeof(body);
-#ifdef CD_FLAVOR_WATCH
+#if defined(CD_FLAVOR_WATCH)
   const char* flavor = "watch";
+#elif defined(CD_FLAVOR_NIGHTSTAND)
+  const char* flavor = "nightstand";
 #else
   const char* flavor = "dash";
 #endif
@@ -213,8 +226,10 @@ void handle_device() {
   static char body[1024];
   size_t o = 0;
   const size_t C = sizeof(body);
-#ifdef CD_FLAVOR_WATCH
+#if defined(CD_FLAVOR_WATCH)
   const char* flavor = "watch";
+#elif defined(CD_FLAVOR_NIGHTSTAND)
+  const char* flavor = "nightstand";
 #else
   const char* flavor = "dash";
 #endif
@@ -277,12 +292,45 @@ void handle_log() {
   s_server->send(200, "text/plain", body);
 }
 
+// GET /api/fleet — the coarse, UNAUTHENTICATED fleet presence/health contract
+// (tvos/discovery/DISCOVERY.md), the same shape canary-wap answers and the
+// Witness Wall emulator + Flasher's post-flash LAN discovery read. The wire
+// shape is built by the ONE shared builder (fleet_selfreport.h in
+// firmware/common, host-tested), so every networked board answers byte-for-byte
+// identically — across BOTH server styles (this Arduino WebServer and
+// canary-wap's esp_http_server). A display keeps no witness chain of its own
+// (it renders the fleet's), so it honestly reports chain "unknown".
+void handle_fleet() {
+  const auto& cfg = canary::cfg::get();
+  FleetSelfDevice self{};
+  self.name         = (cfg.device_id[0]) ? cfg.device_id : "Canary";
+  self.product      = "canary-display";
+  self.online       = 1;   // we are answering this request, so we are up
+  self.chain_ok     = 0;   // a display holds no witness chain of its own
+  self.chain_height = -1;  // omit chain_height
+  char body[256];
+  fleet_selfreport_build(body, sizeof(body), &self);
+  s_server->sendHeader("Access-Control-Allow-Origin", "*");
+  s_server->send(200, "application/json", body);
+}
+
+// OPTIONS /api/fleet — CORS preflight (DISCOVERY.md). A simple GET doesn't
+// trigger one, but answering keeps stricter cross-origin clients happy.
+void handle_fleet_options() {
+  s_server->sendHeader("Access-Control-Allow-Origin", "*");
+  s_server->sendHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  s_server->send(204, "text/plain", "");
+}
+
 void glass_web_init() {
   if (s_server) return;
   canary::g_log_sink = log_capture;  // browser serial monitor from here on
   s_server = new WebServer(80);
   s_server->on("/", HTTP_GET, handle_root);
+  s_server->on("/tv", HTTP_GET, handle_tv);
   s_server->on("/api/glass", HTTP_GET, handle_glass);
+  s_server->on("/api/fleet", HTTP_GET, handle_fleet);
+  s_server->on("/api/fleet", HTTP_OPTIONS, handle_fleet_options);
   s_server->on("/api/device", HTTP_GET, handle_device);
   s_server->on("/api/log", HTTP_GET, handle_log);
   s_server->on("/api/settings", HTTP_GET, handle_settings_get);

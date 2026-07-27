@@ -16,12 +16,28 @@
 //
 // Whole module is gated by FEATURE_CHIRP_SCAN (BLE is the one genuinely
 // expensive radio decision — flash, heap, and 2.4 GHz coexistence).
+//
+// FEATURE_BLE5_SCAN (bench-gated, off by default like FEATURE_CHIME) arms the
+// BLE 5 extended scanner so the Canaries' Coded-PHY (LE Long Range) chirps are
+// heard too — ~4x the range of legacy 1M, which is the difference between the
+// far-corner Canary's tamper reaching the glass with the router cut and not.
+// The chirp wire format is unchanged (BLE 5 buys range, not a new payload);
+// the flag widens the scan dwell and the BLE heap gate. Actual Coded-PHY
+// reception additionally needs the NimBLE build's extended advertising
+// (CONFIG_BT_NIMBLE_EXT_ADV) and a transmitting Canary — a radio soak is the
+// last gate (trailblazer spec §6).
 
 namespace canary::net {
 
 // Lazy: the BLE stack initializes on the first broker-down burst, not at
 // boot — a healthy display never pays for the radio.
-void chirp_scan_loop(uint32_t now_ms, bool broker_down);
+//
+// wifi_up selects the scan regime while the broker is down: false (fully
+// off-grid, no home WiFi either) runs a CONTINUOUS passive scan since the BLE
+// beacon/chirp is the only channel left and nothing contends for the radio;
+// true (broker unreachable but still on WiFi) keeps the 4 s / 20 s bursts so
+// BLE and WiFi don't fight over the shared 2.4 GHz radio.
+void chirp_scan_loop(uint32_t now_ms, bool broker_down, bool wifi_up);
 
 // Diagnostics: chirps parsed since boot.
 uint32_t chirp_scan_count();

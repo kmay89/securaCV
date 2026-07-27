@@ -1,0 +1,99 @@
+name: Hub Core
+
+# desktop/hub-core holds the footgun-critical DECISIONS behind the Raspberry
+# Pi hub disk writer (which disk may be written, is the image trusted, may we
+# write), and desktop/hub-io the MECHANISMS those decisions feed (streaming
+# download+hash, xz decompress, the read-back-verified raw write, the Wi-Fi
+# seed).
+#
+# The full desktop app (desktop/src-tauri) only builds on release tags and
+# needs the webkit/gtk stack, so nothing in PR CI would catch a break in this
+# logic if it lived there. Both crates build and test on a plain runner —
+# hub-core as pure `std`, hub-io with its few self-contained deps and tests
+# that run against plain files and a loopback HTTP server — so the disk-writer
+# path can't rot silently between releases.
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'desktop/hub-core/**'
+      - 'desktop/hub-io/**'
+      - 'desktop/src-tauri/src/rescue.rs'
+      - '.github/workflows/desktop-hub-core.yml'
+      # hub-io embeds these provisioning-bundle files (include_str!) and
+      # cross-checks their bytes against the Python manifest's SHA-256 pins, so a
+      # change to any of them must re-run this workflow or the check goes stale.
+      - 'canary-local/devices/hub_seed.json'
+      - 'canary-local/devices/hub_provision_bundle.json'
+      - 'canary-local/tools/hub_seed_apply.py'
+      - 'canary-local/tools/gen_hub_provision_bundle.py'
+      - 'homeassistant/frigate/config.yaml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'desktop/hub-core/**'
+      - 'desktop/hub-io/**'
+      - 'desktop/src-tauri/src/rescue.rs'
+      - '.github/workflows/desktop-hub-core.yml'
+      # hub-io embeds these provisioning-bundle files (include_str!) and
+      # cross-checks their bytes against the Python manifest's SHA-256 pins, so a
+      # change to any of them must re-run this workflow or the check goes stale.
+      - 'canary-local/devices/hub_seed.json'
+      - 'canary-local/devices/hub_provision_bundle.json'
+      - 'canary-local/tools/hub_seed_apply.py'
+      - 'canary-local/tools/gen_hub_provision_bundle.py'
+      - 'homeassistant/frigate/config.yaml'
+
+# Read-only token: this workflow only checks out and runs cargo — it needs
+# nothing else. (CodeQL flags workflows that don't pin GITHUB_TOKEN scope.)
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+# A new push to a PR branch cancels the in-flight run; main is never cancelled.
+concurrency:
+  group: hub-core-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [hub-core, hub-io]
+    defaults:
+      run:
+        working-directory: desktop/${{ matrix.crate }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install fmt + clippy
+        run: rustup component add rustfmt clippy
+      - name: Format check
+        run: cargo fmt --check
+      - name: Clippy (warnings are errors)
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Docs (warnings are errors)
+        run: cargo doc --no-deps
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+      - name: Test
+        run: cargo test
+
+  # Self-contained pure modules that live inside the release-only tauri crate
+  # (desktop/src-tauri) but depend on nothing but `std`, so `rustc --test` runs
+  # their unit tests on a plain runner — the footgun logic (rescue backup/restore
+  # validation, espflash arg building) can't rot silently between releases, even
+  # though the full app only builds on release tags.
+  tauri-pure-modules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: rescue.rs unit tests
+        run: |
+          rustc --edition 2021 --test desktop/src-tauri/src/rescue.rs -o /tmp/rescue_test
+          /tmp/rescue_test

@@ -1,0 +1,255 @@
+# One-click whole-pipeline launcher — the firmware, the apps, AND the web.
+#
+# The single button that runs everything that ships SecuraCV to users:
+#   • Canary firmware → firmware-release.yml (the .bin OTA images AND the
+#     browser-flasher factory images + manifest-flash.json — i.e. what makes
+#     products appear, flashable, in the in-browser flasher)
+#   • SecuraCV Flasher (macOS + Linux) → desktop-flasher-release.yml
+#   • SecuraCV Lab     (macOS + Linux) → desktop-release.yml
+#   • canary.local site → GitHub Pages → pages.yml
+#
+# NOT the button to reach for by default. This one runs whatever you tick,
+# unconditionally — it will happily publish an app version that is already
+# released, which overwrites that release's assets instead of cutting a new
+# download. Prefer "Update everything (only what needs it)", which works out what
+# genuinely needs releasing and refuses to re-ship a published version. Use THIS
+# when you know exactly what you want (e.g. re-cutting the apps after a packaging
+# fix with no version change). See docs/RELEASE_BUTTONS.md.
+#
+# Use from GitHub: Actions → "Release — one click (firmware + apps + web)" →
+# Run workflow.
+#   • "firmware" cuts a firmware release that populates the browser flasher:
+#     none (default) / dev (prerelease, dev channel) / release (stable). Set
+#     "firmware_version" to the version you bumped the headers to (e.g. 2.3.0,
+#     or 2.3.0-dev.1 for dev; blank = the source triple, release only).
+#   • "publish" governs the DESKTOP APPS: unchecked = build-only smoke run,
+#     checked = real app releases. (Firmware has its own selector above — a
+#     firmware release is always a publish, so it is opt-in, never smoke.)
+#   • "deploy_web" (default on) redeploys the live site.
+#   • "apps" picks which desktop apps to run (both / flasher / lab / none).
+#
+# This is a thin launcher: it dispatches the existing per-target workflows
+# (the same ones you can run individually) via createWorkflowDispatch, so each
+# target keeps its own build logic, signing, and concurrency guard. Watch the
+# linked runs it starts for progress — this job finishes as soon as they're
+# queued. Mirrors the proven fan-out in mac-apps-release.yml, extended to the
+# firmware release, the Linux app builds, and the web deploy.
+name: Release — one click (firmware + apps + web)
+run-name: >-
+  Release — ${{ inputs.firmware != 'none' && format('fw:{0} ', inputs.firmware) || '' }}${{ inputs.publish && 'PUBLISH apps' || 'apps dev build' }}${{ inputs.deploy_web && ' + web' || '' }} (${{ inputs.apps }}) — @${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      firmware:
+        description: "Firmware release — none / dev (prerelease, dev-channel devices only) / release (stable, moves releases-latest). Needs the OTA signing key; refuses up front without it."
+        type: choice
+        options:
+          - none
+          - dev
+          - release
+        default: none
+      firmware_version:
+        description: "Firmware version, e.g. 2.3.0 (release) or 2.3.0-dev.1 (dev). Must already match the bumped FIRMWARE_VERSION / CANARY_FW_VERSION headers — CI greps each binary. Blank = the source triple (release only). An existing tag is refused."
+        type: string
+        default: ""
+      publish:
+        description: "Publish real DESKTOP APP releases. WARNING: an app version that is already released gets its assets OVERWRITTEN, not re-cut — bump the version first unless that is what you want. Unchecked = build-only smoke run."
+        type: boolean
+        default: false
+      apps:
+        description: "Which desktop apps to build/publish (the Lab always lands as a DRAFT release — a human clicks Publish)"
+        type: choice
+        options:
+          - both
+          - flasher
+          - lab
+          - none
+        default: both
+      deploy_web:
+        description: "Also deploy the canary.local site to GitHub Pages (safe and idempotent)"
+        type: boolean
+        default: true
+
+# Dispatching other workflows needs actions: write; nothing here touches
+# contents directly (each dispatched workflow elevates its own permissions).
+permissions:
+  actions: write
+  contents: read
+
+# One launcher per ref; a double-click queues rather than fanning out twice.
+concurrency:
+  group: release-one-click-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  launch:
+    name: Launch the whole pipeline
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Tags: the app-version preflight below asks "has this version already
+          # been released?", which is a question about tags.
+          fetch-depth: 0
+
+      - name: Preflight — refuse a firmware release that cannot be signed
+        # This button means "do exactly this", so unlike the master button (which
+        # reports firmware as gated and ships everything else) it REFUSES: you
+        # asked for a firmware release, and without both halves of the signing key
+        # there is no firmware release to be had. Better a clear stop here than a
+        # separate run dying 20s later on the key guard.
+        if: inputs.firmware != 'none'
+        env:
+          HAS_SECRET: ${{ secrets.OTA_SIGNING_KEY_PEM != '' }}
+        run: |
+          set -euo pipefail
+          python3 firmware/scripts/ota_key_state.py
+          embedded=$(python3 firmware/scripts/ota_key_state.py --json \
+                     | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["embedded"]).lower())')
+          echo "OTA_SIGNING_KEY_PEM secret set: ${HAS_SECRET}"
+          if [ "$embedded" != "true" ] || [ "$HAS_SECRET" != "true" ]; then
+            echo "::error title=Firmware cannot be signed::The release signing key is not ready — public key embedded: ${embedded}, OTA_SIGNING_KEY_PEM set: ${HAS_SECRET}. Nothing was dispatched. One-time ceremony: firmware/scripts/setup_release_key.sh (see docs/RELEASE_BUTTONS.md § Firmware will not release)."
+            exit 1
+          fi
+          echo "Release signing key is ready."
+
+      - name: Preflight — will publishing an app OVERWRITE a shipped release?
+        # The trap this button walks into: app tags come from tauri.conf.json, so
+        # publishing a version that is already released rewrites that release's
+        # assets instead of cutting a new download — nobody's updater sees a
+        # thing. Re-uploading after a packaging fix is a LEGITIMATE use, so this
+        # warns loudly rather than refusing; the master button is the one that
+        # says "bump the version first" and stops.
+        if: inputs.publish && inputs.apps != 'none'
+        run: |
+          set -euo pipefail
+          python3 desktop/scripts/check_app_versions.py
+          collide=0
+          check() {  # $1 = app label, $2 = tauri.conf.json, $3 = tag prefix
+            [ -f "$2" ] || return 0
+            v=$(python3 -c "import json;print(json.load(open('$2'))['version'])")
+            if git rev-parse -q --verify "refs/tags/${3}${v}" >/dev/null; then
+              echo "::warning title=${1} ${v} is already released::Tag ${3}${v} exists, so publishing will REWRITE that release's assets rather than cut a new download — existing installs will see no update. Bump ${2} (and package.json + Cargo.toml) first if you meant to ship a new version."
+              collide=1
+            else
+              echo "${1}: ${3}${v} is new — this will cut a real release."
+            fi
+          }
+          if [ "${{ inputs.apps }}" = "both" ] || [ "${{ inputs.apps }}" = "flasher" ]; then
+            check "SecuraCV Flasher" desktop/src-tauri/tauri.conf.json flasher-v
+          fi
+          if [ "${{ inputs.apps }}" = "both" ] || [ "${{ inputs.apps }}" = "lab" ]; then
+            check "SecuraCV Lab" desktop-lab/src-tauri/tauri.conf.json app-v
+          fi
+          if [ "$collide" -eq 1 ]; then
+            {
+              echo "### ⚠️ An app version you are publishing is already released"
+              echo ""
+              echo "Publishing it **overwrites that release's assets** instead of cutting a"
+              echo "new download, so nobody's in-app updater will offer it. That is the right"
+              echo "behaviour only when you are deliberately re-uploading after a packaging"
+              echo "fix. To ship a new version, bump all three version files first —"
+              echo "\`python3 desktop/scripts/check_app_versions.py\` keeps them honest."
+              echo ""
+              echo "See \`docs/RELEASE_BUTTONS.md\` § \"An app release that already exists\"."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Dispatch app + web workflows
+        uses: actions/github-script@v8
+        env:
+          PUBLISH: ${{ inputs.publish }}
+          APPS: ${{ inputs.apps }}
+          DEPLOY_WEB: ${{ inputs.deploy_web }}
+          FIRMWARE: ${{ inputs.firmware }}
+          FIRMWARE_VERSION: ${{ inputs.firmware_version }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const ref = context.ref.replace('refs/heads/', '').replace('refs/tags/', '');
+            const publish = process.env.PUBLISH === 'true';
+            const apps = process.env.APPS;
+            const deployWeb = process.env.DEPLOY_WEB === 'true';
+            const firmware = process.env.FIRMWARE;            // none | dev | release
+            const firmwareVersion = process.env.FIRMWARE_VERSION || '';
+            const wantApp = (name) => apps === 'both' || apps === name;
+
+            // Each target is the existing per-workflow contract:
+            //  - firmware-release:        channel=dev|release cuts a real
+            //    firmware release (the .bin OTA images + the browser-flasher
+            //    factory images/manifest). Always a publish — opt-in only.
+            //  - desktop-flasher-release: dry_run=true means build-only
+            //  - desktop-release (Lab):   publish=false means build-only
+            //  - pages: no inputs; it deploys the current site
+            const targets = [];
+            if (firmware && firmware !== 'none') targets.push({
+              workflow_id: 'firmware-release.yml',
+              label: `Canary firmware — ${firmware} channel${firmwareVersion ? ` (${firmwareVersion})` : ' (source version)'}`,
+              inputs: { channel: firmware, version: firmwareVersion },
+            });
+            if (wantApp('flasher')) targets.push({
+              workflow_id: 'desktop-flasher-release.yml',
+              label: 'SecuraCV Flasher (macOS + Linux)',
+              inputs: { dry_run: String(!publish) },
+            });
+            if (wantApp('lab')) targets.push({
+              workflow_id: 'desktop-release.yml',
+              label: 'SecuraCV Lab (macOS + Linux)',
+              inputs: { publish: String(publish) },
+            });
+            if (deployWeb) targets.push({
+              workflow_id: 'pages.yml',
+              label: 'canary.local site → GitHub Pages',
+              inputs: {},
+            });
+
+            if (targets.length === 0) {
+              core.warning('Nothing selected: firmware=none, apps=none, and deploy_web unchecked. No workflows dispatched.');
+              return;
+            }
+
+            const started = [];
+            const failed = [];
+            for (const t of targets) {
+              try {
+                core.info(`Dispatching ${t.label} on ${ref} (publish=${publish})`);
+                await github.rest.actions.createWorkflowDispatch({
+                  owner, repo, workflow_id: t.workflow_id, ref, inputs: t.inputs,
+                });
+                started.push(t.label);
+              } catch (err) {
+                failed.push(`${t.label} — ${err.message}`);
+                core.error(`Failed to dispatch ${t.label}: ${err.message}`);
+              }
+            }
+
+            const fwLine = (firmware && firmware !== 'none')
+              ? `🔩 firmware **${firmware}** release${firmwareVersion ? ` \`${firmwareVersion}\`` : ' (source version)'}`
+              : 'firmware: not this run';
+            await core.summary
+              .addHeading('One-click release launched')
+              .addRaw(`**Firmware:** ${fwLine}`).addBreak()
+              .addRaw(`**Apps:** ${publish ? '🚀 PUBLISH real releases' : '🧪 dev build-only smoke run'} (${apps})`).addBreak()
+              .addRaw(`**Ref:** \`${ref}\``).addBreak()
+              .addHeading('Dispatched', 3)
+              .addList(started.length ? started : ['(none)'])
+              .write();
+
+            if (failed.length) {
+              await core.summary.addHeading('Failed to dispatch', 3).addList(failed).write();
+              core.setFailed(`Some workflows were not dispatched:\n${failed.join('\n')}`);
+              return;
+            }
+
+            core.notice(
+              (firmware && firmware !== 'none'
+                ? `Firmware ${firmware} release cutting — it publishes the OTA .bin images AND the browser-flasher factory images + manifest-flash.json, so the products appear (flashable) in the in-browser flasher. `
+                : '') +
+              (publish
+                ? 'Apps publishing: watch the linked runs — Flasher publishes directly, Lab creates a draft release'
+                : 'App dev smoke run: download each run’s build artifacts when they finish') +
+              (deployWeb ? '. The site redeploys to GitHub Pages.' : '.')
+            );

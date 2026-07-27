@@ -1,0 +1,21 @@
+# The Xcode project is GENERATED from project.yml (xcodegen) on every build and
+# every night — never committed, so it can't rot or drift. This mirrors the
+# desktop apps, whose Tauri Xcode project is likewise generated from config.
+*.xcodeproj
+*.xcworkspace
+
+# Build output
+build/
+DerivedData/
+*.ipa
+*.dSYM.zip
+
+# SwiftPM
+.build/
+.swiftpm/
+
+# Apple signing material must NEVER land in git.
+*.p8
+*.p12
+*.mobileprovision
+*.cer

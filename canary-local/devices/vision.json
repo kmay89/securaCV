@@ -10,8 +10,8 @@
     "model": "Canary Vision (Grove Vision AI V2)",
     "board_short": "Grove Vision AI V2",
     "board_id": "seeed_grove_vision_ai_v2",
-    "fw_version": "2.2.0",
-    "fw_train": "2.2.0",
+    "fw_version": "2.3.0",
+    "fw_train": "2.3.0",
     "ota_product": "securacv-canary-vision",
     "senses": [
       "camera (on-module inference)"
@@ -303,7 +303,7 @@
       "              ,_,          Waking up...",
       "             (o.o)",
       "             /| |\\         SecuraCV Canary Vision",
-      "              d b          v2.2.0",
+      "              d b          v2.3.0",
       "",
       "    This is your privacy witness device.",
       "    It creates tamper-proof records of what it",
@@ -368,7 +368,7 @@
       },
       {
         "tag": "[WIFI]",
-        "text": "Connecting SSID=\"YourHomeWiFi\" ..."
+        "text": "Connecting to the provisioned WiFi network ..."
       },
       {
         "tag": "[WIFI]",
@@ -540,6 +540,21 @@
           "name": "Voxel",
           "component": "sensor",
           "desc": "the occupied cell of the 3\u00d73 grid, as \"r,c\""
+        },
+        {
+          "name": "Occupancy",
+          "component": "sensor",
+          "desc": "coarse count bucket \u2014 none / one / two / several, never an exact tally"
+        },
+        {
+          "name": "Posture",
+          "component": "sensor",
+          "desc": "coarse posture ordinal from box shape \u2014 upright / horizontal / ambiguous"
+        },
+        {
+          "name": "Proximity",
+          "component": "sensor",
+          "desc": "coarse distance ordinal from box area \u2014 near / mid / far"
         },
         {
           "name": "Last event",

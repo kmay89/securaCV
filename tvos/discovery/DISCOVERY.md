@@ -1,0 +1,110 @@
+# Fleet discovery — how the Witness Wall finds your Canaries from a browser
+
+The emulator's **Connect your fleet** panel (and the real tvOS app) shows your
+actual Canaries when they're reachable. This is the small, honest contract that
+makes that work — and the browser rules that decide *where* it can work.
+
+## The contract
+
+A SecuraCV **kernel/hub** (or a Canary that fronts the fleet) answers one
+endpoint:
+
+```
+GET /api/fleet        →  200 application/json
+```
+
+```json
+{
+  "kernel": "kitchen-hub",
+  "verified_through": "4:02 PM",
+  "devices": [
+    { "name": "Front Door", "online": true,  "chain": "ok", "product": "canary-wap" },
+    { "name": "Studio",     "online": true,  "chain": "ok", "product": "canary" },
+    { "name": "Driveway",   "online": false, "chain": "ok", "product": "canary-vision" }
+  ]
+}
+```
+
+- Only `devices[].name` is required; `online` defaults to `true`. `chain` and
+  `product` are optional and shown when present. A bare JSON array of devices is
+  also accepted.
+- **No secrets, no raw media** — this is coarse fleet *presence and health*,
+  exactly what the Witness Wall renders. It is not an evidence API.
+
+### CORS is the whole trick
+
+Because a browser page and the kernel are different origins, the kernel MUST
+send:
+
+```
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Methods: GET, OPTIONS
+```
+
+and answer a `OPTIONS /api/fleet` preflight with the same. Without CORS the
+browser refuses to read the response even when the kernel replies.
+
+## Where it actually works (the honest part)
+
+Browsers deliberately can't do mDNS/Bonjour discovery or scan a LAN, and a
+strict page policy blocks reaching other hosts. So discovery works when:
+
+| Scenario | Works? | Why |
+|---|---|---|
+| Emulator served **from the kernel/hub** itself (same origin) | ✅ | Same origin — no CORS, no mixed content, no CSP hop |
+| Emulator opened **on the LAN over `http://`**, kernel on `http://` | ✅ | Same scheme; kernel just needs CORS |
+| The **desktop app** (native mDNS, no browser sandbox) | ✅ | It discovers `canary.local` natively and hands the list to the UI |
+| Kernel serves **`https://` with a trusted cert**, page is `https://` | ✅ | Same scheme; CORS allows the read |
+| The **public `https://securacv.com`** page → your `http://` LAN device | ❌ | Mixed-content is blocked, and the site's `connect-src` policy only allows itself |
+
+That last row is why the public demo ships a **same-origin live demo kernel**
+(`/demo-fleet.json`) so you can watch a real fetch populate the fleet in the
+browser — and why the *real* fleet shows up once the page is served next to the
+kernel (hub, LAN, or desktop app).
+
+## Try it in ~30 seconds
+
+Run the reference kernel and point the emulator at it:
+
+```sh
+python3 tvos/discovery/mock-kernel.py         # serves http://localhost:8099/api/fleet (CORS on)
+```
+
+Then open the emulator on the **same origin scheme** — the simplest is to serve
+the site locally over http and browse to it:
+
+```sh
+# from the securacv_website checkout
+python3 -m http.server 8080
+# open http://localhost:8080/witness-wall.html, and in "Connect your fleet"
+# enter  http://localhost:8099  → Connect
+```
+
+The board switches to **● LIVE** and lists the reference Canaries. Swap in your
+real kernel's address the same way.
+
+## Making a real Canary answer this
+
+**The firmware answers it now.** `GET /api/fleet` ships in the firmware, served
+identically by every networked board because the wire shape is built by one
+shared header — `firmware/common/fleet_selfreport/fleet_selfreport.h` (host-
+tested in `firmware/tests_host/test_fleet_selfreport.cpp`). See
+[`docs/FLEET_PARITY.md`](../../docs/FLEET_PARITY.md) for the "parity by
+architecture" doctrine that makes a fleet-wide capability like this a
+one-header change instead of a per-board copy-paste.
+
+- **`canary-wap`** (ESP-IDF `esp_http_server`) answers `GET /api/fleet` and the
+  CORS `OPTIONS` preflight, and already advertises `canary.local` — so a single
+  device is discoverable with no hub. This is exactly what the Flasher's
+  post-flash `witness_discover` hits.
+- **`canary-display`** (Arduino `WebServer`) answers the same contract from the
+  *other* server style — the parity core means both emit byte-identical JSON. A
+  display holds no witness chain of its own, so it honestly reports
+  `chain: "unknown"`.
+- **The hub/kernel** (Rust) is the natural aggregator home — add the `/api/fleet`
+  route with the CORS headers above next to its existing HTTP surface; it can
+  reuse the same open/append/close shape to list its peers.
+- It is **coarse and unauthenticated-read** by design (presence/health only) —
+  documented public in the canary-wap route-security allowlist. Anything that
+  touches sealed evidence stays behind the Bearer-gated `/api/fleet-scan` and
+  break-glass paths, never here.

@@ -201,7 +201,10 @@ the eventual margin).
 - [ ] JLC3DP MJF quote for WAP + Vision sets (Phase-2 trigger).
 - [ ] Store go-live: create the Stripe products + payment links (adjustable qty,
       US shipping, flat rate) and paste them into the website repo's `store.json` —
-      the buy buttons switch on per-product; empty link = waitlist state.
+      the buy buttons switch on per-product; empty link = waitlist state. Set the
+      flat rate off the website repo's box-fit tool (`node scripts/box-fit.mjs`),
+      not a guess — it's the packing bench's box-sizing guide, multi-box/backorder
+      splitter, and fix-not-return policy in one (`docs/shipping-and-fulfillment.md`).
 - [ ] Optional Tindie listing for WAP + Vision R1/R2 (marketplace discovery + overflow).
 - [ ] Improv Wi-Fi Serial in canary firmware (nice-to-have, post-launch).
 - [ ] FCC/CE diligence memo before any R3/Crowd Supply boxed product.

@@ -21,6 +21,7 @@
 #include "version.h"
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
 #include <time.h>
+#include "fleet_cards.h"
 #include "journal_instance.h"
 #endif
 #if defined(FEATURE_CARE) && FEATURE_CARE
@@ -491,8 +492,22 @@ void update_device(const Fleet& fleet, uint32_t now, const GlanceState& st,
     lv_label_set_text(s_dev_event, "no events yet");
   }
 
-  char batt[96] = "";  // "•"/"-"/LVGL symbols are multi-byte; keep headroom
-  if (w->wb_present) {
+  char batt[128] = "";  // "•"/"-"/LVGL symbols are multi-byte; keep headroom
+  // Canary Cards (docs/standard/CANARY_CARDS.md): a card-bearing witness
+  // (canary-sense) shows its coarse claim vocabulary — presence/occupants/
+  // range + breathing/BPM — from the same card model the wall dash renders,
+  // instead of the wellbeing-only line. skip_shown drops the trust/event
+  // cards the badge + event row above already carry.
+  if (canary::fleet::has_cards(*w)) {
+    static const canary::fleet::FleetLimits kCardLimits;
+    canary::fleet::CardSet cs;
+    canary::fleet::build_cards(*w, now, kCardLimits, cs);
+    char strip[96];
+    if (canary::fleet::format_card_strip(cs, /*skip_shown=*/true, strip,
+                                         sizeof(strip)) > 0) {
+      snprintf(batt, sizeof(batt), "  •  %s", strip);
+    }
+  } else if (w->wb_present) {
     snprintf(batt, sizeof(batt), "  •  breathing %s",
              w->wb_breathing ? LV_SYMBOL_OK : "-");
   }

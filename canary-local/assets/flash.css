@@ -243,7 +243,59 @@ button.flash-map-key:hover { color: var(--text); }
 .flash-done { text-align: center; }
 .flash-done .flash-row { justify-content: center; }
 .flash-done-bird { font-size: 52px; animation: flash-pop 0.5s cubic-bezier(0.2,1.4,0.4,1) both; }
+
+/* ── the Hatchery: a whimsical name + birth certificate (parity with the native app) ── */
+.flash-cert-slot { display: flex; justify-content: center; }
+.flash-cert {
+  margin: 16px auto 4px; max-width: 420px; text-align: center;
+  border: 1px solid rgba(255,212,79,0.35); border-radius: 14px; padding: 18px 20px 16px;
+  background: radial-gradient(120% 100% at 50% 0%, rgba(255,212,79,0.08), rgba(255,255,255,0.02));
+  animation: flash-pop 0.5s cubic-bezier(0.2,1.4,0.4,1) both;
+}
+.flash-cert-kicker { font-size: 11px; text-transform: uppercase; letter-spacing: 0.18em; color: var(--canary); }
+.flash-cert-intro { margin: 6px 0 2px; font-size: 12.5px; color: var(--muted, #9aa39a); font-style: italic; }
+.flash-cert-name { font-size: 22px; font-weight: 720; letter-spacing: -0.01em; margin: 6px 0 2px; color: #fff; }
+.flash-cert-lineage { font-size: 13px; color: #d8d8d8; }
+.flash-cert-meta { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; margin: 10px 0 2px; font-size: 12px; color: var(--muted, #9aa39a); }
+.flash-cert-meta span { font-variant-numeric: tabular-nums; }
+.flash-cert-motto { margin: 10px 0 2px; font-size: 13.5px; color: #cfe0cf; font-style: italic; }
+.flash-cert-craft { margin-top: 8px; font-size: 11.5px; color: var(--muted, #9aa39a); }
+.flash-cert-foot { margin-top: 6px; font-size: 11px; color: var(--muted, #9aa39a); }
+.flash-cert-reroll { margin-top: 12px; }
+.flash-nextstep {
+  text-align: left; margin: 16px auto 2px; max-width: 460px;
+  border: 1px solid rgba(255,212,79,0.28); background: rgba(255,212,79,0.06);
+  border-radius: 12px; padding: 12px 14px;
+}
+.flash-nextstep-title { font-weight: 640; color: var(--canary); }
+.flash-nextstep-body { margin: 5px 0 0; color: #d8d8d8; font-size: 14px; line-height: 1.5; }
 @keyframes flash-pop { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+/* ── two-port Vision: the "did you do BOTH ports?" completion checklist ───── */
+.vision-checklist {
+  text-align: left; margin: 16px auto 2px; max-width: 460px;
+  border: 1px solid rgba(255,212,79,0.28); background: rgba(255,212,79,0.06);
+  border-radius: 12px; padding: 12px 14px;
+}
+.vision-checklist.is-done {           /* both ports in → celebrate in green */
+  border-color: rgba(67,160,71,0.42); background: rgba(67,160,71,0.12);
+  animation: flash-pop 0.5s cubic-bezier(0.2,1.4,0.4,1) both;
+}
+.vision-checklist-title { font-weight: 640; color: var(--canary); }
+.vision-checklist.is-done .vision-checklist-title { color: #bfe3c1; }
+.vision-checklist-rows {
+  list-style: none; margin: 8px 0 0; padding: 0;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.vision-row { display: flex; align-items: flex-start; gap: 9px; font-size: 14px; line-height: 1.4; }
+.vision-row-mark { flex: none; width: 18px; text-align: center; font-weight: 700; }
+.vision-row.is-todo { color: #b9b9b9; }
+.vision-row.is-todo .vision-row-mark { color: rgba(255,212,79,0.7); }
+.vision-row.is-done { color: #e8e8e8; }
+.vision-row.is-done .vision-row-mark { color: #7CFF9B; }
+.vision-checklist-status { margin: 10px 0 0; font-size: 13.5px; color: #d8d8d8; }
+.vision-checklist.is-done .vision-checklist-status { color: #cfe9d0; font-weight: 620; }
+.vision-checklist-cta { margin-top: 11px; }
 
 /* ── error ─────────────────────────────────────────────────────────────── */
 .flash-error { border-color: rgba(251,140,0,0.4); }
@@ -280,6 +332,16 @@ button.flash-map-key:hover { color: var(--text); }
 
 /* ── WiFi chooser (confirm card) ───────────────────────────────────────── */
 .flash-wifi { margin: 16px 0 4px; border-top: 1px solid var(--edge); padding-top: 14px; }
+.flash-mqtt { margin: 14px 0 4px; border-top: 1px solid var(--edge); padding-top: 14px; }
+.flash-mqtt .flash-wifi-inputs { margin-top: 8px; }
+/* "Using your saved Wi-Fi X" — makes type-once visible instead of a silent pre-fill. */
+.flash-wifi-saved {
+  display: flex; gap: 8px; align-items: baseline; margin: 10px 0 2px;
+  border: 1px solid rgba(67,160,71,0.32); background: rgba(67,160,71,0.09);
+  border-radius: 12px; padding: 9px 12px; color: #cfe9d0; font-size: 13.5px; line-height: 1.45;
+}
+.flash-wifi-saved-i { color: #7CFF9B; font-weight: 700; flex: none; }
+.flash-wifi-saved strong { color: #dff1e0; font-weight: 640; }
 .flash-wifi-inputs { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
 .flash-wifi-inputs input {
   flex: 1; min-width: 180px; background: #0c0c0d; border: 1px solid var(--edge);
@@ -288,6 +350,9 @@ button.flash-map-key:hover { color: var(--text); }
 .flash-wifi-inputs input:focus { outline: none; border-color: var(--canary-deep); }
 .flash-wifi-qr { margin-top: 12px; text-align: center; }
 .flash-wifi-qr svg { background: #fff; border-radius: 10px; padding: 2px; }
+.flash-wifi-remember { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 10px; }
+.flash-wifi-remember-label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; font-size: 0.88rem; }
+.flash-wifi-remember-label input { accent-color: var(--canary-deep); }
 
 /* ── the layers tour ───────────────────────────────────────────────────── */
 .flash-story {
@@ -443,7 +508,7 @@ button.flash-map-key:hover { color: var(--text); }
   to { transform: translate(var(--drift, 0), 108vh) rotate(320deg); opacity: 0.15; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .flash-plug, .flash-spinner, .flash-done-bird, .flash-confetti-bit, .flash-bar-fill { animation: none; }
+  .flash-plug, .flash-spinner, .flash-done-bird, .flash-confetti-bit, .flash-bar-fill, .flash-cert { animation: none; }
   .flash-confetti { display: none; }
 }
 
@@ -467,4 +532,498 @@ button.flash-map-key:hover { color: var(--text); }
 .we2-preview { margin-top: 12px; border: 1px solid #23252b; border-radius: 10px; overflow: hidden;
   background: #08090b; min-height: 120px; display: flex; align-items: center; justify-content: center; }
 .we2-preview-cv { display: block; max-width: 100%; image-rendering: pixelated; }
+.we2-seen {
+  margin: 12px 0 2px; padding: 9px 14px; border-radius: 10px; font-weight: 640;
+  color: #bfe3c1; background: rgba(67,160,71,0.12); border: 1px solid rgba(67,160,71,0.4);
+  animation: flash-pop 0.5s cubic-bezier(0.2,1.4,0.4,1) both;
+}
 @media (max-width: 700px) { .we2-src { grid-template-columns: 1fr; } }
+
+/* ── self-healing: boot-log diagnosis panel + diagnostic report ──────────── */
+.flash-diag {
+  border: 1px solid var(--warn, #fb8c00);
+  background: rgba(251, 140, 0, 0.08);
+  border-radius: 12px; padding: 12px 14px; margin: 10px 0;
+}
+.flash-diag-emoji { font-size: 22px; line-height: 1; }
+.flash-diag h3 { margin: 4px 0 4px; font-size: 15px; }
+.flash-report-btn { white-space: nowrap; }
+.flash-report-ta {
+  width: 100%; margin-top: 8px; font: 12px/1.4 "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  background: #08080a; color: #b9c7b9; border: 1px solid var(--edge, #262626);
+  border-radius: 10px; padding: 10px; resize: vertical;
+}
+
+/* ── post-flash proof: verified-identity card ────────────────────────────── */
+.flash-identity {
+  border: 1px solid rgba(3, 169, 244, 0.4);
+  background: rgba(3, 169, 244, 0.06);
+  border-radius: 12px; padding: 12px 14px; margin: 10px 0;
+}
+.flash-identity-head { font-weight: 640; font-size: 15px; color: #bfe6fb; margin-bottom: 6px; }
+.flash-selfcheck {
+  display: inline-flex; align-items: center; gap: 8px; margin: 4px 0 8px;
+  padding: 6px 13px; border-radius: 999px; font-weight: 600; font-size: 14px;
+}
+.flash-selfcheck-icon { font-size: 15px; }
+.flash-selfcheck-ok { background: rgba(67,160,71,0.12); border: 1px solid rgba(67,160,71,0.4); color: #bfe3c1; }
+.flash-selfcheck-warn { background: rgba(255,212,79,0.1); border: 1px solid rgba(255,212,79,0.35); color: #f0dca0; }
+.flash-selfcheck-attn { background: rgba(244,67,54,0.1); border: 1px solid rgba(244,67,54,0.4); color: #f3b0ab; }
+.flash-selfcheck-pending { background: rgba(255,255,255,0.04); border: 1px solid var(--edge); color: var(--muted); }
+
+/* ── the epic layer: passport, verdicts, help ⓘ, dials, reflexes, glass ──── */
+
+/* board passport chips (pre-flash story, read-only) */
+.flash-passport { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 2px; }
+.flash-passport-chip {
+  padding: 5px 12px; border-radius: 999px; font-size: 13px;
+  background: rgba(255,255,255,0.04); border: 1px solid var(--edge, #262626);
+  color: var(--muted, #9aa39a);
+}
+.flash-passport-chip strong { color: inherit; font-weight: 640; }
+.flash-passport-warn {
+  background: rgba(255,212,79,0.1); border-color: rgba(255,212,79,0.35); color: #f0dca0;
+}
+.flash-feel { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.flash-role { margin: 6px 0 0; font-size: 14px; color: #cfd8cf; }
+.flash-role button { margin-left: 6px; }
+
+/* install verdict: the chip in the picker row + the line on the confirm card */
+.flash-verdict {
+  display: inline-block; margin-left: 6px; padding: 2px 10px; border-radius: 999px;
+  font-size: 12px; font-weight: 640; vertical-align: 1px;
+}
+.flash-verdict-update { background: rgba(67,160,71,0.12); border: 1px solid rgba(67,160,71,0.4); color: #bfe3c1; }
+.flash-verdict-same { background: rgba(255,255,255,0.05); border: 1px solid var(--edge, #262626); color: var(--muted); }
+.flash-verdict-downgrade { background: rgba(255,212,79,0.1); border: 1px solid rgba(255,212,79,0.35); color: #f0dca0; }
+.flash-verdict-switch { background: rgba(3,169,244,0.08); border: 1px solid rgba(3,169,244,0.35); color: #bfe6fb; }
+.flash-verdict-line { border-radius: 10px; padding: 9px 13px; margin: 8px 0; font-size: 14px; }
+.flash-verdict-line.flash-verdict-update { background: rgba(67,160,71,0.08); border: 1px solid rgba(67,160,71,0.3); }
+.flash-verdict-line.flash-verdict-downgrade { background: rgba(255,212,79,0.07); border: 1px solid rgba(255,212,79,0.3); }
+.flash-verdict-line.flash-verdict-same { background: rgba(255,255,255,0.03); border: 1px solid var(--edge, #262626); }
+.flash-verdict-line.flash-verdict-switch { background: rgba(3,169,244,0.06); border: 1px solid rgba(3,169,244,0.3); }
+.flash-verdict-line.flash-verdict-fresh { background: rgba(255,255,255,0.03); border: 1px solid var(--edge, #262626); }
+.flash-verdict-line.flash-verdict-unknown { background: rgba(255,255,255,0.03); border: 1px solid var(--edge, #262626); }
+
+/* per-setting help: the ⓘ dot + its calm card */
+.flash-help { position: relative; display: inline-block; margin-left: 6px; }
+.flash-help-dot {
+  width: 18px; height: 18px; line-height: 16px; padding: 0; border-radius: 50%;
+  border: 1px solid var(--edge, #3a3a3a); background: rgba(255,255,255,0.05);
+  color: var(--muted, #9aa39a); font-size: 11px; font-weight: 700; cursor: pointer;
+  vertical-align: 1px;
+}
+.flash-help-dot:hover, .flash-help-dot[aria-expanded="true"] { color: #ffd44f; border-color: rgba(255,212,79,0.5); }
+.flash-help-pop {
+  position: absolute; z-index: 30; left: 50%; transform: translateX(-50%);
+  top: 24px; width: min(310px, 78vw); padding: 11px 13px; border-radius: 12px;
+  background: #101113; border: 1px solid var(--edge, #303030);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  font-size: 13px; line-height: 1.45; text-align: left; white-space: normal;
+  display: flex; flex-direction: column; gap: 6px; font-weight: 400;
+}
+.flash-help-title { color: #ffd44f; font-size: 13px; }
+.flash-help-what { color: #cfd8cf; }
+.flash-help-when, .flash-help-default { color: var(--muted, #9aa39a); }
+.flash-help-when em, .flash-help-default em { color: #cfd8cf; font-style: normal; font-weight: 640; }
+
+/* Vision dials: preset cards + fine-tune sliders */
+.flash-dials { margin: 14px 0 4px; }
+.flash-dials h3 { margin-bottom: 4px; }
+.flash-preset-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 8px; margin: 8px 0;
+}
+.flash-preset {
+  display: flex; flex-direction: column; gap: 4px; text-align: left;
+  padding: 10px 12px; border-radius: 12px; cursor: pointer;
+  background: rgba(255,255,255,0.03); border: 1px solid var(--edge, #262626);
+  color: inherit; font: inherit;
+}
+.flash-preset:hover { border-color: rgba(255,212,79,0.4); }
+.flash-preset-on { border-color: #ffd44f; background: rgba(255,212,79,0.07); }
+.flash-preset-icon { font-size: 18px; line-height: 1; }
+.flash-preset-title { font-weight: 640; font-size: 14px; }
+.flash-preset-blurb { font-size: 12px; color: var(--muted, #9aa39a); line-height: 1.4; }
+.flash-preset-vals { font-size: 11.5px; color: #cfd8cf; margin-top: 2px; }
+.flash-dials-adv { margin-top: 6px; }
+.flash-dial-row { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+.flash-dial-label { min-width: 150px; font-size: 13.5px; display: inline-flex; align-items: center; }
+.flash-dial-row input[type="range"] { flex: 1; accent-color: #ffd44f; }
+.flash-dial-val { min-width: 64px; text-align: right; font-size: 13px; color: #cfd8cf; }
+
+/* Sense reflexes: shown honestly */
+.flash-reflexes { margin: 12px 0 4px; }
+.flash-reflexes-body { padding: 4px 0; }
+.flash-knob {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 0; border-bottom: 1px dashed rgba(255,255,255,0.07);
+}
+.flash-knob-label { font-size: 13.5px; display: inline-flex; align-items: center; }
+.flash-knob-val { font-size: 13px; color: #cfd8cf; font-variant-numeric: tabular-nums; }
+
+/* displays: the teaser + the hand-off card to the fleet page's live glass */
+.flash-displays { margin-top: 14px; }
+.flash-displaybench .flash-go { text-decoration: none; text-align: center; }
+
+/* ── the WE2 live bench: meter, chips, guide ─────────────────────────────── */
+.we2-preview { position: relative; }
+.we2-chip {
+  position: absolute; top: 10px; padding: 4px 11px; border-radius: 999px;
+  font: 700 12px ui-monospace, Menlo, monospace; letter-spacing: 0.02em;
+  background: rgba(8, 9, 11, 0.78); border: 1px solid rgba(255,255,255,0.16);
+  color: #e8f0e8; backdrop-filter: blur(4px);
+}
+.we2-chip-count { left: 10px; border-color: rgba(124,255,155,0.45); color: #7CFF9B; }
+.we2-chip-fps { right: 10px; color: var(--muted, #9aa39a); }
+
+.we2-meter { margin: 10px 0 2px; }
+.we2-meter-track {
+  position: relative; height: 12px; border-radius: 999px; overflow: visible;
+  background: rgba(255,255,255,0.06); border: 1px solid var(--edge, #262626);
+}
+.we2-meter-fill {
+  height: 100%; width: 0; border-radius: 999px;
+  background: linear-gradient(90deg, #5a4a12, #FFD44F 55%, #7CFF9B 85%);
+  transition: width 180ms ease-out;
+}
+.we2-meter-fill[data-level="ok"] { box-shadow: 0 0 12px rgba(124,255,155,0.35); }
+.we2-meter-tick {
+  position: absolute; top: -4px; bottom: -4px; width: 2px; border-radius: 1px;
+  background: #e8f0e8; opacity: 0.85;
+}
+.we2-meter-tick::after {
+  content: "floor"; position: absolute; top: -15px; left: 50%; transform: translateX(-50%);
+  font: 600 10px ui-monospace, Menlo, monospace; color: var(--muted, #9aa39a);
+}
+.we2-meter-label { margin-top: 8px; font-size: 12.5px; color: var(--muted, #9aa39a); }
+
+.we2-guide { margin: 8px 0 10px; }
+.we2-guide-steps { margin: 8px 0 4px 4px; padding-left: 18px; }
+.we2-guide-steps li { margin: 6px 0; font-size: 13.5px; line-height: 1.5; color: #cfd8cf; }
+.we2-guide-fixh { margin: 10px 0 4px; font-weight: 640; font-size: 13.5px; }
+.we2-guide-fixes { display: flex; flex-direction: column; gap: 7px; }
+.we2-guide-fix {
+  display: flex; flex-direction: column; gap: 2px; padding: 8px 11px;
+  border-radius: 10px; background: rgba(255,255,255,0.03);
+  border: 1px solid var(--edge, #262626); font-size: 13px; line-height: 1.45;
+}
+.we2-guide-fix strong { color: #f0dca0; font-size: 12.5px; }
+.we2-guide-fix span { color: var(--muted, #9aa39a); }
+
+/* ── the live voice (pre-flash serial console on the hello card) ─────────── */
+.flash-voice { margin-top: 10px; }
+.flash-voice h3 { margin-bottom: 4px; }
+.flash-voice-console { max-height: 180px; min-height: 64px; }
+.flash-voice-id { margin: 6px 0 2px; }
+.flash-headline { font-weight: 640; }
+
+/* ── the Nursery: branding, roster, and the radar bench ──────────────────── */
+.nursery-sub { font-size: 0.55em; font-weight: 500; color: var(--muted, #9aa39a); }
+
+.flash-roster { margin-top: 12px; }
+.flash-roster-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 4px; }
+.flash-roster-row {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 7px 11px; border-radius: 10px; font-size: 13px;
+  background: rgba(255,255,255,0.03); border: 1px solid var(--edge, #262626);
+}
+.flash-roster-n { color: #ffd44f; font-weight: 700; font-variant-numeric: tabular-nums; }
+.flash-roster-main { flex: 1; color: #cfd8cf; }
+.flash-roster-extras { color: var(--muted, #9aa39a); }
+.flash-roster-ago { color: var(--muted, #9aa39a); font-size: 12px; white-space: nowrap; }
+.flash-already { color: #f0dca0; }
+
+.flash-sensebench .flash-sense-aura,
+.flash-sensebench .flash-sense-wave {
+  display: block; width: 100%; height: auto;
+  background: #08090b; border: 1px solid var(--edge, #262626); border-radius: 14px;
+}
+.flash-sense-status {
+  margin: 10px 0; padding: 10px 15px; border-radius: 999px; display: inline-block;
+  font-weight: 640; font-size: 15px;
+  background: rgba(255,255,255,0.04); border: 1px solid var(--edge, #262626);
+  color: var(--muted, #9aa39a);
+}
+.flash-sense-present { background: rgba(67,160,71,0.12); border-color: rgba(67,160,71,0.5); color: #7CFF9B; }
+.flash-sense-clear { background: rgba(3,169,244,0.08); border-color: rgba(3,169,244,0.35); color: #bfe6fb; }
+.flash-sense-vitals { margin: 12px 0 6px; }
+.flash-sense-vitals-head {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 14px;
+}
+
+/* ── pro grade: the journey bar, phase fade, calm motion ─────────────────── */
+.flash-journey {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 2px 0 12px; font-size: 12.5px; color: var(--muted, #9aa39a);
+}
+.flash-journey-step { display: inline-flex; align-items: center; gap: 6px; }
+.flash-journey-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: rgba(255,255,255,0.14); border: 1px solid var(--edge, #303030);
+}
+.flash-journey-on { color: #ffd44f; font-weight: 640; }
+.flash-journey-on .flash-journey-dot { background: #ffd44f; border-color: #ffd44f; }
+.flash-journey-done { color: #9fbf9f; }
+.flash-journey-done .flash-journey-dot { background: rgba(124,255,155,0.55); border-color: rgba(124,255,155,0.55); }
+.flash-journey-sep { opacity: 0.4; }
+
+/* each new phase eases in — one soft step, never a jump-cut */
+#flash-flow > * { animation: flash-phase-in 180ms ease-out both; }
+@keyframes flash-phase-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #flash-flow > * { animation: none; }
+  .flash-bar-fill, .we2-meter-fill { transition: none; }
+}
+
+/* ── full polish: hatch animation, chirp toggle, micro-interactions ──────── */
+
+/* the hatch: egg wiggles → cracks → the chick IS. Calm users get the chick. */
+.flash-hatch { position: relative; height: 54px; font-size: 40px; line-height: 54px; }
+.flash-hatch span { position: absolute; left: 0; right: 0; text-align: center; opacity: 0; }
+.flash-hatch-egg { animation: hatch-egg 1.1s ease-in-out both; }
+.flash-hatch-cracked { animation: hatch-cracked 1.1s ease-in-out both; }
+.flash-hatch-chick { animation: hatch-chick 1.4s ease-out both; }
+@keyframes hatch-egg {
+  0% { opacity: 1; transform: rotate(0); }
+  20% { transform: rotate(-8deg); } 35% { transform: rotate(9deg); }
+  50% { transform: rotate(-10deg); } 60% { transform: rotate(6deg); }
+  70%, 100% { opacity: 0; transform: rotate(0); }
+}
+@keyframes hatch-cracked {
+  0%, 62% { opacity: 0; } 66%, 82% { opacity: 1; } 90%, 100% { opacity: 0; }
+}
+@keyframes hatch-chick {
+  0%, 72% { opacity: 0; transform: scale(0.7); }
+  86% { opacity: 1; transform: scale(1.12); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flash-hatch span { animation: none; }
+  .flash-hatch-chick { opacity: 1; }
+}
+
+/* the chirp toggle rides the journey bar's right edge */
+.flash-journey-side { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+.nursery-chirp-toggle {
+  padding: 3px 11px; border-radius: 999px; font-size: 12px; cursor: pointer;
+  background: rgba(255,255,255,0.04); border: 1px solid var(--edge, #262626);
+  color: var(--muted, #9aa39a);
+}
+.nursery-chirp-toggle[aria-pressed="true"] { color: #ffd44f; border-color: rgba(255,212,79,0.5); }
+
+/* micro-interactions: buttons acknowledge the press; chips arrive in turn */
+.flash-card button:active { transform: scale(0.97); }
+.flash-passport-stagger .flash-passport-chip {
+  animation: chip-in 240ms ease-out both;
+}
+.flash-passport-stagger .flash-passport-chip:nth-child(2) { animation-delay: 60ms; }
+.flash-passport-stagger .flash-passport-chip:nth-child(3) { animation-delay: 120ms; }
+.flash-passport-stagger .flash-passport-chip:nth-child(4) { animation-delay: 180ms; }
+.flash-passport-stagger .flash-passport-chip:nth-child(5) { animation-delay: 240ms; }
+@keyframes chip-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* the progress bar breathes while it works */
+.flash-bar-fill { position: relative; overflow: hidden; }
+.flash-bar-fill::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.22), transparent);
+  animation: bar-sheen 1.6s linear infinite;
+}
+@keyframes bar-sheen { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+
+/* the live voice's "on air" dot */
+.flash-voice h3::after {
+  content: ""; display: inline-block; width: 7px; height: 7px; margin-left: 8px;
+  border-radius: 50%; background: #7CFF9B; vertical-align: 2px;
+  animation: onair 1.8s ease-in-out infinite;
+}
+@keyframes onair { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .flash-card button:active { transform: none; }
+  .flash-passport-stagger .flash-passport-chip { animation: none; }
+  .flash-bar-fill::after { animation: none; content: none; }
+  .flash-voice h3::after { animation: none; opacity: 0.8; }
+}
+
+/* ── the coach: waiting is optional learning ─────────────────────────────── */
+.flash-coach {
+  margin: 12px 0 4px; padding: 12px 15px; border-radius: 12px;
+  background: rgba(255,212,79,0.05); border: 1px solid rgba(255,212,79,0.22);
+}
+.flash-coach-head { display: flex; align-items: center; justify-content: space-between; }
+.flash-coach-kicker {
+  font-size: 11.5px; letter-spacing: 0.04em; text-transform: uppercase;
+  color: #d8bc6a; font-weight: 640;
+}
+.flash-coach-close {
+  border: none; background: none; color: var(--muted, #9aa39a);
+  font-size: 16px; line-height: 1; cursor: pointer; padding: 2px 6px;
+}
+.flash-coach-close:hover { color: #f0dca0; }
+.flash-coach-title { margin: 7px 0 3px; font-weight: 640; font-size: 14.5px; color: #ffe8a3; }
+.flash-coach-body { margin: 0 0 8px; font-size: 13.5px; line-height: 1.55; color: #cfd8cf; }
+.flash-coach-controls { display: flex; justify-content: flex-end; }
+.flash-coach-swap .flash-coach-title,
+.flash-coach-swap .flash-coach-body { animation: coach-in 260ms ease-out both; }
+@keyframes coach-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flash-coach-swap .flash-coach-title,
+  .flash-coach-swap .flash-coach-body { animation: none; }
+}
+
+/* the emulated-twin link sits beside the real proof, styled as its equal */
+.flash-twin { text-decoration: none; text-align: center; }
+/* Family headers in the picker's grouped browse (the show-all view):
+   quiet section breaks so ten products read as five stories, not a wall. */
+.flash-family { margin: 14px 0 4px; }
+.flash-family:first-child { margin-top: 4px; }
+.flash-family-name { font-weight: 640; font-size: 14px; }
+.flash-family-pitch { font-size: 12.5px; }
+.flash-family-pick { margin-top: 2px; opacity: 0.85; }
+
+/* ── the settings & about panel: a native <dialog>, one tidy home ── */
+.flash-settings-open {
+  border: none; background: none; cursor: pointer; padding: 2px 6px;
+  font-size: 15px; line-height: 1; color: var(--muted, #9aa39a);
+  border-radius: 8px;
+}
+.flash-settings-open:hover { color: #ffd44f; background: rgba(255,212,79,0.08); }
+.flash-settings {
+  max-width: 560px; width: min(560px, calc(100vw - 36px));
+  max-height: min(82vh, 720px); overflow-y: auto;
+  border: 1px solid rgba(255,212,79,0.25); border-radius: 14px;
+  background: #10130f; color: #cfd8cf;
+  padding: 18px 22px 20px; box-shadow: 0 18px 60px rgba(0,0,0,0.55);
+}
+.flash-settings::backdrop { background: rgba(4,6,4,0.62); backdrop-filter: blur(2px); }
+.flash-settings-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.flash-settings-head h2 { margin: 0 0 4px; font-size: 17px; color: #ffe8a3; }
+.flash-settings-sec { margin-top: 16px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.07); }
+.flash-settings-sec h3 {
+  margin: 0 0 6px; font-size: 11.5px; letter-spacing: 0.05em;
+  text-transform: uppercase; color: #d8bc6a; font-weight: 640;
+}
+.flash-settings-sec p { margin: 6px 0; }
+.flash-settings .flash-row { margin-top: 8px; }
+.flash-settings-vendors { display: flex; flex-direction: column; gap: 4px; margin: 8px 0 4px; }
+.flash-settings-vendors .flash-knob { margin: 0; }
+
+/* ── "which board am I holding?" identity panel ── */
+.flash-identity-wrap { display: flex; flex-direction: column; gap: 14px; margin: 16px 0 4px; }
+.flash-identity {
+  position: relative; border-radius: 14px; overflow: hidden;
+  border: 1px solid rgba(255,212,79,0.18);
+  background: linear-gradient(180deg, #14140f 0%, #0d0d0f 100%);
+}
+/* the enclosure / product frame behind the card */
+.flash-identity-frame {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 11px 16px 22px; background:
+    radial-gradient(140% 120% at 85% -10%, rgba(255,212,79,0.10), transparent 60%);
+}
+.flash-identity-kicker { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted, #8a8a8a); }
+.flash-identity-product { font-size: 15px; font-weight: 680; color: #ffe8a3; }
+.flash-identity-note { font-size: 12px; color: var(--muted, #8a8a8a); }
+/* the white "what it is" card, lifted over the frame */
+.flash-identity-card {
+  position: relative; margin: -12px 12px 12px; padding: 15px 16px;
+  background: #f7f7f4; color: #1a1a1a; border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+}
+.flash-identity-card h3 { margin: 0 0 3px; font-size: 16px; color: #141414; }
+.flash-identity-facts { font-size: 12px; color: #5a5f66; margin-bottom: 8px; }
+.flash-identity-lead { font-size: 12.5px; color: #454b52; margin: 0 0 12px; }
+.flash-identity-pins { display: flex; flex-direction: column; gap: 6px; }
+.flash-identity-pin { display: flex; align-items: baseline; gap: 9px; font-size: 12.5px; line-height: 1.4; }
+.flash-identity-cls {
+  flex: 0 0 auto; min-width: 52px; text-align: center; padding: 2px 7px;
+  border-radius: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.02em;
+}
+.flash-identity-pin-body { color: #23282e; }
+.flash-identity-pin-body b { color: #111; }
+.flash-identity-where { color: #6b7178; font-variant-numeric: tabular-nums; }
+.flash-identity-use { display: block; color: #6b7178; font-size: 11.5px; margin-top: 1px; }
+.flash-identity-planned {
+  flex: 0 0 auto; align-self: center; font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.04em; color: #8a6d1f; background: #f6e6b0; padding: 1px 6px; border-radius: 5px;
+}
+.flash-identity-more { margin-top: 12px; padding-top: 10px; border-top: 1px solid #e4e4de; }
+.flash-identity-more .ghost { color: #7a5c00; }
+.flash-identity-more .ghost:hover { color: #a37b00; }
+@media (prefers-reduced-motion: reduce) { .flash-identity { transition: none; } }
+
+/* ── the Bluetooth check (prove a Canary is on, over the air) ─────────────── */
+.flash-ble-entry summary { cursor: pointer; }
+.flash-ble-status { min-height: 1.2em; }
+.flash-ble-card { border-left: 3px solid var(--ok); }
+.flash-ble-card h3 { color: var(--ok); margin: 0 0 6px; }
+
+/* ── cold start: the BOOT-held gesture, before the cable goes in ──────────── */
+/* Sits above the Connect button because it is the only control on the page
+   that has to happen BEFORE plugging in — everything else checks after. */
+.flash-coldstart {
+  text-align: left; margin: 14px 0 18px; padding: 14px 16px;
+  border: 1px solid rgba(255,212,79,0.32); border-radius: 12px;
+  background: rgba(255,212,79,0.06);
+}
+.flash-coldstart h3 { color: var(--canary, #ffd44f); margin: 0 0 8px; }
+.flash-coldstart p { font-size: 13.5px; margin: 0 0 8px; color: #ddd9cd; }
+.flash-coldstart-steps { margin: 8px 0 10px; }
+.flash-coldstart-row { gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.flash-coldstart-row .flash-chosen {
+  border-color: rgba(67,160,71,0.55); color: #bfe3c1; background: rgba(67,160,71,0.12);
+}
+.flash-coldstart-note:empty { display: none; }
+.flash-coldstart-note { margin: 8px 0 0; }
+
+/* ── customs: the read-only intake report ─────────────────────────────────── */
+.flash-intake { border-left: 3px solid var(--edge); }
+.flash-intake-clear { border-left-color: rgba(67,160,71,0.6); }
+.flash-intake-inconclusive,
+.flash-intake.flash-intake-attention { border-left-color: rgba(255,212,79,0.6); }
+.flash-intake.flash-intake-stop { border-left-color: #e5534b; }
+.flash-intake-head { display: flex; align-items: baseline; gap: 9px; }
+.flash-intake-head h3 { margin: 0; }
+.flash-intake-icon { font-size: 17px; }
+.flash-intake-finding {
+  display: block; margin: 9px 0 0; padding: 9px 12px; border-radius: 10px;
+  font-size: 13.5px; background: rgba(255,255,255,0.035); border: 1px solid var(--edge);
+}
+.flash-intake-finding strong { display: block; color: #e7e7e7; font-weight: 640; }
+.flash-intake-detail { display: block; margin-top: 3px; color: var(--muted, #9aa39a); }
+.flash-intake-finding.flash-intake-attention,
+.flash-intake-finding.flash-intake-inconclusive {
+  background: rgba(255,212,79,0.08); border-color: rgba(255,212,79,0.3);
+}
+.flash-intake-finding.flash-intake-stop {
+  background: rgba(229,83,75,0.1); border-color: rgba(229,83,75,0.42);
+}
+.flash-intake-verdict { margin: 12px 0 0; font-size: 13.5px; color: #cfd8cf; }
+.flash-intake-efuses { margin-top: 12px; }
+.flash-intake-efuses summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
+.flash-intake-efuse-list {
+  margin: 10px 0 8px; display: grid; grid-template-columns: 1fr auto; gap: 2px 14px;
+  font: 12px/1.7 "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+.flash-intake-efuse { display: contents; }
+.flash-intake-efuse-key { color: var(--muted, #9aa39a); }
+.flash-intake-efuse-val { color: #7f8a7f; text-align: right; }
+.flash-intake-burned .flash-intake-efuse-key,
+.flash-intake-burned .flash-intake-efuse-val { color: #f0dca0; font-weight: 600; }
+
+/* the erase we don't let you turn off, on a board we've never met */
+.flash-forced-erase {
+  background: rgba(3,169,244,0.07); border-color: rgba(3,169,244,0.3); color: #bfe6fb;
+}
+.flash-confirm-blocked { border-left: 3px solid #e5534b; }

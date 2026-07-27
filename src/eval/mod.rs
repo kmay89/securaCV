@@ -8,7 +8,7 @@
 //!
 //! - [`metrics`] — pure, always-compiled, unit-tested metric math (no model/image deps).
 //! - [`dataset`] — `labels.json` manifest types and loader.
-//! - [`runner`] — end-to-end run (feature `detect-eval`: needs `image` + `backend-tract`).
+//! - `runner` — end-to-end run (feature `detect-eval`: needs `image` + `backend-tract`).
 
 pub mod dataset;
 pub mod metrics;

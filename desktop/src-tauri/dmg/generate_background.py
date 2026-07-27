@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Build the branded .dmg window background for the SecuraCV Flasher installer.
+
+Layout is deliberately COLLISION-PROOF: Finder places the two icons (the app
+and the Applications alias) roughly in the vertical middle, and their exact Y
+can't be pixel-tuned without a real Mac. So all artwork lives in the top and
+bottom safe zones, leaving a wide clear band in the middle for the icons and
+their Finder labels — no text or arrow can land under an icon.
+
+    windowSize                = 660 x 460   (this canvas is 2x for retina)
+    appPosition               = (175, 225)  ← app icon lands here
+    applicationFolderPosition = (485, 225)  ← Applications alias lands here
+
+Regenerate:  python3 generate_background.py   (needs Pillow + the brand asset)
+The produced background.png is committed, so CI needs no Pillow.
+"""
+import os
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+MASCOT = os.path.normpath(os.path.join(HERE, "../../../brands/logo_main.png"))
+FONT_DIR = "/usr/share/fonts/truetype/dejavu"
+
+S = 2
+WIN_W, WIN_H = 660, 460
+W, H = WIN_W * S, WIN_H * S
+
+INK_TOP = (18, 27, 51)
+INK_BOTTOM = (6, 11, 24)
+CANARY = (245, 179, 1)
+TEXT = (233, 238, 250)
+MUTED = (150, 162, 186)
+
+# Vertical safe zones (points). Nothing is drawn in the middle band, where the
+# icons + their labels live.
+TOP_LIMIT = 150      # artwork stays above this
+BOTTOM_LIMIT = 330   # artwork stays below this
+
+
+def font(name, pt):
+    return ImageFont.truetype(os.path.join(FONT_DIR, name), pt * S)
+
+
+def vgrad(size, top, bottom):
+    w, h = size
+    g = Image.new("RGB", (1, h))
+    for y in range(h):
+        t = y / max(1, h - 1)
+        g.putpixel((0, y), tuple(round(top[i] * (1 - t) + bottom[i] * t) for i in range(3)))
+    return g.resize((w, h))
+
+
+def center(draw, cx, cy, text, fnt, fill):
+    l, t, r, b = draw.textbbox((0, 0), text, font=fnt)
+    draw.text((cx - (r - l) / 2 - l, cy - (b - t) / 2 - t), text, font=fnt, fill=fill)
+
+
+def main():
+    img = vgrad((W, H), INK_TOP, INK_BOTTOM).convert("RGBA")
+
+    # Warm canary glow low-centre, well clear of the text.
+    glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(glow).ellipse([W * 0.18, H * 0.34, W * 0.82, H * 0.86], fill=CANARY + (38,))
+    img = Image.alpha_composite(img, glow.filter(ImageFilter.GaussianBlur(120)))
+    d = ImageDraw.Draw(img)
+
+    # ── TOP safe zone: mascot + wordmark, subtitle, drag instruction ───────
+    mascot = Image.open(MASCOT).convert("RGBA")
+    bb = mascot.getbbox()
+    if bb:
+        mascot = mascot.crop(bb)
+    mh = 46 * S
+    mw = round(mascot.width * (mh / mascot.height))
+    mascot = mascot.resize((mw, mh), Image.LANCZOS)
+
+    title_f = font("DejaVuSans-Bold.ttf", 25)
+    title = "SecuraCV Flasher"
+    tl, tt, tr, tb = d.textbbox((0, 0), title, font=title_f)
+    gap = 15 * S
+    gx = (W - (mw + gap + (tr - tl))) // 2
+    cy = 34 * S
+    img.paste(mascot, (gx, cy - mh // 2), mascot)
+    d.text((gx + mw + gap - tl, cy - (tb - tt) / 2 - tt), title, font=title_f, fill=TEXT)
+
+    center(d, W // 2, 72 * S, "Flash a Canary — no browser, no terminal.",
+           font("DejaVuSans.ttf", 13), MUTED)
+    center(d, W // 2, 108 * S, "Drag the app into Applications  →",
+           font("DejaVuSans-Bold.ttf", 15), CANARY)
+
+    # (icons + their Finder labels render in the clear band here — no artwork)
+
+    # ── BOTTOM safe zone: the one-time first-open note ─────────────────────
+    py0, py1 = BOTTOM_LIMIT * S, (WIN_H - 22) * S
+    panel = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(panel).rounded_rectangle([40 * S, py0, W - 40 * S, py1],
+                                            radius=18 * S, fill=(255, 255, 255, 15))
+    img = Image.alpha_composite(img, panel)
+    d = ImageDraw.Draw(img)
+    center(d, W // 2, py0 + 26 * S,
+           "First launch: right-click the app in Applications → Open  (one time only)",
+           font("DejaVuSans-Bold.ttf", 14), TEXT)
+    center(d, W // 2, py0 + 55 * S, "— or, in Terminal —", font("DejaVuSans.ttf", 11), MUTED)
+    center(d, W // 2, py0 + 81 * S,
+           'xattr -dr com.apple.quarantine "/Applications/SecuraCV Flasher.app"',
+           font("DejaVuSansMono.ttf", 12), CANARY)
+
+    dst = os.path.join(HERE, "background.png")
+    img.convert("RGBA").save(dst)
+    print("wrote", dst, os.path.getsize(dst), "bytes", f"({W}x{H})")
+
+
+if __name__ == "__main__":
+    main()

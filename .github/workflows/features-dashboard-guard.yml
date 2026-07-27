@@ -29,12 +29,13 @@ jobs:
   guard:
     name: Feature-Parity Dashboard Guard
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'
       - name: Guard against unacknowledged capability downgrades

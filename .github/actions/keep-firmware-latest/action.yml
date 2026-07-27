@@ -1,0 +1,119 @@
+name: Keep releases/latest on the firmware
+description: >-
+  Assert that GitHub's releases/latest resolves to a fw-v* release — the URL
+  every Canary in the field polls for updates — and re-point it at the newest
+  published firmware release when an app release has taken it.
+
+# WHY THIS EXISTS
+#
+# Devices poll releases/latest/download/manifest-<product>.json (each project's
+# config.h SECURACV_OTA_MANIFEST_URL). GitHub's "latest" is the newest published
+# release of ANY kind, and this repo ships the desktop apps (flasher-v*, app-v*)
+# from the same release namespace — so publishing an app release silently
+# re-points the whole fleet's update URL at a release with no manifests in it.
+# Devices 404 on their next check and stop seeing updates. Nothing fails.
+#
+# gen_flash.py already dodges this for the browser flasher by pinning its
+# catalog to an exact fw-v<train> tag. Devices cannot: their URL is compiled in,
+# and changing it means shipping firmware — which needs the very channel that is
+# broken. So it is enforced from the outside, here.
+#
+# One implementation, two callers, because a copy would drift:
+#   • release-latest-guard.yml  — every release event a human causes
+#   • the app release workflows — because releases created with GITHUB_TOKEN do
+#     NOT fire `release:` events (GitHub's recursion guard), so the guard
+#     workflow never sees an app release the CI published. This is exactly the
+#     case that breaks the fleet, so the app workflows call it directly.
+
+inputs:
+  github-token:
+    description: Token with contents:write on this repository.
+    required: true
+  context:
+    description: >-
+      Short note on who is calling, for the run summary (e.g. "flasher-v0.2.2
+      publish"). Cosmetic only.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Assert (and repair) releases/latest
+      uses: actions/github-script@v8
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const owner = context.repo.owner;
+          const repo = context.repo.repo;
+          const caller = process.env.CALLER_CONTEXT || '';
+          const suffix = caller ? ` (${caller})` : '';
+          const isFirmware = (tag) => /^fw-v/.test(tag || '');
+
+          // Ask the endpoint the devices actually ride, rather than reasoning
+          // about dates — GitHub's selection rule is the thing under test.
+          let latest = null;
+          try {
+            latest = (await github.rest.repos.getLatestRelease({ owner, repo })).data;
+          } catch (err) {
+            if (err.status !== 404) throw err;
+          }
+
+          if (latest && isFirmware(latest.tag_name)) {
+            core.info(`releases/latest = ${latest.tag_name} — firmware, as it must be.`);
+            await core.summary
+              .addHeading(`releases/latest ✓${suffix}`)
+              .addRaw(`\`${latest.tag_name}\` — devices resolve their update manifests correctly.`)
+              .write();
+            return;
+          }
+
+          const releases = await github.paginate(github.rest.repos.listReleases, {
+            owner, repo, per_page: 100,
+          });
+          const firmware = releases
+            .filter((r) => isFirmware(r.tag_name) && !r.draft && !r.prerelease)
+            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+          const took = latest ? `\`${latest.tag_name}\`` : '_nothing_';
+          if (firmware.length === 0) {
+            const msg =
+              `releases/latest is ${took}, and there is no published fw-v* release to ` +
+              `point it at. Every device's OTA manifest URL 404s until a firmware ` +
+              `release is cut (docs/RELEASE_PROCESS.md).`;
+            core.warning(msg);
+            await core.summary
+              .addHeading(`releases/latest — no firmware release yet${suffix}`)
+              .addRaw(msg).write();
+            return;
+          }
+
+          const target = firmware[0];
+          core.warning(
+            `releases/latest was ${latest ? latest.tag_name : '(none)'} — not firmware. ` +
+            `Re-pointing it at ${target.tag_name} so the fleet keeps seeing updates.`
+          );
+          // Name the firmware release explicitly. Setting the app release to
+          // make_latest:false would only make GitHub recompute by date, which
+          // can land on ANOTHER app release.
+          await github.rest.repos.updateRelease({
+            owner, repo, release_id: target.id, make_latest: 'true',
+          });
+
+          const after = (await github.rest.repos.getLatestRelease({ owner, repo })).data;
+          await core.summary
+            .addHeading(`releases/latest repaired${suffix}`)
+            .addRaw(`Was ${took} (not firmware) → now \`${after.tag_name}\`.`).addBreak()
+            .addRaw('Devices poll `releases/latest/download/manifest-<product>.json`; an ' +
+                    'app release there means the whole fleet stops seeing updates.')
+            .write();
+
+          if (!isFirmware(after.tag_name)) {
+            core.setFailed(
+              `Tried to re-point releases/latest at ${target.tag_name}, but it still ` +
+              `resolves to ${after.tag_name}. The fleet's update URL is wrong and this ` +
+              `action could not fix it — fix it by hand on the Releases page.`
+            );
+          }
+      env:
+        CALLER_CONTEXT: ${{ inputs.context }}

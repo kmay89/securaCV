@@ -45,8 +45,15 @@
 #define LV_FONT_MONTSERRAT_20 1
 #define LV_FONT_MONTSERRAT_24 1   /* dash body (per-flavor scale, theme.h) */
 #define LV_FONT_MONTSERRAT_28 1
+/* The two room-scale sizes are the expensive ones (~170 KB together with the
+ * merged symbol set). CD_LEAN_BUILD — the 4 MB C6 nightstand env — drops
+ * them to fit the 0x1E0000 OTA A/B slot; its 1.47" bedside glass never draws
+ * them (character.cpp's lean ladder caps at 28). Every roomier build keeps
+ * them. */
+#ifndef CD_LEAN_BUILD
 #define LV_FONT_MONTSERRAT_36 1   /* dash title (per-flavor scale, theme.h) */
 #define LV_FONT_MONTSERRAT_48 1
+#endif
 #define LV_FONT_DEFAULT &lv_font_montserrat_14
 
 #define LV_USE_LOG 0

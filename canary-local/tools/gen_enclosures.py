@@ -322,15 +322,58 @@ BOM_MAP = [
     # display CSV interleaves W-* (watch) and D-* (dash) lines.
     ("bom_canary_wap.csv", "canary-wap", None),
     ("bom_canary_vision.csv", "canary-vision", None),
+    ("bom_canary_sense.csv", "canary-sense", None),
     ("bom_canary_display.csv", "canary-display-watch", "W-"),
     ("bom_canary_display.csv", "canary-display-dash", "D-"),
 ]
+
+# Live supply-chain overlay (scripts/bom_pricing.py → docs/hardware/pricing.json).
+# A committed input, so the drift gate stays deterministic; absent file = no
+# overlay, the CSVs' indicative prices stand alone.
+PRICING_PATH = HW / "pricing.json"
+PRICING = (json.loads(PRICING_PATH.read_text(encoding="utf-8"))
+           if PRICING_PATH.exists() else {})
+
+# The snapshot's URL checker, imported rather than re-implemented — two
+# copies of a security rule is how one of them quietly stops matching.
+sys.path.insert(0, str(REPO / "scripts"))
+from bom_pricing import safe_product_url  # noqa: E402
+
+
+def live_overlay(part):
+    """The per-row `live` object, or None when the row isn't distributor-verified.
+
+    Only "digikey"/"mouser" provenance counts as live: a part demoted to
+    "carried" keeps its last-known numbers in the snapshot for reference but
+    must never be republished here as fresh — and so it never carries a link
+    to a listing that may no longer exist.
+    """
+    if not part or part.get("provenance") not in ("digikey", "mouser"):
+        return None
+    if part.get("unit_usd") is None:
+        return None
+    src = part["provenance"]
+    live = {
+        "unit_usd": part["unit_usd"],
+        "stock": part.get("stock"),
+        "src": src,
+    }
+    # Re-checked on the way out, not just on the way in: the snapshot is a
+    # committed file a human can edit. A URL that doesn't pass is simply
+    # absent, and the row renders exactly as it did before links existed.
+    url = safe_product_url(part.get("url"), src)
+    if url:
+        live["url"] = url
+    return live
 
 
 def parse_bom(name, prefix=None):
     rows = []
     req_total = 0.0
     full_total = 0.0
+    req_live = 0.0
+    full_live = 0.0
+    parts = PRICING.get("parts") or {}
     with open(HW / name, newline="", encoding="utf-8") as f:
         for r in csv.DictReader(f):
             if not r.get("RefDes"):
@@ -346,9 +389,17 @@ def parse_bom(name, prefix=None):
             except ValueError:
                 ext = 0.0
             required = (r.get("Required") or "").strip().lower() == "required"
+            # Distributor-verified price, when the nightly snapshot has one;
+            # the CSV's indicative ExtUSD is the fallback for the live totals.
+            part = parts.get(r.get("MPN", ""))
+            qty = r.get("Qty", "1").strip()
+            live = live_overlay(part) if qty.isdigit() else None
+            ext_live = (live["unit_usd"] * int(qty)) if live else ext
             if required:
                 req_total += ext
+                req_live += ext_live
             full_total += ext
+            full_live += ext_live
             rows.append({
                 "ref": r["RefDes"],
                 "qty": r.get("Qty", "1"),
@@ -359,13 +410,68 @@ def parse_bom(name, prefix=None):
                 "mfr": r.get("Manufacturer", ""),
                 "usd": ext,
                 "notes": r.get("Notes", ""),
+                # a real manufacturer part number a distributor can resolve
+                # (drives the Build-it page's order-the-parts copy panel)
+                "orderable": bool(part) and part["sourcing"] == "orderable",
+                **({"live": live} if live else {}),
             })
     return {
         "source": f"docs/hardware/{name}",
         "rows": rows,
         "required_usd": round(req_total, 2),
         "full_usd": round(full_total, 2),
+        **({"required_usd_live": round(req_live, 2),
+            "full_usd_live": round(full_live, 2),
+            "pricing_as_of": PRICING.get("as_of")} if PRICING else {}),
     }
+
+
+def parse_recipes(csv_name: str):
+    """The BOM CSV's own `# <name> (REF+REF+…)` summary rows — named build
+    recipes with their indicative subtotal and note, maintained in the CSV.
+    (Defined here, above build_main, because both the Build-it presets and
+    the workshop read them.)"""
+    recipes = []
+    with open(HW / csv_name, newline="", encoding="utf-8") as f:
+        for row in csv.reader(f):
+            if not row or not row[0].startswith("#"):
+                continue
+            m = re.match(r"^#\s*(.+?)\s*\(([^)]+)\)\s*$", row[0])
+            if not m or "+" not in m.group(2):
+                continue
+            usd = next((c for c in row[1:] if re.fullmatch(r"\d+\.\d\d", c)), None)
+            note = next((c for c in reversed(row[1:]) if c and c != usd), "")
+            recipes.append({
+                "label": m.group(1), "formula": m.group(2),
+                **({"usd": float(usd)} if usd else {}),
+                **({"note": note} if note else {}),
+            })
+    return recipes
+
+
+def resolve_recipe(formula, refs):
+    """A recipe formula → the explicit optional-ref list it names, or None
+    when any token is prose ('LiPo', 'sealed input') rather than a RefDes.
+    'req' means the required rows (the page always includes those), and
+    simple ranges expand (SCR5-7 → SCR5, SCR6, SCR7). Resolved recipes
+    become one-click build presets on the Build-it page; prose ones stay
+    display-only in the workshop."""
+    out = []
+    for tok in (t.strip() for t in formula.split("+")):
+        if not tok or tok.lower() == "req":
+            continue
+        if tok in refs:
+            out.append(tok)
+            continue
+        m = re.match(r"^([A-Za-z]+)(\d+)-(\d+)$", tok)
+        if m:
+            span = [f"{m.group(1)}{n}"
+                    for n in range(int(m.group(2)), int(m.group(3)) + 1)]
+            if span and all(r in refs for r in span):
+                out.extend(span)
+                continue
+        return None
+    return out
 
 
 def parse_assembly(md):
@@ -410,15 +516,36 @@ def build_main():
     assembly = parse_assembly(md)
     devices = {}
     for name, dev_id, prefix in BOM_MAP:
-        devices.setdefault(dev_id, {})["bom"] = parse_bom(name, prefix)
+        bom = parse_bom(name, prefix)
+        # The CSV's own recipe rows, resolved to refs → one-click presets.
+        # Only optional refs matter (required rows are always in a build).
+        opt_refs = {r["ref"] for r in bom["rows"] if not r["required"]}
+        all_refs = {r["ref"] for r in bom["rows"]}
+        presets = []
+        for rec in parse_recipes(name):
+            refs = resolve_recipe(rec["formula"], all_refs)
+            if refs is None:
+                continue
+            presets.append({
+                "label": rec["label"],
+                "refs": [r for r in refs if r in opt_refs],
+                **({"usd": rec["usd"]} if "usd" in rec else {}),
+                **({"note": rec["note"]} if "note" in rec else {}),
+            })
+        if presets:
+            bom["recipes"] = presets
+        devices.setdefault(dev_id, {})["bom"] = bom
     for d, a in assembly.items():
         devices.setdefault(d, {})["assembly"] = a
-    # honest gaps, stated
-    devices.setdefault("canary-sense", {})["bom_note"] = (
-        "Sense BOM pending — parts list lives in firmware/projects/canary-sense/README.md.")
     data = {
         "generated_by": "canary-local/tools/gen_enclosures.py",
         "sbom": SBOM_INFO,
+        **({"pricing": {
+            "source": "docs/hardware/pricing.json",
+            "as_of": PRICING.get("as_of"),
+            "note": "Nightly distributor snapshot (scripts/bom_pricing.py); "
+                    "rows without a live match keep the CSV's indicative price.",
+        }} if PRICING else {}),
         "devices": devices,
     }
     BUILD_JSON.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n")
@@ -490,16 +617,19 @@ OPTION_LINKS = {
         "bom": ["SCR4"], "fw": []},
     ("canary_watch_station.scad", "opt_batt"): {
         "bom": ["W-BT1"], "fw": []},
-    # Sense options: BOM pending (honest gap carried from build.json);
-    # firmware flags still link where the config names them.
+    # Sense options: LED + lux are ON the MR60BHA2 kit board (no separate
+    # BOM row); the enclosure options link to bom_canary_sense.csv refs.
     ("canary_sense_enclosure.scad", "opt_led"): {
         "bom": [], "fw": ["FEATURE_STATUS_LED"]},
     ("canary_sense_enclosure.scad", "opt_lux"): {
         "bom": [], "fw": ["FEATURE_AMBIENT_LIGHT"]},
     ("canary_sense_enclosure.scad", "opt_vent"): {"bom": [], "fw": []},
-    ("canary_sense_enclosure.scad", "opt_tamper"): {"bom": [], "fw": []},
-    ("canary_sense_enclosure.scad", "opt_seal"): {"bom": [], "fw": []},
-    ("canary_sense_enclosure.scad", "opt_mount"): {"bom": [], "fw": []},
+    ("canary_sense_enclosure.scad", "opt_tamper"): {
+        "bom": ["SW2", "MAG1"], "fw": []},
+    ("canary_sense_enclosure.scad", "opt_seal"): {
+        "bom": ["FIL1"], "fw": []},
+    ("canary_sense_enclosure.scad", "opt_mount"): {
+        "bom": ["SCR4"], "fw": []},
 }
 
 # README preset-table name → variant-set id (both must exist; verified).
@@ -553,27 +683,6 @@ def parse_features(project: str, flavor: str):
     if not feats:
         raise SystemExit(f"workshop: no FEATURE_* flags parsed from {path}")
     return feats
-
-
-def parse_recipes(csv_name: str):
-    """The BOM CSV's own `# <name> (REF+REF+…)` summary rows — named build
-    recipes with their indicative subtotal and note, maintained in the CSV."""
-    recipes = []
-    with open(HW / csv_name, newline="", encoding="utf-8") as f:
-        for row in csv.reader(f):
-            if not row or not row[0].startswith("#"):
-                continue
-            m = re.match(r"^#\s*(.+?)\s*\(([^)]+)\)\s*$", row[0])
-            if not m or "+" not in m.group(2):
-                continue
-            usd = next((c for c in row[1:] if re.fullmatch(r"\d+\.\d\d", c)), None)
-            note = next((c for c in reversed(row[1:]) if c and c != usd), "")
-            recipes.append({
-                "label": m.group(1), "formula": m.group(2),
-                **({"usd": float(usd)} if usd else {}),
-                **({"note": note} if note else {}),
-            })
-    return recipes
 
 
 def scad_options(scads: dict, scad: str, bom_rows_by_dev: dict, dev: str,

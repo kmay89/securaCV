@@ -186,7 +186,7 @@
      "id": "compact_plain",
      "label": "compact plain",
      "set": "wap-compact",
-     "dims_mm": "33.7 × 37.6 × 13.7 mm",
+     "dims_mm": "33.7 × 36.6 × 13.7 mm",
      "contents": "plain board (no camera), buzzer + LED, USB-powered",
      "options": {
       "opt_camera": false,
@@ -216,7 +216,7 @@
      "id": "battery_weather",
      "label": "battery weather",
      "set": "wap-weather",
-     "dims_mm": "106.3 × 40.6 × 20.2 mm",
+     "dims_mm": "107.1 × 41.4 × 20.2 mm",
      "contents": "battery_full + gasket seal + drip-edge lid + keyhole mounts",
      "options": {
       "opt_camera": true,
@@ -281,7 +281,7 @@
     {
      "label": "Required-only",
      "formula": "U1+CBL1+SD1",
-     "usd": 26.9,
+     "usd": 25.99,
      "note": "Bench bring-up"
     },
     {
@@ -510,19 +510,19 @@
     {
      "label": "Required-only",
      "formula": "U1+U2+CBL2+CBL1",
-     "usd": 41.7,
-     "note": "Core Vision device"
+     "usd": 28.69,
+     "note": "Core Vision device (Grove AI V2 now $15.99)"
     },
     {
      "label": "Full build",
      "formula": "req + LED + button + battery + PC enclosure",
-     "usd": 71.0,
+     "usd": 57.99,
      "note": "Approx; buzzer unpopulated"
     },
     {
      "label": "Printed camera unit",
      "formula": "req + CAM1 + ENC2 + SCR5-7 + NUT1 + CW2",
-     "usd": 54.75,
+     "usd": 41.74,
      "note": "Wall/tripod-mountable unit with adjustable hinge; add WAP weather-kit items for sealing"
     }
    ],
@@ -619,21 +619,31 @@
      "group": "Options",
      "label": "reed/Hall magnet pocket",
      "consequence": "",
-     "default": false
+     "default": false,
+     "bom": [
+      "SW2",
+      "MAG1"
+     ]
     },
     {
      "id": "opt_seal",
      "group": "Options",
      "label": "perimeter TPU gasket + drip-edge front (indoor ceilings rarely need it)",
      "consequence": "",
-     "default": false
+     "default": false,
+     "bom": [
+      "FIL1"
+     ]
     },
     {
      "id": "opt_mount",
      "group": "Options",
      "label": "opt_mount",
      "consequence": "",
-     "default": true
+     "default": true,
+     "bom": [
+      "SCR4"
+     ]
     },
     {
      "id": "mount_style",
@@ -889,6 +899,14 @@
        "on": true,
        "note": "off-grid BLE chirp fallback (spec 6)"
       },
+      "FEATURE_BLE5_SCAN": {
+       "on": false,
+       "note": "BLE 5 ext/Coded-PHY long-range scan; bench-gated (spec 6, like CHIME)"
+      },
+      "FEATURE_FLEET_LINK": {
+       "on": true,
+       "note": "off-grid BLE GATT pull of WAP status (spec 6)"
+      },
       "FEATURE_TIME_MACHINE": {
        "on": true,
        "note": "proof-carrying event journal + history UI (spec 7)"
@@ -1050,6 +1068,14 @@
       "FEATURE_CHIRP_SCAN": {
        "on": true,
        "note": "off-grid BLE chirp fallback (spec 6)"
+      },
+      "FEATURE_BLE5_SCAN": {
+       "on": false,
+       "note": "BLE 5 ext/Coded-PHY long-range scan; bench-gated (spec 6, like CHIME)"
+      },
+      "FEATURE_FLEET_LINK": {
+       "on": true,
+       "note": "off-grid BLE GATT pull of WAP status (spec 6)"
       },
       "FEATURE_TIME_MACHINE": {
        "on": true,

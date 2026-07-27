@@ -71,6 +71,109 @@ USBONB_BIN = $(BUILD_DIR)/test_usb_onboard_logic
 TESTCON_HDR = ../common/health/test_console.h
 TESTCON_BIN = $(BUILD_DIR)/test_test_console
 
+# Boot crash-loop / safe-mode policy (common/health/boot_policy.h): the pure
+# decision half of "a bad image must not brick trust" — proves a good image
+# never trips safe mode, an unconfirmed image defers to A/B rollback, a confirmed
+# crash-loop degrades to safe mode after exactly N boots and stays there, and
+# that safe mode is always escapable (never a permanent brick). Pure header.
+BOOTPOL_HDR = ../common/health/boot_policy.h
+BOOTPOL_BIN = $(BUILD_DIR)/test_boot_policy
+
+# Power-event lineage + outage log (common/power/power_events.h): the pure
+# decision half of "harden against brownouts / flickers / outages and keep a
+# correct log of when the power went out." Proves the whole classification table
+# (cold boot vs clean reboot vs brownout vs restored outage vs fault), the honest
+# lower-bound outage arithmetic, and the durable ring + monotonic counters the
+# firmware persists to NVS. Pure header, no Arduino deps.
+POWEREVT_HDR = ../common/power/power_events.h
+POWEREVT_BIN = $(BUILD_DIR)/test_power_events
+
+# Console scene engine (common/ui/*.h): proves the drunken-bishop randomart is a
+# faithful, deterministic, bounded walk, and — the anti-fragile guarantee — that
+# the ASCII tier never emits an escape or non-7-bit byte and every framed line
+# aligns to the same width. Pure headers, no Arduino deps.
+SCENE_HDRS = ../common/ui/randomart.h ../common/ui/console_theme.h ../common/ui/console_scenes.h ../common/ui/console_wake.h
+SCENE_BIN = $(BUILD_DIR)/test_console_scene
+
+# Fleet view (common/ui/fleet_view.h): the console face of the self-* roadmap's
+# Fleet map — "which other Canaries can this one hear." Proves the ASCII tier
+# stays escape-free / 7-bit / width-aligned (same contract as the trust card),
+# that presence is rendered honestly as UNSIGNED with worded (not colour-only)
+# attention states, and pins a golden render. Pure header over the console
+# engine + the fleet-link wire constants; no Arduino deps.
+FLEETVIEW_HDRS = ../common/ui/fleet_view.h ../common/ui/console_theme.h \
+                 ../common/fleet_link/fleet_beacon.h ../common/fleet_link/fleet_roster.h
+FLEETVIEW_BIN = $(BUILD_DIR)/test_fleet_view
+
+# Fleet self-report (common/fleet_selfreport/fleet_selfreport.h): the ONE shared
+# builder for the GET /api/fleet body every networked Canary answers — the
+# "parity by architecture" core (write the wire shape once, all boards serve it
+# identically). Pins the DISCOVERY.md contract shape, JSON-escaping of
+# attacker-influenced device names (same discipline as the web XSS fix), the
+# bounded/NUL-terminated writer, and the open/append/close hub composition.
+# Pure header, no Arduino deps.
+FLEETSR_HDR = ../common/fleet_selfreport/fleet_selfreport.h
+FLEETSR_BIN = $(BUILD_DIR)/test_fleet_selfreport
+
+# Device self-manifest (common/attest/self_manifest.h): the machine-readable
+# JSON the device emits on 'j' and the website parses over WebSerial. Pins the
+# schema + every key, proves string escaping, and that the bounded writer never
+# overflows or emits truncated JSON. Pure header, no Arduino deps.
+MANIFEST_HDR = ../common/attest/self_manifest.h
+MANIFEST_BIN = $(BUILD_DIR)/test_self_manifest
+
+# Coarse optical feature classifiers (canary-vision optical_features.h): pins
+# the invariant-safe coarsening of the person-detection model's box geometry —
+# aspect ratio -> posture, area fraction -> proximity, count -> occupancy
+# bucket. Proves only ordinals/names are emitted (no coordinates/area/distance).
+# Pure header over canary/types.h, no Arduino deps.
+OPTFEAT_INC = ../projects/canary-vision/include
+OPTFEAT_HDR = $(OPTFEAT_INC)/canary/vision/optical_features.h $(OPTFEAT_INC)/canary/types.h
+OPTFEAT_BIN = $(BUILD_DIR)/test_optical_features
+
+# Canary Vision detection pipeline: this is the exact allocation-free header
+# compiled by both vision_mgr.cpp on the ESP32 and the browser wasm core.
+VISION_INC = ../projects/canary-vision/include
+VISION_CFG = ../configs/canary-vision/default
+VISION_PIPE_HDR = $(VISION_INC)/canary/vision/detection_pipeline.h \
+                  $(VISION_INC)/canary/vision/optical_features.h \
+                  $(VISION_INC)/canary/detect_config.h \
+                  $(VISION_INC)/canary/types.h
+VISION_PIPE_BIN = $(BUILD_DIR)/test_vision_detection_pipeline
+
+# Sentinel multi-sensor fusion brain (common/fusion/sentinel_fusion.*): the
+# board-agnostic evidence-fusion engine compiled by projects/canary-sentinel on
+# device and here on the host. Pins the anti-evasion scoring (independence
+# bonus, denied-channel suspicion, silent-body anomaly) and the debounced
+# decision FSM. Built with -DSENTINEL_FUSION_TEST_HOST so the reference
+# default_standard_config() is available to the suite. Pure C++, no Arduino.
+FUSION_DIR  = ../common/fusion
+FUSION_SRC  = $(FUSION_DIR)/sentinel_fusion.cpp
+FUSION_HDR  = $(FUSION_DIR)/sentinel_fusion.h $(FUSION_DIR)/sentinel_channels.h
+FUSION_BIN  = $(BUILD_DIR)/test_sentinel_fusion
+
+# Preset -> FusionConfig -> engine pipeline (projects/canary-sentinel's
+# sentinel_config.h over configs/canary-sentinel/<preset>). Built once per
+# preset: the preset dir is placed on the include path so <config.h> resolves
+# to it, and its name is passed for the banner. Two presets cover both the
+# full stack (door) and the reduced Lite tier (mailbox-lite, radar/CSI off).
+SENT_PROJ_INC = ../projects/canary-sentinel/include
+SENT_CFG_DIR  = ../configs/canary-sentinel
+SENT_PRESET_HDR = $(SENT_PROJ_INC)/canary/sentinel_config.h \
+                  $(FUSION_DIR)/sentinel_fusion.h $(FUSION_DIR)/sentinel_channels.h
+PRESET_DOOR_BIN = $(BUILD_DIR)/test_sentinel_preset_door
+PRESET_LITE_BIN = $(BUILD_DIR)/test_sentinel_preset_mailbox_lite
+
+# Nightstand look engine (common/color/*): the gamma LUT, integer HSV→RGB,
+# warmth, palette sampling, breath easing, and the scene→beacon/wash engine
+# with its honest severity override. Pure integer C++ (no float, no Arduino),
+# so the whole color pipeline is proven on the host before it ever reaches the
+# FPU-less C6.
+LOOK_DIR  = ../common/color
+LOOK_SRC  = $(LOOK_DIR)/color_engine.cpp $(LOOK_DIR)/look_engine.cpp
+LOOK_HDRS = $(LOOK_DIR)/color_engine.h $(LOOK_DIR)/look_engine.h
+LOOK_BIN  = $(BUILD_DIR)/test_look_engine
+
 .PHONY: all run clean
 all: run
 
@@ -98,7 +201,43 @@ $(USBONB_BIN): test_usb_onboard_logic.cpp $(USBONB_HDR) Makefile | $(BUILD_DIR)
 $(TESTCON_BIN): test_test_console.cpp $(TESTCON_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_test_console.cpp -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN)
+$(BOOTPOL_BIN): test_boot_policy.cpp $(BOOTPOL_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_boot_policy.cpp -o $@
+
+$(POWEREVT_BIN): test_power_events.cpp $(POWEREVT_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_power_events.cpp -o $@
+
+$(SCENE_BIN): test_console_scene.cpp $(SCENE_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_console_scene.cpp -o $@
+
+$(FLEETVIEW_BIN): test_fleet_view.cpp $(FLEETVIEW_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_fleet_view.cpp -o $@
+
+$(FLEETSR_BIN): test_fleet_selfreport.cpp $(FLEETSR_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_fleet_selfreport.cpp -o $@
+
+$(MANIFEST_BIN): test_self_manifest.cpp $(MANIFEST_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_self_manifest.cpp -o $@
+
+$(OPTFEAT_BIN): test_optical_features.cpp $(OPTFEAT_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I $(OPTFEAT_INC) test_optical_features.cpp -o $@
+
+$(VISION_PIPE_BIN): test_vision_detection_pipeline.cpp $(VISION_PIPE_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I $(VISION_INC) -I $(VISION_CFG) test_vision_detection_pipeline.cpp -o $@
+
+$(FUSION_BIN): test_sentinel_fusion.cpp $(FUSION_SRC) $(FUSION_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -DSENTINEL_FUSION_TEST_HOST -I $(FUSION_DIR) test_sentinel_fusion.cpp $(FUSION_SRC) -o $@
+
+$(PRESET_DOOR_BIN): test_sentinel_presets.cpp $(FUSION_SRC) $(SENT_PRESET_HDR) $(SENT_CFG_DIR)/door/config.h Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) '-DSENTINEL_PRESET_NAME="door"' -I $(SENT_PROJ_INC) -I ../common -I $(SENT_CFG_DIR)/door test_sentinel_presets.cpp $(FUSION_SRC) -o $@
+
+$(PRESET_LITE_BIN): test_sentinel_presets.cpp $(FUSION_SRC) $(SENT_PRESET_HDR) $(SENT_CFG_DIR)/mailbox-lite/config.h Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) '-DSENTINEL_PRESET_NAME="mailbox-lite"' -I $(SENT_PROJ_INC) -I ../common -I $(SENT_CFG_DIR)/mailbox-lite test_sentinel_presets.cpp $(FUSION_SRC) -o $@
+
+$(LOOK_BIN): test_look_engine.cpp $(LOOK_SRC) $(LOOK_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_look_engine.cpp $(LOOK_SRC) -o $@
+
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -106,6 +245,18 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(WITSTORE_BIN)
 	./$(USBONB_BIN)
 	./$(TESTCON_BIN)
+	./$(BOOTPOL_BIN)
+	./$(POWEREVT_BIN)
+	./$(SCENE_BIN)
+	./$(FLEETVIEW_BIN)
+	./$(FLEETSR_BIN)
+	./$(MANIFEST_BIN)
+	./$(OPTFEAT_BIN)
+	./$(VISION_PIPE_BIN)
+	./$(FUSION_BIN)
+	./$(PRESET_DOOR_BIN)
+	./$(PRESET_LITE_BIN)
+	./$(LOOK_BIN)
 
 clean:
 	rm -rf $(BUILD_DIR)

@@ -1,0 +1,8 @@
+noble-ed25519 vendored for the canary.local browser flasher
+package:  @noble/ed25519@2.1.0 (npm)
+file:     ed25519.mjs (upstream index.js, unmodified single-file ESM)
+sha256:   39fb70069dd6668828313d76f40229c1d771609cff786192e2868b68ca7b492f
+license:  MIT (Paul Miller; header retained in the file)
+purpose:  verify the Ed25519 release signature of a firmware image in-browser
+          before flashing (message = uint32_le(size) || sha256(image)).
+fetched:  npm pack @noble/ed25519@2.1.0

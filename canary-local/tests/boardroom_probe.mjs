@@ -146,7 +146,10 @@ if (SHOTS) await page.screenshot({ path: `${SHOTS}/boardroom_wire.png`, fullPage
 step("step player");
 // ── the other boards load too; boards without a harness disable wire-it ──
 for (const [bid, b] of Object.entries(boards.boards).slice(1)) {
-  await page.locator(".broom .pill", { hasText: b.name }).click();
+  // exact-match the pill: "Seeed XIAO ESP32-S3" is a substring of the Sense's
+  // "…S3 Sense", so a hasText substring match would resolve to two pills
+  const exact = new RegExp("^" + b.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$");
+  await page.locator(".broom .pill", { hasText: exact }).click();
   await page.waitForFunction(() => {
     const cv = document.querySelector(".broom-3d");
     return cv && cv.__scene && cv.__scene.parts.length >= 3;

@@ -14,6 +14,50 @@ const el = (tag, cls, text) => {
 
 const GH = "https://github.com/kmay89/securaCV/blob/main/";
 
+const DISTRIBUTOR_DOMAIN = { digikey: "digikey.com", mouser: "mouser.com" };
+
+/* The distributor's own product page for a row, or null.
+ *
+ * build.json only carries a `live.url` for a distributor-verified row, and
+ * only after the URL passed the snapshot's checks twice (bom_pricing.py on
+ * fetch, gen_enclosures.py on generate). Neither of those protects data
+ * that already reached the browser, so this repeats the FULL check — https
+ * AND the host actually belonging to the distributor the row names — on a
+ * build.json that could have been served from anywhere.
+ *
+ * It uses `new URL`, which is the same WHATWG parser the browser navigates
+ * with, and returns that parser's own serialization. So the host we checked
+ * is the host it will go to: no string we validated one way can be resolved
+ * another. Anything that fails just isn't a link — never a broken one. */
+export const liveUrl = (r) => {
+  const live = r && r.live;
+  const base = live && DISTRIBUTOR_DOMAIN[live.src];
+  if (!base || typeof live.url !== "string") return null;
+  let u;
+  try { u = new URL(live.url); } catch { return null; }
+  if (u.protocol !== "https:" || u.username || u.password) return null;
+  const host = u.hostname.toLowerCase();
+  if (host !== base && !host.endsWith("." + base)) return null;
+  return u.href;
+};
+
+/* "Seeed Studio · 102010469" — a link to the part when we have one. */
+export const partNode = (r) => {
+  if (!r.mpn) return "";
+  const label = `${r.mfr} · ${r.mpn}`;
+  const url = liveUrl(r);
+  if (!url) return el("span", "muted", label);
+  const a = el("a", "bom-part-link", label);
+  a.href = url;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  a.title = `Open ${r.mpn} at ${r.live.src}`;
+  // The row itself toggles its note on click; following a link shouldn't
+  // also flip the note open behind the new tab.
+  a.addEventListener("click", (ev) => ev.stopPropagation());
+  return a;
+};
+
 export function buildBuildIt(buildData, dev) {
   const wrap = el("div", "buildit");
   if (!buildData) {
@@ -35,23 +79,100 @@ export function buildBuildIt(buildData, dev) {
     bomHead.append(totals);
     wrap.append(bomHead);
 
+    if (d.bom.pricing_as_of) {
+      const asOf = el("p", "muted fineprint bom-asof");
+      let line = `Supply-chain snapshot ${d.bom.pricing_as_of.slice(0, 10)}`;
+      if (d.bom.required_usd_live != null &&
+          d.bom.required_usd_live !== d.bom.required_usd) {
+        line += ` — live required total $${d.bom.required_usd_live.toFixed(2)}`;
+      }
+      asOf.textContent = line + " · distributor-verified rows are marked live";
+      wrap.append(asOf);
+    }
+
+    // ── Pick your build ──
+    // Required rows are always in; every optional row is a checkbox. The
+    // running total, and the order panel below, follow the selection —
+    // and the CSV's own recipe rows become one-click presets, so "the
+    // sealed outdoor build" is a single tap, not a parts-catalog hunt.
+    const sel = new Set();
+    const extOf = (r) => r.live
+      ? r.live.unit_usd * (Number(r.qty) || 1) : (r.usd || 0);
+    const reqBase = d.bom.required_usd_live != null
+      ? d.bom.required_usd_live : d.bom.required_usd;
+
+    const yourBuild = el("p", "bom-yourbuild");
+    const updateBuild = () => {
+      let total = reqBase;
+      for (const r of d.bom.rows || []) {
+        if (!r.required && sel.has(r.ref)) total += extOf(r);
+      }
+      yourBuild.textContent = "";
+      yourBuild.append(
+        el("strong", null, `Your build: $${total.toFixed(2)}`),
+        el("span", "muted",
+          sel.size ? ` — required parts + ${sel.size} option${
+            sel.size === 1 ? "" : "s"}` : " — required parts only")
+      );
+    };
+    wrap.append(yourBuild);
+
     const optToggle = el("label", "over-toggle bom-toggle");
     const cb = document.createElement("input");
     cb.type = "checkbox";
     optToggle.append(cb, document.createTextNode(" show optional parts"));
+
+    if ((d.bom.recipes || []).length) {
+      const chips = el("div", "bom-recipes");
+      chips.append(el("span", "muted", "Build recipes:"));
+      for (const rec of d.bom.recipes) {
+        const b = el("button", "btn ghost bom-recipe", rec.label);
+        b.type = "button";
+        if (rec.note) b.title = rec.note;
+        b.addEventListener("click", () => {
+          sel.clear();
+          for (const ref of rec.refs || []) sel.add(ref);
+          if (sel.size) cb.checked = true;
+          render();
+          updateBuild();
+          updateStat();
+        });
+        chips.append(b);
+      }
+      wrap.append(chips);
+    }
     wrap.append(optToggle);
 
     const table = el("div", "bom-table");
     const render = () => {
       table.innerHTML = "";
       for (const r of d.bom.rows || []) {
-        if (!r.required && !cb.checked) continue;
-        const row = el("div", "bom-row" + (r.required ? "" : " bom-opt"));
+        if (!r.required && !cb.checked && !sel.has(r.ref)) continue;
+        const row = el("div", "bom-row" + (r.required ? "" : " bom-opt") +
+                       (sel.has(r.ref) ? " bom-picked" : ""));
+        const liveExt = r.live
+          ? r.live.unit_usd * (Number(r.qty) || 1) : null;
         const top = el("div", "bom-row-top");
+        if (!r.required) {
+          const pick = document.createElement("input");
+          pick.type = "checkbox";
+          pick.className = "bom-pick";
+          pick.checked = sel.has(r.ref);
+          pick.title = "add to your build";
+          pick.addEventListener("click", (ev) => ev.stopPropagation());
+          pick.addEventListener("change", () => {
+            if (pick.checked) sel.add(r.ref); else sel.delete(r.ref);
+            row.classList.toggle("bom-picked", pick.checked);
+            updateBuild();
+            updateStat();
+          });
+          top.append(pick);
+        }
         top.append(
           el("code", "bom-ref", r.ref),
           el("span", "bom-desc", r.desc),
-          el("span", "bom-usd", r.usd ? `$${r.usd.toFixed(2)}` : "—")
+          el("span", "bom-usd", liveExt != null ? `$${liveExt.toFixed(2)}`
+                                : r.usd ? `$${r.usd.toFixed(2)}` : "—")
         );
         const meta = el("div", "bom-row-meta");
         meta.append(
@@ -59,8 +180,14 @@ export function buildBuildIt(buildData, dev) {
           el("span", null, `×${r.qty}`),
           r.required ? el("span", "chip chip-live", "required")
                      : el("span", "chip", "optional"),
-          r.mpn ? el("span", "muted", `${r.mfr} · ${r.mpn}`) : ""
+          partNode(r)
         );
+        if (r.live) {
+          meta.append(el("span", "chip chip-live",
+            `live · ${r.live.src}` +
+            (typeof r.live.stock === "number"
+              ? ` · ${r.live.stock.toLocaleString()} in stock` : "")));
+        }
         row.append(top, meta);
         if (r.notes) {
           const note = el("div", "bom-note", r.notes);
@@ -74,6 +201,7 @@ export function buildBuildIt(buildData, dev) {
     };
     cb.addEventListener("change", render);
     render();
+    updateBuild();
     wrap.append(table);
     const src = el("p", "muted fineprint");
     src.append("Generated from ");
@@ -83,6 +211,88 @@ export function buildBuildIt(buildData, dev) {
     a.rel = "noopener";
     src.append(a, document.createTextNode(" — MPNs, distributor SKUs, lifecycle and RoHS columns live there."));
     wrap.append(src);
+
+    // ── Order the parts ──
+    // No unverified APIs, no accounts, no magic that can silently break:
+    // one click copies distributor-ready "MPN,qty" lines for exactly the
+    // build picked above and opens the distributor's own list/BOM page —
+    // paste, and the cart prices itself.
+    const buildRows = () => (d.bom.rows || []).filter(
+      r => r.required || sel.has(r.ref));
+    const orderRows = () => buildRows().filter(r => r.orderable);
+    const orderLines = () => orderRows()
+      .map(r => `${r.mpn},${r.qty}`).join("\n");
+
+    const order = el("div", "bom-order");
+    order.append(el("h4", null, "Order the parts"));
+    const ostat = el("p", "muted fineprint");
+    const updateStat = () => {
+      const n = orderRows().length;
+      const g = buildRows().length - n;
+      ostat.textContent =
+        `${n} orderable part number${n === 1 ? "" : "s"} in your build` +
+        (g ? ` (+${g} generic item${g === 1 ? "" : "s"} — cables, screws, ` +
+             `filament — any hardware store has them; they're in the CSV ` +
+             `download)` : "") + `.`;
+    };
+    updateStat();
+
+    const feedback = el("p", "muted fineprint");
+    const manual = el("textarea", "bom-order-manual");
+    manual.readOnly = true;
+    manual.rows = 4;
+    manual.hidden = true;
+
+    const copyThenOpen = async (label, url) => {
+      const text = orderLines();
+      try {
+        await navigator.clipboard.writeText(text);
+        feedback.textContent =
+          `✓ ${orderRows().length} part numbers copied — paste into ${label} ` +
+          `(opened in a new tab) and the cart prices itself.`;
+        manual.hidden = true;
+      } catch {
+        manual.value = text;
+        manual.hidden = false;
+        manual.select();
+        feedback.textContent =
+          `Clipboard blocked by the browser — the lines are below, select ` +
+          `and copy, then paste into ${label}.`;
+      }
+      window.open(url, "_blank", "noopener");
+    };
+
+    const btns = el("div", "bom-order-btns");
+    const mkBtn = (cls, label, fn) => {
+      const b = el("button", `btn ${cls}`, label);
+      b.type = "button";
+      b.addEventListener("click", fn);
+      return b;
+    };
+    btns.append(
+      mkBtn("primary", "Copy list + open Digi-Key myLists", () =>
+        copyThenOpen("Digi-Key myLists", "https://www.digikey.com/en/mylists")),
+      mkBtn("ghost", "Copy list + open Mouser BOM tool", () =>
+        copyThenOpen("Mouser's BOM tool", "https://www.mouser.com/bom/")),
+      mkBtn("ghost", "Download CSV", () => {
+        const rows = buildRows();
+        const csv = ["MPN,Quantity,RefDes,Manufacturer,Description"]
+          .concat(rows.map(r =>
+            [r.mpn, r.qty, r.ref, r.mfr, `"${(r.desc || "").replace(/"/g, '""')}"`]
+              .join(",")))
+          .join("\n");
+        const blob = new Blob([csv], { type: "text/csv" });
+        const dl = document.createElement("a");
+        dl.href = URL.createObjectURL(blob);
+        dl.download = `securacv-${dev.id}-parts.csv`;
+        dl.click();
+        URL.revokeObjectURL(dl.href);
+        feedback.textContent =
+          `✓ CSV downloaded — both distributors' BOM tools accept it as an upload.`;
+      })
+    );
+    order.append(ostat, btns, feedback, manual);
+    wrap.append(order);
   } else if (d.bom_note) {
     const note = el("p", "ondevice");
     note.append(el("strong", null, "Honesty: "), document.createTextNode(d.bom_note));

@@ -66,6 +66,22 @@
 #if defined(FEATURE_CHIRP_SCAN) && FEATURE_CHIRP_SCAN
 #include "chirp_scan.h"
 #endif
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+#include "field_io.h"   // 4.3B isolated DI/DO -> events + siren
+#endif
+#if defined(FEATURE_MIC_ALARM) && FEATURE_MIC_ALARM && \
+    defined(HAS_MICROPHONE) && HAS_MICROPHONE
+#include "mic_alarm.h"  // 4.3C: acoustic alarm patterns -> events
+#endif
+#if defined(FEATURE_RTC) && FEATURE_RTC
+#include "rtc.h"        // PCF8563 trusted time (probe -> seed/mirror)
+#endif
+#if defined(FEATURE_ESPNOW) && FEATURE_ESPNOW
+#include "espnow_peer.h"  // router-independent peer presence (rx-only)
+#endif
+#if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK
+#include "fleet_link.h"
+#endif
 #if defined(FEATURE_ONBOARDING) && FEATURE_ONBOARDING
 #include "provision.h"
 #endif
@@ -81,8 +97,19 @@
 #include "chime.h"
 #include "core_compat.h"
 #include "glass_settings.h"
-#if defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND
-#include "playground.h"
+#if ((defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND) ||   \
+     (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE) ||         \
+     (defined(FEATURE_DEMO_MODE) && FEATURE_DEMO_MODE) ||     \
+     (defined(FEATURE_DEBUG_MODE) && FEATURE_DEBUG_MODE) ||   \
+     (defined(FEATURE_ARCADE) && FEATURE_ARCADE))
+// Mode system (docs/hardware/display_modes.md): this build carries at least
+// one non-fleet gear (bench / demo / debug / arcade). Which gear a boot
+// lands in is decided ONCE by the host-tested registry (NVS token, legacy
+// devmode migration, fail-safe to Fleet); the resolved gear is cached here
+// so loop() never re-reads NVS.
+#define CD_MODES_COMPILED 1
+#include "mode_glue.h"
+static canary::mode::Mode s_active_mode = canary::mode::Mode::Fleet;
 #endif
 
 #include <lvgl.h>
@@ -96,6 +123,12 @@
 #endif
 #ifdef CD_FLAVOR_DASH
 #include "dash_ui.h"
+#endif
+#ifdef CD_FLAVOR_NIGHTSTAND
+#include "portrait_ui.h"
+#endif
+#if defined(FEATURE_AMBIENT_LED) && FEATURE_AMBIENT_LED
+#include "ambient_led.h"  // WS2812 across-room state beacon
 #endif
 
 #if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG
@@ -339,6 +372,9 @@ static void ui_ack_hold(bool active) {
 #ifdef CD_FLAVOR_DASH
   canary::ui::dash_ui_ack_hold(active);
 #endif
+#ifdef CD_FLAVOR_NIGHTSTAND
+  canary::ui::portrait_ui_ack_hold(active);
+#endif
 }
 
 #if defined(FEATURE_CARE) && FEATURE_CARE
@@ -351,6 +387,9 @@ static void toggle_mute(const canary::fleet::Witness& w, uint32_t now) {
     fleet.set_mute(w.id, false, 0);
     canary::fleet::mute_store_put(w.id, 0);
     boot_line("[input] long-press -> unmute witness");
+#if defined(FEATURE_CHIME) && FEATURE_CHIME
+    canary::hal::voice_play(canary::hal::Voice::MuteOff);  // rising: back on
+#endif
     return;
   }
   const uint32_t until_epoch = canary::care::mute_until_morning_epoch();
@@ -366,6 +405,9 @@ static void toggle_mute(const canary::fleet::Witness& w, uint32_t now) {
   }
   fleet.set_mute(w.id, true, until_ms);
   boot_line("[input] long-press -> mute witness until morning");
+#if defined(FEATURE_CHIME) && FEATURE_CHIME
+  canary::hal::voice_play(canary::hal::Voice::MuteOn);  // falling: going quiet
+#endif
 }
 #endif
 
@@ -491,6 +533,9 @@ static void handle_touch(uint32_t now) {
 
     // Long-press: acknowledge. Quiet, deliberate, works half-asleep.
     fleet.acknowledge_by(now, canary::cfg::get().device_id);
+#if defined(FEATURE_CHIME) && FEATURE_CHIME
+    canary::hal::voice_play(canary::hal::Voice::AckConfirm);  // a warm "got it"
+#endif
 #if defined(FEATURE_ACK_SYNC) && FEATURE_ACK_SYNC
     // Household ack-sync (spec §2): tell the sibling displays — only with
     // a real clock (no guessed timestamps on the wire).
@@ -522,6 +567,17 @@ static void handle_touch(uint32_t now) {
     if (was_awake) {
       g_page = (g_page + 1) % canary::ui::glance_page_count();
       g_page_touched_ms = now;
+#if defined(FEATURE_CHIME) && FEATURE_CHIME
+      canary::hal::voice_play(canary::hal::Voice::PageTurn);  // a light flip
+#endif
+#if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK
+      // Tapping to a witness detail page queues an off-grid GATT status pull
+      // for that WAP (no-op online; the loop only acts while broker-down).
+      if (g_page >= 1 && g_page <= fleet.count()) {
+        const auto* w = fleet.at(g_page - 1);
+        if (w && w->fp[0]) canary::net::fleet_link_request(w->fp);
+      }
+#endif
     } else {
       // Glance-first wake: waking from the dark always lands on the one
       // big fact (the halo hero), never mid-rotation on a detail page —
@@ -534,6 +590,15 @@ static void handle_touch(uint32_t now) {
     // proof sheet; a tap on an open sheet closes it.
     if (was_awake && g_display_ok) {
       canary::ui::dash_ui_handle_tap(g_touch_x, g_touch_y);
+#if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK
+      // A lit tap on a witness card queues an off-grid GATT status pull for
+      // that WAP (no-op online; the loop only acts while broker-down).
+      const int fl_card = canary::ui::dash_ui_card_at(g_touch_x, g_touch_y);
+      if (fl_card >= 0) {
+        const auto* w = fleet.at(fl_card);
+        if (w && w->fp[0]) canary::net::fleet_link_request(w->fp);
+      }
+#endif
     }
 #endif
     fleet.mark_dirty();
@@ -578,6 +643,9 @@ static void render(uint32_t now) {
 #endif
 #ifdef CD_FLAVOR_DASH
       canary::ui::dash_ui_create();
+#endif
+#ifdef CD_FLAVOR_NIGHTSTAND
+      canary::ui::portrait_ui_create();
 #endif
     }
   }
@@ -627,6 +695,16 @@ static void render(uint32_t now) {
   st.bird = bird;
   canary::ui::dash_ui_update(fleet, now, st);
 #endif
+#ifdef CD_FLAVOR_NIGHTSTAND
+  canary::ui::PortraitState st;
+  st.night = night_look;
+  st.wifi_ok = canary::net::wifi_connected();
+  st.mqtt_ok = canary::net::mqtt_connected();
+  st.acked = fleet.ack_active(now);
+  st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
+  st.bird = bird;
+  canary::ui::portrait_ui_update(fleet, now, st);
+#endif
 
   apply_brightness(now, night);
 }
@@ -666,14 +744,20 @@ void setup() {
   boot_scene_banner(&bi);
   boot_scene_hardware(&bi);
 
-#if defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND
-  // Dev playground (docs/hardware/dev_playground_43b.md): the guided
-  // peripheral bench mode owns the device from here. Everything below —
-  // WiFi, MQTT, OTA, discovery, provisioning, watchdog — is deliberately
-  // never initialized: a bench unit can't join the fleet, phone home, or
-  // take an update by accident.
-  canary::playground::playground_setup();
-  return;
+#ifdef CD_MODES_COMPILED
+  // Non-fleet gears (docs/hardware/display_modes.md): resolve this boot's
+  // gear from the NVS latch — the dedicated bench env always boots the
+  // bench, an unknown/uncarried token fails safe to the fleet face, and the
+  // legacy "devmode" bool still lands in the bench it asked for. A non-fleet
+  // gear owns the device from here; per-mode policy (mode_registry.h,
+  // host-tested) pins what it may touch — only debug brings the network up,
+  // none take OTA, none arm the watchdog. Everything below this block is
+  // fleet-only bring-up.
+  s_active_mode = canary::mode::boot_mode();
+  if (s_active_mode != canary::mode::Mode::Fleet) {
+    canary::mode::mode_enter(s_active_mode);
+    return;
+  }
 #endif
 
   // Display-specific boot scene.
@@ -692,8 +776,22 @@ void setup() {
   boot_kvf("RGB",    "DE=%d VS=%d HS=%d PCLK=%d @ %d Hz",
            LCD_PIN_DE, LCD_PIN_VSYNC, LCD_PIN_HSYNC, LCD_PIN_PCLK, LCD_PCLK_HZ);
 #endif
+#ifdef CD_FLAVOR_NIGHTSTAND
+  boot_kv("Glass",   "ST7789 1.47\" 172x320 portrait SPI (no touch)");
+  boot_kvf("SPI",    "SCK=%d MOSI=%d CS=%d DC=%d BL=%d(PWM) off=%d",
+           TFT_PIN_SCK, TFT_PIN_MOSI, TFT_PIN_CS, TFT_PIN_DC, TFT_PIN_BL,
+           TFT_COL_OFFSET);
+#if defined(FEATURE_AMBIENT_LED) && FEATURE_AMBIENT_LED
+  boot_kvf("Beacon", "WS2812 x%d on GPIO%d (RMT) — the state channel",
+           RGBLED_COUNT, RGBLED_PIN);
+#endif
+#endif
+#if !defined(CD_FLAVOR_NIGHTSTAND)
+  // The 1.47" nightstand boards have no touch controller (TOUCH_I2C_ADDR is
+  // not defined on those pin maps) — the I2C header there is sensor-only.
   boot_kvf("Touch",  "I2C SDA=%d SCL=%d  addr 0x%02X",
            I2C_PIN_SDA, I2C_PIN_SCL, TOUCH_I2C_ADDR);
+#endif
   boot_kvf("Fleet",  "up to %d witnesses, stale %lus, lost %lus",
            CD_FLEET_MAX_DEVICES,
            (unsigned long)(CD_STALE_AFTER_MS / 1000),
@@ -722,9 +820,14 @@ void setup() {
   canary::trust::init();
 
 #if defined(FEATURE_CHIME) && FEATURE_CHIME
-  // Chime engine (spec §5) — only ever initialized when the piezo pad is
+  // Canary Voice (spec §5) — only ever initialized when the piezo pad is
   // populated; the engine TU itself is always compiled for CI coverage.
   canary::hal::chime_init(BUZZER_PIN);
+  // Seed night state before the first voice so a reboot during quiet hours
+  // speaks at the night-attenuated level, and sound our boot signature —
+  // "the canary wakes." (voice_play no-ops if the pin was never populated.)
+  canary::hal::voice_set_night(in_quiet_hours());
+  canary::hal::voice_play(canary::hal::Voice::Boot);
 #endif
 #if defined(FEATURE_WAKE_ALARM) && FEATURE_WAKE_ALARM
   // OUTSIDE the chime gate on purpose (review catch): the sunrise ramp is
@@ -738,6 +841,11 @@ void setup() {
   // "listening" state beats a black disc while WiFi retries.
   g_display_ok = canary::hal::display_init();
   if (g_display_ok) g_display_ok = canary::ui::lvgl_port_init();
+#if defined(FEATURE_AMBIENT_LED) && FEATURE_AMBIENT_LED
+  // The across-room state beacon comes up dark and stays dark until the first
+  // render tick colors it — no boot flash on a nightstand.
+  canary::hal::ambient_led_init();
+#endif
   if (g_display_ok) {
     // Boot splash, then face, then the curtain lift. splash_play() ends by
     // dropping an opaque curtain over the glass instead of fading into the
@@ -750,6 +858,9 @@ void setup() {
 #endif
 #ifdef CD_FLAVOR_DASH
     canary::ui::dash_ui_create();
+#endif
+#ifdef CD_FLAVOR_NIGHTSTAND
+    canary::ui::portrait_ui_create();
 #endif
     render(canary::ms_now());
     lv_timer_handler();
@@ -788,6 +899,20 @@ void setup() {
   }
 #endif
 
+#if defined(FEATURE_RTC) && FEATURE_RTC
+  // Trusted time: if a PCF8563 is populated on the shared I2C bus, seed the
+  // clock from it now (so timestamps are trustworthy before/without SNTP); the
+  // loop mirrors NTP back to it once the network gives a real wall time.
+  canary::io::rtc_begin();
+#endif
+
+#if defined(FEATURE_ESPNOW) && FEATURE_ESPNOW
+  // Router-independent peer presence: bring up the ESP-NOW listener now that the
+  // WiFi driver is started. Receive-only — the dash observes peer beacons off
+  // the raw channel when the AP/broker is down; it never transmits or signs.
+  canary::net::espnow_begin();
+#endif
+
   // The display's own web page — live mirror, help, master settings.
   // Started AFTER provisioning (the portal owned :80 during setup) and
   // independent of the panel: a display with broken glass still mirrors.
@@ -805,6 +930,22 @@ void setup() {
   // Care wave: restore the learned rhythm baseline from NVS (mutes re-apply
   // later, from care_loop, once SNTP gives both clocks).
   canary::care::care_begin();
+#endif
+
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+  // 4.3B field I/O: isolated contacts -> unsigned local events, siren on
+  // unacked alerts. Reports under this dash's own id; never signs.
+  canary::io::field_io_begin(canary::cfg::get().device_id);
+#endif
+
+#if defined(FEATURE_MIC_ALARM) && FEATURE_MIC_ALARM && \
+    defined(HAS_MICROPHONE) && HAS_MICROPHONE
+  // 4.3C acoustic alarm listener (display_mic_variant.md): smoke-T3/CO-T4
+  // cadences -> unsigned local events. OFF by default; the amber MIC chip
+  // is lit exactly while the capture driver runs; disarm uninstalls the
+  // driver (the hard mute). Reports under this dash's own id; never signs,
+  // never records, never streams.
+  canary::io::mic_begin(canary::cfg::get().device_id, g_display_ok);
 #endif
 
   // Seed the heap-health snapshot so the first status publish carries real
@@ -877,9 +1018,11 @@ void setup() {
 }
 
 void loop() {
-#if defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND
-  canary::playground::playground_loop();
-  return;
+#ifdef CD_MODES_COMPILED
+  if (s_active_mode != canary::mode::Mode::Fleet) {
+    canary::mode::mode_loop_step(s_active_mode);
+    return;
+  }
 #endif
 
 #if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG
@@ -972,6 +1115,14 @@ void loop() {
 
   const bool broker = mqtt_supervise(now);
 
+#if defined(FEATURE_CHIME) && FEATURE_CHIME
+  // Keep the Voice loudness model in step with quiet hours every pass — the
+  // model silences the gentle categories at night and only lets Wake/Alert
+  // through (voice_score.h::voice_peak_duty). Cheap; in_quiet_hours() is
+  // already read several times a loop.
+  canary::hal::voice_set_night(in_quiet_hours());
+#endif
+
 #if defined(FEATURE_CARE) && FEATURE_CARE
   // Care wave (display_care_wave.md): the attention policy drives the chime
   // (night-silent maintenance + ramp), harvests the overnight ledger, fires
@@ -988,7 +1139,58 @@ void loop() {
   // Off-grid fallback (spec §6): while the broker is dark and WiFi may be
   // too, passive BLE bursts keep tamper/liveness flowing to the glass. The
   // module itself stops scanning the moment the broker is back.
-  canary::net::chirp_scan_loop(now, !broker);
+  canary::net::chirp_scan_loop(now, !broker, canary::net::wifi_connected());
+#endif
+
+#if defined(FEATURE_ESPNOW) && FEATURE_ESPNOW
+  // Drain any peer presence beacons the ESP-NOW listener captured into the
+  // fleet model (unsigned observation, same footing as the BLE beacon).
+  canary::net::espnow_loop(now);
+#endif
+
+#if defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
+  // Broker-less fleet enumeration (WiFi analog of the BLE presence beacon):
+  // once every device is on the home WiFi, browse the fleet's mDNS adverts
+  // directly and show every nearby Canary even with NO broker/Home Assistant.
+  // Gated on the broker being DOWN — when it's up, MQTT is the richer source,
+  // so skip the mDNS enumeration to avoid churn. Self-rate-limits (~20 s) and
+  // only actually queries when due; the query blocks ~3 s inside ESPmDNS.
+  if (!broker) canary::net::discovery_scan_witnesses(now);
+#endif
+
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+  // Poll the isolated contacts into events and drive the siren output. Cheap
+  // and self-throttled; 4.3B only.
+  canary::io::field_io_loop(now);
+#endif
+
+#if defined(FEATURE_MIC_ALARM) && FEATURE_MIC_ALARM && \
+    defined(HAS_MICROPHONE) && HAS_MICROPHONE
+  // Drain mic frames into the cadence detector (scalars only — samples are
+  // zeroed inside the module). Self-throttled; 4.3C only.
+  canary::io::mic_loop(now);
+  // Opt-in "wake on a sound": a loud onset (a door close) lights a dark dash,
+  // the same wake a touch or a presence event gives it. The mic layer only
+  // raises the request while it's actually listening; we turn it into a wake
+  // window here so the display keeps a single owner of that state.
+  if (canary::io::mic_take_wake_request()) {
+    const bool night = in_quiet_hours();
+    g_wake_until_ms = now + wake_window_ms(night);
+    g_last_wake_event_ms = now;
+  }
+#endif
+
+#if defined(FEATURE_RTC) && FEATURE_RTC
+  // Mirror NTP back to the PCF8563 once the clock is real. Self-throttled.
+  canary::io::rtc_loop(now);
+#endif
+
+#if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK
+  // Layer 3: on-demand GATT pull of a WAP's live status (a display tap queues
+  // the request via fleet_link_request; this drives the bounded connect+read
+  // while off-grid). Runs after the passive listener so it can stop that scan
+  // before driving the shared radio as a central.
+  canary::net::fleet_link_loop(now, !broker, canary::net::wifi_connected());
 #endif
 
   // Time machine v1 (spec §7): keep the model's wall-hour current so new
@@ -1028,6 +1230,25 @@ void loop() {
     g_last_render_ms = now;
     render(now);
   }
+
+#if defined(FEATURE_AMBIENT_LED) && FEATURE_AMBIENT_LED
+  // The ambient beacon breathes every loop pass (not just on render ticks) so
+  // the point of light animates smoothly. The honest rule holds: night +
+  // all-quiet + healthy links -> dark (a never-configured hub counts as the
+  // standalone all-quiet case, exactly like apply_brightness's night floor).
+  {
+    using canary::fleet::Sev;
+    const bool led_night = in_quiet_hours();
+    const Sev led_worst = fleet.worst(now);
+    const bool links_ok =
+        canary::net::wifi_connected() && canary::net::mqtt_connected();
+    const bool safe_dark =
+        led_night && (canary::net::mqtt_broker_is_placeholder() ||
+                      (links_ok && led_worst < Sev::Warn));
+    canary::hal::ambient_led_tick(now, led_worst, led_night, safe_dark);
+  }
+#endif
+
   if (g_display_ok) lv_timer_handler();
 
   delay(5);

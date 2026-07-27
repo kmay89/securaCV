@@ -1,0 +1,178 @@
+# Desktop app release — builds the SecuraCV Lab (Tauri) for macOS + Linux
+# and publishes the installers to a GitHub Release.
+#
+# Trigger: push a tag like `app-v0.1.0`. (Bump `version` in
+# desktop-lab/package.json AND desktop-lab/src-tauri/tauri.conf.json first.)
+# Also runnable manually (workflow_dispatch) — leave `publish` unchecked for a
+# throwaway build-only smoke test, or check it to cut a draft release.
+#
+# On `releases/latest`: this workflow needs no keep-firmware-latest step (unlike
+# desktop-flasher-release.yml) because it only ever creates a DRAFT, and a draft
+# is never GitHub's "latest". The moment a human publishes that draft it DOES
+# take `latest` — the URL every Canary polls for OTA — but a human-published
+# release fires a `release:` event, so release-latest-guard.yml catches it and
+# re-points `latest` at the firmware. CI-published releases don't fire that
+# event, which is why the Flasher has to call the action itself.
+name: Desktop app release
+
+on:
+  push:
+    tags:
+      - "app-v*"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish a draft GitHub Release (unchecked = build-only smoke test)"
+        type: boolean
+        default: true
+
+# One release build per ref at a time. A tag build must never be cancelled
+# mid-flight (half-uploaded release assets), so we only auto-cancel the
+# cheap manual smoke-test runs.
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest      # universal .dmg + .app (Apple Silicon + Intel)
+            args: "--target universal-apple-darwin"
+          - platform: ubuntu-22.04      # .AppImage + .deb
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 60
+    env:
+      RUST_BACKTRACE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop-lab/src-tauri -> target
+          key: ${{ matrix.platform }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: desktop-lab/package-lock.json
+
+      - name: Install Tauri CLI
+        working-directory: desktop-lab
+        run: npm ci
+
+      - name: All three version files agree
+        # On the RELEASE path, not just in lint: a pushed `app-v*` tag, or a
+        # dispatch from a branch lint hasn't run on, would otherwise publish a
+        # bundle whose tag (tauri.conf.json), npm version, and user-visible
+        # version (Cargo.toml → the app's own footer) disagree. The Flasher
+        # gained this check first; a guard on one app target and not the other is
+        # exactly the half-fix RELEASE_LESSONS keeps warning about.
+        run: python3 desktop/scripts/check_app_versions.py
+
+      # Codesigning/notarization is OPT-IN via the `ENABLE_MACOS_SIGNING`
+      # repository variable (Settings → Secrets and variables → Actions →
+      # Variables). It is split into two steps on purpose: tauri's macOS
+      # bundler treats APPLE_CERTIFICATE as "sign me" whenever the env var is
+      # *defined at all* — even as an empty string — and then fails importing
+      # it. So the default (unsigned) build must define NO APPLE_* env keys.
+      # Turn signing on by setting the variable to `true` once real certs +
+      # the APPLE_* secrets are in place.
+      - name: Build & publish (unsigned)
+        if: vars.ENABLE_MACOS_SIGNING != 'true'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktop-lab
+          # Publish on a tag push, or on a manual run when `publish` is checked.
+          # A build-only smoke test (publish unchecked) still compiles both
+          # bundles and uploads them as workflow artifacts below.
+          tagName: ${{ (github.event_name == 'push' || inputs.publish) && 'app-v__VERSION__' || '' }}
+          releaseName: "SecuraCV Lab v__VERSION__"
+          releaseBody: |
+            The **SecuraCV Lab**, as a native app — local-first, nothing phones home.
+
+            - **macOS**: download the `.dmg` (universal — Apple Silicon & Intel).
+            - **Linux**: `.AppImage` (runs anywhere) or `.deb` (Debian/Ubuntu).
+
+            ### macOS: first launch (one time)
+
+            These builds are **unsigned**, so macOS quarantines them. On recent
+            macOS, right-click → Open no longer works — clear the quarantine flag
+            instead. Drag the app to Applications, then in **Terminal** run:
+
+            ```sh
+            xattr -dr com.apple.quarantine "/Applications/SecuraCV Lab.app"
+            ```
+
+            Then launch it normally. Full steps (and the Terminal-free path on
+            older macOS): [`desktop-lab/INSTALL.md`](https://github.com/kmay89/securaCV/blob/main/desktop-lab/INSTALL.md).
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+      - name: Build & publish (signed macOS)
+        if: vars.ENABLE_MACOS_SIGNING == 'true'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: desktop-lab
+          tagName: ${{ (github.event_name == 'push' || inputs.publish) && 'app-v__VERSION__' || '' }}
+          releaseName: "SecuraCV Lab v__VERSION__"
+          releaseBody: |
+            The **SecuraCV Lab**, as a native app — local-first, nothing phones home.
+
+            - **macOS**: download the `.dmg` (universal — Apple Silicon & Intel).
+            - **Linux**: `.AppImage` (runs anywhere) or `.deb` (Debian/Ubuntu).
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+      # Always attach the built installers to the workflow run itself, so a
+      # build-only smoke test (or a failed publish) still yields testable
+      # artifacts without touching the Releases page.
+      - name: Upload installers as workflow artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: securacv-lab-${{ matrix.platform }}
+          path: |
+            desktop-lab/src-tauri/target/**/release/bundle/dmg/*.dmg
+            desktop-lab/src-tauri/target/**/release/bundle/macos/*.app
+            desktop-lab/src-tauri/target/**/release/bundle/appimage/*.AppImage
+            desktop-lab/src-tauri/target/**/release/bundle/deb/*.deb
+          if-no-files-found: ignore
+          retention-days: 14

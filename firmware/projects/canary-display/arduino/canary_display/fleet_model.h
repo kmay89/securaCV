@@ -49,6 +49,40 @@ enum class Link : uint8_t {
   Offline,     // broker said so (retained LWT "offline")
 };
 
+// Decoded fleet-link presence beacon status (canary/net/beacon_parse.h fills
+// this from the 11-byte manufacturer blob). Pure values, no wire types — so
+// the model stays dependency-free and host-testable. battery_pct/health carry
+// their own "present" flags because the wire uses 0xFF as an unknown sentinel.
+struct BeaconStatus {
+  int16_t  battery_pct = -1;
+  bool     battery_present = false;
+  int16_t  health = -1;
+  bool     health_present = false;
+  uint32_t chain_seq = 0;     // low 16 bits of the WAP's chain height
+  bool     chain_present = false;
+  bool     mic_muted = false;
+  bool     degraded = false;
+  bool     tamper = false;
+};
+
+// Decoded canary-sense radar state row (mqtt_mgr fills this from the retained
+// securacv/<id>/state payload). Pure values, no wire types — so the model
+// stays dependency-free and host-testable. Sentinels/`have_*` flags keep
+// "not published" distinct from a real zero (schema null-vs-zero honesty).
+struct SenseState {
+  uint8_t  presence  = 0;      // 0 unknown / 1 clear / 2 present
+  uint8_t  occupants = 0;      // 0 "0" / 1 "1" / 2 "2+"
+  uint8_t  range     = 0;      // 0 unknown / 1 near / 2 mid / 3 far
+  bool     radar_ok  = false;
+  uint32_t frame_errors = 0;
+  bool     have_lux  = false;
+  int      lux       = 0;
+  bool     have_bpm  = false;  // the build publishes BPM entities (P1 opt-in)
+  bool     bpm_valid = false;  // BPM currently valid (locked, single target)
+  uint8_t  breath_bpm = 0;
+  uint8_t  heart_bpm  = 0;
+};
+
 struct Witness {
   bool     used = false;
   char     id[48] = {0};
@@ -67,9 +101,38 @@ struct Witness {
   bool     wb_present = false;    // this witness publishes a breathing lock
   bool     wb_breathing = false;  // lock currently held
 
+  // Radar claim surface (canary-sense state topic) — the coarse vocabulary the
+  // glass renders as Canary Cards (docs/standard/CANARY_CARDS.md). Compact by
+  // design: a handful of bytes per witness, no per-target data ever. `*_known`
+  // / sentinels keep "not published" (—) distinct from a real zero, the
+  // schema's null-vs-zero honesty. Set by on_sense_state; drives has_cards().
+  bool     sense_present  = false;  // has published at least one radar state row
+  uint8_t  radar_presence = 0;      // 0 unknown / 1 clear / 2 present
+  uint8_t  radar_occupants = 0;     // 0 "0" / 1 "1" / 2 "2+"
+  uint8_t  radar_range    = 0;      // 0 unknown / 1 near / 2 mid / 3 far
+  bool     radar_ok       = false;  // false while the radar UART is stalled
+  uint16_t frame_errors   = 0;      // UART checksum drops (monotonic, clamped)
+  int16_t  lux            = -1;     // BH1750 illuminance; -1 = not published
+  bool     bpm_valid      = false;  // P1 numerics currently valid (locked+1 tgt)
+  bool     bpm_offered    = false;  // this build publishes BPM entities at all
+  uint8_t  breath_bpm     = 0;      // P1 breaths/min (0 unless bpm_valid)
+  uint8_t  heart_bpm      = 0;      // P1 beats/min  (0 unless bpm_valid)
+
   // Liveness
   Link     link = Link::Unknown;
   uint32_t last_seen_ms = 0;      // any topic activity from this device
+
+  // Direct fleet-link (BLE presence beacon / GATT status) surface. Coarse and
+  // UNSIGNED like a chirp, so these feed liveness + diagnostics but never
+  // trust (badge is never set from a beacon). ble_health is the WAP's own
+  // 0..100 self-report; last_beacon_ms/seen_via_ble mark that we heard it
+  // directly over BLE (no broker, no home WiFi).
+  uint8_t  ble_health = 0;
+  bool     ble_health_present = false;
+  bool     ble_mic_muted = false;
+  bool     ble_degraded = false;
+  uint32_t last_beacon_ms = 0;
+  bool     seen_via_ble = false;
 
   // Last event (edge-triggered attention with per-severity decay)
   char     last_event[40] = {0};
@@ -265,6 +328,38 @@ class FleetModel {
     w->wb_breathing = breathing;
   }
 
+  // Radar claim surface (canary-sense state topic): the coarse presence/count/
+  // range vocabulary plus lux and the P1-gated vitals numerics. Stored for the
+  // Canary Cards renderer (fleet_cards.h). Marks the witness as card-bearing
+  // (sense_present) so a detail page renders type-aware cards instead of the
+  // generic field list. Never carries raw distance or per-target data — the
+  // device already coarsened those at its own privacy chokepoint.
+  void on_sense_state(const char* id, const SenseState& s, uint32_t now) {
+    Witness* w = upsert(id);
+    if (!w) return;
+    w->last_seen_ms = now;
+    if (!w->sense_present ||
+        w->radar_presence != s.presence || w->radar_occupants != s.occupants ||
+        w->radar_range != s.range || w->radar_ok != s.radar_ok ||
+        w->bpm_valid != s.bpm_valid || w->breath_bpm != s.breath_bpm ||
+        w->heart_bpm != s.heart_bpm) {
+      dirty_ = true;
+    }
+    w->sense_present   = true;
+    w->radar_presence  = s.presence;
+    w->radar_occupants = s.occupants;
+    w->radar_range     = s.range;
+    w->radar_ok        = s.radar_ok;
+    w->frame_errors    = (s.frame_errors > 0xFFFFu) ? 0xFFFFu
+                                                    : (uint16_t)s.frame_errors;
+    if (s.have_lux) w->lux = (s.lux < 0) ? -1 : (s.lux > 32767 ? 32767
+                                                              : (int16_t)s.lux);
+    if (s.have_bpm) w->bpm_offered = true;
+    w->bpm_valid  = s.bpm_valid;
+    w->breath_bpm = s.bpm_valid ? s.breath_bpm : 0;
+    w->heart_bpm  = s.bpm_valid ? s.heart_bpm : 0;
+  }
+
   // Chirp ingest (spec §6): an off-grid BLE advert — coarse and UNSIGNED,
   // so it feeds liveness and attention but never trust ("via chirp" names,
   // badge untouched). fp4 = 4 hex chars (the advert's 2-byte fingerprint
@@ -306,6 +401,70 @@ class FleetModel {
     w->has_event = true;
     w->event_sev = sev;
     push_event(w->id, name, sev, false, now);
+  }
+
+  // Beacon ingest (fleet link): a direct BLE presence beacon from a WAP —
+  // coarse and UNSIGNED, same trust rules as on_chirp (badge untouched, "via
+  // ble" liveness). fp4 = 4 hex chars (the beacon's 2-byte fingerprint
+  // suffix); an unknown suffix becomes a pseudo witness "SCV-XXXX", retired
+  // by on_chain once a real identity claims the suffix (same as on_chirp's
+  // ghosts). When have_status the beacon's battery/health/chain/mic/degraded
+  // fields are stored; tamper rides the same 60 s edge-dedupe as a chirp so a
+  // CONTINUOUS beacon can't spam the log or re-cancel acks.
+  void on_beacon(const char fp4[5], const BeaconStatus& s, bool have_status,
+                 uint32_t now) {
+    Witness* w = nullptr;
+    for (int i = 0; i < MAX_DEVICES; i++) {
+      if (slots_[i].used && fp_suffix_match(slots_[i].fp, fp4)) { w = &slots_[i]; break; }
+    }
+    if (!w) {
+      char pseudo[12];
+      pseudo[0] = 'S'; pseudo[1] = 'C'; pseudo[2] = 'V'; pseudo[3] = '-';
+      for (int i = 0; i < 4; i++) pseudo[4 + i] = fp4[i];
+      pseudo[8] = '\0';
+      w = upsert(pseudo);
+      if (!w) return;
+    }
+    w->last_seen_ms = now;
+    w->last_beacon_ms = now;
+    if (!w->seen_via_ble) dirty_ = true;
+    w->seen_via_ble = true;
+    if (w->link != Link::Online) dirty_ = true;
+    w->link = Link::Online;
+
+    if (have_status) {
+      if (s.battery_present && s.battery_pct >= 0) {
+        w->battery_pct = s.battery_pct;
+        w->battery_present = true;
+      }
+      if (s.health_present && s.health >= 0) {
+        w->ble_health = (uint8_t)(s.health > 100 ? 100 : s.health);
+        w->ble_health_present = true;
+      }
+      if (s.chain_present) {
+        // Only the low 16 bits of the WAP's chain height ride the beacon; keep
+        // it as a diagnostics surface (chain_length), NEVER as trust — the
+        // badge stays exactly where the signed chain-verify path left it.
+        w->chain_length = s.chain_seq;
+      }
+      w->ble_mic_muted = s.mic_muted;
+      w->ble_degraded  = s.degraded;
+      dirty_ = true;
+    }
+
+    // Tamper: edge-dedupe identical to on_chirp ("tamper (ble)", Sev::Tamper).
+    if (have_status && s.tamper) {
+      const char* name = "tamper (ble)";
+      if (str_eq(w->last_event, name) &&
+          (int32_t)(now - w->last_event_ms) < 60000) {
+        return;
+      }
+      copy_str(w->last_event, sizeof(w->last_event), name);
+      w->last_event_ms = now;
+      w->has_event = true;
+      w->event_sev = Sev::Tamper;
+      push_event(w->id, name, Sev::Tamper, false, now);
+    }
   }
 
   void on_chain(const char* id, uint32_t length, Badge verdict, uint32_t now,

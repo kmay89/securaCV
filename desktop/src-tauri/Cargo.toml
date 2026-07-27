@@ -1,0 +1,67 @@
+# Standalone workspace root: this crate lives inside the securaCV repo, which
+# has its own root Cargo.toml (the witness-kernel). Declaring an empty
+# [workspace] here stops Cargo from trying to fold the flasher into that
+# package's build.
+[workspace]
+
+[package]
+name = "securacv-flasher"
+version = "0.3.0"
+description = "SecuraCV Canary Flasher — the Lab as a native desktop app"
+authors = ["Errer Labs"]
+license = "Apache-2.0"
+repository = "https://github.com/kmay89/securaCV"
+edition = "2021"
+# Current Tauri v2 transitive dependencies require Rust 1.88 or newer.
+rust-version = "1.88"
+
+# The library the binary and (future) tests share.
+[lib]
+name = "securacv_flasher_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+tauri-plugin-opener = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The Raspberry Pi hub writer: decisions (hub-core) and mechanisms (hub-io)
+# live in their own PR-CI-tested crates; this app only translates and
+# orchestrates (src/hub.rs).
+hub-core = { path = "../hub-core" }
+hub-io = { path = "../hub-io" }
+base64 = "0.22"
+ed25519-dalek = "2"
+sha2 = "0.10"
+tempfile = "3"
+# Native serial-port enumeration — the whole point of going native: no
+# Web Serial, no Chromium. `serialport` talks to the OS directly.
+serialport = "4"
+# HTTPS download of the signed factory image + live manifest. rustls so we
+# don't drag in OpenSSL on any of the three platforms.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+tauri-plugin-notification = "2"
+libc = "0.2.189"
+
+[features]
+# By default Tauri uses a custom protocol on Windows/Linux; nothing to gate
+# here yet, but the block keeps parity with the workspace convention.
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+# A flasher is not a hot loop; optimize for a small, quick-to-download bundle
+# ("feels like magic" starts with a fast download).
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

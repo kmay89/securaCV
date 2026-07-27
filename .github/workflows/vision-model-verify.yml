@@ -1,0 +1,123 @@
+# Vision Model Freshness — the heartbeat that proves the flasher's pinned
+# model stays real. The module-flasher (canary-local/flash.html) fetches the
+# model manifest named by the committed catalog — flash.json's
+# `we2_module.manifest_url`, pinned to the firmware release tag
+# `releases/download/fw-v<train>/manifest-vision-model.json` (NOT /latest/,
+# which a native-app release would shadow) — then the model it names, and
+# SHA-256-verifies before burning. This job reads that same URL from flash.json
+# and re-proves every promise the flasher relies on, so a broken release, a
+# mangled upload, or a manifest that outran its asset surfaces here — not on a
+# user's bench with a module on the wire.
+#
+# What it verifies against the pinned firmware release (what the flasher
+# actually pulls):
+#   · the manifest is fetchable and well-formed
+#   · the model asset it names downloads
+#   · the asset's SHA-256 matches the manifest byte for byte (the pin holds)
+#   · it is a real TFLite (TFL3) Vela command stream for the Ethos-U55
+#     (ethos_u_command_stream present — not an un-compiled passthrough)
+#   · it was compiled with Himax's own Ethos-U55 64-MAC config, not a silent
+#     accelerator-only fallback (manifest vela_source == "himax-config")
+#   · the input tensor is 1×192×192×3 (the Swift-YOLO 192 person model)
+#   · the manifest's flash_addr equals the committed catalog's burn address
+#     (flash.json ← we2-core.js), so the pin and the flasher can't diverge
+#
+# Fails loudly (Actions surfaces it) if any promise breaks; the fix is to
+# re-run "Vision Model Asset" for the affected tag. Offline consistency
+# (catalog ↔ engine ↔ workflow) is already gated per-PR by
+# tests/we2.test.js — this is the network half that only ages on its own,
+# so it gets its own clock, like homeassistant-freshness.yml.
+
+name: Vision Model Freshness
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC (off the :00 fleet stampede)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Read-only freshness probe — one at a time is plenty.
+concurrency:
+  group: vision-model-verify
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify the latest release's pinned model
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Fetch + verify the pinned model (the flasher's own URLs)
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Verify the EXACT URL the flasher fetches — read it from the committed
+          # catalog so this check can never diverge from the pin. gen_flash.py
+          # points it at the firmware release tag (fw-v<train>), not /latest/,
+          # which a native-app release in this repo would otherwise shadow.
+          manifest_url=$(python3 -c "import json;print(json.load(open('canary-local/devices/flash.json'))['we2_module']['manifest_url'])")
+          echo "Fetching manifest (from flash.json we2_module.manifest_url): $manifest_url"
+          if ! curl -fsSL -o manifest.json "$manifest_url"; then
+            echo "::error::the flasher's pinned model manifest 404s ($manifest_url) — the flasher's pinned model would 404. Re-run 'Vision Model Asset' for the fw-v* tag named by registry.json's fw_train."
+            exit 1
+          fi
+          cat manifest.json
+
+          url=$(python3 -c "import json;print(json.load(open('manifest.json'))['model']['url'])")
+          echo "Fetching model: $url"
+          curl -fsSL -o model.tflite "$url" \
+            || { echo "::error::manifest names a model asset that does not download: $url"; exit 1; }
+
+          python3 - << 'PY'
+          import json, hashlib, struct, sys
+          man = json.load(open("manifest.json"))["model"]
+          catalog = json.load(open("canary-local/devices/flash.json"))["we2_module"]
+          b = open("model.tflite", "rb").read()
+          fails = []
+
+          # 1. the pin holds — the very check the flasher runs in the browser
+          got = hashlib.sha256(b).hexdigest()
+          if got != str(man.get("sha256", "")).lower():
+              fails.append(f"sha256 mismatch: manifest {man.get('sha256')} vs asset {got}")
+          if len(b) != int(man.get("size", -1)):
+              fails.append(f"size mismatch: manifest {man.get('size')} vs asset {len(b)}")
+
+          # 2. a real TFLite Vela command stream for the Ethos-U55
+          if b[4:8] != b"TFL3":
+              fails.append("not a TFLite flatbuffer (missing TFL3 magic)")
+          if b"ethos_u_command_stream" not in b and b"ethos-u" not in b:
+              fails.append("no Ethos-U command stream — model is not Vela-compiled for the NPU")
+
+          # 3. the right model: input tensor 1x192x192x3 (Swift-YOLO 192 person)
+          def i32(o): return struct.unpack_from("<i", b, o)[0]
+          has_shape = any(
+              [i32(o + 4 * k) for k in range(4)] == [1, 192, 192, 3]
+              for o in range(0, len(b) - 16, 4)
+          )
+          if not has_shape:
+              fails.append("input tensor is not 1x192x192x3 — not the person Swift-YOLO 192 model")
+
+          # 3b. compiled with Himax's own config, not a silent fallback
+          if man.get("vela_source") != "himax-config":
+              fails.append(f"vela_source is {man.get('vela_source')!r}, not 'himax-config' "
+                           "— the model was not compiled with Himax's Ethos-U55 config")
+          vela = man.get("vela") or {}
+          if vela.get("accelerator") != "ethos-u55-64" or vela.get("memory_mode") != "My_Mem_Mode_Parent":
+              fails.append(f"vela params drifted from the WE2 target: {vela}")
+
+          # 4. the pin address equals the flasher's own burn address
+          if str(man.get("flash_addr", "")).lower() != str(catalog.get("model_addr", "")).lower():
+              fails.append(f"flash_addr {man.get('flash_addr')} != catalog burn address {catalog.get('model_addr')}")
+
+          if fails:
+              for f in fails:
+                  print(f"::error::{f}")
+              sys.exit(1)
+          print(f"OK — pinned model verified: {man['name']} "
+                f"({len(b)} bytes, sha256 {got[:16]}…, burn {man['flash_addr']})")
+          PY

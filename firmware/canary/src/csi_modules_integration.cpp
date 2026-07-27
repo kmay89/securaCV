@@ -22,6 +22,7 @@
 #include "core_activity_ribbon.h"
 #include "meta_daily_summary.h"
 #include "anomaly_baseline.h"
+#include "wifi_channel_activity.h"
 #include "core_multilink_fusion.h"
 #include "meta_empty_room_baseline.h"
 
@@ -453,6 +454,11 @@ extern "C" bool securacv_csi_modules_init(void) {
   csi_module_register(core_activity_ribbon_module());
   csi_module_register(meta_daily_summary_module());
   csi_module_register(anomaly_baseline_module());
+  /* Ambient, unattributed "the airwaves near me just got busy" glow — reads
+   * only identity-free CSI aggregates, emits CSI_CATEGORY_AMBIENT (never
+   * persisted; live UI only). See wifi_channel_activity.{h,cpp} and
+   * spec/canary_free_signals_v0.md §3.2 + Invariants A/E/F. */
+  csi_module_register(wifi_channel_activity_module());
   /* Multi-link motion confirmation (PR 3) — promotes single-link
    * "observed" to multi-link "confirmed" when ≥2 links agree within
    * a 3-second window. PR 3 added the module but never wired it; this

@@ -155,6 +155,28 @@ def main():
                     f"(canary-local/devices/flash.json) — the Flash-in-browser "
                     f"deep-link would 404; add it or fix productPrefix")
 
+    # ── 2c. the default recommendation must resolve to a real product/level ───
+    by_id = {p["id"]: p for p in matrix.get("products", [])}
+    rec = matrix.get("recommended", {})
+    dft = rec.get("default", {})
+    if not dft.get("product"):
+        err("recommended.default.product is required (the pick when nothing is known)")
+    elif dft["product"] not in by_id:
+        err(f"recommended.default.product '{dft['product']}' is not a product")
+    else:
+        dp = by_id[dft["product"]]
+        if dp.get("hasLevels"):
+            if dft.get("level") not in (dp.get("levels") or {}):
+                err(f"recommended.default.level '{dft.get('level')}' not a level of "
+                    f"{dft['product']}")
+    # forChip: each detected-chip pick must be a product whose mcu is that family.
+    for chip, pid in (rec.get("forChip") or {}).items():
+        if pid not in by_id:
+            err(f"recommended.forChip[{chip}] '{pid}' is not a product")
+        elif chip not in (by_id[pid].get("mcu") or ""):
+            err(f"recommended.forChip[{chip}] points at {pid}, whose mcu "
+                f"'{by_id[pid].get('mcu')}' isn't a {chip}")
+
     # ── 3. the matrix must agree with the ini on the BLE/mesh full-only cell ───
     if canary:
         lv = canary.get("levels", {})

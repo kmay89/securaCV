@@ -78,6 +78,7 @@ fn every_claim_kind_maps_into_the_generic_allowlist() {
         ClaimKind::ContactStateChange,
         ClaimKind::ObjectRemovedFromZone,
         ClaimKind::TamperDetected,
+        ClaimKind::VehicleArrivalDeparture,
     ] {
         let et = claim_kind_to_event_type(kind);
         assert!(

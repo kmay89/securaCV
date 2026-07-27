@@ -19,6 +19,9 @@
 #include "ble_scout.h"
 #include "ble_scout_state.h"
 #include "ble_scout_key.h"
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+#include "fleet_roster_feed.h"   // expire the fleet roster on the same ~1 Hz tick
+#endif
 
 #include "csi_event.h"
 #include "csi_module.h"
@@ -161,7 +164,14 @@ void module_tick(const csi_features_t* /*f*/) {
   /* on_tick fires once per CSI window (~1 Hz). That's the same
    * cadence we want for the LOST_MS lapsed-beacon check. */
   if (!s_inited) return;
-  ble_scout_tick(now_ms_impl());
+  const uint32_t now = now_ms_impl();
+  ble_scout_tick(now);
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+  /* Same ~1 Hz cadence ages stale peers out of the fleet roster the scan
+   * callback feeds (fleet_roster_feed) — the roster's own 120 s window does
+   * the real work; this just keeps the live count honest between sightings. */
+  fleet_roster_feed::tick(now);
+#endif
 }
 
 const csi_event_decl_t EVENTS[] = {

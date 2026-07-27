@@ -1,0 +1,82 @@
+# Vendor board-facts freshness — the anti-rot loop for the Waveshare dash
+# boards we build on (docs/hardware/waveshare_board_reference.md).
+#
+# Weekly (and on demand), this re-pulls the vendor wiki pin maps / silicon /
+# parameters into canary-local/devices/board_facts.json via
+# gen_board_facts.py --refresh-upstream, and opens a PR when any fact moved.
+# The snapshot is FACTS (GPIO numbers, part numbers) transcribed from the
+# canonical vendor pages — not their prose — so ours stays exact without
+# going stale.
+#
+# Self-healing, same posture as homeassistant-freshness.yml:
+#   · the refresher moves a board's facts forward ONLY on a clean fetch+parse;
+#     a 403 / dead feed / reshaped page keeps the last good snapshot verbatim
+#     (→ "no diff, no PR", and an unchanged fetch keeps the entry — date
+#     included — verbatim, so no weekly date-only PRs). `verified_utc` moves only
+#     on a real read, and the reference page shows that date's age — a broken
+#     loop tells on itself.
+#   · changes land as a PR, so the drift-lock (board_facts.test.mjs, which
+#     also proves our pins.h still matches the refreshed facts) re-verifies
+#     before anything can merge.
+
+name: board facts freshness
+
+on:
+  schedule:
+    - cron: "50 5 * * 1" # Mondays 05:50 UTC (after homeassistant-freshness)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Two refreshes racing would fight over the bot branch push — queue, never
+# cancel mid-PR-ceremony.
+concurrency:
+  group: board-facts-freshness
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # FRESHNESS_PAT (optional): pushes/PRs by the default GITHUB_TOKEN don't
+      # trigger other workflows (GitHub's recursion guard), so without it the
+      # freshness PR won't get canary-local.yml's checks. The drift-lock below
+      # runs HERE either way — the PR is validated before it exists.
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.FRESHNESS_PAT || github.token }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Refresh the vendor board-facts snapshot
+        run: python3 canary-local/tools/gen_board_facts.py --refresh-upstream
+      - name: Drift-lock before proposing anything (facts shape + pins.h match)
+        run: node --test canary-local/tests/board_facts.test.mjs
+      - name: Open a PR if the vendor facts moved
+        env:
+          GH_TOKEN: ${{ secrets.FRESHNESS_PAT || github.token }}
+        run: |
+          SNAP=canary-local/devices/board_facts.json
+          if [ -z "$(git status --porcelain -- "$SNAP")" ]; then
+            echo "vendor facts unchanged — nothing to do"
+            exit 0
+          fi
+          BRANCH="bot/board-facts-freshness"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add "$SNAP"
+          git commit -m "chore(board-facts): vendor snapshot refresh (Waveshare dash boards)"
+          git push -f origin "$BRANCH"
+          if [ -z "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
+            gh pr create \
+              --title "Board facts: Waveshare vendor snapshot moved" \
+              --body "Weekly freshness run: a Waveshare wiki page changed a fact we track (a pin, a part, a parameter), so \`board_facts.json\` re-lined itself. Refreshed by \`gen_board_facts.py --refresh-upstream\` and validated by \`board_facts.test.mjs\` (which also re-checks that our firmware \`pins.h\` still matches) before this PR was opened. Review the diff to decide whether our pin maps should follow." \
+            || {
+              echo "::error::snapshot branch '$BRANCH' pushed, but PR creation was refused. Open it by hand (https://github.com/${GITHUB_REPOSITORY}/compare/main...${BRANCH}), or enable 'Allow GitHub Actions to create and approve pull requests' (Settings → Actions → General) / add a FRESHNESS_PAT secret."
+              exit 1
+            }
+          fi

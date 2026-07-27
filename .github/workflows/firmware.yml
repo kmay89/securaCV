@@ -6,15 +6,44 @@ on:
     paths:
       - 'firmware/**'
       - '.github/workflows/firmware.yml'
+      # The release workflow is a checked INPUT here, not just a neighbour:
+      # "Regression Guards" runs check_ota_channels.py, which reads the
+      # manifests firmware-release.yml publishes and fails when firmware polls
+      # one that nothing signs. Without this path, a PR that only edits the
+      # publishing side skips the very guard that covers it.
+      - '.github/workflows/firmware-release.yml'
   pull_request:
     branches: [main]
     paths:
       - 'firmware/**'
       - '.github/workflows/firmware.yml'
+      # The release workflow is a checked INPUT here, not just a neighbour:
+      # "Regression Guards" runs check_ota_channels.py, which reads the
+      # manifests firmware-release.yml publishes and fails when firmware polls
+      # one that nothing signs. Without this path, a PR that only edits the
+      # publishing side skips the very guard that covers it.
+      - '.github/workflows/firmware-release.yml'
 
+# A new push to a PR branch supersedes its in-flight run; main is never
+# cancelled.
+#
+# This used to cancel on every ref, main included, and that quietly destroyed
+# the signal this workflow exists to produce. The build takes ~30 minutes and
+# merges arrive in bursts — three landed within about a minute on 2026-07-24 —
+# so each merge killed the previous run before it could report. Four of the
+# five main builds that day ended `cancelled`, including both halves of a
+# link-error fix; the one that did finish reported the failure, but by then
+# the broken commit was already on main and the next merge cancelled the
+# correction's build too.
+#
+# A cancelled build is not a neutral outcome. It is indistinguishable at a
+# glance from one that has not finished, so main can sit broken while looking
+# merely busy. Queueing costs runner minutes; cancelling costs the ability to
+# know whether main compiles. This matches what nearly every other workflow
+# here already does, and what the website's site-checks.yml does.
 concurrency:
   group: firmware-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -62,6 +91,7 @@ jobs:
   flavors:
     name: Load flavor manifest
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       matrix: ${{ steps.load.outputs.matrix }}
     steps:
@@ -73,6 +103,7 @@ jobs:
     name: PlatformIO Build (${{ matrix.flavor.name }})
     needs: flavors
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -84,7 +115,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
@@ -162,6 +193,7 @@ jobs:
     name: Static Analysis (${{ matrix.flavor.name }})
     needs: flavors
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -180,7 +212,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
@@ -220,29 +252,21 @@ jobs:
   build-arduino-cli:
     name: Arduino CLI Build (Canary WAP)
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Arduino CLI
-        uses: arduino/setup-arduino-cli@v2
-
-      - name: Configure Arduino CLI
-        run: |
-          arduino-cli config init
-          arduino-cli config add board_manager.additional_urls \
-            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
-          arduino-cli core update-index
-          arduino-cli core install esp32:esp32
-
-      - name: Install libraries
-        run: |
-          arduino-cli lib install "Crypto"
-          arduino-cli lib install "ArduinoJson"
-          # NimBLE-Arduino (2.x) is REQUIRED for the FULL profile's BLE stack.
-          # Without it the sketch's ble_config.h guard now errors instead of
-          # silently shipping "BLE unavailable in this build" — installing it
-          # here means BLE is actually compile-tested in CI.
-          arduino-cli lib install "NimBLE-Arduino"
+      - name: Install Arduino CLI + ESP32 core (cached)
+        # NimBLE-Arduino (2.x) is REQUIRED for the FULL profile's BLE stack.
+        # Without it the sketch's ble_config.h guard now errors instead of
+        # silently shipping "BLE unavailable in this build" — installing it
+        # here means BLE is actually compile-tested in CI.
+        uses: ./.github/actions/setup-arduino-esp32
+        with:
+          libraries: |
+            Crypto
+            ArduinoJson
+            NimBLE-Arduino
 
       - name: Compile firmware
         run: |
@@ -302,6 +326,7 @@ jobs:
   build-arduino-cli-display:
     name: Arduino CLI Build (Canary Display ${{ matrix.flavor.name }}, core ${{ matrix.core.name }})
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -342,25 +367,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Arduino CLI
-        uses: arduino/setup-arduino-cli@v2
-
-      - name: Configure Arduino CLI (esp32 core ${{ matrix.core.version }})
-        run: |
-          arduino-cli config init
-          arduino-cli config add board_manager.additional_urls \
-            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
-          arduino-cli core update-index
-          arduino-cli core install esp32:esp32@${{ matrix.core.version }}
-
-      - name: Install libraries (pinned per core line)
-        run: |
-          arduino-cli lib install "GFX Library for Arduino@${{ matrix.core.gfx }}"
-          arduino-cli lib install "lvgl@${{ matrix.core.lvgl }}"
-          arduino-cli lib install "PubSubClient"
-          arduino-cli lib install "Crypto"
-          arduino-cli lib install "ArduinoJson"
-          arduino-cli lib install "NimBLE-Arduino@${{ matrix.core.nimble }}"
+      - name: Install Arduino CLI + ESP32 core ${{ matrix.core.version }} (cached, libs pinned per core line)
+        uses: ./.github/actions/setup-arduino-esp32
+        with:
+          core-version: ${{ matrix.core.version }}
+          libraries: |
+            GFX Library for Arduino@${{ matrix.core.gfx }}
+            lvgl@${{ matrix.core.lvgl }}
+            PubSubClient
+            Crypto
+            ArduinoJson
+            NimBLE-Arduino@${{ matrix.core.nimble }}
 
       - name: Profile build (arduino-cli --profile, core-3 row)
         # sketch.yaml profiles are what the CLI docs point users at, but
@@ -409,6 +426,7 @@ jobs:
   csi-sketch-sync:
     name: CSI Sketch Copy Sync
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -439,6 +457,31 @@ jobs:
         run: |
           chmod +x firmware/scripts/check_boot_sync.sh
           firmware/scripts/check_boot_sync.sh
+
+      - name: Verify fleet-link beacon header copies match the canonical wire format
+        # The fleet-link presence beacon (fleet_beacon.h) is a byte-exact BLE
+        # contract shared across firmwares: canonical at
+        # firmware/common/fleet_link/ (included directly by the canary PIO build
+        # via -I, and host-tested there) and committed byte-identical next to the
+        # canary-wap Arduino sketch. If the copies diverge, a canary and a
+        # canary-display silently stop understanding each other's beacon with no
+        # compile error — this guard catches the drift in either direction.
+        run: |
+          chmod +x firmware/scripts/check_fleet_beacon_sync.sh
+          firmware/scripts/check_fleet_beacon_sync.sh
+
+      - name: Verify fleet self-report header copies match the canonical /api/fleet wire shape
+        # fleet_selfreport.h is the ONE place the coarse /api/fleet presence JSON
+        # shape lives (the DISCOVERY.md contract the Witness Wall emulator + the
+        # Flasher's post-flash LAN discovery read). Canonical at
+        # firmware/common/fleet_selfreport/ (included directly by the PIO builds
+        # via -I, and host-tested there) and committed byte-identical next to the
+        # canary-wap Arduino sketch. If the copies diverge, boards answer
+        # /api/fleet with different shapes and the wall/Flasher misparse them,
+        # with no compile error — this guard catches the drift either direction.
+        run: |
+          chmod +x firmware/scripts/check_fleet_selfreport_sync.sh
+          firmware/scripts/check_fleet_selfreport_sync.sh
 
       - name: Verify OTA engine copies in the canary-wap + canary-display sketch dirs match canonical source
         # The signed pull-OTA engine is canonical at firmware/common/ota/src/
@@ -475,6 +518,7 @@ jobs:
   regression-check:
     name: Regression Guards
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -501,6 +545,35 @@ jobs:
         # Contract: firmware/PORTING.md.
         run: python3 firmware/scripts/check_board_registry.py
 
+      - name: Check pin budget (the board fullness gauge)
+        # firmware/boards/PIN_BUDGET.md is generated from the data-only
+        # pins/pins.h files + boards.json and committed (same philosophy as
+        # the website's generated .glb models): edit a pin map, regenerate
+        # in the same change. This fails when the committed gauge no longer
+        # matches the pin maps. Fixer:
+        #   python3 firmware/scripts/pin_budget.py --write
+        run: python3 firmware/scripts/pin_budget.py --check
+
+      - name: Check shared common/ sources are actually compiled
+        # A .cpp under firmware/common/ that no manifest, build_src_filter, or
+        # staged Arduino copy picks up is silently dropped from every image —
+        # and only surfaces as an undefined reference at LINK time, in one
+        # board's build job. The -I../../common include path resolves the
+        # headers either way, which is what makes it so easy to miss in review.
+        # This is a seconds-long check for a failure that otherwise costs a
+        # full firmware matrix run. Contract: the script's module docstring.
+        run: python3 firmware/scripts/check_common_build_reachability.py
+
+      - name: Check OTA channels (polled manifests are published ones)
+        # Every SECURACV_OTA_MANIFEST_URL compiled into the firmware must be a
+        # manifest firmware-release.yml actually signs — or be declared as
+        # having no channel yet, with a reason. The Canary Displays shipped
+        # polling a manifest no release ever published: flashable over USB,
+        # structurally unable to self-update, and silent about it (a device
+        # just fetches a 404 forever). Static and offline, so it fails on the
+        # PR that adds the flavor instead of a release nobody inspects.
+        run: python3 firmware/scripts/check_ota_channels.py
+
       - name: Verify LESSONS_LEARNED.md exists
         run: |
           if [ ! -f "firmware/LESSONS_LEARNED.md" ]; then
@@ -517,6 +590,7 @@ jobs:
   archive-guard:
     name: Archive Edit Guard
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
@@ -564,6 +638,7 @@ jobs:
   csi-invariants:
     name: CSI Privacy Invariants
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
@@ -656,6 +731,7 @@ jobs:
   mesh-scout-host-tests:
     name: Mesh + Scout Host Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
 
@@ -736,6 +812,190 @@ jobs:
             firmware/canary/lib/securacv_thermal_watchdog/test_thermal_wd.cpp \
             firmware/canary/lib/securacv_thermal_watchdog/src/securacv_thermal_watchdog.cpp \
             -I firmware/canary/lib/securacv_thermal_watchdog/src
+
+      - name: Build + run canary-display Modbus RTU host test
+        # The RS485/Modbus master's framing + CRC-16/MODBUS live in the pure
+        # core (canary/io/modbus_rtu.h) so every byte on the 4.3B A/B terminal
+        # is host-verified without a board. Anchored on the catalogued
+        # CRC-16/MODBUS check value 0x4B37 plus build/parse roundtrips,
+        # exception decoding, and CRC/addr/func/capacity rejection cases.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_modbus_rtu.cpp \
+              -o /tmp/modbus_rtu
+          /tmp/modbus_rtu | tee /tmp/modbus_rtu.log
+          grep -q "ALL .* PASSED" /tmp/modbus_rtu.log
+
+      - name: Build + run canary-display CAN frame host test
+        # The CAN 2.0 frame model — id-width/DLC validity, SocketCAN-style
+        # acceptance filtering, and the ASCII log formatter — lives in the pure
+        # core (canary/io/can_frame.h) so it is host-verified without a board.
+        # The TWAI transport itself is compile-checked by the
+        # canary-display-dash-can PlatformIO env.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_can_frame.cpp \
+              -o /tmp/can_frame
+          /tmp/can_frame | tee /tmp/can_frame.log
+          grep -q "ALL .* PASSED" /tmp/can_frame.log
+
+      - name: Build + run canary-display field-I/O logic host test
+        # The isolated DI/DO promotion's two testable decisions — input
+        # debounce (reject contact bounce / bus glitches) and the bounded siren
+        # controller (drive only while a real unacked alert stands, capped so it
+        # can't blare forever) — live in the pure core (canary/io/field_io_logic.h)
+        # and are verified without a board. The runtime that reads the CH422G and
+        # reports UNSIGNED local contact events is compile-checked by the
+        # canary-display-dash-b env (HAS_ISOLATED_IO).
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_field_io.cpp \
+              -o /tmp/field_io
+          /tmp/field_io | tee /tmp/field_io.log
+          grep -q "ALL .* PASSED" /tmp/field_io.log
+
+      - name: Build + run canary-display PCF8563 RTC host test
+        # Trusted time: the RTC register/calendar core (canary/io/rtc_pcf.h) —
+        # BCD packing, the civil<->days epoch math, and the voltage-low validity
+        # gate that refuses an unreliable clock — is verified without a board
+        # (cross-checked against libc timegm). The runtime that probes 0x51 on
+        # the shared I2C bus and seeds/mirrors the clock is compile-checked by the
+        # canary-display-dash-rtc env (FEATURE_RTC).
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_rtc_pcf.cpp \
+              -o /tmp/rtc_pcf
+          /tmp/rtc_pcf | tee /tmp/rtc_pcf.log
+          grep -q "ALL .* PASSED" /tmp/rtc_pcf.log
+
+      - name: Build + run canary-display ESP-NOW peer-decode host test
+        # Router-independent peer presence: the decode that turns a raw ESP-NOW
+        # payload into a fleet-link beacon (fp4 + status) reuses the shared,
+        # host-tested beacon wire contract (canary/net/beacon_parse.h), so an
+        # ESP-NOW frame and a BLE advert from one canary resolve to one witness,
+        # and foreign traffic / noise is rejected before the fleet. The esp_now
+        # transport is compile-checked by the canary-display-dash-espnow env.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_espnow_peer.cpp \
+              -o /tmp/espnow_peer
+          /tmp/espnow_peer | tee /tmp/espnow_peer.log
+          grep -q "ALL .* PASSED" /tmp/espnow_peer.log
+
+      - name: Build + run canary-display mode registry host test
+        # The glass's gears (docs/hardware/display_modes.md): boot-gear
+        # resolution from the NVS token + the legacy devmode-bool migration,
+        # the build-capability gate, and the policy invariants — fail-safe to
+        # Fleet on anything unknown/uncarried, OTA only under the product
+        # face, and every non-fleet gear exit-by-long-press + bannered. Pure
+        # core (canary/mode/mode_registry.h); the runtime latch/branch glue
+        # stays a thin shell around these tables.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_mode_registry.cpp \
+              -o /tmp/mode_registry
+          /tmp/mode_registry | tee /tmp/mode_registry.log
+          grep -q "ALL .* PASSED" /tmp/mode_registry.log
+
+      - name: Build + run canary-display demo script host test
+        # Demo mode's storyline (canary/mode/demo_script.h) is drift-locked to
+        # the REAL event vocabulary: this links src/fleet/fleet_model.cpp and
+        # pins every scripted beat's intended severity to classify_event(), so
+        # a vocabulary change can't quietly defang the demo's alarm beat. Also
+        # pins the timeline shape (ordered, in-loop, resolves to quiet) and
+        # the wrap-safe fires-once-per-lap stepping.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_demo_script.cpp \
+              firmware/projects/canary-display/src/fleet/fleet_model.cpp \
+              -o /tmp/demo_script
+          /tmp/demo_script | tee /tmp/demo_script.log
+          grep -q "ALL .* PASSED" /tmp/demo_script.log
+
+      - name: Build + run canary-display arcade logic host test
+        # Arcade mode's factory claim — one round exercises EVERY touch zone
+        # and the score screen is the QA report — is pinned in the pure core
+        # (canary/mode/arcade_logic.h): the seeded shuffle visits every zone
+        # exactly once and replays from its printed seed, targets never leave
+        # their zone cell, and the verdict fails on a dead zone, a slow zone,
+        # or a stray tap. The LVGL runtime (FEATURE_ARCADE) draws and forwards
+        # taps; it decides nothing.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_arcade_logic.cpp \
+              -o /tmp/arcade_logic
+          /tmp/arcade_logic | tee /tmp/arcade_logic.log
+          grep -q "ALL .* PASSED" /tmp/arcade_logic.log
+
+      - name: Build + run canary-display mic logic host test
+        # The mic-bearing dash's two promises (display_mic_variant.md),
+        # pinned without a board: the GATE (off by default; unset pins
+        # hard-block listening; the amber indicator IS the driver-running
+        # bit — no second flag exists to lie; disarm is a Stop the runtime
+        # maps to i2s_driver_uninstall) and the EARS (only the regulated
+        # smoke-T3 / CO-T4 grammars raise events, each needing two cycles;
+        # doorbells, speech-shaped noise, and stale streaks never do). The
+        # I2S runtime is compile-checked by canary-display-dash-mic.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_mic_logic.cpp \
+              -o /tmp/mic_logic
+          /tmp/mic_logic | tee /tmp/mic_logic.log
+          grep -q "ALL .* PASSED" /tmp/mic_logic.log
+
+      - name: Build + run canary-display voice score host test
+        # The Canary Voice acoustic core (voice_score.h): the pure score +
+        # audio math behind the sound engine, pinned without a piezo — the
+        # palette resolves for every signature, the pleasant voices stay in
+        # the pentatonic scale while the Tier-1 alarm keeps its frozen IEC
+        # pitches, the rise/fall contours carry the semantics (sunrise/boot
+        # rise, all-clear falls, mute-on/off mirror), every envelope
+        # de-clicks its edges, glissando/warble stay bounded, and the volume
+        # model is monotone, night-silences the gentle categories, and keeps
+        # the Tier-1 alert audible at every volume including Off.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_voice_score.cpp \
+              -o /tmp/voice_score
+          /tmp/voice_score | tee /tmp/voice_score.log
+          grep -q "ALL .* PASSED" /tmp/voice_score.log
+
+      - name: Build + run canary-display voice clearance host test
+        # Acoustic clearance (docs/hardware/display_sound_clearance.md): no
+        # signature reproduces a regulated life-safety cadence — ISO 8201
+        # Temporal-Three (fire) or Temporal-Four (CO) — so a status chirp can
+        # never be confused with a real alarm; plus the originality invariants
+        # (pleasant voices stay in the public-domain pentatonic; the alarm uses
+        # only its two IEC frequencies). The detectors self-verify against the
+        # real cadences so the guard can't rot into a rubber stamp.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_voice_clearance.cpp \
+              -o /tmp/voice_clearance
+          /tmp/voice_clearance | tee /tmp/voice_clearance.log
+          grep -q "ALL .* PASSED" /tmp/voice_clearance.log
 
       - name: Build + run canary-wap provisioning-logic host test
         # The first-run wizard's pure decisions (setup-window keep-alive,
@@ -1071,11 +1331,12 @@ jobs:
   microcopy-lint:
     name: Dashboard Microcopy Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
@@ -1099,3 +1360,59 @@ jobs:
         run: |
           chmod +x firmware/scripts/microcopy_lint.sh
           firmware/scripts/microcopy_lint.sh
+
+  # ──────────────────────────────────────────────────────────────────
+  # Fleet-link host tests (direct BLE presence beacon / GATT pull)
+  #
+  # The pure wire-format + fleet-model logic behind the broker-free
+  # "fleet link" compiles standalone (no NimBLE/Arduino): fleet_beacon.h
+  # on the WAP builds the exact 11-byte manufacturer blob the display's
+  # beacon_parse.h decodes, and FleetModel::on_beacon ingests it. These
+  # round-trip both sides so a future edit can't silently break the
+  # contract. Mirrors the mesh-scout-host-tests job.
+  # ──────────────────────────────────────────────────────────────────
+  fleet-link-host-tests:
+    name: Fleet-Link Host Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build + run canonical fleet-beacon builder host test
+        # Round-trips the builder/parser from the CANONICAL header
+        # (firmware/common/fleet_link/fleet_beacon.h) — the single source of
+        # truth the canary PIO build includes directly. check_fleet_beacon_sync.sh
+        # keeps the canary-wap copy byte-identical, so this run covers both.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/common/fleet_link \
+              firmware/common/fleet_link/test_fleet_beacon.cpp \
+              -o /tmp/canonical_fleet_beacon
+          /tmp/canonical_fleet_beacon | tee /tmp/canonical_fleet_beacon.log
+          grep -q "ALL PASS" /tmp/canonical_fleet_beacon.log
+
+      - name: Build + run canonical fleet-roster host test
+        # The device-side roster (firmware/common/fleet_link/fleet_roster.h) — a
+        # Canary's own view of the OTHER Canaries it hears. Single-source header,
+        # included via -I by the canary / vision / sense firmwares; this exercises
+        # note()/upsert/evict/expire/count/find from its one source of truth.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/common/fleet_link \
+              firmware/common/fleet_link/test_fleet_roster.cpp \
+              -o /tmp/canonical_fleet_roster
+          /tmp/canonical_fleet_roster | tee /tmp/canonical_fleet_roster.log
+          grep -q "ALL PASS" /tmp/canonical_fleet_roster.log
+
+      - name: Build + run WAP fleet-beacon builder host test
+        run: |
+          set -euo pipefail
+          make -C firmware/projects/canary-wap/tests_host test_fleet_beacon
+          firmware/projects/canary-wap/tests_host/test_fleet_beacon
+
+      - name: Build + run display beacon-parse + fleet-model host tests
+        run: |
+          set -euo pipefail
+          make -C firmware/projects/canary-display/tests_host

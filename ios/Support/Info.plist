@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>SecuraCV</string>
+  <key>CFBundleDisplayName</key>
+  <string>SecuraCV</string>
+  <key>CFBundleShortVersionString</key>
+  <string>$(MARKETING_VERSION)</string>
+  <key>CFBundleVersion</key>
+  <string>$(CURRENT_PROJECT_VERSION)</string>
+
+  <!-- Build stamp baked by scripts/stamp_build.sh (the "never a guess" panel). -->
+  <key>SECURACV_BUILD_REV</key>
+  <string>$(SECURACV_BUILD_REV)</string>
+  <key>SECURACV_FW_TRAIN</key>
+  <string>$(SECURACV_FW_TRAIN)</string>
+
+  <!-- Live Activities / Dynamic Island -->
+  <key>NSSupportsLiveActivities</key>
+  <true/>
+  <key>NSSupportsLiveActivitiesFrequentUpdates</key>
+  <true/>
+
+  <!-- Local network + Bonjour: reach Canaries on the LAN, nothing off-network. -->
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>SecuraCV finds and talks to your Canaries on your own Wi-Fi. Nothing is sent to any company server.</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_securacv._tcp</string>
+  </array>
+
+  <!-- Bluetooth: hear a Canary directly even when Wi-Fi is down. -->
+  <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>SecuraCV connects to your Canaries over Bluetooth so you still get status if the network drops.</string>
+
+  <!-- HomeKit: publish coarse witness state (motion/occupancy/tamper), never video. -->
+  <key>NSHomeKitUsageDescription</key>
+  <string>Add your Canaries to Apple Home so they can trigger your automations. Only coarse status is shared — never footage.</string>
+
+  <!-- Microphone: two-way talk to a doorbell-class Canary (opt-in, per use). -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Talk through a Canary that supports two-way audio. The mic is used only while you're talking.</string>
+
+  <!-- Local notifications + background delivery for alerts and heartbeat. -->
+  <key>UIBackgroundModes</key>
+  <array>
+    <string>remote-notification</string>
+    <string>bluetooth-central</string>
+    <string>audio</string>
+  </array>
+
+  <key>UILaunchScreen</key>
+  <dict/>
+  <key>UIApplicationSceneManifest</key>
+  <dict>
+    <key>UIApplicationSupportsMultipleScenes</key>
+    <true/>
+  </dict>
+  <key>UISupportedInterfaceOrientations</key>
+  <array>
+    <string>UIInterfaceOrientationPortrait</string>
+    <string>UIInterfaceOrientationLandscapeLeft</string>
+    <string>UIInterfaceOrientationLandscapeRight</string>
+  </array>
+  <key>UISupportedInterfaceOrientations~ipad</key>
+  <array>
+    <string>UIInterfaceOrientationPortrait</string>
+    <string>UIInterfaceOrientationPortraitUpsideDown</string>
+    <string>UIInterfaceOrientationLandscapeLeft</string>
+    <string>UIInterfaceOrientationLandscapeRight</string>
+  </array>
+</dict>
+</plist>

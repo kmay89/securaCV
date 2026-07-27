@@ -8,6 +8,7 @@
 #include "canary/version.h"
 #include "canary/log.h"
 #include "canary/runtime_config.h"  // NVS-backed device id (OTA-safe)
+#include "canary/sense_config.h"    // bounds for the reflex number entities
 
 // Entity set per the canary-sense design doc §5: presence / occupants /
 // range-band / radar-link / illuminance on the P0 path; the wellbeing build
@@ -360,6 +361,77 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
              "}",
              DEVICE_ID, topics.update_auto, topics.update_auto_cmd, availObj, devObj);
     publish_cfg(mqtt, t, p);
+  }
+
+  // Runtime radar reflexes — number entities over the cfg/* schema, the
+  // exact pattern canary-vision's detection dials use. Bounds come from
+  // sense_config.h so HA can never ask for a value the setters would refuse.
+  // Vitals windows are compiled out of the presence-only build's discovery:
+  // an entity for a knob the build doesn't use would be a lie.
+  {
+    struct NumberEnt {
+      const char* objectId;
+      const char* name;
+      const char* json_key;   // key in cfg/state
+      const char* cmd_topic;
+      const char* unit;
+      const char* icon;
+      const char* mode;       // "slider" or "box"
+      long min, max, step;
+    };
+    const NumberEnt numbers[] = {
+      {"cfg_debounce", "Presence debounce", "debounce_ms", topics.cfg_debounce_cmd,
+       "ms", "mdi:timer-play-outline", "slider",
+       (long)canary::cfg::SENSE_DEBOUNCE_MS_LO, (long)canary::cfg::SENSE_DEBOUNCE_MS_HI, 50},
+      {"cfg_clear", "Clear timeout", "clear_ms", topics.cfg_clear_cmd,
+       "ms", "mdi:timer-off-outline", "box",
+       (long)canary::cfg::SENSE_CLEAR_MS_LO, (long)canary::cfg::SENSE_CLEAR_MS_HI, 100},
+      {"cfg_stall", "Radar stall alarm", "stall_ms", topics.cfg_stall_cmd,
+       "ms", "mdi:radar", "box",
+       (long)canary::cfg::SENSE_STALL_MS_LO, (long)canary::cfg::SENSE_STALL_MS_HI, 500},
+      {"cfg_near", "Near band", "near_cm", topics.cfg_near_cmd,
+       "cm", "mdi:map-marker-radius-outline", "slider",
+       (long)canary::cfg::SENSE_NEAR_CM_LO, (long)canary::cfg::SENSE_NEAR_CM_HI, 10},
+      {"cfg_mid", "Mid band", "mid_cm", topics.cfg_mid_cmd,
+       "cm", "mdi:map-marker-distance", "slider",
+       (long)canary::cfg::SENSE_MID_CM_LO, (long)canary::cfg::SENSE_MID_CM_HI, 10},
+#if defined(FEATURE_VITALS) && FEATURE_VITALS
+      {"cfg_vlock", "Vitals lock", "vitals_lock_ms", topics.cfg_vlock_cmd,
+       "ms", "mdi:heart-pulse", "box",
+       (long)canary::cfg::SENSE_VLOCK_MS_LO, (long)canary::cfg::SENSE_VLOCK_MS_HI, 500},
+      {"cfg_vlost", "Vitals lost", "vitals_lost_ms", topics.cfg_vlost_cmd,
+       "ms", "mdi:heart-off-outline", "box",
+       (long)canary::cfg::SENSE_VLOST_MS_LO, (long)canary::cfg::SENSE_VLOST_MS_HI, 500},
+#endif
+    };
+    for (const auto& n : numbers) {
+      char t[192], p[1280];
+      topic_for("number", n.objectId, t, sizeof(t));
+      const int written = snprintf(p, sizeof(p),
+               "{"
+               "\"name\":\"%s\","
+               "\"unique_id\":\"%s_%s\","
+               "\"state_topic\":\"%s\","
+               "\"value_template\":\"{{ value_json.%s }}\","
+               "\"command_topic\":\"%s\","
+               "\"min\":%ld,\"max\":%ld,\"step\":%ld,"
+               "\"mode\":\"%s\","
+               "\"unit_of_measurement\":\"%s\","
+               "\"icon\":\"%s\","
+               "\"entity_category\":\"config\","
+               "%s,%s"
+               "}",
+               n.name, DEVICE_ID, n.objectId,
+               topics.cfg_state, n.json_key, n.cmd_topic,
+               n.min, n.max, n.step, n.mode,
+               n.unit, n.icon, availObj, devObj);
+      if (written < 0 || written >= (int)sizeof(p)) {
+        // Truncated JSON would be silently ignored by HA — fail loud instead.
+        log_line("DISC", "number entity payload truncated — skipped (device_id too long?)");
+        continue;
+      }
+      publish_cfg(mqtt, t, p);
+    }
   }
 
   log_line("DISC", "Home Assistant discovery published (retained).");

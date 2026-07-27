@@ -24,9 +24,15 @@ async function loadGLB(relToCanaryLocal) {
 
 const hex = (c) => "#" + c.map((x) => Math.round(x * 255).toString(16).padStart(2, "0")).join("");
 
-test("device_board maps every device to a real board", () => {
-  for (const [device, bid] of Object.entries(boards.device_board)) {
-    assert.ok(boards.boards[bid], `${device} → ${bid} is not a real board`);
+test("device_board maps every device to real board(s)", () => {
+  for (const [device, mapped] of Object.entries(boards.device_board)) {
+    // a device may carry more than one board (primary first); tolerate the
+    // legacy single-string form too
+    const list = Array.isArray(mapped) ? mapped : [mapped];
+    assert.ok(list.length, `${device} maps to no board`);
+    for (const bid of list) {
+      assert.ok(boards.boards[bid], `${device} → ${bid} is not a real board`);
+    }
   }
 });
 
@@ -60,7 +66,14 @@ for (const [bid, b] of Object.entries(JSON.parse(readFileSync(join(ROOT, "device
 
   test(`${bid}: carries provenance, source STEP and firmware pins`, () => {
     assert.ok(b.provenance && b.provenance.length > 20, "provenance missing");
-    assert.ok(b.source_step && existsSync(join(REPO, b.source_step)), `vendor STEP missing: ${b.source_step}`);
+    // vendor-CAD boards carry a real source STEP; procedural boards (built from
+    // photos/spec, no vendor CAD) carry none — the provenance must say so
+    if (b.source_step) {
+      assert.ok(existsSync(join(REPO, b.source_step)), `vendor STEP missing: ${b.source_step}`);
+    } else {
+      assert.ok(/procedural|dimensional model|reverse-engineer/i.test(b.provenance),
+        `${bid}: no source_step but provenance doesn't declare it procedural`);
+    }
     assert.ok(Array.isArray(b.pinout) && b.pinout.length > 0, "pinout missing");
     assert.ok(b.pose && typeof b.pose.rx === "number", "default pose missing");
     for (const p of b.pinout) assert.ok(p.label && p.pin, "pin row incomplete");

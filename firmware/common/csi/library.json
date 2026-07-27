@@ -23,7 +23,8 @@
     "core_breathing.h",
     "core_activity_ribbon.h",
     "meta_daily_summary.h",
-    "anomaly_baseline.h"
+    "anomaly_baseline.h",
+    "wifi_channel_activity.h"
   ],
   "build": {
     "srcDir": "src",

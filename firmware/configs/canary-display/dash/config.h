@@ -37,8 +37,12 @@
 #define FEATURE_PROOF_QR            1   // tap-for-proof QR (trailblazer spec 1)
 #define FEATURE_ACK_SYNC            1   // household ack-sync    (spec 2)
 #define FEATURE_PRESENCE_WAKE       1   // illumination ladder   (spec 3)
+#ifndef FEATURE_CHIME  // -D overridable so the emulator (not real hardware) can force the chime on
 #define FEATURE_CHIME               0   // piezo unpopulated; engine compiled (spec 5)
+#endif
 #define FEATURE_CHIRP_SCAN          1   // off-grid BLE chirp fallback (spec 6)
+#define FEATURE_BLE5_SCAN           0   // BLE 5 ext/Coded-PHY long-range scan; bench-gated (spec 6, like CHIME)
+#define FEATURE_FLEET_LINK          1   // off-grid BLE GATT pull of WAP status (spec 6)
 #define FEATURE_TIME_MACHINE        1   // proof-carrying event journal + history UI (spec 7)
 #define FEATURE_TIME_MACHINE_PERSIST 0  // LittleFS durability; bench-gated (like CHIME)
 #define FEATURE_ONBOARDING          1   // first-boot SoftAP wizard + on-glass guide

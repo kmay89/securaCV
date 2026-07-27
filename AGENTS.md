@@ -240,6 +240,39 @@ fn detect(&mut self, ...) -> Result<DetectionResult>;
 
 ---
 
+## Release & Packaging (all app targets)
+
+Before touching **any** app build/release workflow — the Flasher, the Lab,
+or the **iPhone / iPad / tvOS / Mac** targets — read
+[`.github/RELEASE_LESSONS.md`](.github/RELEASE_LESSONS.md). It's the canonical,
+growable home for build/release lessons (each a real failure paid for once),
+with principles that hold on every platform: dereference symlinks when copying
+a payload into a bundle (`cp -RL`), pin-or-log every upstream ref, prove the
+bundle with the build-only/`dry_run` path before publishing, and verify
+bundled resources exist in the copy step. When you fix a release/packaging
+bug, **append a dated entry there** (symptom → cause → fix → applies-to) and
+generalize it to the other targets — don't fix only the one that broke.
+
+To *ship* something, or to work out why something didn't ship, start from
+[`docs/RELEASE_BUTTONS.md`](docs/RELEASE_BUTTONS.md) — every button, when to
+press it, when not to, and the three failures that have cost real time (no OTA
+signing key; a flasher pinned to a release nobody cut; an app version that was
+already published, where "publishing" silently overwrites instead of releasing).
+The default is **Actions → "Update everything (only what needs it)"**, whose
+decision engine is unit-tested in `.github/scripts/test_release_plan.py` and
+driven by the catalog in `.github/release-targets.yml` — **add a new target
+there, not in workflow YAML.**
+
+Two things that are easy to half-fix, so check both sides:
+- **Two flashers, two frontends.** `canary-local/assets/` (browser) and
+  `desktop/src/` (desktop app) share no UI code — a user-facing diagnostic
+  belongs in both.
+- **Three version files per app.** `tauri.conf.json` (names the release tag),
+  `package.json`, and `Cargo.toml` (what the app reports to the user).
+  `desktop/scripts/check_app_versions.py` holds them together.
+
+---
+
 ## Dependencies Policy
 
 ### Always allowed

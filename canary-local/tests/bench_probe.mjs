@@ -109,7 +109,7 @@ const shade = () =>
   });
 
 // ── Open the watch sheet; let the firmware boot ─────────────────────────
-await page.goto(`http://localhost:${port}/canary-local/index.html#canary-display-watch`);
+await page.goto(`http://localhost:${port}/canary-local/fleet.html#canary-display-watch`);
 await page.waitForSelector(".tabs .tab", { timeout: 30000 });
 await openTab("Wire");
 await waitSerial("The canary is singing");
@@ -169,7 +169,7 @@ await page.waitForSelector(".style-chip.on", { timeout: 15000 });
 const target = page.locator(".style-chip:not(.on)").first();
 const targetId = await target.getAttribute("data-id");
 await target.click();
-await page.waitForTimeout(3500); // COMMIT_DEBOUNCE_MS (2000) + margin
+await new Promise((res) => setTimeout(res, 3500)); // COMMIT_DEBOUNCE_MS (2000) + margin
 await openTab("Wire");
 const boots3 = await sings();
 await openTab("Bench");

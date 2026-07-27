@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "resources/mass-storage-gadget64": "mass-storage-gadget64"
+    },
+    "macOS": {
+      "frameworks": ["resources/libusb-1.0.0.dylib"]
+    }
+  }
+}

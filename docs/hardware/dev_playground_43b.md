@@ -10,6 +10,30 @@ open line. It exists so anyone can try candidate SecuraCV peripherals
 through printed shells, time-of-flight, laser beam-gap…) against our
 firmware **without being able to hurt the board or the fleet**.
 
+## Two ways in: the bench build, or "dev mode" from a fleet unit
+
+There are two builds that reach this bench, both dash-flavor + 4.3B only
+(`feature_sanity` enforces the board contract):
+
+- **`canary-display-playground`** (`-DFEATURE_PLAYGROUND=1`) — boots straight
+  into the bench, *instead of* the fleet face. No WiFi/MQTT/OTA is ever
+  initialized. This is the dedicated bench flash.
+- **`canary-display-dash-b`** (`-DFEATURE_DEVMODE=1`) — a normal **fleet**
+  witness on the 4.3B that *also* carries the bench. It boots the fleet face;
+  open **Settings → "dev mode" → enter** and it latches an NVS flag and reboots
+  into the exact same network-silent bench. **Long-press the glass for 3 s** to
+  clear the latch and reboot back to the fleet. So one binary is both a witness
+  and a bench/test device, and the bench UI never coexists with a live network
+  stack — entering it is a local, on-glass, confirm-gated reboot, nothing more.
+
+Both share the same `canary::playground` code and the `PG1` serial protocol
+below; `FEATURE_DEVMODE` only adds the Settings doorway and the exit.
+
+> The bench is the first citizen of a larger **mode system** (fleet / bench /
+> demo / debug / arcade) — see [`display_modes.md`](./display_modes.md) for
+> the registry that generalizes the `devmode` latch (the legacy bool stays
+> honored) and the rules every mode obeys.
+
 Vendor documentation (the authoritative board references):
 
 - Wiki: <https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-4.3B>
@@ -93,6 +117,8 @@ lands on **DI COM**.
 | **Light** | I2C | **VEML7700** (0x10, preferred) or BH1750 **strapped to 0x5C** | Live lux; hot-plug |
 | **ToF range** | I2C | **VL53L0X** (0x29) | Live mm + trip threshold (50/100/200/400 mm) with counter — the laser-gap prototype |
 | **Cap touch** | I2C | **MPR121** 12-pad (0x5A) | Electrode bitmap + 4 sensitivity presets for the shell-thickness test |
+| **RS485** | A/B | Modbus RTU device (energy meter, PLC, VFD, HVAC controller, alarm panel) | **PROBE** reads holding register 0 of slave 1 (9600 8N1) and shows the value — the industrial serial bus |
+| **CAN bus** | H/L | CAN 2.0 node (OBD-II/J1939, CANopen gear, gate/barrier controller, telematics) | **SEND FRAME** transmits a test frame (500 kbit/s); received frames are counted + logged |
 | **I2C census** | bus | anything | Live scan every 3 s with reserved-address warnings |
 
 ### Capacitive-touch shell-thickness test (printed coupons)

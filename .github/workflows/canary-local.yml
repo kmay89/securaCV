@@ -1,9 +1,9 @@
 # canary.local page CI — the emulator is the firmware, so this workflow
 # proves three things on every change to either side of that boundary:
-#   1. the display firmware still compiles to WebAssembly (both flavors)
+#   1. display + Vision firmware still compile to WebAssembly
 #   2. the freshly-built firmware actually boots in a browser (probe:
 #      framebuffer flushes, boot banner, MQTT round-trip, TOFU pinning)
-#   3. the page's DOM-free logic tests pass, and committed dist/
+#   3. page logic + committed firmware-wasm tests pass, and dist/
 #      artifacts stay consistent with the registry's firmware train
 name: canary.local
 
@@ -14,6 +14,7 @@ on:
       - "canary-local/**"
       - "firmware/projects/canary-wap/**"
       - "firmware/projects/canary-sense/**"
+      - "firmware/projects/canary-vision/**"
       - "docs/hardware/mr60bha2_radar_notes.md"
       - "docs/standard/CANARY_CARDS.md"
       - "docs/getting_started_canary.md"
@@ -34,6 +35,23 @@ on:
       - "firmware/flavors.json"
       - "firmware/envs/**"
       - "canary-local/tools/gen_flash.py"
+      - "desktop/hub-core/src/hub_disk.rs"
+      - "desktop/src-tauri/src/lib.rs"
+      - "desktop/src-tauri/src/we2.rs"
+      - "desktop/src-tauri/src/provisioning.rs"
+      - "desktop/src-tauri/build.rs"
+      # the desktop frontend: desktop_parity.test.js reads its HTML/JS to keep
+      # the two flashers in step (CLAUDE.md "two flashers, two frontends")
+      - "desktop/src/index.html"
+      - "desktop/src/app.js"
+      - "desktop-lab/frontend-stage.json"
+      - "desktop-lab/scripts/**"
+      - "desktop-lab/src-tauri/tauri.conf.json"
+      - "privacy_witness_kernel/config.yaml"
+      - "homeassistant/lovelace/**"
+      - "homeassistant/automations/**"
+      - "homeassistant/frigate/**"
+      - "docs/blueprints/**"
       - "docs/hardware/enclosure/**"
       - "docs/hardware/bom_*.csv"
       - "docs/homeassistant_setup.md"
@@ -46,6 +64,7 @@ on:
       - "canary-local/**"
       - "firmware/projects/canary-wap/**"
       - "firmware/projects/canary-sense/**"
+      - "firmware/projects/canary-vision/**"
       - "docs/hardware/mr60bha2_radar_notes.md"
       - "docs/standard/CANARY_CARDS.md"
       - "docs/getting_started_canary.md"
@@ -66,6 +85,23 @@ on:
       - "firmware/flavors.json"
       - "firmware/envs/**"
       - "canary-local/tools/gen_flash.py"
+      - "desktop/hub-core/src/hub_disk.rs"
+      - "desktop/src-tauri/src/lib.rs"
+      - "desktop/src-tauri/src/we2.rs"
+      - "desktop/src-tauri/src/provisioning.rs"
+      - "desktop/src-tauri/build.rs"
+      # the desktop frontend: desktop_parity.test.js reads its HTML/JS to keep
+      # the two flashers in step (CLAUDE.md "two flashers, two frontends")
+      - "desktop/src/index.html"
+      - "desktop/src/app.js"
+      - "desktop-lab/frontend-stage.json"
+      - "desktop-lab/scripts/**"
+      - "desktop-lab/src-tauri/tauri.conf.json"
+      - "privacy_witness_kernel/config.yaml"
+      - "homeassistant/lovelace/**"
+      - "homeassistant/automations/**"
+      - "homeassistant/frigate/**"
+      - "docs/blueprints/**"
       - "docs/hardware/enclosure/**"
       - "docs/hardware/bom_*.csv"
       - "docs/homeassistant_setup.md"
@@ -77,13 +113,21 @@ on:
 permissions:
   contents: read
 
+# Supersede stale runs: a new push to a PR branch cancels the in-flight run
+# (the wasm job is one of the most expensive in the repo). Pushes to main
+# are never cancelled — full signal per main commit.
+concurrency:
+  group: canary-local-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   logic-tests:
     name: page logic tests (committed artifacts)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - name: Node tests (shipped source, repo convention)
@@ -94,18 +138,35 @@ jobs:
           node --test canary-local/tests/workshop.test.js
           node --test canary-local/tests/boards.test.js
           node --test canary-local/tests/assembly.test.js
+          node --test canary-local/tests/print_estimate.test.js
+          node --test canary-local/tests/slicer.test.js
           node --test canary-local/tests/boardroom.test.js
           node --test canary-local/tests/homeassistant.test.js
+          node --test canary-local/tests/hub_wizard.test.js
           node --test canary-local/tests/wap.test.js
           node --test canary-local/tests/vision.test.js
+          node --test canary-local/tests/eyes.test.js
+          node --test canary-local/tests/audio.test.js
+          node --test canary-local/tests/board_identity.test.js
           node --test canary-local/tests/we2.test.js
           node --test canary-local/tests/sense.test.js
           node --test canary-local/tests/senselab.test.js
           node --test canary-local/tests/vault.test.js
+          node --test canary-local/tests/operator.test.js
           node --test canary-local/tests/bench.test.js
           node --test canary-local/tests/start.test.js
           node --test canary-local/tests/flash.test.js
+          node --test canary-local/tests/flash_epic.test.js
+          node --test canary-local/tests/flash_select.test.js
+          node --test canary-local/tests/desktop_parity.test.js
+          node --test canary-local/tests/hatchery.test.js
+          node --test canary-local/tests/lab_bundle.test.js
           node --test canary-local/tests/playground.test.js
+          node --test canary-local/tests/mode.test.js
+          node --test canary-local/tests/mic.test.js
+          node --test canary-local/tests/board_facts.test.mjs
+          node --test canary-local/tests/intake.test.mjs
+          node --test canary-local/tests/build_it.test.js
       - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
         run: |
           python3 canary-local/tools/gen_enclosures.py
@@ -113,6 +174,8 @@ jobs:
             echo "::error::generated catalog stale — run canary-local/tools/gen_enclosures.py and commit"
             exit 1
           fi
+      - name: Board-facts snapshot shape (vendor pin maps — refreshed by board-facts-freshness.yml)
+        run: python3 canary-local/tools/gen_board_facts.py
       - name: Hub data drift (deterministic run — upstream snapshot preserved verbatim)
         run: |
           python3 canary-local/tools/gen_homeassistant.py
@@ -120,6 +183,59 @@ jobs:
             echo "::error::generated hub data stale — run canary-local/tools/gen_homeassistant.py and commit"
             exit 1
           fi
+      - name: Hub image drift (derived from the Hub snapshot + flasher safety gate + HA assets)
+        run: |
+          python3 canary-local/tools/gen_hub_image.py
+          if ! git diff --exit-code -- canary-local/devices/hub_image.json; then
+            echo "::error::generated hub image catalog stale — a source moved (HAOS version, hub_disk.rs card floor, add-on config, or the dashboards/automations/blueprints). Run canary-local/tools/gen_hub_image.py and commit"
+            exit 1
+          fi
+      - name: Hub seed drift (the first-boot provisioning plan — rides the hub catalog + Frigate config)
+        run: |
+          python3 canary-local/tools/gen_hub_seed.py
+          if ! git diff --exit-code -- canary-local/devices/hub_seed.json; then
+            echo "::error::generated hub seed plan stale — a source moved (add-on slugs/repositories in hub_image.json, or homeassistant/frigate/config.yaml). Run canary-local/tools/gen_hub_seed.py and commit"
+            exit 1
+          fi
+
+      - name: Hub provision bundle drift (the assembled payload's SHA-256 pins ride the plan/config/executor)
+        run: |
+          python3 canary-local/tools/gen_hub_provision_bundle.py
+          if ! git diff --exit-code -- canary-local/devices/hub_provision_bundle.json; then
+            echo "::error::provision bundle manifest stale — the plan, Frigate config, or executor changed. Run canary-local/tools/gen_hub_provision_bundle.py and commit (the bundle must not carry stale bytes)"
+            exit 1
+          fi
+
+      - name: Hub seed executor + provision-bundle tests (pure planner, fail-closed exec, self-contained bundle — no HA needed)
+        run: python3 -m unittest discover -s canary-local/tools/tests -p 'test_*.py'
+
+      - name: Hub seed executor dry-run smoke (the plan the installer would run)
+        # The executor is what turns hub_seed.json into a provisioned hub. Prove
+        # its dry-run stays runnable AND that the facts that make it actually
+        # work on a real Supervisor are present: the hashed add-on slugs (a bare
+        # slug 404s), the exact repo-registration endpoint the `ha` CLI can't
+        # reach, and the "claims, not recordings" privacy note.
+        run: |
+          set -euo pipefail
+          out="$(python3 canary-local/tools/hub_seed_apply.py --dry-run)"
+          echo "$out"
+          for needle in \
+            "d0491a67_privacy_witness_kernel" \
+            "ccab4aaf_frigate" \
+            "POST http://supervisor/store/repositories" \
+            '{"mode":"frigate"}' \
+            "recordings AND snapshots OFF"; do
+            if ! printf '%s' "$out" | grep -qF -- "$needle"; then
+              echo "::error::hub_seed_apply.py --dry-run no longer mentions '$needle' — the executor and the plan have drifted apart"
+              exit 1
+            fi
+          done
+          # A real run without a token must refuse, not silently no-op.
+          if python3 canary-local/tools/hub_seed_apply.py >/dev/null 2>&1; then
+            echo "::error::hub_seed_apply.py ran a real provision with no SUPERVISOR_TOKEN — it must fail closed"
+            exit 1
+          fi
+
       - name: Get Started data drift (rides the Hub snapshot + README install strings)
         run: |
           python3 canary-local/tools/gen_start.py
@@ -162,6 +278,13 @@ jobs:
             echo "::error::generated Vault data stale — run canary-local/tools/gen_vault.py and commit (the code moved)"
             exit 1
           fi
+      - name: Operator data drift (parsed from the break-glass operator CLI)
+        run: |
+          python3 canary-local/tools/gen_operator.py
+          if ! git diff --exit-code -- canary-local/devices/operator.json; then
+            echo "::error::generated Operator data stale — run canary-local/tools/gen_operator.py and commit (src/break_glass/cli.rs moved)"
+            exit 1
+          fi
       - name: Playground data drift (parsed from the Waveshare 4.3B pins.h + playground firmware)
         run: |
           python3 canary-local/tools/gen_playground.py
@@ -196,12 +319,49 @@ jobs:
           print(f"BUILD map covers all {len(catalog['products'])} flasher products.")
           PY
 
+      - name: Flasher release pin is published (advisory)
+        # The catalog pins manifest_url to an exact fw-v<train> tag (gen_flash.py
+        # release_download_base explains why /latest/ is unsafe). If that release
+        # hasn't been cut, the page fetches a 404 and EVERY product reads
+        # "unavailable" — which is how the display boards stayed invisible after
+        # being correctly wired everywhere else.
+        #
+        # The MISSING RELEASE is advisory: the window between bumping fw_train and
+        # cutting the release is a legitimate state, and the site is much more
+        # than the flasher. But it must be *visible* — a warning on every run
+        # until the release exists, rather than something you learn from a user.
+        # This step going WRONG (no readable manifest_url) is fatal, because a
+        # guard that can't see what it guards must not pass quietly.
+        run: |
+          set -uo pipefail
+          url=$(python3 -c "import json;print(json.load(open('canary-local/devices/flash.json'))['manifest_url'])")
+          if [ -z "$url" ]; then
+            echo "::error::could not read manifest_url out of canary-local/devices/flash.json — this check cannot see the flasher's pin, so it is not proving anything"
+            exit 1
+          fi
+          code=$(curl -sSL -o /dev/null -w '%{http_code}' "$url" || echo 000)
+          if [ "$code" = "200" ]; then
+            echo "flasher pin resolves: $url"
+            exit 0
+          fi
+          tag=$(printf '%s\n' "$url" | sed -n 's|.*/download/\([^/]*\)/.*|\1|p')
+          echo "::warning title=In-browser flasher has nothing to offer::manifest_url returns HTTP ${code} — ${url}. Release ${tag:-?} carries no manifest-flash.json, so every product shows as \"unavailable\". Cut that firmware release (docs/RELEASE_PROCESS.md), or run the \"Flasher Factory Images\" workflow for the tag if the OTA signing key isn't in place yet."
+          {
+            echo "### In-browser flasher: pinned release missing"
+            echo ""
+            echo "\`manifest_url\` → HTTP \`${code}\`"
+            echo ""
+            echo "- URL: \`${url}\`"
+            echo "- Every product on flash.html reads **unavailable** until \`${tag:-?}\` carries \`manifest-flash.json\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   wasm-build-and-boot:
     name: firmware → wasm → boots in a browser
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - name: SHA-256 shim vectors (FIPS 180-4)
@@ -210,16 +370,45 @@ jobs:
             canary-local/emulator/test/sha256_vectors.c \
             canary-local/emulator/src/emu_sha256.c -o /tmp/shacheck
           /tmp/shacheck
-      - name: Install emscripten
+      # The SDK is pinned, so the cache key never needs to rotate — the
+      # clone+install (~2-3 min) only happens on a cold cache.
+      - name: Cache the Emscripten SDK
+        id: emsdk-cache
+        uses: actions/cache@v6
+        with:
+          path: /tmp/emsdk
+          key: emsdk-6.0.3-${{ runner.os }}
+      - name: Install pinned Emscripten SDK 6.0.3
+        if: steps.emsdk-cache.outputs.cache-hit != 'true'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y emscripten
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git /tmp/emsdk
+          /tmp/emsdk/emsdk install 6.0.3
+      - name: Activate + verify Emscripten (cached or fresh)
+        # activate runs UNCONDITIONALLY: it's seconds of local config
+        # writing, and running it on warm-cache restores too means the
+        # build can never depend on which activation state the cache
+        # happened to capture.
+        run: |
+          /tmp/emsdk/emsdk activate 6.0.3
+          source /tmp/emsdk/emsdk_env.sh
           emcc --version | head -1
       - name: Cache third-party sources
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: canary-local/emulator/third_party
           key: canary-local-tp-${{ hashFiles('canary-local/emulator/build.sh') }}
+      # Weekly key: playwright (installed unpinned below) moves its pinned
+      # Chromium build over time; a weekly rotation keeps the ~150 MB
+      # browser download to at most one run per week while never letting
+      # the cached browser drift more than a week behind the npm package.
+      - name: Weekly browser-cache stamp
+        id: week
+        run: echo "stamp=$(date -u +%GW%V)" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright Chromium
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ steps.week.outputs.stamp }}
       - name: Install Playwright Chromium
         run: |
           npm i --no-save playwright
@@ -238,14 +427,23 @@ jobs:
         run: node canary-local/tests/wap_probe.mjs
       - name: Vision probe — two ports, model load + preview, boot, MQTT, aim
         run: node canary-local/tests/vision_probe.mjs
+      - name: Eyes probe — webcam bench renders, real wasm decides presence in-browser, camera path
+        run: node canary-local/tests/eyes_probe.mjs
       - name: Sense probe — radar lab, serial, MQTT + flavor-gated entities
         run: node canary-local/tests/sense_probe.mjs
       - name: Sense Lab probe — placement bench, pipeline, cards, stall path
         run: node canary-local/tests/senselab_probe.mjs
+      - name: Audio probe — smoke bench renders, real wasm detects T3 / rejects off-band, mic path
+        run: node canary-local/tests/audio_probe.mjs
       - name: Vault probe — seal walkthrough + real Ed25519 break-glass quorum
         run: node canary-local/tests/vault_probe.mjs
-      - name: Build both flavors from THIS tree
+      - name: Operator probe — setup ceremony (draft → live quorum), drill + doctor
+        run: node canary-local/tests/operator_probe.mjs
+      - name: Kiri probe — print estimate + watch-it-print + slice bridge (fail-closed)
+        run: node canary-local/tests/kiri_slice_probe.mjs
+      - name: Build display flavors + Vision core from THIS tree
         run: |
+          source /tmp/emsdk/emsdk_env.sh
           cd canary-local/emulator
           ./build.sh all
       - name: Dist drift check (committed artifacts match this tree's sources)
@@ -266,6 +464,17 @@ jobs:
             echo "::error::emulator dist/ artifacts do not match a rebuild from this tree — run canary-local/emulator/build.sh all and commit the result"
             exit 1
           fi
+      - name: Voice preview drift check (index.html matches voice_score.h)
+        # The Canary Voice sound preview (canary-local/voice/index.html) is
+        # GENERATED from the firmware header by the real compiler — never
+        # hand-transcribed — so it cannot drift. This regenerates it and fails
+        # if the committed page is stale, the same guard the dist bundles use.
+        run: node canary-local/tools/gen_voice_preview.mjs --check
+      - name: Voice nav rot guard (sound board stays navigable)
+        # Guards the other way the board could rot: losing its place in the
+        # site. Asserts the generated page exists and is registered in
+        # build-line.json (the one manifest every nav surface reads).
+        run: node canary-local/tests/voice_nav_probe.mjs
       - name: Boot probe — rebuilt artifacts
         run: node canary-local/tests/boot_probe.mjs
       - name: Artifact stamps

@@ -1,0 +1,25 @@
+VERSION ""
+
+NS_ :
+
+BS_:
+
+BU_: CGW AFS BSR CSR DS1 FCM MAV SCS
+
+// Excerpt of opendbc/dbc/toyota_2017_ref_pt.dbc — ECT1S92 (transmission range booleans),
+// ENG1F03 (gear info). See SOURCES.md for provenance.
+//
+// ⚠️ NAME CAVEAT: this file is upstream-named "2017_ref" — a reference/template powertrain DBC,
+// not confirmed specific to any single model year. The Corolla moved to the TNGA platform for
+// MY2020, a substantial redesign — this excerpt has NOT been confirmed to match a 2020+ Corolla's
+// actual bus layout. Treat every signal below as "known to exist on some Toyota powertrain bus of
+// this era," not "confirmed on your Corolla," until bench-verified.
+
+BO_ 956 ECT1S92: 8 CGW
+ SG_ B_N : 11|1@0+ (1,0) [0|1] "" AFS,CSR,MAV
+ SG_ B_R : 12|1@0+ (1,0) [0|1] "" AFS,BSR,CSR,DS1,FCM,MAV
+ SG_ B_P : 13|1@0+ (1,0) [0|1] "" AFS,CSR,MAV
+ SG_ B_D : 47|1@0+ (1,0) [0|1] "" AFS,CSR,DS1,MAV
+
+BO_ 1017 ENG1F03: 8 CGW
+ SG_ GEARINF : 19|4@0+ (1,0) [0|15] "" SCS

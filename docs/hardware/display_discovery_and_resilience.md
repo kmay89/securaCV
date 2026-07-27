@@ -3,7 +3,9 @@
 > Status: **display-side SHIPPED** (`canary-display` v0.1.x, `FEATURE_MDNS_DISCOVERY`)
 > and **canary-side broker gossip SHIPPED** (`canary-wap`,
 > `FEATURE_MDNS_BROKER_GOSSIP` — §5.1); captive-portal onboarding is the
-> remaining follow-up (§5). Companion to [`display_ux_design.md`](./display_ux_design.md).
+> remaining follow-up (§5). The **direct BLE fleet link** (§3.1) adds a
+> broker-free, WiFi-free path — implemented, hardware-validation pending.
+> Companion to [`display_ux_design.md`](./display_ux_design.md).
 
 ## 1. The promise
 
@@ -66,6 +68,106 @@ Rules:
 **The user experience:** provision the *first* device by hand (or run a
 broker that advertises mDNS). Every device after that: plug in, it joins.
 
+## 3.1 Direct BLE fleet link — no broker, no WiFi (the always-there channel)
+
+mDNS/MQTT (§3) is the *rich* channel, but it needs a broker and a shared LAN.
+The **direct BLE fleet link** is the fallback that needs neither — a display
+finds and reads a nearby Canary over Bluetooth LE alone, whether or not either
+device is on home WiFi, and whether or not a broker exists anywhere. BLE is the
+right radio here precisely because its use is **not coupled to the WiFi
+channel** the way ESP-NOW is: the moment a display joins home WiFi for MQTT,
+ESP-NOW to a Canary on a different AP/channel would break — BLE does not.
+
+Two layers, both **unsigned + coarse** (like the Chirp): they feed liveness and
+diagnostics and **never** set the `Verified` trust badge.
+
+1. **Presence + status beacon (passive, always-on).** `canary-wap` now
+   continuously advertises a compact manufacturer-data beacon (company
+   `0xFFFF`, type `0x10`, 11 bytes) carrying its fingerprint suffix, liveness
+   flags (tamper / mic-muted / degraded / on-WiFi / alert), battery %, health %,
+   and the low 16 bits of its chain height. The 128-bit SCV service UUID and
+   `SCV-XXXX` name move to the **scan response** (active-scanning Canaries still
+   see both — backward compatible). A display passively scans (`FEATURE_CHIRP_SCAN`)
+   and, within a single scan burst, lists every nearby Canary with live status —
+   no connection, no pairing, no broker. When WiFi is *also* down the display
+   scans continuously instead of in bursts (no coexistence cost to pay). The
+   wire format is the single source of truth in `canary-wap/.../fleet_beacon.h`
+   and `canary-display/.../beacon_parse.h` (kept identical; host round-tripped).
+2. **GATT pull (on-demand rich detail, `FEATURE_FLEET_LINK`).** Tapping a
+   Canary on the glass opens a bounded NimBLE **central** connection to that
+   device's BLE status GATT service (`5e63a1b0-…`) and reads its fuller
+   self-report (chain seq, health, degrade, SD %, mic-muted, battery), then
+   disconnects. First-seen address↔fingerprint is TOFU-pinned; a later mismatch
+   is refused as a spoof. Read-once-then-disconnect, heap-gated, and it hands the
+   shared radio back to the passive listener when done.
+
+> **Status: implemented, hardware-validation pending.** The wire format and
+> model ingestion are host-tested and the sketch compiles in CI, but the radio
+> behavior (beacon discoverability, the GATT connect, and the peer address
+> type on connect) needs a bench smoke-test on real XIAO ESP32-S3 hardware
+> before it ships in a signed release. `FEATURE_FLEET_LINK=0` cleanly disables
+> the central role if a build needs presence-only. The exact bench gate is
+> [`fleet_link_bench_checklist.md`](./fleet_link_bench_checklist.md).
+
+## 3.2 Direct mDNS fleet enumeration — no broker (the WiFi middle path)
+
+Between "MQTT with a broker" (§2/§3, richest) and "direct BLE" (§3.1, no WiFi
+at all) sits a WiFi path that needs **no broker**. Every witness firmware
+(canary-wap / canary / vision / sense) already advertises `_securacv._tcp` with
+identity TXT (`device_id`, `name`, `dt`, `role=witness`; §3). The display now
+**enumerates those adverts directly** (`discovery_scan_witnesses`) and drops
+each Canary into its fleet — real device id, name, and type — with no MQTT
+broker or Home Assistant. It runs **only while the broker is down** (MQTT is the
+richer source when present), self-rate-limits (~20 s; the mDNS query blocks
+~3 s), and — because mDNS TXT is **unauthenticated LAN input** — feeds
+seen+named liveness only, **never the `Verified` badge** (same trust posture as
+the broker gossip). Gated by `FEATURE_MDNS_DISCOVERY`.
+
+Net: plug every Canary into the home WiFi and a display finds them all, three
+ways in order of richness — **MQTT** (with a broker) → **direct mDNS on the LAN**
+(this, no broker) → **direct BLE** (§3.1, no WiFi at all).
+
+## 3.3 Every Canary keeps a fleet roster — mutual "last chirp" awareness
+
+Discovery so far has been display-centric: the glass finds the witnesses. But
+the witnesses now keep track of **each other**, too — not just the display. Every
+Canary maintains its own **fleet roster**: a small table of the OTHER Canaries it
+has heard over the air, keyed by fingerprint suffix, holding each peer's
+**last-heartbeat** (`last_seen`, the "last chirp") plus the most recent status its
+beacon carried — battery %, health %, chain height, and the liveness flags
+(tamper / mic-muted / degraded / on-wifi / alert). Peers age out after 120 s of
+silence (the beacon/chirp cadence), the same window the display and the WAP use.
+
+- **Single source of truth.** The roster logic is one pure, host-tested module,
+  `firmware/common/fleet_link/fleet_roster.h` — a fixed-size POD table with no
+  NimBLE/heap, round-tripped byte-for-byte in `test_fleet_roster.cpp`. Each
+  firmware declares one roster and feeds it from its BLE scan callback; a
+  status-less chirp (which carries no battery/health) refreshes liveness without
+  wiping the last known status.
+- **Who feeds it.** `canary-vision` and `canary-sense` gained an RX twin of their
+  presence beacon (`src/net/fleet_roster_scan.cpp`, `FEATURE_FLEET_ROSTER`): a
+  low-duty passive scan (3 s bursts / 60 s while on WiFi, continuous when fully
+  off-grid) that parses each nearby beacon + chirp into the roster. The modular
+  `canary` reuses its existing Scout passive scan — one scan, two consumers —
+  feeding the same roster (`fleet_roster_feed`, `FEATURE_BLE_SCAN`). The
+  `canary-wap` already ran a nearby-Canary roster; it now also decodes the
+  11-byte presence beacon, so a sibling's battery/health/chain/flags land in
+  `/api/nearby`, not just its presence.
+- **Trust posture.** Identical to the beacon it consumes and the display's
+  chirp/mDNS ingest: **unsigned presence** — liveness and self-reported status,
+  never a verified trust claim. The roster never stores a MAC; peers are keyed by
+  the self-reported fingerprint suffix on the wire.
+
+> **Status: implemented + host-tested; radio behavior hardware-validation
+> pending.** The roster table and beacon/chirp decode are exercised in host
+> tests and every firmware compiles in CI, but the added scan path's on-air
+> behavior and BLE/WiFi coexistence cost on the C3/C6 leaf sensors want a bench
+> smoke-test (and CI's per-board OTA size guard adjudicates the flash cost —
+> `FEATURE_FLEET_ROSTER=0` cleanly disables the scanner per board). Surfacing the
+> roster on each witness's serial/MQTT/API is an additive follow-up; the data is
+> already maintained and queryable in firmware (`fleet_roster_scan_peer_count()`
+> / the WAP's `/api/nearby`).
+
 ## 4. Failure ladder — what breaks, what keeps working, what the user sees
 
 | Scenario | Canaries | Displays | Recovery |
@@ -78,12 +180,15 @@ broker that advertises mDNS). Every device after that: plug in, it joins.
 | **Witness LWT "offline"** | — | Amber immediately, red after the lost deadline | Same ladder, honest label |
 | **Whole-internet outage** | Unaffected | Unaffected (clock free-runs; SNTP resyncs later) | Nothing to do — the system is LAN-complete |
 
-The one gap that remains by design in v0.1.x: **when WiFi itself is down,
-no new events reach the display** (last-known + staleness honesty only).
-The planned fix is the passive **BLE Chirp scan** fallback — Canaries
-already chirp heartbeat/tamper/alert over connectionless BLE adverts
-(`docs/ble_protocol.md` §5), and a display can listen without joining
-anything. That closes the loop: WiFi dead, tamper still reaches the glass.
+The old v0.1.x gap — **when WiFi itself is down, no new events reach the
+display** — is now addressed by the **direct BLE fleet link** (§3.1): the
+display passively hears each Canary's presence+status beacon and, on a tap,
+pulls fuller detail over a bounded GATT connection, with no broker and no
+router. It builds on the passive **BLE Chirp scan** fallback (Canaries chirp
+heartbeat/tamper/alert over connectionless BLE adverts, `docs/ble_protocol.md`
+§5, `FEATURE_CHIRP_SCAN`). So WiFi dead, presence and tamper still reach the
+glass. The fleet link is implemented and host-tested; its on-air behavior is
+hardware-validation pending (see §3.1's status note).
 
 ## 5.1 Canary-side broker gossip — SHIPPED (`FEATURE_MDNS_BROKER_GOSSIP`)
 
@@ -122,4 +227,8 @@ End-to-end: **plug in → scan → password → watching your canaries.**
    this for any household that has one — this closes the no-canary-yet gap.)
 
 *(BLE Chirp off-WiFi fallback, once listed here, shipped in wave 2 —
-`FEATURE_CHIRP_SCAN`, see the trailblazer spec §6.)*
+`FEATURE_CHIRP_SCAN`, see the trailblazer spec §6. Wave 3 extended it into the
+full **direct BLE fleet link** — continuous presence+status beacon plus an
+on-demand GATT pull, `FEATURE_FLEET_LINK` — so a display reads nearby Canaries
+directly with no broker and no WiFi; see §3.1. Implemented + host-tested,
+hardware smoke-test pending before a signed release.)*

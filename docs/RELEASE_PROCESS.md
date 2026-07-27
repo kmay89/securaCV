@@ -40,6 +40,34 @@ Rules:
   triple, numeric within a band — so promoting a build offers a real update
   to every dev-channel device, and anti-rollback floors stay coherent.
 
+## First-time only — the OTA signing key ceremony
+
+A release cannot be signed until an Ed25519 release key exists and its public
+half is embedded in the firmware. If `ota_release_key.h` is all zeros (the
+default), OTA is hard-disabled and `firmware-release.yml` fails fast with
+`OTA_SIGNING_KEY_PEM secret is not set`. Do this once, on your own machine —
+**never** in CI or any shared/cloud shell:
+
+```sh
+# From the repo root, on your own machine. Writes releaser.pem OUTSIDE the repo.
+firmware/scripts/setup_release_key.sh --key ~/securacv-releaser.pem
+```
+
+That helper (idempotent, refuses to write the key inside the repo) generates
+the private key, embeds the **public** header in the canonical location, and
+syncs the two committed Arduino copies so `check_ota_sync.sh` stays green.
+Then, exactly as it prints:
+
+1. Add the private key as the `OTA_SIGNING_KEY_PEM` GitHub Actions secret
+   (Settings → Secrets and variables → Actions → New repository secret) — the
+   full PEM, `-----BEGIN PRIVATE KEY-----` through `-----END PRIVATE KEY-----`.
+2. Commit **only** the public `ota_release_key.h` files (never `releaser.pem`;
+   `*.pem` is already gitignored).
+3. Cut a release (below) — CI signs with the secret.
+
+The private key is the master signing key: keep it offline, back it up
+privately, rotate via `ota_release_key_previous.h` (see `docs/firmware_ota.md`).
+
 ## Shipping — the whole ceremony
 
 ```sh
@@ -55,17 +83,87 @@ git tag fw-v2.3.1-dev.2 && git push origin fw-v2.3.1-dev.2
 git tag fw-v2.3.1 <same-sha> && git push origin fw-v2.3.1
 ```
 
-CI does everything else: builds all seven products, verifies the signing key
-matches the committed public key, signs every image and manifest, runs
-`ota_release.py verify` over its own output, greps binaries for the version
-string, generates the browser-flasher factory images + `manifest-flash.json`,
-and publishes. There are no manual artifact steps — if you did something by
-hand, that's the bug.
+CI does everything else: builds all products (canary, wap, the three vision
+host boards, the two sense flavors, and the three display flavors — watch /
+dash / dash-modes), verifies the signing key matches the committed public
+key, signs every image and manifest, runs `ota_release.py verify` over its
+own output, greps binaries for the version string, generates the
+browser-flasher factory images + `manifest-flash.json`, and publishes. There
+are no manual artifact steps — if you did something by hand, that's the bug.
+
+The display three are **best-effort**, matching how they're built: a flavor
+that fails to compile, or whose binary doesn't carry the release's version, is
+left out of the release with a `::warning::` rather than sinking the signed OTA
+release around it — so check the run summary for display warnings after a
+release, and re-cut if a display flavor you needed was dropped.
 
 Promotion is a rebuild of the same commit from the same pinned workflow —
 the honest guarantee is "same source, same toolchain, re-verified
 signatures". (Bit-identical artifact promotion is a possible future
 hardening; don't claim it until it's implemented.)
+
+### The same ceremony, one-click (no local `git tag`)
+
+Everything above also runs from the **Actions tab** — same build, same
+signing, same guards, so the two paths can't drift. The button just creates
+the tag for you from the version you pick, at the current commit, so tag and
+source can never disagree.
+
+- **Actions → "Firmware Release" → Run workflow.** Pick `channel`
+  (release / dev) and enter `version`:
+  - `release`: a clean triple, e.g. `2.3.1` (blank reads the triple from
+    source). Tags `fw-v2.3.1`, `latest` moves, everyone sees it.
+  - `dev`: a `-dev.N` / `-rc.N` version, e.g. `2.3.1-dev.2`. Tags
+    `fw-v2.3.1-dev.2` as a prerelease; only the dev channel sees it.
+  - The channel is cross-checked against the version's grammar (a dev
+    version with the release channel — or the reverse — is refused), and an
+    already-published tag is refused (bump the headers first). **You still
+    bump `FIRMWARE_VERSION` / `CANARY_FW_VERSION` in every variant** to match
+    — the version-string guard greps each binary for it and fails closed
+    otherwise. The one-click removes the `git tag` step, not the version bump.
+- **Actions → "Release — one click (firmware + apps + web)".** The
+  whole-pipeline launcher: set `firmware` to `dev` or `release` (with
+  `firmware_version`) and it dispatches the firmware release above alongside
+  the desktop apps and the site deploy. Leave `firmware: none` to ship only
+  the apps/web.
+- **Actions → "Update everything (only what needs it)".** The button to reach
+  for when you just want the world to be current and don't want to think about
+  which targets moved. It reads `.github/release-targets.yml`, compares every
+  target's **source version** with what has actually been tagged, and
+  dispatches **only** the ones that are genuinely ahead:
+  - ahead of its newest tag → released (which is what cuts the tag);
+  - never released → the first one is cut;
+  - same version but the watched files changed → it says **"bump the version
+    first"** and ships everything else, because a release must never carry a
+    version that is already published;
+  - same version, nothing changed → skipped, so pressing it twice costs
+    nothing;
+  - the site is redeployed only if the pages it publishes changed since the
+    last successful deploy;
+  - an Apple target whose `ENABLE_*_BUILD` variable is off is left alone
+    rather than spending a macOS runner on a workflow that would no-op.
+
+  Leave `publish` unchecked for build-only smoke runs, tick it for real
+  releases, or tick `plan_only` to see the table without dispatching anything.
+  It goes red only if a dispatch that was supposed to happen failed — "needs a
+  bump" and "already up to date" are answers, not failures. The decision logic
+  is `.github/scripts/release_plan.py`, unit-tested in CI along with the
+  catalog itself (every workflow it names must exist, every version file it
+  points at must be readable).
+- **Actions → "Flasher Factory Images"** rebuilds *only* the browser-flasher
+  factory images + `manifest-flash.json` without cutting a new version.
+  `channel: release` targets an existing tag (blank = the current
+  `releases/latest`) — e.g. after a packaging-tooling fix. `channel: dev`
+  targets no tag at all: it builds the dispatch branch's HEAD onto the rolling
+  `fw-dev-latest` prerelease, needing neither a version bump nor
+  `OTA_SIGNING_KEY_PEM`. That is the bring-up path — bench hardware flashable
+  from a branch, unsigned and honest about it.
+
+Which products appear (flashable) in the in-browser flasher is decided by
+`manifest-flash.json` in the release the page reads — the stable channel's
+`releases/latest`, or the rolling `fw-dev-latest` with `?channel=dev`. A
+product shows as "unavailable" until a release carries it, so a newly-added
+board reaches the flasher the moment its first release is cut.
 
 ## Opting a device into the dev channel
 
@@ -82,9 +180,18 @@ override lives in the device's own NVS, the choice is local, per-device, and
 invisible to every other device. HA update entities announce only what the
 device's channel manifest offers.
 
-The Lab flasher's dev toggle (`flash.html?channel=dev`) reads the same
-`fw-dev-latest` flash manifest, with a visible banner. The default page is
-release-only.
+Both flashers read the same `fw-dev-latest` flash manifest, with a visible
+banner, from **Advanced → dev channel** (the browser page also accepts
+`flash.html?channel=dev`, which now only *seeds* the toggle). The default is
+release-only. The toggle is the reachable control: the Lab desktop app renders
+`flash.html` in a webview with no address bar, so the query parameter alone left
+every Lab user unable to switch channels at all.
+
+`fw-dev-latest` is populated two ways: **Firmware Release** on a `-dev.N` /
+`-rc.N` version mirrors its manifests there (signed, needs the OTA key), and
+**Flasher Factory Images** with `channel: dev` publishes flasher images there
+straight from a branch (unsigned, needs no key). The second is the bring-up
+path — see [`RELEASE_BUTTONS.md`](RELEASE_BUTTONS.md).
 
 ## Rollback (when a stable release goes wrong)
 
@@ -97,12 +204,40 @@ release-only.
 3. For the dev channel nothing special is needed: the next dev tag re-points
    `fw-dev-latest`.
 
+## `releases/latest` belongs to the firmware
+
+Every device's default OTA URL is
+`releases/latest/download/manifest-<product>.json`, and GitHub's "latest" is
+the newest published release of **any** kind. This repo also ships the desktop
+apps (`flasher-v*`, `app-v*`) from the same releases page, so an app release
+would otherwise re-point the whole fleet's update URL at a release with no
+manifests in it — every device 404s on its next check, silently.
+
+You don't have to remember this. `.github/actions/keep-firmware-latest`
+re-points `latest` at the newest published `fw-v*` release: the app release
+workflows call it as their last step (releases created by CI don't fire
+`release:` events, so a trigger alone would miss them), and
+`release-latest-guard.yml` catches every release a human publishes or edits.
+Both write what they did to the run summary. Two things follow:
+
+- **Publishing an app release is safe**, but check the guard's summary line if
+  a device stops seeing updates right after one.
+- **The browser flasher pins an exact tag** (`gen_flash.py`
+  `release_download_base()`) rather than riding `/latest/`, so it is immune by
+  construction — at the cost of needing the pinned release to exist. CI warns
+  on every `canary-local` run while it doesn't.
+
 ## Invariants CI enforces (don't fight them)
 
 - Signing key in CI must match the committed `ota_release_key.h` (rotation
   window via `ota_release_key_previous.h`).
 - Every manifest signature is re-verified after generation.
 - Binary version strings must match the tag's version.
+- Every `SECURACV_OTA_MANIFEST_URL` compiled into the firmware must be a
+  manifest the release signs, or be declared unpublished with a reason —
+  `firmware/scripts/check_ota_channels.py`, in firmware.yml's "Regression
+  Guards". A product that polls a manifest nobody publishes is flashable and
+  unable to ever update, and nothing else would tell you.
 - `canary-local` catalog drift gates (`gen_flash.py` etc.) keep the flasher
   honest against the firmware tree.
 - Prerelease tags can never move `releases/latest` — that's GitHub's

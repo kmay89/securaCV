@@ -315,6 +315,10 @@ EVENT_TYPE_METADATA = {
         "label": "Tamper detected",
         "icon": "mdi:shield-alert",
     },
+    "vehicle_arrival_departure": {
+        "label": "Vehicle arrival/departure",
+        "icon": "mdi:car-side",
+    },
 }
 
 DEFAULT_EVENT_ICON = "mdi:shield-eye"
