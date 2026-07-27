@@ -97,6 +97,16 @@ pub fn read_flash_args(port: &str, size: u64, out: &str, baud: u32) -> Vec<Strin
     ]
 }
 
+/// `read-flash <offset> <size> <out> --port <port> --baud <baud>` — read ONE
+/// region (the health check reads the partition table, app descriptors, otadata,
+/// coredump, and NVS this way, each to a temp file it reads back).
+pub fn read_region_args(port: &str, offset: u32, size: u32, out: &str, baud: u32) -> Vec<String> {
+    vec![
+        "read-flash".into(), format!("0x{offset:x}"), size.to_string(), out.into(),
+        "--port".into(), port.into(), "--baud".into(), baud.to_string(),
+    ]
+}
+
 /// `write-bin 0x0 <path> --port <port> --baud <baud>` — restore or local flash.
 /// Identical shape to the `flash` command's write step, so a restored image lands
 /// exactly where a factory image would.
@@ -141,6 +151,29 @@ pub fn parse_flash_size(board_info: &str) -> Option<u64> {
             continue;
         };
         return n.checked_mul(mult);
+    }
+    None
+}
+
+/// Pull the board's MAC address out of `espflash board-info` output — the
+/// "MAC address: aa:bb:cc:dd:ee:ff" line — lowercased. `detect_chip` reads it
+/// from the same board-info call that already names the chip, so the health
+/// report and backup names can show a stable ID. None if no MAC-shaped token.
+pub fn parse_mac(board_info: &str) -> Option<String> {
+    for line in board_info.lines() {
+        if !line.to_ascii_lowercase().contains("mac") {
+            continue;
+        }
+        for tok in line.split_whitespace() {
+            let parts: Vec<&str> = tok.split(':').collect();
+            if parts.len() == 6
+                && parts
+                    .iter()
+                    .all(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_hexdigit()))
+            {
+                return Some(tok.to_ascii_lowercase());
+            }
+        }
     }
     None
 }
@@ -219,5 +252,17 @@ mod tests {
             vec!["write-bin", "0x0", "/tmp/b.bin", "--port", "/dev/tty.usb", "--baud", "921600"]
         );
         assert_eq!(erase_flash_args("/dev/tty.usb"), vec!["erase-flash", "--port", "/dev/tty.usb"]);
+        assert_eq!(
+            read_region_args("/dev/tty.usb", 0x8000, 0xc00, "/tmp/pt.bin", 115200),
+            vec!["read-flash", "0x8000", "3072", "/tmp/pt.bin", "--port", "/dev/tty.usb", "--baud", "115200"]
+        );
+    }
+
+    #[test]
+    fn mac_parses_from_board_info() {
+        let info = "Chip type:   esp32s3\nMAC address: AA:BB:CC:11:22:33\nFlash size:  8MB";
+        assert_eq!(parse_mac(info), Some("aa:bb:cc:11:22:33".to_string()));
+        assert_eq!(parse_mac("no mac here"), None);
+        assert_eq!(parse_mac("Chip type: esp32c3"), None);
     }
 }

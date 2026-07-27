@@ -380,13 +380,24 @@ export function parseOtaData(bytes, otaSlotCount) {
     // Fresh otadata: the bootloader falls back to factory, else ota_0.
     return { fresh: true, activeOta: 0, updatesSeen: 0, stateText: "factory default" };
   }
-  const best = valid.reduce((a, b) => (b.seq > a.seq ? b : a));
+  const newest = valid.reduce((a, b) => (b.seq > a.seq ? b : a));
+  // The booted slot is the highest-seq entry the bootloader will actually START:
+  // valid AND not invalid(0x3)/aborted(0x4). If the newest rolled back, the
+  // previous good image runs — so activeOta must exclude it, even though
+  // stateText/updatesSeen still report the newest so the rollback is surfaced.
+  const bootable = valid.filter((e) => e.state !== 0x3 && e.state !== 0x4);
+  const stateText = OTA_STATE[newest.state] || `0x${newest.state.toString(16)}`;
+  if (!bootable.length) {
+    // Every update rolled back → the bootloader falls back to factory.
+    return { fresh: true, activeOta: 0, updatesSeen: newest.seq, stateText, pendingVerify: false };
+  }
+  const best = bootable.reduce((a, b) => (b.seq > a.seq ? b : a));
   return {
     fresh: false,
     activeOta: (best.seq - 1) % otaSlotCount,
-    updatesSeen: best.seq,
-    stateText: OTA_STATE[best.state] || `0x${best.state.toString(16)}`,
-    pendingVerify: best.state === 0x1,
+    updatesSeen: newest.seq,
+    stateText,
+    pendingVerify: newest.state === 0x1,
   };
 }
 
