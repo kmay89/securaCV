@@ -22,8 +22,37 @@ ensure_xcodegen() {
 generate() {
   ensure_xcodegen
   eval "$(scripts/stamp_build.sh)"        # export SECURACV_BUILD_REV / FW_TRAIN
-  xcodegen generate
+  # A signing team in the env persists into git-ignored local.yml so the
+  # regenerated project keeps it even when opened from Xcode's GUI (which has
+  # no shell env).
+  if [ -n "${APPLE_DEVELOPMENT_TEAM:-}" ] && [ ! -f local.yml ]; then
+    printf 'settings:\n  base:\n    APPLE_DEVELOPMENT_TEAM: "%s"\n' \
+      "$APPLE_DEVELOPMENT_TEAM" > local.yml
+    echo "[heal] wrote local.yml with your signing team (git-ignored)"
+  fi
+  # XcodeGen has no optional include, so project.yml never references
+  # local.yml (a bare `xcodegen generate` must always work — the release
+  # workflow runs exactly that). When local.yml exists, merge it AFTER the
+  # main spec via a wrapper so its settings win.
+  if [ -f local.yml ]; then
+    printf 'include:\n  - project.yml\n  - local.yml\n' > .local-spec.yml
+    xcodegen generate --spec .local-spec.yml
+  else
+    xcodegen generate
+  fi
   echo "[heal] project regenerated at build rev ${SECURACV_BUILD_REV}"
+}
+
+# Hard-coding a phone model rots yearly as Xcode retires simulators; pick the
+# newest numbered iPhone simulator actually installed (override: SECURACV_SIM).
+sim_destination() {
+  local name="${SECURACV_SIM:-}"
+  if [ -z "$name" ]; then
+    name="$(xcrun simctl list devices available 2>/dev/null \
+      | sed -n 's/^[[:space:]]*\(iPhone [0-9][0-9][^(]*\)(.*/\1/p' \
+      | sed 's/[[:space:]]*$//' | sort -uV | tail -1)"
+  fi
+  echo "platform=iOS Simulator,name=${name:-iPhone 15}"
 }
 
 build() {
@@ -31,7 +60,7 @@ build() {
   xcodebuild \
     -project SecuraCV.xcodeproj \
     -scheme SecuraCV \
-    -destination 'platform=iOS Simulator,name=iPhone 15,OS=latest' \
+    -destination "$(sim_destination)" \
     -configuration Debug \
     SECURACV_BUILD_REV="${SECURACV_BUILD_REV:-dev}" \
     SECURACV_FW_TRAIN="${SECURACV_FW_TRAIN:-0.x}" \

@@ -70,6 +70,12 @@ scripts/heal.sh build      # regenerate, build, and test on a simulator
 scripts/heal.sh generate && open SecuraCV.xcodeproj
 ```
 
+**Demoing or testing it — Simulator, your own iPhone, Xcode Previews, demo
+mode (the seeded fleet)?** See [`DEMO.md`](DEMO.md). Short version: the
+Simulator opens straight into a sample fleet, and
+`APPLE_DEVELOPMENT_TEAM=YOURTEAMID scripts/heal.sh generate` makes device
+signing survive regeneration.
+
 Signing (device / TestFlight / App Store) uses the **same** Apple secrets as the
 desktop mobile pipeline (`ENABLE_IOS_BUILD`, `APPLE_DEVELOPMENT_TEAM`,
 `APPLE_API_ISSUER`/`APPLE_API_KEY`/`APPLE_API_KEY_BASE64`, …). See
