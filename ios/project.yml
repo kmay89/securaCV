@@ -12,6 +12,15 @@
 # kernel / HA-integration / add-on product line). Bump it here and nowhere else.
 
 name: SecuraCV
+
+# Local overrides that survive regeneration — mainly your signing team, so a
+# regenerated project opened in Xcode's GUI (which has no shell env) still
+# signs: git-ignored `local.yml`, merged AFTER this spec by
+# `scripts/heal.sh generate` (XcodeGen has no optional include, so this file
+# never references it — a bare `xcodegen generate` must always work).
+# heal.sh seeds it from $APPLE_DEVELOPMENT_TEAM; see DEMO.md. Shape:
+#   settings: { base: { APPLE_DEVELOPMENT_TEAM: "ABCDE12345" } }
+
 options:
   bundleIdPrefix: com.securacv
   deploymentTarget:
@@ -25,6 +34,11 @@ settings:
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
+    # The hand-written Support/*.plist files carry only what we author;
+    # Xcode generates and MERGES the required identity boilerplate
+    # (CFBundleIdentifier/Executable/PackageType) for every target — without
+    # this the built .app has no bundle identifier and won't install or test.
+    GENERATE_INFOPLIST_FILE: YES
     DEVELOPMENT_TEAM: "$(APPLE_DEVELOPMENT_TEAM)"   # supplied by env / CI, never committed
     CODE_SIGN_STYLE: Automatic
     ENABLE_USER_SCRIPT_SANDBOXING: YES
@@ -54,6 +68,13 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Support/SecuraCV.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SUPPORTS_MACCATALYST: NO
+      configs:
+        Debug:
+          # Dev builds sign WITHOUT the Apple-granted Critical Alerts
+          # entitlement (automatic signing rejects it for any team not yet
+          # granted it), so "press Run on your iPhone" works with a plain
+          # developer team. Release keeps the full set.
+          CODE_SIGN_ENTITLEMENTS: Support/SecuraCV.dev.entitlements
 
   SecuraCVWidgets:
     type: app-extension

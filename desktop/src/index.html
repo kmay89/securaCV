@@ -189,16 +189,16 @@
             <div class="step-head"><span class="step-n">3</span><h2>Flash it</h2></div>
             <section id="provisioning" class="provision hidden" aria-labelledby="provision-title">
               <h3 id="provision-title">First-boot connection</h3>
-              <p class="muted">The verified Vision release image is generic. These values are written directly
+              <p class="muted" id="provision-note">These values are written directly
                 into this board’s settings partition, never logged and never saved by the app.</p>
               <div class="form-grid">
-                <label>Canary name<input id="device-id" maxlength="47" autocomplete="off" required></label>
-                <label>Wi-Fi name<input id="wifi-ssid" maxlength="32" autocomplete="off" required></label>
-                <label>Wi-Fi password<input id="wifi-pass" type="password" maxlength="63" autocomplete="new-password"></label>
-                <label>Home Assistant / MQTT host<input id="mqtt-host" maxlength="63" placeholder="homeassistant.local" autocomplete="off" required></label>
-                <label>MQTT port<input id="mqtt-port" type="number" min="1" max="65535" value="1883" required></label>
-                <label>MQTT username<input id="mqtt-user" maxlength="32" autocomplete="off"></label>
-                <label>MQTT password<input id="mqtt-pass" type="password" maxlength="64" autocomplete="new-password"></label>
+                <label class="usb-only">Canary name<input id="device-id" maxlength="47" autocomplete="off" required></label>
+                <label>Wi-Fi name<input id="wifi-ssid" maxlength="32" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="next"></label>
+                <label>Wi-Fi password<input id="wifi-pass" type="password" maxlength="63" autocomplete="current-password"></label>
+                <label class="usb-only">Home Assistant / MQTT host<input id="mqtt-host" maxlength="63" placeholder="homeassistant.local" autocomplete="off" required></label>
+                <label class="usb-only">MQTT port<input id="mqtt-port" type="number" min="1" max="65535" value="1883" required></label>
+                <label class="usb-only">MQTT username<input id="mqtt-user" maxlength="32" autocomplete="off"></label>
+                <label class="usb-only">MQTT password<input id="mqtt-pass" type="password" maxlength="64" autocomplete="new-password"></label>
               </div>
             </section>
             <div class="row" id="host-flash-controls">
@@ -327,6 +327,24 @@
               </div>
               <pre id="local-console" class="console hidden" aria-live="polite"></pre>
               <p id="local-result" class="status"></p>
+            </details>
+
+            <details class="hint" id="adv-health">
+              <summary>Health check — read the board’s story (changes nothing)</summary>
+              <p>Read the board’s own record straight off flash — the partition
+                map, the firmware in each slot and when it was built, update
+                history, whether it ever hard-crashed, and its witness chain —
+                and get a plain-language verdict with what to do about anything
+                off. <strong>Read-only:</strong> nothing is written to the board,
+                and the identity key and saved Wi-Fi are never shown or saved —
+                only whether they’re present is reported.</p>
+              <div class="row">
+                <button id="health-check-btn" class="btn btn-ghost btn-small" disabled>Run a health check</button>
+              </div>
+              <p id="health-chip-note" class="muted"></p>
+              <pre id="health-console" class="console hidden" aria-live="polite"></pre>
+              <div id="health-report" class="health-report hidden"></div>
+              <p id="health-result" class="status"></p>
             </details>
 
             <details class="hint" id="adv-rescue">

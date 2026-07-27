@@ -21,7 +21,10 @@
 
 namespace canary::hal {
 
-// Bring up the RMT-driven single-pixel strand and hold it dark. Safe to call
+// Bring up the RMT-driven single-pixel strand and light the boot beacon:
+// bright canary yellow until the first tick knows a real state. A wake-up
+// liveness signal, not a severity claim — the honesty invariant governs the
+// steady state, and the first ambient_led_tick() takes over. Safe to call
 // even where the feature/board is absent (compiles to nothing).
 void ambient_led_init();
 

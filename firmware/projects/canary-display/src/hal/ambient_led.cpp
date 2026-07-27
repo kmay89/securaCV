@@ -41,7 +41,13 @@ void write_rgb(uint8_t r, uint8_t g, uint8_t b) {
 
 void ambient_led_init() {
   s_ready = true;
-  write_rgb(0, 0, 0);  // dark until the first state is known
+  // Boot beacon: bright canary yellow (0xFFD44F — the splash scanline's
+  // brand yellow) from the first instant of power, so the bird visibly wakes
+  // before the glass does. This is a liveness signal, not a state claim —
+  // the first ambient_led_tick() repaints with the real fleet state (or
+  // honest darkness) as soon as one is known, so the yellow lives exactly
+  // as long as boot does.
+  write_rgb(0xFF, 0xD4, 0x4F);
 }
 
 void ambient_led_off() {
