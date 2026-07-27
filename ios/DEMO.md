@@ -35,6 +35,10 @@ path to drift.
   exceeds `.notice` severity, never wears a failed badge or tamper, and so
   can never trigger a notification or the alarm colors. The banner on Today
   makes sure sample data never passes as real.
+- **It can't mask a real alarm either**: the demo feeds the "provably
+  alive" heartbeat only while *no* real device is paired. The moment a real
+  fleet exists, only real confirmations count — sample data must never hold
+  the dead-man's-switch open — and any demo-fed verification is revoked.
 
 ## Simulator on your Mac
 
@@ -107,6 +111,7 @@ implementation.
 ## CI
 
 `ios-selfheal.yml` now also runs on every PR touching `ios/**` — the same
-regenerate + build + test as the nightly, unsigned, on a Simulator. Note it
-is gated on the repo variable `ENABLE_IOS_BUILD=true`; until that's set the
-job is a green no-op, so a local `scripts/heal.sh build` is the real proof.
+regenerate + build + test as the nightly, unsigned, on a Simulator. PR runs
+always build (no Apple credentials needed); the `ENABLE_IOS_BUILD=true`
+repo-variable gate applies only to the scheduled nightly, so it never nags
+before iOS is enabled.

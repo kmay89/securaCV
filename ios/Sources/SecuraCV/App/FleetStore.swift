@@ -34,6 +34,11 @@ final class FleetStore: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     private var bag = Set<AnyCancellable>()
 
+    // True while the heartbeat's lastVerified came from demo seeding rather
+    // than a real end-to-end confirmation — so it can be revoked the moment
+    // it might mask something real.
+    private var heartbeatIsDemoFed = false
+
     var worstSeverity: Severity { witnesses.map(\.effectiveSeverity).max() ?? .ok }
     var allQuiet: Bool { worstSeverity == .ok }
 
@@ -58,20 +63,43 @@ final class FleetStore: ObservableObject {
         discovery.start()
         Task { await alerts.requestAuthorization() }
         Task { await hydrateFromCloud() }
-        if demoMode { heartbeat.recordBeat() }   // the demo's path is, by definition, alive
+        recordDemoBeatIfHarmless()
         startRefreshLoop()
         pushLiveActivity()
     }
 
     /// The UI's one entry point for demo mode — persists the choice and
-    /// re-renders immediately. Leaving demo forgets the demo heartbeat so the
-    /// "provably alive" card never carries a verification it didn't earn.
+    /// re-renders immediately. Leaving demo forgets any demo-fed heartbeat so
+    /// the "provably alive" card never carries a verification it didn't earn.
     func setDemoMode(_ on: Bool) {
         guard on != demoMode else { return }
         demoMode = on
         DemoFleet.remember(on)
-        if on { heartbeat.recordBeat() } else { heartbeat.reset() }
+        if on { recordDemoBeatIfHarmless() } else { revokeDemoBeat() }
         Task { await refreshOnce() }
+    }
+
+    /// The demo may fake the delivery heartbeat ONLY while no real device is
+    /// paired: with nothing real to go dark, "alive" is a harmless stage prop.
+    /// The moment a real fleet exists, its dead-man's-switch (docs §5b) must
+    /// never be masked by sample data — real beats only.
+    private func recordDemoBeatIfHarmless() {
+        guard demoMode else { return }
+        if devices.devices.isEmpty {
+            heartbeat.recordBeat()
+            heartbeatIsDemoFed = true
+        } else {
+            revokeDemoBeat()
+        }
+    }
+
+    /// Back to "Not yet verified" — but only if the beat was demo-fed; a real
+    /// confirmation is never discarded.
+    private func revokeDemoBeat() {
+        if heartbeatIsDemoFed {
+            heartbeat.reset()
+            heartbeatIsDemoFed = false
+        }
     }
 
     func onScenePhase(active: Bool) {
@@ -129,11 +157,12 @@ final class FleetStore: ObservableObject {
 
         // Demo fleet: seeded witnesses/events join anything real (ids are
         // "demo-"-namespaced, so they can't collide) — a live Canary paired
-        // mid-demo still shows up beside the samples.
+        // mid-demo still shows up beside the samples. The heartbeat is only
+        // demo-fed while nothing real is paired (see recordDemoBeatIfHarmless).
         if demoMode {
             next.append(contentsOf: DemoFleet.witnesses())
             events.append(contentsOf: DemoFleet.timeline())
-            heartbeat.recordBeat()
+            recordDemoBeatIfHarmless()
         }
 
         witnesses = next.sorted { $0.effectiveSeverity > $1.effectiveSeverity }
