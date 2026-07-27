@@ -52,7 +52,9 @@ namespace canary::net {
   // schema as every other Canary variant.
   bool publish_update_state_retained(const Topics& topics, const char* json_payload);
   bool publish_update_auto_retained(const Topics& topics, bool enabled);
+  bool publish_update_channel_retained(const Topics& topics, bool dev);
   bool take_pending_install();   // true exactly once after HA pressed Install
   int take_pending_auto();       // -1 none; 0/1 = switch set off/on
+  int take_pending_channel();    // -1 none; 0 = release, 1 = dev
 
 } // namespace canary::net

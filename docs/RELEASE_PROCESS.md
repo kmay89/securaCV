@@ -167,18 +167,32 @@ board reaches the flasher the moment its first release is cut.
 
 ## Opting a device into the dev channel
 
-The engine already has the mechanism: an NVS-persisted manifest-URL override
-(`securacv_ota_set_manifest_url`, surfaced via the device's OTA settings
-API). Point it at:
+The channel is a first-class, NVS-persisted engine setting:
+`securacv_ota_set_channel(SECURACV_OTA_CHANNEL_DEV | _RELEASE)`
+(default: release). On **dev**, the engine derives the device's dev-channel
+manifest URL from its own compiled-in default by rewriting the one canonical
+segment — `/releases/latest/download/` → `/releases/download/fw-dev-latest/`
+— so every product gets both channels with zero per-board configuration, and
+the mapping can never drift from how the dev channel is published (the pure
+derivation is host-tested in `test_ota_logic.cpp`). Both channels verify the
+same Ed25519 signatures from the same release key; switching back to release
+never downgrades — the anti-rollback floor holds the device on its current
+build until the stable channel moves past it.
 
-```
-https://github.com/kmay89/securaCV/releases/download/fw-dev-latest/manifest-<product>.json
-```
+On the Canary Display the switch rides MQTT, next to the install/auto
+topics: retained state on `securacv/<id>/update/channel`
+("release"/"dev"), commands on `securacv/<id>/update/channel/cmd`. A
+switch triggers a prompt check, so the effect is visible in seconds, not
+after the daily timer.
 
-Clearing the override returns the device to the release channel. Because the
-override lives in the device's own NVS, the choice is local, per-device, and
-invisible to every other device. HA update entities announce only what the
-device's channel manifest offers.
+The older mechanism still exists and still wins: an explicit manifest-URL
+override (`securacv_ota_set_manifest_url`) names an exact server — e.g. a
+local update server on the bench — and takes precedence over the channel
+setting outright, so a bench setup can't be silently re-channeled. Clearing
+the override returns the device to whatever channel is set. Both knobs live
+in the device's own NVS: local, per-device, invisible to every other
+device. HA update entities announce only what the device's channel manifest
+offers.
 
 Both flashers read the same `fw-dev-latest` flash manifest, with a visible
 banner, from **Advanced → dev channel** (the browser page also accepts

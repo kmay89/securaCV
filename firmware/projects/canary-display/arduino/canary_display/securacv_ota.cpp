@@ -381,6 +381,35 @@ const char *securacv_ota_friendly_state(securacv_ota_state_t state)
     }
 }
 
+bool securacv_ota_channel_manifest_url(const char *base_url,
+                                       securacv_ota_channel_t channel,
+                                       char *buf, size_t buf_len)
+{
+    if (base_url == NULL || buf == NULL || buf_len == 0) return false;
+    if (channel != SECURACV_OTA_CHANNEL_DEV) return false;
+
+    // The one canonical stable-channel segment (docs/RELEASE_PROCESS.md):
+    // GitHub guarantees releases/latest never points at a prerelease, and
+    // the repo's release guard keeps it on the firmware — so this rewrite
+    // is the exact inverse of how the dev channel is published (the
+    // fw-dev-latest prerelease mirrors every manifest a dev release cuts).
+    static const char k_release_seg[] = "/releases/latest/download/";
+    static const char k_dev_seg[]     = "/releases/download/fw-dev-latest/";
+
+    const char *seg = strstr(base_url, k_release_seg);
+    if (seg == NULL) return false;
+
+    const size_t head = (size_t)(seg - base_url);
+    const char *tail = seg + (sizeof(k_release_seg) - 1);
+    const size_t need = head + (sizeof(k_dev_seg) - 1) + strlen(tail) + 1;
+    if (need > buf_len) return false;
+
+    memcpy(buf, base_url, head);
+    memcpy(buf + head, k_dev_seg, sizeof(k_dev_seg) - 1);
+    strcpy(buf + head + (sizeof(k_dev_seg) - 1), tail);
+    return true;
+}
+
 #ifndef SECURACV_OTA_HOST_BUILD
 // ============================================================================
 // DEVICE IMPLEMENTATION
@@ -535,6 +564,7 @@ static bool s_just_updated = false;
 #define NVS_KEY_AUTO_UPDATE  "auto_upd"
 #define NVS_KEY_HTTP_LOCAL   "http_local"
 #define NVS_KEY_PENDING_VER  "pend_ver"
+#define NVS_KEY_CHANNEL      "channel"
 
 static esp_err_t nvs_store_str(const char *key, const char *value)
 {
@@ -602,11 +632,18 @@ esp_err_t securacv_ota_get_manifest_url(char *buf, size_t buf_len)
 {
     if (buf == NULL || buf_len == 0) return ESP_ERR_INVALID_ARG;
     if (nvs_load_str(NVS_KEY_MANIFEST_URL, buf, buf_len) == ESP_OK && buf[0] != '\0') {
+        // An explicit URL override names an exact server — it wins outright,
+        // channel setting included (see the header's channel contract).
         return ESP_OK;
     }
     if (s_ctx.config.manifest_url == NULL) {
         buf[0] = '\0';
         return ESP_ERR_INVALID_STATE;
+    }
+    if (securacv_ota_channel_manifest_url(s_ctx.config.manifest_url,
+                                          securacv_ota_get_channel(),
+                                          buf, buf_len)) {
+        return ESP_OK;
     }
     strncpy(buf, s_ctx.config.manifest_url, buf_len - 1);
     buf[buf_len - 1] = '\0';
@@ -618,6 +655,23 @@ bool securacv_ota_manifest_url_is_override(void)
     char buf[8];
     return nvs_load_str(NVS_KEY_MANIFEST_URL, buf, sizeof(buf)) != ESP_ERR_NVS_NOT_FOUND &&
            buf[0] != '\0';
+}
+
+esp_err_t securacv_ota_set_channel(securacv_ota_channel_t channel)
+{
+    if (channel != SECURACV_OTA_CHANNEL_RELEASE &&
+        channel != SECURACV_OTA_CHANNEL_DEV) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return nvs_store_u8(NVS_KEY_CHANNEL, (uint8_t)channel);
+}
+
+securacv_ota_channel_t securacv_ota_get_channel(void)
+{
+    // Anything unrecognized in NVS reads as RELEASE: fail toward the
+    // signed stable channel, never toward dev.
+    return nvs_load_u8(NVS_KEY_CHANNEL, 0) == 1 ? SECURACV_OTA_CHANNEL_DEV
+                                                : SECURACV_OTA_CHANNEL_RELEASE;
 }
 
 esp_err_t securacv_ota_set_auto_update(bool enabled)

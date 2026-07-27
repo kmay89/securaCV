@@ -108,6 +108,47 @@ any platform.
 
 ## Entries
 
+### 2026-07-27 — A "successful" release quietly dropped the products that had just compiled, and the app that could tell you about updates was polling a URL that can never answer
+
+Two independent failures, one release day, both invisible-by-design.
+
+- **Symptom (1):** `fw-v2.3.0` published green, but carried none of the
+  ESP32-S3 display images — the Dash 7 and Nightstand S3 had **compiled
+  successfully** minutes earlier in the same job. The Flasher showed every
+  display as "no published release yet" and nobody could say why, because the
+  run concluded `success`.
+- **Cause (1):** PlatformIO silently **cleans the whole `.pio/build`
+  workspace when the project checksum changes** — and running the
+  nightstand-c6 env with its (necessary) isolated `PLATFORMIO_CORE_DIR`
+  changes exactly that. The c6 build erased its siblings' outputs; the
+  display packaging loop is non-blocking on purpose, so "produced no binary"
+  was a warning scrolled past in a 20-minute log.
+- **Fix (1):** in `firmware-release.yml` and `flasher-release.yml`, stage
+  each display env's `.pio/build/<env>` the moment it builds and restore the
+  set after the c6 run. **Generalize:** any time two builds in one job vary
+  `PLATFORMIO_CORE_DIR` / project options, treat earlier build outputs as
+  already lost — copy them out first. And when a loop is deliberately
+  non-blocking, its per-item failure messages are the *only* record; make
+  them name the artifact and the consequence.
+- **Symptom (2):** every installed Flasher's self-update check failed with
+  *"Could not fetch a valid release JSON from the remote"*, forever, while
+  the app reported itself up to date.
+- **Cause (2):** the Tauri updater endpoint was
+  `releases/latest/download/latest.json` — but this repo **deliberately pins
+  `releases/latest` to the firmware releases** (it is the fleet's OTA URL;
+  `keep-firmware-latest` moves it back within minutes of any app publish).
+  A firmware release carries no `latest.json`, so the updater's one URL
+  could never resolve. Two correct invariants, never introduced to each
+  other.
+- **Fix (2):** the updater now polls the rolling **`flasher-latest`
+  prerelease** (a prerelease can never become `releases/latest`, so the two
+  pointers cannot collide), which `desktop-flasher-release.yml`'s finalize
+  job re-points — after the consistency guard — at every publish.
+  **Generalize:** in this repo, no app updater may ever reference
+  `releases/latest`; give each self-updating app its own rolling
+  `<app>-latest` prerelease pointer. If the Lab (or a future target) gains
+  an updater, copy this shape.
+
 ### 2026-07-25 — The whole pipeline was blocked on one missing key, and every button's answer to that was silence
 
 - **Symptom:** a maintainer opened the Flasher and every product read **"no
