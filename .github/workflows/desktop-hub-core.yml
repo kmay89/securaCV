@@ -19,6 +19,7 @@ on:
       - 'desktop/hub-core/**'
       - 'desktop/hub-io/**'
       - 'desktop/src-tauri/src/rescue.rs'
+      - 'desktop/src-tauri/src/port_hint.rs'
       - '.github/workflows/desktop-hub-core.yml'
       # hub-io embeds these provisioning-bundle files (include_str!) and
       # cross-checks their bytes against the Python manifest's SHA-256 pins, so a
@@ -34,6 +35,7 @@ on:
       - 'desktop/hub-core/**'
       - 'desktop/hub-io/**'
       - 'desktop/src-tauri/src/rescue.rs'
+      - 'desktop/src-tauri/src/port_hint.rs'
       - '.github/workflows/desktop-hub-core.yml'
       # hub-io embeds these provisioning-bundle files (include_str!) and
       # cross-checks their bytes against the Python manifest's SHA-256 pins, so a

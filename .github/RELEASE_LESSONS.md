@@ -755,3 +755,37 @@ Two independent failures, one release day, both invisible-by-design.
   performance layer, not part of the contract, and GitHub deletes it after 7
   idle days. If a build breaks only when the cache misses, the build is
   broken.
+
+### 2026-07-27 (c) — The Linux .deb shipped serial access half-solved: dialout was documented, but ModemManager was left free to knock the board over mid-boot
+
+- **Symptom:** the identical flash flow that turns green on macOS stalled on
+  Linux: either every port open failed and the app retried in silence
+  ("Waiting for the board's serial port…" forever, or the misleading "put it
+  in download mode" advice), or — with permissions fixed — the flash verified
+  and the live boot receipt still never arrived, so the result never turned
+  green.
+- **Cause:** two Linux-only facts about USB serial that macOS never taught us.
+  (1) Opening `/dev/ttyACM*` needs `dialout` membership or a udev rule; the
+  .deb shipped a udev rule for **rpiboot** (the 2026-07-26 lesson) but nothing
+  for the serial devices the app's core flow lives on. (2) ModemManager
+  probes any newly enumerated CDC device as a modem — including the board
+  re-enumerating right after espflash's post-flash hard reset — holding the
+  port for ~30 s and toggling control lines the ESP32-S3's USB-Serial/JTAG
+  can take as a reset. The boot the app was watching for got knocked over by
+  the OS itself, deterministically, on stock Ubuntu.
+- **Fix:** the .deb now installs `61-securacv-canary.rules` (Espressif
+  `303a` + CH343 `1a86:55d3`): `TAG+="uaccess"`/`MODE="0666"` for access and
+  `ID_MM_DEVICE_IGNORE`/`ID_MM_PORT_IGNORE` so ModemManager never touches a
+  Canary; INSTALL.md carries the copy-paste rule for AppImage users. In-app,
+  `port_hint.rs` classifies permission/busy open failures so the serial
+  monitor, chip detection, and Vision-module flows say the one-line fix
+  instead of retrying silently or coaching the BOOT/RESET ritual.
+- **Applies to:** **every target that opens a serial device on Linux, and
+  every future USB product ID.** A new board VID/PID must be added to
+  `61-securacv-canary.rules` when it's added to the catalog. More generally:
+  "the port exists" is not "the port is ours" on Linux — permission *and*
+  ModemManager both need settling in packaging, and an open failure the app
+  can classify must be explained in-app (a rule that lives only in docs is
+  invisible at the moment it's needed). The udev-rule lesson from rpiboot
+  (2026-07-26) applies to serial CDC devices too, with ModemManager as the
+  extra tenant nobody invited.
