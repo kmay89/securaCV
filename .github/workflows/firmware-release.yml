@@ -736,7 +736,7 @@ jobs:
           # prevent. So wait for the asset to actually land on the release
           # before calling the release done. The model build is a few minutes
           # (30-min timeout on its side); poll well past that before going red.
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             if gh release view "$TAG" --json assets \
                  -q '.assets[].name' | grep -qx "manifest-vision-model.json"; then
               echo "manifest-vision-model.json attached to $TAG"
