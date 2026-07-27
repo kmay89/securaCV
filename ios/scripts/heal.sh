@@ -24,13 +24,22 @@ generate() {
   eval "$(scripts/stamp_build.sh)"        # export SECURACV_BUILD_REV / FW_TRAIN
   # A signing team in the env persists into git-ignored local.yml so the
   # regenerated project keeps it even when opened from Xcode's GUI (which has
-  # no shell env). project.yml merges local.yml as an optional include.
+  # no shell env).
   if [ -n "${APPLE_DEVELOPMENT_TEAM:-}" ] && [ ! -f local.yml ]; then
     printf 'settings:\n  base:\n    APPLE_DEVELOPMENT_TEAM: "%s"\n' \
       "$APPLE_DEVELOPMENT_TEAM" > local.yml
     echo "[heal] wrote local.yml with your signing team (git-ignored)"
   fi
-  xcodegen generate
+  # XcodeGen has no optional include, so project.yml never references
+  # local.yml (a bare `xcodegen generate` must always work — the release
+  # workflow runs exactly that). When local.yml exists, merge it AFTER the
+  # main spec via a wrapper so its settings win.
+  if [ -f local.yml ]; then
+    printf 'include:\n  - project.yml\n  - local.yml\n' > .local-spec.yml
+    xcodegen generate --spec .local-spec.yml
+  else
+    xcodegen generate
+  fi
   echo "[heal] project regenerated at build rev ${SECURACV_BUILD_REV}"
 }
 

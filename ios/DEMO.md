@@ -67,8 +67,8 @@ Simulator-impossible.
    ```sh
    APPLE_DEVELOPMENT_TEAM=YOURTEAMID scripts/heal.sh generate
    ```
-   (writes git-ignored `ios/local.yml`, which `project.yml` merges on every
-   regenerate), or pick the team in Xcode → target → Signing & Capabilities —
+   (writes git-ignored `ios/local.yml`, which `heal.sh` merges into the spec
+   on every regenerate), or pick the team in Xcode → target → Signing & Capabilities —
    but that manual pick is wiped each time the project regenerates, so
    `local.yml` is the way.
 3. First install: on the phone, Settings → General → VPN & Device

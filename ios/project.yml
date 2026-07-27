@@ -13,16 +13,13 @@
 
 name: SecuraCV
 
-# Optional, git-ignored local overrides that survive regeneration — mainly
-# your signing team, so opening the regenerated project in Xcode's GUI (which
-# has no shell env) still signs. `scripts/heal.sh generate` seeds it from
-# $APPLE_DEVELOPMENT_TEAM; see DEMO.md. Keys must not collide with this spec
-# (the main spec wins a merge) — define the CUSTOM setting the base
-# DEVELOPMENT_TEAM below dereferences, e.g.:
+# Local overrides that survive regeneration — mainly your signing team, so a
+# regenerated project opened in Xcode's GUI (which has no shell env) still
+# signs: git-ignored `local.yml`, merged AFTER this spec by
+# `scripts/heal.sh generate` (XcodeGen has no optional include, so this file
+# never references it — a bare `xcodegen generate` must always work).
+# heal.sh seeds it from $APPLE_DEVELOPMENT_TEAM; see DEMO.md. Shape:
 #   settings: { base: { APPLE_DEVELOPMENT_TEAM: "ABCDE12345" } }
-include:
-  - path: local.yml
-    optional: true
 
 options:
   bundleIdPrefix: com.securacv

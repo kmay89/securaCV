@@ -53,7 +53,13 @@ jobs:
 
       - name: Select Xcode
         if: env.RUN_BUILD == 'true'
-        run: sudo xcode-select -s /Applications/Xcode_16.app || true
+        # Runner images name Xcode with full versions (Xcode_16.2.app…), so a
+        # bare Xcode_16.app never matches; pick the newest 16.x, fall back to
+        # the image default, and always print what we got.
+        run: |
+          latest="$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1 || true)"
+          if [ -n "$latest" ]; then sudo xcode-select -s "$latest"; fi
+          xcodebuild -version
 
       - name: Regenerate, build & test (no signing)
         if: env.RUN_BUILD == 'true'
