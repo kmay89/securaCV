@@ -1131,6 +1131,25 @@ someone went looking.
   health entities, which are pending a firmware publisher
   (`mqtt_publish_transport()` is defined but never called).
 
+## [2.3.2] - 2026-07-27
+
+### The nightstand wakes up canary yellow
+
+The 1.47" nightstand boards' behind-glass WS2812 beacon (GPIO8 on the
+ESP32-C6 board, GPIO38 on the S3 stick) lights bright canary yellow
+(0xFFD44F) as the very first line of setup() — power-on is answered before
+the panel initializes. A liveness signal only: the first render tick hands
+the LED to the real fleet state, and the dark-when-safe night behavior is
+unchanged.
+
+### Wi-Fi preload is standard on every board
+
+Both flashers can bake your network into any Canary at install time (each
+firmware already read the same NVS namespace; the desktop app now writes
+both encodings — string for sense/vision/display, blob + wifi_en for
+canary/wap). Optional everywhere it isn't usb-secrets: skip it and the AP
+portal / on-glass setup is untouched.
+
 ## [2.3.1] - 2026-07-27
 
 ### Every Canary Display ships in this release — including the Dash 7
