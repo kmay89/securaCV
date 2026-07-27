@@ -5,7 +5,7 @@
   "repo": "kmay89/securaCV",
   "release_download": "https://github.com/kmay89/securaCV/releases/download/fw-v2.3.0",
   "manifest_url": "https://github.com/kmay89/securaCV/releases/download/fw-v2.3.0/manifest-flash.json",
-  "release_pubkey": "0000000000000000000000000000000000000000000000000000000000000000",
+  "release_pubkey": "ae123a5c220c5499e579dc449e66392d83d5ad70d100747574eb7b2bac49b244",
   "flash_baud": 921600,
   "console_baud": 115200,
   "chips": {
