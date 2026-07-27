@@ -545,6 +545,15 @@ jobs:
         # Contract: firmware/PORTING.md.
         run: python3 firmware/scripts/check_board_registry.py
 
+      - name: Check pin budget (the board fullness gauge)
+        # firmware/boards/PIN_BUDGET.md is generated from the data-only
+        # pins/pins.h files + boards.json and committed (same philosophy as
+        # the website's generated .glb models): edit a pin map, regenerate
+        # in the same change. This fails when the committed gauge no longer
+        # matches the pin maps. Fixer:
+        #   python3 firmware/scripts/pin_budget.py --write
+        run: python3 firmware/scripts/pin_budget.py --check
+
       - name: Check shared common/ sources are actually compiled
         # A .cpp under firmware/common/ that no manifest, build_src_filter, or
         # staged Arduino copy picks up is silently dropped from every image —
