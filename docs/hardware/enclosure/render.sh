@@ -130,6 +130,11 @@ devstl dev_vehicle_dash.stl  canary_vehicle_mount.scad -D 'part="dash"'
 devstl dev_vehicle_vent.stl  canary_vehicle_mount.scad -D 'part="vent"'
 devstl dev_wear_clip.stl     canary_wear_clip.scad -D 'part="clip"'
 devstl dev_wear_molle.stl    canary_wear_clip.scad -D 'part="molle"'
+devstl dev_c6_147_bezel.stl  canary_c6_display.scad -D 'model="1.47"' -D 'part="bezel"'
+devstl dev_c6_147_back.stl   canary_c6_display.scad -D 'model="1.47"' -D 'part="back"'
+devstl dev_lcd7_bezel.stl    canary_s3_lcd7.scad -D 'part="bezel"'
+devstl dev_lcd7_back.stl     canary_s3_lcd7.scad -D 'part="back"'
+devstl dev_lcd7_stand.stl    canary_s3_lcd7.scad -D 'part="stand"'
 
 # --- User tools (fit coupon, bench fixture, dock, shop tools) ---------------
 devstl dev_coupon_base.stl   canary_fit_coupon.scad    -D 'part="base"'
@@ -179,6 +184,8 @@ if [[ "${1:-}" != "--no-png" ]]; then
   (SRC="canary_vehicle_mount.scad"; png "preview_dev_veh.png"     -D 'part="all"')
   (SRC="canary_vision_pro_mount.scad"; png "preview_dev_visionpro.png" -D 'part="plate"')
   (SRC="canary_wear_clip.scad";     png "preview_dev_wear.png"    -D 'part="all"')
+  (SRC="canary_c6_display.scad";    png "preview_dev_c6_147.png"  -D 'model="1.47"' -D 'part="all"')
+  (SRC="canary_s3_lcd7.scad";       png "preview_dev_lcd7.png"    -D 'part="all"')
   (SRC="canary_fit_coupon.scad";    png "preview_dev_coupon.png"  -D 'part="all"')
   (SRC="canary_bench_fixture.scad"; png "preview_dev_fixture.png" -D 'part="all"')
   (SRC="canary_dock.scad";          png "preview_dev_dock.png")
