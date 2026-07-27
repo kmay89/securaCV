@@ -164,6 +164,59 @@ struct AppInfo {
     fw_train: Option<String>,
 }
 
+// The Wi-Fi network this computer is on right now — the network a new Canary
+// almost always wants — so the SSID field starts filled and joining is one
+// password away. Best-effort: any failure just means no prefill.
+#[tauri::command]
+fn current_ssid() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        for iface in ["en0", "en1"] {
+            if let Ok(out) = std::process::Command::new("networksetup")
+                .args(["-getairportnetwork", iface])
+                .output()
+            {
+                // "Current Wi-Fi Network: <name>" — anything else (off,
+                // not a Wi-Fi interface) has no colon-name to take.
+                let text = String::from_utf8_lossy(&out.stdout);
+                if let Some((_, name)) = text.split_once(": ") {
+                    let name = name.trim();
+                    if !name.is_empty() {
+                        return Some(name.to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(out) = std::process::Command::new("iwgetid").arg("-r").output() {
+            let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !name.is_empty() {
+                return Some(name);
+            }
+        }
+        if let Ok(out) = std::process::Command::new("nmcli")
+            .args(["-t", "-f", "active,ssid", "dev", "wifi"])
+            .output()
+        {
+            for line in String::from_utf8_lossy(&out.stdout).lines() {
+                if let Some(ssid) = line.strip_prefix("yes:") {
+                    if !ssid.is_empty() {
+                        return Some(ssid.to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        None
+    }
+}
+
 #[tauri::command]
 fn app_info() -> AppInfo {
     let fw_train = serde_json::from_str::<Value>(EMBEDDED_CATALOG)
@@ -1416,6 +1469,7 @@ pub fn run() {
             load_catalog,
             load_hatch,
             app_info,
+            current_ssid,
             list_ports,
             detect_chip,
             fetch_manifest,

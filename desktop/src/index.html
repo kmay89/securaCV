@@ -189,16 +189,16 @@
             <div class="step-head"><span class="step-n">3</span><h2>Flash it</h2></div>
             <section id="provisioning" class="provision hidden" aria-labelledby="provision-title">
               <h3 id="provision-title">First-boot connection</h3>
-              <p class="muted">The verified Vision release image is generic. These values are written directly
+              <p class="muted" id="provision-note">These values are written directly
                 into this board’s settings partition, never logged and never saved by the app.</p>
               <div class="form-grid">
-                <label>Canary name<input id="device-id" maxlength="47" autocomplete="off" required></label>
-                <label>Wi-Fi name<input id="wifi-ssid" maxlength="32" autocomplete="off" required></label>
-                <label>Wi-Fi password<input id="wifi-pass" type="password" maxlength="63" autocomplete="new-password"></label>
-                <label>Home Assistant / MQTT host<input id="mqtt-host" maxlength="63" placeholder="homeassistant.local" autocomplete="off" required></label>
-                <label>MQTT port<input id="mqtt-port" type="number" min="1" max="65535" value="1883" required></label>
-                <label>MQTT username<input id="mqtt-user" maxlength="32" autocomplete="off"></label>
-                <label>MQTT password<input id="mqtt-pass" type="password" maxlength="64" autocomplete="new-password"></label>
+                <label class="usb-only">Canary name<input id="device-id" maxlength="47" autocomplete="off" required></label>
+                <label>Wi-Fi name<input id="wifi-ssid" maxlength="32" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="next"></label>
+                <label>Wi-Fi password<input id="wifi-pass" type="password" maxlength="63" autocomplete="current-password"></label>
+                <label class="usb-only">Home Assistant / MQTT host<input id="mqtt-host" maxlength="63" placeholder="homeassistant.local" autocomplete="off" required></label>
+                <label class="usb-only">MQTT port<input id="mqtt-port" type="number" min="1" max="65535" value="1883" required></label>
+                <label class="usb-only">MQTT username<input id="mqtt-user" maxlength="32" autocomplete="off"></label>
+                <label class="usb-only">MQTT password<input id="mqtt-pass" type="password" maxlength="64" autocomplete="new-password"></label>
               </div>
             </section>
             <div class="row" id="host-flash-controls">

@@ -3159,8 +3159,18 @@ function renderWifiFields(box, product) {
 
   const ssid = el("input"), pass = el("input");
   ssid.type = "text"; ssid.placeholder = "network name (SSID)"; ssid.autocomplete = "off";
+  // An SSID is an exact identifier: no auto-capitalized first letter, no
+  // autocorrect "fixes", no red squiggle. (Attribute form — Safari reads
+  // autocapitalize/autocorrect as content attributes, not IDL props.)
+  ssid.setAttribute("autocapitalize", "off");
+  ssid.setAttribute("autocorrect", "off");
+  ssid.spellcheck = false;
+  ssid.enterKeyHint = "next";
   pass.type = "password"; pass.placeholder = "password";
-  pass.autocomplete = "new-password";
+  // current-password (not new-): this is an EXISTING network's password, so
+  // Keychain / password managers offer their saved entry instead of proposing
+  // a generated one.
+  pass.autocomplete = "current-password";
   // Remember-across-boards: pre-fill from the home Wi-Fi we already know — this
   // tab's session, or a copy saved on this computer if the user opted in — so a
   // whole batch of Canaries provisions without re-typing it into each one.
