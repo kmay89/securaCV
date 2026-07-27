@@ -51,6 +51,7 @@ static uint16_t s_broker_port = 1883;
 // drains them. Same pattern as the other Canary variants.
 static volatile bool s_pending_install = false;
 static volatile int s_pending_auto = -1;
+static volatile int s_pending_channel = -1;
 
 // Cached retained payloads, republished on every reconnect so HA's update
 // entity and auto-update switch never sit at "unknown" after a broker
@@ -58,6 +59,7 @@ static volatile int s_pending_auto = -1;
 static char s_update_state_cache[640] = {0};
 static bool s_update_state_set = false;
 static int s_update_auto_cache = -1;
+static int s_update_channel_cache = -1;
 
 // ── Topic parsing ───────────────────────────────────────────────────────
 
@@ -344,6 +346,14 @@ static void on_mqtt_message(char* topic, uint8_t* payload, unsigned int len) {
     if (payload_is(payload, len, "OFF") || payload_is(payload, len, "off")) s_pending_auto = 0;
     return;
   }
+  if (strcmp(topic, g_topics.update_channel_cmd) == 0) {
+    // Exact tokens only — an unrecognized payload changes nothing, and
+    // "release" is the value everything unclear resolves to elsewhere
+    // (the engine reads unknown NVS as RELEASE too).
+    if (payload_is(payload, len, "release")) s_pending_channel = 0;
+    if (payload_is(payload, len, "dev"))     s_pending_channel = 1;
+    return;
+  }
 #if defined(FEATURE_HUB_WEATHER) && FEATURE_HUB_WEATHER
   // Nightstand wave: the hub's ONE retained forecast blob.
   if (strcmp(topic, FleetSubs::WEATHER) == 0) {
@@ -377,6 +387,12 @@ bool take_pending_install() {
 int take_pending_auto() {
   const int v = s_pending_auto;
   s_pending_auto = -1;
+  return v;
+}
+
+int take_pending_channel() {
+  const int v = s_pending_channel;
+  s_pending_channel = -1;
   return v;
 }
 
@@ -601,6 +617,7 @@ bool mqtt_connect_attempt() {
   // may have dropped them) and reconcile the retained states.
   mqtt.subscribe(g_topics.update_cmd, 1);
   mqtt.subscribe(g_topics.update_auto_cmd, 1);
+  mqtt.subscribe(g_topics.update_channel_cmd, 1);
 #if defined(FEATURE_HUB_WEATHER) && FEATURE_HUB_WEATHER
   mqtt.subscribe(FleetSubs::WEATHER, 1);
 #endif
@@ -613,6 +630,10 @@ bool mqtt_connect_attempt() {
   if (s_update_auto_cache >= 0) {
     publish_checked("OTA", g_topics.update_auto,
                     s_update_auto_cache ? "ON" : "OFF", true);
+  }
+  if (s_update_channel_cache >= 0) {
+    publish_checked("OTA", g_topics.update_channel,
+                    s_update_channel_cache ? "dev" : "release", true);
   }
   return true;
 }
@@ -632,6 +653,12 @@ bool publish_update_auto_retained(const Topics& topics, bool enabled) {
   s_update_auto_cache = enabled ? 1 : 0;
   if (!mqtt.connected()) return false;
   return publish_checked("OTA", topics.update_auto, enabled ? "ON" : "OFF", true);
+}
+
+bool publish_update_channel_retained(const Topics& topics, bool dev) {
+  s_update_channel_cache = dev ? 1 : 0;
+  if (!mqtt.connected()) return false;
+  return publish_checked("OTA", topics.update_channel, dev ? "dev" : "release", true);
 }
 
 } // namespace canary::net
