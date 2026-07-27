@@ -18,8 +18,14 @@ final class FleetStore: ObservableObject {
     @Published var fleetName: String = "Your Canaries"
     @Published var isRefreshing = false
 
+    // Demo mode: the seeded DemoFleet joins (never replaces) anything real,
+    // so the app demos on a Simulator or a hardware-free phone. Views flip it
+    // through setDemoMode(_:) so the choice persists; direct sets are for
+    // previews only.
+    @Published var demoMode: Bool
+
     // Collaborators
-    let devices = DeviceStore()
+    let devices: DeviceStore
     let discovery = Discovery()
     let ble = BLEConsole()
     let alerts = AlertCenter()
@@ -32,6 +38,10 @@ final class FleetStore: ObservableObject {
     var allQuiet: Bool { worstSeverity == .ok }
 
     init() {
+        let devices = DeviceStore()
+        self.devices = devices
+        self.demoMode = DemoFleet.defaultEnabled(hasPairedDevices: !devices.devices.isEmpty)
+
         // Forward every collaborator's change into ours, so any view observing
         // the store updates when discovery, BLE, alerts, heartbeat, or the
         // device list change — no view has to know the internal object graph.
@@ -48,8 +58,20 @@ final class FleetStore: ObservableObject {
         discovery.start()
         Task { await alerts.requestAuthorization() }
         Task { await hydrateFromCloud() }
+        if demoMode { heartbeat.recordBeat() }   // the demo's path is, by definition, alive
         startRefreshLoop()
         pushLiveActivity()
+    }
+
+    /// The UI's one entry point for demo mode — persists the choice and
+    /// re-renders immediately. Leaving demo forgets the demo heartbeat so the
+    /// "provably alive" card never carries a verification it didn't earn.
+    func setDemoMode(_ on: Bool) {
+        guard on != demoMode else { return }
+        demoMode = on
+        DemoFleet.remember(on)
+        if on { heartbeat.recordBeat() } else { heartbeat.reset() }
+        Task { await refreshOnce() }
     }
 
     func onScenePhase(active: Bool) {
@@ -103,6 +125,15 @@ final class FleetStore: ObservableObject {
             w.batteryPct = snap.batt
             w.link = .online
             next.append(w)
+        }
+
+        // Demo fleet: seeded witnesses/events join anything real (ids are
+        // "demo-"-namespaced, so they can't collide) — a live Canary paired
+        // mid-demo still shows up beside the samples.
+        if demoMode {
+            next.append(contentsOf: DemoFleet.witnesses())
+            events.append(contentsOf: DemoFleet.timeline())
+            heartbeat.recordBeat()
         }
 
         witnesses = next.sorted { $0.effectiveSeverity > $1.effectiveSeverity }

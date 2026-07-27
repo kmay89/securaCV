@@ -88,3 +88,7 @@ enum BuildInfo {
         Bundle.main.object(forInfoDictionaryKey: "SECURACV_FW_TRAIN") as? String ?? "0.x"
     }
 }
+
+#Preview("Keys — demo fleet") {
+    KeysView().environmentObject(DemoFleet.previewStore())
+}

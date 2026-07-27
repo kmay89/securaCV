@@ -14,6 +14,12 @@ name: iOS self-heal (nightly)
 
 on:
   workflow_dispatch:
+  # Also the app's PR compiler: iOS changes are authored in dev containers
+  # with no Swift toolchain, so this build is the first time they compile.
+  pull_request:
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios-selfheal.yml"
   schedule:
     # 08:41 UTC nightly — off the :00 fleet stampede, distinct from bom-pricing.
     - cron: "41 8 * * *"
