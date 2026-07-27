@@ -74,6 +74,20 @@ DISTRIBUTOR_DOMAIN = {"digikey": "digikey.com", "mouser": "mouser.com"}
 DISTRIBUTOR_ORIGIN = {"digikey": "https://www.digikey.com",
                       "mouser": "https://www.mouser.com"}
 
+# Python's urlsplit and a browser's WHATWG parser do NOT agree on every
+# string, and an attacker gets to pick a string where they differ:
+#
+#     https://evil.example\@digikey.com/x
+#
+# urlsplit calls the host digikey.com — a backslash is an ordinary character
+# to it, so the authority runs to the last "@". A browser normalizes the
+# backslash to "/", making the host evil.example and "@digikey.com/x" a mere
+# path. Validating with one parser and handing the raw string to the other is
+# the whole bug. Rather than trying to model both, refuse any URL containing
+# a character they can disagree about: backslash, and the whitespace/control
+# characters WHATWG strips but Python keeps.
+_URL_AMBIGUOUS = re.compile(r"[\\\s\x00-\x1f\x7f]")
+
 
 def safe_product_url(url, src):
     """The distributor product URL, iff we're willing to publish it as a link."""
@@ -81,7 +95,7 @@ def safe_product_url(url, src):
     if not base or not isinstance(url, str):
         return None
     url = url.strip()
-    if not url:
+    if not url or _URL_AMBIGUOUS.search(url):
         return None
     # Some responses hand back a root-relative path ("/en/products/detail/…");
     # "//host/…" is protocol-relative and is NOT that, so it stays untrusted.
@@ -90,6 +104,10 @@ def safe_product_url(url, src):
     try:
         parts = urllib.parse.urlsplit(url)
     except ValueError:
+        return None
+    # Userinfo is the other way to make a host read one way to a human (or a
+    # lax parser) and resolve another. A product listing never needs it.
+    if "@" in parts.netloc:
         return None
     host = (parts.hostname or "").lower()
     if parts.scheme != "https" or not (host == base

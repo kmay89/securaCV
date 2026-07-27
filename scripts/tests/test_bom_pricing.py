@@ -15,6 +15,7 @@ import importlib.util
 import json
 import sys
 import unittest
+import urllib.parse
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -171,6 +172,8 @@ class ProductUrlSafety(unittest.TestCase):
                 ("digikey", "https://notdigikey.com/x"),       # suffix trick
                 ("digikey", "https://digikey.com.evil.io/x"),  # subdomain trick
                 ("digikey", "//evil.example/x"),               # protocol-rel
+                ("digikey", "https://user@digikey.com/x"),     # userinfo
+                ("digikey", "https://evil.example@digikey.com/x"),
                 ("digikey", "https://www.mouser.com/x"),       # wrong source
                 ("mouser", "https://www.digikey.com/x"),
                 ("digikey", ""),
@@ -181,6 +184,30 @@ class ProductUrlSafety(unittest.TestCase):
         ):
             self.assertIsNone(bp.safe_product_url(url, src),
                               f"{src} accepted {url!r}")
+
+    def test_rejects_urls_python_and_a_browser_parse_differently(self):
+        """The parser-differential class, refused rather than modelled.
+
+        urlsplit reports the host of `https://evil.example\\@digikey.com/x`
+        as digikey.com (backslash is an ordinary character, so the authority
+        runs to the last "@"); a browser normalizes the backslash to "/" and
+        navigates to evil.example. Validating with one parser and publishing
+        the raw string for the other is the bug, so any character the two can
+        disagree about disqualifies the URL outright.
+        """
+        for url in ("https://evil.example\\@digikey.com/x",
+                    "https://evil.example\\.digikey.com/x",
+                    "https://digikey.com\\@evil.example/x",
+                    "https://digikey.com/x\twith-tab",
+                    "https://digikey.com/x\nwith-newline",
+                    "https://digikey.com/x\rwith-cr",
+                    "https://digikey.com/x with-space"):
+            self.assertIsNone(bp.safe_product_url(url, "digikey"),
+                              f"accepted {url!r}")
+        # Pin the differential itself, so a future stdlib change is visible.
+        self.assertEqual(
+            urllib.parse.urlsplit("https://evil.example\\@digikey.com/x").hostname,
+            "digikey.com", "urlsplit stopped disagreeing — recheck this rule")
 
     def test_lookup_drops_a_hostile_url_from_the_snapshot(self):
         """The parser must sanitize, not just the helper — pinned end to end."""

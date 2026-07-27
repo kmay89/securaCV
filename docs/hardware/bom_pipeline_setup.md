@@ -140,14 +140,26 @@ vanished.
   `canary-local/tests/build_it.test.js`) and the website's
   (`tests/economics.test.mjs`).
 - **The product URL is the one fetched field that becomes a clickable
-  link, so it is checked three times** and a failed check always means
-  *no link*, never a broken or hostile one: on fetch
-  (`safe_product_url` — https only, and only at the distributor we
-  actually queried), on generate (again, because `pricing.json` is a
-  committed file a human can edit), and at render in both frontends
-  (because `build.json` arrives over the network). A part demoted to
-  `carried` loses its link with its live status, so a listing that
-  vanished can't linger as a dead link.
+  link, so the full rule — https, no userinfo, and a host belonging to
+  the distributor the row names — is enforced three times**, and a
+  failed check always means *no link*, never a broken or hostile one:
+  on fetch (`safe_product_url`), on generate (again, because
+  `pricing.json` is a committed file a human can edit), and at render in
+  both frontends (again, because `build.json` is *fetched* — the bytes
+  that reach a browser need not be the bytes we generated, so the
+  render check repeats the whole rule rather than trusting upstream).
+  A part demoted to `carried` loses its link along with its live status,
+  so a listing that vanished can't linger as a dead link.
+- **Two URL parsers, one rule.** Python's `urlsplit` and a browser's
+  WHATWG parser disagree about strings like
+  `https://evil.example\@digikey.com/x` — `urlsplit` calls the host
+  `digikey.com`, a browser navigates to `evil.example`. Validating with
+  one parser and publishing the raw string for the other is the whole
+  bug, so the Python side *refuses* any URL containing a character the
+  two can read differently (backslash, whitespace, control characters),
+  and the JavaScript side validates with `new URL` — the browser's own
+  parser — and emits **its** serialization. What was checked is what
+  gets navigated to.
 - **Designed against the documented APIs but not yet exercised with
   real credentials:** the exact Digi-Key/Mouser response-field parsing.
   This repo's build environment has no distributor keys, so the first

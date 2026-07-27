@@ -79,6 +79,44 @@ test("a non-https url is never rendered as a link", async () => {
   }
 });
 
+// The render-time check is the only one that still applies once build.json
+// has left the repo — it is fetched, so it may not be the file we generated.
+// It therefore repeats the FULL rule, not just the scheme.
+test("an https url at the wrong host is refused at render time", async () => {
+  const { partNode, liveUrl } = await mod();
+  for (const bad of ["https://evil.example/x",
+                     "https://notdigikey.com/x",
+                     "https://digikey.com.evil.io/x",
+                     "https://www.mouser.com/x",       // right shape, wrong src
+                     "https://user:pw@www.digikey.com/x"]) {
+    assert.equal(liveUrl(row(bad)), null, `liveUrl accepted ${bad}`);
+    assert.equal(partNode(row(bad)).tag, "span", `linked ${bad}`);
+  }
+});
+
+test("a url Python and the browser parse differently resolves the browser's way", async () => {
+  const { liveUrl } = await mod();
+  // urlsplit would call this host digikey.com; the browser navigates to
+  // evil.example. Checking with new URL means we see what the browser sees.
+  const trick = "https://evil.example\\@digikey.com/x";
+  assert.equal(new URL(trick).hostname, "evil.example");
+  assert.equal(liveUrl(row(trick)), null);
+});
+
+test("the href is the parser's own serialization, not the raw string", async () => {
+  const { liveUrl } = await mod();
+  // What we validated is exactly what gets set — no room for a string to be
+  // checked one way and resolved another.
+  assert.equal(liveUrl(row("https://WWW.DigiKey.com/en/x")),
+               "https://www.digikey.com/en/x");
+});
+
+test("an unknown distributor never links, whatever the url says", async () => {
+  const { liveUrl } = await mod();
+  assert.equal(liveUrl({ ...row("https://www.digikey.com/x"),
+                         live: { src: "carried", url: "https://www.digikey.com/x" } }), null);
+});
+
 test("a row with no MPN renders nothing at all", async () => {
   const { partNode } = await mod();
   assert.equal(partNode({ ref: "X1", qty: "1", mfr: "Generic", mpn: "" }), "");

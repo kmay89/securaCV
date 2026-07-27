@@ -14,17 +14,31 @@ const el = (tag, cls, text) => {
 
 const GH = "https://github.com/kmay89/securaCV/blob/main/";
 
+const DISTRIBUTOR_DOMAIN = { digikey: "digikey.com", mouser: "mouser.com" };
+
 /* The distributor's own product page for a row, or null.
  *
  * build.json only carries a `live.url` for a distributor-verified row, and
- * only after the URL passed the snapshot's https/distributor-domain check
- * twice (scripts/bom_pricing.py on fetch, gen_enclosures.py on generate).
- * This third check is the cheap one that matters at the point of use: a
- * build.json served from anywhere still can't put a non-https scheme in an
- * href. Anything that fails just isn't a link — never a broken one. */
+ * only after the URL passed the snapshot's checks twice (bom_pricing.py on
+ * fetch, gen_enclosures.py on generate). Neither of those protects data
+ * that already reached the browser, so this repeats the FULL check — https
+ * AND the host actually belonging to the distributor the row names — on a
+ * build.json that could have been served from anywhere.
+ *
+ * It uses `new URL`, which is the same WHATWG parser the browser navigates
+ * with, and returns that parser's own serialization. So the host we checked
+ * is the host it will go to: no string we validated one way can be resolved
+ * another. Anything that fails just isn't a link — never a broken one. */
 export const liveUrl = (r) => {
-  const u = r.live && r.live.url;
-  return typeof u === "string" && u.startsWith("https://") ? u : null;
+  const live = r && r.live;
+  const base = live && DISTRIBUTOR_DOMAIN[live.src];
+  if (!base || typeof live.url !== "string") return null;
+  let u;
+  try { u = new URL(live.url); } catch { return null; }
+  if (u.protocol !== "https:" || u.username || u.password) return null;
+  const host = u.hostname.toLowerCase();
+  if (host !== base && !host.endsWith("." + base)) return null;
+  return u.href;
 };
 
 /* "Seeed Studio · 102010469" — a link to the part when we have one. */
