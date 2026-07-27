@@ -193,7 +193,10 @@ final class FleetStore: ObservableObject {
         if let page = try? await api.witness(last: 20) {
             let verdict = ChainVerifier.verify(page, pinnedKey: PinnedKeyStore.key(for: ref.id))
             w.badge = verdict.badge
-            w.chainLength = page.records.map(\.seq).max() ?? 0
+            // The wire's seq is u64; the model mirrors fleet_model.h's
+            // uint32_t chain_length, so clamp at the fold (like the tolerant
+            // enum decoders — a newer firmware never breaks an older app).
+            w.chainLength = UInt32(clamping: page.records.map(\.seq).max() ?? 0)
             events = page.records.map { rec in
                 TimelineEvent(id: "\(ref.id)#\(rec.seq)",
                               deviceID: ref.id, deviceName: info.name, zone: rec.zone,
