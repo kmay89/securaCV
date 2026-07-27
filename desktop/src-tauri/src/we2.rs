@@ -101,7 +101,18 @@ where
         let port = serialport::new(port_name, BAUD)
             .timeout(Duration::from_millis(40))
             .open()
-            .map_err(|e| format!("could not open the Vision module port: {e}"))?;
+            .map_err(|e| {
+                let mut message = format!("could not open the Vision module port: {e}");
+                // Linux-only: permission-denied / busy opens have a Linux
+                // fix the raw errno string doesn't teach (dialout/udev rule,
+                // ModemManager) — append it so the error card is actionable.
+                if cfg!(target_os = "linux") {
+                    if let Some(hint) = crate::port_hint::linux_open_hint(&message) {
+                        message = format!("{message}\n{hint}");
+                    }
+                }
+                message
+            })?;
         Ok(Self {
             port,
             log,

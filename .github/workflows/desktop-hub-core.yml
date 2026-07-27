@@ -97,3 +97,7 @@ jobs:
         run: |
           rustc --edition 2021 --test desktop/src-tauri/src/rescue.rs -o /tmp/rescue_test
           /tmp/rescue_test
+      - name: port_hint.rs unit tests
+        run: |
+          rustc --edition 2021 --test desktop/src-tauri/src/port_hint.rs -o /tmp/port_hint_test
+          /tmp/port_hint_test
