@@ -56,6 +56,7 @@ permissions:
   contents: write
   id-token: write      # OIDC identity used to sign the build-provenance attestation
   attestations: write  # upload the signed provenance to this repo's attestation store
+  actions: write       # chain-dispatch vision-model-release.yml after publishing
 
 # One release build per tag; NEVER cancel a run mid-publish (half-uploaded
 # release assets) — concurrent runs queue instead.
@@ -710,6 +711,24 @@ jobs:
             /tmp/release/manifest-index.json
             /tmp/release/sha256sums.txt
             /tmp/release/provenance-firmware-${{ steps.ver.outputs.version }}.sigstore.jsonl
+
+      # vision-model-release.yml's `release: [published]` trigger looks like it
+      # covers this release — it doesn't. GitHub suppresses workflow events for
+      # anything created with the workflow's own GITHUB_TOKEN (the recursion
+      # guard), so a CI-published release never fires it: fw-v2.3.0 shipped
+      # without manifest-vision-model.json this way, and the Vision module
+      # flasher 404'd on every install while the "anti-rot" trigger sat idle —
+      # it had only ever fired for the early human-published releases. Chain
+      # the dispatch explicitly instead; the event trigger stays for the
+      # human-publish path, and the workflow's per-tag concurrency group
+      # de-dupes if both ever fire.
+      - name: Attach the pinned Vision model asset (chained dispatch)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run vision-model-release.yml \
+            --repo "${{ github.repository }}" --ref "${{ github.ref_name }}" \
+            -f tag="${{ steps.ver.outputs.tag }}"
 
       # The dev channel's stable address. Only the MANIFESTS are mirrored —
       # each manifest's binary URL points at the real fw-v*-dev.* tag's

@@ -108,6 +108,26 @@ any platform.
 
 ## Entries
 
+### 2026-07-27 (b) — An "anti-rot" `release: published` trigger that can never fire for the releases CI publishes
+
+- **Symptom:** every Vision module flash failed with *"no published release
+  yet (manifest returned HTTP 404)"* — `manifest-vision-model.json` was
+  absent from `fw-v2.3.0` even though `vision-model-release.yml` exists
+  precisely to attach it "automatically on every published release."
+- **Cause:** GitHub suppresses workflow events for anything created with a
+  workflow's own `GITHUB_TOKEN` (the recursion guard). Every firmware
+  release is published by `firmware-release.yml` with that token, so the
+  `release: [published]` trigger never fires for them — it had only ever
+  fired for the early human-published releases, which is exactly what made
+  it look alive.
+- **Fix:** `firmware-release.yml` now chain-dispatches
+  `vision-model-release.yml` explicitly after publishing (`actions: write` +
+  `gh workflow run`); the event trigger stays for human publishes, and the
+  per-tag concurrency group de-dupes if both fire. **Generalize:** in this
+  repo, never rely on a `release:`/`push:` event fired by a release another
+  workflow publishes — if workflow B must follow workflow A's publish, A
+  dispatches B by name.
+
 ### 2026-07-27 — A "successful" release quietly dropped the products that had just compiled, and the app that could tell you about updates was polling a URL that can never answer
 
 Two independent failures, one release day, both invisible-by-design.

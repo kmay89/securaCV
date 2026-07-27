@@ -797,7 +797,9 @@ function showModuleFlow() {
   $("module-flow").classList.remove("hidden");
   $("console").textContent = "";
   $("console").classList.remove("hidden");
-  setStatus("flash-result", "Use the module button below. The host firmware receipt is kept while you move the cable.");
+  setStatus("flash-result", "Use the module button below. The host firmware receipt is kept while you move the cable." +
+    (state.vision.hostFlash ? "" :
+      " (This is board 2 of 2 — the XIAO host takes the Canary Vision firmware through its own USB-C port, before or after this; the demo needs both.)"));
   renderReceipts(true);
 }
 
@@ -852,12 +854,21 @@ async function onFlash() {
     renderReceipts();
     announceToWitness(product);   // instant, so the wall reacts right away
     discoverAndPopulate(product); // then replace with the REAL fleet off the LAN
+    // The Vision is a TWO-board Canary: the ESP32 host just flashed here, and
+    // the Grove Vision AI V2 camera module loads its model through its OWN
+    // USB-C port. Say the next move out loud, or the demo dies half-done with
+    // a module that never got a brain.
+    const moduleNext = product.id && product.id.includes("vision") && !state.vision.module
+      ? " Board 1 of 2 done — now move the USB cable to the CAMERA MODULE's own USB-C port " +
+        "(the wide port on the carrier board, next to the Grove socket — not the XIAO's). " +
+        "I'll recognize the module and offer its model below."
+      : "";
     if (requiresLiveReceipt(product)) {
-      setStatus("flash-result", "Firmware write verified. Watching the live boot for its device receipt…", "ok");
+      setStatus("flash-result", "Firmware write verified. Watching the live boot for its device receipt…" + moduleNext, "ok");
       state.busy = false;
       await startMonitor();
     } else {
-      setStatus("flash-result", "Firmware write verified. Flashing is complete. ✓", "ok");
+      setStatus("flash-result", "Firmware write verified. Flashing is complete. ✓" + moduleNext, "ok");
       maybeHatch();
       // The serial monitor should just work — start it automatically so the
       // live boot log is right there, no "Start" click. It reconnects on its
@@ -930,7 +941,12 @@ async function onFlashModule() {
     });
     state.vision.module = receipt;
     $("module-progress").textContent = "100% · inference proved";
-    setStatus("flash-result", "Vision module verified, burned, answered AT, and ran one inference. ✓", "ok");
+    // Mirror of the host-side nudge: whichever board flashed first, the
+    // other one is named — with its port — before this counts as done.
+    const hostNext = state.vision.hostFlash ? "" :
+      " Board 1 of 2 done — the XIAO host still needs the Canary Vision firmware: " +
+      "move the cable to the XIAO's own USB-C port and pick Canary Vision above.";
+    setStatus("flash-result", "Vision module verified, burned, answered AT, and ran one inference. ✓" + hostNext, "ok");
     if (receipt.preview_image) {
       $("module-preview").src = "data:image/jpeg;base64," + receipt.preview_image;
       $("module-preview").classList.remove("hidden");
@@ -1379,7 +1395,9 @@ function renderReceipts(forceVision = false) {
     ? `✓ ${host.channel === "local" ? host.product_id : "v" + host.version}` +
       `${host.channel === "dev" ? " (dev)" : ""} · ${host.bytes_written.toLocaleString()} B · ` +
       `${host.release_verification || "SHA-256"} · ${host.installed_sha256.slice(0, 12)}…`
-    : "waiting for ESP32 flash";
+    : vision
+      ? "waiting for ESP32 flash — plug the XIAO's own USB-C port"
+      : "waiting for ESP32 flash";
   setReceipt("receipt-host-image", !!host, hostLabel);
   setReceipt(
     "receipt-host-boot",
@@ -1401,7 +1419,7 @@ function renderReceipts(forceVision = false) {
       !!(module && module.inference_ok),
       module && module.inference_ok
         ? `✓ v${module.version} · inference · ${module.sha256.slice(0, 12)}…`
-        : "waiting for WE2 model + AT inference"
+        : "waiting for WE2 model — plug the module's own USB-C port (wide port by the Grove socket)"
     );
   }
 }
