@@ -1,10 +1,10 @@
 {
  "generated_by": "scripts/bom_pricing.py",
- "as_of": "2026-07-23T21:49:40Z",
- "note": "Offline seed from the BOM CSVs — prices are the CSVs' indicative values until distributor credentials are configured.",
+ "as_of": "2026-07-27T03:45:54Z",
+ "note": "Nightly distributor snapshot; provenance marks which rows are distributor-verified vs csv-seed.",
  "sources": {
   "csv": "docs/hardware/bom_*.csv (design intent + indicative seed prices)",
-  "digikey": false,
+  "digikey": true,
   "mouser": false
  },
  "parts": {
@@ -14,12 +14,19 @@
    "sourcing": "orderable",
    "seed_usd": 15.99,
    "unit_usd": 15.99,
-   "provenance": "csv-seed",
-   "stock": null,
-   "lifecycle": null,
-   "sku": {},
-   "breaks": [],
-   "url": null,
+   "provenance": "digikey",
+   "stock": 148,
+   "lifecycle": "Active",
+   "sku": {
+    "digikey": "1597-101021112-ND"
+   },
+   "breaks": [
+    {
+     "qty": 1,
+     "usd": 15.99
+    }
+   ],
+   "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/101021112/22469630",
    "boms": [
     "bom_canary_vision.csv"
    ]
@@ -29,16 +36,21 @@
    "desc": "XIAO ESP32-S3 Sense (ESP32-S3, 8MB flash, 8MB PSRAM, OV2640 camera, PDM mic)",
    "sourcing": "orderable",
    "seed_usd": 13.99,
-   "unit_usd": 13.99,
-   "provenance": "csv-seed",
-   "stock": null,
-   "lifecycle": null,
+   "unit_usd": 15.9,
+   "provenance": "digikey",
+   "stock": 1848,
+   "lifecycle": "Active",
    "sku": {
     "mouser": "713-102010469",
-    "digikey": "102010469-ND"
+    "digikey": "1597-102010469-ND"
    },
-   "breaks": [],
-   "url": null,
+   "breaks": [
+    {
+     "qty": 1,
+     "usd": 15.9
+    }
+   ],
+   "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/102010469/16652896",
    "boms": [
     "bom_canary_wap.csv"
    ]
@@ -64,15 +76,21 @@
    "desc": "Grove 4-pin cable",
    "sourcing": "orderable",
    "seed_usd": 1.2,
-   "unit_usd": 1.2,
-   "provenance": "csv-seed",
-   "stock": null,
-   "lifecycle": null,
+   "unit_usd": 2.0,
+   "provenance": "digikey",
+   "stock": 599,
+   "lifecycle": "Active",
    "sku": {
-    "mouser": "713-110990210"
+    "mouser": "713-110990210",
+    "digikey": "1597-1092-ND"
    },
-   "breaks": [],
-   "url": null,
+   "breaks": [
+    {
+     "qty": 1,
+     "usd": 2.0
+    }
+   ],
+   "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/110990210/5482570",
    "boms": [
     "bom_canary_vision.csv"
    ]
@@ -83,14 +101,19 @@
    "sourcing": "orderable",
    "seed_usd": 7.49,
    "unit_usd": 7.49,
-   "provenance": "csv-seed",
-   "stock": null,
-   "lifecycle": null,
+   "provenance": "digikey",
+   "stock": 6041,
+   "lifecycle": "Active",
    "sku": {
-    "digikey": "113991114"
+    "digikey": "1597-113991114-ND"
    },
-   "breaks": [],
-   "url": null,
+   "breaks": [
+    {
+     "qty": 1,
+     "usd": 7.49
+    }
+   ],
+   "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/113991114/19285530",
    "boms": [
     "bom_canary_display.csv"
    ]
@@ -116,16 +139,45 @@
    "desc": "Polycarbonate enclosure w/ clear lid (Hammond 1554/1555 + clear lid); camera window",
    "sourcing": "orderable",
    "seed_usd": 18.0,
-   "unit_usd": 18.0,
-   "provenance": "csv-seed",
-   "stock": null,
-   "lifecycle": null,
+   "unit_usd": 26.29,
+   "provenance": "digikey",
+   "stock": 86,
+   "lifecycle": "Active",
    "sku": {
     "mouser": "546-1554F2GYCL",
-    "digikey": "HM1276-ND"
+    "digikey": "HM1796-ND"
    },
-   "breaks": [],
-   "url": null,
+   "breaks": [
+    {
+     "qty": 1,
+     "usd": 26.29
+    },
+    {
+     "qty": 5,
+     "usd": 22.138
+    },
+    {
+     "qty": 10,
+     "usd": 20.573
+    },
+    {
+     "qty": 25,
+     "usd": 18.6848
+    },
+    {
+     "qty": 50,
+     "usd": 17.3796
+    },
+    {
+     "qty": 100,
+     "usd": 16.1712
+    },
+    {
+     "qty": 250,
+     "usd": 16.0896
+    }
+   ],
+   "url": "https://www.digikey.com/en/products/detail/hammond-manufacturing/1554F2GYCL/2359947",
    "boms": [
     "bom_canary_vision.csv",
     "bom_canary_wap.csv"
@@ -136,17 +188,54 @@
    "desc": "Flyback/clamp diode (small-signal) across magnetic buzzer",
    "sourcing": "orderable",
    "seed_usd": 0.05,
-   "unit_usd": 0.05,
-   "provenance": "csv-seed",
-   "stock": null,
-   "lifecycle": null,
+   "unit_usd": 0.1,
+   "provenance": "digikey",
+   "stock": 966973,
+   "lifecycle": "Active",
    "sku": {
     "mouser": "512-1N4148",
     "digikey": "1N4148FS-ND",
     "lcsc": "C81598"
    },
-   "breaks": [],
-   "url": null,
+   "breaks": [
+    {
+     "qty": 1,
+     "usd": 0.1
+    },
+    {
+     "qty": 10,
+     "usd": 0.055
+    },
+    {
+     "qty": 100,
+     "usd": 0.0338
+    },
+    {
+     "qty": 500,
+     "usd": 0.02424
+    },
+    {
+     "qty": 1000,
+     "usd": 0.02112
+    },
+    {
+     "qty": 2000,
+     "usd": 0.01848
+    },
+    {
+     "qty": 5000,
+     "usd": 0.01559
+    },
+    {
+     "qty": 10000,
+     "usd": 0.0138
+    },
+    {
+     "qty": 50000,
+     "usd": 0.01065
+    }
+   ],
+   "url": "https://www.digikey.com/en/products/detail/onsemi/1N4148/458603",
    "boms": [
     "bom_canary_wap.csv"
    ]
@@ -172,17 +261,38 @@
    "desc": "N-channel MOSFET (only needed for MAGNETIC buzzers)",
    "sourcing": "orderable",
    "seed_usd": 0.1,
-   "unit_usd": 0.1,
-   "provenance": "csv-seed",
-   "stock": null,
-   "lifecycle": null,
+   "unit_usd": 0.16,
+   "provenance": "digikey",
+   "stock": 50369,
+   "lifecycle": "Active",
    "sku": {
     "mouser": "512-2N7002LT1G",
-    "digikey": "2N7002LT1GOSCT-ND",
+    "digikey": "4878-2N7002CT-ND",
     "lcsc": "C8545"
    },
-   "breaks": [],
-   "url": null,
+   "breaks": [
+    {
+     "qty": 1,
+     "usd": 0.16
+    },
+    {
+     "qty": 10,
+     "usd": 0.1
+    },
+    {
+     "qty": 100,
+     "usd": 0.0615
+    },
+    {
+     "qty": 500,
+     "usd": 0.04458
+    },
+    {
+     "qty": 1000,
+     "usd": 0.03906
+    }
+   ],
+   "url": "https://www.digikey.com/en/products/detail/diotec-semiconductor/2N7002/13163336",
    "boms": [
     "bom_canary_wap.csv"
    ]
@@ -192,13 +302,48 @@
    "desc": "Reed switch, SPST normally-closed (tamper), hermetic glass",
    "sourcing": "orderable",
    "seed_usd": 1.8,
-   "unit_usd": 1.8,
-   "provenance": "csv-seed",
-   "stock": null,
-   "lifecycle": null,
-   "sku": {},
-   "breaks": [],
-   "url": null,
+   "unit_usd": 4.08,
+   "provenance": "digikey",
+   "stock": 7643,
+   "lifecycle": "Active",
+   "sku": {
+    "digikey": "HE573-ND"
+   },
+   "breaks": [
+    {
+     "qty": 1,
+     "usd": 4.08
+    },
+    {
+     "qty": 10,
+     "usd": 3.404
+    },
+    {
+     "qty": 25,
+     "usd": 3.154
+    },
+    {
+     "qty": 100,
+     "usd": 2.8117
+    },
+    {
+     "qty": 300,
+     "usd": 2.57783
+    },
+    {
+     "qty": 500,
+     "usd": 2.4811
+    },
+    {
+     "qty": 1000,
+     "usd": 2.36195
+    },
+    {
+     "qty": 2500,
+     "usd": 2.22501
+    }
+   ],
+   "url": "https://www.digikey.com/en/products/detail/littelfuse-inc/59140-1-S-02-A/2650435",
    "boms": [
     "bom_canary_sense.csv",
     "bom_canary_wap.csv"
@@ -290,15 +435,16 @@
    "desc": "ALT: Hall-effect switch (tamper) in place of reed",
    "sourcing": "orderable",
    "seed_usd": 0.45,
-   "unit_usd": 0.45,
-   "provenance": "csv-seed",
-   "stock": null,
-   "lifecycle": null,
+   "unit_usd": 0.0,
+   "provenance": "digikey",
+   "stock": 0,
+   "lifecycle": "Obsolete",
    "sku": {
-    "lcsc": "C460941"
+    "lcsc": "C460941",
+    "digikey": "AH3572-P-BDI-ND"
    },
    "breaks": [],
-   "url": null,
+   "url": "https://www.digikey.com/en/products/detail/diodes-incorporated/AH3572-P-B/9649753",
    "boms": [
     "bom_canary_wap.csv"
    ]
@@ -308,17 +454,54 @@
    "desc": "Tactile push button 6mm momentary (multifunction)",
    "sourcing": "orderable",
    "seed_usd": 0.12,
-   "unit_usd": 0.12,
-   "provenance": "csv-seed",
-   "stock": null,
-   "lifecycle": null,
+   "unit_usd": 0.35,
+   "provenance": "digikey",
+   "stock": 41001,
+   "lifecycle": "Active",
    "sku": {
     "mouser": "653-B3F-1000",
     "digikey": "SW400-ND",
     "lcsc": "C72443"
    },
-   "breaks": [],
-   "url": null,
+   "breaks": [
+    {
+     "qty": 1,
+     "usd": 0.35
+    },
+    {
+     "qty": 10,
+     "usd": 0.299
+    },
+    {
+     "qty": 25,
+     "usd": 0.28
+    },
+    {
+     "qty": 100,
+     "usd": 0.2506
+    },
+    {
+     "qty": 250,
+     "usd": 0.23224
+    },
+    {
+     "qty": 500,
+     "usd": 0.21916
+    },
+    {
+     "qty": 1500,
+     "usd": 0.20025
+    },
+    {
+     "qty": 3000,
+     "usd": 0.18959
+    },
+    {
+     "qty": 6000,
+     "usd": 0.17994
+    }
+   ],
+   "url": "https://www.digikey.com/en/products/detail/aratas-america-llc/B3F-1000/33150",
    "boms": [
     "bom_canary_vision.csv",
     "bom_canary_wap.csv"
@@ -345,15 +528,41 @@
    "desc": "Capacitor 0.1uF 50V X7R 0805 (WS2812 decoupling)",
    "sourcing": "orderable",
    "seed_usd": 0.02,
-   "unit_usd": 0.02,
-   "provenance": "csv-seed",
-   "stock": null,
-   "lifecycle": null,
+   "unit_usd": 0.1,
+   "provenance": "digikey",
+   "stock": 7250710,
+   "lifecycle": "Active",
    "sku": {
-    "lcsc": "C49678"
+    "lcsc": "C49678",
+    "digikey": "1276-1003-1-ND"
    },
-   "breaks": [],
-   "url": null,
+   "breaks": [
+    {
+     "qty": 1,
+     "usd": 0.1
+    },
+    {
+     "qty": 10,
+     "usd": 0.038
+    },
+    {
+     "qty": 50,
+     "usd": 0.0254
+    },
+    {
+     "qty": 100,
+     "usd": 0.0218
+    },
+    {
+     "qty": 500,
+     "usd": 0.0156
+    },
+    {
+     "qty": 1000,
+     "usd": 0.0137
+    }
+   ],
+   "url": "https://www.digikey.com/en/products/detail/samsung-electro-mechanics/CL21B104KBCNNNC/3886661",
    "boms": [
     "bom_canary_vision.csv",
     "bom_canary_wap.csv"
@@ -364,16 +573,41 @@
    "desc": "Passive piezo (UNPOPULATED in v0.1 firmware — future severity-tiered chime)",
    "sourcing": "orderable",
    "seed_usd": 0.55,
-   "unit_usd": 0.55,
-   "provenance": "csv-seed",
-   "stock": null,
-   "lifecycle": null,
+   "unit_usd": 1.9,
+   "provenance": "digikey",
+   "stock": 6314,
+   "lifecycle": "Active",
    "sku": {
     "mouser": "490-CPT-9019S-SMT-TR",
-    "digikey": "102-CPT-9019S-SMT-TRCT-ND"
+    "digikey": "102-3761-1-ND"
    },
-   "breaks": [],
-   "url": null,
+   "breaks": [
+    {
+     "qty": 1,
+     "usd": 1.9
+    },
+    {
+     "qty": 10,
+     "usd": 1.493
+    },
+    {
+     "qty": 25,
+     "usd": 1.3584
+    },
+    {
+     "qty": 50,
+     "usd": 1.266
+    },
+    {
+     "qty": 100,
+     "usd": 1.1808
+    },
+    {
+     "qty": 250,
+     "usd": 1.09088
+    }
+   ],
+   "url": "https://www.digikey.com/en/products/detail/same-sky-formerly-cui-devices/CPT-9019S-SMT-TR/6012432",
    "boms": [
     "bom_canary_display.csv",
     "bom_canary_vision.csv",
@@ -450,15 +684,20 @@
    "sourcing": "orderable",
    "seed_usd": 8.0,
    "unit_usd": 8.0,
-   "provenance": "csv-seed",
-   "stock": null,
-   "lifecycle": null,
+   "provenance": "digikey",
+   "stock": 0,
+   "lifecycle": "Obsolete",
    "sku": {
     "mouser": "356-ESP32C3DEVKITM1",
-    "digikey": "1965-ESP32-C3-DEVKITM-1ND"
+    "digikey": "1965-ESP32-C3-DEVKITM-1-ND"
    },
-   "breaks": [],
-   "url": null,
+   "breaks": [
+    {
+     "qty": 1,
+     "usd": 8.0
+    }
+   ],
+   "url": "https://www.digikey.com/en/products/detail/espressif-systems/ESP32-C3-DEVKITM-1/13684315",
    "boms": [
     "bom_canary_vision.csv"
    ]
@@ -857,13 +1096,52 @@
    "desc": "Light pipe, single, vertical (LED to face)",
    "sourcing": "orderable",
    "seed_usd": 0.45,
-   "unit_usd": 0.45,
-   "provenance": "csv-seed",
-   "stock": null,
-   "lifecycle": null,
-   "sku": {},
-   "breaks": [],
-   "url": null,
+   "unit_usd": 0.79,
+   "provenance": "digikey",
+   "stock": 3148,
+   "lifecycle": "Active",
+   "sku": {
+    "digikey": "492-1149-ND"
+   },
+   "breaks": [
+    {
+     "qty": 1,
+     "usd": 0.79
+    },
+    {
+     "qty": 10,
+     "usd": 0.546
+    },
+    {
+     "qty": 100,
+     "usd": 0.3984
+    },
+    {
+     "qty": 500,
+     "usd": 0.33242
+    },
+    {
+     "qty": 1000,
+     "usd": 0.31076
+    },
+    {
+     "qty": 2000,
+     "usd": 0.29238
+    },
+    {
+     "qty": 5000,
+     "usd": 0.27227
+    },
+    {
+     "qty": 10000,
+     "usd": 0.25974
+    },
+    {
+     "qty": 25000,
+     "usd": 0.24608
+    }
+   ],
+   "url": "https://www.digikey.com/en/products/detail/bivar-inc/PLP1-250/586454",
    "boms": [
     "bom_canary_wap.csv"
    ]
@@ -889,16 +1167,50 @@
    "desc": "Resistor 100k ohm 1% 0805 (VBAT 2:1 divider, qty 2)",
    "sourcing": "orderable",
    "seed_usd": 0.02,
-   "unit_usd": 0.02,
-   "provenance": "csv-seed",
-   "stock": null,
-   "lifecycle": null,
+   "unit_usd": 0.1,
+   "provenance": "digikey",
+   "stock": 649761,
+   "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07100KL",
-    "lcsc": "C17407"
+    "lcsc": "C17407",
+    "digikey": "311-100KCRCT-ND"
    },
-   "breaks": [],
-   "url": null,
+   "breaks": [
+    {
+     "qty": 1,
+     "usd": 0.1
+    },
+    {
+     "qty": 10,
+     "usd": 0.034
+    },
+    {
+     "qty": 25,
+     "usd": 0.0256
+    },
+    {
+     "qty": 50,
+     "usd": 0.0208
+    },
+    {
+     "qty": 100,
+     "usd": 0.0171
+    },
+    {
+     "qty": 250,
+     "usd": 0.01344
+    },
+    {
+     "qty": 500,
+     "usd": 0.01136
+    },
+    {
+     "qty": 1000,
+     "usd": 0.00973
+    }
+   ],
+   "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-07100KL/727544",
    "boms": [
     "bom_canary_wap.csv"
    ]
@@ -908,16 +1220,50 @@
    "desc": "Resistor 100 ohm 1/8W 0805 (buzzer series/inrush)",
    "sourcing": "orderable",
    "seed_usd": 0.02,
-   "unit_usd": 0.02,
-   "provenance": "csv-seed",
-   "stock": null,
-   "lifecycle": null,
+   "unit_usd": 0.1,
+   "provenance": "digikey",
+   "stock": 178768,
+   "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07100RL",
-    "lcsc": "C17408"
+    "lcsc": "C17408",
+    "digikey": "311-100CRCT-ND"
    },
-   "breaks": [],
-   "url": null,
+   "breaks": [
+    {
+     "qty": 1,
+     "usd": 0.1
+    },
+    {
+     "qty": 10,
+     "usd": 0.034
+    },
+    {
+     "qty": 25,
+     "usd": 0.0256
+    },
+    {
+     "qty": 50,
+     "usd": 0.0208
+    },
+    {
+     "qty": 100,
+     "usd": 0.0171
+    },
+    {
+     "qty": 250,
+     "usd": 0.01344
+    },
+    {
+     "qty": 500,
+     "usd": 0.01136
+    },
+    {
+     "qty": 1000,
+     "usd": 0.00973
+    }
+   ],
+   "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-07100RL/727543",
    "boms": [
     "bom_canary_wap.csv"
    ]
@@ -927,16 +1273,50 @@
    "desc": "Resistor 1k ohm 1/8W 0805 (touch ESD series)",
    "sourcing": "orderable",
    "seed_usd": 0.02,
-   "unit_usd": 0.02,
-   "provenance": "csv-seed",
-   "stock": null,
-   "lifecycle": null,
+   "unit_usd": 0.1,
+   "provenance": "digikey",
+   "stock": 497309,
+   "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-071KL",
-    "lcsc": "C17513"
+    "lcsc": "C17513",
+    "digikey": "311-1.00KCRCT-ND"
    },
-   "breaks": [],
-   "url": null,
+   "breaks": [
+    {
+     "qty": 1,
+     "usd": 0.1
+    },
+    {
+     "qty": 10,
+     "usd": 0.034
+    },
+    {
+     "qty": 25,
+     "usd": 0.0256
+    },
+    {
+     "qty": 50,
+     "usd": 0.0208
+    },
+    {
+     "qty": 100,
+     "usd": 0.0171
+    },
+    {
+     "qty": 250,
+     "usd": 0.01344
+    },
+    {
+     "qty": 500,
+     "usd": 0.01136
+    },
+    {
+     "qty": 1000,
+     "usd": 0.00973
+    }
+   ],
+   "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-071KL/727444",
    "boms": [
     "bom_canary_wap.csv"
    ]
@@ -946,16 +1326,50 @@
    "desc": "Resistor 330 ohm 1/8W 0805 (WS2812 data series)",
    "sourcing": "orderable",
    "seed_usd": 0.02,
-   "unit_usd": 0.02,
-   "provenance": "csv-seed",
-   "stock": null,
-   "lifecycle": null,
+   "unit_usd": 0.1,
+   "provenance": "digikey",
+   "stock": 472351,
+   "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07330RL",
-    "lcsc": "C17630"
+    "lcsc": "C17630",
+    "digikey": "311-330CRCT-ND"
    },
-   "breaks": [],
-   "url": null,
+   "breaks": [
+    {
+     "qty": 1,
+     "usd": 0.1
+    },
+    {
+     "qty": 10,
+     "usd": 0.034
+    },
+    {
+     "qty": 25,
+     "usd": 0.0256
+    },
+    {
+     "qty": 50,
+     "usd": 0.0208
+    },
+    {
+     "qty": 100,
+     "usd": 0.0171
+    },
+    {
+     "qty": 250,
+     "usd": 0.01344
+    },
+    {
+     "qty": 500,
+     "usd": 0.01136
+    },
+    {
+     "qty": 1000,
+     "usd": 0.00973
+    }
+   ],
+   "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-07330RL/727866",
    "boms": [
     "bom_canary_vision.csv",
     "bom_canary_wap.csv"
