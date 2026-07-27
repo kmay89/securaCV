@@ -81,7 +81,8 @@ final class AlertCenter: ObservableObject {
         switch strongest.minSeverity {
         case .tamper: return .critical
         case .alert: return .important
-        default: return .digest      // digest events are pulled, never pushed
+        default: return nil          // digest events are pulled, never pushed —
+                                     // nil IS the abuse guard this method promises
         }
     }
 
