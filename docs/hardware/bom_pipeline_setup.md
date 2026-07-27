@@ -32,7 +32,14 @@ why it exists is
 - Every night at 09:13 UTC, the 32 orderable parts get verified SKUs,
   live stock, price breaks, and lifecycle status from Digi-Key and
   Mouser. Build-it rows gain `live · digikey · 4,213 in stock` chips
-  and a snapshot date.
+  and a snapshot date, and each verified row's MPN becomes a link to
+  that distributor's own product page.
+- The website's [economics page](https://securacv.com/economics) grows
+  a **"The parts behind each kit"** list — every required part with its
+  price, its live stock, and the same distributor link — and its
+  provenance line counts what is verified ("2 of 17 required parts
+  distributor-verified"). Before the keys, that line honestly reads
+  "17 required parts at indicative prices — no distributor match yet."
 - When something needs a *decision* — a part out of stock, a price
   moving >15% **and** ≥$0.50 (both, so a 2¢ resistor doubling never
   pages anyone), a part leaving Active lifecycle, an MPN that stops
@@ -125,9 +132,22 @@ vanished.
 ## What is verified vs. what is designed (radical honesty)
 
 - **Verified by CI on every PR:** the CSV schema, the snapshot schema,
-  and 13 contract tests on the engine's behavior — miss→demote→one
+  and 17 contract tests on the engine's behavior — miss→demote→one
   alarm, seed never destroys fetched history, recovery goes quiet,
-  every exception kind, the price-jump noise floor.
+  every exception kind, the price-jump noise floor, and the product-URL
+  safety rule below. Plus the overlay's own tests
+  (`canary-local/tools/tests/test_bom_overlay.py`,
+  `canary-local/tests/build_it.test.js`) and the website's
+  (`tests/economics.test.mjs`).
+- **The product URL is the one fetched field that becomes a clickable
+  link, so it is checked three times** and a failed check always means
+  *no link*, never a broken or hostile one: on fetch
+  (`safe_product_url` — https only, and only at the distributor we
+  actually queried), on generate (again, because `pricing.json` is a
+  committed file a human can edit), and at render in both frontends
+  (because `build.json` arrives over the network). A part demoted to
+  `carried` loses its link with its live status, so a listing that
+  vanished can't linger as a dead link.
 - **Designed against the documented APIs but not yet exercised with
   real credentials:** the exact Digi-Key/Mouser response-field parsing.
   This repo's build environment has no distributor keys, so the first

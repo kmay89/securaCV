@@ -14,6 +14,36 @@ const el = (tag, cls, text) => {
 
 const GH = "https://github.com/kmay89/securaCV/blob/main/";
 
+/* The distributor's own product page for a row, or null.
+ *
+ * build.json only carries a `live.url` for a distributor-verified row, and
+ * only after the URL passed the snapshot's https/distributor-domain check
+ * twice (scripts/bom_pricing.py on fetch, gen_enclosures.py on generate).
+ * This third check is the cheap one that matters at the point of use: a
+ * build.json served from anywhere still can't put a non-https scheme in an
+ * href. Anything that fails just isn't a link — never a broken one. */
+export const liveUrl = (r) => {
+  const u = r.live && r.live.url;
+  return typeof u === "string" && u.startsWith("https://") ? u : null;
+};
+
+/* "Seeed Studio · 102010469" — a link to the part when we have one. */
+export const partNode = (r) => {
+  if (!r.mpn) return "";
+  const label = `${r.mfr} · ${r.mpn}`;
+  const url = liveUrl(r);
+  if (!url) return el("span", "muted", label);
+  const a = el("a", "bom-part-link", label);
+  a.href = url;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  a.title = `Open ${r.mpn} at ${r.live.src}`;
+  // The row itself toggles its note on click; following a link shouldn't
+  // also flip the note open behind the new tab.
+  a.addEventListener("click", (ev) => ev.stopPropagation());
+  return a;
+};
+
 export function buildBuildIt(buildData, dev) {
   const wrap = el("div", "buildit");
   if (!buildData) {
@@ -136,7 +166,7 @@ export function buildBuildIt(buildData, dev) {
           el("span", null, `×${r.qty}`),
           r.required ? el("span", "chip chip-live", "required")
                      : el("span", "chip", "optional"),
-          r.mpn ? el("span", "muted", `${r.mfr} · ${r.mpn}`) : ""
+          partNode(r)
         );
         if (r.live) {
           meta.append(el("span", "chip chip-live",

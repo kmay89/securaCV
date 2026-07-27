@@ -64,6 +64,39 @@ DK_TOKEN_URL = "https://api.digikey.com/v1/oauth2/token"
 DK_SEARCH_URL = "https://api.digikey.com/products/v4/search/keyword"
 MOUSER_URL = "https://api.mouser.com/api/v1/search/partnumber"
 
+# A product URL is the one field we fetch that becomes an `href` a visitor
+# clicks. It arrives as third-party text, so it is checked here — at the
+# boundary, once — and only an https link at the distributor we actually
+# asked is ever written to the snapshot. Anything else (javascript:, a
+# redirector on another host, a scheme we don't recognise) becomes None and
+# the row simply renders without a link. See docs/hardware/bom_pipeline.md.
+DISTRIBUTOR_DOMAIN = {"digikey": "digikey.com", "mouser": "mouser.com"}
+DISTRIBUTOR_ORIGIN = {"digikey": "https://www.digikey.com",
+                      "mouser": "https://www.mouser.com"}
+
+
+def safe_product_url(url, src):
+    """The distributor product URL, iff we're willing to publish it as a link."""
+    base = DISTRIBUTOR_DOMAIN.get(src)
+    if not base or not isinstance(url, str):
+        return None
+    url = url.strip()
+    if not url:
+        return None
+    # Some responses hand back a root-relative path ("/en/products/detail/…");
+    # "//host/…" is protocol-relative and is NOT that, so it stays untrusted.
+    if url.startswith("/") and not url.startswith("//"):
+        url = DISTRIBUTOR_ORIGIN[src] + url
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return None
+    host = (parts.hostname or "").lower()
+    if parts.scheme != "https" or not (host == base
+                                       or host.endswith("." + base)):
+        return None
+    return url
+
 
 def now_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -157,6 +190,13 @@ def digikey_lookup(token, client_id, mpn):
         "X-DIGIKEY-Locale-Language": "en",
         "X-DIGIKEY-Locale-Currency": "USD",
     })
+    return _parse_digikey(res, mpn)
+
+
+def _parse_digikey(res, mpn):
+    """Response → snapshot fields. Split from the fetch so the field parsing
+    — the part the setup guide flags as unexercised until real credentials
+    land — is testable against a canned response."""
     for prod in (res or {}).get("Products") or []:
         if (prod.get("ManufacturerProductNumber") or "").lower() != mpn.lower():
             continue
@@ -176,7 +216,7 @@ def digikey_lookup(token, client_id, mpn):
                           or None),
             "sku_digikey": var.get("DigiKeyProductNumber"),
             "breaks": breaks,
-            "url": prod.get("ProductUrl"),
+            "url": safe_product_url(prod.get("ProductUrl"), "digikey"),
         }
     return None
 
@@ -187,6 +227,11 @@ def mouser_lookup(api_key, mpn):
     res = http_json(url, label="mouser search", data={"SearchByPartRequest": {
         "mouserPartNumber": mpn, "partSearchOptions": "",
     }})
+    return _parse_mouser(res, mpn)
+
+
+def _parse_mouser(res, mpn):
+    """Response → snapshot fields (see _parse_digikey on why this is split)."""
     for part in ((res or {}).get("SearchResults") or {}).get("Parts") or []:
         if (part.get("ManufacturerPartNumber") or "").lower() != mpn.lower():
             continue
@@ -204,7 +249,7 @@ def mouser_lookup(api_key, mpn):
             "lifecycle": part.get("LifecycleStatus") or None,
             "sku_mouser": part.get("MouserPartNumber"),
             "breaks": breaks,
-            "url": part.get("ProductDetailUrl"),
+            "url": safe_product_url(part.get("ProductDetailUrl"), "mouser"),
         }
     return None
 
