@@ -1,7 +1,12 @@
 // src/hal/display_1in47.cpp — Nightstand flavor glass: a Waveshare ESP32
-// 1.47" board (ST7789 172x320 portrait over 4-wire SPI). No touch panel;
-// the WS2812 ambient LED (hal/ambient_led.cpp) and the BOOT button are the
-// input surface.
+// portrait ST7789 board over 4-wire SPI (the 1.47" 172x320 boards, and the
+// Touch-1.69's 240x280 — geometry and offsets come from pins.h). On the
+// 1.47" boards there is no touch panel; the WS2812 ambient LED
+// (hal/ambient_led.cpp) and the BOOT button are the input surface. On a
+// board that carries a CST816-family touch layer (FEATURE_TOUCH +
+// HAS_TOUCH, e.g. the Touch-1.69's CST816T), touch_read() is real and
+// main.cpp's standard tap/long-press ladder works by finger — the
+// LED-less glass is both the ambient surface and the input.
 //
 // LVGL owns buffering/dirty-region rendering (ui/lvgl_port.cpp); this HAL
 // exposes the bare panel and flushes arrive via draw16bitRGBBitmap.
@@ -20,6 +25,15 @@
 
 #include <Arduino.h>
 #include <Arduino_GFX_Library.h>
+
+// The CST816 path costs nothing on the touchless 1.47" boards: it is
+// double-gated (flavor turns it on AND the board carries the panel), the
+// same contract ambient_led.cpp uses for the WS2812.
+#if defined(FEATURE_TOUCH) && FEATURE_TOUCH && \
+    defined(HAS_TOUCH) && HAS_TOUCH
+#define CD_1IN47_TOUCH 1
+#include <Wire.h>
+#endif
 
 #include "pins.h"
 #include "display.h"
@@ -47,6 +61,23 @@ constexpr uint8_t  NIGHT_RES_BITS = 13;
 constexpr uint16_t NIGHT_DUTY_MAX = 8191;
 
 bool s_night_profile = false;
+
+#ifdef CD_1IN47_TOUCH
+// CST816-family registers (same map the watch's CST816S uses; the
+// Touch-1.69's CST816T answers identically for gesture/fingers/coords).
+constexpr uint8_t CST_REG_GESTURE = 0x01;  // gesture id
+constexpr uint8_t CST_REG_FINGERS = 0x02;  // finger count
+constexpr uint8_t CST_REG_XPOS_H  = 0x03;  // [3:0] = x[11:8]
+
+bool cst816_read(uint8_t reg, uint8_t* buf, size_t len) {
+  Wire.beginTransmission(TOUCH_I2C_ADDR);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom((int)TOUCH_I2C_ADDR, (int)len) != (int)len) return false;
+  for (size_t i = 0; i < len; i++) buf[i] = (uint8_t)Wire.read();
+  return true;
+}
+#endif  // CD_1IN47_TOUCH
 
 void ensure_profile(bool night) {
   if (night == s_night_profile) return;
@@ -86,7 +117,28 @@ bool display_init() {
   }
   s_panel->fillScreen(0x0000);
 
-  log_line("DISP", "ST7789 172x320 up (LVGL render, PWM backlight).");
+#ifdef CD_1IN47_TOUCH
+  // Touch: shared I2C bus (CST816T + QMI8658 + PCF85063 live on it). The
+  // CST816 wants its reset released before it will ACK; some revisions
+  // then nap until touched — a quiet probe is normal, not fatal.
+#if TOUCH_PIN_RST >= 0
+  pinMode(TOUCH_PIN_RST, OUTPUT);
+  digitalWrite(TOUCH_PIN_RST, LOW);
+  delay(10);
+  digitalWrite(TOUCH_PIN_RST, HIGH);
+  delay(50);
+#endif
+  Wire.begin(I2C_PIN_SDA, I2C_PIN_SCL, I2C_FREQ_FAST);
+#if TOUCH_PIN_INT >= 0
+  pinMode(TOUCH_PIN_INT, INPUT);
+#endif
+  uint8_t probe = 0;
+  if (!cst816_read(CST_REG_FINGERS, &probe, 1)) {
+    log_line("DISP", "CST816 quiet at boot (naps until touched) — touch armed.");
+  }
+#endif  // CD_1IN47_TOUCH
+
+  log_line("DISP", "ST7789 portrait up (LVGL render, PWM backlight).");
   return true;
 }
 
@@ -113,10 +165,24 @@ void backlight_night_set(uint16_t duty13) {
 #endif
 }
 
+#ifdef CD_1IN47_TOUCH
+TouchSample touch_read() {
+  TouchSample s;
+  uint8_t buf[6];
+  // gesture, fingers, xH, xL, yH, yL — one burst from 0x01.
+  if (!cst816_read(CST_REG_GESTURE, buf, sizeof(buf))) return s;
+  if (buf[1] == 0) return s;
+  s.touched = true;
+  s.x = (int16_t)(((buf[2] & 0x0F) << 8) | buf[3]);
+  s.y = (int16_t)(((buf[4] & 0x0F) << 8) | buf[5]);
+  return s;
+}
+#else
 // No touch panel on the 1.47" boards. The signature stays (main.cpp polls it
 // every loop pass); it simply never reports a touch. Attention is the BOOT
 // button + the ambient LED beacon.
 TouchSample touch_read() { return TouchSample{}; }
+#endif  // CD_1IN47_TOUCH
 
 }  // namespace canary::hal
 

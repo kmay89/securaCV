@@ -325,7 +325,7 @@ jobs:
           #define MQTT_USER nullptr
           #define MQTT_PASS nullptr
           HEADER
-          for E in canary-display-dash7 canary-display-nightstand-s3; do
+          for E in canary-display-dash7 canary-display-nightstand-s3 canary-display-touch169; do
             if ! pio run -e "$E"; then
               echo "::warning::${E} build failed (or this tag predates the env) — absent from the browser flasher this rebuild"
             fi

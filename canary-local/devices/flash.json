@@ -1152,6 +1152,45 @@
       "pick_label": "Nightstand — the 1.47″ USB-A stick"
     },
     {
+      "id": "securacv-canary-display-touch169",
+      "name": "Canary Nightstand Touch",
+      "tagline": "The portrait glance you can touch — tap to peek, hold to acknowledge; runs on a battery.",
+      "family": "display",
+      "board_label": "Waveshare ESP32-S3-Touch-LCD-1.69",
+      "chip": "ESP32-S3",
+      "flash_mb": 16,
+      "board": "esp32-s3-devkitc-1",
+      "asset_stem": "canary-display-touch169",
+      "provisioning": "on-glass",
+      "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
+      "wifi_nvs": "string",
+      "hatch": {
+        "kicker": "Display hatched",
+        "title": "Your glass is waking up.",
+        "body": "First light is the whole setup: the display guides you from its own screen — no app, no account, and it never reboot-loops on a fresh network.",
+        "steps": [
+          "Watch the splash land, then the hello: a fresh display shows a join QR on its own glass (a device-unique setup network).",
+          "Scan the QR with your phone — the setup page opens by itself; pick your home Wi-Fi and you're done typing.",
+          "The fleet face fades in and every Canary on your broker appears on its own — retained topics, no pairing, ever."
+        ]
+      },
+      "serial_receipt": false,
+      "role": "display",
+      "prove": {
+        "real": {
+          "kind": "glass",
+          "label": "Watch the glass — it comes alive",
+          "how": "The proof is the screen itself: splash, then the face, then the on-glass wizard. Touch works."
+        },
+        "emulated": {
+          "href": "fleet.html#canary-display-touch169",
+          "label": "🧪 the 1:1 twin — the same firmware, in the browser",
+          "how": "The fleet page boots the REAL display firmware compiled to WASM — the pixels here are the pixels the glass shows. The listening 4.3C variant gets its own does/doesn't mic bench at dash-mic.html — same decision core, drift-locked."
+        }
+      },
+      "pick_label": "Nightstand Touch — the 1.69″ touch + battery board"
+    },
+    {
       "id": "securacv-canary-display-nightstand-c6",
       "name": "Canary Nightstand C6",
       "tagline": "The 1.47″ portrait glance on the Wi-Fi 6 pin-header board — breadboard-friendly.",
