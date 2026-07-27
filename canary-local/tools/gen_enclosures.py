@@ -334,6 +334,38 @@ PRICING_PATH = HW / "pricing.json"
 PRICING = (json.loads(PRICING_PATH.read_text(encoding="utf-8"))
            if PRICING_PATH.exists() else {})
 
+# The snapshot's URL checker, imported rather than re-implemented — two
+# copies of a security rule is how one of them quietly stops matching.
+sys.path.insert(0, str(REPO / "scripts"))
+from bom_pricing import safe_product_url  # noqa: E402
+
+
+def live_overlay(part):
+    """The per-row `live` object, or None when the row isn't distributor-verified.
+
+    Only "digikey"/"mouser" provenance counts as live: a part demoted to
+    "carried" keeps its last-known numbers in the snapshot for reference but
+    must never be republished here as fresh — and so it never carries a link
+    to a listing that may no longer exist.
+    """
+    if not part or part.get("provenance") not in ("digikey", "mouser"):
+        return None
+    if part.get("unit_usd") is None:
+        return None
+    src = part["provenance"]
+    live = {
+        "unit_usd": part["unit_usd"],
+        "stock": part.get("stock"),
+        "src": src,
+    }
+    # Re-checked on the way out, not just on the way in: the snapshot is a
+    # committed file a human can edit. A URL that doesn't pass is simply
+    # absent, and the row renders exactly as it did before links existed.
+    url = safe_product_url(part.get("url"), src)
+    if url:
+        live["url"] = url
+    return live
+
 
 def parse_bom(name, prefix=None):
     rows = []
@@ -360,15 +392,8 @@ def parse_bom(name, prefix=None):
             # Distributor-verified price, when the nightly snapshot has one;
             # the CSV's indicative ExtUSD is the fallback for the live totals.
             part = parts.get(r.get("MPN", ""))
-            live = None
             qty = r.get("Qty", "1").strip()
-            if (part and part.get("provenance") in ("digikey", "mouser")
-                    and part.get("unit_usd") is not None and qty.isdigit()):
-                live = {
-                    "unit_usd": part["unit_usd"],
-                    "stock": part.get("stock"),
-                    "src": part["provenance"],
-                }
+            live = live_overlay(part) if qty.isdigit() else None
             ext_live = (live["unit_usd"] * int(qty)) if live else ext
             if required:
                 req_total += ext

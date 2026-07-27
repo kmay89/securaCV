@@ -1131,6 +1131,39 @@ someone went looking.
   health entities, which are pending a firmware publisher
   (`mqtt_publish_transport()` is defined but never called).
 
+## [2.3.1] - 2026-07-27
+
+### Every Canary Display ships in this release — including the Dash 7
+
+fw-v2.3.0 published without the ESP32-S3 display images (watch, dash,
+dash-modes, dash7, nightstand-s3): the Dash 7 and Nightstand S3 binaries
+compiled successfully, but the isolated-core nightstand-c6 build that
+follows them changed the PlatformIO project checksum, which silently
+cleaned `.pio/build` and erased their outputs before the signing step —
+the non-blocking display loop then dropped them from the release with
+only a warning. Both release workflows now stage each display env's build
+outputs the moment they exist and restore them after the C6 run, so the
+packaging, signing, and factory-image steps see every board that built.
+
+### The update channel is now a device setting, not a reflash
+
+The pull-OTA engine understands two channels: **release** (the compiled-in
+manifest URL riding `releases/latest`, guaranteed to be a signed stable
+firmware release) and **dev** (the same product's manifest on the rolling
+`fw-dev-latest` prerelease). The channel persists in NVS
+(`securacv_ota_set_channel` / `securacv_ota_get_channel`); the dev URL is
+derived from the compiled default by rewriting the one canonical release
+segment, so every product gets both channels with no per-board
+configuration — and a custom-server manifest override still wins outright.
+Both channels verify the same Ed25519 signatures from the same release
+key; switching back to release never downgrades (the anti-rollback floor
+holds until the stable channel moves past the running build). The Canary
+Display exposes the switch over MQTT — retained
+`securacv/<id>/update/channel` ("release"/"dev"), commands on
+`securacv/<id>/update/channel/cmd` — next to the existing install/auto
+topics, and checks the new channel promptly after a switch. Host-tested
+(`test_ota_logic.cpp`).
+
 ## [0.6.0] - Unreleased
 
 **State summary.** The Frigate -> MQTT -> sealed-log pipeline is verified

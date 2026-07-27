@@ -7,6 +7,11 @@ truth is [`boards.json`](boards.json) — the board-level counterpart of
 keeps this README, the registry, the board directories, and the build
 environments consistent, so the table below cannot silently rot.
 
+How full is each board — pins committed vs free, peripheral demand, thermal
+notes? See the generated gauge: [`PIN_BUDGET.md`](PIN_BUDGET.md)
+(regenerate with `python3 firmware/scripts/pin_budget.py --write`; CI fails
+if it drifts from the pin maps).
+
 ## Supported Boards
 
 | Board ID | MCU | Tier | Used by | Description |
@@ -23,6 +28,7 @@ environments consistent, so the table below cannot silently rot.
 | `xiao-esp32c6-sentinel` | ESP32-C6 | compile-tested | — (Phase 0) | Canary Sentinel Standard/Heavy head — MR60BHA2 radar + PIR + lux + WiFi/BLE; fusion core host-tested, on-device build/bench pending |
 | `xiao-esp32c3-sentinel-lite` | ESP32-C3 | compile-tested | — (Phase 0) | Canary Sentinel Lite — PIR + lux + WiFi/BLE, no radar (honest tier limit); fusion core host-tested, on-device build/bench pending |
 | `waveshare-esp32c6-lcd147` | ESP32-C6 | compile-tested | canary-display | Nightstand Line 1.47" — ST7789 172x320 SPI + 1x WS2812 ambient LED, single-core C6, no PSRAM; `nightstand` flavor on the core-3.x base (env `canary-display-nightstand-c6`), bench pending (docs/hardware/display_nightstand_line.md) |
+| `waveshare-esp32c6-lcd169` | ESP32-C6 | compile-tested | — | Nightstand Line candidate 1.69" (battery/pocket) — ST7789V2 240x280 (20-px row offset), QMI8658 IMU + PCF85063 RTC, battery charging, possible mic ("AI speech" — treat as mic-bearing); PARTIAL pin map, vendor wiki unreachable from CI sandbox, unverified pins are -1 VERIFY |
 | `waveshare-esp32s3-lcd147` | ESP32-S3 | compile-tested | canary-display | Nightstand Line 1.47" (USB-A stick) — same ST7789 172x320 panel, all pins differ, 8 MB PSRAM (can animate); `nightstand` flavor (env `canary-display-nightstand-s3`), bench pending |
 | `waveshare-esp32s3-lcd7` | ESP32-S3 | compile-tested | canary-display | Nightstand Line 7" big glass — 800x480 RGB + GT911 5-point touch + CH422G; electrically the 4.3" Dash at 7", reuses the dash HAL (env `canary-display-dash7`), bench pending |
 

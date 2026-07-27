@@ -12,6 +12,8 @@ struct Topics {
   char update_cmd[96];
   char update_auto[96];
   char update_auto_cmd[96];
+  char update_channel[96];      // retained "release" | "dev" — which rolling
+  char update_channel_cmd[96];  // release address the pull-OTA engine follows
   char alarm_set[96];   // nightstand wake alarm config (retained, own topic)
 };
 
@@ -25,6 +27,8 @@ static inline Topics build_topics(const char* device_id) {
   snprintf(t.update_cmd,      sizeof(t.update_cmd),      "securacv/%s/update/cmd",      device_id);
   snprintf(t.update_auto,     sizeof(t.update_auto),     "securacv/%s/update/auto",     device_id);
   snprintf(t.update_auto_cmd, sizeof(t.update_auto_cmd), "securacv/%s/update/auto/cmd", device_id);
+  snprintf(t.update_channel,     sizeof(t.update_channel),     "securacv/%s/update/channel",     device_id);
+  snprintf(t.update_channel_cmd, sizeof(t.update_channel_cmd), "securacv/%s/update/channel/cmd", device_id);
   snprintf(t.alarm_set,       sizeof(t.alarm_set),       "securacv/%s/alarm/set",       device_id);
   return t;
 }

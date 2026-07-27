@@ -801,7 +801,9 @@ function showModuleFlow() {
   $("module-flow").classList.remove("hidden");
   $("console").textContent = "";
   $("console").classList.remove("hidden");
-  setStatus("flash-result", "Use the module button below. The host firmware receipt is kept while you move the cable.");
+  setStatus("flash-result", "Use the module button below. The host firmware receipt is kept while you move the cable." +
+    (state.vision.hostFlash ? "" :
+      " (The demo takes two boards — the XIAO host gets the Canary Vision firmware through its own USB-C port, before or after this one.)"));
   renderReceipts(true);
 }
 
@@ -856,12 +858,21 @@ async function onFlash() {
     renderReceipts();
     announceToWitness(product);   // instant, so the wall reacts right away
     discoverAndPopulate(product); // then replace with the REAL fleet off the LAN
+    // The Vision is a TWO-board Canary: the ESP32 host just flashed here, and
+    // the Grove Vision AI V2 camera module loads its model through its OWN
+    // USB-C port. Say the next move out loud, or the demo dies half-done with
+    // a module that never got a brain.
+    const moduleNext = product.id && product.id.includes("vision") && !state.vision.module
+      ? " Board 1 of 2 done — now move the USB cable to the CAMERA MODULE's own USB-C port " +
+        "(the wide port on the carrier board, next to the Grove socket — not the XIAO's). " +
+        "I'll recognize the module and offer its model below."
+      : "";
     if (requiresLiveReceipt(product)) {
-      setStatus("flash-result", "Firmware write verified. Watching the live boot for its device receipt…", "ok");
+      setStatus("flash-result", "Firmware write verified. Watching the live boot for its device receipt…" + moduleNext, "ok");
       state.busy = false;
       await startMonitor();
     } else {
-      setStatus("flash-result", "Firmware write verified. Flashing is complete. ✓", "ok");
+      setStatus("flash-result", "Firmware write verified. Flashing is complete. ✓" + moduleNext, "ok");
       maybeHatch();
       // The serial monitor should just work — start it automatically so the
       // live boot log is right there, no "Start" click. It reconnects on its
@@ -916,6 +927,74 @@ function clearSecretFields() {
   $("mqtt-pass").value = "";
 }
 
+// ── module inference preview: the frame WITH its detections drawn ───────────
+// The receipt's `boxes` are SSCMA detections — [x, y, w, h, score, target],
+// x/y the box CENTER in frame pixels, score already a 0-100 percent. Geometry,
+// identity colors, and confidence bands mirror the browser bench (the source
+// of truth is canary-local/assets/we2-core.js stylizeDetections; the two
+// flashers share no code, so per the two-flashers rule the paint lives here
+// too). Garbage boxes are dropped, never thrown on.
+const MODULE_CLASSES = ["person"];
+const PREVIEW_HUES = [140, 45, 200, 320, 20, 260, 80, 175];
+
+function moduleDetections(boxes) {
+  const out = [];
+  for (const b of boxes || []) {
+    if (!Array.isArray(b) || b.length < 6) continue;
+    const [x, y, w, h, score, target] = b;
+    if (![x, y, w, h].every((n) => typeof n === "number" && Number.isFinite(n))) continue;
+    const pct = Math.max(0, Math.min(100, Math.round(Number(score) || 0)));
+    out.push({ x, y, w, h, score: pct, label: MODULE_CLASSES[target] || "object" });
+  }
+  return out;
+}
+
+function moduleSummary(boxes) {
+  const dets = moduleDetections(boxes);
+  if (!dets.length) return "nothing in frame";
+  const top = dets.reduce((m, d) => Math.max(m, d.score), 0);
+  const word = dets[0].label + (dets.length > 1 ? "s" : "");
+  return `${dets.length} ${word} · top ${top}%`;
+}
+
+function renderModulePreview(receipt) {
+  const cv = $("module-preview");
+  if (!receipt || !receipt.preview_image || !cv.getContext) return;
+  const img = new Image();
+  img.onload = () => {
+    cv.width = img.width; cv.height = img.height;
+    const ctx = cv.getContext("2d");
+    ctx.drawImage(img, 0, 0);
+    moduleDetections(receipt.boxes).forEach((d, i) => {
+      const hue = PREVIEW_HUES[i % PREVIEW_HUES.length];
+      const band = d.score >= 60 ? "ok" : d.score >= 35 ? "soft" : "faint";
+      const color = `hsl(${hue} 90% ${band === "ok" ? 66 : 58}%)`;
+      const x = d.x - d.w / 2, y = d.y - d.h / 2;
+      ctx.lineWidth = band === "ok" ? 3 : 2;
+      ctx.strokeStyle = color;
+      ctx.strokeRect(x, y, d.w, d.h);
+      // corner ticks make thin boxes readable on busy frames
+      ctx.lineWidth = band === "ok" ? 5 : 3;
+      const t = Math.min(14, d.w / 4, d.h / 4);
+      ctx.beginPath();
+      for (const [cx, cy, dx, dy] of [[x, y, 1, 1], [x + d.w, y, -1, 1], [x, y + d.h, 1, -1], [x + d.w, y + d.h, -1, -1]]) {
+        ctx.moveTo(cx + dx * t, cy); ctx.lineTo(cx, cy); ctx.lineTo(cx, cy + dy * t);
+      }
+      ctx.stroke();
+      const text = `#${i + 1} ${d.label} · ${d.score}%`;
+      ctx.font = "700 13px ui-monospace, Menlo, monospace";
+      const tw = ctx.measureText(text).width + 10;
+      const ly = y - 20 >= 0 ? y - 20 : y + d.h + 1;
+      ctx.fillStyle = `hsl(${hue} 65% 14% / ${band === "ok" ? 0.92 : 0.85})`;
+      ctx.fillRect(x, ly, tw, 19);
+      ctx.fillStyle = color;
+      ctx.fillText(text, x + 5, ly + 14);
+    });
+    cv.classList.remove("hidden");
+  };
+  img.src = "data:image/jpeg;base64," + receipt.preview_image;
+}
+
 async function onFlashModule() {
   const btn = $("module-flash-btn");
   btn.disabled = true;
@@ -933,12 +1012,14 @@ async function onFlashModule() {
       manifestUrl: state.catalog.we2_module.manifest_url,
     });
     state.vision.module = receipt;
-    $("module-progress").textContent = "100% · inference proved";
-    setStatus("flash-result", "Vision module verified, burned, answered AT, and ran one inference. ✓", "ok");
-    if (receipt.preview_image) {
-      $("module-preview").src = "data:image/jpeg;base64," + receipt.preview_image;
-      $("module-preview").classList.remove("hidden");
-    }
+    $("module-progress").textContent = "100% · inference proved · " + moduleSummary(receipt.boxes);
+    // Mirror of the host-side nudge: whichever board flashed first, the
+    // other one is named — with its port — before this counts as done.
+    const hostNext = state.vision.hostFlash ? "" :
+      " Board 1 of 2 done — the XIAO host still needs the Canary Vision firmware: " +
+      "move the cable to the XIAO's own USB-C port and pick Canary Vision above.";
+    setStatus("flash-result", "Vision module verified, burned, answered AT, and ran one inference. ✓" + hostNext, "ok");
+    renderModulePreview(receipt);
     renderReceipts(true);
     maybeHatch();
   } catch (e) {
@@ -1515,7 +1596,13 @@ function resetOutcome() {
   setStatus("flash-result", "");
   setStatus("local-result", "");
   try { hideHatchCard(); } catch (_) {}
-  if (state.vision) { state.vision.hostFlash = null; state.vision.hostBoot = null; state.vision.module = null; }
+  // Host receipts belong to the image being overwritten — clear them. The
+  // MODULE receipt survives: the model lives in the camera module's own
+  // 16 MB flash and persists across every host reflash, so a module-first
+  // session must still count it after the host is flashed (wiping it here
+  // sent the user back to reflash a module that was already done, and the
+  // two-board hatch could never fire).
+  if (state.vision) { state.vision.hostFlash = null; state.vision.hostBoot = null; }
   try { renderReceipts(); } catch (_) {}
   const con = $("serial-console");
   if (con) con.textContent = "";
@@ -1561,7 +1648,9 @@ function renderReceipts(forceVision = false) {
     ? `✓ ${host.channel === "local" ? host.product_id : "v" + host.version}` +
       `${host.channel === "dev" ? " (dev)" : ""} · ${host.bytes_written.toLocaleString()} B · ` +
       `${host.release_verification || "SHA-256"} · ${host.installed_sha256.slice(0, 12)}…`
-    : "waiting for ESP32 flash";
+    : vision
+      ? "waiting for ESP32 flash — plug the XIAO's own USB-C port"
+      : "waiting for ESP32 flash";
   setReceipt("receipt-host-image", !!host, hostLabel);
   setReceipt(
     "receipt-host-boot",
@@ -1583,7 +1672,7 @@ function renderReceipts(forceVision = false) {
       !!(module && module.inference_ok),
       module && module.inference_ok
         ? `✓ v${module.version} · inference · ${module.sha256.slice(0, 12)}…`
-        : "waiting for WE2 model + AT inference"
+        : "waiting for WE2 model — plug the module's own USB-C port (wide port by the Grove socket)"
     );
   }
 }

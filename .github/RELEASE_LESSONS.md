@@ -108,6 +108,67 @@ any platform.
 
 ## Entries
 
+### 2026-07-27 (b) — An "anti-rot" `release: published` trigger that can never fire for the releases CI publishes
+
+- **Symptom:** every Vision module flash failed with *"no published release
+  yet (manifest returned HTTP 404)"* — `manifest-vision-model.json` was
+  absent from `fw-v2.3.0` even though `vision-model-release.yml` exists
+  precisely to attach it "automatically on every published release."
+- **Cause:** GitHub suppresses workflow events for anything created with a
+  workflow's own `GITHUB_TOKEN` (the recursion guard). Every firmware
+  release is published by `firmware-release.yml` with that token, so the
+  `release: [published]` trigger never fires for them — it had only ever
+  fired for the early human-published releases, which is exactly what made
+  it look alive.
+- **Fix:** `firmware-release.yml` now chain-dispatches
+  `vision-model-release.yml` explicitly after publishing (`actions: write` +
+  `gh workflow run`); the event trigger stays for human publishes, and the
+  per-tag concurrency group de-dupes if both fire. **Generalize:** in this
+  repo, never rely on a `release:`/`push:` event fired by a release another
+  workflow publishes — if workflow B must follow workflow A's publish, A
+  dispatches B by name.
+
+### 2026-07-27 — A "successful" release quietly dropped the products that had just compiled, and the app that could tell you about updates was polling a URL that can never answer
+
+Two independent failures, one release day, both invisible-by-design.
+
+- **Symptom (1):** `fw-v2.3.0` published green, but carried none of the
+  ESP32-S3 display images — the Dash 7 and Nightstand S3 had **compiled
+  successfully** minutes earlier in the same job. The Flasher showed every
+  display as "no published release yet" and nobody could say why, because the
+  run concluded `success`.
+- **Cause (1):** PlatformIO silently **cleans the whole `.pio/build`
+  workspace when the project checksum changes** — and running the
+  nightstand-c6 env with its (necessary) isolated `PLATFORMIO_CORE_DIR`
+  changes exactly that. The c6 build erased its siblings' outputs; the
+  display packaging loop is non-blocking on purpose, so "produced no binary"
+  was a warning scrolled past in a 20-minute log.
+- **Fix (1):** in `firmware-release.yml` and `flasher-release.yml`, stage
+  each display env's `.pio/build/<env>` the moment it builds and restore the
+  set after the c6 run. **Generalize:** any time two builds in one job vary
+  `PLATFORMIO_CORE_DIR` / project options, treat earlier build outputs as
+  already lost — copy them out first. And when a loop is deliberately
+  non-blocking, its per-item failure messages are the *only* record; make
+  them name the artifact and the consequence.
+- **Symptom (2):** every installed Flasher's self-update check failed with
+  *"Could not fetch a valid release JSON from the remote"*, forever, while
+  the app reported itself up to date.
+- **Cause (2):** the Tauri updater endpoint was
+  `releases/latest/download/latest.json` — but this repo **deliberately pins
+  `releases/latest` to the firmware releases** (it is the fleet's OTA URL;
+  `keep-firmware-latest` moves it back within minutes of any app publish).
+  A firmware release carries no `latest.json`, so the updater's one URL
+  could never resolve. Two correct invariants, never introduced to each
+  other.
+- **Fix (2):** the updater now polls the rolling **`flasher-latest`
+  prerelease** (a prerelease can never become `releases/latest`, so the two
+  pointers cannot collide), which `desktop-flasher-release.yml`'s finalize
+  job re-points — after the consistency guard — at every publish.
+  **Generalize:** in this repo, no app updater may ever reference
+  `releases/latest`; give each self-updating app its own rolling
+  `<app>-latest` prerelease pointer. If the Lab (or a future target) gains
+  an updater, copy this shape.
+
 ### 2026-07-25 — The whole pipeline was blocked on one missing key, and every button's answer to that was silence
 
 - **Symptom:** a maintainer opened the Flasher and every product read **"no
@@ -660,3 +721,37 @@ any platform.
   group; device-mode USB tools need a udev rule instead. And **a permission
   failure that reads like "nothing happened" needs an in-app hint**, or the user
   has no way to know a one-line fix exists.
+
+### 2026-07-27 — Mixed-platform release job: a warm cache masked a core-dir conflict until GitHub evicted it
+
+- **Symptom:** the first signed firmware release (fw-v2.3.0) failed in
+  `canary-sense-default` with `TypeError: expected str, bytes or os.PathLike
+  object, not NoneType` at pioarduino's `arduino.py` (`FRAMEWORK_DIR=None`)
+  before compiling a single file — twice, deterministically — while
+  `canary-sense-wellbeing` (same board, same platform pin) built fine seconds
+  later in the same job.
+- **Cause:** the release job builds every project sequentially in one shared
+  `~/.platformio`. canary/canary-vision (official `espressif32` platform) run
+  first and install `framework-arduinoespressif32` 2.0.x; canary-sense rides
+  the pioarduino core-3.x fork, whose platform ships a package with the **same
+  name** at 3.3.8. pioarduino sees the official copy "installed", skips its
+  own, and dies with `FRAMEWORK_DIR=None` — the exact failure
+  `firmware.yml`'s `isolated_core_envs` comment documents. It never bit the
+  release workflow before because the PlatformIO cache (keyed on an unchanged
+  file) stayed warm with both versions resolvable; GitHub evicted the cache
+  after 7 days of no saves, and the first cold run exposed it. The
+  nightstand-c6 env in the *same job* already had the isolation; sense didn't.
+- **Fix:** run canary-sense under its own
+  `PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-canary-sense"` in both
+  `firmware-release.yml` and `flasher-release.yml` (the flasher factory-image
+  job has the same sequential shape and was one cache eviction away from the
+  same failure).
+- **Applies to:** **every job that builds more than one PlatformIO project in
+  sequence.** If any project pins the pioarduino fork while another uses the
+  official platform, the pioarduino build MUST get an isolated
+  `PLATFORMIO_CORE_DIR` — sharing the core dir only appears to work while a
+  cache is warm. And more generally: **a step that only ever ran against a
+  restored cache has never actually been proven** — the cache is a
+  performance layer, not part of the contract, and GitHub deletes it after 7
+  idle days. If a build breaks only when the cache misses, the build is
+  broken.

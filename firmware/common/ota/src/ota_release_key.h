@@ -2,31 +2,18 @@
  * SecuraCV — Release Signing Public Key (Ed25519)
  *
  * The 32-byte Ed25519 public key whose private half signs every firmware
- * image accepted over the air — both the pull-OTA engine (securacv_ota.h)
- * and the BLE OTA path (ble_ota.h) verify against this same key, so one
- * release signature serves every update channel.
+ * image accepted over the air (pull OTA and BLE OTA). The private key MUST
+ * live off-device — on a release engineer's machine or in the
+ * OTA_SIGNING_KEY_PEM CI secret; the device only needs the public half.
  *
  * If this key is all zeros (the default), OTA installs are HARD-DISABLED —
- * the pull-OTA engine refuses to install and the BLE OTA BEGIN handler
- * refuses every request. Replace the bytes below with your own public key
- * before shipping a build that should accept OTA updates.
- *
- * Generating and embedding a keypair:
+ * both the pull-OTA engine and the BLE OTA BEGIN handler refuse every
+ * image. Generate and embed a real key with:
  *
  *     python firmware/scripts/ota_release.py keygen --private-key releaser.pem
- *     python firmware/scripts/ota_release.py pubkey-header \
- *       --private-key releaser.pem --out firmware/common/ota/src/ota_release_key.h
+ *     python firmware/scripts/ota_release.py pubkey-header --private-key releaser.pem
  *
- * The private key MUST live off-device and outside the repository — on a
- * release engineer's secure machine or in the OTA_SIGNING_KEY_PEM GitHub
- * Actions secret. The firmware-release workflow cross-checks that the
- * secret's public half matches this header before publishing a release.
- *
- * Signing a firmware image (what ota_release.py sign/manifest do):
- *
- *     1. SIZE = wc -c < firmware.bin   (4 bytes, little-endian)
- *     2. HASH = sha256(firmware.bin)   (32 bytes)
- *     3. SIG  = ed25519_sign(SIZE_LE32 || HASH, releaser.pem)   (64 bytes)
+ * Key id (sha256 of pubkey, first 16 hex): 532429078dc47c04
  *
  * Threat model: a stolen release private key permits firmware substitution.
  * Treat it like a code-signing certificate. Rotate by shipping a firmware
@@ -39,10 +26,10 @@
 #include <stdint.h>
 
 static const uint8_t SECURACV_OTA_RELEASE_PUBKEY[32] = {
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0xae, 0x12, 0x3a, 0x5c, 0x22, 0x0c, 0x54, 0x99,
+  0xe5, 0x79, 0xdc, 0x44, 0x9e, 0x66, 0x39, 0x2d,
+  0x83, 0xd5, 0xad, 0x70, 0xd1, 0x00, 0x74, 0x75,
+  0x74, 0xeb, 0x7b, 0x2b, 0xac, 0x49, 0xb2, 0x44,
 };
 
 #endif // SECURACV_OTA_RELEASE_KEY_H
