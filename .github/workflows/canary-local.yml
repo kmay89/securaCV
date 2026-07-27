@@ -463,7 +463,7 @@ jobs:
               echo "  committed: $(tail -c +$start /tmp/committed.js | head -c 160 | tr -d '\n')"
               echo "  rebuilt:   $(tail -c +$start "$f" | head -c 160 | tr -d '\n')"
             done
-            echo "::error::emulator dist/ artifacts do not match a rebuild from this tree — run canary-local/emulator/build.sh all and commit the result"
+            echo "::error::emulator dist/ artifacts do not match a rebuild from this tree — run canary-local/emulator/build.sh all and commit the result (no emsdk 6.0.3 where you are? Actions → 'Rebuild emulator dist (pinned emsdk)' on your branch does the same and pushes the result)"
             exit 1
           fi
       - name: Voice preview drift check (index.html matches voice_score.h)
