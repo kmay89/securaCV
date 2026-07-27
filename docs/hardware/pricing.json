@@ -1,6 +1,6 @@
 {
  "generated_by": "scripts/bom_pricing.py",
- "as_of": "2026-07-27T03:45:54Z",
+ "as_of": "2026-07-27T12:36:35Z",
  "note": "Nightly distributor snapshot; provenance marks which rows are distributor-verified vs csv-seed.",
  "sources": {
   "csv": "docs/hardware/bom_*.csv (design intent + indicative seed prices)",
@@ -38,7 +38,7 @@
    "seed_usd": 13.99,
    "unit_usd": 15.9,
    "provenance": "digikey",
-   "stock": 1848,
+   "stock": 1847,
    "lifecycle": "Active",
    "sku": {
     "mouser": "713-102010469",
@@ -78,7 +78,7 @@
    "seed_usd": 1.2,
    "unit_usd": 2.0,
    "provenance": "digikey",
-   "stock": 599,
+   "stock": 597,
    "lifecycle": "Active",
    "sku": {
     "mouser": "713-110990210",
@@ -102,7 +102,7 @@
    "seed_usd": 7.49,
    "unit_usd": 7.49,
    "provenance": "digikey",
-   "stock": 6041,
+   "stock": 6040,
    "lifecycle": "Active",
    "sku": {
     "digikey": "1597-113991114-ND"
@@ -190,7 +190,7 @@
    "seed_usd": 0.05,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 966973,
+   "stock": 966863,
    "lifecycle": "Active",
    "sku": {
     "mouser": "512-1N4148",
@@ -263,7 +263,7 @@
    "seed_usd": 0.1,
    "unit_usd": 0.16,
    "provenance": "digikey",
-   "stock": 50369,
+   "stock": 49700,
    "lifecycle": "Active",
    "sku": {
     "mouser": "512-2N7002LT1G",
@@ -303,7 +303,7 @@
    "sourcing": "orderable",
    "seed_usd": 1.8,
    "unit_usd": 4.08,
-   "provenance": "digikey",
+   "provenance": "carried",
    "stock": 7643,
    "lifecycle": "Active",
    "sku": {
@@ -456,7 +456,7 @@
    "seed_usd": 0.12,
    "unit_usd": 0.35,
    "provenance": "digikey",
-   "stock": 41001,
+   "stock": 40981,
    "lifecycle": "Active",
    "sku": {
     "mouser": "653-B3F-1000",
@@ -530,7 +530,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 7250710,
+   "stock": 7250640,
    "lifecycle": "Active",
    "sku": {
     "lcsc": "C49678",
@@ -573,9 +573,9 @@
    "desc": "Passive piezo (UNPOPULATED in v0.1 firmware — future severity-tiered chime)",
    "sourcing": "orderable",
    "seed_usd": 0.55,
-   "unit_usd": 1.9,
+   "unit_usd": 2.2,
    "provenance": "digikey",
-   "stock": 6314,
+   "stock": 6285,
    "lifecycle": "Active",
    "sku": {
     "mouser": "490-CPT-9019S-SMT-TR",
@@ -584,27 +584,35 @@
    "breaks": [
     {
      "qty": 1,
-     "usd": 1.9
+     "usd": 2.2
     },
     {
      "qty": 10,
-     "usd": 1.493
+     "usd": 1.667
     },
     {
      "qty": 25,
-     "usd": 1.3584
+     "usd": 1.5012
     },
     {
      "qty": 50,
-     "usd": 1.266
+     "usd": 1.3892
     },
     {
      "qty": 100,
-     "usd": 1.1808
+     "usd": 1.2874
     },
     {
      "qty": 250,
-     "usd": 1.09088
+     "usd": 1.16648
+    },
+    {
+     "qty": 500,
+     "usd": 1.08426
+    },
+    {
+     "qty": 1000,
+     "usd": 1.00912
     }
    ],
    "url": "https://www.digikey.com/en/products/detail/same-sky-formerly-cui-devices/CPT-9019S-SMT-TR/6012432",
@@ -1096,7 +1104,7 @@
    "desc": "Light pipe, single, vertical (LED to face)",
    "sourcing": "orderable",
    "seed_usd": 0.45,
-   "unit_usd": 0.79,
+   "unit_usd": 0.78,
    "provenance": "digikey",
    "stock": 3148,
    "lifecycle": "Active",
@@ -1106,39 +1114,39 @@
    "breaks": [
     {
      "qty": 1,
-     "usd": 0.79
+     "usd": 0.78
     },
     {
      "qty": 10,
-     "usd": 0.546
+     "usd": 0.541
     },
     {
      "qty": 100,
-     "usd": 0.3984
+     "usd": 0.3946
     },
     {
      "qty": 500,
-     "usd": 0.33242
+     "usd": 0.32922
     },
     {
      "qty": 1000,
-     "usd": 0.31076
+     "usd": 0.30778
     },
     {
      "qty": 2000,
-     "usd": 0.29238
+     "usd": 0.28956
     },
     {
      "qty": 5000,
-     "usd": 0.27227
+     "usd": 0.26966
     },
     {
      "qty": 10000,
-     "usd": 0.25974
+     "usd": 0.25724
     },
     {
      "qty": 25000,
-     "usd": 0.24608
+     "usd": 0.24371
     }
    ],
    "url": "https://www.digikey.com/en/products/detail/bivar-inc/PLP1-250/586454",
@@ -1169,7 +1177,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 649761,
+   "stock": 648711,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07100KL",
@@ -1222,7 +1230,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 178768,
+   "stock": 178718,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07100RL",
@@ -1275,7 +1283,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 497309,
+   "stock": 497231,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-071KL",
@@ -1328,7 +1336,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 472351,
+   "stock": 471734,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07330RL",
