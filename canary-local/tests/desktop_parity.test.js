@@ -135,17 +135,24 @@ test("provisioning NVS: the browser writes the same key-set as native build_nvs"
   // set, or a board provisioned in the Lab differs from one provisioned natively.
   const provRs = read(join(ROOT, "desktop/src-tauri/src/provisioning.rs"));
   const nativeKeys = new Set(
-    [...provRs.matchAll(/writer\.(?:string|u8|u16|u32)\(\s*"([a-z0-9_]+)"/g)].map((m) => m[1])
+    [...provRs.matchAll(/writer\.(?:string|u8|u16|u32|blob)\(\s*"([a-z0-9_]+)"/g)].map((m) => m[1])
   );
   assert.ok(nativeKeys.size >= 5,
     "couldn't parse native build_nvs keys from desktop/src-tauri/src/provisioning.rs");
 
-  // The browser's usb-secrets provisioning: wifi (string scheme) + the id/broker map.
+  // The browser's provisioning: wifi in BOTH schemes native now writes too —
+  // string (sense/vision/display) and blob + wifi_en (canary/wap, flash-core's
+  // blob branch) — plus the usb-secrets id/broker map. Assert the browser
+  // really has the blob-scheme enable key rather than hardcoding trust.
+  const flashCoreSrc = read(join(CANARY, "assets/flash-core.js"));
+  assert.match(flashCoreSrc, /writeInt\("wifi_en"/,
+    "flash-core.js buildNvsSeedImage lost the blob-scheme wifi_en write (canary/wap)");
   const { mqttProvisioningToNvs } = await import("../assets/flash-core.js");
   const { strings, u16 } = mqttProvisioningToNvs({
     deviceId: "d", mqttHost: "h", mqttPort: 1, mqttUser: "u", mqttPass: "p",
   });
-  const browserKeys = new Set(["wifi_ssid", "wifi_pass", ...Object.keys(strings), ...Object.keys(u16)]);
+  const browserKeys = new Set(["wifi_ssid", "wifi_pass", "wifi_en",
+    ...Object.keys(strings), ...Object.keys(u16)]);
 
   assert.deepStrictEqual([...browserKeys].sort(), [...nativeKeys].sort(),
     "browser vs native provisioning NVS key-sets diverged — reconcile " +

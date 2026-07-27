@@ -768,8 +768,29 @@ function onProductChosen(p, ver) {
   $("module-flow").classList.add("hidden");
   $("host-flash-controls").classList.remove("hidden");
   $("serial-monitor").classList.remove("hidden");
-  $("provisioning").classList.toggle("hidden", p.provisioning !== "usb-secrets");
-  if (p.provisioning === "usb-secrets" && !$("device-id").value) {
+  // Wi-Fi preload is standard on EVERY board (each firmware reads the same
+  // NVS namespace, catalog wifi_nvs says in which encoding) — so the network
+  // fields always show. Identity + broker stay usb-secrets-only: the other
+  // firmwares configure that part themselves (AP portal / on-glass).
+  const usbSecrets = p.provisioning === "usb-secrets";
+  $("provisioning").classList.remove("hidden");
+  document.querySelectorAll("#provisioning .usb-only").forEach((n) => {
+    n.classList.toggle("hidden", !usbSecrets);
+    const input = n.querySelector("input");
+    if (input) input.required = usbSecrets && ["device-id", "mqtt-host", "mqtt-port"].includes(input.id);
+  });
+  $("wifi-ssid").required = usbSecrets;
+  $("provision-note").textContent = usbSecrets
+    ? "The verified release image is generic. These values are written directly into this board's settings partition, never logged and never saved by the app."
+    : "Optional: bake your network in and the Canary joins it on first boot — skip it and the board's own setup path (phone portal or on-screen) still works.";
+  // Offer the network this computer is on — the common case — so joining is
+  // one Tab and a password away (which Keychain/password managers can fill).
+  if (!$("wifi-ssid").value) {
+    invoke("current_ssid").then((ssid) => {
+      if (ssid && !$("wifi-ssid").value) $("wifi-ssid").value = ssid;
+    }).catch(() => {});
+  }
+  if (usbSecrets && !$("device-id").value) {
     const family = p.id.includes("vision")
       ? "canary_vision"
       : p.id.includes("sense")
@@ -892,8 +913,14 @@ async function onFlash() {
 }
 
 function readProvisioning(product) {
-  if (!product || product.provisioning !== "usb-secrets") return null;
-  const fields = ["device-id", "wifi-ssid", "wifi-pass", "mqtt-host", "mqtt-port", "mqtt-user", "mqtt-pass"];
+  if (!product) return null;
+  const usbSecrets = product.provisioning === "usb-secrets";
+  // Wi-Fi-only boards: an empty SSID just means "skip the preload" — the
+  // board's own setup path still works, so nothing to validate or write.
+  if (!usbSecrets && !$("wifi-ssid").value) return null;
+  const fields = usbSecrets
+    ? ["device-id", "wifi-ssid", "wifi-pass", "mqtt-host", "mqtt-port", "mqtt-user", "mqtt-pass"]
+    : ["wifi-ssid", "wifi-pass"];
   for (const id of fields) {
     const input = $(id);
     if (!input.checkValidity()) {
@@ -908,13 +935,16 @@ function readProvisioning(product) {
     return null;
   }
   return {
-    deviceId: $("device-id").value.trim(),
+    deviceId: usbSecrets ? $("device-id").value.trim() : "",
     wifiSsid: $("wifi-ssid").value,
     wifiPass,
-    mqttHost: $("mqtt-host").value.trim(),
-    mqttPort: Number($("mqtt-port").value),
-    mqttUser: $("mqtt-user").value,
-    mqttPass: $("mqtt-pass").value,
+    mqttHost: usbSecrets ? $("mqtt-host").value.trim() : "",
+    mqttPort: usbSecrets ? Number($("mqtt-port").value) : 1883,
+    mqttUser: usbSecrets ? $("mqtt-user").value : "",
+    mqttPass: usbSecrets ? $("mqtt-pass").value : "",
+    // Which NVS encoding this firmware reads (catalog, from the source):
+    // "blob" for canary/wap, "string" for sense/vision/display.
+    wifiNvs: product.wifi_nvs || "string",
   };
 }
 
