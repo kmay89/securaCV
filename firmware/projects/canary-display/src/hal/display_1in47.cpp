@@ -26,16 +26,18 @@
 #include <Arduino.h>
 #include <Arduino_GFX_Library.h>
 
+#include "pins.h"  // MUST precede the touch gate: HAS_TOUCH lives here, not
+                   // in config.h (same contract settings_ui.cpp documents
+                   // for HAS_ISOLATED_IO — gate after the board header).
+
 // The CST816 path costs nothing on the touchless 1.47" boards: it is
-// double-gated (flavor turns it on AND the board carries the panel), the
-// same contract ambient_led.cpp uses for the WS2812.
+// double-gated (flavor turns it on AND the board carries the panel).
 #if defined(FEATURE_TOUCH) && FEATURE_TOUCH && \
     defined(HAS_TOUCH) && HAS_TOUCH
 #define CD_1IN47_TOUCH 1
 #include <Wire.h>
 #endif
 
-#include "pins.h"
 #include "canary/hal/display.h"
 #include "canary/hal/core_compat.h"
 #include "canary/log.h"
