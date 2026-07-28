@@ -100,7 +100,9 @@ jobs:
   # Developer account.
   app:
     name: Witness Wall (simulator build + unit tests)
-    runs-on: macos-15
+    # macos-26 to match tvos-release.yml (ITMS-90725: releases must build
+    # with the 26 SDK, so CI must compile with it too).
+    runs-on: macos-26
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7

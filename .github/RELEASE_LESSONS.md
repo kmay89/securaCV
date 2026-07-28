@@ -958,3 +958,26 @@ Two independent failures, one release day, both invisible-by-design.
   altool. Fixed in the shared script precisely so both callers inherit it.
 - **Applies to:** `ios-release.yml` and `tvos-release.yml` (both publish
   through `.github/scripts/asc_publish.sh`).
+
+### 2026-07-28 (h) — ASC's SDK floor bites AFTER a green upload: ITMS-90725 arrives by email
+
+- **Symptom:** the first fully green `ios-release.yml` run (validated,
+  uploaded, tagged `ios-v0.1.0`) never reached TestFlight. Minutes later
+  Apple emailed "ITMS-90725: SDK version issue — this app was built with the
+  iOS 18.2 SDK. All iOS and iPadOS apps must be built with the iOS 26 SDK or
+  later." `altool --validate-app` does NOT catch this; asynchronous
+  post-upload processing does, so CI is green while the build is dead.
+- **Cause:** the workflow pinned `macos-14` + `Xcode_16*` (both chosen for
+  earlier, unrelated reasons). Apple enforces a rolling minimum SDK for App
+  Store Connect uploads; the runner image and Xcode glob silently aged out.
+- **Fix:** `runs-on: macos-26` (GA since 2026-02, default Xcode 26.x) and
+  select `Xcode_26*`, in the release, the self-heal/CI builds (the first
+  compiler must match the shipping SDK), and both tvOS jobs — the same floor
+  applies per-platform. Fallout: the tag guard correctly refuses to re-run
+  a tagged version, and ASC has the dead binary as v0.1.0 build 1 — a
+  post-upload rejection therefore BURNS the version; bump
+  `MARKETING_VERSION` and ship the next one.
+- **Applies to:** `ios-release.yml`, `ios-selfheal.yml`,
+  `tvos-release.yml`, `tvos.yml` (all fixed), `desktop-mobile-release.yml`
+  (already on `macos-latest`, which tracks new images). Watch for the same
+  aging on the next annual Xcode requirement.

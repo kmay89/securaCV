@@ -33,7 +33,9 @@ concurrency:
 
 jobs:
   selfheal:
-    runs-on: macos-14
+    # macos-26 to match ios-release.yml: the release must build with the
+    # iOS 26 SDK (ITMS-90725), so the first compiler must compile with it too.
+    runs-on: macos-26
     timeout-minutes: 40
     # The ENABLE_IOS_BUILD gate applies only to the scheduled nightly (so it
     # never nags before iOS is enabled). PRs always build: this is an unsigned
@@ -53,11 +55,12 @@ jobs:
 
       - name: Select Xcode
         if: env.RUN_BUILD == 'true'
-        # Runner images name Xcode with full versions (Xcode_16.2.app…), so a
-        # bare Xcode_16.app never matches; pick the newest 16.x, fall back to
-        # the image default, and always print what we got.
+        # Runner images name Xcode with full versions (Xcode_26.6.app…), so a
+        # bare Xcode_26.app never matches; pick the newest 26.x (the SDK App
+        # Store Connect requires — ITMS-90725), fall back to the image
+        # default, and always print what we got.
         run: |
-          latest="$(find /Applications -maxdepth 1 -name 'Xcode_16*.app' 2>/dev/null | sort -V | tail -1)"
+          latest="$(find /Applications -maxdepth 1 -name 'Xcode_26*.app' 2>/dev/null | sort -V | tail -1)"
           if [ -n "$latest" ]; then sudo xcode-select -s "$latest"; fi
           xcodebuild -version
 

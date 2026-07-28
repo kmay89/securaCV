@@ -60,7 +60,10 @@ permissions:
 jobs:
   tvos:
     name: Build, sign, and upload the Witness Wall
-    runs-on: macos-15
+    # macos-26: App Store Connect requires the platform-26 SDK for uploads
+    # (ITMS-90725, RELEASE_LESSONS 2026-07-28 (h)); the image default Xcode
+    # there is 26.x.
+    runs-on: macos-26
     timeout-minutes: 90
     steps:
       - name: Gate — tvOS builds enabled?
