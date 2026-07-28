@@ -49,7 +49,7 @@ jobs:
         run: |
           echo "::notice title=iOS release skipped::Set ENABLE_IOS_BUILD=true and the APPLE_* signing secrets to enable. Exiting green."
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: vars.ENABLE_IOS_BUILD == 'true'
         with:
           fetch-depth: 0   # tags, to refuse re-publishing a shipped version
@@ -217,7 +217,7 @@ jobs:
 
       - name: Upload .ipa
         if: vars.ENABLE_IOS_BUILD == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: SecuraCV-ipa
           path: ${{ runner.temp }}/export/*.ipa
