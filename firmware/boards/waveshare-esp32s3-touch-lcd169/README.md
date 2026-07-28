@@ -42,16 +42,26 @@ The portrait face reads its geometry from the pin header (`TFT_WIDTH` ×
 original. No WS2812: `FEATURE_AMBIENT_LED 0`, the wash + backlight ladder is
 the beacon.
 
-## Pin map status — vendor-demo map, VERIFY before first flash
+## Pin map status — reconciled against the vendor pinout table
 
-The vendor wiki was unreachable from the CI sandbox, so
-[`pins/pins.h`](pins/pins.h) carries the widely-mirrored demo-code map
-(LCD SCK6/MOSI7/CS5/DC4/RST8/BL15; touch SDA11/SCL10/INT14/RST13) with every
-line `VERIFY`-tagged, and the low-confidence power lines (`PWR_KEY_PIN`) as
-`-1`. Check against the
-[schematic PDF](https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.69/ESP32-S3-Touch-LCD-1.69-Sch.pdf)
-on first bring-up. The [pin budget](../PIN_BUDGET.md) counts only what is
-declared.
+[`pins/pins.h`](pins/pins.h) is now reconciled against the vendor GPIO /
+peripheral pinout table (docs.waveshare.com, 2026-07). The demo map's
+LCD/touch/I2C block held up (LCD CLK6/DIN7/CS5/DC4/RST8/BL15; touch
+SDA11/SCL10/INT14/RST13), and the table resolved what had been stubbed:
+
+- **`RTC_INT` corrected `GPIO9 → GPIO39`** — the demo map was wrong here.
+- **Power latch filled in:** the `-1` lines are `SYS_EN = GPIO41` (holds the
+  rail on) / `SYS_OUT = GPIO40`; PWR/Key2 acts through that network, not a
+  plain readable GPIO.
+- **Added:** buzzer `GPIO42`, QMI8658 interrupt `GPIO38`, native-USB `D-/D+ =
+  GPIO19/20`, extension UART `GPIO43/44`, and the I2C device addresses
+  (touch `0x15`, IMU `0x6B`, RTC `0x51`).
+
+Only the electrical details a pin table can't give — backlight polarity, the
+IMU INT edge, and whether the vendor's own INT1/INT2 labelling for GPIO38 is
+right — still want a bench check against the
+[schematic PDF](https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.69/ESP32-S3-Touch-LCD-1.69-Sch.pdf).
+The [pin budget](../PIN_BUDGET.md) counts only what is declared.
 
 ## Thermals
 
