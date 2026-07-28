@@ -108,6 +108,36 @@ jobs:
           echo "$APPLE_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/keys/AuthKey_${APPLE_API_KEY}.p8"
           echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/keys/AuthKey_${APPLE_API_KEY}.p8" >> "$GITHUB_ENV"
 
+      # Ephemeral runners cannot keep the private key of a per-run
+      # cloud-created certificate, so the NEXT run finds the account's cert
+      # with no local key and dies with "Revoke certificate: … private key is
+      # not installed" (RELEASE_LESSONS 2026-07-28 (e)). A persistent identity
+      # imported from the APPLE_CERTIFICATE secret (the same secret names the
+      # desktop mobile pipeline documents in desktop-lab/MOBILE.md) makes
+      # signing deterministic. Skipped when the secret is unset — signing then
+      # falls back to per-run cloud certificates, which works only until the
+      # first orphaned cert accumulates.
+      - name: Import signing certificate
+        # secrets.* is not readable in a step `if` (actionlint: context not
+        # allowed) — route it through the step's own env instead.
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        if: vars.ENABLE_IOS_BUILD == 'true' && env.APPLE_CERTIFICATE != ''
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/securacv-ci.keychain-db"
+          KEYCHAIN_PW="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/signing.p12"
+          security import "$RUNNER_TEMP/signing.p12" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          rm -f "$RUNNER_TEMP/signing.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          echo "imported signing identities:"
+          security find-identity -v -p codesigning "$KEYCHAIN"
+
       - name: Regenerate project
         if: vars.ENABLE_IOS_BUILD == 'true'
         working-directory: ios
@@ -172,6 +202,17 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :method string $EXPORT_METHOD" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :teamID string $APPLE_DEVELOPMENT_TEAM" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :signingStyle string automatic" "$PLIST"
+          # Pin the export to the persistent identity the keychain already
+          # holds. Without this, automatic-style export asks Apple for a
+          # CLOUD-MANAGED distribution certificate, which needs an Admin-role
+          # API key — an App Manager key dies with "Cloud signing permission
+          # error" even though a valid local cert is installed. `debugging`
+          # is a development-method export, so it pins the development cert.
+          if [ "$EXPORT_METHOD" = "debugging" ]; then
+            /usr/libexec/PlistBuddy -c "Add :signingCertificate string Apple Development" "$PLIST"
+          else
+            /usr/libexec/PlistBuddy -c "Add :signingCertificate string Apple Distribution" "$PLIST"
+          fi
 
           xcodebuild -exportArchive \
             -archivePath "$RUNNER_TEMP/SecuraCV.xcarchive" \

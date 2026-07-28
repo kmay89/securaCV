@@ -890,3 +890,71 @@ Two independent failures, one release day, both invisible-by-design.
 - **Applies to:** `ios-release.yml`, `tvos-release.yml` (an Apple TV
   registers the same way), and any Apple-platform CI archive with automatic
   signing on a team that may have no registered devices.
+
+### 2026-07-28 (e) — Per-run cloud certificates orphan themselves: the second CI signing run always fails
+
+- **Symptom:** the first signing run after device registration got past every
+  earlier gate and failed with "Revoke certificate: Your account already has
+  an Apple Development signing certificate for this machine, but its private
+  key is not installed in your keychain."
+- **Cause:** `-allowProvisioningUpdates` cloud signing *created* a
+  certificate during an earlier run — and its private key lived only in that
+  ephemeral runner's keychain, which was destroyed with the runner. Every
+  later run sees the account's certificate, has no key for it, and
+  non-interactive xcodebuild will not auto-revoke. Per-run certificate
+  creation is structurally unsound on throwaway machines; distribution
+  certificates make it worse (Apple caps them at 2–3 per team).
+- **Fix:** import a persistent identity: export Apple Development + Apple
+  Distribution from a real Mac's Keychain Access as one `.p12`, store as the
+  `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` secrets (the exact
+  names desktop-lab/MOBILE.md already documents), and have the workflow
+  import it into a temp keychain (`security create-keychain` → `import` →
+  `set-key-partition-list` → `list-keychains`). Orphaned Apple Development
+  certificates on the account are safe to revoke — dev certs are recreated
+  on demand. Cloud signing then only manages *profiles*, which are
+  stateless.
+  One caveat: `APPLE_CERTIFICATE` is repo-wide — the macOS desktop pipeline
+  keeps its *Developer ID Application* identity in the same secret
+  (`desktop/SIGNING.md`), so the `.p12` must be a **combined** bundle
+  containing every identity the pipelines need, never a platform-only
+  replacement.
+- **Applies to:** `ios-release.yml` and `tvos-release.yml` (both fixed), and
+  any Apple-platform job that signs on ephemeral runners with
+  `-allowProvisioningUpdates`.
+
+### 2026-07-28 (f) — Distribution export needs an Admin API key: "Cloud signing permission error"
+
+- **Symptom:** with archive green, `xcodebuild -exportArchive` (automatic
+  signing, `app-store-connect` method) failed in seconds with "Cloud signing
+  permission error" + "No profiles for '<bundle id>' were found" for every
+  target — even though the keychain held a valid imported Apple Distribution
+  identity.
+- **Cause:** creating **distribution** provisioning profiles and touching
+  cloud-managed distribution certificates requires an **Admin**-role App
+  Store Connect API key. A lesser key can mint development profiles (so the
+  archive works, which makes the export failure look mysterious), and a
+  key's role cannot be upgraded after creation.
+- **Fix:** two halves. (1) Generate a new API key with **Admin** access and
+  update `APPLE_API_KEY` / `APPLE_API_KEY_BASE64`. (2) Pin
+  `signingCertificate` in ExportOptions ("Apple Distribution", or "Apple
+  Development" for a development-method export) so the export prefers the
+  persistent imported identity over requesting a cloud-managed one.
+- **Applies to:** `ios-release.yml` (fixed); any future Apple-platform
+  export with automatic signing.
+
+### 2026-07-28 (g) — altool never takes a key path: stage the .p8 where it actually looks
+
+- **Symptom:** the first run to reach "Upload to App Store Connect" failed
+  validation with Cocoa error -43: "The file 'AuthKey_….p8' could not be
+  found in any of these locations: './private_keys', '~/private_keys',
+  '~/.private_keys', '~/.appstoreconnect/private_keys'."
+- **Cause:** `xcrun altool` accepts only `--apiKey <id>` and searches those
+  four fixed directories — unlike `xcodebuild`, it has no
+  `-authenticationKeyPath` equivalent, so the `$RUNNER_TEMP/keys/…p8` the
+  workflow materializes is invisible to it. Latent until every earlier
+  signing gate was cleared, because no run had ever reached the upload.
+- **Fix:** `asc_publish.sh` now copies `$APPLE_API_KEY_PATH` into
+  `~/.appstoreconnect/private_keys/AuthKey_$APPLE_API_KEY.p8` before calling
+  altool. Fixed in the shared script precisely so both callers inherit it.
+- **Applies to:** `ios-release.yml` and `tvos-release.yml` (both publish
+  through `.github/scripts/asc_publish.sh`).
