@@ -36,6 +36,30 @@ pub fn boot_partition_path(device: &str) -> String {
     format!("/dev/{name}1")
 }
 
+/// Mint a random UUID (version 4, RFC 4122 variant) for the keyfile's
+/// `uuid=` line. HA's docs warn that a boot-partition profile without a
+/// stable UUID is re-imported with a fresh identity every boot — "the IP
+/// address changes on every boot" — so the flasher mints one at flash
+/// time and it rides the card forever. hub-core stays dependency-free; the
+/// randomness (getrandom, same as the account minting) lives here.
+pub fn uuid_v4() -> Result<String, String> {
+    let mut b = [0u8; 16];
+    getrandom::fill(&mut b)
+        .map_err(|e| format!("couldn't gather randomness for the connection UUID: {e}"))?;
+    b[6] = (b[6] & 0x0f) | 0x40; // version 4
+    b[8] = (b[8] & 0x3f) | 0x80; // RFC 4122 variant
+    let hex: Vec<String> = b.iter().map(|x| format!("{x:02x}")).collect();
+    let s = hex.concat();
+    Ok(format!(
+        "{}-{}-{}-{}-{}",
+        &s[0..8],
+        &s[8..12],
+        &s[12..16],
+        &s[16..20],
+        &s[20..32]
+    ))
+}
+
 /// The keyfile's filename stem: the connection id reduced to a safe,
 /// FAT-friendly name. Never empty — falls back to "securacv-hub".
 pub fn keyfile_stem(connection_id: &str) -> String {
@@ -365,6 +389,27 @@ mod tests {
         assert_eq!(boot_partition_path("/dev/nvme0n1"), "/dev/nvme0n1p1");
         assert_eq!(boot_partition_path("/dev/disk4"), "/dev/disk4s1");
         assert_eq!(boot_partition_path("sdb"), "/dev/sdb1");
+    }
+
+    #[test]
+    fn minted_uuids_are_well_formed_v4_and_unique() {
+        let a = uuid_v4().expect("mints");
+        let b = uuid_v4().expect("mints");
+        for u in [&a, &b] {
+            assert_eq!(u.len(), 36);
+            let parts: Vec<&str> = u.split('-').collect();
+            assert_eq!(
+                parts.iter().map(|p| p.len()).collect::<Vec<_>>(),
+                vec![8, 4, 4, 4, 12]
+            );
+            assert!(u.chars().all(|c| c == '-' || c.is_ascii_hexdigit()));
+            assert!(parts[2].starts_with('4'), "version nibble in {u}");
+            assert!(
+                matches!(parts[3].chars().next(), Some('8' | '9' | 'a' | 'b')),
+                "variant nibble in {u}"
+            );
+        }
+        assert_ne!(a, b, "two mints must differ");
     }
 
     #[test]

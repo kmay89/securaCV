@@ -55,7 +55,8 @@
 #define FEATURE_ACK_SYNC            1   // household ack-sync    (spec 2)
 #define FEATURE_PRESENCE_WAKE       1   // illumination ladder   (spec 3)
 #ifndef FEATURE_CHIME  // -D overridable so the emulator (not real hardware) can force the chime on
-#define FEATURE_CHIME               0   // no piezo on these boards; engine compiled
+#define FEATURE_CHIME               1   // populated buzzer (GPIO42, vendor pinout) —
+                                        // sounds the "canary wakes" boot chime on power-on
 #endif
 // Overridable (#ifndef): the C6 board's env compiles these two OUT
 // (-DFEATURE_CHIRP_SCAN=0 -DFEATURE_FLEET_LINK=0). Not a preference — an

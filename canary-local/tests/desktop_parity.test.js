@@ -594,3 +594,29 @@ test("self-update: each app's updater endpoint names the pointer its workflow ad
   assert.strictEqual(labConf.bundle.createUpdaterArtifacts, true,
     "lab no longer builds updater artifacts");
 });
+
+test("hub first-boot watch: the escalation countdown is wired on both paths", () => {
+  // The 25-minute troubleshooting escalation is visible-in-advance: a
+  // countdown painted from the SAME deadline the watch checks, on the live
+  // first-boot panel AND the resumed-after-relaunch banner. Losing either
+  // wiring re-creates the tips-appear-from-nowhere surprise (or, on the
+  // resumed path, the stranded-user case from the Codex review).
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+
+  assert.match(appJs, /function hubCountdownStart\b/,
+    "desktop/src/app.js lost hubCountdownStart");
+  assert.match(appJs, /HUB_FB_ESCALATE_MS\s*-\s*Date\.now\(\)/,
+    "the countdown no longer derives from HUB_FB_ESCALATE_MS — it can drift " +
+    "from the deadline the escalation check actually uses");
+  assert.match(appJs, /hubCountdownStart\(\$\("hub-fb-count"\),\s*t0\)/,
+    "the live first-boot watch no longer starts the countdown");
+  assert.match(appJs, /hubCountdownStart\(\$\("hub-resume-count"\),\s*rec\.at\)/,
+    "the resumed watch no longer starts the countdown from the persisted " +
+    "flash time (rec.at)");
+
+  for (const id of ["hub-fb-count", "hub-resume-count"]) {
+    assert.match(html, new RegExp(`id="${id}"`),
+      `desktop/src/index.html is missing the countdown element #${id}`);
+  }
+});

@@ -113,7 +113,14 @@ one-time setup, then it's one button per release.
    - Secret `APPLE_API_KEY_BASE64` — the `.p8` contents, base64-encoded
    (Create the key at App Store Connect → Users and Access → Integrations →
    App Store Connect API, role **App Manager**.)
-4. **TestFlight** app from the App Store on your iPhone, signed into the same
+4. **Register one device on the team** — CI archives sign with a development
+   profile, and Apple refuses to mint one for a team with *zero* registered
+   devices (RELEASE_LESSONS 2026-07-28 (d)). Plug your iPhone into your Mac →
+   Finder → click the phone → click the subtitle line under its name until
+   the **UDID** shows → right-click it → Copy UDID. Then
+   developer.apple.com → Certificates, Identifiers & Profiles → Devices →
+   **+** → paste. One-time; any one device unblocks every future archive.
+5. **TestFlight** app from the App Store on your iPhone, signed into the same
    Apple ID.
 
 **Each release (one button):**
@@ -131,8 +138,11 @@ one-time setup, then it's one button per release.
    (that's it working, not breaking; see `docs/RELEASE_BUTTONS.md`).
 
 A dry run first is house style (RELEASE_LESSONS principle 3): run the same
-button with `publish = false` / `export_method = release-testing` and confirm
-the `.ipa` artifact appears before doing the real one.
+button with `publish = false` and `export_method = app-store-connect`, and
+confirm the `.ipa` artifact appears before doing the real one. (Use
+app-store-connect even for the dry run — `release-testing` is an ad-hoc
+export, which requires registered devices on the team; the app-store path
+needs none.)
 
 The app icon App Store Connect requires is generated + committed
 (`scripts/make_app_icon.py` → `Assets.xcassets`, same contract as the tvOS
