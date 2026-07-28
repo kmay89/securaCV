@@ -56,6 +56,11 @@ void voice_play(Voice v, uint8_t ramp = 2);
 void voice_loop(uint32_t now_ms);
 inline void chime_loop(uint32_t now_ms) { voice_loop(now_ms); }
 
+// True while a phrase is latched and still rendering. Lets a caller pump the
+// engine to completion (e.g. render the boot chime synchronously at power-on,
+// before the steady-state loop that normally drives voice_loop() begins).
+bool voice_active();
+
 // Runtime state the loudness model reads. Night gates the gentle categories
 // (see voice_peak_duty); the render/care loop keeps it in step with quiet
 // hours. Volume is 0..4 (Off, Soft, Low, Medium, Full); interactions are the

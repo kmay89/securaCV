@@ -2408,6 +2408,7 @@ const hub = {
   // ETA bookkeeping, reset at each stage change
   eta: { stage: null, t0: 0, done0: 0 },
   fbTimer: null, // first-boot poll
+  fbCountStop: null, // stops the escalation countdown paint (hubCountdownStart)
   resumeTimer: null, // resume-across-restart poll
 };
 
@@ -2417,6 +2418,10 @@ const HUB_LASTFLASH_KEY = "securacv.hub.lastflash";
 // How long after a flash we'll still offer to resume the first-boot watch on
 // relaunch — comfortably longer than HAOS's 10–20 min first boot.
 const HUB_RESUME_WINDOW_MS = 45 * 60 * 1000;
+// When the first-boot watch escalates from "be patient" to "here's how to go
+// find it": past the honest 10–20 min first-boot window with margin. The watch
+// keeps polling — this only changes what the panel says.
+const HUB_FB_ESCALATE_MS = 25 * 60 * 1000;
 
 const HUB_STAGE_COPY = {
   download: "Downloading Home Assistant OS…",
@@ -2567,17 +2572,30 @@ async function hubMaybeResume() {
   if (up) { hubClearFlashRecord(); return; }
   const banner = $("hub-resume");
   banner.classList.remove("hidden");
+  // Same countdown as the live watch, from the persisted flash time — the
+  // relaunched app owes the user the same "when do I start worrying" answer.
+  const stopCount = hubCountdownStart($("hub-resume-count"), rec.at);
   $("hub-resume-open").addEventListener("click", () => openExternal("http://" + (rec.host || HUB_HOST)));
   $("hub-resume-dismiss").addEventListener("click", () => {
     hubClearFlashRecord();
     banner.classList.add("hidden");
+    stopCount();
     if (hub.resumeTimer) { clearInterval(hub.resumeTimer); hub.resumeTimer = null; }
   });
+  let escalated = false;
   const tick = async () => {
     let alive = false;
     try { alive = await invoke("hub_probe_hub", { host: rec.host || HUB_HOST }); } catch (_) {}
+    // The resumed watch escalates exactly like the live one — measured from
+    // the persisted flash time (rec.at), so a relaunch mid-first-boot never
+    // loses the 25-minute troubleshooting transition along with the timer.
+    if (!alive && !escalated && Date.now() - rec.at > HUB_FB_ESCALATE_MS) {
+      escalated = true;
+      $("hub-resume-text").textContent = hubFindItChecklist();
+    }
     if (alive) {
       if (hub.resumeTimer) { clearInterval(hub.resumeTimer); hub.resumeTimer = null; }
+      stopCount();
       $("hub-resume-dot").className = "dot connected";
       $("hub-resume-text").textContent = "Your hub from earlier is up. 🐤";
       $("hub-resume-open").classList.remove("hidden");
@@ -2588,6 +2606,54 @@ async function hubMaybeResume() {
   };
   hub.resumeTimer = setInterval(tick, 6000);
   tick();
+}
+
+// Visible countdown to the go-find-it escalation, so the troubleshooting
+// tips are something the user can see coming ("in 18:32") rather than a
+// surprise at the 25-minute mark — and so "nothing yet" reads as expected,
+// not broken. Painted every second from the SAME deadline the escalation
+// check uses (startedAt + HUB_FB_ESCALATE_MS); self-stops and hides its
+// element when the deadline passes. Returns a stop() for the hub-answered
+// and watch-dismissed paths.
+function hubCountdownStart(el, startedAt) {
+  let timer = null;
+  const stop = () => {
+    if (timer) { clearInterval(timer); timer = null; }
+    el.classList.add("hidden");
+  };
+  const paint = () => {
+    const left = startedAt + HUB_FB_ESCALATE_MS - Date.now();
+    if (left <= 0) { stop(); return; }
+    const m = Math.floor(left / 60000);
+    const s = String(Math.floor((left % 60000) / 1000)).padStart(2, "0");
+    el.textContent =
+      "If it hasn't answered in " + m + ":" + s + ", we'll walk you through finding it.";
+    el.classList.remove("hidden");
+  };
+  timer = setInterval(paint, 1000);
+  paint();
+  return stop;
+}
+
+// The go-find-it checklist for a hub that's past the honest first-boot
+// window. Shared by the live first-boot watch AND the resumed-after-relaunch
+// watch — the hub is often fine and it's the *finding* that failed (this
+// computer can't resolve .local, a router blocking mDNS, a typo'd Wi-Fi
+// password we can't see from here); a headless user must never be left
+// staring at a spinner with no next move on either path.
+function hubFindItChecklist() {
+  return (
+    "Longer than a normal first boot now. The Pi may well be fine and just hard to find; " +
+    "try these, in order: " +
+    "1) Open http://" + HUB_HOST + " from a phone or another computer — some computers " +
+    "can't resolve .local names even when the hub is up (this watcher has the same limit). " +
+    "2) Look in your router's device list for “homeassistant” and open its IP address " +
+    "with :8123 on the end. " +
+    "3) If you set Wi-Fi at flash time, a mistyped network name or password is invisible " +
+    "from outside — plug an ethernet cable into the Pi (it needs no setup at all), or " +
+    "re-flash the card with the Wi-Fi typed fresh. " +
+    "Still watching in the background — if it answers, we'll say so."
+  );
 }
 
 // Turn a backend error into calm, useful words: what happened, why the
@@ -2783,15 +2849,25 @@ function hubStartFirstBoot() {
     (hub.flashedViaPi
       ? "Unplug the USB-C cable, then plug your Pi into its own power supply — it stays a plain USB disk until that power-cycle. Watching for it to come online."
       : "Put the card in your Pi and power it on — watching for it to come online.") +
+    " No monitor or keyboard needed — the hub announces itself on your network by itself." +
     " First boot takes 10–20 minutes while it sets itself up; the blinking light is normal. Leave it powered if you can (a power cut usually just delays it — worst case is re-flashing). You can walk away, we'll ping you.";
   $("hub-fb-open").classList.add("hidden");
   hubRenderQr();
   hubStopFirstBoot(true); // clear any prior timer without hiding the panel
+  const t0 = Date.now();
+  hub.fbCountStop = hubCountdownStart($("hub-fb-count"), t0);
+  let escalated = false;
   const tick = async () => {
     let up = false;
     try {
       up = await invoke("hub_probe_hub", { host: HUB_HOST });
     } catch (_) {}
+    // Past the honest first-boot window with nothing heard: swap "be patient"
+    // for the go-find-it checklist (see hubFindItChecklist).
+    if (!up && !escalated && Date.now() - t0 > HUB_FB_ESCALATE_MS) {
+      escalated = true;
+      $("hub-fb-text").textContent = hubFindItChecklist();
+    }
     if (up) {
       hubStopFirstBoot(true);
       $("hub-fb-dot").className = "dot connected";
@@ -2814,6 +2890,10 @@ function hubStopFirstBoot(keepPanel) {
   if (hub.fbTimer) {
     clearInterval(hub.fbTimer);
     hub.fbTimer = null;
+  }
+  if (hub.fbCountStop) {
+    hub.fbCountStop();
+    hub.fbCountStop = null;
   }
   if (!keepPanel) $("hub-firstboot").classList.add("hidden");
 }

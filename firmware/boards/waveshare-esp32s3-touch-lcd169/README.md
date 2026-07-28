@@ -24,6 +24,9 @@ finger, exactly as on the watch and dash.
 - **Power**: USB-C **or 3.7 V MX1.25 lithium battery**, onboard charging, PWR
   button
 - **Radios**: Wi-Fi (2.4 GHz), BLE 5
+- **Buzzer**: populated passive piezo on GPIO42 (vendor pinout) — drives the
+  Canary Voice engine, so this board sounds the "canary wakes" boot chime on
+  power-on (`FEATURE_CHIME 1`), unlike the unpopulated-pad siblings
 - **No** camera, microphone, TF slot, or addressable LED
 
 ## Firmware — the `touch169` flavor (full nightstand parity + touch)

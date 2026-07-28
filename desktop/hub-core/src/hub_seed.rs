@@ -17,9 +17,24 @@
 //!     that can't authenticate; the one character that needs escaping in a
 //!     keyfile value (`\`) and a leading space are handled.
 //!
-//! NOTE: the keyfile follows Home Assistant's documented boot-network format, but
-//! whether a specific HAOS build accepts it end-to-end must be confirmed by a
-//! real flash — this crate tests the generation, not the boot.
+//! Two more choices that make the headless (no monitor, no keyboard) promise
+//! hold end-to-end:
+//!   * The `[connection]` section carries `llmnr=2` and `mdns=2` — the same
+//!     values HAOS's own default wired profile sets — so the hub *answers*
+//!     `homeassistant.local` on the Wi-Fi link at the OS-resolver level, not
+//!     only once Home Assistant Core's zeroconf is up.
+//!   * The caller should pass a freshly minted UUID4 (`hub_io::seed::uuid_v4`
+//!     mints one): HA's docs warn that without a stable `uuid=` the profile is
+//!     re-imported with a new identity each boot and "the IP address changes
+//!     on every boot" — exactly what a headless user can't chase.
+//!
+//! The placement this feeds is HA-documented, not folklore: the OS
+//! configuration docs say a USB stick named CONFIG works, and "Alternative you
+//! can create a `CONFIG` folder inside the `boot` partition", read on startup
+//! (developers.home-assistant.io/docs/operating-system/configuration). Files
+//! must use UNIX (LF) line endings — everything this module emits is LF-only.
+//! End-to-end acceptance on a specific HAOS build is still confirmed by a real
+//! flash — this crate tests the generation, not the boot.
 
 /// The inputs for a Wi-Fi keyfile. Borrowed strings — the caller owns them.
 #[derive(Debug, Clone)]
@@ -31,7 +46,10 @@ pub struct WifiSeed<'a> {
     /// The connection id — the keyfile's `id=` and the suggested filename stem.
     pub connection_id: &'a str,
     /// A pre-generated UUID, or `None` to omit it (NetworkManager assigns one on
-    /// load). `hub-core` is dependency-free, so it will not mint one itself.
+    /// load). `hub-core` is dependency-free, so it will not mint one itself —
+    /// callers should pass one (`hub_io::seed::uuid_v4`): HA's docs warn that a
+    /// boot-partition profile without a stable `uuid=` gets a fresh identity on
+    /// every boot's re-import, so the hub's IP can change each boot.
     pub uuid: Option<&'a str>,
     /// The network hides its SSID (no beacon) — adds `hidden=true` so the Pi
     /// probes for it actively.
@@ -156,7 +174,13 @@ pub fn wifi_keyfile(seed: &WifiSeed) -> Result<String, WifiSeedError> {
     if let Some(uuid) = seed.uuid {
         k.push_str(&format!("uuid={uuid}\n"));
     }
-    k.push_str("type=802-11-wireless\n\n");
+    k.push_str("type=802-11-wireless\n");
+    // Announce-and-respond on LLMNR and mDNS for this connection — the values
+    // HAOS's own default wired profile uses. Without them a Wi-Fi-only hub can
+    // sit healthy on the network yet never answer `homeassistant.local`, which
+    // to a headless user is indistinguishable from a dead flash.
+    k.push_str("llmnr=2\n");
+    k.push_str("mdns=2\n\n");
 
     k.push_str("[802-11-wireless]\n");
     k.push_str("mode=infrastructure\n");
@@ -201,6 +225,8 @@ mod tests {
         for section in [
             "[connection]",
             "type=802-11-wireless",
+            "llmnr=2",
+            "mdns=2",
             "[802-11-wireless]",
             "mode=infrastructure",
             "[802-11-wireless-security]",
@@ -216,6 +242,26 @@ mod tests {
         assert!(!k.contains("uuid="));
         // Not hidden by default.
         assert!(!k.contains("hidden="));
+    }
+
+    #[test]
+    fn the_connection_section_advertises_mdns_and_llmnr() {
+        // HAOS's own default profile sets llmnr=2 / mdns=2 on [connection];
+        // ours must too, or a Wi-Fi-only hub can be up yet never answer
+        // homeassistant.local — the headless dead end.
+        let k = wifi_keyfile(&seed("home", "supersecret")).unwrap();
+        let connection = k.split("\n\n").next().unwrap();
+        assert!(connection.starts_with("[connection]"));
+        assert!(connection.contains("\nllmnr=2"));
+        assert!(connection.contains("\nmdns=2"));
+    }
+
+    #[test]
+    fn the_keyfile_is_lf_only() {
+        // HA's docs: "Please make sure to save this file with UNIX line
+        // endings (LF…)" — a CRLF keyfile is silently ignored.
+        let k = wifi_keyfile(&seed("home", "supersecret")).unwrap();
+        assert!(!k.contains('\r'));
     }
 
     #[test]
