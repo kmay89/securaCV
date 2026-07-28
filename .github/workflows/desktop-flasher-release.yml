@@ -591,7 +591,7 @@ jobs:
   # SECURACV_OTA_MANIFEST_URL). Left alone, the whole fleet 404s on its next
   # check and quietly stops seeing updates.
   #
-  # Its own job, under `always()`, and NOT gated on `build` succeeding: with
+  # Its own job, under `always()`, and NOT gated on its needs succeeding: with
   # `fail-fast: false`, one matrix leg can publish the release and upload its
   # installers while the other fails — and a job with `needs:` but no `always()`
   # is skipped outright when a dependency fails, so a step-level `if: always()`
@@ -599,9 +599,17 @@ jobs:
   # needs the repair MOST: the release exists, it has taken `latest`, and being
   # CI-created it fires no `release:` event for release-latest-guard.yml to
   # catch. `always()` also covers cancellation, for the same reason.
+  #
+  # `finalize` is in `needs` for ORDERING, not gating: the action also mirrors
+  # flasher-latest's latest.json onto the firmware release holding
+  # `releases/latest` (the stranded ≤ 0.3.0 self-updaters poll that URL — see
+  # the action's header), so it must run after finalize has re-pointed
+  # flasher-latest at THIS publish, or it would mirror the previous version's
+  # manifest. Under `always()` a failed finalize doesn't skip the repair — the
+  # mirror then just re-serves the last good manifest, which is correct.
   keep-latest:
     name: Keep releases/latest on the firmware
-    needs: build
+    needs: [build, finalize]
     if: always() && (github.ref_type == 'tag' || github.event.inputs.dry_run == 'false')
     runs-on: ubuntu-latest
     timeout-minutes: 5

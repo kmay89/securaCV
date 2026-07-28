@@ -7,9 +7,16 @@ can't be pixel-tuned without a real Mac. So all artwork lives in the top and
 bottom safe zones, leaving a wide clear band in the middle for the icons and
 their Finder labels — no text or arrow can land under an icon.
 
-    windowSize                = 660 x 460   (this canvas is 2x for retina)
+    windowSize                = 660 x 460   (the saved PNG is exactly this)
     appPosition               = (175, 225)  ← app icon lands here
     applicationFolderPosition = (485, 225)  ← Applications alias lands here
+
+The canvas is drawn at 2x and downscaled to 660x460 before saving. Finder maps
+a background image's PIXELS straight onto window POINTS (it ignores PNG DPI
+metadata), so a PNG saved at the raw 2x size shows up double-size and cropped —
+the title blown up huge, the subtitle cut off mid-word, the bottom panel pushed
+out of the window entirely. The 2x pass exists only to supersample the text;
+the file we ship must match windowSize pixel-for-point.
 
 Regenerate:  python3 generate_background.py   (needs Pillow + the brand asset)
 The produced background.png is committed, so CI needs no Pillow.
@@ -104,9 +111,12 @@ def main():
            'xattr -dr com.apple.quarantine "/Applications/SecuraCV Flasher.app"',
            font("DejaVuSansMono.ttf", 12), CANARY)
 
+    # Downscale the supersampled canvas to the exact window size — Finder maps
+    # image pixels to window points, so anything else renders wrong-scale.
+    img = img.resize((WIN_W, WIN_H), Image.LANCZOS)
     dst = os.path.join(HERE, "background.png")
     img.convert("RGBA").save(dst)
-    print("wrote", dst, os.path.getsize(dst), "bytes", f"({W}x{H})")
+    print("wrote", dst, os.path.getsize(dst), "bytes", f"({WIN_W}x{WIN_H})")
 
 
 if __name__ == "__main__":
