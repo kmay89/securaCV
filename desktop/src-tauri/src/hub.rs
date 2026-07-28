@@ -598,6 +598,12 @@ fn hub_flash_blocking(
         .find(|d| d.path == disk_path)
         .ok_or_else(|| format!("{disk_path} is no longer connected — was it unplugged?"))?;
 
+    // Mint the connection UUID once, up front — the keyfile needs a stable
+    // uuid= or HAOS re-imports it with a fresh identity (and possibly a fresh
+    // IP) every boot. If randomness somehow fails we still flash: NetworkManager
+    // assigns a UUID on load, we just lose the cross-boot stability.
+    let wifi_uuid = hub_io::seed::uuid_v4().ok();
+
     // Validate the Wi-Fi seed BEFORE any download or write: a typo'd
     // passphrase should fail in one second, not after two GB.
     if let Some(w) = wifi.as_ref() {
@@ -605,7 +611,7 @@ fn hub_flash_blocking(
             ssid: &w.ssid,
             passphrase: &w.passphrase,
             connection_id: "securacv-hub",
-            uuid: None,
+            uuid: wifi_uuid.as_deref(),
             hidden: w.hidden,
         };
         hub_core::hub_seed::wifi_keyfile(&seed).map_err(|e| e.message())?;
@@ -809,7 +815,7 @@ fn hub_flash_blocking(
         ssid: &w.ssid,
         passphrase: &w.passphrase,
         connection_id: "securacv-hub",
-        uuid: None,
+        uuid: wifi_uuid.as_deref(),
         hidden: w.hidden,
     });
     let want_wifi = wifi_seed.is_some();
