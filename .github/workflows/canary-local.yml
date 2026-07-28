@@ -463,7 +463,17 @@ jobs:
               echo "  committed: $(tail -c +$start /tmp/committed.js | head -c 160 | tr -d '\n')"
               echo "  rebuilt:   $(tail -c +$start "$f" | head -c 160 | tr -d '\n')"
             done
-            echo "::error::emulator dist/ artifacts do not match a rebuild from this tree — run canary-local/emulator/build.sh all and commit the result (no emsdk 6.0.3 where you are? Actions → 'Rebuild emulator dist (pinned emsdk)' on your branch does the same and pushes the result)"
+            # The rebuilt bytes exist right here — hand them over instead of
+            # only complaining. The gzip'd git binary patch is emitted as
+            # PATCH:-prefixed base64 lines, so an environment that cannot
+            # install emsdk 6.0.3 (network-restricted sandboxes) can recover
+            # the exact CI-built artifacts from this log:
+            #   grep '^PATCH:' log | cut -c7- | tr -d '\n' | base64 -d \
+            #     | gunzip | git apply && commit
+            echo "── CI-built dist as a binary patch (base64, gzip) ──"
+            git diff --binary -- 'canary-local/emulator/dist/*.js' | gzip -9 | base64 -w0 | fold -w 8000 | sed 's/^/PATCH:/'
+            echo "── end of patch ──"
+            echo "::error::emulator dist/ artifacts do not match a rebuild from this tree — run canary-local/emulator/build.sh all and commit the result (no emsdk 6.0.3 where you are? Actions → 'Rebuild emulator dist (pinned emsdk)' on your branch does the same and pushes the result, or apply the PATCH: lines above)"
             exit 1
           fi
       - name: Voice preview drift check (index.html matches voice_score.h)
