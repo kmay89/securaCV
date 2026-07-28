@@ -201,6 +201,111 @@
       }
     },
     {
+      "id": "canary-display-nightstand-s3",
+      "family": "canary-display",
+      "kind": "display",
+      "name": "Canary Nightstand",
+      "tagline": "The tall portrait glance — a witness column you read from bed.",
+      "board": "Waveshare ESP32-S3-LCD-1.47 (USB-A stick)",
+      "glass": {
+        "w": 172,
+        "h": 320,
+        "round": false,
+        "panel": "ST7789 1.47\" IPS",
+        "touch": null
+      },
+      "senses": [],
+      "shows": [
+        "portrait witness column",
+        "living canary",
+        "ambient beacon",
+        "honest night"
+      ],
+      "network": {
+        "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
+        "web": "first-boot portal only",
+        "mqtt": "fleet subscriber + own heartbeat"
+      },
+      "emulator": {
+        "module": "emulator/dist/canary-display-nightstand.js",
+        "factory": "createCanaryEmuNightstand"
+      },
+      "docs": [
+        "docs/hardware/display_nightstand_line.md"
+      ],
+      "status": "in development — CI-verified twin, bench pending"
+    },
+    {
+      "id": "canary-display-touch169",
+      "family": "canary-display",
+      "kind": "display",
+      "name": "Canary Nightstand Touch",
+      "tagline": "The portrait glance you can touch — tap to peek, hold to acknowledge.",
+      "board": "Waveshare ESP32-S3-Touch-LCD-1.69",
+      "glass": {
+        "w": 240,
+        "h": 280,
+        "round": false,
+        "panel": "ST7789V2 1.69\" IPS",
+        "touch": "CST816T"
+      },
+      "senses": [],
+      "shows": [
+        "portrait witness column",
+        "living canary",
+        "touch peek + ack",
+        "honest night"
+      ],
+      "network": {
+        "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
+        "web": "first-boot portal only",
+        "mqtt": "fleet subscriber + own heartbeat"
+      },
+      "emulator": {
+        "module": "emulator/dist/canary-display-touch169.js",
+        "factory": "createCanaryEmuTouch169"
+      },
+      "docs": [
+        "docs/hardware/display_nightstand_line.md"
+      ],
+      "status": "in development — CI-verified twin, bench pending"
+    },
+    {
+      "id": "canary-display-dash7",
+      "family": "canary-display",
+      "kind": "display",
+      "name": "Canary Dash 7",
+      "tagline": "The 4.3″ Dash grown to 7″ — same quiet truth, room-scale glass.",
+      "board": "Waveshare ESP32-S3-Touch-LCD-7",
+      "glass": {
+        "w": 800,
+        "h": 480,
+        "round": false,
+        "panel": "7\" 800×480 IPS (parallel RGB)",
+        "touch": "GT911 (5-point)"
+      },
+      "senses": [],
+      "shows": [
+        "witness cards",
+        "event timeline",
+        "proof sheets",
+        "roll call"
+      ],
+      "network": {
+        "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
+        "web": "first-boot portal only",
+        "mqtt": "fleet subscriber + own heartbeat"
+      },
+      "emulator": {
+        "module": "emulator/dist/canary-display-dash.js",
+        "factory": "createCanaryEmuDash"
+      },
+      "docs": [
+        "docs/hardware/display_nightstand_line.md"
+      ],
+      "status": "in development — CI-verified twin (via the Dash), bench pending"
+    },
+    {
       "id": "canary-vision",
       "family": "canary-vision",
       "kind": "witness",
