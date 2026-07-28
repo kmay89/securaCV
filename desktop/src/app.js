@@ -2577,9 +2577,17 @@ async function hubMaybeResume() {
     banner.classList.add("hidden");
     if (hub.resumeTimer) { clearInterval(hub.resumeTimer); hub.resumeTimer = null; }
   });
+  let escalated = false;
   const tick = async () => {
     let alive = false;
     try { alive = await invoke("hub_probe_hub", { host: rec.host || HUB_HOST }); } catch (_) {}
+    // The resumed watch escalates exactly like the live one — measured from
+    // the persisted flash time (rec.at), so a relaunch mid-first-boot never
+    // loses the 25-minute troubleshooting transition along with the timer.
+    if (!alive && !escalated && Date.now() - rec.at > HUB_FB_ESCALATE_MS) {
+      escalated = true;
+      $("hub-resume-text").textContent = hubFindItChecklist();
+    }
     if (alive) {
       if (hub.resumeTimer) { clearInterval(hub.resumeTimer); hub.resumeTimer = null; }
       $("hub-resume-dot").className = "dot connected";
@@ -2592,6 +2600,27 @@ async function hubMaybeResume() {
   };
   hub.resumeTimer = setInterval(tick, 6000);
   tick();
+}
+
+// The go-find-it checklist for a hub that's past the honest first-boot
+// window. Shared by the live first-boot watch AND the resumed-after-relaunch
+// watch — the hub is often fine and it's the *finding* that failed (this
+// computer can't resolve .local, a router blocking mDNS, a typo'd Wi-Fi
+// password we can't see from here); a headless user must never be left
+// staring at a spinner with no next move on either path.
+function hubFindItChecklist() {
+  return (
+    "Longer than a normal first boot now. The Pi may well be fine and just hard to find; " +
+    "try these, in order: " +
+    "1) Open http://" + HUB_HOST + " from a phone or another computer — some computers " +
+    "can't resolve .local names even when the hub is up (this watcher has the same limit). " +
+    "2) Look in your router's device list for “homeassistant” and open its IP address " +
+    "with :8123 on the end. " +
+    "3) If you set Wi-Fi at flash time, a mistyped network name or password is invisible " +
+    "from outside — plug an ethernet cable into the Pi (it needs no setup at all), or " +
+    "re-flash the card with the Wi-Fi typed fresh. " +
+    "Still watching in the background — if it answers, we'll say so."
+  );
 }
 
 // Turn a backend error into calm, useful words: what happened, why the
@@ -2800,23 +2829,10 @@ function hubStartFirstBoot() {
       up = await invoke("hub_probe_hub", { host: HUB_HOST });
     } catch (_) {}
     // Past the honest first-boot window with nothing heard: swap "be patient"
-    // for a concrete go-find-it checklist. The hub is often fine and it's the
-    // *finding* that failed (this computer can't resolve .local, a router
-    // blocking mDNS, a typo'd Wi-Fi password we can't see from here) — a
-    // headless user must never be left staring at a spinner with no next move.
+    // for the go-find-it checklist (see hubFindItChecklist).
     if (!up && !escalated && Date.now() - t0 > HUB_FB_ESCALATE_MS) {
       escalated = true;
-      $("hub-fb-text").textContent =
-        "Over 25 minutes now — longer than a normal first boot. The Pi may well be fine and " +
-        "just hard to find; try these, in order: " +
-        "1) Open http://" + HUB_HOST + " from a phone or another computer — some computers " +
-        "can't resolve .local names even when the hub is up (this watcher has the same limit). " +
-        "2) Look in your router's device list for “homeassistant” and open its IP address " +
-        "with :8123 on the end. " +
-        "3) If you set Wi-Fi at flash time, a mistyped network name or password is invisible " +
-        "from outside — plug an ethernet cable into the Pi (it needs no setup at all), or " +
-        "re-flash the card with the Wi-Fi typed fresh. " +
-        "Still watching in the background — if it answers, we'll say so.";
+      $("hub-fb-text").textContent = hubFindItChecklist();
     }
     if (up) {
       hubStopFirstBoot(true);

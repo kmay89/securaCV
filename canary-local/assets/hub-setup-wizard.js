@@ -84,7 +84,7 @@ export function wizardSteps(facts) {
         "The Pi never needs a monitor or keyboard: flash it, power it, and it announces " +
         "itself on your network by itself.",
       do: [
-        "Follow HA’s official installer for your device, or flash our ready Hub image (it comes pre-wired, Wi-Fi included).",
+        "Follow HA’s official installer for your device, or flash our ready Hub image. Heads up on Wi-Fi: seeding it onto the card at flash time is a desktop Flasher app feature — the browser guide writes stock HAOS, so on that route plug in an ethernet cable for the first boot (you can switch to Wi-Fi inside HA afterwards).",
         "Power it on and give the first boot 10–20 minutes — it’s setting itself up; the blinking light is normal.",
         "Then open Home Assistant in your browser (usually http://homeassistant.local:8123) and create your account — that account is local, stored on your box.",
       ],
