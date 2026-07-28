@@ -1,6 +1,6 @@
 {
  "generated_by": "scripts/bom_pricing.py",
- "as_of": "2026-07-27T12:36:35Z",
+ "as_of": "2026-07-28T11:27:27Z",
  "note": "Nightly distributor snapshot; provenance marks which rows are distributor-verified vs csv-seed.",
  "sources": {
   "csv": "docs/hardware/bom_*.csv (design intent + indicative seed prices)",
@@ -38,7 +38,7 @@
    "seed_usd": 13.99,
    "unit_usd": 15.9,
    "provenance": "digikey",
-   "stock": 1847,
+   "stock": 1823,
    "lifecycle": "Active",
    "sku": {
     "mouser": "713-102010469",
@@ -78,7 +78,7 @@
    "seed_usd": 1.2,
    "unit_usd": 2.0,
    "provenance": "digikey",
-   "stock": 597,
+   "stock": 599,
    "lifecycle": "Active",
    "sku": {
     "mouser": "713-110990210",
@@ -102,7 +102,7 @@
    "seed_usd": 7.49,
    "unit_usd": 7.49,
    "provenance": "digikey",
-   "stock": 6040,
+   "stock": 6014,
    "lifecycle": "Active",
    "sku": {
     "digikey": "1597-113991114-ND"
@@ -190,7 +190,7 @@
    "seed_usd": 0.05,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 966863,
+   "stock": 962596,
    "lifecycle": "Active",
    "sku": {
     "mouser": "512-1N4148",
@@ -263,7 +263,7 @@
    "seed_usd": 0.1,
    "unit_usd": 0.16,
    "provenance": "digikey",
-   "stock": 49700,
+   "stock": 37309,
    "lifecycle": "Active",
    "sku": {
     "mouser": "512-2N7002LT1G",
@@ -303,8 +303,8 @@
    "sourcing": "orderable",
    "seed_usd": 1.8,
    "unit_usd": 4.08,
-   "provenance": "carried",
-   "stock": 7643,
+   "provenance": "digikey",
+   "stock": 16043,
    "lifecycle": "Active",
    "sku": {
     "digikey": "HE573-ND"
@@ -456,7 +456,7 @@
    "seed_usd": 0.12,
    "unit_usd": 0.35,
    "provenance": "digikey",
-   "stock": 40981,
+   "stock": 40912,
    "lifecycle": "Active",
    "sku": {
     "mouser": "653-B3F-1000",
@@ -501,7 +501,7 @@
      "usd": 0.17994
     }
    ],
-   "url": "https://www.digikey.com/en/products/detail/aratas-america-llc/B3F-1000/33150",
+   "url": "https://www.digikey.com/en/products/detail/aratas-formerly-omron-components/B3F-1000/33150",
    "boms": [
     "bom_canary_vision.csv",
     "bom_canary_wap.csv"
@@ -530,7 +530,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 7250640,
+   "stock": 6971494,
    "lifecycle": "Active",
    "sku": {
     "lcsc": "C49678",
@@ -543,23 +543,23 @@
     },
     {
      "qty": 10,
-     "usd": 0.038
+     "usd": 0.047
     },
     {
      "qty": 50,
-     "usd": 0.0254
+     "usd": 0.0316
     },
     {
      "qty": 100,
-     "usd": 0.0218
+     "usd": 0.0271
     },
     {
      "qty": 500,
-     "usd": 0.0156
+     "usd": 0.01938
     },
     {
      "qty": 1000,
-     "usd": 0.0137
+     "usd": 0.01703
     }
    ],
    "url": "https://www.digikey.com/en/products/detail/samsung-electro-mechanics/CL21B104KBCNNNC/3886661",
@@ -575,7 +575,7 @@
    "seed_usd": 0.55,
    "unit_usd": 2.2,
    "provenance": "digikey",
-   "stock": 6285,
+   "stock": 6282,
    "lifecycle": "Active",
    "sku": {
     "mouser": "490-CPT-9019S-SMT-TR",
@@ -1177,7 +1177,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 648711,
+   "stock": 639248,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07100KL",
@@ -1230,7 +1230,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 178718,
+   "stock": 147311,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07100RL",
@@ -1283,7 +1283,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 497231,
+   "stock": 477569,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-071KL",
@@ -1336,7 +1336,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 471734,
+   "stock": 451504,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07330RL",
