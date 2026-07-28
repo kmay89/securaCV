@@ -47,6 +47,7 @@ jobs:
         # in-app "update ready" UI shows — so a bump without notes would ship an
         # update that can't say what it changes.
         run: python3 desktop/scripts/release_notes.py check
+      - name: OTA release key state (reported, never gating)
         # Prints whether the release signing public key is embedded or still all
         # zeros (OTA hard-disabled). Informational on purpose: a repo without the
         # key is a legitimate state — a SILENT one was the problem, since it
