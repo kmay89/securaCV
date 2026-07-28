@@ -121,6 +121,14 @@ one-time setup, then it's one button per release.
    password; then
    - Secret `APPLE_CERTIFICATE` — the `.p12`, base64-encoded
    - Secret `APPLE_CERTIFICATE_PASSWORD` — its password
+
+   ⚠️ `APPLE_CERTIFICATE` is **repo-wide** — the macOS desktop pipeline
+   reads the same secret for its *Developer ID Application* identity
+   (`desktop/SIGNING.md`). If that's already set up (or when you set it up
+   later), export ONE combined `.p12` containing every identity — Developer
+   ID Application + Apple Development + Apple Distribution — rather than
+   replacing the secret with a phone-only bundle. Each pipeline picks its
+   own identity out of the bundle; nothing conflicts.
 4. **Register one device on the team** — CI archives sign with a development
    profile, and Apple refuses to mint one for a team with *zero* registered
    devices (RELEASE_LESSONS 2026-07-28 (d)). Plug your iPhone into your Mac →

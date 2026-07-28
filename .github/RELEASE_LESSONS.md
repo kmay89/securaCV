@@ -913,6 +913,11 @@ Two independent failures, one release day, both invisible-by-design.
   certificates on the account are safe to revoke — dev certs are recreated
   on demand. Cloud signing then only manages *profiles*, which are
   stateless.
-- **Applies to:** `ios-release.yml` (fixed), `tvos-release.yml`, and any
-  Apple-platform job that signs on ephemeral runners with
+  One caveat: `APPLE_CERTIFICATE` is repo-wide — the macOS desktop pipeline
+  keeps its *Developer ID Application* identity in the same secret
+  (`desktop/SIGNING.md`), so the `.p12` must be a **combined** bundle
+  containing every identity the pipelines need, never a platform-only
+  replacement.
+- **Applies to:** `ios-release.yml` and `tvos-release.yml` (both fixed), and
+  any Apple-platform job that signs on ephemeral runners with
   `-allowProvisioningUpdates`.

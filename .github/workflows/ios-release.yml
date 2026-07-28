@@ -118,10 +118,12 @@ jobs:
       # falls back to per-run cloud certificates, which works only until the
       # first orphaned cert accumulates.
       - name: Import signing certificate
-        if: vars.ENABLE_IOS_BUILD == 'true' && secrets.APPLE_CERTIFICATE != ''
+        # secrets.* is not readable in a step `if` (actionlint: context not
+        # allowed) — route it through the step's own env instead.
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        if: vars.ENABLE_IOS_BUILD == 'true' && env.APPLE_CERTIFICATE != ''
         run: |
           KEYCHAIN="$RUNNER_TEMP/securacv-ci.keychain-db"
           KEYCHAIN_PW="$(uuidgen)"
