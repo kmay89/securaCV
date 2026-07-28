@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Every app keeps itself fresh — and says what's changing
+
+Self-update is now a contract both desktop apps honor, not a Flasher-only
+feature. The **Flasher** (0.3.5) re-checks on a six-hour routine while it
+stays open (and when a stale window regains focus), shows the pending
+release's own notes in the update banner and About page, and records every
+check and install in its local activity log. The **Lab** (0.2.0) gains the
+whole shape for the first time: signed self-update against its own rolling
+`lab-latest` pointer, a boot + six-hour check routine, a native "what's
+changing" dialog that asks before anything installs, and a local
+`update-journal.log` — desktop only, with the iOS/iPadOS builds compiling it
+out (the App Store owns updates there).
+
+What's-changing text is now a checked artifact, not prose that rots: each app
+carries a `RELEASE_NOTES.md` (newest-first, per version, written for the
+user), `release_notes.py check` fails any build whose newest section doesn't
+match the version being shipped, and the section flows into both the GitHub
+release body and the updater manifest's `notes` (via the now-shared
+`harden_updater_manifest.py`). Publishing the Lab's draft triggers
+`desktop-lab-updater-pointer.yml`, which hardens the manifest, refuses to
+proceed unless every updater URL resolves, and only then advances
+`lab-latest`. `desktop_parity.test.js` pins the whole contract (endpoint tag
+= workflow tag, distinct pointers, one shared pubkey, updater artifacts on).
+
 ### Pet & sleep presets for the radar (movement wake/sleep + dog/human vitals)
 
 Three researched presets for the Canary Sense radar, with feasibility stated

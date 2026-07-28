@@ -46,6 +46,12 @@ on:
       - "desktop/src/index.html"
       - "desktop/src/app.js"
       - "desktop-lab/frontend-stage.json"
+      # self-update parity: endpoints/pubkeys in the app configs must match
+      # the workflows that publish the rolling updater pointers
+      - "desktop/src-tauri/tauri.conf.json"
+      - "desktop-lab/src-tauri/tauri.conf.json"
+      - ".github/workflows/desktop-flasher-release.yml"
+      - ".github/workflows/desktop-lab-updater-pointer.yml"
       - "desktop-lab/scripts/**"
       - "desktop-lab/src-tauri/tauri.conf.json"
       - "privacy_witness_kernel/config.yaml"
@@ -97,6 +103,12 @@ on:
       - "desktop/src/index.html"
       - "desktop/src/app.js"
       - "desktop-lab/frontend-stage.json"
+      # self-update parity: endpoints/pubkeys in the app configs must match
+      # the workflows that publish the rolling updater pointers
+      - "desktop/src-tauri/tauri.conf.json"
+      - "desktop-lab/src-tauri/tauri.conf.json"
+      - ".github/workflows/desktop-flasher-release.yml"
+      - ".github/workflows/desktop-lab-updater-pointer.yml"
       - "desktop-lab/scripts/**"
       - "desktop-lab/src-tauri/tauri.conf.json"
       - "privacy_witness_kernel/config.yaml"

@@ -4,6 +4,15 @@
 // entirely on your machine. The commands below are the seam where native
 // capabilities plug in next — the biggest win being reliable USB flashing
 // (replacing the browser's flaky WebSerial). See ../README.md.
+//
+// Self-update (desktop only; iOS/iPadOS updates ride the App Store): the app
+// checks its release channel at launch and on a six-hour routine while it
+// stays open — see src/self_update.rs for the shape, copied from the Flasher.
+// Local-first still means local-first: the only thing the Lab ever fetches on
+// its own is its update manifest, from the project's releases.
+
+#[cfg(desktop)]
+mod self_update;
 
 #[tauri::command]
 fn app_version() -> String {
@@ -29,15 +38,52 @@ fn native_capabilities() -> serde_json::Value {
         "shell": "tauri",
         "serial": false,     // Phase 2: serialport
         "discovery": false,  // Phase 2: mDNS + BLE
-        "notifications": false
+        "notifications": false,
+        // Signed self-update via the rolling lab-latest pointer (desktop
+        // builds only — the App Store owns updates on iOS/iPadOS).
+        "self_update": cfg!(desktop)
     })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![app_version, native_capabilities])
+    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
+
+    #[cfg(desktop)]
+    let builder = builder
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(std::sync::Mutex::new(self_update::UpdateGate::default()))
+        .invoke_handler(tauri::generate_handler![
+            app_version,
+            native_capabilities,
+            self_update::check_update,
+            self_update::install_update
+        ]);
+    #[cfg(not(desktop))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        app_version,
+        native_capabilities
+    ]);
+
+    builder
+        .setup(|_app| {
+            // The freshness routine: first check shortly after launch, then
+            // every six hours for as long as the window stays open.
+            #[cfg(desktop)]
+            {
+                let handle = _app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(self_update::FIRST_CHECK_DELAY).await;
+                    loop {
+                        self_update::routine_check(handle.clone()).await;
+                        tokio::time::sleep(self_update::RECHECK_EVERY).await;
+                    }
+                });
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
-        .expect("error while running the SecuraCV Lab");
+        .expect("error while running the SecuraCV Lab")
 }

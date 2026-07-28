@@ -226,6 +226,13 @@ than cutting a new download — so nobody's updater sees anything new. Three
 python3 desktop/scripts/check_app_versions.py    # all three, both apps
 ```
 
+Bumping is half the act: the version must also **say what it changes**. Add a
+`## <version> — <date>` section at the top of the app's `RELEASE_NOTES.md`
+(`desktop/` or `desktop-lab/`) — it becomes the release body and the text the
+in-app updater shows as "what's changing". `desktop/scripts/release_notes.py
+check` (lint + both app workflows) fails the build if the newest section
+doesn't match the version being shipped.
+
 Cargo.toml is the one that bit us: the Flasher shipped as `0.2.2` with a footer
 reading `v0.1.0`, so a bug report named a version that had never been released.
 Remember `Cargo.lock` too — it pins the crate's own version and a `--locked`
@@ -248,7 +255,9 @@ You don't have to remember these; CI does. Listed so a red run makes sense.
 | A display binary carries the identity it's published under | the product-string check in `firmware-release.yml` |
 | The signing key in CI matches the committed public key | `firmware-release.yml`, fails before building |
 | The flasher's pinned release actually resolves | advisory warning in `canary-local.yml` |
-| Every updater URL in a published `latest.json` resolves | the consistency guard in `desktop-flasher-release.yml` |
+| Every updater URL in a published `latest.json` resolves | the consistency guards in `desktop-flasher-release.yml` + `desktop-lab-updater-pointer.yml` |
+| An app release says what it changes, in the body and in the updater notes | `desktop/scripts/release_notes.py` (lint + both app workflows) |
+| Each self-updating app polls its own rolling pointer (`flasher-latest`, `lab-latest`), never `releases/latest`, and the workflow that advances it names the same tag | `desktop_parity.test.js` |
 
 ## Things no button can do for you
 
@@ -258,4 +267,8 @@ You don't have to remember these; CI does. Listed so a red run makes sense.
   secrets need a developer account. Until then those targets are honest no-ops.
 - **Publishing the Lab's release.** It's created as a **draft** on purpose;
   a human clicks Publish. (`release-latest-guard.yml` then puts
-  `releases/latest` back on the firmware.)
+  `releases/latest` back on the firmware, and
+  `desktop-lab-updater-pointer.yml` verifies the updater manifest and
+  advances `lab-latest` — the pointer every installed Lab polls — so
+  publishing the draft is also what makes the fleet of installed Labs see
+  the update.)
