@@ -173,6 +173,20 @@ jobs:
           cp _tooling/firmware/scripts/build_flash_manifest.py firmware/scripts/build_flash_manifest.py
           mkdir -p canary-local/devices
           cp _tooling/canary-local/devices/flash.json canary-local/devices/flash.json
+          # The local composite actions below resolve from the WORKSPACE, which
+          # on this channel is the tag's tree — so `uses: ./.github/actions/...`
+          # would load whatever that tag shipped. A tag cut before
+          # `exclusive-core` existed would ignore the input (GitHub only warns
+          # on unexpected inputs) and rebuild the mixed-core failure this
+          # workflow is meant to be immune to; a tag cut before the action
+          # existed at all would fail the step outright. The overlay is how
+          # this workflow already keeps its packaging tooling current — the
+          # provisioning action belongs in it for the same reason. -RL so a
+          # symlinked file inside the action is copied as content
+          # (RELEASE_LESSONS principle 1).
+          mkdir -p .github/actions
+          rm -rf .github/actions/setup-arduino-esp32
+          cp -RL _tooling/.github/actions/setup-arduino-esp32 .github/actions/setup-arduino-esp32
           rm -rf _tooling
 
       - name: Set up Python

@@ -1089,3 +1089,26 @@ Two independent failures, one release day, both invisible-by-design.
   install command succeeding. Same shape as the PlatformIO core-dir
   isolation (lesson (j)/#1313): shared toolchain directories are state,
   and a cache restore is not an install.
+
+### 2026-07-29 (l) — A local `uses: ./` action comes from the WORKSPACE, so a tag checkout silently downgrades it
+
+- **Symptom (caught in review, before it shipped):** `flasher-release.yml`
+  on `channel=release` would have rebuilt an old tag using that tag's copy
+  of `.github/actions/setup-arduino-esp32` — the one without
+  `exclusive-core`. GitHub only *warns* on an unexpected input, so the
+  run would look fine while quietly reproducing the mixed-core failure
+  from (k); a tag predating the action entirely would fail the step.
+- **Cause:** local composite actions are read from the checked-out
+  workspace at step time. This workflow deliberately checks out the
+  **tag** it is rebuilding, so every `./`-referenced action is that tag's
+  version — even though the workflow YAML itself is the dispatch ref's.
+  The two halves of a run can therefore come from different commits.
+- **Fix:** the existing tooling overlay (which already refreshes
+  `make_factory.py`, `build_flash_manifest.py`, and `flash.json` from the
+  dispatch ref) now also overlays `.github/actions/setup-arduino-esp32`,
+  with `cp -RL`.
+- **Applies to:** any workflow that checks out a ref other than the one it
+  was dispatched from — rebuild buttons, backport jobs, tag-repair jobs.
+  If the workflow body is "today" but the workspace is "then", every
+  local action, script, and config it touches is "then" until you
+  overlay it. Decide per file which era it should come from, and say so.
