@@ -357,6 +357,17 @@ if [[ "$FLAVOR" == "nightstand" || "$FLAVOR" == "touch169" ]]; then
     "$PROJ/src/hal/ambient_led.cpp"
   )
 fi
+if [[ "$FLAVOR" == "touch169" ]]; then
+  FIRMWARE_SRCS+=(
+    # The battery-backed RTC transport (FEATURE_RTC on this flavor):
+    # main.cpp calls rtc_begin/rtc_loop under the same gate, so the TU
+    # must link. On the shim's empty I2C bus (shim/Wire.h) the probe
+    # NACKs and the firmware takes the same no-RTC path as hardware
+    # with the pad unstuffed. Per-flavor so the other twins' bytes
+    # don't move for a TU their configs compile to nothing anyway.
+    "$PROJ/src/io/rtc.cpp"
+  )
+fi
 # The two silicon HALs are replaced by emu_hal_display.cpp; everything
 # else in src/ compiles verbatim. (net/* are replaced by emu_net/emu_mqtt.)
 

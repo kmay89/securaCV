@@ -68,6 +68,13 @@ jobs:
   #                        official espressif32 7.x platform imports it
   #                        without declaring it, so bootloader.bin
   #                        generation dies on a clean runner without it)
+  #   core_dir_groups    — map of env → group label; every env with the same
+  #                        label shares ONE PLATFORMIO_CORE_DIR
+  #                        (.pio-core-<label>), separate from the default.
+  #                        Same isolation reason as isolated_core_envs, but
+  #                        one toolchain download for a whole same-platform
+  #                        family (the 12 pioarduino dash envs) instead of
+  #                        one per env. Checked before isolated_core_envs.
   #   isolated_core_envs — envs that get their own PLATFORMIO_CORE_DIR.
   #                        Needed when one project mixes the official
   #                        espressif32 platform with the pioarduino fork:
@@ -177,7 +184,11 @@ jobs:
             echo "Firmware size: $SIZE / $SLOT bytes ($((SIZE * 100 / SLOT))% of $SLOT_NAME)"
           }
           for e in $(jq -r '.build_envs[]' <<< "$FLAVOR_JSON"); do
-            if jq -e --arg e "$e" '(.isolated_core_envs // []) | index($e)' <<< "$FLAVOR_JSON" > /dev/null; then
+            GROUP=$(jq -r --arg e "$e" '(.core_dir_groups // {})[$e] // empty' <<< "$FLAVOR_JSON")
+            if [ -n "$GROUP" ]; then
+              echo "── pio run -e $e (shared PLATFORMIO_CORE_DIR group: $GROUP) ──"
+              PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-$GROUP" pio run -e "$e"
+            elif jq -e --arg e "$e" '(.isolated_core_envs // []) | index($e)' <<< "$FLAVOR_JSON" > /dev/null; then
               echo "── pio run -e $e (isolated PLATFORMIO_CORE_DIR) ──"
               PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-$e" pio run -e "$e"
             else
