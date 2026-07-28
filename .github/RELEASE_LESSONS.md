@@ -1051,3 +1051,41 @@ Two independent failures, one release day, both invisible-by-design.
   mechanism and stay on their bench-validated pairing. If a new RGB board
   joins the fleet, its release build belongs on the core-3 row from day
   one.
+
+### 2026-07-29 (k) — Two core versions in one job: the cache layers them and an unversioned FQBN takes the newest
+
+- **Symptom:** `fw-v2.4.1` — the release that finally fixed the display
+  builds — shipped six of seven display products. The Canary Watch
+  Station was missing again: `canary-display watch produced no binary`,
+  a `::warning::`, run green. Dash and Dash · Modes, built two steps
+  later, were fine.
+- **Cause:** the release job calls `setup-arduino-esp32` three times
+  (latest core for the WAP, 2.0.17 for the SPI watch, 3.3.10 for the RGB
+  dash). Each call restores a `~/.arduino15` cache **into the same
+  directory** — `actions/cache` extracts, it does not clear — and
+  `arduino-cli core install X@V` is a no-op when V is already present.
+  So both 3.3.x and 2.0.17 sat in the tree, and an FQBN carries no
+  version: the watch compiled against the NEWEST installed core (3.x)
+  with the core-2 library row pinned beside it, which is the documented
+  mixing failure (`esp32-hal-periman.h: No such file or directory`) and
+  dies in seconds. The dash row "worked" only because its wanted core
+  happened to be the newest — which is exactly why the defect was
+  invisible from that side.
+- **Fix:** `setup-arduino-esp32` gains `exclusive-core`. When true it
+  uninstalls every other `esp32:esp32` version before installing this
+  row's, then **asserts** the requested version is the installed one and
+  fails the step if not. The assertion lives in setup, where failing
+  loudly is correct — the display compiles downstream are deliberately
+  non-blocking, so a wrong core there can only ever surface as a warning
+  and a missing product. Both display rows in `firmware-release.yml`
+  set it; `flasher-release.yml` was also ported off profile mode onto
+  the same two-row build (it had carried lesson (i)'s defect untouched,
+  so the "Flasher Factory Images" button had never produced a watch,
+  dash, or modes image either).
+- **Applies to:** any job that installs more than one version of the same
+  Arduino platform — and, generally, any toolchain selected by an
+  unversioned identifier. If a build's correctness depends on *which*
+  version is installed, assert it after install; don't infer it from the
+  install command succeeding. Same shape as the PlatformIO core-dir
+  isolation (lesson (j)/#1313): shared toolchain directories are state,
+  and a cache restore is not an install.
