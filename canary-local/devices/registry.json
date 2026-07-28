@@ -233,7 +233,30 @@
       "docs": [
         "docs/hardware/display_nightstand_line.md"
       ],
-      "status": "in development — CI-verified twin, bench pending"
+      "status": "in development — CI-verified twin, bench pending",
+      "bench": {
+        "power": {
+          "usb": "USB-A — the stick's whole body is the plug (power + serial over the same port)",
+          "switch": {
+            "label": "— (not fitted)",
+            "controls": "battery",
+            "note": "no switch is fitted because there is no battery path to gate — USB-A is the stick's only power"
+          }
+        },
+        "buttons": [
+          {
+            "id": "boot",
+            "label": "BOOT",
+            "note": "GPIO0 strapping pin, sampled only at reset — this firmware never reads it while running"
+          },
+          {
+            "id": "reset",
+            "label": "RESET",
+            "note": "chip reset — RAM clears, NVS flash survives"
+          }
+        ],
+        "leds": []
+      }
     },
     {
       "id": "canary-display-touch169",
@@ -268,7 +291,31 @@
       "docs": [
         "docs/hardware/display_nightstand_line.md"
       ],
-      "status": "in development — CI-verified twin, bench pending"
+      "status": "in development — CI-verified twin, bench pending",
+      "bench": {
+        "power": {
+          "usb": "USB-C — power + serial",
+          "battery": "3.7 V cell on the MX1.25 header (onboard charge/discharge management)",
+          "switch": {
+            "label": "PWR (push-button)",
+            "controls": "battery",
+            "note": "a power-latch button rather than a slide switch — it gates the battery path; on USB the board is always up (VERIFY the latch behavior on the bench)"
+          }
+        },
+        "buttons": [
+          {
+            "id": "boot",
+            "label": "BOOT",
+            "note": "GPIO0 strapping pin, sampled only at reset — this firmware never reads it while running"
+          },
+          {
+            "id": "reset",
+            "label": "RESET",
+            "note": "chip reset — RAM clears, NVS flash survives"
+          }
+        ],
+        "leds": []
+      }
     },
     {
       "id": "canary-display-dash7",
@@ -303,7 +350,53 @@
       "docs": [
         "docs/hardware/display_nightstand_line.md"
       ],
-      "status": "in development — CI-verified twin (via the Dash), bench pending"
+      "status": "in development — CI-verified twin (via the Dash), bench pending",
+      "bench": {
+        "power": {
+          "usb": "USB-C — power + serial (use a 5 V/1 A+ supply on the real bench)",
+          "battery": "single-cell lithium pack on the board's battery header (onboard charger)",
+          "switch": {
+            "label": "ON/OFF",
+            "controls": "battery",
+            "note": "electrically the 4.3\" Dash: the board-edge switch gates the battery path only — on USB the panel is always up (VERIFY on the 7\" revision)"
+          }
+        },
+        "buttons": [
+          {
+            "id": "boot",
+            "label": "BOOT",
+            "note": "GPIO0 strapping pin, sampled only at reset — this firmware never reads it while running"
+          },
+          {
+            "id": "reset",
+            "label": "RESET",
+            "note": "chip reset — RAM clears, NVS flash survives"
+          }
+        ],
+        "leds": [
+          {
+            "id": "pwr",
+            "label": "PWR",
+            "color": "red",
+            "driver": "rail",
+            "note": "wired straight to the power rail — lit whenever the board is up, from either source. No firmware can turn it off. (VERIFY on the 7\" revision)"
+          },
+          {
+            "id": "chg",
+            "label": "CHG",
+            "color": "red",
+            "driver": "charger",
+            "note": "lit while the onboard charger is filling the battery (VERIFY on the 7\" revision)"
+          },
+          {
+            "id": "done",
+            "label": "DONE",
+            "color": "red",
+            "driver": "charger",
+            "note": "lit when the battery is full and USB is still supplying (VERIFY on the 7\" revision)"
+          }
+        ]
+      }
     },
     {
       "id": "canary-vision",
