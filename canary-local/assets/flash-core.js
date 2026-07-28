@@ -1605,7 +1605,8 @@ export function postFlashNextStep(product, opts = {}) {
       kind: "wifi-portal",
       title: "Finish setup from your phone",
       body: "It’s broadcasting its own Wi-Fi network now — join it from your " +
-            "phone and a setup page opens by itself. Nothing to type here.",
+            "phone and its setup wizard pops up on its own. (If it doesn’t, " +
+            "open canary.local — or 192.168.4.1 — in your browser.)",
       cta: "How to connect",
     };
   }

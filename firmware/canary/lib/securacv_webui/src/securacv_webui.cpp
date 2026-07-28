@@ -889,6 +889,9 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       outline: none;
       border-color: var(--accent);
     }
+    /* Masks a text input like a password field WITHOUT type=password —
+       keeps iOS from offering to invent a new password for a Wi-Fi key. */
+    .pw-masked { -webkit-text-security: disc; text-security: disc; }
     
     /* Resolution selector */
     .resolution-selector {
@@ -2274,7 +2277,12 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div class="form-group">
             <label class="form-label">Password</label>
             <div style="position:relative;">
-              <input type="password" class="form-input" id="wifiPassword" placeholder="WiFi password">
+              <!-- Deliberately NOT type=password: this is another network's
+                   key, not an account credential, and iOS treats a password
+                   field here as "sign-up" — covering it with a strong-password
+                   suggestion sheet. Masked via -webkit-text-security instead,
+                   with autofill/autocorrect fully off. -->
+              <input type="text" class="form-input pw-masked" id="wifiPassword" placeholder="WiFi password" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
               <button type="button" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--muted);cursor:pointer;font-size:0.9rem;" onclick="togglePasswordVisibility()">Show</button>
             </div>
           </div>
@@ -5304,13 +5312,15 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     function togglePasswordVisibility() {
+      // The field stays type=text (see the pw-masked note in the markup);
+      // Show/Hide flips the masking class, never the input type.
       const input = document.getElementById('wifiPassword');
       const btn = event.target;
-      if (input.type === 'password') {
-        input.type = 'text';
+      if (input.classList.contains('pw-masked')) {
+        input.classList.remove('pw-masked');
         btn.textContent = 'Hide';
       } else {
-        input.type = 'password';
+        input.classList.add('pw-masked');
         btn.textContent = 'Show';
       }
     }

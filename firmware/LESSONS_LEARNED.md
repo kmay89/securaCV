@@ -666,6 +666,25 @@
   setup DNS hijack for non-`.local` lookups.
 - **Date learned:** 2026-05
 
+### iOS offers to *invent* a password for a Wi-Fi key field
+- **What happened:** On the setup portal, tapping the Wi-Fi password field
+  made iOS cover it with its "strong password" suggestion sheet — it read the
+  form as account sign-up. A real user tapped the suggestion and "generated"
+  a brand-new password instead of retrieving their home Wi-Fi key, and the
+  join then failed with credentials no router had ever seen.
+- **Root cause:** `<input type="password">` with no autocomplete annotation:
+  iOS's heuristics treat any password field on an unfamiliar page as a
+  new-account credential and push the generator.
+- **Fix:** For password-shaped fields that are NOT account credentials (a
+  Wi-Fi key, a broker secret), use `type="text"` masked with
+  `-webkit-text-security: disc` via a `.pw-masked` class, plus
+  `autocomplete="off" autocapitalize="none" autocorrect="off"
+  spellcheck="false"`. The Show/Hide toggle flips the class, never the input
+  type (flipping to `type="password"` re-summons the generator). Applied to
+  the canary dashboard's Wi-Fi field and the first-boot wizard
+  (`securacv_setup_page.cpp`); copy the pattern to any future field like it.
+- **Date learned:** 2026-07
+
 ### Captive DNS redirector must answer A queries only — NODATA for AAAA/HTTPS
 - **What happened:** Even with the per-platform probes, `canary.local` and the
   redirect resolved slowly or not at all on Android Chrome.

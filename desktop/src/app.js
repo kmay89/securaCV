@@ -2347,7 +2347,7 @@ function hatchMoment(product) {
     title: "Your Canary is on its perch.",
     body: "The magical first proof is local and physical: join its setup network, open the dashboard, then make one harmless signal it can witness.",
     steps: [
-      "Join the SecuraCV-XXXX Wi-Fi network it creates and open canary.local.",
+      "On your phone, join the SecuraCV-XXXX Wi-Fi network it creates — the Canary's setup wizard pops up on its own a moment later. (If it doesn't, open canary.local — or 192.168.4.1 — in your browser.)",
       "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
       "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test."
     ]
@@ -2400,6 +2400,9 @@ const hub = {
   done: false,
   piUsbWaiting: false,
   platform: "", // "macos" | "linux" | …
+  // True when the flashed target was the Pi itself presented over USB-C
+  // (rpiboot mass-storage) — the "what now" steps differ from a card reader.
+  flashedViaPi: false,
   accountValid: false,
   accountRequested: false,
   // ETA bookkeeping, reset at each stage change
@@ -2777,7 +2780,10 @@ function hubStartFirstBoot() {
   panel.classList.remove("hidden");
   $("hub-fb-dot").className = "dot reading";
   $("hub-fb-text").textContent =
-    "Put the card in your Pi and power it on — watching for it to come online. First boot takes 10–20 minutes while it sets itself up; the blinking light is normal. You can walk away, we'll ping you.";
+    (hub.flashedViaPi
+      ? "Unplug the USB-C cable, then plug your Pi into its own power supply — it stays a plain USB disk until that power-cycle. Watching for it to come online."
+      : "Put the card in your Pi and power it on — watching for it to come online.") +
+    " First boot takes 10–20 minutes while it sets itself up; the blinking light is normal. Leave it powered if you can (a power cut usually just delays it — worst case is re-flashing). You can walk away, we'll ping you.";
   $("hub-fb-open").classList.add("hidden");
   hubRenderQr();
   hubStopFirstBoot(true); // clear any prior timer without hiding the panel
@@ -3053,6 +3059,9 @@ async function hubFlash() {
   const target = hub.targets.find((t) => t.path === hub.selected);
   if (!target || hub.busy) return;
   hubStopFirstBoot(); // a fresh flash supersedes any prior first-boot watch
+  // Remember HOW this flash reaches the Pi — the "what now" steps differ
+  // between a card in a reader and the Pi itself acting as a USB disk.
+  hub.flashedViaPi = /rpi[-_ ]?msd/i.test(target.model);
   hub.busy = true;
   state.busy = true; // pause the Canary port watcher during the heavy write
   $("hub-flash-btn").disabled = true;
@@ -3075,7 +3084,12 @@ async function hubFlash() {
     setStatus("hub-result", "Done — written, read back, and verified.", "ok");
     logEvent("ok", "Home Assistant hub written to " + target.model);
     hubShowHatch(receipt);
-    hubNotify("Your card is ready", "Now boot it in your Pi — the app will tell you when it's online.");
+    hubNotify(
+      "Your card is ready",
+      hub.flashedViaPi
+        ? "Unplug the USB-C cable, then power your Pi from its own supply — the app will tell you when it's online."
+        : "Now boot it in your Pi — the app will tell you when it's online."
+    );
     hubChime();
     hubStartFirstBoot();
   } catch (e) {
@@ -3125,12 +3139,30 @@ function hubShowHatch(receipt) {
     `(SHA-256 ${receipt.sha256.slice(0, 16)}…).${cacheLine}${wifiLine}${acctLine}${ejectLine}`;
   // If the account was pre-made, the third step is "log in", not "create".
   const accountMade = receipt.account_seeded;
+  // The first step depends on HOW we reached the Pi's storage: a card in a
+  // reader moves to the Pi; the Pi-over-USB-C path has nothing to move — but
+  // it stays a plain USB disk until it's power-cycled onto its own supply.
+  const bootStep = hub.flashedViaPi
+    ? "Nothing to move — the storage we just wrote is already inside your Pi. It's still in " +
+      "“act as a disk” mode though, so it won't start on its own: unplug the USB-C cable " +
+      "from this computer, then plug the Pi into its normal power supply. That power-cycle " +
+      "is what starts the first boot."
+    : "Take the card out of the reader and put it in your Raspberry Pi (or connect the SSD), " +
+      "then power it on.";
   const steps = [
-    "Put the card in your Raspberry Pi (or connect the SSD) and power it on.",
-    "First boot takes 10–20 minutes while Home Assistant sets itself up — the LED activity is normal.",
+    bootStep,
+    "First boot takes 10–20 minutes while Home Assistant unpacks and sets itself up — LED " +
+      "activity is it working, not a problem. Best to leave it plugged in for those minutes; " +
+      "if power does get cut, it nearly always recovers on the next boot, and the true worst " +
+      "case is simply re-flashing this card.",
     accountMade
       ? `Open http://${HUB_HOST} and log in with the account you just made.`
       : `Open http://${HUB_HOST} on any device in your home and create your account.`,
+    "Once you're in, give your Canaries their meeting point: in Home Assistant go to " +
+      "Settings → Add-ons → Add-on Store, install “Mosquitto broker”, and press Start. When " +
+      "Home Assistant then offers to set up the newly discovered “MQTT” integration, accept " +
+      "with the defaults — they're exactly right for Canaries (the broker lives on the hub " +
+      "itself, port 1883).",
     "Then follow “The Hub” guide to bring in your Canaries — securacv.com/lab → Home Assistant.",
   ];
   $("hub-hatch-steps").innerHTML = steps.map((s) => `<li>${esc(s)}</li>`).join("");

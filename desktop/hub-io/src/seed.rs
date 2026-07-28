@@ -176,27 +176,51 @@ pub fn seed_card(
 #[cfg(target_os = "linux")]
 fn mount_partition(partition: &str) -> Result<PathBuf, String> {
     // Give the kernel a beat to re-read the new partition table after the raw
-    // write, then let udisks do a user-session mount (no root needed).
+    // write, then let udisks do a user-session mount (no root needed). The
+    // first mount attempt right after a multi-GB write can still fail while
+    // udev/udisks catch up, so retry a few times before giving up.
     wait_for_node(partition)?;
-    let out = std::process::Command::new("udisksctl")
-        .args(["mount", "-b", partition])
-        .output()
-        .map_err(|e| format!("couldn't run udisksctl: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
+    let mut last = String::new();
+    for attempt in 0..4u32 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(2000));
+        }
+        let out = std::process::Command::new("udisksctl")
+            .args(["mount", "-b", partition])
+            .output()
+            .map_err(|e| format!("couldn't run udisksctl: {e}"))?;
+        if out.status.success() {
+            // "Mounted /dev/sdb1 at /media/user/hassos-boot" (a trailing
+            // period on older udisks). Parse the mount point from udisks'
+            // own answer.
+            let text = String::from_utf8_lossy(&out.stdout);
+            let at = text
+                .split(" at ")
+                .nth(1)
+                .map(|s| s.trim().trim_end_matches('.').to_string())
+                .ok_or_else(|| format!("couldn't read the mount point from: {}", text.trim()))?;
+            return Ok(PathBuf::from(at));
+        }
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        // Already mounted (e.g. the desktop auto-mounter won the race) is a
+        // success in disguise — udisks names the existing mount point.
+        if let Some(at) = stderr.split(" already mounted at ").nth(1) {
+            let at = at
+                .trim()
+                .trim_start_matches('`')
+                .trim_end_matches('.')
+                .trim_end_matches('\'')
+                .trim_end_matches('`');
+            if !at.is_empty() {
+                return Ok(PathBuf::from(at));
+            }
+        }
+        last = format!(
             "couldn't mount the boot partition {partition}: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
+            stderr.trim()
+        );
     }
-    // "Mounted /dev/sdb1 at /media/user/hassos-boot" (a trailing period on
-    // older udisks). Parse the mount point from udisks' own answer.
-    let text = String::from_utf8_lossy(&out.stdout);
-    let at = text
-        .split(" at ")
-        .nth(1)
-        .map(|s| s.trim().trim_end_matches('.').to_string())
-        .ok_or_else(|| format!("couldn't read the mount point from: {}", text.trim()))?;
-    Ok(PathBuf::from(at))
+    Err(last)
 }
 
 #[cfg(target_os = "linux")]
@@ -231,29 +255,77 @@ fn wait_for_node(partition: &str) -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 fn mount_partition(partition: &str) -> Result<PathBuf, String> {
+    // The raw write just replaced the whole partition table under macOS's
+    // feet, and DiskArbitration takes a few seconds to re-probe before the
+    // FAT boot volume becomes mountable. The very first `diskutil mount`
+    // right after the write routinely fails with "Volume on diskXsY failed
+    // to mount" — a timing hiccup, not a damaged card (this is exactly the
+    // failure that used to drop the Wi-Fi seed). So: retry over ~20 s, and
+    // between attempts nudge the OS with `diskutil mountDisk` on the whole
+    // disk, which forces a re-probe of the fresh partition table.
+    let whole_disk = whole_disk_of(partition);
+    let mut last = String::new();
+    for attempt in 0..8u32 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(2500));
+            let _ = std::process::Command::new("diskutil")
+                .args(["mountDisk", &whole_disk])
+                .output();
+        }
+        match try_mount_macos(partition) {
+            Ok(p) => return Ok(p),
+            Err(e) => last = e,
+        }
+    }
+    Err(format!(
+        "{last} (tried for ~20 seconds; macOS wouldn't re-mount the freshly written card)"
+    ))
+}
+
+/// `/dev/disk11s1` → `/dev/disk11` — the whole-disk node a partition sits on.
+#[cfg(target_os = "macos")]
+fn whole_disk_of(partition: &str) -> String {
+    match partition.rfind('s') {
+        Some(i) if i > 0 && partition[i + 1..].chars().all(|c| c.is_ascii_digit()) => {
+            partition[..i].to_string()
+        }
+        _ => partition.to_string(),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn try_mount_macos(partition: &str) -> Result<PathBuf, String> {
     use hub_core::hub_enumerate_macos::{parse_plist, Plist};
 
     let mount = std::process::Command::new("diskutil")
         .args(["mount", partition])
         .output()
         .map_err(|e| format!("couldn't run diskutil: {e}"))?;
+    // Even when `mount` reports failure, the volume may (already) be mounted —
+    // e.g. the auto-mounter won the race — so trust the MountPoint diskutil
+    // reports over the exit status alone.
+    let info = std::process::Command::new("diskutil")
+        .args(["info", "-plist", partition])
+        .output()
+        .map_err(|e| format!("couldn't run diskutil: {e}"))?;
+    if let Ok(plist) = parse_plist(&String::from_utf8_lossy(&info.stdout)) {
+        if let Some(mp) = plist
+            .get("MountPoint")
+            .and_then(Plist::as_str)
+            .filter(|m| !m.is_empty())
+        {
+            return Ok(PathBuf::from(mp));
+        }
+    }
     if !mount.status.success() {
         return Err(format!(
             "couldn't mount the boot partition {partition}: {}",
             String::from_utf8_lossy(&mount.stderr).trim()
         ));
     }
-    let info = std::process::Command::new("diskutil")
-        .args(["info", "-plist", partition])
-        .output()
-        .map_err(|e| format!("couldn't run diskutil: {e}"))?;
-    let plist = parse_plist(&String::from_utf8_lossy(&info.stdout))?;
-    let mount_point = plist
-        .get("MountPoint")
-        .and_then(Plist::as_str)
-        .filter(|m| !m.is_empty())
-        .ok_or_else(|| format!("{partition} mounted but macOS reports no mount point"))?;
-    Ok(PathBuf::from(mount_point))
+    Err(format!(
+        "{partition} mounted but macOS reports no mount point"
+    ))
 }
 
 #[cfg(target_os = "macos")]

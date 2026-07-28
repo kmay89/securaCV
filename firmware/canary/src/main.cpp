@@ -799,8 +799,15 @@ void setup() {
       net.startHttpServer();
 #endif
 #if FEATURE_SETUP_WIZARD
+      // The captive DNS redirector runs for the AP's LIFETIME, not just first
+      // boot (LESSONS_LEARNED, "captive DNS runs for the AP's lifetime"): the
+      // OS probe domains only resolve to us while the hijack is live, and the
+      // probe handlers answer correctly in every state — the setup wizard
+      // while unprovisioned or offline, the platform success tokens once the
+      // home Wi-Fi is up. Safe because the softAP has no upstream anyway, and
+      // the device's own lookups use the STA resolver, never this listener.
+      setup_start_captive_portal();
       if (setup_is_active()) {
-        setup_start_captive_portal();
         Serial.println("[OK] Captive portal active — connect to configure");
       }
 #endif
@@ -1494,8 +1501,14 @@ void loop() {
   handle_boot_button();
 
 #if FEATURE_SETUP_WIZARD
+  // Pump the portal DNS whenever the responder is up — NOT only while setup
+  // is active. Setup completes the moment credentials are saved, but the
+  // phone's captive-portal sheet stays open on the wizard's success screen
+  // and keeps re-resolving the hijacked hostname; going deaf here would cut
+  // that session off mid-sentence. (setup_dns_process is a no-op once the
+  // responder is stopped, so this costs nothing in normal operation.)
+  setup_dns_process();
   if (setup_is_active()) {
-    setup_dns_process();
     setup_check_timeout();
     if (WiFi.status() == WL_CONNECTED) {
       setup_mark_complete();
