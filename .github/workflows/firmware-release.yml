@@ -282,12 +282,13 @@ jobs:
             --output-dir /tmp/wap-build \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
-      - name: Install ESP32 core 2.0.17 + display libraries (cached)
-        # The display flavors release from the core-2.0.17 row — the
-        # PlatformIO-matched pairing firmware.yml proves on every push
-        # (GFX 1.4.9 / LVGL 8.4 / NimBLE 1.4.3). Runs AFTER the wap build
-        # on purpose: it switches the installed esp32:esp32 platform to
-        # 2.0.17, and wap builds on the latest core.
+      - name: Install ESP32 core 2.0.17 + display libraries (core-2 row, cached)
+        # The watch releases from the core-2.0.17 row — the PlatformIO-matched
+        # pairing firmware.yml proves on every push (GFX 1.4.9 / LVGL 8.4 /
+        # NimBLE 1.4.3). SPI panel: no RGB-scanout mechanism, so the
+        # bench-validated core-2 row is the right one. Runs AFTER the wap
+        # build on purpose: it switches the installed esp32:esp32 platform,
+        # and wap builds on the latest core.
         uses: ./.github/actions/setup-arduino-esp32
         with:
           core-version: "2.0.17"
@@ -299,11 +300,51 @@ jobs:
             ArduinoJson
             NimBLE-Arduino@1.4.3
 
-      - name: Build canary-display watch + dash + modes (arduino-cli, fqbn + staged lv_conf.h)
-        # These three release exactly the way firmware.yml's "Stage + compile"
-        # leg proves on every push: explicit --fqbn against the pinned 2.0.17
-        # core, with LVGL's config staged at the libraries-dir root —
-        # libraries/lvgl/src/../../lv_conf.h is how LVGL 8.4 finds it.
+      - name: Build canary-display watch (arduino-cli, core-2 fqbn + staged lv_conf.h)
+        # Exactly the path firmware.yml's core-2 "Stage + compile" leg proves
+        # on every push: explicit --fqbn, LVGL's config staged at the
+        # libraries-dir root (libraries/lvgl/src/../../lv_conf.h is how LVGL
+        # finds it). See the dash/modes step below for why NOT profile mode.
+        run: |
+          cd firmware/projects/canary-display/arduino/canary_display
+          rm -f flavor_local.h
+          LIBDIR="$(arduino-cli config get directories.user)/libraries"
+          mkdir -p "${LIBDIR}"
+          cp lv_conf.h "${LIBDIR}/lv_conf.h"
+          if ! arduino-cli compile \
+              --fqbn 'esp32:esp32:XIAO_ESP32S3:PSRAM=opi,CDCOnBoot=default,USBMode=hwcdc' \
+              --output-dir /tmp/display-watch-build canary_display.ino; then
+            echo "::warning::canary-display 'watch' build failed — absent from the browser flasher this release"
+          fi
+
+      - name: Install ESP32 core 3.3.10 + display libraries (core-3 row, cached)
+        # The RGB-panel boards (dash + modes, the Waveshare 4.3B) MUST ship
+        # the core-3 pairing: only GFX 1.6.x's Arduino_ESP32RGBPanel takes
+        # bounce buffers, and without them the panel visibly
+        # flickers/jitters/shifts sideways the moment WiFi comes up — the
+        # radio and the RGB scanout contend for PSRAM bandwidth and the
+        # peripheral underruns (display_dash.cpp, seen on the 4.3B bench).
+        # The core-2 pairing has no bounce-buffer parameter and stays
+        # bench-only for these boards. Same reason the canary-display-dash7
+        # PlatformIO env moved production to the core-3 toolchain.
+        uses: ./.github/actions/setup-arduino-esp32
+        with:
+          core-version: "3.3.10"
+          libraries: |
+            GFX Library for Arduino@1.6.6
+            lvgl@9.5.0
+            PubSubClient
+            Crypto
+            ArduinoJson
+            NimBLE-Arduino@2.5.0
+
+      - name: Build canary-display dash + modes (arduino-cli, core-3 fqbn + staged lv_conf.h)
+        # Same mechanism as the watch step, on the core-3 row firmware.yml's
+        # "Stage + compile" leg proves on every push: explicit --fqbn with
+        # LVGL's config staged at the libraries-dir root. Core 3 is
+        # load-bearing here, not a preference — it's what compiles the RGB
+        # panel's bounce buffers in (see the setup step above); a core-2
+        # dash build ships the WiFi-flicker defect.
         #
         # NOT profile mode (`arduino-cli compile --profile`), which this step
         # used from its first day and which never produced a single release
@@ -316,10 +357,9 @@ jobs:
         # dash, and dash-modes and nothing went red. Lesson:
         # .github/RELEASE_LESSONS.md 2026-07-28 (i).
         #
-        # FQBNs are the sketch.yaml profiles' own values (the profiles remain
-        # the documented bench path for IDE/CLI users). The flavor dispatchers
-        # infer watch vs dash from the board (XIAO_ESP32S3 -> watch, generic
-        # esp32s3 -> dash).
+        # The FQBN is the dash-core3 profile's own value (the profiles remain
+        # the documented bench path for IDE/CLI users). Board inference picks
+        # the dash flavor from the generic esp32s3 board.
         #
         # `modes` is the exception, and it bites: it builds on the dash board
         # — the same physical 4.3B the PlatformIO canary-display-dash-modes
@@ -342,20 +382,17 @@ jobs:
           LIBDIR="$(arduino-cli config get directories.user)/libraries"
           mkdir -p "${LIBDIR}"
           cp lv_conf.h "${LIBDIR}/lv_conf.h"
-          WATCH_FQBN='esp32:esp32:XIAO_ESP32S3:PSRAM=opi,CDCOnBoot=default,USBMode=hwcdc'
           DASH_FQBN='esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=huge_app,CDCOnBoot=default,USBMode=hwcdc'
-          for P in watch dash modes; do
+          for P in dash modes; do
             if [ "$P" = modes ]; then
               ../../setup.sh flavor modes
-              FQBN="$DASH_FQBN"
             else
-              # No override: let board inference pick watch vs dash. Explicit
-              # so the loop is order-independent and a re-run can't inherit a
+              # No override: board inference picks dash. Explicit so the
+              # loop is order-independent and a re-run can't inherit a
               # stale staging.
               rm -f flavor_local.h
-              if [ "$P" = watch ]; then FQBN="$WATCH_FQBN"; else FQBN="$DASH_FQBN"; fi
             fi
-            if ! arduino-cli compile --fqbn "$FQBN" \
+            if ! arduino-cli compile --fqbn "$DASH_FQBN" \
                 --output-dir "/tmp/display-${P}-build" canary_display.ino; then
               echo "::warning::canary-display '${P}' build failed — absent from the browser flasher this release"
             fi

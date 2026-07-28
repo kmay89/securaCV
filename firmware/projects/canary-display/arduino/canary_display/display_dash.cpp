@@ -107,8 +107,11 @@ bool display_init() {
       (size_t)LCD_WIDTH * 10 /* bounce_buffer_size_px */);
 #else
   // GFX 1.4.9 (the core-2 pairing) predates the bounce-buffer parameter —
-  // this path can show WiFi-load jitter on the 4.3B; the shipping answer
-  // for that pairing is under evaluation (lower PCLK trades refresh rate).
+  // this path shows visible WiFi-load flicker/jitter on the 4.3B, so it is
+  // BENCH-ONLY: the release builds dash/modes on the core-3 pairing above
+  // (firmware-release.yml), the same call the dash7 env ships. If you're
+  // seeing the glass flicker/shift on a 4.3B, you're running a core-2
+  // build — reflash from the release.
   s_rgbpanel = new Arduino_ESP32RGBPanel(
       LCD_PIN_DE, LCD_PIN_VSYNC, LCD_PIN_HSYNC, LCD_PIN_PCLK,
       LCD_PIN_R3, LCD_PIN_R4, LCD_PIN_R5, LCD_PIN_R6, LCD_PIN_R7,

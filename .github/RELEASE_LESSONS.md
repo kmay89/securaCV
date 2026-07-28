@@ -1016,3 +1016,28 @@ Two independent failures, one release day, both invisible-by-design.
   outputs. The assemble step already warned per-missing-binary; a warning
   nobody reads is not a control. And: a release workflow must build the
   same way CI builds, or CI green proves nothing about the release.
+
+### 2026-07-28 (j) — RGB-panel boards must ship the core-3 pairing: core-2 has no bounce buffers and the glass visibly flickers under WiFi
+
+- **Symptom:** flicker / tearing / sideways shifting on the 4.3B dash
+  glass in normal operation (WiFi is always up on a fielded Canary).
+- **Cause:** the ESP32-S3 RGB peripheral scans its framebuffer out of
+  PSRAM continuously; when the radio contends for PSRAM bandwidth the
+  scanout underruns and the panel visibly glitches. The fix is bounce
+  buffers (small internal-SRAM staging the LCD DMA streams from), which
+  exist only in GFX 1.6.x — the core-3 pairing. GFX 1.4.9 (the core-2
+  pairing) predates the parameter, so any core-2 dash build carries the
+  defect by construction. The dash7 PlatformIO env had already moved
+  production to the core-3 toolchain for exactly this reason; the (i) fix
+  below initially put the 4.3B dash/modes release builds on core 2.0.17 —
+  correct for the SPI watch, wrong for RGB glass.
+- **Fix:** `firmware-release.yml` splits the display Arduino builds:
+  watch on the core-2 row (SPI panel, bench-validated pairing), dash +
+  modes on core 3.3.10 + GFX 1.6.6 / LVGL 9.5.0 / NimBLE 2.5.0 with
+  bounce buffers compiled in — the same rows firmware.yml proves on every
+  push. `display_dash.cpp` now marks the core-2 RGB path bench-only.
+- **Applies to:** every RGB-parallel-panel board, on any target. SPI
+  panels (watch, nightstand, touch169) have no scanout-contention
+  mechanism and stay on their bench-validated pairing. If a new RGB board
+  joins the fleet, its release build belongs on the core-3 row from day
+  one.
