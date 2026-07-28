@@ -48,12 +48,15 @@ FLAVOR="${1:-watch}"
 if [[ "$FLAVOR" == "all" ]]; then
   "$0" watch
   "$0" dash
+  "$0" nightstand
+  "$0" touch169
   "$0" vision
   "$0" audio
   exit 0
 fi
-[[ "$FLAVOR" == "watch" || "$FLAVOR" == "dash" || "$FLAVOR" == "vision" || "$FLAVOR" == "audio" ]] || {
-  echo "usage: $0 [watch|dash|vision|audio|all]" >&2
+[[ "$FLAVOR" == "watch" || "$FLAVOR" == "dash" || "$FLAVOR" == "nightstand" || \
+   "$FLAVOR" == "touch169" || "$FLAVOR" == "vision" || "$FLAVOR" == "audio" ]] || {
+  echo "usage: $0 [watch|dash|nightstand|touch169|vision|audio|all]" >&2
   exit 2
 }
 
@@ -252,13 +255,28 @@ fi
 if [[ "$FLAVOR" == "watch" ]]; then
   PINS_DIR="$FW/boards/xiao-esp32s3-round/pins"
   CFG_DIR="$FW/configs/canary-display/watch"
+elif [[ "$FLAVOR" == "nightstand" ]]; then
+  # The portrait 172x320 face on the S3 stick's pin map (same glass as the
+  # C6 sibling — one twin previews both boards).
+  PINS_DIR="$FW/boards/waveshare-esp32s3-lcd147/pins"
+  CFG_DIR="$FW/configs/canary-display/nightstand"
+elif [[ "$FLAVOR" == "touch169" ]]; then
+  # The 240x280 touch portrait: same nightstand app, CST816T glass — the
+  # shim's pointer events ARE the touch panel here.
+  PINS_DIR="$FW/boards/waveshare-esp32s3-touch-lcd169/pins"
+  CFG_DIR="$FW/configs/canary-display/touch169"
 else
   PINS_DIR="$FW/boards/waveshare-esp32s3-lcd43/pins"
   CFG_DIR="$FW/configs/canary-display/dash"
 fi
 
 OUT_BASE="canary-display-$FLAVOR"
-if [[ "$FLAVOR" == "watch" ]]; then EXPORT_NAME="createCanaryEmuWatch"; else EXPORT_NAME="createCanaryEmuDash"; fi
+case "$FLAVOR" in
+  watch)      EXPORT_NAME="createCanaryEmuWatch" ;;
+  nightstand) EXPORT_NAME="createCanaryEmuNightstand" ;;
+  touch169)   EXPORT_NAME="createCanaryEmuTouch169" ;;
+  *)          EXPORT_NAME="createCanaryEmuDash" ;;
+esac
 OBJ="$BUILD/$FLAVOR"
 mkdir -p "$OBJ"
 
@@ -325,6 +343,16 @@ FIRMWARE_SRCS=(
   "$PROJ"/src/fleet/*.cpp
   "$FW/common/boot/boot_banner.cpp"
 )
+# The portrait flavors are the only ones whose UI calls into the shared
+# color/look engine (the same LDF lesson the nightstand-s3 PlatformIO env
+# documents) — adding these TUs to watch/dash would perturb their bytes
+# for nothing, so they join per-flavor.
+if [[ "$FLAVOR" == "nightstand" || "$FLAVOR" == "touch169" ]]; then
+  FIRMWARE_SRCS+=(
+    "$FW/common/color/color_engine.cpp"
+    "$FW/common/color/look_engine.cpp"
+  )
+fi
 # The two silicon HALs are replaced by emu_hal_display.cpp; everything
 # else in src/ compiles verbatim. (net/* are replaced by emu_net/emu_mqtt.)
 
