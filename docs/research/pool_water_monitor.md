@@ -1,9 +1,17 @@
 # Research — pool water-chemistry monitor node (2026-07)
 
 Feasibility + options for a **`canary-pool`** node: an outdoor ESP32 that reads
-pool chemistry (pH first; ORP / temp / salinity next), publishes signed samples
-to the fleet, and surfaces them indoors — continuous graphs in Home Assistant
-and an at-a-glance "pool OK?" card + threshold alerts on the Dash.
+pool chemistry (pH first; ORP / temp / salinity next), publishes samples to the
+fleet, and surfaces them indoors — continuous graphs in Home Assistant and an
+at-a-glance "pool OK?" card + threshold alerts on the Dash.
+
+> **Scope note (this is a research plan, not a built feature).** A `canary-pool`
+> fork inherits the fleet's signed-chain *machinery*, but three things called out
+> below are **net-new firmware work, not free**: (a) retained `state` samples are
+> **not individually signed** — tamper-evidence for chemistry needs the samples
+> folded into the signed chain or periodic signed digests (§6); (b) Dash cards
+> and (c) threshold→event alerts both require Dash-side + node code (§6). The
+> earlier drafts overstated these as "zero-change"; corrected here.
 
 > **Prices are July-2026 USD list/street, agent-gathered — verify before
 > purchase, they drift.** Each row keeps one representative source. This is a
@@ -51,8 +59,11 @@ loop (BH1750 lux), so the firmware shape is already in the repo:
   Use their **electrical isolators** on the pH/ORP circuits to kill ground-loop
   noise. This drops straight into the BH1750 pattern.
 - **Industrial 4-20 mA front-end:** a differential probe (e.g. Sensorex SD7420CD,
-  direct 4-20 mA) → an I²C ADC (ADS1115) → same read loop. Higher cost, highest
-  stability.
+  direct 4-20 mA). The ADS1115 measures **voltage, not loop current**, so the
+  loop needs a **precision shunt** (e.g. ~150–165 Ω, which maps 4–20 mA → ~0.6–3.3 V)
+  or a current-loop receiver, plus a loop supply — sized to stay inside the ADC's
+  input and common-mode limits — *then* into the ADS1115 and the same read loop.
+  Higher cost, highest stability.
 
 ---
 
@@ -118,18 +129,21 @@ is an **event log, not a numeric series** (no value field).
 
 So graphing is two paths:
 
-- **Path A — graph in Home Assistant (recommended, ~zero new UI).** Every node
+- **Path A — graph in Home Assistant (recommended for the graphs).** Every node
   self-describes sensors via MQTT discovery
   ([`canary-sense/src/ha/ha_discovery.cpp`](../../firmware/projects/canary-sense/src/ha/ha_discovery.cpp)),
-  and **HA graphs any `sensor.*` entity automatically**. The Dash shows the
-  *current* pH/ORP + a "sanitizer OK/low" card and fires **out-of-band alerts**
-  on the `events` topic.
+  and **HA graphs any `sensor.*` entity automatically** — *this* part is ~zero new
+  UI. The Dash's *current-value card* and *threshold alerts*, however, are **not**
+  free (see build steps 2a/2b below): the Dash doesn't parse chemistry keys or
+  card a new device type yet.
 - **Path B — a trend widget on the Dash glass (net-new firmware).** A new
   `lv_chart` + a numeric ring buffer in the fleet model. Real work; only if the
   rolling graph must live on the wall display.
 
 **Recommended build path — fork `canary-sense` → `canary-pool`** (inherits MQTT
-connect/LWT/status/health/**signed chain**/OTA/HA-discovery for free):
+connect/LWT/status/health/OTA/HA-discovery + the signed-chain *machinery* for
+free — but see 2c: the chain today advances on **events**, and retained `state`
+samples are **not** signed):
 
 1. Swap the BH1750 read loop
    ([`canary-sense/src/main.cpp`](../../firmware/projects/canary-sense/src/main.cpp),
@@ -138,10 +152,25 @@ connect/LWT/status/health/**signed chain**/OTA/HA-discovery for free):
 2. Add `ph` / `orp` / `water_temp_c` / `tds` keys (null-when-absent) to the
    retained `state` publish
    ([`canary-sense/src/net/mqtt_mgr.cpp` `publish_state_retained()`](../../firmware/projects/canary-sense/src/net/mqtt_mgr.cpp)).
-   Publishing `temperature`/`humidity` also lights a **Dash card with zero Dash
-   changes** (Dash already parses those on `state` →
-   [`mqtt_mgr.cpp`](../../firmware/projects/canary-display/src/net/mqtt_mgr.cpp) →
-   `dash_ui.cpp`).
+   This gets you the HA graphs (step 3) but **nothing on the Dash by itself** —
+   the three items below are the net-new Dash/node work:
+   - **2a — Dash card (net-new):** the Dash `mqtt_mgr` parses `temperature`/`temp_c`
+     but **not** `ph`/`orp`/`water_temp_c`
+     ([`display .../mqtt_mgr.cpp`](../../firmware/projects/canary-display/src/net/mqtt_mgr.cpp)),
+     and [`fleet_cards.cpp::has_cards()`](../../firmware/projects/canary-display/src/fleet/fleet_cards.cpp)
+     recognizes **only** `canary-sense` — a `canary-pool` device gets no card. A
+     pool card = parse the keys into the model + add a `canary-pool` card set
+     (the file notes a card set is ~one builder branch).
+   - **2b — threshold alerts (net-new):** publishing `state` fires no alerts. The
+     node needs a **threshold/hysteresis state machine** that publishes named
+     events to the `events` topic; and each new name must be added to
+     [`fleet_model.cpp::classify_event()`](../../firmware/projects/canary-display/src/fleet/fleet_model.cpp)
+     or it defaults to `Notice` severity.
+   - **2c — tamper-evidence (design choice):** retained `state` values are **not
+     individually signed** (a broker/subscriber could alter a graphed reading
+     without breaking the chain). For tamper-evident chemistry, fold samples into
+     the signed chain (advance it on sample commits) or emit **periodic signed
+     digests**; otherwise treat graphed values as convenience data, not evidence.
 3. Copy the illuminance HA entity → pH/ORP/temp entities (`value_json.ph`, unit
    `pH`; ORP `mV`; water temp `device_class: temperature`) for auto-graphs.
 4. Register: `CD/CS_DEVICE_TYPE "canary-pool"` in
@@ -178,7 +207,7 @@ connect/LWT/status/health/**signed chain**/OTA/HA-discovery for free):
 | Sensorex **SD7420CD** differential pH (4-20 mA) | ~$500–700 (up to ~$1,130 some resellers) | [Sensorex](https://sensorex.com/product/sd7420cd-differential-ph-probe-direct-4-20ma-output/) |
 | Sensorex **Pool Plus** pH+ORP electrodes | ~$749–778 | [Sensorex](https://sensorex.com/product/pool-plus-ph-and-orp-electrodes/) |
 | Chemtrol pH / ORP probes (10 ft) | pH ~$314 / ORP ~$353 | [Poolweb](https://www.poolweb.com/collections/chemical-controller-probes) |
-| 4-20 mA → I²C ADC (ADS1115) + ESP32 + Hammond box | ~$40–70 | as above |
+| 4-20 mA loop supply + precision shunt / current-loop receiver → ADS1115 + ESP32 + Hammond box | ~$50–90 | as above (ADS1115 reads voltage, not loop current — §2) |
 | **Tier B total** | **≈ $700–1,500** | — |
 
 **Reference points (context):** a premium turnkey *Chemistry Probe Kit + Flow
