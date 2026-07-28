@@ -125,6 +125,12 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           CRITICAL_ALERTS: ${{ inputs.critical_alerts }}
         run: |
+          # NOTE: automatic signing archives with a DEVELOPMENT profile, and
+          # Apple won't mint one for a team with ZERO registered devices —
+          # the archive dies with "Your team has no devices". Register any
+          # one device once (RELEASE_LESSONS 2026-07-28 (d)); overriding
+          # CODE_SIGN_IDENTITY here instead hard-fails with "conflicting
+          # provisioning settings".
           # Critical Alerts is granted per-app by Apple; until then, signing a
           # build that requests it fails for every team. The standard set
           # (Support/SecuraCV.dev.entitlements) drops only that one key — the
