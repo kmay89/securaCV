@@ -202,6 +202,17 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :method string $EXPORT_METHOD" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :teamID string $APPLE_DEVELOPMENT_TEAM" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :signingStyle string automatic" "$PLIST"
+          # Pin the export to the persistent identity the keychain already
+          # holds. Without this, automatic-style export asks Apple for a
+          # CLOUD-MANAGED distribution certificate, which needs an Admin-role
+          # API key — an App Manager key dies with "Cloud signing permission
+          # error" even though a valid local cert is installed. `debugging`
+          # is a development-method export, so it pins the development cert.
+          if [ "$EXPORT_METHOD" = "debugging" ]; then
+            /usr/libexec/PlistBuddy -c "Add :signingCertificate string Apple Development" "$PLIST"
+          else
+            /usr/libexec/PlistBuddy -c "Add :signingCertificate string Apple Distribution" "$PLIST"
+          fi
 
           xcodebuild -exportArchive \
             -archivePath "$RUNNER_TEMP/SecuraCV.xcarchive" \
