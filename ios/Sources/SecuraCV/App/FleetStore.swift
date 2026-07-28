@@ -18,8 +18,14 @@ final class FleetStore: ObservableObject {
     @Published var fleetName: String = "Your Canaries"
     @Published var isRefreshing = false
 
+    // Demo mode: the seeded DemoFleet joins (never replaces) anything real,
+    // so the app demos on a Simulator or a hardware-free phone. Views flip it
+    // through setDemoMode(_:) so the choice persists; direct sets are for
+    // previews only.
+    @Published var demoMode: Bool
+
     // Collaborators
-    let devices = DeviceStore()
+    let devices: DeviceStore
     let discovery = Discovery()
     let ble = BLEConsole()
     let alerts = AlertCenter()
@@ -28,10 +34,19 @@ final class FleetStore: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     private var bag = Set<AnyCancellable>()
 
+    // True while the heartbeat's lastVerified came from demo seeding rather
+    // than a real end-to-end confirmation — so it can be revoked the moment
+    // it might mask something real.
+    private var heartbeatIsDemoFed = false
+
     var worstSeverity: Severity { witnesses.map(\.effectiveSeverity).max() ?? .ok }
     var allQuiet: Bool { worstSeverity == .ok }
 
     init() {
+        let devices = DeviceStore()
+        self.devices = devices
+        self.demoMode = DemoFleet.defaultEnabled(hasPairedDevices: !devices.devices.isEmpty)
+
         // Forward every collaborator's change into ours, so any view observing
         // the store updates when discovery, BLE, alerts, heartbeat, or the
         // device list change — no view has to know the internal object graph.
@@ -48,8 +63,43 @@ final class FleetStore: ObservableObject {
         discovery.start()
         Task { await alerts.requestAuthorization() }
         Task { await hydrateFromCloud() }
+        recordDemoBeatIfHarmless()
         startRefreshLoop()
         pushLiveActivity()
+    }
+
+    /// The UI's one entry point for demo mode — persists the choice and
+    /// re-renders immediately. Leaving demo forgets any demo-fed heartbeat so
+    /// the "provably alive" card never carries a verification it didn't earn.
+    func setDemoMode(_ on: Bool) {
+        guard on != demoMode else { return }
+        demoMode = on
+        DemoFleet.remember(on)
+        if on { recordDemoBeatIfHarmless() } else { revokeDemoBeat() }
+        Task { await refreshOnce() }
+    }
+
+    /// The demo may fake the delivery heartbeat ONLY while no real device is
+    /// paired: with nothing real to go dark, "alive" is a harmless stage prop.
+    /// The moment a real fleet exists, its dead-man's-switch (docs §5b) must
+    /// never be masked by sample data — real beats only.
+    private func recordDemoBeatIfHarmless() {
+        guard demoMode else { return }
+        if devices.devices.isEmpty {
+            heartbeat.recordBeat()
+            heartbeatIsDemoFed = true
+        } else {
+            revokeDemoBeat()
+        }
+    }
+
+    /// Back to "Not yet verified" — but only if the beat was demo-fed; a real
+    /// confirmation is never discarded.
+    private func revokeDemoBeat() {
+        if heartbeatIsDemoFed {
+            heartbeat.reset()
+            heartbeatIsDemoFed = false
+        }
     }
 
     func onScenePhase(active: Bool) {
@@ -105,6 +155,16 @@ final class FleetStore: ObservableObject {
             next.append(w)
         }
 
+        // Demo fleet: seeded witnesses/events join anything real (ids are
+        // "demo-"-namespaced, so they can't collide) — a live Canary paired
+        // mid-demo still shows up beside the samples. The heartbeat is only
+        // demo-fed while nothing real is paired (see recordDemoBeatIfHarmless).
+        if demoMode {
+            next.append(contentsOf: DemoFleet.witnesses())
+            events.append(contentsOf: DemoFleet.timeline())
+            recordDemoBeatIfHarmless()
+        }
+
         witnesses = next.sorted { $0.effectiveSeverity > $1.effectiveSeverity }
         timeline = events.sorted { $0.timeBucket > $1.timeBucket }
         pushLiveActivity()
@@ -133,7 +193,10 @@ final class FleetStore: ObservableObject {
         if let page = try? await api.witness(last: 20) {
             let verdict = ChainVerifier.verify(page, pinnedKey: PinnedKeyStore.key(for: ref.id))
             w.badge = verdict.badge
-            w.chainLength = page.records.map(\.seq).max() ?? 0
+            // The wire's seq is u64; the model mirrors fleet_model.h's
+            // uint32_t chain_length, so clamp at the fold (like the tolerant
+            // enum decoders — a newer firmware never breaks an older app).
+            w.chainLength = UInt32(clamping: page.records.map(\.seq).max() ?? 0)
             events = page.records.map { rec in
                 TimelineEvent(id: "\(ref.id)#\(rec.seq)",
                               deviceID: ref.id, deviceName: info.name, zone: rec.zone,

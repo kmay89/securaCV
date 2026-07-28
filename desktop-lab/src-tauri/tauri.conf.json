@@ -1,15 +1,18 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "SecuraCV Lab",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "identifier": "com.securacv.lab",
   "build": {
-    "frontendDist": "../../canary-local"
+    "beforeDevCommand": "node scripts/stage-frontend.mjs",
+    "beforeBuildCommand": "node scripts/stage-frontend.mjs",
+    "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
         "title": "SecuraCV Lab",
+        "url": "canary-local/lab.html",
         "width": 1200,
         "height": 820,
         "minWidth": 880,
@@ -24,7 +27,8 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["app", "dmg", "appimage", "deb"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -57,6 +61,14 @@
           "y": 220
         }
       }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/kmay89/securaCV/releases/download/lab-latest/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc3NDJCRThGRUVDQ0IzQkIKUldTN3M4enVqNzVDZHpnejBGeE0yQUg3T1RFZ3dBS0x4ckpGUTIyRU9Ea3FyaG9ZSGJXSGhmVTcK"
     }
   }
 }

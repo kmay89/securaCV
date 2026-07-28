@@ -17,6 +17,12 @@
   <key>SECURACV_FW_TRAIN</key>
   <string>$(SECURACV_FW_TRAIN)</string>
 
+  <!-- Export compliance: only Apple's OS crypto (CryptoKit / Secure Enclave /
+       TLS) with standard algorithms — the exempt category. Declaring it here
+       keeps TestFlight from parking every build on a manual questionnaire. -->
+  <key>ITSAppUsesNonExemptEncryption</key>
+  <false/>
+
   <!-- Live Activities / Dynamic Island -->
   <key>NSSupportsLiveActivities</key>
   <true/>

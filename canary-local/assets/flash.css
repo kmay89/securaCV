@@ -243,6 +243,25 @@ button.flash-map-key:hover { color: var(--text); }
 .flash-done { text-align: center; }
 .flash-done .flash-row { justify-content: center; }
 .flash-done-bird { font-size: 52px; animation: flash-pop 0.5s cubic-bezier(0.2,1.4,0.4,1) both; }
+
+/* ── the Hatchery: a whimsical name + birth certificate (parity with the native app) ── */
+.flash-cert-slot { display: flex; justify-content: center; }
+.flash-cert {
+  margin: 16px auto 4px; max-width: 420px; text-align: center;
+  border: 1px solid rgba(255,212,79,0.35); border-radius: 14px; padding: 18px 20px 16px;
+  background: radial-gradient(120% 100% at 50% 0%, rgba(255,212,79,0.08), rgba(255,255,255,0.02));
+  animation: flash-pop 0.5s cubic-bezier(0.2,1.4,0.4,1) both;
+}
+.flash-cert-kicker { font-size: 11px; text-transform: uppercase; letter-spacing: 0.18em; color: var(--canary); }
+.flash-cert-intro { margin: 6px 0 2px; font-size: 12.5px; color: var(--muted, #9aa39a); font-style: italic; }
+.flash-cert-name { font-size: 22px; font-weight: 720; letter-spacing: -0.01em; margin: 6px 0 2px; color: #fff; }
+.flash-cert-lineage { font-size: 13px; color: #d8d8d8; }
+.flash-cert-meta { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; margin: 10px 0 2px; font-size: 12px; color: var(--muted, #9aa39a); }
+.flash-cert-meta span { font-variant-numeric: tabular-nums; }
+.flash-cert-motto { margin: 10px 0 2px; font-size: 13.5px; color: #cfe0cf; font-style: italic; }
+.flash-cert-craft { margin-top: 8px; font-size: 11.5px; color: var(--muted, #9aa39a); }
+.flash-cert-foot { margin-top: 6px; font-size: 11px; color: var(--muted, #9aa39a); }
+.flash-cert-reroll { margin-top: 12px; }
 .flash-nextstep {
   text-align: left; margin: 16px auto 2px; max-width: 460px;
   border: 1px solid rgba(255,212,79,0.28); background: rgba(255,212,79,0.06);
@@ -489,7 +508,7 @@ button.flash-map-key:hover { color: var(--text); }
   to { transform: translate(var(--drift, 0), 108vh) rotate(320deg); opacity: 0.15; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .flash-plug, .flash-spinner, .flash-done-bird, .flash-confetti-bit, .flash-bar-fill { animation: none; }
+  .flash-plug, .flash-spinner, .flash-done-bird, .flash-confetti-bit, .flash-bar-fill, .flash-cert { animation: none; }
   .flash-confetti { display: none; }
 }
 
@@ -733,6 +752,56 @@ button.flash-map-key:hover { color: var(--text); }
   display: flex; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 14px;
 }
 
+/* ── the tuning suite: live knobs over the cable ─────────────────────────── */
+.flash-sense-rawline {
+  margin: -2px 0 8px; font: 12.5px/1.6 "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  color: #f0dca0;
+}
+.flash-sense-tune {
+  margin: 14px 0 6px; padding: 12px 14px; border-radius: 14px;
+  background: rgba(255,255,255,0.03); border: 1px solid var(--edge, #262626);
+}
+.flash-sense-knobs {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 4px 22px; margin: 10px 0 4px;
+}
+.flash-sense-knob {
+  display: grid; grid-template-columns: 96px 1fr 84px; align-items: center;
+  gap: 10px; padding: 4px 0; font-size: 13px;
+}
+.flash-sense-knob-name {
+  font: 12.5px/1.4 "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  color: var(--muted, #9aa39a);
+}
+.flash-sense-knob-val {
+  font: 12.5px/1.4 "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  color: #e7e7e7; text-align: right; white-space: nowrap;
+}
+.flash-sense-knob input[type="range"] { width: 100%; accent-color: #ffd44f; }
+.flash-sense-knob input[type="range"]:disabled { opacity: 0.4; }
+.flash-sense-tunectl { align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+.flash-sense-streamsel {
+  background: rgba(255,255,255,0.05); color: #e7e7e7; font-size: 12.5px;
+  border: 1px solid var(--edge, #262626); border-radius: 8px; padding: 6px 8px;
+}
+.flash-sense-rawtoggle {
+  display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px;
+  color: var(--muted, #9aa39a); cursor: pointer;
+}
+.flash-passport-warn { background: rgba(255,212,79,0.1); border-color: rgba(255,212,79,0.4); color: #f0dca0; }
+
+/* the classified live console: the stream stays quiet, verdicts pop */
+.flash-sense-logctl { gap: 8px; margin: 6px 0; }
+.flash-sense-log { max-height: 300px; overflow-y: auto; }
+.flash-senseline { white-space: pre-wrap; word-break: break-word; }
+.flash-senseline.tone-stream { color: #6f7a86; }
+.flash-senseline.tone-sense { color: #7CFF9B; }
+.flash-senseline.tone-vitals { color: #ff9fb2; }
+.flash-senseline.tone-cfg { color: #ffd44f; }
+.flash-senseline.tone-tune { color: #bfe6fb; }
+.flash-senseline.tone-err { color: #ff8a80; font-weight: 640; }
+.flash-senseline.tone-health { color: #9aa39a; }
+
 /* ── pro grade: the journey bar, phase fade, calm motion ─────────────────── */
 .flash-journey {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
@@ -949,3 +1018,62 @@ button.flash-map-key:hover { color: var(--text); }
 .flash-ble-status { min-height: 1.2em; }
 .flash-ble-card { border-left: 3px solid var(--ok); }
 .flash-ble-card h3 { color: var(--ok); margin: 0 0 6px; }
+
+/* ── cold start: the BOOT-held gesture, before the cable goes in ──────────── */
+/* Sits above the Connect button because it is the only control on the page
+   that has to happen BEFORE plugging in — everything else checks after. */
+.flash-coldstart {
+  text-align: left; margin: 14px 0 18px; padding: 14px 16px;
+  border: 1px solid rgba(255,212,79,0.32); border-radius: 12px;
+  background: rgba(255,212,79,0.06);
+}
+.flash-coldstart h3 { color: var(--canary, #ffd44f); margin: 0 0 8px; }
+.flash-coldstart p { font-size: 13.5px; margin: 0 0 8px; color: #ddd9cd; }
+.flash-coldstart-steps { margin: 8px 0 10px; }
+.flash-coldstart-row { gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.flash-coldstart-row .flash-chosen {
+  border-color: rgba(67,160,71,0.55); color: #bfe3c1; background: rgba(67,160,71,0.12);
+}
+.flash-coldstart-note:empty { display: none; }
+.flash-coldstart-note { margin: 8px 0 0; }
+
+/* ── customs: the read-only intake report ─────────────────────────────────── */
+.flash-intake { border-left: 3px solid var(--edge); }
+.flash-intake-clear { border-left-color: rgba(67,160,71,0.6); }
+.flash-intake-inconclusive,
+.flash-intake.flash-intake-attention { border-left-color: rgba(255,212,79,0.6); }
+.flash-intake.flash-intake-stop { border-left-color: #e5534b; }
+.flash-intake-head { display: flex; align-items: baseline; gap: 9px; }
+.flash-intake-head h3 { margin: 0; }
+.flash-intake-icon { font-size: 17px; }
+.flash-intake-finding {
+  display: block; margin: 9px 0 0; padding: 9px 12px; border-radius: 10px;
+  font-size: 13.5px; background: rgba(255,255,255,0.035); border: 1px solid var(--edge);
+}
+.flash-intake-finding strong { display: block; color: #e7e7e7; font-weight: 640; }
+.flash-intake-detail { display: block; margin-top: 3px; color: var(--muted, #9aa39a); }
+.flash-intake-finding.flash-intake-attention,
+.flash-intake-finding.flash-intake-inconclusive {
+  background: rgba(255,212,79,0.08); border-color: rgba(255,212,79,0.3);
+}
+.flash-intake-finding.flash-intake-stop {
+  background: rgba(229,83,75,0.1); border-color: rgba(229,83,75,0.42);
+}
+.flash-intake-verdict { margin: 12px 0 0; font-size: 13.5px; color: #cfd8cf; }
+.flash-intake-efuses { margin-top: 12px; }
+.flash-intake-efuses summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
+.flash-intake-efuse-list {
+  margin: 10px 0 8px; display: grid; grid-template-columns: 1fr auto; gap: 2px 14px;
+  font: 12px/1.7 "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+.flash-intake-efuse { display: contents; }
+.flash-intake-efuse-key { color: var(--muted, #9aa39a); }
+.flash-intake-efuse-val { color: #7f8a7f; text-align: right; }
+.flash-intake-burned .flash-intake-efuse-key,
+.flash-intake-burned .flash-intake-efuse-val { color: #f0dca0; font-weight: 600; }
+
+/* the erase we don't let you turn off, on a board we've never met */
+.flash-forced-erase {
+  background: rgba(3,169,244,0.07); border-color: rgba(3,169,244,0.3); color: #bfe6fb;
+}
+.flash-confirm-blocked { border-left: 3px solid #e5534b; }

@@ -48,8 +48,15 @@ Both OSes, reader path first (it isolates the writer from the gadget):
 - ☐ macOS: "Wait for my Pi" → hold power button, connect USB-C, release —
   rpiboot narrates, exits 0, and the card inside the Pi appears in the
   picker badged "your Pi, over USB-C".
-- ☐ Linux: same flow (note whether udev needed a rule for `0a5c:2712`; if
-  so, add it to the deb/AppImage and this runbook).
+- ☐ Linux: same flow. **Finding (2026-07-26): udev IS needed** — without a rule
+  granting access to the Pi's `0a5c:` boot device, rpiboot can't open it, so the
+  Pi never appears as a disk (looks like "nothing happened"). Fixed: the rule now
+  ships in the `.deb` (`/usr/lib/udev/rules.d/60-rpiboot.rules`, from
+  `desktop/src-tauri/packaging/rpiboot.rules`) and INSTALL.md documents the manual
+  add for AppImage; the app now emits a udev hint when rpiboot reports an
+  access/open failure. **Re-validate:** with the rule installed, "Wait for my Pi"
+  serves the gadget and the Pi shows up in the picker (and without it, confirm the
+  hint appears).
 - ☐ Full flash + Wi-Fi seed THROUGH the Pi, then boot it — same result as
   the reader path.
 - ☐ If an NVMe is fitted: it appears as a second LUN and is flashable.

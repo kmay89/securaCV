@@ -37,26 +37,41 @@ static void dns_respond(const uint8_t* query, size_t len, IPAddress client_ip, u
   uint8_t response[512];
   if (len > sizeof(response) - 16) return;
 
+  // Walk the first question's QNAME (labels are never compressed in queries)
+  // to find its QTYPE. Answer the redirect A record ONLY for A (type 1)
+  // queries; everything else — AAAA, HTTPS/SVCB, … — gets NOERROR with zero
+  // answers (NODATA), so clients fall straight back to their A lookup. An
+  // A-record answer to an AAAA query is malformed and makes Android Chrome
+  // stall instead of connecting (LESSONS_LEARNED, "answer A queries only").
+  size_t q = 12;
+  while (q < len && query[q] != 0 && (query[q] & 0xC0) == 0) {
+    q += 1 + query[q];
+  }
+  if (q >= len || query[q] != 0 || q + 4 >= len) return;  // malformed question
+  uint16_t qtype = ((uint16_t)query[q + 1] << 8) | query[q + 2];
+
   memcpy(response, query, len);
 
   response[2] = 0x84 | (query[2] & 0x01);
   response[3] = 0x00;
   response[6] = 0x00;
-  response[7] = 0x01;
+  response[7] = (qtype == 1) ? 0x01 : 0x00;
   response[8] = 0x00;
   response[9] = 0x00;
   response[10] = 0x00;
   response[11] = 0x00;
 
   size_t pos = len;
-  response[pos++] = 0xC0; response[pos++] = 0x0C;
-  response[pos++] = 0x00; response[pos++] = 0x01;
-  response[pos++] = 0x00; response[pos++] = 0x01;
-  response[pos++] = 0x00; response[pos++] = 0x00;
-  response[pos++] = 0x00; response[pos++] = 0x3C;
-  response[pos++] = 0x00; response[pos++] = 0x04;
-  response[pos++] = ap_ip[0]; response[pos++] = ap_ip[1];
-  response[pos++] = ap_ip[2]; response[pos++] = ap_ip[3];
+  if (qtype == 1) {
+    response[pos++] = 0xC0; response[pos++] = 0x0C;
+    response[pos++] = 0x00; response[pos++] = 0x01;
+    response[pos++] = 0x00; response[pos++] = 0x01;
+    response[pos++] = 0x00; response[pos++] = 0x00;
+    response[pos++] = 0x00; response[pos++] = 0x3C;
+    response[pos++] = 0x00; response[pos++] = 0x04;
+    response[pos++] = ap_ip[0]; response[pos++] = ap_ip[1];
+    response[pos++] = ap_ip[2]; response[pos++] = ap_ip[3];
+  }
 
   s_dns_udp.beginPacket(client_ip, client_port);
   s_dns_udp.write(response, pos);
@@ -109,7 +124,12 @@ void setup_mark_complete(void) {
   }
   s_first_boot = false;
   s_active = false;
-  setup_stop_captive_portal();
+  // Deliberately DON'T stop the portal DNS responder here: the phone's
+  // captive-portal sheet is still open on the wizard's success screen, and
+  // its status polling re-resolves the hijacked probe hostname. Killing DNS
+  // now would snap that session mid-sentence. (The redirector runs for the
+  // AP's lifetime anyway — main.cpp starts it whenever the AP comes up — so
+  // the probe handlers can keep phones from dropping the management AP.)
   log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM,
              "Setup complete", "normal operation");
 }

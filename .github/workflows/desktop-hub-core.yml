@@ -18,13 +18,35 @@ on:
     paths:
       - 'desktop/hub-core/**'
       - 'desktop/hub-io/**'
+      - 'desktop/src-tauri/src/rescue.rs'
+      - 'desktop/src-tauri/src/port_hint.rs'
+      - 'desktop/src-tauri/src/health.rs'
       - '.github/workflows/desktop-hub-core.yml'
+      # hub-io embeds these provisioning-bundle files (include_str!) and
+      # cross-checks their bytes against the Python manifest's SHA-256 pins, so a
+      # change to any of them must re-run this workflow or the check goes stale.
+      - 'canary-local/devices/hub_seed.json'
+      - 'canary-local/devices/hub_provision_bundle.json'
+      - 'canary-local/tools/hub_seed_apply.py'
+      - 'canary-local/tools/gen_hub_provision_bundle.py'
+      - 'homeassistant/frigate/config.yaml'
   pull_request:
     branches: [ main ]
     paths:
       - 'desktop/hub-core/**'
       - 'desktop/hub-io/**'
+      - 'desktop/src-tauri/src/rescue.rs'
+      - 'desktop/src-tauri/src/port_hint.rs'
+      - 'desktop/src-tauri/src/health.rs'
       - '.github/workflows/desktop-hub-core.yml'
+      # hub-io embeds these provisioning-bundle files (include_str!) and
+      # cross-checks their bytes against the Python manifest's SHA-256 pins, so a
+      # change to any of them must re-run this workflow or the check goes stale.
+      - 'canary-local/devices/hub_seed.json'
+      - 'canary-local/devices/hub_provision_bundle.json'
+      - 'canary-local/tools/hub_seed_apply.py'
+      - 'canary-local/tools/gen_hub_provision_bundle.py'
+      - 'homeassistant/frigate/config.yaml'
 
 # Read-only token: this workflow only checks out and runs cargo — it needs
 # nothing else. (CodeQL flags workflows that don't pin GITHUB_TOKEN scope.)
@@ -51,7 +73,7 @@ jobs:
       run:
         working-directory: desktop/${{ matrix.crate }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install fmt + clippy
         run: rustup component add rustfmt clippy
       - name: Format check
@@ -64,3 +86,26 @@ jobs:
           RUSTDOCFLAGS: "-D warnings"
       - name: Test
         run: cargo test
+
+  # Self-contained pure modules that live inside the release-only tauri crate
+  # (desktop/src-tauri) but depend on nothing but `std`, so `rustc --test` runs
+  # their unit tests on a plain runner — the footgun logic (rescue backup/restore
+  # validation, espflash arg building) can't rot silently between releases, even
+  # though the full app only builds on release tags.
+  tauri-pure-modules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: rescue.rs unit tests
+        run: |
+          rustc --edition 2021 --test desktop/src-tauri/src/rescue.rs -o /tmp/rescue_test
+          /tmp/rescue_test
+      - name: port_hint.rs unit tests
+        run: |
+          rustc --edition 2021 --test desktop/src-tauri/src/port_hint.rs -o /tmp/port_hint_test
+          /tmp/port_hint_test
+      - name: health.rs unit tests
+        run: |
+          rustc --edition 2021 --test desktop/src-tauri/src/health.rs -o /tmp/health_test
+          /tmp/health_test

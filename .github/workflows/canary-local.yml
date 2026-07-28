@@ -37,8 +37,23 @@ on:
       - "canary-local/tools/gen_flash.py"
       - "desktop/hub-core/src/hub_disk.rs"
       - "desktop/src-tauri/src/lib.rs"
+      - "desktop/src-tauri/src/health.rs"
       - "desktop/src-tauri/src/we2.rs"
       - "desktop/src-tauri/src/provisioning.rs"
+      - "desktop/src-tauri/build.rs"
+      # the desktop frontend: desktop_parity.test.js reads its HTML/JS to keep
+      # the two flashers in step (CLAUDE.md "two flashers, two frontends")
+      - "desktop/src/index.html"
+      - "desktop/src/app.js"
+      - "desktop-lab/frontend-stage.json"
+      # self-update parity: endpoints/pubkeys in the app configs must match
+      # the workflows that publish the rolling updater pointers
+      - "desktop/src-tauri/tauri.conf.json"
+      - "desktop-lab/src-tauri/tauri.conf.json"
+      - ".github/workflows/desktop-flasher-release.yml"
+      - ".github/workflows/desktop-lab-updater-pointer.yml"
+      - "desktop-lab/scripts/**"
+      - "desktop-lab/src-tauri/tauri.conf.json"
       - "privacy_witness_kernel/config.yaml"
       - "homeassistant/lovelace/**"
       - "homeassistant/automations/**"
@@ -79,8 +94,23 @@ on:
       - "canary-local/tools/gen_flash.py"
       - "desktop/hub-core/src/hub_disk.rs"
       - "desktop/src-tauri/src/lib.rs"
+      - "desktop/src-tauri/src/health.rs"
       - "desktop/src-tauri/src/we2.rs"
       - "desktop/src-tauri/src/provisioning.rs"
+      - "desktop/src-tauri/build.rs"
+      # the desktop frontend: desktop_parity.test.js reads its HTML/JS to keep
+      # the two flashers in step (CLAUDE.md "two flashers, two frontends")
+      - "desktop/src/index.html"
+      - "desktop/src/app.js"
+      - "desktop-lab/frontend-stage.json"
+      # self-update parity: endpoints/pubkeys in the app configs must match
+      # the workflows that publish the rolling updater pointers
+      - "desktop/src-tauri/tauri.conf.json"
+      - "desktop-lab/src-tauri/tauri.conf.json"
+      - ".github/workflows/desktop-flasher-release.yml"
+      - ".github/workflows/desktop-lab-updater-pointer.yml"
+      - "desktop-lab/scripts/**"
+      - "desktop-lab/src-tauri/tauri.conf.json"
       - "privacy_witness_kernel/config.yaml"
       - "homeassistant/lovelace/**"
       - "homeassistant/automations/**"
@@ -143,10 +173,14 @@ jobs:
           node --test canary-local/tests/flash_epic.test.js
           node --test canary-local/tests/flash_select.test.js
           node --test canary-local/tests/desktop_parity.test.js
+          node --test canary-local/tests/hatchery.test.js
+          node --test canary-local/tests/lab_bundle.test.js
           node --test canary-local/tests/playground.test.js
           node --test canary-local/tests/mode.test.js
           node --test canary-local/tests/mic.test.js
           node --test canary-local/tests/board_facts.test.mjs
+          node --test canary-local/tests/intake.test.mjs
+          node --test canary-local/tests/build_it.test.js
       - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
         run: |
           python3 canary-local/tools/gen_enclosures.py
@@ -170,6 +204,52 @@ jobs:
             echo "::error::generated hub image catalog stale — a source moved (HAOS version, hub_disk.rs card floor, add-on config, or the dashboards/automations/blueprints). Run canary-local/tools/gen_hub_image.py and commit"
             exit 1
           fi
+      - name: Hub seed drift (the first-boot provisioning plan — rides the hub catalog + Frigate config)
+        run: |
+          python3 canary-local/tools/gen_hub_seed.py
+          if ! git diff --exit-code -- canary-local/devices/hub_seed.json; then
+            echo "::error::generated hub seed plan stale — a source moved (add-on slugs/repositories in hub_image.json, or homeassistant/frigate/config.yaml). Run canary-local/tools/gen_hub_seed.py and commit"
+            exit 1
+          fi
+
+      - name: Hub provision bundle drift (the assembled payload's SHA-256 pins ride the plan/config/executor)
+        run: |
+          python3 canary-local/tools/gen_hub_provision_bundle.py
+          if ! git diff --exit-code -- canary-local/devices/hub_provision_bundle.json; then
+            echo "::error::provision bundle manifest stale — the plan, Frigate config, or executor changed. Run canary-local/tools/gen_hub_provision_bundle.py and commit (the bundle must not carry stale bytes)"
+            exit 1
+          fi
+
+      - name: Hub seed executor + provision-bundle tests (pure planner, fail-closed exec, self-contained bundle — no HA needed)
+        run: python3 -m unittest discover -s canary-local/tools/tests -p 'test_*.py'
+
+      - name: Hub seed executor dry-run smoke (the plan the installer would run)
+        # The executor is what turns hub_seed.json into a provisioned hub. Prove
+        # its dry-run stays runnable AND that the facts that make it actually
+        # work on a real Supervisor are present: the hashed add-on slugs (a bare
+        # slug 404s), the exact repo-registration endpoint the `ha` CLI can't
+        # reach, and the "claims, not recordings" privacy note.
+        run: |
+          set -euo pipefail
+          out="$(python3 canary-local/tools/hub_seed_apply.py --dry-run)"
+          echo "$out"
+          for needle in \
+            "d0491a67_privacy_witness_kernel" \
+            "ccab4aaf_frigate" \
+            "POST http://supervisor/store/repositories" \
+            '{"mode":"frigate"}' \
+            "recordings AND snapshots OFF"; do
+            if ! printf '%s' "$out" | grep -qF -- "$needle"; then
+              echo "::error::hub_seed_apply.py --dry-run no longer mentions '$needle' — the executor and the plan have drifted apart"
+              exit 1
+            fi
+          done
+          # A real run without a token must refuse, not silently no-op.
+          if python3 canary-local/tools/hub_seed_apply.py >/dev/null 2>&1; then
+            echo "::error::hub_seed_apply.py ran a real provision with no SUPERVISOR_TOKEN — it must fail closed"
+            exit 1
+          fi
+
       - name: Get Started data drift (rides the Hub snapshot + README install strings)
         run: |
           python3 canary-local/tools/gen_start.py
@@ -395,7 +475,17 @@ jobs:
               echo "  committed: $(tail -c +$start /tmp/committed.js | head -c 160 | tr -d '\n')"
               echo "  rebuilt:   $(tail -c +$start "$f" | head -c 160 | tr -d '\n')"
             done
-            echo "::error::emulator dist/ artifacts do not match a rebuild from this tree — run canary-local/emulator/build.sh all and commit the result"
+            # The rebuilt bytes exist right here — hand them over instead of
+            # only complaining. The gzip'd git binary patch is emitted as
+            # PATCH:-prefixed base64 lines, so an environment that cannot
+            # install emsdk 6.0.3 (network-restricted sandboxes) can recover
+            # the exact CI-built artifacts from this log:
+            #   grep '^PATCH:' log | cut -c7- | tr -d '\n' | base64 -d \
+            #     | gunzip | git apply && commit
+            echo "── CI-built dist as a binary patch (base64, gzip) ──"
+            git diff --binary -- 'canary-local/emulator/dist/*.js' | gzip -9 | base64 -w0 | fold -w 8000 | sed 's/^/PATCH:/'
+            echo "── end of patch ──"
+            echo "::error::emulator dist/ artifacts do not match a rebuild from this tree — run canary-local/emulator/build.sh all and commit the result (no emsdk 6.0.3 where you are? Actions → 'Rebuild emulator dist (pinned emsdk)' on your branch does the same and pushes the result, or apply the PATCH: lines above)"
             exit 1
           fi
       - name: Voice preview drift check (index.html matches voice_score.h)

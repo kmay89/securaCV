@@ -158,7 +158,7 @@ jobs:
           fi
 
       - name: Dispatch app + web workflows
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           PUBLISH: ${{ inputs.publish }}
           APPS: ${{ inputs.apps }}

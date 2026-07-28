@@ -1,0 +1,165 @@
+# The Lab's self-updater polls the rolling `lab-latest` prerelease pointer
+# (desktop-lab tauri.conf.json `plugins.updater.endpoints`) — its own pointer,
+# because `releases/latest` belongs to the firmware the fleet polls and
+# `flasher-latest` belongs to the Flasher. This workflow is what advances it.
+#
+# Why a separate workflow instead of the build's finalize job: the Lab is
+# released as a DRAFT on purpose (a human clicks Publish — see
+# docs/RELEASE_BUTTONS.md), and a draft's assets have no public download URLs,
+# so neither the resolve-every-URL consistency guard nor the pointer advance
+# can run before the publish. A human publish DOES fire `release: published`
+# (GitHub only suppresses events for GITHUB_TOKEN-created releases), so this
+# is the rare place in this repo where a release-event trigger is reliable.
+# The manual dispatch input exists for backfills and for re-running after a
+# transient failure.
+#
+# Order of operations is load-bearing: harden (idempotent — also repairs a
+# hand-made release), then verify every updater URL resolves, and only then
+# advance the pointer. The pointer can never land on a manifest whose URLs
+# don't resolve.
+name: Lab updater pointer (lab-latest)
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Published Lab release tag to point lab-latest at (e.g. app-v0.2.0)"
+        type: string
+        required: true
+
+permissions:
+  contents: write
+
+# Two publishes must not race to advance the pointer.
+concurrency:
+  group: lab-updater-pointer
+  cancel-in-progress: false
+
+jobs:
+  advance:
+    name: Verify manifest, advance lab-latest
+    # Fires for every published release; only Lab tags proceed.
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'app-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve tag + version
+        id: plan
+        shell: bash
+        env:
+          TAG_INPUT: ${{ inputs.tag }}
+          TAG_EVENT: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          tag="${TAG_INPUT:-$TAG_EVENT}"
+          if [[ ! "$tag" == app-v* ]]; then
+            echo "::error::'${tag}' is not a Lab release tag (app-v*)"; exit 1
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#app-v}" >> "$GITHUB_OUTPUT"
+
+      - name: Harden latest.json (idempotent — repairs hand-made releases too)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          VER: ${{ steps.plan.outputs.version }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" >/dev/null
+          work="$(mktemp -d)"
+          gh release download "$TAG" -p latest.json -D "$work" --clobber
+          for f in \
+            "SecuraCV.Lab_${VER}_amd64.AppImage.sig" \
+            "SecuraCV.Lab_${VER}_amd64.deb.sig" \
+            "SecuraCV.Lab_${VER}_universal.app.tar.gz.sig"; do
+            gh release download "$TAG" -p "$f" -D "$work" --clobber
+          done
+          python3 desktop/scripts/release_notes.py extract lab "$VER" > "$work/notes.md"
+          python3 desktop/scripts/harden_updater_manifest.py \
+            --product SecuraCV.Lab --notes-file "$work/notes.md" \
+            "$work/latest.json" "$OWNER" "$REPO" "$TAG" "$VER" "$work"
+          ok=0
+          for i in 1 2 3 4 5; do
+            if gh release upload "$TAG" "$work/latest.json" --clobber; then ok=1; break; fi
+            echo "latest.json upload failed (attempt $i) — retrying in $((i*6))s"; sleep $((i*6))
+          done
+          [ "$ok" -eq 1 ] || { echo "::error::could not upload latest.json after retries"; exit 1; }
+          echo "MANIFEST=$work/latest.json" >> "$GITHUB_ENV"
+
+      - name: Consistency guard — every updater URL must resolve
+        shell: bash
+        env:
+          MANIFEST: ${{ env.MANIFEST }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r url; do
+            code=$(curl -sSL -o /dev/null -w '%{http_code}' "$url")
+            if [ "$code" != "200" ]; then
+              echo "::error::updater URL does not resolve ($code): $url"; fail=1
+            else
+              echo "ok $code  $url"
+            fi
+          done < <(python3 -c "import json,sys;[print(p['url']) for p in json.load(open('$MANIFEST'))['platforms'].values()]" | sort -u)
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::release $TAG has a broken updater manifest — self-update would fail"; exit 1
+          fi
+          echo "updater manifest is self-consistent"
+
+      - name: Advance the rolling lab-latest updater pointer
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MANIFEST: ${{ env.MANIFEST }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          VER: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Stable installs poll this pointer, so only a stable version may
+          # advance it (same grammar guard as flasher-latest).
+          if [[ ! "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "prerelease version ${VER} — lab-latest pointer left untouched"
+            exit 0
+          fi
+          # …and never BACKWARD: a draft published late, or a manual backfill
+          # with an older tag, must not strand the installed base on a stale
+          # manifest. Equal versions may re-point (a re-cut of the same
+          # version refreshes URLs/signatures/notes).
+          cur="$(mktemp -d)"
+          if gh release download lab-latest -p latest.json -D "$cur" --clobber 2>/dev/null; then
+            current=$(python3 -c "import json;print(json.load(open('$cur/latest.json')).get('version',''))" 2>/dev/null || true)
+            if [[ "$current" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              behind=$(python3 -c "cand=tuple(map(int,'$VER'.split('.'))); cur=tuple(map(int,'$current'.split('.'))); print('yes' if cand<cur else 'no')")
+              if [ "$behind" = "yes" ]; then
+                echo "::notice::lab-latest already serves ${current} (newer than ${VER}) — pointer left untouched"
+                exit 0
+              fi
+            fi
+          fi
+          notes="Rolling pointer for the SecuraCV Lab's self-updater — the app
+          polls this prerelease's latest.json (desktop-lab tauri.conf.json
+          \`plugins.updater.endpoints\`). Not an install: download the Lab from
+          the versioned app-v* releases. Currently: **${VER}** (${TAG}).
+          \`releases/latest\` stays on the firmware on purpose — see
+          docs/RELEASE_BUTTONS.md."
+          if gh release view lab-latest >/dev/null 2>&1; then
+            gh release edit lab-latest --prerelease --notes "$notes" \
+              --title "SecuraCV Lab — updater pointer (rolling)"
+          else
+            gh release create lab-latest --prerelease --notes "$notes" \
+              --title "SecuraCV Lab — updater pointer (rolling)"
+          fi
+          ok=0
+          for i in 1 2 3 4 5; do
+            if gh release upload lab-latest "$MANIFEST" --clobber; then ok=1; break; fi
+            echo "lab-latest upload failed (attempt $i) — retrying in $((i*6))s"; sleep $((i*6))
+          done
+          [ "$ok" -eq 1 ] || { echo "::error::could not update the lab-latest pointer"; exit 1; }

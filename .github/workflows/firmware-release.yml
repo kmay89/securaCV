@@ -56,6 +56,7 @@ permissions:
   contents: write
   id-token: write      # OIDC identity used to sign the build-provenance attestation
   attestations: write  # upload the signed provenance to this repo's attestation store
+  actions: write       # chain-dispatch vision-model-release.yml after publishing
 
 # One release build per tag; NEVER cancel a run mid-publish (half-uploaded
 # release assets) — concurrent runs queue instead.
@@ -233,6 +234,16 @@ jobs:
 
       - name: Build canary-sense (release)
         working-directory: firmware/projects/canary-sense
+        # canary-sense rides the pioarduino core-3.x platform, but this job
+        # builds canary/canary-vision on the official espressif32 platform
+        # first — and the two ship a package literally named
+        # `framework-arduinoespressif32` at incompatible versions (2.0.x vs
+        # 3.3.8). Sharing ~/.platformio, pioarduino sees the official copy
+        # already "installed", skips its own, and fails with
+        # FRAMEWORK_DIR=None before any compile. A warm cache masked this
+        # until the cache was evicted (fw-v2.3.0, 2026-07-27). Isolate the
+        # core dir, exactly as the nightstand-c6 env below and firmware.yml's
+        # isolated_core_envs already do.
         run: |
           # Generic release build: placeholder secrets ON PURPOSE — same
           # NVS-backed runtime-config scheme as canary-vision above.
@@ -247,7 +258,8 @@ jobs:
           #define MQTT_USER nullptr
           #define MQTT_PASS nullptr
           HEADER
-          pio run -e canary-sense-default -e canary-sense-wellbeing
+          PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-canary-sense" \
+            pio run -e canary-sense-default -e canary-sense-wellbeing
 
       - name: Install Arduino CLI + ESP32 core (cached)
         uses: ./.github/actions/setup-arduino-esp32
@@ -345,8 +357,21 @@ jobs:
           #define MQTT_USER nullptr
           #define MQTT_PASS nullptr
           HEADER
-          for E in canary-display-dash7 canary-display-nightstand-s3; do
-            if ! pio run -e "$E"; then
+          # PlatformIO wipes the whole .pio/build workspace when the project
+          # checksum changes — and the C6 run's PLATFORMIO_CORE_DIR below
+          # changes exactly that. fw-v2.3.0 shipped without dash7 and
+          # nightstand-s3 this way: both compiled SUCCESS, then the C6 build
+          # cleaned the workspace and the packaging step found no binaries
+          # ("produced no binary", non-blocking, gone). Stage each env's
+          # outputs the moment it builds, and restore them after the C6 run
+          # so the packaging steps read the same .pio/build paths as always.
+          STAGE=/tmp/pio-display-staged
+          mkdir -p "$STAGE"
+          for E in canary-display-dash7 canary-display-nightstand-s3 canary-display-touch169; do
+            if pio run -e "$E"; then
+              rm -rf "${STAGE:?}/$E"
+              cp -R ".pio/build/$E" "$STAGE/$E"
+            else
               echo "::warning::${E} build failed — its product is absent from this release"
             fi
           done
@@ -354,6 +379,8 @@ jobs:
               pio run -e canary-display-nightstand-c6; then
             echo "::warning::canary-display-nightstand-c6 build failed — its product is absent from this release"
           fi
+          mkdir -p .pio/build
+          cp -R "$STAGE"/. .pio/build/
 
       - name: Assemble, sign, and verify release artifacts
         env:
@@ -458,7 +485,7 @@ jobs:
           # to every display flavor identically. A missing .pio build (its
           # env failed above) simply stages nothing and the loop's existing
           # "produced no binary" warning covers it.
-          for E in dash7 nightstand-s3 nightstand-c6; do
+          for E in dash7 nightstand-s3 nightstand-c6 touch169; do
             SRC="firmware/projects/canary-display/.pio/build/canary-display-${E}/firmware.bin"
             if [ -s "$SRC" ]; then
               mkdir -p "/tmp/display-${E}-build"
@@ -467,7 +494,7 @@ jobs:
           done
 
           DISPLAY_INDEX=""
-          for D in "watch:watch" "dash:dash" "dash-modes:modes" "dash7:dash7" "nightstand-s3:nightstand-s3" "nightstand-c6:nightstand-c6"; do
+          for D in "watch:watch" "dash:dash" "dash-modes:modes" "dash7:dash7" "nightstand-s3:nightstand-s3" "nightstand-c6:nightstand-c6" "touch169:touch169"; do
             NAME="${D%%:*}"; DIR="${D##*:}"
             SRC="/tmp/display-${DIR}-build/canary_display.ino.bin"
             OUT="/tmp/release/canary-display-${NAME}-${VERSION}.bin"
@@ -632,7 +659,7 @@ jobs:
         #   gh attestation verify <file> --repo ${{ github.repository }}
         # See docs/supply_chain_transparency.md.
         id: attest
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             /tmp/release/*.bin
@@ -684,6 +711,59 @@ jobs:
             /tmp/release/manifest-index.json
             /tmp/release/sha256sums.txt
             /tmp/release/provenance-firmware-${{ steps.ver.outputs.version }}.sigstore.jsonl
+
+      # A fresh stable fw-v* release takes releases/latest the moment it
+      # publishes — correctly, it IS firmware — but it is born WITHOUT the
+      # mirrored Flasher updater manifest keep-firmware-latest maintains there
+      # for desktop Flashers ≤ 0.3.0 (they poll
+      # releases/latest/download/latest.json; the action's header tells the
+      # whole story). Being CI-created, this release fires no `release:` event
+      # for release-latest-guard.yml to see (GitHub's recursion guard), so
+      # call the action directly — and do it HERE, immediately after publish:
+      # the vision-model chain below polls for up to 20 minutes and can even
+      # ride into the job timeout, and every minute the manifest is missing is
+      # a minute the stranded updaters 404 against the release that just took
+      # `latest`.
+      - name: Keep releases/latest healthy (firmware + stranded-Flasher manifest)
+        uses: ./.github/actions/keep-firmware-latest
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          context: ${{ steps.ver.outputs.tag }} publish
+
+      # vision-model-release.yml's `release: [published]` trigger looks like it
+      # covers this release — it doesn't. GitHub suppresses workflow events for
+      # anything created with the workflow's own GITHUB_TOKEN (the recursion
+      # guard), so a CI-published release never fires it: fw-v2.3.0 shipped
+      # without manifest-vision-model.json this way, and the Vision module
+      # flasher 404'd on every install while the "anti-rot" trigger sat idle —
+      # it had only ever fired for the early human-published releases. Chain
+      # the dispatch explicitly instead; the event trigger stays for the
+      # human-publish path, and the workflow's per-tag concurrency group
+      # de-dupes if both ever fire.
+      - name: Attach the pinned Vision model asset (chained dispatch, verified)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh workflow run vision-model-release.yml \
+            --repo "${{ github.repository }}" --ref "${{ github.ref_name }}" \
+            -f tag="$TAG"
+          # `gh workflow run` is fire-and-forget; a green firmware run with a
+          # 404ing model manifest is the exact failure this chain exists to
+          # prevent. So wait for the asset to actually land on the release
+          # before calling the release done. The model build is a few minutes
+          # (30-min timeout on its side); poll well past that before going red.
+          for _ in $(seq 1 60); do
+            if gh release view "$TAG" --json assets \
+                 -q '.assets[].name' | grep -qx "manifest-vision-model.json"; then
+              echo "manifest-vision-model.json attached to $TAG"
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::error::vision model asset never landed on $TAG — the chained vision-model-release.yml run failed or stalled. The firmware is published but the Vision module flasher will 404 until it is attached; re-run via Actions → Vision Model Asset with tag=$TAG."
+          exit 1
 
       # The dev channel's stable address. Only the MANIFESTS are mirrored —
       # each manifest's binary URL points at the real fw-v*-dev.* tag's

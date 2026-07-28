@@ -144,6 +144,8 @@ void ota_init(const Topics& topics) {
   }
 
   publish_update_auto_retained(g_topics, securacv_ota_get_auto_update());
+  publish_update_channel_retained(
+      g_topics, securacv_ota_get_channel() == SECURACV_OTA_CHANNEL_DEV);
   publish_update_state_now();
 
   // First check a couple of minutes after boot (jittered) so a fresh
@@ -168,6 +170,22 @@ void ota_loop(uint32_t now_ms) {
       log_line("OTA", enable ? "Auto-update turned on." : "Auto-update turned off.");
     }
     publish_update_auto_retained(g_topics, enable);
+  }
+  const int channel_cmd = take_pending_channel();
+  if (channel_cmd >= 0) {
+    const securacv_ota_channel_t ch = (channel_cmd == 1)
+        ? SECURACV_OTA_CHANNEL_DEV : SECURACV_OTA_CHANNEL_RELEASE;
+    // Same flash-wear discipline as the auto switch; on a real change,
+    // check the new channel promptly so the switch has a visible effect
+    // instead of waiting out the daily timer.
+    if (securacv_ota_get_channel() != ch) {
+      securacv_ota_set_channel(ch);
+      log_line("OTA", ch == SECURACV_OTA_CHANNEL_DEV
+          ? "Update channel: dev (rolling prerelease)."
+          : "Update channel: release (stable).");
+      schedule_next(5000UL, 2000UL);
+    }
+    publish_update_channel_retained(g_topics, ch == SECURACV_OTA_CHANNEL_DEV);
   }
 
   // Daily jittered check — the jitter spreads a fleet's checks over an

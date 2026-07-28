@@ -52,7 +52,7 @@ void begin_sta() {
 
 }  // namespace
 
-void wifi_init_or_reboot() {
+void wifi_init_or_reboot(void (*idle_poll)()) {
   const auto& cfg = canary::cfg::get();
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(false);  // wifi_loop owns retry policy (backoff)
@@ -65,6 +65,7 @@ void wifi_init_or_reboot() {
   while (WiFi.status() != WL_CONNECTED) {
     delay(300);
     canary::dbg_serial().print(".");
+    if (idle_poll) idle_poll();  // keep the cable-side bench alive meanwhile
 
     if ((canary::ms_now() - start) > WIFI_BOOT_TIMEOUT_MS) {
       canary::dbg_serial().println();

@@ -426,6 +426,28 @@
 
 ## Build System
 
+### Gate on a HAS_* board capability only AFTER including pins.h
+- **What happened:** `ambient_led.cpp` guarded its whole body with
+  `#if defined(HAS_RGBLED) && HAS_RGBLED` — but `HAS_RGBLED` lives in the
+  board's `pins.h`, which the file included *inside* the guard. At gate time
+  the macro was undefined, the gate was always false, and the TU compiled
+  EMPTY: the nightstand boards' WS2812 "primary ambient state channel" was
+  dead code in every image that shipped it. The new Touch-1.69 CST816 gate
+  copied the same pattern and would have shipped touch that ignored every
+  tap. Caught in review (PR #1290), before either board's bench pass.
+- **Root cause:** `HAS_*` capabilities come from the board header (`pins.h`
+  via the env's `-I`), not from `<config.h>` (the flavor). A capability gate
+  placed before the `pins.h` include silently evaluates the macro as
+  undefined — and `defined(X) && X` makes that *look* deliberate.
+- **Fix:** Include `pins.h` (pure `#define`s, safe unconditionally) BEFORE
+  any `#if` that reads a `HAS_*` flag — the pattern `settings_ui.cpp`
+  already documented for `HAS_ISOLATED_IO`. Fixed in `ambient_led.cpp` and
+  `display_1in47.cpp`.
+- **Regression check:** none automated yet; when touching a `HAS_*` gate,
+  check the `pins.h` include is above it (a grep for `#if` lines that
+  mention `HAS_` before the first `pins.h` include would automate this).
+- **Date learned:** 2026-07
+
 ### Dual-build compatibility required
 - **Rule:** Firmware must compile on BOTH Arduino IDE and PlatformIO
 - **Why:** Different team members use different IDEs; CI tests both
@@ -643,6 +665,25 @@
   breaks. `canary.local` itself resolves via mDNS on the AP netif plus the
   setup DNS hijack for non-`.local` lookups.
 - **Date learned:** 2026-05
+
+### iOS offers to *invent* a password for a Wi-Fi key field
+- **What happened:** On the setup portal, tapping the Wi-Fi password field
+  made iOS cover it with its "strong password" suggestion sheet — it read the
+  form as account sign-up. A real user tapped the suggestion and "generated"
+  a brand-new password instead of retrieving their home Wi-Fi key, and the
+  join then failed with credentials no router had ever seen.
+- **Root cause:** `<input type="password">` with no autocomplete annotation:
+  iOS's heuristics treat any password field on an unfamiliar page as a
+  new-account credential and push the generator.
+- **Fix:** For password-shaped fields that are NOT account credentials (a
+  Wi-Fi key, a broker secret), use `type="text"` masked with
+  `-webkit-text-security: disc` via a `.pw-masked` class, plus
+  `autocomplete="off" autocapitalize="none" autocorrect="off"
+  spellcheck="false"`. The Show/Hide toggle flips the class, never the input
+  type (flipping to `type="password"` re-summons the generator). Applied to
+  the canary dashboard's Wi-Fi field and the first-boot wizard
+  (`securacv_setup_page.cpp`); copy the pattern to any future field like it.
+- **Date learned:** 2026-07
 
 ### Captive DNS redirector must answer A queries only — NODATA for AAAA/HTTPS
 - **What happened:** Even with the per-platform probes, `canary.local` and the

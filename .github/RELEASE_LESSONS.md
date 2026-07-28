@@ -108,6 +108,67 @@ any platform.
 
 ## Entries
 
+### 2026-07-27 (b) — An "anti-rot" `release: published` trigger that can never fire for the releases CI publishes
+
+- **Symptom:** every Vision module flash failed with *"no published release
+  yet (manifest returned HTTP 404)"* — `manifest-vision-model.json` was
+  absent from `fw-v2.3.0` even though `vision-model-release.yml` exists
+  precisely to attach it "automatically on every published release."
+- **Cause:** GitHub suppresses workflow events for anything created with a
+  workflow's own `GITHUB_TOKEN` (the recursion guard). Every firmware
+  release is published by `firmware-release.yml` with that token, so the
+  `release: [published]` trigger never fires for them — it had only ever
+  fired for the early human-published releases, which is exactly what made
+  it look alive.
+- **Fix:** `firmware-release.yml` now chain-dispatches
+  `vision-model-release.yml` explicitly after publishing (`actions: write` +
+  `gh workflow run`); the event trigger stays for human publishes, and the
+  per-tag concurrency group de-dupes if both fire. **Generalize:** in this
+  repo, never rely on a `release:`/`push:` event fired by a release another
+  workflow publishes — if workflow B must follow workflow A's publish, A
+  dispatches B by name.
+
+### 2026-07-27 — A "successful" release quietly dropped the products that had just compiled, and the app that could tell you about updates was polling a URL that can never answer
+
+Two independent failures, one release day, both invisible-by-design.
+
+- **Symptom (1):** `fw-v2.3.0` published green, but carried none of the
+  ESP32-S3 display images — the Dash 7 and Nightstand S3 had **compiled
+  successfully** minutes earlier in the same job. The Flasher showed every
+  display as "no published release yet" and nobody could say why, because the
+  run concluded `success`.
+- **Cause (1):** PlatformIO silently **cleans the whole `.pio/build`
+  workspace when the project checksum changes** — and running the
+  nightstand-c6 env with its (necessary) isolated `PLATFORMIO_CORE_DIR`
+  changes exactly that. The c6 build erased its siblings' outputs; the
+  display packaging loop is non-blocking on purpose, so "produced no binary"
+  was a warning scrolled past in a 20-minute log.
+- **Fix (1):** in `firmware-release.yml` and `flasher-release.yml`, stage
+  each display env's `.pio/build/<env>` the moment it builds and restore the
+  set after the c6 run. **Generalize:** any time two builds in one job vary
+  `PLATFORMIO_CORE_DIR` / project options, treat earlier build outputs as
+  already lost — copy them out first. And when a loop is deliberately
+  non-blocking, its per-item failure messages are the *only* record; make
+  them name the artifact and the consequence.
+- **Symptom (2):** every installed Flasher's self-update check failed with
+  *"Could not fetch a valid release JSON from the remote"*, forever, while
+  the app reported itself up to date.
+- **Cause (2):** the Tauri updater endpoint was
+  `releases/latest/download/latest.json` — but this repo **deliberately pins
+  `releases/latest` to the firmware releases** (it is the fleet's OTA URL;
+  `keep-firmware-latest` moves it back within minutes of any app publish).
+  A firmware release carries no `latest.json`, so the updater's one URL
+  could never resolve. Two correct invariants, never introduced to each
+  other.
+- **Fix (2):** the updater now polls the rolling **`flasher-latest`
+  prerelease** (a prerelease can never become `releases/latest`, so the two
+  pointers cannot collide), which `desktop-flasher-release.yml`'s finalize
+  job re-points — after the consistency guard — at every publish.
+  **Generalize:** in this repo, no app updater may ever reference
+  `releases/latest`; give each self-updating app its own rolling
+  `<app>-latest` prerelease pointer. If the Lab (or a future target) gains
+  an updater, copy this shape.
+
 ### 2026-07-25 — The whole pipeline was blocked on one missing key, and every button's answer to that was silence
 
 - **Symptom:** a maintainer opened the Flasher and every product read **"no
@@ -512,3 +573,320 @@ any platform.
   capability?", not just "does it have the string?". Cross-frontend constants
   (manifest URLs, channel names) belong in `desktop_parity.test.js` so the
   next divergence fails a test instead of a user.
+
+### 2026-07-25 — The C6 nightstand's first real link came out 21% bigger than the OTA slot it ships into
+
+- **Symptom:** `canary-display-nightstand-c6`'s first full build against the
+  real toolchain linked clean and then died in `checkprogsize`: 2,382,638
+  bytes into a 0x1E0000 (1,966,080-byte) A/B slot. Every earlier signal was
+  green — the env was registered, the OTA channel published, the flasher
+  catalog carried the product — because nothing before the link ever does the
+  slot arithmetic.
+- **Cause:** the env was assembled from siblings that never share its budget.
+  The graphics stack (LVGL + eight Montserrat faces + Arduino_GFX) was sized
+  on 16 MB boards with 0x330000+ slots; the BLE features were costed on
+  canary-sense, which carries no display. On the one board with BOTH a
+  display and a 4 MB flash, the two budgets met for the first time at link
+  time — the last possible moment.
+- **Fix:** measure, then cut what the board never uses — never squeeze what
+  it does. `esp-idf-size --archives` on the .map named the spend:
+  `libble_app` + the NimBLE host (~300 KB) and the 36/48 room-scale fonts
+  (~170 KB). The C6 env compiles both out, each cut documented in the env
+  with its size tag (`CD_LEAN_BUILD` in lv_conf.h + a lean type ladder in
+  character.cpp; `FEATURE_CHIRP_SCAN=0` / `FEATURE_FLEET_LINK=0` made
+  `#ifndef`-overridable in the nightstand config). Landed at 1,955,024 of
+  1,966,080 bytes — an ~11 KB margin, kept deliberately with the next two
+  cuts already scoped in the env comment. Bonus find: `fleet_link.cpp`'s
+  disabled-path stubs never compiled before (missing `<stdint.h>`) — a
+  feature flag nobody has ever turned off is a build nobody has ever tested.
+- **Applies to:** every env that pairs a rich UI stack with a 4 MB part
+  (`min_spiffs`-class slots), and every future flavors.json entry: do the
+  slot arithmetic at env-authoring time, not at first link. A flavor's
+  size_guard watches ONE binary — a new env on a smaller part must either
+  fit inside the guarded budget or document its own (checkprogsize is the
+  final backstop, but it speaks at the last moment, in bytes, without
+  naming the cuts). And when a feature flag exists, CI must compile at
+  least one env with it OFF, or the disabled path is fiction.
+
+### 2026-07-25 — The dev channel had no button and no publisher: unreachable in the Lab, and unfillable without the OTA key
+
+- **Symptom:** every product in the Lab's flasher read *"no published release
+  yet"* — displays included, on hardware sitting wired up on the bench. Three
+  facts stacked into one dead end. (1) The catalog pins `manifest_url` to an
+  exact tag, `fw-v2.3.0`, which was never cut; the newest firmware release was
+  `fw-v2.2.0`, published before the display sketch existed, so even reaching it
+  would have offered zero display products. (2) `firmware-release.yml` — the
+  only thing that publishes `manifest-flash.json` on its own — hard-stops in 20
+  seconds without `OTA_SIGNING_KEY_PEM`. (3) `flasher-release.yml`, the
+  documented no-key escape hatch, checks the tag *out*, so it could not help a
+  tag that had never been created. The one remaining route, the dev channel,
+  was reachable only as `?channel=dev` — and the Lab desktop app renders that
+  page in a webview with **no address bar**. Every exit was closed, and each
+  one closed for a different, individually reasonable reason.
+- **Cause:** the dev channel was built as a *destination* with neither a road
+  in nor a road out. Its constant was drift-gated across all three frontends
+  (`desktop_parity.test.js`), its banner copy was written, its device-side NVS
+  override was documented — but nothing could publish to `fw-dev-latest`
+  without the signing key, and one of the two flashers had no control to select
+  it. Both gaps were invisible to CI because both were about *absent*
+  capability, and the drift gates all compared strings that were present and
+  identical.
+- **Fix:** a road at each end. `flasher-release.yml` gained `channel: dev` —
+  builds the dispatch ref's HEAD onto the rolling `fw-dev-latest` prerelease,
+  no tag, no version bump, no signing key, `prerelease: true` so
+  `releases/latest` can never drift off the firmware. The browser flasher gained
+  the **Advanced → dev channel** toggle the desktop Flasher already had, with
+  `?channel=dev` demoted to seeding it. The banner stopped claiming dev images
+  are "signed with the same key" when no key exists — it now reports
+  checksum-only verification, matching what `imageVerificationPolicy()`
+  actually returns. And `channel: release` now names a missing tag in its own
+  error instead of dying inside `actions/checkout`.
+- **Applies to:** every escape hatch, forever. A fallback path is only real if
+  something can *fill* it and someone can *reach* it — assert both, not the
+  constant between them. `desktop_parity.test.js` now checks that each frontend
+  has a user-reachable dev-channel control (not just the URL), and that the
+  workflow publishes to the same tag the frontends read; a publisher and a
+  consumer naming the same release in two files is two chances to be wrong.
+  When a product is "unavailable" everywhere at once, suspect the pinned tag
+  before the wiring — `canary-local.yml` already warns on every run while the
+  pin is unresolvable, and that warning was right for weeks.
+
+### 2026-07-25 — The Lab app shipped a workshop with no renders: the web root had no parent to reach into
+
+- **Symptom:** in the native **SecuraCV Lab** on macOS, the Workshop's "Start
+  from a package" card showed the WebKit broken-image glyph instead of the
+  package render, and the 3D viewport was empty for every part except the
+  handful of watch-station / dash / combo meshes. The same page in a browser —
+  same commit, same files — was perfect, so it read like a rendering or CSP
+  problem in the webview. It was neither: the pieces that worked were exactly
+  the ones whose files live *inside* `canary-local/`, and the pieces that
+  failed were exactly the ones under `docs/hardware/enclosure/`.
+- **Cause:** `frontendDist` was `../../canary-local`, so Tauri embedded that
+  directory and served it as the **entire origin**. The shared frontend
+  addresses the enclosure library as a sibling — `../docs/hardware/enclosure/…`
+  in `workshop.js`, `enclosure-lab.js`, `assembly-lab.js`, `real-shapes.js`,
+  `chooser.js` — which is correct from a repo checkout and from the deployed
+  site (`pages.yml` assembles `_site/canary-local` *and*
+  `_site/docs/hardware/enclosure`), and impossible in a bundle: the webview
+  collapses `../` at the root, requests `/docs/hardware/enclosure/…`, and 404s.
+  Nothing logged, nothing crashed — a static asset that isn't there just isn't
+  there, and only half the page knows.
+- **Fix:** stage the app's web root instead of pointing at a source directory.
+  `desktop-lab/scripts/stage-frontend.mjs` mirrors the trees named in
+  `desktop-lab/frontend-stage.json` (`canary-local` + `docs/hardware/enclosure`
+  — deliberately the same list `pages.yml` deploys) into `desktop-lab/dist/`
+  with `cp -RL` semantics, verifies its sentinels, and runs from
+  `beforeDevCommand`/`beforeBuildCommand`; `frontendDist` is `../dist` and the
+  window opens `canary-local/lab.html`. The app's root and the site's root now
+  have the same shape, so one set of relative URLs is true on both. The two
+  frontend links that pointed at repo docs rather than assets
+  (`hub-setup-wizard.js`, `site-map.html`) moved to the `GH +` source-link idiom
+  their siblings already use. `canary-local/tests/lab_bundle.test.js` is the
+  gate: it resolves every escaping URL in the shipped frontend and fails unless
+  the manifest carries it.
+- **Applies to:** every app target that wraps a web root — the Lab, its iOS/iPad
+  builds (same `tauri.conf.json`, so they inherit the fix), and any future
+  webview shell. Two rules generalize. **A bundled web root has no parent:**
+  if the frontend is shared with a site, the packaging step must reproduce the
+  site's *layout*, not just its files. And **a missing static asset is a silent
+  failure** — it produces a broken glyph, not an error, so the guard has to be
+  a test over the source, not a hope that someone clicks the right tab before
+  publishing.
+
+### 2026-07-26 — A bundled native USB tool needs its Linux access rule shipped
+
+- **Symptom:** the Flasher's "Wait for my Pi" (flash a Pi over USB-C, no card
+  reader) did nothing on Linux — the Pi never appeared as a disk, so the app
+  looked like it "wasn't receiving the USB connection". Worked on macOS.
+- **Cause:** the bundled `rpiboot` sidecar runs as the user and opens the Pi's
+  boot-ROM USB device (`0a5c:2712` on a Pi 5) over libusb. Linux denies a
+  non-root process access to a USB device without a **udev rule**, and we shipped
+  none — so `libusb_open()` failed, rpiboot never served the mass-storage gadget,
+  and nothing enumerated. macOS has no udev equivalent (it grants USB access
+  freely), which is exactly why the same build worked there — a classic
+  works-on-mac-fails-on-linux gap for any bundled USB tool.
+- **Fix:** ship the rule. `desktop/src-tauri/packaging/rpiboot.rules` grants
+  access to the Pi boot device (Broadcom `0a5c`, product ids 2711/2712/2763/2764;
+  `TAG+="uaccess"` + `0666`), and `tauri.conf.json`'s `deb.files` installs it to
+  `/usr/lib/udev/rules.d/`. INSTALL.md documents the manual add for AppImage
+  users (no package to install it). Belt: `hub_core::hub_usbboot` (host-tested)
+  recognises rpiboot's device-open failures so the app shows the fix in-line
+  instead of a silent wait, gated to Linux where it applies.
+- **Applies to:** **every bundled native tool that opens a USB device** — today
+  `rpiboot`, tomorrow anything similar. Two rules generalize. **macOS "just
+  works" for USB is a trap:** it needs no udev, so a Linux access rule is easy to
+  forget, and its absence fails *silently* (the device just never opens). If a
+  target ships a native USB tool, ship (deb) **and** document (AppImage/manual)
+  its Linux access rule — the serial tools already do this via the `dialout`
+  group; device-mode USB tools need a udev rule instead. And **a permission
+  failure that reads like "nothing happened" needs an in-app hint**, or the user
+  has no way to know a one-line fix exists.
+
+### 2026-07-27 — Mixed-platform release job: a warm cache masked a core-dir conflict until GitHub evicted it
+
+- **Symptom:** the first signed firmware release (fw-v2.3.0) failed in
+  `canary-sense-default` with `TypeError: expected str, bytes or os.PathLike
+  object, not NoneType` at pioarduino's `arduino.py` (`FRAMEWORK_DIR=None`)
+  before compiling a single file — twice, deterministically — while
+  `canary-sense-wellbeing` (same board, same platform pin) built fine seconds
+  later in the same job.
+- **Cause:** the release job builds every project sequentially in one shared
+  `~/.platformio`. canary/canary-vision (official `espressif32` platform) run
+  first and install `framework-arduinoespressif32` 2.0.x; canary-sense rides
+  the pioarduino core-3.x fork, whose platform ships a package with the **same
+  name** at 3.3.8. pioarduino sees the official copy "installed", skips its
+  own, and dies with `FRAMEWORK_DIR=None` — the exact failure
+  `firmware.yml`'s `isolated_core_envs` comment documents. It never bit the
+  release workflow before because the PlatformIO cache (keyed on an unchanged
+  file) stayed warm with both versions resolvable; GitHub evicted the cache
+  after 7 days of no saves, and the first cold run exposed it. The
+  nightstand-c6 env in the *same job* already had the isolation; sense didn't.
+- **Fix:** run canary-sense under its own
+  `PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-canary-sense"` in both
+  `firmware-release.yml` and `flasher-release.yml` (the flasher factory-image
+  job has the same sequential shape and was one cache eviction away from the
+  same failure).
+- **Applies to:** **every job that builds more than one PlatformIO project in
+  sequence.** If any project pins the pioarduino fork while another uses the
+  official platform, the pioarduino build MUST get an isolated
+  `PLATFORMIO_CORE_DIR` — sharing the core dir only appears to work while a
+  cache is warm. And more generally: **a step that only ever ran against a
+  restored cache has never actually been proven** — the cache is a
+  performance layer, not part of the contract, and GitHub deletes it after 7
+  idle days. If a build breaks only when the cache misses, the build is
+  broken.
+
+### 2026-07-27 (c) — The Linux .deb shipped serial access half-solved: dialout was documented, but ModemManager was left free to knock the board over mid-boot
+
+- **Symptom:** the identical flash flow that turns green on macOS stalled on
+  Linux: either every port open failed and the app retried in silence
+  ("Waiting for the board's serial port…" forever, or the misleading "put it
+  in download mode" advice), or — with permissions fixed — the flash verified
+  and the live boot receipt still never arrived, so the result never turned
+  green.
+- **Cause:** two Linux-only facts about USB serial that macOS never taught us.
+  (1) Opening `/dev/ttyACM*` needs `dialout` membership or a udev rule; the
+  .deb shipped a udev rule for **rpiboot** (the 2026-07-26 lesson) but nothing
+  for the serial devices the app's core flow lives on. (2) ModemManager
+  probes any newly enumerated CDC device as a modem — including the board
+  re-enumerating right after espflash's post-flash hard reset — holding the
+  port for ~30 s and toggling control lines the ESP32-S3's USB-Serial/JTAG
+  can take as a reset. The boot the app was watching for got knocked over by
+  the OS itself, deterministically, on stock Ubuntu.
+- **Fix:** the .deb now installs `61-securacv-canary.rules` (Espressif
+  `303a` + CH343 `1a86:55d3`): `TAG+="uaccess"`/`MODE="0666"` for access and
+  `ID_MM_DEVICE_IGNORE`/`ID_MM_PORT_IGNORE` so ModemManager never touches a
+  Canary; INSTALL.md carries the copy-paste rule for AppImage users. In-app,
+  `port_hint.rs` classifies permission/busy open failures so the serial
+  monitor, chip detection, and Vision-module flows say the one-line fix
+  instead of retrying silently or coaching the BOOT/RESET ritual.
+- **Applies to:** **every target that opens a serial device on Linux, and
+  every future USB product ID.** A new board VID/PID must be added to
+  `61-securacv-canary.rules` when it's added to the catalog. More generally:
+  "the port exists" is not "the port is ours" on Linux — permission *and*
+  ModemManager both need settling in packaging, and an open failure the app
+  can classify must be explained in-app (a rule that lives only in docs is
+  invisible at the moment it's needed). The udev-rule lesson from rpiboot
+  (2026-07-26) applies to serial CDC devices too, with ModemManager as the
+  extra tenant nobody invited.
+
+### 2026-07-28 (a) — The DMG opened on a giant, cropped background: Finder maps background PIXELS to window POINTS
+
+- **Symptom:** the Flasher's installer window showed the branded background
+  blown up to double size — title cut off mid-word ("SecuraC…"), the drag
+  instruction unreadable, the whole bottom "first launch" panel pushed out of
+  the window. The PNG itself looked perfect in every image viewer.
+- **Cause:** both DMG background generators rendered on a 2x canvas "for
+  retina" and shipped that raw 2x PNG (1320×920 for a 660×460 window). Finder
+  maps a background image's **pixels** straight onto window **points** and
+  ignores PNG DPI metadata, so the window showed the top-left quarter of the
+  image at double size. Retina Macs don't rescue it — the window is 660
+  points regardless of the panel behind it.
+- **Fix:** keep the 2x canvas as text supersampling only, and **downscale to
+  the exact `windowSize` before saving** (`img.resize((WIN_W, WIN_H),
+  LANCZOS)`) in both `desktop/src-tauri/dmg/generate_background.py` and
+  `desktop-lab/src-tauri/dmg/generate_background.py`; both committed
+  `background.png` files regenerated. If true retina sharpness is ever wanted,
+  the mechanism is a multi-resolution TIFF built on a real Mac (`tiffutil
+  -cathidpicheck`), not a big PNG.
+- **Applies to:** **any image Finder itself draws** — DMG backgrounds in every
+  app target, and any future volume icon layout. The shipped file's pixel
+  size must equal the configured point size; a "2x for quality" canvas is a
+  render-time trick that must never reach the artifact.
+
+### 2026-07-28 (b) — Every installed Flasher ≤ 0.3.0 lost self-update forever when the endpoint moved: a compiled-in URL must be SERVED, not just corrected
+
+- **Symptom:** installed Flashers logged "Update check failed: … Could not
+  fetch a valid release JSON from the remote" on every check — including
+  after #1286 fixed the updater endpoint. New installs were fine; the field
+  was not, and 0.3.1+ could never reach them.
+- **Cause:** builds ≤ 0.3.0 shipped polling
+  `releases/latest/download/latest.json`, and `releases/latest` is
+  deliberately owned by the **firmware** releases (Principle 6), which carry
+  no `latest.json` — a permanent 404 for every copy already installed. Fixing
+  the endpoint in `tauri.conf.json` only helps builds that don't exist on
+  users' disks yet: an updater endpoint is **compiled in**, so the only way to
+  reach old installs is to serve a valid manifest at the OLD address.
+- **Fix:** `.github/actions/keep-firmware-latest` now has a second duty:
+  after asserting `releases/latest` is firmware, it mirrors `flasher-latest`'s
+  hardened `latest.json` onto that firmware release (digest-compared,
+  idempotent). All three release paths converge on it: the guard workflow
+  (human releases), `desktop-flasher-release.yml`'s `keep-latest` job (now
+  `needs: finalize` so it mirrors the freshly hardened manifest), and
+  `firmware-release.yml` right after publishing (a new fw-v* release takes
+  `latest` the instant it publishes and would otherwise be born without the
+  manifest). Old installs then see the update, verify it against the same
+  updater pubkey every build has embedded, and come out polling the right
+  endpoint. Devices never notice: they fetch `manifest-<product>.json` only.
+- **Applies to:** **every compiled-in update URL in every target** — the
+  Flasher's and Lab's updater endpoints, the firmware's OTA manifest URL, the
+  Vision model manifest. Before moving any such URL, ask "who is already
+  polling the old one, and what will they fetch there tomorrow?" — the answer
+  must be "a working manifest", indefinitely, or the field is stranded. And
+  when a rolling pointer release (`flasher-latest`, `fw-dev-latest`) gains a
+  consumer, every workflow that creates or advances the release it shadows
+  must keep the mirror fresh.
+
+### 2026-07-28 (c) — `xcode-select` to an unversioned Xcode path never matches
+
+- **Symptom:** iOS jobs "selected Xcode 16" and then built with whatever the
+  runner image's default was — or, once a step actually depended on it,
+  failed in ways that looked unrelated (missing simulators, wrong SDK).
+- **Cause:** runner images install Xcode at *versioned* paths
+  (`/Applications/Xcode_16.2.app`, never `Xcode_16.app`), and the trailing
+  `|| true` swallowed the `invalid developer directory` error, so the no-op
+  passed silently for months.
+- **Fix:** resolve the newest installed version and always print the result:
+  ```sh
+  latest="$(find /Applications -maxdepth 1 -name 'Xcode_16*.app' | sort -V | tail -1)"
+  if [ -n "$latest" ]; then sudo xcode-select -s "$latest"; fi
+  xcodebuild -version
+  ```
+  A selection step that can't tell you what it selected isn't a step, it's a
+  wish. Same class of rot as hard-coding a simulator model name
+  (`heal.sh` now picks the newest installed iPhone simulator for the same
+  reason).
+- **Applies to:** `ios-selfheal.yml`, `ios-release.yml` (both fixed);
+  any future macOS job that pins a toolchain path.
+
+### 2026-07-28 (d) — CI archives die on a fresh team: automatic signing archives as DEVELOPMENT, and development profiles need a registered device
+
+- **Symptom:** the first authenticated `ios-release.yml` run failed archiving
+  all three targets with "Your team has no devices from which to generate a
+  provisioning profile" — even though the release was bound for TestFlight,
+  which never involves registered devices.
+- **Cause:** `xcodebuild archive` under automatic signing signs with a
+  *development* profile (distribution happens at export), and Apple will not
+  mint a development profile for a team with zero registered devices. CI
+  runners never have a device to offer.
+- **Fix:** register **any one device** on the team (Certificates,
+  Identifiers & Profiles → Devices → +, with the phone's UDID from Finder) —
+  one-time, and it unblocks every future archive. The tempting CI-side
+  patch — `CODE_SIGN_IDENTITY="Apple Distribution"` on the archive — does
+  NOT work: automatic signing rejects it with "conflicting provisioning
+  settings". Corollary for dry runs: export with `app-store-connect`
+  (+ `publish=false`); `release-testing` is an ad-hoc export that *also*
+  requires registered devices.
+- **Applies to:** `ios-release.yml`, `tvos-release.yml` (an Apple TV
+  registers the same way), and any Apple-platform CI archive with automatic
+  signing on a team that may have no registered devices.

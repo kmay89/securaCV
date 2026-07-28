@@ -65,7 +65,8 @@ test("S3 + 16 MB names the Waveshare display boards exactly", async () => {
   const set = c.productsForBoard(catalog, "ESP32-S3", 16 * MB);
   assert.deepStrictEqual(set.map((p) => p.id),
     ["securacv-canary-display-dash", "securacv-canary-display-dash-modes",
-     "securacv-canary-display-dash7", "securacv-canary-display-nightstand-s3"]);
+     "securacv-canary-display-dash7", "securacv-canary-display-nightstand-s3",
+     "securacv-canary-display-touch169"]);
 });
 
 test("S3 + 8 MB is the XIAO class; unknown or odd sizes never empty the set",

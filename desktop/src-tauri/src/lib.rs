@@ -19,15 +19,18 @@
 //! Everything the user watches scroll by during a flash is `espflash`'s own
 //! output, relayed verbatim over the `flash:log` event.
 
+mod health;
 mod hub;
+mod port_hint;
 mod provisioning;
 mod release;
+mod rescue;
 mod serial_monitor;
 mod we2;
 
 use provisioning::Provisioning;
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_shell::process::CommandEvent;
@@ -69,6 +72,14 @@ const DEV_FLASH_MANIFEST_URL: &str =
 // wrong pick — a disk image, a video — not a firmware image, so the local-file
 // path refuses it before reading further.
 const LOCAL_IMAGE_MAX_BYTES: u64 = 32 * 1024 * 1024;
+
+// The shape of a merged factory image: the ESP32 partition table lives at
+// 0x8000 on every variant, and its 32-byte entries open with the magic bytes
+// 0xAA 0x50 (u16le 0x50AA) — the same constants
+// firmware/scripts/make_factory.py merges by. This is what tells a factory
+// image apart from an app-only build, because BOTH start with 0xE9.
+const PARTITION_TABLE_OFFSET: usize = 0x8000;
+const PARTITION_MAGIC_LE: [u8; 2] = [0xAA, 0x50];
 
 // The one sidecar we ship. This is the RUNTIME name: the bundler flattens the
 // `externalBin` "binaries/espflash-<triple>" to plain `espflash` next to the
@@ -152,6 +163,59 @@ struct AppInfo {
     build_rev: String,
     build_epoch: u64,
     fw_train: Option<String>,
+}
+
+// The Wi-Fi network this computer is on right now — the network a new Canary
+// almost always wants — so the SSID field starts filled and joining is one
+// password away. Best-effort: any failure just means no prefill.
+#[tauri::command]
+fn current_ssid() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        for iface in ["en0", "en1"] {
+            if let Ok(out) = std::process::Command::new("networksetup")
+                .args(["-getairportnetwork", iface])
+                .output()
+            {
+                // "Current Wi-Fi Network: <name>" — anything else (off,
+                // not a Wi-Fi interface) has no colon-name to take.
+                let text = String::from_utf8_lossy(&out.stdout);
+                if let Some((_, name)) = text.split_once(": ") {
+                    let name = name.trim();
+                    if !name.is_empty() {
+                        return Some(name.to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(out) = std::process::Command::new("iwgetid").arg("-r").output() {
+            let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !name.is_empty() {
+                return Some(name);
+            }
+        }
+        if let Ok(out) = std::process::Command::new("nmcli")
+            .args(["-t", "-f", "active,ssid", "dev", "wifi"])
+            .output()
+        {
+            for line in String::from_utf8_lossy(&out.stdout).lines() {
+                if let Some(ssid) = line.strip_prefix("yes:") {
+                    if !ssid.is_empty() {
+                        return Some(ssid.to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        None
+    }
 }
 
 #[tauri::command]
@@ -253,23 +317,47 @@ async fn run_sidecar_capture(app: &AppHandle, args: Vec<String>) -> Result<(i32,
     Ok((code, buf))
 }
 
-/// Ask the connected board which ESP32 it is. This is the "you can't pick the
-/// wrong image" guard: the UI only offers products whose `chip` matches.
+/// What `detect_chip` reports: the canonical chip name — the "you can't pick the
+/// wrong image" guard, since the UI only offers products whose `chip` matches —
+/// plus the flash size in bytes when board-info named it, which the rescue
+/// bench's full-chip backup needs. Both come from the one board-info call.
+#[derive(Serialize)]
+pub struct ChipInfo {
+    chip: String,
+    flash_bytes: Option<u64>,
+    mac: Option<String>,
+}
+
+/// Ask the connected board which ESP32 it is (and how much flash it carries).
 #[tauri::command]
-async fn detect_chip(app: AppHandle, port: String) -> Result<String, String> {
+async fn detect_chip(app: AppHandle, port: String) -> Result<ChipInfo, String> {
     let (code, out) =
         run_sidecar_capture(&app, vec!["board-info".into(), "--port".into(), port]).await?;
     // Check the exit code before parsing: a *failed* board-info can still print
     // a chip name in its error text, which would otherwise read as a false
     // positive detection.
     if code != 0 {
+        // On Linux, a failed board-info is more often the OS refusing or
+        // holding the port than a board out of download mode — when the
+        // output names that cause, lead with its real fix instead of the
+        // BOOT/RESET ritual (which can't help and reads as the board's
+        // fault). Linux-only: the hint text is a Linux fix.
+        if cfg!(target_os = "linux") {
+            if let Some(hint) = port_hint::linux_open_hint(&out) {
+                return Err(format!("{hint}\n\nespflash said:\n{}", out.trim()));
+            }
+        }
         return Err(format!(
             "couldn't read the chip (espflash exit {code}). Put the board in download mode (hold BOOT, tap RESET, release BOOT) and try again.\n\nespflash said:\n{}",
             out.trim()
         ));
     }
     match canonical_chip(&out) {
-        Some(chip) => Ok(chip.to_string()),
+        Some(chip) => Ok(ChipInfo {
+            chip: chip.to_string(),
+            flash_bytes: rescue::parse_flash_size(&out),
+            mac: rescue::parse_mac(&out),
+        }),
         None => Err(format!(
             "couldn't recognize the chip from espflash's output:\n{}",
             out.trim()
@@ -350,6 +438,7 @@ async fn flash(
     baud: u32,
     detected_chip: String,
     provisioning: Option<Provisioning>,
+    erase_first: Option<bool>,
 ) -> Result<FlashReceipt, String> {
     let emit = |app: &AppHandle, line: String| {
         let _ = app.emit("flash:log", line);
@@ -531,6 +620,32 @@ async fn flash(
         ),
     );
 
+    // 2b) First contact: wipe the WHOLE chip before writing. `write-bin` only
+    //     touches the regions the image covers, so a board that arrived
+    //     carrying somebody else's firmware would keep whatever sat in the
+    //     partitions we don't write — on a board the user now believes is
+    //     theirs. Erasing first is the only way that leftover goes away.
+    //
+    //     This mirrors the browser flasher, which forces the same erase on a
+    //     board it has never written (canary-local/assets/intake.js:
+    //     isFirstContact). The browser decides it by reading the board;
+    //     espflash reports nothing about resident firmware, so here it comes
+    //     from the step-1 checkbox.
+    if erase_first.unwrap_or(false) {
+        emit(
+            &app,
+            "→ first contact with this board — erasing the whole chip before writing".into(),
+        );
+        let code =
+            run_sidecar_streaming(&app, rescue::erase_flash_args(&port), "flash:log").await?;
+        if code != 0 {
+            return Err(format!(
+                "the full erase failed (espflash exit {code}). Nothing was written. The board can't be bricked — put it back in download mode and try again."
+            ));
+        }
+        emit(&app, "✓ chip erased — nothing of the old firmware is left".into());
+    }
+
     // 3) Flash the merged factory image at 0x0. A factory image already carries
     //    the bootloader/partition table at their real offsets, so 0x0 is right.
     //    espflash hard-resets the board when it's done.
@@ -597,17 +712,34 @@ async fn flash(
 }
 
 /// The cheap refusals for a user-picked firmware file: an empty file or one
-/// larger than any Canary's flash is a wrong pick, not a firmware image.
-/// Anything subtler (a valid-looking image for the wrong board) is on the
-/// user — a personal file has no catalog entry to check it against.
-fn check_local_image(len: u64) -> Result<(), String> {
-    if len == 0 {
+/// larger than any Canary's flash is a wrong pick, and a file without a
+/// partition table at 0x8000 is an app-only build — this path writes whole
+/// factory images at offset 0, so an app-only .bin would land on the
+/// bootloader and the board wouldn't boot (recoverable over USB download
+/// mode, but a guaranteed bad hour). The 0xE9 image magic can't make that
+/// call — an app-only build starts with 0xE9 too. Anything subtler (a real
+/// factory image for the wrong board) is on the user — a personal file has
+/// no catalog entry to check it against.
+fn check_local_image(bytes: &[u8]) -> Result<(), String> {
+    if bytes.is_empty() {
         return Err("that file is empty — there's nothing to write".into());
     }
-    if len > LOCAL_IMAGE_MAX_BYTES {
+    if bytes.len() as u64 > LOCAL_IMAGE_MAX_BYTES {
         return Err(format!(
-            "that file is {len} bytes — no Canary carries more than 32 MiB of flash, so this can't be a firmware image"
+            "that file is {} bytes — no Canary carries more than 32 MiB of flash, so this can't be a firmware image",
+            bytes.len()
         ));
+    }
+    let factory_shape = bytes.len() > PARTITION_TABLE_OFFSET + 32
+        && bytes[PARTITION_TABLE_OFFSET..PARTITION_TABLE_OFFSET + 2] == PARTITION_MAGIC_LE;
+    if !factory_shape {
+        return Err(
+            "this looks like an app-only build, not a merged factory image — there's no \
+             partition table at 0x8000. The flasher writes whole factory images at offset 0, \
+             so an app-only .bin would overwrite the bootloader and the board wouldn't boot. \
+             Merge one with firmware/scripts/make_factory.py or use `dev_flash.sh <env> -f`."
+                .into(),
+        );
     }
     Ok(())
 }
@@ -627,7 +759,7 @@ pub struct LocalFileInfo {
 #[tauri::command]
 async fn inspect_local_file(path: String) -> Result<LocalFileInfo, String> {
     let bytes = std::fs::read(&path).map_err(|e| format!("couldn't read that file: {e}"))?;
-    check_local_image(bytes.len() as u64)?;
+    check_local_image(&bytes)?;
     Ok(LocalFileInfo {
         size: bytes.len() as u64,
         sha256: release::sha256_hex(&bytes),
@@ -639,15 +771,20 @@ async fn inspect_local_file(path: String) -> Result<LocalFileInfo, String> {
 /// catalog product, no manifest, no signature — a personal file has no origin
 /// we can verify, so nothing here claims "verified": the file is fingerprinted
 /// (SHA-256 + size) so the receipt names exactly what was written, and that is
-/// all the receipt claims. The write mechanics are identical to flash():
-/// private staged temp file, `write-bin 0x0` via the bundled espflash,
-/// `flash:log` streaming.
+/// all the receipt claims. `expected_size`/`expected_sha256` are the values
+/// inspect_local_file showed and the user confirmed — the file is re-read and
+/// re-hashed here, so a file that changed on disk between the two calls is
+/// refused rather than silently written. The write mechanics are identical to
+/// flash(): private staged temp file, `write-bin 0x0` via the bundled
+/// espflash, `flash:log` streaming.
 #[tauri::command]
 async fn flash_local_file(
     app: AppHandle,
     port: String,
     baud: u32,
     path: String,
+    expected_size: u64,
+    expected_sha256: String,
 ) -> Result<FlashReceipt, String> {
     let emit = |app: &AppHandle, line: String| {
         let _ = app.emit("flash:log", line);
@@ -659,8 +796,13 @@ async fn flash_local_file(
         .unwrap_or_else(|| "local file".to_string());
     emit(&app, format!("→ reading {file_name} from this computer…"));
     let bytes = std::fs::read(&path).map_err(|e| format!("couldn't read that file: {e}"))?;
-    check_local_image(bytes.len() as u64)?;
+    check_local_image(&bytes)?;
     let sha = release::sha256_hex(&bytes);
+    // The confirm was over the inspected fingerprint, not over a path — a
+    // path can point at different bytes a moment later.
+    if bytes.len() as u64 != expected_size || !sha.eq_ignore_ascii_case(&expected_sha256) {
+        return Err("the file changed since it was inspected — pick it again".into());
+    }
     emit(
         &app,
         format!(
@@ -669,13 +811,14 @@ async fn flash_local_file(
         ),
     );
     if bytes[0] != 0xE9 {
-        // Warn, never block: 0xE9 is the ESP32 image magic, and a merged
-        // factory image starts with the bootloader image, which begins 0xE9
-        // itself — but the board can't be bricked either way.
+        // Warn, never block: the partition table at 0x8000 already vouched
+        // for the factory shape, and on the catalog's chips (C3/C6/S3) the
+        // bootloader sits at 0x0, so a factory image normally opens with the
+        // 0xE9 image magic — but the board can't be bricked either way.
         emit(
             &app,
             format!(
-                "⚠ first byte is 0x{:02X}, not the ESP32 image magic 0xE9 — this may not be a factory/merged image. Writing anyway; the board can't be bricked.",
+                "⚠ first byte is 0x{:02X}, not the ESP32 image magic 0xE9 — unusual for a C3/C6/S3 factory image. Writing anyway; the board can't be bricked.",
                 bytes[0]
             ),
         );
@@ -916,6 +1059,368 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
     app.restart()
 }
 
+// ── the rescue bench: back up / restore / erase / flash a local image ────────
+// The espflash I/O around the pure `rescue` module (host-tested). Each streams
+// the sidecar's output over `rescue:log` so the UI is a live console, and none
+// can brick the board — the ESP32's first-stage bootloader is mask ROM.
+
+/// Spawn the espflash sidecar with `args`, streaming each non-empty line over
+/// `event`, and return its exit code.
+async fn run_sidecar_streaming(
+    app: &AppHandle,
+    args: Vec<String>,
+    event: &'static str,
+) -> Result<i32, String> {
+    let cmd = app
+        .shell()
+        .sidecar(ESPFLASH)
+        .map_err(|e| format!("bundled espflash missing: {e}"))?
+        .args(args);
+    let (mut rx, _child) = cmd
+        .spawn()
+        .map_err(|e| format!("could not start espflash: {e}"))?;
+    let mut code = -1;
+    while let Some(ev) = rx.recv().await {
+        match ev {
+            CommandEvent::Stdout(bytes) | CommandEvent::Stderr(bytes) => {
+                let text = String::from_utf8_lossy(&bytes);
+                for line in text.split(['\r', '\n']).filter(|l| !l.trim().is_empty()) {
+                    let _ = app.emit(event, line.to_string());
+                }
+            }
+            CommandEvent::Terminated(payload) => code = payload.code.unwrap_or(-1),
+            _ => {}
+        }
+    }
+    Ok(code)
+}
+
+/// Back up the whole chip to `out_path` — a full-flash read the operator keeps
+/// and can restore later. The safety copy the one-shot flow never had.
+#[tauri::command]
+async fn backup_flash(
+    app: AppHandle,
+    port: String,
+    out_path: String,
+    flash_size: u64,
+    baud: u32,
+) -> Result<(), String> {
+    if flash_size == 0 {
+        return Err("couldn't read this chip's flash size — reconnect and try again".into());
+    }
+    let _ = app.emit(
+        "rescue:log",
+        format!("→ reading {} of flash → {out_path}…", rescue::human_bytes(flash_size)),
+    );
+    let code =
+        run_sidecar_streaming(&app, rescue::read_flash_args(&port, flash_size, &out_path, baud), "rescue:log")
+            .await?;
+    if code == 0 {
+        let _ = app.emit("rescue:log", "✓ backup saved — keep it safe; restore it any time.".to_string());
+        Ok(())
+    } else {
+        Err(format!(
+            "espflash exited with code {code} while reading the chip. Nothing on the board changed — try again."
+        ))
+    }
+}
+
+/// Write a local image to the chip at 0x0 — a restored backup, or any `.bin`.
+///
+/// Guards the offset-0 write with the SAME check the Advanced local-file path
+/// uses (`check_local_image`): an app-only build has no partition table at
+/// 0x8000 and, written from 0x0, would land on the bootloader and stop the
+/// board booting. Both surfaces agree here — the browser's local-file picker
+/// gates on `core.localImageShape`, native on `check_local_image`, same refusal
+/// in the same words. A genuine full-flash backup carries that table, so it
+/// passes; only an app-only file is turned away. The flash-size fit is then
+/// checked against THIS chip, mirroring the browser's restore validation.
+#[tauri::command]
+async fn write_local_image(
+    app: AppHandle,
+    port: String,
+    path: String,
+    flash_size: Option<u64>,
+    baud: u32,
+) -> Result<(), String> {
+    // A firmware image is at most one chip's flash (≤ 32 MiB), so read it once —
+    // the same bounded read `flash_local_file` does — and run the offset-0 guard
+    // before anything is written. espflash re-reads the path when it writes.
+    let bytes = std::fs::read(&path).map_err(|e| format!("couldn't read {path}: {e}"))?;
+    // Single source of truth for "safe to write at 0x0": empty, larger than any
+    // Canary's flash, or an app-only build with no partition table at 0x8000 are
+    // all refused here, before espflash runs.
+    check_local_image(&bytes)?;
+    // Fit against the detected chip (the shape gate doesn't look at flash size):
+    // bigger than this board can't be its image; smaller writes from 0x0 and
+    // leaves the tail. Mirrors the browser's validateBackupFile.
+    match rescue::validate_restore_image(bytes.len() as u64, flash_size) {
+        Err(reason) => return Err(reason),
+        Ok(Some(warn)) => {
+            let _ = app.emit("rescue:log", warn);
+        }
+        Ok(None) => {}
+    }
+    if let Some(hint) = rescue::image_first_bytes_hint(&bytes) {
+        let _ = app.emit("rescue:log", format!("→ this looks like {hint}"));
+    }
+    // Write the bytes we just validated — not the path. A sync tool or another
+    // process could swap the file between the check above and espflash's own
+    // read, slipping unvalidated bytes past the shape/size guards. Staging the
+    // validated bytes to a private, RAII-removed temp file (alive until espflash
+    // exits) closes that window, exactly as flash_local_file does.
+    let staged = stage_firmware(&bytes, "rescue-restore")?;
+    let staged_path = staged.path().to_string_lossy().to_string();
+    let _ = app.emit("rescue:log", format!("→ writing {path} to the board…"));
+    let code =
+        run_sidecar_streaming(&app, rescue::write_bin_args(&port, &staged_path, baud), "rescue:log").await?;
+    if code == 0 {
+        let _ = app.emit("rescue:log", "✓ written — the board is rebooting into it.".to_string());
+        Ok(())
+    } else {
+        Err(format!(
+            "espflash exited with code {code}. The board can't be bricked — put it in download mode and try again."
+        ))
+    }
+}
+
+/// Erase the whole chip — a truly clean slate before a fresh install.
+#[tauri::command]
+async fn erase_chip(app: AppHandle, port: String) -> Result<(), String> {
+    let _ = app.emit("rescue:log", "→ erasing the whole chip…".to_string());
+    let code = run_sidecar_streaming(&app, rescue::erase_flash_args(&port), "rescue:log").await?;
+    if code == 0 {
+        let _ = app.emit("rescue:log", "✓ chip erased — factory-fresh. Flash any image next.".to_string());
+        Ok(())
+    } else {
+        Err(format!("espflash exited with code {code} while erasing. Nothing is bricked — try again."))
+    }
+}
+
+// ── the health check: read the board's story, change nothing ─────────────────
+// Reads a handful of flash regions with the espflash sidecar and feeds their
+// bytes to the pure `health` parsers (host-tested), then assembles the same
+// report the browser Lab produces. Every read is to a private temp file we read
+// back — `espflash read-flash` writes a file, not stdout.
+
+/// Read one flash region into memory: a quiet sidecar run to a private 0600 temp
+/// file (auto-removed), read back. Quiet on purpose — a health check does many
+/// small reads, and streaming each one's progress bar would bury the console.
+async fn read_region(
+    app: &AppHandle,
+    port: &str,
+    offset: u32,
+    size: u32,
+    baud: u32,
+) -> Result<Vec<u8>, String> {
+    let tmp = tempfile::Builder::new()
+        .prefix("securacv-health-")
+        .suffix(".bin")
+        .tempfile()
+        .map_err(|e| format!("couldn't create a temp file for the read: {e}"))?;
+    let out = tmp.path().to_string_lossy().to_string();
+    let (code, log) =
+        run_sidecar_capture(app, rescue::read_region_args(port, offset, size, &out, baud)).await?;
+    if code != 0 {
+        return Err(format!(
+            "espflash exited with code {code} reading 0x{offset:x}: {}",
+            log.trim()
+        ));
+    }
+    let data = std::fs::read(tmp.path())
+        .map_err(|e| format!("couldn't read back region 0x{offset:x}: {e}"))?;
+    // A region read can carry secrets — the NVS/settings partition holds the
+    // Ed25519 private key and saved Wi-Fi. We parse them in memory with an
+    // allow-list and never surface the values, but espflash had to write the raw
+    // bytes to this temp file first. Overwrite it with zeros before it's removed
+    // so nothing recoverable is left on the host disk.
+    let _ = std::fs::write(tmp.path(), vec![0u8; data.len()]);
+    Ok(data)
+}
+
+/// Write UTF-8 text to a path the user just chose in the OS save panel — the
+/// health report's JSON export. No FS plugin, no ambient access: the frontend
+/// hands over a path the save dialog already blessed.
+#[tauri::command]
+async fn save_text_file(path: String, contents: String) -> Result<(), String> {
+    std::fs::write(&path, contents).map_err(|e| format!("couldn't save {path}: {e}"))
+}
+
+fn verdict_json(v: &health::Verdict) -> Value {
+    json!({
+        "level": v.level,
+        "headline": v.headline,
+        "findings": v.findings.iter().map(|f| json!({
+            "severity": f.severity, "title": f.title, "fix": f.fix,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+/// Read the connected board's health: partition map, the firmware in each slot,
+/// update history, crash dump, and the witness chain — read-only. Returns the
+/// same report shape the browser renders, plus a self-heal verdict.
+#[tauri::command]
+async fn health_check(
+    app: AppHandle,
+    port: String,
+    chip: String,
+    mac: Option<String>,
+    flash_bytes: Option<u64>,
+    baud: u32,
+) -> Result<Value, String> {
+    let emit = |m: &str| {
+        let _ = app.emit("health:log", m.to_string());
+    };
+
+    emit("→ reading the partition map…");
+    let pt = read_region(&app, &port, 0x8000, 0xc00, baud).await?;
+    let entries = health::parse_partition_table(&pt);
+    if entries.is_empty() {
+        let verdict = health::report_verdict(&health::VerdictInput { blank: true, ..Default::default() });
+        emit("✓ read complete — the chip looks blank.");
+        return Ok(json!({
+            "chip": chip, "mac": mac, "flashBytes": flash_bytes,
+            "blank": true, "partitions": [], "verdict": verdict_json(&verdict),
+        }));
+    }
+
+    let partitions: Vec<Value> = entries
+        .iter()
+        .map(|e| json!({
+            "label": e.label,
+            "kind": health::partition_kind(e.ptype, e.subtype),
+            "offset": e.offset,
+            "size": e.size,
+        }))
+        .collect();
+
+    // App slots + their descriptors.
+    let apps = health::app_partitions(&entries);
+    let ota_slots: Vec<&health::Partition> =
+        apps.iter().filter(|a| (0x10..0x20).contains(&a.subtype)).collect();
+    emit("→ reading the firmware in each slot…");
+    let mut slots: Vec<Map<String, Value>> = Vec::new();
+    for app_p in &apps {
+        let desc = read_region(&app, &port, app_p.offset + health::APP_DESC_OFFSET, 256, baud)
+            .await
+            .ok()
+            .and_then(|b| health::parse_app_descriptor(&b));
+        let mut m = Map::new();
+        let label = if app_p.label.is_empty() {
+            health::partition_kind(app_p.ptype, app_p.subtype)
+        } else {
+            app_p.label.clone()
+        };
+        m.insert("label".into(), json!(label));
+        m.insert("subtype".into(), json!(app_p.subtype));
+        m.insert("empty".into(), json!(desc.is_none()));
+        if let Some(d) = &desc {
+            let built = format!("{} {}", d.date, d.time).trim().to_string();
+            m.insert("project".into(), json!(d.project_name));
+            m.insert("version".into(), json!(d.version));
+            m.insert("built".into(), if built.is_empty() { Value::Null } else { json!(built) });
+            m.insert("idf".into(), json!(d.idf_ver));
+        }
+        slots.push(m);
+    }
+
+    // otadata → which slot is booting, and how many updates it has seen.
+    let mut ota_json = Value::Null;
+    let mut active_label: Option<String> = None;
+    if let Some(otap) = entries.iter().find(|e| health::is_ota_data(e)) {
+        emit("→ reading update history…");
+        let ob = read_region(&app, &port, otap.offset, otap.size.min(0x2000), baud).await?;
+        let ota = health::parse_ota_data(&ob, ota_slots.len() as u32);
+        if !ota.fresh {
+            active_label = ota_slots.get(ota.active_ota as usize).map(|s| s.label.clone());
+        } else {
+            let first = apps.iter().find(|a| a.subtype == 0x00).or_else(|| ota_slots.first().copied());
+            active_label = first.map(|a| a.label.clone());
+        }
+        ota_json = json!({
+            "fresh": ota.fresh, "activeOta": ota.active_ota, "updatesSeen": ota.updates_seen,
+            "stateText": ota.state_text, "pendingVerify": ota.pending_verify,
+        });
+    }
+    // No otadata partition at all → a factory-only layout; the ESP32 boots the
+    // factory app, so mark it running (otherwise the verdict falsely warns that
+    // nothing is bootable).
+    if active_label.is_none() {
+        active_label = apps.iter().find(|a| a.subtype == 0x00).map(|a| a.label.clone());
+    }
+
+    // Mark the booted slot.
+    let mut has_running = false;
+    if let Some(al) = &active_label {
+        for m in slots.iter_mut() {
+            if m.get("label").and_then(|v| v.as_str()) == Some(al.as_str()) {
+                m.insert("active".into(), json!(true));
+                has_running = true;
+            }
+        }
+    }
+
+    // Crash dump.
+    let mut coredump_present = false;
+    let coredump_json = if let Some(cd) = entries.iter().find(|e| health::is_coredump(e)) {
+        let cb = read_region(&app, &port, cd.offset, 16, baud).await?;
+        let c = health::parse_coredump_header(&cb, cd.size);
+        coredump_present = c.present;
+        json!({ "present": c.present, "size": c.size })
+    } else {
+        Value::Null
+    };
+
+    // Witness chain (NVS), presence-only for secrets.
+    let mut witness_json = Value::Null;
+    let mut tamper: Option<u64> = None;
+    let mut provisioned = false;
+    if let Some(nv) = entries.iter().find(|e| health::is_nvs(e)) {
+        emit("→ reading the witness chain…");
+        let nb = read_region(&app, &port, nv.offset, nv.size, baud).await?;
+        let items = health::parse_nvs(&nb, &[health::WITNESS_CHAIN_BLOB_KEY]);
+        if let Some(w) = health::witness_summary(&items) {
+            tamper = w.tamper;
+            provisioned = w.provisioned;
+            witness_json = json!({
+                "seq": w.seq, "boots": w.boots, "tamper": w.tamper, "logSeq": w.log_seq,
+                "chainHeadFp": w.chain_head_fp, "provisioned": w.provisioned,
+                "wifiConfigured": w.wifi_configured,
+            });
+        }
+    }
+    let witness_log_json = entries
+        .iter()
+        .find(|e| health::is_witness_log(e))
+        .map(|e| json!({ "label": e.label, "size": e.size }))
+        .unwrap_or(Value::Null);
+
+    let rolled_back = ota_json
+        .get("stateText")
+        .and_then(|v| v.as_str())
+        .map(|s| s.contains("rolled back"))
+        .unwrap_or(false);
+    let verdict = health::report_verdict(&health::VerdictInput {
+        blank: false,
+        coredump_present,
+        ota_pending_verify: ota_json.get("pendingVerify").and_then(|v| v.as_bool()).unwrap_or(false),
+        ota_rolled_back: rolled_back,
+        tamper,
+        has_running_slot: has_running,
+        provisioned,
+    });
+
+    emit("✓ health check complete.");
+    Ok(json!({
+        "chip": chip, "mac": mac, "flashBytes": flash_bytes,
+        "partitions": partitions,
+        "slots": slots.into_iter().map(Value::Object).collect::<Vec<_>>(),
+        "ota": ota_json, "coredump": coredump_json,
+        "witness": witness_json, "witnessLog": witness_log_json,
+        "verdict": verdict_json(&verdict),
+    }))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -975,6 +1480,7 @@ pub fn run() {
             load_catalog,
             load_hatch,
             app_info,
+            current_ssid,
             list_ports,
             detect_chip,
             fetch_manifest,
@@ -995,11 +1501,38 @@ pub fn run() {
             serial_monitor::start_serial_monitor,
             serial_monitor::serial_monitor_send,
             serial_monitor::stop_serial_monitor,
+            backup_flash,
+            write_local_image,
+            erase_chip,
+            health_check,
+            save_text_file,
             check_update,
             install_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running SecuraCV Flasher");
+}
+
+#[cfg(test)]
+mod local_image_tests {
+    use super::{check_local_image, PARTITION_TABLE_OFFSET};
+
+    #[test]
+    fn app_only_builds_are_refused_and_factory_shapes_pass() {
+        assert!(check_local_image(&[]).is_err());
+        // An app-only PlatformIO build starts with 0xE9 too — the refusal
+        // must come from the missing partition table, not the image magic.
+        let app_only = vec![0xE9; PARTITION_TABLE_OFFSET / 2];
+        assert!(check_local_image(&app_only).is_err());
+        // Right length, no 0xAA 0x50 at 0x8000 → still not a factory image.
+        let unmerged = vec![0xE9; PARTITION_TABLE_OFFSET + 64];
+        assert!(check_local_image(&unmerged).is_err());
+        let mut factory = vec![0xFF; PARTITION_TABLE_OFFSET + 64];
+        factory[0] = 0xE9;
+        factory[PARTITION_TABLE_OFFSET] = 0xAA;
+        factory[PARTITION_TABLE_OFFSET + 1] = 0x50;
+        assert!(check_local_image(&factory).is_ok());
+    }
 }
 
 #[cfg(test)]

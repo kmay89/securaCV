@@ -51,10 +51,22 @@
                                         // BOOT-button gestures land — follow-up)
 #define FEATURE_ACK_SYNC            1   // household ack-sync    (spec 2)
 #define FEATURE_PRESENCE_WAKE       1   // illumination ladder   (spec 3)
+#ifndef FEATURE_CHIME  // -D overridable so the emulator (not real hardware) can force the chime on
 #define FEATURE_CHIME               0   // no piezo on these boards; engine compiled
+#endif
+// Overridable (#ifndef): the C6 board's env compiles these two OUT
+// (-DFEATURE_CHIRP_SCAN=0 -DFEATURE_FLEET_LINK=0). Not a preference — an
+// OTA-slot budget: the 4 MB C6 has 0x1E0000 A/B slots and the BLE stack
+// (libble_app + the NimBLE host) costs ~300 KB the full portrait image
+// doesn't have. The S3 stick (16 MB) keeps both. Off-grid BLE on the C6
+// returns with the size work, not by flag-flipping here.
+#ifndef FEATURE_CHIRP_SCAN
 #define FEATURE_CHIRP_SCAN          1   // off-grid BLE chirp fallback (spec 6)
+#endif
 #define FEATURE_BLE5_SCAN           0   // BLE 5 ext/Coded-PHY long-range scan; bench-gated
+#ifndef FEATURE_FLEET_LINK
 #define FEATURE_FLEET_LINK          1   // off-grid BLE GATT pull of WAP status (spec 6)
+#endif
 #define FEATURE_TIME_MACHINE        1   // proof-carrying event journal + history (spec 7)
 #define FEATURE_TIME_MACHINE_PERSIST 0  // LittleFS durability; bench-gated
 #define FEATURE_ONBOARDING          1   // first-boot SoftAP wizard + on-glass guide

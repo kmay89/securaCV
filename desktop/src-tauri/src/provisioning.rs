@@ -22,6 +22,20 @@ pub struct Provisioning {
     pub mqtt_port: u16,
     pub mqtt_user: String,
     pub mqtt_pass: String,
+    // Which NVS encoding this firmware reads its Wi-Fi with (catalog
+    // `wifi_nvs`, derived from the firmware source): "string" (Preferences
+    // getString — sense/vision/display) or "blob" (getBytes + a wifi_en
+    // bool — canary/wap). Defaults to "string" for old callers.
+    #[serde(default)]
+    pub wifi_nvs: String,
+}
+
+// Wi-Fi-only provisioning (every non-usb-secrets board): the identity and
+// broker fields stay empty and are simply not written — those firmwares
+// configure that part elsewhere (AP portal / on-glass), but the network
+// itself is baked in so joining is instant.
+fn wifi_only(config: &Provisioning) -> bool {
+    config.device_id.is_empty() && config.mqtt_host.is_empty()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,14 +92,17 @@ fn crc32_esp_rom(bytes: &[u8]) -> u32 {
 
 fn validate(config: &Provisioning) -> Result<(), String> {
     let byte_len = |value: &str| value.len();
-    if config.device_id.is_empty() || byte_len(&config.device_id) > 47 {
-        return Err("device name must be 1–47 UTF-8 bytes".into());
-    }
     if config.wifi_ssid.is_empty() || byte_len(&config.wifi_ssid) > 32 {
         return Err("Wi-Fi name must be 1–32 UTF-8 bytes".into());
     }
     if !config.wifi_pass.is_empty() && !(8..=63).contains(&byte_len(&config.wifi_pass)) {
         return Err("Wi-Fi password must be 8–63 bytes (or empty for an open network)".into());
+    }
+    if wifi_only(config) {
+        return Ok(());
+    }
+    if config.device_id.is_empty() || byte_len(&config.device_id) > 47 {
+        return Err("device name must be 1–47 UTF-8 bytes".into());
     }
     if config.mqtt_host.is_empty() || byte_len(&config.mqtt_host) > 63 {
         return Err("MQTT host must be 1–63 UTF-8 bytes".into());
@@ -186,6 +203,51 @@ impl NvsWriter {
         Ok(())
     }
 
+    fn u8(&mut self, key: &str, value: u8) -> Result<(), String> {
+        self.ensure(1)?;
+        let index = self.next;
+        self.header(index, 1, 0x01, 1, key);
+        let offset = Self::item_offset(index);
+        self.page[offset + 24] = value;
+        self.finish_item(index);
+        self.next += 1;
+        Ok(())
+    }
+
+    // ESP-IDF v2 blob (Preferences putBytes): one BLOB_DATA chunk (0x42)
+    // carrying the payload plus one BLOB_IDX (0x48) with the total size —
+    // byte-identical to the browser flasher's writeBlob (flash-core.js).
+    fn blob(&mut self, key: &str, bytes: &[u8]) -> Result<(), String> {
+        let payload_entries = bytes.len().div_ceil(32);
+        self.ensure(1 + payload_entries + 1)?;
+        let index = self.next;
+        self.header(index, 1, 0x42, (1 + payload_entries) as u8, key);
+        let offset = Self::item_offset(index);
+        // chunk index byte (header() writes 0xff): VER_0 chunk 0
+        self.page[offset + 3] = 0;
+        self.page[offset + 24..offset + 26]
+            .copy_from_slice(&(bytes.len() as u16).to_le_bytes());
+        self.page[offset + 28..offset + 32]
+            .copy_from_slice(&crc32_esp_rom(bytes).to_le_bytes());
+        self.page[offset + 32..offset + 32 + bytes.len()].copy_from_slice(bytes);
+        self.finish_item(index);
+        for payload_index in 1..=payload_entries {
+            self.mark_written(index + payload_index);
+        }
+        self.next += 1 + payload_entries;
+
+        let index = self.next;
+        self.header(index, 1, 0x48, 1, key);
+        let offset = Self::item_offset(index);
+        self.page[offset + 24..offset + 28]
+            .copy_from_slice(&(bytes.len() as u32).to_le_bytes());
+        self.page[offset + 28] = 1; // chunkCount
+        self.page[offset + 29] = 0; // chunkStart (VER_0)
+        self.finish_item(index);
+        self.next += 1;
+        Ok(())
+    }
+
     fn u16(&mut self, key: &str, value: u16) -> Result<(), String> {
         self.ensure(1)?;
         let index = self.next;
@@ -213,13 +275,23 @@ fn build_nvs(config: &Provisioning, partition_size: usize) -> Result<Vec<u8>, St
     validate(config)?;
     let mut writer = NvsWriter::new();
     writer.namespace("securacv")?;
-    writer.string("dev_id", &config.device_id)?;
-    writer.string("wifi_ssid", &config.wifi_ssid)?;
-    writer.string("wifi_pass", &config.wifi_pass)?;
-    writer.string("mqtt_host", &config.mqtt_host)?;
-    writer.u16("mqtt_port", config.mqtt_port)?;
-    writer.string("mqtt_user", &config.mqtt_user)?;
-    writer.string("mqtt_pass", &config.mqtt_pass)?;
+    if config.wifi_nvs == "blob" {
+        // canary/wap read Wi-Fi with getBytes and gate on a wifi_en bool —
+        // a string under the same key would read back empty, and vice versa.
+        writer.blob("wifi_ssid", config.wifi_ssid.as_bytes())?;
+        writer.blob("wifi_pass", config.wifi_pass.as_bytes())?;
+        writer.u8("wifi_en", 1)?;
+    } else {
+        writer.string("wifi_ssid", &config.wifi_ssid)?;
+        writer.string("wifi_pass", &config.wifi_pass)?;
+    }
+    if !wifi_only(config) {
+        writer.string("dev_id", &config.device_id)?;
+        writer.string("mqtt_host", &config.mqtt_host)?;
+        writer.u16("mqtt_port", config.mqtt_port)?;
+        writer.string("mqtt_user", &config.mqtt_user)?;
+        writer.string("mqtt_pass", &config.mqtt_pass)?;
+    }
     Ok(writer.finish(partition_size))
 }
 
@@ -247,7 +319,61 @@ mod tests {
             mqtt_port: 1883,
             mqtt_user: "canary".into(),
             mqtt_pass: "broker-secret".into(),
+            wifi_nvs: String::new(),
         }
+    }
+
+    // The blob scheme (canary/wap firmwares: getBytes + wifi_en) — the seed
+    // must carry BLOB_DATA + BLOB_IDX entries and the enable bool, and a
+    // wifi-only config must skip every identity/broker key.
+    #[test]
+    fn blob_scheme_wifi_only_seed() {
+        let cfg = Provisioning {
+            device_id: String::new(),
+            mqtt_host: String::new(),
+            mqtt_user: String::new(),
+            mqtt_pass: String::new(),
+            wifi_nvs: "blob".into(),
+            ..config()
+        };
+        let image = build_nvs(&cfg, 0x4000).expect("wifi-only blob seed builds");
+        let page = &image[..4096];
+        let has_item = |kind: u8, key: &str| {
+            (0..126).any(|i| {
+                let o = 64 + i * 32;
+                page[o + 1] == kind
+                    && &page[o + 8..o + 8 + key.len()] == key.as_bytes()
+                    && matches!(page[o + 8 + key.len()], 0 | 0xff)
+            })
+        };
+        assert!(has_item(0x42, "wifi_ssid") && has_item(0x48, "wifi_ssid"));
+        assert!(has_item(0x42, "wifi_pass") && has_item(0x48, "wifi_pass"));
+        assert!(has_item(0x01, "wifi_en"));
+        assert!(!has_item(0x21, "wifi_ssid"), "no string twin beside the blob");
+        assert!(!has_item(0x21, "dev_id") && !has_item(0x21, "mqtt_host"));
+    }
+
+    // Wi-Fi-only with the default string scheme: network keys only.
+    #[test]
+    fn string_scheme_wifi_only_skips_identity() {
+        let cfg = Provisioning {
+            device_id: String::new(),
+            mqtt_host: String::new(),
+            mqtt_user: String::new(),
+            mqtt_pass: String::new(),
+            ..config()
+        };
+        let image = build_nvs(&cfg, 0x4000).expect("wifi-only string seed builds");
+        let page = &image[..4096];
+        let has_key = |key: &str| {
+            (0..126).any(|i| {
+                let o = 64 + i * 32;
+                &page[o + 8..o + 8 + key.len()] == key.as_bytes()
+                    && matches!(page[o + 8 + key.len()], 0 | 0xff)
+            })
+        };
+        assert!(has_key("wifi_ssid") && has_key("wifi_pass"));
+        assert!(!has_key("dev_id") && !has_key("mqtt_host") && !has_key("mqtt_port"));
     }
 
     fn factory() -> Vec<u8> {

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "SecuraCV Flasher",
-  "version": "0.3.0",
+  "version": "0.3.5",
   "identifier": "com.securacv.flasher",
   "build": {
     "frontendDist": "../src",
@@ -54,14 +54,18 @@
     },
     "linux": {
       "deb": {
-        "depends": ["libusb-1.0-0"]
+        "depends": ["libusb-1.0-0"],
+        "files": {
+          "/usr/lib/udev/rules.d/60-rpiboot.rules": "packaging/rpiboot.rules",
+          "/usr/lib/udev/rules.d/61-securacv-canary.rules": "packaging/canary-serial.rules"
+        }
       }
     }
   },
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/kmay89/securaCV/releases/latest/download/latest.json"
+        "https://github.com/kmay89/securaCV/releases/download/flasher-latest/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc3NDJCRThGRUVDQ0IzQkIKUldTN3M4enVqNzVDZHpnejBGeE0yQUg3T1RFZ3dBS0x4ckpGUTIyRU9Ea3FyaG9ZSGJXSGhmVTcK"
     }

@@ -81,3 +81,10 @@ struct DeviceDetailView: View {
         }
     }
 }
+
+#Preview("Device detail — demo Canary") {
+    NavigationStack {
+        DeviceDetailView(witness: DemoFleet.witnesses().first!)
+            .environmentObject(DemoFleet.previewStore())
+    }
+}

@@ -15,6 +15,7 @@ struct TodayView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: Theme.l) {
+                    if store.demoMode { DemoDataBanner() }
                     StatusHero(severity: store.worstSeverity,
                                headline: store.allQuiet ? "All quiet" : hotHeadline)
                     HeartbeatCard()
@@ -106,4 +107,26 @@ struct EmptyTimeline: View {
             }
         }
     }
+}
+
+/// The unmissable "this is sample data" chip — demo must never pass as real.
+struct DemoDataBanner: View {
+    @EnvironmentObject var store: FleetStore
+    var body: some View {
+        HStack(spacing: Theme.s) {
+            Image(systemName: "sparkles.rectangle.stack")
+            Text("Demo fleet — sample data").font(.footnote.weight(.medium))
+            Spacer()
+            Button("Turn off") { store.setDemoMode(false) }
+                .font(.footnote.bold())
+        }
+        .padding(.horizontal, Theme.m)
+        .padding(.vertical, Theme.s)
+        .background(.ultraThinMaterial, in: Capsule())
+        .accessibilityElement(children: .combine)
+    }
+}
+
+#Preview("Today — demo fleet") {
+    TodayView().environmentObject(DemoFleet.previewStore())
 }

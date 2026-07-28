@@ -7,7 +7,7 @@
  },
  "pricing": {
   "source": "docs/hardware/pricing.json",
-  "as_of": "2026-07-23T21:49:40Z",
+  "as_of": "2026-07-28T11:27:27Z",
   "note": "Nightly distributor snapshot (scripts/bom_pricing.py); rows without a live match keep the CSV's indicative price."
  },
  "devices": {
@@ -25,7 +25,13 @@
       "mfr": "Seeed Studio",
       "usd": 13.99,
       "notes": "Main controller; onboard LiPo charger (BAT pads); operating -40 to +65 C; verified Mouser/DigiKey SKU. Seeed/DigiKey list $13.99 (mid-2026)",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 15.9,
+       "stock": 1823,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/102010469/16652896"
+      }
      },
      {
       "ref": "CBL1",
@@ -61,7 +67,13 @@
       "mfr": "CUI Devices",
       "usd": 0.55,
       "notes": "CHIRP_GPIO=GPIO2 (D1); LEDC PWM 2kHz/8-bit. For outdoor use a sealed IP67 piezo OR mount behind GORE vent (VENT1). Piezo preferred over magnetic (moisture/coil wear)",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 2.2,
+       "stock": 6282,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/same-sky-formerly-cui-devices/CPT-9019S-SMT-TR/6012432"
+      }
      },
      {
       "ref": "Q1",
@@ -73,7 +85,13 @@
       "mfr": "onsemi",
       "usd": 0.1,
       "notes": "Magnetic buzzers draw 30-50mA and are moisture-susceptible; not needed for the recommended piezo BZ1",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.16,
+       "stock": 37309,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/diotec-semiconductor/2N7002/13163336"
+      }
      },
      {
       "ref": "Dfb1",
@@ -85,7 +103,13 @@
       "mfr": "onsemi",
       "usd": 0.05,
       "notes": "Clamps inductive spike to protect Q1 when driving a MAGNETIC buzzer; not needed for piezo BZ1",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.1,
+       "stock": 962596,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/onsemi/1N4148/458603"
+      }
      },
      {
       "ref": "R1",
@@ -97,7 +121,13 @@
       "mfr": "Yageo",
       "usd": 0.02,
       "notes": "Series with buzzer",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.1,
+       "stock": 147311,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-07100RL/727543"
+      }
      },
      {
       "ref": "DLED1",
@@ -121,7 +151,13 @@
       "mfr": "Yageo",
       "usd": 0.02,
       "notes": "In series with WS2812 DIN",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.1,
+       "stock": 451504,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-07330RL/727866"
+      }
      },
      {
       "ref": "C1",
@@ -133,7 +169,13 @@
       "mfr": "Samsung",
       "usd": 0.02,
       "notes": "Local bypass at pixel V+/GND; X7R good over temp",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.1,
+       "stock": 6971494,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/samsung-electro-mechanics/CL21B104KBCNNNC/3886661"
+      }
      },
      {
       "ref": "SW2",
@@ -145,7 +187,13 @@
       "mfr": "Littelfuse",
       "usd": 1.8,
       "notes": "TAMPER_PIN_DEFAULT=GPIO4 (D3), INPUT_PULLUP active LOW. FIRMWARE: FEATURE_TAMPER_GPIO defined but NOT yet consumed - needs firmware support, OR use securacv_touch enclosure-tamper mode. GPIO4 shared with touch default (see build plan 5.1). Hermetic glass = wide-temp, near-zero idle current",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 4.08,
+       "stock": 16043,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/littelfuse-inc/59140-1-S-02-A/2650435"
+      }
      },
      {
       "ref": "SW2-ALT",
@@ -157,7 +205,13 @@
       "mfr": "Diodes Inc",
       "usd": 0.45,
       "notes": "Alternative to reed; draws continuous quiescent current (reed preferred for battery devices)",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.0,
+       "stock": 0,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/diodes-incorporated/AH3572-P-B/9649753"
+      }
      },
      {
       "ref": "MAG1",
@@ -181,7 +235,13 @@
       "mfr": "Omron",
       "usd": 0.12,
       "notes": "Parallel to BOOT/GPIO0; hold>=2000ms. NOT sealed - for outdoor use SW1-ALT or just reuse onboard BOOT",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.35,
+       "stock": 40912,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/aratas-formerly-omron-components/B3F-1000/33150"
+      }
      },
      {
       "ref": "SW1-ALT",
@@ -217,7 +277,13 @@
       "mfr": "Yageo",
       "usd": 0.02,
       "notes": "Series with touch electrode",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.1,
+       "stock": 477569,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-071KL/727444"
+      }
      },
      {
       "ref": "BT1",
@@ -265,7 +331,13 @@
       "mfr": "Yageo",
       "usd": 0.04,
       "notes": "VBAT->R4->GPIO1(A0)->R5->GND; VBAT_DIVIDER_RATIO=2.0",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.1,
+       "stock": 639248,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-07100KL/727544"
+      }
      },
      {
       "ref": "M1",
@@ -289,7 +361,13 @@
       "mfr": "Hammond",
       "usd": 18.0,
       "notes": "-40 to +110C, IK08 impact, UL listed. Clear-lid variant doubles as camera window. ABS 1551 (prior pick) was INDOOR-ONLY - corrected",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 26.29,
+       "stock": 86,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/hammond-manufacturing/1554F2GYCL/2359947"
+      }
      },
      {
       "ref": "VENT1",
@@ -313,7 +391,13 @@
       "mfr": "Bivar",
       "usd": 0.45,
       "notes": "Carries DLED1 to enclosure face; gasketed press-fit keeps IP rating",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.78,
+       "stock": 3148,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/bivar-inc/PLP1-250/586454"
+      }
      },
      {
       "ref": "ANT1",
@@ -414,9 +498,9 @@
     ],
     "required_usd": 25.99,
     "full_usd": 101.98,
-    "required_usd_live": 25.99,
-    "full_usd_live": 101.98,
-    "pricing_as_of": "2026-07-23T21:49:40Z",
+    "required_usd_live": 27.9,
+    "full_usd_live": 116.81,
+    "pricing_as_of": "2026-07-28T11:27:27Z",
     "recipes": [
      {
       "label": "Required-only",
@@ -466,7 +550,13 @@
       "mfr": "Espressif",
       "usd": 8.0,
       "notes": "Vision controller (Grove-cable host flavor); NO onboard LiPo charger; operating -40 to +85 C",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 8.0,
+       "stock": 0,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/espressif-systems/ESP32-C3-DEVKITM-1/13684315"
+      }
      },
      {
       "ref": "U1-ALT",
@@ -490,7 +580,13 @@
       "mfr": "Seeed Studio",
       "usd": 15.99,
       "notes": "I2C on GPIO4 (SDA) / GPIO5 (SCL); Seeed product 5851, SKU 101021112 = the HX6538 V2. NOT the older HX6537-A V1 (SKU 101021040 / DigiKey 114992866, OV2640) — those were wrong here. Camera sold separately on some SKUs. Board-only list $15.99 (verified mid-2026)",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 15.99,
+       "stock": 148,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/101021112/22469630"
+      }
      },
      {
       "ref": "CBL2",
@@ -502,7 +598,13 @@
       "mfr": "Seeed Studio",
       "usd": 1.2,
       "notes": "Usually ships with U2; connects U2 to U1",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 2.0,
+       "stock": 599,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/110990210/5482570"
+      }
      },
      {
       "ref": "CBL1",
@@ -538,7 +640,13 @@
       "mfr": "Yageo",
       "usd": 0.02,
       "notes": "In series with WS2812 DIN",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.1,
+       "stock": 451504,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-07330RL/727866"
+      }
      },
      {
       "ref": "C1",
@@ -550,7 +658,13 @@
       "mfr": "Samsung",
       "usd": 0.02,
       "notes": "Local bypass at DLED1 V+/GND; recommended close to WS2812B power pins",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.1,
+       "stock": 6971494,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/samsung-electro-mechanics/CL21B104KBCNNNC/3886661"
+      }
      },
      {
       "ref": "SW1",
@@ -562,7 +676,13 @@
       "mfr": "Omron",
       "usd": 0.12,
       "notes": "Parallel to BOOT/GPIO9; or reuse onboard BOOT. Indoor; see WAP BOM SW1-ALT for outdoor",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 0.35,
+       "stock": 40912,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/aratas-formerly-omron-components/B3F-1000/33150"
+      }
      },
      {
       "ref": "BZ1",
@@ -574,7 +694,13 @@
       "mfr": "CUI Devices",
       "usd": 0.0,
       "notes": "BUZZER_PIN_DEFAULT=GPIO2; requires firmware fork (FEATURE_AUDIBLE_CHIRP off on Vision)",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 2.2,
+       "stock": 6282,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/same-sky-formerly-cui-devices/CPT-9019S-SMT-TR/6012432"
+      }
      },
      {
       "ref": "BT1",
@@ -598,7 +724,13 @@
       "mfr": "Hammond",
       "usd": 18.0,
       "notes": "UV-stabilized IP66/NEMA4X, -40 to +110C. Clear lid = camera aperture for Grove Vision AI V2; keep optically clear (no smoke tint)",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 26.29,
+       "stock": 86,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/hammond-manufacturing/1554F2GYCL/2359947"
+      }
      },
      {
       "ref": "CAM1",
@@ -735,9 +867,9 @@
     ],
     "required_usd": 28.69,
     "full_usd": 80.15,
-    "required_usd_live": 28.69,
-    "full_usd_live": 80.15,
-    "pricing_as_of": "2026-07-23T21:49:40Z",
+    "required_usd_live": 29.49,
+    "full_usd_live": 91.83,
+    "pricing_as_of": "2026-07-28T11:27:27Z",
     "recipes": [
      {
       "label": "Required-only",
@@ -823,7 +955,13 @@
       "mfr": "Littelfuse",
       "usd": 1.8,
       "notes": "Enclosure-level tamper for the printed radome; wire to a free GPIO. FIRMWARE: no FEATURE_TAMPER flag in canary-sense yet — the P0 tamper signal is BH1750 lights-out corroboration (design doc §tamper enrichment)",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 4.08,
+       "stock": 16043,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/littelfuse-inc/59140-1-S-02-A/2650435"
+      }
      },
      {
       "ref": "MAG1",
@@ -889,8 +1027,8 @@
     "required_usd": 36.4,
     "full_usd": 40.0,
     "required_usd_live": 36.4,
-    "full_usd_live": 40.0,
-    "pricing_as_of": "2026-07-23T21:49:40Z",
+    "full_usd_live": 42.28,
+    "pricing_as_of": "2026-07-28T11:27:27Z",
     "recipes": [
      {
       "label": "Required-only",
@@ -927,7 +1065,13 @@
       "mfr": "Seeed Studio",
       "usd": 7.49,
       "notes": "Seats in W-U2's back socket, zero wiring (same stack pattern as Vision/Sense). Plain, NOT Sense: a display needs no camera/mic, and their absence is a privacy feature. Seeed list $7.49; 3-pack ~$5.97/pc; street (Amazon) $9-12",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 7.49,
+       "stock": 6014,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/113991114/19285530"
+      }
      },
      {
       "ref": "W-U2",
@@ -975,7 +1119,13 @@
       "mfr": "CUI Devices",
       "usd": 0.0,
       "notes": "Reserved: display_ux_design.md sound spec (IEC 60601-1-8-informed tiers, falling all-clear tone). No firmware support yet",
-      "orderable": true
+      "orderable": true,
+      "live": {
+       "unit_usd": 2.2,
+       "stock": 6282,
+       "src": "digikey",
+       "url": "https://www.digikey.com/en/products/detail/same-sky-formerly-cui-devices/CPT-9019S-SMT-TR/6012432"
+      }
      },
      {
       "ref": "CBL1",
@@ -1005,8 +1155,8 @@
     "required_usd": 34.99,
     "full_usd": 41.94,
     "required_usd_live": 34.99,
-    "full_usd_live": 41.94,
-    "pricing_as_of": "2026-07-23T21:49:40Z"
+    "full_usd_live": 44.14,
+    "pricing_as_of": "2026-07-28T11:27:27Z"
    }
   },
   "canary-display-dash": {
@@ -1102,7 +1252,7 @@
     "full_usd": 45.5,
     "required_usd_live": 42.5,
     "full_usd_live": 45.5,
-    "pricing_as_of": "2026-07-23T21:49:40Z"
+    "pricing_as_of": "2026-07-28T11:27:27Z"
    }
   }
  }

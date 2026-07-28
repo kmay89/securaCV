@@ -164,6 +164,14 @@ SENT_PRESET_HDR = $(SENT_PROJ_INC)/canary/sentinel_config.h \
 PRESET_DOOR_BIN = $(BUILD_DIR)/test_sentinel_preset_door
 PRESET_LITE_BIN = $(BUILD_DIR)/test_sentinel_preset_mailbox_lite
 
+# Serial tuning console (common/console/tuning_console.h): the line-based
+# knob console the canary-sense bench speaks over USB serial. Proves the
+# command vocabulary (help/cfg/set/reset/stream/raw), clamping through the
+# knob table, strict number parsing, overflow discipline, CRLF tolerance,
+# and the single-line [cfg] snapshot the flasher parses. Pure header.
+TUNECON_HDR = ../common/console/tuning_console.h
+TUNECON_BIN = $(BUILD_DIR)/test_tuning_console
+
 # Nightstand look engine (common/color/*): the gamma LUT, integer HSV→RGB,
 # warmth, palette sampling, breath easing, and the scene→beacon/wash engine
 # with its honest severity override. Pure integer C++ (no float, no Arduino),
@@ -237,7 +245,10 @@ $(PRESET_LITE_BIN): test_sentinel_presets.cpp $(FUSION_SRC) $(SENT_PRESET_HDR) $
 $(LOOK_BIN): test_look_engine.cpp $(LOOK_SRC) $(LOOK_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_look_engine.cpp $(LOOK_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN)
+$(TUNECON_BIN): test_tuning_console.cpp $(TUNECON_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_tuning_console.cpp -o $@
+
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(TUNECON_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -257,6 +268,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(PRESET_DOOR_BIN)
 	./$(PRESET_LITE_BIN)
 	./$(LOOK_BIN)
+	./$(TUNECON_BIN)
 
 clean:
 	rm -rf $(BUILD_DIR)

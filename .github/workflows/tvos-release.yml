@@ -229,7 +229,7 @@ jobs:
       # run keeps the .ipa so a human can sideload it to a dev device.
       - name: Upload .ipa (build-only runs)
         if: vars.ENABLE_TVOS_BUILD == 'true' && steps.plan.outputs.publish != 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: securacv-witness-wall-tvos
           path: tvos/build/export/*.ipa

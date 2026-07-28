@@ -718,6 +718,13 @@ static void display_serial_write(const char* str) {
 }
 
 void setup() {
+#if defined(FEATURE_AMBIENT_LED) && FEATURE_AMBIENT_LED
+  // First visible sign of life: the behind-the-glass beacon lights bright
+  // canary yellow before ANYTHING else — before serial settles, before the
+  // panel initializes — so power-on is answered instantly. The first render
+  // tick replaces it with the real state (or honest darkness).
+  canary::hal::ambient_led_init();
+#endif
   Serial.begin(115200);
   delay(600);
 
@@ -819,16 +826,6 @@ void setup() {
   // moment the broker accepts our subscriptions.
   canary::trust::init();
 
-#if defined(FEATURE_CHIME) && FEATURE_CHIME
-  // Canary Voice (spec §5) — only ever initialized when the piezo pad is
-  // populated; the engine TU itself is always compiled for CI coverage.
-  canary::hal::chime_init(BUZZER_PIN);
-  // Seed night state before the first voice so a reboot during quiet hours
-  // speaks at the night-attenuated level, and sound our boot signature —
-  // "the canary wakes." (voice_play no-ops if the pin was never populated.)
-  canary::hal::voice_set_night(in_quiet_hours());
-  canary::hal::voice_play(canary::hal::Voice::Boot);
-#endif
 #if defined(FEATURE_WAKE_ALARM) && FEATURE_WAKE_ALARM
   // OUTSIDE the chime gate on purpose (review catch): the sunrise ramp is
   // the alarm's visual half and must restore even on a silent-piezo build
@@ -841,11 +838,41 @@ void setup() {
   // "listening" state beats a black disc while WiFi retries.
   g_display_ok = canary::hal::display_init();
   if (g_display_ok) g_display_ok = canary::ui::lvgl_port_init();
-#if defined(FEATURE_AMBIENT_LED) && FEATURE_AMBIENT_LED
-  // The across-room state beacon comes up dark and stays dark until the first
-  // render tick colors it — no boot flash on a nightstand.
-  canary::hal::ambient_led_init();
+
+#if defined(FEATURE_CHIME) && FEATURE_CHIME
+  // Canary Voice (spec §5): sound the boot signature — "the canary wakes" —
+  // right here, as the glass comes up. Init needs only the pin; the engine TU
+  // is always compiled for CI coverage even when the pad is unpopulated.
+  canary::hal::chime_init(BUZZER_PIN);
+#if defined(FEATURE_RTC) && FEATURE_RTC
+  // Seed trusted wall time from the battery-backed RTC now (Wire is up after
+  // display_init) so the chime's quiet-hours attenuation is right on a cold
+  // reboot, before SNTP. Idempotent — the later rtc_begin() re-probes and
+  // no-ops once the clock is valid.
+  canary::io::rtc_begin();
 #endif
+  // Quiet-hours volume: use real wall time when we have it; if it's still
+  // unknown (no / unreliable RTC), err quiet so a 3am reboot never chimes loud.
+  int boot_hh;
+  const bool boot_time_known = local_time(&boot_hh, nullptr);
+  canary::hal::voice_set_night(boot_time_known ? in_quiet_hours() : true);
+  canary::hal::voice_play(canary::hal::Voice::Boot);
+  // Render it synchronously, at power-on. The steady-state loop that normally
+  // pumps voice_loop() only runs AFTER the blocking splash, provisioning (which
+  // can wait indefinitely on first setup) and Wi-Fi-or-reboot phases — so a
+  // latched-only phrase would play seconds late or, on first setup / a no-Wi-Fi
+  // reboot, never. Bounded (the phrase is ~330 ms) so a stuck note can't hang boot.
+  {
+    constexpr uint32_t kBootChimeMaxMs = 700;
+    const uint32_t t0 = millis();
+    while (canary::hal::voice_active() &&
+           (uint32_t)(millis() - t0) < kBootChimeMaxMs) {
+      canary::hal::chime_loop(millis());
+      delay(1);
+    }
+  }
+#endif
+
   if (g_display_ok) {
     // Boot splash, then face, then the curtain lift. splash_play() ends by
     // dropping an opaque curtain over the glass instead of fading into the

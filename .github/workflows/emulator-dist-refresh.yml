@@ -1,0 +1,86 @@
+# Rebuild the committed emulator dist/ from the dispatched ref — in CI,
+# where the pinned Emscripten SDK is installable — and push the byte-exact
+# result back to that same branch.
+#
+# Why this button exists: canary-local/emulator/dist/*.js are generated AND
+# committed, and canary-local.yml's drift gate rebuilds them and fails on
+# any byte difference. The fixer ("run build.sh all and commit") requires
+# emsdk 6.0.3 exactly — a toolchain many working environments (network-
+# restricted sandboxes, laptops without emsdk) cannot install. This
+# workflow is the same fixer run where the toolchain lives, following the
+# homeassistant-freshness bot's commit/push pattern.
+#
+# It only ever pushes to the branch it was dispatched on, and only when the
+# rebuild actually changed dist/. Note GitHub's recursion guard: a push
+# made with the default GITHUB_TOKEN does not retrigger workflows, so the
+# refreshed head may need one ordinary push (or re-run) to collect checks.
+
+name: Rebuild emulator dist (pinned emsdk)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Two rebuilds racing on one branch would fight over the push — queue them.
+concurrency:
+  group: emulator-dist-refresh-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      # Same pinned SDK + caches as canary-local.yml's wasm job — the whole
+      # point is byte-identical output to that job's rebuild.
+      - name: Cache the Emscripten SDK
+        id: emsdk-cache
+        uses: actions/cache@v6
+        with:
+          path: /tmp/emsdk
+          key: emsdk-6.0.3-${{ runner.os }}
+      - name: Install pinned Emscripten SDK 6.0.3
+        if: steps.emsdk-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git /tmp/emsdk
+          /tmp/emsdk/emsdk install 6.0.3
+      - name: Activate + verify Emscripten
+        run: |
+          /tmp/emsdk/emsdk activate 6.0.3
+          source /tmp/emsdk/emsdk_env.sh
+          emcc --version | head -1
+      - name: Cache third-party sources
+        uses: actions/cache@v6
+        with:
+          path: canary-local/emulator/third_party
+          key: canary-local-tp-${{ hashFiles('canary-local/emulator/build.sh') }}
+
+      - name: Rebuild dist from this tree
+        run: |
+          source /tmp/emsdk/emsdk_env.sh
+          cd canary-local/emulator
+          ./build.sh all
+
+      - name: Commit + push the refreshed dist (only if it changed)
+        run: |
+          # status --porcelain, not diff: a NEW flavor's first build creates
+          # untracked dist files that git diff cannot see.
+          if [ -z "$(git status --porcelain -- canary-local/emulator/dist)" ]; then
+            echo "dist/ already matches a rebuild from this tree — nothing to push."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add canary-local/emulator/dist
+          git commit -m "chore(canary-local): rebuild emulator dist from this tree (pinned emsdk 6.0.3)"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
