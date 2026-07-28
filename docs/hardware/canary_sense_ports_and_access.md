@@ -24,24 +24,32 @@ Serial/JTAG peripheral. There is no path from the power port to the ESP32-C6's
 USB, so a flash attempt from there either shows no device at all or shows
 something that isn't your Canary. Nothing is harmed; it simply cannot work.
 
-## Flashing means opening the case
+## Do you have to open it?
 
-On an assembled unit the XIAO's port is inside — and on the sealed radome
-preset (`opt_seal`) there is a printed **cover over the USB opening** as well
-(see `usb_cover` in
-[`enclosure/canary_sense_enclosure.scad`](./enclosure/canary_sense_enclosure.scad)).
-So:
+**Depends on the enclosure — and on the SecuraCV printed radome, no.**
 
-1. **Open the lid.** Four M2 screws on the printed radome (≤ ~0.3 N·m, or the
-   printed posts strip — heat-set inserts if you'll open it often).
-2. **Plug the USB-C data cable straight into the XIAO** — the small board, not
+- **Printed SecuraCV radome:** the XIAO's USB-C is routed out through the
+  **bottom wall**. In
+  [`enclosure/canary_sense_enclosure.scad`](./enclosure/canary_sense_enclosure.scad)
+  that opening is cut in `back()`, and the sealed preset's `usb_cover` is a
+  **shallow weather recess around** the opening (also a cut, ~1 mm deep) — not
+  a lid over it. Plug straight in; don't take anything apart.
+- **Stock kit case or any build that swallows the XIAO:** the port is inside,
+  so you do have to open it to flash.
+
+Do not remove screws you don't have to: the printed posts take **≤ ~0.3 N·m**
+before they strip (use M2 heat-set inserts if you expect to open it often).
+
+Then, either way:
+
+1. **Plug the USB-C data cable straight into the XIAO** — the small board, not
    the big radar board. A charge-only cable will power it and never enumerate;
    the BOM calls for a data-capable one for exactly this reason.
-3. **Flash.** If the flasher can't see it, use download mode by hand: hold
+2. **Flash.** If the flasher can't see it, use download mode by hand: hold
    **BOOT**, tap **RESET**, release BOOT.
-4. **Close it up** and go back to the power port for everyday running.
+3. **Go back to the power port** for everyday running.
 
-### When you close it: the radome rule
+### If you did open it: the radome rule
 
 Keep the radar's front window clear — **no foil labels, no metal, nothing
 added in front of the antenna**, and don't swap in a CF-filled filament. 60 GHz

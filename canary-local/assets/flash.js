@@ -678,6 +678,7 @@ function accessCards() {
     other.append(el("strong", null, `That other port — ${a.other_port}: `));
     other.append(document.createTextNode(a.other_effect));
     d.append(other);
+    if (a.enclosure_note) d.append(el("p", "muted", a.enclosure_note));
     if (a.reassembly) d.append(el("p", "fineprint", a.reassembly));
     if (a.doc) {
       const p2 = el("p", "fineprint");

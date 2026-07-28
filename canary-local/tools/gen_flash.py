@@ -377,7 +377,7 @@ BOARD_ACCESS = {
     "sense": {
         # The 60 GHz radar kit is a carrier board with the XIAO seated in its
         # socket. Flashing always talks to the XIAO's own chip.
-        "headline": "Open the case first — the port that flashes is inside",
+        "headline": "Two boards — the one that flashes is the XIAO",
         "flash_port": "the XIAO ESP32-C6's own USB-C — the small board seated "
                       "in the radar carrier's socket",
         "other_port": "the port you normally leave plugged in for power",
@@ -386,18 +386,30 @@ BOARD_ACCESS = {
                         "device at all or a device that isn't your Canary. "
                         "Nothing is harmed; it simply cannot work.",
         "steps": [
-            "Take the lid off (four M2 screws on the printed radome; a sealed "
-            "build also has a cover over the USB opening).",
-            "Plug your USB-C data cable straight into the XIAO — the small "
-            "board, not the big radar board.",
-            "Flash, then unplug, close it up, and go back to the power port "
-            "for everyday running.",
+            "Find the XIAO — the small board seated in the radar carrier's "
+            "socket — and plug a USB-C DATA cable into its port, not the big "
+            "radar board's.",
+            "If that port isn't reachable on your build, open the case to get "
+            "to it (the stock kit case encloses it).",
+            "Flash, then go back to the power port for everyday running.",
         ],
-        # The radome rule is a real constraint on reassembly and belongs
-        # anywhere we tell someone to open this particular box.
-        "reassembly": "When you close it, keep the radar's front window clear — "
-                      "no foil labels, no metal, nothing added in front of the "
-                      "antenna. 60 GHz has to pass through that face.",
+        # Do NOT send every Sense owner to a screwdriver: our own printed
+        # radome routes the XIAO's port out through the bottom wall
+        # (canary_sense_enclosure.scad — the opening is cut in back(), and the
+        # sealed preset's `usb_cover` is a shallow weather RECESS around it,
+        # also a cut, not a lid over it). Only enclosures that swallow the
+        # XIAO need opening, and stripping printed M2 posts for no reason is a
+        # real cost.
+        "enclosure_note": "Printed the SecuraCV radome? The XIAO's USB-C comes "
+                          "out through the bottom wall — nothing to open. "
+                          "(A sealed build adds a shallow weather recess "
+                          "around that opening, not a cover.)",
+        # The radome rule is a real constraint on reassembly, for the people
+        # who did have to open something.
+        "reassembly": "If you did open it: keep the radar's front window clear "
+                      "when you close it — no foil labels, no metal, nothing "
+                      "added in front of the antenna. 60 GHz has to pass "
+                      "through that face.",
         "doc": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/"
                "canary_sense_ports_and_access.md",
     },

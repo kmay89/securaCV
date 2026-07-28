@@ -605,16 +605,17 @@
       },
       "pick_label": "presence only",
       "access": {
-        "headline": "Open the case first — the port that flashes is inside",
+        "headline": "Two boards — the one that flashes is the XIAO",
         "flash_port": "the XIAO ESP32-C6's own USB-C — the small board seated in the radar carrier's socket",
         "other_port": "the port you normally leave plugged in for power",
         "other_effect": "It powers the Canary, but it is not wired to the ESP32-C6's USB — flashing from there either shows no device at all or a device that isn't your Canary. Nothing is harmed; it simply cannot work.",
         "steps": [
-          "Take the lid off (four M2 screws on the printed radome; a sealed build also has a cover over the USB opening).",
-          "Plug your USB-C data cable straight into the XIAO — the small board, not the big radar board.",
-          "Flash, then unplug, close it up, and go back to the power port for everyday running."
+          "Find the XIAO — the small board seated in the radar carrier's socket — and plug a USB-C DATA cable into its port, not the big radar board's.",
+          "If that port isn't reachable on your build, open the case to get to it (the stock kit case encloses it).",
+          "Flash, then go back to the power port for everyday running."
         ],
-        "reassembly": "When you close it, keep the radar's front window clear — no foil labels, no metal, nothing added in front of the antenna. 60 GHz has to pass through that face.",
+        "enclosure_note": "Printed the SecuraCV radome? The XIAO's USB-C comes out through the bottom wall — nothing to open. (A sealed build adds a shallow weather recess around that opening, not a cover.)",
+        "reassembly": "If you did open it: keep the radar's front window clear when you close it — no foil labels, no metal, nothing added in front of the antenna. 60 GHz has to pass through that face.",
         "doc": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_sense_ports_and_access.md"
       },
       "reflexes": {
@@ -814,16 +815,17 @@
       },
       "pick_label": "with wellbeing (breathing/heartbeat)",
       "access": {
-        "headline": "Open the case first — the port that flashes is inside",
+        "headline": "Two boards — the one that flashes is the XIAO",
         "flash_port": "the XIAO ESP32-C6's own USB-C — the small board seated in the radar carrier's socket",
         "other_port": "the port you normally leave plugged in for power",
         "other_effect": "It powers the Canary, but it is not wired to the ESP32-C6's USB — flashing from there either shows no device at all or a device that isn't your Canary. Nothing is harmed; it simply cannot work.",
         "steps": [
-          "Take the lid off (four M2 screws on the printed radome; a sealed build also has a cover over the USB opening).",
-          "Plug your USB-C data cable straight into the XIAO — the small board, not the big radar board.",
-          "Flash, then unplug, close it up, and go back to the power port for everyday running."
+          "Find the XIAO — the small board seated in the radar carrier's socket — and plug a USB-C DATA cable into its port, not the big radar board's.",
+          "If that port isn't reachable on your build, open the case to get to it (the stock kit case encloses it).",
+          "Flash, then go back to the power port for everyday running."
         ],
-        "reassembly": "When you close it, keep the radar's front window clear — no foil labels, no metal, nothing added in front of the antenna. 60 GHz has to pass through that face.",
+        "enclosure_note": "Printed the SecuraCV radome? The XIAO's USB-C comes out through the bottom wall — nothing to open. (A sealed build adds a shallow weather recess around that opening, not a cover.)",
+        "reassembly": "If you did open it: keep the radar's front window clear when you close it — no foil labels, no metal, nothing added in front of the antenna. 60 GHz has to pass through that face.",
         "doc": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_sense_ports_and_access.md"
       },
       "reflexes": {

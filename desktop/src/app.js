@@ -830,6 +830,7 @@ function renderAccessNotes() {
       <ol>${a.steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>
       <p class="muted"><strong>That other port — ${esc(a.other_port)}:</strong>
         ${esc(a.other_effect)}</p>
+      ${a.enclosure_note ? `<p class="muted">${esc(a.enclosure_note)}</p>` : ""}
       ${a.reassembly ? `<p class="fineprint">${esc(a.reassembly)}</p>` : ""}`;
     host.append(d);
   }
