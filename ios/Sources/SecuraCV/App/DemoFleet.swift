@@ -103,8 +103,8 @@ enum DemoFleet {
         driveway.firmware = "2.4.0"
         driveway.rssiDBM = -61
 
-        // The nightstand display — the fleet's across-the-room face. Fw 2.3.2
-        // is the train where its behind-glass beacon boots canary yellow.
+        // The nightstand display — the fleet's across-the-room face, whose
+        // behind-glass beacon boots canary yellow since the 2.3.2 train.
         var nightstand = Witness(id: "demo-display-9f31", deviceType: .display, name: "Nightstand")
         nightstand.room = "Bedroom"
         // A display WATCHES the fleet; it holds no witness key and never
