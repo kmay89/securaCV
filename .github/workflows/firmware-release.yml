@@ -674,6 +674,7 @@ jobs:
         run: cp "${{ steps.attest.outputs.bundle-path }}" "/tmp/release/provenance-firmware-${{ steps.ver.outputs.version }}.sigstore.jsonl"
 
       - name: Publish GitHub Release
+        id: publish
         uses: softprops/action-gh-release@v3
         with:
           # On a tag push this is the pushed tag; on the one-click path it
@@ -778,3 +779,21 @@ jobs:
             /tmp/release/manifest-canary-display-*.json
             /tmp/release/manifest-index.json
             /tmp/release/sha256sums.txt
+
+      # A fresh stable fw-v* release takes releases/latest the moment it
+      # publishes — correctly, it IS firmware — but it is born WITHOUT the
+      # mirrored Flasher updater manifest keep-firmware-latest maintains there
+      # for desktop Flashers ≤ 0.3.0 (they poll
+      # releases/latest/download/latest.json; the action's header tells the
+      # whole story). Being CI-created, this release fires no `release:` event
+      # for release-latest-guard.yml to see (GitHub's recursion guard), so
+      # call the action directly. `always()` + the publish-outcome gate: the
+      # vision-model chain step above can go red minutes AFTER the release is
+      # already live and holding `latest` — the stranded updaters need their
+      # manifest on it either way.
+      - name: Keep releases/latest healthy (firmware + stranded-Flasher manifest)
+        if: always() && steps.publish.outcome == 'success'
+        uses: ./.github/actions/keep-firmware-latest
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          context: ${{ steps.ver.outputs.tag }} publish
