@@ -201,6 +201,204 @@
       }
     },
     {
+      "id": "canary-display-nightstand-s3",
+      "family": "canary-display",
+      "kind": "display",
+      "name": "Canary Nightstand",
+      "tagline": "The tall portrait glance — a witness column you read from bed.",
+      "board": "Waveshare ESP32-S3-LCD-1.47 (USB-A stick)",
+      "glass": {
+        "w": 172,
+        "h": 320,
+        "round": false,
+        "panel": "ST7789 1.47\" IPS",
+        "touch": null
+      },
+      "senses": [],
+      "shows": [
+        "portrait witness column",
+        "living canary",
+        "ambient beacon",
+        "honest night"
+      ],
+      "network": {
+        "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
+        "web": "first-boot portal only",
+        "mqtt": "fleet subscriber + own heartbeat"
+      },
+      "emulator": {
+        "module": "emulator/dist/canary-display-nightstand.js",
+        "factory": "createCanaryEmuNightstand"
+      },
+      "docs": [
+        "docs/hardware/display_nightstand_line.md"
+      ],
+      "status": "in development — CI-verified twin, bench pending",
+      "bench": {
+        "power": {
+          "usb": "USB-A — the stick's whole body is the plug (power + serial over the same port)",
+          "switch": {
+            "label": "— (not fitted)",
+            "controls": "battery",
+            "note": "no switch is fitted because there is no battery path to gate — USB-A is the stick's only power"
+          }
+        },
+        "buttons": [
+          {
+            "id": "boot",
+            "label": "BOOT",
+            "note": "GPIO0 strapping pin, sampled only at reset — this firmware never reads it while running"
+          },
+          {
+            "id": "reset",
+            "label": "RESET",
+            "note": "chip reset — RAM clears, NVS flash survives"
+          }
+        ],
+        "leds": []
+      }
+    },
+    {
+      "id": "canary-display-touch169",
+      "family": "canary-display",
+      "kind": "display",
+      "name": "Canary Nightstand Touch",
+      "tagline": "The portrait glance you can touch — tap to peek, hold to acknowledge.",
+      "board": "Waveshare ESP32-S3-Touch-LCD-1.69",
+      "glass": {
+        "w": 240,
+        "h": 280,
+        "round": false,
+        "panel": "ST7789V2 1.69\" IPS",
+        "touch": "CST816T"
+      },
+      "senses": [],
+      "shows": [
+        "portrait witness column",
+        "living canary",
+        "touch peek + ack",
+        "honest night"
+      ],
+      "network": {
+        "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
+        "web": "first-boot portal only",
+        "mqtt": "fleet subscriber + own heartbeat"
+      },
+      "emulator": {
+        "module": "emulator/dist/canary-display-touch169.js",
+        "factory": "createCanaryEmuTouch169"
+      },
+      "docs": [
+        "docs/hardware/display_nightstand_line.md"
+      ],
+      "status": "in development — CI-verified twin, bench pending",
+      "bench": {
+        "power": {
+          "usb": "USB-C — power + serial",
+          "battery": "3.7 V cell on the MX1.25 header (onboard charge/discharge management)",
+          "switch": {
+            "label": "PWR (push-button)",
+            "controls": "battery",
+            "note": "a power-latch button rather than a slide switch — it gates the battery path; on USB the board is always up (VERIFY the latch behavior on the bench)"
+          }
+        },
+        "buttons": [
+          {
+            "id": "boot",
+            "label": "BOOT",
+            "note": "GPIO0 strapping pin, sampled only at reset — this firmware never reads it while running"
+          },
+          {
+            "id": "reset",
+            "label": "RESET",
+            "note": "chip reset — RAM clears, NVS flash survives"
+          }
+        ],
+        "leds": []
+      }
+    },
+    {
+      "id": "canary-display-dash7",
+      "family": "canary-display",
+      "kind": "display",
+      "name": "Canary Dash 7",
+      "tagline": "The 4.3″ Dash grown to 7″ — same quiet truth, room-scale glass.",
+      "board": "Waveshare ESP32-S3-Touch-LCD-7",
+      "glass": {
+        "w": 800,
+        "h": 480,
+        "round": false,
+        "panel": "7\" 800×480 IPS (parallel RGB)",
+        "touch": "GT911 (5-point)"
+      },
+      "senses": [],
+      "shows": [
+        "witness cards",
+        "event timeline",
+        "proof sheets",
+        "roll call"
+      ],
+      "network": {
+        "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
+        "web": "first-boot portal only",
+        "mqtt": "fleet subscriber + own heartbeat"
+      },
+      "emulator": {
+        "module": "emulator/dist/canary-display-dash.js",
+        "factory": "createCanaryEmuDash"
+      },
+      "docs": [
+        "docs/hardware/display_nightstand_line.md"
+      ],
+      "status": "in development — CI-verified twin (via the Dash), bench pending",
+      "bench": {
+        "power": {
+          "usb": "USB-C — power + serial (use a 5 V/1 A+ supply on the real bench)",
+          "battery": "single-cell lithium pack on the board's battery header (onboard charger)",
+          "switch": {
+            "label": "ON/OFF",
+            "controls": "battery",
+            "note": "electrically the 4.3\" Dash: the board-edge switch gates the battery path only — on USB the panel is always up (VERIFY on the 7\" revision)"
+          }
+        },
+        "buttons": [
+          {
+            "id": "boot",
+            "label": "BOOT",
+            "note": "GPIO0 strapping pin, sampled only at reset — this firmware never reads it while running"
+          },
+          {
+            "id": "reset",
+            "label": "RESET",
+            "note": "chip reset — RAM clears, NVS flash survives"
+          }
+        ],
+        "leds": [
+          {
+            "id": "pwr",
+            "label": "PWR",
+            "color": "red",
+            "driver": "rail",
+            "note": "wired straight to the power rail — lit whenever the board is up, from either source. No firmware can turn it off. (VERIFY on the 7\" revision)"
+          },
+          {
+            "id": "chg",
+            "label": "CHG",
+            "color": "red",
+            "driver": "charger",
+            "note": "lit while the onboard charger is filling the battery (VERIFY on the 7\" revision)"
+          },
+          {
+            "id": "done",
+            "label": "DONE",
+            "color": "red",
+            "driver": "charger",
+            "note": "lit when the battery is full and USB is still supplying (VERIFY on the 7\" revision)"
+          }
+        ]
+      }
+    },
+    {
       "id": "canary-vision",
       "family": "canary-vision",
       "kind": "witness",

@@ -625,6 +625,7 @@
             "unit": "ms",
             "value": 300,
             "nvs": "sns_debounce",
+            "console": "debounce",
             "bounds": [
               0,
               3000
@@ -636,6 +637,7 @@
             "unit": "ms",
             "value": 1500,
             "nvs": "sns_clear",
+            "console": "clear",
             "bounds": [
               200,
               10000
@@ -647,6 +649,7 @@
             "unit": "ms",
             "value": 5000,
             "nvs": "sns_stall",
+            "console": "stall",
             "bounds": [
               1000,
               20000
@@ -658,6 +661,7 @@
             "unit": "cm",
             "value": 150,
             "nvs": "sns_near",
+            "console": "near",
             "bounds": [
               50,
               400
@@ -669,6 +673,7 @@
             "unit": "cm",
             "value": 350,
             "nvs": "sns_mid",
+            "console": "mid",
             "bounds": [
               100,
               600
@@ -740,6 +745,19 @@
               "range_near_cm": 150,
               "range_mid_cm": 500
             }
+          },
+          {
+            "id": "mouse_cage",
+            "icon": "🐭",
+            "title": "Mouse / small-pet cage — wake & sleep",
+            "blurb": "Cage-mounted movement watch for a small rodent. Reads activity vs. stillness for wake/sleep — not heart or breathing (a mouse’s rates are far above what this module can read). Close mount, the whole cage is one band.",
+            "values": {
+              "present_debounce_ms": 250,
+              "clear_timeout_ms": 3000,
+              "stall_timeout_ms": 5000,
+              "range_near_cm": 50,
+              "range_mid_cm": 100
+            }
           }
         ]
       }
@@ -793,7 +811,11 @@
             "range_near_cm": "sns_near",
             "range_mid_cm": "sns_mid",
             "vitals_lock_ms": "sns_vlock",
-            "vitals_lost_ms": "sns_vlost"
+            "vitals_lost_ms": "sns_vlost",
+            "breath_min_bpm": "sns_bmin",
+            "breath_max_bpm": "sns_bmax",
+            "heart_min_bpm": "sns_hmin",
+            "heart_max_bpm": "sns_hmax"
           }
         },
         "note": "These are live numbers now: they persist in the chip’s settings region and Home Assistant can retune every one of them later (cfg/*/set). Baking a preset here just means the Canary is already dialed for its room on first boot — nothing is locked in.",
@@ -805,6 +827,7 @@
             "unit": "ms",
             "value": 300,
             "nvs": "sns_debounce",
+            "console": "debounce",
             "bounds": [
               0,
               3000
@@ -816,6 +839,7 @@
             "unit": "ms",
             "value": 1500,
             "nvs": "sns_clear",
+            "console": "clear",
             "bounds": [
               200,
               10000
@@ -827,6 +851,7 @@
             "unit": "ms",
             "value": 5000,
             "nvs": "sns_stall",
+            "console": "stall",
             "bounds": [
               1000,
               20000
@@ -838,6 +863,7 @@
             "unit": "cm",
             "value": 150,
             "nvs": "sns_near",
+            "console": "near",
             "bounds": [
               50,
               400
@@ -849,6 +875,7 @@
             "unit": "cm",
             "value": 350,
             "nvs": "sns_mid",
+            "console": "mid",
             "bounds": [
               100,
               600
@@ -860,6 +887,7 @@
             "unit": "ms",
             "value": 4000,
             "nvs": "sns_vlock",
+            "console": "vlock",
             "bounds": [
               500,
               15000
@@ -871,9 +899,58 @@
             "unit": "ms",
             "value": 6000,
             "nvs": "sns_vlost",
+            "console": "vlost",
             "bounds": [
               1000,
               20000
+            ]
+          },
+          {
+            "id": "breath_min_bpm",
+            "macro": "CS_BREATH_MIN_BPM",
+            "unit": "bpm",
+            "value": 6,
+            "nvs": "sns_bmin",
+            "console": "breath_min",
+            "bounds": [
+              3,
+              15
+            ]
+          },
+          {
+            "id": "breath_max_bpm",
+            "macro": "CS_BREATH_MAX_BPM",
+            "unit": "bpm",
+            "value": 30,
+            "nvs": "sns_bmax",
+            "console": "breath_max",
+            "bounds": [
+              16,
+              60
+            ]
+          },
+          {
+            "id": "heart_min_bpm",
+            "macro": "CS_HEART_MIN_BPM",
+            "unit": "bpm",
+            "value": 40,
+            "nvs": "sns_hmin",
+            "console": "heart_min",
+            "bounds": [
+              30,
+              79
+            ]
+          },
+          {
+            "id": "heart_max_bpm",
+            "macro": "CS_HEART_MAX_BPM",
+            "unit": "bpm",
+            "value": 130,
+            "nvs": "sns_hmax",
+            "console": "heart_max",
+            "bounds": [
+              80,
+              220
             ]
           }
         ],
@@ -890,7 +967,11 @@
               "range_near_cm": 150,
               "range_mid_cm": 350,
               "vitals_lock_ms": 4000,
-              "vitals_lost_ms": 6000
+              "vitals_lost_ms": 6000,
+              "breath_min_bpm": 6,
+              "breath_max_bpm": 30,
+              "heart_min_bpm": 40,
+              "heart_max_bpm": 130
             }
           },
           {
@@ -905,7 +986,11 @@
               "range_near_cm": 100,
               "range_mid_cm": 250,
               "vitals_lock_ms": 6000,
-              "vitals_lost_ms": 8000
+              "vitals_lost_ms": 8000,
+              "breath_min_bpm": 6,
+              "breath_max_bpm": 30,
+              "heart_min_bpm": 40,
+              "heart_max_bpm": 130
             }
           },
           {
@@ -920,7 +1005,11 @@
               "range_near_cm": 200,
               "range_mid_cm": 450,
               "vitals_lock_ms": 4000,
-              "vitals_lost_ms": 6000
+              "vitals_lost_ms": 6000,
+              "breath_min_bpm": 6,
+              "breath_max_bpm": 30,
+              "heart_min_bpm": 40,
+              "heart_max_bpm": 130
             }
           },
           {
@@ -935,7 +1024,11 @@
               "range_near_cm": 150,
               "range_mid_cm": 350,
               "vitals_lock_ms": 4000,
-              "vitals_lost_ms": 6000
+              "vitals_lost_ms": 6000,
+              "breath_min_bpm": 6,
+              "breath_max_bpm": 30,
+              "heart_min_bpm": 40,
+              "heart_max_bpm": 130
             }
           },
           {
@@ -950,7 +1043,68 @@
               "range_near_cm": 150,
               "range_mid_cm": 500,
               "vitals_lock_ms": 4000,
-              "vitals_lost_ms": 6000
+              "vitals_lost_ms": 6000,
+              "breath_min_bpm": 6,
+              "breath_max_bpm": 30,
+              "heart_min_bpm": 40,
+              "heart_max_bpm": 130
+            }
+          },
+          {
+            "id": "mouse_cage",
+            "icon": "🐭",
+            "title": "Mouse / small-pet cage — wake & sleep",
+            "blurb": "Cage-mounted movement watch for a small rodent. Reads activity vs. stillness for wake/sleep — not heart or breathing (a mouse’s rates are far above what this module can read). Close mount, the whole cage is one band.",
+            "values": {
+              "present_debounce_ms": 250,
+              "clear_timeout_ms": 3000,
+              "stall_timeout_ms": 5000,
+              "range_near_cm": 50,
+              "range_mid_cm": 100,
+              "vitals_lock_ms": 4000,
+              "vitals_lost_ms": 6000,
+              "breath_min_bpm": 6,
+              "breath_max_bpm": 30,
+              "heart_min_bpm": 40,
+              "heart_max_bpm": 130
+            }
+          },
+          {
+            "id": "dog_kennel",
+            "icon": "🐕",
+            "title": "Dog kennel / crate — resting heart & breathing",
+            "blurb": "Breathing- and heart-rate watch for a resting or sleeping dog in a kennel. Bands widened for a dog (heart ~50–160, breath ~8–40); lock waits for a genuinely settled signal. Best for a calm, single dog within ~1.5 m — panting or pacing breaks the lock.",
+            "values": {
+              "present_debounce_ms": 400,
+              "clear_timeout_ms": 5000,
+              "stall_timeout_ms": 5000,
+              "range_near_cm": 120,
+              "range_mid_cm": 300,
+              "vitals_lock_ms": 6000,
+              "vitals_lost_ms": 8000,
+              "breath_min_bpm": 8,
+              "breath_max_bpm": 40,
+              "heart_min_bpm": 45,
+              "heart_max_bpm": 160
+            }
+          },
+          {
+            "id": "human_sleep",
+            "icon": "🛌",
+            "title": "Human sleep & wake watch",
+            "blurb": "Bedside breathing/heart watch tuned to a sleeping adult: settle and breathing locks; the numbers appear once it holds. Human bands (breath 6–24, heart 40–110), long debounce so turning over doesn’t flip presence.",
+            "values": {
+              "present_debounce_ms": 500,
+              "clear_timeout_ms": 6000,
+              "stall_timeout_ms": 5000,
+              "range_near_cm": 100,
+              "range_mid_cm": 250,
+              "vitals_lock_ms": 5000,
+              "vitals_lost_ms": 7000,
+              "breath_min_bpm": 6,
+              "breath_max_bpm": 24,
+              "heart_min_bpm": 40,
+              "heart_max_bpm": 110
             }
           }
         ]
@@ -1284,6 +1438,87 @@
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
       "flash_product": "securacv-canary-display-dash"
+    },
+    {
+      "id": "canary-display-nightstand-s3",
+      "name": "Canary Nightstand",
+      "tagline": "The tall portrait glance — a witness column you read from bed.",
+      "board": "Waveshare ESP32-S3-LCD-1.47 (USB-A stick)",
+      "match": "display",
+      "panel": "ST7789 1.47\" IPS · 172×320",
+      "glass": {
+        "w": 172,
+        "h": 320,
+        "round": false
+      },
+      "shows": [
+        "portrait witness column",
+        "living canary",
+        "ambient beacon",
+        "honest night"
+      ],
+      "emulator": {
+        "module": "emulator/dist/canary-display-nightstand.js",
+        "factory": "createCanaryEmuNightstand",
+        "fw_version": "2.4.0",
+        "lvgl": "v8.4.0"
+      },
+      "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
+      "flash_product": "securacv-canary-display-nightstand-s3"
+    },
+    {
+      "id": "canary-display-touch169",
+      "name": "Canary Nightstand Touch",
+      "tagline": "The portrait glance you can touch — tap to peek, hold to acknowledge.",
+      "board": "Waveshare ESP32-S3-Touch-LCD-1.69",
+      "match": "display",
+      "panel": "ST7789V2 1.69\" IPS · 240×280",
+      "glass": {
+        "w": 240,
+        "h": 280,
+        "round": false
+      },
+      "shows": [
+        "portrait witness column",
+        "living canary",
+        "touch peek + ack",
+        "honest night"
+      ],
+      "emulator": {
+        "module": "emulator/dist/canary-display-touch169.js",
+        "factory": "createCanaryEmuTouch169",
+        "fw_version": "2.4.0",
+        "lvgl": "v8.4.0"
+      },
+      "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
+      "flash_product": "securacv-canary-display-touch169"
+    },
+    {
+      "id": "canary-display-dash7",
+      "name": "Canary Dash 7",
+      "tagline": "The 4.3″ Dash grown to 7″ — same quiet truth, room-scale glass.",
+      "board": "Waveshare ESP32-S3-Touch-LCD-7",
+      "match": "display",
+      "panel": "7\" 800×480 IPS (parallel RGB) · 800×480",
+      "glass": {
+        "w": 800,
+        "h": 480,
+        "round": false
+      },
+      "shows": [
+        "witness cards",
+        "event timeline",
+        "proof sheets",
+        "roll call"
+      ],
+      "emulator": {
+        "module": "emulator/dist/canary-display-dash.js",
+        "factory": "createCanaryEmuDash",
+        "fw_version": "2.4.0",
+        "lvgl": "v8.4.0"
+      },
+      "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
+      "flash_product": "securacv-canary-display-dash7"
     }
   ],
   "settings_help": {
@@ -1399,6 +1634,41 @@
       "label": "Vitals lost",
       "what": "How long without a plausible breathing signal before the lock is dropped rather than guessed at.",
       "default": "6000 ms in the Wellbeing build."
+    },
+    "breath_min_bpm": {
+      "label": "Breath min",
+      "what": "The slowest breathing the Wellbeing build will believe. Radar readings below this band are treated as noise, never as a person — the floor of the plausibility band the vitals lock trusts.",
+      "default": "6 bpm in the Wellbeing build."
+    },
+    "breath_max_bpm": {
+      "label": "Breath max",
+      "what": "The fastest breathing the Wellbeing build will believe — the ceiling of the plausibility band. Together with breath min it decides which radar readings can ever earn the breathing lock.",
+      "default": "30 bpm in the Wellbeing build."
+    },
+    "heart_min_bpm": {
+      "label": "Heart min",
+      "what": "The slowest heart rate the Wellbeing build will believe. If a resting heart rate sits below this floor the lock politely refuses — lower it on the tuning bench and watch the lock latch.",
+      "default": "40 bpm in the Wellbeing build."
+    },
+    "heart_max_bpm": {
+      "label": "Heart max",
+      "what": "The fastest heart rate the Wellbeing build will believe — the ceiling of the heart plausibility band the vitals lock trusts.",
+      "default": "130 bpm in the Wellbeing build."
+    },
+    "mouse_cage": {
+      "label": "Mouse / small-pet cage",
+      "what": "A movement watch for a caged small rodent, not a vitals monitor. For a fixed cage, the radar confirming a live, moving occupant reads as awake/active; sustained stillness reads as settled or asleep. It does NOT read a mouse’s heart or breathing — those rates (heart 300–800 bpm, breath 80–230/min) sit far above the human-tuned band this module reports.",
+      "when": "Mount close over or beside a small cage; keep other movement out of the ~0.5 m near field."
+    },
+    "dog_kennel": {
+      "label": "Dog kennel / crate",
+      "what": "Resting/sleeping-dog breathing and heart rate. A calm dog’s heart (≈50–160 bpm) and breathing (≈8–35/min) overlap the bands this module was built for, so a settled dog within ~1.5 m reads like a human torso. Wellbeing build only.",
+      "when": "A single, resting or sleeping dog, radar aimed at the chest. Panting, pacing, or a second animal breaks the lock — same physics as a fidgeting person."
+    },
+    "human_sleep": {
+      "label": "Human sleep & wake",
+      "what": "Bedside breathing/heart watch tuned to a sleeping adult — the module’s native use case. Breathing locks once the sleeper settles; wake/sleep is the breathing lock plus presence. Wellbeing build only.",
+      "when": "One sleeper, radar within ~1.5 m of the chest. Vitals suppress themselves whenever more than one person is in view."
     },
     "chip": {
       "label": "Chip",

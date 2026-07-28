@@ -2,7 +2,10 @@ name: Keep releases/latest on the firmware
 description: >-
   Assert that GitHub's releases/latest resolves to a fw-v* release — the URL
   every Canary in the field polls for updates — and re-point it at the newest
-  published firmware release when an app release has taken it.
+  published firmware release when an app release has taken it. Then mirror the
+  desktop Flasher's updater manifest (latest.json, from the rolling
+  flasher-latest prerelease) onto that firmware release, so Flashers installed
+  before the endpoint moved (≤ 0.3.0) can still find updates.
 
 # WHY THIS EXISTS
 #
@@ -18,12 +21,34 @@ description: >-
 # and changing it means shipping firmware — which needs the very channel that is
 # broken. So it is enforced from the outside, here.
 #
-# One implementation, two callers, because a copy would drift:
+# One implementation, three callers, because a copy would drift:
 #   • release-latest-guard.yml  — every release event a human causes
 #   • the app release workflows — because releases created with GITHUB_TOKEN do
 #     NOT fire `release:` events (GitHub's recursion guard), so the guard
 #     workflow never sees an app release the CI published. This is exactly the
 #     case that breaks the fleet, so the app workflows call it directly.
+#   • firmware-release.yml      — a fresh fw-v* release takes releases/latest
+#     the moment it publishes (correctly — it IS firmware), but it is born
+#     without the mirrored Flasher manifest below, and being CI-created it
+#     fires no `release:` event either. It calls this action right after
+#     publishing so the stranded updaters never see a gap.
+#
+# SECOND DUTY — the stranded Flasher self-updaters.
+#
+# Desktop Flashers ≤ 0.3.0 shipped polling
+#   releases/latest/download/latest.json
+# for self-update. That URL belongs to the firmware (see above), and firmware
+# releases carry no latest.json — so every one of those installs fails its
+# update check with "Could not fetch a valid release JSON from the remote",
+# forever. The endpoint moved to the rolling flasher-latest prerelease in
+# 0.3.1, but an installed app's endpoint is compiled in: the ONLY way to reach
+# the old installs is to serve a valid manifest at the old URL. So after
+# asserting releases/latest is firmware, this action copies flasher-latest's
+# hardened latest.json onto that firmware release (idempotent — it compares
+# digests and skips when current). Old installs then see the new version,
+# verify it against the same updater pubkey every build has embedded, update,
+# and come out polling the right endpoint. Devices are indifferent: they fetch
+# manifest-<product>.json, never latest.json.
 
 inputs:
   github-token:
@@ -50,6 +75,75 @@ runs:
           const suffix = caller ? ` (${caller})` : '';
           const isFirmware = (tag) => /^fw-v/.test(tag || '');
 
+          // Mirror the Flasher's hardened updater manifest onto the firmware
+          // release that holds releases/latest, so Flashers ≤ 0.3.0 (which
+          // poll releases/latest/download/latest.json — see the header) keep
+          // seeing updates. Idempotent: digest-compared, skipped when current.
+          // Returns a one-line summary of what it did.
+          const mirrorFlasherManifest = async (fwRelease) => {
+            let pointer = null;
+            try {
+              pointer = (await github.rest.repos.getReleaseByTag({
+                owner, repo, tag: 'flasher-latest',
+              })).data;
+            } catch (err) {
+              if (err.status !== 404) throw err;
+            }
+            const src = pointer && (pointer.assets || []).find((a) => a.name === 'latest.json');
+            if (!src) {
+              // Legitimate pre-state: no Flasher published yet. Not a failure.
+              core.info('flasher-latest has no latest.json yet — nothing to mirror.');
+              return 'no Flasher manifest to mirror yet';
+            }
+            const existing = (fwRelease.assets || []).find((a) => a.name === 'latest.json');
+            if (existing && existing.digest && src.digest && existing.digest === src.digest) {
+              core.info(`latest.json on ${fwRelease.tag_name} already matches flasher-latest.`);
+              return `\`latest.json\` already current on \`${fwRelease.tag_name}\``;
+            }
+            // Fetch the manifest bytes from the flasher-latest asset.
+            const res = await github.request('GET /repos/{owner}/{repo}/releases/assets/{asset_id}', {
+              owner, repo, asset_id: src.id,
+              headers: { accept: 'application/octet-stream' },
+            });
+            const body = Buffer.from(res.data);
+            // Sanity: never mirror something that isn't an updater manifest —
+            // a truncated download served at the fleet-adjacent URL would
+            // break the stranded apps in a new way.
+            const manifest = JSON.parse(body.toString('utf8'));
+            if (!manifest.version || !manifest.platforms) {
+              throw new Error('flasher-latest latest.json is not an updater manifest (no version/platforms)');
+            }
+            if (existing) {
+              await github.rest.repos.deleteReleaseAsset({ owner, repo, asset_id: existing.id });
+            }
+            // The upload endpoint 5xx's occasionally; retry briefly rather
+            // than leaving the old URL empty after we deleted the stale copy.
+            let lastErr = null;
+            for (let attempt = 1; attempt <= 3; attempt++) {
+              try {
+                await github.rest.repos.uploadReleaseAsset({
+                  owner, repo,
+                  release_id: fwRelease.id,
+                  name: 'latest.json',
+                  data: body,
+                  headers: {
+                    'content-type': 'application/json',
+                    'content-length': body.length,
+                  },
+                });
+                lastErr = null;
+                break;
+              } catch (err) {
+                lastErr = err;
+                core.warning(`latest.json upload to ${fwRelease.tag_name} failed (attempt ${attempt}): ${err.message}`);
+                await new Promise((r) => setTimeout(r, attempt * 5000));
+              }
+            }
+            if (lastErr) throw lastErr;
+            core.info(`mirrored Flasher ${manifest.version} manifest onto ${fwRelease.tag_name}.`);
+            return `mirrored Flasher **${manifest.version}** \`latest.json\` onto \`${fwRelease.tag_name}\``;
+          };
+
           // Ask the endpoint the devices actually ride, rather than reasoning
           // about dates — GitHub's selection rule is the thing under test.
           let latest = null;
@@ -61,9 +155,12 @@ runs:
 
           if (latest && isFirmware(latest.tag_name)) {
             core.info(`releases/latest = ${latest.tag_name} — firmware, as it must be.`);
+            const mirrored = await mirrorFlasherManifest(latest);
             await core.summary
               .addHeading(`releases/latest ✓${suffix}`)
               .addRaw(`\`${latest.tag_name}\` — devices resolve their update manifests correctly.`)
+              .addBreak()
+              .addRaw(`Stranded-Flasher manifest: ${mirrored}.`)
               .write();
             return;
           }
@@ -101,11 +198,16 @@ runs:
           });
 
           const after = (await github.rest.repos.getLatestRelease({ owner, repo })).data;
+          const mirrored = isFirmware(after.tag_name)
+            ? await mirrorFlasherManifest(after)
+            : '_skipped — releases/latest is still not firmware_';
           await core.summary
             .addHeading(`releases/latest repaired${suffix}`)
             .addRaw(`Was ${took} (not firmware) → now \`${after.tag_name}\`.`).addBreak()
             .addRaw('Devices poll `releases/latest/download/manifest-<product>.json`; an ' +
                     'app release there means the whole fleet stops seeing updates.')
+            .addBreak()
+            .addRaw(`Stranded-Flasher manifest: ${mirrored}.`)
             .write();
 
           if (!isFirmware(after.tag_name)) {

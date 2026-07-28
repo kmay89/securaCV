@@ -790,7 +790,64 @@ Two independent failures, one release day, both invisible-by-design.
   (2026-07-26) applies to serial CDC devices too, with ModemManager as the
   extra tenant nobody invited.
 
-## 2026-07-28 — `xcode-select` to an unversioned Xcode path never matches
+### 2026-07-28 (a) — The DMG opened on a giant, cropped background: Finder maps background PIXELS to window POINTS
+
+- **Symptom:** the Flasher's installer window showed the branded background
+  blown up to double size — title cut off mid-word ("SecuraC…"), the drag
+  instruction unreadable, the whole bottom "first launch" panel pushed out of
+  the window. The PNG itself looked perfect in every image viewer.
+- **Cause:** both DMG background generators rendered on a 2x canvas "for
+  retina" and shipped that raw 2x PNG (1320×920 for a 660×460 window). Finder
+  maps a background image's **pixels** straight onto window **points** and
+  ignores PNG DPI metadata, so the window showed the top-left quarter of the
+  image at double size. Retina Macs don't rescue it — the window is 660
+  points regardless of the panel behind it.
+- **Fix:** keep the 2x canvas as text supersampling only, and **downscale to
+  the exact `windowSize` before saving** (`img.resize((WIN_W, WIN_H),
+  LANCZOS)`) in both `desktop/src-tauri/dmg/generate_background.py` and
+  `desktop-lab/src-tauri/dmg/generate_background.py`; both committed
+  `background.png` files regenerated. If true retina sharpness is ever wanted,
+  the mechanism is a multi-resolution TIFF built on a real Mac (`tiffutil
+  -cathidpicheck`), not a big PNG.
+- **Applies to:** **any image Finder itself draws** — DMG backgrounds in every
+  app target, and any future volume icon layout. The shipped file's pixel
+  size must equal the configured point size; a "2x for quality" canvas is a
+  render-time trick that must never reach the artifact.
+
+### 2026-07-28 (b) — Every installed Flasher ≤ 0.3.0 lost self-update forever when the endpoint moved: a compiled-in URL must be SERVED, not just corrected
+
+- **Symptom:** installed Flashers logged "Update check failed: … Could not
+  fetch a valid release JSON from the remote" on every check — including
+  after #1286 fixed the updater endpoint. New installs were fine; the field
+  was not, and 0.3.1+ could never reach them.
+- **Cause:** builds ≤ 0.3.0 shipped polling
+  `releases/latest/download/latest.json`, and `releases/latest` is
+  deliberately owned by the **firmware** releases (Principle 6), which carry
+  no `latest.json` — a permanent 404 for every copy already installed. Fixing
+  the endpoint in `tauri.conf.json` only helps builds that don't exist on
+  users' disks yet: an updater endpoint is **compiled in**, so the only way to
+  reach old installs is to serve a valid manifest at the OLD address.
+- **Fix:** `.github/actions/keep-firmware-latest` now has a second duty:
+  after asserting `releases/latest` is firmware, it mirrors `flasher-latest`'s
+  hardened `latest.json` onto that firmware release (digest-compared,
+  idempotent). All three release paths converge on it: the guard workflow
+  (human releases), `desktop-flasher-release.yml`'s `keep-latest` job (now
+  `needs: finalize` so it mirrors the freshly hardened manifest), and
+  `firmware-release.yml` right after publishing (a new fw-v* release takes
+  `latest` the instant it publishes and would otherwise be born without the
+  manifest). Old installs then see the update, verify it against the same
+  updater pubkey every build has embedded, and come out polling the right
+  endpoint. Devices never notice: they fetch `manifest-<product>.json` only.
+- **Applies to:** **every compiled-in update URL in every target** — the
+  Flasher's and Lab's updater endpoints, the firmware's OTA manifest URL, the
+  Vision model manifest. Before moving any such URL, ask "who is already
+  polling the old one, and what will they fetch there tomorrow?" — the answer
+  must be "a working manifest", indefinitely, or the field is stranded. And
+  when a rolling pointer release (`flasher-latest`, `fw-dev-latest`) gains a
+  consumer, every workflow that creates or advances the release it shadows
+  must keep the mirror fresh.
+
+### 2026-07-28 (c) — `xcode-select` to an unversioned Xcode path never matches
 
 - **Symptom:** iOS jobs "selected Xcode 16" and then built with whatever the
   runner image's default was — or, once a step actually depended on it,
@@ -811,3 +868,4 @@ Two independent failures, one release day, both invisible-by-design.
   reason).
 - **Applies to:** `ios-selfheal.yml`, `ios-release.yml` (both fixed);
   any future macOS job that pins a toolchain path.
+
