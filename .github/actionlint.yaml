@@ -1,0 +1,11 @@
+# Labels actionlint's pinned build (1.7.7, workflows-lint.yml) doesn't know
+# yet. These are real GitHub-hosted images — macos-26 went GA 2026-02 and the
+# Apple release workflows need it for the iOS/tvOS 26 SDK (ITMS-90725,
+# RELEASE_LESSONS 2026-07-28 (h)). Drop entries when a bumped actionlint
+# recognizes them natively.
+self-hosted-runner:
+  labels:
+    - macos-26
+    - macos-26-intel
+    - macos-26-large
+    - macos-26-xlarge
