@@ -161,6 +161,8 @@ void voice_loop(uint32_t now_ms) {
   tone_duty((uint8_t)((uint32_t)s_peak * amp / 256u));
 }
 
+bool voice_active() { return s_seq != nullptr; }
+
 void voice_set_night(bool night) { s_night = night; }
 
 void voice_set_volume(uint8_t vol) {
