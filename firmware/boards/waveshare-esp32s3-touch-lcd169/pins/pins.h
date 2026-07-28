@@ -11,12 +11,16 @@
  * https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.69 (schematic:
  * files.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.69/ESP32-S3-Touch-LCD-1.69-Sch.pdf)
  *
- * ⚠️ DEV STATUS: pin map compiled from the vendor demo-code layout — the
- *    wiki was unreachable from the CI sandbox (network policy), so every
- *    assignment below is marked by confidence: the LCD/touch/I2C block is
- *    the widely-mirrored demo map (verify once against the schematic); the
- *    battery/PWR lines are lower confidence and partly -1. Bench-check
- *    before first flash; correct against the schematic PDF, not by trial.
+ * PIN MAP SOURCE: reconciled against the vendor GPIO / peripheral pinout
+ *    table (docs.waveshare.com/ESP32-S3-Touch-LCD-1.69, 2026-07). The demo
+ *    map's LCD/touch/I2C block was correct; the table additionally resolves
+ *    what had been stubbed: RTC_INT was WRONG in the demo map (was GPIO9 —
+ *    the table says GPIO39), the "-1" power lines are SYS_OUT=GPIO40 /
+ *    SYS_EN=GPIO41 (soft power latch), and it adds the buzzer (GPIO42),
+ *    the QMI8658 interrupt (GPIO38) and the I2C device addresses. Only the
+ *    electrical details a pin table can't give — backlight polarity, INT
+ *    edge — still want a bench check; the schematic PDF remains the ultimate
+ *    authority.
  *
  * ⚠️ ST7789V2 OFFSET: the 240x280 glass is a window into the controller's
  *    240x320 RAM — every draw needs a 20-px ROW offset at rotation 0
@@ -47,7 +51,7 @@
 
 // ============================================================================
 // TFT — ST7789V2 1.69" 240x280 portrait, 4-wire SPI (RGB565)
-// Vendor demo map — VERIFY against the schematic before first flash.
+// Per vendor pinout table (LCD_CLK/DIN/CS/DC/RST/BL).
 // ============================================================================
 
 #define LCD_WIDTH               240
@@ -55,13 +59,13 @@
 #define TFT_WIDTH               240
 #define TFT_HEIGHT              280
 
-#define TFT_PIN_SCK             6     // VERIFY (demo map)
-#define TFT_PIN_MOSI            7     // VERIFY (demo map)
+#define TFT_PIN_SCK             6     // LCD_CLK
+#define TFT_PIN_MOSI            7     // LCD_DIN (write only; LCD_DOUT unused)
 #define TFT_PIN_MISO            -1    // ST7789 is write-only; no TF slot
-#define TFT_PIN_CS              5     // VERIFY (demo map)
-#define TFT_PIN_DC              4     // VERIFY (demo map)
-#define TFT_PIN_RST             8     // VERIFY (demo map)
-#define TFT_PIN_BL              15    // VERIFY (demo map); LEDC PWM
+#define TFT_PIN_CS              5     // LCD_CS
+#define TFT_PIN_DC              4     // LCD_DC
+#define TFT_PIN_RST             8     // LCD_RST
+#define TFT_PIN_BL              15    // LCD_BL; LEDC PWM
 #define TFT_BL_ACTIVE_HIGH      1     // VERIFY polarity on the bench
 #define TFT_SPI_HZ              40000000
 
@@ -73,35 +77,57 @@
 // TOUCH — CST816T capacitive, shared I2C bus
 // ============================================================================
 
-#define TOUCH_I2C_ADDR          0x15  // CST816-family default
-#define TOUCH_PIN_INT           14    // VERIFY (demo map); polled, INT optional
-#define TOUCH_PIN_RST           13    // VERIFY (demo map); pulse low at init
+#define TOUCH_I2C_ADDR          0x15  // CST816T (TP_INT/TP_RST wired)
+#define TOUCH_PIN_INT           14    // TP_INT
+#define TOUCH_PIN_RST           13    // TP_RST; pulse low at init
 
 // ============================================================================
-// I2C — CST816T touch + QMI8658 IMU + PCF85063 RTC share the bus
+// I2C — CST816T touch (0x15) + QMI8658C IMU (0x6B) + PCF85063 RTC (0x51)
+// share the bus. Avoid external devices at these three addresses.
 // ============================================================================
 
-#define I2C_PIN_SDA             11    // VERIFY (demo map)
-#define I2C_PIN_SCL             10    // VERIFY (demo map)
+#define I2C_PIN_SDA             11    // ESP32_SDA (shared, also on ext port)
+#define I2C_PIN_SCL             10    // ESP32_SCL (shared, also on ext port)
 #define I2C_FREQ_DEFAULT        100000
 #define I2C_FREQ_FAST           400000
 
-#define IMU_PIN_INT1            -1    // VERIFY (QMI8658 INT, if wired)
-#define RTC_PIN_INT             9     // VERIFY (PCF85063 INT per demo map)
+#define IMU_I2C_ADDR            0x6B  // QMI8658C
+#define IMU_PIN_INT1            38    // QMI interrupt (vendor tables label it
+                                      // INT1 in the device summary / INT2 in
+                                      // the GPIO list — same pin; VERIFY which)
+#define RTC_I2C_ADDR            0x51  // PCF85063ATL
+#define RTC_PIN_INT             39    // RTC_INT (corrected: demo map had 9)
 
 // ============================================================================
-// POWER — 3.7 V MX1.25 battery, charge/discharge managed onboard
+// POWER — 3.7 V MX1.25 battery, charge/discharge managed onboard.
+// The PWR button (Key2) drives a soft power-latch network, not a plain
+// readable GPIO: SYS_EN holds the rail on, SYS_OUT is the control/sense side.
 // ============================================================================
 
-#define BAT_ADC_PIN             1     // VERIFY (battery divider on ADC1_CH0)
-#define PWR_KEY_PIN             -1    // VERIFY (PWR button / power latch line)
+#define BAT_ADC_PIN             1     // BAT_ADC divider; VBAT = VADC * 3
+#define SYS_PWR_EN_PIN          41    // SYS_EN — hold system power on
+#define SYS_PWR_OUT_PIN         40    // SYS_OUT — power control/sense
+#define PWR_KEY_PIN             -1    // no direct GPIO — PWR/Key2 acts through
+                                      // the SYS_EN/SYS_OUT latch above
 
 // ============================================================================
 // ONBOARD PERIPHERALS
 // ============================================================================
 
-#define BOOT_BUTTON_PIN         0     // BOOT/user (strapping pin — chip fact)
+#define BOOT_BUTTON_PIN         0     // BOOT/Key1 (strapping pin — chip fact)
 #define BOOT_BUTTON_ACTIVE      LOW
+// RST/Key3 is CHIP_PU (hardware reset line) — not a readable GPIO.
+
+#define BUZZER_PIN              42    // Buzz — passive buzzer, LEDC PWM / tone
+
+// Native USB (S3 USB-OTG on the Type-C) — chip-fixed, not for general GPIO.
+#define USB_PIN_DM              19    // USB_N (D-)
+#define USB_PIN_DP              20    // USB_P (D+)
+
+// Extension port / reserved header pads (free for user I/O), left undeclared
+// so the pin budget keeps them in their true buckets:
+//   GPIO2, GPIO3, GPIO17, GPIO18 — free header pads,
+//   U0TXD=GPIO43 / U0RXD=GPIO44 — the UART0 console pair (conditional).
 
 // ============================================================================
 // BOARD CAPABILITIES
@@ -123,3 +149,4 @@
 #define HAS_IMU                 1     // QMI8658 6-axis (driver: room to grow)
 #define HAS_BATTERY             1     // 3.7 V MX1.25 + onboard charging
 #define HAS_BACKLIGHT_PWM       1     // LEDC PWM on TFT_PIN_BL
+#define HAS_BUZZER              1     // passive buzzer on GPIO42 (LEDC tone)

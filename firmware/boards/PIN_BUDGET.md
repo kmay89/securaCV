@@ -44,7 +44,7 @@ README stays the narrative source for those stories.
 | `waveshare-esp32s3-lcd43b` | ESP32-S3 | 33 | 30 (91%) | 0 | 2 | 1 |
 | `waveshare-esp32s3-lcd43c` | ESP32-S3 | 33 | 28 (85%) | 0 | 2 | 3 |
 | `waveshare-esp32s3-lcd7` | ESP32-S3 | 33 | 23 (70%) | 0 | 4 | 6 |
-| `waveshare-esp32s3-touch-lcd169` | ESP32-S3 | 33 | 13 (39%) | 0 | 7 | 13 |
+| `waveshare-esp32s3-touch-lcd169` | ESP32-S3 | 33 | 17 (52%) | 0 | 7 | 9 |
 | `xiao-esp32c3` | ESP32-C3 | 15 | 1 (7%) | 4 | 6 | 4 |
 | `xiao-esp32c3-sentinel-lite` | ESP32-C3 | 15 | 2 (13%) | 0 | 7 | 6 |
 | `xiao-esp32c6-mr60` | ESP32-C6 | 24 | 2 (8%) | 2 | 8 | 12 |
@@ -434,7 +434,7 @@ Capabilities off (room to grow): `HAS_BACKLIGHT_PWM`, `HAS_BATTERY`, `HAS_CAMERA
 
 ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32s3-touch-lcd169/pins/pins.h)
 
-**13/33 committed** · 0 assigned · 7 conditional · **13 free** (5 ADC-capable)
+**17/33 committed** · 0 assigned · 7 conditional · **9 free** (6 ADC-capable)
 
 | GPIO | bucket | held by / trade | notes |
 |---|---|---|---|
@@ -447,7 +447,7 @@ ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32
 | 6 | committed | TFT_PIN_SCK | ADC, sleep-wake |
 | 7 | committed | TFT_PIN_MOSI | ADC, sleep-wake |
 | 8 | committed | TFT_PIN_RST | ADC, sleep-wake |
-| 9 | committed | RTC_PIN_INT | ADC, sleep-wake |
+| 9 | **free** | — | ADC, sleep-wake |
 | 10 | committed | I2C_PIN_SCL | ADC, sleep-wake |
 | 11 | committed | I2C_PIN_SDA | ADC, sleep-wake |
 | 12 | **free** | — | ADC, sleep-wake |
@@ -457,14 +457,14 @@ ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32
 | 16 | **free** | — | ADC, sleep-wake |
 | 17 | **free** | — | ADC, sleep-wake |
 | 18 | **free** | — | ADC, sleep-wake |
-| 19 | conditional | USB-Serial/JTAG — free only if you give up USB | ADC, sleep-wake |
-| 20 | conditional | USB-Serial/JTAG — free only if you give up USB | ADC, sleep-wake |
+| 19 | conditional | USB-Serial/JTAG — free only if you give up USB; (declared as USB_PIN_DM) | ADC, sleep-wake |
+| 20 | conditional | USB-Serial/JTAG — free only if you give up USB; (declared as USB_PIN_DP) | ADC, sleep-wake |
 | 21 | **free** | — | sleep-wake |
-| 38 | **free** | — |  |
-| 39 | **free** | — |  |
-| 40 | **free** | — |  |
-| 41 | **free** | — |  |
-| 42 | **free** | — |  |
+| 38 | committed | IMU_PIN_INT1 |  |
+| 39 | committed | RTC_PIN_INT |  |
+| 40 | committed | SYS_PWR_OUT_PIN |  |
+| 41 | committed | SYS_PWR_EN_PIN |  |
+| 42 | committed | BUZZER_PIN |  |
 | 43 | conditional | UART0 console — free only if you give up the serial log |  |
 | 44 | conditional | UART0 console — free only if you give up the serial log |  |
 | 45 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | strap⚠ |
@@ -472,11 +472,11 @@ ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32
 | 47 | **free** | — |  |
 | 48 | **free** | — |  |
 
-⚠ 3 pin define(s) are `-1` — not wired OR not yet verified (see the comments in pins.h): `IMU_PIN_INT1`, `PWR_KEY_PIN`, `TFT_PIN_MISO`. Free counts above may shrink as these resolve.
+⚠ 2 pin define(s) are `-1` — not wired OR not yet verified (see the comments in pins.h): `PWR_KEY_PIN`, `TFT_PIN_MISO`. Free counts above may shrink as these resolve.
 
-Peripheral demand (declared pin map vs MCU): SPI 1/2 · I2C 1/2 · UART 0/3 · RMT TX 0/4 · LEDC 1/8.
+Peripheral demand (declared pin map vs MCU): SPI 1/2 · I2C 1/2 · UART 0/3 · RMT TX 0/4 · LEDC 2/8.
 
-Capabilities on: `HAS_BACKLIGHT_PWM`, `HAS_BATTERY`, `HAS_BLE`, `HAS_DISPLAY`, `HAS_IMU`, `HAS_NATIVE_USB`, `HAS_PSRAM`, `HAS_RTC`, `HAS_TOUCH`, `HAS_USB_CDC`, `HAS_WIFI`.
+Capabilities on: `HAS_BACKLIGHT_PWM`, `HAS_BATTERY`, `HAS_BLE`, `HAS_BUZZER`, `HAS_DISPLAY`, `HAS_IMU`, `HAS_NATIVE_USB`, `HAS_PSRAM`, `HAS_RTC`, `HAS_TOUCH`, `HAS_USB_CDC`, `HAS_WIFI`.
 Capabilities off (room to grow): `HAS_CAMERA`, `HAS_MICROPHONE`, `HAS_RGBLED`, `HAS_SD_CARD`, `HAS_THREAD_ZIGBEE`.
 
 **Thermals:** Battery charging + the S3R8 render load stack on one small PCB: charging warms the PCF85063 crystal (drift) and QMI8658 (bias) — charge with the backlight dimmed, don't calibrate the IMU mid-charge. CST816 touch drifts when hot; keep the glass out of direct sun. The night backlight floor doubles as the thermal relief valve.
