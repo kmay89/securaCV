@@ -64,7 +64,9 @@ echo "── uploading to App Store Connect ──"
 log="$(mktemp)"
 delay=15
 for attempt in 1 2 3 4; do
-  echo "upload attempt $attempt…"
+  # ${attempt} braced: macOS bash 3.2 under `set -u` swallows a following
+  # multibyte char (the … here) into the variable name and dies "unbound".
+  echo "upload attempt ${attempt}…"
   if xcrun altool --upload-app --type "$platform" \
         --file "$ipa" \
         --apiKey "$APPLE_API_KEY" \
