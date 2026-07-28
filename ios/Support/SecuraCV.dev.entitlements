@@ -2,13 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <!-- Debug/dev-build entitlements: SecuraCV.entitlements MINUS Critical
+  <!-- The STANDARD entitlements: SecuraCV.entitlements MINUS Critical
        Alerts. Critical Alerts is granted per-app by Apple, so with it in the
        set, automatic signing fails for every team that hasn't been granted
-       it — which would make "press Run on your iPhone" impossible during
-       development. The app already falls back to time-sensitive
-       notifications when the entitlement is absent; Release keeps the full
-       set (see project.yml's per-config CODE_SIGN_ENTITLEMENTS).
+       it. Debug builds always use this file ("press Run on your iPhone" must
+       work with a plain developer team), and the release workflow uses it
+       too until the grant lands (its critical_alerts input flips to the full
+       set). The app falls back to time-sensitive notifications either way.
+       Selected via SECURACV_APP_ENTITLEMENTS in project.yml.
        Keep the two files in sync: this one is derived, never the truth. -->
 
   <!-- APNs for away-from-home alerts (metadata-only wake, per docs §5). -->

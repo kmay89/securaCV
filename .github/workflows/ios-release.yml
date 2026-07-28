@@ -23,6 +23,10 @@ on:
         type: choice
         options: [debugging, release-testing, app-store-connect]
         default: debugging
+      critical_alerts:
+        description: "Sign with the Apple-granted Critical Alerts entitlement (leave OFF until Apple approves the request — signing fails otherwise; the app falls back to time-sensitive alerts)"
+        type: boolean
+        default: false
 
 # `contents: write` so a publishing run can create its `ios-v*` tag. Before
 # this, the workflow only ever produced a build ARTIFACT — so the
@@ -85,7 +89,13 @@ jobs:
 
       - name: Select Xcode
         if: vars.ENABLE_IOS_BUILD == 'true'
-        run: sudo xcode-select -s /Applications/Xcode_16.app || true
+        # Runner images name Xcode with full versions (Xcode_16.2.app…), so a
+        # bare Xcode_16.app never matches (RELEASE_LESSONS 2026-07-28); pick
+        # the newest 16.x, fall back to the image default, print what we got.
+        run: |
+          latest="$(find /Applications -maxdepth 1 -name 'Xcode_16*.app' 2>/dev/null | sort -V | tail -1)"
+          if [ -n "$latest" ]; then sudo xcode-select -s "$latest"; fi
+          xcodebuild -version
 
       - name: Materialize App Store Connect API key
         if: vars.ENABLE_IOS_BUILD == 'true'
@@ -113,7 +123,19 @@ jobs:
           APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          CRITICAL_ALERTS: ${{ inputs.critical_alerts }}
         run: |
+          # Critical Alerts is granted per-app by Apple; until then, signing a
+          # build that requests it fails for every team. The standard set
+          # (Support/SecuraCV.dev.entitlements) drops only that one key — the
+          # app already falls back to time-sensitive alerts. The override goes
+          # through SECURACV_APP_ENTITLEMENTS (see project.yml) so the
+          # widget/NSE targets keep their own entitlements.
+          ENTITLEMENTS="Support/SecuraCV.entitlements"
+          if [ "${CRITICAL_ALERTS:-false}" != "true" ]; then
+            ENTITLEMENTS="Support/SecuraCV.dev.entitlements"
+            echo "::notice title=Critical Alerts off::Signing without the Apple-granted Critical Alerts entitlement (flip the critical_alerts input once Apple approves it)."
+          fi
           xcodebuild \
             -project SecuraCV.xcodeproj \
             -scheme SecuraCV \
@@ -121,6 +143,7 @@ jobs:
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/SecuraCV.xcarchive" \
             DEVELOPMENT_TEAM="$APPLE_DEVELOPMENT_TEAM" \
+            SECURACV_APP_ENTITLEMENTS="$ENTITLEMENTS" \
             SECURACV_BUILD_REV="${SECURACV_BUILD_REV:-dev}" \
             SECURACV_FW_TRAIN="${SECURACV_FW_TRAIN:-0.x}" \
             -allowProvisioningUpdates \
