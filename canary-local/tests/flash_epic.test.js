@@ -331,12 +331,13 @@ test("flash.json: the display boards are flashable products now", () => {
     assert.ok(p.provisioning_note.length > 40, `${p.id}: provisioning copy`);
     assert.ok(p.hatch && /glass/i.test(p.hatch.title), `${p.id}: a display's hatch is the glass`);
   }
-  // The profile-built displays each keep their 1:1 emulator twin. The
-  // Nightstand Line boards (dash7 / nightstand-*) have no shipped emulator
-  // yet — that wasm/Lab wiring is staged work (display_nightstand_line.md
-  // §7), so the twin contract covers exactly the products with a twin to
-  // point at, and grows with them.
-  for (const p of displays.filter((d) => !/dash7|nightstand|touch169/.test(d.id))) {
+  // Every display product keeps a 1:1 emulator twin: the profile-built
+  // displays, the portrait boards (nightstand / touch169 wasm flavors),
+  // and dash7 (electrically the 4.3″ Dash — the dash twin is its honest
+  // preview). The one exception is the nightstand C6, whose glass is the
+  // S3 stick's — its preview is the same nightstand twin, wired when the
+  // picker learns module aliasing.
+  for (const p of displays.filter((d) => !/nightstand-c6/.test(d.id))) {
     const twin = catalog.displays.find((d) => p.id.includes(d.id));
     assert.ok(twin, `${p.id}: no emulator twin in catalog.displays`);
   }

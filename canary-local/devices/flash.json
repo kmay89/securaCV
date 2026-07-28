@@ -1284,6 +1284,87 @@
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
       "flash_product": "securacv-canary-display-dash"
+    },
+    {
+      "id": "canary-display-nightstand-s3",
+      "name": "Canary Nightstand",
+      "tagline": "The tall portrait glance — a witness column you read from bed.",
+      "board": "Waveshare ESP32-S3-LCD-1.47 (USB-A stick)",
+      "match": "display",
+      "panel": "ST7789 1.47\" IPS · 172×320",
+      "glass": {
+        "w": 172,
+        "h": 320,
+        "round": false
+      },
+      "shows": [
+        "portrait witness column",
+        "living canary",
+        "ambient beacon",
+        "honest night"
+      ],
+      "emulator": {
+        "module": "emulator/dist/canary-display-nightstand.js",
+        "factory": "createCanaryEmuNightstand",
+        "fw_version": "2.4.0",
+        "lvgl": "v8.4.0"
+      },
+      "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
+      "flash_product": "securacv-canary-display-nightstand-s3"
+    },
+    {
+      "id": "canary-display-touch169",
+      "name": "Canary Nightstand Touch",
+      "tagline": "The portrait glance you can touch — tap to peek, hold to acknowledge.",
+      "board": "Waveshare ESP32-S3-Touch-LCD-1.69",
+      "match": "display",
+      "panel": "ST7789V2 1.69\" IPS · 240×280",
+      "glass": {
+        "w": 240,
+        "h": 280,
+        "round": false
+      },
+      "shows": [
+        "portrait witness column",
+        "living canary",
+        "touch peek + ack",
+        "honest night"
+      ],
+      "emulator": {
+        "module": "emulator/dist/canary-display-touch169.js",
+        "factory": "createCanaryEmuTouch169",
+        "fw_version": "2.4.0",
+        "lvgl": "v8.4.0"
+      },
+      "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
+      "flash_product": "securacv-canary-display-touch169"
+    },
+    {
+      "id": "canary-display-dash7",
+      "name": "Canary Dash 7",
+      "tagline": "The 4.3″ Dash grown to 7″ — same quiet truth, room-scale glass.",
+      "board": "Waveshare ESP32-S3-Touch-LCD-7",
+      "match": "display",
+      "panel": "7\" 800×480 IPS (parallel RGB) · 800×480",
+      "glass": {
+        "w": 800,
+        "h": 480,
+        "round": false
+      },
+      "shows": [
+        "witness cards",
+        "event timeline",
+        "proof sheets",
+        "roll call"
+      ],
+      "emulator": {
+        "module": "emulator/dist/canary-display-dash.js",
+        "factory": "createCanaryEmuDash",
+        "fw_version": "2.4.0",
+        "lvgl": "v8.4.0"
+      },
+      "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
+      "flash_product": "securacv-canary-display-dash7"
     }
   ],
   "settings_help": {

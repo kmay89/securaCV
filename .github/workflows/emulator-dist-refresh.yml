@@ -73,7 +73,9 @@ jobs:
 
       - name: Commit + push the refreshed dist (only if it changed)
         run: |
-          if git diff --quiet -- canary-local/emulator/dist; then
+          # status --porcelain, not diff: a NEW flavor's first build creates
+          # untracked dist files that git diff cannot see.
+          if [ -z "$(git status --porcelain -- canary-local/emulator/dist)" ]; then
             echo "dist/ already matches a rebuild from this tree — nothing to push."
             exit 0
           fi
