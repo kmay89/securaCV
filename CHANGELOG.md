@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [2.4.1] - 2026-07-28
+
+### On the device: what 2.4.1 changes since 2.4.0
+
+- **The Nightstand Touch (1.69") sounds the "canary wakes" boot chime on
+  power-on** — the audible sibling of the boot-yellow beacon, so a shelf
+  device answers the power switch before its panel initializes.
+- **Radar tuning suite**: every Sense knob is live over USB serial, from
+  both flashers — tune presence detection on the bench without a reflash.
+- **Broker-down mDNS discovery seats sibling displays, not witnesses
+  only** — displays finding each other no longer depends on the MQTT
+  broker being up.
+- **Every display has a live emulated twin** (nightstand + touch169 WASM
+  flavors join the fleet page), compiled from the same firmware these
+  images carry.
+
 ### Headless Pi 5 hub, verified against HA's own docs — no monitor, ever
 
 The "flash → power → it appears on your network" promise is now built on the
