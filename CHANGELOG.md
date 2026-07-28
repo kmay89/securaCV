@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### Pet & sleep presets for the radar (movement wake/sleep + dog/human vitals)
+
+Three researched presets for the Canary Sense radar, with feasibility stated
+honestly (the MR60BHA2 computes breath/heart BPM on-module, band-passed for
+human physiology; this firmware reads those scalars):
+
+- **🐭 Mouse / small-pet cage (both builds)** — a *movement* wake/sleep watch
+  for a caged small rodent, not vitals. For a fixed cage, a live moving
+  occupant reads as awake and sustained stillness as asleep, off the existing
+  presence pipeline. A mouse's heart (300–800 bpm) and breathing (80–230/min)
+  are 4–8× above the module's human passband, so vitals are deliberately left
+  untouched — the preset never pretends to read them.
+- **🐕 Dog kennel / crate (wellbeing)** — a real vitals preset. A resting
+  dog's heart (≈50–160 bpm) and breathing (≈8–35/min) overlap the human bands
+  the module is tuned for, so a settled dog within ~1.5 m reads like a human
+  torso. Bands widened for small-breed hearts and faster resting breathing;
+  longer lock windows suit an animal that stills in bursts.
+- **🛌 Human sleep & wake (wellbeing)** — the native case, bands trimmed to a
+  sleeping adult.
+
+Vitals presets are gated to the wellbeing build (the presence-only build has
+no breath/heart knobs, so offering them there would be a lie); the mouse
+preset applies to both. Each carries an ⓘ explainer stating what it can and
+can't do. Feasibility contract pinned in `flash_epic.test.js`.
+
 ### Radar tuning suite: every Sense knob live over USB, in both flashers
 
 The canary-sense firmware grows a **serial tuning console**

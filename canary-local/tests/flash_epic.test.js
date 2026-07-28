@@ -93,6 +93,60 @@ test("flash.json: sense reflexes are runtime dials — NVS-backed, bounded, pres
     "presence-only build does not advertise vitals knobs");
 });
 
+test("sense presets: pet & sleep presets encode the researched feasibility contract", () => {
+  const wb = catalog.products.find((p) => p.id === "securacv-canary-sense-wellbeing");
+  const def = catalog.products.find((p) => p.id === "securacv-canary-sense");
+  const byId = (p) => Object.fromEntries(p.reflexes.presets.map((pr) => [pr.id, pr]));
+  const wbP = byId(wb), defP = byId(def);
+
+  // Mouse: a MOVEMENT preset, on BOTH builds, that never CHANGES the vitals
+  // bands — a mouse's heart/breath sit far outside this module's reported
+  // band, so the preset must leave every breath/heart/lock knob at the shipped
+  // default rather than pretend to tune it. (Catalog presets carry a fully
+  // resolved value map, so the honest check is "equals ships", not "absent".)
+  for (const P of [wbP, defP]) {
+    assert.ok(P.mouse_cage, "mouse_cage preset present on every Sense build");
+    const ships = P.ships.values;
+    for (const k of ["breath_min_bpm", "breath_max_bpm", "heart_min_bpm", "heart_max_bpm",
+                     "vitals_lock_ms", "vitals_lost_ms"]) {
+      if (!(k in ships)) continue; // presence-only build has no vitals knobs at all
+      assert.strictEqual(P.mouse_cage.values[k], ships[k],
+        `mouse_cage must not retune ${k} — a mouse's vitals are unreadable by this module`);
+    }
+    // Close cage mount: the tightest near band the firmware allows.
+    assert.strictEqual(P.mouse_cage.values.range_near_cm, 50, "mouse cage mount is close-range");
+  }
+  // And the movement preset genuinely moves the PRESENCE knobs off shipped.
+  assert.notStrictEqual(wbP.mouse_cage.values.clear_timeout_ms, wbP.ships.values.clear_timeout_ms,
+    "mouse_cage should tune the clear timeout (stillness → asleep) off the default");
+
+  // Dog & human sleep: VITALS presets, wellbeing-only (the presence-only build
+  // has no breath/heart knobs, so offering them there would be dishonest).
+  for (const id of ["dog_kennel", "human_sleep"]) {
+    assert.ok(wbP[id], `${id} present on the wellbeing build`);
+    assert.ok(!defP[id], `${id} must be hidden on the presence-only build (no vitals knobs)`);
+    for (const k of ["breath_min_bpm", "breath_max_bpm", "heart_min_bpm", "heart_max_bpm"]) {
+      assert.ok(Number.isInteger(wbP[id].values[k]), `${id} sets ${k}`);
+    }
+  }
+
+  // Dog bands must be a real superset of the human bands (a dog's resting rates
+  // run faster and its small breeds' hearts run higher), and min<max holds.
+  const d = wbP.dog_kennel.values, h = wbP.human_sleep.values;
+  assert.ok(d.breath_max_bpm > h.breath_max_bpm, "dog breathing band reaches higher than human");
+  assert.ok(d.heart_max_bpm > h.heart_max_bpm, "dog heart band reaches higher than human (small breeds)");
+  for (const v of [d, h]) {
+    assert.ok(v.breath_min_bpm < v.breath_max_bpm, "breath band min < max");
+    assert.ok(v.heart_min_bpm < v.heart_max_bpm, "heart band min < max");
+  }
+
+  // Every pet/sleep preset has an ⓘ explainer that states the feasibility honestly.
+  for (const id of ["mouse_cage", "dog_kennel", "human_sleep"]) {
+    assert.ok(catalog.settings_help[id] && catalog.settings_help[id].what,
+      `${id} needs a help topic stating what it can and can't do`);
+  }
+});
+
 test("reflexValuesToNvs: maps knob ids to sns_* keys, clamped to each knob's bounds", async () => {
   const c = await core();
   const sense = catalog.products.find((p) => p.id === "securacv-canary-sense-wellbeing");

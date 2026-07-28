@@ -51,8 +51,11 @@ first `pio run` downloads that platform (~hundreds of MB) — needs network.
 
 The USB console is **two-way**: alongside the boot log and telemetry lines,
 a line-based tuning console (`common/console/tuning_console.h`) listens at
-115200 8N1 from the moment `setup()` finishes — before WiFi, before the
-broker — so a freshly-flashed board can be tuned and tested immediately.
+115200 8N1 — no WiFi, no broker, no HA required. It is serviced from the
+main loop *before* the network phase AND as the idle poll inside the
+blocking boot-time WiFi connect, so even a board with no provisioned WiFi
+(which otherwise spins to the boot timeout and reboots) answers `cfg`/`set`
+the whole time it waits.
 Both flashers' tuning suites (the browser radar bench and the desktop
 Flasher's monitor panel) are UIs over exactly this protocol; `pio device
 monitor -b 115200` works just as well by hand.
@@ -71,6 +74,33 @@ Knobs (the same eleven numbers HA tunes over `cfg/*/set`): `debounce`,
 `breath_min`, `breath_max`, `heart_min`, `heart_max`. Every `set` answers
 with a `[tune] ok/err` verdict plus the refreshed `[cfg]` snapshot, so a UI
 reconciles by replacing, never by diffing.
+
+### Pet & sleep presets (what the radar can and can't do)
+
+The flasher bakes room presets into NVS at install time (and HA/the console
+retune them after). Three are pet/sleep-oriented, and the feasibility is
+honest — the MR60BHA2 computes breath/heart BPM *on its own module*,
+band-passed for **human** physiology, and this firmware only reads the
+scalars it reports:
+
+- **🐭 Mouse / small-pet cage — wake & sleep** (both builds): a *movement*
+  watch, not vitals. For a fixed cage, the radar confirming a live, moving
+  occupant reads as awake/active and sustained stillness reads as
+  settled/asleep. It does **not** read a mouse's heart or breathing — those
+  rates (heart 300–800 bpm ≈ 5–13 Hz, breath 80–230/min) sit 4–8× above the
+  module's human passband, so the module never reports them, and the BPM
+  bounds can't even express them. Close cage mount; the whole cage is the
+  near band.
+- **🐕 Dog kennel / crate — resting heart & breathing** (wellbeing only): a
+  real vitals preset. A calm dog's heart (≈50–160 bpm) and breathing
+  (≈8–35/min) overlap the human bands the module was tuned for, so a settled
+  dog within ~1.5 m reads like a human torso. Bands are widened for a dog
+  (small-breed hearts, faster resting breathing) and the lock waits longer
+  (a dog holds still in bursts). Panting or pacing breaks the lock — this is
+  a resting/sleeping monitor for a single animal.
+- **🛌 Human sleep & wake** (wellbeing only): the module's native use case —
+  bands trimmed to a sleeping adult so a settled sleeper locks and a restless
+  one doesn't latch noise.
 
 The `[radar]` stream is the "what does the radar see right now" heartbeat:
 `[radar] state=present count=1 range=near lock=locked breath=14 heart=72

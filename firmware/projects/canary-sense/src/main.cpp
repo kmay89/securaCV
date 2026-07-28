@@ -759,7 +759,13 @@ void setup() {
   // the chain must be ready before the first presence transition.
   canary::witness::init();
 
-  canary::net::wifi_init_or_reboot();
+  // The idle poll keeps the tuning console answering (and its [radar]
+  // stream ticking) through the blocking boot connect — without it, a
+  // bench board with no provisioned WiFi would spin here for the boot
+  // timeout and reboot, starving loop() so the console never speaks.
+  canary::net::wifi_init_or_reboot([]() {
+    tuning_console_tick(canary::ms_now());
+  });
 
   // Fleet LAN presence: the _securacv._tcp advert (device_id/name/host/
   // fw/model/dt/role TXT) that lets the companion app, canary-display,
