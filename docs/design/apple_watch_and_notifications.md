@@ -80,13 +80,23 @@ Doctrine, in five rules (these are the §5b properties made operational):
    display's physical ack, HA) clears the alert everywhere. Per-witness
    mute with tamper punch-through already exists in `fleet_model.h`; the
    apps expose it, never reinvent it.
-5. **Content-free over the wire.** Pushes carry `{sev, device_id, sig}` and
-   nothing else (relay payload schema in `alert_relay.md` — no content
-   field, by construction). The Notification Service Extension hydrates
-   human copy from the local digest cache. Complete the two NSE TODOs
-   (verify `userInfo["sig"]` against the pinned key; hydrate from the app
-   group cache) as part of this work — an unverifiable push renders as
-   "Unverified alert," visibly worse than a verified one.
+5. **Content-free over the wire, verified before believed.** Pushes carry
+   `{sev, event_token, sig}` and nothing else (relay payload schema in
+   `alert_relay.md` — no content field, by construction). The
+   `event_token` is opaque and single-use, derived from the per-pairing
+   secret — never a stable device identifier — so the relay and push
+   providers can route, dedup, and match acks without learning which
+   witness fired (`iphone_companion_app.md` §5: no device identity
+   crosses the relay). The phone resolves token → witness locally.
+   Signature verification happens **before** any payload field is
+   accepted: on failure the NSE never adopts the payload's severity,
+   sound, or copy — a forged `sev` must not buy the Critical path. iOS
+   does not let an NSE suppress a visible push outright, so the honest
+   floor is: demote to `.passive`, no sound, generic "unverifiable push"
+   copy with no severity styling — and repeated verification failures are
+   themselves surfaced as a local Important alert on relay health.
+   Complete the two NSE TODOs (verify `userInfo["sig"]` against the
+   pinned key; hydrate from the app group cache) as part of this work.
 
 ### 1.2 User controls that prevent fatigue instead of apologizing for it
 
@@ -139,16 +149,18 @@ by the system. So the moment the relay + iPhone tiers work, the Watch
 already buzzes correctly — *if* we do the small work of making mirrored
 notifications first-class:
 
-- A `WKUserNotificationHostingController` scene so alerts render as our UI
-  (severity color, device name, reason string, verified badge) instead of
-  generic text.
-- **Actionable categories**: Ack, Mute 1h (tamper punch-through preserved),
-  View. Ack from the wrist is the single highest-value interaction.
+- **Actionable categories**: Ack, Mute 1h (tamper punch-through
+  preserved), View — registered by the iPhone app; mirrored notifications
+  surface the same actions on the wrist. Ack from the wrist is the single
+  highest-value interaction.
 - Haptic discipline: tier table above; Critical uses a distinct repeating
   pattern.
 
-No new infrastructure. This phase is almost entirely UI + category
-registration inside the existing iOS target.
+No new targets at all — this phase is category registration + copy inside
+the existing iOS app. A custom on-wrist notification scene
+(`WKUserNotificationHostingController`) requires a watchOS app target, so
+it lands in W1 with the target, not here; until then mirrored alerts
+render with the system long-look.
 
 ### 3.2 Phase W1 — glanceable: Smart Stack widget + Live Activity mirroring
 
@@ -162,10 +174,22 @@ registration inside the existing iOS target.
   "device dark — investigating") appear in the watch Smart Stack
   automatically on watchOS 11+; on watchOS 26 the Relevance API can float
   the fleet widget when an alert is active.
-- Data path: the app group (`group.com.securacv.witness`) cache the NSE
-  already hydrates from is the same cache the widget timeline reads.
-  Background budget honesty: widget refresh is coarse (system-budgeted);
-  the *push* is what carries urgency, the widget carries ambient state.
+- This phase creates the **watchOS app target** (a minimal shell hosting
+  the widget extension) — and with it the custom notification scene
+  deferred from W0: a `WKUserNotificationHostingController` so alerts
+  render as our UI (severity color, witness name, reason string, verified
+  badge) instead of generic mirrored text.
+- Data path — the `WCSession` plumbing lands *here*, not W2: app groups
+  do **not** sync containers between iPhone and Watch, so the watch
+  widget cannot read the iPhone NSE's `group.com.securacv.witness` cache.
+  The iPhone app pushes fleet state over WatchConnectivity
+  (`updateApplicationContext` for ambient state,
+  `transferCurrentComplicationUserInfo` for complication-urgent changes)
+  into a **watch-local** app-group cache that the widget timeline reads.
+  Live Activity mirroring needs none of this — the system carries the
+  iPhone's activity to the Smart Stack itself. Background budget honesty:
+  widget refresh is coarse (system-budgeted); the *push* is what carries
+  urgency, the widget carries ambient state.
 
 ### 3.3 Phase W2 — the app itself: three screens, no more
 
@@ -177,8 +201,8 @@ registration inside the existing iOS target.
    round-trip self-test (`runTestAlert(roundTrip:)`) from the wrist.
 3. **Ack/mute** — surface `fleet_model.h` semantics; nothing new invented.
 
-Connectivity: `WCSession` transfer from the phone as primary (the phone's
-`FleetStore` is the source of truth); optional direct-to-hub URLSession
+Connectivity: the W1 `WCSession` pipeline, now driving full screens (the
+phone's `FleetStore` remains the source of truth); optional direct-to-hub URLSession
 fetch of `GET /api/fleet` (the tvOS `FleetClient` contract) when the phone
 is unreachable and the Watch is on home Wi-Fi. The `isPrivate()` guard from
 `DeviceAPI.swift` applies unchanged — the Watch also refuses public hosts.
@@ -252,7 +276,9 @@ The additions this doc makes to its requirements:
    Push (VAPID private key likewise hub-held). Same content-free payload,
    same dedup ledger.
 2. **LAN-receipt suppression**: a client that saw the event over SSE/MQTT
-   acks receipt; the relay drops the corresponding push within its window.
+   acks receipt by event token; the relay drops the corresponding push
+   within its window. The dedup ledger is keyed by the same opaque token,
+   so suppression works without the relay holding device identity.
 3. The heartbeat monitor terminates at the relay (hub → fleet peers →
    relay precedence is `iphone_companion_app.md` §10 #7 — still open, still
    owned by that doc).
@@ -300,8 +326,8 @@ not a snowflake:
 |---|---|---|
 | **N0** | — | SSE adoption in `FleetStore`; NSE signature-verify + hydrate; tier/controls UI in Alerts tab |
 | **R1** | `alert_relay.md` substrate decision | Relay MVP: APNs + Web Push, content-free payload, dedup + LAN-receipt suppression, heartbeat terminus |
-| **W0** | N0, R1 | Watch: custom notification scene + Ack/Mute/View actions |
-| **W1** | W0 | Smart Stack widget, complications, Live Activity mirroring |
+| **W0** | N0, R1 | Watch: actionable mirrored notifications (Ack/Mute/View from the wrist); no new targets |
+| **W1** | W0 | watchOS target + `WCSession` state pipeline; Smart Stack widget, complications, custom notification scene, Live Activity mirroring |
 | **W2** | W1 | 3-screen Watch app (fleet glance / heartbeat / ack) |
 | **P1** | R1 | Web monitor as installable PWA + Web Push (declarative payload, SW fallback) |
 
