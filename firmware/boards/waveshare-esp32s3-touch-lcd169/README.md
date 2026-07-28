@@ -20,7 +20,10 @@ finger, exactly as on the watch and dash.
 - **Touch**: CST816T capacitive (I2C 0x15), INT/RST wired
 - **IMU**: QMI8658 (3-axis accel + 3-axis gyro) on the shared I2C bus —
   declared (`HAS_IMU 1`), driver is room-to-grow (raise/tilt wake later)
-- **RTC**: PCF85063 on the same bus (same 0x51 family the dash RTC layer probes)
+- **RTC**: PCF85063**A** on the same bus, **trusted time enabled** (`FEATURE_RTC`):
+  seeds the clock before/without SNTP, and gives the boot chime a correct
+  day/night volume at cold power-on. NB its 7-byte time block starts at register
+  **0x04**, not the PCF8563 base 0x02 — the core selects that via `RTC_CHIP_PCF85063`
 - **Power**: USB-C **or 3.7 V MX1.25 lithium battery**, onboard charging, PWR
   button
 - **Radios**: Wi-Fi (2.4 GHz), BLE 5

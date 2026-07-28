@@ -163,6 +163,8 @@ void voice_loop(uint32_t now_ms) {
 
 bool voice_active() { return s_seq != nullptr; }
 
+void voice_stop() { tone_off(); s_seq = nullptr; s_idx = -1; }
+
 void voice_set_night(bool night) { s_night = night; }
 
 void voice_set_volume(uint8_t vol) {

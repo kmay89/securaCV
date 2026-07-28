@@ -78,6 +78,13 @@
 #define FEATURE_RHYTHM              1   // whole-home morning-rhythm baseline
 #define FEATURE_WATCHDOG            1
 #define FEATURE_SNTP                1   // clock + quiet-hours source
+#define FEATURE_RTC                 1   // battery-backed PCF85063A: trusted time
+                                        // before/without SNTP, and a correct
+                                        // day/night volume for the boot chime at
+                                        // cold power-on (else it errs quiet)
+#define RTC_CHIP_PCF85063           1   // this board's RTC is a PCF85063A — its
+                                        // 7-byte time block starts at reg 0x04,
+                                        // NOT the PCF8563 base 0x02 (rtc_pcf.h)
 // ── Nightstand wave (display_nightstand.md + display_nightstand_line.md) ──
 // This IS the bedside device the wave was written for: PWM backlight floor,
 // gentle wake, comfort words — plus the new ambient LED beacon.

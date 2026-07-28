@@ -61,6 +61,11 @@ inline void chime_loop(uint32_t now_ms) { voice_loop(now_ms); }
 // before the steady-state loop that normally drives voice_loop() begins).
 bool voice_active();
 
+// Silence immediately and drop any latched phrase. Use it to bound a
+// synchronous pump: if the phrase hasn't finished by a deadline, stop() ensures
+// the tone can't keep sounding through subsequent blocking work.
+void voice_stop();
+
 // Runtime state the loudness model reads. Night gates the gentle categories
 // (see voice_peak_duty); the render/care loop keeps it in step with quiet
 // hours. Volume is 0..4 (Off, Soft, Low, Medium, Full); interactions are the
