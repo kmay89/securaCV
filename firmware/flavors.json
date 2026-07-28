@@ -74,6 +74,20 @@
       "bin": ".pio/build/canary-display-watch/firmware.bin",
       "slot_bytes": 3342336,
       "slot_name": "0x330000 OTA slot (ESP32-S3 default_8MB.csv app0/app1)"
+    },
+    "core_dir_groups": {
+      "canary-display-dash": "display-pio3",
+      "canary-display-playground": "display-pio3",
+      "canary-display-dash-b": "display-pio3",
+      "canary-display-dash-rs485": "display-pio3",
+      "canary-display-dash-can": "display-pio3",
+      "canary-display-dash-vault": "display-pio3",
+      "canary-display-dash-rtc": "display-pio3",
+      "canary-display-dash-espnow": "display-pio3",
+      "canary-display-dash-ble5": "display-pio3",
+      "canary-display-dash-modes": "display-pio3",
+      "canary-display-dash-mic": "display-pio3",
+      "canary-display-dash7": "display-pio3"
     }
   },
   {

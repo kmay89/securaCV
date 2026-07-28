@@ -414,10 +414,11 @@ jobs:
         # those products from this release instead of sinking the signed OTA
         # release around it.
         #
-        # The C6 env rides the pioarduino core-3.x platform while the rest of
-        # this project is on espressif32@6.9.0 — give it its own
-        # PLATFORMIO_CORE_DIR, exactly as firmware.yml isolates it (the two
-        # platforms ship framework-arduinoespressif32 at incompatible
+        # The pioarduino core-3.x envs (dash7 for its RGB bounce buffers,
+        # the C6 for its chip) cannot share a core dir with the
+        # espressif32@6.9.0 envs — each pioarduino build gets its own
+        # PLATFORMIO_CORE_DIR, exactly as firmware.yml isolates them (the
+        # two platforms ship framework-arduinoespressif32 at incompatible
         # versions and corrupt each other's core dir).
         run: |
           # Generic release build: placeholder secrets ON PURPOSE — same
@@ -443,7 +444,20 @@ jobs:
           # so the packaging steps read the same .pio/build paths as always.
           STAGE=/tmp/pio-display-staged
           mkdir -p "$STAGE"
-          for E in canary-display-dash7 canary-display-nightstand-s3 canary-display-touch169; do
+          # dash7 rides the pioarduino core-3 platform (canary-display.ini —
+          # the RGB bounce-buffer pairing) and cannot share a core dir with
+          # the espressif32 envs, exactly like the C6. It builds FIRST: its
+          # CORE_DIR switch changes the project checksum and wipes
+          # .pio/build, so it must never run after an env whose outputs
+          # aren't staged yet.
+          if PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-display-pio3" \
+              pio run -e canary-display-dash7; then
+            rm -rf "${STAGE:?}/canary-display-dash7"
+            cp -R ".pio/build/canary-display-dash7" "$STAGE/canary-display-dash7"
+          else
+            echo "::warning::canary-display-dash7 build failed — its product is absent from this release"
+          fi
+          for E in canary-display-nightstand-s3 canary-display-touch169; do
             if pio run -e "$E"; then
               rm -rf "${STAGE:?}/$E"
               cp -R ".pio/build/$E" "$STAGE/$E"
