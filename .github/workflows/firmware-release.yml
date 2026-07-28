@@ -659,7 +659,7 @@ jobs:
         #   gh attestation verify <file> --repo ${{ github.repository }}
         # See docs/supply_chain_transparency.md.
         id: attest
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             /tmp/release/*.bin

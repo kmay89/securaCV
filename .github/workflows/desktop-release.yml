@@ -51,7 +51,7 @@ jobs:
     env:
       RUST_BACKTRACE: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Linux build deps
         if: matrix.platform == 'ubuntu-22.04'
@@ -76,7 +76,7 @@ jobs:
           key: ${{ matrix.platform }}
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -105,7 +105,7 @@ jobs:
       # the APPLE_* secrets are in place.
       - name: Build & publish (unsigned)
         if: vars.ENABLE_MACOS_SIGNING != 'true'
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -139,7 +139,7 @@ jobs:
 
       - name: Build & publish (signed macOS)
         if: vars.ENABLE_MACOS_SIGNING == 'true'
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -166,7 +166,7 @@ jobs:
       # artifacts without touching the Releases page.
       - name: Upload installers as workflow artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: securacv-lab-${{ matrix.platform }}
           path: |

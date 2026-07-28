@@ -51,7 +51,7 @@ jobs:
 
       - name: Decide whether a release is needed
         id: decide
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           CHANNEL: ${{ inputs.channel }}
           FORCE: ${{ inputs.force }}
@@ -130,7 +130,7 @@ jobs:
 
       - name: Cut the firmware release
         if: steps.decide.outputs.dispatch == 'true'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           VERSION: ${{ steps.decide.outputs.version }}
           CHANNEL: ${{ steps.decide.outputs.channel }}

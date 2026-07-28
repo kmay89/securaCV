@@ -48,7 +48,7 @@ jobs:
         run: |
           echo "::notice title=iOS self-heal skipped::Set repository variable ENABLE_IOS_BUILD=true to enable the nightly iOS build/test (PRs touching ios/** always build). Exiting green."
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: env.RUN_BUILD == 'true'
 
       - name: Select Xcode

@@ -94,7 +94,7 @@ jobs:
       # (stale docs) — neither is "only what needs it".
       - name: Find the last successful Pages deploy
         id: pages
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             try {
@@ -198,7 +198,7 @@ jobs:
           cat /tmp/plan.json
 
       - name: Dispatch what needs releasing, and report the rest
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           PLAN_ONLY: ${{ inputs.plan_only }}
           PUBLISH: ${{ inputs.publish }}
