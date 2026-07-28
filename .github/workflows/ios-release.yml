@@ -124,7 +124,18 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           CRITICAL_ALERTS: ${{ inputs.critical_alerts }}
+          EXPORT_METHOD: ${{ inputs.export_method }}
         run: |
+          # Automatic signing archives with a DEVELOPMENT profile by default,
+          # and development profiles require at least one registered device on
+          # the team — a fresh team has zero, so the archive dies with "Your
+          # team has no devices". Distribution signing needs no devices, so
+          # any distribution-bound run archives as Apple Distribution; only
+          # the debugging export keeps a development-signed archive.
+          IDENTITY="Apple Distribution"
+          if [ "${EXPORT_METHOD}" = "debugging" ]; then
+            IDENTITY="Apple Development"
+          fi
           # Critical Alerts is granted per-app by Apple; until then, signing a
           # build that requests it fails for every team. The standard set
           # (Support/SecuraCV.dev.entitlements) drops only that one key — the
@@ -143,6 +154,7 @@ jobs:
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/SecuraCV.xcarchive" \
             DEVELOPMENT_TEAM="$APPLE_DEVELOPMENT_TEAM" \
+            CODE_SIGN_IDENTITY="$IDENTITY" \
             SECURACV_APP_ENTITLEMENTS="$ENTITLEMENTS" \
             SECURACV_BUILD_REV="${SECURACV_BUILD_REV:-dev}" \
             SECURACV_FW_TRAIN="${SECURACV_FW_TRAIN:-0.x}" \

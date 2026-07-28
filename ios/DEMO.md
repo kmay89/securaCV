@@ -131,8 +131,11 @@ one-time setup, then it's one button per release.
    (that's it working, not breaking; see `docs/RELEASE_BUTTONS.md`).
 
 A dry run first is house style (RELEASE_LESSONS principle 3): run the same
-button with `publish = false` / `export_method = release-testing` and confirm
-the `.ipa` artifact appears before doing the real one.
+button with `publish = false` and `export_method = app-store-connect`, and
+confirm the `.ipa` artifact appears before doing the real one. (Use
+app-store-connect even for the dry run — `release-testing` is an ad-hoc
+export, which requires registered devices on the team; the app-store path
+needs none.)
 
 The app icon App Store Connect requires is generated + committed
 (`scripts/make_app_icon.py` → `Assets.xcassets`, same contract as the tvOS

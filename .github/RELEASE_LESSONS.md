@@ -926,3 +926,25 @@ Two independent failures, one release day, both invisible-by-design.
   assets are not public: anything that must resolve URLs belongs after the
   publish, keyed off the human-fired event.
 
+
+### 2026-07-28 (d) — CI archives die on a fresh team: automatic signing archives as DEVELOPMENT, and development profiles need a registered device
+
+- **Symptom:** the first real `ios-release.yml` run failed archiving all three
+  targets with "Your team has no devices from which to generate a
+  provisioning profile" — on a brand-new (or device-less) Apple team, even
+  though the release was bound for TestFlight, which never involves
+  registered devices.
+- **Cause:** `xcodebuild archive` under automatic signing signs with a
+  *development* profile by default (distribution normally happens at export),
+  and Apple will not mint a development profile for a team with zero
+  registered devices. CI runners never have a device to offer.
+- **Fix:** archive with `CODE_SIGN_IDENTITY="Apple Distribution"` for any
+  distribution-bound export (`release-testing`, `app-store-connect`) — cloud
+  signing then creates a distribution profile, which needs no devices; only
+  the `debugging` export keeps a development-signed archive. Corollary for
+  dry runs: export with `app-store-connect` (+ `publish=false`), because
+  `release-testing` is an ad-hoc export that also requires registered
+  devices.
+- **Applies to:** `ios-release.yml` (fixed), `tvos-release.yml` and any
+  future Apple-platform CI archive with automatic signing on a team that
+  may have no registered devices.
