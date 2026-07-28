@@ -890,3 +890,29 @@ Two independent failures, one release day, both invisible-by-design.
 - **Applies to:** `ios-release.yml`, `tvos-release.yml` (an Apple TV
   registers the same way), and any Apple-platform CI archive with automatic
   signing on a team that may have no registered devices.
+
+### 2026-07-28 (e) — Per-run cloud certificates orphan themselves: the second CI signing run always fails
+
+- **Symptom:** the first signing run after device registration got past every
+  earlier gate and failed with "Revoke certificate: Your account already has
+  an Apple Development signing certificate for this machine, but its private
+  key is not installed in your keychain."
+- **Cause:** `-allowProvisioningUpdates` cloud signing *created* a
+  certificate during an earlier run — and its private key lived only in that
+  ephemeral runner's keychain, which was destroyed with the runner. Every
+  later run sees the account's certificate, has no key for it, and
+  non-interactive xcodebuild will not auto-revoke. Per-run certificate
+  creation is structurally unsound on throwaway machines; distribution
+  certificates make it worse (Apple caps them at 2–3 per team).
+- **Fix:** import a persistent identity: export Apple Development + Apple
+  Distribution from a real Mac's Keychain Access as one `.p12`, store as the
+  `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` secrets (the exact
+  names desktop-lab/MOBILE.md already documents), and have the workflow
+  import it into a temp keychain (`security create-keychain` → `import` →
+  `set-key-partition-list` → `list-keychains`). Orphaned Apple Development
+  certificates on the account are safe to revoke — dev certs are recreated
+  on demand. Cloud signing then only manages *profiles*, which are
+  stateless.
+- **Applies to:** `ios-release.yml` (fixed), `tvos-release.yml`, and any
+  Apple-platform job that signs on ephemeral runners with
+  `-allowProvisioningUpdates`.
