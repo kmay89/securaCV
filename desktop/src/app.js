@@ -51,6 +51,11 @@ const DEV_FLASH_MANIFEST_URL =
   "https://github.com/kmay89/securaCV/releases/download/fw-dev-latest/manifest-flash.json";
 
 const POLL_MS = 1000;
+// Self-update cadence. Checked once at launch, then routinely while the app
+// stays open — a bench machine that never relaunches must still hear about
+// updates — and again when the window regains focus after sitting stale.
+const UPDATE_RECHECK_MS = 6 * 60 * 60 * 1000; // every 6 hours while open
+const UPDATE_STALE_MS = 4 * 60 * 60 * 1000;   // focus re-check if older than this
 const WE2_VID = 0x1a86;
 const WE2_PID = 0x55d3;
 
@@ -63,6 +68,8 @@ const state = {
   portInfo: null,
   portKind: null,    // "esp32" | "we2"
   chip: null,        // identified chip for state.port, or null
+  flashBytes: null,  // detected flash size (bytes) for state.chip — the rescue backup needs it
+  mac: null,         // detected MAC (for the health report + backup name), or null
   product: null,
   detecting: false,  // a detect_chip call is in flight
   failedPort: null,  // a port whose chip read failed — don't auto-retry it
@@ -71,6 +78,7 @@ const state = {
   devChannel: false, // fetch fw-dev-latest instead of the pinned stable release
   localFile: null,   // { path, name, size, sha256, esp_magic } picked under Advanced
   update: null,      // pending self-update, if any
+  announcedUpdate: null, // last update version logged, so routine re-checks stay quiet
   vision: {
     hostFlash: null,
     hostBoot: null,
@@ -182,6 +190,10 @@ async function boot() {
   $("dev-channel").addEventListener("change", onDevChannelToggle);
   $("local-pick").addEventListener("click", onPickLocalFile);
   $("local-flash-btn").addEventListener("click", onFlashLocalFile);
+  $("rescue-backup-btn").addEventListener("click", onRescueBackup);
+  $("rescue-restore-btn").addEventListener("click", onRescueRestore);
+  $("rescue-erase-btn").addEventListener("click", onRescueErase);
+  $("health-check-btn").addEventListener("click", onHealthCheck);
   updateLocalFlashUi();
   $("monitor-start").addEventListener("click", startMonitor);
   $("monitor-stop").addEventListener("click", stopMonitor);
@@ -218,6 +230,13 @@ async function boot() {
       .then(() => { input.value = ""; })
       .catch((e) => setStatus("monitor-status", String(e), "err"));
   });
+  // Radar tuning suite controls (Sense boards; the sliders wire themselves
+  // per-knob in renderSenseTune).
+  $("sense-reset").addEventListener("click", () => sendTune("reset"));
+  $("sense-stream").addEventListener("change", (e) =>
+    sendTune(e.target.value === "0" ? "stream off" : "stream " + e.target.value));
+  $("sense-raw").addEventListener("change", (e) =>
+    sendTune(e.target.checked ? "raw on" : "raw off"));
   $("update-btn").addEventListener("click", onInstallUpdate);
   const rerollBtn = $("cert-reroll");
   if (rerollBtn) rerollBtn.addEventListener("click", rerollCertificate);
@@ -230,9 +249,12 @@ async function boot() {
     window.addEventListener("afterprint", done, { once: true });
     try { window.print(); } catch (_) { done(); }
   });
-  $("update-dismiss").addEventListener("click", () =>
-    $("update-banner").classList.add("hidden")
-  );
+  $("update-dismiss").addEventListener("click", () => {
+    $("update-banner").classList.add("hidden");
+    // Remember which version was waved off, so the routine re-checks don't
+    // nag — the banner returns only for a NEWER version (or a manual check).
+    if (state.update) { prefs.updateDismissed = state.update.version; savePrefs(); }
+  });
   // Manual re-read: clear any failure and force a fresh identify next tick.
   $("recheck").addEventListener("click", () => {
     state.failedPort = null;
@@ -252,7 +274,10 @@ async function boot() {
   });
   PROV_FIELDS.forEach((id) => $(id).addEventListener("input", persistProv));
 
-  await listen("serial:log", (ev) => appendConsole("serial-console", ev.payload));
+  await listen("serial:log", (ev) => {
+    feedSenseTune(ev.payload); // the tuning panel reads [cfg]/[tune] replies
+    appendConsole("serial-console", ev.payload);
+  });
   await listen("serial:status", (ev) => {
     $("monitor-status").textContent = ev.payload;
     if (String(ev.payload).toLowerCase().includes("stopped") ||
@@ -289,6 +314,13 @@ async function boot() {
   });
 
   checkForUpdate();     // best-effort, in the background
+  // …and keep checking: on a routine while the window stays open, plus a
+  // catch-up when the user comes back to a window that sat idle. Both are
+  // quiet — they only surface anything when an update is actually ready.
+  setInterval(() => checkForUpdate(), UPDATE_RECHECK_MS);
+  window.addEventListener("focus", () => {
+    if (Date.now() - (prefs.lastCheckedAt || 0) > UPDATE_STALE_MS) checkForUpdate();
+  });
   pollPorts();          // first tick now…
   setInterval(pollPorts, POLL_MS); // …then keep watching
 }
@@ -551,10 +583,12 @@ async function identify(portInfo) {
   setConn("reading", `Found ${label} — reading chip…`);
   $("download-mode").classList.add("hidden");
   try {
-    const chip = await invoke("detect_chip", { port });
+    const info = await invoke("detect_chip", { port });
     if (port !== state.port) return; // unplugged/switched while we were reading
-    state.chip = chip;
-    setConn("connected", `Connected · ${chip} on ${port}`);
+    state.chip = info.chip;
+    state.flashBytes = info.flash_bytes; // may be null if board-info didn't report it
+    state.mac = info.mac; // may be null
+    setConn("connected", `Connected · ${info.chip} on ${port}`);
     $("recheck").classList.remove("hidden");
 
     refreshManifest();
@@ -564,8 +598,19 @@ async function identify(portInfo) {
   } catch (e) {
     if (port !== state.port) return;
     state.failedPort = port;
-    setConn("failed", `Found ${port} — couldn't read the chip. Put it in download mode.`);
-    $("download-mode").classList.remove("hidden");
+    // detect_chip's error names the real cause when it knows one — on Linux,
+    // "permission denied" and "port held by ModemManager" have a one-line OS
+    // fix, and coaching the BOOT/RESET ritual for those sends the user to the
+    // wrong fix forever. Show the backend's first line for an OS-level
+    // failure (and hide the download-mode coaching); blame download mode only
+    // when nothing else was named. (The browser flasher makes the same call
+    // in classifyFlashError — two frontends, same diagnostic.)
+    const firstLine = String(e).split("\n")[0].trim();
+    const osLevel = /Linux blocked opening|holding the board's serial port/i.test(firstLine);
+    setConn("failed", osLevel
+      ? `Found ${port} — ${firstLine}`
+      : `Found ${port} — couldn't read the chip. Put it in download mode.`);
+    $("download-mode").classList.toggle("hidden", osLevel);
     $("recheck").classList.remove("hidden");
   } finally {
     state.detecting = false;
@@ -578,6 +623,8 @@ function onDisconnect() {
   state.portInfo = null;
   state.portKind = null;
   state.chip = null;
+  state.flashBytes = null;
+  state.mac = null;
   state.product = null;
   state.failedPort = null;
   resetSteps();
@@ -598,6 +645,12 @@ function resetSteps() {
   setStatus("flash-result", "");
   $("provisioning").classList.add("hidden");
   $("host-flash-controls").classList.remove("hidden");
+  // Re-arm the first-contact erase for every board that attaches. The checkbox
+  // starts ticked in the markup, but that only happens once per app launch —
+  // so unticking it to reflash a known Canary would silently carry over to the
+  // next board plugged in, which is precisely the marketplace board that needs
+  // the wipe. The safe default has to be restored per board, not per session.
+  if ($("first-contact")) $("first-contact").checked = true;
   $("module-flow").classList.add("hidden");
   $("serial-monitor").classList.add("hidden");
   renderReceipts();
@@ -630,11 +683,18 @@ function activeManifestUrl() {
   return state.devChannel ? DEV_FLASH_MANIFEST_URL : state.catalog.manifest_url;
 }
 
+// Stale-fetch guard: a stable and a dev fetch can be in flight at once (the
+// toggle mid-fetch), and the network decides which lands last — only the
+// NEWEST refresh may write state, or the products shown belong to the other
+// channel.
+let manifestGeneration = 0;
 function refreshManifest() {
+  const generation = ++manifestGeneration;
   state.manifest = null;
   state.manifestError = null;
   invoke("fetch_manifest", { manifestUrl: activeManifestUrl() })
     .then((m) => {
+      if (generation !== manifestGeneration) return; // superseded by a newer refresh
       state.manifest = m;
       state.manifestError = null;
       renderProducts();
@@ -644,6 +704,7 @@ function refreshManifest() {
     // shipped" — when the real answer was "the release this build is pinned
     // to was never cut". renderProducts() turns it into that sentence.
     .catch((e) => {
+      if (generation !== manifestGeneration) return; // superseded by a newer refresh
       state.manifestError = String((e && e.message) || e || "unreachable");
       renderProducts();
     });
@@ -748,8 +809,29 @@ function onProductChosen(p, ver) {
   $("module-flow").classList.add("hidden");
   $("host-flash-controls").classList.remove("hidden");
   $("serial-monitor").classList.remove("hidden");
-  $("provisioning").classList.toggle("hidden", p.provisioning !== "usb-secrets");
-  if (p.provisioning === "usb-secrets" && !$("device-id").value) {
+  // Wi-Fi preload is standard on EVERY board (each firmware reads the same
+  // NVS namespace, catalog wifi_nvs says in which encoding) — so the network
+  // fields always show. Identity + broker stay usb-secrets-only: the other
+  // firmwares configure that part themselves (AP portal / on-glass).
+  const usbSecrets = p.provisioning === "usb-secrets";
+  $("provisioning").classList.remove("hidden");
+  document.querySelectorAll("#provisioning .usb-only").forEach((n) => {
+    n.classList.toggle("hidden", !usbSecrets);
+    const input = n.querySelector("input");
+    if (input) input.required = usbSecrets && ["device-id", "mqtt-host", "mqtt-port"].includes(input.id);
+  });
+  $("wifi-ssid").required = usbSecrets;
+  $("provision-note").textContent = usbSecrets
+    ? "The verified release image is generic. These values are written directly into this board's settings partition, never logged and never saved by the app."
+    : "Optional: bake your network in and the Canary joins it on first boot — skip it and the board's own setup path (phone portal or on-screen) still works.";
+  // Offer the network this computer is on — the common case — so joining is
+  // one Tab and a password away (which Keychain/password managers can fill).
+  if (!$("wifi-ssid").value) {
+    invoke("current_ssid").then((ssid) => {
+      if (ssid && !$("wifi-ssid").value) $("wifi-ssid").value = ssid;
+    }).catch(() => {});
+  }
+  if (usbSecrets && !$("device-id").value) {
     const family = p.id.includes("vision")
       ? "canary_vision"
       : p.id.includes("sense")
@@ -777,14 +859,26 @@ function showModuleFlow() {
   $("module-flow").classList.remove("hidden");
   $("console").textContent = "";
   $("console").classList.remove("hidden");
-  setStatus("flash-result", "Use the module button below. The host firmware receipt is kept while you move the cable.");
+  setStatus("flash-result", "Use the module button below. The host firmware receipt is kept while you move the cable." +
+    (state.vision.hostFlash ? "" :
+      " (The demo takes two boards — the XIAO host gets the Canary Vision firmware through its own USB-C port, before or after this one.)"));
   renderReceipts(true);
 }
 
 // ── step 3: flash ───────────────────────────────────────────────────────────
 async function onFlash() {
-  const provisioning = readProvisioning(state.product);
-  if (state.product.provisioning === "usb-secrets" && !provisioning) return;
+  // Snapshot the chosen product and channel for this write: a dev-channel
+  // toggle clears state.product, and the receipt logic below must keep
+  // judging the product that was actually written, not whatever the UI
+  // holds by the time the flash finishes.
+  const product = state.product;
+  const manifestUrl = activeManifestUrl();
+  // false = the user TYPED provisioning values that don't validate — abort so
+  // the install can't succeed while silently dropping the Wi-Fi they asked
+  // for. null = intentionally skipped (wifi-only board, empty SSID): flash on.
+  const provisioning = readProvisioning(product);
+  if (provisioning === false) return;
+  if (product.provisioning === "usb-secrets" && !provisioning) return;
   persistProv();
   const btn = $("flash-btn");
   const con = $("console");
@@ -792,6 +886,7 @@ async function onFlash() {
   con.classList.remove("hidden");
   btn.disabled = true;
   btn.textContent = "Flashing…";
+  $("dev-channel").disabled = true;
   setStatus("flash-result", "");
   // Reflash must start from a clean slate — never show the PREVIOUS flash's
   // green result, receipts, certificate, or a stale "Broken pipe" monitor line.
@@ -807,24 +902,39 @@ async function onFlash() {
   try {
     const receipt = await invoke("flash", {
       port: state.port,
-      productId: state.product.id,
-      manifestUrl: activeManifestUrl(),
+      productId: product.id,
+      manifestUrl,
       baud: state.catalog.flash_baud || 921600,
       detectedChip: state.chip,
       provisioning,
+      // First contact with a board we've never written: wipe the whole chip
+      // rather than only the regions we're about to write, so nothing a
+      // previous owner left in an untouched partition rides through. The
+      // browser flasher decides this by reading the board; espflash can't
+      // report what's resident, so here it's the user's answer on step 1.
+      eraseFirst: !!($("first-contact") && $("first-contact").checked),
     });
     state.vision.hostFlash = receipt;
     state.vision.hostBoot = null;
     clearSecretFields();
     renderReceipts();
-    announceToWitness(state.product);   // instant, so the wall reacts right away
-    discoverAndPopulate(state.product); // then replace with the REAL fleet off the LAN
-    if (requiresLiveReceipt(state.product)) {
-      setStatus("flash-result", "Firmware write verified. Watching the live boot for its device receipt…", "ok");
+    announceToWitness(product);   // instant, so the wall reacts right away
+    discoverAndPopulate(product); // then replace with the REAL fleet off the LAN
+    // The Vision is a TWO-board Canary: the ESP32 host just flashed here, and
+    // the Grove Vision AI V2 camera module loads its model through its OWN
+    // USB-C port. Say the next move out loud, or the demo dies half-done with
+    // a module that never got a brain.
+    const moduleNext = product.id && product.id.includes("vision") && !state.vision.module
+      ? " Board 1 of 2 done — now move the USB cable to the CAMERA MODULE's own USB-C port " +
+        "(the wide port on the carrier board, next to the Grove socket — not the XIAO's). " +
+        "I'll recognize the module and offer its model below."
+      : "";
+    if (requiresLiveReceipt(product)) {
+      setStatus("flash-result", "Firmware write verified. Watching the live boot for its device receipt…" + moduleNext, "ok");
       state.busy = false;
       await startMonitor();
     } else {
-      setStatus("flash-result", "Firmware write verified. Flashing is complete. ✓", "ok");
+      setStatus("flash-result", "Firmware write verified. Flashing is complete. ✓" + moduleNext, "ok");
       maybeHatch();
       // The serial monitor should just work — start it automatically so the
       // live boot log is right there, no "Start" click. It reconnects on its
@@ -839,6 +949,7 @@ async function onFlash() {
     unlisten();
     btn.disabled = false;
     btn.textContent = "Flash my Canary";
+    $("dev-channel").disabled = false;
     state.busy = false;
     // The board reboots after a flash; let the watcher re-sync from scratch.
     state.chip = null;
@@ -847,29 +958,38 @@ async function onFlash() {
 }
 
 function readProvisioning(product) {
-  if (!product || product.provisioning !== "usb-secrets") return null;
-  const fields = ["device-id", "wifi-ssid", "wifi-pass", "mqtt-host", "mqtt-port", "mqtt-user", "mqtt-pass"];
+  if (!product) return null;
+  const usbSecrets = product.provisioning === "usb-secrets";
+  // Wi-Fi-only boards: an empty SSID just means "skip the preload" — the
+  // board's own setup path still works, so nothing to validate or write.
+  if (!usbSecrets && !$("wifi-ssid").value) return null;
+  const fields = usbSecrets
+    ? ["device-id", "wifi-ssid", "wifi-pass", "mqtt-host", "mqtt-port", "mqtt-user", "mqtt-pass"]
+    : ["wifi-ssid", "wifi-pass"];
   for (const id of fields) {
     const input = $(id);
     if (!input.checkValidity()) {
       input.reportValidity();
-      return null;
+      return false; // typed but invalid — the caller must NOT flash without it
     }
   }
   const wifiPass = $("wifi-pass").value;
   if (wifiPass && (new TextEncoder().encode(wifiPass).length < 8 ||
                    new TextEncoder().encode(wifiPass).length > 63)) {
     setStatus("flash-result", "Wi-Fi password must be 8–63 UTF-8 bytes (or empty for an open network).", "err");
-    return null;
+    return false; // same: an answer the user gave, not an answer to drop
   }
   return {
-    deviceId: $("device-id").value.trim(),
+    deviceId: usbSecrets ? $("device-id").value.trim() : "",
     wifiSsid: $("wifi-ssid").value,
     wifiPass,
-    mqttHost: $("mqtt-host").value.trim(),
-    mqttPort: Number($("mqtt-port").value),
-    mqttUser: $("mqtt-user").value,
-    mqttPass: $("mqtt-pass").value,
+    mqttHost: usbSecrets ? $("mqtt-host").value.trim() : "",
+    mqttPort: usbSecrets ? Number($("mqtt-port").value) : 1883,
+    mqttUser: usbSecrets ? $("mqtt-user").value : "",
+    mqttPass: usbSecrets ? $("mqtt-pass").value : "",
+    // Which NVS encoding this firmware reads (catalog, from the source):
+    // "blob" for canary/wap, "string" for sense/vision/display.
+    wifiNvs: product.wifi_nvs || "string",
   };
 }
 
@@ -878,10 +998,79 @@ function clearSecretFields() {
   $("mqtt-pass").value = "";
 }
 
+// ── module inference preview: the frame WITH its detections drawn ───────────
+// The receipt's `boxes` are SSCMA detections — [x, y, w, h, score, target],
+// x/y the box CENTER in frame pixels, score already a 0-100 percent. Geometry,
+// identity colors, and confidence bands mirror the browser bench (the source
+// of truth is canary-local/assets/we2-core.js stylizeDetections; the two
+// flashers share no code, so per the two-flashers rule the paint lives here
+// too). Garbage boxes are dropped, never thrown on.
+const MODULE_CLASSES = ["person"];
+const PREVIEW_HUES = [140, 45, 200, 320, 20, 260, 80, 175];
+
+function moduleDetections(boxes) {
+  const out = [];
+  for (const b of boxes || []) {
+    if (!Array.isArray(b) || b.length < 6) continue;
+    const [x, y, w, h, score, target] = b;
+    if (![x, y, w, h].every((n) => typeof n === "number" && Number.isFinite(n))) continue;
+    const pct = Math.max(0, Math.min(100, Math.round(Number(score) || 0)));
+    out.push({ x, y, w, h, score: pct, label: MODULE_CLASSES[target] || "object" });
+  }
+  return out;
+}
+
+function moduleSummary(boxes) {
+  const dets = moduleDetections(boxes);
+  if (!dets.length) return "nothing in frame";
+  const top = dets.reduce((m, d) => Math.max(m, d.score), 0);
+  const word = dets[0].label + (dets.length > 1 ? "s" : "");
+  return `${dets.length} ${word} · top ${top}%`;
+}
+
+function renderModulePreview(receipt) {
+  const cv = $("module-preview");
+  if (!receipt || !receipt.preview_image || !cv.getContext) return;
+  const img = new Image();
+  img.onload = () => {
+    cv.width = img.width; cv.height = img.height;
+    const ctx = cv.getContext("2d");
+    ctx.drawImage(img, 0, 0);
+    moduleDetections(receipt.boxes).forEach((d, i) => {
+      const hue = PREVIEW_HUES[i % PREVIEW_HUES.length];
+      const band = d.score >= 60 ? "ok" : d.score >= 35 ? "soft" : "faint";
+      const color = `hsl(${hue} 90% ${band === "ok" ? 66 : 58}%)`;
+      const x = d.x - d.w / 2, y = d.y - d.h / 2;
+      ctx.lineWidth = band === "ok" ? 3 : 2;
+      ctx.strokeStyle = color;
+      ctx.strokeRect(x, y, d.w, d.h);
+      // corner ticks make thin boxes readable on busy frames
+      ctx.lineWidth = band === "ok" ? 5 : 3;
+      const t = Math.min(14, d.w / 4, d.h / 4);
+      ctx.beginPath();
+      for (const [cx, cy, dx, dy] of [[x, y, 1, 1], [x + d.w, y, -1, 1], [x, y + d.h, 1, -1], [x + d.w, y + d.h, -1, -1]]) {
+        ctx.moveTo(cx + dx * t, cy); ctx.lineTo(cx, cy); ctx.lineTo(cx, cy + dy * t);
+      }
+      ctx.stroke();
+      const text = `#${i + 1} ${d.label} · ${d.score}%`;
+      ctx.font = "700 13px ui-monospace, Menlo, monospace";
+      const tw = ctx.measureText(text).width + 10;
+      const ly = y - 20 >= 0 ? y - 20 : y + d.h + 1;
+      ctx.fillStyle = `hsl(${hue} 65% 14% / ${band === "ok" ? 0.92 : 0.85})`;
+      ctx.fillRect(x, ly, tw, 19);
+      ctx.fillStyle = color;
+      ctx.fillText(text, x + 5, ly + 14);
+    });
+    cv.classList.remove("hidden");
+  };
+  img.src = "data:image/jpeg;base64," + receipt.preview_image;
+}
+
 async function onFlashModule() {
   const btn = $("module-flash-btn");
   btn.disabled = true;
   btn.textContent = "Flashing model…";
+  $("dev-channel").disabled = true;
   state.busy = true;
   $("console").textContent = "";
   $("console").classList.remove("hidden");
@@ -894,12 +1083,14 @@ async function onFlashModule() {
       manifestUrl: state.catalog.we2_module.manifest_url,
     });
     state.vision.module = receipt;
-    $("module-progress").textContent = "100% · inference proved";
-    setStatus("flash-result", "Vision module verified, burned, answered AT, and ran one inference. ✓", "ok");
-    if (receipt.preview_image) {
-      $("module-preview").src = "data:image/jpeg;base64," + receipt.preview_image;
-      $("module-preview").classList.remove("hidden");
-    }
+    $("module-progress").textContent = "100% · inference proved · " + moduleSummary(receipt.boxes);
+    // Mirror of the host-side nudge: whichever board flashed first, the
+    // other one is named — with its port — before this counts as done.
+    const hostNext = state.vision.hostFlash ? "" :
+      " Board 1 of 2 done — the XIAO host still needs the Canary Vision firmware: " +
+      "move the cable to the XIAO's own USB-C port and pick Canary Vision above.";
+    setStatus("flash-result", "Vision module verified, burned, answered AT, and ran one inference. ✓" + hostNext, "ok");
+    renderModulePreview(receipt);
     renderReceipts(true);
     maybeHatch();
   } catch (e) {
@@ -909,11 +1100,20 @@ async function onFlashModule() {
     state.busy = false;
     btn.disabled = false;
     btn.textContent = "Flash & prove the Vision module";
+    $("dev-channel").disabled = false;
   }
 }
 
 // ── Advanced: dev channel + local file ──────────────────────────────────────
 function onDevChannelToggle() {
+  // Never mid-flash: the in-flight write already resolved its manifest, and
+  // clearing state under it would leave the receipt logic waiting on a
+  // product that no longer exists. The checkbox is disabled while busy too —
+  // this guard covers any path that flips it anyway.
+  if (state.busy) {
+    $("dev-channel").checked = state.devChannel;
+    return;
+  }
   state.devChannel = $("dev-channel").checked;
   $("dev-banner").classList.toggle("hidden", !state.devChannel);
   logEvent("info", state.devChannel
@@ -944,6 +1144,363 @@ function updateLocalFlashUi() {
     : "Plug in a Canary and let the chip read finish first — the file is " +
       "written to whichever chip is connected.";
   $("local-flash-btn").disabled = !(state.localFile && connected && !state.busy);
+  // The rescue bench sits in the same Advanced card and gates on the same
+  // connection, so refresh it on every pass through here.
+  updateRescueUi();
+}
+
+// ── the rescue bench (Advanced): back up / restore / erase ──────────────────
+// Parity with the browser Lab's rescue tools, over the native espflash sidecar
+// (backup_flash / write_local_image / erase_chip stream `rescue:log`). Nothing
+// here can brick the board — the ESP32's first-stage bootloader is mask ROM.
+function rescueButtons(enabled) {
+  for (const id of ["rescue-backup-btn", "rescue-restore-btn", "rescue-erase-btn"]) {
+    const b = $(id);
+    if (b) b.disabled = !enabled;
+  }
+}
+
+function updateRescueUi() {
+  const connected = !!state.chip && state.portKind === "esp32";
+  const note = $("rescue-chip-note");
+  if (note) {
+    note.textContent = connected
+      ? `Connected: ${state.chip} on ${state.port}` +
+        (state.flashBytes ? ` · ${Math.round(state.flashBytes / (1 << 20))} MB flash` : "")
+      : "Plug in a Canary and let the chip read finish first.";
+  }
+  const on = connected && !state.busy;
+  rescueButtons(on);
+  // A backup is a full-chip read, so it needs the flash size; without it,
+  // restore and erase still work but backup can't.
+  const backupBtn = $("rescue-backup-btn");
+  if (backupBtn && !state.flashBytes) backupBtn.disabled = true;
+  // The health check reads its own sizes from the partition table, so it only
+  // needs a connection.
+  const healthBtn = $("health-check-btn");
+  if (healthBtn) healthBtn.disabled = !on;
+  const healthNote = $("health-chip-note");
+  if (healthNote) {
+    healthNote.textContent = connected
+      ? `Connected: ${state.chip} on ${state.port}${state.mac ? ` · ${state.mac}` : ""}`
+      : "Plug in a Canary and let the chip read finish first.";
+  }
+}
+
+const flashBaud = () => (state.catalog && state.catalog.flash_baud) || 921600;
+
+// Release the busy-lock a rescue handler took before opening its dialog, when
+// the user cancels out. The watcher resumes and the buttons re-enable.
+function cancelRescue() {
+  state.busy = false;
+  updateRescueUi();
+}
+
+// The shared plumbing for one CONFIRMED rescue operation: a fresh console, the
+// rescue:log stream, and releasing the busy-lock. The caller has already
+// snapshotted the target and set state.busy (so the port watcher can't swap the
+// board out while a dialog is open), so `op` runs the invoke against that
+// snapshot and returns the success line; a throw becomes the error line. A
+// write/erase reboots or wipes the board, so the detected chip is dropped
+// afterward to force a clean re-read; keepChip:true is for the read-only backup.
+async function runRescue(label, op, { keepChip = false } = {}) {
+  const con = $("rescue-console");
+  con.textContent = "";
+  con.classList.remove("hidden");
+  setStatus("rescue-result", "");
+  resetOutcome();
+  await stopMonitor();
+  const unlisten = await listen("rescue:log", (ev) => {
+    con.textContent += ev.payload + "\n";
+    con.scrollTop = con.scrollHeight;
+  });
+  try {
+    const okMsg = await op();
+    setStatus("rescue-result", okMsg, "ok");
+    logEvent("ok", `${label} ✓`);
+  } catch (e) {
+    setStatus("rescue-result", String(e), "err");
+    logEvent("err", `${label} failed: ` + e);
+  } finally {
+    unlisten();
+    state.busy = false;
+    if (!keepChip) {
+      state.chip = null;
+      state.flashBytes = null;
+      state.failedPort = null;
+    }
+    updateRescueUi();
+  }
+}
+
+async function onRescueBackup() {
+  if (state.busy || !state.chip || state.portKind !== "esp32") return;
+  if (!state.flashBytes) {
+    setStatus("rescue-result",
+      "Couldn't read this chip's flash size — reconnect in download mode and try again.", "err");
+    return;
+  }
+  // Snapshot the target and take the busy-lock BEFORE the save sheet opens: the
+  // 1 s port watcher is otherwise free to swap in a different board while the
+  // dialog sits open, and the write must land on the board the user is looking
+  // at — never whatever got plugged in mid-dialog.
+  const port = state.port, chip = state.chip, flashBytes = state.flashBytes;
+  state.busy = true;
+  rescueButtons(false);
+  let out = null;
+  try {
+    out = await window.__TAURI__.dialog.save({
+      defaultPath: `securacv-${chip}-backup.bin`.replace(/[^\w.-]+/g, "-"),
+      filters: [{ name: "Flash backup", extensions: ["bin"] }],
+    });
+  } catch (e) {
+    setStatus("rescue-result", String(e), "err");
+    cancelRescue();
+    return;
+  }
+  if (!out) { cancelRescue(); return; }
+  // Read-only: the board isn't rebooted, so keep the detected chip.
+  await runRescue("Backup", async () => {
+    await invoke("backup_flash", { port, outPath: out, flashSize: flashBytes, baud: flashBaud() });
+    return "Backup saved. Store the file like a house key — it holds the board's " +
+      "identity key and saved Wi-Fi.";
+  }, { keepChip: true });
+}
+
+async function onRescueRestore() {
+  if (state.busy || !state.chip || state.portKind !== "esp32") return;
+  // Snapshot + lock before the picker and the confirm, so the board named in
+  // the confirmation is the exact board written — not one swapped in meanwhile.
+  const port = state.port, chip = state.chip, flashBytes = state.flashBytes;
+  state.busy = true;
+  rescueButtons(false);
+  let path = null;
+  try {
+    path = await window.__TAURI__.dialog.open({
+      multiple: false,
+      directory: false,
+      filters: [{ name: "Firmware image or backup", extensions: ["bin"] }],
+    });
+  } catch (e) {
+    setStatus("rescue-result", String(e), "err");
+    cancelRescue();
+    return;
+  }
+  if (!path) { cancelRescue(); return; }
+  const name = String(path).split(/[\\/]/).pop();
+  let ok = false;
+  try {
+    ok = await window.__TAURI__.dialog.confirm(
+      `Write ${name} to the ${chip} on ${port}?\n\nThis overwrites the whole chip ` +
+      `from offset 0. A backup or a merged factory .bin is right; an app-only ` +
+      `build is refused before anything is written.`,
+      { title: "Restore / write a .bin", kind: "warning" });
+  } catch (_) {
+    ok = window.confirm(`Write ${name} to the ${chip} on ${port}?`);
+  }
+  if (!ok) { cancelRescue(); return; }
+  await runRescue("Restore", async () => {
+    await invoke("write_local_image", {
+      port,
+      path,
+      flashSize: flashBytes || null, // optional fit-check; the shape guard runs regardless
+      baud: flashBaud(),
+    });
+    return `${name} written — the board is rebooting into it. Run a health check next.`;
+  });
+}
+
+async function onRescueErase() {
+  if (state.busy || !state.chip || state.portKind !== "esp32") return;
+  // Erase is the most dangerous of the three — it destroys the identity key —
+  // so snapshotting the target under the busy-lock before the confirm matters
+  // most here: approving must wipe the named board, never a mid-dialog swap-in.
+  const port = state.port, chip = state.chip;
+  state.busy = true;
+  rescueButtons(false);
+  let ok = false;
+  try {
+    ok = await window.__TAURI__.dialog.confirm(
+      `Erase the entire ${chip} on ${port}?\n\nThis wipes everything — including ` +
+      `the board's Ed25519 identity key and saved Wi-Fi. Do this before selling ` +
+      `or giving a board away. Back it up first if you might want any of it back.`,
+      { title: "Erase the whole chip", kind: "warning" });
+  } catch (_) {
+    ok = window.confirm(`Erase the entire ${chip}? This destroys the identity key.`);
+  }
+  if (!ok) { cancelRescue(); return; }
+  await runRescue("Erase", async () => {
+    await invoke("erase_chip", { port });
+    return "Chip erased — factory-fresh. Flash any image next.";
+  });
+}
+
+// ── the health check: read the board's story, change nothing ────────────────
+// Parity with the browser Lab's health report. Read-only, so no confirm — but
+// it still snapshots the target + takes the busy-lock before touching the wire,
+// like the rescue ops, so the watcher can't swap boards mid-read.
+async function onHealthCheck() {
+  if (state.busy || !state.chip || state.portKind !== "esp32") return;
+  const port = state.port, chip = state.chip, mac = state.mac, flashBytes = state.flashBytes;
+  state.busy = true;
+  rescueButtons(false);
+  const btn = $("health-check-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "Reading…"; }
+  const con = $("health-console");
+  con.textContent = "";
+  con.classList.remove("hidden");
+  $("health-report").classList.add("hidden");
+  setStatus("health-result", "");
+  resetOutcome();
+  await stopMonitor();
+  const unlisten = await listen("health:log", (ev) => {
+    con.textContent += ev.payload + "\n";
+    con.scrollTop = con.scrollHeight;
+  });
+  try {
+    const report = await invoke("health_check", { port, chip, mac, flashBytes, baud: flashBaud() });
+    report.generatedAt = new Date().toISOString(); // the browser stamps this too
+    renderHealthReport(report);
+    const v = report.verdict || {};
+    setStatus("health-result", `Verdict: ${v.headline || "read complete"}.`,
+      v.level === "attn" ? "err" : "ok");
+    logEvent("ok", "Health check read");
+  } catch (e) {
+    setStatus("health-result", String(e), "err");
+    logEvent("err", "Health check failed: " + e);
+  } finally {
+    unlisten();
+    state.busy = false; // read-only — the board wasn't touched, keep the detected chip
+    if (btn) btn.textContent = "Run a health check";
+    updateRescueUi();
+  }
+}
+
+// Build the report DOM from the object the backend returns. Everything read off
+// flash (project names, versions, labels) goes in via textContent, never HTML.
+function renderHealthReport(r) {
+  const box = $("health-report");
+  box.textContent = "";
+  box.classList.remove("hidden");
+
+  const h = (tag, cls, text) => {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  };
+  const row = (label, value, tone) => {
+    const d = h("div", "health-row" + (tone ? " health-" + tone : ""));
+    d.append(h("span", "health-row-k", label), h("span", "health-row-v", value));
+    box.append(d);
+  };
+  const section = (title) => box.append(h("h3", "health-h", title));
+
+  // Verdict + self-heal findings first — the point of the whole thing.
+  const v = r.verdict || {};
+  const vBox = h("div", "health-verdict health-" + (v.level || "ok"));
+  vBox.append(h("strong", "health-verdict-h", `${v.level === "ok" ? "✓" : "⚠"} ${v.headline || ""}`));
+  for (const f of (v.findings || [])) {
+    const fEl = h("div", "health-finding");
+    fEl.append(h("p", "health-finding-t", f.title));
+    if (f.fix) fEl.append(h("p", "health-finding-fix muted", f.fix));
+    vBox.append(fEl);
+  }
+  box.append(vBox);
+
+  // Facts.
+  if (r.chip) row("Chip", r.chip);
+  if (r.mac) row("ID (MAC)", r.mac);
+  if (r.flashBytes) row("Flash", `${Math.round(r.flashBytes / (1 << 20))} MB`);
+
+  if (r.blank) {
+    box.append(h("p", "muted", "No partition table at 0x8000 — this chip looks blank."));
+    appendSaveReport(box, r);
+    return;
+  }
+
+  if (r.slots && r.slots.length) {
+    section("Firmware on the board");
+    for (const s of r.slots) {
+      const val = s.empty
+        ? "empty"
+        : `${s.project || "?"} ${s.version || ""}`.trim() + (s.built ? ` · built ${s.built}` : "");
+      row(s.label + (s.active ? " — running now" : ""), val, s.active ? "ok" : null);
+    }
+  }
+
+  if (r.ota) {
+    section("Update history");
+    if (r.ota.fresh && !r.ota.updatesSeen) {
+      row("Over-the-air updates", "none yet — factory image");
+    } else {
+      row("Updates recorded", String(r.ota.updatesSeen));
+      row("Boot state", r.ota.stateText, r.ota.pendingVerify ? "warn" : null);
+    }
+  }
+
+  section("Health");
+  if (r.coredump) {
+    r.coredump.present
+      ? row("Crash dump", `found (${r.coredump.size} bytes) — the board hard-crashed`, "warn")
+      : row("Crash dump", "none stored", "ok");
+  }
+  if (r.witness && r.witness.boots != null) row("Lifetime boots", String(r.witness.boots));
+  if (r.witness && r.witness.tamper) row("Tamper flag", `set (${r.witness.tamper})`, "warn");
+
+  if (r.witness) {
+    section("Witness chain");
+    if (r.witness.seq != null) row("Records chained", String(r.witness.seq), "ok");
+    if (r.witness.chainHeadFp) row("Chain head", r.witness.chainHeadFp + "…");
+    row("Device identity", r.witness.provisioned ? "provisioned" : "not provisioned",
+      r.witness.provisioned ? "ok" : null);
+    row("Wi-Fi settings", r.witness.wifiConfigured ? "stored" : "none");
+    box.append(h("p", "muted",
+      "Presence only — the identity key and Wi-Fi password are never shown or saved; " +
+      "the report notes only whether they exist."));
+  }
+
+  if (r.partitions && r.partitions.length) {
+    section("Flash map");
+    for (const p of r.partitions) {
+      row(p.label || p.kind,
+        `${p.kind} · ${Math.round(p.size / 1024)} KB @ 0x${(p.offset >>> 0).toString(16)}`);
+    }
+  }
+
+  appendSaveReport(box, r);
+}
+
+function appendSaveReport(box, r) {
+  const rowDiv = document.createElement("div");
+  rowDiv.className = "row";
+  const save = document.createElement("button");
+  save.className = "btn btn-ghost btn-small";
+  save.textContent = "Save report (.json)…";
+  save.addEventListener("click", () => onSaveHealthReport(r));
+  rowDiv.append(save);
+  box.append(rowDiv);
+}
+
+async function onSaveHealthReport(r) {
+  const stamp = (r.mac || "").replace(/[^0-9a-fA-F]/g, "").slice(-6).toLowerCase() || "canary";
+  let out = null;
+  try {
+    out = await window.__TAURI__.dialog.save({
+      defaultPath: `canary-${stamp}-report.json`,
+      filters: [{ name: "Health report", extensions: ["json"] }],
+    });
+  } catch (e) {
+    setStatus("health-result", String(e), "err");
+    return;
+  }
+  if (!out) return;
+  try {
+    await invoke("save_text_file", { path: out, contents: JSON.stringify(r, null, 2) });
+    setStatus("health-result", "Report saved.", "ok");
+  } catch (e) {
+    setStatus("health-result", "Couldn't save the report: " + e, "err");
+  }
 }
 
 async function onPickLocalFile() {
@@ -952,7 +1509,7 @@ async function onPickLocalFile() {
     path = await window.__TAURI__.dialog.open({
       multiple: false,
       directory: false,
-      filters: [{ name: "Firmware image", extensions: ["bin"] }],
+      filters: [{ name: "Factory firmware image", extensions: ["bin"] }],
     });
   } catch (e) {
     setStatus("local-result", String(e), "err");
@@ -972,13 +1529,14 @@ async function onPickLocalFile() {
     const magic = $("local-magic");
     magic.classList.toggle("hidden", state.localFile.esp_magic);
     if (!state.localFile.esp_magic) {
-      // Advisory only: a factory/merged image starts with the bootloader
-      // image, which itself begins 0xE9 — so a missing magic is worth a
-      // sentence, never a refusal.
+      // Advisory only: the backend already required the factory shape (the
+      // partition table at 0x8000), and on the catalog's chips the
+      // bootloader sits at 0x0 — so a missing 0xE9 is worth a sentence,
+      // never a refusal.
       magic.textContent =
         "⚠ This file doesn't start with 0xE9 — the ESP32's own “program " +
-        "starts here” marker, which a factory/merged image opens with. It " +
-        "can still be written; the board can't be bricked.";
+        "starts here” marker, which a factory image for these chips opens " +
+        "with. It can still be written; the board can't be bricked.";
     }
     $("local-info").classList.remove("hidden");
   } catch (e) {
@@ -1014,6 +1572,7 @@ async function onFlashLocalFile() {
   con.classList.remove("hidden");
   btn.disabled = true;
   btn.textContent = "Writing…";
+  $("dev-channel").disabled = true;
   setStatus("local-result", "");
   resetOutcome();
   state.busy = true; // pause the watcher so it can't grab the port
@@ -1025,10 +1584,15 @@ async function onFlashLocalFile() {
   });
 
   try {
+    // The inspected size + fingerprint ride along so the backend can prove
+    // the confirmed bytes are the ones still on disk — a changed file is
+    // refused, never silently written.
     const receipt = await invoke("flash_local_file", {
       port: state.port,
       baud: state.catalog.flash_baud || 921600,
       path: file.path,
+      expectedSize: file.size,
+      expectedSha256: file.sha256,
     });
     state.vision.hostFlash = receipt;
     state.vision.hostBoot = null;
@@ -1049,12 +1613,156 @@ async function onFlashLocalFile() {
   } finally {
     unlisten();
     btn.textContent = "Write this file to the board";
+    $("dev-channel").disabled = false;
     state.busy = false;
     // The board reboots after a flash; let the watcher re-sync from scratch.
     state.chip = null;
     state.failedPort = null;
     updateLocalFlashUi();
   }
+}
+
+// ── radar tuning suite (Sense): live knobs over the monitor port ────────────
+// Mirror of the web flasher's radar-bench tuning suite (two frontends share
+// no UI code — parity is the promise, see CLAUDE.md). The firmware side is
+// common/console/tuning_console.h: `set <knob> <value>` clamps, applies to
+// the live FSMs, and persists to NVS; every command answers with the full
+// `[cfg]` snapshot line, which is the only state this panel trusts.
+
+const senseTune = {
+  tail: "",       // partial console line across serial:log chunks
+  synced: false,  // saw a [cfg] snapshot this monitor session
+  active: false,  // panel visible (a Sense product is on the bench)
+  timer: 0,       // honesty timeout for "no tuning console"
+};
+
+function senseProductForTuning() {
+  // The product whose firmware is (or just landed) on the board: the last
+  // host flash wins, else the chosen product card.
+  const flashedId = state.vision && state.vision.hostFlash && state.vision.hostFlash.product_id;
+  const id = flashedId || (state.product && state.product.id);
+  if (!id) return null;
+  const p = ((state.catalog && state.catalog.products) || []).find((x) => x.id === id);
+  return p && p.reflexes && Array.isArray(p.reflexes.knobs) ? p : null;
+}
+
+function sendTune(cmd) {
+  invoke("serial_monitor_send", { command: cmd + "\n" }).catch((e) =>
+    setStatus("monitor-status", String(e), "err"));
+}
+
+function renderSenseTune() {
+  const p = senseProductForTuning();
+  const wrap = $("sense-tune");
+  senseTune.active = !!p;
+  senseTune.synced = false;
+  senseTune.tail = "";
+  clearTimeout(senseTune.timer);
+  wrap.classList.toggle("hidden", !p);
+  if (!p) return;
+  const badge = $("sense-tune-badge");
+  badge.textContent = "syncing with the board…";
+  const grid = $("sense-knobs");
+  grid.textContent = "";
+  for (const k of p.reflexes.knobs) {
+    if (!k.console) continue;
+    const row = document.createElement("label");
+    row.className = "sense-knob";
+    const name = document.createElement("span");
+    name.className = "sense-knob-name";
+    name.textContent = k.console;
+    const input = document.createElement("input");
+    input.type = "range";
+    input.min = String(k.bounds[0]);
+    input.max = String(k.bounds[1]);
+    input.step = k.unit === "cm" ? "10" : k.unit === "bpm" ? "1" : "50";
+    input.value = String(k.value);
+    input.disabled = true; // enabled on the first [cfg] sync
+    input.dataset.knob = k.console;
+    input.dataset.unit = k.unit;
+    const val = document.createElement("span");
+    val.className = "sense-knob-val";
+    val.textContent = `${k.value} ${k.unit}`;
+    input.addEventListener("input", () => { val.textContent = `${input.value} ${k.unit}`; });
+    input.addEventListener("change", () => sendTune(`set ${k.console} ${input.value}`));
+    row.title = `${k.id} — default ${k.value} ${k.unit}, range ${k.bounds[0]}–${k.bounds[1]}`;
+    row.append(name, input, val);
+    grid.append(row);
+  }
+  $("sense-reset").disabled = true;
+  $("sense-stream").disabled = true;
+  $("sense-raw").disabled = true;
+}
+
+function senseTuneHandshake() {
+  if (!senseTune.active) return;
+  // Ask for the knob snapshot (twice — the board may still be rebooting),
+  // then be honest if this firmware predates the tuning console.
+  setTimeout(() => { if (state.monitoring && !senseTune.synced) sendTune("cfg"); }, 800);
+  setTimeout(() => { if (state.monitoring && !senseTune.synced) sendTune("cfg"); }, 2500);
+  senseTune.timer = setTimeout(() => {
+    if (state.monitoring && senseTune.active && !senseTune.synced) {
+      $("sense-tune-badge").textContent =
+        "no tuning console on this firmware — install the latest release to tune live";
+    }
+  }, 5000);
+}
+
+// `[cfg] debounce=300 … stream=1000 raw=0` — the whole knob state on one
+// line, sent on demand and after every set/reset. stream/raw are console
+// session state, split out from the knob map.
+function parseSenseCfgLine(line) {
+  const t = String(line || "").trim();
+  if (!/^\[cfg\]\s/.test(t)) return null;
+  const values = {};
+  let stream = null, raw = null;
+  const re = /([a-z_]+)=(\d+)/g;
+  let m;
+  while ((m = re.exec(t))) {
+    const v = Number(m[2]);
+    if (m[1] === "stream") stream = v;
+    else if (m[1] === "raw") raw = v === 1;
+    else values[m[1]] = v;
+  }
+  return Object.keys(values).length ? { values, stream, raw } : null;
+}
+
+function onSenseTuneLine(line) {
+  const badge = $("sense-tune-badge");
+  const cfg = parseSenseCfgLine(line);
+  if (cfg) {
+    senseTune.synced = true;
+    for (const input of $("sense-knobs").querySelectorAll("input[type=range]")) {
+      const v = cfg.values[input.dataset.knob];
+      if (!Number.isFinite(v)) continue;
+      input.value = String(v);
+      input.disabled = false;
+      const val = input.parentElement.querySelector(".sense-knob-val");
+      if (val) val.textContent = `${v} ${input.dataset.unit}`;
+    }
+    $("sense-reset").disabled = false;
+    $("sense-stream").disabled = false;
+    $("sense-raw").disabled = false;
+    if (Number.isFinite(cfg.stream)) {
+      const sel = $("sense-stream");
+      const v = String(cfg.stream);
+      if ([...sel.options].some((o) => o.value === v)) sel.value = v;
+    }
+    if (typeof cfg.raw === "boolean") $("sense-raw").checked = cfg.raw;
+    badge.textContent = "LIVE — knobs synced with the board";
+    return;
+  }
+  const verdict = /^\[tune\]\s+(ok|err)\s+(.*)$/.exec(String(line).trim());
+  if (verdict) badge.textContent = (verdict[1] === "ok" ? "✓ " : "⚠ ") + verdict[2];
+}
+
+function feedSenseTune(chunk) {
+  if (!senseTune.active) return;
+  senseTune.tail += String(chunk);
+  const lines = senseTune.tail.split("\n");
+  senseTune.tail = lines.pop() || "";
+  if (senseTune.tail.length > 512) senseTune.tail = ""; // never hoard a runaway line
+  for (const line of lines) onSenseTuneLine(line);
 }
 
 // ── serial monitor + earned receipts ────────────────────────────────────────
@@ -1066,6 +1774,7 @@ async function startMonitor() {
   $("serial-monitor").classList.remove("hidden");
   $("serial-console").textContent = "";
   $("monitor-status").textContent = "Waiting for the board to reappear after reboot…";
+  renderSenseTune(); // the radar tuning suite rides the monitor on Sense boards
   setMonitorButtons(true);
   try {
     await invoke("start_serial_monitor", {
@@ -1074,6 +1783,7 @@ async function startMonitor() {
       pid: state.portInfo && state.portInfo.pid,
       baud: state.catalog.console_baud || 115200,
     });
+    senseTuneHandshake();
   } catch (e) {
     setMonitorButtons(false);
     $("monitor-status").textContent = String(e);
@@ -1102,13 +1812,22 @@ function resetOutcome() {
   setStatus("flash-result", "");
   setStatus("local-result", "");
   try { hideHatchCard(); } catch (_) {}
-  if (state.vision) { state.vision.hostFlash = null; state.vision.hostBoot = null; state.vision.module = null; }
+  // Host receipts belong to the image being overwritten — clear them. The
+  // MODULE receipt survives: the model lives in the camera module's own
+  // 16 MB flash and persists across every host reflash, so a module-first
+  // session must still count it after the host is flashed (wiping it here
+  // sent the user back to reflash a module that was already done, and the
+  // two-board hatch could never fire).
+  if (state.vision) { state.vision.hostFlash = null; state.vision.hostBoot = null; }
   try { renderReceipts(); } catch (_) {}
   const con = $("serial-console");
   if (con) con.textContent = "";
   const ms = $("monitor-status");
   if (ms) ms.textContent = "";
   $("serial-monitor").classList.add("hidden");
+  $("sense-tune").classList.add("hidden");
+  senseTune.active = false;
+  clearTimeout(senseTune.timer);
 }
 
 function appendConsole(id, text) {
@@ -1148,7 +1867,9 @@ function renderReceipts(forceVision = false) {
     ? `✓ ${host.channel === "local" ? host.product_id : "v" + host.version}` +
       `${host.channel === "dev" ? " (dev)" : ""} · ${host.bytes_written.toLocaleString()} B · ` +
       `${host.release_verification || "SHA-256"} · ${host.installed_sha256.slice(0, 12)}…`
-    : "waiting for ESP32 flash";
+    : vision
+      ? "waiting for ESP32 flash — plug the XIAO's own USB-C port"
+      : "waiting for ESP32 flash";
   setReceipt("receipt-host-image", !!host, hostLabel);
   setReceipt(
     "receipt-host-boot",
@@ -1170,7 +1891,7 @@ function renderReceipts(forceVision = false) {
       !!(module && module.inference_ok),
       module && module.inference_ok
         ? `✓ v${module.version} · inference · ${module.sha256.slice(0, 12)}…`
-        : "waiting for WE2 model + AT inference"
+        : "waiting for WE2 model — plug the module's own USB-C port (wide port by the Grove socket)"
     );
   }
 }
@@ -1200,6 +1921,22 @@ function requiresLiveReceipt(product) {
 }
 
 // ── self-update ─────────────────────────────────────────────────────────────
+// The update's own release notes, rendered safely: escape everything first,
+// then re-allow exactly two bits of markdown the notes use — `- ` bullets and
+// `**bold**` — so the banner can say WHAT is changing, not just a number.
+function notesHtml(notes) {
+  const lines = String(notes || "").split("\n").map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return "";
+  const li = [];
+  const p = [];
+  const bold = (s) => esc(s).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+  lines.forEach((l) => {
+    if (l.startsWith("- ")) li.push(`<li>${bold(l.slice(2))}</li>`);
+    else p.push(bold(l));
+  });
+  return (p.length ? `<p>${p.join(" ")}</p>` : "") + (li.length ? `<ul>${li.join("")}</ul>` : "");
+}
+
 async function checkForUpdate(manual = false) {
   prefs.lastCheckedAt = Date.now();
   savePrefs();
@@ -1209,10 +1946,20 @@ async function checkForUpdate(manual = false) {
     state.update = up || null;
     if (up) {
       $("update-text").textContent = `Version ${up.version} is ready (you have ${up.current_version}).`;
-      $("update-banner").classList.remove("hidden");
+      $("update-notes").innerHTML = notesHtml(up.notes);
+      $("update-notes").classList.toggle("hidden", !up.notes);
+      // Routine re-checks stay polite: a version the user already clicked
+      // "Later" on doesn't re-raise the banner (the About page and the health
+      // chip still show it; a manual check always does).
+      if (manual || prefs.updateDismissed !== up.version) {
+        $("update-banner").classList.remove("hidden");
+      }
       $("health-update").classList.remove("hidden");
       const upd = $("splash-upd"); if (upd) { upd.textContent = "update ready → v" + up.version; }
-      logEvent("info", "Update available: v" + up.version);
+      if (state.announcedUpdate !== up.version) {
+        state.announcedUpdate = up.version; // routine re-checks don't re-log it
+        logEvent("info", "Update available: v" + up.version);
+      }
     } else {
       $("health-update").classList.add("hidden");
       const upd = $("splash-upd"); if (upd) { upd.textContent = "up to date ✓"; }
@@ -1229,6 +1976,7 @@ async function checkForUpdate(manual = false) {
 async function onInstallUpdate() {
   const btn = $("update-btn");
   btn.disabled = true;
+  if (state.update) logEvent("info", "Installing update v" + state.update.version + "…");
   const unlisten = await listen("update:log", (ev) => {
     $("update-text").textContent = ev.payload;
   });
@@ -1360,9 +2108,10 @@ function renderAbout() {
 
   const updState = state.update
     ? `<p class="status ok">Version ${esc(state.update.version)} is ready to install.</p>
+       ${state.update.notes ? `<div class="update-notes"><b>What's changing</b>${notesHtml(state.update.notes)}</div>` : ""}
        <div class="row"><button class="btn btn-primary btn-small" id="about-update">Update &amp; relaunch</button>
        <button class="btn btn-ghost btn-small" id="about-check">Check again</button></div>`
-    : `<p class="status">You're on the newest build. The app checks on its own and heals forward — updates are signed and verified before they install.</p>
+    : `<p class="status">You're on the newest build. The app checks on its own — at launch and every few hours — and heals forward; updates are signed and verified before they install.</p>
        <div class="row"><button class="btn btn-ghost btn-small" id="about-check">Check now</button></div>`;
 
   const log = (prefs.log || []);
@@ -1598,7 +2347,7 @@ function hatchMoment(product) {
     title: "Your Canary is on its perch.",
     body: "The magical first proof is local and physical: join its setup network, open the dashboard, then make one harmless signal it can witness.",
     steps: [
-      "Join the SecuraCV-XXXX Wi-Fi network it creates and open canary.local.",
+      "On your phone, join the SecuraCV-XXXX Wi-Fi network it creates — the Canary's setup wizard pops up on its own a moment later. (If it doesn't, open canary.local — or 192.168.4.1 — in your browser.)",
       "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
       "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test."
     ]
@@ -1651,11 +2400,15 @@ const hub = {
   done: false,
   piUsbWaiting: false,
   platform: "", // "macos" | "linux" | …
+  // True when the flashed target was the Pi itself presented over USB-C
+  // (rpiboot mass-storage) — the "what now" steps differ from a card reader.
+  flashedViaPi: false,
   accountValid: false,
   accountRequested: false,
   // ETA bookkeeping, reset at each stage change
   eta: { stage: null, t0: 0, done0: 0 },
   fbTimer: null, // first-boot poll
+  fbCountStop: null, // stops the escalation countdown paint (hubCountdownStart)
   resumeTimer: null, // resume-across-restart poll
 };
 
@@ -1665,6 +2418,10 @@ const HUB_LASTFLASH_KEY = "securacv.hub.lastflash";
 // How long after a flash we'll still offer to resume the first-boot watch on
 // relaunch — comfortably longer than HAOS's 10–20 min first boot.
 const HUB_RESUME_WINDOW_MS = 45 * 60 * 1000;
+// When the first-boot watch escalates from "be patient" to "here's how to go
+// find it": past the honest 10–20 min first-boot window with margin. The watch
+// keeps polling — this only changes what the panel says.
+const HUB_FB_ESCALATE_MS = 25 * 60 * 1000;
 
 const HUB_STAGE_COPY = {
   download: "Downloading Home Assistant OS…",
@@ -1727,6 +2484,11 @@ function hubInit() {
   listen("hub:pi-usb", (e) => {
     // rpiboot's own narration, one line at a time — the last line is the state.
     $("hub-pi-usb-status").textContent = e.payload;
+  });
+  listen("hub:pi-usb-hint", (e) => {
+    // A recognised failure (on Linux, almost always the missing udev rule) — show
+    // the actionable fix in the persistent hint line so "done" can't bury it.
+    $("hub-pi-usb-hint").textContent = e.payload;
   });
   listen("hub:pi-usb-done", (e) => {
     hub.piUsbWaiting = false;
@@ -1810,17 +2572,30 @@ async function hubMaybeResume() {
   if (up) { hubClearFlashRecord(); return; }
   const banner = $("hub-resume");
   banner.classList.remove("hidden");
+  // Same countdown as the live watch, from the persisted flash time — the
+  // relaunched app owes the user the same "when do I start worrying" answer.
+  const stopCount = hubCountdownStart($("hub-resume-count"), rec.at);
   $("hub-resume-open").addEventListener("click", () => openExternal("http://" + (rec.host || HUB_HOST)));
   $("hub-resume-dismiss").addEventListener("click", () => {
     hubClearFlashRecord();
     banner.classList.add("hidden");
+    stopCount();
     if (hub.resumeTimer) { clearInterval(hub.resumeTimer); hub.resumeTimer = null; }
   });
+  let escalated = false;
   const tick = async () => {
     let alive = false;
     try { alive = await invoke("hub_probe_hub", { host: rec.host || HUB_HOST }); } catch (_) {}
+    // The resumed watch escalates exactly like the live one — measured from
+    // the persisted flash time (rec.at), so a relaunch mid-first-boot never
+    // loses the 25-minute troubleshooting transition along with the timer.
+    if (!alive && !escalated && Date.now() - rec.at > HUB_FB_ESCALATE_MS) {
+      escalated = true;
+      $("hub-resume-text").textContent = hubFindItChecklist();
+    }
     if (alive) {
       if (hub.resumeTimer) { clearInterval(hub.resumeTimer); hub.resumeTimer = null; }
+      stopCount();
       $("hub-resume-dot").className = "dot connected";
       $("hub-resume-text").textContent = "Your hub from earlier is up. 🐤";
       $("hub-resume-open").classList.remove("hidden");
@@ -1831,6 +2606,54 @@ async function hubMaybeResume() {
   };
   hub.resumeTimer = setInterval(tick, 6000);
   tick();
+}
+
+// Visible countdown to the go-find-it escalation, so the troubleshooting
+// tips are something the user can see coming ("in 18:32") rather than a
+// surprise at the 25-minute mark — and so "nothing yet" reads as expected,
+// not broken. Painted every second from the SAME deadline the escalation
+// check uses (startedAt + HUB_FB_ESCALATE_MS); self-stops and hides its
+// element when the deadline passes. Returns a stop() for the hub-answered
+// and watch-dismissed paths.
+function hubCountdownStart(el, startedAt) {
+  let timer = null;
+  const stop = () => {
+    if (timer) { clearInterval(timer); timer = null; }
+    el.classList.add("hidden");
+  };
+  const paint = () => {
+    const left = startedAt + HUB_FB_ESCALATE_MS - Date.now();
+    if (left <= 0) { stop(); return; }
+    const m = Math.floor(left / 60000);
+    const s = String(Math.floor((left % 60000) / 1000)).padStart(2, "0");
+    el.textContent =
+      "If it hasn't answered in " + m + ":" + s + ", we'll walk you through finding it.";
+    el.classList.remove("hidden");
+  };
+  timer = setInterval(paint, 1000);
+  paint();
+  return stop;
+}
+
+// The go-find-it checklist for a hub that's past the honest first-boot
+// window. Shared by the live first-boot watch AND the resumed-after-relaunch
+// watch — the hub is often fine and it's the *finding* that failed (this
+// computer can't resolve .local, a router blocking mDNS, a typo'd Wi-Fi
+// password we can't see from here); a headless user must never be left
+// staring at a spinner with no next move on either path.
+function hubFindItChecklist() {
+  return (
+    "Longer than a normal first boot now. The Pi may well be fine and just hard to find; " +
+    "try these, in order: " +
+    "1) Open http://" + HUB_HOST + " from a phone or another computer — some computers " +
+    "can't resolve .local names even when the hub is up (this watcher has the same limit). " +
+    "2) Look in your router's device list for “homeassistant” and open its IP address " +
+    "with :8123 on the end. " +
+    "3) If you set Wi-Fi at flash time, a mistyped network name or password is invisible " +
+    "from outside — plug an ethernet cable into the Pi (it needs no setup at all), or " +
+    "re-flash the card with the Wi-Fi typed fresh. " +
+    "Still watching in the background — if it answers, we'll say so."
+  );
 }
 
 // Turn a backend error into calm, useful words: what happened, why the
@@ -2023,15 +2846,28 @@ function hubStartFirstBoot() {
   panel.classList.remove("hidden");
   $("hub-fb-dot").className = "dot reading";
   $("hub-fb-text").textContent =
-    "Put the card in your Pi and power it on — watching for it to come online. First boot takes 10–20 minutes while it sets itself up; the blinking light is normal. You can walk away, we'll ping you.";
+    (hub.flashedViaPi
+      ? "Unplug the USB-C cable, then plug your Pi into its own power supply — it stays a plain USB disk until that power-cycle. Watching for it to come online."
+      : "Put the card in your Pi and power it on — watching for it to come online.") +
+    " No monitor or keyboard needed — the hub announces itself on your network by itself." +
+    " First boot takes 10–20 minutes while it sets itself up; the blinking light is normal. Leave it powered if you can (a power cut usually just delays it — worst case is re-flashing). You can walk away, we'll ping you.";
   $("hub-fb-open").classList.add("hidden");
   hubRenderQr();
   hubStopFirstBoot(true); // clear any prior timer without hiding the panel
+  const t0 = Date.now();
+  hub.fbCountStop = hubCountdownStart($("hub-fb-count"), t0);
+  let escalated = false;
   const tick = async () => {
     let up = false;
     try {
       up = await invoke("hub_probe_hub", { host: HUB_HOST });
     } catch (_) {}
+    // Past the honest first-boot window with nothing heard: swap "be patient"
+    // for the go-find-it checklist (see hubFindItChecklist).
+    if (!up && !escalated && Date.now() - t0 > HUB_FB_ESCALATE_MS) {
+      escalated = true;
+      $("hub-fb-text").textContent = hubFindItChecklist();
+    }
     if (up) {
       hubStopFirstBoot(true);
       $("hub-fb-dot").className = "dot connected";
@@ -2054,6 +2890,10 @@ function hubStopFirstBoot(keepPanel) {
   if (hub.fbTimer) {
     clearInterval(hub.fbTimer);
     hub.fbTimer = null;
+  }
+  if (hub.fbCountStop) {
+    hub.fbCountStop();
+    hub.fbCountStop = null;
   }
   if (!keepPanel) $("hub-firstboot").classList.add("hidden");
 }
@@ -2299,6 +3139,9 @@ async function hubFlash() {
   const target = hub.targets.find((t) => t.path === hub.selected);
   if (!target || hub.busy) return;
   hubStopFirstBoot(); // a fresh flash supersedes any prior first-boot watch
+  // Remember HOW this flash reaches the Pi — the "what now" steps differ
+  // between a card in a reader and the Pi itself acting as a USB disk.
+  hub.flashedViaPi = /rpi[-_ ]?msd/i.test(target.model);
   hub.busy = true;
   state.busy = true; // pause the Canary port watcher during the heavy write
   $("hub-flash-btn").disabled = true;
@@ -2321,7 +3164,12 @@ async function hubFlash() {
     setStatus("hub-result", "Done — written, read back, and verified.", "ok");
     logEvent("ok", "Home Assistant hub written to " + target.model);
     hubShowHatch(receipt);
-    hubNotify("Your card is ready", "Now boot it in your Pi — the app will tell you when it's online.");
+    hubNotify(
+      "Your card is ready",
+      hub.flashedViaPi
+        ? "Unplug the USB-C cable, then power your Pi from its own supply — the app will tell you when it's online."
+        : "Now boot it in your Pi — the app will tell you when it's online."
+    );
     hubChime();
     hubStartFirstBoot();
   } catch (e) {
@@ -2371,12 +3219,30 @@ function hubShowHatch(receipt) {
     `(SHA-256 ${receipt.sha256.slice(0, 16)}…).${cacheLine}${wifiLine}${acctLine}${ejectLine}`;
   // If the account was pre-made, the third step is "log in", not "create".
   const accountMade = receipt.account_seeded;
+  // The first step depends on HOW we reached the Pi's storage: a card in a
+  // reader moves to the Pi; the Pi-over-USB-C path has nothing to move — but
+  // it stays a plain USB disk until it's power-cycled onto its own supply.
+  const bootStep = hub.flashedViaPi
+    ? "Nothing to move — the storage we just wrote is already inside your Pi. It's still in " +
+      "“act as a disk” mode though, so it won't start on its own: unplug the USB-C cable " +
+      "from this computer, then plug the Pi into its normal power supply. That power-cycle " +
+      "is what starts the first boot."
+    : "Take the card out of the reader and put it in your Raspberry Pi (or connect the SSD), " +
+      "then power it on.";
   const steps = [
-    "Put the card in your Raspberry Pi (or connect the SSD) and power it on.",
-    "First boot takes 10–20 minutes while Home Assistant sets itself up — the LED activity is normal.",
+    bootStep,
+    "First boot takes 10–20 minutes while Home Assistant unpacks and sets itself up — LED " +
+      "activity is it working, not a problem. Best to leave it plugged in for those minutes; " +
+      "if power does get cut, it nearly always recovers on the next boot, and the true worst " +
+      "case is simply re-flashing this card.",
     accountMade
       ? `Open http://${HUB_HOST} and log in with the account you just made.`
       : `Open http://${HUB_HOST} on any device in your home and create your account.`,
+    "Once you're in, give your Canaries their meeting point: in Home Assistant go to " +
+      "Settings → Add-ons → Add-on Store, install “Mosquitto broker”, and press Start. When " +
+      "Home Assistant then offers to set up the newly discovered “MQTT” integration, accept " +
+      "with the defaults — they're exactly right for Canaries (the broker lives on the hub " +
+      "itself, port 1883).",
     "Then follow “The Hub” guide to bring in your Canaries — securacv.com/lab → Home Assistant.",
   ];
   $("hub-hatch-steps").innerHTML = steps.map((s) => `<li>${esc(s)}</li>`).join("");

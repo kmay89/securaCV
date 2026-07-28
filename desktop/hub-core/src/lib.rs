@@ -23,3 +23,4 @@ pub mod hub_enumerate_windows;
 pub mod hub_flash;
 pub mod hub_image;
 pub mod hub_seed;
+pub mod hub_usbboot;

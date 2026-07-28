@@ -143,8 +143,24 @@ publish executables/artifacts too and are the next to get the firmware release's
 treatment — tracked as a follow-up so this claim stays honest about what's
 covered *now*.
 
+## The other half: the board itself
+
+Everything above is about *our* bytes — proving the firmware you download was
+built from the open source. It says nothing about the **hardware** you bought
+it for. A board that arrives from a marketplace carries somebody else's flash
+contents and somebody else's eFuse state, and no amount of provenance on our
+side speaks to that.
+
+[Unflashed board intake](unflashed_board_intake.md) is the mirror of this
+document pointed at the hardware: the cold-start gesture that keeps an unknown
+board's firmware from ever executing, the read-only customs check the flasher
+runs before writing (security eFuses, flash-size honesty, what it shipped
+with), and — stated as plainly as the reproducible-builds section above — the
+parts nothing we ship can reach.
+
 ## See also
 
+- [Unflashed board intake](unflashed_board_intake.md) — the same honesty, applied to the hardware
 - [Firmware OTA](firmware_ota.md) — the Ed25519 release signature devices verify
 - [Browser flasher § Trust model](browser_flasher.md) — SHA-256 + in-browser Ed25519 + the flasher's own CSP/SRI
 - [Release process & channels](RELEASE_PROCESS.md) — how tags become releases

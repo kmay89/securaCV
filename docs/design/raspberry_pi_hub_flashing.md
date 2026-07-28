@@ -114,6 +114,15 @@ everywhere else):
    (`CONFIG/network/my-network`) carrying the user's SSID/PSK. This is the same
    secret our flasher already collects (`wifi-memory.js`) and the same
    local-only-custody promise: it goes onto the card, never to a cloud.
+   This placement is HA-documented, not folklore: the OS configuration docs
+   (developers.home-assistant.io/docs/operating-system/configuration) accept a
+   USB stick named `CONFIG` and say *"Alternative you can create a `CONFIG`
+   folder inside the `boot` partition"*, read on startup; files must be LF-only
+   (ours are). The keyfile carries a flash-time-minted stable `uuid=` (HA's
+   docs: without one "the IP address … change[s] on every boot") and
+   `llmnr=2`/`mdns=2` on `[connection]` — the values HAOS's own default wired
+   profile uses — so a Wi-Fi-only hub answers `homeassistant.local` at the OS
+   resolver, keeping the no-monitor promise.
 2. **securaCV, zero-touch** — seed a curated **HA backup / first-boot config** into
    the boot partition so onboarding brings up Mosquitto + the PWK add-on (and, at
    the chosen scope, dashboards + blueprints + the integration) already wired. First
@@ -266,9 +275,13 @@ Raspberry Pi Imager.
   - *Wi-Fi keyfile generator (landed):* `hub_core::hub_seed::wifi_keyfile` builds
     the NetworkManager keyfile HAOS reads at first boot from the SSID +
     passphrase — SSID as a byte array (any characters survive), passphrase
-    validated to WPA rules, escaping handled. Pure + host-tested. (Real-HAOS
-    acceptance still needs a flash to confirm — the crate tests the generation,
-    not the boot.)
+    validated to WPA rules, escaping handled, LF-only as HA's docs require.
+    The `[connection]` section carries `llmnr=2`/`mdns=2` (HAOS's own default
+    profile values, so the hub answers `homeassistant.local` on Wi-Fi) and a
+    stable `uuid=` minted at flash time by `hub_io::seed::uuid_v4` (HA's docs:
+    without one the profile is re-imported with a fresh identity — and possibly
+    a fresh IP — every boot). Pure + host-tested. (Real-HAOS acceptance still
+    needs a flash to confirm — the crate tests the generation, not the boot.)
   - *Seed drop (implemented; real-HAOS boot validation OUTSTANDING):*
     `hub_io::seed` mounts the freshly written boot partition (udisks /
     diskutil), writes `CONFIG/network/<id>` via the tested keyfile generator,
@@ -292,13 +305,72 @@ Raspberry Pi Imager.
     securaCV consumes Frigate over MQTT, the same recipe serves a Pi-with-Coral
     or a dedicated NVIDIA Jetson detector — see
     [`integrations/jetson-detector/`](../../integrations/jetson-detector/README.md).
-  - *Remaining:* upgrade the typed-once Wi-Fi persist store to the OS
-    keychain, and build the **seed assembler** that carries the curated
-    **full-stack** backup (Mosquitto + PWK add-on + Frigate/go2rtc + dashboards
-    + blueprints + the Frigate add-on repository) onto the card so first boot
-    comes up pre-wired — the config recipe now exists; what's missing is the
-    assembler + the hardware-validated restore mechanism. Until then the hub
-    boots as stock HAOS + Wi-Fi and the guide carries the user from
+  - *Provisioning plan (landed 2026-07-25):* `gen_hub_seed.py` →
+    `canary-local/devices/hub_seed.json` is the ordered first-boot sequence —
+    register the add-on repositories (the step the `ha` CLI **cannot** do, so it
+    names the Supervisor API `POST /store/repositories` that can), install the
+    broker, install Frigate, write its config to the add-on's *own* config dir,
+    then start the witness kernel. Every step carries `why` + `for_what` in plain
+    language so an installer can narrate what it's doing to someone's home.
+    Derived from `hub_image.json` (slugs/repositories) + the curated Frigate
+    config and drift-gated, so a slug fixed in the catalog can't stay wrong here;
+    an add-on that vanishes fails the generator loudly rather than emitting a
+    wrong plan (both behaviours verified).
+  - *Provisioning executor (landed 2026-07-25):*
+    [`canary-local/tools/hub_seed_apply.py`](../../canary-local/tools/hub_seed_apply.py)
+    is the piece that *runs* the plan, replacing `install.sh`'s punt (the `ha`
+    CLI can't register a repository, so the old path degrades to "click through
+    the store UI"). It drives the Supervisor REST API and is split the same way
+    the flasher is: a **pure** `plan_actions(seed, observed)` that decides the
+    ordered, idempotent action list, and a thin `SupervisorClient` that is the
+    only thing touching the network — so the whole planner is host-tested with no
+    Home Assistant (18 cases). It resolves each add-on's **Supervisor slug** from
+    the plan (a third-party add-on answers to `<repo_hash>_<slug>`, so securaCV is
+    `d0491a67_privacy_witness_kernel`, not the bare name — install-by-API 404s
+    otherwise; the plan now carries this, computed once in `gen_hub_seed.py`).
+    `--dry-run` narrates the full sequence — every `why`/`for_what` verbatim from
+    the plan, plus the exact API call — needing no hub, and never overwrites an
+    existing Frigate config (either `config.yml` or `config.yaml`, since Frigate
+    accepts both). It also sets the kernel's `mode: frigate` option **before**
+    starting it — the add-on's factory default is `standalone`, which serves only
+    a setup wizard, so without that the "unattended" install would come up
+    producing no claims. Real runs fail **closed**: any error stops with a "safe
+    to re-run, it's idempotent" note rather than leaving a half-built hub.
+  - *Provisioning bundle — the assembler's content half (landed 2026-07-26):*
+    [`gen_hub_provision_bundle.py`](../../canary-local/tools/gen_hub_provision_bundle.py)
+    assembles the self-contained payload the card will carry — the plan, the
+    curated Frigate config, the executor, and a one-line `provision.sh` runner —
+    and emits a drift-gated manifest
+    ([`hub_provision_bundle.json`](../../canary-local/devices/hub_provision_bundle.json))
+    that **pins each file's SHA-256**, so the bundle can't silently ship stale
+    code. A built bundle runs its own `sh provision.sh --dry-run` with no repo and
+    no hub — host-tested for self-containment. This deliberately supersedes the
+    early "curated HA *backup*" idea: a narrated, idempotent, auditable executor is
+    a better fit than an opaque blob for a stack whose whole point is "understand
+    *why* it's configuring each thing". Its landing spot is `CONFIG/securacv/` on
+    the boot partition, written by the same `hub_io::seed` mechanism as the Wi-Fi
+    keyfile.
+  - *Boot-partition write side (landed 2026-07-26):* `hub_io::provision` turns the
+    bundle into the `SeedFile`s the existing guarded writer drops under
+    `CONFIG/securacv/`. The payload is embedded VERBATIM from the repo
+    (`include_str!` of the plan, Frigate config, and executor) and the runner is
+    reproduced in Rust — and a **host cross-check hashes every shipped byte against
+    the Python manifest's SHA-256 pins**, so the flasher's Rust and the generator's
+    Python can't drift apart (the "Hub Core" workflow re-runs it whenever an
+    embedded file changes). Same posture as the rest of hub-io: the layout is
+    host-tested, the physical boot is not. It carries the runnable payload plus the
+    integrity manifest — the same set the generator's `--build` produces; the
+    self-documenting `provision.sh` means there's no separate README to drift.
+  - *Remaining:* upgrade the typed-once Wi-Fi persist store to the OS keychain;
+    add the app opt-in that hands `provision_seed_files()` to `seed_card` during a
+    flash (an experimental toggle like the account pre-seed — the assembler and its
+    cross-check exist; what's left is the UI + the `seed_card` call); and — the
+    genuinely unresolved, on-hardware-pinned piece — the **first-boot hook** that
+    auto-runs `provision.sh`. HAOS has no supported hook to run an arbitrary
+    boot-partition script, so today the bundle is a one-command step (drop it via
+    the SSH add-on, `sh provision.sh`), not zero-touch; HAOS ignores files it
+    doesn't recognise, so an un-run bundle is harmless. Until the hook is pinned
+    the hub boots as stock HAOS + Wi-Fi and the guide carries the user from
     `homeassistant.local:8123`.
   - *Account pre-seed (minting + opt-in seed IMPLEMENTED 2026-07-23; HAOS
     acceptance OUTSTANDING):* the flasher collects the operator's

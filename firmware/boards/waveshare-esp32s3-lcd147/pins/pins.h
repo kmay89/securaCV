@@ -102,6 +102,11 @@
 // ============================================================================
 
 #define BOOT_BUTTON_PIN         0
+
+// No piezo pad on this board — the chime engine compiles (CI coverage /
+// the emulator's forced FEATURE_CHIME) and chime_init(-1) no-ops, the
+// same unpopulated-pad convention the 4.3B carries.
+#define BUZZER_PIN              -1
 #define BOOT_BUTTON_ACTIVE      LOW
 
 // Native USB data lines (informational; managed by the USB stack).

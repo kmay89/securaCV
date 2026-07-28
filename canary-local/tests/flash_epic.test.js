@@ -93,6 +93,60 @@ test("flash.json: sense reflexes are runtime dials — NVS-backed, bounded, pres
     "presence-only build does not advertise vitals knobs");
 });
 
+test("sense presets: pet & sleep presets encode the researched feasibility contract", () => {
+  const wb = catalog.products.find((p) => p.id === "securacv-canary-sense-wellbeing");
+  const def = catalog.products.find((p) => p.id === "securacv-canary-sense");
+  const byId = (p) => Object.fromEntries(p.reflexes.presets.map((pr) => [pr.id, pr]));
+  const wbP = byId(wb), defP = byId(def);
+
+  // Mouse: a MOVEMENT preset, on BOTH builds, that never CHANGES the vitals
+  // bands — a mouse's heart/breath sit far outside this module's reported
+  // band, so the preset must leave every breath/heart/lock knob at the shipped
+  // default rather than pretend to tune it. (Catalog presets carry a fully
+  // resolved value map, so the honest check is "equals ships", not "absent".)
+  for (const P of [wbP, defP]) {
+    assert.ok(P.mouse_cage, "mouse_cage preset present on every Sense build");
+    const ships = P.ships.values;
+    for (const k of ["breath_min_bpm", "breath_max_bpm", "heart_min_bpm", "heart_max_bpm",
+                     "vitals_lock_ms", "vitals_lost_ms"]) {
+      if (!(k in ships)) continue; // presence-only build has no vitals knobs at all
+      assert.strictEqual(P.mouse_cage.values[k], ships[k],
+        `mouse_cage must not retune ${k} — a mouse's vitals are unreadable by this module`);
+    }
+    // Close cage mount: the tightest near band the firmware allows.
+    assert.strictEqual(P.mouse_cage.values.range_near_cm, 50, "mouse cage mount is close-range");
+  }
+  // And the movement preset genuinely moves the PRESENCE knobs off shipped.
+  assert.notStrictEqual(wbP.mouse_cage.values.clear_timeout_ms, wbP.ships.values.clear_timeout_ms,
+    "mouse_cage should tune the clear timeout (stillness → asleep) off the default");
+
+  // Dog & human sleep: VITALS presets, wellbeing-only (the presence-only build
+  // has no breath/heart knobs, so offering them there would be dishonest).
+  for (const id of ["dog_kennel", "human_sleep"]) {
+    assert.ok(wbP[id], `${id} present on the wellbeing build`);
+    assert.ok(!defP[id], `${id} must be hidden on the presence-only build (no vitals knobs)`);
+    for (const k of ["breath_min_bpm", "breath_max_bpm", "heart_min_bpm", "heart_max_bpm"]) {
+      assert.ok(Number.isInteger(wbP[id].values[k]), `${id} sets ${k}`);
+    }
+  }
+
+  // Dog bands must be a real superset of the human bands (a dog's resting rates
+  // run faster and its small breeds' hearts run higher), and min<max holds.
+  const d = wbP.dog_kennel.values, h = wbP.human_sleep.values;
+  assert.ok(d.breath_max_bpm > h.breath_max_bpm, "dog breathing band reaches higher than human");
+  assert.ok(d.heart_max_bpm > h.heart_max_bpm, "dog heart band reaches higher than human (small breeds)");
+  for (const v of [d, h]) {
+    assert.ok(v.breath_min_bpm < v.breath_max_bpm, "breath band min < max");
+    assert.ok(v.heart_min_bpm < v.heart_max_bpm, "heart band min < max");
+  }
+
+  // Every pet/sleep preset has an ⓘ explainer that states the feasibility honestly.
+  for (const id of ["mouse_cage", "dog_kennel", "human_sleep"]) {
+    assert.ok(catalog.settings_help[id] && catalog.settings_help[id].what,
+      `${id} needs a help topic stating what it can and can't do`);
+  }
+});
+
 test("reflexValuesToNvs: maps knob ids to sns_* keys, clamped to each knob's bounds", async () => {
   const c = await core();
   const sense = catalog.products.find((p) => p.id === "securacv-canary-sense-wellbeing");
@@ -323,20 +377,21 @@ test("flash.json: every product declares its wifi NVS scheme, honestly", () => {
 
 test("flash.json: the display boards are flashable products now", () => {
   const displays = catalog.products.filter((p) => p.role === "display");
-  assert.strictEqual(displays.length, 6,
-    "watch + dash + dash-modes + dash7 + nightstand-s3 + nightstand-c6");
+  assert.strictEqual(displays.length, 7,
+    "watch + dash + dash-modes + dash7 + nightstand-s3 + touch169 + nightstand-c6");
   for (const p of displays) {
     assert.ok(["ESP32-S3", "ESP32-C6"].includes(p.chip), `${p.id}: chip ${p.chip}`);
     assert.strictEqual(p.provisioning, "on-glass");
     assert.ok(p.provisioning_note.length > 40, `${p.id}: provisioning copy`);
     assert.ok(p.hatch && /glass/i.test(p.hatch.title), `${p.id}: a display's hatch is the glass`);
   }
-  // The profile-built displays each keep their 1:1 emulator twin. The
-  // Nightstand Line boards (dash7 / nightstand-*) have no shipped emulator
-  // yet — that wasm/Lab wiring is staged work (display_nightstand_line.md
-  // §7), so the twin contract covers exactly the products with a twin to
-  // point at, and grows with them.
-  for (const p of displays.filter((d) => !/dash7|nightstand/.test(d.id))) {
+  // Every display product keeps a 1:1 emulator twin: the profile-built
+  // displays, the portrait boards (nightstand / touch169 wasm flavors),
+  // and dash7 (electrically the 4.3″ Dash — the dash twin is its honest
+  // preview). The one exception is the nightstand C6, whose glass is the
+  // S3 stick's — its preview is the same nightstand twin, wired when the
+  // picker learns module aliasing.
+  for (const p of displays.filter((d) => !/nightstand-c6/.test(d.id))) {
     const twin = catalog.displays.find((d) => p.id.includes(d.id));
     assert.ok(twin, `${p.id}: no emulator twin in catalog.displays`);
   }
@@ -384,6 +439,81 @@ test("parseSenseLine: the radar bench reads every console shape", async () => {
   assert.deepStrictEqual(h, { kind: "health", up_s: 120, heap_kb: 187, frame_errs: 0 });
   assert.strictEqual(c.parseSenseLine("random noise"), null);
   assert.strictEqual(c.parseSenseLine(""), null);
+});
+
+test("parseSenseLine: the tuning console's [radar] stream — coarse, vitals, raw", async () => {
+  const c = await core();
+  // presence-only build: just the coarse triple + link health
+  const p = c.parseSenseLine("[radar] state=present count=1 range=near errs=0");
+  assert.strictEqual(p.kind, "radar");
+  assert.strictEqual(p.presence, "present");
+  assert.strictEqual(p.count, "1");
+  assert.strictEqual(p.range, "near");
+  assert.strictEqual(p.frame_errs, 0);
+  assert.strictEqual(p.lock, undefined);
+  assert.strictEqual(p.raw, undefined);
+  // wellbeing build: lock + P1 numerics ride along
+  const w = c.parseSenseLine("[radar] state=present count=1 range=mid lock=locked breath=14 heart=67 errs=2");
+  assert.strictEqual(w.lock, "locked");
+  assert.strictEqual(w.breath, 14);
+  assert.strictEqual(w.heart, 67);
+  assert.strictEqual(w.frame_errs, 2);
+  assert.strictEqual(c.parseSenseLine("[radar] state=clear count=0 range=unknown lock=lost breath=0 heart=0 errs=0").lock, "lost");
+  // `raw on` bench mode: the attended-cable detail block
+  const r = c.parseSenseLine(
+    "[radar] state=present count=1 range=near lock=locked breath=14 heart=67 " +
+    "raw_dist=178cm raw_count=1 raw_breath=14 raw_heart=66 errs=0");
+  assert.deepStrictEqual(r.raw, { dist_cm: 178, count: 1, breath: 14, heart: 66 });
+  assert.strictEqual(c.parseSenseLine("[radar] state=nonsense count=9 range=weird"), null);
+});
+
+test("parseCfgLine: the [cfg] snapshot is the tuning UI's single source of truth", async () => {
+  const c = await core();
+  const cfg = c.parseCfgLine(
+    "[cfg] debounce=300 clear=1500 stall=5000 near=150 mid=350 vlock=4000 " +
+    "vlost=6000 breath_min=6 breath_max=30 heart_min=40 heart_max=130 stream=1000 raw=0");
+  assert.strictEqual(cfg.kind, "cfg");
+  assert.strictEqual(cfg.values.debounce, 300);
+  assert.strictEqual(cfg.values.heart_max, 130);
+  assert.strictEqual(cfg.values.breath_min, 6);
+  assert.strictEqual(cfg.stream, 1000);
+  assert.strictEqual(cfg.raw, false);
+  // stream/raw are session state, never knobs
+  assert.strictEqual(cfg.values.stream, undefined);
+  assert.strictEqual(cfg.values.raw, undefined);
+  // presence-only build carries fewer knobs — still a valid snapshot
+  const p = c.parseCfgLine("[cfg] debounce=200 clear=800 stall=5000 near=150 mid=350 stream=0 raw=1");
+  assert.strictEqual(p.values.vlock, undefined);
+  assert.strictEqual(p.stream, 0);
+  assert.strictEqual(p.raw, true);
+  // the firmware's multi-line [CFG] boot block is NOT the snapshot
+  assert.strictEqual(c.parseCfgLine("[CFG]"), null);
+  assert.strictEqual(c.parseCfgLine("Radar reflexes: debounce=300ms"), null);
+  assert.strictEqual(c.parseCfgLine(""), null);
+});
+
+test("parseTuneLine: one verdict per command — ok pops, err glows", async () => {
+  const c = await core();
+  assert.deepStrictEqual(c.parseTuneLine("[tune] ok debounce=500"),
+    { kind: "tune", ok: true, text: "debounce=500" });
+  assert.deepStrictEqual(c.parseTuneLine("[tune] err unknown knob 'flux' (try 'help')"),
+    { kind: "tune", ok: false, text: "unknown knob 'flux' (try 'help')" });
+  assert.strictEqual(c.parseTuneLine("[tune] commands:"), null, "help text is not a verdict");
+  assert.strictEqual(c.parseTuneLine("[radar] state=clear count=0 range=unknown"), null);
+});
+
+test("senseLineTone: the live log classifies every console voice", async () => {
+  const c = await core();
+  assert.strictEqual(c.senseLineTone("[radar] state=present count=1 range=near errs=0"), "stream");
+  assert.strictEqual(c.senseLineTone("[sense] present count=1 range=near"), "sense");
+  assert.strictEqual(c.senseLineTone("[presence] -> clear"), "sense");
+  assert.strictEqual(c.senseLineTone("[vitals] breathing locked"), "vitals");
+  assert.strictEqual(c.senseLineTone("[cfg] debounce=300 stream=1000 raw=0"), "cfg");
+  assert.strictEqual(c.senseLineTone("[CFG]"), "cfg");
+  assert.strictEqual(c.senseLineTone("[tune] ok near=200"), "tune");
+  assert.strictEqual(c.senseLineTone("[tune] err line too long (max 95 chars)"), "err");
+  assert.strictEqual(c.senseLineTone("[health] up 120s heap 187KB frame_errs 0"), "health");
+  assert.strictEqual(c.senseLineTone("anything else"), "plain");
 });
 
 test("roster: add, find, and the progression lines", async () => {

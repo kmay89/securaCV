@@ -2,6 +2,109 @@
 
 ## [Unreleased]
 
+### Headless Pi 5 hub, verified against HA's own docs — no monitor, ever
+
+The "flash → power → it appears on your network" promise is now built on the
+documented Home Assistant OS contract instead of hope, and the whole path
+assumes nobody ever attaches an HDMI cable. The Wi-Fi keyfile the Flasher
+seeds onto the boot partition (`CONFIG/network/` — HA's docs: *"Alternative
+you can create a CONFIG folder inside the boot partition"*, read on startup,
+LF-only) now carries two things it was missing: a stable `uuid=` minted at
+flash time (HA warns the hub's IP can change on every boot without one) and
+`llmnr=2`/`mdns=2` on the connection — the same values HAOS's default wired
+profile uses — so a Wi-Fi-only hub answers `homeassistant.local` at the OS
+resolver level, not just once Home Assistant is fully up.
+
+The finding side stopped assuming mDNS works everywhere. The Flasher's
+first-boot watch now says up front that no monitor or keyboard is needed, and
+if the hub hasn't answered after 25 minutes it swaps "be patient" for a
+concrete checklist: try it from a phone (some computers can't resolve
+`.local` even when the hub is up — including the watcher itself), read the
+router's device list for "homeassistant", and — since a typo'd Wi-Fi password
+is invisible from outside — plug in ethernet (zero setup) or re-flash. The
+Lab's Hub wizard carries the same promise and the same fallbacks
+(two-frontends rule).
+
+### Every app keeps itself fresh — and says what's changing
+
+Self-update is now a contract both desktop apps honor, not a Flasher-only
+feature. The **Flasher** (0.3.5) re-checks on a six-hour routine while it
+stays open (and when a stale window regains focus), shows the pending
+release's own notes in the update banner and About page, and records every
+check and install in its local activity log. The **Lab** (0.2.0) gains the
+whole shape for the first time: signed self-update against its own rolling
+`lab-latest` pointer, a boot + six-hour check routine, a native "what's
+changing" dialog that asks before anything installs, and a local
+`update-journal.log` — desktop only, with the iOS/iPadOS builds compiling it
+out (the App Store owns updates there).
+
+What's-changing text is now a checked artifact, not prose that rots: each app
+carries a `RELEASE_NOTES.md` (newest-first, per version, written for the
+user), `release_notes.py check` fails any build whose newest section doesn't
+match the version being shipped, and the section flows into both the GitHub
+release body and the updater manifest's `notes` (via the now-shared
+`harden_updater_manifest.py`). Publishing the Lab's draft triggers
+`desktop-lab-updater-pointer.yml`, which hardens the manifest, refuses to
+proceed unless every updater URL resolves, and only then advances
+`lab-latest`. `desktop_parity.test.js` pins the whole contract (endpoint tag
+= workflow tag, distinct pointers, one shared pubkey, updater artifacts on).
+
+### Pet & sleep presets for the radar (movement wake/sleep + dog/human vitals)
+
+Three researched presets for the Canary Sense radar, with feasibility stated
+honestly (the MR60BHA2 computes breath/heart BPM on-module, band-passed for
+human physiology; this firmware reads those scalars):
+
+- **🐭 Mouse / small-pet cage (both builds)** — a *movement* wake/sleep watch
+  for a caged small rodent, not vitals. For a fixed cage, a live moving
+  occupant reads as awake and sustained stillness as asleep, off the existing
+  presence pipeline. A mouse's heart (300–800 bpm) and breathing (80–230/min)
+  are 4–8× above the module's human passband, so vitals are deliberately left
+  untouched — the preset never pretends to read them.
+- **🐕 Dog kennel / crate (wellbeing)** — a real vitals preset. A resting
+  dog's heart (≈50–160 bpm) and breathing (≈8–35/min) overlap the human bands
+  the module is tuned for, so a settled dog within ~1.5 m reads like a human
+  torso. Bands widened for small-breed hearts and faster resting breathing;
+  longer lock windows suit an animal that stills in bursts.
+- **🛌 Human sleep & wake (wellbeing)** — the native case, bands trimmed to a
+  sleeping adult.
+
+Vitals presets are gated to the wellbeing build (the presence-only build has
+no breath/heart knobs, so offering them there would be a lie); the mouse
+preset applies to both. Each carries an ⓘ explainer stating what it can and
+can't do. Feasibility contract pinned in `flash_epic.test.js`.
+
+### Radar tuning suite: every Sense knob live over USB, in both flashers
+
+The canary-sense firmware grows a **serial tuning console**
+(`firmware/common/console/tuning_console.h`, host-tested): line commands
+(`help` / `cfg` / `set <knob> <value>` / `reset` / `stream` / `raw`) at
+115200 8N1, live from `setup()` — before WiFi, before the broker — so a
+freshly-flashed board is tunable and testable immediately. Every runtime
+knob goes through the same clamping NVS setters HA uses, and the four
+vitals plausibility bands (`breath_min/max_bpm`, `heart_min/max_bpm`) are
+promoted from compile-time constants to full runtime knobs (NVS +
+`cfg/breath_min/set`-style MQTT topics + HA number entities + serial), so
+the breathing/heart-rate lock can be calibrated to a real person on the
+bench. A default-on 1 Hz `[radar]` stream line shows what the radar sees
+(state/count/range, lock + BPM on wellbeing); the opt-in `raw on` bench
+mode echoes raw cm/BPM on the attended cable only — the documented,
+session-scoped exception to the coarse-vocabulary rule.
+
+Both flashers grew the matching **tuning suite UI** (two frontends, no
+shared code — parity is now CI-gated in `desktop_parity.test.js`): the
+browser radar bench (`flash.html`, straight from the post-flash "prove it"
+button) gains catalog-driven sliders for every knob wired to the console,
+restore-defaults / stream-cadence / raw-detail controls, and a classified
+live log (stream quiet, verdicts pop, errors glow) with hold-scroll and
+clear; the desktop Flasher's serial monitor gains the same panel over its
+existing send path. Sliders reconcile only to the firmware's `[cfg]`
+snapshot line — never to their own optimistic state — and both frontends
+say so honestly when older firmware has no console. Knob vocabulary,
+bounds, and defaults flow from one source (`gen_flash.py` → catalog
+`reflexes.knobs[].console`), parsed from the firmware headers so no
+surface can drift.
+
 ### The offline viewer now reads event exports (Reading Room P1a)
 
 `viewer/evidence_viewer.html` accepts the `ExportBundle` JSON that
@@ -1130,6 +1233,58 @@ someone went looking.
   the transport catalog separates transport status from the per-transport
   health entities, which are pending a firmware publisher
   (`mqtt_publish_transport()` is defined but never called).
+
+## [2.3.2] - 2026-07-27
+
+### The nightstand wakes up canary yellow
+
+The 1.47" nightstand boards' behind-glass WS2812 beacon (GPIO8 on the
+ESP32-C6 board, GPIO38 on the S3 stick) lights bright canary yellow
+(0xFFD44F) as the very first line of setup() — power-on is answered before
+the panel initializes. A liveness signal only: the first render tick hands
+the LED to the real fleet state, and the dark-when-safe night behavior is
+unchanged.
+
+### Wi-Fi preload is standard on every board
+
+Both flashers can bake your network into any Canary at install time (each
+firmware already read the same NVS namespace; the desktop app now writes
+both encodings — string for sense/vision/display, blob + wifi_en for
+canary/wap). Optional everywhere it isn't usb-secrets: skip it and the AP
+portal / on-glass setup is untouched.
+
+## [2.3.1] - 2026-07-27
+
+### Every Canary Display ships in this release — including the Dash 7
+
+fw-v2.3.0 published without the ESP32-S3 display images (watch, dash,
+dash-modes, dash7, nightstand-s3): the Dash 7 and Nightstand S3 binaries
+compiled successfully, but the isolated-core nightstand-c6 build that
+follows them changed the PlatformIO project checksum, which silently
+cleaned `.pio/build` and erased their outputs before the signing step —
+the non-blocking display loop then dropped them from the release with
+only a warning. Both release workflows now stage each display env's build
+outputs the moment they exist and restore them after the C6 run, so the
+packaging, signing, and factory-image steps see every board that built.
+
+### The update channel is now a device setting, not a reflash
+
+The pull-OTA engine understands two channels: **release** (the compiled-in
+manifest URL riding `releases/latest`, guaranteed to be a signed stable
+firmware release) and **dev** (the same product's manifest on the rolling
+`fw-dev-latest` prerelease). The channel persists in NVS
+(`securacv_ota_set_channel` / `securacv_ota_get_channel`); the dev URL is
+derived from the compiled default by rewriting the one canonical release
+segment, so every product gets both channels with no per-board
+configuration — and a custom-server manifest override still wins outright.
+Both channels verify the same Ed25519 signatures from the same release
+key; switching back to release never downgrades (the anti-rollback floor
+holds until the stable channel moves past the running build). The Canary
+Display exposes the switch over MQTT — retained
+`securacv/<id>/update/channel` ("release"/"dev"), commands on
+`securacv/<id>/update/channel/cmd` — next to the existing install/auto
+topics, and checks the new channel promptly after a switch. Host-tested
+(`test_ota_logic.cpp`).
 
 ## [0.6.0] - Unreleased
 

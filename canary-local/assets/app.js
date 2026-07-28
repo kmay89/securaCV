@@ -370,6 +370,19 @@ async function buildDisplaySheet(ctx, side, stage) {
     document.body.append(btn);
   })();
 
+  // The page ships only the watch/dash twins as <script> tags; every other
+  // twin (nightstand, touch169, whatever comes next) loads on demand from
+  // the registry's module path — the card, not the page, knows which
+  // firmware it needs. A factory already on window (script tag) no-ops.
+  if (!window[dev.emulator.factory]) {
+    await new Promise((resolve) => {
+      const s = document.createElement("script");
+      s.src = dev.emulator.module;
+      s.onload = resolve;
+      s.onerror = resolve;  // fall through: the boot path reports a missing factory honestly
+      document.head.append(s);
+    });
+  }
   const factory = window[dev.emulator.factory];
   const serialAppend = (t) => {
     serialLog.textContent = (serialLog.textContent + t).slice(-24000);

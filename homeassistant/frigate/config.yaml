@@ -33,6 +33,11 @@ mqtt:
 detectors:
   cpu:
     type: cpu
+  # Using a Coral USB TPU? Plugging it in does NOT accelerate anything on its
+  # own — you must replace the `cpu` detector above with this one:
+  #   coral:
+  #     type: edgetpu
+  #     device: usb        # PCIe / M.2 Coral: use `pci`
 
 go2rtc:
   streams: {}

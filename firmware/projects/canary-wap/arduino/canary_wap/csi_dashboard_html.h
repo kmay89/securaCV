@@ -688,6 +688,10 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
     outline: none; transition: border-color .2s;
   }
   .fleet-field input:focus { border-color: var(--accent); }
+  /* Password-shaped but NOT an account credential: mask without
+     type=password so iOS never offers to invent a new password here
+     (firmware/LESSONS_LEARNED.md, "iOS offers to invent a password"). */
+  .pw-masked { -webkit-text-security: disc; text-security: disc; }
   .fleet-qr-wrap {
     margin-top: 18px; text-align: center;
   }
@@ -1190,7 +1194,7 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
         </label>
         <label class="fleet-field">
           <span>Password</span>
-          <input type="password" id="fleetPass" maxlength="63" autocomplete="off">
+          <input type="text" class="pw-masked" id="fleetPass" maxlength="63" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
         </label>
         <button class="calibrate" id="fleetGenBtn" style="margin-top:4px">Generate QR</button>
       </div>

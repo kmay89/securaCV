@@ -13,6 +13,14 @@
 # release fires a `release:` event, so release-latest-guard.yml catches it and
 # re-points `latest` at the firmware. CI-published releases don't fire that
 # event, which is why the Flasher has to call the action itself.
+#
+# Self-update: the Lab polls the rolling `lab-latest` prerelease pointer (its
+# own — NEVER `releases/latest`, and never the Flasher's). This workflow builds
+# the signed updater artifacts and hardens the draft's latest.json; the pointer
+# itself only advances when a human PUBLISHES the draft, via
+# desktop-lab-updater-pointer.yml (a `release: published` event fires for human
+# publishes — the case CI-created releases can't rely on). A draft's assets have
+# no public URLs, so the resolve-every-URL guard also lives there, after publish.
 name: Desktop app release
 
 on:
@@ -50,8 +58,13 @@ jobs:
     timeout-minutes: 60
     env:
       RUST_BACKTRACE: "1"
+      # Updater-manifest signing (same repo key as the Flasher, so both apps
+      # embed one pubkey). The "Ensure updater signing key" step overrides
+      # these via $GITHUB_ENV when it has to mint an ephemeral key.
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Linux build deps
         if: matrix.platform == 'ubuntu-22.04'
@@ -76,7 +89,7 @@ jobs:
           key: ${{ matrix.platform }}
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -95,6 +108,36 @@ jobs:
         # exactly the half-fix RELEASE_LESSONS keeps warning about.
         run: python3 desktop/scripts/check_app_versions.py
 
+      - name: The version says what it changes (RELEASE_NOTES.md)
+        # The newest section of desktop-lab/RELEASE_NOTES.md becomes the draft
+        # release's body and the updater manifest's notes — the text the Lab's
+        # own "update ready" dialog shows. A bump without notes fails here,
+        # before a runner minute is spent building.
+        run: python3 desktop/scripts/release_notes.py check
+
+      # If the repo has a persistent updater signing key, use it (self-update
+      # works across releases). If not, mint an ephemeral one so the build
+      # still succeeds — and patch the app's embedded public key to match, so
+      # that build is internally consistent. Same step as the Flasher's.
+      - name: Ensure updater signing key
+        working-directory: desktop-lab
+        shell: bash
+        env:
+          SECRET_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -n "${SECRET_KEY:-}" ]; then
+            echo "Using repository signing key."
+          else
+            echo "::warning::No TAURI_SIGNING_PRIVATE_KEY secret set — minting an EPHEMERAL key so this build succeeds. Cross-release self-update needs a persistent key; see desktop/INSTALL.md."
+            npx --yes @tauri-apps/cli signer generate -w "$RUNNER_TEMP/lab.key" --password ""
+            # $(cat) strips the trailing newline; a heredoc fails when the file
+            # lacks a final newline (the delimiter glues onto the key).
+            echo "TAURI_SIGNING_PRIVATE_KEY=$(cat "$RUNNER_TEMP/lab.key")" >> "$GITHUB_ENV"
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=" >> "$GITHUB_ENV"
+            python3 -c 'import json,sys; p="src-tauri/tauri.conf.json"; c=json.load(open(p)); c["plugins"]["updater"]["pubkey"]=sys.argv[1].strip(); json.dump(c,open(p,"w"),indent=2); print("patched embedded pubkey for ephemeral build")' "$(cat "$RUNNER_TEMP/lab.key.pub")"
+          fi
+
       # Codesigning/notarization is OPT-IN via the `ENABLE_MACOS_SIGNING`
       # repository variable (Settings → Secrets and variables → Actions →
       # Variables). It is split into two steps on purpose: tauri's macOS
@@ -105,9 +148,11 @@ jobs:
       # the APPLE_* secrets are in place.
       - name: Build & publish (unsigned)
         if: vars.ENABLE_MACOS_SIGNING != 'true'
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # TAURI_SIGNING_PRIVATE_KEY / _PASSWORD come from job-level env
+          # (repo secret, or the ephemeral key written to $GITHUB_ENV above).
         with:
           projectPath: desktop-lab
           # Publish on a tag push, or on a manual run when `publish` is checked.
@@ -135,11 +180,12 @@ jobs:
             older macOS): [`desktop-lab/INSTALL.md`](https://github.com/kmay89/securaCV/blob/main/desktop-lab/INSTALL.md).
           releaseDraft: true
           prerelease: false
+          includeUpdaterJson: true
           args: ${{ matrix.args }}
 
       - name: Build & publish (signed macOS)
         if: vars.ENABLE_MACOS_SIGNING == 'true'
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -159,6 +205,7 @@ jobs:
             - **Linux**: `.AppImage` (runs anywhere) or `.deb` (Debian/Ubuntu).
           releaseDraft: true
           prerelease: false
+          includeUpdaterJson: true
           args: ${{ matrix.args }}
 
       # Always attach the built installers to the workflow run itself, so a
@@ -166,7 +213,7 @@ jobs:
       # artifacts without touching the Releases page.
       - name: Upload installers as workflow artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: securacv-lab-${{ matrix.platform }}
           path: |
@@ -176,3 +223,110 @@ jobs:
             desktop-lab/src-tauri/target/**/release/bundle/deb/*.deb
           if-no-files-found: ignore
           retention-days: 14
+
+  # ── one authoritative writer for the DRAFT's updater manifest ───────────────
+  # Same single-writer shape as the Flasher's finalize job: the matrix jobs
+  # each write latest.json with asset-id URLs that die on any re-upload, so
+  # this runs ONCE after both builds and rewrites it durable — stable
+  # name-based URLs, signatures read from the .sig assets the draft actually
+  # carries, and this version's own RELEASE_NOTES.md section as the `notes`
+  # the in-app dialog shows. What it deliberately does NOT do: the
+  # resolve-every-URL guard and the lab-latest pointer advance. A draft's
+  # assets have no public URLs yet, so both wait for the human publish —
+  # desktop-lab-updater-pointer.yml picks up the `release: published` event.
+  finalize:
+    name: Finalize draft updater manifest (stable URLs + notes)
+    needs: build
+    if: github.ref_type == 'tag' || inputs.publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve tag + version
+        id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            ver=$(python3 -c "import json;print(json.load(open('desktop-lab/src-tauri/tauri.conf.json'))['version'])")
+            tag="app-v${ver}"
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#app-v}" >> "$GITHUB_OUTPUT"
+
+      - name: Rewrite latest.json with stable URLs, fresh signatures, and notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          VER: ${{ steps.plan.outputs.version }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          # gh resolves DRAFT releases by tag name (with repo write auth).
+          gh release view "$TAG" >/dev/null
+          work="$(mktemp -d)"
+          gh release download "$TAG" -p latest.json -D "$work" --clobber
+          for f in \
+            "SecuraCV.Lab_${VER}_amd64.AppImage.sig" \
+            "SecuraCV.Lab_${VER}_amd64.deb.sig" \
+            "SecuraCV.Lab_${VER}_universal.app.tar.gz.sig"; do
+            gh release download "$TAG" -p "$f" -D "$work" --clobber
+          done
+          python3 desktop/scripts/release_notes.py extract lab "$VER" > "$work/notes.md"
+          python3 desktop/scripts/harden_updater_manifest.py \
+            --product SecuraCV.Lab --notes-file "$work/notes.md" \
+            "$work/latest.json" "$OWNER" "$REPO" "$TAG" "$VER" "$work"
+          ok=0
+          for i in 1 2 3 4 5; do
+            if gh release upload "$TAG" "$work/latest.json" --clobber; then ok=1; break; fi
+            echo "latest.json upload failed (attempt $i) — retrying in $((i*6))s"; sleep $((i*6))
+          done
+          [ "$ok" -eq 1 ] || { echo "::error::could not upload latest.json after retries"; exit 1; }
+
+      - name: Draft body says what this version changes
+        # The human publishing this draft should read the user-facing notes
+        # first, and everyone downloading it after. Deterministic, so a re-run
+        # converges instead of appending.
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          VER: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          body="$(mktemp)"
+          {
+            echo "## What's changing in ${VER}"
+            echo
+            python3 desktop/scripts/release_notes.py extract lab "$VER"
+            echo
+            echo "---"
+            echo
+            echo "The **SecuraCV Lab**, as a native app — local-first, nothing phones home."
+            echo
+            echo "- **macOS**: download the \`.dmg\` (universal — Apple Silicon & Intel)."
+            echo "- **Linux**: \`.AppImage\` (runs anywhere) or \`.deb\` (Debian/Ubuntu)."
+            echo
+            echo "### macOS: first launch (one time)"
+            echo
+            echo "Unless this build is signed & notarized, macOS quarantines it. Drag the app"
+            echo "to Applications, then in **Terminal** run:"
+            echo
+            echo '```sh'
+            echo 'xattr -dr com.apple.quarantine "/Applications/SecuraCV Lab.app"'
+            echo '```'
+            echo
+            echo "Full steps: [\`desktop-lab/INSTALL.md\`](https://github.com/kmay89/securaCV/blob/main/desktop-lab/INSTALL.md)."
+            echo
+            echo "Installed Labs pick this version up on their own once it's published —"
+            echo "the app checks at launch and every few hours, shows these notes, and"
+            echo "installs only after you say yes."
+          } > "$body"
+          gh release edit "$TAG" --draft --notes-file "$body"

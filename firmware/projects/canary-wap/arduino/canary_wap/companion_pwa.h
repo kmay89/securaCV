@@ -164,6 +164,10 @@ footer a{color:var(--accent);text-decoration:none}
 .wiz-sub{color:var(--muted);font-size:.85rem;margin:0 0 1rem;line-height:1.45}
 .wiz-input{width:100%;padding:.75rem .85rem;border-radius:10px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);font-size:1rem;font-family:inherit;-webkit-appearance:none}
 .wiz-input:focus{outline:none;border-color:var(--accent)}
+/* Masks a text input like a password field WITHOUT type=password — keeps iOS
+ * from covering a Wi-Fi/broker key with its new-password generator (see
+ * firmware/LESSONS_LEARNED.md, "iOS offers to invent a password"). */
+.pw-masked{-webkit-text-security:disc;text-security:disc}
 .wiz-btnrow{display:flex;gap:.5rem;margin-top:1rem}
 .wiz-btnrow .btn{flex:1}
 .wiz-net-list{max-height:280px;overflow-y:auto;margin:.5rem 0 .25rem;border:1px solid var(--border);border-radius:10px;background:var(--surface-2)}
@@ -383,7 +387,7 @@ footer a{color:var(--accent);text-decoration:none}
   <div class="wiz-step" id="wiz-step-3">
     <h2 class="wiz-h" tabindex="-1">Type the password</h2>
     <p class="wiz-sub">Joining <strong id="wiz-picked-ssid">…</strong>. Your password is sent only to the Canary.</p>
-    <input type="password" class="wiz-input" id="wiz-pw" placeholder="Network password" autocomplete="new-password" spellcheck="false" aria-describedby="wiz-step-3-err" aria-invalid="false">
+    <input type="text" class="wiz-input pw-masked" id="wiz-pw" placeholder="Network password" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" aria-describedby="wiz-step-3-err" aria-invalid="false">
     <label style="display:flex;gap:.5rem;align-items:center;margin-top:.5rem;color:var(--muted);font-size:.8rem">
       <input type="checkbox" id="wiz-show-pw"> Show password
     </label>
@@ -489,7 +493,7 @@ footer a{color:var(--accent);text-decoration:none}
         <input type="text" class="wiz-input" id="wiz-ha-host" placeholder="Broker address (like 192.168.1.10)" autocomplete="off" spellcheck="false" aria-describedby="wiz-ha-err">
         <input type="number" class="wiz-input" id="wiz-ha-port" placeholder="Port (1883)" min="1" max="65535" style="margin-top:.4rem">
         <input type="text" class="wiz-input" id="wiz-ha-user" placeholder="Username (optional)" autocomplete="off" spellcheck="false" style="margin-top:.4rem">
-        <input type="password" class="wiz-input" id="wiz-ha-pass" placeholder="Password (optional)" autocomplete="new-password" style="margin-top:.4rem">
+        <input type="text" class="wiz-input pw-masked" id="wiz-ha-pass" placeholder="Password (optional)" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" style="margin-top:.4rem">
         <div class="err" id="wiz-ha-err" role="alert"></div>
         <p class="wiz-sub" id="wiz-ha-done" style="display:none;margin:.4rem 0 .6rem">✓ Connected. Your Canary will show up in Home Assistant on its own.</p>
         <div class="wiz-btnrow">
@@ -700,7 +704,7 @@ footer a{color:var(--accent);text-decoration:none}
     <button class="btn btn-secondary" id="scan-btn">Scan for networks</button>
     <div id="ap-list" role="group" aria-label="Heard networks" aria-busy="false" style="margin-top:.5rem"></div>
     <div id="creds-box" class="hidden" style="margin-top:.75rem">
-      <input type="password" class="input" id="pw-input" placeholder="WiFi password" autocomplete="new-password" spellcheck="false">
+      <input type="text" class="input pw-masked" id="pw-input" placeholder="WiFi password" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
       <div class="row-flex" style="margin-top:.5rem">
         <button class="btn btn-primary" id="creds-send" style="flex:1">Send credentials</button>
       </div>
@@ -1142,7 +1146,9 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
   // ── Card 3: password + connect ─────────────────────────────────────────
   $w('wiz-back-2').addEventListener('click', () => setStep(2));
   $w('wiz-show-pw').addEventListener('change', e => {
-    $w('wiz-pw').type = e.target.checked ? 'text' : 'password';
+    // Flip the masking class, never the input type — switching to
+    // type=password re-summons iOS's new-password generator.
+    $w('wiz-pw').classList.toggle('pw-masked', !e.target.checked);
   });
   $w('wiz-pw').addEventListener('keydown', e => {
     if (e.key === 'Enter') $w('wiz-go-4').click();

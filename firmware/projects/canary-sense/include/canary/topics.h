@@ -33,6 +33,10 @@ struct Topics {
   char cfg_mid_cmd[96];
   char cfg_vlock_cmd[96];
   char cfg_vlost_cmd[96];
+  char cfg_bmin_cmd[96];
+  char cfg_bmax_cmd[96];
+  char cfg_hmin_cmd[96];
+  char cfg_hmax_cmd[96];
 };
 
 // device_id comes from canary::cfg::get() — NVS-backed, so topics stay
@@ -58,5 +62,9 @@ static inline Topics build_topics(const char* device_id) {
   snprintf(t.cfg_mid_cmd,      sizeof(t.cfg_mid_cmd),      "securacv/%s/cfg/mid/set",         device_id);
   snprintf(t.cfg_vlock_cmd,    sizeof(t.cfg_vlock_cmd),    "securacv/%s/cfg/vitals_lock/set", device_id);
   snprintf(t.cfg_vlost_cmd,    sizeof(t.cfg_vlost_cmd),    "securacv/%s/cfg/vitals_lost/set", device_id);
+  snprintf(t.cfg_bmin_cmd,     sizeof(t.cfg_bmin_cmd),     "securacv/%s/cfg/breath_min/set",  device_id);
+  snprintf(t.cfg_bmax_cmd,     sizeof(t.cfg_bmax_cmd),     "securacv/%s/cfg/breath_max/set",  device_id);
+  snprintf(t.cfg_hmin_cmd,     sizeof(t.cfg_hmin_cmd),     "securacv/%s/cfg/heart_min/set",   device_id);
+  snprintf(t.cfg_hmax_cmd,     sizeof(t.cfg_hmax_cmd),     "securacv/%s/cfg/heart_max/set",   device_id);
   return t;
 }

@@ -69,3 +69,7 @@ struct AlertRuleRow: View {
         .padding(.vertical, 2)
     }
 }
+
+#Preview("Alerts — demo fleet") {
+    AlertsView().environmentObject(DemoFleet.previewStore())
+}

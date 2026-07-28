@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop-self-update",
+  "description": "Self-update for the desktop Lab: check the signed lab-latest manifest, ask via a native dialog, relaunch after install. Desktop only — the iOS/iPadOS builds update through the App Store and don't carry these plugins.",
+  "windows": ["main"],
+  "platforms": ["macOS", "linux", "windows"],
+  "permissions": [
+    "updater:default",
+    "dialog:default",
+    "process:default"
+  ]
+}

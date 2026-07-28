@@ -1,6 +1,6 @@
 [package]
 name = "securacv-lab"
-version = "0.1.1"
+version = "0.2.0"
 description = "SecuraCV Lab — the local-first Canary workshop"
 authors = ["Errer Labs"]
 license = "Apache-2.0"
@@ -24,6 +24,19 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# Self-update, the same shape as the Flasher (desktop/): the updater plugin
+# polls the rolling `lab-latest` release pointer, the dialog plugin asks the
+# user (with the release's own notes) before anything installs, and the
+# process plugin relaunches into the new version. Desktop only — the iOS /
+# iPadOS builds (desktop-mobile-release.yml) update through the App Store,
+# and the updater plugin doesn't exist there.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-process = "2"
+# Only for the recheck timer (tauri's async runtime is tokio already).
+tokio = { version = "1", features = ["time"] }
 
 [profile.release]
 panic = "abort"

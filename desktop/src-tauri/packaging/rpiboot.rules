@@ -1,0 +1,21 @@
+# securaCV Flasher — Raspberry Pi USB device-boot access (Linux).
+#
+# The flasher's bundled `rpiboot` sidecar talks to a Raspberry Pi in USB
+# device-boot mode over libusb, to push the mass-storage gadget so the Pi's
+# SD/NVMe appears as a disk (the "flash my Pi over USB-C, no card reader" path).
+# rpiboot runs as your user, not root, so it needs permission to OPEN the Pi's
+# boot-ROM USB device — without this rule Linux blocks the open, rpiboot never
+# serves the gadget, and the Pi never shows up as a disk. macOS needs no
+# equivalent, which is why it "just works" there.
+#
+# Broadcom vendor id is 0a5c; the product id is the board's boot ROM:
+#   2712 = Pi 5 / CM5 (BCM2712)      2711 = Pi 4 / CM4 (BCM2711)
+#   2764 = CM4 (alt) / Pi Zero 2     2763 = Compute Module 3
+# Confirm yours with `lsusb` while the Pi is in boot mode (look for "0a5c:").
+#
+# TAG+="uaccess" grants the logged-in user access on systemd systems; MODE=0666
+# is the universal fallback. The device only exists briefly during flashing.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0a5c", ATTRS{idProduct}=="2763", MODE="0666", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0a5c", ATTRS{idProduct}=="2764", MODE="0666", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0a5c", ATTRS{idProduct}=="2711", MODE="0666", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0a5c", ATTRS{idProduct}=="2712", MODE="0666", TAG+="uaccess"

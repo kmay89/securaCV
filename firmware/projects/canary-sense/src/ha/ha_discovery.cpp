@@ -402,6 +402,18 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
       {"cfg_vlost", "Vitals lost", "vitals_lost_ms", topics.cfg_vlost_cmd,
        "ms", "mdi:heart-off-outline", "box",
        (long)canary::cfg::SENSE_VLOST_MS_LO, (long)canary::cfg::SENSE_VLOST_MS_HI, 500},
+      {"cfg_bmin", "Breath min", "breath_min_bpm", topics.cfg_bmin_cmd,
+       "bpm", "mdi:weather-windy", "slider",
+       (long)canary::cfg::SENSE_BREATH_MIN_LO, (long)canary::cfg::SENSE_BREATH_MIN_HI, 1},
+      {"cfg_bmax", "Breath max", "breath_max_bpm", topics.cfg_bmax_cmd,
+       "bpm", "mdi:weather-windy", "slider",
+       (long)canary::cfg::SENSE_BREATH_MAX_LO, (long)canary::cfg::SENSE_BREATH_MAX_HI, 1},
+      {"cfg_hmin", "Heart min", "heart_min_bpm", topics.cfg_hmin_cmd,
+       "bpm", "mdi:heart-pulse", "slider",
+       (long)canary::cfg::SENSE_HEART_MIN_LO, (long)canary::cfg::SENSE_HEART_MIN_HI, 1},
+      {"cfg_hmax", "Heart max", "heart_max_bpm", topics.cfg_hmax_cmd,
+       "bpm", "mdi:heart-pulse", "slider",
+       (long)canary::cfg::SENSE_HEART_MAX_LO, (long)canary::cfg::SENSE_HEART_MAX_HI, 1},
 #endif
     };
     for (const auto& n : numbers) {

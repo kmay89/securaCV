@@ -36,6 +36,30 @@ pub fn boot_partition_path(device: &str) -> String {
     format!("/dev/{name}1")
 }
 
+/// Mint a random UUID (version 4, RFC 4122 variant) for the keyfile's
+/// `uuid=` line. HA's docs warn that a boot-partition profile without a
+/// stable UUID is re-imported with a fresh identity every boot — "the IP
+/// address changes on every boot" — so the flasher mints one at flash
+/// time and it rides the card forever. hub-core stays dependency-free; the
+/// randomness (getrandom, same as the account minting) lives here.
+pub fn uuid_v4() -> Result<String, String> {
+    let mut b = [0u8; 16];
+    getrandom::fill(&mut b)
+        .map_err(|e| format!("couldn't gather randomness for the connection UUID: {e}"))?;
+    b[6] = (b[6] & 0x0f) | 0x40; // version 4
+    b[8] = (b[8] & 0x3f) | 0x80; // RFC 4122 variant
+    let hex: Vec<String> = b.iter().map(|x| format!("{x:02x}")).collect();
+    let s = hex.concat();
+    Ok(format!(
+        "{}-{}-{}-{}-{}",
+        &s[0..8],
+        &s[8..12],
+        &s[12..16],
+        &s[16..20],
+        &s[20..32]
+    ))
+}
+
 /// The keyfile's filename stem: the connection id reduced to a safe,
 /// FAT-friendly name. Never empty — falls back to "securacv-hub".
 pub fn keyfile_stem(connection_id: &str) -> String {
@@ -176,27 +200,51 @@ pub fn seed_card(
 #[cfg(target_os = "linux")]
 fn mount_partition(partition: &str) -> Result<PathBuf, String> {
     // Give the kernel a beat to re-read the new partition table after the raw
-    // write, then let udisks do a user-session mount (no root needed).
+    // write, then let udisks do a user-session mount (no root needed). The
+    // first mount attempt right after a multi-GB write can still fail while
+    // udev/udisks catch up, so retry a few times before giving up.
     wait_for_node(partition)?;
-    let out = std::process::Command::new("udisksctl")
-        .args(["mount", "-b", partition])
-        .output()
-        .map_err(|e| format!("couldn't run udisksctl: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
+    let mut last = String::new();
+    for attempt in 0..4u32 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(2000));
+        }
+        let out = std::process::Command::new("udisksctl")
+            .args(["mount", "-b", partition])
+            .output()
+            .map_err(|e| format!("couldn't run udisksctl: {e}"))?;
+        if out.status.success() {
+            // "Mounted /dev/sdb1 at /media/user/hassos-boot" (a trailing
+            // period on older udisks). Parse the mount point from udisks'
+            // own answer.
+            let text = String::from_utf8_lossy(&out.stdout);
+            let at = text
+                .split(" at ")
+                .nth(1)
+                .map(|s| s.trim().trim_end_matches('.').to_string())
+                .ok_or_else(|| format!("couldn't read the mount point from: {}", text.trim()))?;
+            return Ok(PathBuf::from(at));
+        }
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        // Already mounted (e.g. the desktop auto-mounter won the race) is a
+        // success in disguise — udisks names the existing mount point.
+        if let Some(at) = stderr.split(" already mounted at ").nth(1) {
+            let at = at
+                .trim()
+                .trim_start_matches('`')
+                .trim_end_matches('.')
+                .trim_end_matches('\'')
+                .trim_end_matches('`');
+            if !at.is_empty() {
+                return Ok(PathBuf::from(at));
+            }
+        }
+        last = format!(
             "couldn't mount the boot partition {partition}: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
+            stderr.trim()
+        );
     }
-    // "Mounted /dev/sdb1 at /media/user/hassos-boot" (a trailing period on
-    // older udisks). Parse the mount point from udisks' own answer.
-    let text = String::from_utf8_lossy(&out.stdout);
-    let at = text
-        .split(" at ")
-        .nth(1)
-        .map(|s| s.trim().trim_end_matches('.').to_string())
-        .ok_or_else(|| format!("couldn't read the mount point from: {}", text.trim()))?;
-    Ok(PathBuf::from(at))
+    Err(last)
 }
 
 #[cfg(target_os = "linux")]
@@ -231,29 +279,77 @@ fn wait_for_node(partition: &str) -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 fn mount_partition(partition: &str) -> Result<PathBuf, String> {
+    // The raw write just replaced the whole partition table under macOS's
+    // feet, and DiskArbitration takes a few seconds to re-probe before the
+    // FAT boot volume becomes mountable. The very first `diskutil mount`
+    // right after the write routinely fails with "Volume on diskXsY failed
+    // to mount" — a timing hiccup, not a damaged card (this is exactly the
+    // failure that used to drop the Wi-Fi seed). So: retry over ~20 s, and
+    // between attempts nudge the OS with `diskutil mountDisk` on the whole
+    // disk, which forces a re-probe of the fresh partition table.
+    let whole_disk = whole_disk_of(partition);
+    let mut last = String::new();
+    for attempt in 0..8u32 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(2500));
+            let _ = std::process::Command::new("diskutil")
+                .args(["mountDisk", &whole_disk])
+                .output();
+        }
+        match try_mount_macos(partition) {
+            Ok(p) => return Ok(p),
+            Err(e) => last = e,
+        }
+    }
+    Err(format!(
+        "{last} (tried for ~20 seconds; macOS wouldn't re-mount the freshly written card)"
+    ))
+}
+
+/// `/dev/disk11s1` → `/dev/disk11` — the whole-disk node a partition sits on.
+#[cfg(target_os = "macos")]
+fn whole_disk_of(partition: &str) -> String {
+    match partition.rfind('s') {
+        Some(i) if i > 0 && partition[i + 1..].chars().all(|c| c.is_ascii_digit()) => {
+            partition[..i].to_string()
+        }
+        _ => partition.to_string(),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn try_mount_macos(partition: &str) -> Result<PathBuf, String> {
     use hub_core::hub_enumerate_macos::{parse_plist, Plist};
 
     let mount = std::process::Command::new("diskutil")
         .args(["mount", partition])
         .output()
         .map_err(|e| format!("couldn't run diskutil: {e}"))?;
+    // Even when `mount` reports failure, the volume may (already) be mounted —
+    // e.g. the auto-mounter won the race — so trust the MountPoint diskutil
+    // reports over the exit status alone.
+    let info = std::process::Command::new("diskutil")
+        .args(["info", "-plist", partition])
+        .output()
+        .map_err(|e| format!("couldn't run diskutil: {e}"))?;
+    if let Ok(plist) = parse_plist(&String::from_utf8_lossy(&info.stdout)) {
+        if let Some(mp) = plist
+            .get("MountPoint")
+            .and_then(Plist::as_str)
+            .filter(|m| !m.is_empty())
+        {
+            return Ok(PathBuf::from(mp));
+        }
+    }
     if !mount.status.success() {
         return Err(format!(
             "couldn't mount the boot partition {partition}: {}",
             String::from_utf8_lossy(&mount.stderr).trim()
         ));
     }
-    let info = std::process::Command::new("diskutil")
-        .args(["info", "-plist", partition])
-        .output()
-        .map_err(|e| format!("couldn't run diskutil: {e}"))?;
-    let plist = parse_plist(&String::from_utf8_lossy(&info.stdout))?;
-    let mount_point = plist
-        .get("MountPoint")
-        .and_then(Plist::as_str)
-        .filter(|m| !m.is_empty())
-        .ok_or_else(|| format!("{partition} mounted but macOS reports no mount point"))?;
-    Ok(PathBuf::from(mount_point))
+    Err(format!(
+        "{partition} mounted but macOS reports no mount point"
+    ))
 }
 
 #[cfg(target_os = "macos")]
@@ -293,6 +389,27 @@ mod tests {
         assert_eq!(boot_partition_path("/dev/nvme0n1"), "/dev/nvme0n1p1");
         assert_eq!(boot_partition_path("/dev/disk4"), "/dev/disk4s1");
         assert_eq!(boot_partition_path("sdb"), "/dev/sdb1");
+    }
+
+    #[test]
+    fn minted_uuids_are_well_formed_v4_and_unique() {
+        let a = uuid_v4().expect("mints");
+        let b = uuid_v4().expect("mints");
+        for u in [&a, &b] {
+            assert_eq!(u.len(), 36);
+            let parts: Vec<&str> = u.split('-').collect();
+            assert_eq!(
+                parts.iter().map(|p| p.len()).collect::<Vec<_>>(),
+                vec![8, 4, 4, 4, 12]
+            );
+            assert!(u.chars().all(|c| c == '-' || c.is_ascii_hexdigit()));
+            assert!(parts[2].starts_with('4'), "version nibble in {u}");
+            assert!(
+                matches!(parts[3].chars().next(), Some('8' | '9' | 'a' | 'b')),
+                "variant nibble in {u}"
+            );
+        }
+        assert_ne!(a, b, "two mints must differ");
     }
 
     #[test]

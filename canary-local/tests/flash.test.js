@@ -298,6 +298,28 @@ test("planReadChunks covers the span exactly, in order, capped per chunk", async
   assert.deepStrictEqual(planReadChunks(0, 0), []);
 });
 
+// ── local-file factory-shape gate (Advanced → local .bin) ───────────────────
+// Everything installed from a local file is written at offset 0, so an
+// app-only build (which also starts 0xE9) would land on the bootloader.
+// The discriminator is the partition table at 0x8000 — same check, same
+// reason, as the desktop Flasher's flash_local_file.
+test("localImageShape refuses app-only builds and passes merged factory images", async () => {
+  const { localImageShape } = await core();
+  assert.strictEqual(localImageShape(new Uint8Array(0)).factory, false, "empty");
+  const appOnly = new Uint8Array(0x20000).fill(0xff);
+  appOnly[0] = 0xe9; // app image magic alone doesn't make a factory image
+  assert.strictEqual(localImageShape(appOnly).factory, false, "app-only, 0x8000-spanning");
+  assert.match(localImageShape(appOnly).reason, /partition table/);
+  const short = new Uint8Array(0x4000);
+  short[0] = 0xe9;
+  assert.strictEqual(localImageShape(short).factory, false, "shorter than 0x8000");
+  const factory = new Uint8Array(0x20000).fill(0xff);
+  factory[0] = 0xe9; // bootloader image magic at 0
+  ptEntry({ type: 1, subtype: 2, offset: 0x9000, size: 0x5000, label: "nvs" })
+    .copy(Buffer.from(factory.buffer), 0x8000);
+  assert.strictEqual(localImageShape(factory).factory, true, "merged factory image");
+});
+
 // ── partition kinds (board report vocabulary) ───────────────────────────────
 test("partitionKind names app slots and data partitions", async () => {
   const { partitionKind, isOtaDataPart, isCoredumpPart, isNvsPart, isWitnessLogPart } = await core();
@@ -345,6 +367,17 @@ test("parseOtaData: fresh otadata → factory default; valid seq → active slot
   const r2 = parseOtaData(new Uint8Array(two), 2);
   assert.strictEqual(r2.activeOta, 1);
   assert.strictEqual(r2.pendingVerify, true);
+  // Rollback: newest (seq 6, INVALID) doesn't boot → the previous good image
+  // (seq 5) runs, so activeOta must exclude the rolled-back slot.
+  const rolled = Buffer.concat([
+    otaEntry(5, 0x2 /* valid */, crc32EspRom),
+    otaEntry(6, 0x3 /* invalid — rolled back */, crc32EspRom),
+  ]);
+  const r3 = parseOtaData(new Uint8Array(rolled), 2);
+  assert.strictEqual(r3.updatesSeen, 6); // the attempt is still counted
+  assert.strictEqual(r3.activeOta, (5 - 1) % 2); // = 0, previous good — NOT (6-1)%2 = 1
+  assert.ok(/rolled back/.test(r3.stateText));
+  assert.strictEqual(r3.pendingVerify, false);
   // A corrupt CRC is ignored, falling back to the other sector.
   const bad = Buffer.concat([otaEntry(9, 0x2, crc32EspRom), Buffer.alloc(0x1000, 0xff)]);
   bad.writeUInt32LE(0xdeadbeef, 28); // stomp the CRC

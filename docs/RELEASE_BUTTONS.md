@@ -82,8 +82,10 @@ behaviour. Otherwise the master button already covers it.
 
 ### Flasher Factory Images
 
-Rebuilds *only* the browser-flasher factory images and `manifest-flash.json` for
-an **existing** `fw-v*` tag, and attaches them to that release.
+Rebuilds *only* the browser-flasher factory images and `manifest-flash.json`, and
+attaches them to a release. Pick a `channel`.
+
+**`channel: release`** — an **existing** `fw-v*` tag.
 
 **Use it** in two situations:
 1. A packaging-tooling fix should reach an already-cut tag without a new version.
@@ -93,8 +95,29 @@ an **existing** `fw-v*` tag, and attaches them to that release.
    the flasher up anyway.
 
 **Don't:** expect it to help a tag that doesn't exist — it checks out the tag, so
-the tag has to be there first. And read the version-burn warning below before
-creating one by hand.
+the tag has to be there first. It now fails with that sentence rather than a raw
+git error, and points you at `channel: dev`. Read the version-burn warning below
+before creating a tag by hand.
+
+**`channel: dev`** — **no tag, no version, no signing key.** Builds the branch
+you dispatch from and publishes to the rolling `fw-dev-latest` prerelease, which
+is exactly what the flasher's **Advanced → dev channel** toggle reads.
+
+**Use it:** hardware is on the bench and you need a real flashable image *today*
+— a new board, a demo, a bring-up. It's the shortest path from "the code is on a
+branch" to "the product is installable", and it burns no version.
+
+**Don't:** point a stranger at it. Dev images are unsigned *while the key
+ceremony is pending*: verified by SHA-256 against the manifest, and both
+flashers say so on the banner and the receipt. Stable installs belong on a
+signed release. It also cannot reach `releases/latest` — it publishes a
+prerelease, on purpose, so the fleet's OTA URL never lands on it.
+
+Once the key exists this button signs like every other path, and **refuses to
+run** if the key is pinned but `OTA_SIGNING_KEY_PEM` isn't set — an unsigned
+manifest published after the ceremony isn't a weaker install, it's an
+uninstallable one (the flashers' policy becomes `require-signature` and they
+reject the whole manifest).
 
 ### Build Mac apps (Flasher + Lab)
 
@@ -175,7 +198,11 @@ release fw-v2.3.0, which has no published images"*. `canary-local` CI also warns
 on every run while the pin is unresolvable.
 
 **Fix:** cut that firmware release (master button), or run **Flasher Factory
-Images** for the tag if the key ceremony hasn't happened yet.
+Images** for the tag if the key ceremony hasn't happened yet. If the tag itself
+was never created — the usual case, and what makes this look like "nothing
+works" rather than "one release is missing" — run **Flasher Factory Images**
+with `channel: dev` instead: it needs no tag, and the images land on the channel
+the flasher's **Advanced → dev channel** toggle reads.
 
 ### An app release that already exists
 
@@ -199,6 +226,13 @@ than cutting a new download — so nobody's updater sees anything new. Three
 python3 desktop/scripts/check_app_versions.py    # all three, both apps
 ```
 
+Bumping is half the act: the version must also **say what it changes**. Add a
+`## <version> — <date>` section at the top of the app's `RELEASE_NOTES.md`
+(`desktop/` or `desktop-lab/`) — it becomes the release body and the text the
+in-app updater shows as "what's changing". `desktop/scripts/release_notes.py
+check` (lint + both app workflows) fails the build if the newest section
+doesn't match the version being shipped.
+
 Cargo.toml is the one that bit us: the Flasher shipped as `0.2.2` with a footer
 reading `v0.1.0`, so a bug report named a version that had never been released.
 Remember `Cargo.lock` too — it pins the crate's own version and a `--locked`
@@ -221,7 +255,9 @@ You don't have to remember these; CI does. Listed so a red run makes sense.
 | A display binary carries the identity it's published under | the product-string check in `firmware-release.yml` |
 | The signing key in CI matches the committed public key | `firmware-release.yml`, fails before building |
 | The flasher's pinned release actually resolves | advisory warning in `canary-local.yml` |
-| Every updater URL in a published `latest.json` resolves | the consistency guard in `desktop-flasher-release.yml` |
+| Every updater URL in a published `latest.json` resolves | the consistency guards in `desktop-flasher-release.yml` + `desktop-lab-updater-pointer.yml` |
+| An app release says what it changes, in the body and in the updater notes | `desktop/scripts/release_notes.py` (lint + both app workflows) |
+| Each self-updating app polls its own rolling pointer (`flasher-latest`, `lab-latest`), never `releases/latest`, and the workflow that advances it names the same tag | `desktop_parity.test.js` |
 
 ## Things no button can do for you
 
@@ -231,4 +267,8 @@ You don't have to remember these; CI does. Listed so a red run makes sense.
   secrets need a developer account. Until then those targets are honest no-ops.
 - **Publishing the Lab's release.** It's created as a **draft** on purpose;
   a human clicks Publish. (`release-latest-guard.yml` then puts
-  `releases/latest` back on the firmware.)
+  `releases/latest` back on the firmware, and
+  `desktop-lab-updater-pointer.yml` verifies the updater manifest and
+  advances `lab-latest` — the pointer every installed Lab polls — so
+  publishing the draft is also what makes the fleet of installed Labs see
+  the update.)

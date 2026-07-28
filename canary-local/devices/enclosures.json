@@ -502,6 +502,39 @@
    "scad": "canary_dash_display.scad"
   },
   {
+   "id": "c6-display-pocket-case",
+   "name": "C6 display pocket case",
+   "for": "Waveshare ESP32-C6-LCD-1.47 (portrait), flat-bottom board (no down-facing male headers): face-down bezel over the active-area window, edge-captured board (no screws into the board), snap-in vented back, USB-C + BOOT/RST access, blind keyhole. `model=\"1.47\"` is drawn from the Waveshare mechanical drawing; a `\"1.69\"` preset is parameterised. Heat-escape slots on the sides + a back grille",
+   "status": "in-development",
+   "note": "snap-fit, vented",
+   "device": "canary-display-watch",
+   "preview": "preview_dev_c6_147.png",
+   "parts": [],
+   "scad": "canary_c6_display.scad"
+  },
+  {
+   "id": "7-touch-dashboard-case",
+   "name": "7″ touch dashboard case",
+   "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on moulded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Big convection grille (~52 cm² back + side chimney vents — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots, optional 20° desk cradle. Connector centres are NOMINAL — measure yours",
+   "status": "in-development",
+   "note": "glass drops in, bezel lip 3.0, M3 corners",
+   "device": "canary-display-dash",
+   "preview": "preview_dev_lcd7.png",
+   "parts": [],
+   "scad": "canary_s3_lcd7.scad"
+  },
+  {
+   "id": "1-69-touch-watch-display-puck",
+   "name": "1.69″ touch watch-display puck",
+   "for": "Waveshare ESP32-S3-Touch-LCD-1.69 (rounded-square 240×280 capacitive-touch smartwatch board — S3, IMU, RTC, battery/charger). The bonded glass slab (41.13 × 33.13) overhangs the smaller PCB (37.12 × 29.83) by ~2 mm, so the face lip captures it — no screws (this board has no mount holes). Face-down bezel + snap-in vented back (skirt rides the overhang, 4 nubs, standoffs press the board forward, blind keyhole). USB-C (bottom) + PWR/BOOT/RST (top) + battery/RTC/pin slot (side); side heat slots + back grille; optional 22° cradle. Connector centres NOMINAL — measure yours",
+   "status": "in-development",
+   "note": "snap-fit, vented, edge-captured",
+   "device": "canary-display-watch",
+   "preview": "preview_dev_t169.png",
+   "parts": [],
+   "scad": "canary_s3_touch169.scad"
+  },
+  {
    "id": "vehicle-mount-kit",
    "name": "Vehicle mount kit",
    "for": "VHB-taped dash plate with a 10° stud riser + an air-vent louver clip (extruded spring prongs snap over one blade). ⚠️ cabins exceed +60 °C: USB power only, ASA, light colors",
@@ -6029,6 +6062,690 @@
       {
        "name": "view_w",
        "default": "panel_w - 2*bez_lip"
+      }
+     ]
+    }
+   ]
+  },
+  "canary_c6_display.scad": {
+   "title": "Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "groups": [
+    {
+     "name": "What to render",
+     "note": "",
+     "params": [
+      {
+       "name": "part",
+       "default": "all",
+       "enum": [
+        "bezel",
+        "back",
+        "all"
+       ]
+      },
+      {
+       "name": "model",
+       "default": "1.47",
+       "enum": [
+        "1.47",
+        "1.69"
+       ],
+       "comment": "board preset"
+      }
+     ]
+    },
+    {
+     "name": "Board",
+     "note": "ESP32-C6-LCD-1.47, flat-bottom. From the Waveshare drawing (mm).",
+     "params": [
+      {
+       "name": "board_l",
+       "default": "(model == \"1.69\") ? 36.0  : 36.37",
+       "comment": "1.69 = MEASURE (placeholder)"
+      },
+      {
+       "name": "board_w",
+       "default": "(model == \"1.69\") ? 25.0  : 20.32"
+      },
+      {
+       "name": "pcb_t",
+       "default": "1.45"
+      },
+      {
+       "name": "lcd_rise",
+       "default": "3.65",
+       "comment": "LCD glass front above the PCB front face (5.10 stack − 1.45 PCB)"
+      },
+      {
+       "name": "back_stack",
+       "default": "2.2",
+       "comment": "back-side component clearance below the PCB — MEASURE"
+      }
+     ]
+    },
+    {
+     "name": "Screen",
+     "note": "active area = the window; the LCD module border sits under the lip",
+     "params": [
+      {
+       "name": "aa_l",
+       "default": "(model == \"1.69\") ? 27.972 : 32.35",
+       "comment": "active-area long (Y) — 1.69 = MEASURE"
+      },
+      {
+       "name": "aa_w",
+       "default": "(model == \"1.69\") ? 27.972 : 17.39",
+       "comment": "active-area short (X)"
+      },
+      {
+       "name": "lcm_l",
+       "default": "(model == \"1.69\") ? 32.0   : 36.28",
+       "comment": "LCD module outline long"
+      },
+      {
+       "name": "lcm_w",
+       "default": "(model == \"1.69\") ? 28.0   : 19.39",
+       "comment": "LCD module outline short"
+      }
+     ]
+    },
+    {
+     "name": "Buttons",
+     "note": "BOOT/RST flank the USB end on the two side (±X) walls",
+     "params": [
+      {
+       "name": "opt_btn",
+       "default": "true"
+      },
+      {
+       "name": "btn_d",
+       "default": "3.6",
+       "comment": "side access hole Ø"
+      },
+      {
+       "name": "btn_up",
+       "default": "6.5",
+       "comment": "button centre up from the USB (−Y) end — MEASURE"
+      }
+     ]
+    },
+    {
+     "name": "Mount",
+     "note": "",
+     "params": [
+      {
+       "name": "opt_keyhole",
+       "default": "true",
+       "comment": "one blind keyhole in the back (wall hang)"
+      },
+      {
+       "name": "opt_vent",
+       "default": "true"
+      },
+      {
+       "name": "vent_n",
+       "default": "5",
+       "comment": "slots per side wall"
+      },
+      {
+       "name": "vent_pitch",
+       "default": "5.0",
+       "comment": "slot spacing"
+      },
+      {
+       "name": "vent_w",
+       "default": "1.4",
+       "comment": "slot width"
+      }
+     ]
+    },
+    {
+     "name": "Shell",
+     "note": "",
+     "params": [
+      {
+       "name": "wall",
+       "default": "2.2",
+       "comment": "side wall thickness"
+      },
+      {
+       "name": "face_t",
+       "default": "2.0",
+       "comment": "bezel face (over the glass border)"
+      },
+      {
+       "name": "back_t",
+       "default": "2.0",
+       "comment": "rear cover plate"
+      },
+      {
+       "name": "r_out",
+       "default": "3.0",
+       "comment": "outer corner radius"
+      },
+      {
+       "name": "lid_edge",
+       "default": "0.8",
+       "comment": "bezel face edge chamfer"
+      }
+     ]
+    },
+    {
+     "name": "Quality",
+     "note": "",
+     "params": [
+      {
+       "name": "cav_d",
+       "default": "lcd_rise + pcb_t + back_stack",
+       "comment": "glass ledge → back-plate inner"
+      },
+      {
+       "name": "bez_h",
+       "default": "face_t + cav_d",
+       "comment": "bezel wall height"
+      },
+      {
+       "name": "r_in",
+       "default": "max(0.6, r_out - wall)",
+       "comment": "cavity corner radius"
+      },
+      {
+       "name": "z_pcb_front",
+       "default": "face_t + lcd_rise",
+       "comment": "PCB front plane"
+      },
+      {
+       "name": "z_usb",
+       "default": "face_t + lcd_rise + pcb_t/2",
+       "comment": "USB-C centre (mid-PCB)"
+      },
+      {
+       "name": "lip_l",
+       "default": "(lcm_l - aa_l)/2",
+       "comment": "long-side lip (Y)"
+      },
+      {
+       "name": "lip_w",
+       "default": "(lcm_w - aa_w)/2",
+       "comment": "short-side lip (X)"
+      }
+     ]
+    }
+   ]
+  },
+  "canary_s3_lcd7.scad": {
+   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "groups": [
+    {
+     "name": "What to render",
+     "note": "",
+     "params": [
+      {
+       "name": "part",
+       "default": "all",
+       "enum": [
+        "bezel",
+        "back",
+        "stand",
+        "all"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Glass slab",
+     "note": "bonded touch panel, from the Waveshare drawing (mm)",
+     "params": [
+      {
+       "name": "glass_w",
+       "default": "192.96",
+       "comment": "touch-glass width  (X)"
+      },
+      {
+       "name": "glass_h",
+       "default": "110.76",
+       "comment": "touch-glass height (Y)"
+      },
+      {
+       "name": "glass_t",
+       "default": "4.0",
+       "comment": "glass + LCD module thickness at the edge — MEASURE"
+      },
+      {
+       "name": "aa_w",
+       "default": "154.88",
+       "comment": "active area width"
+      },
+      {
+       "name": "aa_h",
+       "default": "86.72",
+       "comment": "active area height"
+      },
+      {
+       "name": "aa_dy",
+       "default": "-1.02",
+       "comment": "AA centre offset from glass centre (top border 13.04, bottom 11.00)"
+      }
+     ]
+    },
+    {
+     "name": "PCB stack behind the glass",
+     "note": "",
+     "params": [
+      {
+       "name": "pcb_standoff",
+       "default": "5.0",
+       "comment": "glass back → PCB front (the white M3 standoffs) — MEASURE"
+      },
+      {
+       "name": "pcb_t",
+       "default": "1.6"
+      },
+      {
+       "name": "comp_h",
+       "default": "11.0",
+       "comment": "tallest thing behind the PCB (USB-C / terminals / batt JST) — MEASURE"
+      },
+      {
+       "name": "pcb_w",
+       "default": "165.72",
+       "comment": "PCB outline width  (X) — from the drawing"
+      },
+      {
+       "name": "pcb_h",
+       "default": "97.60",
+       "comment": "PCB outline height (Y)"
+      }
+     ]
+    },
+    {
+     "name": "Board mounts",
+     "note": "4x M3 corner standoffs carry the PCB (nominal pattern)",
+     "params": [
+      {
+       "name": "m3_dx",
+       "default": "165.72",
+       "comment": "M3 hole pattern width  — MEASURE (drawing: 165.72 span)"
+      },
+      {
+       "name": "m3_dy",
+       "default": "88.0",
+       "comment": "M3 hole pattern height — MEASURE"
+      },
+      {
+       "name": "m3_pilot",
+       "default": "2.7",
+       "comment": "self-tap pilot for M3 into printed bosses"
+      }
+     ]
+    },
+    {
+     "name": "Screen",
+     "note": "",
+     "params": [
+      {
+       "name": "bez_lip",
+       "default": "3.0",
+       "comment": "bezel overlap onto the glass border (big slab → wider lip)"
+      },
+      {
+       "name": "opt_bottom_ports",
+       "default": "true"
+      },
+      {
+       "name": "opt_side_ports",
+       "default": "true"
+      }
+     ]
+    },
+    {
+     "name": "Ventilation",
+     "note": "MUST let the backlight/SoC heat convect out",
+     "params": [
+      {
+       "name": "vent_back",
+       "default": "true",
+       "comment": "large grille in the back plate"
+      },
+      {
+       "name": "vent_rows",
+       "default": "11",
+       "comment": "grille rows"
+      },
+      {
+       "name": "vent_cols",
+       "default": "22",
+       "comment": "grille columns"
+      },
+      {
+       "name": "vent_slot_w",
+       "default": "2.4",
+       "comment": "slot width"
+      },
+      {
+       "name": "vent_slot_l",
+       "default": "9.0",
+       "comment": "slot length"
+      },
+      {
+       "name": "vent_pitch_x",
+       "default": "7.0",
+       "comment": "column pitch"
+      },
+      {
+       "name": "vent_pitch_y",
+       "default": "8.0",
+       "comment": "row pitch"
+      },
+      {
+       "name": "vent_sides",
+       "default": "true",
+       "comment": "extra chimney slots high on the side walls"
+      },
+      {
+       "name": "vent_side_n",
+       "default": "6"
+      }
+     ]
+    },
+    {
+     "name": "Shell",
+     "note": "",
+     "params": [
+      {
+       "name": "wall",
+       "default": "3.0",
+       "comment": "side wall thickness (big case → thicker)"
+      },
+      {
+       "name": "face_t",
+       "default": "3.0",
+       "comment": "bezel face"
+      },
+      {
+       "name": "back_t",
+       "default": "3.0",
+       "comment": "rear tray floor"
+      },
+      {
+       "name": "r_out",
+       "default": "6.0",
+       "comment": "outer corner radius"
+      }
+     ]
+    },
+    {
+     "name": "Stand",
+     "note": "",
+     "params": [
+      {
+       "name": "opt_stand",
+       "default": "true"
+      }
+     ]
+    },
+    {
+     "name": "Quality",
+     "note": "",
+     "params": [
+      {
+       "name": "cav_d",
+       "default": "glass_t + pcb_standoff + pcb_t + comp_h",
+       "comment": "glass front ledge → back floor"
+      },
+      {
+       "name": "bez_h",
+       "default": "face_t + glass_t + 1.0",
+       "comment": "bezel just retains the glass (the deep box is the back)"
+      },
+      {
+       "name": "r_in",
+       "default": "max(1.0, r_out - wall)"
+      },
+      {
+       "name": "z_pcb_front",
+       "default": "glass_t + pcb_standoff",
+       "comment": "from the glass ledge (back frame)"
+      }
+     ]
+    }
+   ]
+  },
+  "canary_s3_touch169.scad": {
+   "title": "Canary — ESP32-S3-Touch-LCD-1.69 WATCH-DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "groups": [
+    {
+     "name": "What to render",
+     "note": "",
+     "params": [
+      {
+       "name": "part",
+       "default": "all",
+       "enum": [
+        "bezel",
+        "back",
+        "stand",
+        "all"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Glass slab",
+     "note": "bonded touch panel, from the Waveshare \"Dimensions\" drawing (mm)",
+     "params": [
+      {
+       "name": "glass_w",
+       "default": "41.13",
+       "comment": "rounded-square glass width  (X)"
+      },
+      {
+       "name": "glass_h",
+       "default": "33.13",
+       "comment": "rounded-square glass height (Y)"
+      },
+      {
+       "name": "glass_t",
+       "default": "2.6",
+       "comment": "glass + LCD module thickness at the edge — MEASURE"
+      },
+      {
+       "name": "r_glass",
+       "default": "7.0",
+       "comment": "glass corner radius (watch-style) — MEASURE"
+      },
+      {
+       "name": "aa_w",
+       "default": "32.634",
+       "comment": "active area width  (280 px long axis, landscape)"
+      },
+      {
+       "name": "aa_h",
+       "default": "27.972",
+       "comment": "active area height (240 px)"
+      }
+     ]
+    },
+    {
+     "name": "PCB behind the glass",
+     "note": "smaller than the glass, no mounting holes",
+     "params": [
+      {
+       "name": "pcb_w",
+       "default": "37.12",
+       "comment": "PCB outline width  (X)"
+      },
+      {
+       "name": "pcb_h",
+       "default": "29.83",
+       "comment": "PCB outline height (Y)"
+      },
+      {
+       "name": "pcb_t",
+       "default": "1.6"
+      },
+      {
+       "name": "panel_gap",
+       "default": "0.0",
+       "comment": "spacer between the display-module base and the PCB front"
+      },
+      {
+       "name": "back_stack",
+       "default": "4.5",
+       "comment": "tallest thing behind the PCB (USB-C / JST / buzzer) — MEASURE"
+      }
+     ]
+    },
+    {
+     "name": "USB-C",
+     "note": "on the BOTTOM (−Y) edge, centred on the PCB thickness",
+     "params": [
+      {
+       "name": "opt_usb",
+       "default": "true"
+      }
+     ]
+    },
+    {
+     "name": "Buttons",
+     "note": "PWR / BOOT / RST on the TOP (+Y) edge (side access holes)",
+     "params": [
+      {
+       "name": "opt_btn",
+       "default": "true"
+      },
+      {
+       "name": "btn_d",
+       "default": "3.4",
+       "comment": "access hole Ø"
+      },
+      {
+       "name": "btn_xs",
+       "default": "[-9.0, 0.0, 9.0]",
+       "comment": "button X centres on the top edge — MEASURE"
+      }
+     ]
+    },
+    {
+     "name": "Side cluster",
+     "note": "battery / RTC / pin row exit on the RIGHT (+X) edge",
+     "params": [
+      {
+       "name": "opt_side",
+       "default": "true"
+      }
+     ]
+    },
+    {
+     "name": "Mount",
+     "note": "",
+     "params": [
+      {
+       "name": "opt_keyhole",
+       "default": "true",
+       "comment": "one blind keyhole in the back (wall hang)"
+      }
+     ]
+    },
+    {
+     "name": "Ventilation",
+     "note": "let the S3 / backlight / charger heat convect out",
+     "params": [
+      {
+       "name": "opt_vent",
+       "default": "true"
+      },
+      {
+       "name": "vent_n",
+       "default": "6",
+       "comment": "side slots per long wall"
+      },
+      {
+       "name": "vent_pitch",
+       "default": "4.6",
+       "comment": "slot spacing"
+      },
+      {
+       "name": "vent_w",
+       "default": "1.4",
+       "comment": "slot width"
+      },
+      {
+       "name": "grille_n",
+       "default": "7",
+       "comment": "back-grille slots"
+      }
+     ]
+    },
+    {
+     "name": "Shell",
+     "note": "",
+     "params": [
+      {
+       "name": "wall",
+       "default": "2.4",
+       "comment": "side wall thickness"
+      },
+      {
+       "name": "face_t",
+       "default": "2.0",
+       "comment": "bezel face (over the glass border)"
+      },
+      {
+       "name": "back_t",
+       "default": "2.0",
+       "comment": "rear cover plate"
+      },
+      {
+       "name": "r_out",
+       "default": "r_glass + wall",
+       "comment": "outer corner radius follows the glass"
+      }
+     ]
+    },
+    {
+     "name": "Stand",
+     "note": "",
+     "params": [
+      {
+       "name": "opt_stand",
+       "default": "true"
+      }
+     ]
+    },
+    {
+     "name": "Quality",
+     "note": "",
+     "params": [
+      {
+       "name": "lcd_rise",
+       "default": "glass_t + panel_gap",
+       "comment": "glass front above PCB front"
+      },
+      {
+       "name": "cav_d",
+       "default": "lcd_rise + pcb_t + back_stack",
+       "comment": "glass ledge → back-plate inner"
+      },
+      {
+       "name": "bez_h",
+       "default": "face_t + cav_d",
+       "comment": "bezel wall height"
+      },
+      {
+       "name": "r_in",
+       "default": "max(1.0, r_out - wall)",
+       "comment": "cavity corner radius"
+      },
+      {
+       "name": "z_pcb_front",
+       "default": "face_t + lcd_rise",
+       "comment": "PCB front plane"
+      },
+      {
+       "name": "z_usb",
+       "default": "face_t + lcd_rise + pcb_t/2",
+       "comment": "USB-C centre (mid-PCB)"
       }
      ]
     }

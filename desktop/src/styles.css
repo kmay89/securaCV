@@ -317,6 +317,22 @@ kbd {
   box-shadow: var(--shadow-1);
 }
 .banner #update-text { flex: 1; }
+.banner { flex-wrap: wrap; }
+
+/* "What's changing" — the pending update's own release notes, in the banner
+   and on the About page. Full-width row under the banner's controls. */
+.update-notes {
+  flex-basis: 100%;
+  font-size: 13px;
+  color: var(--text);
+  border-top: 1px solid color-mix(in srgb, var(--canary) 40%, transparent);
+  padding-top: 8px; margin-top: 2px;
+  max-height: 180px; overflow-y: auto;
+}
+.update-notes p { margin: 0 0 6px; }
+.update-notes ul { margin: 0; padding-left: 18px; }
+.update-notes li { margin: 3px 0; }
+.card .update-notes { border-top: none; padding-top: 0; margin: 6px 0 10px; }
 
 /* ── dev-channel banner ───────────────────────────────────────────────── */
 /* Deliberately loud: hazard stripes in the caution amber, so a prerelease
@@ -432,6 +448,14 @@ kbd {
 }
 .resume-banner .resume-grow { flex: 1; min-width: 0; }
 .resume-banner .link-btn { white-space: nowrap; }
+.resume-banner { flex-wrap: wrap; }
+.resume-banner .fb-count { flex-basis: 100%; margin-top: 0; }
+
+/* Countdown to the go-find-it escalation (see hubCountdownStart). */
+.fb-count {
+  margin-top: 6px; font-size: 12.5px; color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
 
 /* first-boot companion */
 .firstboot {
@@ -688,3 +712,86 @@ kbd {
 /* Your Fleet — the embedded Witness Wall (isolated iframe) */
 #fleet-view { padding: 0; height: 100%; min-height: 0; }
 .witness-frame { width: 100%; height: 100%; min-height: 72vh; border: 0; border-radius: 12px; background: transparent; display: block; }
+
+/* ── cold start: the BOOT-held gesture, before the cable goes in ──────────── */
+/* Mirrors the browser flasher's .flash-coldstart. It sits inside step 1
+   because it is the only instruction on the page that has to be followed
+   BEFORE plugging in — everything else the app does is a check afterwards. */
+.coldstart {
+  margin: 14px 0 4px; padding: 14px 16px;
+  border: 1px solid var(--canary); border-radius: 12px;
+  background: var(--canary-soft);
+}
+.coldstart h3 { margin: 0 0 8px; font-size: 15px; font-weight: 650; color: var(--canary-dark); }
+.coldstart p { margin: 0 0 8px; font-size: 13.5px; color: var(--text-secondary); }
+.coldstart ol { margin: 8px 0 10px 20px; font-size: 13.5px; color: var(--text-secondary); }
+.coldstart ol li { margin: 3px 0; }
+.coldstart .fineprint { font-size: 12.5px; color: var(--text-muted); }
+.coldstart kbd {
+  font: 600 11.5px/1 ui-monospace, Menlo, Consolas, monospace;
+  padding: 2px 6px; border: 1px solid var(--border-strong); border-radius: 5px;
+  background: var(--surface); color: var(--text);
+}
+.coldstart code { font: 12px/1 ui-monospace, Menlo, Consolas, monospace; }
+.coldstart-ask {
+  display: flex; gap: 9px; align-items: flex-start; margin: 12px 0 10px;
+  padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: 10px;
+  background: var(--surface); font-size: 13px; color: var(--text-secondary);
+  cursor: pointer;
+}
+.coldstart-ask input { margin-top: 2px; flex: 0 0 auto; }
+/* ── health report (rescue bench) ─────────────────────────────────────── */
+.health-report { display: grid; gap: 8px; margin-top: 12px; }
+.health-h {
+  margin: 10px 0 2px; font-size: 12px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted);
+}
+.health-row {
+  display: flex; gap: 12px; justify-content: space-between; align-items: baseline;
+  border-radius: 8px; padding: 7px 10px; font-size: 12.5px;
+  background: var(--bg); color: var(--text-secondary);
+}
+.health-row-k { font-weight: 500; color: var(--text); }
+.health-row-v {
+  text-align: right; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px;
+}
+.health-row.health-ok { background: var(--success-bg); color: var(--success); }
+.health-row.health-warn { background: var(--caution-bg); color: var(--caution); }
+.health-verdict {
+  border-radius: 12px; padding: 12px 14px; border: 1px solid var(--border-strong);
+  background: var(--surface-2); display: grid; gap: 8px;
+}
+.health-verdict-h { font-size: 14px; }
+.health-verdict.health-ok { border-color: var(--success); background: var(--success-bg); }
+.health-verdict.health-warn { border-color: var(--caution); background: var(--caution-bg); }
+.health-verdict.health-attn { border-color: var(--danger); background: var(--danger-bg); }
+.health-finding { border-top: 1px solid var(--border); padding-top: 7px; }
+.health-finding:first-of-type { border-top: none; padding-top: 0; }
+.health-finding-t { margin: 0; font-size: 13px; font-weight: 500; color: var(--text); }
+.health-finding-fix { margin: 3px 0 0; font-size: 12.5px; }
+
+/* ── radar tuning suite (Sense): live knobs riding the serial monitor ────── */
+.sense-tune {
+  margin: 10px 0; padding: 10px 12px; border: 1px solid var(--border);
+  border-radius: 10px; background: rgba(255, 255, 255, 0.02);
+}
+.sense-tune-head { align-items: baseline; gap: 10px; }
+.sense-tune-head h4 { margin: 0 auto 0 0; font-size: 13.5px; }
+.sense-knobs {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 2px 20px; margin: 8px 0 4px;
+}
+.sense-knob {
+  display: grid; grid-template-columns: 92px 1fr 82px; align-items: center;
+  gap: 8px; padding: 3px 0; font-size: 12.5px;
+}
+.sense-knob-name, .sense-knob-val {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.sense-knob-name { color: var(--muted); }
+.sense-knob-val { text-align: right; white-space: nowrap; }
+.sense-knob input[type="range"] { width: 100%; accent-color: var(--accent, #ffd44f); }
+.sense-knob input[type="range"]:disabled { opacity: 0.4; }
+.sense-tune-ctl { gap: 10px; align-items: center; flex-wrap: wrap; }
+.sense-raw-toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }

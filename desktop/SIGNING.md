@@ -136,11 +136,14 @@ If all three pass, you're done — signing is real.
 Signing changes nothing about versioning — the repo's rule still holds: **a
 release version that already exists is not a release** (bump first).
 
-1. Bump the version in **both** `desktop/src-tauri/tauri.conf.json` **and**
-   `desktop/package.json` (they must agree — the workflow fails loudly if they
-   drift) — e.g. `0.2.2` → `0.2.3`.
-2. Either push a tag `flasher-v0.2.3`, or Actions → Run workflow with
-   **`dry_run = false`**.
+1. Bump the version in **all three** files that must agree — the release fails
+   loudly at `desktop/scripts/check_app_versions.py` if any drift:
+   `desktop/src-tauri/tauri.conf.json`, `desktop/package.json`, **and**
+   `desktop/src-tauri/Cargo.toml` (this last one is easy to forget — it's
+   `CARGO_PKG_VERSION`, the version the running app reports) — e.g. `0.3.0` →
+   `0.3.1`. Run `python3 desktop/scripts/check_app_versions.py` first to confirm.
+2. Either push a tag `flasher-v0.3.1` (matching the version from step 1), or
+   Actions → Run workflow with **`dry_run = false`**.
 3. The release's `.dmg`/`.app` are now signed + notarized; users double-click to
    open. (The `xattr` step in `desktop/INSTALL.md` no longer applies to signed
    builds.)

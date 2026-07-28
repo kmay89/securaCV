@@ -85,6 +85,25 @@ export function parsePartitionTable(bytes) {
   return { entries, apps };
 }
 
+// A local file is written at offset 0, where only a MERGED factory image
+// belongs (bootloader + partition table + app — make_factory.py's output).
+// An app-only build also starts with the 0xE9 image magic, so the only
+// honest discriminator is the partition table at 0x8000: no table, no
+// factory image. Refusing app-only files here is what keeps "install a
+// local file" from writing an app over the bootloader and leaving the
+// board unbootable until a USB re-flash (same check, same reason, as the
+// desktop Flasher's flash_local_file).
+export function localImageShape(bytes) {
+  if (!bytes || bytes.length <= 0x8000 + 32) {
+    return { factory: false, reason: "shorter than the 0x8000 partition-table offset — an app-only build, not a merged factory image" };
+  }
+  const { entries } = parsePartitionTable(bytes.subarray(0x8000, Math.min(0x8c00, bytes.length)));
+  if (!entries.length) {
+    return { factory: false, reason: "no partition table at 0x8000 — an app-only build, not a merged factory image" };
+  }
+  return { factory: true, reason: "" };
+}
+
 // Which app partition to read a version out of: prefer ota_0, then factory,
 // then whatever app comes first. Used when otadata could not be read — the
 // install verdict compares against the booted slot via pickBootedAppPartition.
@@ -361,13 +380,24 @@ export function parseOtaData(bytes, otaSlotCount) {
     // Fresh otadata: the bootloader falls back to factory, else ota_0.
     return { fresh: true, activeOta: 0, updatesSeen: 0, stateText: "factory default" };
   }
-  const best = valid.reduce((a, b) => (b.seq > a.seq ? b : a));
+  const newest = valid.reduce((a, b) => (b.seq > a.seq ? b : a));
+  // The booted slot is the highest-seq entry the bootloader will actually START:
+  // valid AND not invalid(0x3)/aborted(0x4). If the newest rolled back, the
+  // previous good image runs — so activeOta must exclude it, even though
+  // stateText/updatesSeen still report the newest so the rollback is surfaced.
+  const bootable = valid.filter((e) => e.state !== 0x3 && e.state !== 0x4);
+  const stateText = OTA_STATE[newest.state] || `0x${newest.state.toString(16)}`;
+  if (!bootable.length) {
+    // Every update rolled back → the bootloader falls back to factory.
+    return { fresh: true, activeOta: 0, updatesSeen: newest.seq, stateText, pendingVerify: false };
+  }
+  const best = bootable.reduce((a, b) => (b.seq > a.seq ? b : a));
   return {
     fresh: false,
     activeOta: (best.seq - 1) % otaSlotCount,
-    updatesSeen: best.seq,
-    stateText: OTA_STATE[best.state] || `0x${best.state.toString(16)}`,
-    pendingVerify: best.state === 0x1,
+    updatesSeen: newest.seq,
+    stateText,
+    pendingVerify: newest.state === 0x1,
   };
 }
 
@@ -1024,7 +1054,9 @@ export function classifyFlashError(err) {
     return { kind: "port-busy", title: "That port is busy",
       hint: "Another program or browser tab is holding the board. Close the Arduino " +
         "IDE / PlatformIO serial monitor and any other flasher tab, then unplug, " +
-        "replug, and try again." };
+        "replug, and try again. On Linux the holder is often ModemManager probing a " +
+        "just-plugged board — wait ~30 s, or add the udev rule from the desktop " +
+        "flasher's INSTALL.md (Linux section) so it ignores Canaries for good." };
 
   // Cable pulled or board vanished mid-operation.
   if (has("device has been lost", "device lost", "no device", "disconnected",
@@ -1573,7 +1605,8 @@ export function postFlashNextStep(product, opts = {}) {
       kind: "wifi-portal",
       title: "Finish setup from your phone",
       body: "It’s broadcasting its own Wi-Fi network now — join it from your " +
-            "phone and a setup page opens by itself. Nothing to type here.",
+            "phone and its setup wizard pops up on its own. (If it doesn’t, " +
+            "open canary.local — or 192.168.4.1 — in your browser.)",
       cta: "How to connect",
     };
   }
@@ -1956,7 +1989,81 @@ export function parseSenseLine(line) {
   if (m) return { kind: "vitals", locked: m[1] === "locked", stalled: /stall/.test(t) };
   m = /\[health\]\s+up\s+(\d+)s\s+heap\s+(\d+)KB\s+frame_errs\s+(\d+)/.exec(t);
   if (m) return { kind: "health", up_s: Number(m[1]), heap_kb: Number(m[2]), frame_errs: Number(m[3]) };
+  // The tuning console's periodic stream — the always-on "what the radar
+  // sees" heartbeat ([radar] state=… count=… range=… [lock=… breath=…
+  // heart=…] [raw_dist=…cm raw_count=… raw_breath=… raw_heart=…] errs=…).
+  // The vitals and raw fields ride only on wellbeing / `raw on` benches, so
+  // everything past the coarse triple is optional.
+  m = /\[radar\]\s+state=(present|clear|unknown)\s+count=(0|1|2\+)\s+range=(near|mid|far|unknown)/.exec(t);
+  if (m) {
+    const ev = { kind: "radar", presence: m[1], count: m[2], range: m[3] };
+    const lock = /\block=(locked|lost|unknown)\b/.exec(t);
+    if (lock) {
+      ev.lock = lock[1];
+      const b = /\bbreath=(\d+)\b/.exec(t);
+      const h = /\bheart=(\d+)\b/.exec(t);
+      if (b) ev.breath = Number(b[1]);
+      if (h) ev.heart = Number(h[1]);
+    }
+    const rd = /\braw_dist=(\d+)cm\b/.exec(t);
+    if (rd) {
+      ev.raw = {
+        dist_cm: Number(rd[1]),
+        count: Number((/\braw_count=(\d+)\b/.exec(t) || [0, 0])[1]),
+        breath: Number((/\braw_breath=(\d+)\b/.exec(t) || [0, 0])[1]),
+        heart: Number((/\braw_heart=(\d+)\b/.exec(t) || [0, 0])[1]),
+      };
+    }
+    const e = /\berrs=(\d+)\b/.exec(t);
+    if (e) ev.frame_errs = Number(e[1]);
+    return ev;
+  }
   return null;
+}
+
+// ── the tuning console's replies: knob snapshot + command verdicts ─────────
+// `[cfg] debounce=300 clear=1500 … stream=1000 raw=0` is the whole knob
+// state on one line — sent on demand ("cfg") and after every set/reset, so
+// a bench UI reconciles by replacing, never by diffing. `stream`/`raw` are
+// console session state, split out from the knob map.
+export function parseCfgLine(line) {
+  const t = String(line || "").trim();
+  if (!/^\[cfg\]\s/.test(t)) return null;
+  const values = {};
+  let stream = null, raw = null;
+  const re = /([a-z_]+)=(\d+)/g;
+  let m;
+  while ((m = re.exec(t))) {
+    const v = Number(m[2]);
+    if (m[1] === "stream") stream = v;
+    else if (m[1] === "raw") raw = v === 1;
+    else values[m[1]] = v;
+  }
+  if (!Object.keys(values).length) return null;
+  return { kind: "cfg", values, stream, raw };
+}
+
+// `[tune] ok …` / `[tune] err …` — one verdict line per command. Anything
+// else under the [tune] tag (the help text) is informational.
+export function parseTuneLine(line) {
+  const t = String(line || "").trim();
+  const m = /^\[tune\]\s+(ok|err)\s+(.*)$/.exec(t);
+  if (!m) return null;
+  return { kind: "tune", ok: m[1] === "ok", text: m[2] };
+}
+
+// One tone class per console line so the bench log reads at a glance —
+// verdicts pop, the stream stays quiet, errors glow. Pure string → token.
+export function senseLineTone(line) {
+  const t = String(line || "").trim();
+  if (/^\[tune\]\s+err\b/.test(t)) return "err";
+  if (/^\[tune\]/.test(t)) return "tune";
+  if (/^\[cfg\]/i.test(t) || /^\[CFG\]/.test(t)) return "cfg";
+  if (/^\[radar\]/.test(t)) return "stream";
+  if (/^\[(vitals)\]/.test(t)) return "vitals";
+  if (/^\[(sense|presence)\]/.test(t)) return "sense";
+  if (/^\[health\]/.test(t)) return "health";
+  return "plain";
 }
 
 // ── the WiFi field's live voice: parse the WAP console telemetry ───────────

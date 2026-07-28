@@ -8,12 +8,17 @@
 // costs nothing on the watch/dash. On the wasm emulator the hardware write is
 // skipped (no RMT peripheral in the browser).
 #include <config.h>
+#include "pins.h"  // MUST precede the gate: HAS_RGBLED lives here, not in
+                   // config.h. With the include below the gate (as first
+                   // shipped) HAS_RGBLED was undefined at gate time and this
+                   // TU compiled EMPTY on the nightstand boards — the beacon
+                   // was dead code. Same contract as settings_ui.cpp's
+                   // HAS_ISOLATED_IO: board header first, then the gate.
 
 #if defined(FEATURE_AMBIENT_LED) && FEATURE_AMBIENT_LED && \
     defined(HAS_RGBLED) && HAS_RGBLED
 
 #include <Arduino.h>
-#include "pins.h"
 #include "canary/hal/ambient_led.h"
 #include "canary/ui/look_state.h"
 #include "color/look_engine.h"
@@ -41,7 +46,13 @@ void write_rgb(uint8_t r, uint8_t g, uint8_t b) {
 
 void ambient_led_init() {
   s_ready = true;
-  write_rgb(0, 0, 0);  // dark until the first state is known
+  // Boot beacon: bright canary yellow (0xFFD44F — the splash scanline's
+  // brand yellow) from the first instant of power, so the bird visibly wakes
+  // before the glass does. This is a liveness signal, not a state claim —
+  // the first ambient_led_tick() repaints with the real fleet state (or
+  // honest darkness) as soon as one is known, so the yellow lives exactly
+  // as long as boot does.
+  write_rgb(0xFF, 0xD4, 0x4F);
 }
 
 void ambient_led_off() {

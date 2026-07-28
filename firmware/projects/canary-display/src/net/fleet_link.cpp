@@ -286,6 +286,8 @@ uint32_t fleet_link_count() { return s_count; }
 
 #else  // !FEATURE_FLEET_LINK
 
+#include <stdint.h>  // the stubs still speak the header's uint32_t types
+
 namespace canary::net {
 void fleet_link_loop(uint32_t, bool, bool) {}
 void fleet_link_request(const char*) {}

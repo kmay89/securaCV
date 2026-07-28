@@ -1,0 +1,33 @@
+{
+  "_why": [
+    "The Lab's web root for the NATIVE app. Tauri embeds `frontendDist` and serves",
+    "it as the whole origin, so a URL that walks UP out of that directory has",
+    "nowhere to land: `../docs/hardware/enclosure/x.png` from canary-local/ is",
+    "resolved by the webview to /docs/hardware/enclosure/x.png, which is not in the",
+    "bundle, and the request 404s. In a browser the same URL is fine, because",
+    "canary-local/ really does have a parent there. The app therefore ships the",
+    "SIBLING directory the frontend reaches for, mirrored at its repo-relative",
+    "path, so one set of relative URLs works on both surfaces.",
+    "",
+    "`mirror` is deliberately the same tree the website deploys (see the",
+    "'Assemble the site' step in .github/workflows/pages.yml): the app's web root",
+    "and the site's web root are the same layout, which is what makes the shared",
+    "frontend's relative paths a single truth instead of two.",
+    "",
+    "canary-local/tests/lab_bundle.test.js reads this file and fails CI if the",
+    "frontend grows an escaping path this manifest does not cover."
+  ],
+  "entry": "canary-local/lab.html",
+  "mirror": ["canary-local", "docs/hardware/enclosure"],
+  "prune": ["canary-local/emulator/third_party", "canary-local/emulator/.build"],
+  "sentinels": [
+    "canary-local/lab.html",
+    "canary-local/workshop.html",
+    "canary-local/assets/workshop.js",
+    "canary-local/devices/workshop.json",
+    "canary-local/enclosures/preview/canary_watch_station_drum.stl",
+    "docs/hardware/enclosure/preview_dev_station.png",
+    "docs/hardware/enclosure/canary_wap_enclosure_compact_base.stl",
+    "docs/hardware/enclosure/canary_vision_enclosure.scad"
+  ]
+}

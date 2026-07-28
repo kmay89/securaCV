@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- The STANDARD entitlements: SecuraCV.entitlements MINUS Critical
+       Alerts. Critical Alerts is granted per-app by Apple, so with it in the
+       set, automatic signing fails for every team that hasn't been granted
+       it. Debug builds always use this file ("press Run on your iPhone" must
+       work with a plain developer team), and the release workflow uses it
+       too until the grant lands (its critical_alerts input flips to the full
+       set). The app falls back to time-sensitive notifications either way.
+       Selected via SECURACV_APP_ENTITLEMENTS in project.yml.
+       Keep the two files in sync: this one is derived, never the truth. -->
+
+  <!-- APNs for away-from-home alerts (metadata-only wake, per docs §5). -->
+  <key>aps-environment</key>
+  <string>development</string>
+
+  <!-- Time Sensitive: ordinary capability, no Apple grant — required for the
+       .timeSensitive level that is both the everyday alert and the
+       critical-alert fallback. -->
+  <key>com.apple.developer.usernotifications.time-sensitive</key>
+  <true/>
+
+  <!-- HomeKit -->
+  <key>com.apple.developer.homekit</key>
+  <true/>
+
+  <!-- CloudKit private database — the user's own iCloud is the sync backend;
+       SecuraCV runs no server and cannot read it. -->
+  <key>com.apple.developer.icloud-services</key>
+  <array>
+    <string>CloudKit</string>
+  </array>
+  <key>com.apple.developer.icloud-container-identifiers</key>
+  <array>
+    <string>iCloud.com.securacv.witness</string>
+  </array>
+
+  <!-- Shared container so the widget + NSE can read cached fleet state. -->
+  <key>com.apple.security.application-groups</key>
+  <array>
+    <string>group.com.securacv.witness</string>
+  </array>
+</dict>
+</plist>

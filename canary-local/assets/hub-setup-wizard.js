@@ -13,6 +13,11 @@
 
 const KEY = "hub.wizard.step.v1";
 const BROKER_PORT = 1883; // Mosquitto's standard MQTT port
+// Repo docs are linked at their source, the same way hub.js/sense.js/vision.js/
+// start.js do it. A relative "../docs/…" would walk out of the Lab's own
+// directory — which works from a repo checkout and nowhere else: the deployed
+// site and the native app both serve canary-local as a root with no parent.
+const GH = "https://github.com/kmay89/securaCV/blob/main/";
 
 function el(tag, cls, text) {
   const n = document.createElement(tag);
@@ -75,14 +80,18 @@ export function wizardSteps(facts) {
       title: "Get Home Assistant running",
       what:
         "Install Home Assistant Operating System (HAOS) on your Pi/mini-PC. It’s the " +
-        "easiest, most reliable way — it updates and heals itself. You want " + ha + ".",
+        "easiest, most reliable way — it updates and heals itself. You want " + ha + ". " +
+        "The Pi never needs a monitor or keyboard: flash it, power it, and it announces " +
+        "itself on your network by itself.",
       do: [
-        "Follow HA’s official installer for your device, or flash our ready Hub image (it comes pre-wired).",
-        "When it’s done, open Home Assistant in your browser (usually http://homeassistant.local:8123) and create your account — that account is local, stored on your box.",
+        "Follow HA’s official installer for your device, or flash our ready Hub image. Heads up on Wi-Fi: seeding it onto the card at flash time is a desktop Flasher app feature — the browser guide writes stock HAOS, so on that route plug in an ethernet cable for the first boot (you can switch to Wi-Fi inside HA afterwards).",
+        "Power it on and give the first boot 10–20 minutes — it’s setting itself up; the blinking light is normal.",
+        "Then open Home Assistant in your browser (usually http://homeassistant.local:8123) and create your account — that account is local, stored on your box.",
       ],
       link: { label: "Use our ready Hub image →", href: "start.html" },
       stuck: [
-        "“homeassistant.local” won’t load? Try your box’s IP address instead (your router’s device list shows it), still on :8123.",
+        "“homeassistant.local” won’t load? Try it from a phone first (some computers can’t resolve .local names), or find the box’s IP in your router’s device list — look for “homeassistant” — and open that IP, still on :8123.",
+        "Flashed with Wi-Fi and it never appears? A mistyped network name or password is invisible from outside — plug in an ethernet cable (it needs no setup at all), or re-flash with the Wi-Fi typed fresh.",
         "Installer stuck? Re-flash the SD card / drive and retry — HAOS images are forgiving, you can’t hurt anything.",
       ],
       check: "I can open Home Assistant and I’m logged in.",
@@ -302,7 +311,12 @@ export function buildHubWizard(container, ha) {
     const net = el("p", "hub-wiz-net");
     net.append(document.createTextNode("Rather read it all, or truly stuck? "));
     const dl = el("a", null, "the complete written guide");
-    dl.href = "../" + facts.doc;
+    dl.href = GH + facts.doc;
+    // New tab, always: the Lab app is one webview with no chrome and no Back,
+    // so an in-place navigation to the guide strands the user in a page they
+    // can only leave by restarting. Every other external link here does this.
+    dl.target = "_blank";
+    dl.rel = "noopener noreferrer";
     net.append(dl);
     net.append(document.createTextNode(" walks through every screen."));
     card.append(net);

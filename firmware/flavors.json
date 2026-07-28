@@ -2,10 +2,16 @@
   {
     "name": "canary",
     "dir": "firmware/canary",
-    "build_envs": ["dev", "release", "full"],
+    "build_envs": [
+      "dev",
+      "release",
+      "full"
+    ],
     "check_env": "release",
     "pip_extras": "intelhex",
-    "isolated_core_envs": ["full"],
+    "isolated_core_envs": [
+      "full"
+    ],
     "size_guard": {
       "bin": ".pio/build/release/firmware.bin",
       "slot_bytes": 1966080,
@@ -15,13 +21,20 @@
   {
     "name": "canary-wap",
     "dir": "firmware/projects/canary-wap",
-    "build_envs": ["canary-wap-default", "canary-wap-usbdrive"],
+    "build_envs": [
+      "canary-wap-default",
+      "canary-wap-usbdrive"
+    ],
     "check_env": "canary-wap-default"
   },
   {
     "name": "canary-vision",
     "dir": "firmware/projects/canary-vision",
-    "build_envs": ["canary-vision-default", "canary-vision-xiao-c3", "canary-vision-xiao-s3"],
+    "build_envs": [
+      "canary-vision-default",
+      "canary-vision-xiao-c3",
+      "canary-vision-xiao-s3"
+    ],
     "check_env": "canary-vision-default",
     "pre_step": "secrets_header",
     "size_guard": {
@@ -33,9 +46,29 @@
   {
     "name": "canary-display",
     "dir": "firmware/projects/canary-display",
-    "build_envs": ["canary-display-watch", "canary-display-dash", "canary-display-playground", "canary-display-dash-b", "canary-display-dash-rs485", "canary-display-dash-can", "canary-display-dash-vault", "canary-display-dash-rtc", "canary-display-dash-espnow", "canary-display-dash-ble5", "canary-display-dash-modes", "canary-display-watch-modes", "canary-display-dash-mic", "canary-display-nightstand-s3", "canary-display-dash7", "canary-display-nightstand-c6"],
+    "build_envs": [
+      "canary-display-watch",
+      "canary-display-dash",
+      "canary-display-playground",
+      "canary-display-dash-b",
+      "canary-display-dash-rs485",
+      "canary-display-dash-can",
+      "canary-display-dash-vault",
+      "canary-display-dash-rtc",
+      "canary-display-dash-espnow",
+      "canary-display-dash-ble5",
+      "canary-display-dash-modes",
+      "canary-display-watch-modes",
+      "canary-display-dash-mic",
+      "canary-display-nightstand-s3",
+      "canary-display-dash7",
+      "canary-display-nightstand-c6",
+      "canary-display-touch169"
+    ],
     "check_env": "canary-display-watch",
-    "isolated_core_envs": ["canary-display-nightstand-c6"],
+    "isolated_core_envs": [
+      "canary-display-nightstand-c6"
+    ],
     "pre_step": "secrets_header",
     "size_guard": {
       "bin": ".pio/build/canary-display-watch/firmware.bin",
@@ -46,7 +79,10 @@
   {
     "name": "canary-sense",
     "dir": "firmware/projects/canary-sense",
-    "build_envs": ["canary-sense-default", "canary-sense-wellbeing"],
+    "build_envs": [
+      "canary-sense-default",
+      "canary-sense-wellbeing"
+    ],
     "check_env": "canary-sense-default",
     "pre_step": "secrets_header",
     "size_guard": {

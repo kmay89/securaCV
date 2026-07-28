@@ -15,7 +15,7 @@ struct FleetView: View {
         NavigationStack {
             List {
                 if !store.witnesses.isEmpty {
-                    Section("Your fleet") {
+                    Section(store.demoMode ? "Your fleet (demo)" : "Your fleet") {
                         ForEach(store.witnesses) { w in
                             NavigationLink(value: w) { WitnessRow(witness: w) }
                         }
@@ -32,12 +32,28 @@ struct FleetView: View {
                     }
                 }
                 if store.witnesses.isEmpty && unpaired.isEmpty {
-                    ContentUnavailableView("No Canaries yet",
-                        systemImage: "bird",
-                        description: Text("Plug in a Canary on this network — it'll appear here to pair."))
+                    ContentUnavailableView {
+                        Label("No Canaries yet", systemImage: "bird")
+                    } description: {
+                        Text("Plug in a Canary on this network — it'll appear here to pair. Or look around with sample data first.")
+                    } actions: {
+                        Button("Try the demo fleet") { store.setDemoMode(true) }
+                            .buttonStyle(.borderedProminent)
+                    }
                 }
             }
             .navigationTitle("Fleet")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Toggle("Demo fleet", isOn: Binding(
+                            get: { store.demoMode },
+                            set: { store.setDemoMode($0) }))
+                    } label: {
+                        Label("Options", systemImage: "ellipsis.circle")
+                    }
+                }
+            }
             .navigationDestination(for: Witness.self) { DeviceDetailView(witness: $0) }
             .sheet(item: $pairing) { PairView(canary: $0) }
             .refreshable { await store.refreshOnce() }
@@ -89,4 +105,8 @@ struct DiscoveredRow: View {
             Image(systemName: "plus.circle").foregroundStyle(Theme.color(.info))
         }
     }
+}
+
+#Preview("Fleet — demo fleet") {
+    FleetView().environmentObject(DemoFleet.previewStore())
 }

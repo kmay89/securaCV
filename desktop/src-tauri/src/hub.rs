@@ -321,12 +321,23 @@ pub async fn hub_pi_boot_start(
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move {
         let mut code = -1;
+        let mut hinted = false;
         while let Some(event) = rx.recv().await {
             match event {
                 CommandEvent::Stdout(bytes) | CommandEvent::Stderr(bytes) => {
                     let text = String::from_utf8_lossy(&bytes);
                     for line in text.split(['\r', '\n']).filter(|l| !l.trim().is_empty()) {
                         let _ = app2.emit("hub:pi-usb", line.to_string());
+                        // The udev fix is Linux-only, so only look for (and
+                        // surface) it there — on macOS a device-open failure means
+                        // something else, and this hint would mislead. Surface it
+                        // once instead of leaving a cryptic error.
+                        if !hinted && cfg!(target_os = "linux") {
+                            if let Some(hint) = hub_core::hub_usbboot::access_denied_hint(line) {
+                                let _ = app2.emit("hub:pi-usb-hint", hint.to_string());
+                                hinted = true;
+                            }
+                        }
                     }
                 }
                 CommandEvent::Terminated(payload) => {
@@ -587,6 +598,12 @@ fn hub_flash_blocking(
         .find(|d| d.path == disk_path)
         .ok_or_else(|| format!("{disk_path} is no longer connected — was it unplugged?"))?;
 
+    // Mint the connection UUID once, up front — the keyfile needs a stable
+    // uuid= or HAOS re-imports it with a fresh identity (and possibly a fresh
+    // IP) every boot. If randomness somehow fails we still flash: NetworkManager
+    // assigns a UUID on load, we just lose the cross-boot stability.
+    let wifi_uuid = hub_io::seed::uuid_v4().ok();
+
     // Validate the Wi-Fi seed BEFORE any download or write: a typo'd
     // passphrase should fail in one second, not after two GB.
     if let Some(w) = wifi.as_ref() {
@@ -594,7 +611,7 @@ fn hub_flash_blocking(
             ssid: &w.ssid,
             passphrase: &w.passphrase,
             connection_id: "securacv-hub",
-            uuid: None,
+            uuid: wifi_uuid.as_deref(),
             hidden: w.hidden,
         };
         hub_core::hub_seed::wifi_keyfile(&seed).map_err(|e| e.message())?;
@@ -798,7 +815,7 @@ fn hub_flash_blocking(
         ssid: &w.ssid,
         passphrase: &w.passphrase,
         connection_id: "securacv-hub",
-        uuid: None,
+        uuid: wifi_uuid.as_deref(),
         hidden: w.hidden,
     });
     let want_wifi = wifi_seed.is_some();
@@ -870,21 +887,33 @@ fn hub_flash_blocking(
         ));
     }
 
-    // Turn the raw seed notes into calm, actionable copy.
+    // Turn the raw seed notes into calm, actionable copy. When BOTH seeds
+    // failed it was one mount failure, not two — say the reason once and keep
+    // the second note short, or the receipt reads as a wall of repeated error.
+    let both_failed = want_wifi && !wifi_seeded && want_account && !account_seeded;
     if want_wifi && !wifi_seeded {
         wifi_note = Some(format!(
-            "The card itself is perfect — only the Wi-Fi note didn't make it on. Easiest fixes: \
-             plug in ethernet for the first boot, or flash again. ({})",
+            "The card itself is perfect — only the Wi-Fi settings couldn't be added (usually \
+             the computer not re-mounting the freshly written card in time). Easiest fixes: \
+             flash again — the second pass almost always mounts fine — or plug in ethernet for \
+             the first boot and set Wi-Fi inside Home Assistant afterwards. ({})",
             wifi_note.as_deref().unwrap_or("unknown reason")
         ));
     }
     if want_account && !account_seeded {
-        account_note = Some(format!(
-            "The card is perfect and (if set) your Wi-Fi is on it — only the experimental \
-             account pre-seed didn't apply, so first boot will show Home Assistant's normal \
-             setup wizard. ({})",
-            account_note.as_deref().unwrap_or("unknown reason")
-        ));
+        account_note = Some(if both_failed {
+            // Same mount failure as the Wi-Fi note — don't repeat the reason.
+            "The experimental account pre-seed hit the same snag, so first boot will show Home \
+             Assistant's normal setup wizard — creating your account there takes under a minute."
+                .to_string()
+        } else {
+            format!(
+                "The card is perfect and (if set) your Wi-Fi is on it — only the experimental \
+                 account pre-seed didn't apply, so first boot will show Home Assistant's normal \
+                 setup wizard. ({})",
+                account_note.as_deref().unwrap_or("unknown reason")
+            )
+        });
     } else if want_account && account_seeded {
         account_note = Some(
             "Experimental: we wrote your account onto the card. On first boot, tell us whether \

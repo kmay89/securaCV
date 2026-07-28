@@ -1,13 +1,14 @@
 {
   "name": "securacv-lab-desktop",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "SecuraCV Lab — native Tauri shell (desktop + mobile) around the local-first canary-local Lab.",
   "scripts": {
     "tauri": "tauri",
+    "stage": "node scripts/stage-frontend.mjs",
     "dev": "tauri dev",
     "build": "tauri build",
-    "ios:init": "tauri ios init",
+    "ios:init": "node scripts/stage-frontend.mjs && tauri ios init",
     "ios:dev": "tauri ios dev",
     "ios:build": "tauri ios build"
   },
