@@ -41,7 +41,10 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-14
+    # macos-26: App Store Connect refuses binaries built with an SDK older
+    # than iOS 26 (ITMS-90725, RELEASE_LESSONS 2026-07-28 (h)) — and the
+    # rejection arrives by EMAIL after upload, with CI already green.
+    runs-on: macos-26
     timeout-minutes: 60
     steps:
       - name: Gate notice
@@ -89,11 +92,13 @@ jobs:
 
       - name: Select Xcode
         if: vars.ENABLE_IOS_BUILD == 'true'
-        # Runner images name Xcode with full versions (Xcode_16.2.app…), so a
-        # bare Xcode_16.app never matches (RELEASE_LESSONS 2026-07-28); pick
-        # the newest 16.x, fall back to the image default, print what we got.
+        # Runner images name Xcode with full versions (Xcode_26.6.app…), so a
+        # bare Xcode_26.app never matches (RELEASE_LESSONS 2026-07-28); pick
+        # the newest 26.x, fall back to the image default, print what we got.
+        # 26.x minimum: App Store Connect rejects anything built with an older
+        # SDK (ITMS-90725, RELEASE_LESSONS 2026-07-28 (h)).
         run: |
-          latest="$(find /Applications -maxdepth 1 -name 'Xcode_16*.app' 2>/dev/null | sort -V | tail -1)"
+          latest="$(find /Applications -maxdepth 1 -name 'Xcode_26*.app' 2>/dev/null | sort -V | tail -1)"
           if [ -n "$latest" ]; then sudo xcode-select -s "$latest"; fi
           xcodebuild -version
 
