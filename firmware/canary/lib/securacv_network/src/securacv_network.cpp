@@ -142,6 +142,13 @@ ScvNetworkManager::ScvNetworkManager()
 // canary-wap sketch's AP_DROP_GRACE_MS.
 static const uint32_t AP_DROP_GRACE_MS = 8000;
 
+// Hard cap on how long an associated AP client can extend that grace (see the
+// F4 drop in checkConnection). The captive sheet holds the phone on the AP
+// while the wizard's success screen offers the optional hub step, so we won't
+// yank the AP mid-wizard — but a sheet left open forever must not pin the
+// unstable AP+STA+BLE radio combo, so coexistence stability wins after this.
+static const uint32_t AP_CLIENT_HOLD_MAX_MS = 10UL * 60UL * 1000UL;
+
 // mDNS hostname rules (RFC 6762 §16): only [a-z0-9-], must not start/end with
 // hyphen. We lowercase the device_id and replace any other byte with '-'.
 static void sanitize_mdns_hostname(const char* in, char* out, size_t cap) {
@@ -643,9 +650,17 @@ void ScvNetworkManager::checkConnection() {
         }
         // F4: STA has held the home link past the grace window — drop the AP so
         // the radio runs the stable STA+BLE coexistence combo (vs the unstable
-        // AP+STA+BLE) and no lingering management AP stays exposed.
+        // AP+STA+BLE) and no lingering management AP stays exposed. But never
+        // out from under a still-associated client: the captive sheet keeps
+        // the phone on the AP while the wizard's success screen offers the
+        // optional hub step, and dropping then reroutes the sheet's relative
+        // URLs to the home network (the probe hostname stops resolving to us),
+        // so the hub save silently dies. Hold until the sheet closes (client
+        // count hits 0), capped at AP_CLIENT_HOLD_MAX_MS.
         if ((WiFi.getMode() & WIFI_AP) &&
-            now - m_status.connected_since_ms > AP_DROP_GRACE_MS) {
+            now - m_status.connected_since_ms > AP_DROP_GRACE_MS &&
+            (m_status.ap_clients == 0 ||  // fresh: updateStatus() ran above
+             now - m_status.connected_since_ms > AP_CLIENT_HOLD_MAX_MS)) {
           dropAp();
         }
       }
@@ -1147,6 +1162,11 @@ void ScvNetworkManager::registerHttpHandlers() {
 // first-boot setup wizard (/setup + the captive-portal probe paths).
 static esp_err_t send_html_with_token(httpd_req_t* req, const char* html) {
   httpd_resp_set_type(req, "text/html");
+  // no-store: captive sheets cache aggressively, and a cached copy of this
+  // page carries the PREVIOUS Canary's bearer token when the same phone
+  // provisions a second device — every wizard API call then fails auth.
+  // Mirrors canary-display's provision.cpp, which learned this the hard way.
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
 
   static const char kTokenPlaceholder[] = "__CV_TOKEN__";
   const size_t placeholder_len = sizeof(kTokenPlaceholder) - 1;
