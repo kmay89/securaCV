@@ -63,11 +63,20 @@ final class AlertCenter: ObservableObject {
     private let center = UNUserNotificationCenter.current()
 
     func requestAuthorization() async {
-        // Ask for the critical option too; iOS ignores it gracefully if the
-        // app isn't entitled, so this is safe to request unconditionally.
-        let opts: UNAuthorizationOptions = [.alert, .sound, .badge, .criticalAlert, .timeSensitive]
-        let granted = (try? await center.requestAuthorization(options: opts)) ?? false
-        authorized = granted
+        // iOS does NOT ignore an unentitled .criticalAlert — it fails the
+        // whole request (UNErrorDomain code 1), which would cost us even
+        // ordinary alerts on any build signed without the Apple-granted
+        // entitlement (Debug always; Release until the grant). So ask for the
+        // full set, and on error fall back to the standard ask. A user's
+        // "Don't Allow" reports granted=false, not an error, so the retry
+        // never re-prompts someone who declined.
+        let full: UNAuthorizationOptions = [.alert, .sound, .badge, .criticalAlert, .timeSensitive]
+        let standard: UNAuthorizationOptions = [.alert, .sound, .badge, .timeSensitive]
+        do {
+            authorized = try await center.requestAuthorization(options: full)
+        } catch {
+            authorized = (try? await center.requestAuthorization(options: standard)) ?? false
+        }
         let settings = await center.notificationSettings()
         Self.hasCriticalEntitlement = settings.criticalAlertSetting == .enabled
     }

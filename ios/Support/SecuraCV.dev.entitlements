@@ -16,6 +16,12 @@
   <key>aps-environment</key>
   <string>development</string>
 
+  <!-- Time Sensitive: ordinary capability, no Apple grant — required for the
+       .timeSensitive level that is both the everyday alert and the
+       critical-alert fallback. -->
+  <key>com.apple.developer.usernotifications.time-sensitive</key>
+  <true/>
+
   <!-- HomeKit -->
   <key>com.apple.developer.homekit</key>
   <true/>
