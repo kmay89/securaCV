@@ -29,6 +29,16 @@ esac
 : "${APPLE_API_KEY:?App Store Connect key ID missing}"
 : "${APPLE_API_ISSUER:?App Store Connect issuer ID missing}"
 
+# altool takes only a key ID, never a key path — it searches ./private_keys,
+# ~/private_keys, ~/.private_keys, and ~/.appstoreconnect/private_keys, and
+# dies with Cocoa error -43 "Failed to load AuthKey file" when the .p8 lives
+# anywhere else (like the $RUNNER_TEMP/keys file the workflows materialize).
+# Stage the materialized key into a directory altool actually checks.
+if [ -n "${APPLE_API_KEY_PATH:-}" ] && [ -s "$APPLE_API_KEY_PATH" ]; then
+  mkdir -p "$HOME/.appstoreconnect/private_keys"
+  cp "$APPLE_API_KEY_PATH" "$HOME/.appstoreconnect/private_keys/AuthKey_${APPLE_API_KEY}.p8"
+fi
+
 if [ ! -s "$ipa" ]; then
   echo "::error::no .ipa to upload at $ipa"
   exit 1

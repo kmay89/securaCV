@@ -921,3 +921,40 @@ Two independent failures, one release day, both invisible-by-design.
 - **Applies to:** `ios-release.yml` and `tvos-release.yml` (both fixed), and
   any Apple-platform job that signs on ephemeral runners with
   `-allowProvisioningUpdates`.
+
+### 2026-07-28 (f) — Distribution export needs an Admin API key: "Cloud signing permission error"
+
+- **Symptom:** with archive green, `xcodebuild -exportArchive` (automatic
+  signing, `app-store-connect` method) failed in seconds with "Cloud signing
+  permission error" + "No profiles for '<bundle id>' were found" for every
+  target — even though the keychain held a valid imported Apple Distribution
+  identity.
+- **Cause:** creating **distribution** provisioning profiles and touching
+  cloud-managed distribution certificates requires an **Admin**-role App
+  Store Connect API key. A lesser key can mint development profiles (so the
+  archive works, which makes the export failure look mysterious), and a
+  key's role cannot be upgraded after creation.
+- **Fix:** two halves. (1) Generate a new API key with **Admin** access and
+  update `APPLE_API_KEY` / `APPLE_API_KEY_BASE64`. (2) Pin
+  `signingCertificate` in ExportOptions ("Apple Distribution", or "Apple
+  Development" for a development-method export) so the export prefers the
+  persistent imported identity over requesting a cloud-managed one.
+- **Applies to:** `ios-release.yml` (fixed); any future Apple-platform
+  export with automatic signing.
+
+### 2026-07-28 (g) — altool never takes a key path: stage the .p8 where it actually looks
+
+- **Symptom:** the first run to reach "Upload to App Store Connect" failed
+  validation with Cocoa error -43: "The file 'AuthKey_….p8' could not be
+  found in any of these locations: './private_keys', '~/private_keys',
+  '~/.private_keys', '~/.appstoreconnect/private_keys'."
+- **Cause:** `xcrun altool` accepts only `--apiKey <id>` and searches those
+  four fixed directories — unlike `xcodebuild`, it has no
+  `-authenticationKeyPath` equivalent, so the `$RUNNER_TEMP/keys/…p8` the
+  workflow materializes is invisible to it. Latent until every earlier
+  signing gate was cleared, because no run had ever reached the upload.
+- **Fix:** `asc_publish.sh` now copies `$APPLE_API_KEY_PATH` into
+  `~/.appstoreconnect/private_keys/AuthKey_$APPLE_API_KEY.p8` before calling
+  altool. Fixed in the shared script precisely so both callers inherit it.
+- **Applies to:** `ios-release.yml` and `tvos-release.yml` (both publish
+  through `.github/scripts/asc_publish.sh`).
