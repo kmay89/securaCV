@@ -870,6 +870,10 @@ void setup() {
       canary::hal::chime_loop(millis());
       delay(1);
     }
+    // Silence on the way out: a normal finish already did, but a deadline exit
+    // (scheduler stall) must not leave a note sounding through the blocking
+    // splash / provisioning that follow.
+    canary::hal::voice_stop();
   }
 #endif
 
