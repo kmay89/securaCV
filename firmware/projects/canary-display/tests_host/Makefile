@@ -70,6 +70,16 @@ VOICE_SRC = test_voice_score.cpp
 CLEAR_BIN = test_voice_clearance
 CLEAR_SRC = test_voice_clearance.cpp
 
+# PCF8563/PCF85063A RTC core (canary/io/rtc_pcf.h): epoch<->civil inversion vs
+# libc, the 7-byte BCD register round-trip, VL/OS "unreliable" rejection, and
+# the per-chip seconds-register base (0x02 vs 0x04) — the guard against a
+# mis-based read feeding shifted garbage into a signed timestamp. The second TU
+# compiles the core WITH RTC_CHIP_PCF85063 to prove the base flips to 0x04.
+RTC_BIN = test_rtc_pcf
+RTC_SRC = test_rtc_pcf.cpp
+RTC85063_BIN = test_rtc_pcf85063
+RTC85063_SRC = test_rtc_pcf85063.cpp
+
 .PHONY: all run clean
 all: run
 
@@ -100,7 +110,13 @@ $(VOICE_BIN): $(VOICE_SRC)
 $(CLEAR_BIN): $(CLEAR_SRC)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(CLEAR_SRC)
 
-run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN)
+$(RTC_BIN): $(RTC_SRC)
+	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(RTC_SRC)
+
+$(RTC85063_BIN): $(RTC85063_SRC)
+	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(RTC85063_SRC)
+
+run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN)
 	./$(BEACON_PARSE_BIN)
 	./$(MODEL_BIN)
 	./$(CARDS_BIN)
@@ -110,6 +126,8 @@ run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARC
 	./$(MIC_BIN)
 	./$(VOICE_BIN)
 	./$(CLEAR_BIN)
+	./$(RTC_BIN)
+	./$(RTC85063_BIN)
 
 clean:
-	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN)
+	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN)

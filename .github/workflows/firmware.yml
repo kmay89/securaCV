@@ -860,13 +860,15 @@ jobs:
           /tmp/field_io | tee /tmp/field_io.log
           grep -q "ALL .* PASSED" /tmp/field_io.log
 
-      - name: Build + run canary-display PCF8563 RTC host test
+      - name: Build + run canary-display PCF8563/PCF85063A RTC host test
         # Trusted time: the RTC register/calendar core (canary/io/rtc_pcf.h) —
         # BCD packing, the civil<->days epoch math, and the voltage-low validity
         # gate that refuses an unreliable clock — is verified without a board
         # (cross-checked against libc timegm). The runtime that probes 0x51 on
         # the shared I2C bus and seeds/mirrors the clock is compile-checked by the
-        # canary-display-dash-rtc env (FEATURE_RTC).
+        # canary-display-dash-rtc env (FEATURE_RTC). The second TU pins the
+        # PCF85063A register base (0x04, not the PCF8563 0x02) that the
+        # touch169 build relies on.
         run: |
           set -euo pipefail
           g++ -std=c++17 -Wall -Wextra -Werror \
@@ -875,6 +877,12 @@ jobs:
               -o /tmp/rtc_pcf
           /tmp/rtc_pcf | tee /tmp/rtc_pcf.log
           grep -q "ALL .* PASSED" /tmp/rtc_pcf.log
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_rtc_pcf85063.cpp \
+              -o /tmp/rtc_pcf85063
+          /tmp/rtc_pcf85063 | tee /tmp/rtc_pcf85063.log
+          grep -q "ALL .* PASSED" /tmp/rtc_pcf85063.log
 
       - name: Build + run canary-display ESP-NOW peer-decode host test
         # Router-independent peer presence: the decode that turns a raw ESP-NOW

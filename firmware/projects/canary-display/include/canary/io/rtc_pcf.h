@@ -9,16 +9,23 @@
 // voltage-low validity flag, range checks — lives here where a host test pins it
 // without a board (tests_host/test_rtc_pcf.cpp).
 //
-// Register block is the 7 bytes starting at PCF8563 reg 0x02 (VL_seconds):
-//   [0] 0x02 seconds  bit7 = VL (1 => oscillator stopped, time UNRELIABLE)
-//   [1] 0x03 minutes
-//   [2] 0x04 hours    (24h)
-//   [3] 0x05 days
-//   [4] 0x06 weekdays (0..6; derived, not trusted on read)
-//   [5] 0x07 months   bit7 = century (0 => 20xx, this core's supported range)
-//   [6] 0x08 years    (00..99, base 2000)
-// PCF8563 and PCF85063A both answer at I2C 0x51 and share this seconds-first
-// BCD layout, so this core drives either.
+// Register block is the 7-byte seconds-first BCD group (same byte ORDER on both
+// supported parts):
+//   [0] seconds  bit7 = VL (PCF8563) / OS (PCF85063): 1 => oscillator stopped,
+//                time UNRELIABLE
+//   [1] minutes
+//   [2] hours    (24h)
+//   [3] days
+//   [4] weekdays (0..6; derived, not trusted on read)
+//   [5] months   bit7 = century on the PCF8563 (0 => 20xx); reserved/0 on the
+//                PCF85063 — masked off on decode either way, so 20xx-only
+//   [6] years    (00..99, base 2000)
+// Both parts answer at I2C 0x51 and share the block ORDER, but the block starts
+// at a DIFFERENT register: PCF8563 at 0x02, PCF85063A at 0x04 (whose 0x02/0x03
+// are the offset and RAM-byte registers, NOT time). The board declares its part
+// via RTC_CHIP_PCF85063; the default is the PCF8563 base. Reading the wrong base
+// yields shifted garbage that decode_regs then rejects — a mis-declared chip
+// fails safe (no time), never a wrong signed timestamp.
 
 #ifndef CANARY_IO_RTC_PCF_H
 #define CANARY_IO_RTC_PCF_H
@@ -29,9 +36,15 @@ namespace canary {
 namespace io {
 namespace rtc {
 
-constexpr uint8_t PCF_ADDR      = 0x51;  // PCF8563 / PCF85063A
-constexpr uint8_t PCF_REG_SECS  = 0x02;  // first register of the 7-byte block
-constexpr uint8_t PCF_VL_BIT    = 0x80;  // seconds reg bit7: voltage-low flag
+constexpr uint8_t PCF_ADDR      = 0x51;  // PCF8563 / PCF85063A (both at 0x51)
+constexpr uint8_t PCF8563_REG_SECS  = 0x02;  // PCF8563 seconds (7-byte block base)
+constexpr uint8_t PCF85063_REG_SECS = 0x04;  // PCF85063A seconds (block base)
+#if defined(RTC_CHIP_PCF85063) && RTC_CHIP_PCF85063
+constexpr uint8_t PCF_REG_SECS = PCF85063_REG_SECS;  // this board carries a PCF85063A
+#else
+constexpr uint8_t PCF_REG_SECS = PCF8563_REG_SECS;   // default part: PCF8563
+#endif
+constexpr uint8_t PCF_VL_BIT    = 0x80;  // seconds reg bit7: VL (8563) / OS (85063)
 
 // A wall-clock instant, UTC. `year` is the full year (e.g. 2026); `mon` is
 // 1..12; `wday` is 0..6 (Sun=0), derived on encode and ignored on decode.

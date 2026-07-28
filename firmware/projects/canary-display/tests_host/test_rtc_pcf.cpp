@@ -15,6 +15,14 @@
 
 namespace rtc = canary::io::rtc;
 
+// The two parts share the block order but NOT the base register; the default
+// build (no RTC_CHIP_PCF85063) must select the PCF8563 base. (The PCF85063A
+// selection is exercised by test_rtc_pcf85063.cpp.)
+static_assert(rtc::PCF8563_REG_SECS == 0x02, "PCF8563 seconds base is 0x02");
+static_assert(rtc::PCF85063_REG_SECS == 0x04, "PCF85063A seconds base is 0x04");
+static_assert(rtc::PCF_REG_SECS == rtc::PCF8563_REG_SECS,
+              "default RTC base must be the PCF8563 (0x02)");
+
 static int g_fail = 0;
 
 #define CHECK(cond, msg)                                             \
