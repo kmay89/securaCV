@@ -869,82 +869,24 @@ Two independent failures, one release day, both invisible-by-design.
 - **Applies to:** `ios-selfheal.yml`, `ios-release.yml` (both fixed);
   any future macOS job that pins a toolchain path.
 
-### 2026-07-28 (d) — Self-update existed on one app, checked once, and couldn't say what it was installing
-
-- **Symptom:** three gaps, none of them red anywhere. The Lab — explicitly
-  named by the 2026-07-27 entry as "copy this shape if it gains an updater" —
-  had gained no updater: every installed Lab was frozen at whatever version
-  was downloaded, forever, with nothing anywhere saying so. The Flasher
-  checked for updates exactly once, at launch, so a bench machine that stays
-  open for weeks never heard about anything. And when an update *was* offered,
-  the banner said only "Version 0.3.4 is ready" — the updater manifest's
-  `notes` field carried tauri-action's static install boilerplate, because
-  nothing in the pipeline ever wrote real release notes anywhere a user or an
-  updater could read them.
-- **Cause:** self-update was treated as a per-app feature instead of a
-  contract every installable app owes its installed base. The Flasher's shape
-  (rolling `flasher-latest` pointer, hardened manifest, consistency guard)
-  was right and stayed on one app — the exact anti-pattern Principle 14 and
-  the 2026-07-25 signing entry document. And "what changed" lived only in
-  PR descriptions and CHANGELOG.md prose, neither of which any release
-  artifact carries.
-- **Fix:** one contract, both apps, notes as a checked artifact.
-  - Each app now has a `RELEASE_NOTES.md` (newest-first `## <version> — <date>`
-    sections, written for the user). `desktop/scripts/release_notes.py check`
-    (lint + both release workflows) fails a build whose newest section doesn't
-    match the version being shipped — bumping and explaining are one act.
-    The section flows into the release body AND the updater manifest's
-    `notes` via `harden_updater_manifest.py` (now shared: `--product`,
-    `--notes-file`), so the in-app "update ready" UI shows what's changing.
-  - The Flasher re-checks every six hours while open and when a stale window
-    regains focus; a version the user waved off isn't re-raised until a newer
-    one appears. Checks and installs land in the About page's activity log.
-  - The Lab grew the whole shape (`desktop-lab/src-tauri/src/self_update.rs`):
-    signed updater artifacts against the same repo signing key, its own
-    rolling `lab-latest` pointer, a boot + six-hour routine, a native dialog
-    that shows the notes and asks, and a local `update-journal.log` so no
-    check or install is ever silent. Desktop only — the iOS/iPadOS builds
-    compile it out (`#[cfg(desktop)]` + platform-scoped capabilities), since
-    the App Store owns updates there and the updater plugin doesn't exist on
-    mobile.
-  - The Lab ships as a DRAFT, and a draft's assets have no public URLs — so
-    the resolve-every-URL guard and the pointer advance run at publish time,
-    in `desktop-lab-updater-pointer.yml`, off the `release: published` event
-    (reliable here because a human publishes the draft; CI-created releases
-    fire no events). Order is load-bearing: harden → verify → advance, so the
-    pointer can never land on a manifest whose URLs don't resolve.
-  - `desktop_parity.test.js` now pins the contract: each app's endpoint names
-    the exact tag its workflow advances, the two pointers differ, both apps
-    embed the same updater pubkey, and both build updater artifacts.
-- **Applies to:** every current and future installable target. An app that can
-  be installed owes its installed base three things, from day one of its first
-  release: a way to HEAR about updates (its own rolling pointer + a routine
-  check, not just launch), a way to TRUST them (signed, verified, asked), and
-  a way to READ them (notes a human wrote, carried by the manifest, checked by
-  CI). A "later" from the user is an answer — honor it until the next version,
-  don't nag. And when a release flows through a draft, remember the draft's
-  assets are not public: anything that must resolve URLs belongs after the
-  publish, keyed off the human-fired event.
-
-
 ### 2026-07-28 (d) — CI archives die on a fresh team: automatic signing archives as DEVELOPMENT, and development profiles need a registered device
 
-- **Symptom:** the first real `ios-release.yml` run failed archiving all three
-  targets with "Your team has no devices from which to generate a
-  provisioning profile" — on a brand-new (or device-less) Apple team, even
-  though the release was bound for TestFlight, which never involves
-  registered devices.
+- **Symptom:** the first authenticated `ios-release.yml` run failed archiving
+  all three targets with "Your team has no devices from which to generate a
+  provisioning profile" — even though the release was bound for TestFlight,
+  which never involves registered devices.
 - **Cause:** `xcodebuild archive` under automatic signing signs with a
-  *development* profile by default (distribution normally happens at export),
-  and Apple will not mint a development profile for a team with zero
-  registered devices. CI runners never have a device to offer.
-- **Fix:** archive with `CODE_SIGN_IDENTITY="Apple Distribution"` for any
-  distribution-bound export (`release-testing`, `app-store-connect`) — cloud
-  signing then creates a distribution profile, which needs no devices; only
-  the `debugging` export keeps a development-signed archive. Corollary for
-  dry runs: export with `app-store-connect` (+ `publish=false`), because
-  `release-testing` is an ad-hoc export that also requires registered
-  devices.
-- **Applies to:** `ios-release.yml` (fixed), `tvos-release.yml` and any
-  future Apple-platform CI archive with automatic signing on a team that
-  may have no registered devices.
+  *development* profile (distribution happens at export), and Apple will not
+  mint a development profile for a team with zero registered devices. CI
+  runners never have a device to offer.
+- **Fix:** register **any one device** on the team (Certificates,
+  Identifiers & Profiles → Devices → +, with the phone's UDID from Finder) —
+  one-time, and it unblocks every future archive. The tempting CI-side
+  patch — `CODE_SIGN_IDENTITY="Apple Distribution"` on the archive — does
+  NOT work: automatic signing rejects it with "conflicting provisioning
+  settings". Corollary for dry runs: export with `app-store-connect`
+  (+ `publish=false`); `release-testing` is an ad-hoc export that *also*
+  requires registered devices.
+- **Applies to:** `ios-release.yml`, `tvos-release.yml` (an Apple TV
+  registers the same way), and any Apple-platform CI archive with automatic
+  signing on a team that may have no registered devices.

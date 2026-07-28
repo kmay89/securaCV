@@ -113,7 +113,14 @@ one-time setup, then it's one button per release.
    - Secret `APPLE_API_KEY_BASE64` — the `.p8` contents, base64-encoded
    (Create the key at App Store Connect → Users and Access → Integrations →
    App Store Connect API, role **App Manager**.)
-4. **TestFlight** app from the App Store on your iPhone, signed into the same
+4. **Register one device on the team** — CI archives sign with a development
+   profile, and Apple refuses to mint one for a team with *zero* registered
+   devices (RELEASE_LESSONS 2026-07-28 (d)). Plug your iPhone into your Mac →
+   Finder → click the phone → click the subtitle line under its name until
+   the **UDID** shows → right-click it → Copy UDID. Then
+   developer.apple.com → Certificates, Identifiers & Profiles → Devices →
+   **+** → paste. One-time; any one device unblocks every future archive.
+5. **TestFlight** app from the App Store on your iPhone, signed into the same
    Apple ID.
 
 **Each release (one button):**
