@@ -61,5 +61,9 @@ namespace canary::net {
   long take_pending_cfg_mid();
   long take_pending_cfg_vlock();
   long take_pending_cfg_vlost();
+  long take_pending_cfg_bmin();
+  long take_pending_cfg_bmax();
+  long take_pending_cfg_hmin();
+  long take_pending_cfg_hmax();
 
 } // namespace

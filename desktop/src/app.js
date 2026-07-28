@@ -224,6 +224,13 @@ async function boot() {
       .then(() => { input.value = ""; })
       .catch((e) => setStatus("monitor-status", String(e), "err"));
   });
+  // Radar tuning suite controls (Sense boards; the sliders wire themselves
+  // per-knob in renderSenseTune).
+  $("sense-reset").addEventListener("click", () => sendTune("reset"));
+  $("sense-stream").addEventListener("change", (e) =>
+    sendTune(e.target.value === "0" ? "stream off" : "stream " + e.target.value));
+  $("sense-raw").addEventListener("change", (e) =>
+    sendTune(e.target.checked ? "raw on" : "raw off"));
   $("update-btn").addEventListener("click", onInstallUpdate);
   const rerollBtn = $("cert-reroll");
   if (rerollBtn) rerollBtn.addEventListener("click", rerollCertificate);
@@ -258,7 +265,10 @@ async function boot() {
   });
   PROV_FIELDS.forEach((id) => $(id).addEventListener("input", persistProv));
 
-  await listen("serial:log", (ev) => appendConsole("serial-console", ev.payload));
+  await listen("serial:log", (ev) => {
+    feedSenseTune(ev.payload); // the tuning panel reads [cfg]/[tune] replies
+    appendConsole("serial-console", ev.payload);
+  });
   await listen("serial:status", (ev) => {
     $("monitor-status").textContent = ev.payload;
     if (String(ev.payload).toLowerCase().includes("stopped") ||
@@ -1596,6 +1606,149 @@ async function onFlashLocalFile() {
   }
 }
 
+// ── radar tuning suite (Sense): live knobs over the monitor port ────────────
+// Mirror of the web flasher's radar-bench tuning suite (two frontends share
+// no UI code — parity is the promise, see CLAUDE.md). The firmware side is
+// common/console/tuning_console.h: `set <knob> <value>` clamps, applies to
+// the live FSMs, and persists to NVS; every command answers with the full
+// `[cfg]` snapshot line, which is the only state this panel trusts.
+
+const senseTune = {
+  tail: "",       // partial console line across serial:log chunks
+  synced: false,  // saw a [cfg] snapshot this monitor session
+  active: false,  // panel visible (a Sense product is on the bench)
+  timer: 0,       // honesty timeout for "no tuning console"
+};
+
+function senseProductForTuning() {
+  // The product whose firmware is (or just landed) on the board: the last
+  // host flash wins, else the chosen product card.
+  const flashedId = state.vision && state.vision.hostFlash && state.vision.hostFlash.product_id;
+  const id = flashedId || (state.product && state.product.id);
+  if (!id) return null;
+  const p = ((state.catalog && state.catalog.products) || []).find((x) => x.id === id);
+  return p && p.reflexes && Array.isArray(p.reflexes.knobs) ? p : null;
+}
+
+function sendTune(cmd) {
+  invoke("serial_monitor_send", { command: cmd + "\n" }).catch((e) =>
+    setStatus("monitor-status", String(e), "err"));
+}
+
+function renderSenseTune() {
+  const p = senseProductForTuning();
+  const wrap = $("sense-tune");
+  senseTune.active = !!p;
+  senseTune.synced = false;
+  senseTune.tail = "";
+  clearTimeout(senseTune.timer);
+  wrap.classList.toggle("hidden", !p);
+  if (!p) return;
+  const badge = $("sense-tune-badge");
+  badge.textContent = "syncing with the board…";
+  const grid = $("sense-knobs");
+  grid.textContent = "";
+  for (const k of p.reflexes.knobs) {
+    if (!k.console) continue;
+    const row = document.createElement("label");
+    row.className = "sense-knob";
+    const name = document.createElement("span");
+    name.className = "sense-knob-name";
+    name.textContent = k.console;
+    const input = document.createElement("input");
+    input.type = "range";
+    input.min = String(k.bounds[0]);
+    input.max = String(k.bounds[1]);
+    input.step = k.unit === "cm" ? "10" : k.unit === "bpm" ? "1" : "50";
+    input.value = String(k.value);
+    input.disabled = true; // enabled on the first [cfg] sync
+    input.dataset.knob = k.console;
+    input.dataset.unit = k.unit;
+    const val = document.createElement("span");
+    val.className = "sense-knob-val";
+    val.textContent = `${k.value} ${k.unit}`;
+    input.addEventListener("input", () => { val.textContent = `${input.value} ${k.unit}`; });
+    input.addEventListener("change", () => sendTune(`set ${k.console} ${input.value}`));
+    row.title = `${k.id} — default ${k.value} ${k.unit}, range ${k.bounds[0]}–${k.bounds[1]}`;
+    row.append(name, input, val);
+    grid.append(row);
+  }
+  $("sense-reset").disabled = true;
+  $("sense-stream").disabled = true;
+  $("sense-raw").disabled = true;
+}
+
+function senseTuneHandshake() {
+  if (!senseTune.active) return;
+  // Ask for the knob snapshot (twice — the board may still be rebooting),
+  // then be honest if this firmware predates the tuning console.
+  setTimeout(() => { if (state.monitoring && !senseTune.synced) sendTune("cfg"); }, 800);
+  setTimeout(() => { if (state.monitoring && !senseTune.synced) sendTune("cfg"); }, 2500);
+  senseTune.timer = setTimeout(() => {
+    if (state.monitoring && senseTune.active && !senseTune.synced) {
+      $("sense-tune-badge").textContent =
+        "no tuning console on this firmware — install the latest release to tune live";
+    }
+  }, 5000);
+}
+
+// `[cfg] debounce=300 … stream=1000 raw=0` — the whole knob state on one
+// line, sent on demand and after every set/reset. stream/raw are console
+// session state, split out from the knob map.
+function parseSenseCfgLine(line) {
+  const t = String(line || "").trim();
+  if (!/^\[cfg\]\s/.test(t)) return null;
+  const values = {};
+  let stream = null, raw = null;
+  const re = /([a-z_]+)=(\d+)/g;
+  let m;
+  while ((m = re.exec(t))) {
+    const v = Number(m[2]);
+    if (m[1] === "stream") stream = v;
+    else if (m[1] === "raw") raw = v === 1;
+    else values[m[1]] = v;
+  }
+  return Object.keys(values).length ? { values, stream, raw } : null;
+}
+
+function onSenseTuneLine(line) {
+  const badge = $("sense-tune-badge");
+  const cfg = parseSenseCfgLine(line);
+  if (cfg) {
+    senseTune.synced = true;
+    for (const input of $("sense-knobs").querySelectorAll("input[type=range]")) {
+      const v = cfg.values[input.dataset.knob];
+      if (!Number.isFinite(v)) continue;
+      input.value = String(v);
+      input.disabled = false;
+      const val = input.parentElement.querySelector(".sense-knob-val");
+      if (val) val.textContent = `${v} ${input.dataset.unit}`;
+    }
+    $("sense-reset").disabled = false;
+    $("sense-stream").disabled = false;
+    $("sense-raw").disabled = false;
+    if (Number.isFinite(cfg.stream)) {
+      const sel = $("sense-stream");
+      const v = String(cfg.stream);
+      if ([...sel.options].some((o) => o.value === v)) sel.value = v;
+    }
+    if (typeof cfg.raw === "boolean") $("sense-raw").checked = cfg.raw;
+    badge.textContent = "LIVE — knobs synced with the board";
+    return;
+  }
+  const verdict = /^\[tune\]\s+(ok|err)\s+(.*)$/.exec(String(line).trim());
+  if (verdict) badge.textContent = (verdict[1] === "ok" ? "✓ " : "⚠ ") + verdict[2];
+}
+
+function feedSenseTune(chunk) {
+  if (!senseTune.active) return;
+  senseTune.tail += String(chunk);
+  const lines = senseTune.tail.split("\n");
+  senseTune.tail = lines.pop() || "";
+  if (senseTune.tail.length > 512) senseTune.tail = ""; // never hoard a runaway line
+  for (const line of lines) onSenseTuneLine(line);
+}
+
 // ── serial monitor + earned receipts ────────────────────────────────────────
 async function startMonitor() {
   if (!state.port || state.portKind !== "esp32") {
@@ -1605,6 +1758,7 @@ async function startMonitor() {
   $("serial-monitor").classList.remove("hidden");
   $("serial-console").textContent = "";
   $("monitor-status").textContent = "Waiting for the board to reappear after reboot…";
+  renderSenseTune(); // the radar tuning suite rides the monitor on Sense boards
   setMonitorButtons(true);
   try {
     await invoke("start_serial_monitor", {
@@ -1613,6 +1767,7 @@ async function startMonitor() {
       pid: state.portInfo && state.portInfo.pid,
       baud: state.catalog.console_baud || 115200,
     });
+    senseTuneHandshake();
   } catch (e) {
     setMonitorButtons(false);
     $("monitor-status").textContent = String(e);
@@ -1654,6 +1809,9 @@ function resetOutcome() {
   const ms = $("monitor-status");
   if (ms) ms.textContent = "";
   $("serial-monitor").classList.add("hidden");
+  $("sense-tune").classList.add("hidden");
+  senseTune.active = false;
+  clearTimeout(senseTune.timer);
 }
 
 function appendConsole(id, text) {

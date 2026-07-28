@@ -2084,12 +2084,18 @@ function phaseSenseBench(port, product) {
   box.append(el("p", "muted",
     "This is the radar’s own senses, live off the USB cable — the same coarse " +
     "truths it publishes (present/clear, 0/1/2+, near/mid/far), never raw " +
-    "centimetres. Walk past it. Stand in each band. Then sit statue-still and " +
-    "feel the clear timeout breathe out."));
+    "centimetres unless you flip the bench-detail switch below (that raw echo " +
+    "stays on this cable). Walk past it. Stand in each band. Then sit " +
+    "statue-still and feel the clear timeout breathe out."));
 
   const status = el("div", "flash-sense-status", "listening for the radar…");
   status.setAttribute("role", "status");
   box.append(status);
+  // Bench-detail readout: raw scalars, only when the raw switch is on and the
+  // firmware echoes them ([radar] … raw_dist=…). Hidden otherwise.
+  const rawLine = el("div", "flash-sense-rawline");
+  rawLine.hidden = true;
+  box.append(rawLine);
   const calm = prefersCalm(); // decorative motion politely sits out
 
   const aura = document.createElement("canvas");
@@ -2119,6 +2125,76 @@ function phaseSenseBench(port, product) {
       "Canary Sense · Wellbeing firmware senses here; flash that build and they go live."));
   box.append(vit);
 
+  // ── the tuning suite: every runtime knob, live over this cable ────────────
+  // Sliders speak the firmware's USB tuning console (`set <knob> <value>` →
+  // clamped, applied to the live FSMs, saved to NVS). The `[cfg]` snapshot
+  // line is the single source of truth: the UI reconciles to it on connect
+  // and after every command, so what you see is what the chip holds.
+  const dials = core.reflexDials(state.catalog, product);
+  const tune = el("div", "flash-sense-tune");
+  const tuneHead = el("div", "flash-sense-vitals-head");
+  const tuneBadge = el("span", "flash-passport-chip", "syncing with the board…");
+  tuneBadge.setAttribute("role", "status");
+  tuneHead.append(el("strong", null, "Tuning suite — every knob, live"), tuneBadge);
+  tune.append(tuneHead);
+  tune.append(el("p", "fineprint",
+    "Slide a knob and it lands on the chip immediately, saved so it survives " +
+    "reboots — the same numbers Home Assistant tunes later over cfg/*/set. " +
+    (wellbeing
+      ? "The breath/heart bands decide what the vitals lock will believe: if a " +
+        "resting heart rate sits outside heart_min…heart_max, the lock politely " +
+        "refuses — widen the band and watch it latch."
+      : "This presence-only build carries the presence knobs; flash the " +
+        "Wellbeing build to tune breathing and heart-rate bands too.")));
+  const knobEls = new Map(); // console token -> {input, val, unit}
+  const knobGrid = el("div", "flash-sense-knobs");
+  for (const k of (dials && dials.knobs) || []) {
+    if (!k.console) continue;
+    const row = el("label", "flash-sense-knob");
+    row.append(el("span", "flash-sense-knob-name", k.console));
+    const input = document.createElement("input");
+    input.type = "range";
+    input.min = String(k.bounds[0]);
+    input.max = String(k.bounds[1]);
+    input.step = k.unit === "cm" ? "10" : k.unit === "bpm" ? "1" : "50";
+    input.value = String(k.value);
+    input.disabled = true; // enabled on the first [cfg] sync
+    const val = el("span", "flash-sense-knob-val", `${k.value} ${k.unit}`);
+    input.addEventListener("input", () => { val.textContent = `${input.value} ${k.unit}`; });
+    input.addEventListener("change", () => sendCmd(`set ${k.console} ${input.value}`));
+    row.append(input, val);
+    row.title = `${k.id} — default ${k.value} ${k.unit}, range ${k.bounds[0]}–${k.bounds[1]}`;
+    knobGrid.append(row);
+    knobEls.set(k.console, { input, val, unit: k.unit });
+  }
+  tune.append(knobGrid);
+
+  const tunectl = el("div", "flash-row flash-sense-tunectl");
+  const resetBtn = el("button", "ghost", "↺ restore defaults");
+  resetBtn.disabled = true;
+  resetBtn.addEventListener("click", () => sendCmd("reset"));
+  const streamSel = document.createElement("select");
+  streamSel.className = "flash-sense-streamsel";
+  [["500", "stream: 2×/s"], ["1000", "stream: 1×/s"], ["2000", "stream: every 2 s"], ["0", "stream: off"]]
+    .forEach(([v, label]) => {
+      const o = document.createElement("option");
+      o.value = v; o.textContent = label;
+      streamSel.append(o);
+    });
+  streamSel.value = "1000";
+  streamSel.disabled = true;
+  streamSel.addEventListener("change", () =>
+    sendCmd(streamSel.value === "0" ? "stream off" : `stream ${streamSel.value}`));
+  const rawLab = el("label", "flash-sense-rawtoggle");
+  const rawChk = document.createElement("input");
+  rawChk.type = "checkbox";
+  rawChk.disabled = true;
+  rawChk.addEventListener("change", () => sendCmd(rawChk.checked ? "raw on" : "raw off"));
+  rawLab.append(rawChk, document.createTextNode(" bench detail (raw cm & bpm — stays on this cable)"));
+  tunectl.append(resetBtn, streamSel, rawLab);
+  tune.append(tunectl);
+  box.append(tune);
+
   const script = el("div", "flash-nextstep");
   script.append(el("div", "flash-nextstep-title", "Make it magic — the 60-second tour"));
   const ol = el("ol", "we2-guide-steps");
@@ -2133,11 +2209,33 @@ function phaseSenseBench(port, product) {
   script.append(ol);
   box.append(script);
 
+  // The live console — classified line by line so it reads at a glance
+  // ([radar] stream stays quiet, [tune] verdicts pop, errors glow). Open by
+  // default: seeing what the board says IS the bench.
   const conWrap = el("details", "flash-displaybench-serial");
-  conWrap.append(el("summary", null, "the raw console under the magic"));
-  const con = el("pre", "flash-console");
+  conWrap.open = true;
+  conWrap.append(el("summary", null, "the live console — every line the radar speaks"));
+  const conCtl = el("div", "flash-row flash-sense-logctl");
+  const pauseBtn = el("button", "ghost", "⏸ hold the scroll");
+  let paused = false;
+  pauseBtn.addEventListener("click", () => {
+    paused = !paused;
+    pauseBtn.textContent = paused ? "▶ follow again" : "⏸ hold the scroll";
+  });
+  const clearBtn = el("button", "ghost", "✕ clear");
+  conCtl.append(pauseBtn, clearBtn);
+  conWrap.append(conCtl);
+  const con = el("div", "flash-console flash-sense-log");
+  clearBtn.addEventListener("click", () => { con.textContent = ""; });
   conWrap.append(con);
   box.append(conWrap);
+
+  function logLine(text) {
+    if (!text.trim()) return;
+    con.append(el("div", "flash-senseline tone-" + core.senseLineTone(text), text));
+    while (con.childElementCount > 400) con.firstElementChild.remove();
+    if (!paused) con.scrollTop = con.scrollHeight;
+  }
 
   const row = el("div", "flash-row");
   const back = el("button", "ghost", "← back to the Nursery");
@@ -2164,14 +2262,46 @@ function phaseSenseBench(port, product) {
   }
 
   // reader loop (the voice engine pattern — attended bench, no supervisor)
+  // plus a writer: the bench now TALKS to the tuning console (cfg/set/reset/
+  // stream/raw). The `[cfg]` reply is the sync point for every control.
   let reader = null;
+  let writer = null;
+  let synced = false;
+  const enc = new TextEncoder();
+  async function sendCmd(cmd) {
+    if (!writer) return;
+    try { await writer.write(enc.encode(cmd + "\n")); } catch { /* mid-unplug */ }
+  }
+
+  function syncFromCfg(cfg) {
+    synced = true;
+    for (const [name, ui] of knobEls) {
+      if (!Number.isFinite(cfg.values[name])) continue;
+      ui.input.value = String(cfg.values[name]);
+      ui.val.textContent = `${cfg.values[name]} ${ui.unit}`;
+      ui.input.disabled = false;
+    }
+    resetBtn.disabled = false;
+    streamSel.disabled = false;
+    rawChk.disabled = false;
+    if (Number.isFinite(cfg.stream)) {
+      const v = String(cfg.stream);
+      streamSel.value = [...streamSel.options].some((o) => o.value === v) ? v : "1000";
+    }
+    if (typeof cfg.raw === "boolean") rawChk.checked = cfg.raw;
+    tuneBadge.textContent = "LIVE — knobs synced with the chip";
+    tuneBadge.className = "flash-passport-chip flash-passport-ok";
+  }
+
   (async () => {
     try {
       await port.open({ baudRate: state.catalog.console_baud || 115200 });
       if (!model.alive) { try { await port.close(); } catch {} return; } // back won the race
       reader = port.readable.getReader();
+      try { writer = port.writable.getWriter(); } catch { writer = null; }
       if (!model.alive) {
         try { reader.releaseLock(); } catch {}
+        try { writer && writer.releaseLock(); } catch {}
         try { await port.close(); } catch {}
         return;
       }
@@ -2179,20 +2309,37 @@ function phaseSenseBench(port, product) {
       status.textContent = "The console didn’t open (" + String(e.message || e) + ") — unplug, replug, reconnect.";
       return;
     }
+    // Handshake: ask for the knob snapshot (twice — the board may still be
+    // booting), then be honest if this firmware predates the console.
+    setTimeout(() => { if (model.alive && !synced) sendCmd("cfg"); }, 600);
+    setTimeout(() => { if (model.alive && !synced) sendCmd("cfg"); }, 2500);
+    setTimeout(() => {
+      if (model.alive && !synced) {
+        tuneBadge.textContent = "no tuning console — reflash with the latest firmware to tune live";
+        tuneBadge.className = "flash-passport-chip flash-passport-warn";
+      }
+    }, 5000);
     const dec = new TextDecoder();
-    let buf = "", tail = "";
+    let tail = "";
     try {
       for (;;) {
         const { value, done } = await reader.read();
         if (done || !model.alive) break;
         const text = dec.decode(value, { stream: true });
-        buf = (buf + text).slice(-8000);
-        con.textContent = buf;
-        con.scrollTop = con.scrollHeight;
         tail += text;
         const lines = tail.split("\n");
         tail = lines.pop() || "";
         for (const line of lines) {
+          logLine(line);
+          const cfg = core.parseCfgLine(line);
+          if (cfg) { syncFromCfg(cfg); continue; }
+          const verdict = core.parseTuneLine(line);
+          if (verdict) {
+            tuneBadge.textContent = (verdict.ok ? "✓ " : "⚠ ") + verdict.text;
+            tuneBadge.className = "flash-passport-chip " +
+              (verdict.ok ? "flash-passport-ok" : "flash-passport-warn");
+            continue;
+          }
           const ev = core.parseSenseLine(line);
           if (!ev) continue;
           model.lastSeenMs = performance.now();
@@ -2214,6 +2361,33 @@ function phaseSenseBench(port, product) {
             }
           } else if (ev.kind === "health") {
             model.frameErrs = ev.frame_errs;
+          } else if (ev.kind === "radar") {
+            // The tuning console's periodic stream: the bench stays alive
+            // even between change-gated lines — presence, bands, lock and
+            // (wellbeing) live BPM all ride it.
+            if (ev.presence === "present" && model.presence !== "present") chirp("found");
+            model.presence = ev.presence; model.count = ev.count; model.range = ev.range;
+            if (ev.lock) {
+              const locked = ev.lock === "locked";
+              if (locked && Number.isFinite(ev.breath) && ev.breath > 0) {
+                model.breath = ev.breath; model.heart = ev.heart; model.locked = true;
+                vitBadge.textContent = `LIVE · breathing ${ev.breath} bpm · heart ${ev.heart} bpm`;
+                vitBadge.className = "flash-passport-chip flash-passport-ok";
+              } else if (!locked && model.locked && wellbeing) {
+                model.locked = false;
+                vitBadge.textContent = ev.lock === "lost" ? "lock lost — settle again" : "waiting for a lock…";
+                vitBadge.className = "flash-passport-chip";
+              }
+            }
+            if (ev.raw) {
+              rawLine.hidden = false;
+              rawLine.textContent =
+                `bench detail · distance ${ev.raw.dist_cm} cm · targets ${ev.raw.count}` +
+                (wellbeing ? ` · raw breath ${ev.raw.breath} · raw heart ${ev.raw.heart} bpm` : "");
+            } else if (!rawChk.checked) {
+              rawLine.hidden = true;
+            }
+            if (Number.isFinite(ev.frame_errs)) model.frameErrs = ev.frame_errs;
           }
           setStatus();
         }
@@ -2337,6 +2511,7 @@ function phaseSenseBench(port, product) {
     cancelAnimationFrame(raf);
     try { reader && await reader.cancel(); } catch {}
     try { reader && reader.releaseLock(); } catch {}
+    try { writer && writer.releaseLock(); } catch {}
     try { await port.close(); } catch {}
     setPhase(phaseConnect());
   });

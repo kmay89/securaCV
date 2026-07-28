@@ -752,6 +752,56 @@ button.flash-map-key:hover { color: var(--text); }
   display: flex; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 14px;
 }
 
+/* ── the tuning suite: live knobs over the cable ─────────────────────────── */
+.flash-sense-rawline {
+  margin: -2px 0 8px; font: 12.5px/1.6 "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  color: #f0dca0;
+}
+.flash-sense-tune {
+  margin: 14px 0 6px; padding: 12px 14px; border-radius: 14px;
+  background: rgba(255,255,255,0.03); border: 1px solid var(--edge, #262626);
+}
+.flash-sense-knobs {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 4px 22px; margin: 10px 0 4px;
+}
+.flash-sense-knob {
+  display: grid; grid-template-columns: 96px 1fr 84px; align-items: center;
+  gap: 10px; padding: 4px 0; font-size: 13px;
+}
+.flash-sense-knob-name {
+  font: 12.5px/1.4 "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  color: var(--muted, #9aa39a);
+}
+.flash-sense-knob-val {
+  font: 12.5px/1.4 "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  color: #e7e7e7; text-align: right; white-space: nowrap;
+}
+.flash-sense-knob input[type="range"] { width: 100%; accent-color: #ffd44f; }
+.flash-sense-knob input[type="range"]:disabled { opacity: 0.4; }
+.flash-sense-tunectl { align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+.flash-sense-streamsel {
+  background: rgba(255,255,255,0.05); color: #e7e7e7; font-size: 12.5px;
+  border: 1px solid var(--edge, #262626); border-radius: 8px; padding: 6px 8px;
+}
+.flash-sense-rawtoggle {
+  display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px;
+  color: var(--muted, #9aa39a); cursor: pointer;
+}
+.flash-passport-warn { background: rgba(255,212,79,0.1); border-color: rgba(255,212,79,0.4); color: #f0dca0; }
+
+/* the classified live console: the stream stays quiet, verdicts pop */
+.flash-sense-logctl { gap: 8px; margin: 6px 0; }
+.flash-sense-log { max-height: 300px; overflow-y: auto; }
+.flash-senseline { white-space: pre-wrap; word-break: break-word; }
+.flash-senseline.tone-stream { color: #6f7a86; }
+.flash-senseline.tone-sense { color: #7CFF9B; }
+.flash-senseline.tone-vitals { color: #ff9fb2; }
+.flash-senseline.tone-cfg { color: #ffd44f; }
+.flash-senseline.tone-tune { color: #bfe6fb; }
+.flash-senseline.tone-err { color: #ff8a80; font-weight: 640; }
+.flash-senseline.tone-health { color: #9aa39a; }
+
 /* ── pro grade: the journey bar, phase fade, calm motion ─────────────────── */
 .flash-journey {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
