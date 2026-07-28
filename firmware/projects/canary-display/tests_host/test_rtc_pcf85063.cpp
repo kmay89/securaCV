@@ -7,8 +7,10 @@
 // 0x04 while the BCD codec still round-trips and the (PCF8563-only) century bit
 // is masked off. Prints "ALL RTC PCF85063 TESTS PASSED" on success.
 //
-//   g++ -std=c++17 -Wall -Wextra -I firmware/projects/canary-display/include \
+//   g++ -std=c++17 -Wall -Wextra -I firmware/projects/canary-display/include
 //     firmware/projects/canary-display/tests_host/test_rtc_pcf85063.cpp -o t && ./t
+// (one command — wrap as needed; a literal backslash here would make this a
+// multi-line comment and -Werror=comment fails the build)
 
 #define RTC_CHIP_PCF85063 1
 #include "canary/io/rtc_pcf.h"
