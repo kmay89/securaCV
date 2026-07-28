@@ -745,3 +745,29 @@ kbd {
 .health-finding:first-of-type { border-top: none; padding-top: 0; }
 .health-finding-t { margin: 0; font-size: 13px; font-weight: 500; color: var(--text); }
 .health-finding-fix { margin: 3px 0 0; font-size: 12.5px; }
+
+/* ── radar tuning suite (Sense): live knobs riding the serial monitor ────── */
+.sense-tune {
+  margin: 10px 0; padding: 10px 12px; border: 1px solid var(--border);
+  border-radius: 10px; background: rgba(255, 255, 255, 0.02);
+}
+.sense-tune-head { align-items: baseline; gap: 10px; }
+.sense-tune-head h4 { margin: 0 auto 0 0; font-size: 13.5px; }
+.sense-knobs {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 2px 20px; margin: 8px 0 4px;
+}
+.sense-knob {
+  display: grid; grid-template-columns: 92px 1fr 82px; align-items: center;
+  gap: 8px; padding: 3px 0; font-size: 12.5px;
+}
+.sense-knob-name, .sense-knob-val {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.sense-knob-name { color: var(--muted); }
+.sense-knob-val { text-align: right; white-space: nowrap; }
+.sense-knob input[type="range"] { width: 100%; accent-color: var(--accent, #ffd44f); }
+.sense-knob input[type="range"]:disabled { opacity: 0.4; }
+.sense-tune-ctl { gap: 10px; align-items: center; flex-wrap: wrap; }
+.sense-raw-toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }

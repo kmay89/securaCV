@@ -60,6 +60,10 @@ static volatile long s_pending_cfg_near = -1;
 static volatile long s_pending_cfg_mid = -1;
 static volatile long s_pending_cfg_vlock = -1;
 static volatile long s_pending_cfg_vlost = -1;
+static volatile long s_pending_cfg_bmin = -1;
+static volatile long s_pending_cfg_bmax = -1;
+static volatile long s_pending_cfg_hmin = -1;
+static volatile long s_pending_cfg_hmax = -1;
 
 // Parse a small non-negative integer from an MQTT payload (HA number
 // entities send plain decimals, possibly as "12.0", possibly quoted).
@@ -126,6 +130,22 @@ static void on_mqtt_message(char* topic, uint8_t* payload, unsigned int len) {
     s_pending_cfg_vlost = parse_cfg_number(payload, len, 20000);
     return;
   }
+  if (strcmp(topic, g_topics.cfg_bmin_cmd) == 0) {
+    s_pending_cfg_bmin = parse_cfg_number(payload, len, 15);
+    return;
+  }
+  if (strcmp(topic, g_topics.cfg_bmax_cmd) == 0) {
+    s_pending_cfg_bmax = parse_cfg_number(payload, len, 60);
+    return;
+  }
+  if (strcmp(topic, g_topics.cfg_hmin_cmd) == 0) {
+    s_pending_cfg_hmin = parse_cfg_number(payload, len, 79);
+    return;
+  }
+  if (strcmp(topic, g_topics.cfg_hmax_cmd) == 0) {
+    s_pending_cfg_hmax = parse_cfg_number(payload, len, 220);
+    return;
+  }
 
   const bool is_install = (strcmp(topic, g_topics.update_cmd) == 0);
   const bool is_auto = (strcmp(topic, g_topics.update_auto_cmd) == 0);
@@ -187,6 +207,10 @@ long take_pending_cfg_near()     { return take_pending(s_pending_cfg_near); }
 long take_pending_cfg_mid()      { return take_pending(s_pending_cfg_mid); }
 long take_pending_cfg_vlock()    { return take_pending(s_pending_cfg_vlock); }
 long take_pending_cfg_vlost()    { return take_pending(s_pending_cfg_vlost); }
+long take_pending_cfg_bmin()     { return take_pending(s_pending_cfg_bmin); }
+long take_pending_cfg_bmax()     { return take_pending(s_pending_cfg_bmax); }
+long take_pending_cfg_hmin()     { return take_pending(s_pending_cfg_hmin); }
+long take_pending_cfg_hmax()     { return take_pending(s_pending_cfg_hmax); }
 
 static bool publish_checked(const char* tag, const char* topic, const char* payload, bool retain) {
   const bool ok = mqtt.publish(topic, payload, retain);
@@ -467,6 +491,10 @@ bool mqtt_connect_attempt() {
   mqtt.subscribe(g_topics.cfg_mid_cmd, 1);
   mqtt.subscribe(g_topics.cfg_vlock_cmd, 1);
   mqtt.subscribe(g_topics.cfg_vlost_cmd, 1);
+  mqtt.subscribe(g_topics.cfg_bmin_cmd, 1);
+  mqtt.subscribe(g_topics.cfg_bmax_cmd, 1);
+  mqtt.subscribe(g_topics.cfg_hmin_cmd, 1);
+  mqtt.subscribe(g_topics.cfg_hmax_cmd, 1);
   publish_sense_cfg_retained(g_topics);
   if (s_update_state_set) {
     publish_checked("OTA", g_topics.update_state, s_update_state_cache, true);
@@ -481,7 +509,7 @@ bool mqtt_connect_attempt() {
 bool publish_sense_cfg_retained(const Topics& topics) {
   if (!mqtt.connected()) return false;
   const auto& s = canary::cfg::sense();
-  char msg[224];
+  char msg[320];
   snprintf(msg, sizeof(msg),
            "{"
            "\"debounce_ms\":%lu,"
@@ -490,7 +518,11 @@ bool publish_sense_cfg_retained(const Topics& topics) {
            "\"near_cm\":%lu,"
            "\"mid_cm\":%lu,"
            "\"vitals_lock_ms\":%lu,"
-           "\"vitals_lost_ms\":%lu"
+           "\"vitals_lost_ms\":%lu,"
+           "\"breath_min_bpm\":%lu,"
+           "\"breath_max_bpm\":%lu,"
+           "\"heart_min_bpm\":%lu,"
+           "\"heart_max_bpm\":%lu"
            "}",
            (unsigned long)s.present_debounce_ms,
            (unsigned long)s.clear_timeout_ms,
@@ -498,7 +530,11 @@ bool publish_sense_cfg_retained(const Topics& topics) {
            (unsigned long)s.near_cm,
            (unsigned long)s.mid_cm,
            (unsigned long)s.vitals_lock_ms,
-           (unsigned long)s.vitals_lost_ms);
+           (unsigned long)s.vitals_lost_ms,
+           (unsigned long)s.breath_min_bpm,
+           (unsigned long)s.breath_max_bpm,
+           (unsigned long)s.heart_min_bpm,
+           (unsigned long)s.heart_max_bpm);
   return publish_checked("CFG", topics.cfg_state, msg, true);
 }
 

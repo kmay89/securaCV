@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### Radar tuning suite: every Sense knob live over USB, in both flashers
+
+The canary-sense firmware grows a **serial tuning console**
+(`firmware/common/console/tuning_console.h`, host-tested): line commands
+(`help` / `cfg` / `set <knob> <value>` / `reset` / `stream` / `raw`) at
+115200 8N1, live from `setup()` — before WiFi, before the broker — so a
+freshly-flashed board is tunable and testable immediately. Every runtime
+knob goes through the same clamping NVS setters HA uses, and the four
+vitals plausibility bands (`breath_min/max_bpm`, `heart_min/max_bpm`) are
+promoted from compile-time constants to full runtime knobs (NVS +
+`cfg/breath_min/set`-style MQTT topics + HA number entities + serial), so
+the breathing/heart-rate lock can be calibrated to a real person on the
+bench. A default-on 1 Hz `[radar]` stream line shows what the radar sees
+(state/count/range, lock + BPM on wellbeing); the opt-in `raw on` bench
+mode echoes raw cm/BPM on the attended cable only — the documented,
+session-scoped exception to the coarse-vocabulary rule.
+
+Both flashers grew the matching **tuning suite UI** (two frontends, no
+shared code — parity is now CI-gated in `desktop_parity.test.js`): the
+browser radar bench (`flash.html`, straight from the post-flash "prove it"
+button) gains catalog-driven sliders for every knob wired to the console,
+restore-defaults / stream-cadence / raw-detail controls, and a classified
+live log (stream quiet, verdicts pop, errors glow) with hold-scroll and
+clear; the desktop Flasher's serial monitor gains the same panel over its
+existing send path. Sliders reconcile only to the firmware's `[cfg]`
+snapshot line — never to their own optimistic state — and both frontends
+say so honestly when older firmware has no console. Knob vocabulary,
+bounds, and defaults flow from one source (`gen_flash.py` → catalog
+`reflexes.knobs[].console`), parsed from the firmware headers so no
+surface can drift.
+
 ### The offline viewer now reads event exports (Reading Room P1a)
 
 `viewer/evidence_viewer.html` accepts the `ExportBundle` JSON that

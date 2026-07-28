@@ -19,6 +19,12 @@
   as a near/mid/far band. Raw centimetres, per-target data and vitals phases
   are read and dropped here. Vitals (wellbeing builds) ride the state channel
   as a binary lock plus P1-gated BPM numerics and NEVER appear in events.
+
+  One documented exception: the USB serial tuning console's `raw on` bench
+  mode may echo the radar's raw distance/BPM scalars to the ATTENDED local
+  console (never the network) so the flasher's tuning bench can calibrate
+  the band edges. It is off by default, never persisted, and dies with the
+  session — the network-facing vocabulary above is unaffected.
 */
 
 #include <Arduino.h>
@@ -57,6 +63,7 @@
 
 // Shared, board-agnostic modules (reached via -I .../common).
 #include "boot/boot_banner.h"
+#include "console/tuning_console.h"     // USB serial tuning console (bench)
 #include "identity/device_pseudonym.h"  // salted, MAC-free device handle (Invariant III)
 #include "sensors/mmwave_mr60/mr60_uart.h"
 #include "sensors/mmwave_mr60/mr60_presence.h"
@@ -110,14 +117,16 @@ using securacv::mmwave::VitalsFSM;
 using securacv::mmwave::VitalsLock;
 
 static VitalsConfig make_vitals_config() {
+  // Fully NVS-backed since the tuning console: the CS_* band macros only
+  // seed sense_config's first boot (see sense_config.cpp).
   const auto& s = canary::cfg::sense();
   VitalsConfig c;
   c.lock_confirm_ms = s.vitals_lock_ms;
   c.lock_lost_ms    = s.vitals_lost_ms;
-  c.breath_min_bpm  = CS_BREATH_MIN_BPM;
-  c.breath_max_bpm  = CS_BREATH_MAX_BPM;
-  c.heart_min_bpm   = CS_HEART_MIN_BPM;
-  c.heart_max_bpm   = CS_HEART_MAX_BPM;
+  c.breath_min_bpm  = (uint16_t)s.breath_min_bpm;
+  c.breath_max_bpm  = (uint16_t)s.breath_max_bpm;
+  c.heart_min_bpm   = (uint16_t)s.heart_min_bpm;
+  c.heart_max_bpm   = (uint16_t)s.heart_max_bpm;
   return c;
 }
 
@@ -249,6 +258,23 @@ static void led_for_presence(Presence p) {
   }
 }
 
+// One [CFG] block for every applied reflex change, whichever transport
+// carried it (HA number entity or the serial tuning console) — the bench
+// and the boot log read the same shape.
+static void log_cfg_applied() {
+  const auto& s = canary::cfg::sense();
+  canary::log_header("CFG");
+  canary::dbg_serial().printf(
+      "Radar reflexes: debounce=%lums clear=%lums stall=%lums near=%lucm "
+      "mid=%lucm vlock=%lums vlost=%lums breath=%lu..%lubpm heart=%lu..%lubpm\n",
+      (unsigned long)s.present_debounce_ms, (unsigned long)s.clear_timeout_ms,
+      (unsigned long)s.stall_timeout_ms, (unsigned long)s.near_cm,
+      (unsigned long)s.mid_cm, (unsigned long)s.vitals_lock_ms,
+      (unsigned long)s.vitals_lost_ms, (unsigned long)s.breath_min_bpm,
+      (unsigned long)s.breath_max_bpm, (unsigned long)s.heart_min_bpm,
+      (unsigned long)s.heart_max_bpm);
+}
+
 // ── runtime radar reflexes: drain → clamp → apply → republish ───────────────
 static void poll_sense_cfg_commands(uint32_t now) {
   using namespace canary::net;
@@ -283,6 +309,22 @@ static void poll_sense_cfg_commands(uint32_t now) {
     any_cmd = true;
     vitals_changed |= canary::cfg::sense_set_vitals_lost_ms((uint32_t)v);
   }
+  if ((v = take_pending_cfg_bmin()) >= 0) {
+    any_cmd = true;
+    vitals_changed |= canary::cfg::sense_set_breath_min_bpm((uint32_t)v);
+  }
+  if ((v = take_pending_cfg_bmax()) >= 0) {
+    any_cmd = true;
+    vitals_changed |= canary::cfg::sense_set_breath_max_bpm((uint32_t)v);
+  }
+  if ((v = take_pending_cfg_hmin()) >= 0) {
+    any_cmd = true;
+    vitals_changed |= canary::cfg::sense_set_heart_min_bpm((uint32_t)v);
+  }
+  if ((v = take_pending_cfg_hmax()) >= 0) {
+    any_cmd = true;
+    vitals_changed |= canary::cfg::sense_set_heart_max_bpm((uint32_t)v);
+  }
 
   if (changed) {
     g_presence.reconfigure(make_presence_config(), now);
@@ -292,17 +334,7 @@ static void poll_sense_cfg_commands(uint32_t now) {
     g_vitals.reconfigure(make_vitals_config(), now);
   }
 #endif
-  if (changed || vitals_changed) {
-    const auto& s = canary::cfg::sense();
-    canary::log_header("CFG");
-    canary::dbg_serial().printf(
-        "Radar reflexes: debounce=%lums clear=%lums stall=%lums near=%lucm "
-        "mid=%lucm vlock=%lums vlost=%lums\n",
-        (unsigned long)s.present_debounce_ms, (unsigned long)s.clear_timeout_ms,
-        (unsigned long)s.stall_timeout_ms, (unsigned long)s.near_cm,
-        (unsigned long)s.mid_cm, (unsigned long)s.vitals_lock_ms,
-        (unsigned long)s.vitals_lost_ms);
-  }
+  if (changed || vitals_changed) log_cfg_applied();
   if (any_cmd) publish_sense_cfg_retained(TOPICS);
 }
 
@@ -332,6 +364,132 @@ static void identify_tick(uint32_t now) {
 
 static void sense_serial_write(const char* str) {
   Serial.print(str);
+}
+
+// ----------------------------------------------------------------------------
+// USB serial tuning console — the flasher's post-flash tuning bench.
+//
+// Every runtime knob, over the same clamping setters HA uses, plus a periodic
+// `[radar]` line so the console always shows what the radar sees. Works with
+// no WiFi and no broker: it is serviced BEFORE the network phase of loop().
+// Type `help` in any 115200-baud monitor.
+// ----------------------------------------------------------------------------
+
+static uint32_t kget_debounce() { return canary::cfg::sense().present_debounce_ms; }
+static uint32_t kget_clear()    { return canary::cfg::sense().clear_timeout_ms; }
+static uint32_t kget_stall()    { return canary::cfg::sense().stall_timeout_ms; }
+static uint32_t kget_near()     { return canary::cfg::sense().near_cm; }
+static uint32_t kget_mid()      { return canary::cfg::sense().mid_cm; }
+#ifdef CANARY_SENSE_VITALS
+static uint32_t kget_vlock()    { return canary::cfg::sense().vitals_lock_ms; }
+static uint32_t kget_vlost()    { return canary::cfg::sense().vitals_lost_ms; }
+static uint32_t kget_bmin()     { return canary::cfg::sense().breath_min_bpm; }
+static uint32_t kget_bmax()     { return canary::cfg::sense().breath_max_bpm; }
+static uint32_t kget_hmin()     { return canary::cfg::sense().heart_min_bpm; }
+static uint32_t kget_hmax()     { return canary::cfg::sense().heart_max_bpm; }
+#endif
+
+// The knob vocabulary matches the cfg/* MQTT topic tails and the flasher's
+// sns_* NVS keys, so every surface speaks the same names.
+static const securacv::console::Knob SENSE_KNOBS[] = {
+  {"debounce", "ms", "sustained target before 'present'",
+   canary::cfg::SENSE_DEBOUNCE_MS_LO, canary::cfg::SENSE_DEBOUNCE_MS_HI,
+   CS_PRESENT_DEBOUNCE_MS, kget_debounce, canary::cfg::sense_set_present_debounce_ms},
+  {"clear", "ms", "no target before 'clear'",
+   canary::cfg::SENSE_CLEAR_MS_LO, canary::cfg::SENSE_CLEAR_MS_HI,
+   CS_CLEAR_TIMEOUT_MS, kget_clear, canary::cfg::sense_set_clear_timeout_ms},
+  {"stall", "ms", "radar silence before 'unknown'",
+   canary::cfg::SENSE_STALL_MS_LO, canary::cfg::SENSE_STALL_MS_HI,
+   CS_RADAR_STALL_MS, kget_stall, canary::cfg::sense_set_stall_timeout_ms},
+  {"near", "cm", "near band edge",
+   canary::cfg::SENSE_NEAR_CM_LO, canary::cfg::SENSE_NEAR_CM_HI,
+   CS_RANGE_NEAR_CM, kget_near, canary::cfg::sense_set_near_cm},
+  {"mid", "cm", "mid band edge (beyond = far)",
+   canary::cfg::SENSE_MID_CM_LO, canary::cfg::SENSE_MID_CM_HI,
+   CS_RANGE_MID_CM, kget_mid, canary::cfg::sense_set_mid_cm},
+#ifdef CANARY_SENSE_VITALS
+  {"vlock", "ms", "sustained vitals before 'locked'",
+   canary::cfg::SENSE_VLOCK_MS_LO, canary::cfg::SENSE_VLOCK_MS_HI,
+   CS_VITALS_LOCK_MS, kget_vlock, canary::cfg::sense_set_vitals_lock_ms},
+  {"vlost", "ms", "no vitals before 'lost'",
+   canary::cfg::SENSE_VLOST_MS_LO, canary::cfg::SENSE_VLOST_MS_HI,
+   CS_VITALS_LOST_MS, kget_vlost, canary::cfg::sense_set_vitals_lost_ms},
+  {"breath_min", "bpm", "reject breathing below this",
+   canary::cfg::SENSE_BREATH_MIN_LO, canary::cfg::SENSE_BREATH_MIN_HI,
+   CS_BREATH_MIN_BPM, kget_bmin, canary::cfg::sense_set_breath_min_bpm},
+  {"breath_max", "bpm", "reject breathing above this",
+   canary::cfg::SENSE_BREATH_MAX_LO, canary::cfg::SENSE_BREATH_MAX_HI,
+   CS_BREATH_MAX_BPM, kget_bmax, canary::cfg::sense_set_breath_max_bpm},
+  {"heart_min", "bpm", "reject heart rate below this",
+   canary::cfg::SENSE_HEART_MIN_LO, canary::cfg::SENSE_HEART_MIN_HI,
+   CS_HEART_MIN_BPM, kget_hmin, canary::cfg::sense_set_heart_min_bpm},
+  {"heart_max", "bpm", "reject heart rate above this",
+   canary::cfg::SENSE_HEART_MAX_LO, canary::cfg::SENSE_HEART_MAX_HI,
+   CS_HEART_MAX_BPM, kget_hmax, canary::cfg::sense_set_heart_max_bpm},
+#endif
+};
+
+static securacv::console::TuningConsole g_console;
+
+// Latest raw parser aggregate — only ever printed by the stream's opt-in
+// `raw on` bench mode (see the privacy note in the file header).
+static Frame g_last_raw;
+static uint32_t g_last_stream_ms = 0;
+
+// The periodic "what the radar sees" line. Coarse vocabulary by default
+// (identical to what MQTT publishes); `raw on` appends the bench scalars.
+static void tuning_stream_tick(uint32_t now) {
+  const uint32_t period = g_console.stream_period_ms();
+  if (!period) return;
+  if ((int32_t)(now - g_last_stream_ms) < (int32_t)period) return;
+  g_last_stream_ms = now;
+
+  char line[192];
+  size_t n = (size_t)snprintf(line, sizeof(line),
+      "[radar] state=%s count=%s range=%s",
+      presence_str(g_presence.state()), count_str(g_presence.count()),
+      range_str(g_presence.range()));
+#ifdef CANARY_SENSE_VITALS
+  if (n < sizeof(line)) {
+    const char* lock = "unknown";
+    if (g_vitals.lock() == VitalsLock::Locked)    lock = "locked";
+    else if (g_vitals.lock() == VitalsLock::Lost) lock = "lost";
+    n += (size_t)snprintf(line + n, sizeof(line) - n,
+        " lock=%s breath=%u heart=%u",
+        lock, (unsigned)g_snap.breath_bpm, (unsigned)g_snap.heart_bpm);
+  }
+#endif
+  if (g_console.raw_enabled() && n < sizeof(line)) {
+    n += (size_t)snprintf(line + n, sizeof(line) - n,
+        " raw_dist=%ucm raw_count=%u raw_breath=%u raw_heart=%u",
+        (unsigned)g_last_raw.distance_cm, (unsigned)g_last_raw.target_count,
+        (unsigned)g_last_raw.breath_rate, (unsigned)g_last_raw.heart_rate);
+  }
+  if (n < sizeof(line)) {
+    snprintf(line + n, sizeof(line) - n, " errs=%lu",
+             (unsigned long)g_parser.error_count());
+  }
+  boot_line(line);
+}
+
+// Drain typed bytes, apply any knob change to the live FSMs, keep the
+// stream ticking. Runs before the network phase so the bench works with
+// no WiFi, no broker, no HA.
+static void tuning_console_tick(uint32_t now) {
+  while (Serial.available() > 0) {
+    g_console.feed((char)Serial.read());
+  }
+  if (g_console.take_changed()) {
+    g_presence.reconfigure(make_presence_config(), now);
+#ifdef CANARY_SENSE_VITALS
+    g_vitals.reconfigure(make_vitals_config(), now);
+#endif
+    log_cfg_applied();
+    // Keep HA's optimistic number entities honest when a bench and HA are
+    // both attached; a no-op while the broker is away.
+    canary::net::publish_sense_cfg_retained(TOPICS);
+  }
+  tuning_stream_tick(now);
 }
 
 // ----------------------------------------------------------------------------
@@ -563,7 +721,14 @@ void setup() {
            (unsigned long)canary::cfg::sense().present_debounce_ms,
            (unsigned long)canary::cfg::sense().clear_timeout_ms,
            (unsigned long)canary::cfg::sense().stall_timeout_ms);
+  boot_kv("Tuning", "serial console ready — type 'help' (115200 8N1)");
   boot_blank();
+
+  // Serial tuning console: every knob above is live from this moment —
+  // before WiFi, before the broker — so the flasher's bench can start
+  // tuning the instant the flash finishes.
+  g_console.begin(SENSE_KNOBS, sizeof(SENSE_KNOBS) / sizeof(SENSE_KNOBS[0]),
+                  sense_serial_write);
 
   // Bring up the radar UART (host TX16 / RX17 per the kit reference wiring).
   RadarSerial.begin(RADAR_UART_BAUD, SERIAL_8N1, RADAR_UART_RX, RADAR_UART_TX);
@@ -694,12 +859,17 @@ void loop() {
   bool any_frame = false;
   for (Frame frame = g_parser.poll(); frame.kind != securacv::mmwave::FrameKind::None;
        frame = g_parser.poll()) {
+    g_last_raw = frame;  // bench-only echo; see the raw-mode privacy note
     drive_fsms(frame, now);
     any_frame = true;
   }
   if (!any_frame) {
     drive_fsms(Frame(), now);
   }
+
+  // Serial tuning console + [radar] stream — before the network phase, so
+  // the post-flash bench works with no WiFi, no broker, no HA.
+  tuning_console_tick(now);
 
 #if defined(FEATURE_AMBIENT_LIGHT) && FEATURE_AMBIENT_LIGHT
   if (g_lux.present() && (int32_t)(now - g_last_lux_ms) >= (int32_t)LUX_SAMPLE_MS) {

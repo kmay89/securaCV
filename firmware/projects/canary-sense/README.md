@@ -47,6 +47,38 @@ The C6 builds on the pinned **pioarduino** platform fork (arduino-esp32 3.x);
 see `../../envs/platformio/canary-sense.ini` for the pin and the rationale. The
 first `pio run` downloads that platform (~hundreds of MB) — needs network.
 
+## Serial tuning console (the flasher's bench rides this)
+
+The USB console is **two-way**: alongside the boot log and telemetry lines,
+a line-based tuning console (`common/console/tuning_console.h`) listens at
+115200 8N1 from the moment `setup()` finishes — before WiFi, before the
+broker — so a freshly-flashed board can be tuned and tested immediately.
+Both flashers' tuning suites (the browser radar bench and the desktop
+Flasher's monitor panel) are UIs over exactly this protocol; `pio device
+monitor -b 115200` works just as well by hand.
+
+```
+help | ?              command list + every knob with range/current value
+cfg                   all knobs on one line: [cfg] debounce=300 … stream=1000 raw=0
+set <knob> <value>    clamp + apply to the live FSMs + persist to NVS
+reset                 restore compiled defaults
+stream on|off|<ms>    periodic [radar] line (default: on, 1000 ms)
+raw on|off            bench detail in the stream (raw cm/BPM; session-only)
+```
+
+Knobs (the same eleven numbers HA tunes over `cfg/*/set`): `debounce`,
+`clear`, `stall`, `near`, `mid`, and — wellbeing builds — `vlock`, `vlost`,
+`breath_min`, `breath_max`, `heart_min`, `heart_max`. Every `set` answers
+with a `[tune] ok/err` verdict plus the refreshed `[cfg]` snapshot, so a UI
+reconciles by replacing, never by diffing.
+
+The `[radar]` stream is the "what does the radar see right now" heartbeat:
+`[radar] state=present count=1 range=near lock=locked breath=14 heart=72
+errs=0`. It speaks the same coarse vocabulary MQTT publishes; the opt-in
+`raw on` mode appends `raw_dist/raw_count/raw_breath/raw_heart` for band
+calibration on the ATTENDED cable only — it is never persisted and never
+touches the network (the documented exception in `src/main.cpp`'s header).
+
 Your first USB flash with real `secrets/secrets.h` seeds the unit's NVS;
 generic OTA release builds afterwards inherit that identity + credentials
 (same `runtime_config` scheme as canary-vision).

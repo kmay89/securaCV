@@ -386,6 +386,81 @@ test("parseSenseLine: the radar bench reads every console shape", async () => {
   assert.strictEqual(c.parseSenseLine(""), null);
 });
 
+test("parseSenseLine: the tuning console's [radar] stream — coarse, vitals, raw", async () => {
+  const c = await core();
+  // presence-only build: just the coarse triple + link health
+  const p = c.parseSenseLine("[radar] state=present count=1 range=near errs=0");
+  assert.strictEqual(p.kind, "radar");
+  assert.strictEqual(p.presence, "present");
+  assert.strictEqual(p.count, "1");
+  assert.strictEqual(p.range, "near");
+  assert.strictEqual(p.frame_errs, 0);
+  assert.strictEqual(p.lock, undefined);
+  assert.strictEqual(p.raw, undefined);
+  // wellbeing build: lock + P1 numerics ride along
+  const w = c.parseSenseLine("[radar] state=present count=1 range=mid lock=locked breath=14 heart=67 errs=2");
+  assert.strictEqual(w.lock, "locked");
+  assert.strictEqual(w.breath, 14);
+  assert.strictEqual(w.heart, 67);
+  assert.strictEqual(w.frame_errs, 2);
+  assert.strictEqual(c.parseSenseLine("[radar] state=clear count=0 range=unknown lock=lost breath=0 heart=0 errs=0").lock, "lost");
+  // `raw on` bench mode: the attended-cable detail block
+  const r = c.parseSenseLine(
+    "[radar] state=present count=1 range=near lock=locked breath=14 heart=67 " +
+    "raw_dist=178cm raw_count=1 raw_breath=14 raw_heart=66 errs=0");
+  assert.deepStrictEqual(r.raw, { dist_cm: 178, count: 1, breath: 14, heart: 66 });
+  assert.strictEqual(c.parseSenseLine("[radar] state=nonsense count=9 range=weird"), null);
+});
+
+test("parseCfgLine: the [cfg] snapshot is the tuning UI's single source of truth", async () => {
+  const c = await core();
+  const cfg = c.parseCfgLine(
+    "[cfg] debounce=300 clear=1500 stall=5000 near=150 mid=350 vlock=4000 " +
+    "vlost=6000 breath_min=6 breath_max=30 heart_min=40 heart_max=130 stream=1000 raw=0");
+  assert.strictEqual(cfg.kind, "cfg");
+  assert.strictEqual(cfg.values.debounce, 300);
+  assert.strictEqual(cfg.values.heart_max, 130);
+  assert.strictEqual(cfg.values.breath_min, 6);
+  assert.strictEqual(cfg.stream, 1000);
+  assert.strictEqual(cfg.raw, false);
+  // stream/raw are session state, never knobs
+  assert.strictEqual(cfg.values.stream, undefined);
+  assert.strictEqual(cfg.values.raw, undefined);
+  // presence-only build carries fewer knobs — still a valid snapshot
+  const p = c.parseCfgLine("[cfg] debounce=200 clear=800 stall=5000 near=150 mid=350 stream=0 raw=1");
+  assert.strictEqual(p.values.vlock, undefined);
+  assert.strictEqual(p.stream, 0);
+  assert.strictEqual(p.raw, true);
+  // the firmware's multi-line [CFG] boot block is NOT the snapshot
+  assert.strictEqual(c.parseCfgLine("[CFG]"), null);
+  assert.strictEqual(c.parseCfgLine("Radar reflexes: debounce=300ms"), null);
+  assert.strictEqual(c.parseCfgLine(""), null);
+});
+
+test("parseTuneLine: one verdict per command — ok pops, err glows", async () => {
+  const c = await core();
+  assert.deepStrictEqual(c.parseTuneLine("[tune] ok debounce=500"),
+    { kind: "tune", ok: true, text: "debounce=500" });
+  assert.deepStrictEqual(c.parseTuneLine("[tune] err unknown knob 'flux' (try 'help')"),
+    { kind: "tune", ok: false, text: "unknown knob 'flux' (try 'help')" });
+  assert.strictEqual(c.parseTuneLine("[tune] commands:"), null, "help text is not a verdict");
+  assert.strictEqual(c.parseTuneLine("[radar] state=clear count=0 range=unknown"), null);
+});
+
+test("senseLineTone: the live log classifies every console voice", async () => {
+  const c = await core();
+  assert.strictEqual(c.senseLineTone("[radar] state=present count=1 range=near errs=0"), "stream");
+  assert.strictEqual(c.senseLineTone("[sense] present count=1 range=near"), "sense");
+  assert.strictEqual(c.senseLineTone("[presence] -> clear"), "sense");
+  assert.strictEqual(c.senseLineTone("[vitals] breathing locked"), "vitals");
+  assert.strictEqual(c.senseLineTone("[cfg] debounce=300 stream=1000 raw=0"), "cfg");
+  assert.strictEqual(c.senseLineTone("[CFG]"), "cfg");
+  assert.strictEqual(c.senseLineTone("[tune] ok near=200"), "tune");
+  assert.strictEqual(c.senseLineTone("[tune] err line too long (max 95 chars)"), "err");
+  assert.strictEqual(c.senseLineTone("[health] up 120s heap 187KB frame_errs 0"), "health");
+  assert.strictEqual(c.senseLineTone("anything else"), "plain");
+});
+
 test("roster: add, find, and the progression lines", async () => {
   const c = await core();
   let r = c.rosterAdd([], { t: 1000000, mac: "a4:cf:12:00:a4:3b", product: "Canary Sense",

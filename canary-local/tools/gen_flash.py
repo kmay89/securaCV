@@ -799,16 +799,23 @@ SENSE_CFG = {
 SENSE_CONFIG_H = REPO / "firmware/projects/canary-sense/include/canary/sense_config.h"
 
 SENSE_KNOBS = [
-    # (id, macro, nvs key, bounds macros stem, unit, flavor)
+    # (id, macro, nvs key, bounds macros stem, unit, console name, flavor)
     # flavor None = both builds carry it. The NVS keys and bounds come from
     # sense_config.{h,cpp} — the runtime twin of vision's detect_config.
-    ("present_debounce_ms", "CS_PRESENT_DEBOUNCE_MS", "sns_debounce", "SENSE_DEBOUNCE_MS", "ms", None),
-    ("clear_timeout_ms", "CS_CLEAR_TIMEOUT_MS", "sns_clear", "SENSE_CLEAR_MS", "ms", None),
-    ("stall_timeout_ms", "CS_RADAR_STALL_MS", "sns_stall", "SENSE_STALL_MS", "ms", None),
-    ("range_near_cm", "CS_RANGE_NEAR_CM", "sns_near", "SENSE_NEAR_CM", "cm", None),
-    ("range_mid_cm", "CS_RANGE_MID_CM", "sns_mid", "SENSE_MID_CM", "cm", None),
-    ("vitals_lock_ms", "CS_VITALS_LOCK_MS", "sns_vlock", "SENSE_VLOCK_MS", "ms", "wellbeing"),
-    ("vitals_lost_ms", "CS_VITALS_LOST_MS", "sns_vlost", "SENSE_VLOST_MS", "ms", "wellbeing"),
+    # The console name is the token the firmware's USB serial tuning console
+    # answers to (`set <name> <value>`, common/console/tuning_console.h) —
+    # carried here so both flashers wire their sliders to the same words.
+    ("present_debounce_ms", "CS_PRESENT_DEBOUNCE_MS", "sns_debounce", "SENSE_DEBOUNCE_MS", "ms", "debounce", None),
+    ("clear_timeout_ms", "CS_CLEAR_TIMEOUT_MS", "sns_clear", "SENSE_CLEAR_MS", "ms", "clear", None),
+    ("stall_timeout_ms", "CS_RADAR_STALL_MS", "sns_stall", "SENSE_STALL_MS", "ms", "stall", None),
+    ("range_near_cm", "CS_RANGE_NEAR_CM", "sns_near", "SENSE_NEAR_CM", "cm", "near", None),
+    ("range_mid_cm", "CS_RANGE_MID_CM", "sns_mid", "SENSE_MID_CM", "cm", "mid", None),
+    ("vitals_lock_ms", "CS_VITALS_LOCK_MS", "sns_vlock", "SENSE_VLOCK_MS", "ms", "vlock", "wellbeing"),
+    ("vitals_lost_ms", "CS_VITALS_LOST_MS", "sns_vlost", "SENSE_VLOST_MS", "ms", "vlost", "wellbeing"),
+    ("breath_min_bpm", "CS_BREATH_MIN_BPM", "sns_bmin", "SENSE_BREATH_MIN", "bpm", "breath_min", "wellbeing"),
+    ("breath_max_bpm", "CS_BREATH_MAX_BPM", "sns_bmax", "SENSE_BREATH_MAX", "bpm", "breath_max", "wellbeing"),
+    ("heart_min_bpm", "CS_HEART_MIN_BPM", "sns_hmin", "SENSE_HEART_MIN", "bpm", "heart_min", "wellbeing"),
+    ("heart_max_bpm", "CS_HEART_MAX_BPM", "sns_hmax", "SENSE_HEART_MAX", "bpm", "heart_max", "wellbeing"),
 ]
 
 # Room presets for the radar — authored here (like the hatch moments), values
@@ -862,13 +869,14 @@ def sense_reflexes_block(flavor: str) -> dict:
     bounds from sense_config.h, so no surface can drift from the firmware."""
     cfg = SENSE_CFG[flavor]
     knobs = []
-    for kid, macro, nvs_key, bstem, unit, only in SENSE_KNOBS:
+    for kid, macro, nvs_key, bstem, unit, console, only in SENSE_KNOBS:
         if only and only != flavor:
             continue
         knobs.append({
             "id": kid, "macro": macro, "unit": unit,
             "value": read_const(cfg, macro),
             "nvs": nvs_key,
+            "console": console,
             "bounds": [read_const(SENSE_CONFIG_H, bstem + "_LO"),
                        read_const(SENSE_CONFIG_H, bstem + "_HI")],
         })
@@ -1108,6 +1116,33 @@ def settings_help_block(vision: dict, sense_default: dict, sense_wellbeing: dict
             "what": "How long without a plausible breathing signal before the lock is "
                     "dropped rather than guessed at.",
             "default": f"{wk['vitals_lost_ms']} ms in the Wellbeing build.",
+        },
+        "breath_min_bpm": {
+            "label": "Breath min",
+            "what": "The slowest breathing the Wellbeing build will believe. Radar "
+                    "readings below this band are treated as noise, never as a person — "
+                    "the floor of the plausibility band the vitals lock trusts.",
+            "default": f"{wk['breath_min_bpm']} bpm in the Wellbeing build.",
+        },
+        "breath_max_bpm": {
+            "label": "Breath max",
+            "what": "The fastest breathing the Wellbeing build will believe — the "
+                    "ceiling of the plausibility band. Together with breath min it "
+                    "decides which radar readings can ever earn the breathing lock.",
+            "default": f"{wk['breath_max_bpm']} bpm in the Wellbeing build.",
+        },
+        "heart_min_bpm": {
+            "label": "Heart min",
+            "what": "The slowest heart rate the Wellbeing build will believe. If a "
+                    "resting heart rate sits below this floor the lock politely refuses — "
+                    "lower it on the tuning bench and watch the lock latch.",
+            "default": f"{wk['heart_min_bpm']} bpm in the Wellbeing build.",
+        },
+        "heart_max_bpm": {
+            "label": "Heart max",
+            "what": "The fastest heart rate the Wellbeing build will believe — the "
+                    "ceiling of the heart plausibility band the vitals lock trusts.",
+            "default": f"{wk['heart_max_bpm']} bpm in the Wellbeing build.",
         },
         # ── the passport & facts (what the flasher reads off the board) ──
         "chip": {
