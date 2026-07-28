@@ -351,6 +351,10 @@ if [[ "$FLAVOR" == "nightstand" || "$FLAVOR" == "touch169" ]]; then
   FIRMWARE_SRCS+=(
     "$FW/common/color/color_engine.cpp"
     "$FW/common/color/look_engine.cpp"
+    # The WS2812 beacon TU: emscripten-aware by design (the hardware write
+    # is skipped in the browser) and double-gated, so it is real code on
+    # the nightstand (HAS_RGBLED 1) and an empty TU on the touch169.
+    "$PROJ/src/hal/ambient_led.cpp"
   )
 fi
 # The two silicon HALs are replaced by emu_hal_display.cpp; everything
