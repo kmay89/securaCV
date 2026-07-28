@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include <string.h>
 #include <cstddef>
 
 // Fleet model — the display's single source of truth about the witnesses it
@@ -555,7 +556,10 @@ class FleetModel {
         // any standing ack so the display re-demands attention (G5/G8) —
         // unless this witness is deliberately muted (a flaky unit someone
         // bypassed must not keep un-acking the household all night).
-        if (next == Link::Lost && !mute_active(w, now)) acked_ = false;
+        // Display peers are exempt: an unplugged sibling screen must not
+        // re-demand the household's attention (see is_display_peer).
+        if (next == Link::Lost && !mute_active(w, now) && !is_display_peer(w))
+          acked_ = false;
         w.link = next;
         dirty_ = true;
       }
@@ -610,12 +614,28 @@ class FleetModel {
   // failed chain verify: mute quiets nags (staleness, battery, events), it
   // never un-knows an attack. The UI renders the muted tag in place of the
   // suppressed state, so the bypass is always visible.
+  // A display peer is a sibling SCREEN, not a life-safety sensor: it seats in
+  // the roster (it has its own I2C sensor data and screen state) but its
+  // link-loss must never climb the witness-lost alarm ladder — unplugging a
+  // nightstand is ordinary, not an emergency. Matched on the device_type
+  // prefix every display flavor reports.
+  static bool is_display_peer(const Witness& w) {
+    return strncmp(w.device_type, "canary-display", 14) == 0;
+  }
+
   Sev witness_sev(const Witness& w, uint32_t now) const {
     Sev s = Sev::Ok;
     if (w.tamper) s = worst_of(s, Sev::Tamper);
     if (w.badge == Badge::Failed) s = worst_of(s, Sev::Alert);
     if (mute_active(w, now)) return s;  // punch-through conditions only
-    if (w.link == Link::Lost) {
+    if (is_display_peer(w)) {
+      // Show the outage (the roster row reads offline) without the alarm:
+      // at most a Notice for any link state below Online.
+      if (w.link == Link::Lost || w.link == Link::Offline ||
+          w.link == Link::Stale) {
+        s = worst_of(s, Sev::Notice);
+      }
+    } else if (w.link == Link::Lost) {
       s = worst_of(s, Sev::Alert);
     } else if (w.link == Link::Offline) {
       // A retained LWT is an explicit "died on the wire" — it follows the
