@@ -11,6 +11,13 @@
   <key>com.apple.developer.usernotifications.critical-alerts</key>
   <true/>
 
+  <!-- Time Sensitive: the ordinary capability (no Apple grant) that lets
+       .timeSensitive actually break through Focus — it is BOTH the everyday
+       alert level and the critical-alert fallback, so without it the push
+       discipline's middle rung silently degrades to a plain banner. -->
+  <key>com.apple.developer.usernotifications.time-sensitive</key>
+  <true/>
+
   <!-- HomeKit -->
   <key>com.apple.developer.homekit</key>
   <true/>

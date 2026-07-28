@@ -846,3 +846,26 @@ Two independent failures, one release day, both invisible-by-design.
   when a rolling pointer release (`flasher-latest`, `fw-dev-latest`) gains a
   consumer, every workflow that creates or advances the release it shadows
   must keep the mirror fresh.
+
+### 2026-07-28 (c) — `xcode-select` to an unversioned Xcode path never matches
+
+- **Symptom:** iOS jobs "selected Xcode 16" and then built with whatever the
+  runner image's default was — or, once a step actually depended on it,
+  failed in ways that looked unrelated (missing simulators, wrong SDK).
+- **Cause:** runner images install Xcode at *versioned* paths
+  (`/Applications/Xcode_16.2.app`, never `Xcode_16.app`), and the trailing
+  `|| true` swallowed the `invalid developer directory` error, so the no-op
+  passed silently for months.
+- **Fix:** resolve the newest installed version and always print the result:
+  ```sh
+  latest="$(find /Applications -maxdepth 1 -name 'Xcode_16*.app' | sort -V | tail -1)"
+  if [ -n "$latest" ]; then sudo xcode-select -s "$latest"; fi
+  xcodebuild -version
+  ```
+  A selection step that can't tell you what it selected isn't a step, it's a
+  wish. Same class of rot as hard-coding a simulator model name
+  (`heal.sh` now picks the newest installed iPhone simulator for the same
+  reason).
+- **Applies to:** `ios-selfheal.yml`, `ios-release.yml` (both fixed);
+  any future macOS job that pins a toolchain path.
+
