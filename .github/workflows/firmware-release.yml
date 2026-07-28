@@ -282,42 +282,80 @@ jobs:
             --output-dir /tmp/wap-build \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
-      - name: Build canary-display watch + dash + modes (arduino-cli, profile-pinned)
-        # The display flavors build from the committed sketch.yaml profiles —
-        # platform + library pins live THERE (arduino-esp32 2.0.17, the
-        # PlatformIO-matched row firmware.yml proves on every push), and
-        # profiles auto-install their own isolated core + libs, so no
-        # --fqbn/--libraries here. The flavor dispatchers infer watch/dash
-        # from each profile's board (fqbn esp32:esp32:XIAO_ESP32S3 -> watch,
-        # esp32:esp32:esp32s3 -> dash).
+      - name: Install ESP32 core 2.0.17 + display libraries (cached)
+        # The display flavors release from the core-2.0.17 row — the
+        # PlatformIO-matched pairing firmware.yml proves on every push
+        # (GFX 1.4.9 / LVGL 8.4 / NimBLE 1.4.3). Runs AFTER the wap build
+        # on purpose: it switches the installed esp32:esp32 platform to
+        # 2.0.17, and wap builds on the latest core.
+        uses: ./.github/actions/setup-arduino-esp32
+        with:
+          core-version: "2.0.17"
+          libraries: |
+            GFX Library for Arduino@1.4.9
+            lvgl@8.4.0
+            PubSubClient
+            Crypto
+            ArduinoJson
+            NimBLE-Arduino@1.4.3
+
+      - name: Build canary-display watch + dash + modes (arduino-cli, fqbn + staged lv_conf.h)
+        # These three release exactly the way firmware.yml's "Stage + compile"
+        # leg proves on every push: explicit --fqbn against the pinned 2.0.17
+        # core, with LVGL's config staged at the libraries-dir root —
+        # libraries/lvgl/src/../../lv_conf.h is how LVGL 8.4 finds it.
         #
-        # `modes` is the exception, and it bites: the profile pins the 4.3B
-        # board and libraries but carries NO build flags. The gear flags
-        # (FEATURE_DEVMODE / DEMO_MODE / DEBUG_MODE / ARCADE) live in the
-        # git-ignored flavor_local.h, and CD_GEARS_COMPILED_IDENTITY — which is
-        # what makes the image identify as dash-modes instead of plain dash —
-        # is derived from them (config.h). Compile `--profile modes` without
-        # staging and you get a GEARLESS DASH binary labelled dash-modes:
-        # flashing it strips the modes build, and OTA-ing it onto a real modes
-        # unit cross-grades that unit down and leaves it polling as plain dash.
-        # `setup.sh flavor` writes only that one gitignored file, so the flag
-        # list has exactly one home.
+        # NOT profile mode (`arduino-cli compile --profile`), which this step
+        # used from its first day and which never produced a single release
+        # binary: profiles install libraries into an isolated internal dir
+        # where no lv_conf.h can be staged (watch/dash died on "fatal error:
+        # ../../lv_conf.h: No such file or directory"), and the modes
+        # profile's vendor-board pin doesn't resolve in profile mode at all
+        # ("Invalid FQBN"). Every failure was a ::warning:: — non-blocking by
+        # design — so fw-v2.2.0 through fw-v2.4.0 shipped without watch,
+        # dash, and dash-modes and nothing went red. Lesson:
+        # .github/RELEASE_LESSONS.md 2026-07-28 (i).
+        #
+        # FQBNs are the sketch.yaml profiles' own values (the profiles remain
+        # the documented bench path for IDE/CLI users). The flavor dispatchers
+        # infer watch vs dash from the board (XIAO_ESP32S3 -> watch, generic
+        # esp32s3 -> dash).
+        #
+        # `modes` is the exception, and it bites: it builds on the dash board
+        # — the same physical 4.3B the PlatformIO canary-display-dash-modes
+        # env targets — but the gear flags (FEATURE_DEVMODE / DEMO_MODE /
+        # DEBUG_MODE / ARCADE) live in the git-ignored flavor_local.h, and
+        # CD_GEARS_COMPILED_IDENTITY — which is what makes the image identify
+        # as dash-modes instead of plain dash — is derived from them
+        # (config.h). Compile without staging and you get a GEARLESS DASH
+        # binary labelled dash-modes: flashing it strips the modes build, and
+        # OTA-ing it onto a real modes unit cross-grades that unit down.
+        # `setup.sh flavor` writes only that one gitignored file, and the
+        # assemble step's product-string check proves the identity before any
+        # manifest is signed.
         #
         # Non-blocking on purpose: a display build hiccup only drops those
         # products from the browser flasher (build_flash_manifest warns
         # per-variant) — it must never sink the signed OTA release around it.
         run: |
           cd firmware/projects/canary-display/arduino/canary_display
+          LIBDIR="$(arduino-cli config get directories.user)/libraries"
+          mkdir -p "${LIBDIR}"
+          cp lv_conf.h "${LIBDIR}/lv_conf.h"
+          WATCH_FQBN='esp32:esp32:XIAO_ESP32S3:PSRAM=opi,CDCOnBoot=default,USBMode=hwcdc'
+          DASH_FQBN='esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=huge_app,CDCOnBoot=default,USBMode=hwcdc'
           for P in watch dash modes; do
             if [ "$P" = modes ]; then
               ../../setup.sh flavor modes
+              FQBN="$DASH_FQBN"
             else
               # No override: let board inference pick watch vs dash. Explicit
               # so the loop is order-independent and a re-run can't inherit a
               # stale staging.
               rm -f flavor_local.h
+              if [ "$P" = watch ]; then FQBN="$WATCH_FQBN"; else FQBN="$DASH_FQBN"; fi
             fi
-            if ! arduino-cli compile --profile "$P" \
+            if ! arduino-cli compile --fqbn "$FQBN" \
                 --output-dir "/tmp/display-${P}-build" canary_display.ino; then
               echo "::warning::canary-display '${P}' build failed — absent from the browser flasher this release"
             fi
