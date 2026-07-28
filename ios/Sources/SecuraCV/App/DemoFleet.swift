@@ -58,7 +58,7 @@ enum DemoFleet {
         frontDoor.lastSeen = now
         frontDoor.badge = .verified
         frontDoor.chainLength = 1284
-        frontDoor.firmware = "2.3.2"
+        frontDoor.firmware = "2.4.0-wap"
         frontDoor.rssiDBM = -52
         frontDoor.lastEvent = "Someone at the front door"
         frontDoor.lastEventAt = bucket(now.addingTimeInterval(-35 * 60))
@@ -71,7 +71,7 @@ enum DemoFleet {
         garage.lastSeen = now
         garage.badge = .verified
         garage.chainLength = 862
-        garage.firmware = "2.3.2"
+        garage.firmware = "2.4.0-wap"
         garage.rssiDBM = -67
         garage.batteryPct = 78
         garage.lastEvent = "Vehicle in the driveway"
@@ -85,7 +85,7 @@ enum DemoFleet {
         nursery.lastSeen = now
         nursery.badge = .verified
         nursery.chainLength = 903
-        nursery.firmware = "2.3.2"
+        nursery.firmware = "2.4.0"
         nursery.rssiDBM = -58
         nursery.radarPresent = true
         nursery.radarOccupants = 1
@@ -100,19 +100,20 @@ enum DemoFleet {
         driveway.lastSeen = now
         driveway.badge = .signed
         driveway.chainLength = 447
-        driveway.firmware = "2.3.2"
+        driveway.firmware = "2.4.0"
         driveway.rssiDBM = -61
 
         // The nightstand display — the fleet's across-the-room face. Fw 2.3.2
         // is the train where its behind-glass beacon boots canary yellow.
         var nightstand = Witness(id: "demo-display-9f31", deviceType: .display, name: "Nightstand")
         nightstand.room = "Bedroom"
-        nightstand.fingerprint = "9f31 5e07 44da b1c8"
+        // A display WATCHES the fleet; it holds no witness key and never
+        // mints its own chain (canary_display config.h) — so no fingerprint,
+        // no signing badge, no chain length. Anything else would demo an
+        // impossible trust state.
         nightstand.link = .online
         nightstand.lastSeen = now
-        nightstand.badge = .verified
-        nightstand.chainLength = 210
-        nightstand.firmware = "2.3.2"
+        nightstand.firmware = "2.4.0"
         nightstand.rssiDBM = -49
 
         var mailbox = Witness(id: "demo-wap-e412", deviceType: .wap, name: "Mailbox")
