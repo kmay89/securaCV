@@ -58,7 +58,7 @@ enum DemoFleet {
         frontDoor.lastSeen = now
         frontDoor.badge = .verified
         frontDoor.chainLength = 1284
-        frontDoor.firmware = "2.3.1"
+        frontDoor.firmware = "2.3.2"
         frontDoor.rssiDBM = -52
         frontDoor.lastEvent = "Someone at the front door"
         frontDoor.lastEventAt = bucket(now.addingTimeInterval(-35 * 60))
@@ -71,7 +71,7 @@ enum DemoFleet {
         garage.lastSeen = now
         garage.badge = .verified
         garage.chainLength = 862
-        garage.firmware = "2.3.1"
+        garage.firmware = "2.3.2"
         garage.rssiDBM = -67
         garage.batteryPct = 78
         garage.lastEvent = "Vehicle in the driveway"
@@ -85,7 +85,7 @@ enum DemoFleet {
         nursery.lastSeen = now
         nursery.badge = .verified
         nursery.chainLength = 903
-        nursery.firmware = "2.3.1"
+        nursery.firmware = "2.3.2"
         nursery.rssiDBM = -58
         nursery.radarPresent = true
         nursery.radarOccupants = 1
@@ -100,8 +100,20 @@ enum DemoFleet {
         driveway.lastSeen = now
         driveway.badge = .signed
         driveway.chainLength = 447
-        driveway.firmware = "2.3.1"
+        driveway.firmware = "2.3.2"
         driveway.rssiDBM = -61
+
+        // The nightstand display — the fleet's across-the-room face. Fw 2.3.2
+        // is the train where its behind-glass beacon boots canary yellow.
+        var nightstand = Witness(id: "demo-display-9f31", deviceType: .display, name: "Nightstand")
+        nightstand.room = "Bedroom"
+        nightstand.fingerprint = "9f31 5e07 44da b1c8"
+        nightstand.link = .online
+        nightstand.lastSeen = now
+        nightstand.badge = .verified
+        nightstand.chainLength = 210
+        nightstand.firmware = "2.3.2"
+        nightstand.rssiDBM = -49
 
         var mailbox = Witness(id: "demo-wap-e412", deviceType: .wap, name: "Mailbox")
         mailbox.fingerprint = "e412 9b55 60fe a2d7"
@@ -110,7 +122,7 @@ enum DemoFleet {
         mailbox.seenViaBLE = true
         mailbox.batteryPct = 64
 
-        return [frontDoor, garage, nursery, driveway, mailbox]
+        return [frontDoor, garage, nursery, driveway, nightstand, mailbox]
     }
 
     static func timeline(now: Date = Date()) -> [TimelineEvent] {
