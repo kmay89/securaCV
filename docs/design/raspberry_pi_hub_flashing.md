@@ -114,6 +114,15 @@ everywhere else):
    (`CONFIG/network/my-network`) carrying the user's SSID/PSK. This is the same
    secret our flasher already collects (`wifi-memory.js`) and the same
    local-only-custody promise: it goes onto the card, never to a cloud.
+   This placement is HA-documented, not folklore: the OS configuration docs
+   (developers.home-assistant.io/docs/operating-system/configuration) accept a
+   USB stick named `CONFIG` and say *"Alternative you can create a `CONFIG`
+   folder inside the `boot` partition"*, read on startup; files must be LF-only
+   (ours are). The keyfile carries a flash-time-minted stable `uuid=` (HA's
+   docs: without one "the IP address … change[s] on every boot") and
+   `llmnr=2`/`mdns=2` on `[connection]` — the values HAOS's own default wired
+   profile uses — so a Wi-Fi-only hub answers `homeassistant.local` at the OS
+   resolver, keeping the no-monitor promise.
 2. **securaCV, zero-touch** — seed a curated **HA backup / first-boot config** into
    the boot partition so onboarding brings up Mosquitto + the PWK add-on (and, at
    the chosen scope, dashboards + blueprints + the integration) already wired. First
@@ -266,9 +275,13 @@ Raspberry Pi Imager.
   - *Wi-Fi keyfile generator (landed):* `hub_core::hub_seed::wifi_keyfile` builds
     the NetworkManager keyfile HAOS reads at first boot from the SSID +
     passphrase — SSID as a byte array (any characters survive), passphrase
-    validated to WPA rules, escaping handled. Pure + host-tested. (Real-HAOS
-    acceptance still needs a flash to confirm — the crate tests the generation,
-    not the boot.)
+    validated to WPA rules, escaping handled, LF-only as HA's docs require.
+    The `[connection]` section carries `llmnr=2`/`mdns=2` (HAOS's own default
+    profile values, so the hub answers `homeassistant.local` on Wi-Fi) and a
+    stable `uuid=` minted at flash time by `hub_io::seed::uuid_v4` (HA's docs:
+    without one the profile is re-imported with a fresh identity — and possibly
+    a fresh IP — every boot). Pure + host-tested. (Real-HAOS acceptance still
+    needs a flash to confirm — the crate tests the generation, not the boot.)
   - *Seed drop (implemented; real-HAOS boot validation OUTSTANDING):*
     `hub_io::seed` mounts the freshly written boot partition (udisks /
     diskutil), writes `CONFIG/network/<id>` via the tested keyfile generator,

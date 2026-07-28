@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Headless Pi 5 hub, verified against HA's own docs — no monitor, ever
+
+The "flash → power → it appears on your network" promise is now built on the
+documented Home Assistant OS contract instead of hope, and the whole path
+assumes nobody ever attaches an HDMI cable. The Wi-Fi keyfile the Flasher
+seeds onto the boot partition (`CONFIG/network/` — HA's docs: *"Alternative
+you can create a CONFIG folder inside the boot partition"*, read on startup,
+LF-only) now carries two things it was missing: a stable `uuid=` minted at
+flash time (HA warns the hub's IP can change on every boot without one) and
+`llmnr=2`/`mdns=2` on the connection — the same values HAOS's default wired
+profile uses — so a Wi-Fi-only hub answers `homeassistant.local` at the OS
+resolver level, not just once Home Assistant is fully up.
+
+The finding side stopped assuming mDNS works everywhere. The Flasher's
+first-boot watch now says up front that no monitor or keyboard is needed, and
+if the hub hasn't answered after 25 minutes it swaps "be patient" for a
+concrete checklist: try it from a phone (some computers can't resolve
+`.local` even when the hub is up — including the watcher itself), read the
+router's device list for "homeassistant", and — since a typo'd Wi-Fi password
+is invisible from outside — plug in ethernet (zero setup) or re-flash. The
+Lab's Hub wizard carries the same promise and the same fallbacks
+(two-frontends rule).
+
 ### Every app keeps itself fresh — and says what's changing
 
 Self-update is now a contract both desktop apps honor, not a Flasher-only

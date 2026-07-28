@@ -2417,6 +2417,10 @@ const HUB_LASTFLASH_KEY = "securacv.hub.lastflash";
 // How long after a flash we'll still offer to resume the first-boot watch on
 // relaunch — comfortably longer than HAOS's 10–20 min first boot.
 const HUB_RESUME_WINDOW_MS = 45 * 60 * 1000;
+// When the first-boot watch escalates from "be patient" to "here's how to go
+// find it": past the honest 10–20 min first-boot window with margin. The watch
+// keeps polling — this only changes what the panel says.
+const HUB_FB_ESCALATE_MS = 25 * 60 * 1000;
 
 const HUB_STAGE_COPY = {
   download: "Downloading Home Assistant OS…",
@@ -2783,15 +2787,37 @@ function hubStartFirstBoot() {
     (hub.flashedViaPi
       ? "Unplug the USB-C cable, then plug your Pi into its own power supply — it stays a plain USB disk until that power-cycle. Watching for it to come online."
       : "Put the card in your Pi and power it on — watching for it to come online.") +
+    " No monitor or keyboard needed — the hub announces itself on your network by itself." +
     " First boot takes 10–20 minutes while it sets itself up; the blinking light is normal. Leave it powered if you can (a power cut usually just delays it — worst case is re-flashing). You can walk away, we'll ping you.";
   $("hub-fb-open").classList.add("hidden");
   hubRenderQr();
   hubStopFirstBoot(true); // clear any prior timer without hiding the panel
+  const t0 = Date.now();
+  let escalated = false;
   const tick = async () => {
     let up = false;
     try {
       up = await invoke("hub_probe_hub", { host: HUB_HOST });
     } catch (_) {}
+    // Past the honest first-boot window with nothing heard: swap "be patient"
+    // for a concrete go-find-it checklist. The hub is often fine and it's the
+    // *finding* that failed (this computer can't resolve .local, a router
+    // blocking mDNS, a typo'd Wi-Fi password we can't see from here) — a
+    // headless user must never be left staring at a spinner with no next move.
+    if (!up && !escalated && Date.now() - t0 > HUB_FB_ESCALATE_MS) {
+      escalated = true;
+      $("hub-fb-text").textContent =
+        "Over 25 minutes now — longer than a normal first boot. The Pi may well be fine and " +
+        "just hard to find; try these, in order: " +
+        "1) Open http://" + HUB_HOST + " from a phone or another computer — some computers " +
+        "can't resolve .local names even when the hub is up (this watcher has the same limit). " +
+        "2) Look in your router's device list for “homeassistant” and open its IP address " +
+        "with :8123 on the end. " +
+        "3) If you set Wi-Fi at flash time, a mistyped network name or password is invisible " +
+        "from outside — plug an ethernet cable into the Pi (it needs no setup at all), or " +
+        "re-flash the card with the Wi-Fi typed fresh. " +
+        "Still watching in the background — if it answers, we'll say so.";
+    }
     if (up) {
       hubStopFirstBoot(true);
       $("hub-fb-dot").className = "dot connected";
