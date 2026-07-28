@@ -2408,6 +2408,7 @@ const hub = {
   // ETA bookkeeping, reset at each stage change
   eta: { stage: null, t0: 0, done0: 0 },
   fbTimer: null, // first-boot poll
+  fbCountStop: null, // stops the escalation countdown paint (hubCountdownStart)
   resumeTimer: null, // resume-across-restart poll
 };
 
@@ -2571,10 +2572,14 @@ async function hubMaybeResume() {
   if (up) { hubClearFlashRecord(); return; }
   const banner = $("hub-resume");
   banner.classList.remove("hidden");
+  // Same countdown as the live watch, from the persisted flash time — the
+  // relaunched app owes the user the same "when do I start worrying" answer.
+  const stopCount = hubCountdownStart($("hub-resume-count"), rec.at);
   $("hub-resume-open").addEventListener("click", () => openExternal("http://" + (rec.host || HUB_HOST)));
   $("hub-resume-dismiss").addEventListener("click", () => {
     hubClearFlashRecord();
     banner.classList.add("hidden");
+    stopCount();
     if (hub.resumeTimer) { clearInterval(hub.resumeTimer); hub.resumeTimer = null; }
   });
   let escalated = false;
@@ -2590,6 +2595,7 @@ async function hubMaybeResume() {
     }
     if (alive) {
       if (hub.resumeTimer) { clearInterval(hub.resumeTimer); hub.resumeTimer = null; }
+      stopCount();
       $("hub-resume-dot").className = "dot connected";
       $("hub-resume-text").textContent = "Your hub from earlier is up. 🐤";
       $("hub-resume-open").classList.remove("hidden");
@@ -2600,6 +2606,33 @@ async function hubMaybeResume() {
   };
   hub.resumeTimer = setInterval(tick, 6000);
   tick();
+}
+
+// Visible countdown to the go-find-it escalation, so the troubleshooting
+// tips are something the user can see coming ("in 18:32") rather than a
+// surprise at the 25-minute mark — and so "nothing yet" reads as expected,
+// not broken. Painted every second from the SAME deadline the escalation
+// check uses (startedAt + HUB_FB_ESCALATE_MS); self-stops and hides its
+// element when the deadline passes. Returns a stop() for the hub-answered
+// and watch-dismissed paths.
+function hubCountdownStart(el, startedAt) {
+  let timer = null;
+  const stop = () => {
+    if (timer) { clearInterval(timer); timer = null; }
+    el.classList.add("hidden");
+  };
+  const paint = () => {
+    const left = startedAt + HUB_FB_ESCALATE_MS - Date.now();
+    if (left <= 0) { stop(); return; }
+    const m = Math.floor(left / 60000);
+    const s = String(Math.floor((left % 60000) / 1000)).padStart(2, "0");
+    el.textContent =
+      "If it hasn't answered in " + m + ":" + s + ", we'll walk you through finding it.";
+    el.classList.remove("hidden");
+  };
+  timer = setInterval(paint, 1000);
+  paint();
+  return stop;
 }
 
 // The go-find-it checklist for a hub that's past the honest first-boot
@@ -2822,6 +2855,7 @@ function hubStartFirstBoot() {
   hubRenderQr();
   hubStopFirstBoot(true); // clear any prior timer without hiding the panel
   const t0 = Date.now();
+  hub.fbCountStop = hubCountdownStart($("hub-fb-count"), t0);
   let escalated = false;
   const tick = async () => {
     let up = false;
@@ -2856,6 +2890,10 @@ function hubStopFirstBoot(keepPanel) {
   if (hub.fbTimer) {
     clearInterval(hub.fbTimer);
     hub.fbTimer = null;
+  }
+  if (hub.fbCountStop) {
+    hub.fbCountStop();
+    hub.fbCountStop = null;
   }
   if (!keepPanel) $("hub-firstboot").classList.add("hidden");
 }
