@@ -608,6 +608,20 @@ jobs:
             echo "prerelease version ${VER} — flasher-latest pointer left untouched"
             exit 0
           fi
+          # …and never BACKWARD: re-running an old tag's workflow must not
+          # strand the installed base on a stale manifest. Equal versions may
+          # re-point (a re-cut refreshes URLs/signatures/notes).
+          cur="$(mktemp -d)"
+          if gh release download flasher-latest -p latest.json -D "$cur" --clobber 2>/dev/null; then
+            current=$(python3 -c "import json;print(json.load(open('$cur/latest.json')).get('version',''))" 2>/dev/null || true)
+            if [[ "$current" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              behind=$(python3 -c "cand=tuple(map(int,'$VER'.split('.'))); cur=tuple(map(int,'$current'.split('.'))); print('yes' if cand<cur else 'no')")
+              if [ "$behind" = "yes" ]; then
+                echo "::notice::flasher-latest already serves ${current} (newer than ${VER}) — pointer left untouched"
+                exit 0
+              fi
+            fi
+          fi
           notes="Rolling pointer for the desktop Flasher's self-updater — the
           app polls this prerelease's latest.json (tauri.conf.json
           \`plugins.updater.endpoints\`). Not an install: download the Flasher

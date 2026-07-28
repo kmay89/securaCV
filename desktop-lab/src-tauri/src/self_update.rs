@@ -23,12 +23,16 @@ use tauri_plugin_updater::UpdaterExt;
 pub const FIRST_CHECK_DELAY: Duration = Duration::from_secs(15);
 pub const RECHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 
-/// One update conversation at a time, and a version the user waved off is
-/// not re-asked until the next launch (the journal still records checks).
+/// A "Later" is an answer: a declined version isn't re-asked for this long
+/// (persisted on disk, so a relaunch doesn't turn into a nag), and any NEWER
+/// version asks straight away. Bounded on purpose — with no in-app updates
+/// UI yet, an eternal decline would strand someone who changes their mind.
+const DECLINE_SNOOZE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
+/// One update conversation at a time.
 #[derive(Default)]
 pub struct UpdateGate {
     busy: bool,
-    declined: Option<String>,
 }
 
 /// What an update offer looks like to the frontend seam (same DTO shape as
@@ -40,13 +44,17 @@ pub struct UpdateDto {
     notes: Option<String>,
 }
 
+fn epoch_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 /// `YYYY-MM-DD HH:MM:SSZ` from the system clock, no chrono dependency.
 /// Civil-from-days per Howard Hinnant's algorithm — plenty for a journal.
 fn utc_stamp() -> String {
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let secs = epoch_secs();
     let (days, rem) = (secs / 86_400, secs % 86_400);
     let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
     let z = days as i64 + 719_468;
@@ -77,6 +85,29 @@ fn journal(app: &AppHandle, line: &str) {
         {
             let _ = writeln!(f, "{stamped}");
         }
+    }
+}
+
+/// The declined-version marker: `<version> <epoch-secs>`, in the app data
+/// dir next to the journal, so a "Later" survives a relaunch.
+fn declined_path(app: &AppHandle) -> Option<std::path::PathBuf> {
+    app.path().app_data_dir().ok().map(|d| d.join("update-declined"))
+}
+
+fn read_declined(app: &AppHandle) -> Option<(String, u64)> {
+    let text = std::fs::read_to_string(declined_path(app)?).ok()?;
+    let mut parts = text.split_whitespace();
+    let version = parts.next()?.to_string();
+    let at = parts.next()?.parse().ok()?;
+    Some((version, at))
+}
+
+fn write_declined(app: &AppHandle, version: &str) {
+    if let Some(path) = declined_path(app) {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(path, format!("{version} {}\n", epoch_secs()));
     }
 }
 
@@ -177,11 +208,13 @@ pub async fn routine_check(app: AppHandle) {
         &app,
         &format!("v{version} is ready (running v{})", update.current_version),
     );
-    {
-        let gate = app.state::<Mutex<UpdateGate>>();
-        if gate.lock().unwrap().declined.as_deref() == Some(version.as_str()) {
-            // Asked already this session and the user said later — honor that
-            // until the next launch instead of nagging every six hours.
+    if let Some((declined, at)) = read_declined(&app) {
+        // The user already said "later" to exactly this version, recently —
+        // honor that across launches instead of nagging. A newer version, or
+        // the snooze running out, asks again.
+        if declined == version
+            && epoch_secs().saturating_sub(at) < DECLINE_SNOOZE.as_secs()
+        {
             return done(&app);
         }
     }
@@ -213,8 +246,7 @@ pub async fn routine_check(app: AppHandle) {
 
     if !install {
         journal(&app, &format!("v{version} offered — user chose later"));
-        let gate = app.state::<Mutex<UpdateGate>>();
-        gate.lock().unwrap().declined = Some(version);
+        write_declined(&app, &version);
         return done(&app);
     }
 
