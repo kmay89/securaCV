@@ -325,8 +325,9 @@ jobs:
         # radio and the RGB scanout contend for PSRAM bandwidth and the
         # peripheral underruns (display_dash.cpp, seen on the 4.3B bench).
         # The core-2 pairing has no bounce-buffer parameter and stays
-        # bench-only for these boards. Same reason the canary-display-dash7
-        # PlatformIO env moved production to the core-3 toolchain.
+        # bench-only for these boards. The dash-family PlatformIO envs
+        # (dash7 included) ride the same core-3 pairing via the pioarduino
+        # platform — see canary-display.ini's [env:canary-display-dash].
         uses: ./.github/actions/setup-arduino-esp32
         with:
           core-version: "3.3.10"

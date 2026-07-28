@@ -3,9 +3,11 @@
 // LVGL split its display/driver API with the 9.x line (lv_disp_drv_t ->
 // lv_display_t, buffers in bytes, tick source registered at runtime); this
 // port carries both behind LVGL_VERSION_MAJOR — the same pattern as
-// hal/core_compat.h for the arduino-esp32 majors. The PlatformIO release
-// path pins 8.4 (bench parity); the Arduino core-3 profiles pair with the
-// current 9.x so a stock Library Manager install builds unmodified.
+// hal/core_compat.h for the arduino-esp32 majors. The SPI-panel PlatformIO
+// envs (watch/nightstand/touch169) pin 8.4; the RGB dash family and the
+// Arduino core-3 profiles pair with the current 9.x (the dash family rides
+// core 3 for its bounce buffers — see canary-display.ini), so a stock
+// Library Manager install builds unmodified either way.
 //
 // Draw buffers: the watch keeps a quarter-screen buffer in internal RAM
 // (240x60x2 = 28.8 KiB — a full GC9A01 frame pushes over SPI in ~23 ms at

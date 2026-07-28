@@ -1027,15 +1027,25 @@ Two independent failures, one release day, both invisible-by-design.
   buffers (small internal-SRAM staging the LCD DMA streams from), which
   exist only in GFX 1.6.x — the core-3 pairing. GFX 1.4.9 (the core-2
   pairing) predates the parameter, so any core-2 dash build carries the
-  defect by construction. The dash7 PlatformIO env had already moved
-  production to the core-3 toolchain for exactly this reason; the (i) fix
-  below initially put the 4.3B dash/modes release builds on core 2.0.17 —
-  correct for the SPI watch, wrong for RGB glass.
-- **Fix:** `firmware-release.yml` splits the display Arduino builds:
-  watch on the core-2 row (SPI panel, bench-validated pairing), dash +
-  modes on core 3.3.10 + GFX 1.6.6 / LVGL 9.5.0 / NimBLE 2.5.0 with
-  bounce buffers compiled in — the same rows firmware.yml proves on every
-  push. `display_dash.cpp` now marks the core-2 RGB path bench-only.
+  defect by construction. And EVERY RGB build was core-2: the (i) fix
+  below initially put the 4.3B dash/modes release builds on core 2.0.17
+  (correct for the SPI watch, wrong for RGB glass), and the dash-family
+  PlatformIO envs — dash7 included, the one RGB product that actually
+  shipped in fw-v2.4.0 — all extended the core-2 base, so fielded Dash 7
+  units flicker today. (An earlier version of this entry claimed dash7
+  had already moved to core-3; that was wrong — only the C6 nightstand
+  base had.)
+- **Fix:** two halves. `firmware-release.yml` splits the display Arduino
+  builds: watch on the core-2 row (SPI panel, bench-validated pairing),
+  dash + modes on core 3.3.10 + GFX 1.6.6 / LVGL 9.5.0 / NimBLE 2.5.0
+  with bounce buffers compiled in — the same rows firmware.yml proves on
+  every push. And `canary-display.ini` moves `[env:canary-display-dash]`
+  (which every dash-family env, dash7 included, extends) onto the
+  pioarduino core-3 platform with the core-3 library row, so PlatformIO
+  release and bench builds get the bounce buffers too. `flavors.json`
+  groups the CI build order by platform so the shared PLATFORMIO_CORE_DIR
+  sees one platform switch, not many (the fw-v2.3.0 output-wipe
+  mechanism). `display_dash.cpp` marks the core-2 RGB path bench-only.
 - **Applies to:** every RGB-parallel-panel board, on any target. SPI
   panels (watch, nightstand, touch169) have no scanout-contention
   mechanism and stay on their bench-validated pairing. If a new RGB board
