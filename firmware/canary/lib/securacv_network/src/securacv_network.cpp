@@ -794,6 +794,11 @@ static bool auth_gate(httpd_req_t* req) {
 
 // Forward declarations for HTTP handlers
 static esp_err_t handle_ui(httpd_req_t* req);
+// Captive-portal probes + first-boot setup wizard (see the CAPTIVE-PORTAL
+// section below for the per-platform strategy).
+static esp_err_t handle_captive_probe(httpd_req_t* req);
+static esp_err_t handle_setup_page(httpd_req_t* req);
+static esp_err_t handle_captive_catchall(httpd_req_t* req);
 static esp_err_t handle_status(httpd_req_t* req);
 static esp_err_t handle_chain(httpd_req_t* req);
 static esp_err_t handle_witness(httpd_req_t* req);
@@ -891,13 +896,14 @@ bool ScvNetworkManager::startHttpServer() {
   config.server_port = 80;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;
-  // 42 base (incl. /api/witness + /api/thermal) + 6 mesh endpoints (PR-8)
-  // when the mesh feature is compiled in. Each registered httpd_uri_t
-  // needs a slot.
+  // 42 base (incl. /api/witness + /api/thermal) + 8 captive-portal routes
+  // (6 OS connectivity probes + /setup + the wildcard fallback) + 6 mesh
+  // endpoints (PR-8) when the mesh feature is compiled in. Each registered
+  // httpd_uri_t needs a slot.
   #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
-  config.max_uri_handlers = 48;
+  config.max_uri_handlers = 56;
   #else
-  config.max_uri_handlers = 42;
+  config.max_uri_handlers = 50;
   #endif
   config.recv_wait_timeout = 30;
   config.send_wait_timeout = 30;
@@ -924,6 +930,25 @@ void ScvNetworkManager::registerHttpHandlers() {
   // UI
   httpd_uri_t ui = { .uri = "/", .method = HTTP_GET, .handler = handle_ui };
   httpd_register_uri_handler(m_http_server, &ui);
+
+  // First-boot setup wizard + the OS captive-portal connectivity probes.
+  // Registered with a trailing '*' because probe URLs sometimes carry a
+  // cache-busting query and the wildcard matcher compares the FULL uri;
+  // handle_captive_probe re-checks the exact path component itself.
+  httpd_uri_t setup_page = { .uri = "/setup", .method = HTTP_GET, .handler = handle_setup_page };
+  httpd_register_uri_handler(m_http_server, &setup_page);
+  static const char* kProbePaths[] = {
+    "/hotspot-detect.html*",        // Apple CNA
+    "/library/test/success.html*",  // Apple (older probe)
+    "/generate_204*",               // Android
+    "/gen_204*",                    // Android (short variant)
+    "/connecttest.txt*",            // Windows NCSI
+    "/ncsi.txt*",                   // Windows NCSI (legacy)
+  };
+  for (const char* p : kProbePaths) {
+    httpd_uri_t probe = { .uri = p, .method = HTTP_GET, .handler = handle_captive_probe };
+    httpd_register_uri_handler(m_http_server, &probe);
+  }
 
   // API endpoints
   httpd_uri_t status = { .uri = "/api/status", .method = HTTP_GET, .handler = handle_status };
@@ -1099,6 +1124,12 @@ void ScvNetworkManager::registerHttpHandlers() {
   httpd_uri_t mesh_pair_cancel_ep = { .uri = "/api/mesh/pair/cancel", .method = HTTP_POST, .handler = handle_mesh_pair_cancel };
   httpd_register_uri_handler(m_http_server, &mesh_pair_cancel_ep);
   #endif
+
+  // Wildcard fallback — MUST stay the last registration, so every exact
+  // route above wins first. During setup it funnels stray hijacked-DNS
+  // requests to the wizard; otherwise it 404s like before.
+  httpd_uri_t catchall = { .uri = "/*", .method = HTTP_GET, .handler = handle_captive_catchall };
+  httpd_register_uri_handler(m_http_server, &catchall);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1108,28 +1139,29 @@ void ScvNetworkManager::registerHttpHandlers() {
 // Include triggers PlatformIO LDF to build+link the securacv_webui library
 #include "securacv_webui.h"
 
-static esp_err_t handle_ui(httpd_req_t* req) {
-  witness_get_health().http_requests++;
+// Stream an embedded HTML page, injecting the bearer credential at the
+// `__CV_TOKEN__` placeholder so the page's fetch() helper can send
+// `Authorization: Bearer cv_…`. The pages are tens of KB and ESP32 heap
+// fragments fast, so we stream prefix/token/suffix as three chunks rather
+// than allocating a rendered copy. Shared by the dashboard (/) and the
+// first-boot setup wizard (/setup + the captive-portal probe paths).
+static esp_err_t send_html_with_token(httpd_req_t* req, const char* html) {
   httpd_resp_set_type(req, "text/html");
 
-  // Phase 2.5: inject the bearer credential into the embedded SPA so its
-  // fetch() helper can send `Authorization: Bearer cv_…`. The SPA is tens
-  // of KB and ESP32 heap fragments fast, so we stream prefix/token/suffix
-  // as three chunks rather than allocating a rendered copy.
   static const char kTokenPlaceholder[] = "__CV_TOKEN__";
   const size_t placeholder_len = sizeof(kTokenPlaceholder) - 1;
 
-  const char* needle = strstr(CANARY_UI_HTML, kTokenPlaceholder);
+  const char* needle = strstr(html, kTokenPlaceholder);
   if (!needle) {
-    return httpd_resp_send(req, CANARY_UI_HTML, HTTPD_RESP_USE_STRLEN);
+    return httpd_resp_send(req, html, HTTPD_RESP_USE_STRLEN);
   }
 
   const char* token = auth_get_token();
   if (!token) token = "";
   const size_t token_len = strlen(token);
-  const size_t prefix_len = needle - CANARY_UI_HTML;
+  const size_t prefix_len = needle - html;
 
-  esp_err_t result = httpd_resp_send_chunk(req, CANARY_UI_HTML, prefix_len);
+  esp_err_t result = httpd_resp_send_chunk(req, html, prefix_len);
   if (result != ESP_OK) return result;
 
   if (token_len > 0) {
@@ -1141,6 +1173,97 @@ static esp_err_t handle_ui(httpd_req_t* req) {
   if (result != ESP_OK) return result;
 
   return httpd_resp_send_chunk(req, NULL, 0);
+}
+
+static esp_err_t handle_ui(httpd_req_t* req) {
+  witness_get_health().http_requests++;
+  return send_html_with_token(req, CANARY_UI_HTML);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CAPTIVE-PORTAL PROBES + SETUP WIZARD
+// ════════════════════════════════════════════════════════════════════════════
+//
+// During first-boot setup the DNS responder (securacv_setup) answers every
+// name with the AP's address, so the phone's OS sends its connectivity probe
+// here. The per-platform "hybrid" strategy — proven on canary-wap, see its
+// captive_probe.h and firmware/LESSONS_LEARNED.md "Networking & Captive
+// Portal" — decides what each probe gets:
+//
+//   - Apple   (/hotspot-detect.html, /library/test/success.html): while setup
+//     is active, 200 + the setup WIZARD itself — that pops the Captive
+//     Network Assistant sheet automatically (no "open Safari" folklore) and
+//     the sheet keeps the Wi-Fi association up while the user works. Once
+//     setup is complete, Apple's own Success token, so the sheet can close
+//     cleanly and never nags again.
+//   - Android (/generate_204, /gen_204): 204 No Content, so Android marks the
+//     AP validated and never falls back to cellular mid-setup.
+//   - Windows (/connecttest.txt, /ncsi.txt): the exact NCSI success bodies.
+//
+// The wizard page itself is small, static-plus-vanilla-JS HTML
+// (CANARY_SETUP_HTML) — captive mini-browsers choke on the full dashboard
+// SPA, which is why the probe never serves CANARY_UI_HTML.
+
+static const char kAppleSuccessBody[] =
+    "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>";
+
+// True when `uri`'s path component — everything before '?' or '#' — equals
+// `lit` exactly. Probe URLs sometimes carry a cache-busting query and
+// req->uri keeps it, so plain strcmp would misroute those.
+static bool probe_path_is(const char* uri, const char* lit) {
+  size_t i = 0;
+  for (; lit[i] != '\0'; ++i) {
+    if (uri[i] != lit[i]) return false;
+  }
+  return uri[i] == '\0' || uri[i] == '?' || uri[i] == '#';
+}
+
+static esp_err_t handle_captive_probe(httpd_req_t* req) {
+  witness_get_health().http_requests++;
+  const char* uri = req->uri;
+
+  if (probe_path_is(uri, "/generate_204") || probe_path_is(uri, "/gen_204")) {
+    httpd_resp_set_status(req, "204 No Content");
+    return httpd_resp_send(req, NULL, 0);
+  }
+  if (probe_path_is(uri, "/connecttest.txt") || probe_path_is(uri, "/ncsi.txt")) {
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_sendstr(
+        req, strstr(uri, "ncsi") ? "Microsoft NCSI" : "Microsoft Connect Test");
+  }
+  // Apple (and the connection-preserving fallback for anything misrouted).
+  // Serve the wizard while setup is active OR while the home-Wi-Fi link is
+  // down — a typo'd password saves credentials (which completes "setup") but
+  // leaves the Canary offline, and the sheet must keep offering the wizard
+  // for the retry, not declare Success. Only a live STA link earns Apple's
+  // Success token (which lets the sheet close cleanly and stop nagging).
+  if (setup_is_active() || !network_get_instance().getStatus().sta_connected) {
+    return send_html_with_token(req, CANARY_SETUP_HTML);
+  }
+  httpd_resp_set_type(req, "text/html");
+  return httpd_resp_sendstr(req, kAppleSuccessBody);
+}
+
+// GET /setup — the wizard at a stable address, reachable from a real browser
+// too (canary.local/setup), not only through the captive sheet.
+static esp_err_t handle_setup_page(httpd_req_t* req) {
+  witness_get_health().http_requests++;
+  return send_html_with_token(req, CANARY_SETUP_HTML);
+}
+
+// Wildcard fallback, registered LAST. While setup is active every stray
+// hijacked-DNS request (favicon fetches, portals the phone remembers, …)
+// funnels to the wizard instead of 404ing — a 404 here would make the
+// captive sheet look broken. Outside setup, keep the old 404 behavior.
+static esp_err_t handle_captive_catchall(httpd_req_t* req) {
+  witness_get_health().http_requests++;
+  if (!setup_is_active()) {
+    httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "not found");
+    return ESP_OK;
+  }
+  httpd_resp_set_status(req, "302 Found");
+  httpd_resp_set_hdr(req, "Location", "/setup");
+  return httpd_resp_send(req, NULL, 0);
 }
 
 static esp_err_t handle_status(httpd_req_t* req) {

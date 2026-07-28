@@ -135,6 +135,7 @@ border-radius:var(--r);padding:18px 16px;display:none}
 border-radius:10px;padding:2px 4px 2px 14px;margin-bottom:8px}
 .field input{flex:1;background:none;border:0;outline:0;color:var(--txt);
 font-size:16px;padding:11px 0}
+.pw-masked{-webkit-text-security:disc;text-security:disc}
 .field button{background:none;border:0;color:var(--mut);font-size:13px;padding:10px 12px;cursor:pointer}
 #msg{min-height:20px;font-size:13.5px;color:var(--warn);margin:2px 2px 8px}
 #join{width:100%;padding:14px;border:0;border-radius:10px;background:var(--txt);
@@ -170,7 +171,7 @@ footer{margin-top:26px;text-align:center;color:var(--faint);font-size:12px}
     <input id="ssid" placeholder="Network name" autocapitalize="none" autocorrect="off">
   </div>
   <div class="field">
-    <input id="pw" type="password" placeholder="Password" autocapitalize="none" autocorrect="off">
+    <input id="pw" type="text" class="pw-masked" placeholder="Password" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
     <button id="eye" type="button">show</button>
   </div>
   <div id="msg"></div>
@@ -214,8 +215,8 @@ fetch('/scan'+(force?'?force=1':'')).then(function(r){return r.json()})
 renderNets(j.networks||[])})
 .catch(function(){setTimeout(function(){scan(false)},1200)})}
 $('rescan').onclick=function(){if(!busy)scan(true)};
-$('eye').onclick=function(){var p=$('pw'),t=p.type==='password';
-p.type=t?'text':'password';$('eye').textContent=t?'hide':'show'};
+$('eye').onclick=function(){var p=$('pw'),t=p.classList.contains('pw-masked');
+p.classList.toggle('pw-masked',!t);$('eye').textContent=t?'hide':'show'};
 $('join').onclick=function(){if(busy)return;
 var ssid=$('ssidf').style.display!=='none'?$('ssid').value.trim():sel;
 if(!ssid){$('msg').textContent='Enter the network name.';return}

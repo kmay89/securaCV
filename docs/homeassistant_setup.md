@@ -60,10 +60,23 @@ default HACS store yet):
 
 Connect to your Canary's WiFi AP (SSID shown on device, password is device-unique):
 
-1. Open `http://canary-<id>.local` (the device's unique hostname, shown in the boot banner — e.g. `http://canary-s3-ab7k.local`) or `http://192.168.4.1` in your browser. If you only have one Canary, plain `http://canary.local` may also resolve, but each Canary always advertises its unique hostname so multiple devices on the same network don't collide.
-2. Go to the **Network** tab
-3. Enter your home WiFi credentials (the Canary needs WiFi to reach the MQTT broker)
-4. Enter your MQTT broker details:
+1. On first boot, joining the AP from a phone pops the Canary's **setup
+   wizard** on its own (the captive-portal sheet) — pick your home WiFi
+   there and enter its password. The wizard's finish screen also offers an
+   optional **"point it at your hub"** step, prefilled with the values that
+   are right for a SecuraCV hub (`homeassistant.local`, port `1883`) — fill
+   in username/password only if your broker requires them, save, and let it
+   restart.
+2. If the wizard doesn't appear (or the Canary was set up before), open
+   `http://canary-<id>.local` (the device's unique hostname, shown in the
+   boot banner — e.g. `http://canary-s3-ab7k.local`) or `http://192.168.4.1`
+   in your browser. If you only have one Canary, plain `http://canary.local`
+   may also resolve, but each Canary always advertises its unique hostname
+   so multiple devices on the same network don't collide. `/setup` on any of
+   those addresses reopens the wizard.
+3. In the dashboard, go to the **Network** tab and enter your home WiFi
+   credentials (the Canary needs WiFi to reach the MQTT broker)
+4. MQTT broker details (if you skipped the wizard's hub step):
    - **Host**: Your Mosquitto broker IP (e.g., `192.168.1.10` or `homeassistant.local`)
    - **Port**: `1883` (default)
    - **Username/Password**: If your broker requires authentication

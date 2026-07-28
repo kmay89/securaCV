@@ -881,21 +881,33 @@ fn hub_flash_blocking(
         ));
     }
 
-    // Turn the raw seed notes into calm, actionable copy.
+    // Turn the raw seed notes into calm, actionable copy. When BOTH seeds
+    // failed it was one mount failure, not two — say the reason once and keep
+    // the second note short, or the receipt reads as a wall of repeated error.
+    let both_failed = want_wifi && !wifi_seeded && want_account && !account_seeded;
     if want_wifi && !wifi_seeded {
         wifi_note = Some(format!(
-            "The card itself is perfect — only the Wi-Fi note didn't make it on. Easiest fixes: \
-             plug in ethernet for the first boot, or flash again. ({})",
+            "The card itself is perfect — only the Wi-Fi settings couldn't be added (usually \
+             the computer not re-mounting the freshly written card in time). Easiest fixes: \
+             flash again — the second pass almost always mounts fine — or plug in ethernet for \
+             the first boot and set Wi-Fi inside Home Assistant afterwards. ({})",
             wifi_note.as_deref().unwrap_or("unknown reason")
         ));
     }
     if want_account && !account_seeded {
-        account_note = Some(format!(
-            "The card is perfect and (if set) your Wi-Fi is on it — only the experimental \
-             account pre-seed didn't apply, so first boot will show Home Assistant's normal \
-             setup wizard. ({})",
-            account_note.as_deref().unwrap_or("unknown reason")
-        ));
+        account_note = Some(if both_failed {
+            // Same mount failure as the Wi-Fi note — don't repeat the reason.
+            "The experimental account pre-seed hit the same snag, so first boot will show Home \
+             Assistant's normal setup wizard — creating your account there takes under a minute."
+                .to_string()
+        } else {
+            format!(
+                "The card is perfect and (if set) your Wi-Fi is on it — only the experimental \
+                 account pre-seed didn't apply, so first boot will show Home Assistant's normal \
+                 setup wizard. ({})",
+                account_note.as_deref().unwrap_or("unknown reason")
+            )
+        });
     } else if want_account && account_seeded {
         account_note = Some(
             "Experimental: we wrote your account onto the card. On first boot, tell us whether \

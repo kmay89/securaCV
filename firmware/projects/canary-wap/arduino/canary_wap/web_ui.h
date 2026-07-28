@@ -564,6 +564,9 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       font-size: 0.9rem;
     }
     .form-input:focus, .form-select:focus { outline: none; border-color: var(--accent); }
+    /* Masks a Wi-Fi key like a password field WITHOUT type=password, so iOS
+       never offers to invent a new password for it (LESSONS_LEARNED). */
+    .pw-masked { -webkit-text-security: disc; text-security: disc; }
 
     /* Toggle switch */
     .toggle-row {
@@ -2180,7 +2183,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             </div>
             <div class="form-group">
               <label class="form-label">Password</label>
-              <input type="password" class="form-input" id="wifiPassword" placeholder="WiFi password">
+              <input type="text" class="form-input pw-masked" id="wifiPassword" placeholder="WiFi password" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
             </div>
             <div class="form-group">
               <label class="form-label">Device name <span style="color:var(--muted);font-weight:normal;">(optional — makes it canary-&lt;name&gt;.local)</span></label>
