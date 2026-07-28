@@ -19,6 +19,17 @@ and what to expect after updating. Heading grammar is
 
 ## 0.3.5 — 2026-07-28
 
+- **The hub really is headless now — and the app says so.** The Wi-Fi you
+  type at flash time lands on the card the way Home Assistant's own docs
+  specify (a stable connection identity, and name-resolution turned on at
+  the OS level), so a Pi 5 joins your network and answers
+  `homeassistant.local` with no monitor or keyboard ever attached.
+- **The first-boot watch never leaves you guessing.** A visible countdown
+  shows exactly when patience stops being the plan; if the hub hasn't
+  answered by then, the watch swaps in a concrete checklist — try it from
+  a phone, read your router's device list, or fall back to ethernet or a
+  re-flash. Quitting and reopening the app mid-boot keeps the same
+  countdown and the same checklist.
 - **The update banner now says what's changing.** When a newer version is
   ready, the app shows that release's own notes — these very sections —
   not just a version number, so you decide with the facts in front of you.

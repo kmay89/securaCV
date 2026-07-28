@@ -981,3 +981,38 @@ Two independent failures, one release day, both invisible-by-design.
   `tvos-release.yml`, `tvos.yml` (all fixed), `desktop-mobile-release.yml`
   (already on `macos-latest`, which tracks new images). Watch for the same
   aging on the next annual Xcode requirement.
+
+### 2026-07-28 (i) — Non-blocking build loops rot silently: watch/dash/dash-modes missing from every firmware release ever cut
+
+- **Symptom:** the Flasher's product picker showed "no published release
+  yet" for Canary Watch Station, Dash, and Dash · Modes while their
+  siblings said "release 2.4.0". The fw-v2.4.0 release carried no
+  `canary-display-watch/dash/dash-modes` binaries, factory images, or
+  manifests — and neither did any earlier release from this workflow.
+  Every run was green.
+- **Cause:** two independent failures inside a deliberately non-blocking
+  loop. (1) The release step compiled the three flavors with `arduino-cli
+  compile --profile`, but profile mode installs libraries into an isolated
+  internal dir where the sketch's `lv_conf.h` can never be staged — LVGL
+  8.4 resolves its config as `libraries/lvgl/src/../../lv_conf.h`, so
+  watch/dash died on `fatal error: ../../lv_conf.h: No such file or
+  directory`. (2) The `modes` profile pins a vendor board
+  (`waveshare_esp32_s3_touch_lcd_43b`) that fails `Invalid FQBN` in
+  profile mode. Meanwhile push CI (`firmware.yml`) proved a DIFFERENT
+  path — explicit `--fqbn` + user-space libraries + a `cp lv_conf.h`
+  staging step — and only exercised profile mode on the core-3 profiles
+  the release never uses. Each release failure surfaced as `::warning::`
+  (non-blocking by design, so a display hiccup can't sink the signed OTA
+  release), which meant nobody ever saw it.
+- **Fix:** `firmware-release.yml` now builds the three flavors exactly the
+  way `firmware.yml` proves on every push: a pinned core-2.0.17 install
+  (GFX 1.4.9 / LVGL 8.4.0 / NimBLE 1.4.3) via `setup-arduino-esp32`,
+  `lv_conf.h` copied to the libraries-dir root, and the sketch.yaml
+  profiles' own FQBNs passed explicitly (`modes` = the dash board + the
+  gear flags staged by `setup.sh flavor modes`; the assemble step's
+  product-string check still guards the dash-modes identity).
+- **Applies to:** any workflow with a non-blocking loop around builds —
+  if a step is allowed to fail quietly, something else must count the
+  outputs. The assemble step already warned per-missing-binary; a warning
+  nobody reads is not a control. And: a release workflow must build the
+  same way CI builds, or CI green proves nothing about the release.
