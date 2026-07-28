@@ -76,9 +76,10 @@ lid_edge = 0.8;  // bezel face edge chamfer
    skirt_dep must NOT exceed back_stack: the cavity is only board+2·tol_slide
    wide (~0.2 mm/side over the PCB), so the skirt rides directly behind the PCB
    edge and may only reach the PCB back plane — any deeper and it drives into
-   the board and the cover can't seat. The nub still lands on it as long as
-   back_t + skirt_dep ≥ snap_depth. */
-snap_n = 4; snap_w = 5.0; snap_h = 1.6; snap_depth = 2.6; snap_proud = 0.5; skirt_dep = back_stack;
+   the board and the cover can't seat. The nub sits at back_t + snap_depth so
+   it lands on the skirt AND lines up with the bezel window; keep snap_depth +
+   snap_h/2 ≤ skirt_dep (= back_stack) so the nub stays on the skirt. */
+snap_n = 4; snap_w = 5.0; snap_h = 1.6; snap_depth = 1.4; snap_proud = 0.5; skirt_dep = back_stack;
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;
@@ -106,7 +107,7 @@ assert(lip_w >= 0.8, "short-side lip < 0.8 mm won't retain the glass — check a
 assert(lcm_l <= yc && lcm_w <= xc, "LCD module larger than the board cavity — check dims");
 assert(usb_h <= pcb_t + 2*lcd_rise, "USB slot taller than the front stack — check usb_h");
 assert(skirt_dep <= back_stack + 0.01, "skirt_dep > back_stack — the skirt would drive into the PCB; cap it at back_stack");
-assert(back_t + skirt_dep >= snap_depth + snap_h/2, "skirt too short to carry the snap nub — raise skirt_dep or lower snap_depth");
+assert(skirt_dep >= snap_depth + snap_h/2, "skirt too short to carry the snap nub (nub sits at back_t + snap_depth) — raise skirt_dep/back_stack or lower snap_depth");
 echo(str("Canary C6 display (", model, ") v0.1-dev — outer ", xo, " x ", yo,
          " x ", bez_h + back_t, " mm, window ", aa_w, " x ", aa_l,
          " (lip X ", lip_w, " / Y ", lip_l, ")  (IN DEVELOPMENT — MEASURE)"));
@@ -174,7 +175,7 @@ module back() {
                     cylinder(d = 4.2, h = back_stack + 0.01);
             // snap nubs on the short-wall (±X) skirt faces, chamfered both ways
             for (sx = [1, -1], yc0 = nub_ys())
-                translate([sx*(skirt_x/2 - 0.3), yc0, snap_depth]) hull() {
+                translate([sx*(skirt_x/2 - 0.3), yc0, back_t + snap_depth]) hull() {
                     for (dy = [-snap_w/2 + 1.0, snap_w/2 - 1.0])
                         translate([0, dy, 0]) cube([0.6, 0.1, snap_h - 0.4], center = true);
                     translate([sx*(snap_proud + 0.3), 0, 0]) cube([0.1, 0.1, 0.6], center = true);

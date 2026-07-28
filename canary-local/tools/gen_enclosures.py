@@ -39,6 +39,11 @@ DEVICE_OF = [
     (r"^Sense", "canary-sense"),
     (r"Watch station", "canary-display-watch"),
     (r"Dashboard display", "canary-display-dash"),
+    # board-specific firmware-display cases → their display device page (not
+    # universal, or they'd show on every WAP/Vision/Sense/hub page)
+    (r"7. touch dashboard case", "canary-display-dash"),   # ESP32-S3-Touch-LCD-7
+    (r"touch watch-display", "canary-display-watch"),      # ESP32-S3-Touch-LCD-1.69
+    (r"C6 display pocket", "canary-display-watch"),        # ESP32-C6-LCD-1.47 (glance)
     (r"Sense bedside|Sense in-wall", "canary-sense"),
     (r"Thermal / outdoor", "canary-wap"),
     (r"Combo", "canary-vision"),
