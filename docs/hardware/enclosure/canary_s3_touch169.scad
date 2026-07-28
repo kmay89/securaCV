@@ -48,7 +48,8 @@ aa_dx = 0.0; aa_dy = 0.0;   // AA centre offset from glass centre — MEASURE
 pcb_w = 37.12;       // PCB outline width  (X)
 pcb_h = 29.83;       // PCB outline height (Y)
 pcb_t = 1.6;
-lcd_rise   = 2.0;    // glass front above the PCB front face (module height) — MEASURE
+panel_gap  = 0.0;    // spacer between the display-module base and the PCB front
+                     // (0 = module bonded straight on) — MEASURE
 back_stack = 4.5;    // tallest thing behind the PCB (USB-C / JST / buzzer) — MEASURE
 
 /* [USB-C] — on the BOTTOM (−Y) edge, centred on the PCB thickness */
@@ -100,6 +101,10 @@ $fa = 3; $fs = 0.4;
 // ----------------------------------------------------------------------------
 xc = glass_w + 2*tol_slide;   yc = glass_h + 2*tol_slide;   // glass cavity
 xo = xc + 2*wall;             yo = yc + 2*wall;             // outer
+// glass front → PCB front = the module rides glass_t proud of its base, which
+// sits panel_gap above the PCB. Deriving it from glass_t means MEASUREing the
+// module thickness actually re-seats the cavity, PCB plane and ports.
+lcd_rise = glass_t + panel_gap;                 // glass front above PCB front
 cav_d = lcd_rise + pcb_t + back_stack;          // glass ledge → back-plate inner
 bez_h = face_t + cav_d;                         // bezel wall height
 r_in  = max(1.0, r_out - wall);                 // cavity corner radius
@@ -116,7 +121,7 @@ assert(aa_w < glass_w && aa_h < glass_h, "active area must sit inside the glass"
 assert(lip_w >= 1.5 && lip_h >= 1.5, "glass lip < 1.5 mm won't retain the slab — check aa/glass");
 assert(pcb_w < glass_w && pcb_h < glass_h, "PCB should be smaller than the glass slab — check dims");
 assert(skirt_dep <= back_stack + 0.01, "skirt_dep > back_stack — the skirt would drive into the PCB; cap it at back_stack");
-assert(back_t + skirt_dep >= snap_depth + snap_h/2, "skirt too short to carry the snap nub — raise skirt_dep or lower snap_depth");
+assert(skirt_dep >= snap_depth + snap_h/2, "skirt too short to carry the snap nub (nub sits at back_t + snap_depth) — raise skirt_dep or lower snap_depth");
 assert(usb_h <= pcb_t + 2*lcd_rise, "USB slot taller than the front stack — check usb_h");
 echo(str("Canary S3-Touch-1.69 watch display v0.1-dev — outer ", xo, " x ", yo,
          " x ", bez_h + back_t, " mm, window ", aa_w, " x ", aa_h,
@@ -184,9 +189,12 @@ module back() {
             // standoffs press the PCB forward onto the bezel glass ledge
             for (p = standoff_pts())
                 translate([p[0], p[1], back_t - 0.01]) cylinder(d = 4.4, h = back_stack + 0.01);
-            // snap nubs on the ±X skirt faces, chamfered both ways
+            // snap nubs on the ±X skirt faces, chamfered both ways.
+            // The back assembles outer-face-out, so a skirt point at back-z
+            // maps to bezel-z = bez_h + back_t − back-z; placing the nub at
+            // back_t + snap_depth lands it at bez_h − snap_depth = the window.
             for (sx = [1, -1], yy = nub_ys())
-                translate([sx*(skirt_x/2 - 0.3), yy, snap_depth]) hull() {
+                translate([sx*(skirt_x/2 - 0.3), yy, back_t + snap_depth]) hull() {
                     for (dy = [-snap_w/2 + 1.0, snap_w/2 - 1.0])
                         translate([0, dy, 0]) cube([0.6, 0.1, snap_h - 0.4], center = true);
                     translate([sx*(snap_proud + 0.3), 0, 0]) cube([0.1, 0.1, 0.6], center = true);

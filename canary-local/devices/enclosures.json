@@ -507,7 +507,7 @@
    "for": "Waveshare ESP32-C6-LCD-1.47 (portrait), flat-bottom board (no down-facing male headers): face-down bezel over the active-area window, edge-captured board (no screws into the board), snap-in vented back, USB-C + BOOT/RST access, blind keyhole. `model=\"1.47\"` is drawn from the Waveshare mechanical drawing; a `\"1.69\"` preset is parameterised. Heat-escape slots on the sides + a back grille",
    "status": "in-development",
    "note": "snap-fit, vented",
-   "device": null,
+   "device": "canary-display-watch",
    "preview": "preview_dev_c6_147.png",
    "parts": [],
    "scad": "canary_c6_display.scad"
@@ -518,7 +518,7 @@
    "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on moulded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Big convection grille (~52 cm² back + side chimney vents — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots, optional 20° desk cradle. Connector centres are NOMINAL — measure yours",
    "status": "in-development",
    "note": "glass drops in, bezel lip 3.0, M3 corners",
-   "device": null,
+   "device": "canary-display-dash",
    "preview": "preview_dev_lcd7.png",
    "parts": [],
    "scad": "canary_s3_lcd7.scad"
@@ -529,7 +529,7 @@
    "for": "Waveshare ESP32-S3-Touch-LCD-1.69 (rounded-square 240×280 capacitive-touch smartwatch board — S3, IMU, RTC, battery/charger). The bonded glass slab (41.13 × 33.13) overhangs the smaller PCB (37.12 × 29.83) by ~2 mm, so the face lip captures it — no screws (this board has no mount holes). Face-down bezel + snap-in vented back (skirt rides the overhang, 4 nubs, standoffs press the board forward, blind keyhole). USB-C (bottom) + PWR/BOOT/RST (top) + battery/RTC/pin slot (side); side heat slots + back grille; optional 22° cradle. Connector centres NOMINAL — measure yours",
    "status": "in-development",
    "note": "snap-fit, vented, edge-captured",
-   "device": null,
+   "device": "canary-display-watch",
    "preview": "preview_dev_t169.png",
    "parts": [],
    "scad": "canary_s3_touch169.scad"
@@ -6585,9 +6585,9 @@
        "default": "1.6"
       },
       {
-       "name": "lcd_rise",
-       "default": "2.0",
-       "comment": "glass front above the PCB front face (module height) — MEASURE"
+       "name": "panel_gap",
+       "default": "0.0",
+       "comment": "spacer between the display-module base and the PCB front"
       },
       {
        "name": "back_stack",
@@ -6717,6 +6717,11 @@
      "name": "Quality",
      "note": "",
      "params": [
+      {
+       "name": "lcd_rise",
+       "default": "glass_t + panel_gap",
+       "comment": "glass front above PCB front"
+      },
       {
        "name": "cav_d",
        "default": "lcd_rise + pcb_t + back_stack",
