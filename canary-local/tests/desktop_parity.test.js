@@ -536,3 +536,87 @@ test("radar tuning suite: BOTH flashers wire every knob to the serial tuning con
     assert.ok(appJs.includes(cmd), `desktop tuning panel lost the ${cmd} control`);
   }
 });
+
+test("self-update: each app's updater endpoint names the pointer its workflow advances", () => {
+  // A self-updating app and the workflow that feeds it name the same rolling
+  // release in two different files — two chances to be wrong, and the failure
+  // mode (RELEASE_LESSONS 2026-07-27/28) is an installed base that polls a URL
+  // nothing serves, forever. So: the endpoint tag must be the exact tag the
+  // publishing workflow re-points, for BOTH apps, and neither may ever be
+  // `releases/latest` — that URL belongs to the firmware the fleet polls.
+  const flasherConf = JSON.parse(read(join(ROOT, "desktop/src-tauri/tauri.conf.json")));
+  const labConf = JSON.parse(read(join(ROOT, "desktop-lab/src-tauri/tauri.conf.json")));
+  const flasherWf = read(join(ROOT, ".github/workflows/desktop-flasher-release.yml"));
+  const labPointerWf = read(join(ROOT, ".github/workflows/desktop-lab-updater-pointer.yml"));
+
+  const endpointTag = (conf, app) => {
+    const eps = (((conf.plugins || {}).updater || {}).endpoints) || [];
+    assert.strictEqual(eps.length, 1, `${app}: expected exactly one updater endpoint`);
+    const m = eps[0].match(/\/releases\/download\/([^/]+)\/latest\.json$/);
+    assert.ok(m, `${app}: endpoint isn't a <tag>/latest.json release download: ${eps[0]}`);
+    assert.notStrictEqual(m[1], "latest",
+      `${app}: updater endpoint rides releases/latest — that URL belongs to the firmware`);
+    return m[1];
+  };
+
+  const flasherTag = endpointTag(flasherConf, "flasher");
+  assert.strictEqual(flasherTag, "flasher-latest",
+    "flasher updater endpoint moved off flasher-latest — stranded installs poll the old tag");
+  for (const cmd of [`gh release view ${flasherTag}`, `gh release upload ${flasherTag}`]) {
+    assert.ok(flasherWf.includes(cmd),
+      `desktop-flasher-release.yml no longer advances the ${flasherTag} pointer (${cmd})`);
+  }
+
+  const labTag = endpointTag(labConf, "lab");
+  assert.strictEqual(labTag, "lab-latest",
+    "lab updater endpoint moved off lab-latest — stranded installs poll the old tag");
+  for (const cmd of [`gh release view ${labTag}`, `gh release upload ${labTag}`]) {
+    assert.ok(labPointerWf.includes(cmd),
+      `desktop-lab-updater-pointer.yml no longer advances the ${labTag} pointer (${cmd})`);
+  }
+
+  // The two pointers must differ, or one app's publish would feed the other
+  // app's updater a manifest for the wrong product.
+  assert.notStrictEqual(flasherTag, labTag, "both apps poll the same updater pointer");
+
+  // One repo signing secret (TAURI_SIGNING_PRIVATE_KEY) signs both apps'
+  // updater artifacts, so both must embed the same public key — a divergent
+  // pubkey means one app rejects every update it's offered.
+  const pk = (c) => ((c.plugins || {}).updater || {}).pubkey;
+  assert.ok(pk(flasherConf), "flasher lost its updater pubkey");
+  assert.strictEqual(pk(flasherConf), pk(labConf),
+    "the two apps embed different updater pubkeys — one of them can't verify updates");
+
+  // And both must actually produce updater artifacts, or the pointer serves
+  // a manifest with nothing behind it.
+  assert.strictEqual(flasherConf.bundle.createUpdaterArtifacts, true,
+    "flasher no longer builds updater artifacts");
+  assert.strictEqual(labConf.bundle.createUpdaterArtifacts, true,
+    "lab no longer builds updater artifacts");
+});
+
+test("hub first-boot watch: the escalation countdown is wired on both paths", () => {
+  // The 25-minute troubleshooting escalation is visible-in-advance: a
+  // countdown painted from the SAME deadline the watch checks, on the live
+  // first-boot panel AND the resumed-after-relaunch banner. Losing either
+  // wiring re-creates the tips-appear-from-nowhere surprise (or, on the
+  // resumed path, the stranded-user case from the Codex review).
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+
+  assert.match(appJs, /function hubCountdownStart\b/,
+    "desktop/src/app.js lost hubCountdownStart");
+  assert.match(appJs, /HUB_FB_ESCALATE_MS\s*-\s*Date\.now\(\)/,
+    "the countdown no longer derives from HUB_FB_ESCALATE_MS — it can drift " +
+    "from the deadline the escalation check actually uses");
+  assert.match(appJs, /hubCountdownStart\(\$\("hub-fb-count"\),\s*t0\)/,
+    "the live first-boot watch no longer starts the countdown");
+  assert.match(appJs, /hubCountdownStart\(\$\("hub-resume-count"\),\s*rec\.at\)/,
+    "the resumed watch no longer starts the countdown from the persisted " +
+    "flash time (rec.at)");
+
+  for (const id of ["hub-fb-count", "hub-resume-count"]) {
+    assert.match(html, new RegExp(`id="${id}"`),
+      `desktop/src/index.html is missing the countdown element #${id}`);
+  }
+});

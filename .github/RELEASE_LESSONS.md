@@ -869,3 +869,24 @@ Two independent failures, one release day, both invisible-by-design.
 - **Applies to:** `ios-selfheal.yml`, `ios-release.yml` (both fixed);
   any future macOS job that pins a toolchain path.
 
+### 2026-07-28 (d) — CI archives die on a fresh team: automatic signing archives as DEVELOPMENT, and development profiles need a registered device
+
+- **Symptom:** the first authenticated `ios-release.yml` run failed archiving
+  all three targets with "Your team has no devices from which to generate a
+  provisioning profile" — even though the release was bound for TestFlight,
+  which never involves registered devices.
+- **Cause:** `xcodebuild archive` under automatic signing signs with a
+  *development* profile (distribution happens at export), and Apple will not
+  mint a development profile for a team with zero registered devices. CI
+  runners never have a device to offer.
+- **Fix:** register **any one device** on the team (Certificates,
+  Identifiers & Profiles → Devices → +, with the phone's UDID from Finder) —
+  one-time, and it unblocks every future archive. The tempting CI-side
+  patch — `CODE_SIGN_IDENTITY="Apple Distribution"` on the archive — does
+  NOT work: automatic signing rejects it with "conflicting provisioning
+  settings". Corollary for dry runs: export with `app-store-connect`
+  (+ `publish=false`); `release-testing` is an ad-hoc export that *also*
+  requires registered devices.
+- **Applies to:** `ios-release.yml`, `tvos-release.yml` (an Apple TV
+  registers the same way), and any Apple-platform CI archive with automatic
+  signing on a team that may have no registered devices.
