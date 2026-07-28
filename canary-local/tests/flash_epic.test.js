@@ -323,8 +323,8 @@ test("flash.json: every product declares its wifi NVS scheme, honestly", () => {
 
 test("flash.json: the display boards are flashable products now", () => {
   const displays = catalog.products.filter((p) => p.role === "display");
-  assert.strictEqual(displays.length, 6,
-    "watch + dash + dash-modes + dash7 + nightstand-s3 + nightstand-c6");
+  assert.strictEqual(displays.length, 7,
+    "watch + dash + dash-modes + dash7 + nightstand-s3 + touch169 + nightstand-c6");
   for (const p of displays) {
     assert.ok(["ESP32-S3", "ESP32-C6"].includes(p.chip), `${p.id}: chip ${p.chip}`);
     assert.strictEqual(p.provisioning, "on-glass");
@@ -336,7 +336,7 @@ test("flash.json: the display boards are flashable products now", () => {
   // yet — that wasm/Lab wiring is staged work (display_nightstand_line.md
   // §7), so the twin contract covers exactly the products with a twin to
   // point at, and grows with them.
-  for (const p of displays.filter((d) => !/dash7|nightstand/.test(d.id))) {
+  for (const p of displays.filter((d) => !/dash7|nightstand|touch169/.test(d.id))) {
     const twin = catalog.displays.find((d) => p.id.includes(d.id));
     assert.ok(twin, `${p.id}: no emulator twin in catalog.displays`);
   }

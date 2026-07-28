@@ -226,6 +226,23 @@
     "psram_type": "quad"
   },
   {
+    "id": "waveshare-esp32s3-touch-lcd169",
+    "name": "Waveshare ESP32-S3-Touch-LCD-1.69",
+    "vendor": "Waveshare",
+    "mcu": "ESP32-S3",
+    "flash_mb": 16,
+    "psram_mb": 8,
+    "psram_type": "octal",
+    "pio_board": "esp32-s3-devkitc-1",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": [
+      "canary-display"
+    ],
+    "notes": "Nightstand Line TOUCH member (battery glance node): ST7789V2 240x280 SPI (20-px ROW offset) + CST816T capacitive touch, QMI8658 IMU + PCF85063 RTC on shared I2C, 3.7 V MX1.25 battery with onboard charging, PWR button, S3R8 (16 MB flash / 8 MB octal PSRAM). Wired as the canary-display 'touch169' flavor (env canary-display-touch169: nightstand app + FEATURE_TOUCH — display_1in47.cpp grows the double-gated CST816 path, portrait_ui.cpp reads geometry from pins.h). Pin map is the vendor demo layout, every line VERIFY-tagged (wiki unreachable from CI sandbox — check the schematic PDF on bring-up). Bench validation pending.",
+    "thermal_notes": "Battery charging + the S3R8 render load stack on one small PCB: charging warms the PCF85063 crystal (drift) and QMI8658 (bias) — charge with the backlight dimmed, don't calibrate the IMU mid-charge. CST816 touch drifts when hot; keep the glass out of direct sun. The night backlight floor doubles as the thermal relief valve."
+  },
+  {
     "id": "waveshare-esp32s3-lcd7",
     "name": "Waveshare ESP32-S3-Touch-LCD-7",
     "vendor": "Waveshare",

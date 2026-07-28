@@ -426,6 +426,28 @@
 
 ## Build System
 
+### Gate on a HAS_* board capability only AFTER including pins.h
+- **What happened:** `ambient_led.cpp` guarded its whole body with
+  `#if defined(HAS_RGBLED) && HAS_RGBLED` — but `HAS_RGBLED` lives in the
+  board's `pins.h`, which the file included *inside* the guard. At gate time
+  the macro was undefined, the gate was always false, and the TU compiled
+  EMPTY: the nightstand boards' WS2812 "primary ambient state channel" was
+  dead code in every image that shipped it. The new Touch-1.69 CST816 gate
+  copied the same pattern and would have shipped touch that ignored every
+  tap. Caught in review (PR #1290), before either board's bench pass.
+- **Root cause:** `HAS_*` capabilities come from the board header (`pins.h`
+  via the env's `-I`), not from `<config.h>` (the flavor). A capability gate
+  placed before the `pins.h` include silently evaluates the macro as
+  undefined — and `defined(X) && X` makes that *look* deliberate.
+- **Fix:** Include `pins.h` (pure `#define`s, safe unconditionally) BEFORE
+  any `#if` that reads a `HAS_*` flag — the pattern `settings_ui.cpp`
+  already documented for `HAS_ISOLATED_IO`. Fixed in `ambient_led.cpp` and
+  `display_1in47.cpp`.
+- **Regression check:** none automated yet; when touching a `HAS_*` gate,
+  check the `pins.h` include is above it (a grep for `#if` lines that
+  mention `HAS_` before the first `pins.h` include would automate this).
+- **Date learned:** 2026-07
+
 ### Dual-build compatibility required
 - **Rule:** Firmware must compile on BOTH Arduino IDE and PlatformIO
 - **Why:** Different team members use different IDEs; CI tests both

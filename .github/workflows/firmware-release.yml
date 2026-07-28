@@ -367,7 +367,7 @@ jobs:
           # so the packaging steps read the same .pio/build paths as always.
           STAGE=/tmp/pio-display-staged
           mkdir -p "$STAGE"
-          for E in canary-display-dash7 canary-display-nightstand-s3; do
+          for E in canary-display-dash7 canary-display-nightstand-s3 canary-display-touch169; do
             if pio run -e "$E"; then
               rm -rf "${STAGE:?}/$E"
               cp -R ".pio/build/$E" "$STAGE/$E"
@@ -485,7 +485,7 @@ jobs:
           # to every display flavor identically. A missing .pio build (its
           # env failed above) simply stages nothing and the loop's existing
           # "produced no binary" warning covers it.
-          for E in dash7 nightstand-s3 nightstand-c6; do
+          for E in dash7 nightstand-s3 nightstand-c6 touch169; do
             SRC="firmware/projects/canary-display/.pio/build/canary-display-${E}/firmware.bin"
             if [ -s "$SRC" ]; then
               mkdir -p "/tmp/display-${E}-build"
@@ -494,7 +494,7 @@ jobs:
           done
 
           DISPLAY_INDEX=""
-          for D in "watch:watch" "dash:dash" "dash-modes:modes" "dash7:dash7" "nightstand-s3:nightstand-s3" "nightstand-c6:nightstand-c6"; do
+          for D in "watch:watch" "dash:dash" "dash-modes:modes" "dash7:dash7" "nightstand-s3:nightstand-s3" "nightstand-c6:nightstand-c6" "touch169:touch169"; do
             NAME="${D%%:*}"; DIR="${D##*:}"
             SRC="/tmp/display-${DIR}-build/canary_display.ino.bin"
             OUT="/tmp/release/canary-display-${NAME}-${VERSION}.bin"

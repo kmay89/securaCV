@@ -41,10 +41,24 @@ namespace {
 // The narrow glass reads at most ~5 witness rows from across a room before
 // they get too short; past that a muted "+N more" stands in (the worst are
 // always in the visible set because the column is severity-ordered).
-constexpr int ROWS = 5;
+// (ROWS is derived below, after the glass geometry — the shorter Touch-1.69
+// glass fits 4 rows where the 172x320 original fits its designed 5.)
 
-constexpr int SCR_W = 172;
-constexpr int SCR_H = 320;
+// Geometry comes from the board's pin header, so every portrait board lays
+// out correctly: the 1.47" boards are 172x320, the Touch-1.69 is 240x280.
+// Vertical positions below are authored against the original 320-tall glass
+// and scaled through V(), which is the identity on 172x320 — the shipped
+// 1.47 layout is bit-for-bit unchanged.
+#include "pins.h"
+constexpr int SCR_W = TFT_WIDTH;
+constexpr int SCR_H = TFT_HEIGHT;
+constexpr int V(int y320) { return (y320 * SCR_H) / 320; }
+
+// Witness rows that fit between the column top (V(172)) and the glance
+// line's reserve, capped at the designed 5 — the formula reproduces exactly
+// 5 on the original 172x320 glass and degrades gracefully on shorter ones.
+constexpr int ROWS_FIT = (SCR_H - V(172) - 26) / 24;
+constexpr int ROWS = ROWS_FIT < 5 ? (ROWS_FIT < 1 ? 1 : ROWS_FIT) : 5;
 
 lv_obj_t* s_wash = nullptr;        // breathing severity field behind the bird
 lv_obj_t* s_bird = nullptr;        // the living canary
@@ -126,8 +140,8 @@ void portrait_ui_create() {
   // top fading into the ground, so the bird sits inside a halo of the
   // fleet's mood rather than in front of a hard band.
   s_wash = lv_obj_create(scr);
-  lv_obj_set_size(s_wash, SCR_W + 40, 200);
-  lv_obj_align(s_wash, LV_ALIGN_TOP_MID, 0, -24);
+  lv_obj_set_size(s_wash, SCR_W + 40, V(200));
+  lv_obj_align(s_wash, LV_ALIGN_TOP_MID, 0, V(-24));
   lv_obj_set_style_radius(s_wash, 120, 0);
   lv_obj_set_style_border_width(s_wash, 0, 0);
   lv_obj_set_style_pad_all(s_wash, 0, 0);
@@ -141,17 +155,17 @@ void portrait_ui_create() {
   // ── The living canary ──
   // 108 px of bird in the top band — the vertical room the round face never
   // had. The mark's own engine breathes, blinks, and reacts.
-  s_bird = canary_mark_create(scr, 108);
-  if (s_bird) lv_obj_align(s_bird, LV_ALIGN_TOP_MID, 0, 22);
+  s_bird = canary_mark_create(scr, V(108));
+  if (s_bird) lv_obj_align(s_bird, LV_ALIGN_TOP_MID, 0, V(22));
 
   // ── The state word, in the state's own hue ──
   s_state = mk_label(scr, font_title(), sev_color(Sev::Ok, false));
   lv_obj_set_style_text_align(s_state, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_align(s_state, LV_ALIGN_TOP_MID, 0, 138);
+  lv_obj_align(s_state, LV_ALIGN_TOP_MID, 0, V(138));
   lv_label_set_text(s_state, "all quiet");
 
   // ── The witness column ──
-  const int col_top = 172;
+  const int col_top = V(172);
   const int row_h = 22;
   const int row_gap = 2;
   for (int i = 0; i < ROWS; i++) {

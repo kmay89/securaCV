@@ -340,7 +340,7 @@ jobs:
           # so build_flash_manifest reads the same .pio/build paths as always.
           STAGE=/tmp/pio-display-staged
           mkdir -p "$STAGE"
-          for E in canary-display-dash7 canary-display-nightstand-s3; do
+          for E in canary-display-dash7 canary-display-nightstand-s3 canary-display-touch169; do
             if pio run -e "$E"; then
               rm -rf "${STAGE:?}/$E"
               cp -R ".pio/build/$E" "$STAGE/$E"

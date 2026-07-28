@@ -8,12 +8,17 @@
 // costs nothing on the watch/dash. On the wasm emulator the hardware write is
 // skipped (no RMT peripheral in the browser).
 #include <config.h>
+#include "pins.h"  // MUST precede the gate: HAS_RGBLED lives here, not in
+                   // config.h. With the include below the gate (as first
+                   // shipped) HAS_RGBLED was undefined at gate time and this
+                   // TU compiled EMPTY on the nightstand boards — the beacon
+                   // was dead code. Same contract as settings_ui.cpp's
+                   // HAS_ISOLATED_IO: board header first, then the gate.
 
 #if defined(FEATURE_AMBIENT_LED) && FEATURE_AMBIENT_LED && \
     defined(HAS_RGBLED) && HAS_RGBLED
 
 #include <Arduino.h>
-#include "pins.h"
 #include "canary/hal/ambient_led.h"
 #include "canary/ui/look_state.h"
 #include "color/look_engine.h"

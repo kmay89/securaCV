@@ -1,10 +1,10 @@
 {
   "$generated_by": "canary-local/tools/gen_flash.py — do not edit by hand",
   "$doc": "Browser flasher catalog. Live binaries come from manifest_url (the signed release); this file supplies the chip guard and the human copy, and is honest even before a release exists.",
-  "fw_train": "2.3.2",
+  "fw_train": "2.4.0",
   "repo": "kmay89/securaCV",
-  "release_download": "https://github.com/kmay89/securaCV/releases/download/fw-v2.3.2",
-  "manifest_url": "https://github.com/kmay89/securaCV/releases/download/fw-v2.3.2/manifest-flash.json",
+  "release_download": "https://github.com/kmay89/securaCV/releases/download/fw-v2.4.0",
+  "manifest_url": "https://github.com/kmay89/securaCV/releases/download/fw-v2.4.0/manifest-flash.json",
   "release_pubkey": "ae123a5c220c5499e579dc449e66392d83d5ad70d100747574eb7b2bac49b244",
   "flash_baud": 921600,
   "console_baud": 115200,
@@ -1152,6 +1152,45 @@
       "pick_label": "Nightstand — the 1.47″ USB-A stick"
     },
     {
+      "id": "securacv-canary-display-touch169",
+      "name": "Canary Nightstand Touch",
+      "tagline": "The portrait glance you can touch — tap to peek, hold to acknowledge; runs on a battery.",
+      "family": "display",
+      "board_label": "Waveshare ESP32-S3-Touch-LCD-1.69",
+      "chip": "ESP32-S3",
+      "flash_mb": 16,
+      "board": "esp32-s3-devkitc-1",
+      "asset_stem": "canary-display-touch169",
+      "provisioning": "on-glass",
+      "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
+      "wifi_nvs": "string",
+      "hatch": {
+        "kicker": "Display hatched",
+        "title": "Your glass is waking up.",
+        "body": "First light is the whole setup: the display guides you from its own screen — no app, no account, and it never reboot-loops on a fresh network.",
+        "steps": [
+          "Watch the splash land, then the hello: a fresh display shows a join QR on its own glass (a device-unique setup network).",
+          "Scan the QR with your phone — the setup page opens by itself; pick your home Wi-Fi and you're done typing.",
+          "The fleet face fades in and every Canary on your broker appears on its own — retained topics, no pairing, ever."
+        ]
+      },
+      "serial_receipt": false,
+      "role": "display",
+      "prove": {
+        "real": {
+          "kind": "glass",
+          "label": "Watch the glass — it comes alive",
+          "how": "The proof is the screen itself: splash, then the face, then the on-glass wizard. Touch works."
+        },
+        "emulated": {
+          "href": "fleet.html#canary-display-touch169",
+          "label": "🧪 the 1:1 twin — the same firmware, in the browser",
+          "how": "The fleet page boots the REAL display firmware compiled to WASM — the pixels here are the pixels the glass shows. The listening 4.3C variant gets its own does/doesn't mic bench at dash-mic.html — same decision core, drift-locked."
+        }
+      },
+      "pick_label": "Nightstand Touch — the 1.69″ touch + battery board"
+    },
+    {
       "id": "securacv-canary-display-nightstand-c6",
       "name": "Canary Nightstand C6",
       "tagline": "The 1.47″ portrait glance on the Wi-Fi 6 pin-header board — breadboard-friendly.",
@@ -1213,7 +1252,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-watch.js",
         "factory": "createCanaryEmuWatch",
-        "fw_version": "2.3.2",
+        "fw_version": "2.4.0",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -1240,7 +1279,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-dash.js",
         "factory": "createCanaryEmuDash",
-        "fw_version": "2.3.2",
+        "fw_version": "2.4.0",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -1573,7 +1612,7 @@
     "usb_pid": "0x55d3",
     "baud": 921600,
     "model_addr": "0x400000",
-    "manifest_url": "https://github.com/kmay89/securaCV/releases/download/fw-v2.3.2/manifest-vision-model.json",
+    "manifest_url": "https://github.com/kmay89/securaCV/releases/download/fw-v2.4.0/manifest-vision-model.json",
     "model": {
       "name": "Person Detection",
       "arch": "Swift-YOLO (tiny) · 192×192×3 RGB · compiled for the Ethos-U55",
