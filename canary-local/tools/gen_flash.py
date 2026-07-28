@@ -362,6 +362,47 @@ FAMILIES = [
 # variants bring up their own WiFi to be set up from; the sensor variants
 # seed WiFi/MQTT into NVS from the build's secrets and inherit it thereafter
 # (docs/firmware_ota.md § canary-vision: generic release builds + NVS).
+# ── Getting a cable onto the chip, per FAMILY ───────────────────────────────
+# A property of how the board is PACKAGED, not of the firmware — which is why
+# it lives here and not in the per-product rows. Only families whose flashing
+# port is not simply "the port you can see" carry an entry; every other Canary
+# is one cable and done, and inventing ceremony for those would be noise.
+#
+# This exists because the failure is silent and expensive: the user plugs into
+# the port that is reachable, nothing appears in the browser's device chooser
+# (or the wrong thing does), and the honest conclusion — "my board is dead" —
+# is wrong. Both flashers render this BEFORE the connect step, because it is
+# the one instruction that has to arrive before the cable does.
+BOARD_ACCESS = {
+    "sense": {
+        # The 60 GHz radar kit is a carrier board with the XIAO seated in its
+        # socket. Flashing always talks to the XIAO's own chip.
+        "headline": "Open the case first — the port that flashes is inside",
+        "flash_port": "the XIAO ESP32-C6's own USB-C — the small board seated "
+                      "in the radar carrier's socket",
+        "other_port": "the port you normally leave plugged in for power",
+        "other_effect": "It powers the Canary, but it is not wired to the "
+                        "ESP32-C6's USB — flashing from there either shows no "
+                        "device at all or a device that isn't your Canary. "
+                        "Nothing is harmed; it simply cannot work.",
+        "steps": [
+            "Take the lid off (four M2 screws on the printed radome; a sealed "
+            "build also has a cover over the USB opening).",
+            "Plug your USB-C data cable straight into the XIAO — the small "
+            "board, not the big radar board.",
+            "Flash, then unplug, close it up, and go back to the power port "
+            "for everyday running.",
+        ],
+        # The radome rule is a real constraint on reassembly and belongs
+        # anywhere we tell someone to open this particular box.
+        "reassembly": "When you close it, keep the radar's front window clear — "
+                      "no foil labels, no metal, nothing added in front of the "
+                      "antenna. 60 GHz has to pass through that face.",
+        "doc": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/"
+               "canary_sense_ports_and_access.md",
+    },
+}
+
 PROVISIONING = {
     "ap": "When it boots it hands you a WiFi network of its own — join it and a "
           "setup page opens automatically. Nothing to type here; no secrets ever "
@@ -1568,6 +1609,10 @@ def main() -> None:
         }
         if p.get("pick_label"):
             entry["pick_label"] = p["pick_label"]
+        # How you physically reach this board's flashing port (BOARD_ACCESS).
+        # Absent for every family that just plugs in.
+        if p["family"] in BOARD_ACCESS:
+            entry["access"] = BOARD_ACCESS[p["family"]]
         # The dials that genuinely apply to this product — Vision's four NVS
         # numbers are flash-bakeable; Sense's reflexes are compile-time and
         # say so. Nothing here is decorative.

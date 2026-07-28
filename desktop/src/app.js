@@ -164,6 +164,7 @@ async function boot() {
 
   try {
     state.catalog = await invoke("load_catalog");
+    renderAccessNotes();
   } catch (e) {
     setConn("failed", "Couldn't load the catalog: " + e);
     logEvent("err", "Catalog load failed: " + e);
@@ -801,6 +802,37 @@ function renderProducts() {
     list.appendChild(row);
     if (isSelected) onProductChosen(p, ver);
   });
+}
+
+// Boards whose flashing port isn't the one you can see. Catalog-driven
+// (products[].access, from gen_flash.py's BOARD_ACCESS — the same block the
+// in-browser flasher renders, so the two frontends can't drift), and shown in
+// the CONNECT step because it's the one instruction that has to arrive before
+// the cable does: on the 60 GHz radar kit the port that flashes is the XIAO's,
+// inside the case, while the reachable one is power. Plug into the reachable
+// port and the port list stays empty — which reads as "my board is dead"
+// instead of "wrong port". Families without an access block get no card.
+function renderAccessNotes() {
+  const host = $("access-notes");
+  if (!host) return;
+  host.textContent = "";
+  const seen = new Set();
+  for (const p of (state.catalog && state.catalog.products) || []) {
+    const a = p.access;
+    if (!a || seen.has(p.family)) continue;
+    seen.add(p.family);
+    const d = document.createElement("details");
+    d.className = "hint";
+    d.dataset.family = p.family;
+    d.innerHTML = `
+      <summary>${esc(p.name.replace(/ · .*$/, ""))} — ${esc(a.headline)}</summary>
+      <p>Flash into <strong>${esc(a.flash_port)}</strong>.</p>
+      <ol>${a.steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>
+      <p class="muted"><strong>That other port — ${esc(a.other_port)}:</strong>
+        ${esc(a.other_effect)}</p>
+      ${a.reassembly ? `<p class="fineprint">${esc(a.reassembly)}</p>` : ""}`;
+    host.append(d);
+  }
 }
 
 function onProductChosen(p, ver) {

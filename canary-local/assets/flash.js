@@ -648,6 +648,51 @@ function modeBadge(mode) {
   return b;
 }
 
+// ── boards whose flashing port isn't the one you can see ────────────────────
+// Catalog-driven (products[].access, from gen_flash.py's BOARD_ACCESS), and
+// rendered BEFORE Connect on purpose: on the 60 GHz radar kit the port that
+// flashes is the XIAO's, inside the case, while the reachable one is power.
+// Plug into the reachable port and the device chooser stays empty — which
+// reads as "my board is dead" instead of "wrong port". Every family without
+// an access block plugs in and works, and gets no card at all.
+function accessCards() {
+  const products = (state.catalog && state.catalog.products) || [];
+  const seen = new Set();
+  const out = [];
+  for (const p of products) {
+    const a = p.access;
+    if (!a || seen.has(p.family)) continue;
+    seen.add(p.family);
+    const d = el("details", "flash-access");
+    d.dataset.family = p.family;
+    d.append(el("summary", null, `${p.name.replace(/ · .*$/, "")} — ${a.headline}`));
+    const g = el("p", null);
+    g.append(document.createTextNode("Flash into "));
+    g.append(el("strong", null, a.flash_port));
+    g.append(document.createTextNode("."));
+    d.append(g);
+    const ol = el("ol", "flash-steps");
+    for (const s of a.steps) ol.append(el("li", null, s));
+    d.append(ol);
+    const other = el("p", "muted");
+    other.append(el("strong", null, `That other port — ${a.other_port}: `));
+    other.append(document.createTextNode(a.other_effect));
+    d.append(other);
+    if (a.reassembly) d.append(el("p", "fineprint", a.reassembly));
+    if (a.doc) {
+      const p2 = el("p", "fineprint");
+      const link = el("a", null, "The full port guide →");
+      link.href = a.doc;
+      link.target = "_blank";
+      link.rel = "noopener";
+      p2.append(link);
+      d.append(p2);
+    }
+    out.push(d);
+  }
+  return out;
+}
+
 // ── cold start: the gesture that keeps an unknown board off your desktop ────
 // This is deliberately BEFORE the Connect button, because it is the only
 // control here that has to happen before the cable goes in. Everything else
@@ -726,6 +771,10 @@ function phaseConnect() {
   // Holding BOOT is what stops it, in mask ROM: the chip lands in download
   // mode and the resident image never executes an instruction.
   box.append(coldStartCard());
+
+  // Which port to plug into, for the boards where that is a real question.
+  // Before the button, because the cable goes in before the button is clicked.
+  for (const card of accessCards()) box.append(card);
 
   const btn = el("button", "primary flash-connect-btn", "Connect your Canary");
   btn.addEventListener("click", onConnect);
