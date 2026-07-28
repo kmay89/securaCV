@@ -483,3 +483,56 @@ test("health check: native parsers pin the browser's byte-magics, and the UI rea
   assert.match(appJs, /invoke\(\s*["']health_check["']/,
     "app.js never invokes health_check — the health button is dead");
 });
+
+test("radar tuning suite: BOTH flashers wire every knob to the serial tuning console", () => {
+  // CLAUDE.md's two-flashers rule, applied to the Sense tuning bench: a live
+  // knob added to one frontend must exist on the other, or half the users
+  // keep the read-only bench. Both frontends speak the SAME wire words
+  // (`set <knob> <value>` / `reset` / `stream …` / `raw on|off`) from the
+  // SAME catalog source (each knob's `console` name, gen_flash.py), and both
+  // reconcile only to the firmware's `[cfg]` snapshot line — never to their
+  // own optimistic slider state.
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const flashCore = read(join(CANARY, "assets/flash-core.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+
+  // The catalog carries a console token for every Sense knob — the one
+  // vocabulary both frontends bind their sliders to.
+  for (const p of catalog.products.filter((x) => x.role === "sense")) {
+    for (const k of p.reflexes.knobs) {
+      assert.ok(k.console && /^[a-z_]+$/.test(k.console),
+        `${p.id}: knob ${k.id} has no console token — the tuning suites can't reach it`);
+    }
+  }
+  const wellbeing = catalog.products.find((p) => p.id === "securacv-canary-sense-wellbeing");
+  const tokens = wellbeing.reflexes.knobs.map((k) => k.console);
+  for (const t of ["debounce", "clear", "stall", "near", "mid",
+                   "vlock", "vlost", "breath_min", "breath_max", "heart_min", "heart_max"]) {
+    assert.ok(tokens.includes(t),
+      `wellbeing catalog lost console knob "${t}" — regen devices/flash.json (gen_flash.py)`);
+  }
+
+  // Browser: the bench builds sliders from the catalog and speaks the console.
+  assert.match(flashJs, /sendCmd\(`set \$\{k\.console\} \$\{input\.value\}`\)/,
+    "browser bench sliders no longer send `set <knob> <value>`");
+  for (const cmd of ['sendCmd("reset")', '"raw on"', '"stream off"', 'sendCmd("cfg")']) {
+    assert.ok(flashJs.includes(cmd), `browser bench lost the ${cmd} control`);
+  }
+  for (const fn of ["parseCfgLine", "parseTuneLine", "senseLineTone"]) {
+    assert.match(flashCore, new RegExp(`export function ${fn}\\b`),
+      `flash-core.js lost ${fn} — the bench can't read the tuning console`);
+  }
+
+  // Native: the monitor carries the same panel, same words, same [cfg] sync.
+  assert.match(html, /id="sense-tune"/, "desktop index.html lost the radar tuning panel");
+  assert.match(html, /id="sense-knobs"/, "desktop index.html lost the knob grid");
+  assert.match(appJs, /function renderSenseTune\b/, "desktop app.js lost renderSenseTune");
+  assert.match(appJs, /function parseSenseCfgLine\b/,
+    "desktop app.js lost parseSenseCfgLine — the panel can't sync to [cfg]");
+  assert.match(appJs, /sendTune\(`set \$\{k\.console\} \$\{input\.value\}`\)/,
+    "desktop sliders no longer send `set <knob> <value>`");
+  for (const cmd of ['sendTune("reset")', '"raw on"', '"stream off"', 'sendTune("cfg")']) {
+    assert.ok(appJs.includes(cmd), `desktop tuning panel lost the ${cmd} control`);
+  }
+});

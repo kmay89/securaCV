@@ -118,6 +118,36 @@ int main() {
     CHECK(e && e->signed_flag == false, "beacon tamper event is unsigned");
   }
 
+  // ── display peers seat in the roster but never trip the witness-lost
+  //    alarm ladder (PR #1300: an unplugged sibling screen is ordinary) ──
+  {
+    Model m;
+    // A witness and a sibling display, both alive at t=0.
+    m.on_status("wap-1", "canary-wap", true, -1, 0);
+    m.on_status("night-1", "canary-display-nightstand-c6", true, -1, 0);
+    m.acknowledge(0);  // household is acked and quiet
+    CHECK(m.worst(1000) == Sev::Ok, "both peers online -> fleet Ok");
+
+    // Long silence: both cross the lost deadline on tick.
+    const uint32_t late = 30UL * 60UL * 1000UL;  // 30 min, past any default
+    m.tick(late);
+    const Witness* d = find(m, "night-1");
+    CHECK(d && d->link == Link::Lost, "silent display shows Lost in the roster");
+    CHECK(m.witness_sev(*d, late) <= Sev::Notice,
+          "lost display is at most a Notice, never the witness-lost Alert");
+    const Witness* w = find(m, "wap-1");
+    CHECK(w && m.witness_sev(*w, late) == Sev::Alert,
+          "lost WITNESS still alerts exactly as before");
+
+    // The un-ack on crossing Lost is witness-only: with just a display lost,
+    // a standing ack must survive.
+    Model m2;
+    m2.on_status("night-2", "canary-display-nightstand-s3", true, -1, 0);
+    m2.acknowledge(0);
+    m2.tick(late);
+    CHECK(m2.ack_active(late), "display going Lost does not un-ack the household");
+  }
+
   printf(g_failures == 0 ? "\nALL PASS\n" : "\n%d FAILURE(S)\n", g_failures);
   return g_failures == 0 ? 0 : 1;
 }

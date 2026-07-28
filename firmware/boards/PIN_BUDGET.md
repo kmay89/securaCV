@@ -121,6 +121,8 @@ ESP32-C6 · flash 4 MB · PSRAM 0 MB · pin map [`pins/pins.h`](waveshare-esp32c
 | 22 | committed | TFT_PIN_BL |  |
 | 23 | **free** | — |  |
 
+⚠ 1 pin define(s) are `-1` — not wired OR not yet verified (see the comments in pins.h): `BUZZER_PIN`. Free counts above may shrink as these resolve.
+
 Peripheral demand (declared pin map vs MCU): SPI 1/1 · I2C 1/1 · UART 0/2 · RMT TX 1/2 · LEDC 1/6.
 
 Capabilities on: `HAS_BACKLIGHT_PWM`, `HAS_BLE`, `HAS_DISPLAY`, `HAS_RGBLED`, `HAS_SD_CARD`, `HAS_THREAD_ZIGBEE`, `HAS_USB_CDC`, `HAS_WIFI`.
@@ -217,7 +219,7 @@ ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32
 | 47 | **free** | — |  |
 | 48 | committed | TFT_PIN_BL |  |
 
-⚠ 2 pin define(s) are `-1` — not wired OR not yet verified (see the comments in pins.h): `SD_PIN_CS`, `TFT_PIN_MISO`. Free counts above may shrink as these resolve.
+⚠ 3 pin define(s) are `-1` — not wired OR not yet verified (see the comments in pins.h): `BUZZER_PIN`, `SD_PIN_CS`, `TFT_PIN_MISO`. Free counts above may shrink as these resolve.
 
 Peripheral demand (declared pin map vs MCU): SPI 2/2 · I2C 1/2 · UART 0/3 · RMT TX 1/4 · LEDC 1/8.
 

@@ -929,6 +929,14 @@ export function buildFenceGuard(scene) {
 export const BUILDERS = {
   "canary-display-watch": buildWatchStation,
   "canary-display-dash": buildDash,
+  // The Nightstand Line: dedicated meshes are follow-up work — until then
+  // the honest nearest kin stands in. Dash 7 IS the dash electrically and
+  // visually (same 800x480 panel, roomier bezel); the portrait boards
+  // borrow the dash's panel shape rather than falling through to an
+  // unrelated witness enclosure.
+  "canary-display-nightstand-s3": buildDash,
+  "canary-display-touch169": buildDash,
+  "canary-display-dash7": buildDash,
   "canary-vision": buildVision,
   "canary-wap": buildWap,
   "canary-sense": buildSense,

@@ -1,4 +1,4 @@
-# Demo & test the iPhone app — Simulator, your iPhone, and fast iteration
+# Demo & test the iPhone app — Simulator, your iPhone, TestFlight, fast iteration
 
 How to get SecuraCV running for a demo or a test pass, with no Canary
 hardware required. Everything here happens **on a Mac** (the app never
@@ -11,6 +11,7 @@ compiles in the Linux dev container — CI and your Mac are the compilers).
 | See it in the Simulator | `cd ios && scripts/heal.sh generate && open SecuraCV.xcodeproj`, pick an iPhone simulator, ⌘R |
 | Build + test headless | `cd ios && scripts/heal.sh build` |
 | Run it on my iPhone | Same as Simulator, but select your phone as the destination — signing notes below |
+| **The production app on my iPhone** | TestFlight — one-time setup + one Actions button, see below |
 | Iterate on a screen fast | Open any file in `Sources/SecuraCV/Views/`, ⌥⌘↩ for the Preview canvas |
 | Demo without hardware | Demo mode — it's automatic in the Simulator; on a phone, Fleet tab → ⋯ → **Demo fleet** |
 
@@ -83,8 +84,61 @@ the full set. If you're on a **free** Apple ID (no paid membership), push,
 HomeKit, and iCloud entitlements won't sign either — use the Simulator, or
 temporarily point `CODE_SIGN_ENTITLEMENTS` at a stripped copy.
 
-TestFlight / App Store distribution is a different pipeline entirely:
-`.github/workflows/ios-release.yml` and `desktop-lab/MOBILE.md`.
+An Xcode dev build stops launching ~7 days (free Apple ID) or ~1 year (paid)
+after install, and untethers from your Mac either way. For the app that
+*lives* on your phone and updates itself, use TestFlight — next section.
+
+## The production app on your iPhone — TestFlight
+
+The repo already has the whole pipeline (`.github/workflows/ios-release.yml`:
+archive → sign → upload to App Store Connect → tag `ios-v*`). It needs a
+one-time setup, then it's one button per release.
+
+**One-time setup (~30 minutes, all outside this repo):**
+
+1. **Apple Developer Program** membership ($99/yr) on your Apple ID —
+   TestFlight does not work on the free tier.
+2. **App record**: App Store Connect → Apps → **+** → New App → platform iOS,
+   bundle ID `com.securacv.witness` (register the ID at
+   developer.apple.com → Identifiers first if it's not offered). Name it
+   SecuraCV. Nothing else needs filling in for TestFlight.
+3. **CI signing credentials** — the same four secrets the whole repo's Apple
+   pipeline shares (full walkthrough in
+   [`desktop-lab/MOBILE.md`](../desktop-lab/MOBILE.md) § CI). In the repo's
+   Settings → Secrets and variables → Actions:
+   - Variable `ENABLE_IOS_BUILD` = `true`
+   - Secret `APPLE_DEVELOPMENT_TEAM` — your 10-char Team ID
+   - Secret `APPLE_API_ISSUER` — App Store Connect API issuer UUID
+   - Secret `APPLE_API_KEY` — the API key ID (10 chars)
+   - Secret `APPLE_API_KEY_BASE64` — the `.p8` contents, base64-encoded
+   (Create the key at App Store Connect → Users and Access → Integrations →
+   App Store Connect API, role **App Manager**.)
+4. **TestFlight** app from the App Store on your iPhone, signed into the same
+   Apple ID.
+
+**Each release (one button):**
+
+1. Actions → **iOS release** → Run workflow with
+   `export_method = app-store-connect`, `publish = true`. Leave
+   `critical_alerts` **off** until Apple has granted that entitlement
+   (request it at developer.apple.com; the app falls back to time-sensitive
+   alerts meanwhile — flipping it early just fails signing).
+2. ~15 min later the build appears in App Store Connect → TestFlight. Under
+   Internal Testing, add a group with your Apple ID once; every future build
+   auto-notifies your phone and installs/updates through the TestFlight app.
+3. Each publish needs a `MARKETING_VERSION` bump in `ios/project.yml` — the
+   workflow refuses to re-ship a version whose `ios-v*` tag already exists
+   (that's it working, not breaking; see `docs/RELEASE_BUTTONS.md`).
+
+A dry run first is house style (RELEASE_LESSONS principle 3): run the same
+button with `publish = false` / `export_method = release-testing` and confirm
+the `.ipa` artifact appears before doing the real one.
+
+The app icon App Store Connect requires is generated + committed
+(`scripts/make_app_icon.py` → `Assets.xcassets`, same contract as the tvOS
+icon); `Info.plist` declares exempt-only encryption
+(`ITSAppUsesNonExemptEncryption=false`) so TestFlight builds don't park on
+the export-compliance questionnaire.
 
 ## Fast iteration (and the "web emulator" question)
 

@@ -1988,7 +1988,81 @@ export function parseSenseLine(line) {
   if (m) return { kind: "vitals", locked: m[1] === "locked", stalled: /stall/.test(t) };
   m = /\[health\]\s+up\s+(\d+)s\s+heap\s+(\d+)KB\s+frame_errs\s+(\d+)/.exec(t);
   if (m) return { kind: "health", up_s: Number(m[1]), heap_kb: Number(m[2]), frame_errs: Number(m[3]) };
+  // The tuning console's periodic stream — the always-on "what the radar
+  // sees" heartbeat ([radar] state=… count=… range=… [lock=… breath=…
+  // heart=…] [raw_dist=…cm raw_count=… raw_breath=… raw_heart=…] errs=…).
+  // The vitals and raw fields ride only on wellbeing / `raw on` benches, so
+  // everything past the coarse triple is optional.
+  m = /\[radar\]\s+state=(present|clear|unknown)\s+count=(0|1|2\+)\s+range=(near|mid|far|unknown)/.exec(t);
+  if (m) {
+    const ev = { kind: "radar", presence: m[1], count: m[2], range: m[3] };
+    const lock = /\block=(locked|lost|unknown)\b/.exec(t);
+    if (lock) {
+      ev.lock = lock[1];
+      const b = /\bbreath=(\d+)\b/.exec(t);
+      const h = /\bheart=(\d+)\b/.exec(t);
+      if (b) ev.breath = Number(b[1]);
+      if (h) ev.heart = Number(h[1]);
+    }
+    const rd = /\braw_dist=(\d+)cm\b/.exec(t);
+    if (rd) {
+      ev.raw = {
+        dist_cm: Number(rd[1]),
+        count: Number((/\braw_count=(\d+)\b/.exec(t) || [0, 0])[1]),
+        breath: Number((/\braw_breath=(\d+)\b/.exec(t) || [0, 0])[1]),
+        heart: Number((/\braw_heart=(\d+)\b/.exec(t) || [0, 0])[1]),
+      };
+    }
+    const e = /\berrs=(\d+)\b/.exec(t);
+    if (e) ev.frame_errs = Number(e[1]);
+    return ev;
+  }
   return null;
+}
+
+// ── the tuning console's replies: knob snapshot + command verdicts ─────────
+// `[cfg] debounce=300 clear=1500 … stream=1000 raw=0` is the whole knob
+// state on one line — sent on demand ("cfg") and after every set/reset, so
+// a bench UI reconciles by replacing, never by diffing. `stream`/`raw` are
+// console session state, split out from the knob map.
+export function parseCfgLine(line) {
+  const t = String(line || "").trim();
+  if (!/^\[cfg\]\s/.test(t)) return null;
+  const values = {};
+  let stream = null, raw = null;
+  const re = /([a-z_]+)=(\d+)/g;
+  let m;
+  while ((m = re.exec(t))) {
+    const v = Number(m[2]);
+    if (m[1] === "stream") stream = v;
+    else if (m[1] === "raw") raw = v === 1;
+    else values[m[1]] = v;
+  }
+  if (!Object.keys(values).length) return null;
+  return { kind: "cfg", values, stream, raw };
+}
+
+// `[tune] ok …` / `[tune] err …` — one verdict line per command. Anything
+// else under the [tune] tag (the help text) is informational.
+export function parseTuneLine(line) {
+  const t = String(line || "").trim();
+  const m = /^\[tune\]\s+(ok|err)\s+(.*)$/.exec(t);
+  if (!m) return null;
+  return { kind: "tune", ok: m[1] === "ok", text: m[2] };
+}
+
+// One tone class per console line so the bench log reads at a glance —
+// verdicts pop, the stream stays quiet, errors glow. Pure string → token.
+export function senseLineTone(line) {
+  const t = String(line || "").trim();
+  if (/^\[tune\]\s+err\b/.test(t)) return "err";
+  if (/^\[tune\]/.test(t)) return "tune";
+  if (/^\[cfg\]/i.test(t) || /^\[CFG\]/.test(t)) return "cfg";
+  if (/^\[radar\]/.test(t)) return "stream";
+  if (/^\[(vitals)\]/.test(t)) return "vitals";
+  if (/^\[(sense|presence)\]/.test(t)) return "sense";
+  if (/^\[health\]/.test(t)) return "health";
+  return "plain";
 }
 
 // ── the WiFi field's live voice: parse the WAP console telemetry ───────────

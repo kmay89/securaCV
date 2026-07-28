@@ -799,22 +799,36 @@ SENSE_CFG = {
 SENSE_CONFIG_H = REPO / "firmware/projects/canary-sense/include/canary/sense_config.h"
 
 SENSE_KNOBS = [
-    # (id, macro, nvs key, bounds macros stem, unit, flavor)
+    # (id, macro, nvs key, bounds macros stem, unit, console name, flavor)
     # flavor None = both builds carry it. The NVS keys and bounds come from
     # sense_config.{h,cpp} — the runtime twin of vision's detect_config.
-    ("present_debounce_ms", "CS_PRESENT_DEBOUNCE_MS", "sns_debounce", "SENSE_DEBOUNCE_MS", "ms", None),
-    ("clear_timeout_ms", "CS_CLEAR_TIMEOUT_MS", "sns_clear", "SENSE_CLEAR_MS", "ms", None),
-    ("stall_timeout_ms", "CS_RADAR_STALL_MS", "sns_stall", "SENSE_STALL_MS", "ms", None),
-    ("range_near_cm", "CS_RANGE_NEAR_CM", "sns_near", "SENSE_NEAR_CM", "cm", None),
-    ("range_mid_cm", "CS_RANGE_MID_CM", "sns_mid", "SENSE_MID_CM", "cm", None),
-    ("vitals_lock_ms", "CS_VITALS_LOCK_MS", "sns_vlock", "SENSE_VLOCK_MS", "ms", "wellbeing"),
-    ("vitals_lost_ms", "CS_VITALS_LOST_MS", "sns_vlost", "SENSE_VLOST_MS", "ms", "wellbeing"),
+    # The console name is the token the firmware's USB serial tuning console
+    # answers to (`set <name> <value>`, common/console/tuning_console.h) —
+    # carried here so both flashers wire their sliders to the same words.
+    ("present_debounce_ms", "CS_PRESENT_DEBOUNCE_MS", "sns_debounce", "SENSE_DEBOUNCE_MS", "ms", "debounce", None),
+    ("clear_timeout_ms", "CS_CLEAR_TIMEOUT_MS", "sns_clear", "SENSE_CLEAR_MS", "ms", "clear", None),
+    ("stall_timeout_ms", "CS_RADAR_STALL_MS", "sns_stall", "SENSE_STALL_MS", "ms", "stall", None),
+    ("range_near_cm", "CS_RANGE_NEAR_CM", "sns_near", "SENSE_NEAR_CM", "cm", "near", None),
+    ("range_mid_cm", "CS_RANGE_MID_CM", "sns_mid", "SENSE_MID_CM", "cm", "mid", None),
+    ("vitals_lock_ms", "CS_VITALS_LOCK_MS", "sns_vlock", "SENSE_VLOCK_MS", "ms", "vlock", "wellbeing"),
+    ("vitals_lost_ms", "CS_VITALS_LOST_MS", "sns_vlost", "SENSE_VLOST_MS", "ms", "vlost", "wellbeing"),
+    ("breath_min_bpm", "CS_BREATH_MIN_BPM", "sns_bmin", "SENSE_BREATH_MIN", "bpm", "breath_min", "wellbeing"),
+    ("breath_max_bpm", "CS_BREATH_MAX_BPM", "sns_bmax", "SENSE_BREATH_MAX", "bpm", "breath_max", "wellbeing"),
+    ("heart_min_bpm", "CS_HEART_MIN_BPM", "sns_hmin", "SENSE_HEART_MIN", "bpm", "heart_min", "wellbeing"),
+    ("heart_max_bpm", "CS_HEART_MAX_BPM", "sns_hmax", "SENSE_HEART_MAX", "bpm", "heart_max", "wellbeing"),
 ]
 
 # Room presets for the radar — authored here (like the hatch moments), values
 # guided by the Sense pages' raise-it-when/lower-it-when playbook and bounded
 # by sense_config.h (asserted below, so an out-of-range preset can't ship).
 # "As it ships" is prepended at build time and writes nothing.
+#
+# A preset with "only": "wellbeing" is skipped on the presence-only build —
+# the pet-vitals presets (dog, human sleep) tune the breath/heart bands, which
+# don't exist without -DCANARY_SENSE_VITALS, so offering them there would be a
+# lie. The mouse preset carries no vitals values (a mouse's heart/breath sit
+# far outside this human-tuned module's reported range — see the mouse_cage
+# help topic), so it applies to both builds as a pure movement/wake-sleep tune.
 SENSE_PRESETS = [
     {
         "id": "bedside", "icon": "🛏",
@@ -850,6 +864,62 @@ SENSE_PRESETS = [
         "values": {"present_debounce_ms": 600, "clear_timeout_ms": 2000,
                    "range_near_cm": 150, "range_mid_cm": 500},
     },
+    # ── pet & sleep-watch presets ──
+    # Movement-based wake/sleep for a caged small rodent. Cage-mount, very
+    # close range, so the whole cage is the "near" band. This is a PRESENCE
+    # tune, not vitals: mmWave presence confirms a live, MOVING occupant, so
+    # for a fixed cage "present" reads as awake/active and sustained stillness
+    # reads as settled/asleep. A short debounce catches a brief scurry; a
+    # multi-second clear waits for genuine stillness before calling it asleep.
+    # No breath/heart bands — a mouse's rates are far outside what this
+    # human-tuned module reports (see the mouse_cage help topic).
+    {
+        "id": "mouse_cage", "icon": "🐭",
+        "title": "Mouse / small-pet cage — wake & sleep",
+        "blurb": "Cage-mounted movement watch for a small rodent. Reads activity "
+                 "vs. stillness for wake/sleep — not heart or breathing (a mouse’s "
+                 "rates are far above what this module can read). Close mount, "
+                 "the whole cage is one band.",
+        "values": {"present_debounce_ms": 250, "clear_timeout_ms": 3000,
+                   "range_near_cm": 50, "range_mid_cm": 100},
+    },
+    # Resting/sleeping-dog vitals for a kennel or crate. A calm dog’s heart
+    # (≈50–160 bpm) and breathing (≈8–35 /min) overlap the human bands this
+    # module was tuned for, so a settled dog within ~1.5 m reads like a human
+    # torso. Wider bands than the human presets cover small-breed heart rates
+    # and a dog’s faster resting breathing; longer lock windows suit an animal
+    # that holds still in bursts. Panting or moving breaks the lock, same as a
+    # fidgeting person — this is a resting/sleeping monitor.
+    {
+        "id": "dog_kennel", "icon": "🐕", "only": "wellbeing",
+        "title": "Dog kennel / crate — resting heart & breathing",
+        "blurb": "Breathing- and heart-rate watch for a resting or sleeping dog in "
+                 "a kennel. Bands widened for a dog (heart ~50–160, breath ~8–40); "
+                 "lock waits for a genuinely settled signal. Best for a calm, single "
+                 "dog within ~1.5 m — panting or pacing breaks the lock.",
+        "values": {"present_debounce_ms": 400, "clear_timeout_ms": 5000,
+                   "range_near_cm": 120, "range_mid_cm": 300,
+                   "vitals_lock_ms": 6000, "vitals_lost_ms": 8000,
+                   "breath_min_bpm": 8, "breath_max_bpm": 40,
+                   "heart_min_bpm": 45, "heart_max_bpm": 160},
+    },
+    # Human sleep/wake vitals — the module’s home turf. Bands trimmed to a
+    # sleeping/resting adult (breath ~6–24, heart ~40–110) so a settled sleeper
+    # locks and a restless one doesn’t latch noise; long debounce/clear ride out
+    # turning over. The wake/sleep read is the breathing lock plus presence.
+    {
+        "id": "human_sleep", "icon": "🛌", "only": "wellbeing",
+        "title": "Human sleep & wake watch",
+        "blurb": "Bedside breathing/heart watch tuned to a sleeping adult: settle "
+                 "and breathing locks; the numbers appear once it holds. Human bands "
+                 "(breath 6–24, heart 40–110), long debounce so turning over doesn’t "
+                 "flip presence.",
+        "values": {"present_debounce_ms": 500, "clear_timeout_ms": 6000,
+                   "range_near_cm": 100, "range_mid_cm": 250,
+                   "vitals_lock_ms": 5000, "vitals_lost_ms": 7000,
+                   "breath_min_bpm": 6, "breath_max_bpm": 24,
+                   "heart_min_bpm": 40, "heart_max_bpm": 110},
+    },
 ]
 
 
@@ -862,13 +932,14 @@ def sense_reflexes_block(flavor: str) -> dict:
     bounds from sense_config.h, so no surface can drift from the firmware."""
     cfg = SENSE_CFG[flavor]
     knobs = []
-    for kid, macro, nvs_key, bstem, unit, only in SENSE_KNOBS:
+    for kid, macro, nvs_key, bstem, unit, console, only in SENSE_KNOBS:
         if only and only != flavor:
             continue
         knobs.append({
             "id": kid, "macro": macro, "unit": unit,
             "value": read_const(cfg, macro),
             "nvs": nvs_key,
+            "console": console,
             "bounds": [read_const(SENSE_CONFIG_H, bstem + "_LO"),
                        read_const(SENSE_CONFIG_H, bstem + "_HI")],
         })
@@ -881,6 +952,10 @@ def sense_reflexes_block(flavor: str) -> dict:
         "values": {k["id"]: k["value"] for k in knobs},
     }]
     for pr in SENSE_PRESETS:
+        # A vitals-tuning preset (only=wellbeing) is skipped on the
+        # presence-only build, where the breath/heart knobs don't exist.
+        if pr.get("only") and pr["only"] != flavor:
+            continue
         values = {kid: v for kid, v in pr["values"].items() if kid in by_id}
         for kid, v in values.items():
             lo, hi = by_id[kid]["bounds"]
@@ -1108,6 +1183,64 @@ def settings_help_block(vision: dict, sense_default: dict, sense_wellbeing: dict
             "what": "How long without a plausible breathing signal before the lock is "
                     "dropped rather than guessed at.",
             "default": f"{wk['vitals_lost_ms']} ms in the Wellbeing build.",
+        },
+        "breath_min_bpm": {
+            "label": "Breath min",
+            "what": "The slowest breathing the Wellbeing build will believe. Radar "
+                    "readings below this band are treated as noise, never as a person — "
+                    "the floor of the plausibility band the vitals lock trusts.",
+            "default": f"{wk['breath_min_bpm']} bpm in the Wellbeing build.",
+        },
+        "breath_max_bpm": {
+            "label": "Breath max",
+            "what": "The fastest breathing the Wellbeing build will believe — the "
+                    "ceiling of the plausibility band. Together with breath min it "
+                    "decides which radar readings can ever earn the breathing lock.",
+            "default": f"{wk['breath_max_bpm']} bpm in the Wellbeing build.",
+        },
+        "heart_min_bpm": {
+            "label": "Heart min",
+            "what": "The slowest heart rate the Wellbeing build will believe. If a "
+                    "resting heart rate sits below this floor the lock politely refuses — "
+                    "lower it on the tuning bench and watch the lock latch.",
+            "default": f"{wk['heart_min_bpm']} bpm in the Wellbeing build.",
+        },
+        "heart_max_bpm": {
+            "label": "Heart max",
+            "what": "The fastest heart rate the Wellbeing build will believe — the "
+                    "ceiling of the heart plausibility band the vitals lock trusts.",
+            "default": f"{wk['heart_max_bpm']} bpm in the Wellbeing build.",
+        },
+        # ── pet & sleep presets (feasibility stated honestly) ──
+        "mouse_cage": {
+            "label": "Mouse / small-pet cage",
+            "what": "A movement watch for a caged small rodent, not a vitals monitor. "
+                    "For a fixed cage, the radar confirming a live, moving occupant "
+                    "reads as awake/active; sustained stillness reads as settled or "
+                    "asleep. It does NOT read a mouse’s heart or breathing — those "
+                    "rates (heart 300–800 bpm, breath 80–230/min) sit far above the "
+                    "human-tuned band this module reports.",
+            "when": "Mount close over or beside a small cage; keep other movement out "
+                    "of the ~0.5 m near field.",
+        },
+        "dog_kennel": {
+            "label": "Dog kennel / crate",
+            "what": "Resting/sleeping-dog breathing and heart rate. A calm dog’s heart "
+                    "(≈50–160 bpm) and breathing (≈8–35/min) overlap the bands this "
+                    "module was built for, so a settled dog within ~1.5 m reads like a "
+                    "human torso. Wellbeing build only.",
+            "when": "A single, resting or sleeping dog, radar aimed at the chest. "
+                    "Panting, pacing, or a second animal breaks the lock — same "
+                    "physics as a fidgeting person.",
+        },
+        "human_sleep": {
+            "label": "Human sleep & wake",
+            "what": "Bedside breathing/heart watch tuned to a sleeping adult — the "
+                    "module’s native use case. Breathing locks once the sleeper "
+                    "settles; wake/sleep is the breathing lock plus presence. "
+                    "Wellbeing build only.",
+            "when": "One sleeper, radar within ~1.5 m of the chest. Vitals suppress "
+                    "themselves whenever more than one person is in view.",
         },
         # ── the passport & facts (what the flasher reads off the board) ──
         "chip": {

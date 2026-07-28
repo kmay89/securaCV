@@ -118,6 +118,11 @@
 #define BOOT_BUTTON_ACTIVE      LOW
 // RST/Key3 is CHIP_PU (hardware reset line) — not a readable GPIO.
 
+// The board DOES carry a populated buzzer: the vendor pinout table lists
+// GPIO42 = "Buzz — onboard buzzer driver (PWM/tone)" and it is item 8 in the
+// onboard-resources list. This supersedes the earlier provisional BUZZER_PIN
+// -1 ("no piezo pad"), which dated from when the wiki was unreachable — so
+// the chime engine now drives a real pin instead of no-opping on chime_init(-1).
 #define BUZZER_PIN              42    // Buzz — passive buzzer, LEDC PWM / tone
 
 // Native USB (S3 USB-OTG on the Type-C) — chip-fixed, not for general GPIO.

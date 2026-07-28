@@ -203,10 +203,13 @@ void discovery_scan_witnesses(uint32_t now) {
 
   const int n = MDNS.queryService(SVC, PROTO);
   for (int i = 0; i < n; i++) {
-    // Only real witnesses join the fleet: skip our own kind (display) and any
-    // advert with no role. UNAUTHENTICATED LAN input — every read is bounded.
+    // Witnesses AND sibling displays join the fleet: a display is a peer with
+    // its own sensor data (the I2C header) and its screen state, so on a
+    // broker-down LAN the screens still see each other — same as they do over
+    // MQTT. Only roleless adverts are dropped (no identity, no seat).
+    // UNAUTHENTICATED LAN input — every read is bounded.
     const String role = MDNS.txt(i, "role");
-    if (role.length() != strlen("witness") || role != "witness") continue;
+    if (role != "witness" && role != "display") continue;
 
     const String id = MDNS.txt(i, "device_id");
     const size_t id_len = id.length();

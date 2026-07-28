@@ -28,6 +28,17 @@ constexpr uint32_t SEED_VLOST = CS_VITALS_LOST_MS;
 constexpr uint32_t SEED_VLOCK = 4000;
 constexpr uint32_t SEED_VLOST = 6000;
 #endif
+#if defined(CS_BREATH_MIN_BPM)
+constexpr uint32_t SEED_BMIN = CS_BREATH_MIN_BPM;
+constexpr uint32_t SEED_BMAX = CS_BREATH_MAX_BPM;
+constexpr uint32_t SEED_HMIN = CS_HEART_MIN_BPM;
+constexpr uint32_t SEED_HMAX = CS_HEART_MAX_BPM;
+#else
+constexpr uint32_t SEED_BMIN = 6;
+constexpr uint32_t SEED_BMAX = 30;
+constexpr uint32_t SEED_HMIN = 40;
+constexpr uint32_t SEED_HMAX = 130;
+#endif
 
 uint32_t clamp_u32(uint32_t v, uint32_t lo, uint32_t hi) {
   return (v < lo) ? lo : (v > hi) ? hi : v;
@@ -44,6 +55,10 @@ void load() {
   g_sense.mid_cm              = CS_RANGE_MID_CM;
   g_sense.vitals_lock_ms      = SEED_VLOCK;
   g_sense.vitals_lost_ms      = SEED_VLOST;
+  g_sense.breath_min_bpm      = SEED_BMIN;
+  g_sense.breath_max_bpm      = SEED_BMAX;
+  g_sense.heart_min_bpm       = SEED_HMIN;
+  g_sense.heart_max_bpm       = SEED_HMAX;
 
   // Read-only open first (hot path); fall back to read/write so a
   // factory-fresh unit creates the namespace — detect_config.cpp precedent.
@@ -78,6 +93,18 @@ void load() {
   g_sense.vitals_lost_ms = clamp_u32(
       prefs.getULong("sns_vlost", g_sense.vitals_lost_ms),
       SENSE_VLOST_MS_LO, SENSE_VLOST_MS_HI);
+  g_sense.breath_min_bpm = clamp_u32(
+      prefs.getULong("sns_bmin", g_sense.breath_min_bpm),
+      SENSE_BREATH_MIN_LO, SENSE_BREATH_MIN_HI);
+  g_sense.breath_max_bpm = clamp_u32(
+      prefs.getULong("sns_bmax", g_sense.breath_max_bpm),
+      SENSE_BREATH_MAX_LO, SENSE_BREATH_MAX_HI);
+  g_sense.heart_min_bpm = clamp_u32(
+      prefs.getULong("sns_hmin", g_sense.heart_min_bpm),
+      SENSE_HEART_MIN_LO, SENSE_HEART_MIN_HI);
+  g_sense.heart_max_bpm = clamp_u32(
+      prefs.getULong("sns_hmax", g_sense.heart_max_bpm),
+      SENSE_HEART_MAX_LO, SENSE_HEART_MAX_HI);
 
   prefs.end();
   g_sense_loaded = true;
@@ -136,6 +163,22 @@ bool sense_set_vitals_lock_ms(uint32_t v) {
 bool sense_set_vitals_lost_ms(uint32_t v) {
   return set_field(g_sense.vitals_lost_ms, "sns_vlost", v,
                    SENSE_VLOST_MS_LO, SENSE_VLOST_MS_HI);
+}
+bool sense_set_breath_min_bpm(uint32_t v) {
+  return set_field(g_sense.breath_min_bpm, "sns_bmin", v,
+                   SENSE_BREATH_MIN_LO, SENSE_BREATH_MIN_HI);
+}
+bool sense_set_breath_max_bpm(uint32_t v) {
+  return set_field(g_sense.breath_max_bpm, "sns_bmax", v,
+                   SENSE_BREATH_MAX_LO, SENSE_BREATH_MAX_HI);
+}
+bool sense_set_heart_min_bpm(uint32_t v) {
+  return set_field(g_sense.heart_min_bpm, "sns_hmin", v,
+                   SENSE_HEART_MIN_LO, SENSE_HEART_MIN_HI);
+}
+bool sense_set_heart_max_bpm(uint32_t v) {
+  return set_field(g_sense.heart_max_bpm, "sns_hmax", v,
+                   SENSE_HEART_MAX_LO, SENSE_HEART_MAX_HI);
 }
 
 } // namespace canary::cfg

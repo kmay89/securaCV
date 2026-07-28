@@ -236,6 +236,35 @@
                 <button id="monitor-expand" class="btn btn-small" aria-pressed="false">Expand</button>
               </div>
               <p id="monitor-status" class="muted">Not connected.</p>
+
+              <!-- Radar tuning suite (Sense boards): every runtime knob, live
+                   over the same monitor port. Sliders speak the firmware's USB
+                   tuning console (`set <knob> <value>`); the [cfg] snapshot
+                   line is the single source of truth the panel reconciles to.
+                   Mirror of the web flasher's radar-bench tuning suite. -->
+              <div id="sense-tune" class="sense-tune hidden">
+                <div class="row sense-tune-head">
+                  <h4>Radar tuning — every knob, live</h4>
+                  <span id="sense-tune-badge" class="muted">syncing with the board…</span>
+                </div>
+                <div id="sense-knobs" class="sense-knobs"></div>
+                <div class="row sense-tune-ctl">
+                  <button id="sense-reset" class="btn btn-small" disabled>Restore defaults</button>
+                  <label class="muted">
+                    <select id="sense-stream" class="input" aria-label="Stream cadence" disabled>
+                      <option value="500">stream: 2×/s</option>
+                      <option value="1000" selected>stream: 1×/s</option>
+                      <option value="2000">stream: every 2 s</option>
+                      <option value="0">stream: off</option>
+                    </select>
+                  </label>
+                  <label class="muted sense-raw-toggle">
+                    <input id="sense-raw" type="checkbox" disabled />
+                    bench detail (raw cm &amp; bpm — stays on this cable)
+                  </label>
+                </div>
+              </div>
+
               <pre id="serial-console" class="console" aria-live="polite"></pre>
               <form id="monitor-cmd-form" class="row monitor-cmd" autocomplete="off">
                 <input id="monitor-cmd" class="input" type="text" placeholder="Type a command and press Enter…"

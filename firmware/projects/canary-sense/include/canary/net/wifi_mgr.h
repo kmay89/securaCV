@@ -7,7 +7,13 @@ namespace canary::net {
 // (a witness that can't reach its broker is better off retrying from a clean
 // slate than half-running). Applies the WiFi power policy (modem sleep / TX
 // power cap from canary/config.h) once the link is up.
-void wifi_init_or_reboot();
+//
+// `idle_poll` (optional) is invoked on every 300 ms wait tick so cable-side
+// services stay alive while the link comes up — main.cpp passes the serial
+// tuning console's tick, which keeps the post-flash bench responsive on a
+// board whose WiFi isn't provisioned yet (otherwise the boot-timeout reboot
+// cycle would starve loop() and the console could never answer).
+void wifi_init_or_reboot(void (*idle_poll)() = nullptr);
 
 // Steady-state STA supervision — call every loop() pass. Non-blocking:
 // detects link loss, retries with exponential backoff (2 s → 4 s → 8 s →
