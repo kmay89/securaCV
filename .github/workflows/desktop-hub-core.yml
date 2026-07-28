@@ -73,7 +73,7 @@ jobs:
       run:
         working-directory: desktop/${{ matrix.crate }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install fmt + clippy
         run: rustup component add rustfmt clippy
       - name: Format check
@@ -96,7 +96,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: rescue.rs unit tests
         run: |
           rustc --edition 2021 --test desktop/src-tauri/src/rescue.rs -o /tmp/rescue_test
