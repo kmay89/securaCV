@@ -317,6 +317,22 @@ kbd {
   box-shadow: var(--shadow-1);
 }
 .banner #update-text { flex: 1; }
+.banner { flex-wrap: wrap; }
+
+/* "What's changing" — the pending update's own release notes, in the banner
+   and on the About page. Full-width row under the banner's controls. */
+.update-notes {
+  flex-basis: 100%;
+  font-size: 13px;
+  color: var(--text);
+  border-top: 1px solid color-mix(in srgb, var(--canary) 40%, transparent);
+  padding-top: 8px; margin-top: 2px;
+  max-height: 180px; overflow-y: auto;
+}
+.update-notes p { margin: 0 0 6px; }
+.update-notes ul { margin: 0; padding-left: 18px; }
+.update-notes li { margin: 3px 0; }
+.card .update-notes { border-top: none; padding-top: 0; margin: 6px 0 10px; }
 
 /* ── dev-channel banner ───────────────────────────────────────────────── */
 /* Deliberately loud: hazard stripes in the caution amber, so a prerelease

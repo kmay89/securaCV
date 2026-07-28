@@ -51,6 +51,11 @@ const DEV_FLASH_MANIFEST_URL =
   "https://github.com/kmay89/securaCV/releases/download/fw-dev-latest/manifest-flash.json";
 
 const POLL_MS = 1000;
+// Self-update cadence. Checked once at launch, then routinely while the app
+// stays open — a bench machine that never relaunches must still hear about
+// updates — and again when the window regains focus after sitting stale.
+const UPDATE_RECHECK_MS = 6 * 60 * 60 * 1000; // every 6 hours while open
+const UPDATE_STALE_MS = 4 * 60 * 60 * 1000;   // focus re-check if older than this
 const WE2_VID = 0x1a86;
 const WE2_PID = 0x55d3;
 
@@ -73,6 +78,7 @@ const state = {
   devChannel: false, // fetch fw-dev-latest instead of the pinned stable release
   localFile: null,   // { path, name, size, sha256, esp_magic } picked under Advanced
   update: null,      // pending self-update, if any
+  announcedUpdate: null, // last update version logged, so routine re-checks stay quiet
   vision: {
     hostFlash: null,
     hostBoot: null,
@@ -243,9 +249,12 @@ async function boot() {
     window.addEventListener("afterprint", done, { once: true });
     try { window.print(); } catch (_) { done(); }
   });
-  $("update-dismiss").addEventListener("click", () =>
-    $("update-banner").classList.add("hidden")
-  );
+  $("update-dismiss").addEventListener("click", () => {
+    $("update-banner").classList.add("hidden");
+    // Remember which version was waved off, so the routine re-checks don't
+    // nag — the banner returns only for a NEWER version (or a manual check).
+    if (state.update) { prefs.updateDismissed = state.update.version; savePrefs(); }
+  });
   // Manual re-read: clear any failure and force a fresh identify next tick.
   $("recheck").addEventListener("click", () => {
     state.failedPort = null;
@@ -305,6 +314,13 @@ async function boot() {
   });
 
   checkForUpdate();     // best-effort, in the background
+  // …and keep checking: on a routine while the window stays open, plus a
+  // catch-up when the user comes back to a window that sat idle. Both are
+  // quiet — they only surface anything when an update is actually ready.
+  setInterval(() => checkForUpdate(), UPDATE_RECHECK_MS);
+  window.addEventListener("focus", () => {
+    if (Date.now() - (prefs.lastCheckedAt || 0) > UPDATE_STALE_MS) checkForUpdate();
+  });
   pollPorts();          // first tick now…
   setInterval(pollPorts, POLL_MS); // …then keep watching
 }
@@ -1905,6 +1921,22 @@ function requiresLiveReceipt(product) {
 }
 
 // ── self-update ─────────────────────────────────────────────────────────────
+// The update's own release notes, rendered safely: escape everything first,
+// then re-allow exactly two bits of markdown the notes use — `- ` bullets and
+// `**bold**` — so the banner can say WHAT is changing, not just a number.
+function notesHtml(notes) {
+  const lines = String(notes || "").split("\n").map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return "";
+  const li = [];
+  const p = [];
+  const bold = (s) => esc(s).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+  lines.forEach((l) => {
+    if (l.startsWith("- ")) li.push(`<li>${bold(l.slice(2))}</li>`);
+    else p.push(bold(l));
+  });
+  return (p.length ? `<p>${p.join(" ")}</p>` : "") + (li.length ? `<ul>${li.join("")}</ul>` : "");
+}
+
 async function checkForUpdate(manual = false) {
   prefs.lastCheckedAt = Date.now();
   savePrefs();
@@ -1914,10 +1946,20 @@ async function checkForUpdate(manual = false) {
     state.update = up || null;
     if (up) {
       $("update-text").textContent = `Version ${up.version} is ready (you have ${up.current_version}).`;
-      $("update-banner").classList.remove("hidden");
+      $("update-notes").innerHTML = notesHtml(up.notes);
+      $("update-notes").classList.toggle("hidden", !up.notes);
+      // Routine re-checks stay polite: a version the user already clicked
+      // "Later" on doesn't re-raise the banner (the About page and the health
+      // chip still show it; a manual check always does).
+      if (manual || prefs.updateDismissed !== up.version) {
+        $("update-banner").classList.remove("hidden");
+      }
       $("health-update").classList.remove("hidden");
       const upd = $("splash-upd"); if (upd) { upd.textContent = "update ready → v" + up.version; }
-      logEvent("info", "Update available: v" + up.version);
+      if (state.announcedUpdate !== up.version) {
+        state.announcedUpdate = up.version; // routine re-checks don't re-log it
+        logEvent("info", "Update available: v" + up.version);
+      }
     } else {
       $("health-update").classList.add("hidden");
       const upd = $("splash-upd"); if (upd) { upd.textContent = "up to date ✓"; }
@@ -1934,6 +1976,7 @@ async function checkForUpdate(manual = false) {
 async function onInstallUpdate() {
   const btn = $("update-btn");
   btn.disabled = true;
+  if (state.update) logEvent("info", "Installing update v" + state.update.version + "…");
   const unlisten = await listen("update:log", (ev) => {
     $("update-text").textContent = ev.payload;
   });
@@ -2065,9 +2108,10 @@ function renderAbout() {
 
   const updState = state.update
     ? `<p class="status ok">Version ${esc(state.update.version)} is ready to install.</p>
+       ${state.update.notes ? `<div class="update-notes"><b>What's changing</b>${notesHtml(state.update.notes)}</div>` : ""}
        <div class="row"><button class="btn btn-primary btn-small" id="about-update">Update &amp; relaunch</button>
        <button class="btn btn-ghost btn-small" id="about-check">Check again</button></div>`
-    : `<p class="status">You're on the newest build. The app checks on its own and heals forward — updates are signed and verified before they install.</p>
+    : `<p class="status">You're on the newest build. The app checks on its own — at launch and every few hours — and heals forward; updates are signed and verified before they install.</p>
        <div class="row"><button class="btn btn-ghost btn-small" id="about-check">Check now</button></div>`;
 
   const log = (prefs.log || []);

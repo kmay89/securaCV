@@ -42,10 +42,26 @@ desktop-lab/
     tauri.conf.json            frontendDist -> ../dist, window -> canary-local/lab.html
     Cargo.toml
     build.rs
-    capabilities/default.json
+    capabilities/              default.json + desktop.json (self-update perms)
     icons/                     generated from mascot.png
     src/{main,lib}.rs          native shell + capability seam
+    src/self_update.rs         signed self-update (desktop only, see below)
 ```
+
+## Self-update
+
+The desktop Lab keeps itself fresh the same way the Flasher does (the shape
+`RELEASE_LESSONS.md` 2026-07-27 prescribed): it checks its release channel
+shortly after launch and every six hours while open, polling the rolling
+**`lab-latest`** prerelease pointer — its own pointer; `releases/latest`
+belongs to the firmware the fleet polls. When a newer signed build exists, a
+native dialog shows that release's own notes (`RELEASE_NOTES.md`, the newest
+section) and asks; nothing installs without a yes. Every check and install is
+appended to `update-journal.log` in the app's data dir — visible, local,
+never silent. iOS/iPadOS builds compile the updater out (`#[cfg(desktop)]`);
+the App Store owns updates there. The pointer advances only when a human
+publishes the draft release (`desktop-lab-updater-pointer.yml`), and only
+after every URL in the hardened manifest resolves.
 
 The frontend is **not built** — `canary-local/` is a static, committed bundle
 (vanilla JS + committed WASM `dist/`), so Tauri packages it directly. It is
