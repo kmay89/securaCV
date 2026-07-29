@@ -222,7 +222,7 @@ jobs:
                       | awk '/^ *commonName/{sub(/^ *commonName *= */, ""); print}'
                   done | sort -u)
           echo "Certificates inside APPLE_DESKTOP_CERTIFICATE:"
-          echo "$CNS" | sed 's/^/  - /'
+          printf '%s\n' "$CNS" | awk '{print "  - " $0}'
           echo "APPLE_SIGNING_IDENTITY asks for: $WANT"
           if ! printf '%s\n' "$CNS" | grep -qxF "$WANT"; then
             echo "::error::The .p12 does not contain the identity named by APPLE_SIGNING_IDENTITY. Signing would fail after a long build. Export the 'Developer ID Application: ...' identity (NOT Apple Distribution, NOT Apple Development) and set APPLE_DESKTOP_CERTIFICATE + APPLE_SIGNING_IDENTITY to the same one — desktop/SIGNING.md."
