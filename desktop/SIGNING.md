@@ -63,12 +63,12 @@ key needed:
 - Keychain Access → **login** keychain → **My Certificates**
 - find **"Developer ID Application: Your Name (TEAMID)"** → right-click →
   **Export…** → save `flasher-cert.p12` → set an **export password** (remember
-  it — it becomes `APPLE_CERTIFICATE_PASSWORD`).
+  it — it becomes `APPLE_DESKTOP_CERTIFICATE_PASSWORD`).
 
 **2b. Base64-encode it** for the secret (Terminal):
 
 ```sh
-base64 -i flasher-cert.p12 | pbcopy      # now on your clipboard → APPLE_CERTIFICATE
+base64 -i flasher-cert.p12 | pbcopy      # now on your clipboard → APPLE_DESKTOP_CERTIFICATE
 ```
 
 **2c. Read the exact identity string** (must match byte-for-byte):
@@ -88,14 +88,38 @@ Repo → **Settings → Secrets and variables → Actions**.
 
 **Secrets** (New repository secret), exactly these names:
 
-| Secret | Value |
-|---|---|
-| `APPLE_CERTIFICATE` | the base64 blob from **2b** |
-| `APPLE_CERTIFICATE_PASSWORD` | the `.p12` export password from **2a** |
-| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: Your Name (TEAMID)` from **2c** |
-| `APPLE_ID` | your Apple ID email |
-| `APPLE_PASSWORD` | the app-specific password from **1d** |
-| `APPLE_TEAM_ID` | the 10-char Team ID from **1a** |
+> ⚠️ **These names are deliberately not `APPLE_CERTIFICATE`.** The iPhone /
+> iPad / tvOS pipelines use `APPLE_CERTIFICATE` for an **Apple Distribution**
+> `.p12` (App Store signing). The Mac apps need a **Developer ID Application**
+> `.p12` (notarized, downloaded outside the App Store) — a different
+> certificate for a different job. They shared one name until 2026-07-29, and
+> setting up the iPhone app silently overwrote the desktop identity: three
+> Flasher releases in a row failed with *"certificate ... does not match
+> provided identity"* and 0.3.5 never shipped. One secret, one meaning.
+
+| Secret | Value | Also used by |
+|---|---|---|
+| `APPLE_DESKTOP_CERTIFICATE` | the base64 blob from **2b** (Developer ID Application) | Flasher + Lab only |
+| `APPLE_DESKTOP_CERTIFICATE_PASSWORD` | the `.p12` export password from **2a** | Flasher + Lab only |
+| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: Your Name (TEAMID)` from **2c** | Flasher + Lab only |
+| `APPLE_ID` | your Apple ID email | shared with notarization |
+| `APPLE_PASSWORD` | the app-specific password from **1d** | shared with notarization |
+| `APPLE_TEAM_ID` | the 10-char Team ID from **1a** | shared |
+
+The release workflows check the `.p12` **before** building: if it doesn't
+contain the identity `APPLE_SIGNING_IDENTITY` names, the run stops in seconds
+and prints every certificate it did find, instead of dying ten minutes into a
+bundle.
+
+### Who signs with what, across this repo
+
+| Target | Certificate | Secret holding it |
+|---|---|---|
+| Flasher / Lab (macOS `.dmg`) | **Developer ID Application** | `APPLE_DESKTOP_CERTIFICATE` |
+| iPhone / iPad / tvOS (App Store) | **Apple Distribution** | `APPLE_CERTIFICATE` |
+
+Both can — and should — exist at once. They are different certificates for
+different distribution channels; neither is a substitute for the other.
 
 **Variable** (the **Variables** tab, *not* Secrets):
 
@@ -161,8 +185,8 @@ release version that already exists is not a release** (bump first).
   bundle it as a framework or sidecar, never a bare resource.
 - **"You must first sign the relevant contracts"** → accept the latest Apple
   Developer + Program License agreements at developer.apple.com, then re-run.
-- **`APPLE_CERTIFICATE` import fails** → the base64 must be the whole `.p12`
-  (`base64 -i file.p12`), and `APPLE_CERTIFICATE_PASSWORD` must be the **export**
+- **`APPLE_DESKTOP_CERTIFICATE` import fails** → the base64 must be the whole `.p12`
+  (`base64 -i file.p12`), and `APPLE_DESKTOP_CERTIFICATE_PASSWORD` must be the **export**
   password you set in 2a, not your Apple ID password.
 - **Notarization hangs / times out** → it's an Apple-side queue; re-run the
   workflow. The submission is idempotent.
