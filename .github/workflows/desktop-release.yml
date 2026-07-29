@@ -219,7 +219,7 @@ jobs:
                 ; for c in "$RUNNER_TEMP"/c*.pem; do
                     [ -e "$c" ] || continue
                     openssl x509 -in "$c" -noout -subject -nameopt multiline 2>/dev/null \
-                      | sed -n 's/^ *commonName *= //p'
+                      | awk '/^ *commonName/{sub(/^ *commonName *= */, ""); print}'
                   done | sort -u)
           echo "Certificates inside APPLE_DESKTOP_CERTIFICATE:"
           echo "$CNS" | sed 's/^/  - /'
