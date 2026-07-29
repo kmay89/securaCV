@@ -620,3 +620,48 @@ test("hub first-boot watch: the escalation countdown is wired on both paths", ()
       `desktop/src/index.html is missing the countdown element #${id}`);
   }
 });
+
+test("board access notes: both flashers explain the radar's hidden flashing port", () => {
+  // The Sense is two boards — a radar carrier with a XIAO seated in it — and
+  // the port you can reach is NOT the one that flashes. Plug into the wrong
+  // one and the device list stays empty, which reads as "dead board". The
+  // truth lives once in the catalog (products[].access) and each frontend
+  // renders it in its CONNECT step, before the cable goes in; this pins all
+  // three so a future edit can't leave half the users with the vague version.
+  const catalog = JSON.parse(read(join(CANARY, "devices/flash.json")));
+  const sense = catalog.products.filter((p) => p.family === "sense");
+  assert.ok(sense.length >= 1, "no sense products in the catalog");
+  for (const p of sense) {
+    assert.ok(p.access, `${p.id} lost its access block (gen_flash.py BOARD_ACCESS)`);
+    for (const k of ["headline", "flash_port", "other_port", "other_effect", "steps"]) {
+      assert.ok(p.access[k], `${p.id}.access is missing ${k}`);
+    }
+    assert.match(p.access.flash_port, /XIAO/,
+      `${p.id}.access.flash_port must name the XIAO — the board that actually flashes`);
+    assert.ok(Array.isArray(p.access.steps) && p.access.steps.length >= 2,
+      `${p.id}.access.steps should walk through opening the case`);
+  }
+
+  const browser = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+
+  assert.match(browser, /function accessCards\(\)/,
+    "canary-local/assets/flash.js lost accessCards()");
+  assert.match(browser, /accessCards\(\)[\s\S]{0,200}box\.append/,
+    "the browser flasher no longer renders the access cards into the connect phase");
+  assert.match(appJs, /function renderAccessNotes\(\)/,
+    "desktop/src/app.js lost renderAccessNotes()");
+  assert.match(appJs, /renderAccessNotes\(\)/g,
+    "desktop/src/app.js never calls renderAccessNotes()");
+  assert.match(html, /id="access-notes"/,
+    "desktop/src/index.html is missing the #access-notes host in the connect step");
+
+  // Both must read it from the catalog rather than hardcoding board copy —
+  // that is what keeps them from drifting apart.
+  for (const [label, src] of [["browser", browser], ["desktop", appJs]]) {
+    assert.match(src, /\.access\b/, `${label} flasher doesn't read products[].access`);
+    assert.ok(!/radar carrier's socket/.test(src),
+      `${label} flasher hardcodes access copy that belongs in gen_flash.py's BOARD_ACCESS`);
+  }
+});
