@@ -1,0 +1,210 @@
+#!/bin/bash
+# Put a *single-identity* Developer ID Application .p12 into the repo secrets
+# the desktop apps (Flasher, Lab) sign with. Run it on the Mac that holds the
+# signing key:
+#
+#     bash desktop/scripts/set-desktop-signing-secrets.sh
+#
+# Why this exists instead of a Keychain Access click-path (desktop/SIGNING.md
+# used to say "export it by hand"): every hand export so far went wrong in a
+# way that only surfaced in CI.
+#
+#   * `security export -t identities` writes EVERY identity in the keychain.
+#     Tauri validates the LAST certificate in the .p12, so an iOS cert riding
+#     along makes it abort with "certificate ... does not match provided
+#     identity" — even though the right cert is in there. (Three dry runs.)
+#   * Keychain Access saves wherever it last saved, so `base64 -i <path>` hit a
+#     file that wasn't there, printed nothing, and `gh secret set` cheerfully
+#     stored an EMPTY secret. (One more dry run.)
+#   * A copy-pasted `VAR=path   # comment` line makes zsh run `#` as a command,
+#     leaving VAR unset and every later check reading zero. (One more.)
+#
+# So: no paths to fill in, no GUI, and nothing is written to GitHub unless the
+# .p12 this builds contains exactly one certificate, exactly one matching
+# private key, an unexpired cert, and a common name identical to the identity
+# the workflow asks for. Those are the same four things the release workflow's
+# preflight checks — see "Verify the macOS signing certificate matches the
+# identity" in .github/workflows/desktop-flasher-release.yml.
+#
+# Expect one macOS dialog asking to let `security` export the key. That is the
+# keychain guarding your private key; enter your login password and Allow.
+
+set -euo pipefail
+
+REPO="${REPO:-kmay89/securaCV}"
+KEEP_DIR="${KEEP_DIR:-$HOME/securacv-signing}"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+# Common name of a PEM certificate. /usr/bin/openssl on macOS is LibreSSL, not
+# OpenSSL 3, and the two print subjects differently ("/CN=x" vs "CN = x"), so
+# fall back to parsing the one-line form rather than returning empty — an empty
+# CN here would report "your identity isn't in the export" for a keychain that
+# has it, which is the worst possible lie to tell at this step.
+cn_of() {
+  local cn
+  cn="$(openssl x509 -in "$1" -noout -subject -nameopt multiline 2>/dev/null \
+        | awk '/^ *commonName/{sub(/^ *commonName *= */, ""); print; exit}')"
+  if [ -z "$cn" ]; then
+    cn="$(openssl x509 -in "$1" -noout -subject 2>/dev/null \
+          | awk '{sub(/^subject=[[:space:]]*/, "")} 1' \
+          | tr ',/' '\n\n' \
+          | awk -F'[[:space:]]*=[[:space:]]*' '/^[[:space:]]*CN[[:space:]]*=/{print $2; exit}')"
+  fi
+  printf '%s' "$cn"
+}
+
+say()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
+ok()   { printf '  ok   %s\n' "$*"; }
+die()  { printf '\n\033[31mSTOPPED\033[0m %s\n\n' "$*" >&2; exit 1; }
+
+# ---------------------------------------------------------------- preconditions
+say "Checking tools"
+[ "$(uname -s)" = "Darwin" ] || die "This has to run on the Mac that holds the signing key."
+command -v security >/dev/null || die "No /usr/bin/security."
+command -v openssl  >/dev/null || die "No openssl."
+command -v gh       >/dev/null || die "GitHub CLI missing. Install it: brew install gh"
+gh auth status >/dev/null 2>&1 || die "gh is not signed in. Run: gh auth login"
+ok "security, openssl, gh (signed in)"
+
+# ------------------------------------------------------------------- identity
+# find-identity -p codesigning lists only codesigning-valid identities, which
+# is the right filter for "what can actually sign" — but note it hides some
+# certs that `security export` will still dump, which is the whole reason this
+# script repacks rather than trusting the export.
+say "Finding the Developer ID Application identity"
+security find-identity -v -p codesigning > "$WORK/ids.txt" 2>/dev/null || true
+IDENT="$(awk -F'"' '/Developer ID Application:/ {print $2}' "$WORK/ids.txt" | sort -u)"
+N_IDENT="$(printf '%s\n' "$IDENT" | awk 'NF' | wc -l | tr -d ' ')"
+if [ "$N_IDENT" = "0" ]; then
+  die "No 'Developer ID Application' identity in this keychain.
+
+That is the certificate a DMG downloaded outside the App Store signs with —
+NOT 'Apple Distribution' (App Store) and NOT 'Apple Development'. Create one at
+developer.apple.com/account/resources/certificates → + → Developer ID
+Application, download it, double-click to install, then re-run this.
+
+What this keychain does have:
+$(sed 's/^/  /' "$WORK/ids.txt")"
+fi
+[ "$N_IDENT" = "1" ] || die "More than one Developer ID Application identity here; I won't guess which:
+$(printf '%s\n' "$IDENT" | sed 's/^/  - /')"
+ok "$IDENT"
+
+# --------------------------------------------------------------------- export
+# The keychain will only hand over a private key with the user's consent, so a
+# GUI prompt here is expected, not a failure. The password is a throwaway for a
+# file inside $WORK that this script deletes on exit.
+say "Exporting identities from the keychain (expect a macOS Allow prompt)"
+TMPPW="$(openssl rand -hex 16)"; export TMPPW
+security export -t identities -f pkcs12 -P "$TMPPW" -o "$WORK/all.p12" \
+  || die "The keychain export was cancelled or denied. Re-run and click Allow."
+ok "exported"
+
+# OpenSSL 3 needs -legacy for the RC2-encrypted PKCS#12 macOS writes; LibreSSL
+# (what /usr/bin/openssl usually is) has no -legacy flag at all. Try both.
+if ! openssl pkcs12 -in "$WORK/all.p12" -nodes -passin env:TMPPW -legacy \
+        -out "$WORK/all.pem" 2>/dev/null; then
+  openssl pkcs12 -in "$WORK/all.p12" -nodes -passin env:TMPPW \
+        -out "$WORK/all.pem" 2>/dev/null \
+    || die "Could not read the keychain's own export. Send me the output of: openssl version"
+fi
+
+# ---------------------------------------------------------------------- split
+awk '/-----BEGIN CERTIFICATE-----/{c++; f=d "/cert." c ".pem"; p=1}
+     p{print > f}
+     /-----END CERTIFICATE-----/{p=0}' d="$WORK" "$WORK/all.pem"
+awk '/-----BEGIN .*PRIVATE KEY-----/{k++; f=d "/key." k ".pem"; p=1}
+     p{print > f}
+     /-----END .*PRIVATE KEY-----/{p=0}' d="$WORK" "$WORK/all.pem"
+rm -f "$WORK/all.pem" "$WORK/all.p12"
+
+say "Picking out that one certificate and its private key"
+CERT=""
+for f in "$WORK"/cert.*.pem; do
+  [ -e "$f" ] || continue
+  [ "$(cn_of "$f")" = "$IDENT" ] && { CERT="$f"; break; }
+done
+[ -n "$CERT" ] || die "The keychain export didn't contain '$IDENT'. If the key shows as
+non-exportable, the certificate was installed without its private key and has
+to be re-created at developer.apple.com."
+
+# Match key to certificate by public key, not by position: the export's
+# ordering is not guaranteed and pairing the wrong key produces a .p12 that
+# imports fine and then fails to sign.
+CPUB="$(openssl x509 -in "$CERT" -noout -pubkey | openssl dgst -sha256 | awk '{print $NF}')"
+KEY=""
+for f in "$WORK"/key.*.pem; do
+  [ -e "$f" ] || continue
+  kpub="$(openssl pkey -in "$f" -pubout 2>/dev/null | openssl dgst -sha256 | awk '{print $NF}')" || continue
+  [ "$kpub" = "$CPUB" ] && { KEY="$f"; break; }
+done
+[ -n "$KEY" ] || die "Found the certificate but not its private key. Signing needs both."
+ok "certificate and matching private key"
+
+openssl x509 -in "$CERT" -checkend 0 >/dev/null 2>&1 \
+  || die "That certificate has already expired ($(openssl x509 -in "$CERT" -noout -enddate | cut -d= -f2)). Create a new Developer ID Application certificate."
+if ! openssl x509 -in "$CERT" -checkend 2592000 >/dev/null 2>&1; then
+  printf '  \033[33mnote\033[0m expires within 30 days: %s\n' \
+    "$(openssl x509 -in "$CERT" -noout -enddate | cut -d= -f2)"
+else
+  ok "valid until $(openssl x509 -in "$CERT" -noout -enddate | cut -d= -f2)"
+fi
+
+# ---------------------------------------------------------------------- repack
+# One leaf certificate only. Not even the Apple intermediate: the preflight
+# enumerates every certificate in the file and treats anything that isn't the
+# wanted identity as an extra, and macOS runners already trust Apple's
+# Developer ID intermediate.
+say "Building a single-identity .p12"
+NEWPW="$(openssl rand -base64 24)"; export NEWPW
+openssl pkcs12 -export -out "$WORK/desktop.p12" -inkey "$KEY" -in "$CERT" \
+  -name "$IDENT" -passout env:NEWPW || die "Repacking the .p12 failed."
+
+if ! openssl pkcs12 -in "$WORK/desktop.p12" -passin env:NEWPW -nokeys -legacy \
+        -out "$WORK/check.pem" 2>/dev/null; then
+  openssl pkcs12 -in "$WORK/desktop.p12" -passin env:NEWPW -nokeys \
+        -out "$WORK/check.pem" 2>/dev/null || die "Built a .p12 I can't reopen."
+fi
+N_CERT="$(grep -c 'BEGIN CERTIFICATE' "$WORK/check.pem" || true)"
+[ "$N_CERT" = "1" ] || die "Built a .p12 holding $N_CERT certificates; the release preflight requires exactly 1."
+ok "exactly 1 certificate, 1 private key"
+
+B64="$(base64 -i "$WORK/desktop.p12" | tr -d '\n')"
+[ "${#B64}" -gt 1000 ] || die "The base64 came out ${#B64} characters long, which cannot be a real .p12."
+ok "base64 is ${#B64} characters"
+
+# ---------------------------------------------------------------------- upload
+# Values go in on stdin, never argv: keeps the key and password out of shell
+# history and out of `ps`.
+say "Setting the secrets on $REPO"
+printf '%s' "$B64"   | gh secret set APPLE_DESKTOP_CERTIFICATE          --repo "$REPO"
+printf '%s' "$NEWPW" | gh secret set APPLE_DESKTOP_CERTIFICATE_PASSWORD --repo "$REPO"
+# Set the identity from the same certificate that just went up, so the
+# workflow's exact-string comparison cannot fail on a stray space or an old
+# team name.
+printf '%s' "$IDENT" | gh secret set APPLE_SIGNING_IDENTITY             --repo "$REPO"
+ok "APPLE_DESKTOP_CERTIFICATE, APPLE_DESKTOP_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY"
+
+# ------------------------------------------------------------------------ keep
+# Developer ID certificates are limited per account and revoking one breaks
+# apps already shipped under it, so losing this key is expensive. Keep a copy.
+mkdir -p "$KEEP_DIR"; chmod 700 "$KEEP_DIR"
+cp "$WORK/desktop.p12" "$KEEP_DIR/developer-id-application.p12"
+printf '%s\n' "$NEWPW" > "$KEEP_DIR/developer-id-application.password.txt"
+chmod 600 "$KEEP_DIR/developer-id-application.p12" \
+          "$KEEP_DIR/developer-id-application.password.txt"
+
+cat <<SUMMARY
+
+Done. Signing identity: $IDENT
+
+Backup copy (move both into your password manager, then delete the folder —
+Developer ID certs are limited per account and revoking one breaks apps you
+have already shipped):
+  $KEEP_DIR/developer-id-application.p12
+  $KEEP_DIR/developer-id-application.password.txt
+
+Next: a dry run of the Flasher release.
+  gh workflow run desktop-flasher-release.yml --repo $REPO --ref main -f dry_run=true
+SUMMARY
