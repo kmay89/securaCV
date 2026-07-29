@@ -199,16 +199,57 @@ printf '%s\n' "$NEWPW" > "$KEEP_DIR/developer-id-application.password.txt"
 chmod 600 "$KEEP_DIR/developer-id-application.p12" \
           "$KEEP_DIR/developer-id-application.password.txt"
 
+# ------------------------------------------------------- what's still missing
+# This script only owns the three certificate secrets. Signing also needs
+# notarization credentials and the ENABLE_MACOS_SIGNING variable — and the
+# workflows take the UNSIGNED branch unless that variable is exactly "true", so
+# an incomplete setup ships an unsigned app with a green checkmark rather than
+# failing. Report the gap here instead of letting a release discover it.
+# --json needs gh >= 2.30; fall back to the table output on older versions.
+gh_secret_names() {
+  gh secret list --repo "$REPO" --json name --jq '.[].name' 2>/dev/null && return 0
+  gh secret list --repo "$REPO" 2>/dev/null | awk '{print $1}'
+}
+gh_variable_value() {
+  gh variable list --repo "$REPO" --json name,value \
+     --jq ".[] | select(.name==\"$1\") | .value" 2>/dev/null && return 0
+  gh variable list --repo "$REPO" 2>/dev/null | awk -v n="$1" '$1 == n {print $2}'
+}
+# `|| true` on both: this runs AFTER the secrets are set, and `set -e` plus
+# `pipefail` would otherwise abort the script — silently, having printed
+# nothing — just because a `gh` fallback exited non-zero. Reporting is
+# best-effort by design; it must never swallow the summary.
+SECRETS="$(gh_secret_names || true)"
+MISSING=""
+for s in APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+  printf '%s\n' "$SECRETS" | grep -qxF "$s" || MISSING="$MISSING $s"
+done
+SIGNING_ON="$(gh_variable_value ENABLE_MACOS_SIGNING || true)"
+
+say "Done — signing identity: $IDENT"
 cat <<SUMMARY
-
-Done. Signing identity: $IDENT
-
 Backup copy (move both into your password manager, then delete the folder —
 Developer ID certs are limited per account and revoking one breaks apps you
 have already shipped):
   $KEEP_DIR/developer-id-application.p12
   $KEEP_DIR/developer-id-application.password.txt
-
-Next: a dry run of the Flasher release.
-  gh workflow run desktop-flasher-release.yml --repo $REPO --ref main -f dry_run=true
 SUMMARY
+
+if [ -n "$MISSING" ] || [ "$SIGNING_ON" != "true" ]; then
+  printf '\n\033[33mStill to do before a release can sign\033[0m\n'
+  for s in $MISSING; do
+    case "$s" in
+      APPLE_ID) printf '  %s — your Apple ID email, for notarization:\n      gh secret set APPLE_ID --repo %s\n' "$s" "$REPO" ;;
+      APPLE_PASSWORD) printf '  %s — an app-specific password from appleid.apple.com (NOT your Apple ID password):\n      gh secret set APPLE_PASSWORD --repo %s\n' "$s" "$REPO" ;;
+      APPLE_TEAM_ID) printf '  %s — the 10-character Team ID, %s here:\n      gh secret set APPLE_TEAM_ID --repo %s\n' "$s" "$(printf '%s' "$IDENT" | sed -n 's/.*(\([A-Z0-9]*\))$/\1/p')" "$REPO" ;;
+    esac
+  done
+  if [ "$SIGNING_ON" != "true" ]; then
+    printf '  ENABLE_MACOS_SIGNING is %s — the workflows build UNSIGNED unless it is exactly "true":\n      gh variable set ENABLE_MACOS_SIGNING --repo %s --body true\n' \
+      "${SIGNING_ON:-unset}" "$REPO"
+  fi
+  printf '\nSee desktop/SIGNING.md section 3 for what each one is.\n'
+else
+  printf '\n  ok   notarization secrets present, ENABLE_MACOS_SIGNING=true\n'
+  printf '\nNext: a dry run of the Flasher release.\n  gh workflow run desktop-flasher-release.yml --repo %s --ref main -f dry_run=true\n' "$REPO"
+fi

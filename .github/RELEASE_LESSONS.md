@@ -1212,3 +1212,11 @@ Two independent failures, one release day, both invisible-by-design.
   the preflight demands and make the setup tool produce exactly that; here
   the guard's real invariant was "exactly one certificate", so the script
   omits even the Apple intermediate.
+- **Second-order trap caught in review:** a *partial* credential setup is
+  worse than none. The desktop workflows pick the unsigned branch unless
+  `ENABLE_MACOS_SIGNING` is exactly `true`, and notarization needs
+  `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` — none of which the
+  certificate script owns. Setting only the three cert secrets and calling
+  it done would ship an **unsigned** app under a green checkmark. A setup
+  tool that covers part of a credential set must enumerate what it did
+  *not* set, because the failure mode of the remainder is silent success.

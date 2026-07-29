@@ -73,8 +73,16 @@ disagree. Nothing is written to GitHub unless the file it built passes the same
 checks the release workflow runs. macOS will ask permission to export the
 private key; that prompt is the keychain doing its job.
 
-Then skip to **§4** — §3 is reference for what those secrets mean, not steps to
-perform.
+Those three are the *certificate*. Signing also needs notarization credentials
+and the `ENABLE_MACOS_SIGNING` variable, which the script does not invent — so
+it finishes by listing whatever is still missing, with the command for each.
+**If it prints "Still to do", work through that list (§3 explains each one)
+before §4.** Take that seriously: the workflows build **unsigned** unless
+`ENABLE_MACOS_SIGNING` is exactly `true`, so a half-finished setup ships an
+unsigned app under a green checkmark instead of failing.
+
+If it instead prints `notarization secrets present, ENABLE_MACOS_SIGNING=true`,
+you're done here — go to **§4**.
 
 <details>
 <summary>Doing it by hand (and the four ways that went wrong)</summary>
