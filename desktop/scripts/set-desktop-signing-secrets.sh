@@ -46,6 +46,10 @@ cn_of() {
   cn="$(openssl x509 -in "$1" -noout -subject -nameopt multiline 2>/dev/null \
         | awk '/^ *commonName/{sub(/^ *commonName *= */, ""); print; exit}')"
   if [ -z "$cn" ]; then
+    # Both separators map to newline deliberately, so string2 repeats \n: BSD tr
+    # and GNU tr disagree about padding a short string2, and a one-character
+    # string2 would behave differently on the Mac this runs on.
+    # shellcheck disable=SC2020
     cn="$(openssl x509 -in "$1" -noout -subject 2>/dev/null \
           | awk '{sub(/^subject=[[:space:]]*/, "")} 1' \
           | tr ',/' '\n\n' \
