@@ -1434,7 +1434,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-watch.js",
         "factory": "createCanaryEmuWatch",
-        "fw_version": "2.4.1",
+        "fw_version": "2.4.2",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -1461,7 +1461,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-dash.js",
         "factory": "createCanaryEmuDash",
-        "fw_version": "2.4.1",
+        "fw_version": "2.4.2",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -1488,7 +1488,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-nightstand.js",
         "factory": "createCanaryEmuNightstand",
-        "fw_version": "2.4.1",
+        "fw_version": "2.4.2",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -1515,7 +1515,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-touch169.js",
         "factory": "createCanaryEmuTouch169",
-        "fw_version": "2.4.1",
+        "fw_version": "2.4.2",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -1542,7 +1542,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-dash.js",
         "factory": "createCanaryEmuDash",
-        "fw_version": "2.4.1",
+        "fw_version": "2.4.2",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
