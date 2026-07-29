@@ -1149,3 +1149,30 @@ Two independent failures, one release day, both invisible-by-design.
   shared name is a silent coupling that only shows up as someone else's
   build failing later. And validate credentials at the START of a long job,
   where the error is cheap and legible.
+
+### 2026-07-29 (n) — `security export -t identities` exports EVERY identity, and tauri validates the last one
+
+- **Symptom:** with the Developer ID certificate correctly created and the
+  new `APPLE_DESKTOP_CERTIFICATE` secret in place, the signed macOS build
+  still died ~8 minutes in with the same message as the collision it was
+  meant to fix: `certificate from APPLE_CERTIFICATE "Apple Development:
+  …" does not match provided identity`. The (m) preflight PASSED, because
+  the requested identity really was inside the `.p12`.
+- **Cause:** two facts meeting. `security export -k login.keychain-db -t
+  identities` exports **every** identity in the keychain — not just the
+  ones `security find-identity -v -p codesigning` lists (that command
+  filters to identities valid for the codesigning policy, which is why it
+  showed only one while three were present). And tauri checks the **last**
+  certificate it finds in the bundle against `APPLE_SIGNING_IDENTITY`, so
+  a `.p12` carrying the iOS Apple Development / Apple Distribution
+  identities alongside the Developer ID one aborts even though the right
+  certificate is there.
+- **Fix:** the `.p12` must contain exactly ONE identity — in Keychain
+  Access, expand the certificate and export the certificate row alone. The
+  preflight now also fails when the bundle holds anything besides the
+  requested identity, naming the extras, so this costs seconds instead of
+  a full build. "Contains the right cert" was too weak a check; "contains
+  only the right cert" is the real invariant.
+- **Applies to:** every `.p12` fed to a CI signer. Verify the *shape* of a
+  credential bundle, not just that the needle is somewhere in it — and
+  never assume an export command exports the subset you were looking at.

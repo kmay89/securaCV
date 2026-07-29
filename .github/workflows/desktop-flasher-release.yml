@@ -421,6 +421,19 @@ jobs:
           echo "Certificates inside APPLE_DESKTOP_CERTIFICATE:"
           printf '%s\n' "$CNS" | awk '{print "  - " $0}'
           echo "APPLE_SIGNING_IDENTITY asks for: $WANT"
+          # Tauri validates against the LAST certificate it finds in the .p12,
+          # so ANY extra identity in there aborts the bundle with "does not
+          # match provided identity" — even when the right one is present.
+          # `security export -t identities` exports EVERY identity in the
+          # keychain (including iOS certs that `find-identity -v -p codesigning`
+          # doesn't list), which is exactly how that happens. Catch it here, in
+          # seconds, instead of ~8 minutes into a build.
+          EXTRA=$(printf '%s\n' "$CNS" | grep -vxF "$WANT" || true)
+          if [ -n "$EXTRA" ] && printf '%s\n' "$CNS" | grep -qxF "$WANT"; then
+            echo "::error::The .p12 holds identities besides the one being used. Tauri checks the LAST certificate it finds and will abort. Re-export ONLY '$WANT' (Keychain Access: expand that certificate, select the certificate row alone, right-click → Export) and update APPLE_DESKTOP_CERTIFICATE. Extra identities found:"
+            printf '%s\n' "$EXTRA" | awk '{print "  - " $0}'
+            exit 1
+          fi
           if ! printf '%s\n' "$CNS" | grep -qxF "$WANT"; then
             echo "::error::The .p12 does not contain the identity named by APPLE_SIGNING_IDENTITY. Signing would fail after a long build. Export the 'Developer ID Application: ...' identity (NOT Apple Distribution, NOT Apple Development) and set APPLE_DESKTOP_CERTIFICATE + APPLE_SIGNING_IDENTITY to the same one — desktop/SIGNING.md."
             exit 1
