@@ -63,12 +63,12 @@ key needed:
 - Keychain Access → **login** keychain → **My Certificates**
 - find **"Developer ID Application: Your Name (TEAMID)"** → right-click →
   **Export…** → save `flasher-cert.p12` → set an **export password** (remember
-  it — it becomes `APPLE_CERTIFICATE_PASSWORD`).
+  it — it becomes `APPLE_DESKTOP_CERTIFICATE_PASSWORD`).
 
 **2b. Base64-encode it** for the secret (Terminal):
 
 ```sh
-base64 -i flasher-cert.p12 | pbcopy      # now on your clipboard → APPLE_CERTIFICATE
+base64 -i flasher-cert.p12 | pbcopy      # now on your clipboard → APPLE_DESKTOP_CERTIFICATE
 ```
 
 **2c. Read the exact identity string** (must match byte-for-byte):
@@ -185,8 +185,8 @@ release version that already exists is not a release** (bump first).
   bundle it as a framework or sidecar, never a bare resource.
 - **"You must first sign the relevant contracts"** → accept the latest Apple
   Developer + Program License agreements at developer.apple.com, then re-run.
-- **`APPLE_CERTIFICATE` import fails** → the base64 must be the whole `.p12`
-  (`base64 -i file.p12`), and `APPLE_CERTIFICATE_PASSWORD` must be the **export**
+- **`APPLE_DESKTOP_CERTIFICATE` import fails** → the base64 must be the whole `.p12`
+  (`base64 -i file.p12`), and `APPLE_DESKTOP_CERTIFICATE_PASSWORD` must be the **export**
   password you set in 2a, not your Apple ID password.
 - **Notarization hangs / times out** → it's an Apple-side queue; re-run the
   workflow. The submission is idempotent.

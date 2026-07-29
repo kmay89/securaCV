@@ -401,13 +401,23 @@ jobs:
               rm -f "$RUNNER_TEMP/desktop-cert.p12"; exit 1; }
           fi
           rm -f "$RUNNER_TEMP/desktop-cert.p12"
-          CNS=$(awk '/BEGIN CERT/,/END CERT/' "$RUNNER_TEMP/certs.pem" \
-                | csplit -z -f "$RUNNER_TEMP/c" -b '%02d.pem' - '/BEGIN CERT/' '{*}' >/dev/null 2>&1 \
-                ; for c in "$RUNNER_TEMP"/c*.pem; do
-                    [ -e "$c" ] || continue
-                    openssl x509 -in "$c" -noout -subject -nameopt multiline 2>/dev/null \
-                      | awk '/^ *commonName/{sub(/^ *commonName *= */, ""); print}'
-                  done | sort -u)
+          # Walk the certificates one at a time. NOT csplit: this job runs on
+          # macOS, whose BSD csplit has no -z/-b (GNU-only) — it would fail,
+          # produce no files, leave CNS empty, and reject every certificate
+          # including the right one. awk + a counter is POSIX and behaves the
+          # same on both platforms.
+          TOTAL=$(grep -c 'BEGIN CERTIFICATE' "$RUNNER_TEMP/certs.pem" || true)
+          : > "$RUNNER_TEMP/cns.txt"
+          i=1
+          while [ "$i" -le "${TOTAL:-0}" ]; do
+            awk -v want="$i" '/-----BEGIN CERTIFICATE-----/{c++} c==want' \
+              "$RUNNER_TEMP/certs.pem" > "$RUNNER_TEMP/one.pem"
+            openssl x509 -in "$RUNNER_TEMP/one.pem" -noout -subject -nameopt multiline 2>/dev/null \
+              | awk '/^ *commonName/{sub(/^ *commonName *= */, ""); print}' >> "$RUNNER_TEMP/cns.txt"
+            i=$((i + 1))
+          done
+          rm -f "$RUNNER_TEMP/one.pem"
+          CNS=$(awk 'NF' "$RUNNER_TEMP/cns.txt" | sort -u)
           echo "Certificates inside APPLE_DESKTOP_CERTIFICATE:"
           printf '%s\n' "$CNS" | awk '{print "  - " $0}'
           echo "APPLE_SIGNING_IDENTITY asks for: $WANT"
