@@ -114,7 +114,9 @@ won't verify. To make self-update work for good:
 
 To drop the one-time `xattr` step in `INSTALL.md`, add an Apple Developer
 signing identity + notarization credentials to the `tauri-action` step
-(`APPLE_CERTIFICATE`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`). Costs
+(`APPLE_DESKTOP_CERTIFICATE`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` —
+desktop-only cert name so the iPhone pipeline's `APPLE_CERTIFICATE` can't
+clobber it; see `SIGNING.md`). Costs
 $99/yr; everything else stays the same.
 
 ## Local development

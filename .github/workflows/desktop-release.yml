@@ -183,13 +183,63 @@ jobs:
           includeUpdaterJson: true
           args: ${{ matrix.args }}
 
+      - name: Verify the macOS signing certificate matches the identity
+        # Fail in seconds, with the reason, instead of ~10 minutes into a
+        # bundle with tauri's terse "certificate ... does not match provided
+        # identity". This exact mismatch shipped nothing three times running:
+        # the iPhone pipeline reused APPLE_CERTIFICATE for an Apple
+        # Distribution/Development .p12, which is NOT what a notarized
+        # outside-the-App-Store DMG signs with (Developer ID Application).
+        # Hence the separate APPLE_DESKTOP_* namespace — see
+        # .github/RELEASE_LESSONS.md 2026-07-29 (m) and desktop/SIGNING.md.
+        if: matrix.platform == 'macos-latest' && vars.ENABLE_MACOS_SIGNING == 'true'
+        env:
+          CERT_B64: ${{ secrets.APPLE_DESKTOP_CERTIFICATE }}
+          CERT_PW: ${{ secrets.APPLE_DESKTOP_CERTIFICATE_PASSWORD }}
+          WANT: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CERT_B64:-}" ]; then
+            echo "::error::ENABLE_MACOS_SIGNING is on but APPLE_DESKTOP_CERTIFICATE is empty. The desktop apps sign with their OWN secret now (APPLE_DESKTOP_CERTIFICATE / _PASSWORD, a Developer ID Application .p12) so the iPhone pipeline's APPLE_CERTIFICATE can never overwrite it. Setup: desktop/SIGNING.md."
+            exit 1
+          fi
+          printf '%s' "$CERT_B64" | base64 --decode > "$RUNNER_TEMP/desktop-cert.p12"
+          # Every certificate in the .p12, by common name. -legacy covers the
+          # RC2-encrypted .p12s Keychain Access still exports.
+          if ! openssl pkcs12 -in "$RUNNER_TEMP/desktop-cert.p12" -passin env:CERT_PW -nokeys -legacy \
+                 > "$RUNNER_TEMP/certs.pem" 2>/dev/null; then
+            openssl pkcs12 -in "$RUNNER_TEMP/desktop-cert.p12" -passin env:CERT_PW -nokeys \
+                 > "$RUNNER_TEMP/certs.pem" 2>/dev/null || {
+              echo "::error::Could not open the .p12 — APPLE_DESKTOP_CERTIFICATE_PASSWORD is probably wrong, or the base64 isn't a whole .p12 file (use: base64 -i cert.p12)."
+              rm -f "$RUNNER_TEMP/desktop-cert.p12"; exit 1; }
+          fi
+          rm -f "$RUNNER_TEMP/desktop-cert.p12"
+          CNS=$(awk '/BEGIN CERT/,/END CERT/' "$RUNNER_TEMP/certs.pem" \
+                | csplit -z -f "$RUNNER_TEMP/c" -b '%02d.pem' - '/BEGIN CERT/' '{*}' >/dev/null 2>&1 \
+                ; for c in "$RUNNER_TEMP"/c*.pem; do
+                    [ -e "$c" ] || continue
+                    openssl x509 -in "$c" -noout -subject -nameopt multiline 2>/dev/null \
+                      | sed -n 's/^ *commonName *= //p'
+                  done | sort -u)
+          echo "Certificates inside APPLE_DESKTOP_CERTIFICATE:"
+          echo "$CNS" | sed 's/^/  - /'
+          echo "APPLE_SIGNING_IDENTITY asks for: $WANT"
+          if ! printf '%s\n' "$CNS" | grep -qxF "$WANT"; then
+            echo "::error::The .p12 does not contain the identity named by APPLE_SIGNING_IDENTITY. Signing would fail after a long build. Export the 'Developer ID Application: ...' identity (NOT Apple Distribution, NOT Apple Development) and set APPLE_DESKTOP_CERTIFICATE + APPLE_SIGNING_IDENTITY to the same one — desktop/SIGNING.md."
+            exit 1
+          fi
+          if ! printf '%s' "$WANT" | grep -q '^Developer ID Application:'; then
+            echo "::warning::APPLE_SIGNING_IDENTITY is not a 'Developer ID Application' identity. A DMG downloaded outside the App Store needs that one to notarize and open cleanly."
+          fi
+          echo "Match confirmed — signing can proceed."
+
       - name: Build & publish (signed macOS)
         if: vars.ENABLE_MACOS_SIGNING == 'true'
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_DESKTOP_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DESKTOP_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}

@@ -1112,3 +1112,40 @@ Two independent failures, one release day, both invisible-by-design.
   If the workflow body is "today" but the workspace is "then", every
   local action, script, and config it touches is "then" until you
   overlay it. Decide per file which era it should come from, and say so.
+
+### 2026-07-29 (m) — One secret name, two Apple certificates: setting up the iPhone app silently un-shipped the Mac apps
+
+- **Symptom:** `flasher-v0.3.4` published and signed fine at 06:23. Every
+  desktop release after 17:00 that day failed — three in a row, so
+  **Flasher 0.3.5 never shipped** — with tauri's
+  `failed to bundle project: certificate from APPLE_CERTIFICATE "Apple
+  Development: …" does not match provided identity "***"`. Nothing in the
+  desktop tree had changed. The firmware releases beside them were green,
+  so the master button reported a healthy push while one product silently
+  stopped shipping.
+- **Cause:** `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` were read by
+  **six** workflows that need **different certificates**. The Apple-native
+  pipelines (`ios-release`, `tvos-release`, `desktop-mobile-release`) sign
+  for the **App Store** and want an **Apple Distribution** identity; the
+  Tauri desktop pipelines (`desktop-flasher-release`, `desktop-release`)
+  produce a **notarized DMG downloaded outside the App Store**, which
+  requires **Developer ID Application** — `desktop/SIGNING.md` even says in
+  bold *not* Apple Distribution. Standing up iOS signing wrote an iOS `.p12`
+  into the shared name, which is correct for iOS and fatal for macOS.
+  Whoever writes the secret last breaks the other platform, with no warning
+  and no diff to point at.
+- **Fix:** give each signing domain its own namespace. The desktop apps now
+  read `APPLE_DESKTOP_CERTIFICATE` / `APPLE_DESKTOP_CERTIFICATE_PASSWORD`
+  (Developer ID Application); iOS/tvOS/mobile keep `APPLE_CERTIFICATE`
+  (Apple Distribution) untouched, so the working iPhone setup is not
+  disturbed. Both desktop workflows also gained a **preflight**: decode the
+  `.p12`, list every certificate common-name in it, and fail in seconds if
+  `APPLE_SIGNING_IDENTITY` isn't among them — printing what *was* found —
+  instead of dying ten minutes into a bundle. It warns, too, if the identity
+  isn't a `Developer ID Application:` one.
+- **Applies to:** every credential shared across targets in one repo —
+  signing certs, API keys, provisioning profiles. If two platforms need
+  *different values* for the same concept, they need *different names*; a
+  shared name is a silent coupling that only shows up as someone else's
+  build failing later. And validate credentials at the START of a long job,
+  where the error is cheap and legible.
