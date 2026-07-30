@@ -24,6 +24,15 @@ project:
   from. Each tool's own entrypoint file (`CLAUDE.md`, `GEMINI.md`, `QWEN.md`,
   Copilot, Cursor, Cline, Windsurf) is generated from it, so they can't drift.
 
+## Steer the project (no code required)
+
+- [**How an idea becomes a shipped feature**](IDEAS.md) — the suggestion
+  pipeline end to end: say it in one sentence, it becomes a public issue, people
+  back it with a 👍, and the label lane tracks it to a release. Includes the
+  honest case for **why a privacy project runs its suggestion box on GitHub**,
+  the maintainer triage loop, and the one string (`idea`) that joins all four
+  moving parts together.
+
 ## Start here
 
 Pick the row that sounds like you (same four paths as the interactive guide):

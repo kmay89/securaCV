@@ -1,0 +1,50 @@
+name: Labels
+
+# Makes `.github/labels.yml` real.
+#
+# The idea pipeline runs on labels: the issue form applies `idea`, and the
+# Community Ideas board on securacv.com lists issues by that label. GitHub
+# drops a template label that doesn't exist WITHOUT ERROR, so "the label was
+# never created" is a silent, total outage of the board — issues open fine,
+# they just never appear anywhere a non-GitHub user can see them. This
+# workflow closes that gap: the manifest is the source of truth, and merging
+# a change to it creates or corrects the labels within a minute.
+#
+# Additive by design — it creates and updates the labels it declares and
+# touches nothing else. See the header of .github/labels.yml for why a
+# "reconcile to exactly this list" sync would be actively harmful here.
+#
+# Safe to re-run: creating an existing label is treated as an update, and a
+# label already matching its manifest entry is left alone. Run it by hand any
+# time from Actions → Labels → "Run workflow".
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/labels.yml'
+      - '.github/workflows/labels.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write # creating and updating labels is an issues-scope write
+
+# Never cancel a partially-applied sync: a run killed between two label
+# writes leaves the repo in a state no one has looked at. Queue instead.
+concurrency:
+  group: labels-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync labels from the manifest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Create or update the declared labels
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 .github/scripts/sync_labels.py
