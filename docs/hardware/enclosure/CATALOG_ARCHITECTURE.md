@@ -282,7 +282,8 @@ duplicated.
    `canary-local/tests/catalog.test.js`; `enclosures.json`/`workshop.json` remain
    the live views. It also self-reports coverage (`engineering_param_count`) so
    the manifest never pretends to surface knobs it drops.
-3. **Unify the two pickers.** *(In progress.)* ✅ **`enclosure-lab.js` done** —
+3. **Unify the two pickers.** *(Partly done — the `workshop.js` picker is still
+   open; see §9.)* ✅ **`enclosure-lab.js` done** —
    the lab now reads `catalog.json` (loaded by `app.js`) and renders a live
    configurator in place of the read-only param text: variant-axis selectors
    that jump to the matching committed STL (or flag a custom combo), user-option
@@ -314,31 +315,47 @@ duplicated.
    e.g. a rugged vision build has no vision-specific field case, so it falls back
    to the device-agnostic carriers (`field_case`/`hammond`/`relay_solar`) and
    says so. Guarded by `canary-local/tests/catalog_funnel.test.js`.
-5. **Make the showroom manifest-driven** — delete the hand `PRODUCTS` array;
-   render products/variants/status/choreography from the manifest at the pinned
-   SHA (it already fetches from the repo).
+5. **Make the showroom manifest-driven.** ✅ **Done** — the website showroom
+   (`securacv_website/js/showroom.js`) now fetches `catalog.json` from the **same
+   pinned commit** it pins every STL/GLB to and derives product **status** from
+   the manifest's variant statuses (the five hand-typed `status` strings are
+   deleted), plus an honest catalog line (env as *design intent, not verified* ·
+   variants/flavors · options · sideways alternatives) and a drift guard when a
+   referenced `.scad` isn't in the manifest. The 3D **scene/choreography** stays
+   hand-authored — the manifest has no scene data, so `PRODUCTS` keeps the parts/
+   positions/explode/camera, and only the retyped metadata moves to the manifest.
+   Pure logic in `js/showroom-catalog.mjs`, gated by
+   `tests/showroom-catalog.test.mjs`.
 
 Sensible stop points: after 1–2 the catalog is *correct and complete* even
 without new UI; after 3 the option story is coherent; 4–5 are the delight layer.
+**Phases 1, 2, 4 and 5 are fully landed, and Phase 3 is landed except its second
+picker** — the per-device `workshop.js` configurator (§8.3's ⬜) is the single
+open item in the plan. It is real Phase-3 work, not dropped: the faceted browse
+(§6B) covers every product it doesn't configure and its three configurable
+devices already surface their user options, so it's low-urgency — but Phase 3 is
+not closed until it lands.
 
 ---
 
 ## 9. Status & what's next
 
-Phases **1–2 are landed as data**: the manifest is real and generated
-(`canary-local/devices/catalog.json`), not just described — run
-`python3 canary-local/tools/gen_enclosures.py` to rebuild it. It is the
-correct-and-complete source the rest of the work reads from; it does **not** yet
-drive any UI.
+**Phases 1, 2, 4 and 5 are fully landed; Phase 3 is landed except its second
+picker.** The manifest is real and generated (`canary-local/devices/catalog.json`
+— run `python3 canary-local/tools/gen_enclosures.py` to rebuild), and it drives
+most of the UI: the enclosure lab's live configurator (§8.3), the faceted browse
+(§6B, `catalog.html`), the guided funnel + remix rail (§6A/§6D, `find.html`), and
+the website showroom's status/facts (§8.5, `securacv_website`). Each was its own
+CI-gated, drift-checked PR.
 
-The next buildable step is **Phase 3** — point a picker at the manifest: fold
-`enclosure-lab.js`'s read-only param text into real inputs and generalize
-`workshop.js`'s configurator to every product via `catalog.json` (today it hand-
-lists five devices). Phases 4–5 (guided funnel, remix rail, manifest-driven
-showroom) are the delight layer on top.
+**The one open item — Phase 3's second picker:** make the per-device
+`workshop.js` *configurator* itself catalog-driven — today it hand-lists five
+devices and filters options by the `opt_` prefix. This is required to close Phase
+3, not an optional extra; it is only low-urgency because its three configurable
+devices already surface their user options and the faceted browse covers every
+product it doesn't configure.
 
-Two honest gaps the manifest marks rather than hides, to close in Phase 3:
-`env` ratings come from a small curated overlay in the generator (there is no
-parseable rating source yet — Phase 1's source annotation would move them into
-the SCAD/README), and `remix_of` is `null` everywhere until a `builds.json`
-remix source exists.
+Two honest gaps the manifest still marks rather than hides: `env` ratings come
+from a small curated overlay in the generator (there is no parseable rating
+source yet — a source-annotation pass would move them into the SCAD/README), and
+`remix_of` is `null` everywhere until a `builds.json` remix source exists.
