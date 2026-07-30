@@ -1176,3 +1176,47 @@ Two independent failures, one release day, both invisible-by-design.
 - **Applies to:** every `.p12` fed to a CI signer. Verify the *shape* of a
   credential bundle, not just that the needle is somewhere in it — and
   never assume an export command exports the subset you were looking at.
+
+### 2026-07-29 (o) — A credential runbook made of copy-paste steps fails at the paste, not the crypto
+
+- **Symptom:** four consecutive dry runs of `desktop-flasher-release.yml`
+  died in the signing preflight, and not one of them was a signing
+  problem. In order: a three-identity `.p12` (twice, see (n)); then
+  `APPLE_DESKTOP_CERTIFICATE` **empty**, because Keychain Access had saved
+  the re-export somewhere other than the path the instructions assumed, so
+  `base64 -i <that path>` printed nothing and `gh secret set` stored the
+  empty string; and before that, a pasted block whose assignment line
+  carried a trailing `# comment`, which zsh runs as a command — leaving the
+  variable unset so every later check read zero and *still* wrote both
+  secrets.
+- **Cause:** the runbook was a sequence of human steps over a credential
+  whose correctness is invisible locally. Each step had a silent failure
+  mode (`gh secret set` accepts an empty value; `base64` of a missing file
+  exits 0 on some paths; a GUI remembers its own last directory; `#` is a
+  comment in a file but a command in an interactive zsh line), and the
+  first place any of them surfaced was a CI job eight steps in.
+- **Fix:** `desktop/scripts/set-desktop-signing-secrets.sh` — one command,
+  no paths to substitute, no GUI. It reads the identity from the keychain,
+  repacks *only* that certificate and the private key that matches it **by
+  public-key digest** (the export's order is not guaranteed; in testing the
+  key sat two positions away from its certificate, so pairing by position
+  would have produced a `.p12` that imports cleanly and then cannot sign),
+  and refuses to upload anything unless the result has exactly one
+  certificate, one matching key, an unexpired cert, and a CN identical to
+  the identity string. It sets `APPLE_SIGNING_IDENTITY` from that same
+  certificate, so the workflow's exact-string comparison cannot fail on a
+  stray space. Values go to `gh` on **stdin**, never argv.
+- **Applies to:** any credential a human has to move by hand into CI. If
+  correctness is only observable in CI, the local step must verify it
+  locally and refuse to proceed — a documented click-path cannot. Ask what
+  the preflight demands and make the setup tool produce exactly that; here
+  the guard's real invariant was "exactly one certificate", so the script
+  omits even the Apple intermediate.
+- **Second-order trap caught in review:** a *partial* credential setup is
+  worse than none. The desktop workflows pick the unsigned branch unless
+  `ENABLE_MACOS_SIGNING` is exactly `true`, and notarization needs
+  `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` — none of which the
+  certificate script owns. Setting only the three cert secrets and calling
+  it done would ship an **unsigned** app under a green checkmark. A setup
+  tool that covers part of a credential set must enumerate what it did
+  *not* set, because the failure mode of the remainder is silent success.
