@@ -58,15 +58,19 @@ automatically. You can watch it get written, watch it get reviewed, and see
 the exact firmware release it ships in — from the page where you first asked
 for it. Almost no product lets you do that.
 
-**Because it makes us accountable in public.** Not because we *can't* touch
-your words — any project owner can moderate their own issue tracker, and
-pretending otherwise would be the kind of overclaim this project fails a build
-over. Because we can't do it **invisibly**: an edited comment carries a visible
-edit history anyone can open, a closed idea shows who closed it and when, and
-the whole thread is public and archived by third parties the moment it exists.
-If we say no, the reason has to sit on your page where you and everyone else
-can read it. A private suggestion form has none of those properties, and every
-one of them is a check on us rather than on you.
+**Because the everyday moves leave a trail.** Not because we *can't* touch your
+words. Any project owner can moderate their own issue tracker — up to deleting
+a thread outright — and claiming otherwise would be the kind of overclaim this
+project fails a build over. What GitHub actually gives you is a record of the
+ordinary moves: an edited comment carries a visible edit history anyone can
+open, a closed idea shows who closed it and when, and the thread is public for
+as long as it exists. So the quiet ways a project walks back a promise are the
+visible ones here, and the drastic ways are conspicuous — people were already
+reading it. If we say no, the reason sits on your page where you and everyone
+else can see it. A private suggestion form gives you none of that.
+
+That is a weaker claim than "we can't touch it," and a more useful one: it's
+the one that survives someone going and checking.
 
 **Because the votes are real.** A vote is a reaction from a real account, which
 means we can't inflate the numbers and neither can a competitor. "This was the
