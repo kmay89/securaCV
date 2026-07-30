@@ -82,6 +82,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [Parity by architecture](FLEET_PARITY.md) — how a fleet-wide capability (like the `/api/fleet` self-report) lives in one host-tested `common/` core so one edit reaches every board, never a per-board copy-paste
 - [Which button do I press?](RELEASE_BUTTONS.md) — the operator's index: every release button, when to press it, when not to, and the three failures that cost us time (no signing key, a dark flasher, an app version that already shipped)
 - [Release process & channels](RELEASE_PROCESS.md) — tags → releases; how the dev channel stays invisible to release devices
+- [Apple signing, every target](APPLE_SIGNING.md) — which certificate signs which app and which secret carries it: the split is not Mac-vs-phone but *how the user gets the app* (website download needs Developer ID + notarization, an App Store needs Apple Distribution), why adding an app usually needs no new signing setup, and a symptom→cause table for the four ways this broke — including the `.p12` that `openssl` reads happily and macOS rejects as "wrong password?"
 - [USB evidence drive (design)](design/usb_evidence_drive.md) — the Canary as a read-only USB drive + drop-file signed updates
 - [USB onboarding (design)](design/usb_onboard.md) — "plug me in": consented HID help-launch, read-only drive, guided recovery/unsealing
 - [Serial test console (design)](design/test_console.md) — run tests over serial safely: read-only `t`, tiered demo/mutate gating, the BLE bring-up ladder
