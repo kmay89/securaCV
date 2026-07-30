@@ -18,6 +18,14 @@ The constitutional bar below applies to `spec/`, `kernel/`, and `src/`. The
 rest of SecuraCV is built to be welcoming, and that's where a first-time
 contributor should start:
 
+- **Suggest something — you don't have to write any code.** The most useful
+  thing many people ever contribute is one sentence about what they wish their
+  Canary did. Say it on the [Community Ideas board](https://securacv.com/ideas)
+  or straight in the [idea form](https://github.com/kmay89/securaCV/issues/new?template=idea.yml);
+  one box is required and plain words are perfect. It becomes a public issue,
+  people back it with a 👍, and the most-wanted are what get built next.
+  [`docs/IDEAS.md`](docs/IDEAS.md) is the whole path — including why this
+  project runs its suggestion box on GitHub, and what that actually costs you.
 - **Build a Canary in the browser** — no hardware, no soldering. Run the Lab
   (`canary-local/`, hosted at the site's `/lab`), then add your virtual build
   to the community gallery. That's a real, mergeable first PR.

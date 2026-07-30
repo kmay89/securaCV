@@ -1,0 +1,162 @@
+name: Idea Intake
+
+# The welcome desk for a community idea.
+#
+# Someone who has never used GitHub just filled in a form because a website
+# button asked them to. Right now, from their side, nothing visibly happened:
+# a page of grey chrome, some labels, silence. This workflow answers them —
+# it confirms the idea landed, says in plain words how a vote works (a 👍 on
+# the FIRST message, which is not obvious and is the single most common thing
+# people get wrong), and says what happens next.
+#
+# It also re-applies the `idea` label defensively. The issue form asks for that
+# label, but GitHub drops a template label that doesn't exist yet without
+# saying so, and a blank issue about an idea never had one to begin with. The
+# board lists issues by that label, so an unlabeled idea is an invisible one.
+# Belt and braces here is cheap; a silently empty ideas board is not.
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write # apply the label, post the welcome comment
+
+# One run per issue. Never cancel: a run killed between the label and the
+# comment leaves a submitter with no reply at all.
+concurrency:
+  group: idea-intake-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  welcome:
+    name: Label and welcome a new idea
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Cheap pre-filter so unrelated issues (bugs, security, board ports) never
+    # start a runner. The real check is in the script: the form prefixes every
+    # title with "Idea:", and the template applies the label when it exists.
+    if: >-
+      startsWith(github.event.issue.title, 'Idea:') ||
+      contains(github.event.issue.title, '[Idea]') ||
+      contains(join(github.event.issue.labels.*.name, ','), 'idea')
+    steps:
+      - name: Make sure it carries the `idea` label
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issue = context.payload.issue;
+            const has = (issue.labels || []).some(
+              (l) => (l.name || '').toLowerCase() === 'idea'
+            );
+            if (has) {
+              core.info('Already labeled `idea` — nothing to do.');
+              return;
+            }
+            try {
+              await github.rest.issues.addLabels({
+                owner, repo, issue_number: issue.number, labels: ['idea'],
+              });
+              core.info('Applied the `idea` label.');
+            } catch (err) {
+              // The one failure that matters: if the label itself is missing,
+              // the board is dark and no one will notice from the issue alone.
+              core.warning(
+                `Could not apply the \`idea\` label (${err.status}). ` +
+                'If the label does not exist, run Actions → Labels to create ' +
+                'it from .github/labels.yml — the ideas board reads that label.'
+              );
+            }
+
+      - name: Say hello, and explain how a vote works
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issue = context.payload.issue;
+            const author = issue.user.login;
+
+            // Has this person suggested something before? A returning
+            // contributor doesn't need the whole orientation again.
+            //
+            // Counted with the issues API, not the search API: search is
+            // eventually consistent, and an issue opened one second ago is
+            // usually not indexed yet — which would have made every returning
+            // submitter's count read one low. This is exact, and filtering by
+            // number means the issue we're replying to can't count itself.
+            let priors = 0;
+            try {
+              const mine = await github.paginate(github.rest.issues.listForRepo, {
+                owner, repo, creator: author, labels: 'idea', state: 'all', per_page: 100,
+              });
+              priors = mine.filter(
+                (i) => i.number !== issue.number && !i.pull_request
+              ).length;
+            } catch (err) {
+              core.info(`Could not count prior ideas (${err.status}); treating as a first.`);
+            }
+
+            const board = 'https://securacv.com/ideas';
+
+            const greeting = priors > 0
+              ? `Thanks again, @${author} — that's idea number ${priors + 1} from you. 🐤`
+              : `Thanks for this, @${author} — and welcome. 🐤`;
+
+            const orientation = priors > 0 ? '' : `
+
+            <details>
+            <summary><b>First time here? Why an idea for a camera lives on GitHub</b> (30 seconds)</summary>
+
+            GitHub is where the code for SecuraCV is written, reviewed, and released — so
+            putting the ideas here too means your suggestion sits in the same place as the
+            work. That's not a formality; it's what makes a few things true that a normal
+            suggestion box can't manage:
+
+            - **You can watch it happen.** When someone starts building this, the change
+              will link itself right here in this thread — the actual code, line by line.
+              You'll see it get reviewed, and you'll see which firmware release it lands in.
+            - **It can't quietly disappear.** This page is public and permanent. Nobody can
+              edit your words, and if we decline the idea we have to say so here, in the
+              open, where you and everyone else can read the reason.
+            - **Nobody harvested anything to let you in.** We never asked for your email,
+              because we don't run a database — GitHub already knows who you are, and that
+              free account is the same one that works for every other open-source project
+              you'll ever want to talk to.
+            - **The vote count is honest.** Votes are reactions from real accounts, so we
+              can't inflate them and neither can anyone else. When we say an idea was the
+              most-wanted, that's a number you can go and check yourself.
+
+            This is a privacy project. It would be strange to run it behind a form that
+            phoned home — so we don't.
+            </details>`;
+
+            const body = `${greeting}
+
+            Your idea is live on the **[Community Ideas board](${board})** now, where anyone
+            can find it and back it.
+
+            **How a vote works — it trips almost everyone up once:** a vote is a 👍 reaction
+            on the **first message of this page** (this one is a reply; reactions on replies
+            don't count). Hover the top message, click the little 🙂 face at its corner, and
+            pick 👍. That's the whole thing.
+
+            Two things that genuinely help right now:
+
+            1. **Vote for your own idea.** Yours counts like anyone's, and an idea sitting at
+               zero looks abandoned even when it isn't.
+            2. **Share this page's link** with anyone who'd want it too. The most-backed ideas
+               are what get built next — that's not a slogan, it's how the queue is ordered.
+
+            **What happens next:** a maintainer reads every one of these. As it moves, the
+            label on it changes and the board shows that in plain words — \`planned\` reads as
+            *"Planned"*, \`in-progress\` as *"Building now"*, and \`shipped\` as *"Shipped"*.
+            You'll get a notification at each step, and you can reply here any time; no
+            special phrasing needed, plain words are perfect.${orientation}`;
+
+            // The YAML block scalar above indents every line; strip that back
+            // out or the comment renders as one long code block.
+            await github.rest.issues.createComment({
+              owner, repo, issue_number: issue.number,
+              body: body.replace(/^[ \t]+/gm, ''),
+            });

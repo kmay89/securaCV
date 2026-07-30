@@ -1,0 +1,48 @@
+# The labels the idea pipeline depends on, declared once.
+#
+# WHY THIS FILE EXISTS: an issue form's `labels:` list is not a promise. If a
+# label named there doesn't already exist in the repo, GitHub silently drops
+# it — the issue opens unlabeled and nothing complains. That is exactly what
+# happened here: `.github/ISSUE_TEMPLATE/idea.yml` applies `idea`, the website's
+# Community Ideas board (`js/ideas.js` in kmay89/securacv_website) lists issues
+# by `labels=idea`, and the label had never been created. Every idea anyone
+# submitted would have landed unlabeled, and the board would have read "no ideas
+# yet" forever, with no error anywhere to explain why.
+#
+# So the labels the pipeline needs are now code: declared here, created by
+# `.github/workflows/labels.yml`, and reviewable in a diff.
+#
+# The sync is ADDITIVE ON PURPOSE — it creates what's missing and corrects the
+# color/description of what it declares. It never deletes or renames a label it
+# doesn't know about, because this repo's other labels (bug, help wanted, the
+# language labels, …) are managed by hand and by GitHub itself, and a
+# "reconcile to exactly this list" sync would quietly strip them off live issues.
+#
+# Adding a label here is the whole procedure: add the entry, merge, done.
+
+labels:
+  # ---- the board's front door -----------------------------------------
+  # `idea` is the query key. The Community Ideas board asks GitHub for
+  # "open issues labeled idea" and renders them as the voting leaderboard,
+  # so an idea without this label is invisible to everyone who isn't
+  # browsing raw GitHub. Renaming it breaks the board — change LABEL in the
+  # website's js/ideas.js in the same breath if you ever do.
+  - name: idea
+    color: "f5b301" # canary yellow, the site's accent for "this is yours to steer"
+    description: A community suggestion. Votes are 👍 reactions; it shows on securacv.com/ideas.
+
+  # ---- the status lane ------------------------------------------------
+  # These three are read back by the board's status filter chips, which map
+  # labels to plain language for people who don't speak GitHub. The names
+  # here must stay in the set js/ideas.js `statusOf()` recognizes.
+  - name: planned
+    color: "5319e7"
+    description: 'Accepted — it''s on the roadmap. Shows as "Planned" on the ideas board.'
+
+  - name: in-progress
+    color: "1d76db"
+    description: 'Actively being built right now. Shows as "Building now" on the ideas board.'
+
+  - name: shipped
+    color: "0e8a16"
+    description: 'Built and released. Shows as "Shipped" on the ideas board — the proof the loop closes.'
