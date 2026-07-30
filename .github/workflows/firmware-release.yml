@@ -277,7 +277,7 @@ jobs:
           # SD writes failing, dashboard timing out). No extra_flags override
           # here, so the board menu's -DBOARD_HAS_PSRAM flows normally.
           arduino-cli compile \
-            --fqbn esp32:esp32:XIAO_ESP32S3:PSRAM=opi \
+            --fqbn esp32:esp32:XIAO_ESP32S3:PSRAM=opi,CDCOnBoot=cdc \
             --libraries firmware/common \
             --output-dir /tmp/wap-build \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
@@ -318,7 +318,7 @@ jobs:
           mkdir -p "${LIBDIR}"
           cp lv_conf.h "${LIBDIR}/lv_conf.h"
           if ! arduino-cli compile \
-              --fqbn 'esp32:esp32:XIAO_ESP32S3:PSRAM=opi,CDCOnBoot=default,USBMode=hwcdc' \
+              --fqbn 'esp32:esp32:XIAO_ESP32S3:PSRAM=opi,CDCOnBoot=cdc,USBMode=hwcdc' \
               --output-dir /tmp/display-watch-build canary_display.ino; then
             echo "::warning::canary-display 'watch' build failed — absent from the browser flasher this release"
           fi
@@ -393,7 +393,18 @@ jobs:
           LIBDIR="$(arduino-cli config get directories.user)/libraries"
           mkdir -p "${LIBDIR}"
           cp lv_conf.h "${LIBDIR}/lv_conf.h"
-          DASH_FQBN='esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=huge_app,CDCOnBoot=default,USBMode=hwcdc'
+          # CDCOnBoot=cdc, NOT default: with `default` the core maps `Serial` to
+          # UART0 (the GPIO pins), so a released S3 image prints to a header
+          # nobody has wired and the app's serial monitor sits silent — which is
+          # exactly what "the monitor doesn't work for some firmwares" was. The
+          # PlatformIO bench builds these same boards with
+          # -DARDUINO_USB_CDC_ON_BOOT=1 (envs/platformio/common.ini), so
+          # `default` here meant release and bench disagreed about where the
+          # console goes. Same release-vs-bench drift that kept the display
+          # firmware out of five releases; see RELEASE_LESSONS (i).
+          # C3/C6 are the opposite case and must NOT get this — they provide
+          # Serial on USB-Serial/JTAG and the flag prevents it (common.ini -U).
+          DASH_FQBN='esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=huge_app,CDCOnBoot=cdc,USBMode=hwcdc'
           for P in dash modes; do
             if [ "$P" = modes ]; then
               ../../setup.sh flavor modes
