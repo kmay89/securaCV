@@ -61,6 +61,7 @@ final class FleetStore: ObservableObject {
 
     func onAppear() {
         discovery.start()
+        ble.startScan()
         Task { await alerts.requestAuthorization() }
         Task { await hydrateFromCloud() }
         recordDemoBeatIfHarmless()
@@ -105,10 +106,16 @@ final class FleetStore: ObservableObject {
     func onScenePhase(active: Bool) {
         if active {
             discovery.start()
+            ble.startScan()
             heartbeat.tick()
             Task { await refreshOnce() }
         } else {
             discovery.stop()
+            // The beacon scan is unfiltered with duplicates on — deliberately a
+            // foreground transport (iOS withholds manufacturer data from
+            // background scans anyway). Stopping it in the background saves the
+            // radio; away-from-home delivery is APNs' job, not BLE's.
+            ble.stopScan()
         }
     }
 
@@ -136,6 +143,7 @@ final class FleetStore: ObservableObject {
         var next: [Witness] = []
         var events: [TimelineEvent] = []
 
+        // ── Tier 3: paired devices, authenticated and locally verified ──
         await withTaskGroup(of: (Witness, [TimelineEvent])?.self) { group in
             for ref in devices.devices {
                 group.addTask { await Self.poll(ref, store: self) }
@@ -145,7 +153,43 @@ final class FleetStore: ObservableObject {
             }
         }
 
-        // Fold in BLE snapshots for anything we heard off-grid.
+        // ── Tier 2: /api/fleet on Canaries we can see but haven't paired ──
+        // The fleet-wide, unauthenticated self-report. This is what makes a
+        // canary-display (and any board that later gains an HTTP server) show
+        // up over Wi-Fi at all — it serves no /api/v1 device-api.
+        let pairedIDs = Set(devices.devices.map(\.id))
+        let unpairedHosts: [String] = discovery.found
+            .filter { !pairedIDs.contains($0.id) }
+            .compactMap(\.host)
+        if !unpairedHosts.isEmpty {
+            let reports = await withTaskGroup(of: (String, FleetSelfReport)?.self) { group -> [(String, FleetSelfReport)] in
+                for host in unpairedHosts {
+                    group.addTask {
+                        // Bare mDNS labels need their implied .local — see
+                        // DeviceAPI.url(forDiscoveredHost:).
+                        guard let url = DeviceAPI.url(forDiscoveredHost: host),
+                              let report = try? await DeviceAPI.fleetSelfReport(at: url) else { return nil }
+                        return (host, report)
+                    }
+                }
+                var out: [(String, FleetSelfReport)] = []
+                for await r in group { if let r { out.append(r) } }
+                return out
+            }
+            for (host, report) in reports {
+                // A hub answers for itself AND its peers, so every row counts —
+                // and each needs its own id (see provisionalWitness).
+                for (index, row) in report.devices.enumerated() {
+                    if let i = next.firstIndex(where: { $0.name == row.name && !row.name.isEmpty }) {
+                        FleetMerge.fold(row, into: &next[i])
+                    } else {
+                        next.append(FleetMerge.provisionalWitness(from: row, host: host, index: index))
+                    }
+                }
+            }
+        }
+
+        // ── Tier 1a: the WAP-class GATT console snapshot ──
         for (id, snap) in ble.snapshotsByDevice where !next.contains(where: { $0.id == id }) {
             var w = Witness(id: id)
             w.seenViaBLE = true
@@ -154,6 +198,12 @@ final class FleetStore: ObservableObject {
             w.link = .online
             next.append(w)
         }
+
+        // ── Tier 1b: the universal presence beacon — every Canary, no broker,
+        // no home Wi-Fi, no pairing. Attached last so it decorates the rows
+        // above rather than competing with them.
+        ble.pruneStaleSightings()
+        FleetMerge.attach(ble.freshSightings, to: &next)
 
         // Demo fleet: seeded witnesses/events join anything real (ids are
         // "demo-"-namespaced, so they can't collide) — a live Canary paired
@@ -183,6 +233,17 @@ final class FleetStore: ObservableObject {
             return (w, [])
         }
         var w = Witness(id: info.deviceID, deviceType: ref.deviceType, name: info.name)
+        // Derive the device's fingerprint from the key we already pinned, using
+        // the firmware's own scheme (Wire/DeviceFingerprint). Without this the
+        // field stays empty, FleetMerge.attach can never tie a heard beacon to
+        // this row, and the same Canary appears twice — once here, once as an
+        // anonymous SCV-XXXX — while this row may sit .lost and raise a false
+        // alert. /api/v1/info carries no fingerprint, so the pinned key is the
+        // source.
+        if let pub = PinnedKeyStore.key(for: ref.id),
+           let fp = DeviceFingerprint.hex(forPublicKey: pub) {
+            w.fingerprint = fp
+        }
         w.firmware = info.firmwareVersion
         w.rssiDBM = info.wifiRSSI
         w.link = .online

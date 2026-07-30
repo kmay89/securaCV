@@ -88,6 +88,32 @@ actor DeviceAPI {
 
     func config() async throws -> Data { try await getRaw("/api/v1/config") }
 
+    // MARK: - the fleet-wide surface
+
+    /// `GET /api/fleet` — the coarse self-report EVERY networked Canary answers
+    /// (`firmware/common/fleet_selfreport`), as opposed to the `/api/v1/*`
+    /// device-api contract only WAP-class boards serve. Deliberately:
+    ///
+    ///   * **static** — it needs no paired device, only a reachable address;
+    ///   * **unauthenticated** — the firmware serves it with no token check and
+    ///     `Access-Control-Allow-Origin: *`, because the body is coarse presence
+    ///     and health, never anything extractive. This is the Wi-Fi twin of the
+    ///     BLE presence beacon: what a Canary will tell anyone who asks.
+    ///
+    /// Still gated on `isPrivate` — the app never dials a public address.
+    static func fleetSelfReport(at base: URL, session: URLSession = .shared) async throws -> FleetSelfReport {
+        guard isPrivate(base) else { throw DeviceError.notPrivateAddress }
+        var req = URLRequest(url: base.appendingPathComponent("/api/fleet"))
+        // Probing several discovered hosts must not stall the refresh loop: a
+        // board that is off, asleep, or serving no HTTP should fail fast.
+        req.timeoutInterval = 4
+        let (data, resp) = try await session.data(for: req)
+        if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw DeviceError.http(http.statusCode, "")
+        }
+        return try FleetSelfReport.decode(data)
+    }
+
     /// Physical-presence confirm for gated settings (camera peek, etc.).
     func confirm() async throws { _ = try await postRaw("/api/v1/confirm", body: Data()) }
 
@@ -133,6 +159,26 @@ actor DeviceAPI {
         }
         return d
     }()
+
+    /// Turn an mDNS TXT `host` value into a URL we can actually dial.
+    ///
+    /// The canonical TXT schema (canary-vision/docs/discovery.md) documents
+    /// `host=canary-a3f7.local`, but the firmware writes the raw mDNS hostname:
+    /// `make_hostname()` produces a BARE label like `canary-display-a1b2c3`,
+    /// with no domain. Building `http://canary-display-a1b2c3` from that is
+    /// rejected by `isPrivate` and the request is never made — so the whole
+    /// `/api/fleet` path would silently do nothing for exactly the boards it
+    /// exists to reach. Appending the implied `.local` is what makes a bare
+    /// mDNS label resolvable.
+    ///
+    /// A value that already carries a dot (a `.local` name or an IP) is left
+    /// alone; `isPrivate` remains the gate either way.
+    static func url(forDiscoveredHost host: String) -> URL? {
+        let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let name = trimmed.contains(".") ? trimmed : trimmed + ".local"
+        return URL(string: "http://\(name)")
+    }
 
     /// Only RFC-1918 / loopback / .local hosts are allowed to be contacted.
     static func isPrivate(_ url: URL) -> Bool {

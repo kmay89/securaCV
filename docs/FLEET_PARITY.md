@@ -58,6 +58,36 @@ behaviour is a change to that one file — never a sweep across boards.
   Core: `firmware/common/attest/self_manifest.h`; test:
   `test_self_manifest.cpp`.
 
+## Consumers outside the firmware (the iPhone app)
+
+A fleet-wide contract has readers that aren't boards. The iPhone app is one, and
+it follows the same discipline one layer out:
+
+- **`ios/Sources/SecuraCV/Wire/`** holds *pure* ports of the canonical headers —
+  `FleetBeacon.swift` (from `common/fleet_link/fleet_beacon.h`) and
+  `FleetSelfReport.swift` (from `common/fleet_selfreport/fleet_selfreport.h`).
+  Foundation only: no CoreBluetooth, no URLSession, no SwiftUI, so they are
+  host-testable exactly like `firmware/tests_host/`. The transports
+  (`Transport/BLEConsole.swift`, `Transport/DeviceAPI.swift`) are thin glue on
+  top, and `App/FleetMerge.swift` — also pure — folds the tiers together.
+- **The guard is the test, not a byte-copy.** `check_*_sync.sh` can keep two C
+  files identical; it cannot keep a Swift file identical to a C header. So the
+  Swift tests reuse the firmware's own vectors: `FleetBeaconTests` carries the
+  values from `common/fleet_link/test_fleet_beacon.cpp`, and
+  `FleetSelfReportTests` decodes JSON literals that are the verbatim stdout of
+  `fleet_selfreport_build()` compiled with g++. Change the wire, and the C test
+  changes — these must change with it or they fail.
+- **Tier discipline.** The app reads three surfaces and they are not equal: the
+  BLE presence beacon and `GET /api/fleet` are unauthenticated and coarse, while
+  `GET /api/v1/witness` is authenticated *and* locally verified. Only the last
+  may set a trust badge. `FleetMerge` states the rules and `FleetMergeTests`
+  enforces them — a device *claiming* `"chain":"ok"` must never render as
+  verified.
+
+**When you add a fleet-wide capability, add the app-side reader in the same
+change** — a contract with a firmware writer and no reader on the surface users
+actually look at has only half shipped.
+
 ## Adding the next fleet-wide capability
 
 1. Write the pure core in `firmware/common/<area>/` (no Arduino types; guard any
