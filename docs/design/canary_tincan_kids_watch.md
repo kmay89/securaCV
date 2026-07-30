@@ -34,7 +34,7 @@ watch *product*.
 |---|---|---|
 | MCU | ESP32-S3R8, dual LX7 @ 240 MHz, 8 MB PSRAM, 32 MB flash | plenty; the OTA A/B story from [`canary-ota`](../../firmware/projects/canary-ota) fits with room to spare |
 | Display | 2.06" AMOLED **410 × 502**, QSPI, CO5300 driver | the whole UI. AMOLED = true black, so a mostly-black kid face costs almost nothing |
-| Touch | capacitive (**CST9220** per the store page, **FT3168** per the wiki — *confirm at bring-up*) | taps, holds, one-finger doodle |
+| Touch | **FT3168** @ 0x38 — the store page says CST9220, every vendor sketch drives an FT3168 ([resolved](#hardware-notes-settled-at-registration)) | taps, holds, one-finger doodle |
 | IMU | QMI8658 6-axis | step duel, wake-on-raise, knock-by-wrist-tap |
 | RTC | PCF85063 | the clock keeps time with the radio off |
 | PMU | AXP2101 + Li-po | battery telemetry, the sleep budget in §8 |
@@ -57,16 +57,37 @@ in a classroom and is useless under a blanket at 8 p.m. So:
   minimum viable Tin Can. It is a two-wire add-on, it has a mature driver, and
   its effect library is exactly the vocabulary §5 needs (sharp click, ramp-up,
   double-tick).
-- **The degraded fallback is named, not hidden — and it is visual only.** The
-  board ships a codec but **no speaker** (§12.5), so with neither a motor nor a
-  fitted speaker a knock can only be a full-screen AMOLED flash. The boot screen
-  says *"no buzzer fitted — knocks will be seen, not felt."* The
+- **The degraded fallback is named, not hidden.** With no motor a knock is a
+  full-screen AMOLED flash, and — where an output transducer is actually
+  present — the
   [`chime`](../../firmware/projects/canary-display/include/canary/hal/chime.h)
-  voice is only reachable on a build that has actually detected an output
-  transducer; the firmware must probe rather than assume, because a device that
-  claims it can be heard and can't is exactly the surprise that leaves a kid
-  waiting for an answer that already arrived. Honest degradation is the house
-  style ([`failure_semantics.md`](../failure_semantics.md)).
+  voice. The board does have an audio output path (see below), but whether a
+  transducer is fitted varies by revision, so the firmware **probes rather than
+  assumes**: a device that claims it can be heard and can't is exactly the
+  surprise that leaves a kid waiting for an answer that already arrived. The
+  boot screen says *"no buzzer fitted — knocks will be seen, not felt."* Honest
+  degradation is the house style
+  ([`failure_semantics.md`](../failure_semantics.md)).
+
+### Hardware notes settled at registration
+
+Two of §12's open questions were answered by reading the vendor tree
+([waveshareteam/ESP32-S3-Touch-AMOLED-2.06](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-2.06))
+rather than the store page, while transcribing the pin map for
+[`waveshare-esp32s3-amoled206`](../../firmware/boards/waveshare-esp32s3-amoled206/README.md):
+
+- **Touch is FT3168 @ 0x38.** Waveshare's store copy says CST9220; every sketch
+  in the vendor tree drives an FT3168 through `Arduino_DriveBus`. Vendor code
+  beats vendor marketing — but this is still the first thing to confirm on real
+  hardware, because a wrong touch driver is a dead watch, not a degraded one.
+- **There is an audio output path.** `08_ES8311.ino` plays PCM through
+  `i2s.setPins(41, 45, 40, 42, 16)` after driving GPIO46 high — a power-amp
+  enable. So the codec can make sound; §12.5's "no speaker fitted" was too
+  strong. What remains genuinely open is whether a *transducer* is populated on
+  a given revision, which is why the runtime probes.
+
+Still unresolved and still the thing that matters most: **there is no haptic
+motor anywhere in the vendor tree**, and no LRA/ERM on the schematic.
 
 ### 1.2 Board registry
 
@@ -591,11 +612,15 @@ them, per the tree's existing anti-drift habit.
 3. **Is the tie window enough of a stranger gate,** or does a string also need
    a per-household key so two watches from different houses can never tie even
    inside a window? (Leaning: yes, add it — it's cheap.)
-4. **Should the Ring reach a kid who has walked out of range and back?** A
-   queued Ring that lands 40 minutes late is arguably worse than none. Leaning:
-   **expire Rings after 5 minutes** and tell the parent it expired.
-5. **Sound on the watch at all?** The board has a codec and no speaker fitted.
-   A silent-only device is purer, and quieter in a classroom.
+4. ~~**Should the Ring reach a kid who has walked out of range and back?**~~
+   **Settled: it expires after 5 minutes**, and the parent is told it expired.
+   Implemented both ways in
+   [`ring_policy.h`](../../firmware/projects/canary-tincan/include/canary/tincan/ring_policy.h):
+   the sender stops waiting, *and* a receiving watch refuses to render a Ring
+   older than its own window. Late is not a weaker kind of on-time.
+5. **Sound on the watch at all?** Partly settled — the board *can* make sound
+   (see the hardware notes in §1.1); what is open is whether we want it to. A
+   silent-only device is purer, and quieter in a classroom.
 6. **Do we want the mics physically absent** on any household build — a
    cut-trace or DNP note in the enclosure docs — so "no voice" is provable by
    looking, not just by reading our source?
