@@ -59,6 +59,11 @@ struct Node {
   uint32_t last_heard_ms = 0;
   uint8_t hops = 0;          // 0 = direct neighbour
   uint16_t via = 0;          // next hop to use; 0 when direct
+  // When we last heard this node THROUGH the selected next hop. Tracked apart
+  // from last_heard_ms because they answer different questions: "is this node
+  // alive?" and "is the path we chose still working?". Conflating them strands
+  // traffic on a dead next hop — see the failover rule in observe().
+  uint32_t route_heard_ms = 0;
   uint8_t caps = 0;          // payload-layer capability bits, opaque here
 
   NodeLiveness liveness(uint32_t now_ms) const {
@@ -108,10 +113,23 @@ struct NodeTable {
   // Record that `id` was heard. Creates the node if it is new, evicting the
   // deadest slot when full.
   //
-  // The route rule: a strictly shorter path always wins, and an EQUAL-length
-  // path does NOT displace the incumbent. Ties would otherwise flap between
-  // two equally good neighbours every beacon, and route flap in a house full
-  // of nodes is what turns "seamless" into "why did that take four seconds".
+  // The route rule has three clauses, and the third exists because the first
+  // two together have a trap in them:
+  //
+  //   1. A strictly SHORTER path always wins.
+  //   2. An EQUAL-length path does NOT displace the incumbent. Ties would
+  //      otherwise flap between two equally good neighbours every beacon, and
+  //      route flap in a house full of nodes is what turns "seamless" into
+  //      "why did that take four seconds".
+  //   3. But an incumbent whose own path has gone quiet must be replaceable,
+  //      even by an equal-length alternative. Without this, a node reachable
+  //      via both A and B keeps looking alive on B's advertisements while
+  //      traffic is still addressed to a dead A — the node is Fresh, so the
+  //      "is it Lost?" failover never fires, and it never fires again.
+  //
+  // That is why route freshness is tracked separately from node freshness: an
+  // observation arriving through some other next hop proves the NODE is alive
+  // and proves nothing at all about the PATH we picked.
   Node* observe(uint16_t id, int16_t rssi, uint8_t hops, uint16_t via,
                 uint32_t now_ms) {
     Node* n = find(id);
@@ -123,10 +141,22 @@ struct NodeTable {
       n->heard_once = false;
       n->hops = hops;
       n->via = via;
+      n->route_heard_ms = now_ms;
       n->caps = 0;
-    } else if (hops < n->hops || n->liveness(now_ms) == NodeLiveness::Lost) {
-      n->hops = hops;
-      n->via = via;
+    } else {
+      const bool via_incumbent = (via == n->via);
+      const bool route_stale =
+          (now_ms - n->route_heard_ms) > NODE_FRESH_MS;
+      if (hops < n->hops || n->liveness(now_ms) == NodeLiveness::Lost ||
+          (!via_incumbent && route_stale)) {
+        n->hops = hops;
+        n->via = via;
+        n->route_heard_ms = now_ms;
+      } else if (via_incumbent) {
+        n->route_heard_ms = now_ms;
+      }
+      // Deliberately no `else`: an observation through a next hop we did not
+      // choose must NOT refresh the incumbent's route clock.
     }
 
     n->rssi_ema = node_rssi_fold(n->rssi_ema, n->heard_once, rssi);

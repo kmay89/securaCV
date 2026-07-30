@@ -184,6 +184,51 @@ static void test_replay_window() {
   CHECK(!w3.accept(6), "replay: the old range fell off the back");
 }
 
+// The boundary. `behind` runs 1..64 and maps to bits 0..63, so a jump of
+// EXACTLY the window size still leaves the old `highest` inside the window —
+// at the very last slot. Forgetting it there makes a recorded frame replayable
+// after nothing more exotic than ordinary packet loss, which on this device
+// means a knock that can be played back at 2 a.m.
+//
+// It also cannot be left to fall out of the shift arithmetic: shifting a
+// 64-bit value by 64 is undefined behaviour, so the case needs its own branch.
+static void test_replay_window_boundary() {
+  const uint64_t n = 1000;
+
+  ReplayWindow at;
+  CHECK(at.accept(n), "replay boundary: base counter accepted");
+  CHECK(at.accept(n + LINK_REPLAY_WINDOW), "replay boundary: +window accepted");
+  CHECK(!at.would_accept(n),
+        "replay boundary: the old highest is still remembered at +window");
+  CHECK(!at.accept(n), "replay boundary: and refused a second time");
+
+  // One past the window: the old highest legitimately falls off the back.
+  ReplayWindow past;
+  past.accept(n);
+  past.accept(n + LINK_REPLAY_WINDOW + 1);
+  CHECK(!past.would_accept(n),
+        "replay boundary: past the window, the old counter is below the floor");
+
+  // One inside: unchanged behaviour, guarding the shift path.
+  ReplayWindow inside;
+  inside.accept(n);
+  inside.accept(n + LINK_REPLAY_WINDOW - 1);
+  CHECK(!inside.would_accept(n),
+        "replay boundary: just inside the window is still remembered");
+
+  // Sweep every jump across the boundary — the old highest must never become
+  // acceptable again while it is still inside the window.
+  for (uint64_t jump = 1; jump <= LINK_REPLAY_WINDOW; jump++) {
+    ReplayWindow w;
+    w.accept(n);
+    w.accept(n + jump);
+    if (w.would_accept(n)) {
+      CHECK(false, "replay boundary: some in-window jump forgets the old highest");
+      break;
+    }
+  }
+}
+
 // The mirror hazard: a reboot must never rewind the send counter, because that
 // reuses (key, nonce). Skipping forward is free; repeating is fatal.
 static void test_send_counter_never_rewinds() {
@@ -347,6 +392,48 @@ static void test_route_prefers_shorter_and_ignores_ties() {
   CHECK(n->hops == 1 && n->via == 0x3333, "route: a shorter path wins");
 }
 
+// The trap hiding behind "shorter wins, ties don't displace": a node reachable
+// through both A and B keeps looking Fresh on B's advertisements while traffic
+// is still addressed to a dead A. The node never becomes Lost, so the "is it
+// Lost?" failover never fires — and never will. Route freshness therefore has
+// to be tracked apart from node freshness.
+static void test_route_fails_over_when_the_incumbent_path_goes_quiet() {
+  const uint16_t A = 0x1111, B = 0x2222;
+
+  NodeTable<4> t;
+  t.observe(0xBEEF, -60, 2, A, 1000);
+  Node* n = t.find(0xBEEF);
+  CHECK(n && n->via == A, "failover: A is the incumbent");
+
+  // B keeps advertising an equal-length path while A is silent. The node stays
+  // Fresh the whole time, which is exactly what used to mask the dead route.
+  t.observe(0xBEEF, -60, 2, B, 1000 + NODE_FRESH_MS + 1);
+  CHECK(n->liveness(1000 + NODE_FRESH_MS + 1) == NodeLiveness::Fresh,
+        "failover: the node itself never looked dead");
+  CHECK(n->via == B, "failover: a quiet incumbent is replaced by the live path");
+
+  // And the anti-flap property must survive the fix: while the incumbent IS
+  // being heard, an equal-length alternative still does not displace it.
+  NodeTable<4> t2;
+  t2.observe(0xCAFE, -60, 2, A, 1000);
+  Node* m = t2.find(0xCAFE);
+  t2.observe(0xCAFE, -60, 2, A, 1000 + NODE_FRESH_MS - 1);  // heard via A
+  t2.observe(0xCAFE, -60, 2, B, 1000 + NODE_FRESH_MS + 1);  // B tries
+  CHECK(m->via == A, "failover: a live incumbent still wins a tie");
+
+  // An observation through some other next hop must not refresh the
+  // incumbent's route clock — that is the bug, stated directly.
+  NodeTable<4> t3;
+  t3.observe(0xF00D, -60, 2, A, 0);
+  Node* k = t3.find(0xF00D);
+  for (uint32_t at = 1000; at <= NODE_FRESH_MS; at += 1000) {
+    t3.observe(0xF00D, -60, 2, B, at);  // B chatters, A is silent
+  }
+  t3.observe(0xF00D, -60, 2, B, NODE_FRESH_MS + 1);
+  CHECK(k->via == B,
+        "failover: B's chatter never kept A's route clock alive");
+}
+
 // A full table refuses a new node rather than evicting one that is still
 // talking to us.
 static void test_node_table_does_not_evict_the_living() {
@@ -434,6 +521,7 @@ int main() {
   test_aad_excludes_mutable_fields();
 
   test_replay_window();
+  test_replay_window_boundary();
   test_send_counter_never_rewinds();
 
   test_role_assignment_is_symmetric();
@@ -444,6 +532,7 @@ int main() {
   test_node_liveness_is_three_states();
   test_rssi_first_sample_seeds();
   test_route_prefers_shorter_and_ignores_ties();
+  test_route_fails_over_when_the_incumbent_path_goes_quiet();
   test_node_table_does_not_evict_the_living();
 
   test_relay_dedupe_and_ttl();

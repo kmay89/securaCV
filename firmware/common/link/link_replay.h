@@ -71,8 +71,19 @@ struct ReplayWindow {
 
     if (ctr > highest) {
       const uint64_t jump = ctr - highest;
-      if (jump >= LINK_REPLAY_WINDOW) {
-        bitmap = 0;  // the whole old window fell off the back
+      // Three cases, and the boundary one is easy to get wrong. `behind` runs
+      // 1..LINK_REPLAY_WINDOW and maps to bits 0..63, so a jump of EXACTLY the
+      // window size still leaves the old `highest` inside the window, at the
+      // last slot. Folding that case in with "jump >= window -> clear" would
+      // forget it, and a recorded frame at the old `highest` would then be
+      // accepted a second time after ordinary packet loss — a replayable knock.
+      // It cannot simply fall out of the shift arithmetic either: shifting a
+      // 64-bit value by 64 is undefined behaviour, which is exactly why the
+      // tempting `>=` was there in the first place.
+      if (jump > LINK_REPLAY_WINDOW) {
+        bitmap = 0;  // the whole old window really did fall off the back
+      } else if (jump == LINK_REPLAY_WINDOW) {
+        bitmap = (1ULL << (LINK_REPLAY_WINDOW - 1));  // only the old highest survives
       } else {
         // Shift the old slots down, then mark where `highest` itself now sits.
         bitmap <<= jump;
