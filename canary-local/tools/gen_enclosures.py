@@ -1007,21 +1007,39 @@ VARIANT_SELECTS = {
 # test protocol, never asserted from the CAD.
 CER_LEVELS = {1, 2, 3, 4}  # docs/hardware/enclosure/field_ratings.md
 _ENV_KEYS = {"ip", "mil", "basis", "note", "env"}
+# A key=value token: value is a properly TERMINATED double-quoted string or a
+# bare run that does not start with a quote. This is strict on purpose — see
+# parse_env: the whole annotation must be consumed by these tokens, so a typo
+# (`cer 2`, a stray word, an unterminated quote) fails the build instead of
+# being silently dropped into a truthy-but-empty rating.
+_ENV_TOKEN = re.compile(r'(\w+)=("[^"]*"|[^"\s]\S*)')
 
 
 def parse_env(scad_text: str):
     """A model's environment rating from its `// @env …` header line, or None
     when the model declares none. Values may be bare or double-quoted; `cer`
     coerces to int and is validated against the CER ladder; `verified` is forced
-    False (honesty invariant)."""
-    m = re.search(r"^\s*//\s*@env\s+(.*)$", scad_text, re.M)
+    False (honesty invariant). The parser is STRICT: any text the token grammar
+    can't consume, or an annotation that yields no rating field, fails the build
+    — a mistyped rating must never regenerate to a silent, empty env."""
+    m = re.search(r"^\s*//\s*@env\b(.*)$", scad_text, re.M)
     if not m:
         return None
-    out = {}
-    for k, v in re.findall(r'(\w+)=("[^"]*"|\S+)', m.group(1)):
+    body = m.group(1).strip()
+    out, pos = {}, 0
+    while pos < len(body):
+        tm = _ENV_TOKEN.match(body, pos)
+        if not tm:
+            raise SystemExit(
+                f"catalog: malformed @env — expected key=value near "
+                f"'{body[pos:pos + 40]}'")
+        k, v = tm.group(1), tm.group(2)
         val = v[1:-1] if v.startswith('"') else v
         if k == "cer":
-            cer = int(val)
+            try:
+                cer = int(val)
+            except ValueError:
+                raise SystemExit(f"catalog: @env cer='{val}' is not an integer")
             if cer not in CER_LEVELS:
                 raise SystemExit(
                     f"catalog: @env cer={cer} is not a field_ratings.md CER "
@@ -1030,7 +1048,12 @@ def parse_env(scad_text: str):
         elif k in _ENV_KEYS:
             out[k] = val
         else:
-            raise SystemExit(f"catalog: @env unknown key '{k}=…'")
+            raise SystemExit(f"catalog: @env unknown key '{k}='")
+        pos = tm.end()
+        while pos < len(body) and body[pos].isspace():
+            pos += 1
+    if not out:
+        raise SystemExit(f"catalog: @env line has no rating fields: '{body}'")
     out["verified"] = False
     return out
 
