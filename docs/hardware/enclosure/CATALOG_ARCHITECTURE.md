@@ -299,18 +299,25 @@ duplicated.
    product" path the per-device workshop can't give (it only configures the five
    devices with firmware + a BOM). Guarded by
    `canary-local/tests/catalog_browse.test.js`. ✅ **`workshop.js` done** — its
-   configurator now (a) picks options by the manifest's `audience` tag, not the
-   `opt_` name prefix (the generator stamps every emitted option `audience:
-   "user"`; `workshop.js`'s `hasConfigurator`/`optionVector`/seed all filter on
-   it), and (b) reads `catalog.json` to show each device's manifest facts —
-   environment rating (design intent, never "verified") · flavors · options ·
-   see-also — beside its packages. The literal "configure all 29 products in the
-   workshop" is **intentionally not pursued**: the workshop is a per-device build
-   tool (it needs a BOM + firmware, which the accessory/display enclosures don't
-   have), so the faceted browse (§6B) is the manifest-driven surface for every
-   product it doesn't build. Guarded by the audience assertion in
-   `canary-local/tests/workshop.test.js`; the strict `workshop_probe` stays green
-   (the audience filter is behaviorally identical for the five devices).
+   configurator now (a) classifies options by **audience, at the source**, not
+   the `opt_` name prefix: the generator's `scad_options` shares one
+   `is_user_option` predicate with `catalog_options` (a bool/enum that isn't a
+   variant selector, the `part` render selector, or an engineering toggle), and
+   `workshop.js`'s `hasConfigurator`/`optionVector`/seed filter on the resulting
+   `audience` tag — so a non-`opt_` user bool on a configurable device would
+   surface just the same. (For the five workshop devices the emitted set is
+   unchanged — their user options are all `opt_*` + `mount_style`; their
+   non-`opt_` bools are all engineering — so `workshop.json` is byte-identical
+   and the strict `workshop_probe` stays green.) And (b) it reads `catalog.json`
+   to show each device's manifest facts beside its packages — environment rating
+   (design intent, never "verified") · flavors · **the options it can actually
+   configure** (the workshop's own count, never the catalog's larger inventory —
+   the workshop can't build an accessory enclosure) · see-also. The literal
+   "configure all 29 products in the workshop" is **intentionally not pursued**:
+   the workshop is a per-device build tool (it needs a BOM + firmware, which the
+   accessory/display enclosures don't have), so the faceted browse (§6B) is the
+   manifest-driven surface for every product it doesn't build. Guarded by the
+   audience assertion in `canary-local/tests/workshop.test.js`.
 4. **Add the guided funnel (§6A) + remix rail (§6D).** ✅ **Done** — a new
    `find.html` / `catalog-funnel.js` asks up to three questions (what you're
    building → where it lives → how you mount it), each narrowing the next over

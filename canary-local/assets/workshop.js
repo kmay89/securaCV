@@ -475,7 +475,12 @@ function renderConfigure(root) {
     if (cf.envLabel && cf.envLabel !== "unrated")
       bits.push(`${cf.envLabel} · target`);
     if (cf.flavors) bits.push(`${cf.flavors} flavor${cf.flavors === 1 ? "" : "s"}`);
-    if (cf.userOptions) bits.push(`${cf.userOptions} options`);
+    // Count the options THIS workshop actually exposes, not the catalog's full
+    // user-option inventory — the workshop only builds devices with a BOM +
+    // firmware, so a "5 options" claim beside a package it can't configure
+    // (e.g. the Dash) would mislead. Zero → the line just omits it.
+    const nOpts = (d.options || []).filter((o) => o.audience === "user").length;
+    if (nOpts) bits.push(`${nOpts} option${nOpts === 1 ? "" : "s"}`);
     if (cf.alternatives.length)
       bits.push("see also " + cf.alternatives.map((a) => a.replace(/_/g, " ")).join(", "));
     if (bits.length) {

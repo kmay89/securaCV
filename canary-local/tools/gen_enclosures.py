@@ -690,10 +690,40 @@ def parse_features(project: str, flavor: str):
     return feats
 
 
+# ── option classification (shared by the workshop transform and the catalog) ──
+# The audience split, the EXPLICIT signal that replaces the leaky `opt_` name
+# prefix. A user option is any boolean param (default true/false) or option-enum
+# (mount_style) that isn't a variant selector, the `part` render selector, or a
+# structural/manufacturing engineering toggle. Both scad_options (workshop.json)
+# and catalog_options (catalog.json) classify with these, so the workshop can't
+# silently diverge from the manifest.
+VARIANT_SELECTOR_PARAMS = {
+    "preset", "host", "radar", "stack", "model", "variant", "mode", "mount",
+}
+OPTION_ENUM_PARAMS = {"mount_style"}
+ENGINEERING_OPTIONS = {
+    "lid_ribs", "kh_lock", "hinge_teeth", "bracket_tripod", "screw_insert",
+    "board_clips", "usb_cover",
+}
+
+
+def is_user_option(p: dict) -> bool:
+    name = p["name"]
+    if name == "part" or name in VARIANT_SELECTOR_PARAMS:
+        return False
+    if name in ENGINEERING_OPTIONS:
+        return False
+    is_bool = str(p.get("default", "")).lower() in ("true", "false")
+    return is_bool or name in OPTION_ENUM_PARAMS
+
+
 def scad_options(scads: dict, scad: str, bom_rows_by_dev: dict, dev: str,
                  features_all: dict):
-    """opt_* booleans + their enum companions from the parsed customizer
-    groups, enriched with verified BOM/firmware links."""
+    """The device's USER options from the parsed customizer groups — classified
+    by `is_user_option` (audience), NOT the `opt_` name prefix — enriched with
+    verified BOM/firmware links. Structural/engineering toggles and variant
+    selectors are excluded; a non-`opt_` user bool (term_open, vent_back, …) on a
+    configurable device would surface here just the same."""
     out = []
     parsed = scads.get(scad)
     if not parsed:
@@ -703,13 +733,8 @@ def scad_options(scads: dict, scad: str, bom_rows_by_dev: dict, dev: str,
     for fl in features_all.get(dev, {}).values():
         flags |= set(fl)
     for g in parsed["groups"]:
-        has_opt = any(p["name"].startswith("opt_") for p in g["params"])
-        if not has_opt:
-            continue
         for p in g["params"]:
-            is_opt = p["name"].startswith("opt_")
-            is_enum_companion = "enum" in p and p["name"] in ("mount_style",)
-            if not (is_opt or is_enum_companion):
+            if not is_user_option(p):
                 continue
             comment = p.get("comment", "")
             label, _, consequence = comment.partition("->")
@@ -730,9 +755,6 @@ def scad_options(scads: dict, scad: str, bom_rows_by_dev: dict, dev: str,
                 "group": g["name"].split("—")[0].split(" you have")[0].strip(),
                 "label": label.strip() or p["name"],
                 "consequence": consequence.strip(),
-                # Every option this transform emits is user-facing (opt_* + the
-                # mount_style enum); the tag lets the workshop pick options by
-                # audience instead of the leaky opt_ prefix (see catalog.json).
                 "audience": "user",
                 "default": p["default"] == "true",
                 **({"enum": p["enum"]} if "enum" in p else {}),
@@ -953,31 +975,13 @@ workshop_main()
 
 CATALOG_JSON = REPO / "canary-local/devices/catalog.json"
 
-# Enum params that pick a DISCRETE part-set / configuration (axis 3 —
-# "variant / flavor"). Explicitly NOT `part` (that's the render-piece
-# selector) and NOT `mount_style` (an option enum, axis 4).
-VARIANT_SELECTOR_PARAMS = {
-    "preset", "host", "radar", "stack", "model", "variant", "mode", "mount",
-}
-# Enum params that are an OPTION with more than on/off (axis 4).
-OPTION_ENUM_PARAMS = {"mount_style"}
-
 # The canonical id for a case that fits no single device (axis 1). The doc's
 # §4 identity contract replaces the nullable `device` link with this, so a
 # universal record joins by device id on the same path as a device-specific one.
+# (VARIANT_SELECTOR_PARAMS / OPTION_ENUM_PARAMS / ENGINEERING_OPTIONS — the
+# option classification — are defined above scad_options, shared by both
+# transforms.)
 UNIVERSAL_ID = "_universal"
-
-# Audience split (axis 4), the EXPLICIT tag the doc calls for instead of the
-# leaky `opt_` prefix: these boolean params are structural / manufacturing
-# detail toggles, not user choices — captured (so nothing is silently dropped)
-# but tagged `engineering` so a picker shows only the user set. Everything else
-# that's a bool (term_open, vent_back, bez_on, tie_slots, screws, din, …) is a
-# user option. (Doc §5: "hinge_teeth/usb_cover stop being silently dropped and
-# lid_ribs stops masquerading as a user option.")
-ENGINEERING_OPTIONS = {
-    "lid_ribs", "kh_lock", "hinge_teeth", "bracket_tripod", "screw_insert",
-    "board_clips", "usb_cover",
-}
 
 # The selector vector that produces each committed variant (axis 3 — the doc's
 # `selects{}`), keyed by set id. Every param/value is verified against the
