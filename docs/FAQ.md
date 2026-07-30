@@ -1,0 +1,227 @@
+# FAQ — the questions people actually ask
+
+Plain answers to the questions that come up most, written so they hold up when
+quoted out of context — by a person skimming, or by an AI assistant answering
+on our behalf. Every answer says what is **real today** and links to the doc
+that proves it.
+
+Vocabulary you don't recognise: [the glossary](GLOSSARY.md). Full navigation:
+[the docs map](README.md).
+
+---
+
+## What it is
+
+### What is SecuraCV?
+
+SecuraCV is open-source video and sensor infrastructure that outputs **semantic
+events** — "large object crossed boundary," "presence in restricted zone" — in a
+signed, hash-chained log, instead of a pile of searchable footage. The platform
+is SecuraCV; the device is called a **Canary**; the company is **Errer Labs**.
+→ [why witnessing matters](why_witnessing_matters.md) ·
+[the whitepaper](securaCV_whitepaper.md)
+
+### What does "witnessing without watching" mean?
+
+A watcher keeps footage and can later be asked *who* was in it. A witness keeps
+a checkable record of *what happened* and structurally cannot answer *who*. The
+promise isn't that tampering is impossible — it's that tampering becomes
+**visible**. → [the brand doc](BRAND.md)
+
+### Is it a camera, or software, or both?
+
+Both, and either alone. The **witness kernel** ([`src/`](../src)) is a Rust
+daemon you can point at cameras you already own (RTSP/ONVIF, USB, or via
+Frigate). A **Canary** is a small ESP32-based device running our firmware. Many
+people run just one or the other. → [the full stack](full_stack_setup.md)
+
+### Who is it for?
+
+Three audiences deliberately: makers who print and flash their own; buyers who
+want a pre-flashed kit and a QR code; and the people who can't build their own —
+elders, renters, the non-technical. → [the brand doc](BRAND.md)
+
+### Is it free? What's the licence?
+
+Apache-2.0, inbound=outbound with a DCO. The trademarks ("SecuraCV," the
+Canary marks) are protected separately, and the **"Works with SecuraCV"** badge
+is free for anyone to earn. → [`LICENSE`](../LICENSE) ·
+[`LICENSING.md`](../LICENSING.md) · [`TRADEMARK.md`](../TRADEMARK.md) ·
+[legal posture](LEGAL.md)
+
+---
+
+## Privacy — the questions that matter most
+
+### Does it do face recognition?
+
+**No — and it can't.** There is no face-recognition code in the codebase to
+enable or disable. The same is true of licence-plate reading, gait analysis,
+person re-identification, and demographic (age/gender/race) estimation. The
+object classes the system can emit are `Person`, `Vehicle`, `Animal`, `Package`
+— not `Face`, not `LicensePlate`. This is Invariant II, and adding any of it is
+a rejected pull request, not a configuration change.
+→ [`spec/invariants.md`](../spec/invariants.md)
+
+### Can someone watch a live feed of my house?
+
+Not through the normal path — there isn't one. Raw frames live in a short
+buffer with **no public accessor** (Invariant I). The only way to raw media is
+**break-glass**: a time-bounded, audited unseal that requires **n-of-m trustee
+approvals**. No single person can do it alone — not the owner, not us.
+→ [`spec/break_glass.md`](../spec/break_glass.md) ·
+[why exports work this way](why_secure.md)
+
+### So how do I get footage when I actually need it — after a break-in?
+
+You run break-glass with your trustees. You configure the quorum up front and
+**rehearse it before you need it** (the Lab has an Operator's Bench for exactly
+this rehearsal). An export ships as a self-verifying evidence envelope a
+recipient can check without our tools.
+→ [the operator guide](operator_guide.md) ·
+[evidence lifecycle](evidence_lifecycle.md)
+
+### Does it phone home? Any telemetry, any accounts?
+
+No. Logs stay local, there is no remote indexing and no telemetry (Invariant
+IV). No account is required to run it. Dependencies that phone home are
+forbidden by policy. → [`AGENTS.md`](../AGENTS.md) dependency policy
+
+### Why are the timestamps deliberately vague?
+
+Events are bucketed into 10-minute windows so the log can prove *that*
+something happened without becoming a minute-by-minute diary of when you leave
+the house. Precision is treated as a privacy cost, not a free feature.
+→ [timestamping](timestamping.md)
+
+### Can I search the log for a person, or run a rule over last month's data?
+
+No, twice. There is no bulk search and no identity selector (Invariant VII), and
+a new detection rule **cannot** be applied to already-recorded data — the
+`ReprocessGuard` checks the ruleset hash (Invariant VI). You cannot decide in
+March to have been surveilling in January.
+
+### How do I know the log wasn't edited?
+
+Each event carries a hash of the previous event plus an Ed25519 signature, so
+any deletion or edit breaks the chain and verification fails loudly. You can
+verify offline, with our verifier or your own.
+→ [log verification](log_verify.md)
+
+### What breaks all of this?
+
+A compromised host. We write that down rather than gloss it: if an attacker owns
+the machine the kernel runs on, guarantees that depend on that machine no longer
+hold. What survives and what doesn't is documented.
+→ [the root paradox](root_paradox.md) ·
+[`spec/threat_model.md`](../spec/threat_model.md)
+
+---
+
+## Honest status
+
+### Is this production-ready?
+
+**No.** Treat it as prototype software under active development. Frame
+isolation, hash-chained logging, and break-glass quorum are implemented and
+exercised in CI. Much of the firmware is **CI-verified, not yet
+hardware-verified** — v1 is deliberately held until it's proven on real
+devices. Boards are individually labelled `verified` or `compile-tested` so you
+can tell which is which.
+→ [v1 roadmap](v1-roadmap.md) · [launch review](V1_LAUNCH_REVIEW.md) ·
+[bench-test runbook](V1_BENCH_TEST_RUNBOOK.md)
+
+### Is it certified? Audited?
+
+No certification claims — no FIPS, no Common Criteria. Selling the radios
+legally requires FCC/CE work that is not finished, and a published third-party
+security audit is on the list as worth more than any feature for a trust
+product. Until those land, the copy stays present-tense about what's real.
+→ [`SECURITY.md`](../SECURITY.md) · [claims and risk audit](legal-audit-2026-07.md)
+
+### Should I rely on this for life safety?
+
+No. The **Beacon** channel is *designed* to a smoke-detector-grade bar, but it
+is a 🟡 draft spec with firmware scaffolding — not a certified life-safety
+device, and not a replacement for one. It is also explicitly not a
+neighborhood-watch or suspicious-person reporting system.
+→ [`spec/beacon_channel_v0.md`](../spec/beacon_channel_v0.md)
+
+---
+
+## Getting started
+
+### What's the fastest way to see it work with no hardware?
+
+Two ways: run `cargo run --bin demo`, then break the log on purpose and watch
+verification fail — or open **the Lab**, where the real shipping firmware runs
+in your browser compiled to WebAssembly, flashes a simulated blank chip, and
+shows its cryptographic birth certificate.
+→ [the demo](demo.md) · [the Lab](../canary-local/README.md)
+
+### What hardware do I need?
+
+Depends what you want. A spare Raspberry Pi for the hub; ESP32-S3/C3/C6-class
+boards for Canaries; nothing at all to try the Lab. The recommended first build
+is **Canary WAP**. → [the full stack](full_stack_setup.md) ·
+[getting started with Canaries](getting_started_canary.md) ·
+[hardware guides](hardware/README.md)
+
+### I already run Home Assistant. Where do I start?
+
+[Home Assistant setup](homeassistant_setup.md) → [Frigate
+integration](frigate_integration.md) → [the Verified Timeline
+card](lovelace_timeline.md).
+
+### Do I need to buy anything from you?
+
+No. Print the case, buy the parts anywhere, flash it yourself — the whole path
+is open. Kits exist for people who'd rather not. Independent vendors can sell
+kits under the free "Works with SecuraCV" badge.
+→ [the ecosystem](https://securacv.com/ecosystem) ·
+[vendors](https://securacv.com/vendors)
+
+### Which device should I build?
+
+| You want | Build |
+|---|---|
+| A first device, general purpose | **Canary WAP** |
+| Camera + person detection into Home Assistant | **Canary Vision** |
+| Presence/breathing care with no camera | **Canary Sense** |
+| A doorway that's very hard to sneak past | **Canary Sentinel** |
+| A wall display for the household | **Canary Display** |
+
+→ [the glossary's device line](GLOSSARY.md#the-device-line)
+
+---
+
+## Contributing & agents
+
+### I'm an AI coding assistant working in this repo. What should I read?
+
+[`AGENTS.md`](../AGENTS.md) — the canonical brief, read by Claude Code, Codex,
+Gemini CLI, Copilot, Cursor, Cline, Windsurf, and Qwen Code via their own
+entrypoint files. It carries the privacy invariants, the naming rules, the repo
+map, and the CI gates you will trip. Then [the glossary](GLOSSARY.md) for
+vocabulary and [`docs/FLIGHT_RULES.md`](FLIGHT_RULES.md) for the engineering
+constitution.
+
+### What will get my pull request rejected?
+
+Adding any identity-inferring capability; giving `RawFrame` a public accessor or
+a `Clone`; overselling a security property in a doc comment; a performance claim
+with no benchmark; the word "flock" for a group of Canaries; a new doc that
+isn't on [the docs map](README.md); or a vocabulary change that doesn't start in
+[`spec/witness_dictionary.json`](../spec/witness_dictionary.json).
+→ [`CONTRIBUTING.md`](../CONTRIBUTING.md) · [`AGENTS.md`](../AGENTS.md)
+
+### Why "fleet" and never "flock"?
+
+A company called Flock soured the word, so a group of Canaries is a **fleet** —
+in copy, device strings, product names, identifiers, and comments. The one
+exception is the Unix `flock(2)` syscall, which is a real API name.
+
+### Where do I report a security issue?
+
+[`SECURITY.md`](../SECURITY.md) — please don't open a public issue for a
+vulnerability.
