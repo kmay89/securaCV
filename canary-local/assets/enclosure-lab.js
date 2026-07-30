@@ -81,12 +81,305 @@ export function enclosuresFor(encData, deviceId) {
   return { mine, universal };
 }
 
-export function buildEnclosureLab(encData, deviceId, buildData) {
+// Map every committed set id → { product, variant, siblings } from catalog.json.
+// `siblings` are the OTHER variants of the same product that pin a discrete
+// selector vector (non-empty `selects`) — the ones an axis change can switch to.
+export function catalogVariantIndex(catalogData) {
+  const idx = new Map();
+  if (!catalogData || !Array.isArray(catalogData.products)) return idx;
+  for (const product of catalogData.products) {
+    const configurable = (product.variants || []).filter(
+      (v) => v.selects && Object.keys(v.selects).length);
+    for (const variant of product.variants || []) {
+      idx.set(variant.id, {
+        product,
+        variant,
+        siblings: configurable.filter((v) => v.id !== variant.id),
+      });
+    }
+  }
+  return idx;
+}
+
+// Seed the option state from a product's options, by TYPE: an enum option
+// (mount_style) keeps its string default; a bool coerces to a real boolean.
+// (Coercing every default with !! would turn "hinge" into true and render the
+// enum as a checkbox that exports mount_style:"true".)
+export function seedOptionValues(options) {
+  const out = {};
+  for (const o of options || []) {
+    if (o.audience && o.audience !== "user") continue;
+    out[o.id] = o.type === "enum" ? o.default : !!o.default;
+  }
+  return out;
+}
+
+// A named preset makes the SCAD override the individual option params, so once
+// a user edits any option the preset must fall back to "custom" or the export
+// silently renders the original preset. Returns the preset to use after an edit.
+export function presetAfterEdit(product, currentPreset) {
+  const pa = (product.variant_axes || []).find(
+    (a) => a.param === "preset" && (a.values || []).includes("custom"));
+  return pa && currentPreset !== "custom" ? "custom" : currentPreset;
+}
+
+// The OpenSCAD parameter vector for a configuration: variant-axis choices +
+// user option values, as a customizer-ready {name: value} map (booleans stay
+// booleans, enums/strings stay strings). Engineering knobs are left at their
+// SCAD defaults — this is the user surface, not the whole param space.
+export function scadParamVector(product, axisVals, optVals) {
+  const out = {};
+  for (const a of product.variant_axes || []) {
+    if (axisVals[a.param] != null) out[a.param] = axisVals[a.param];
+  }
+  for (const o of product.options || []) {
+    if (o.audience !== "user") continue;
+    if (optVals[o.id] != null) out[o.id] = optVals[o.id];
+  }
+  return out;
+}
+
+// Resolve which committed variant (if any) matches a chosen axis vector: every
+// key the variant pins must equal the current choice. Prefer the most specific
+// (most pinned axes). Returns the variant id or null (a "custom" combination).
+export function matchVariant(siblingsPlusSelf, axisVals) {
+  let best = null, bestPins = -1;
+  for (const v of siblingsPlusSelf) {
+    const keys = Object.keys(v.selects || {});
+    if (!keys.length) continue;
+    if (keys.every((k) => v.selects[k] === axisVals[k]) && keys.length > bestPins) {
+      best = v; bestPins = keys.length;
+    }
+  }
+  return best ? best.id : null;
+}
+
+// The old read-only param inventory, kept (collapsed) as the "advanced" view so
+// numeric/engineering knobs the configurator doesn't surface are never lost.
+function renderParamDump(scad, open) {
+  const box = el("details", "pgroup param-dump");
+  if (open) box.open = true;
+  box.append(el("summary", null, "All SCAD parameters (read-only)"));
+  for (const g of scad.groups) {
+    const d = el("details", "pgroup");
+    const s = el("summary");
+    s.append(el("strong", null, g.name),
+             g.note ? el("span", "muted", "  " + g.note) : "");
+    d.append(s);
+    for (const p of g.params) {
+      const row = el("div", "prow");
+      row.append(el("code", null, p.name), el("span", "pdefault", p.default));
+      if (p.enum) row.append(el("span", "penum", p.enum.join(" · ")));
+      if (p.range) row.append(el("span", "penum",
+        `${p.range[0]}…${p.range[2]} step ${p.range[1]}`));
+      if (p.comment) row.append(el("span", "pcomment", p.comment));
+      d.append(row);
+    }
+    box.append(d);
+  }
+  return box;
+}
+
+// The live, catalog-driven configurator: variant-axis selectors (that switch to
+// the matching committed STL, or flag a custom combo), user-option toggles/enums
+// with live requires/excludes/requires_parts feedback, and an OpenSCAD parameter
+// export. `onPickVariant(id)` switches the lab to a sibling committed variant.
+function renderConfigurator({ product, variant, scad, onPickVariant }) {
+  const px = el("div", "params configurator");
+  px.append(el("h4", null, "Configure this case"));
+  px.append(el("p", "muted",
+    "Live from the catalog manifest. Pick a flavor to jump to its printable " +
+    "parts; toggle options to see what each adds; export the parameters into " +
+    "OpenSCAD's customizer to render a combination we don't ship a mesh for."));
+
+  const userOpts = (product.options || []).filter((o) => o.audience === "user");
+  const axes = product.variant_axes || [];
+
+  // live state, seeded from this variant. Enum options keep their string
+  // default; booleans coerce to a real boolean.
+  const axisVals = {};
+  for (const a of axes) axisVals[a.param] = (variant.selects || {})[a.param] ?? a.default;
+  const optVals = seedOptionValues(product.options);
+
+  // A named preset (battery_full, vision_weather, …) makes the SCAD OVERRIDE
+  // the individual option params — so the moment a user edits an option,
+  // markCustomOnEdit falls the preset back to "custom" (via presetAfterEdit) or
+  // the download silently renders the original preset and ignores the edit.
+  const axisSelects = {};
+
+  const optsWrap = el("div", "cfg-opts");
+  const exportBox = el("pre", "param-export");
+  const dlRow = el("div", "cfg-export-row");
+  const note = el("p", "muted cfg-note");
+
+  const scadStem = (product.scad || "").replace(/\.scad$/, "");
+
+  function markCustomOnEdit() {
+    const next = presetAfterEdit(product, axisVals.preset);
+    if (next !== axisVals.preset) {
+      axisVals.preset = next;
+      if (axisSelects.preset) axisSelects.preset.value = next;
+      note.textContent =
+        "Options edited — preset set to “custom” so your choices take effect " +
+        "(a named preset would override them in the SCAD).";
+    }
+  }
+
+  function applyConstraints() {
+    // requires forces the target on; excludes forces it off (bool options only)
+    for (const o of userOpts) {
+      if (o.type !== "bool" || !optVals[o.id]) continue;
+      for (const r of o.requires || []) if (r in optVals) optVals[r] = true;
+      for (const x of o.excludes || []) if (x in optVals) optVals[x] = false;
+    }
+  }
+
+  function refreshExport() {
+    const vec = scadParamVector(product, axisVals, optVals);
+    const strs = {};
+    for (const [k, v] of Object.entries(vec)) strs[k] = String(v);
+    exportBox.textContent = JSON.stringify(
+      { parameterSets: { [variant.id]: strs }, fileFormatVersion: "1" }, null, 1);
+    dlRow.innerHTML = "";
+    const fname = `${scadStem}_${variant.id}_openscad-params.json`;
+    const blob = new Blob([exportBox.textContent], { type: "application/json" });
+    const a = el("a", "primary small", "⤓ params .json");
+    a.href = URL.createObjectURL(blob);
+    a.download = fname;
+    const copy = el("button", "small", "copy");
+    copy.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(exportBox.textContent);
+        copy.textContent = "copied ✓"; } catch { copy.textContent = "select + copy"; }
+    });
+    dlRow.append(a, copy,
+      el("span", "muted", "→ OpenSCAD ▸ Window ▸ Customizer ▸ load preset"));
+  }
+
+  function optTxt(o) {
+    const txt = el("span", "cfg-opt-txt");
+    txt.append(el("strong", null, o.label || o.id));
+    if (o.consequence) txt.append(el("span", "muted", " — " + o.consequence));
+    return txt;
+  }
+  function optTags(o, forcedOn) {
+    const tags = el("span", "cfg-tags");
+    for (const r of o.requires || [])
+      tags.append(el("span", "cfg-tag req", `requires ${r}`));
+    for (const x of o.excludes || [])
+      tags.append(el("span", "cfg-tag exc", `excludes ${x}`));
+    for (const rp of o.requires_parts || [])
+      tags.append(el("span", "cfg-tag part", `adds ${rp} part`));
+    if (forcedOn) tags.append(el("span", "cfg-tag on", "auto-on (required)"));
+    return tags;
+  }
+
+  function renderOpts() {
+    optsWrap.innerHTML = "";
+    if (!userOpts.length) return;
+    optsWrap.append(el("h5", null, "Options"));
+    for (const o of userOpts) {
+      const row = el("label", "cfg-opt");
+      if (o.type === "enum") {
+        // an enum option (e.g. mount_style) → a select of its members
+        row.append(optTxt(o));
+        const sel = el("select");
+        for (const v of o.enum || []) {
+          const opt = el("option", null, v);
+          opt.value = v;
+          if (optVals[o.id] === v) opt.selected = true;
+          sel.append(opt);
+        }
+        sel.addEventListener("change", () => {
+          optVals[o.id] = sel.value;
+          markCustomOnEdit();
+          refreshExport();
+        });
+        row.append(sel, optTags(o, false));
+      } else {
+        const forcedOn = userOpts.some((s) => optVals[s.id] &&
+          (s.requires || []).includes(o.id));
+        const forcedOff = userOpts.some((s) => optVals[s.id] &&
+          (s.excludes || []).includes(o.id));
+        const input = el("input");
+        input.type = "checkbox";
+        input.checked = !!optVals[o.id];
+        input.disabled = forcedOn || forcedOff;
+        input.addEventListener("change", () => {
+          optVals[o.id] = input.checked;
+          markCustomOnEdit();
+          applyConstraints();
+          renderOpts();
+          refreshExport();
+        });
+        row.append(input, optTxt(o), optTags(o, forcedOn));
+      }
+      optsWrap.append(row);
+    }
+  }
+
+  // axis selectors
+  if (axes.length) {
+    const ax = el("div", "cfg-axes");
+    ax.append(el("h5", null, "Flavor"));
+    for (const a of axes) {
+      const row = el("label", "cfg-axis");
+      row.append(el("span", "cfg-axis-label", a.param));
+      const sel = el("select");
+      axisSelects[a.param] = sel;
+      for (const v of a.values) {
+        const opt = el("option", null, v);
+        opt.value = v;
+        if (axisVals[a.param] === v) opt.selected = true;
+        sel.append(opt);
+      }
+      sel.addEventListener("change", () => {
+        axisVals[a.param] = sel.value;
+        const sibs = [variant, ...(catSiblings(product, variant))];
+        const hit = matchVariant(sibs, axisVals);
+        if (hit && hit !== variant.id) { onPickVariant(hit); return; }
+        note.textContent = hit
+          ? ""
+          : "Custom combination — no committed STL; export the parameters and " +
+            "render it in OpenSCAD.";
+        refreshExport();
+      });
+      row.append(sel);
+      ax.append(row);
+    }
+    px.append(ax);
+  }
+
+  applyConstraints();
+  renderOpts();
+  refreshExport();
+  px.append(optsWrap, note);
+
+  // export + advanced (read-only) dump
+  const exp = el("details", "pgroup cfg-export");
+  exp.append(el("summary", null, "OpenSCAD parameter export"));
+  exp.append(dlRow, exportBox);
+  px.append(exp);
+  if (scad) px.append(renderParamDump(scad, false));
+  return px;
+}
+
+// the sibling committed variants of a product (non-empty selects, not self)
+function catSiblings(product, variant) {
+  return (product.variants || []).filter(
+    (v) => v.id !== variant.id && v.selects && Object.keys(v.selects).length);
+}
+
+export function buildEnclosureLab(encData, deviceId, buildData, catalogData) {
   const wrap = el("div", "enclab");
   if (!encData) {
     wrap.append(el("p", "muted", "Enclosure catalog unavailable."));
     return wrap;
   }
+  // catalog.json (Phase-2 manifest) → live configurator: for each committed
+  // set we look up its product + variant so the parameter panel can render
+  // real, constraint-aware controls instead of read-only text. Absent catalog
+  // (or a set with no product) falls back to the old read-only param dump.
+  const catBySet = catalogVariantIndex(catalogData);
   const { mine, universal } = enclosuresFor(encData, deviceId);
   if (!mine.length && !universal.length) {
     wrap.append(el("p", "muted", "No enclosures catalogued for this device yet."));
@@ -765,27 +1058,21 @@ export function buildEnclosureLab(encData, deviceId, buildData) {
     }
     info.append(files);
 
-    // parameter explorer
+    // parameter panel → live configurator (from catalog.json) when this set
+    // maps to a catalog product; read-only fallback otherwise.
     const scad = set.scad && encData.scads[set.scad];
-    if (scad) {
+    const cat = catBySet.get(set.id);
+    if (cat) {
+      info.append(renderConfigurator({
+        product: cat.product,
+        variant: cat.variant,
+        scad,
+        onPickVariant: (id) => selectSetById(id),
+      }));
+    } else if (scad) {
       const px = el("div", "params");
       px.append(el("h4", null, "What this configurator can adapt to"));
-      for (const g of scad.groups) {
-        const d = el("details", "pgroup");
-        const s = el("summary");
-        s.append(el("strong", null, g.name),
-                 g.note ? el("span", "muted", "  " + g.note) : "");
-        d.append(s);
-        for (const p of g.params) {
-          const row = el("div", "prow");
-          row.append(el("code", null, p.name), el("span", "pdefault", p.default));
-          if (p.enum) row.append(el("span", "penum", p.enum.join(" · ")));
-          if (p.range) row.append(el("span", "penum", `${p.range[0]}…${p.range[2]} step ${p.range[1]}`));
-          if (p.comment) row.append(el("span", "pcomment", p.comment));
-          d.append(row);
-        }
-        px.append(d);
-      }
+      px.append(renderParamDump(scad, true));
       px.append(el("p", "muted",
         "Change any of these in OpenSCAD's customizer and re-render — " +
         "print the fit coupon first to tune tolerances for your printer."));
@@ -796,6 +1083,14 @@ export function buildEnclosureLab(encData, deviceId, buildData) {
   window.__encPrintSettings = encData.print_settings;
 
   const all = [...mine, ...universal.map((u) => ({ ...u, _uni: true }))];
+  const pillBySetId = new Map();
+  // Jump the lab to another committed variant (used when a configurator axis
+  // change lands on a sibling we ship an STL for). Re-clicks its pill so the
+  // pill row, 3D stage and configurator all stay in sync.
+  function selectSetById(id) {
+    const b = pillBySetId.get(id);
+    if (b) b.click();
+  }
   let first = null;
   for (const set of all) {
     const b = el("button", "pill" + (set._uni ? " pill-uni" : ""));
@@ -807,6 +1102,7 @@ export function buildEnclosureLab(encData, deviceId, buildData) {
       showSet(set);
     });
     pills.append(b);
+    pillBySetId.set(set.id, b);
     first ||= b;
   }
   first?.click();

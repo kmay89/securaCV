@@ -282,9 +282,18 @@ duplicated.
    `canary-local/tests/catalog.test.js`; `enclosures.json`/`workshop.json` remain
    the live views. It also self-reports coverage (`engineering_param_count`) so
    the manifest never pretends to surface knobs it drops.
-3. **Unify the two pickers.** Fold `enclosure-lab.js`'s read-only param text into
-   real inputs; generalize `workshop.js`'s configurator to every product via the
-   manifest. Add facets (§6B).
+3. **Unify the two pickers.** *(In progress.)* ✅ **`enclosure-lab.js` done** —
+   the lab now reads `catalog.json` (loaded by `app.js`) and renders a live
+   configurator in place of the read-only param text: variant-axis selectors
+   that jump to the matching committed STL (or flag a custom combo), user-option
+   toggles/enums with live `requires`/`excludes`/`requires_parts` feedback,
+   engineering knobs kept in a collapsed read-only block, and an OpenSCAD
+   parameter export. Options come from `option.audience`, not the `opt_` prefix,
+   so non-prefixed user options finally show. Guarded by
+   `canary-local/tests/catalog_lab.test.js`. ⬜ **Still to do:** generalize
+   `workshop.js`'s configurator to every product via the manifest (today it hand-
+   lists 5 devices and filters options by the `opt_` prefix), and add facets
+   (§6B).
 4. **Add the guided funnel (§6A) + remix rail (§6D).**
 5. **Make the showroom manifest-driven** — delete the hand `PRODUCTS` array;
    render products/variants/status/choreography from the manifest at the pinned

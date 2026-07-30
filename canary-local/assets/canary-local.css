@@ -244,6 +244,32 @@ button:disabled { opacity: 0.35; cursor: default; }
 .penum { color: var(--signed); font-size: 12px; }
 .pcomment { color: var(--muted); flex-basis: 100%; padding-left: 2px; }
 
+/* ── enclosure lab: live configurator (catalog.json) ── */
+.configurator h5 { margin: 14px 0 6px; font-size: 13px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .04em; }
+.cfg-axes { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.cfg-axis { display: flex; align-items: center; gap: 8px; }
+.cfg-axis-label { font-size: 13px; color: var(--canary-deep); font-family: monospace; }
+.cfg-axis select, .cfg-opt select { background: var(--surface); color: var(--text);
+  border: 1px solid var(--edge); border-radius: 8px; padding: 4px 8px; font-size: 13px; }
+.cfg-opts { margin-top: 6px; }
+.cfg-opt { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px;
+  padding: 6px 0; border-top: 1px solid #1d1d1d; font-size: 13px; }
+.cfg-opt input[type=checkbox] { margin-right: 4px; }
+.cfg-opt-txt strong { color: var(--text); }
+.cfg-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.cfg-tag { font-size: 11px; padding: 1px 6px; border-radius: 999px;
+  border: 1px solid var(--edge); color: var(--muted); }
+.cfg-tag.req { border-color: var(--signed); color: var(--signed); }
+.cfg-tag.exc { border-color: var(--clay, #c96); color: var(--clay, #c96); }
+.cfg-tag.part { border-color: var(--canary-deep); color: var(--canary-deep); }
+.cfg-tag.on { border-color: var(--canary); color: var(--canary); }
+.cfg-note:empty { display: none; }
+.cfg-export-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+.param-export { background: var(--surface); border: 1px solid var(--edge); border-radius: 8px;
+  padding: 8px 10px; font-size: 12px; overflow-x: auto; white-space: pre; margin: 4px 0; }
+.param-dump { margin-top: 8px; }
+
 /* ── enclosure lab: filament + print guide ── */
 .enclab-tools { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; margin: 2px 0 8px; }
 
