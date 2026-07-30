@@ -304,7 +304,16 @@ duplicated.
    configurable devices already surface their user options, so the practical gap
    is the non-`opt_` options on the accessory/display products the browse now
    covers.
-4. **Add the guided funnel (§6A) + remix rail (§6D).**
+4. **Add the guided funnel (§6A) + remix rail (§6D).** ✅ **Done** — a new
+   `find.html` / `catalog-funnel.js` asks up to three questions (what you're
+   building → where it lives → how you mount it), each narrowing the next over
+   `catalog.json`, and resolves to **one** recommended case with its variant +
+   options pre-checked (weather/field → seal + vent; desk → stand), the fit
+   coupon offered, and a sideways **remix rail** (§6D: `alternatives` + the
+   runner-up matches, never inside the funnel). It's honest about relaxation —
+   e.g. a rugged vision build has no vision-specific field case, so it falls back
+   to the device-agnostic carriers (`field_case`/`hammond`/`relay_solar`) and
+   says so. Guarded by `canary-local/tests/catalog_funnel.test.js`.
 5. **Make the showroom manifest-driven** — delete the hand `PRODUCTS` array;
    render products/variants/status/choreography from the manifest at the pinned
    SHA (it already fetches from the repo).
