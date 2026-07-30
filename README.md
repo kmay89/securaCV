@@ -36,6 +36,9 @@ Clips stay on your hardware. Events become privacy-preserving claims. The durabl
 | Building hardware | [Getting started with Canaries](docs/getting_started_canary.md) → [hardware guides](docs/hardware/README.md) | Small independent witnesses for radar, camera-module presence, WiFi sensing, and displays. |
 | Evaluating trust and safety | [Why exports work this way](docs/why_secure.md) → [threat model](docs/security/THREAT_MODEL.md) | A clear view of what is enforced, what is audited, and what remains out of scope. |
 | Developing | [Operator guide](docs/operator_guide.md) → [documentation map](docs/README.md) | Specs, commands, testing expectations, and day-2 operations in one map. |
+| Just trying to understand a word | [The glossary](docs/GLOSSARY.md) | Every proper noun defined once — SecuraCV vs the Canary vs the kernel, Opera/Chirp/Beacon, break-glass, the device line. |
+| Asking a common question | [The FAQ](docs/FAQ.md) | "Does it do face recognition?", "how do I get footage after a break-in?", "is this production-ready?" — answered plainly. |
+| An AI coding assistant | [AGENTS.md](AGENTS.md) | The canonical brief: invariants, naming rules, repo map, CI gates. Every tool's own entrypoint file is generated from it. |
 
 Prefer to explore first? The [SecuraCV Lab](https://kmay89.github.io/securaCV/canary-local/start.html) turns the same paths into an interactive guide with browser demos and one-tap commands.
 

@@ -1,4 +1,152 @@
-# AGENTS.md — Witness-Kernel Development Guide
+# AGENTS.md — the brief for any AI agent working in this repo
+
+**This file is the canonical brief.** It is vendor-neutral on purpose: every
+assistant that works here reads these same rules, through whichever filename its
+tool looks for.
+
+| Tool | File it reads | What that file is |
+|---|---|---|
+| Codex, Cursor, Jules, Aider, Zed, Devin, most others | `AGENTS.md` | **this file** |
+| Claude Code | [`CLAUDE.md`](CLAUDE.md) | project rules + a pointer here |
+| Gemini CLI | [`GEMINI.md`](GEMINI.md) | generated pointer |
+| Qwen Code | [`QWEN.md`](QWEN.md) | generated pointer |
+| GitHub Copilot | [`.github/copilot-instructions.md`](.github/copilot-instructions.md) | generated pointer |
+| Cursor (rules format) | [`.cursor/rules/securacv.mdc`](.cursor/rules/securacv.mdc) | generated pointer |
+| Cline | [`.clinerules`](.clinerules) | generated pointer |
+| Windsurf | [`.windsurfrules`](.windsurfrules) | generated pointer |
+
+The pointer files are **generated** from the brief block below by
+`scripts/gen_agent_entrypoints.py` and byte-checked in CI, so they cannot drift.
+Edit this file, then run the generator — never edit a pointer file by hand.
+
+## Read these first
+
+| If you're doing this | Read |
+|---|---|
+| Anything at all | The non-negotiables block below |
+| Wondering what a word means | [`docs/GLOSSARY.md`](docs/GLOSSARY.md) — every proper noun in the project, defined once |
+| Answering a user's question about the project | [`docs/FAQ.md`](docs/FAQ.md) |
+| Looking for a doc | [`docs/README.md`](docs/README.md) — the CI-enforced map of all ~240 docs |
+| Wondering which directory is the real one | [`docs/CONSOLIDATION.md`](docs/CONSOLIDATION.md) — the tree map |
+| Writing code | [`docs/FLIGHT_RULES.md`](docs/FLIGHT_RULES.md) — the engineering constitution |
+| Shipping or releasing | [`docs/RELEASE_BUTTONS.md`](docs/RELEASE_BUTTONS.md), then [`.github/RELEASE_LESSONS.md`](.github/RELEASE_LESSONS.md) |
+
+---
+
+<!-- BEGIN AGENT-BRIEF — generated into the vendor entrypoint files; do not
+     delete these markers. Keep it short: it is copied verbatim. -->
+
+## What this project is
+
+**SecuraCV** is privacy-preserving witness infrastructure: it turns camera and
+sensor input into **semantic events** ("large object crossed boundary") in a
+signed, hash-chained log — never a searchable pile of footage. The platform is
+**SecuraCV**, the device is a **Canary**, the company is **Errer Labs**. The
+core is a Rust daemon (`witnessd`, in `src/`); Canaries are ESP32 firmware (in
+`firmware/`).
+
+The design rule behind everything: guarantees are **`can't`, not `won't`**. The
+surveillance code was never written, so there is no setting to turn off.
+
+## Non-negotiables
+
+**1. Never add an identity-inferring capability.** No face recognition or
+embeddings, no licence-plate OCR, no person re-identification, no gait analysis,
+no demographic (age/gender/race) estimation, no audio transcription. `ObjectClass`
+is `Person | Vehicle | Animal | Package` — never `Face` or `LicensePlate`. This
+is Invariant II (`spec/invariants.md`) and it is a rejected PR, not a config flag.
+
+**2. Never widen the raw-frame escape hatch.** `RawFrame.data` stays private: no
+public getter, no `Clone`, no `AsRef<[u8]>`. The only path to raw bytes is
+`export_for_vault()` behind a `BreakGlassToken`, which needs n-of-m trustee
+approval.
+
+**3. Say "fleet," never "flock."** A group of Canaries is a **fleet**. "Flock" is
+off-limits in user-facing copy, device UI strings, product and bundle names, code
+identifiers, and comments — a company called Flock soured the word. The **only**
+exception is the Unix `flock(2)` syscall, which is a real API name; do not rename
+it. Use "fleet" (already established across the firmware, e.g. `fleet_model.h`)
+or plain "your Canaries" / "the devices."
+
+**4. Don't oversell, and don't overclaim.** "Verified" means *an Ed25519
+signature checked against a pinned key* — nothing looser. No performance claim
+without a benchmark. Describe `DetectorBackend` as an audit boundary that must be
+audited, not as something that "cryptographically enforces" anything. Where a
+guarantee isn't structural yet, say so out loud.
+
+**5. Vocabulary changes start in the dictionary.** Event types, failure types,
+attestation tiers, claim kinds and modalities are duplicated as constants across
+Rust, Python, JS and firmware C++. `spec/witness_dictionary.json` is the single
+source of truth and `scripts/lint_dictionary_sync.py` fails CI on any drift. Edit
+the dictionary first, then every copy the linter names.
+
+**6. A new doc gets a home on the map in the same commit.**
+`scripts/lint_docs_index.py` fails the build if a doc under `docs/` isn't
+reachable from `docs/README.md`, or if a link there is dead.
+
+**7. Two flashers, two frontends.** The in-browser flasher
+(`canary-local/assets/`) and the desktop Flasher app (`desktop/src/`) share no UI
+code. A user-facing diagnostic added to one must be added to the other, or half
+the users keep the vague version.
+
+**8. Beacon and Chirp have their own hard invariants** — two-pubkey co-signing,
+no automatic origination, no PII on the wire, no impersonation of official
+alerts, ephemeral session keys. If you touch `firmware/projects/canary-wap/`
+beacon or chirp code, read the Beacon section of `AGENTS.md` in full first.
+
+## Before you commit
+
+- `cargo test`, `cargo clippy` (no warnings), `cargo doc` (no warnings)
+- `python3 scripts/lint_docs_index.py` if you touched anything under `docs/`
+- `python3 scripts/lint_dictionary_sync.py` if you touched a vocabulary
+- `python3 scripts/gen_agent_entrypoints.py` if you edited this brief
+- Commit format: `<type>(<scope>): <description>` — `feat`, `fix`, `docs`,
+  `test`, `refactor`, `chore`
+
+<!-- END AGENT-BRIEF -->
+
+---
+
+## Where do I look for X?
+
+| Question | Answer |
+|---|---|
+| The kernel / the daemon | `src/` — the real Rust product, `witnessd` and its binaries |
+| Device firmware | `firmware/canary/` (canonical) and `firmware/projects/<product>/` |
+| The normative contracts | `spec/` — read `spec/README.md` first for each doc's maturity (🟢 stable / 🟡 draft / ⚪ spec-only) |
+| The in-browser Lab | `canary-local/` — real firmware compiled to WebAssembly |
+| The desktop Flasher / hub app | `desktop/` (plus `desktop/hub-core`, `desktop/hub-io`) |
+| The Lab desktop app | `desktop-lab/` — a different app from the Flasher |
+| Home Assistant integration | `custom_components/securacv/` + the add-on wrapper `privacy_witness_kernel/` |
+| Apple targets | `ios/` (iPhone/iPad), `tvos/` (the Witness Wall) |
+| Architecture docs, not code | `kernel/` — docs only, despite the name |
+| What a word means | `docs/GLOSSARY.md` |
+| Which tree is the real one | `docs/CONSOLIDATION.md` |
+| Machine-readable vocabularies | `spec/witness_dictionary.json` |
+| Which build has which feature | `firmware/build_matrix.json` (generated truth), not `firmware/FEATURES.md` (narrative, can lag) |
+| Which products/envs ship | `firmware/flavors.json` |
+| Board hardware-verification status | `firmware/boards/boards.json` — `verified` vs `compile-tested` |
+| Release targets | `.github/release-targets.yml` — add a target there, not in workflow YAML |
+
+## CI gates you will trip
+
+These run on every PR. Run the relevant one locally before you push.
+
+| Gate | What it enforces |
+|---|---|
+| `scripts/lint_docs_index.py` | Every doc reachable from `docs/README.md`; no dead links |
+| `scripts/lint_dictionary_sync.py` | Rust/Python/JS/firmware vocabularies match `spec/witness_dictionary.json` |
+| `scripts/gen_agent_entrypoints.py --check` | Vendor agent files match this file's brief block |
+| `scripts/lint_no_impersonation.sh` | No red, no reserved emergency tones, no official-alert phrasing |
+| `scripts/lint_build_matrix.py` | `build_matrix.json` matches `platformio.ini` + `canary_config.h` |
+| `scripts/lint_feature_flags.sh` | Feature-flag hygiene |
+| `scripts/lint_version_sync.sh`, `desktop/scripts/check_app_versions.py` | One version per app across `tauri.conf.json` / `package.json` / `Cargo.toml` |
+| `scripts/lint_bom.py` | BOM CSVs schema-clean and wired to the generator |
+
+Full list: [`.github/workflows/lint.yml`](.github/workflows/lint.yml) and
+[`docs/ci.md`](docs/ci.md).
+
+---
 
 ## Project Identity
 
