@@ -240,27 +240,85 @@ static void note_peer(uint16_t id, int16_t rssi) {
   }
 }
 
+// The ESP-NOW receive callback runs on the Wi-Fi task, NOT in loop(). Touching
+// the playback or peer state directly from here would race loop() — and the
+// race is not theoretical: publishing g_playing before g_play_start is written
+// lets loop() start replaying a knock against a stale timestamp, which shows up
+// as a rhythm that is subtly wrong. On a device whose entire product is "the
+// rhythm arrives exactly as tapped", that is the worst possible bug: it looks
+// like bad haptics rather than bad code.
+//
+// So the callback does the least it can — copy the bytes into a small ring
+// under a spinlock — and loop() does the decoding and installing. Keeping the
+// callback short is also just correct ESP-NOW practice.
+
+struct Inbound {
+  uint16_t from;
+  int16_t rssi;
+  uint8_t kind;
+  uint8_t len;
+  uint8_t payload[32];
+};
+
+static const uint8_t INBOX_N = 4;
+static Inbound g_inbox[INBOX_N];
+static uint8_t g_in_head = 0;
+static uint8_t g_in_tail = 0;
+static portMUX_TYPE g_inbox_mux = portMUX_INITIALIZER_UNLOCKED;
+
 static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data,
                     int len) {
   if (len < 5) return;
   if (data[0] != TC_BRINGUP_MAGIC0 || data[1] != TC_BRINGUP_MAGIC1) return;
 
-  const uint8_t kind = data[2];
   const uint16_t from = (uint16_t)(data[3] | ((uint16_t)data[4] << 8));
   if (from == g_my_id) return;  // our own broadcast, reflected
 
-  note_peer(from, info ? info->rx_ctrl->rssi : 0);
+  size_t n = (size_t)(len - 5);
+  if (n > sizeof(g_inbox[0].payload)) n = sizeof(g_inbox[0].payload);
 
-  if (kind == TC_KNOCK && len > 5) {
-    Knock k;
-    // knock_decode is total: a malformed knock is dropped, never half-played.
-    // A half-understood rhythm replayed on a wrist is worse than none.
-    if (canary::tincan::knock_decode(data + 5, (size_t)(len - 5), k)) {
-      if (canary::tincan::knock_playback(k, g_play)) {
-        g_playing = true;
+  portENTER_CRITICAL(&g_inbox_mux);
+  const uint8_t next = (uint8_t)((g_in_head + 1) % INBOX_N);
+  if (next != g_in_tail) {  // full ring drops rather than overwrites
+    Inbound &s = g_inbox[g_in_head];
+    s.from = from;
+    s.rssi = info ? info->rx_ctrl->rssi : 0;
+    s.kind = data[2];
+    s.len = (uint8_t)n;
+    if (n) memcpy(s.payload, data + 5, n);
+    g_in_head = next;
+  }
+  portEXIT_CRITICAL(&g_inbox_mux);
+}
+
+// Drain the ring on the loop task, where all the state actually lives.
+static void drain_inbox() {
+  for (;;) {
+    Inbound f;
+    bool have = false;
+
+    portENTER_CRITICAL(&g_inbox_mux);
+    if (g_in_tail != g_in_head) {
+      f = g_inbox[g_in_tail];
+      g_in_tail = (uint8_t)((g_in_tail + 1) % INBOX_N);
+      have = true;
+    }
+    portEXIT_CRITICAL(&g_inbox_mux);
+
+    if (!have) return;
+
+    note_peer(f.from, f.rssi);
+
+    if (f.kind == TC_KNOCK && f.len) {
+      Knock k;
+      // knock_decode is total: a malformed knock is dropped, never half-played.
+      // A half-understood rhythm replayed on a wrist is worse than none.
+      if (canary::tincan::knock_decode(f.payload, f.len, k) &&
+          canary::tincan::knock_playback(k, g_play)) {
         g_play_next = 0;
         g_play_start = millis();
-        USBSerial.printf("[knock] from %04x, %u taps, span %ums\n", from,
+        g_playing = true;  // published LAST, once the schedule is complete
+        USBSerial.printf("[knock] from %04x, %u taps, span %ums\n", f.from,
                          (unsigned)k.taps, (unsigned)k.span_ms());
       }
     }
@@ -473,14 +531,23 @@ void loop() {
     send_frame(TC_HELLO, nullptr, 0);
   }
 
+  drain_inbox();
+
   // Touch, with edge detection so a press is one event.
   int32_t tx = 0, ty = 0;
   const bool down = touch_read(tx, ty);
   static bool was_down = false;
   static uint32_t down_since = 0;
+  // One hold advances exactly one stage. Restarting the timer instead would
+  // only postpone the next advance: two seconds later the same uninterrupted
+  // press qualifies again, and a finger left resting walks straight past the
+  // touch and peer checks to stage 5 — silently skipping the two stages whose
+  // whole job is to catch a fault before you trust the knock.
+  static bool hold_consumed = false;
   const bool pressed = down && !was_down;
   if (pressed) down_since = now;
-  const bool long_held = down && (now - down_since > 2000);
+  if (!down) hold_consumed = false;  // the latch clears only on release
+  const bool long_held = down && !hold_consumed && (now - down_since > 2000);
 
   // Stage advance — long press everywhere except the auto-advancing scan.
   if (g_stage == 1 && now - g_stage_since > 6000) {
@@ -491,7 +558,7 @@ void loop() {
     g_stage++;
     g_stage_since = now;
     g_stage_drawn = false;
-    down_since = now;  // don't let one hold skip two stages
+    hold_consumed = true;
     tap_feedback();
   }
 
