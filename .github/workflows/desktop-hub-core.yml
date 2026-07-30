@@ -144,12 +144,20 @@ jobs:
           cd desktop/src-tauri
           mkdir -p binaries resources
           triple="$(rustc -vV | awk '/^host:/{print $2}')"
-          for bin in espflash rpiboot; do
-            : > "binaries/${bin}-${triple}"
-            chmod +x "binaries/${bin}-${triple}"
+          # Create ONLY what is missing. resources/mass-storage-gadget64 is a
+          # real directory committed to the repo, so truncating it is both
+          # wrong and an error ("Is a directory") — the first version of this
+          # step did exactly that.
+          for want in "binaries/espflash-${triple}" "binaries/rpiboot-${triple}" \
+                      "resources/mass-storage-gadget64"; do
+            if [ -e "$want" ]; then
+              echo "have    $want"
+            else
+              : > "$want"
+              chmod +x "$want"
+              echo "stubbed $want"
+            fi
           done
-          : > resources/mass-storage-gadget64
-          ls -l binaries resources
       - name: cargo check
         working-directory: desktop/src-tauri
         run: cargo check --all-targets
