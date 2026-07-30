@@ -53,6 +53,13 @@ jobs:
         # key is a legitimate state — a SILENT one was the problem, since it
         # makes every product read "unavailable" in the flasher with no clue why.
         run: python3 firmware/scripts/ota_key_state.py
+      - name: USB console agreement (release FQBNs vs the bench)
+        # An S3 built without CDC-on-boot prints `Serial` to UART0: it builds,
+        # flashes, runs — and the app's serial monitor is silent, with no
+        # visible cause. Three release FQBNs had drifted from the PlatformIO
+        # bench when this lint was added.
+        run: python3 scripts/lint_usb_console.py
+
       - name: Witness Dictionary sync (Rust / Python / JS / firmware)
         run: python3 scripts/lint_dictionary_sync.py
       - name: Vehicle DBC signal math (golden vectors)
