@@ -57,13 +57,16 @@ in a classroom and is useless under a blanket at 8 p.m. So:
   minimum viable Tin Can. It is a two-wire add-on, it has a mature driver, and
   its effect library is exactly the vocabulary §5 needs (sharp click, ramp-up,
   double-tick).
-- **The degraded fallback is named, not hidden.** With no motor the firmware
-  falls back to a full-screen AMOLED flash plus the existing
+- **The degraded fallback is named, not hidden — and it is visual only.** The
+  board ships a codec but **no speaker** (§12.5), so with neither a motor nor a
+  fitted speaker a knock can only be a full-screen AMOLED flash. The boot screen
+  says *"no buzzer fitted — knocks will be seen, not felt."* The
   [`chime`](../../firmware/projects/canary-display/include/canary/hal/chime.h)
-  voice, and the boot screen says *"no buzzer fitted — knocks will be seen and
-  heard, not felt."* Honest degradation is the house style
-  ([`failure_semantics.md`](../failure_semantics.md)); a silent-looking device
-  that isn't silent is the kind of surprise that gets a kid in trouble.
+  voice is only reachable on a build that has actually detected an output
+  transducer; the firmware must probe rather than assume, because a device that
+  claims it can be heard and can't is exactly the surprise that leaves a kid
+  waiting for an answer that already arrived. Honest degradation is the house
+  style ([`failure_semantics.md`](../failure_semantics.md)).
 
 ### 1.2 Board registry
 
@@ -251,11 +254,32 @@ including the parent's own settings (§9.3).
 ### 5.1 Transport
 
 **ESP-NOW is primary.** Connectionless, ~ms latency, no AP association, and —
-critically for a house — it keeps working when the router reboots. It reuses
-the existing peer path and the *same* wire contract the BLE chirp uses
-([`espnow_peer_logic.h`](../../firmware/projects/canary-display/include/canary/net/espnow_peer_logic.h),
-`beacon_parse.h`), and inherits the channel and airtime discipline already
-written for the WAP mesh (`mesh_channel_policy.h`, `airtime_governor.h`).
+critically for a house — it keeps working when the router reboots.
+
+**What we reuse is the plumbing, not the wire format.** Be precise about this,
+because the existing path cannot carry a string:
+[`espnow_peer.h`](../../firmware/projects/canary-display/include/canary/net/espnow_peer.h)
+is a **receive-only observer** by design — the dash has no signing identity, so
+"it never transmits" is a stated honesty rule, not an omission — and
+[`espnow_peer_logic.h`](../../firmware/projects/canary-display/include/canary/net/espnow_peer_logic.h)
+accepts *only* an exact **11-byte** (`BEACON_MFG_LEN`) fleet-presence beacon and
+decodes it into the fleet model. The paired transmit side doesn't exist yet at
+all ([`board_capability_map_43b.md` §"Remaining to go live"](../hardware/board_capability_map_43b.md)).
+
+So the Tin Can needs, as new work in wave 1–2:
+
+- a **second ESP-NOW frame type** — variable length, authenticated, and
+  discriminated from the presence beacon before either parser runs, so a string
+  frame can never be mistaken for a witness observation or vice versa;
+- a **transmit API** (`string_send`) alongside the existing receive drain — the
+  watch *does* mint its own per-string keys, so unlike the dash it has something
+  to say.
+
+What genuinely carries over: the ESP-NOW bring-up and channel-follow code, the
+"reject foreign traffic before it reaches any model" discipline, and the channel
+and airtime governance already written for the WAP mesh
+(`mesh_channel_policy.h`, `airtime_governor.h`). The fleet presence beacon stays
+exactly as it is — the Tin Can listens to it for §6.5, and never extends it.
 
 **LAN/MQTT is the fallback and the parent path.** When both watches are
 associated to the house Wi-Fi but out of ESP-NOW earshot, strings ride
@@ -308,15 +332,27 @@ and it is the thing they'll show their grandmother.
 Every string owns its own key. One frame shape, versioned, small:
 
 ```
-[ ver | string_id(2) | ctr(4) | kind(1) | payload(≤32) | tag(16) ]
+[ ver | string_id(2) | dir(1) | ctr(8) | kind(1) | payload(≤32) | tag(16) ]
               AEAD (ChaCha20-Poly1305 or AES-GCM via mbedtls)
 ```
 
-- Key: X25519 at tie time → HKDF → per-string symmetric key, in NVS on both
-  ends. The project already carries Ed25519 on-device for chain verify, so the
-  crypto posture and the review habits exist.
-- `ctr` is a monotonic counter with a sliding replay window — a recorded knock
-  can't be replayed at 2 a.m.
+- Key: X25519 at tie time → HKDF → **two directional keys**, `K_AB` and `K_BA`,
+  derived with distinct info strings. Roles A and B are assigned by
+  lexicographic order of the two X25519 public keys, so both ends agree without
+  negotiating. The project already carries Ed25519 on-device for chain verify,
+  so the crypto posture and the review habits exist.
+- **Nonce discipline — the thing to get right.** A single shared key plus a
+  per-endpoint counter would put the *same* key/nonce pair on the first frame
+  each watch sends, and nonce reuse destroys both confidentiality and
+  authenticity under ChaCha20-Poly1305 and AES-GCM alike. Two defences, both
+  required: the directional keys above mean the two send streams never share a
+  key at all, and the nonce is constructed as `dir ‖ ctr` (never random, never
+  implicit) so it is recoverable from the frame and unique within a stream.
+- `ctr` is **64-bit**, monotonic, and **persisted to NVS before first use of a
+  value** — a reboot must never rewind it. It is also the replay defence: a
+  sliding window rejects anything not strictly ahead, so a recorded knock can't
+  be replayed at 2 a.m. A counter that would wrap, or that cannot be persisted,
+  forces a re-tie rather than a rollover.
 - **The parent Ring is signed by the household key** and is the only frame kind
   a watch will accept from something that is not a tied peer.
 - Off-string frames are dropped before they reach any model — the same
@@ -377,15 +413,28 @@ a chore app.
 The genuinely novel one, and it works *only* because the household already has
 a fleet of Canaries beaconing.
 
-A **hider** watch stands somewhere and records a fingerprint: the RSSI of every
-Canary and AP it can hear. A **seeker** watch continuously compares its own
-fingerprint to that one and shows **warmer / colder** — a bird that gets
-excited, a line that tightens, a haptic that quickens.
+A **hider** watch stands somewhere and records a fingerprint: the RSSI of each
+**household Canary** it can hear, keyed by the `fp4` those Canaries already
+beacon. A **seeker** watch continuously compares its own fingerprint to that one
+and shows **warmer / colder** — a bird that gets excited, a line that tightens,
+a haptic that quickens.
 
+- **Household Canaries only — never Wi-Fi APs.** The obvious implementation
+  ("every AP it can hear") is the wrong one and must be refused in the wire
+  contract, not just in review: an RSSI vector keyed by BSSIDs — or by *stable
+  hashes* of them — is precisely the input that commercial Wi-Fi geolocation
+  databases consume. Emitting one would manufacture reusable location metadata
+  on a device whose headline claim is that it has none, and would break
+  **Invariant III (Metadata Minimization)** — *"zone IDs are local only,
+  correlation tokens are single-use"* ([`AGENTS.md`](../../AGENTS.md)).
+  Household `fp4`s are already household-scoped, already coarsened, and already
+  ours.
 - It is a **similarity score**, not a position. No trilateration, no map, no
   coordinates, ever — because the moment it produces a coordinate it becomes a
   child locator and inherits that entire category's liability.
-- It never leaves the pair and is never stored.
+- The fingerprint is **game-scoped**: it lives only for the round, only inside
+  the string, and is discarded when the round ends. It is never stored, never
+  reused across games, and never leaves the pair.
 - It reuses `chirp_scan.h` and the beacon RSSI machinery we already ship.
 - Every extra Canary a household owns makes the game *better*. That is the
   nicest incentive alignment in the product line.
@@ -502,7 +551,7 @@ troubled household.
 | **Doodle is a bullying channel** | Sibling-scoped by construction, ephemeral, parent off switch. It is also the first feature to cut if bench use says otherwise. |
 | **Step duel → arguments** | Daily reset, no history, and the firmware admits shaking counts (§6.3). |
 | **Parent treats the Ring as safety** | §7's three delivery states, plus the boot-screen disclaimer. If bench testing shows parents still over-trust it, add a monthly "this only works at home" reminder. |
-| **A watch is lost with keys on it** | Per-string keys, no household master secret on a kid's watch, and cut-from-the-app revokes a string instantly. There is nothing personal on the device to find. |
+| **A watch is lost with keys on it** | Per-string keys, no household master secret on a kid's watch, and nothing personal on the device to find. **Revocation is not instant, and the UI must not pretend it is:** the app cannot erase a lost watch's NVS, and the two watches can still reach each other over router-independent ESP-NOW. So a cut is a **signed revocation** the *surviving* peer must receive and persist (it then refuses the string's keys and shows the string as cut); until that ack lands, the app shows the cut as **pending**, exactly like the Ring's three delivery states in §7. A revocation the surviving watch has persisted is permanent — it survives reboot and cannot be un-cut by a replayed frame. |
 | **RF congestion** with several watches + a fleet | Reuse the WAP airtime governor and channel policy. Strings are tiny and bursty; the fleet beacons are the bigger consumer. |
 | **The board is not a kid product** | §3.3. This is the one that stops a launch, and it should. |
 | **Scope creep to voice** | The refusal in §3.1 is a *constitutional* line here, same standing as Invariant I. Adding voice is a new product with a new argument, not a feature PR. |
@@ -514,8 +563,8 @@ troubled household.
 | Wave | Deliverable | Gate |
 |---|---|---|
 | **0 — bring-up** | Board registry entry + pin header; LVGL on the CO5300 at 410 × 502; confirm the touch controller part; DRV2605L + LRA on the I²C port; battery telemetry from the AXP2101 | it lights up, it buzzes, it survives a day |
-| **1 — pure cores, host-tested** | `string_model.h` (tied/taut/slack), `knock_codec.h`, `tincan_wire.h` (header parse, replay window), `tie_ceremony.h` (incl. the knot derivation), `ring_policy.h` (priority, ack, delivery states), `stamp_set.h`, `warmer_colder.h`, `duel_model.h` — all in `tests_host/`, zero Arduino | CI green with no board attached |
-| **2 — one string** | Two watches, tie ceremony, knock + tug over ESP-NOW, taut/slack drawn honestly | two kids in one house, one week, no instructions |
+| **1 — pure cores, host-tested** | `string_model.h` (tied/taut/slack, + persisted revocation), `knock_codec.h`, `tincan_wire.h` (frame discrimination, header parse, **directional nonce construction**, monotonic-counter replay window), `tie_ceremony.h` (role assignment + the knot derivation), `ring_policy.h` (priority, ack, delivery states), `stamp_set.h`, `warmer_colder.h` (`fp4`-keyed only — a test asserts no AP identifier can enter a fingerprint), `duel_model.h` — all in `tests_host/`, zero Arduino | CI green with no board attached |
+| **2 — one string** | The new ESP-NOW string frame type **and its transmit path** (§5.1), tie ceremony, knock + tug, taut/slack drawn honestly | two kids in one house, one week, no instructions |
 | **3 — the Ring** | Hub → watch over MQTT, ack path, the three delivery states in the app and on the dash | a parent can call kids to dinner and knows whether it landed |
 | **4 — the fun** | Stamps, Doodle, quest-a-day, step duel, warmer/colder | the watch is still on the wrist after a month |
 | **5 — the shell** | Strap, enclosure ([`canary-local/enclosures`](../../canary-local/enclosures)), battery containment, and the §3.3 certification homework | nobody says "kids" in a store listing before this |
