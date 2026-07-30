@@ -57,6 +57,33 @@ test("the export vector carries user axes + user options, drops engineering", as
   assert.ok(!("lid_ribs" in vec), "an engineering option is NOT in the vector");
 });
 
+test("options seed by type: enum keeps its value, bool coerces to boolean", async () => {
+  // mount_style is an enum option on the vision/sense/wap enclosures — its
+  // default must survive as a string, not collapse to a boolean.
+  const vision = cat.products.find((p) => p.id === "vision_enclosure");
+  const mount = vision.options.find((o) => o.id === "mount_style");
+  assert.ok(mount && mount.type === "enum", "mount_style is an enum option");
+  const seeded = LAB.seedOptionValues(vision.options);
+  assert.strictEqual(seeded.mount_style, mount.default,
+    "enum option seeds to its string default, not true/false");
+  assert.strictEqual(typeof seeded.opt_led, "boolean", "a bool option seeds boolean");
+  // engineering options are not part of the user surface
+  assert.ok(!("lid_ribs" in seeded), "engineering options are not seeded");
+});
+
+test("editing an option flips a named preset to custom (SCAD override safety)", async () => {
+  const wap = cat.products.find((p) => p.id === "wap_enclosure");
+  // WAP has a preset axis whose enum includes "custom"
+  assert.strictEqual(LAB.presetAfterEdit(wap, "battery_full"), "custom",
+    "a named preset falls back to custom when an option is edited");
+  assert.strictEqual(LAB.presetAfterEdit(wap, "custom"), "custom",
+    "already-custom stays custom");
+  // a product without a custom-capable preset axis leaves the value alone
+  const dash = cat.products.find((p) => p.id === "dash_display");
+  assert.strictEqual(LAB.presetAfterEdit(dash, "whatever"), "whatever",
+    "no preset axis → nothing to override, value unchanged");
+});
+
 test("matchVariant resolves an axis choice to its committed STL, else null", async () => {
   const idx = LAB.catalogVariantIndex(cat);
   const self = idx.get("vision-xiao-weather").variant;

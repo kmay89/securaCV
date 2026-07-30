@@ -101,6 +101,28 @@ export function catalogVariantIndex(catalogData) {
   return idx;
 }
 
+// Seed the option state from a product's options, by TYPE: an enum option
+// (mount_style) keeps its string default; a bool coerces to a real boolean.
+// (Coercing every default with !! would turn "hinge" into true and render the
+// enum as a checkbox that exports mount_style:"true".)
+export function seedOptionValues(options) {
+  const out = {};
+  for (const o of options || []) {
+    if (o.audience && o.audience !== "user") continue;
+    out[o.id] = o.type === "enum" ? o.default : !!o.default;
+  }
+  return out;
+}
+
+// A named preset makes the SCAD override the individual option params, so once
+// a user edits any option the preset must fall back to "custom" or the export
+// silently renders the original preset. Returns the preset to use after an edit.
+export function presetAfterEdit(product, currentPreset) {
+  const pa = (product.variant_axes || []).find(
+    (a) => a.param === "preset" && (a.values || []).includes("custom"));
+  return pa && currentPreset !== "custom" ? "custom" : currentPreset;
+}
+
 // The OpenSCAD parameter vector for a configuration: variant-axis choices +
 // user option values, as a customizer-ready {name: value} map (booleans stay
 // booleans, enums/strings stay strings). Engineering knobs are left at their
@@ -173,11 +195,17 @@ function renderConfigurator({ product, variant, scad, onPickVariant }) {
   const userOpts = (product.options || []).filter((o) => o.audience === "user");
   const axes = product.variant_axes || [];
 
-  // live state, seeded from this variant
+  // live state, seeded from this variant. Enum options keep their string
+  // default; booleans coerce to a real boolean.
   const axisVals = {};
   for (const a of axes) axisVals[a.param] = (variant.selects || {})[a.param] ?? a.default;
-  const optVals = {};
-  for (const o of userOpts) optVals[o.id] = !!o.default;
+  const optVals = seedOptionValues(product.options);
+
+  // A named preset (battery_full, vision_weather, …) makes the SCAD OVERRIDE
+  // the individual option params — so the moment a user edits an option,
+  // markCustomOnEdit falls the preset back to "custom" (via presetAfterEdit) or
+  // the download silently renders the original preset and ignores the edit.
+  const axisSelects = {};
 
   const optsWrap = el("div", "cfg-opts");
   const exportBox = el("pre", "param-export");
@@ -185,6 +213,17 @@ function renderConfigurator({ product, variant, scad, onPickVariant }) {
   const note = el("p", "muted cfg-note");
 
   const scadStem = (product.scad || "").replace(/\.scad$/, "");
+
+  function markCustomOnEdit() {
+    const next = presetAfterEdit(product, axisVals.preset);
+    if (next !== axisVals.preset) {
+      axisVals.preset = next;
+      if (axisSelects.preset) axisSelects.preset.value = next;
+      note.textContent =
+        "Options edited — preset set to “custom” so your choices take effect " +
+        "(a named preset would override them in the SCAD).";
+    }
+  }
 
   function applyConstraints() {
     // requires forces the target on; excludes forces it off (bool options only)
@@ -216,38 +255,64 @@ function renderConfigurator({ product, variant, scad, onPickVariant }) {
       el("span", "muted", "→ OpenSCAD ▸ Window ▸ Customizer ▸ load preset"));
   }
 
+  function optTxt(o) {
+    const txt = el("span", "cfg-opt-txt");
+    txt.append(el("strong", null, o.label || o.id));
+    if (o.consequence) txt.append(el("span", "muted", " — " + o.consequence));
+    return txt;
+  }
+  function optTags(o, forcedOn) {
+    const tags = el("span", "cfg-tags");
+    for (const r of o.requires || [])
+      tags.append(el("span", "cfg-tag req", `requires ${r}`));
+    for (const x of o.excludes || [])
+      tags.append(el("span", "cfg-tag exc", `excludes ${x}`));
+    for (const rp of o.requires_parts || [])
+      tags.append(el("span", "cfg-tag part", `adds ${rp} part`));
+    if (forcedOn) tags.append(el("span", "cfg-tag on", "auto-on (required)"));
+    return tags;
+  }
+
   function renderOpts() {
     optsWrap.innerHTML = "";
     if (!userOpts.length) return;
     optsWrap.append(el("h5", null, "Options"));
     for (const o of userOpts) {
       const row = el("label", "cfg-opt");
-      const forcedOn = userOpts.some((s) => optVals[s.id] &&
-        (s.requires || []).includes(o.id));
-      const forcedOff = userOpts.some((s) => optVals[s.id] &&
-        (s.excludes || []).includes(o.id));
-      const input = el("input");
-      input.type = "checkbox";
-      input.checked = !!optVals[o.id];
-      input.disabled = forcedOn || forcedOff;
-      input.addEventListener("change", () => {
-        optVals[o.id] = input.checked;
-        applyConstraints();
-        renderOpts();
-        refreshExport();
-      });
-      const txt = el("span", "cfg-opt-txt");
-      txt.append(el("strong", null, o.label || o.id));
-      if (o.consequence) txt.append(el("span", "muted", " — " + o.consequence));
-      const tags = el("span", "cfg-tags");
-      for (const r of o.requires || [])
-        tags.append(el("span", "cfg-tag req", `requires ${r}`));
-      for (const x of o.excludes || [])
-        tags.append(el("span", "cfg-tag exc", `excludes ${x}`));
-      for (const rp of o.requires_parts || [])
-        tags.append(el("span", "cfg-tag part", `adds ${rp} part`));
-      if (forcedOn) tags.append(el("span", "cfg-tag on", "auto-on (required)"));
-      row.append(input, txt, tags);
+      if (o.type === "enum") {
+        // an enum option (e.g. mount_style) → a select of its members
+        row.append(optTxt(o));
+        const sel = el("select");
+        for (const v of o.enum || []) {
+          const opt = el("option", null, v);
+          opt.value = v;
+          if (optVals[o.id] === v) opt.selected = true;
+          sel.append(opt);
+        }
+        sel.addEventListener("change", () => {
+          optVals[o.id] = sel.value;
+          markCustomOnEdit();
+          refreshExport();
+        });
+        row.append(sel, optTags(o, false));
+      } else {
+        const forcedOn = userOpts.some((s) => optVals[s.id] &&
+          (s.requires || []).includes(o.id));
+        const forcedOff = userOpts.some((s) => optVals[s.id] &&
+          (s.excludes || []).includes(o.id));
+        const input = el("input");
+        input.type = "checkbox";
+        input.checked = !!optVals[o.id];
+        input.disabled = forcedOn || forcedOff;
+        input.addEventListener("change", () => {
+          optVals[o.id] = input.checked;
+          markCustomOnEdit();
+          applyConstraints();
+          renderOpts();
+          refreshExport();
+        });
+        row.append(input, optTxt(o), optTags(o, forcedOn));
+      }
       optsWrap.append(row);
     }
   }
@@ -260,6 +325,7 @@ function renderConfigurator({ product, variant, scad, onPickVariant }) {
       const row = el("label", "cfg-axis");
       row.append(el("span", "cfg-axis-label", a.param));
       const sel = el("select");
+      axisSelects[a.param] = sel;
       for (const v of a.values) {
         const opt = el("option", null, v);
         opt.value = v;
