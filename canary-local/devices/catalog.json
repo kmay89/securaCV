@@ -1,0 +1,2014 @@
+{
+ "generated_by": "canary-local/tools/gen_enclosures.py",
+ "spec": "docs/hardware/enclosure/CATALOG_ARCHITECTURE.md",
+ "note": "Phase-2 stub: the 3-tier Product→Variant→Option manifest, generated (not hand-authored) from the SCAD customizer inventory + README variant tables. Phase 3+ (unify the pickers, guided funnel, showroom) reads from here.",
+ "axes": [
+  {
+   "n": 1,
+   "axis": "use-case / device",
+   "role": "filters — what the user has/wants to sense"
+  },
+  {
+   "n": 2,
+   "axis": "product / case family",
+   "role": "the base geometry — one designed enclosure (≈ one .scad)"
+  },
+  {
+   "n": 3,
+   "axis": "variant / flavor",
+   "role": "discrete; changes the printed part set (preset/host/model/…)"
+  },
+  {
+   "n": 4,
+   "axis": "option",
+   "role": "a toggle/enum inside a variant; may carry requires/excludes"
+  },
+  {
+   "n": 5,
+   "axis": "fit",
+   "role": "print-tolerance tier — orthogonal, belongs to the printer"
+  },
+  {
+   "n": 6,
+   "axis": "remix / alternative",
+   "role": "a sideways 'see also', never a step in the funnel"
+  }
+ ],
+ "fit": {
+  "tiers": [
+   {
+    "id": "standard",
+    "note": "one shared print-fit tier; calibrate to your printer with the coupon, then reuse the offsets across every case",
+    "defaults": {
+     "tol_slide": 0.2,
+     "tol_press": 0.1,
+     "tol_hole": 0.3
+    }
+   }
+  ],
+  "coupon_scad": "canary_fit_coupon.scad",
+  "coupon_part": {
+   "name": "coupon",
+   "file": "canary_wap_enclosure_clip_coupon.stl"
+  }
+ },
+ "products": [
+  {
+   "id": "bench_fixture",
+   "scad": "canary_bench_fixture.scad",
+   "title": "Canary — BENCH BRING-UP FIXTURE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "universal",
+   "device_compat": [],
+   "class": "primary",
+   "fit": "standard",
+   "variant_axes": [],
+   "variants": [
+    {
+     "id": "bench-bring-up-fixture",
+     "name": "Bench bring-up fixture",
+     "for": "labelled stations for XIAO + BZ1/DLED1/SW1/SW2 with a sliding magnet carriage for repeatable tamper tests (companion to [bench_bringup.md](../bench_bringup.md))",
+     "status": "in-development",
+     "device": null,
+     "preview": "preview_dev_fixture.png",
+     "parts": []
+    }
+   ],
+   "render_parts": [
+    "plate",
+    "slider"
+   ],
+   "options": [],
+   "engineering_param_count": 17,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 0,
+    "variant_axes": 0
+   }
+  },
+  {
+   "id": "c6_display",
+   "scad": "canary_c6_display.scad",
+   "title": "Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "canary-display-watch",
+   "device_compat": [
+    "canary-display-watch"
+   ],
+   "class": "primary",
+   "fit": "standard",
+   "variant_axes": [
+    {
+     "param": "model",
+     "values": [
+      "1.47",
+      "1.69"
+     ],
+     "default": "1.47",
+     "audience": "user",
+     "note": "board preset"
+    }
+   ],
+   "variants": [
+    {
+     "id": "c6-display-pocket-case",
+     "name": "C6 display pocket case",
+     "for": "Waveshare ESP32-C6-LCD-1.47 (portrait), flat-bottom board (no down-facing male headers): face-down bezel over the active-area window, edge-captured board (no screws into the board), snap-in vented back, USB-C + BOOT/RST access, blind keyhole. `model=\"1.47\"` is drawn from the Waveshare mechanical drawing; a `\"1.69\"` preset is parameterised. Heat-escape slots on the sides + a back grille",
+     "status": "in-development",
+     "device": "canary-display-watch",
+     "preview": "preview_dev_c6_147.png",
+     "parts": []
+    }
+   ],
+   "render_parts": [
+    "bezel",
+    "back"
+   ],
+   "options": [
+    {
+     "id": "opt_btn",
+     "type": "bool",
+     "label": "opt_btn",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_keyhole",
+     "type": "bool",
+     "label": "one blind keyhole in the back (wall hang)",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_vent",
+     "type": "bool",
+     "label": "opt_vent",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    }
+   ],
+   "engineering_param_count": 26,
+   "alternatives": [
+    "s3_touch169",
+    "watch_station"
+   ],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 3,
+    "variant_axes": 1
+   }
+  },
+  {
+   "id": "combo",
+   "scad": "canary_combo.scad",
+   "title": "Canary — RADAR + CAMERA COMBO WITNESS  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "canary-vision",
+   "device_compat": [
+    "canary-vision"
+   ],
+   "class": "primary",
+   "fit": "standard",
+   "variant_axes": [],
+   "variants": [
+    {
+     "id": "combo-witness",
+     "name": "Combo witness",
+     "for": "Vision + Sense stacks in one face (lens + radome); radar-confirmed camera events",
+     "status": "in-development",
+     "device": "canary-vision",
+     "preview": "preview_dev_combo.png",
+     "parts": [
+      {
+       "name": "back",
+       "file": "preview/canary_combo_back.stl",
+       "preview_mesh": true
+      },
+      {
+       "name": "front",
+       "file": "preview/canary_combo_front.stl",
+       "preview_mesh": true
+      }
+     ]
+    }
+   ],
+   "render_parts": [
+    "back",
+    "front",
+    "gasket"
+   ],
+   "options": [
+    {
+     "id": "opt_seal",
+     "type": "bool",
+     "label": "gasket + drip skirt (same system as the other cases)",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
+     "id": "opt_hood",
+     "type": "bool",
+     "label": "rain hood over the lens",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
+     "id": "opt_led",
+     "type": "bool",
+     "label": "one light pipe (wire to either stack's LED)",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_mount",
+     "type": "bool",
+     "label": "blind keyholes in the back",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    }
+   ],
+   "engineering_param_count": 32,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 4,
+    "variant_axes": 0
+   }
+  },
+  {
+   "id": "dash_display",
+   "scad": "canary_dash_display.scad",
+   "title": "Canary — DASHBOARD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "canary-display-dash",
+   "device_compat": [
+    "canary-display-dash"
+   ],
+   "class": "primary",
+   "fit": "standard",
+   "variant_axes": [],
+   "variants": [
+    {
+     "id": "dashboard-display-case",
+     "name": "Dashboard display case",
+     "for": "Waveshare ESP32-S3-Touch-LCD-4.3 (the [display research](../display_research.md) step-up dashboard): face-down bezel frame, vented screw-on back with keyholes + 75 mm M4 pair, free-standing 25° desk cradle. Panel dims are NOMINAL — measure yours",
+     "status": "in-development",
+     "device": "canary-display-dash",
+     "preview": "preview_dev_dash.png",
+     "parts": [
+      {
+       "name": "frame",
+       "file": "preview/canary_dash_display_frame.stl",
+       "preview_mesh": true
+      },
+      {
+       "name": "back",
+       "file": "preview/canary_dash_display_back.stl",
+       "preview_mesh": true
+      },
+      {
+       "name": "stand",
+       "file": "preview/canary_dash_display_stand.stl",
+       "preview_mesh": true
+      }
+     ]
+    }
+   ],
+   "render_parts": [
+    "frame",
+    "back",
+    "stand"
+   ],
+   "options": [],
+   "engineering_param_count": 22,
+   "alternatives": [
+    "s3_lcd7"
+   ],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 0,
+    "variant_axes": 0
+   }
+  },
+  {
+   "id": "dock",
+   "scad": "canary_dock.scad",
+   "title": "Canary — FLEET PROVISIONING DOCK  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "universal",
+   "device_compat": [],
+   "class": "primary",
+   "fit": "standard",
+   "variant_axes": [
+    {
+     "param": "variant",
+     "values": [
+      "bare",
+      "sense"
+     ],
+     "default": "bare",
+     "audience": "user"
+    }
+   ],
+   "variants": [
+    {
+     "id": "fleet-provisioning-dock",
+     "name": "Fleet provisioning dock",
+     "for": "N numbered reclined bays for bare XIAOs beside a USB hub (v1 runbook fleet flashing)",
+     "status": "in-development",
+     "device": null,
+     "preview": "preview_dev_dock.png",
+     "parts": []
+    }
+   ],
+   "render_parts": [
+    "dock"
+   ],
+   "options": [],
+   "engineering_param_count": 15,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 0,
+    "variant_axes": 1
+   }
+  },
+  {
+   "id": "field_case",
+   "scad": "canary_field_case.scad",
+   "title": "Canary — FIELD CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "universal",
+   "device_compat": [],
+   "class": "primary",
+   "env": {
+    "cer": 4,
+    "ip": "IP67",
+    "mil": "MIL-STD-810H",
+    "verified": false,
+    "note": "design intent — untested; do not claim before the field_ratings.md protocol"
+   },
+   "fit": "standard",
+   "variant_axes": [],
+   "variants": [
+    {
+     "id": "field-case",
+     "name": "Field case",
+     "for": "bag-carry rugged witness at the honest top of the FDM ceiling: Ø1.5 O-ring cord (27 % squeeze), six-lobe clamp, zero external ports (open to charge), bonded PC lens disc behind a contrast-color trim bezel, ePTFE vent, 4 mm walls, TPU impact boot + lanyard. CER‑4 intent: IP67 + MIL‑STD‑810H transit drop — [earn the rating, don't assume it](./field_ratings.md)",
+     "status": "in-development",
+     "device": null,
+     "preview": "preview_dev_field.png",
+     "parts": []
+    }
+   ],
+   "render_parts": [
+    "body",
+    "lid",
+    "boot",
+    "gasket",
+    "bezel"
+   ],
+   "options": [],
+   "engineering_param_count": 49,
+   "alternatives": [
+    "hammond_chassis",
+    "relay_solar"
+   ],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 0,
+    "variant_axes": 0
+   }
+  },
+  {
+   "id": "fit_coupon",
+   "scad": "canary_fit_coupon.scad",
+   "title": "Canary — UNIVERSAL FIT-CHECK COUPON  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "universal",
+   "device_compat": [],
+   "class": "primary",
+   "fit": "standard",
+   "variant_axes": [],
+   "variants": [
+    {
+     "id": "universal-fit-coupon",
+     "name": "Universal fit coupon",
+     "for": "ONE ~25 min print that calibrates every fit in the catalog: clip, keyhole+stud, slide, gasket, press, screw, insert — each station labelled with the parameter it tunes",
+     "status": "in-development",
+     "device": null,
+     "preview": "preview_dev_coupon.png",
+     "parts": []
+    }
+   ],
+   "render_parts": [
+    "base",
+    "mate",
+    "strip"
+   ],
+   "options": [],
+   "engineering_param_count": 7,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 0,
+    "variant_axes": 0
+   }
+  },
+  {
+   "id": "hammond_chassis",
+   "scad": "canary_hammond_chassis.scad",
+   "title": "Canary — HAMMOND INTERNAL CHASSIS PLATE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "universal",
+   "device_compat": [],
+   "class": "primary",
+   "env": {
+    "ip": "IP66/67/68 (from the bought Hammond box)",
+    "verified": false,
+    "note": "the rating is the purchased box's, earned only if the gland + vent are installed correctly — not our printed plate's"
+   },
+   "fit": "standard",
+   "variant_axes": [
+    {
+     "param": "stack",
+     "values": [
+      "wap",
+      "vision",
+      "sense"
+     ],
+     "default": "wap",
+     "audience": "user"
+    }
+   ],
+   "variants": [
+    {
+     "id": "hammond-chassis-plates",
+     "name": "Hammond chassis plates",
+     "for": "bring the Canary rail/clip cradles into the ENC1 polycarbonate route (`stack` = wap/vision/sense)",
+     "status": "in-development",
+     "device": null,
+     "preview": "preview_dev_hammond.png",
+     "parts": []
+    }
+   ],
+   "render_parts": [
+    "plate"
+   ],
+   "options": [],
+   "engineering_param_count": 15,
+   "alternatives": [
+    "field_case",
+    "relay_solar"
+   ],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 0,
+    "variant_axes": 1
+   }
+  },
+  {
+   "id": "hub_din",
+   "scad": "canary_hub_din.scad",
+   "title": "Canary — HUB ENCLOSURE (Raspberry Pi 5, DIN rail)  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "universal",
+   "device_compat": [],
+   "class": "primary",
+   "fit": "standard",
+   "variant_axes": [],
+   "variants": [
+    {
+     "id": "hub-pi-5-din-rail",
+     "name": "Hub (Pi 5, DIN rail)",
+     "for": "vented tray + cover for the server side; printed DIN spring clip",
+     "status": "in-development",
+     "device": null,
+     "preview": "preview_dev_hub.png",
+     "parts": []
+    }
+   ],
+   "render_parts": [
+    "tray",
+    "cover"
+   ],
+   "options": [],
+   "engineering_param_count": 27,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 0,
+    "variant_axes": 0
+   }
+  },
+  {
+   "id": "inserts",
+   "scad": "canary_inserts.scad",
+   "title": "Canary — FUNCTIONAL INSERTS  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "universal",
+   "device_compat": [],
+   "class": "primary",
+   "fit": "standard",
+   "variant_axes": [],
+   "variants": [
+    {
+     "id": "functional-inserts",
+     "name": "Functional inserts",
+     "for": "buzzer horn (louder chirp), matte anti-glare ring, 3-part printed cable gland (TPU bush)",
+     "status": "in-development",
+     "device": null,
+     "preview": "preview_dev_inserts.png",
+     "parts": []
+    }
+   ],
+   "render_parts": [
+    "horn",
+    "glare_ring",
+    "gland_body",
+    "gland_bush",
+    "gland_cap"
+   ],
+   "options": [],
+   "engineering_param_count": 13,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 0,
+    "variant_axes": 0
+   }
+  },
+  {
+   "id": "jbox",
+   "scad": "canary_jbox.scad",
+   "title": "Canary — COVERT JUNCTION-BOX SHELL  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "universal",
+   "device_compat": [],
+   "class": "primary",
+   "fit": "standard",
+   "variant_axes": [],
+   "variants": [
+    {
+     "id": "covert-junction-box",
+     "name": "Covert junction box",
+     "for": "compact WAP disguised as utility hardware; aperture hidden in a mock knockout",
+     "status": "in-development",
+     "device": null,
+     "preview": "preview_dev_jbox.png",
+     "parts": []
+    }
+   ],
+   "render_parts": [
+    "body",
+    "lid"
+   ],
+   "options": [
+    {
+     "id": "opt_camera",
+     "type": "bool",
+     "label": "aperture hidden in the knockout ring (XIAO Sense)",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_led",
+     "type": "bool",
+     "label": "pinhole light pipe (covert: usually off)",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    }
+   ],
+   "engineering_param_count": 17,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 2,
+    "variant_axes": 0
+   }
+  },
+  {
+   "id": "mount_adapters",
+   "scad": "canary_mount_adapters.scad",
+   "title": "Canary — UNIVERSAL MOUNT ADAPTERS  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "universal",
+   "device_compat": [],
+   "class": "primary",
+   "fit": "standard",
+   "variant_axes": [],
+   "variants": [
+    {
+     "id": "mount-adapters",
+     "name": "Mount adapters",
+     "for": "the T-stud interface everywhere: 90° corner wedge, magnet plate, pole strap plate, drill template",
+     "status": "in-development",
+     "device": null,
+     "preview": "preview_dev_adapters.png",
+     "parts": []
+    }
+   ],
+   "render_parts": [
+    "corner",
+    "magnet",
+    "pole",
+    "template"
+   ],
+   "options": [],
+   "engineering_param_count": 16,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 0,
+    "variant_axes": 0
+   }
+  },
+  {
+   "id": "outlet_cradle",
+   "scad": "canary_outlet_cradle.scad",
+   "title": "Canary — OUTLET PLUG-IN CRADLE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "universal",
+   "device_compat": [],
+   "class": "primary",
+   "fit": "standard",
+   "variant_axes": [],
+   "variants": [
+    {
+     "id": "outlet-cradle",
+     "name": "Outlet cradle",
+     "for": "collar grips a USB wall wart; T-studs hang any keyhole-pocket Canary",
+     "status": "in-development",
+     "device": null,
+     "preview": "preview_dev_cradle.png",
+     "parts": []
+    }
+   ],
+   "render_parts": [
+    "cradle"
+   ],
+   "options": [],
+   "engineering_param_count": 11,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 0,
+    "variant_axes": 0
+   }
+  },
+  {
+   "id": "relay_solar",
+   "scad": "canary_relay_solar.scad",
+   "title": "Canary — SOLAR LoRa/MESHTASTIC RELAY POD  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "universal",
+   "device_compat": [],
+   "class": "primary",
+   "env": {
+    "cer": 2,
+    "ip": "CER-2 (→3 after test)",
+    "verified": false
+   },
+   "fit": "standard",
+   "variant_axes": [],
+   "variants": [
+    {
+     "id": "solar-lora-relay-pod",
+     "name": "Solar LoRa relay pod",
+     "for": "off-grid mesh backhaul: LoRa board + 18650, SMA top, solar roof bracket, pole straps",
+     "status": "in-development",
+     "device": null,
+     "preview": "preview_dev_relay.png",
+     "parts": []
+    }
+   ],
+   "render_parts": [
+    "body",
+    "lid",
+    "roof",
+    "gasket"
+   ],
+   "options": [
+    {
+     "id": "opt_seal",
+     "type": "bool",
+     "label": "opt_seal",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    }
+   ],
+   "engineering_param_count": 39,
+   "alternatives": [
+    "field_case",
+    "hammond_chassis"
+   ],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 1,
+    "variant_axes": 0
+   }
+  },
+  {
+   "id": "s3_lcd7",
+   "scad": "canary_s3_lcd7.scad",
+   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "canary-display-dash",
+   "device_compat": [
+    "canary-display-dash"
+   ],
+   "class": "primary",
+   "env": {
+    "env": "indoor; runs hot → print in PETG/ASA",
+    "verified": false
+   },
+   "fit": "standard",
+   "variant_axes": [],
+   "variants": [
+    {
+     "id": "7-touch-dashboard-case",
+     "name": "7″ touch dashboard case",
+     "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on moulded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Big convection grille (~52 cm² back + side chimney vents — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots, optional 20° desk cradle. Connector centres are NOMINAL — measure yours",
+     "status": "in-development",
+     "device": "canary-display-dash",
+     "preview": "preview_dev_lcd7.png",
+     "parts": []
+    }
+   ],
+   "render_parts": [
+    "bezel",
+    "back",
+    "stand"
+   ],
+   "options": [
+    {
+     "id": "opt_bottom_ports",
+     "type": "bool",
+     "label": "opt_bottom_ports",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_side_ports",
+     "type": "bool",
+     "label": "opt_side_ports",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_stand",
+     "type": "bool",
+     "label": "opt_stand",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    }
+   ],
+   "engineering_param_count": 32,
+   "alternatives": [
+    "dash_display"
+   ],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 3,
+    "variant_axes": 0
+   }
+  },
+  {
+   "id": "s3_touch169",
+   "scad": "canary_s3_touch169.scad",
+   "title": "Canary — ESP32-S3-Touch-LCD-1.69 WATCH-DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "canary-display-watch",
+   "device_compat": [
+    "canary-display-watch"
+   ],
+   "class": "primary",
+   "fit": "standard",
+   "variant_axes": [],
+   "variants": [
+    {
+     "id": "1-69-touch-watch-display-puck",
+     "name": "1.69″ touch watch-display puck",
+     "for": "Waveshare ESP32-S3-Touch-LCD-1.69 (rounded-square 240×280 capacitive-touch smartwatch board — S3, IMU, RTC, battery/charger). The bonded glass slab (41.13 × 33.13) overhangs the smaller PCB (37.12 × 29.83) by ~2 mm, so the face lip captures it — no screws (this board has no mount holes). Face-down bezel + snap-in vented back (skirt rides the overhang, 4 nubs, standoffs press the board forward, blind keyhole). USB-C (bottom) + PWR/BOOT/RST (top) + battery/RTC/pin slot (side); side heat slots + back grille; optional 22° cradle. Connector centres NOMINAL — measure yours",
+     "status": "in-development",
+     "device": "canary-display-watch",
+     "preview": "preview_dev_t169.png",
+     "parts": []
+    }
+   ],
+   "render_parts": [
+    "bezel",
+    "back",
+    "stand"
+   ],
+   "options": [
+    {
+     "id": "opt_usb",
+     "type": "bool",
+     "label": "opt_usb",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_btn",
+     "type": "bool",
+     "label": "opt_btn",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_side",
+     "type": "bool",
+     "label": "opt_side",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_keyhole",
+     "type": "bool",
+     "label": "one blind keyhole in the back (wall hang)",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_vent",
+     "type": "bool",
+     "label": "opt_vent",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_stand",
+     "type": "bool",
+     "label": "opt_stand",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    }
+   ],
+   "engineering_param_count": 27,
+   "alternatives": [
+    "c6_display",
+    "watch_station"
+   ],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 6,
+    "variant_axes": 0
+   }
+  },
+  {
+   "id": "sense_enclosure",
+   "scad": "canary_sense_enclosure.scad",
+   "title": "SecuraCV Canary Sense — 3D-printable RADOME enclosure (parametric)  v0.1",
+   "family": "canary-sense",
+   "device_compat": [
+    "canary-sense"
+   ],
+   "class": "primary",
+   "env": {
+    "cer": 2,
+    "ip": "radome (sheltered)",
+    "verified": false
+   },
+   "fit": "standard",
+   "variant_axes": [
+    {
+     "param": "radar",
+     "values": [
+      "bha2",
+      "fda2"
+     ],
+     "default": "bha2",
+     "audience": "user"
+    }
+   ],
+   "variants": [
+    {
+     "id": "sense-radome",
+     "name": "Sense · radome",
+     "for": "MR60BHA2 mmWave witness: thin radar window, hinge + keyholes (shares the Vision bracket/knob)",
+     "status": "released",
+     "device": "canary-sense",
+     "preview": "preview_sense.png",
+     "parts": [
+      {
+       "name": "back",
+       "file": "canary_sense_back.stl"
+      },
+      {
+       "name": "front",
+       "file": "canary_sense_front.stl"
+      }
+     ]
+    }
+   ],
+   "render_parts": [
+    "back",
+    "front",
+    "gasket",
+    "bracket",
+    "knob"
+   ],
+   "options": [
+    {
+     "id": "opt_led",
+     "type": "bool",
+     "label": "onboard WS2812",
+     "consequence": "light-pipe port (outside the radome zone)",
+     "audience": "user",
+     "default": true,
+     "fw": [
+      "FEATURE_STATUS_LED"
+     ]
+    },
+    {
+     "id": "opt_lux",
+     "type": "bool",
+     "label": "BH1750 lux sensor",
+     "consequence": "small light aperture (outside the radome zone)",
+     "audience": "user",
+     "default": true,
+     "fw": [
+      "FEATURE_AMBIENT_LIGHT"
+     ]
+    },
+    {
+     "id": "opt_vent",
+     "type": "bool",
+     "label": "GORE vent cluster (recommended with opt_seal)",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
+     "id": "opt_tamper",
+     "type": "bool",
+     "label": "reed/Hall magnet pocket",
+     "consequence": "",
+     "audience": "user",
+     "default": false,
+     "bom": [
+      "SW2",
+      "MAG1"
+     ]
+    },
+    {
+     "id": "opt_seal",
+     "type": "bool",
+     "label": "perimeter TPU gasket + drip-edge front (indoor ceilings rarely need it)",
+     "consequence": "",
+     "audience": "user",
+     "default": false,
+     "bom": [
+      "FIL1"
+     ],
+     "requires": [
+      "opt_vent"
+     ],
+     "requires_parts": [
+      "gasket"
+     ]
+    },
+    {
+     "id": "opt_mount",
+     "type": "bool",
+     "label": "opt_mount",
+     "consequence": "",
+     "audience": "user",
+     "default": true,
+     "bom": [
+      "SCR4"
+     ]
+    },
+    {
+     "id": "mount_style",
+     "type": "enum",
+     "label": "mount_style",
+     "consequence": "",
+     "audience": "user",
+     "enum": [
+      "hinge",
+      "keyhole",
+      "both"
+     ],
+     "default": "hinge"
+    }
+   ],
+   "engineering_param_count": 129,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 1,
+    "options": 7,
+    "variant_axes": 1
+   }
+  },
+  {
+   "id": "sense_gang",
+   "scad": "canary_sense_gang.scad",
+   "title": "Canary Sense — IN-WALL SINGLE-GANG FLUSH MOUNT  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "canary-sense",
+   "device_compat": [
+    "canary-sense"
+   ],
+   "class": "primary",
+   "fit": "standard",
+   "variant_axes": [],
+   "variants": [
+    {
+     "id": "sense-in-wall-plate",
+     "name": "Sense in-wall plate",
+     "for": "single-gang flush mount; the faceplate IS the radome (check local code; low-voltage box only)",
+     "status": "in-development",
+     "device": "canary-sense",
+     "preview": "preview_dev_gang.png",
+     "parts": []
+    }
+   ],
+   "render_parts": [
+    "plate"
+   ],
+   "options": [],
+   "engineering_param_count": 19,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 0,
+    "variant_axes": 0
+   }
+  },
+  {
+   "id": "sense_stand",
+   "scad": "canary_sense_stand.scad",
+   "title": "Canary Sense — BEDSIDE STAND  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "canary-sense",
+   "device_compat": [
+    "canary-sense"
+   ],
+   "class": "primary",
+   "fit": "standard",
+   "variant_axes": [],
+   "variants": [
+    {
+     "id": "sense-bedside-stand",
+     "name": "Sense bedside stand",
+     "for": "weighted base + tilted stalk with the three-prong hinge head (wellbeing channel, ≤1.5 m)",
+     "status": "in-development",
+     "device": "canary-sense",
+     "preview": "preview_dev_stand.png",
+     "parts": []
+    }
+   ],
+   "render_parts": [
+    "base",
+    "ballast_lid"
+   ],
+   "options": [],
+   "engineering_param_count": 20,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 0,
+    "variant_axes": 0
+   }
+  },
+  {
+   "id": "shop_tools",
+   "scad": "canary_shop_tools.scad",
+   "title": "Canary — SHOP TOOLS  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "universal",
+   "device_compat": [],
+   "class": "primary",
+   "fit": "standard",
+   "variant_axes": [],
+   "variants": [
+    {
+     "id": "shop-tools",
+     "name": "Shop tools",
+     "for": "heat-set insert press guide (keeps inserts square) + doorbell button accent ring",
+     "status": "in-development",
+     "device": null,
+     "parts": []
+    }
+   ],
+   "render_parts": [
+    "insert_guide",
+    "button_ring"
+   ],
+   "options": [],
+   "engineering_param_count": 7,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 0,
+    "variant_axes": 0
+   }
+  },
+  {
+   "id": "sign",
+   "scad": "canary_sign.scad",
+   "title": "Canary — WITNESS SIGNAGE PLATE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "universal",
+   "device_compat": [],
+   "class": "primary",
+   "fit": "standard",
+   "variant_axes": [],
+   "variants": [
+    {
+     "id": "witness-signage-plate",
+     "name": "Witness signage plate",
+     "for": "\"presence sensing in use / no video stored\", debossed, 3 parametric lines",
+     "status": "in-development",
+     "device": null,
+     "preview": "preview_dev_sign.png",
+     "parts": []
+    }
+   ],
+   "render_parts": [
+    "sign"
+   ],
+   "options": [],
+   "engineering_param_count": 12,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 0,
+    "variant_axes": 0
+   }
+  },
+  {
+   "id": "templates_2d",
+   "scad": "canary_templates_2d.scad",
+   "title": "Canary — 1:1 PAPER INSTALL TEMPLATES (2D)  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "universal",
+   "device_compat": [],
+   "class": "primary",
+   "fit": "standard",
+   "variant_axes": [
+    {
+     "param": "mode",
+     "values": [
+      "studs",
+      "bracket",
+      "doorbell"
+     ],
+     "default": "studs",
+     "audience": "user"
+    }
+   ],
+   "variants": [
+    {
+     "id": "paper-install-templates",
+     "name": "Paper install templates",
+     "for": "1:1 SVGs ([studs](./template_studs.svg) · [bracket](./template_bracket.svg) · [doorbell](./template_doorbell.svg)): print ON PAPER at 100 % (verify the 20 mm square), tape to the wall, drill",
+     "status": "in-development",
+     "device": null,
+     "parts": []
+    }
+   ],
+   "render_parts": [],
+   "options": [],
+   "engineering_param_count": 2,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 0,
+    "variant_axes": 1
+   }
+  },
+  {
+   "id": "vehicle_mount",
+   "scad": "canary_vehicle_mount.scad",
+   "title": "Canary — VEHICLE MOUNT KIT  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "universal",
+   "device_compat": [],
+   "class": "primary",
+   "fit": "standard",
+   "variant_axes": [],
+   "variants": [
+    {
+     "id": "vehicle-mount-kit",
+     "name": "Vehicle mount kit",
+     "for": "VHB-taped dash plate with a 10° stud riser + an air-vent louver clip (extruded spring prongs snap over one blade). ⚠️ cabins exceed +60 °C: USB power only, ASA, light colors",
+     "status": "in-development",
+     "device": null,
+     "preview": "preview_dev_veh.png",
+     "parts": []
+    }
+   ],
+   "render_parts": [
+    "dash",
+    "vent"
+   ],
+   "options": [],
+   "engineering_param_count": 12,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 0,
+    "variant_axes": 0
+   }
+  },
+  {
+   "id": "vision_doorbell",
+   "scad": "canary_vision_doorbell.scad",
+   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.2",
+   "family": "canary-vision",
+   "device_compat": [
+    "canary-vision"
+   ],
+   "class": "primary",
+   "env": {
+    "cer": 2,
+    "ip": "~IP54 (button ~IP65)",
+    "verified": false
+   },
+   "fit": "standard",
+   "variant_axes": [],
+   "variants": [
+    {
+     "id": "vision-doorbell",
+     "name": "Vision · DOORBELL",
+     "for": "Wyze/Ring form factor: camera + button, plate-mounted with a hidden security screw, sealed by default",
+     "status": "released",
+     "device": "canary-vision",
+     "preview": "preview_doorbell.png",
+     "parts": [
+      {
+       "name": "body",
+       "file": "canary_vision_doorbell_body.stl"
+      },
+      {
+       "name": "face",
+       "file": "canary_vision_doorbell_face.stl"
+      },
+      {
+       "name": "plate",
+       "file": "canary_vision_doorbell_plate.stl"
+      },
+      {
+       "name": "wedge 15°",
+       "file": "canary_vision_doorbell_plate_wedge15.stl"
+      },
+      {
+       "name": "gasket",
+       "file": "canary_vision_doorbell_gasket.stl"
+      }
+     ]
+    }
+   ],
+   "render_parts": [
+    "body",
+    "face",
+    "plate",
+    "gasket"
+   ],
+   "options": [
+    {
+     "id": "opt_seal",
+     "type": "bool",
+     "label": "perimeter TPU gasket + drip-edge face (doorbells live outside)",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_vent",
+     "type": "bool",
+     "label": "GORE vent cluster on the face — ON by default: a sealed outdoor",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_led",
+     "type": "bool",
+     "label": "separate light-pipe port (the 12 mm button usually has its own LED ring)",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
+     "id": "opt_tamper",
+     "type": "bool",
+     "label": "reed/Hall magnet pocket on the face underside",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    }
+   ],
+   "engineering_param_count": 118,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 1,
+    "options": 4,
+    "variant_axes": 0
+   }
+  },
+  {
+   "id": "vision_enclosure",
+   "scad": "canary_vision_enclosure.scad",
+   "title": "SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.2",
+   "family": "canary-vision",
+   "device_compat": [
+    "canary-vision"
+   ],
+   "class": "primary",
+   "env": {
+    "cer": 2,
+    "ip": "~IP54",
+    "verified": false,
+    "basis": "weather preset"
+   },
+   "fit": "standard",
+   "variant_axes": [
+    {
+     "param": "preset",
+     "values": [
+      "custom",
+      "vision_indoor",
+      "vision_weather"
+     ],
+     "default": "custom",
+     "audience": "user"
+    },
+    {
+     "param": "host",
+     "values": [
+      "xiao",
+      "devkit"
+     ],
+     "default": "xiao",
+     "audience": "user",
+     "note": "stacked XIAO (recommended) or Grove-cabled DevKitM-1"
+    }
+   ],
+   "variants": [
+    {
+     "id": "vision-xiao-indoor",
+     "name": "Vision · xiao indoor",
+     "for": "stacked XIAO host (recommended), hinge mount, desk/shelf",
+     "status": "released",
+     "device": "canary-vision",
+     "preview": "preview_vision_xiao_indoor.png",
+     "parts": [
+      {
+       "name": "back",
+       "file": "canary_vision_enclosure_xiao_indoor_back.stl"
+      },
+      {
+       "name": "front",
+       "file": "canary_vision_enclosure_xiao_indoor_front.stl"
+      }
+     ]
+    },
+    {
+     "id": "vision-xiao-weather",
+     "name": "Vision · xiao weather",
+     "for": "stacked XIAO, sealed + rain hood + vent, hinge & keyholes",
+     "status": "released",
+     "device": "canary-vision",
+     "preview": "preview_vision_xiao_weather.png",
+     "parts": [
+      {
+       "name": "back",
+       "file": "canary_vision_enclosure_xiao_weather_back.stl"
+      },
+      {
+       "name": "front",
+       "file": "canary_vision_enclosure_xiao_weather_front.stl"
+      },
+      {
+       "name": "gasket",
+       "file": "canary_vision_enclosure_xiao_weather_gasket.stl"
+      }
+     ]
+    },
+    {
+     "id": "vision-devkit-indoor",
+     "name": "Vision · devkit indoor",
+     "for": "Grove-cabled ESP32-C3-DevKitM-1 host",
+     "status": "released",
+     "device": "canary-vision",
+     "preview": "preview_vision_devkit.png",
+     "parts": [
+      {
+       "name": "back",
+       "file": "canary_vision_enclosure_devkit_indoor_back.stl"
+      },
+      {
+       "name": "front",
+       "file": "canary_vision_enclosure_devkit_indoor_front.stl"
+      }
+     ]
+    },
+    {
+     "id": "vision-mount-kit",
+     "name": "Vision · mount kit",
+     "for": "wall bracket (GoPro-prong, tripod nut) + M5 thumbscrew knob",
+     "status": "released",
+     "device": "canary-vision",
+     "preview": "preview_vision_bracket.png",
+     "parts": [
+      {
+       "name": "bracket",
+       "file": "canary_vision_enclosure_bracket.stl"
+      },
+      {
+       "name": "knob",
+       "file": "canary_vision_enclosure_knob.stl"
+      }
+     ]
+    }
+   ],
+   "render_parts": [
+    "back",
+    "front",
+    "gasket",
+    "bracket",
+    "knob"
+   ],
+   "options": [
+    {
+     "id": "opt_led",
+     "type": "bool",
+     "label": "status LED",
+     "consequence": "light-pipe port on the front",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_buzzer",
+     "type": "bool",
+     "label": "piezo buzzer",
+     "consequence": "shares the vent cluster (firmware: unpopulated on Vision)",
+     "audience": "user",
+     "default": false
+    },
+    {
+     "id": "opt_vent",
+     "type": "bool",
+     "label": "GORE vent cluster",
+     "consequence": "pressure equalisation (recommended with opt_seal)",
+     "audience": "user",
+     "default": false
+    },
+    {
+     "id": "opt_tamper",
+     "type": "bool",
+     "label": "reed/Hall + magnet",
+     "consequence": "magnet pocket on the front underside",
+     "audience": "user",
+     "default": false
+    },
+    {
+     "id": "opt_hood",
+     "type": "bool",
+     "label": "rain/glare hood over the lens window",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
+     "id": "opt_seal",
+     "type": "bool",
+     "label": "perimeter TPU gasket + drip-edge front + USB plug recess (splash-resistant, NOT immersion)",
+     "consequence": "",
+     "audience": "user",
+     "default": false,
+     "requires": [
+      "opt_vent"
+     ],
+     "requires_parts": [
+      "gasket"
+     ]
+    },
+    {
+     "id": "opt_mount",
+     "type": "bool",
+     "label": "mounting features per mount_style",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "mount_style",
+     "type": "enum",
+     "label": "mount_style",
+     "consequence": "",
+     "audience": "user",
+     "enum": [
+      "hinge",
+      "keyhole",
+      "both"
+     ],
+     "default": "hinge"
+    }
+   ],
+   "engineering_param_count": 150,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 4,
+    "released": 4,
+    "options": 8,
+    "variant_axes": 2
+   }
+  },
+  {
+   "id": "vision_pro_mount",
+   "scad": "canary_vision_pro_mount.scad",
+   "title": "Canary — VISION PRO MOUNT  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "canary-vision",
+   "device_compat": [
+    "canary-vision"
+   ],
+   "class": "primary",
+   "fit": "standard",
+   "variant_axes": [
+    {
+     "param": "mount",
+     "values": [
+      "tripod",
+      "magnet",
+      "both"
+     ],
+     "default": "both",
+     "audience": "user"
+    }
+   ],
+   "variants": [
+    {
+     "id": "vision-pro-mount",
+     "name": "Vision Pro mount",
+     "for": "bridges a Seeed reCamera Pro onto the shared stud interface: keyhole pockets on the back (hangs on any existing stud surface in this catalog), 1/4\"-20 tripod counterbore and/or magnet pocket on the front (reCamera's confirmed mount options, [Canary Vision Pro doc](../canary_vision_pro_recamera.md)). No confirmed body dimensions yet — mounting interface only",
+     "status": "in-development",
+     "device": "canary-vision",
+     "preview": "preview_dev_visionpro.png",
+     "parts": []
+    }
+   ],
+   "render_parts": [
+    "plate"
+   ],
+   "options": [],
+   "engineering_param_count": 16,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 0,
+    "variant_axes": 1
+   }
+  },
+  {
+   "id": "wap_enclosure",
+   "scad": "canary_wap_enclosure.scad",
+   "title": "SecuraCV Canary WAP — 3D-printable enclosure (parametric)  v0.7",
+   "family": "canary-wap",
+   "device_compat": [
+    "canary-wap"
+   ],
+   "class": "primary",
+   "env": {
+    "cer": 2,
+    "ip": "~IP54",
+    "verified": false,
+    "basis": "weather preset"
+   },
+   "fit": "standard",
+   "variant_axes": [
+    {
+     "param": "preset",
+     "values": [
+      "custom",
+      "battery_full",
+      "compact_plain",
+      "battery_weather"
+     ],
+     "default": "custom",
+     "audience": "user"
+    }
+   ],
+   "variants": [
+    {
+     "id": "wap-compact",
+     "name": "WAP · compact",
+     "for": "plain XIAO ESP32-S3, USB-powered, smallest box",
+     "status": "released",
+     "device": "canary-wap",
+     "preview": "preview_compact.png",
+     "parts": [
+      {
+       "name": "base",
+       "file": "canary_wap_enclosure_compact_base.stl"
+      },
+      {
+       "name": "lid",
+       "file": "canary_wap_enclosure_compact_lid.stl"
+      }
+     ]
+    },
+    {
+     "id": "wap-battery",
+     "name": "WAP · battery",
+     "for": "XIAO Sense camera + LiPo + GPS, indoor",
+     "status": "released",
+     "device": "canary-wap",
+     "preview": "preview_all.png",
+     "parts": [
+      {
+       "name": "base",
+       "file": "canary_wap_enclosure_battery_base.stl"
+      },
+      {
+       "name": "lid",
+       "file": "canary_wap_enclosure_battery_lid.stl"
+      }
+     ]
+    },
+    {
+     "id": "wap-weather",
+     "name": "WAP · weather",
+     "for": "battery build + TPU gasket seal, drip-edge lid, keyhole mounts (CER‑2 / ~IP54 target — ratings)",
+     "status": "released",
+     "device": "canary-wap",
+     "preview": "preview_weather.png",
+     "parts": [
+      {
+       "name": "base",
+       "file": "canary_wap_enclosure_weather_base.stl"
+      },
+      {
+       "name": "lid",
+       "file": "canary_wap_enclosure_weather_lid.stl"
+      },
+      {
+       "name": "gasket",
+       "file": "canary_wap_enclosure_weather_gasket.stl"
+      }
+     ]
+    },
+    {
+     "id": "wap-clip-coupon",
+     "name": "WAP · clip coupon",
+     "for": "**print first** — 15 min snap-fit tuner",
+     "status": "released",
+     "device": "canary-wap",
+     "preview": "preview_coupon.png",
+     "parts": [
+      {
+       "name": "coupon",
+       "file": "canary_wap_enclosure_clip_coupon.stl"
+      }
+     ]
+    },
+    {
+     "id": "thermal-outdoor-kit",
+     "name": "Thermal / outdoor kit",
+     "for": "solar radiation shield (weather WAP) + universal desiccant tray",
+     "status": "released",
+     "device": "canary-wap",
+     "parts": [
+      {
+       "name": "shield",
+       "file": "canary_wap_enclosure_weather_shield.stl"
+      },
+      {
+       "name": "tray",
+       "file": "canary_wap_enclosure_tray.stl"
+      }
+     ]
+    }
+   ],
+   "render_parts": [
+    "base",
+    "lid",
+    "coupon",
+    "gasket",
+    "shield",
+    "tray"
+   ],
+   "options": [
+    {
+     "id": "opt_camera",
+     "type": "bool",
+     "label": "XIAO *Sense* camera",
+     "consequence": "lid sensor window + taller cavity (off = plain XIAO ESP32-S3)",
+     "audience": "user",
+     "default": true,
+     "bom": [
+      "CW1",
+      "ADH1"
+     ],
+     "fw": [
+      "FEATURE_CAMERA_PEEK"
+     ]
+    },
+    {
+     "id": "opt_buzzer",
+     "type": "bool",
+     "label": "piezo buzzer",
+     "consequence": "lid vent + GORE seat",
+     "audience": "user",
+     "default": true,
+     "bom": [
+      "BZ1",
+      "R1",
+      "Q1",
+      "Dfb1"
+     ],
+     "fw": [
+      "FEATURE_CHIRP"
+     ]
+    },
+    {
+     "id": "opt_led",
+     "type": "bool",
+     "label": "external status LED",
+     "consequence": "light-pipe port",
+     "audience": "user",
+     "default": true,
+     "bom": [
+      "DLED1",
+      "R2",
+      "C1",
+      "LP1"
+     ]
+    },
+    {
+     "id": "opt_battery",
+     "type": "bool",
+     "label": "LiPo",
+     "consequence": "battery bay (enlarges the case)",
+     "audience": "user",
+     "default": true,
+     "bom": [
+      "BT1",
+      "BT1-ALT1",
+      "BT1-ALT2"
+     ]
+    },
+    {
+     "id": "opt_gps",
+     "type": "bool",
+     "label": "L76K GPS module",
+     "consequence": "internal module bay",
+     "audience": "user",
+     "default": false,
+     "bom": [
+      "M1"
+     ],
+     "fw": [
+      "FEATURE_GNSS"
+     ]
+    },
+    {
+     "id": "opt_tamper",
+     "type": "bool",
+     "label": "reed/Hall + magnet",
+     "consequence": "lid magnet pocket",
+     "audience": "user",
+     "default": true,
+     "bom": [
+      "SW2",
+      "SW2-ALT",
+      "MAG1"
+     ],
+     "fw": [
+      "FEATURE_TAMPER_GPIO"
+     ]
+    },
+    {
+     "id": "opt_touch",
+     "type": "bool",
+     "label": "cap-touch pad",
+     "consequence": "thinned \"touch window\" on the lid",
+     "audience": "user",
+     "default": false,
+     "bom": [
+      "TP1",
+      "R6"
+     ]
+    },
+    {
+     "id": "opt_antenna",
+     "type": "bool",
+     "label": "external u.FL antenna",
+     "consequence": "side bulkhead hole",
+     "audience": "user",
+     "default": false,
+     "bom": [
+      "ANT1"
+     ]
+    },
+    {
+     "id": "opt_seal",
+     "type": "bool",
+     "label": "perimeter TPU gasket + drip-edge lid + USB plug recess (splash-resistant, NOT immersion)",
+     "consequence": "",
+     "audience": "user",
+     "default": false,
+     "bom": [
+      "FIL1",
+      "PLUG1",
+      "VENT1",
+      "ADH1"
+     ],
+     "requires_parts": [
+      "gasket"
+     ]
+    },
+    {
+     "id": "opt_mount",
+     "type": "bool",
+     "label": "wall-mount features (keyholes thicken the case back by `kh_extra`)",
+     "consequence": "",
+     "audience": "user",
+     "default": false,
+     "bom": [
+      "SCR4"
+     ]
+    },
+    {
+     "id": "mount_style",
+     "type": "enum",
+     "label": "mount_style",
+     "consequence": "",
+     "audience": "user",
+     "enum": [
+      "keyhole",
+      "tabs",
+      "both"
+     ],
+     "default": "keyhole"
+    }
+   ],
+   "engineering_param_count": 145,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 5,
+    "released": 5,
+    "options": 11,
+    "variant_axes": 1
+   }
+  },
+  {
+   "id": "watch_station",
+   "scad": "canary_watch_station.scad",
+   "title": "SecuraCV Canary Watch — monitoring-station puck  ⚠️ IN DEVELOPMENT (v0.2-dev)",
+   "family": "canary-display-watch",
+   "device_compat": [
+    "canary-display-watch"
+   ],
+   "class": "primary",
+   "fit": "standard",
+   "variant_axes": [],
+   "variants": [
+    {
+     "id": "watch-station",
+     "name": "Watch station",
+     "for": "SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 pinned into the Round Display's back socket (see [display research](../display_research.md)); v0.2 bore sized to the measured Ø43.0 disc, snap bezel (no fasteners), and a true cradle divot",
+     "status": "in-development",
+     "device": "canary-display-watch",
+     "preview": "preview_dev_station.png",
+     "parts": [
+      {
+       "name": "drum",
+       "file": "preview/canary_watch_station_drum.stl",
+       "preview_mesh": true
+      },
+      {
+       "name": "bezel",
+       "file": "preview/canary_watch_station_bezel.stl",
+       "preview_mesh": true
+      },
+      {
+       "name": "stand",
+       "file": "preview/canary_watch_station_stand.stl",
+       "preview_mesh": true
+      }
+     ]
+    }
+   ],
+   "render_parts": [
+    "drum",
+    "bezel",
+    "stand"
+   ],
+   "options": [
+    {
+     "id": "opt_batt",
+     "type": "bool",
+     "label": "opt_batt",
+     "consequence": "",
+     "audience": "user",
+     "default": false,
+     "bom": [
+      "W-BT1"
+     ]
+    }
+   ],
+   "engineering_param_count": 59,
+   "alternatives": [
+    "s3_touch169",
+    "c6_display"
+   ],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 1,
+    "variant_axes": 0
+   }
+  },
+  {
+   "id": "wear_clip",
+   "scad": "canary_wear_clip.scad",
+   "title": "Canary — BODY-WORN CARRY CLIPS  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "universal",
+   "device_compat": [],
+   "class": "primary",
+   "fit": "standard",
+   "variant_axes": [],
+   "variants": [
+    {
+     "id": "body-worn-clips",
+     "name": "Body-worn clips",
+     "for": "belt leaf-spring clip (prints on its side: flex stays in-plane) + MOLLE/PALS weave plate, both on the two-stud interface; made for the field case's floor keyholes",
+     "status": "in-development",
+     "device": null,
+     "preview": "preview_dev_wear.png",
+     "parts": []
+    }
+   ],
+   "render_parts": [
+    "clip",
+    "molle"
+   ],
+   "options": [],
+   "engineering_param_count": 9,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 0,
+    "variant_axes": 0
+   }
+  }
+ ]
+}

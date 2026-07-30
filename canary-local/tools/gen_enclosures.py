@@ -917,3 +917,342 @@ def workshop_main():
 
 
 workshop_main()
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Catalog manifest (the 3-tier Product → Variant → Option model) →
+# devices/catalog.json
+#
+# This is Phase 2 of docs/hardware/enclosure/CATALOG_ARCHITECTURE.md: make
+# the manifest that doc describes REAL and runnable, generated from the same
+# sources the other emitters already parse — never hand-authored, so it
+# can't drift from the SCADs (guarded by the same CI diff gate).
+#
+# What it adds over enclosures.json's flat sets[]:
+#   · one PRODUCT per .scad, with its whole customizer inventory classified
+#     by the six axes (§2 of the doc): variant-selectors vs options vs the
+#     render `part` selector vs engineering/tuning knobs
+#   · the ⚠ "invisible" enum axes (host/radar/stack/model/variant/mode/mount)
+#     surfaced as first-class VARIANT SELECTORS instead of dropped
+#   · committed sets become VARIANTS (their own parts/meshes/preview), and a
+#     variant may override the product `scad` — the schema half of §7 row 1
+#     (display family collapses across files; no current set triggers it yet)
+#   · env rating as a FIELD with a `verified` flag (never badge a target as
+#     achieved — field case stays untested per field_ratings.md)
+#   · a shared, orthogonal FIT tier bound to the coupon, not per-file copy
+#   · sideways alternatives (the "which one do I pick?" links)
+#
+# Every curated overlay (ENV/ALTERNATIVES/OPTION_DEPS) is verified against
+# the parsed sources at gen time — a renamed scad/option fails the build
+# instead of silently lying, the same discipline as OPTION_LINKS above.
+# ═════════════════════════════════════════════════════════════════════════
+
+CATALOG_JSON = REPO / "canary-local/devices/catalog.json"
+
+# Enum params that pick a DISCRETE part-set / configuration (axis 3 —
+# "variant / flavor"). Explicitly NOT `part` (that's the render-piece
+# selector) and NOT `mount_style` (an option enum, axis 4).
+VARIANT_SELECTOR_PARAMS = {
+    "preset", "host", "radar", "stack", "model", "variant", "mode", "mount",
+}
+# Enum params that are an OPTION with more than on/off (axis 4).
+OPTION_ENUM_PARAMS = {"mount_style"}
+
+# Env rating as data (axis: environment). Ratings are DESIGN INTENT unless a
+# row says otherwise — none of our printed cases has passed the
+# field_ratings.md protocol, so `verified` is False everywhere. Keyed by
+# scad; a scad absent here simply has no env field. (Verified against the
+# scad files existing, below.)
+ENV_BY_SCAD = {
+    "canary_wap_enclosure.scad": {
+        "cer": 2, "ip": "~IP54", "verified": False, "basis": "weather preset"},
+    "canary_vision_enclosure.scad": {
+        "cer": 2, "ip": "~IP54", "verified": False, "basis": "weather preset"},
+    "canary_vision_doorbell.scad": {
+        "cer": 2, "ip": "~IP54 (button ~IP65)", "verified": False},
+    "canary_sense_enclosure.scad": {
+        "cer": 2, "ip": "radome (sheltered)", "verified": False},
+    "canary_field_case.scad": {
+        "cer": 4, "ip": "IP67", "mil": "MIL-STD-810H", "verified": False,
+        "note": "design intent — untested; do not claim before the "
+                "field_ratings.md protocol"},
+    "canary_relay_solar.scad": {
+        "cer": 2, "ip": "CER-2 (→3 after test)", "verified": False},
+    "canary_hammond_chassis.scad": {
+        "ip": "IP66/67/68 (from the bought Hammond box)", "verified": False,
+        "note": "the rating is the purchased box's, earned only if the gland "
+                "+ vent are installed correctly — not our printed plate's"},
+    "canary_s3_lcd7.scad": {
+        "env": "indoor; runs hot → print in PETG/ASA", "verified": False},
+}
+
+# Sideways "which one do I pick?" links (axis 6 — alternative/remix). NOT a
+# step in the narrowing funnel. Keyed by scad → list of alternative scads;
+# every target is verified to exist below.
+ALTERNATIVES = {
+    # outdoor witness — printed pod vs bought IP67 box vs sealed field case
+    "canary_field_case.scad": [
+        "canary_hammond_chassis.scad", "canary_relay_solar.scad"],
+    "canary_hammond_chassis.scad": [
+        "canary_field_case.scad", "canary_relay_solar.scad"],
+    "canary_relay_solar.scad": [
+        "canary_field_case.scad", "canary_hammond_chassis.scad"],
+    # watch-display board — the three ways "which display board" is encoded
+    "canary_s3_touch169.scad": [
+        "canary_c6_display.scad", "canary_watch_station.scad"],
+    "canary_c6_display.scad": [
+        "canary_s3_touch169.scad", "canary_watch_station.scad"],
+    "canary_watch_station.scad": [
+        "canary_s3_touch169.scad", "canary_c6_display.scad"],
+    # dashboard display
+    "canary_s3_lcd7.scad": ["canary_dash_display.scad"],
+    "canary_dash_display.scad": ["canary_s3_lcd7.scad"],
+}
+
+# Option dependency graph (axis 4 carries requires/excludes). Minimal and
+# verified: each `requires`/`excludes` names another option on the SAME
+# scad; `requires_parts` names a `part` enum value the scad exposes. Keyed by
+# (scad, option).
+OPTION_DEPS = {
+    ("canary_wap_enclosure.scad", "opt_seal"): {"requires_parts": ["gasket"]},
+    ("canary_vision_enclosure.scad", "opt_seal"): {
+        "requires_parts": ["gasket"], "requires": ["opt_vent"]},
+    ("canary_sense_enclosure.scad", "opt_seal"): {
+        "requires_parts": ["gasket"], "requires": ["opt_vent"]},
+}
+
+# The six axes, so the manifest is self-describing (mirrors §2 of the doc).
+AXES_LEGEND = [
+    {"n": 1, "axis": "use-case / device",
+     "role": "filters — what the user has/wants to sense"},
+    {"n": 2, "axis": "product / case family",
+     "role": "the base geometry — one designed enclosure (≈ one .scad)"},
+    {"n": 3, "axis": "variant / flavor",
+     "role": "discrete; changes the printed part set (preset/host/model/…)"},
+    {"n": 4, "axis": "option",
+     "role": "a toggle/enum inside a variant; may carry requires/excludes"},
+    {"n": 5, "axis": "fit",
+     "role": "print-tolerance tier — orthogonal, belongs to the printer"},
+    {"n": 6, "axis": "remix / alternative",
+     "role": "a sideways 'see also', never a step in the funnel"},
+]
+
+
+def _tol_defaults(parsed) -> dict:
+    """The tol_* print-fit knobs' defaults from a parsed scad (the fit tier
+    is shared, so we read one representative product, not per-file copies)."""
+    out = {}
+    for g in parsed["groups"]:
+        for p in g["params"]:
+            if p["name"].startswith("tol_"):
+                try:
+                    out[p["name"]] = float(p["default"])
+                except ValueError:
+                    out[p["name"]] = p["default"]
+    return out
+
+
+def catalog_options(parsed, scad: str):
+    """opt_* booleans + option-enums (mount_style) → catalog options, with
+    BOM/fw links (verified already by workshop_main via OPTION_LINKS) and the
+    requires/excludes graph. audience is 'user' for these; raw numeric knobs
+    are counted as engineering, not emitted (see coverage below)."""
+    opts = []
+    for g in parsed["groups"]:
+        for p in g["params"]:
+            name = p["name"]
+            is_opt = name.startswith("opt_")
+            is_opt_enum = name in OPTION_ENUM_PARAMS
+            if not (is_opt or is_opt_enum):
+                continue
+            comment = p.get("comment", "")
+            label, _, consequence = comment.partition("->")
+            link = OPTION_LINKS.get((scad, name), {"bom": [], "fw": []})
+            dep = OPTION_DEPS.get((scad, name), {})
+            opts.append({
+                "id": name,
+                "type": "enum" if "enum" in p else "bool",
+                "label": (label.strip() or name),
+                "consequence": consequence.strip(),
+                "audience": "user",
+                **({"enum": p["enum"]} if "enum" in p else {}),
+                **({"default": p["default"] == "true"} if is_opt
+                   else {"default": p["default"]}),
+                **({"bom": link["bom"]} if link["bom"] else {}),
+                **({"fw": link["fw"]} if link["fw"] else {}),
+                **({"requires": dep["requires"]} if dep.get("requires") else {}),
+                **({"excludes": dep["excludes"]} if dep.get("excludes") else {}),
+                **({"requires_parts": dep["requires_parts"]}
+                   if dep.get("requires_parts") else {}),
+            })
+    return opts
+
+
+def variant_axes_of(parsed):
+    """The discrete part-set selectors (axis 3) surfaced from the customizer —
+    including the ⚠ invisible ones the workshop transform drops today."""
+    axes = []
+    for g in parsed["groups"]:
+        for p in g["params"]:
+            if p["name"] in VARIANT_SELECTOR_PARAMS and "enum" in p:
+                axes.append({
+                    "param": p["name"],
+                    "values": p["enum"],
+                    "default": p["default"],
+                    "audience": "user",
+                    **({"note": p["comment"]} if p.get("comment") else {}),
+                })
+    return axes
+
+
+def render_parts_of(parsed):
+    """The `part` enum values (minus the 'all' meta) — the printable pieces a
+    configurator lists per product. Not a user variant axis."""
+    for g in parsed["groups"]:
+        for p in g["params"]:
+            if p["name"] == "part" and "enum" in p:
+                return [v for v in p["enum"] if v != "all"]
+    return []
+
+
+def variant_from_set(s: dict, product_scad: str) -> dict:
+    """A committed set → a first-class variant. Carries its own scad only
+    when it differs from the product default (the display-family collapse
+    hook; no current set triggers it, but the schema is ready)."""
+    meshes = [
+        {"name": p.get("name", ""), "file": p["file"],
+         **({"preview_mesh": True} if p.get("preview_mesh") else {})}
+        for p in s["parts"]
+    ]
+    return {
+        "id": s["id"],
+        "name": s["name"],
+        "for": s.get("for") or s.get("note", ""),
+        "status": s["status"],
+        "device": s.get("device"),
+        **({"scad": s["scad"]} if s.get("scad") and s["scad"] != product_scad
+           else {}),
+        **({"preview": s["preview"]} if s.get("preview") else {}),
+        "parts": meshes,
+    }
+
+
+def catalog_main():
+    md = (ENC / "README.md").read_text(errors="replace")
+    sets = parse_tables(md)
+    scad_files = sorted(p.name for p in ENC.glob("*.scad"))
+    scads = {name: parse_scad(ENC / name) for name in scad_files}
+
+    # Verify every curated overlay points at real sources (fail-fast).
+    for scad in ENV_BY_SCAD:
+        if scad not in scads:
+            raise SystemExit(f"catalog: ENV_BY_SCAD names missing scad {scad}")
+    for scad, alts in ALTERNATIVES.items():
+        if scad not in scads:
+            raise SystemExit(f"catalog: ALTERNATIVES key {scad} is not a scad")
+        for a in alts:
+            if a not in scads:
+                raise SystemExit(
+                    f"catalog: ALTERNATIVES[{scad}] names missing scad {a}")
+    for (scad, opt), dep in OPTION_DEPS.items():
+        parsed = scads.get(scad)
+        if not parsed:
+            raise SystemExit(f"catalog: OPTION_DEPS names missing scad {scad}")
+        names = {p["name"] for g in parsed["groups"] for p in g["params"]}
+        if opt not in names:
+            raise SystemExit(
+                f"catalog: OPTION_DEPS ({scad},{opt}) — option not in the scad")
+        part_vals = set(render_parts_of(parsed))
+        for rp in dep.get("requires_parts", []):
+            if rp not in part_vals:
+                raise SystemExit(
+                    f"catalog: OPTION_DEPS ({scad},{opt}) requires_parts "
+                    f"'{rp}' — not a `part` value of {scad}")
+        for req in dep.get("requires", []) + dep.get("excludes", []):
+            if req not in names:
+                raise SystemExit(
+                    f"catalog: OPTION_DEPS ({scad},{opt}) references '{req}' "
+                    f"— not an option on {scad}")
+
+    sets_by_scad = {}
+    for s in sets:
+        sets_by_scad.setdefault(s.get("scad"), []).append(s)
+
+    products = []
+    for scad in scad_files:
+        parsed = scads[scad]
+        my_sets = sets_by_scad.get(scad, [])
+        devices = sorted({s["device"] for s in my_sets if s.get("device")})
+        family = (device_for(parsed["title"]) or (devices[0] if devices else None)
+                  or "universal")
+        options = catalog_options(parsed, scad)
+        vaxes = variant_axes_of(parsed)
+        variants = [variant_from_set(s, scad) for s in my_sets]
+        released = sum(1 for v in variants if v["status"] == "released")
+
+        # Coverage honesty: how many raw customizer knobs are NOT surfaced as
+        # user variant-axes/options (engineering/tuning) — dropped on purpose,
+        # counted so the manifest never pretends it captured everything.
+        surfaced = ({a["param"] for a in vaxes} | {o["id"] for o in options}
+                    | {"part"})
+        eng = sum(1 for g in parsed["groups"] for p in g["params"]
+                  if p["name"] not in surfaced)
+
+        products.append({
+            "id": scad[:-5].removeprefix("canary_"),  # stable, unique
+            "scad": scad,
+            "title": parsed["title"],
+            "family": family,
+            "device_compat": devices,
+            "class": "primary" if variants else "accessory",
+            **({"env": ENV_BY_SCAD[scad]} if scad in ENV_BY_SCAD else {}),
+            "fit": "standard",  # → the shared tier (top-level `fit`)
+            "variant_axes": vaxes,
+            "variants": variants,
+            "render_parts": render_parts_of(parsed),
+            "options": options,
+            "engineering_param_count": eng,
+            "alternatives": [a[:-5].removeprefix("canary_")
+                             for a in ALTERNATIVES.get(scad, [])],
+            "remix_of": None,  # no builds.json source yet — honest null
+            "counts": {"variants": len(variants), "released": released,
+                       "options": len(options), "variant_axes": len(vaxes)},
+        })
+
+    # The shared, orthogonal fit tier (axis 5) — one tier, bound to the coupon,
+    # not per-file copy-paste. Defaults read from one representative product.
+    coupon_set = next((s for s in sets if "coupon" in s["id"]), None)
+    fit = {
+        "tiers": [{
+            "id": "standard",
+            "note": "one shared print-fit tier; calibrate to your printer with "
+                    "the coupon, then reuse the offsets across every case",
+            "defaults": _tol_defaults(scads["canary_wap_enclosure.scad"]),
+        }],
+        "coupon_scad": "canary_fit_coupon.scad",
+        **({"coupon_part": coupon_set["parts"][0]}
+           if coupon_set and coupon_set.get("parts") else {}),
+    }
+
+    data = {
+        "generated_by": "canary-local/tools/gen_enclosures.py",
+        "spec": "docs/hardware/enclosure/CATALOG_ARCHITECTURE.md",
+        "note": "Phase-2 stub: the 3-tier Product→Variant→Option manifest, "
+                "generated (not hand-authored) from the SCAD customizer "
+                "inventory + README variant tables. Phase 3+ (unify the "
+                "pickers, guided funnel, showroom) reads from here.",
+        "axes": AXES_LEGEND,
+        "fit": fit,
+        "products": products,
+    }
+    CATALOG_JSON.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n")
+    prim = sum(1 for p in products if p["class"] == "primary")
+    nvar = sum(p["counts"]["variants"] for p in products)
+    nax = sum(p["counts"]["variant_axes"] for p in products)
+    nopt = sum(p["counts"]["options"] for p in products)
+    print(f"OK catalog.json: {len(products)} products ({prim} primary), "
+          f"{nvar} variants, {nax} variant-axes, {nopt} options "
+          f"→ {CATALOG_JSON.relative_to(REPO)}")
+
+
+catalog_main()
