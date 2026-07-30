@@ -889,11 +889,16 @@ fn hub_flash_blocking(
     // still in the reader and the person is still standing there.
     if want_wifi && !wifi_seeded {
         return Err(format!(
+            // Deliberately avoids the words the UI's error classifier greps for
+            // (network / timed out / connection): this is a POST-write failure,
+            // and being mistaken for a mid-download stumble would tell the
+            // operator "your card is untouched" when the card is in fact
+            // complete and verified.
             "The image is written and verified, but your Wi-Fi could not be saved onto the card, \
-             so the hub would boot with no network and never answer at homeassistant.local. \
-             Nothing is broken — the card is good. Flash again (the second pass almost always \
-             mounts fine), or use ethernet for the first boot and set Wi-Fi inside Home \
-             Assistant afterwards. Reason: {}",
+             so the hub would start up with nothing to join and never answer at \
+             homeassistant.local. Nothing is broken — the card is good. Flash again (the second \
+             pass almost always mounts fine), or use ethernet for the first boot and set Wi-Fi \
+             inside Home Assistant afterwards. Reason: {}",
             wifi_note.as_deref().unwrap_or("unknown")
         ));
     }

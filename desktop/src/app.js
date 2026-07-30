@@ -2490,6 +2490,21 @@ function hubInit() {
   $("hub-confirm").addEventListener("input", hubArm);
   $("hub-ethernet").addEventListener("change", () => {
     const wired = $("hub-ethernet").checked;
+    // Ticking "wired" is an explicit choice, so make the fields agree with it
+    // BEFORE disabling them. A returning user has their remembered SSID
+    // restored into a field with no password; leaving that text in place while
+    // the inputs go disabled would read as "Wi-Fi typed" to the contradiction
+    // guard and disable the flash button with its own remedy — "clear the
+    // fields" — out of reach behind a disabled input.
+    // Setting .value programmatically fires no `input` event, so the
+    // remembered SSID stays in prefs and comes back when ethernet is unticked.
+    if (wired) {
+      $("hub-ssid").value = "";
+      $("hub-pass").value = "";
+      $("hub-hidden-net").checked = false;
+    } else if (prefs.hubSsid) {
+      $("hub-ssid").value = prefs.hubSsid;
+    }
     $("hub-ssid").disabled = wired;
     $("hub-pass").disabled = wired;
     $("hub-hidden-net").disabled = wired;

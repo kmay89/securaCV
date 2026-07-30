@@ -92,17 +92,28 @@ pub fn write_wifi_seed(mount_root: &Path, seed: &WifiSeed<'_>) -> Result<PathBuf
     let path = dir.join(keyfile_stem(seed.connection_id));
     std::fs::write(&path, &keyfile)
         .map_err(|e| format!("couldn't write the Wi-Fi keyfile: {e}"))?;
-    // Flush through to the card — the very next thing that happens to it is
-    // physical removal.
-    if let Ok(f) = std::fs::File::open(&path) {
-        let _ = f.sync_all();
+    // Flush the FILE through to the card, then the DIRECTORY so the new entry
+    // itself is durable — the very next thing that happens to this card is
+    // physical removal. These errors used to be swallowed with `let _ =`,
+    // which meant a failed flush — precisely the case where the bytes never
+    // reach the media — still reported a seeded card.
+    let file = std::fs::File::open(&path)
+        .map_err(|e| format!("wrote the Wi-Fi keyfile but couldn't reopen it to flush: {e}"))?;
+    file.sync_all()
+        .map_err(|e| format!("couldn't flush the Wi-Fi keyfile to the card: {e}"))?;
+    drop(file);
+    if let Ok(d) = std::fs::File::open(&dir) {
+        // Directory fsync is best-effort ONLY because some platforms refuse to
+        // open a directory for this; the file's own sync_all above is the one
+        // that must succeed, and it is now checked.
+        let _ = d.sync_all();
     }
-    // Read it back off the CARD, not out of the page cache we just wrote.
-    // The image gets a read-back verify; this one file decides whether a
-    // headless hub is reachable at all, so it earns the same treatment. A
-    // FAT write that lands in cache and never reaches the card produces a
-    // flash that looks perfect and a hub that never joins a network — the
-    // exact failure this seeding path shipped with.
+    // Compare what is on the filesystem against what we meant to write. Note
+    // honestly what this does and does not prove: after a successful fsync it
+    // catches a truncated or short write (a full card, a dying reader), but a
+    // plain read can still be served from the page cache, so it is NOT by
+    // itself proof the bytes reached the media. Durability rests on the fsync
+    // above being checked and on the unmount that follows in `seed_card`.
     let read_back = std::fs::read(&path)
         .map_err(|e| format!("wrote the Wi-Fi keyfile but couldn't read it back: {e}"))?;
     if read_back != keyfile.as_bytes() {
