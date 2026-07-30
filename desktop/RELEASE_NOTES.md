@@ -17,6 +17,20 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.3.6 — 2026-07-30
+
+- **Your Wi-Fi now has to actually make it onto the hub card.** Saving it was
+  treated as a convenience: if the card couldn't be re-mounted, or the write
+  never reached the media, the flash still said "Done — written, read back,
+  and verified" and you found out at a Pi that never appeared on your network.
+  It is now checked — written, read back off the card, and compared — and a
+  Wi-Fi you asked for that didn't land fails the flash, on the spot, with the
+  reason and what to do next.
+- **Typing Wi-Fi while "wired ethernet" is selected is no longer resolved
+  silently.** It used to drop the Wi-Fi. Now it says which one would win.
+- Under the hood: the app's own release build is checked by CI for the first
+  time, so a change to the hub writer can't reach you uncompiled.
+
 ## 0.3.5 — 2026-07-28
 
 - **The hub really is headless now — and the app says so.** The Wi-Fi you
