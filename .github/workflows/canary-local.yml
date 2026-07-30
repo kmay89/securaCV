@@ -184,6 +184,7 @@ jobs:
           node --test canary-local/tests/catalog.test.js
           node --test canary-local/tests/catalog_lab.test.js
           node --test canary-local/tests/catalog_browse.test.js
+          node --test canary-local/tests/catalog_funnel.test.js
       - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
         run: |
           python3 canary-local/tools/gen_enclosures.py

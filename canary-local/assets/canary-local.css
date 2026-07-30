@@ -301,6 +301,36 @@ button:disabled { opacity: 0.35; cursor: default; }
 .cat-alts { font-size: 12px; }
 .cat-alts a { color: var(--canary-deep); }
 
+/* ── guided funnel (find.html / catalog-funnel.js) ── */
+.fun-questions { max-width: 760px; margin: 0 auto; padding: 0 16px; }
+.fun-q { border: 1px solid var(--edge); border-radius: 12px; margin: 10px 0;
+  padding: 10px 14px 14px; background: var(--surface); }
+.fun-q legend { padding: 0 6px; font-weight: 600; }
+.fun-opt { display: inline-flex; flex-direction: column; align-items: flex-start;
+  gap: 2px; text-align: left; margin: 4px 6px 0 0; padding: 8px 12px;
+  border: 1px solid var(--edge); border-radius: 10px; background: transparent;
+  color: var(--text); cursor: pointer; }
+.fun-opt:hover { border-color: var(--canary-deep); }
+.fun-opt.on { border-color: var(--canary); background: rgba(255, 212, 79, .12); }
+.fun-opt strong { font-size: 14px; }
+.fun-opt .muted { font-size: 12px; }
+.fun-out { max-width: 760px; margin: 8px auto 40px; padding: 0 16px; }
+.fun-out h2 { margin: 18px 0 8px; }
+.fun-note { color: var(--canary-deep); font-size: 13px; }
+.fun-result { border: 1px solid var(--canary); border-radius: 12px;
+  padding: 14px 16px; background: var(--surface); display: flex;
+  flex-direction: column; gap: 6px; }
+.fun-result h3 { margin: 0; }
+.fun-why { font-size: 13px; color: var(--signed); }
+.fun-opts { font-size: 13px; }
+.fun-rail { margin-top: 14px; }
+.fun-rail h4 { margin: 0 0 6px; font-size: 13px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .04em; }
+.fun-rail-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.fun-chip { font-size: 13px; padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--edge); color: var(--canary-deep); }
+.fun-chip:hover { border-color: var(--canary-deep); }
+
 /* ── enclosure lab: filament + print guide ── */
 .enclab-tools { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; margin: 2px 0 8px; }
 
