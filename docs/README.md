@@ -7,6 +7,23 @@ straggler. Prefer clicking around? The same getting-started paths run
 interactively — with one-tap-copy commands, a progress bar, and your OS
 picked once — in **[the Lab's Get Started guide](https://kmay89.github.io/securaCV/canary-local/start.html)**. The Lab also has a generated **[complete site map](https://kmay89.github.io/securaCV/canary-local/site-map.html)** that folds in every bench, depth page, redirect, iPad runbook, evidence viewer, and standalone HTML doc from the same manifest.
 
+## Look something up
+
+Three pages exist so you never have to infer an answer from context — useful to
+a newcomer, and to an AI assistant answering someone's question about the
+project:
+
+- [**The glossary**](GLOSSARY.md) — every proper noun defined once: SecuraCV vs
+  the Canary vs the witness kernel, the device line, Opera/Chirp/Beacon,
+  break-glass and quorum, the seven invariants, and the words we deliberately
+  don't use.
+- [**The FAQ**](FAQ.md) — the questions people actually ask ("does it do face
+  recognition?", "how do I get footage after a break-in?", "is this
+  production-ready?"), answered honestly with pointers.
+- [**AGENTS.md**](../AGENTS.md) — the brief every AI coding assistant works
+  from. Each tool's own entrypoint file (`CLAUDE.md`, `GEMINI.md`, `QWEN.md`,
+  Copilot, Cursor, Cline, Windsurf) is generated from it, so they can't drift.
+
 ## Start here
 
 Pick the row that sounds like you (same four paths as the interactive guide):

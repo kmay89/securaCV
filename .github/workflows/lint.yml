@@ -68,6 +68,14 @@ jobs:
         run: python3 scripts/dbc_signal_resolve.py check-profiles
       - name: Docs index — no stragglers, no dead links
         run: python3 scripts/lint_docs_index.py
+      - name: Agent entrypoints match AGENTS.md
+        # Every AI tool reads a different filename (GEMINI.md, QWEN.md,
+        # copilot-instructions.md, .cursor/rules, .clinerules, .windsurfrules).
+        # They're generated from the one brief in AGENTS.md, because a stale copy
+        # is worse than no copy — the agent trusts it and confidently breaks a
+        # rule (says "flock", widens the raw-frame accessor) that AGENTS.md
+        # forbids.
+        run: python3 scripts/gen_agent_entrypoints.py --check
       - name: Build matrix matches platformio.ini + config.h
         run: python3 scripts/lint_build_matrix.py
       - name: common/ library manifests are LDF-consistent

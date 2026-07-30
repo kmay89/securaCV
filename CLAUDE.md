@@ -1,5 +1,20 @@
 # securaCV — working notes
 
+> **Start with [`AGENTS.md`](AGENTS.md).** It's the canonical brief every AI
+> assistant here works from: what the project is, the privacy invariants that
+> are non-negotiable, the repo map, the "where do I look for X" index, and the
+> CI gates you'll trip. This file adds the Claude-specific working notes on top
+> of it — it is not a replacement.
+>
+> Two more worth having open:
+> - [`docs/GLOSSARY.md`](docs/GLOSSARY.md) — every proper noun in the project
+>   (SecuraCV vs Canary vs the kernel, Opera/Chirp/Beacon, the device line,
+>   break-glass, the invariants), defined once. **Read this before answering a
+>   user's question about what something is** — most of the terms here are
+>   ours, not general knowledge.
+> - [`docs/FAQ.md`](docs/FAQ.md) — the questions users actually ask, with the
+>   honest-status answers.
+
 ## Voice & naming
 
 - **Never call a group of Canaries a "flock." We call it a *fleet*.**
