@@ -1220,3 +1220,39 @@ Two independent failures, one release day, both invisible-by-design.
   it done would ship an **unsigned** app under a green checkmark. A setup
   tool that covers part of a credential set must enumerate what it did
   *not* set, because the failure mode of the remainder is silent success.
+
+### 2026-07-29 (p) — openssl and macOS disagree about PKCS#12: "wrong password?" when the password is right
+
+- **Symptom:** with a correct single-identity Developer ID `.p12` in
+  `APPLE_DESKTOP_CERTIFICATE`, the (m)/(n)/(o) preflight passing cleanly,
+  and `ENABLE_MACOS_SIGNING=true`, the signed macOS build still died —
+  7.5 minutes in, at the bundling step:
+  ```
+  security: SecKeychainItemImport: MAC verification failed during PKCS12 import (wrong password?)
+  failed codesign application: failed to run command security import
+  ```
+  The password was **not** wrong. The same `.p12` and the same password
+  had just been opened successfully by `openssl` three times: once by the
+  setup script, twice by the preflight.
+- **Cause:** the two tools support different PKCS#12 encryption. OpenSSL 3
+  defaults to AES-256-CBC with a **SHA-256** MAC; macOS's Security
+  framework only understands the legacy **SHA-1** MAC, and reports every
+  other MAC as a password failure. A Mac with Homebrew openssl first on
+  `PATH` therefore produces a file `openssl` reads perfectly and
+  `security import` — which is what tauri runs to sign — cannot read at
+  all. The misleading error sends you to re-check the password, which is
+  the one thing that was never wrong.
+- **Fix:** two halves. `set-desktop-signing-secrets.sh` now exports with
+  `-keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1`, and the
+  release preflight **re-encrypts** whatever it is handed into that form
+  before tauri sees it (`APPLE_CERT_P12_B64`), so the pipeline no longer
+  depends on which openssl the operator happens to have. Both then prove
+  the result by running `security import` into a throwaway keychain and
+  deleting it — the same command that failed.
+- **Applies to:** any credential validated by one implementation and
+  consumed by another. Six checks passed before this because all six were
+  openssl checking openssl's own output; the format was never the thing
+  under test. **Validate with the tool that will actually consume the
+  artifact**, especially when a library and an OS framework both claim to
+  implement the same standard. And distrust the error text: "wrong
+  password?" was a guess by code that could not tell the difference.

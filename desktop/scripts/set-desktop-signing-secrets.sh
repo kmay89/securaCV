@@ -162,8 +162,18 @@ fi
 # Developer ID intermediate.
 say "Building a single-identity .p12"
 NEWPW="$(openssl rand -base64 24)"; export NEWPW
+# -keypbe/-certpbe/-macalg pin the LEGACY PKCS#12 algorithms. OpenSSL 3 defaults
+# to AES-256 with a SHA-256 MAC, which macOS's Security framework cannot read —
+# `security import` (what tauri runs to sign) rejects it as
+#   SecKeychainItemImport: MAC verification failed during PKCS12 import
+#   (wrong password?)
+# The password is fine; that message is simply wrong about the cause. openssl
+# reads such a file back happily, so no openssl-based check catches it — the
+# first signal was a failed 7.5-minute CI build. See RELEASE_LESSONS (p).
 openssl pkcs12 -export -out "$WORK/desktop.p12" -inkey "$KEY" -in "$CERT" \
-  -name "$IDENT" -passout env:NEWPW || die "Repacking the .p12 failed."
+  -name "$IDENT" -passout env:NEWPW \
+  -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 \
+  || die "Repacking the .p12 failed."
 
 if ! openssl pkcs12 -in "$WORK/desktop.p12" -passin env:NEWPW -nokeys -legacy \
         -out "$WORK/check.pem" 2>/dev/null; then
@@ -173,6 +183,23 @@ fi
 N_CERT="$(grep -c 'BEGIN CERTIFICATE' "$WORK/check.pem" || true)"
 [ "$N_CERT" = "1" ] || die "Built a .p12 holding $N_CERT certificates; the release preflight requires exactly 1."
 ok "exactly 1 certificate, 1 private key"
+
+# The check that actually predicts CI: import it with `security`, the same tool
+# tauri uses on the runner, into a throwaway keychain we delete immediately.
+# Everything above this line is openssl agreeing with openssl.
+PROBE="$WORK/probe.keychain"
+security create-keychain -p probe "$PROBE" >/dev/null 2>&1 \
+  || die "Could not create a scratch keychain to test the .p12 with."
+if security import "$WORK/desktop.p12" -k "$PROBE" -P "$NEWPW" \
+     -T /usr/bin/codesign >/dev/null 2>&1; then
+  security delete-keychain "$PROBE" >/dev/null 2>&1 || true
+  ok "macOS imports it (same command the release runner uses)"
+else
+  security delete-keychain "$PROBE" >/dev/null 2>&1 || true
+  die "Built a .p12 that macOS itself refuses to import, so signing would fail in
+CI even though every openssl check passed. Send me this line:
+  $(openssl version)"
+fi
 
 B64="$(base64 -i "$WORK/desktop.p12" | tr -d '\n')"
 [ "${#B64}" -gt 1000 ] || die "The base64 came out ${#B64} characters long, which cannot be a real .p12."
