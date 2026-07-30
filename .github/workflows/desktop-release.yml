@@ -434,6 +434,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.plan.outputs.tag }}
           VER: ${{ steps.plan.outputs.version }}
+          # Same condition the macOS job signs on. A signed build must NOT carry
+          # quarantine-stripping instructions: telling someone to run
+          # `xattr -dr com.apple.quarantine` on an app that opens fine teaches
+          # them to disarm Gatekeeper by reflex, which is worse than the
+          # inconvenience it was meant to solve.
+          SIGNED: ${{ vars.ENABLE_MACOS_SIGNING }}
         run: |
           set -euo pipefail
           body="$(mktemp)"
@@ -449,17 +455,23 @@ jobs:
             echo "- **macOS**: download the \`.dmg\` (universal — Apple Silicon & Intel)."
             echo "- **Linux**: \`.AppImage\` (runs anywhere) or \`.deb\` (Debian/Ubuntu)."
             echo
-            echo "### macOS: first launch (one time)"
-            echo
-            echo "Unless this build is signed & notarized, macOS quarantines it. Drag the app"
-            echo "to Applications, then in **Terminal** run:"
-            echo
-            echo '```sh'
-            echo 'xattr -dr com.apple.quarantine "/Applications/SecuraCV Lab.app"'
-            echo '```'
-            echo
-            echo "Full steps: [\`desktop-lab/INSTALL.md\`](https://github.com/kmay89/securaCV/blob/main/desktop-lab/INSTALL.md)."
-            echo
+            if [ "${SIGNED:-}" = "true" ]; then
+              echo "**Signed and notarized by Apple** — drag it to Applications and open it."
+              echo "No Terminal, no quarantine warning."
+              echo
+            else
+              echo "### macOS: first launch (one time)"
+              echo
+              echo "This build is unsigned, so macOS quarantines it. Drag the app to"
+              echo "Applications, then in **Terminal** run:"
+              echo
+              echo '```sh'
+              echo 'xattr -dr com.apple.quarantine "/Applications/SecuraCV Lab.app"'
+              echo '```'
+              echo
+              echo "Full steps: [\`desktop-lab/INSTALL.md\`](https://github.com/kmay89/securaCV/blob/main/desktop-lab/INSTALL.md)."
+              echo
+            fi
             echo "Installed Labs pick this version up on their own once it's published —"
             echo "the app checks at launch and every few hours, shows these notes, and"
             echo "installs only after you say yes."
