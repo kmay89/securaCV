@@ -1295,3 +1295,30 @@ Two independent failures, one release day, both invisible-by-design.
   nothing compares them. When a build knob changes behaviour and lives
   in two places, write the lint that compares them — a knob whose only
   symptom is silence will not report itself.
+
+### 2026-07-30 (r) — PR CI compiled three files out of a crate, so a merged change had no compile coverage at all
+
+- **Symptom:** a change to `desktop/src-tauri/src/hub.rs` was reviewed and
+  merged with the crate never compiled — not locally (it needs GTK/WebKit
+  dev libraries that a headless container lacks) and not in PR CI. The
+  first compile would have been the next release build, on `main`. It
+  happened to compile; the check was luck, not process.
+- **Cause:** `desktop-hub-core.yml` path-triggered on `desktop/hub-core/**`,
+  `desktop/hub-io/**`, and **three individually named files** —
+  `rescue.rs`, `port_hint.rs`, `health.rs` — which a `tauri-pure-modules`
+  job compiles in isolation as pure modules. Everything else in the crate
+  (`hub.rs`, `provisioning.rs`, `lib.rs`) matched no path and was built by
+  no job. The workflow looked like desktop coverage and was coverage of a
+  hand-picked subset.
+- **Fix:** a `tauri-crate-check` job that installs the Linux GUI dev
+  libraries and runs `cargo check --all-targets` on `desktop/src-tauri`,
+  plus a `desktop/src-tauri/**` path trigger so edits anywhere in the crate
+  reach it. `check`, not `build` — the type error is the point, not a
+  binary.
+- **Applies to:** any workflow whose paths enumerate FILES rather than the
+  unit that must compile. A per-file trigger silently becomes wrong the
+  moment someone adds a file, and the failure mode is not a red build —
+  it is no build, which reads identically to a green one. If a crate must
+  compile to ship, something in PR CI must compile the crate; and if it
+  cannot be compiled locally, that is a reason to add the job, not a
+  reason to trust review.

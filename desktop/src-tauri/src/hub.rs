@@ -826,7 +826,7 @@ fn hub_flash_blocking(
     // wouldn't cleanly unmount still needs a "eject it yourself before pulling
     // it" instruction, or the operator may yank a still-mounted card before
     // the CONFIG writes flush.
-    let (wifi_seeded, mut wifi_note, account_seeded, mut account_note, mut eject_note) =
+    let (wifi_seeded, wifi_note, account_seeded, mut account_note, mut eject_note) =
         if want_wifi || want_account {
             match hub_io::seed::seed_card(
                 &receipt.target_path,
