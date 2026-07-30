@@ -1055,6 +1055,21 @@ jobs:
           /tmp/tincan_cores | tee /tmp/tincan_cores.log
           grep -q "ALL .* PASSED" /tmp/tincan_cores.log
 
+      - name: Tin Can sketch copy sync
+        # The Arduino bring-up sketch carries a staged copy of knock_codec.h,
+        # because the Arduino IDE compiles what is in the sketch folder and
+        # nothing above it. A staged copy that drifts is worse than no copy:
+        # the bench tool would be testing a rhythm codec the product no longer
+        # uses, and the divergence would surface as "it felt wrong on the
+        # wrist" rather than as a compile error. Same guard, same reason, as
+        # the CSI sketch copies.
+        run: |
+          set -euo pipefail
+          diff -u firmware/projects/canary-tincan/include/canary/tincan/knock_codec.h \
+                  firmware/projects/canary-tincan/arduino/tincan_bringup/knock_codec.h \
+            || { echo "::error::tincan_bringup/knock_codec.h has drifted from the canonical header. Re-copy it."; exit 1; }
+          echo "Tin Can sketch copy is in sync."
+
       - name: Build + run canary-wap provisioning-logic host test
         # The first-run wizard's pure decisions (setup-window keep-alive,
         # scan-cache freshness, AP-only join suppression, AP teardown

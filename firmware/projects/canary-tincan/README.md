@@ -52,6 +52,18 @@ firmware/projects/canary-tincan/tests_host/
 cd firmware/projects/canary-tincan/tests_host && make
 ```
 
+## Bench bring-up (flash this first)
+
+[`arduino/tincan_bringup/`](arduino/tincan_bringup/) is the day-one bench tool:
+one sketch, one third-party library, five staged checks ending in a knock
+crossing between two watches. **Read [`arduino/README.md`](arduino/README.md)
+before plugging anything in** — it carries the failure ladder and is explicit
+about which parts have never executed.
+
+It is deliberately not the product: no encryption, no strings, no Ring. Bench
+frames use their own magic (`0x7B7C`) that the real Canary Link parser rejects
+outright, so a bench frame can never be mistaken for product traffic.
+
 ## Why the cores come first
 
 The board is not on anyone's desk yet — but the parts of this design that are
