@@ -39,8 +39,11 @@ The lane, and what the board shows for each:
 | `shipped` | **Shipped** | Built and released |
 
 Closed-but-not-shipped ideas drop off the board rather than sitting there as
-tombstones — but the issue stays public and readable forever, with the reason
-written on it. Declining an idea is done in the open or not at all.
+tombstones — but the issue stays public and readable, with the reason written on
+it. Declining an idea is done in the open or not at all. That last part is a
+promise we make, not one the platform enforces; see
+[the note on deletion](#why-this-lives-on-github) for where our word is all
+you have.
 
 ---
 
@@ -64,13 +67,21 @@ a thread outright — and claiming otherwise would be the kind of overclaim this
 project fails a build over. What GitHub actually gives you is a record of the
 ordinary moves: an edited comment carries a visible edit history anyone can
 open, a closed idea shows who closed it and when, and the thread is public for
-as long as it exists. So the quiet ways a project walks back a promise are the
-visible ones here, and the drastic ways are conspicuous — people were already
-reading it. If we say no, the reason sits on your page where you and everyone
-else can see it. A private suggestion form gives you none of that.
+as long as it exists. If we say no, the reason sits on your page where you and
+everyone else can see it.
 
-That is a weaker claim than "we can't touch it," and a more useful one: it's
-the one that survives someone going and checking.
+**Deletion is the exception, and it's worth naming plainly.** An owner can
+delete an issue outright. GitHub leaves no public tombstone when they do, no
+one is notified, and on a new or quiet idea it's entirely possible nobody would
+notice. There is no structural guarantee against it — only our word, and
+whatever copies other people happen to have made. We would rather point at that
+gap than let you find it yourself, because a page arguing you can trust us is
+the worst place to be caught rounding up.
+
+So the honest version is narrow: everything *short of deletion* is on the
+record, and a private suggestion form doesn't even offer that much. It's a
+weaker claim than "we can't touch it" — and the one that survives someone going
+and checking, which is the only kind worth making here.
 
 **Because the votes are real.** A vote is a reaction from a real account, which
 means we can't inflate the numbers and neither can a competitor. "This was the
