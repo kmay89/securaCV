@@ -21,6 +21,9 @@ on:
       - 'desktop/src-tauri/src/rescue.rs'
       - 'desktop/src-tauri/src/port_hint.rs'
       - 'desktop/src-tauri/src/health.rs'
+      # The WHOLE crate, so a change to hub.rs / provisioning.rs / lib.rs
+      # reaches the compile job below instead of nothing at all.
+      - 'desktop/src-tauri/**'
       - '.github/workflows/desktop-hub-core.yml'
       # hub-io embeds these provisioning-bundle files (include_str!) and
       # cross-checks their bytes against the Python manifest's SHA-256 pins, so a
@@ -38,6 +41,9 @@ on:
       - 'desktop/src-tauri/src/rescue.rs'
       - 'desktop/src-tauri/src/port_hint.rs'
       - 'desktop/src-tauri/src/health.rs'
+      # The WHOLE crate, so a change to hub.rs / provisioning.rs / lib.rs
+      # reaches the compile job below instead of nothing at all.
+      - 'desktop/src-tauri/**'
       - '.github/workflows/desktop-hub-core.yml'
       # hub-io embeds these provisioning-bundle files (include_str!) and
       # cross-checks their bytes against the Python manifest's SHA-256 pins, so a
@@ -92,6 +98,43 @@ jobs:
   # their unit tests on a plain runner — the footgun logic (rescue backup/restore
   # validation, espflash arg building) can't rot silently between releases, even
   # though the full app only builds on release tags.
+  # Compile the ACTUAL Tauri crate. Until this existed, PR CI compiled exactly
+  # three files out of desktop/src-tauri (below, as pure modules) and nothing
+  # else — so a change to hub.rs could be reviewed, merged, and only discovered
+  # to be broken by the next release build. That happened: a hub.rs edit reached
+  # main with no compile coverage anywhere, local or CI, because the crate needs
+  # GTK/WebKit dev libraries. It compiled — but the check was luck, not process.
+  # cargo check (not build) keeps it a few minutes: we want the type error, not
+  # a binary.
+  tauri-crate-check:
+    name: cargo check (src-tauri)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Linux build dependencies
+        # Same set the desktop release workflow installs; gdk-sys and friends
+        # cannot configure without them.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libgtk-3-dev \
+            libssl-dev \
+            libudev-dev \
+            pkg-config \
+            build-essential
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+      - name: cargo check
+        working-directory: desktop/src-tauri
+        run: cargo check --all-targets
+
   tauri-pure-modules:
     runs-on: ubuntu-latest
     timeout-minutes: 10
