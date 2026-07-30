@@ -16,6 +16,7 @@
      "group": "Peripherals",
      "label": "XIAO *Sense* camera",
      "consequence": "lid sensor window + taller cavity (off = plain XIAO ESP32-S3)",
+     "audience": "user",
      "default": true,
      "bom": [
       "CW1",
@@ -30,6 +31,7 @@
      "group": "Peripherals",
      "label": "piezo buzzer",
      "consequence": "lid vent + GORE seat",
+     "audience": "user",
      "default": true,
      "bom": [
       "BZ1",
@@ -46,6 +48,7 @@
      "group": "Peripherals",
      "label": "external status LED",
      "consequence": "light-pipe port",
+     "audience": "user",
      "default": true,
      "bom": [
       "DLED1",
@@ -59,6 +62,7 @@
      "group": "Peripherals",
      "label": "LiPo",
      "consequence": "battery bay (enlarges the case)",
+     "audience": "user",
      "default": true,
      "bom": [
       "BT1",
@@ -71,6 +75,7 @@
      "group": "Peripherals",
      "label": "L76K GPS module",
      "consequence": "internal module bay",
+     "audience": "user",
      "default": false,
      "bom": [
       "M1"
@@ -84,6 +89,7 @@
      "group": "Peripherals",
      "label": "reed/Hall + magnet",
      "consequence": "lid magnet pocket",
+     "audience": "user",
      "default": true,
      "bom": [
       "SW2",
@@ -99,6 +105,7 @@
      "group": "Peripherals",
      "label": "cap-touch pad",
      "consequence": "thinned \"touch window\" on the lid",
+     "audience": "user",
      "default": false,
      "bom": [
       "TP1",
@@ -110,6 +117,7 @@
      "group": "Peripherals",
      "label": "external u.FL antenna",
      "consequence": "side bulkhead hole",
+     "audience": "user",
      "default": false,
      "bom": [
       "ANT1"
@@ -120,6 +128,7 @@
      "group": "Weather sealing",
      "label": "perimeter TPU gasket + drip-edge lid + USB plug recess (splash-resistant, NOT immersion)",
      "consequence": "",
+     "audience": "user",
      "default": false,
      "bom": [
       "FIL1",
@@ -133,6 +142,7 @@
      "group": "Mounting",
      "label": "wall-mount features (keyholes thicken the case back by `kh_extra`)",
      "consequence": "",
+     "audience": "user",
      "default": false,
      "bom": [
       "SCR4"
@@ -143,6 +153,7 @@
      "group": "Mounting",
      "label": "mount_style",
      "consequence": "",
+     "audience": "user",
      "default": false,
      "enum": [
       "keyhole",
@@ -592,6 +603,7 @@
      "group": "Options",
      "label": "onboard WS2812",
      "consequence": "light-pipe port (outside the radome zone)",
+     "audience": "user",
      "default": true,
      "fw": [
       "FEATURE_STATUS_LED"
@@ -602,6 +614,7 @@
      "group": "Options",
      "label": "BH1750 lux sensor",
      "consequence": "small light aperture (outside the radome zone)",
+     "audience": "user",
      "default": true,
      "fw": [
       "FEATURE_AMBIENT_LIGHT"
@@ -612,6 +625,7 @@
      "group": "Options",
      "label": "GORE vent cluster (recommended with opt_seal)",
      "consequence": "",
+     "audience": "user",
      "default": false
     },
     {
@@ -619,6 +633,7 @@
      "group": "Options",
      "label": "reed/Hall magnet pocket",
      "consequence": "",
+     "audience": "user",
      "default": false,
      "bom": [
       "SW2",
@@ -630,6 +645,7 @@
      "group": "Options",
      "label": "perimeter TPU gasket + drip-edge front (indoor ceilings rarely need it)",
      "consequence": "",
+     "audience": "user",
      "default": false,
      "bom": [
       "FIL1"
@@ -640,6 +656,7 @@
      "group": "Options",
      "label": "opt_mount",
      "consequence": "",
+     "audience": "user",
      "default": true,
      "bom": [
       "SCR4"
@@ -650,6 +667,7 @@
      "group": "Options",
      "label": "mount_style",
      "consequence": "",
+     "audience": "user",
      "default": false,
      "enum": [
       "hinge",
@@ -814,6 +832,7 @@
      "group": "Battery",
      "label": "opt_batt",
      "consequence": "",
+     "audience": "user",
      "default": false,
      "bom": [
       "W-BT1"

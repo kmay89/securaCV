@@ -50,6 +50,15 @@ test("option links are live: BOM refs exist, firmware flags exist", () => {
   }
 });
 
+test("every workshop option is tagged user-audience (drives the audience filter, not opt_)", () => {
+  for (const [dev, d] of Object.entries(ws.devices)) {
+    for (const o of d.options || []) {
+      assert.strictEqual(o.audience, "user",
+        `${dev}/${o.id}: workshop options are user-facing (opt_* + mount_style)`);
+    }
+  }
+});
+
 test("wap presets carry the README's own option story", () => {
   const wap = ws.devices["canary-wap"];
   const by = Object.fromEntries(wap.packages.map((p) => [p.id, p.options]));
