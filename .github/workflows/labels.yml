@@ -43,6 +43,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # sync_labels.py parses the manifest with PyYAML, which is not on a clean
+      # ubuntu-latest image. Without this the script dies on ModuleNotFoundError
+      # before its first API call — so the labels would never be created and the
+      # documented manual recovery would fail too. Same step, same reason, as
+      # workflows-lint.yml and release-everything.yml.
+      - name: Install PyYAML
+        run: python3 -m pip install --quiet pyyaml
+
       - name: Create or update the declared labels
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

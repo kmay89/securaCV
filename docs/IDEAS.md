@@ -58,11 +58,15 @@ automatically. You can watch it get written, watch it get reviewed, and see
 the exact firmware release it ships in — from the page where you first asked
 for it. Almost no product lets you do that.
 
-**Because it makes us accountable in public.** Your words can't be edited by
-us. Nothing can be quietly deleted. If we say no, we have to say it on your
-page, with a reason, where you and everyone else can read it. A private
-suggestion form has none of those properties, and every one of them protects
-you rather than us.
+**Because it makes us accountable in public.** Not because we *can't* touch
+your words — any project owner can moderate their own issue tracker, and
+pretending otherwise would be the kind of overclaim this project fails a build
+over. Because we can't do it **invisibly**: an edited comment carries a visible
+edit history anyone can open, a closed idea shows who closed it and when, and
+the whole thread is public and archived by third parties the moment it exists.
+If we say no, the reason has to sit on your page where you and everyone else
+can read it. A private suggestion form has none of those properties, and every
+one of them is a check on us rather than on you.
 
 **Because the votes are real.** A vote is a reaction from a real account, which
 means we can't inflate the numbers and neither can a competitor. "This was the
