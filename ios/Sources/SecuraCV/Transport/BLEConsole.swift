@@ -63,6 +63,14 @@ final class BLEConsole: NSObject, ObservableObject {
 
     private var central: CBCentralManager!
     private var peripherals: [UUID: CBPeripheral] = [:]
+    /// Whether a scan has been *requested*, independent of whether the radio is
+    /// ready. CBCentralManager starts in `.unknown` and only reaches
+    /// `.poweredOn` a moment later, so at launch `startScan()` always arrives
+    /// too early — and Bluetooth can be toggled off and on while the scene
+    /// stays active. Remembering the intent is what lets the state callback
+    /// pick the scan up; keying that off `scanning` instead would deadlock,
+    /// because `scanning` can only become true once the radio is already on.
+    private var wantsScan = false
 
     override init() {
         super.init()
@@ -78,7 +86,8 @@ final class BLEConsole: NSObject, ObservableObject {
     }
 
     func startScan() {
-        guard poweredOn else { return }
+        wantsScan = true
+        guard poweredOn else { return }   // resumed by centralManagerDidUpdateState
         scanning = true
         // Unfiltered: the beacon lives in manufacturer data, which no service
         // filter can select for. Duplicates ON so a status change (tamper!)
@@ -89,6 +98,7 @@ final class BLEConsole: NSObject, ObservableObject {
     }
 
     func stopScan() {
+        wantsScan = false
         scanning = false
         central.stopScan()
     }
@@ -104,7 +114,11 @@ final class BLEConsole: NSObject, ObservableObject {
 extension BLEConsole: CBCentralManagerDelegate, CBPeripheralDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         poweredOn = central.state == .poweredOn
-        if poweredOn && scanning { startScan() }
+        if poweredOn {
+            if wantsScan { startScan() }        // the radio caught up with us
+        } else {
+            scanning = false                    // powered off: we are not scanning
+        }
     }
 
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,

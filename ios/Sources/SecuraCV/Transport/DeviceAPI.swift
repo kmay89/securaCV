@@ -160,6 +160,26 @@ actor DeviceAPI {
         return d
     }()
 
+    /// Turn an mDNS TXT `host` value into a URL we can actually dial.
+    ///
+    /// The canonical TXT schema (canary-vision/docs/discovery.md) documents
+    /// `host=canary-a3f7.local`, but the firmware writes the raw mDNS hostname:
+    /// `make_hostname()` produces a BARE label like `canary-display-a1b2c3`,
+    /// with no domain. Building `http://canary-display-a1b2c3` from that is
+    /// rejected by `isPrivate` and the request is never made — so the whole
+    /// `/api/fleet` path would silently do nothing for exactly the boards it
+    /// exists to reach. Appending the implied `.local` is what makes a bare
+    /// mDNS label resolvable.
+    ///
+    /// A value that already carries a dot (a `.local` name or an IP) is left
+    /// alone; `isPrivate` remains the gate either way.
+    static func url(forDiscoveredHost host: String) -> URL? {
+        let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let name = trimmed.contains(".") ? trimmed : trimmed + ".local"
+        return URL(string: "http://\(name)")
+    }
+
     /// Only RFC-1918 / loopback / .local hosts are allowed to be contacted.
     static func isPrivate(_ url: URL) -> Bool {
         guard let host = url.host else { return false }

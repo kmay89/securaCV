@@ -165,7 +165,9 @@ final class FleetStore: ObservableObject {
             let reports = await withTaskGroup(of: (String, FleetSelfReport)?.self) { group -> [(String, FleetSelfReport)] in
                 for host in unpairedHosts {
                     group.addTask {
-                        guard let url = URL(string: "http://\(host)"),
+                        // Bare mDNS labels need their implied .local — see
+                        // DeviceAPI.url(forDiscoveredHost:).
+                        guard let url = DeviceAPI.url(forDiscoveredHost: host),
                               let report = try? await DeviceAPI.fleetSelfReport(at: url) else { return nil }
                         return (host, report)
                     }
@@ -175,12 +177,13 @@ final class FleetStore: ObservableObject {
                 return out
             }
             for (host, report) in reports {
-                // A hub answers for itself AND its peers, so every row counts.
-                for row in report.devices {
+                // A hub answers for itself AND its peers, so every row counts —
+                // and each needs its own id (see provisionalWitness).
+                for (index, row) in report.devices.enumerated() {
                     if let i = next.firstIndex(where: { $0.name == row.name && !row.name.isEmpty }) {
                         FleetMerge.fold(row, into: &next[i])
                     } else {
-                        next.append(FleetMerge.provisionalWitness(from: row, host: host))
+                        next.append(FleetMerge.provisionalWitness(from: row, host: host, index: index))
                     }
                 }
             }
@@ -230,6 +233,17 @@ final class FleetStore: ObservableObject {
             return (w, [])
         }
         var w = Witness(id: info.deviceID, deviceType: ref.deviceType, name: info.name)
+        // Derive the device's fingerprint from the key we already pinned, using
+        // the firmware's own scheme (Wire/DeviceFingerprint). Without this the
+        // field stays empty, FleetMerge.attach can never tie a heard beacon to
+        // this row, and the same Canary appears twice — once here, once as an
+        // anonymous SCV-XXXX — while this row may sit .lost and raise a false
+        // alert. /api/v1/info carries no fingerprint, so the pinned key is the
+        // source.
+        if let pub = PinnedKeyStore.key(for: ref.id),
+           let fp = DeviceFingerprint.hex(forPublicKey: pub) {
+            w.fingerprint = fp
+        }
         w.firmware = info.firmwareVersion
         w.rssiDBM = info.wifiRSSI
         w.link = .online

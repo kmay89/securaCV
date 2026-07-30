@@ -87,4 +87,33 @@ final class FleetSelfReportTests: XCTestCase {
     func testGarbageIsAnError() {
         XCTAssertThrowsError(try FleetSelfReport.decode(Data("not json".utf8)))
     }
+
+    // ── Reaching the endpoint at all ──
+    //
+    // The firmware's make_hostname() writes a BARE mDNS label into the `host`
+    // TXT key (e.g. "canary-display-a1b2c3"), not the "canary-a3f7.local" the
+    // schema doc shows. A URL built from the bare label fails isPrivate, so the
+    // probe is dropped before any request — silently disabling /api/fleet for
+    // exactly the boards it exists to reach.
+    func testBareMDNSLabelGetsItsImpliedLocalSuffix() throws {
+        let url = try XCTUnwrap(DeviceAPI.url(forDiscoveredHost: "canary-display-a1b2c3"))
+        XCTAssertEqual(url.absoluteString, "http://canary-display-a1b2c3.local")
+        XCTAssertTrue(DeviceAPI.isPrivate(url), "the normalized host must survive the private-address gate")
+    }
+
+    func testAlreadyQualifiedHostsAreLeftAlone() throws {
+        let dotted = try XCTUnwrap(DeviceAPI.url(forDiscoveredHost: "canary-a3f7.local"))
+        XCTAssertEqual(dotted.absoluteString, "http://canary-a3f7.local")
+        XCTAssertTrue(DeviceAPI.isPrivate(dotted))
+
+        let ip = try XCTUnwrap(DeviceAPI.url(forDiscoveredHost: "192.168.1.47"))
+        XCTAssertEqual(ip.absoluteString, "http://192.168.1.47", "an IP must not gain a .local suffix")
+        XCTAssertTrue(DeviceAPI.isPrivate(ip))
+    }
+
+    func testPublicAddressesStillCannotBeDialed() throws {
+        let url = try XCTUnwrap(DeviceAPI.url(forDiscoveredHost: "example.com"))
+        XCTAssertFalse(DeviceAPI.isPrivate(url), "normalizing must not widen what we are willing to contact")
+        XCTAssertNil(DeviceAPI.url(forDiscoveredHost: "   "), "an empty host is not a URL")
+    }
 }

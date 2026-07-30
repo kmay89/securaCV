@@ -152,8 +152,15 @@ enum FleetMerge {
 
     /// Build a Witness for a Canary that answered `/api/fleet` but isn't paired.
     /// Namespaced id, like the BLE provisional rows.
-    static func provisionalWitness(from row: FleetSelfDevice, host: String, heardAt: Date = Date()) -> Witness {
-        var w = Witness(id: "lan:" + host)
+    ///
+    /// The id carries a per-ROW discriminator, not just the answering host: a
+    /// hub reports itself *and* its peers from one address, so keying on the
+    /// host alone would give several rows the same `Identifiable` id and let
+    /// SwiftUI's `ForEach` reuse or drop the wrong ones. `index` keeps rows
+    /// distinct even when two peers share a name (or have none).
+    static func provisionalWitness(from row: FleetSelfDevice, host: String,
+                                   index: Int = 0, heardAt: Date = Date()) -> Witness {
+        var w = Witness(id: "lan:\(host)#\(index)")
         w.name = row.name.isEmpty ? host : row.name
         w.deviceType = row.deviceType
         fold(row, into: &w, heardAt: heardAt)
