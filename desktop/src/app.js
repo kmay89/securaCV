@@ -3159,7 +3159,22 @@ function hubArm() {
     accountOk &&
     $("hub-confirm").value.trim().toUpperCase() === "ERASE" &&
     !hub.busy;
-  $("hub-flash-btn").disabled = !armed;
+  // Typed Wi-Fi + "wired ethernet" selected is a contradiction, and the old
+  // behaviour resolved it by silently throwing the Wi-Fi away: hubWifiValue()
+  // returns null, the backend logs "no Wi-Fi to seed (wired ethernet
+  // assumed)", and the hub boots with no network. Someone who typed a
+  // password meant it — say which one is winning instead of picking one.
+  const typedWifi = !!($("hub-ssid").value.trim() || $("hub-pass").value);
+  const contradiction = $("hub-ethernet").checked && typedWifi;
+  if (contradiction) {
+    setStatus(
+      "hub-result",
+      "You've typed Wi-Fi but chosen wired ethernet — the Wi-Fi would be dropped. " +
+        "Untick ethernet to use the Wi-Fi, or clear the fields to go wired.",
+      "err",
+    );
+  }
+  $("hub-flash-btn").disabled = !armed || contradiction;
   $("hub-write-summary").textContent = target
     ? `${hub.plan ? hub.plan.os_label : "Home Assistant OS"} → ${target.model} ` +
       `(${target.path}, ${hubFmtBytes(target.size_bytes)})` +

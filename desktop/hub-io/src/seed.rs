@@ -90,11 +90,27 @@ pub fn write_wifi_seed(mount_root: &Path, seed: &WifiSeed<'_>) -> Result<PathBuf
     std::fs::create_dir_all(&dir)
         .map_err(|e| format!("couldn't create CONFIG/network on the boot partition: {e}"))?;
     let path = dir.join(keyfile_stem(seed.connection_id));
-    std::fs::write(&path, keyfile).map_err(|e| format!("couldn't write the Wi-Fi keyfile: {e}"))?;
+    std::fs::write(&path, &keyfile)
+        .map_err(|e| format!("couldn't write the Wi-Fi keyfile: {e}"))?;
     // Flush through to the card — the very next thing that happens to it is
     // physical removal.
     if let Ok(f) = std::fs::File::open(&path) {
         let _ = f.sync_all();
+    }
+    // Read it back off the CARD, not out of the page cache we just wrote.
+    // The image gets a read-back verify; this one file decides whether a
+    // headless hub is reachable at all, so it earns the same treatment. A
+    // FAT write that lands in cache and never reaches the card produces a
+    // flash that looks perfect and a hub that never joins a network — the
+    // exact failure this seeding path shipped with.
+    let read_back = std::fs::read(&path)
+        .map_err(|e| format!("wrote the Wi-Fi keyfile but couldn't read it back: {e}"))?;
+    if read_back != keyfile.as_bytes() {
+        return Err(format!(
+            "the Wi-Fi keyfile read back as {} bytes instead of {} — the card did not take it",
+            read_back.len(),
+            keyfile.len()
+        ));
     }
     Ok(path)
 }
