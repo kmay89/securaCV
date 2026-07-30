@@ -213,7 +213,6 @@ jobs:
               echo "::error::Could not open the .p12 — APPLE_DESKTOP_CERTIFICATE_PASSWORD is probably wrong, or the base64 isn't a whole .p12 file (use: base64 -i cert.p12)."
               rm -f "$RUNNER_TEMP/desktop-cert.p12"; exit 1; }
           fi
-          rm -f "$RUNNER_TEMP/desktop-cert.p12"
           # Walk the certificates one at a time. NOT csplit: this job runs on
           # macOS, whose BSD csplit has no -z/-b (GNU-only) — it would fail,
           # produce no files, leave CNS empty, and reject every certificate
@@ -254,14 +253,59 @@ jobs:
           if ! printf '%s' "$WANT" | grep -q '^Developer ID Application:'; then
             echo "::warning::APPLE_SIGNING_IDENTITY is not a 'Developer ID Application' identity. A DMG downloaded outside the App Store needs that one to notarize and open cleanly."
           fi
-          echo "Match confirmed — signing can proceed."
+          echo "Match confirmed."
+
+          # ── normalize the .p12 so `security import` will take it ───────────
+          # openssl and macOS disagree about PKCS#12. OpenSSL 3 writes AES-256
+          # with a SHA-256 MAC; macOS's Security framework only understands the
+          # legacy SHA-1 MAC and rejects the rest as
+          #   SecKeychainItemImport: MAC verification failed during PKCS12
+          #   import (wrong password?)
+          # The password is NOT wrong — that message is a lie, and it cost a
+          # full 7.5-minute build to read. Every openssl check above passes on
+          # such a file, so re-encrypt with SHA-1/3DES here instead of asking
+          # each operator to have the right openssl. See RELEASE_LESSONS (p).
+          if ! openssl pkcs12 -in "$RUNNER_TEMP/desktop-cert.p12" -passin env:CERT_PW \
+                 -nodes -legacy -out "$RUNNER_TEMP/cert-all.pem" 2>/dev/null; then
+            openssl pkcs12 -in "$RUNNER_TEMP/desktop-cert.p12" -passin env:CERT_PW \
+                 -nodes -out "$RUNNER_TEMP/cert-all.pem" 2>/dev/null \
+              || { echo "::error::Could not read the .p12 to normalize it."; exit 1; }
+          fi
+          openssl pkcs12 -export -in "$RUNNER_TEMP/cert-all.pem" -passout env:CERT_PW \
+            -name "$WANT" -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 \
+            -out "$RUNNER_TEMP/desktop-cert-macos.p12" \
+            || { echo "::error::Could not re-encrypt the .p12 for macOS."; exit 1; }
+          rm -f "$RUNNER_TEMP/cert-all.pem" "$RUNNER_TEMP/desktop-cert.p12"
+
+          # Prove it with the SAME command tauri runs. Every check above is an
+          # openssl check, and openssl was perfectly happy with the file macOS
+          # refused — so the only check that means anything here is this one.
+          PROBE="$RUNNER_TEMP/probe.keychain"
+          security create-keychain -p probe "$PROBE" >/dev/null
+          if ! security import "$RUNNER_TEMP/desktop-cert-macos.p12" -k "$PROBE" \
+                 -P "$CERT_PW" -T /usr/bin/codesign >/dev/null 2>&1; then
+            security delete-keychain "$PROBE" >/dev/null 2>&1 || true
+            echo "::error::macOS still refuses to import the signing certificate after normalizing it. Re-run desktop/scripts/set-desktop-signing-secrets.sh on the Mac holding the key, and paste its output."
+            exit 1
+          fi
+          security delete-keychain "$PROBE" >/dev/null 2>&1 || true
+
+          B64="$(base64 -i "$RUNNER_TEMP/desktop-cert-macos.p12" | tr -d '\n')"
+          rm -f "$RUNNER_TEMP/desktop-cert-macos.p12"
+          echo "::add-mask::$B64"
+          echo "APPLE_CERT_P12_B64=$B64" >> "$GITHUB_ENV"
+          echo "Imported into a throwaway keychain — signing can proceed."
 
       - name: Build & publish (signed macOS)
         if: vars.ENABLE_MACOS_SIGNING == 'true'
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_DESKTOP_CERTIFICATE }}
+          # The preflight re-encrypts the .p12 with the SHA-1 MAC macOS requires
+          # and proves it imports; APPLE_CERT_P12_B64 is that normalized file.
+          # Falls back to the raw secret on Linux, where the preflight is skipped
+          # and every Apple variable here is inert anyway.
+          APPLE_CERTIFICATE: ${{ env.APPLE_CERT_P12_B64 || secrets.APPLE_DESKTOP_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DESKTOP_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
