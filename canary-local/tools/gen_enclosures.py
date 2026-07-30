@@ -958,6 +958,38 @@ VARIANT_SELECTOR_PARAMS = {
 # Enum params that are an OPTION with more than on/off (axis 4).
 OPTION_ENUM_PARAMS = {"mount_style"}
 
+# The canonical id for a case that fits no single device (axis 1). The doc's
+# §4 identity contract replaces the nullable `device` link with this, so a
+# universal record joins by device id on the same path as a device-specific one.
+UNIVERSAL_ID = "_universal"
+
+# Audience split (axis 4), the EXPLICIT tag the doc calls for instead of the
+# leaky `opt_` prefix: these boolean params are structural / manufacturing
+# detail toggles, not user choices — captured (so nothing is silently dropped)
+# but tagged `engineering` so a picker shows only the user set. Everything else
+# that's a bool (term_open, vent_back, bez_on, tie_slots, screws, din, …) is a
+# user option. (Doc §5: "hinge_teeth/usb_cover stop being silently dropped and
+# lid_ribs stops masquerading as a user option.")
+ENGINEERING_OPTIONS = {
+    "lid_ribs", "kh_lock", "hinge_teeth", "bracket_tripod", "screw_insert",
+    "board_clips", "usb_cover",
+}
+
+# The selector vector that produces each committed variant (axis 3 — the doc's
+# `selects{}`), keyed by set id. Every param/value is verified against the
+# product's own variant_axes at gen time (a typo fails the build). Sets absent
+# here have no discrete selector (accessories, single in-dev previews) and emit
+# an empty `selects`.
+VARIANT_SELECTS = {
+    "wap-compact": {"preset": "compact_plain"},
+    "wap-battery": {"preset": "battery_full"},
+    "wap-weather": {"preset": "battery_weather"},
+    "vision-xiao-indoor": {"host": "xiao", "preset": "vision_indoor"},
+    "vision-xiao-weather": {"host": "xiao", "preset": "vision_weather"},
+    "vision-devkit-indoor": {"host": "devkit", "preset": "vision_indoor"},
+    "sense-radome": {"radar": "bha2"},  # the MR60BHA2 radome
+}
+
 # Env rating as data (axis: environment). Ratings are DESIGN INTENT unless a
 # row says otherwise — none of our printed cases has passed the
 # field_ratings.md protocol, so `verified` is False everywhere. Keyed by
@@ -1052,19 +1084,30 @@ def _tol_defaults(parsed) -> dict:
     return out
 
 
+def _is_bool_param(p) -> bool:
+    return str(p.get("default", "")).lower() in ("true", "false")
+
+
 def catalog_options(parsed, scad: str):
-    """opt_* booleans + option-enums (mount_style) → catalog options, with
-    BOM/fw links (verified already by workshop_main via OPTION_LINKS) and the
-    requires/excludes graph. audience is 'user' for these; raw numeric knobs
-    are counted as engineering, not emitted (see coverage below)."""
+    """Every boolean param + option-enum (mount_style) → a catalog option,
+    classified by an explicit `audience` tag (user vs engineering) rather than
+    the leaky `opt_` prefix — so non-prefixed user booleans (term_open,
+    vent_back, bez_on, tie_slots, screws, …) are surfaced and structural
+    toggles (lid_ribs, hinge_teeth, …) are captured-but-tagged, not dropped.
+    Enriched with BOM/fw links (verified via OPTION_LINKS) and the
+    requires/excludes graph. Excludes the `part` render selector and the
+    variant-selector enums (those are axis 3, emitted separately)."""
     opts = []
     for g in parsed["groups"]:
         for p in g["params"]:
             name = p["name"]
-            is_opt = name.startswith("opt_")
-            is_opt_enum = name in OPTION_ENUM_PARAMS
-            if not (is_opt or is_opt_enum):
+            if name == "part" or name in VARIANT_SELECTOR_PARAMS:
                 continue
+            is_opt_enum = name in OPTION_ENUM_PARAMS
+            is_bool = _is_bool_param(p)
+            if not (is_bool or is_opt_enum):
+                continue  # numeric/tuning knob → counted as engineering below
+            audience = "engineering" if name in ENGINEERING_OPTIONS else "user"
             comment = p.get("comment", "")
             label, _, consequence = comment.partition("->")
             link = OPTION_LINKS.get((scad, name), {"bom": [], "fw": []})
@@ -1074,9 +1117,9 @@ def catalog_options(parsed, scad: str):
                 "type": "enum" if "enum" in p else "bool",
                 "label": (label.strip() or name),
                 "consequence": consequence.strip(),
-                "audience": "user",
+                "audience": audience,
                 **({"enum": p["enum"]} if "enum" in p else {}),
-                **({"default": p["default"] == "true"} if is_opt
+                **({"default": p["default"] == "true"} if is_bool
                    else {"default": p["default"]}),
                 **({"bom": link["bom"]} if link["bom"] else {}),
                 **({"fw": link["fw"]} if link["fw"] else {}),
@@ -1116,8 +1159,10 @@ def render_parts_of(parsed):
 
 
 def variant_from_set(s: dict, product_scad: str) -> dict:
-    """A committed set → a first-class variant. Carries its own scad only
-    when it differs from the product default (the display-family collapse
+    """A committed set → a first-class variant. Records the `selects` vector
+    that produces it (so a picker can translate the variant back into a SCAD
+    render), normalizes the universal device link, and carries its own scad
+    only when it differs from the product default (the display-family collapse
     hook; no current set triggers it, but the schema is ready)."""
     meshes = [
         {"name": p.get("name", ""), "file": p["file"],
@@ -1129,7 +1174,8 @@ def variant_from_set(s: dict, product_scad: str) -> dict:
         "name": s["name"],
         "for": s.get("for") or s.get("note", ""),
         "status": s["status"],
-        "device": s.get("device"),
+        "device": s.get("device") or UNIVERSAL_ID,
+        "selects": VARIANT_SELECTS.get(s["id"], {}),
         **({"scad": s["scad"]} if s.get("scad") and s["scad"] != product_scad
            else {}),
         **({"preview": s["preview"]} if s.get("preview") else {}),
@@ -1178,12 +1224,33 @@ def catalog_main():
     for s in sets:
         sets_by_scad.setdefault(s.get("scad"), []).append(s)
 
+    # Verify each VARIANT_SELECTS entry against the product's own variant axes
+    # (the selector param must exist on that scad and the value be in its enum).
+    set_to_scad = {s["id"]: s.get("scad") for s in sets}
+    for set_id, sel in VARIANT_SELECTS.items():
+        scad = set_to_scad.get(set_id)
+        if not scad or scad not in scads:
+            raise SystemExit(
+                f"catalog: VARIANT_SELECTS names unknown set '{set_id}'")
+        axes = {a["param"]: a["values"] for a in variant_axes_of(scads[scad])}
+        for param, val in sel.items():
+            if param not in axes:
+                raise SystemExit(
+                    f"catalog: VARIANT_SELECTS[{set_id}] param '{param}' is not "
+                    f"a variant axis of {scad}")
+            if val not in axes[param]:
+                raise SystemExit(
+                    f"catalog: VARIANT_SELECTS[{set_id}] {param}='{val}' not in "
+                    f"{scad}'s enum {axes[param]}")
+
     products = []
     for scad in scad_files:
         parsed = scads[scad]
         my_sets = sets_by_scad.get(scad, [])
-        devices = sorted({s["device"] for s in my_sets if s.get("device")})
-        family = (device_for(parsed["title"]) or (devices[0] if devices else None)
+        # Canonical device ids; universal (nullable) sets normalize to _universal.
+        devices = sorted({s.get("device") or UNIVERSAL_ID for s in my_sets})
+        family = (device_for(parsed["title"])
+                  or (devices[0] if devices and devices != [UNIVERSAL_ID] else None)
                   or "universal")
         options = catalog_options(parsed, scad)
         vaxes = variant_axes_of(parsed)
@@ -1215,13 +1282,22 @@ def catalog_main():
             "alternatives": [a[:-5].removeprefix("canary_")
                              for a in ALTERNATIVES.get(scad, [])],
             "remix_of": None,  # no builds.json source yet — honest null
-            "counts": {"variants": len(variants), "released": released,
-                       "options": len(options), "variant_axes": len(vaxes)},
+            "counts": {
+                "variants": len(variants), "released": released,
+                "options": len(options),
+                "user_options": sum(1 for o in options
+                                    if o["audience"] == "user"),
+                "variant_axes": len(vaxes),
+            },
         })
 
-    # The shared, orthogonal fit tier (axis 5) — one tier, bound to the coupon,
-    # not per-file copy-paste. Defaults read from one representative product.
-    coupon_set = next((s for s in sets if "coupon" in s["id"]), None)
+    # The shared, orthogonal fit tier (axis 5) — one tier, bound to the
+    # UNIVERSAL coupon (canary_fit_coupon.scad: slide/press/hole/gasket/screw/
+    # insert), not the WAP-only snap-clip coupon and not per-file copy. Its mesh
+    # isn't committed yet, so we point at the scad and omit coupon_part rather
+    # than pair the scad with a mismatched STL.
+    coupon_scad = "canary_fit_coupon.scad"
+    coupon_set = next((s for s in sets if s.get("scad") == coupon_scad), None)
     fit = {
         "tiers": [{
             "id": "standard",
@@ -1229,7 +1305,8 @@ def catalog_main():
                     "the coupon, then reuse the offsets across every case",
             "defaults": _tol_defaults(scads["canary_wap_enclosure.scad"]),
         }],
-        "coupon_scad": "canary_fit_coupon.scad",
+        "coupon_scad": coupon_scad,
+        **({"coupon_variant": coupon_set["id"]} if coupon_set else {}),
         **({"coupon_part": coupon_set["parts"][0]}
            if coupon_set and coupon_set.get("parts") else {}),
     }

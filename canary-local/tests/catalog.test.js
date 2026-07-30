@@ -109,3 +109,57 @@ test("alternatives resolve to real product ids (sideways links)", () => {
     }
   }
 });
+
+test("options are classified by an explicit audience, not the opt_ prefix", () => {
+  // The manifest exists to fix the prefix-filtering defect: non-prefixed user
+  // booleans must be present, structural toggles captured-but-tagged.
+  for (const p of cat.products) {
+    for (const o of p.options) {
+      assert.ok(["user", "engineering"].includes(o.audience),
+        `${p.id}/${o.id}: has a user|engineering audience`);
+    }
+  }
+  const dash = cat.products.find((p) => p.id === "dash_display");
+  assert.ok(dash.options.some((o) => o.id === "term_open" && o.audience === "user"),
+    "dash_display surfaces the non-prefixed user option term_open");
+  const vis = cat.products.find((p) => p.id === "vision_enclosure");
+  assert.ok(vis.options.some((o) => o.id === "lid_ribs" && o.audience === "engineering"),
+    "lid_ribs is captured but tagged engineering, not masquerading as a user option");
+});
+
+test("variant selects reference real axes/values on the product", () => {
+  for (const p of cat.products) {
+    const axisVals = new Map(p.variant_axes.map((a) => [a.param, new Set(a.values)]));
+    for (const v of p.variants) {
+      assert.ok(v.selects && typeof v.selects === "object",
+        `${p.id}/${v.id}: has a selects object`);
+      for (const [param, val] of Object.entries(v.selects)) {
+        assert.ok(axisVals.has(param),
+          `${p.id}/${v.id}: selects '${param}' is a variant axis`);
+        assert.ok(axisVals.get(param).has(val),
+          `${p.id}/${v.id}: selects ${param}='${val}' is in the axis enum`);
+      }
+    }
+  }
+});
+
+test("device ids are canonical: universal normalizes to _universal, never null", () => {
+  for (const p of cat.products) {
+    for (const v of p.variants) {
+      assert.ok(v.device != null, `${p.id}/${v.id}: device is not null`);
+    }
+    for (const d of p.device_compat) {
+      assert.ok(d, `${p.id}: device_compat has no empty ids`);
+    }
+  }
+});
+
+test("fit is bound to the universal coupon, with no mismatched part", () => {
+  assert.strictEqual(cat.fit.coupon_scad, "canary_fit_coupon.scad");
+  // The universal coupon's mesh isn't committed — so no coupon_part may be
+  // emitted (a WAP-clip STL paired with the universal scad would misdirect).
+  if (cat.fit.coupon_part) {
+    assert.ok(cat.fit.coupon_part.file.startsWith("canary_fit_coupon"),
+      "coupon_part, if present, is the universal coupon's own mesh");
+  }
+});
