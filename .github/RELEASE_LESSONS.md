@@ -1051,3 +1051,172 @@ Two independent failures, one release day, both invisible-by-design.
   mechanism and stay on their bench-validated pairing. If a new RGB board
   joins the fleet, its release build belongs on the core-3 row from day
   one.
+
+### 2026-07-29 (k) — Two core versions in one job: the cache layers them and an unversioned FQBN takes the newest
+
+- **Symptom:** `fw-v2.4.1` — the release that finally fixed the display
+  builds — shipped six of seven display products. The Canary Watch
+  Station was missing again: `canary-display watch produced no binary`,
+  a `::warning::`, run green. Dash and Dash · Modes, built two steps
+  later, were fine.
+- **Cause:** the release job calls `setup-arduino-esp32` three times
+  (latest core for the WAP, 2.0.17 for the SPI watch, 3.3.10 for the RGB
+  dash). Each call restores a `~/.arduino15` cache **into the same
+  directory** — `actions/cache` extracts, it does not clear — and
+  `arduino-cli core install X@V` is a no-op when V is already present.
+  So both 3.3.x and 2.0.17 sat in the tree, and an FQBN carries no
+  version: the watch compiled against the NEWEST installed core (3.x)
+  with the core-2 library row pinned beside it, which is the documented
+  mixing failure (`esp32-hal-periman.h: No such file or directory`) and
+  dies in seconds. The dash row "worked" only because its wanted core
+  happened to be the newest — which is exactly why the defect was
+  invisible from that side.
+- **Fix:** `setup-arduino-esp32` gains `exclusive-core`. When true it
+  uninstalls every other `esp32:esp32` version before installing this
+  row's, then **asserts** the requested version is the installed one and
+  fails the step if not. The assertion lives in setup, where failing
+  loudly is correct — the display compiles downstream are deliberately
+  non-blocking, so a wrong core there can only ever surface as a warning
+  and a missing product. Both display rows in `firmware-release.yml`
+  set it; `flasher-release.yml` was also ported off profile mode onto
+  the same two-row build (it had carried lesson (i)'s defect untouched,
+  so the "Flasher Factory Images" button had never produced a watch,
+  dash, or modes image either).
+- **Applies to:** any job that installs more than one version of the same
+  Arduino platform — and, generally, any toolchain selected by an
+  unversioned identifier. If a build's correctness depends on *which*
+  version is installed, assert it after install; don't infer it from the
+  install command succeeding. Same shape as the PlatformIO core-dir
+  isolation (lesson (j)/#1313): shared toolchain directories are state,
+  and a cache restore is not an install.
+
+### 2026-07-29 (l) — A local `uses: ./` action comes from the WORKSPACE, so a tag checkout silently downgrades it
+
+- **Symptom (caught in review, before it shipped):** `flasher-release.yml`
+  on `channel=release` would have rebuilt an old tag using that tag's copy
+  of `.github/actions/setup-arduino-esp32` — the one without
+  `exclusive-core`. GitHub only *warns* on an unexpected input, so the
+  run would look fine while quietly reproducing the mixed-core failure
+  from (k); a tag predating the action entirely would fail the step.
+- **Cause:** local composite actions are read from the checked-out
+  workspace at step time. This workflow deliberately checks out the
+  **tag** it is rebuilding, so every `./`-referenced action is that tag's
+  version — even though the workflow YAML itself is the dispatch ref's.
+  The two halves of a run can therefore come from different commits.
+- **Fix:** the existing tooling overlay (which already refreshes
+  `make_factory.py`, `build_flash_manifest.py`, and `flash.json` from the
+  dispatch ref) now also overlays `.github/actions/setup-arduino-esp32`,
+  with `cp -RL`.
+- **Applies to:** any workflow that checks out a ref other than the one it
+  was dispatched from — rebuild buttons, backport jobs, tag-repair jobs.
+  If the workflow body is "today" but the workspace is "then", every
+  local action, script, and config it touches is "then" until you
+  overlay it. Decide per file which era it should come from, and say so.
+
+### 2026-07-29 (m) — One secret name, two Apple certificates: setting up the iPhone app silently un-shipped the Mac apps
+
+- **Symptom:** `flasher-v0.3.4` published and signed fine at 06:23. Every
+  desktop release after 17:00 that day failed — three in a row, so
+  **Flasher 0.3.5 never shipped** — with tauri's
+  `failed to bundle project: certificate from APPLE_CERTIFICATE "Apple
+  Development: …" does not match provided identity "***"`. Nothing in the
+  desktop tree had changed. The firmware releases beside them were green,
+  so the master button reported a healthy push while one product silently
+  stopped shipping.
+- **Cause:** `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` were read by
+  **six** workflows that need **different certificates**. The Apple-native
+  pipelines (`ios-release`, `tvos-release`, `desktop-mobile-release`) sign
+  for the **App Store** and want an **Apple Distribution** identity; the
+  Tauri desktop pipelines (`desktop-flasher-release`, `desktop-release`)
+  produce a **notarized DMG downloaded outside the App Store**, which
+  requires **Developer ID Application** — `desktop/SIGNING.md` even says in
+  bold *not* Apple Distribution. Standing up iOS signing wrote an iOS `.p12`
+  into the shared name, which is correct for iOS and fatal for macOS.
+  Whoever writes the secret last breaks the other platform, with no warning
+  and no diff to point at.
+- **Fix:** give each signing domain its own namespace. The desktop apps now
+  read `APPLE_DESKTOP_CERTIFICATE` / `APPLE_DESKTOP_CERTIFICATE_PASSWORD`
+  (Developer ID Application); iOS/tvOS/mobile keep `APPLE_CERTIFICATE`
+  (Apple Distribution) untouched, so the working iPhone setup is not
+  disturbed. Both desktop workflows also gained a **preflight**: decode the
+  `.p12`, list every certificate common-name in it, and fail in seconds if
+  `APPLE_SIGNING_IDENTITY` isn't among them — printing what *was* found —
+  instead of dying ten minutes into a bundle. It warns, too, if the identity
+  isn't a `Developer ID Application:` one.
+- **Applies to:** every credential shared across targets in one repo —
+  signing certs, API keys, provisioning profiles. If two platforms need
+  *different values* for the same concept, they need *different names*; a
+  shared name is a silent coupling that only shows up as someone else's
+  build failing later. And validate credentials at the START of a long job,
+  where the error is cheap and legible.
+
+### 2026-07-29 (n) — `security export -t identities` exports EVERY identity, and tauri validates the last one
+
+- **Symptom:** with the Developer ID certificate correctly created and the
+  new `APPLE_DESKTOP_CERTIFICATE` secret in place, the signed macOS build
+  still died ~8 minutes in with the same message as the collision it was
+  meant to fix: `certificate from APPLE_CERTIFICATE "Apple Development:
+  …" does not match provided identity`. The (m) preflight PASSED, because
+  the requested identity really was inside the `.p12`.
+- **Cause:** two facts meeting. `security export -k login.keychain-db -t
+  identities` exports **every** identity in the keychain — not just the
+  ones `security find-identity -v -p codesigning` lists (that command
+  filters to identities valid for the codesigning policy, which is why it
+  showed only one while three were present). And tauri checks the **last**
+  certificate it finds in the bundle against `APPLE_SIGNING_IDENTITY`, so
+  a `.p12` carrying the iOS Apple Development / Apple Distribution
+  identities alongside the Developer ID one aborts even though the right
+  certificate is there.
+- **Fix:** the `.p12` must contain exactly ONE identity — in Keychain
+  Access, expand the certificate and export the certificate row alone. The
+  preflight now also fails when the bundle holds anything besides the
+  requested identity, naming the extras, so this costs seconds instead of
+  a full build. "Contains the right cert" was too weak a check; "contains
+  only the right cert" is the real invariant.
+- **Applies to:** every `.p12` fed to a CI signer. Verify the *shape* of a
+  credential bundle, not just that the needle is somewhere in it — and
+  never assume an export command exports the subset you were looking at.
+
+### 2026-07-29 (o) — A credential runbook made of copy-paste steps fails at the paste, not the crypto
+
+- **Symptom:** four consecutive dry runs of `desktop-flasher-release.yml`
+  died in the signing preflight, and not one of them was a signing
+  problem. In order: a three-identity `.p12` (twice, see (n)); then
+  `APPLE_DESKTOP_CERTIFICATE` **empty**, because Keychain Access had saved
+  the re-export somewhere other than the path the instructions assumed, so
+  `base64 -i <that path>` printed nothing and `gh secret set` stored the
+  empty string; and before that, a pasted block whose assignment line
+  carried a trailing `# comment`, which zsh runs as a command — leaving the
+  variable unset so every later check read zero and *still* wrote both
+  secrets.
+- **Cause:** the runbook was a sequence of human steps over a credential
+  whose correctness is invisible locally. Each step had a silent failure
+  mode (`gh secret set` accepts an empty value; `base64` of a missing file
+  exits 0 on some paths; a GUI remembers its own last directory; `#` is a
+  comment in a file but a command in an interactive zsh line), and the
+  first place any of them surfaced was a CI job eight steps in.
+- **Fix:** `desktop/scripts/set-desktop-signing-secrets.sh` — one command,
+  no paths to substitute, no GUI. It reads the identity from the keychain,
+  repacks *only* that certificate and the private key that matches it **by
+  public-key digest** (the export's order is not guaranteed; in testing the
+  key sat two positions away from its certificate, so pairing by position
+  would have produced a `.p12` that imports cleanly and then cannot sign),
+  and refuses to upload anything unless the result has exactly one
+  certificate, one matching key, an unexpired cert, and a CN identical to
+  the identity string. It sets `APPLE_SIGNING_IDENTITY` from that same
+  certificate, so the workflow's exact-string comparison cannot fail on a
+  stray space. Values go to `gh` on **stdin**, never argv.
+- **Applies to:** any credential a human has to move by hand into CI. If
+  correctness is only observable in CI, the local step must verify it
+  locally and refuse to proceed — a documented click-path cannot. Ask what
+  the preflight demands and make the setup tool produce exactly that; here
+  the guard's real invariant was "exactly one certificate", so the script
+  omits even the Apple intermediate.
+- **Second-order trap caught in review:** a *partial* credential setup is
+  worse than none. The desktop workflows pick the unsigned branch unless
+  `ENABLE_MACOS_SIGNING` is exactly `true`, and notarization needs
+  `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` — none of which the
+  certificate script owns. Setting only the three cert secrets and calling
+  it done would ship an **unsigned** app under a green checkmark. A setup
+  tool that covers part of a credential set must enumerate what it did
+  *not* set, because the failure mode of the remainder is silent success.

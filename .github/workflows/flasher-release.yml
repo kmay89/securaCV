@@ -173,6 +173,20 @@ jobs:
           cp _tooling/firmware/scripts/build_flash_manifest.py firmware/scripts/build_flash_manifest.py
           mkdir -p canary-local/devices
           cp _tooling/canary-local/devices/flash.json canary-local/devices/flash.json
+          # The local composite actions below resolve from the WORKSPACE, which
+          # on this channel is the tag's tree — so `uses: ./.github/actions/...`
+          # would load whatever that tag shipped. A tag cut before
+          # `exclusive-core` existed would ignore the input (GitHub only warns
+          # on unexpected inputs) and rebuild the mixed-core failure this
+          # workflow is meant to be immune to; a tag cut before the action
+          # existed at all would fail the step outright. The overlay is how
+          # this workflow already keeps its packaging tooling current — the
+          # provisioning action belongs in it for the same reason. -RL so a
+          # symlinked file inside the action is copied as content
+          # (RELEASE_LESSONS principle 1).
+          mkdir -p .github/actions
+          rm -rf .github/actions/setup-arduino-esp32
+          cp -RL _tooling/.github/actions/setup-arduino-esp32 .github/actions/setup-arduino-esp32
           rm -rf _tooling
 
       - name: Set up Python
@@ -266,30 +280,88 @@ jobs:
             --output-dir /tmp/wap-build \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
-      - name: Build canary-display watch + dash + modes (arduino-cli, profile-pinned)
-        # Same profile builds as firmware-release.yml (sketch.yaml pins the
-        # platform + libs; profiles install their own isolated core). Without
-        # this step the out-of-band rebuild would silently drop the display
-        # products from the flasher — build_flash_manifest only packages the
-        # build dirs that exist. Non-blocking for the same reason as there —
-        # and tolerant of OLDER TAGS: this workflow checks out an existing
-        # fw-v* tag, which may predate the display sketch or a given profile;
-        # a missing dir or profile is a warning, never a failed rebuild.
+      - name: Install ESP32 core 2.0.17 + display libraries (core-2 row, exclusive)
+        # SPI-panel row (watch). Exclusive because the wap row above installed
+        # the LATEST core into this same ~/.arduino15 — see the action's
+        # exclusive-core input and RELEASE_LESSONS 2026-07-29 (k).
+        uses: ./.github/actions/setup-arduino-esp32
+        with:
+          core-version: "2.0.17"
+          exclusive-core: "true"
+          libraries: |
+            GFX Library for Arduino@1.4.9
+            lvgl@8.4.0
+            PubSubClient
+            Crypto
+            ArduinoJson
+            NimBLE-Arduino@1.4.3
+
+      - name: Build canary-display watch (arduino-cli, core-2 fqbn + staged lv_conf.h)
+        # NOT profile mode. This step used `arduino-cli compile --profile` from
+        # its first day and never produced a single image: profiles install
+        # libraries into an isolated internal dir where the sketch's lv_conf.h
+        # can't be staged, so watch/dash died on "fatal error: ../../lv_conf.h",
+        # and the modes profile's vendor board fails "Invalid FQBN" outright.
+        # Every failure was a ::warning:: (non-blocking on purpose), so the
+        # browser flasher showed these three as unavailable while every rebuild
+        # stayed green — the same defect firmware-release.yml carried
+        # (RELEASE_LESSONS 2026-07-28 (i)). This is the path firmware.yml's
+        # "Stage + compile" leg proves on every push.
+        #
+        # Older-tag tolerance is kept: this workflow checks out an existing
+        # fw-v* tag, which may predate the display sketch entirely.
         run: |
           if [ ! -d firmware/projects/canary-display/arduino/canary_display ]; then
             echo "::warning::this tag predates the display sketch — display products absent from this rebuild"
             exit 0
           fi
           cd firmware/projects/canary-display/arduino/canary_display
-          for P in watch dash modes; do
-            # `modes` needs its gear flags staged: the profile pins the 4.3B
-            # board only, and CD_GEARS_COMPILED_IDENTITY (what makes the image
-            # a dash-modes product rather than plain dash) is derived from
+          rm -f flavor_local.h
+          LIBDIR="$(arduino-cli config get directories.user)/libraries"
+          mkdir -p "${LIBDIR}"
+          cp lv_conf.h "${LIBDIR}/lv_conf.h"
+          if ! arduino-cli compile \
+              --fqbn 'esp32:esp32:XIAO_ESP32S3:PSRAM=opi,CDCOnBoot=default,USBMode=hwcdc' \
+              --output-dir /tmp/display-watch-build canary_display.ino; then
+            echo "::warning::canary-display 'watch' build failed — absent from the browser flasher this rebuild"
+          fi
+
+      - name: Install ESP32 core 3.3.10 + display libraries (core-3 row, exclusive)
+        # RGB-panel row (dash + modes): only GFX 1.6.x takes the bounce buffers
+        # that keep the 4.3B glass from flickering under WiFi load
+        # (display_dash.cpp, RELEASE_LESSONS 2026-07-28 (j)).
+        if: hashFiles('firmware/projects/canary-display/arduino/canary_display/canary_display.ino') != ''
+        uses: ./.github/actions/setup-arduino-esp32
+        with:
+          core-version: "3.3.10"
+          exclusive-core: "true"
+          libraries: |
+            GFX Library for Arduino@1.6.6
+            lvgl@9.5.0
+            PubSubClient
+            Crypto
+            ArduinoJson
+            NimBLE-Arduino@2.5.0
+
+      - name: Build canary-display dash + modes (arduino-cli, core-3 fqbn + staged lv_conf.h)
+        run: |
+          if [ ! -d firmware/projects/canary-display/arduino/canary_display ]; then
+            exit 0
+          fi
+          cd firmware/projects/canary-display/arduino/canary_display
+          LIBDIR="$(arduino-cli config get directories.user)/libraries"
+          mkdir -p "${LIBDIR}"
+          cp lv_conf.h "${LIBDIR}/lv_conf.h"
+          DASH_FQBN='esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=huge_app,CDCOnBoot=default,USBMode=hwcdc'
+          for P in dash modes; do
+            # `modes` needs its gear flags staged: the board is the plain dash
+            # 4.3B, and CD_GEARS_COMPILED_IDENTITY (what makes the image a
+            # dash-modes product rather than plain dash) is derived from
             # FEATURE_DEVMODE/DEMO_MODE/DEBUG_MODE/ARCADE in the git-ignored
             # flavor_local.h. Unstaged, this ships a GEARLESS DASH image as the
             # dash-modes factory image, so flashing "modes" would quietly give
-            # you plain dash. Older tags may predate the subcommand — fall back
-            # to skipping modes rather than packaging the wrong bytes.
+            # you plain dash. Older tags may predate the subcommand — skip
+            # rather than package the wrong bytes.
             if [ "$P" = modes ]; then
               if ! ../../setup.sh flavor modes 2>/dev/null; then
                 echo "::warning::this tag's setup.sh has no 'flavor' subcommand — skipping dash-modes rather than packaging a gearless dash image as modes"
@@ -298,7 +370,7 @@ jobs:
             else
               rm -f flavor_local.h
             fi
-            if ! arduino-cli compile --profile "$P" \
+            if ! arduino-cli compile --fqbn "$DASH_FQBN" \
                 --output-dir "/tmp/display-${P}-build" canary_display.ino; then
               echo "::warning::canary-display '${P}' build failed — absent from the browser flasher this rebuild"
             fi

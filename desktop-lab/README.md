@@ -160,8 +160,10 @@ The pipeline ships unsigned artifacts by default — signing is **opt-in** so a
 stray or invalid cert can never break the build. To codesign + notarize macOS
 (so it opens without the Gatekeeper warning):
 
-1. Add the Apple signing secrets that `tauri-action` reads (`APPLE_CERTIFICATE`,
-   `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`,
+1. Add the Apple signing secrets the desktop apps read
+   (`APPLE_DESKTOP_CERTIFICATE`, `APPLE_DESKTOP_CERTIFICATE_PASSWORD` — a
+   **Developer ID Application** .p12, deliberately a different name from the
+   iPhone pipeline's `APPLE_CERTIFICATE`; plus `APPLE_SIGNING_IDENTITY`, `APPLE_ID`,
    `APPLE_PASSWORD`, `APPLE_TEAM_ID`).
 2. Set the repository **variable** `ENABLE_MACOS_SIGNING` to `true`
    (Settings → Secrets and variables → Actions → **Variables**).

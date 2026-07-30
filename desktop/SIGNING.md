@@ -57,28 +57,61 @@ key needed:
 
 ---
 
-## 2. Export the cert + read its identity (on your Mac)
+## 2. Export the cert and set the secrets — one command
 
-**2a. Export the `.p12`:**
-- Keychain Access → **login** keychain → **My Certificates**
-- find **"Developer ID Application: Your Name (TEAMID)"** → right-click →
-  **Export…** → save `flasher-cert.p12` → set an **export password** (remember
-  it — it becomes `APPLE_CERTIFICATE_PASSWORD`).
-
-**2b. Base64-encode it** for the secret (Terminal):
+On the Mac that holds the signing key:
 
 ```sh
-base64 -i flasher-cert.p12 | pbcopy      # now on your clipboard → APPLE_CERTIFICATE
+bash desktop/scripts/set-desktop-signing-secrets.sh
 ```
 
-**2c. Read the exact identity string** (must match byte-for-byte):
+It finds your **Developer ID Application** identity, repacks it into a `.p12`
+holding **only** that one certificate and its matching private key, and sets
+`APPLE_DESKTOP_CERTIFICATE`, `APPLE_DESKTOP_CERTIFICATE_PASSWORD` and
+`APPLE_SIGNING_IDENTITY` — all three from the same certificate, so they cannot
+disagree. Nothing is written to GitHub unless the file it built passes the same
+checks the release workflow runs. macOS will ask permission to export the
+private key; that prompt is the keychain doing its job.
 
-```sh
-security find-identity -v -p codesigning
-#  →  1) ABC...  "Developer ID Application: Your Name (AB12CD34EF)"
-```
+Those three are the *certificate*. Signing also needs notarization credentials
+and the `ENABLE_MACOS_SIGNING` variable, which the script does not invent — so
+it finishes by listing whatever is still missing, with the command for each.
+**If it prints "Still to do", work through that list (§3 explains each one)
+before §4.** Take that seriously: the workflows build **unsigned** unless
+`ENABLE_MACOS_SIGNING` is exactly `true`, so a half-finished setup ships an
+unsigned app under a green checkmark instead of failing.
 
-Copy the quoted string → `APPLE_SIGNING_IDENTITY`.
+If it instead prints `notarization secrets present, ENABLE_MACOS_SIGNING=true`,
+you're done here — go to **§4**.
+
+<details>
+<summary>Doing it by hand (and the four ways that went wrong)</summary>
+
+Keychain Access → **login** → **My Certificates** → expand *"Developer ID
+Application: Your Name (TEAMID)"* → select **the certificate row alone** →
+right-click → **Export…** → `.p12` with an export password. Then
+`base64 -i cert.p12 | pbcopy` → `APPLE_DESKTOP_CERTIFICATE`, the password →
+`APPLE_DESKTOP_CERTIFICATE_PASSWORD`, and the quoted string from
+`security find-identity -v -p codesigning` → `APPLE_SIGNING_IDENTITY`.
+
+Every one of these failed a real dry run before the script existed:
+
+- **`security export -t identities` exports *every* identity in the keychain.**
+  Tauri validates the **last** certificate in the `.p12`, so an iOS cert riding
+  along aborts the build with *"certificate … does not match provided
+  identity"* even though the right cert is present. Two runs died here.
+- **Keychain Access saves where it last saved.** `base64 -i <the path you
+  assumed>` found no file, emitted nothing, and `gh secret set` stored an
+  **empty** secret — which looks identical to "set" in the UI.
+- **`VAR=path   # comment` in a pasted block.** zsh runs `#` as a command,
+  `VAR` stays unset, and every check downstream reads zero.
+- **A placeholder password pasted literally**, so the secret said
+  `the-export-password`.
+
+The script exists because none of those are visible until CI, and each costs a
+release cycle to discover.
+
+</details>
 
 ---
 
@@ -88,14 +121,38 @@ Repo → **Settings → Secrets and variables → Actions**.
 
 **Secrets** (New repository secret), exactly these names:
 
-| Secret | Value |
-|---|---|
-| `APPLE_CERTIFICATE` | the base64 blob from **2b** |
-| `APPLE_CERTIFICATE_PASSWORD` | the `.p12` export password from **2a** |
-| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: Your Name (TEAMID)` from **2c** |
-| `APPLE_ID` | your Apple ID email |
-| `APPLE_PASSWORD` | the app-specific password from **1d** |
-| `APPLE_TEAM_ID` | the 10-char Team ID from **1a** |
+> ⚠️ **These names are deliberately not `APPLE_CERTIFICATE`.** The iPhone /
+> iPad / tvOS pipelines use `APPLE_CERTIFICATE` for an **Apple Distribution**
+> `.p12` (App Store signing). The Mac apps need a **Developer ID Application**
+> `.p12` (notarized, downloaded outside the App Store) — a different
+> certificate for a different job. They shared one name until 2026-07-29, and
+> setting up the iPhone app silently overwrote the desktop identity: three
+> Flasher releases in a row failed with *"certificate ... does not match
+> provided identity"* and 0.3.5 never shipped. One secret, one meaning.
+
+| Secret | Value | Also used by |
+|---|---|---|
+| `APPLE_DESKTOP_CERTIFICATE` | base64 of a **Developer ID Application** `.p12` holding that one identity | Flasher + Lab only |
+| `APPLE_DESKTOP_CERTIFICATE_PASSWORD` | that `.p12`'s export password | Flasher + Lab only |
+| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: Your Name (TEAMID)`, byte-for-byte | Flasher + Lab only |
+| `APPLE_ID` | your Apple ID email | shared with notarization |
+| `APPLE_PASSWORD` | the app-specific password from **1d** | shared with notarization |
+| `APPLE_TEAM_ID` | the 10-char Team ID from **1a** | shared |
+
+The release workflows check the `.p12` **before** building: if it doesn't
+contain the identity `APPLE_SIGNING_IDENTITY` names, the run stops in seconds
+and prints every certificate it did find, instead of dying ten minutes into a
+bundle.
+
+### Who signs with what, across this repo
+
+| Target | Certificate | Secret holding it |
+|---|---|---|
+| Flasher / Lab (macOS `.dmg`) | **Developer ID Application** | `APPLE_DESKTOP_CERTIFICATE` |
+| iPhone / iPad / tvOS (App Store) | **Apple Distribution** | `APPLE_CERTIFICATE` |
+
+Both can — and should — exist at once. They are different certificates for
+different distribution channels; neither is a substitute for the other.
 
 **Variable** (the **Variables** tab, *not* Secrets):
 
@@ -161,8 +218,8 @@ release version that already exists is not a release** (bump first).
   bundle it as a framework or sidecar, never a bare resource.
 - **"You must first sign the relevant contracts"** → accept the latest Apple
   Developer + Program License agreements at developer.apple.com, then re-run.
-- **`APPLE_CERTIFICATE` import fails** → the base64 must be the whole `.p12`
-  (`base64 -i file.p12`), and `APPLE_CERTIFICATE_PASSWORD` must be the **export**
+- **`APPLE_DESKTOP_CERTIFICATE` import fails** → the base64 must be the whole `.p12`
+  (`base64 -i file.p12`), and `APPLE_DESKTOP_CERTIFICATE_PASSWORD` must be the **export**
   password you set in 2a, not your Apple ID password.
 - **Notarization hangs / times out** → it's an Apple-side queue; re-run the
   workflow. The submission is idempotent.

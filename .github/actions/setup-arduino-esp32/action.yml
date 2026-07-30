@@ -16,6 +16,18 @@ inputs:
       of each week refreshes it.
     required: false
     default: ""
+  exclusive-core:
+    description: >
+      When "true", uninstall every other esp32:esp32 version before
+      installing this row's, and fail if the requested version is not the
+      one installed afterwards. Needed whenever ONE job installs more than
+      one core version (the canary-display rows: SPI panels on core 2.0.17,
+      RGB panels on core 3.3.10) — otherwise both versions sit in
+      ~/.arduino15 and an unversioned FQBN takes the newest, compiling a
+      row against the other line's libraries. Costs a re-download when it
+      actually has to switch; correctness beats the cache in a release.
+    required: false
+    default: "false"
   libraries:
     description: >
       Newline-separated arduino-cli library specs, with optional pins
@@ -63,15 +75,37 @@ runs:
       shell: bash
       env:
         CORE_VERSION: ${{ inputs.core-version }}
+        EXCLUSIVE: ${{ inputs.exclusive-core }}
       run: |
         set -euo pipefail
         arduino-cli config init --overwrite
         arduino-cli config add board_manager.additional_urls \
           https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
         arduino-cli core update-index
+        # Exclusive rows drop whatever else is installed FIRST. A job that
+        # calls this action more than once layers several ~/.arduino15 cache
+        # restores into one directory, and `core install` is a no-op when the
+        # version is already there — so two platform versions coexist and an
+        # unversioned FQBN silently resolves to the NEWEST one. See
+        # .github/RELEASE_LESSONS.md 2026-07-29 (k).
+        if [ "$EXCLUSIVE" = "true" ]; then
+          arduino-cli core uninstall esp32:esp32 >/dev/null 2>&1 || true
+        fi
         # No-op seconds on a warm cache; the full download only on a cold
-        # one (new week, new pinned version, or cache eviction).
+        # one (new week, new pinned version, cache eviction, or the uninstall
+        # above).
         arduino-cli core install "esp32:esp32${CORE_VERSION:+@$CORE_VERSION}"
+        arduino-cli core list
+        # Prove the row got the core it asked for. This assertion belongs in
+        # SETUP, where failing loudly is correct — the display compiles
+        # downstream are deliberately non-blocking, so a wrong core there
+        # would only ever surface as a ::warning:: and a missing product.
+        if [ "$EXCLUSIVE" = "true" ] && [ -n "$CORE_VERSION" ]; then
+          if ! arduino-cli core list | grep -qE "^esp32:esp32[[:space:]]+${CORE_VERSION//./\\.}([[:space:]]|\$)"; then
+            echo "::error::esp32:esp32 ${CORE_VERSION} is not the installed version after an exclusive install — a build here would compile against the wrong core (the library rows split along the core boundary)."
+            exit 1
+          fi
+        fi
 
     - name: Install libraries
       if: inputs.libraries != ''

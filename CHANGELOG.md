@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [2.4.2] - 2026-07-29
+
+### The Canary Watch Station is back in the train
+
+2.4.1 published six of the seven display products; the Watch Station image
+was missing, as it had been from every release before it. The cause was
+toolchain state, not the firmware: the release job installs three ESP32 core
+versions in one runner, each restoring a toolchain cache into the same
+directory, and an FQBN carries no version — so the watch compiled against the
+newest installed core with the older core's library row beside it and died in
+seconds, warned away by a deliberately non-blocking build loop. Each display
+row now uninstalls other core versions and asserts it got the one it asked
+for, and the fix was proven on the dev channel (a real watch factory image)
+before this version was cut. Nothing on the device changed: same 2.4.1
+firmware behaviour, now actually built and published for every board.
+
 ## [2.4.1] - 2026-07-28
 
 ### On the device: what 2.4.1 changes since 2.4.0
