@@ -129,11 +129,12 @@ jobs:
             - **You can watch it happen.** When someone starts building this, the change
               will link itself right here in this thread — the actual code, line by line.
               You'll see it get reviewed, and you'll see which firmware release it lands in.
-            - **Nothing here happens quietly.** This page is public, and GitHub keeps the
-              receipts: an edited comment carries a visible "edited" history anyone can
-              open, and a closed idea shows who closed it and when. We *can* moderate this
-              page — any project owner can — but we can't do it invisibly, and if we
-              decline the idea the reason has to sit here in the open where you can read it.
+            - **The everyday moves leave a trail.** We *can* moderate this page — any
+              project owner can, up to deleting a thread — so we won't pretend it's out
+              of our hands. What GitHub keeps is the receipts on the ordinary moves: an
+              edited comment carries a visible "edited" history anyone can open, and a
+              closed idea shows who closed it and when. If we decline your idea, the
+              reason sits here in the open where you can read it.
             - **Nobody harvested anything to let you in.** We never asked for your email,
               because we don't run a database — GitHub already knows who you are, and that
               free account is the same one that works for every other open-source project
@@ -153,9 +154,12 @@ jobs:
               ? `Your idea is live on the **[Community Ideas board](${board})** now, where anyone
             can find it and back it.`
               : `⚠️ Heads up: we couldn't file this onto the
-            **[Community Ideas board](${board})** automatically, so it may not show up there
-            until a maintainer sorts it out — they've been alerted. **Your idea is safe and
-            counted**, and everything below still works right here on this page.`;
+            **[Community Ideas board](${board})** automatically, so it won't show up there
+            until a maintainer adds it by hand. **Your idea is safe and counted** — it's
+            recorded here, on this page, and everything below still works. This run has
+            been marked failed so the problem is on our build log rather than only in
+            this thread; if it looks forgotten in a few days, a nudge in the comments is
+            welcome and not a bother.`;
 
             const body = `${greeting}
 
