@@ -145,6 +145,22 @@ connect/LWT/status/health/OTA/HA-discovery + the signed-chain *machinery* for
 free — but see 2c: the chain today advances on **events**, and retained `state`
 samples are **not** signed):
 
+**Step 0 — strip the radar pipeline first (before any of the below).**
+`canary-sense`'s *primary* sensor is the mmWave radar, **not** the BH1750, and
+unlike the lux block it is **not** feature-gated. If you swap only the BH1750
+loop, the resulting `canary-pool` still starts the radar UART, runs the presence
+FSM, fills radar `state` fields, and publishes radar HA entities — i.e. it
+reports a permanently stalled/unknown "presence" sensor and litters Home
+Assistant with irrelevant entities. So the fork's **first** act is to remove or
+compile-gate (cleanest behind a `FEATURE_RADAR` flag, so the fork is a config
+flip): the radar UART bring-up + parser and the presence FSM in
+[`main.cpp`](../../firmware/projects/canary-sense/src/main.cpp); the radar keys
+in `publish_state_retained()`
+([`net/mqtt_mgr.cpp`](../../firmware/projects/canary-sense/src/net/mqtt_mgr.cpp));
+the radar config controls; and the radar discovery payloads in
+[`ha/ha_discovery.cpp`](../../firmware/projects/canary-sense/src/ha/ha_discovery.cpp).
+Only then do the sensor-swap + publish steps below make sense.
+
 1. Swap the BH1750 read loop
    ([`canary-sense/src/main.cpp`](../../firmware/projects/canary-sense/src/main.cpp),
    the `Wire.begin` + threshold-gated sample pattern) for the EZO/ADS1115
@@ -235,6 +251,12 @@ reference.
 
 Start **Tier A** (`canary-pool` fork + Atlas EZO pH/ORP/temp on I²C, flow cell,
 Hammond box), graphs in Home Assistant, Dash card + alerts. If bench testing
-shows pH won't hold ~6 months, swap the pH probe to **Tier B differential/ISFET**
-— the rest of the node is unchanged. Add free chlorine / salinity only once the
-core loop is trusted.
+shows pH won't hold ~6 months, step up to **Tier B differential/ISFET** — but
+this is **not** a drop-in probe swap. The industrial differential probe named in
+the Tier B BOM (SD7420CD) is a **4–20 mA loop** device, not an EZO I²C circuit,
+so it changes the analog front end: add a loop supply + a precision shunt /
+current-loop receiver feeding the ADS1115 (voltage, not current), with the
+matching firmware scaling and wiring — exactly the front-end §2 and the Tier B
+BOM already call out. (If you want a true drop-in, choose instead an
+**I²C-native differential/ISFET** probe + carrier so the rest of the node stays
+put.) Add free chlorine / salinity only once the core loop is trusted.

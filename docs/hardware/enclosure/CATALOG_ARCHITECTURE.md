@@ -77,8 +77,9 @@ that's the root cause.
 ## 3. The permutation matrix (grounded)
 
 Every model's *real* axes, from the SCAD sources. "Variant axes" are discrete
-part-set changers (axis 3); "Options" are toggles (axis 4). ⚠ = an axis that
-exists in the SCAD but **is invisible to the catalog today**.
+part-set changers (axis 3); "Options" are toggles (axis 4). ⚠ = an axis that's
+already **captured in `enclosures.json`'s read-only param map but surfaced in no
+picker today** (see §5 for why — the workshop transform drops it).
 
 | Model | Top (device) | Variant axes (3) | Key options (4) | Env |
 |---|---|---|---|---|
@@ -91,7 +92,7 @@ exists in the SCAD but **is invisible to the catalog today**.
 | `canary_s3_touch169` | display-watch | — | usb·btn·side·keyhole·vent·**stand** | — |
 | `canary_dash_display` | display-dash | — | term_open | — |
 | `canary_watch_station` | display-watch | — | ⚠batt | — |
-| `canary_field_case` | *(universal)* | — | bez_on | **CER-4 · IP67 · MIL-810H** |
+| `canary_field_case` | *(universal)* | — | bez_on | **CER-4 · IP67 · MIL-810H** *(design intent — untested; do not claim before the [field_ratings.md](./field_ratings.md) protocol)* |
 | `canary_relay_solar` | *(universal)* | — | seal | **CER-2→3** |
 | `canary_combo` | canary-vision | — | seal·hood·led·mount | — |
 | `canary_hammond_chassis` | *(universal)* | ⚠`stack`{wap,vision,sense} | tie_slots | IP66/67 (bought box) |
@@ -99,6 +100,13 @@ exists in the SCAD but **is invisible to the catalog today**.
 | `canary_dock` | *(universal)* | ⚠`variant`{bare,sense} | — | — |
 | `canary_templates_2d` | *(universal)* | ⚠`mode`{studs,bracket,doorbell} | — | 2D |
 | `canary_sense_stand` · `canary_sense_gang` · `canary_outlet_cradle` · `canary_hub_din`{din} · `canary_jbox`{camera,led} · `canary_sign`{screws} · `canary_mount_adapters` · `canary_vehicle_mount` · `canary_wear_clip` · `canary_fit_coupon` · `canary_bench_fixture` · `canary_inserts` · `canary_shop_tools` | *(universal / accessory)* | mostly none | assorted `opt_*` | mixed |
+
+> **Env values are design intent, not measured.** Every CER/IP/MIL figure above
+> is a *target* pending the [`field_ratings.md`](./field_ratings.md) test
+> protocol — none has been verified. When §5 promotes `env` to a structured,
+> badgeable field it **must** carry a `verified: true|false` (or
+> `status: target|tested`) so a catalog badge can never present an unearned
+> ingress/drop rating as achieved.
 
 **The headline defect this exposes:** the **same logical axis — "which display
 board" — is encoded three ways**: a `model=` preset inside `canary_c6_display`,
@@ -134,16 +142,25 @@ should materialize it so the UI doesn't scan.
 ## 5. The generated manifest — one source of truth
 
 Replace the flat `sets[]` with a **3-tier manifest**, still **generated** (so it
-can't drift from the SCADs), emitted by extending `gen_enclosures.py`'s existing
-`parse_scad`/`scad_options` (it already reads `/* [group] */` params, enums and
-ranges — the machinery exists; it just filters to `opt_*` and drops the rest).
+can't drift from the SCADs), emitted from `gen_enclosures.py`. Note *which* layer
+does what today, because it's easy to target the wrong one: `parse_scad()`
+already captures the **complete** parameter inventory (every `name = value;`
+under a `/* [group] */` block, with enums and ranges) — that's why
+`enclosures.json`'s `scads{}` map **already contains** `host`/`radar`/`stack`/
+`model`/`mount`/`variant`/`mode`. The `opt_*` filtering that hides those axes
+happens **downstream**, in `scad_options()`, the transform that builds the
+`workshop.json` picker. So Phase 2 does **not** touch `parse_scad` (the raw
+inventory is already complete); it **replaces/extends the picker-facing transform
+(`scad_options`)** — or adds a new manifest emitter beside it — to promote the
+enum axes into variant selectors instead of dropping everything that isn't
+`opt_*`.
 
 ```jsonc
 // catalog.json  (Product → Variant → Option), generated
 { "products": [{
-  "id": "vision", "scad": "canary_vision_enclosure.scad",
+  "id": "vision", "scad": "canary_vision_enclosure.scad", // ← DEFAULT source; a variant may override (see below)
   "device_compat": ["canary-vision"], "family": "canary-vision",
-  "env": { "cer": 2, "ip": "~IP54(weather)" },        // ← NEW: rating as a field, not header prose
+  "env": { "cer": 2, "ip": "~IP54(weather)", "verified": false }, // ← NEW: rating as a field; verified flag (never badge a target as achieved)
   "fit_tier": "standard",                              // ← NEW: enum, bound to the coupon
   "variants": [                                        // axis 3 — discrete, change the part set
     { "id": "xiao-indoor", "for": "stacked XIAO, desk/shelf",
@@ -159,6 +176,23 @@ ranges — the machinery exists; it just filters to `opt_*` and drops the rest).
     { "id": "mount_style", "enum": ["hinge","keyhole","both"], "default": "hinge" } ],
   "remix_of": null, "alternatives": ["hammond-chassis"] // axis 6 — sideways
 }]}
+```
+
+**Variants carry their own source/render recipe.** The product-level `scad` is
+only a *default*. Some products collapse variants that come from **different
+files** — the display family is the live example: "which display board" today is
+four separate SCADs (`canary_c6_display.scad`, `canary_s3_touch169.scad`,
+`canary_s3_lcd7.scad`, `canary_watch_station.scad`). If a variant only held
+`selects{}` against one product source, the generator could never locate or
+render the other three. So a variant may set its own `scad` (+ `selects`,
+`preview`, `meshes`); it inherits the product `scad` only when absent. This is
+the schema half of §7 row 1 — the file split becomes an internal detail
+*because* the recipe rides on the variant, not a single product source:
+
+```jsonc
+{ "id": "board-1_69", "for": "ESP32-S3-Touch-LCD-1.69 watch",
+  "scad": "canary_s3_touch169.scad",   // ← overrides the product default source
+  "parts": ["front","back"], "meshes": ["…stl"], "status": "released" }
 ```
 
 Key moves vs today: **variants become first-class** (not peer `sets[]` rows);
@@ -214,14 +248,14 @@ pile of flags" into "it makes sense."
 
 | # | Today | Resolved by |
 |---|---|---|
-| 1 | board variant = preset **or** separate file **or** third file | one **variant axis** in the manifest; the file split becomes an impl detail, not a user-visible fork |
+| 1 | board variant = preset **or** separate file **or** third file | one **variant axis** in the manifest, **each variant carrying its own `scad`/render recipe** (§5); the file split becomes an impl detail, not a user-visible fork |
 | 2 | `host/radar/stack/model/mount/variant/mode` invisible | manifest captures **all** enum axes as variant selectors, not just `opt_*` |
 | 3 | "preset" overloaded (overrides toggles in some, absent in others) | preset = a **named variant** that sets a known option vector; uniform |
 | 4 | universal = nullable `device` | `device:"_universal"` **type** + facet |
 | 5 | options split across enclosures.json (read-only) vs workshop.json (5 devices) | **one manifest**, options first-class for all models |
 | 6 | eng vs user toggles undistinguished (`opt_` prefix leaks) | explicit `audience: user\|engineering` tag |
 | 7 | fit tolerances copy-pasted, drifting, no coupon link | **`fit_tier` enum** bound to the coupon; values centralized |
-| 8 | CER/IP/MIL only as header prose | **`env` field** → filterable/badged |
+| 8 | CER/IP/MIL only as header prose | **`env` field** → filterable/badged, **with a `verified` flag** so a target rating never badges as achieved (field case stays *untested* per `field_ratings.md`) |
 | 9 | previews are a magic 3-model subset | manifest marks `preview: none` explicitly (a known gap, not phantom-missing data) |
 
 Plus the cross-repo win: **the showroom stops hand-copying** 5 products and
@@ -235,10 +269,14 @@ duplicated.
 1. **Identity + fields (data only).** Canonical `device_id` across the five
    files; add `env`, `fit_tier`, `audience`, and `device:"_universal"`. No UI
    change; unblocks everything.
-2. **Generate the manifest.** Extend `parse_scad`/`scad_options` to emit the
-   3-tier `catalog.json` (variants first-class, all enum axes, scoped options +
-   `requires`/`excludes`). Keep `enclosures.json`/`workshop.json` as derived
-   views during transition. Guard it with the existing drift tests.
+2. **Generate the manifest.** `parse_scad` already emits the complete param
+   inventory — leave it. Replace/extend the **picker-facing transform**
+   (`scad_options`, which today filters to `opt_*` for `workshop.json`), or add a
+   new emitter beside it, to produce the 3-tier `catalog.json` (variants
+   first-class with their own source recipe, all enum axes promoted to selectors,
+   scoped options + `requires`/`excludes`, `env.verified`). Keep
+   `enclosures.json`/`workshop.json` as derived views during transition. Guard it
+   with the existing drift tests.
 3. **Unify the two pickers.** Fold `enclosure-lab.js`'s read-only param text into
    real inputs; generalize `workshop.js`'s configurator to every product via the
    manifest. Add facets (§6B).
