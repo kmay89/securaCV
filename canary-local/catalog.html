@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>The Case Catalog — browse every enclosure · canary.local</title>
+  <meta name="description" content="Browse every Canary enclosure in one place and narrow by family, device, environment, status and options. Generated from the catalog manifest, so it can't drift from the OpenSCAD sources — pick the right case, then configure it in the workshop or open the SCAD." />
+  <link rel="stylesheet" href="assets/canary-local.css" />
+</head>
+<body class="ws-building">
+  <header id="hero" class="ws-hero">
+    <div class="mark" aria-hidden="true">
+      <svg viewBox="0 0 64 64" width="44" height="44">
+        <circle cx="32" cy="36" r="17" fill="#FFD44F"/>
+        <circle cx="41" cy="24" r="10" fill="#FFD44F"/>
+        <circle cx="44.5" cy="22.5" r="1.8" fill="#141414"/>
+        <path d="M50 25.5 l7 2.2 -7 2.2 z" fill="#F08C2E"/>
+        <ellipse cx="26" cy="38" rx="8.5" ry="6" fill="#E3B33C"/>
+        <path d="M15 36 q-7 1 -9 6 q6 0 10 -2 z" fill="#E3B33C"/>
+      </svg>
+    </div>
+    <h1>The Case Catalog</h1>
+    <p class="lede">
+      Every printable enclosure in the family, in one place. Narrow by what
+      you're building, where it lives, and whether it's print-validated yet —
+      then configure it in the workshop or open its OpenSCAD source. This whole
+      page is generated from the catalog manifest, so it can never disagree with
+      the models the hardware is built from.
+    </p>
+    <p class="fineprint">
+      <a href="index.html">← the family</a> ·
+      <a href="workshop.html">configure one in the workshop</a> ·
+      <a href="choose.html">not sure which? take the chooser</a>
+    </p>
+  </header>
+
+  <main id="catalog">
+    <noscript><p class="muted">The catalog browser needs JavaScript — the same
+    data is readable in <code>docs/hardware/enclosure/README.md</code> and
+    <code>canary-local/devices/catalog.json</code>.</p></noscript>
+  </main>
+
+  <footer class="fineprint" id="foot">
+    <p>
+      Honest by construction: every card — its family, environment rating,
+      flavors, options and "see also" links — is read from
+      <code>devices/catalog.json</code>, generated from the enclosure SCADs and
+      README by <code>canary-local/tools/gen_enclosures.py</code> and
+      drift-checked in CI. Environment ratings are <em>design intent</em>, not
+      verified — see <code>docs/hardware/enclosure/field_ratings.md</code>.
+    </p>
+  </footer>
+
+  <script type="module" src="assets/catalog-browse.js"></script>
+</body>
+</html>
