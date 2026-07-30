@@ -158,6 +158,13 @@ jobs:
               echo "stubbed $want"
             fi
           done
+      - name: Generate app icons
+        # tauri::generate_context!() is a proc macro that OPENS icons/32x32.png
+        # at compile time, so a missing icon set is a compile error, not a
+        # bundling one. source.png is committed; derive the rest, same command
+        # the release workflow uses.
+        working-directory: desktop
+        run: npx --yes @tauri-apps/cli icon src-tauri/icons/source.png
       - name: cargo check
         working-directory: desktop/src-tauri
         run: cargo check --all-targets
