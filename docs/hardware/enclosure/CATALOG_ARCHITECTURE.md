@@ -269,14 +269,19 @@ duplicated.
 1. **Identity + fields (data only).** Canonical `device_id` across the five
    files; add `env`, `fit_tier`, `audience`, and `device:"_universal"`. No UI
    change; unblocks everything.
-2. **Generate the manifest.** `parse_scad` already emits the complete param
-   inventory — leave it. Replace/extend the **picker-facing transform**
-   (`scad_options`, which today filters to `opt_*` for `workshop.json`), or add a
-   new emitter beside it, to produce the 3-tier `catalog.json` (variants
-   first-class with their own source recipe, all enum axes promoted to selectors,
-   scoped options + `requires`/`excludes`, `env.verified`). Keep
-   `enclosures.json`/`workshop.json` as derived views during transition. Guard it
-   with the existing drift tests.
+2. **Generate the manifest.** ✅ **Done** — `catalog_main()` in
+   `canary-local/tools/gen_enclosures.py` emits
+   `canary-local/devices/catalog.json`: one product per `.scad`, the enum axes
+   (`host`/`radar`/`stack`/`model`/`variant`/`mode`/`mount`) promoted to
+   first-class **variant selectors** (never `part` or `mount_style`), committed
+   sets as **variants** (with a per-variant `scad` override hook), `opt_*` +
+   `mount_style` **options** carrying `requires`/`excludes`/`requires_parts`, the
+   **`env`** field with an honest `verified` flag, and one shared **`fit`** tier
+   bound to the coupon. `parse_scad` was left untouched (its inventory was
+   already complete). Guarded by the same CI diff gate as the other emitters plus
+   `canary-local/tests/catalog.test.js`; `enclosures.json`/`workshop.json` remain
+   the live views. It also self-reports coverage (`engineering_param_count`) so
+   the manifest never pretends to surface knobs it drops.
 3. **Unify the two pickers.** Fold `enclosure-lab.js`'s read-only param text into
    real inputs; generalize `workshop.js`'s configurator to every product via the
    manifest. Add facets (§6B).
@@ -290,9 +295,22 @@ without new UI; after 3 the option story is coherent; 4–5 are the delight laye
 
 ---
 
-## 9. Open decision for the owner
+## 9. Status & what's next
 
-This spec is deliberately **model-and-UX only**. The immediate buildable next
-step is **Phase 2** — stub the extended `gen_enclosures.py` so `catalog.json` is
-runnable and the manifest is real (not just described). Say the word and that's
-the next PR; otherwise this stands as the reference the incremental work maps to.
+Phases **1–2 are landed as data**: the manifest is real and generated
+(`canary-local/devices/catalog.json`), not just described — run
+`python3 canary-local/tools/gen_enclosures.py` to rebuild it. It is the
+correct-and-complete source the rest of the work reads from; it does **not** yet
+drive any UI.
+
+The next buildable step is **Phase 3** — point a picker at the manifest: fold
+`enclosure-lab.js`'s read-only param text into real inputs and generalize
+`workshop.js`'s configurator to every product via `catalog.json` (today it hand-
+lists five devices). Phases 4–5 (guided funnel, remix rail, manifest-driven
+showroom) are the delight layer on top.
+
+Two honest gaps the manifest marks rather than hides, to close in Phase 3:
+`env` ratings come from a small curated overlay in the generator (there is no
+parseable rating source yet — Phase 1's source annotation would move them into
+the SCAD/README), and `remix_of` is `null` everywhere until a `builds.json`
+remix source exists.
