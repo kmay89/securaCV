@@ -14,6 +14,10 @@ namespace {
 // STA supervision state (see wifi_loop). All timestamp math is wrap-safe
 // signed-delta, per the firmware idiom for millis() arithmetic.
 bool     s_online          = false;
+// Have we EVER associated on this power cycle? The outage watchdog below may
+// only reboot a link that once worked. Rebooting because we never got on in
+// the first place just repeats the same failed join forever.
+bool     s_ever_online     = false;
 uint32_t s_lost_since_ms   = 0;   // start of the current outage
 uint32_t s_last_attempt_ms = 0;   // last reconnect attempt
 uint32_t s_attempts        = 0;   // consecutive failed attempts this outage
@@ -51,6 +55,22 @@ void begin_sta() {
 
 }  // namespace
 
+// Why the boot-time join didn't take, in words a person can act on. Mirrors
+// provision.cpp's sta_failure_reason (that one is file-local to the
+// onboarding surface); keep the two in step.
+static const char* boot_join_failure(wl_status_t st) {
+  switch (st) {
+    case WL_NO_SSID_AVAIL:
+      return "Couldn't find that network. Staying up and retrying in the "
+             "background. (2.4GHz only — a 5GHz-only or band-steered SSID "
+             "won't be visible to this radio.)";
+    case WL_CONNECT_FAILED:
+      return "Wrong Wi-Fi password. Staying up and retrying in the background.";
+    default:
+      return "Couldn't join Wi-Fi yet. Staying up and retrying in the background.";
+  }
+}
+
 void wifi_init_or_reboot() {
   // Already associated — the onboarding wizard just joined the network and
   // handed over a live link. Adopt it instead of bouncing the connection.
@@ -62,6 +82,7 @@ void wifi_init_or_reboot() {
         WiFi.localIP().toString().c_str(), WiFi.RSSI());
     apply_power_policy();
     s_online = true;
+    s_ever_online = true;
     return;
   }
 
@@ -80,9 +101,17 @@ void wifi_init_or_reboot() {
 
     if ((canary::ms_now() - start) > WIFI_BOOT_TIMEOUT_MS) {
       canary::dbg_serial().println();
-      log_line("WIFI", "Timeout. Rebooting...");
-      delay(200);
-      ESP.restart();
+      // Do NOT reboot. Restarting re-runs this exact join against the exact
+      // same network with the exact same credentials, so a wrong password, a
+      // renamed SSID, or an access point that steers us to a band this radio
+      // cannot use became a silent ~30-second reboot cycle with nothing on the
+      // glass and no way out. Boot is not the retry policy: wifi_loop already
+      // owns retry with backoff, and the rest of the device — screen, touch,
+      // the fleet it can still see over ESP-NOW — has no reason to be denied a
+      // boot because the uplink is unhappy.
+      log_line("WIFI", boot_join_failure(WiFi.status()));
+      s_online = false;
+      return;
     }
   }
 
@@ -96,12 +125,14 @@ void wifi_init_or_reboot() {
 
   apply_power_policy();
   s_online = true;
+  s_ever_online = true;
 }
 
 void wifi_loop(uint32_t now_ms) {
   if (WiFi.status() == WL_CONNECTED) {
     if (!s_online) {
       s_online = true;
+      s_ever_online = true;
       s_attempts = 0;
       log_header("WIFI");
       canary::dbg_serial().printf(
@@ -125,9 +156,14 @@ void wifi_loop(uint32_t now_ms) {
     return;
   }
 
-  // Sustained outage: reboot as a last resort — same recovery philosophy as
-  // the boot-time timeout above.
-  if ((int32_t)(now_ms - s_lost_since_ms) >= (int32_t)WIFI_OUTAGE_REBOOT_MS) {
+  // Sustained outage: reboot as a last resort — but ONLY for a link that was
+  // working and then dropped, where a reboot plausibly clears a wedged radio
+  // or a stale lease. If we have never associated on this power cycle the
+  // credentials or the network are simply wrong, and rebooting is not a
+  // recovery: it is the same failed join on a timer, forever. Boot-time join
+  // failure no longer reboots at all (see wifi_init_or_reboot).
+  if (s_ever_online &&
+      (int32_t)(now_ms - s_lost_since_ms) >= (int32_t)WIFI_OUTAGE_REBOOT_MS) {
     log_line("WIFI", "Outage persisted. Rebooting...");
     delay(200);
     ESP.restart();

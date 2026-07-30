@@ -2490,6 +2490,21 @@ function hubInit() {
   $("hub-confirm").addEventListener("input", hubArm);
   $("hub-ethernet").addEventListener("change", () => {
     const wired = $("hub-ethernet").checked;
+    // Ticking "wired" is an explicit choice, so make the fields agree with it
+    // BEFORE disabling them. A returning user has their remembered SSID
+    // restored into a field with no password; leaving that text in place while
+    // the inputs go disabled would read as "Wi-Fi typed" to the contradiction
+    // guard and disable the flash button with its own remedy — "clear the
+    // fields" — out of reach behind a disabled input.
+    // Setting .value programmatically fires no `input` event, so the
+    // remembered SSID stays in prefs and comes back when ethernet is unticked.
+    if (wired) {
+      $("hub-ssid").value = "";
+      $("hub-pass").value = "";
+      $("hub-hidden-net").checked = false;
+    } else if (prefs.hubSsid) {
+      $("hub-ssid").value = prefs.hubSsid;
+    }
     $("hub-ssid").disabled = wired;
     $("hub-pass").disabled = wired;
     $("hub-hidden-net").disabled = wired;
@@ -3159,7 +3174,22 @@ function hubArm() {
     accountOk &&
     $("hub-confirm").value.trim().toUpperCase() === "ERASE" &&
     !hub.busy;
-  $("hub-flash-btn").disabled = !armed;
+  // Typed Wi-Fi + "wired ethernet" selected is a contradiction, and the old
+  // behaviour resolved it by silently throwing the Wi-Fi away: hubWifiValue()
+  // returns null, the backend logs "no Wi-Fi to seed (wired ethernet
+  // assumed)", and the hub boots with no network. Someone who typed a
+  // password meant it — say which one is winning instead of picking one.
+  const typedWifi = !!($("hub-ssid").value.trim() || $("hub-pass").value);
+  const contradiction = $("hub-ethernet").checked && typedWifi;
+  if (contradiction) {
+    setStatus(
+      "hub-result",
+      "You've typed Wi-Fi but chosen wired ethernet — the Wi-Fi would be dropped. " +
+        "Untick ethernet to use the Wi-Fi, or clear the fields to go wired.",
+      "err",
+    );
+  }
+  $("hub-flash-btn").disabled = !armed || contradiction;
   $("hub-write-summary").textContent = target
     ? `${hub.plan ? hub.plan.os_label : "Home Assistant OS"} → ${target.model} ` +
       `(${target.path}, ${hubFmtBytes(target.size_bytes)})` +

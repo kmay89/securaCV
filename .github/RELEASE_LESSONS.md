@@ -1256,3 +1256,69 @@ Two independent failures, one release day, both invisible-by-design.
   artifact**, especially when a library and an OS framework both claim to
   implement the same standard. And distrust the error text: "wrong
   password?" was a guess by code that could not tell the difference.
+- **Outcome:** Flasher 0.3.5 shipped signed and notarized on the next run —
+  the first Apple-signed desktop build this repo has produced. Verified
+  end to end on real machines, not just in CI: the `.dmg` opened on macOS
+  with no Gatekeeper prompt, and on Linux an installed 0.3.4 detected the
+  update, showed these notes, installed on one click, and logged it. All
+  ten release assets were counted, and the updater-URL consistency guard
+  passed. The map of which certificate signs which target now lives in
+  [`docs/APPLE_SIGNING.md`](../docs/APPLE_SIGNING.md).
+
+### 2026-07-30 (q) — A released S3 prints to pins nobody wired: the serial monitor was silent by build flag
+
+- **Symptom:** "the serial monitor in the app isn't working for all
+  firmwares." It worked on some boards and was silent on others, with no
+  error — the port opens, the monitor connects, and nothing ever
+  arrives. This also blocked diagnosing two *other* open bugs, because
+  the released firmware could not tell us anything about itself.
+- **Cause:** the ESP32 Arduino core decides at build time whether
+  `Serial` is the USB console or UART0 on the GPIO pins. ESP32-S3 needs
+  CDC-on-boot ENABLED; ESP32-C3/C6 must NOT have it (they provide
+  `Serial` on USB-Serial/JTAG, and the flag prevents it). The PlatformIO
+  bench had this right — `-DARDUINO_USB_CDC_ON_BOOT=1` in `common.ini`,
+  undefined for C3/C6 — but the RELEASE FQBNs said `CDCOnBoot=default`
+  (i.e. off) on two S3 targets and omitted the option entirely on a
+  third. So every released S3 image printed to a header nobody has
+  wired, while every bench build printed fine.
+- **Fix:** `CDCOnBoot=cdc` on all three S3 release FQBNs, plus
+  `scripts/lint_usb_console.py` in the repo-lints job: it parses the
+  release FQBNs, infers the chip family, and fails when an S3 lacks
+  CDC-on-boot or a C3/C6 has it — cross-checked against `common.ini` so
+  the rule can't quietly enforce agreement with the wrong thing. The
+  lint found the third FQBN immediately; grepping for `CDCOnBoot` had
+  missed it precisely because the option was absent.
+- **Applies to:** the third instance of release-vs-bench drift, after
+  (i) the display firmware missing from five releases and (j) the
+  core-version pairing. The pattern is always the same: the path we
+  TEST and the path we SHIP are configured in different files, and
+  nothing compares them. When a build knob changes behaviour and lives
+  in two places, write the lint that compares them — a knob whose only
+  symptom is silence will not report itself.
+
+### 2026-07-30 (r) — PR CI compiled three files out of a crate, so a merged change had no compile coverage at all
+
+- **Symptom:** a change to `desktop/src-tauri/src/hub.rs` was reviewed and
+  merged with the crate never compiled — not locally (it needs GTK/WebKit
+  dev libraries that a headless container lacks) and not in PR CI. The
+  first compile would have been the next release build, on `main`. It
+  happened to compile; the check was luck, not process.
+- **Cause:** `desktop-hub-core.yml` path-triggered on `desktop/hub-core/**`,
+  `desktop/hub-io/**`, and **three individually named files** —
+  `rescue.rs`, `port_hint.rs`, `health.rs` — which a `tauri-pure-modules`
+  job compiles in isolation as pure modules. Everything else in the crate
+  (`hub.rs`, `provisioning.rs`, `lib.rs`) matched no path and was built by
+  no job. The workflow looked like desktop coverage and was coverage of a
+  hand-picked subset.
+- **Fix:** a `tauri-crate-check` job that installs the Linux GUI dev
+  libraries and runs `cargo check --all-targets` on `desktop/src-tauri`,
+  plus a `desktop/src-tauri/**` path trigger so edits anywhere in the crate
+  reach it. `check`, not `build` — the type error is the point, not a
+  binary.
+- **Applies to:** any workflow whose paths enumerate FILES rather than the
+  unit that must compile. A per-file trigger silently becomes wrong the
+  moment someone adds a file, and the failure mode is not a red build —
+  it is no build, which reads identically to a green one. If a crate must
+  compile to ship, something in PR CI must compile the crate; and if it
+  cannot be compiled locally, that is a reason to add the job, not a
+  reason to trust review.

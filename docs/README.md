@@ -7,6 +7,32 @@ straggler. Prefer clicking around? The same getting-started paths run
 interactively — with one-tap-copy commands, a progress bar, and your OS
 picked once — in **[the Lab's Get Started guide](https://kmay89.github.io/securaCV/canary-local/start.html)**. The Lab also has a generated **[complete site map](https://kmay89.github.io/securaCV/canary-local/site-map.html)** that folds in every bench, depth page, redirect, iPad runbook, evidence viewer, and standalone HTML doc from the same manifest.
 
+## Look something up
+
+Three pages exist so you never have to infer an answer from context — useful to
+a newcomer, and to an AI assistant answering someone's question about the
+project:
+
+- [**The glossary**](GLOSSARY.md) — every proper noun defined once: SecuraCV vs
+  the Canary vs the witness kernel, the device line, Opera/Chirp/Beacon,
+  break-glass and quorum, the seven invariants, and the words we deliberately
+  don't use.
+- [**The FAQ**](FAQ.md) — the questions people actually ask ("does it do face
+  recognition?", "how do I get footage after a break-in?", "is this
+  production-ready?"), answered honestly with pointers.
+- [**AGENTS.md**](../AGENTS.md) — the brief every AI coding assistant works
+  from. Each tool's own entrypoint file (`CLAUDE.md`, `GEMINI.md`, `QWEN.md`,
+  Copilot, Cursor, Cline, Windsurf) is generated from it, so they can't drift.
+
+## Steer the project (no code required)
+
+- [**How an idea becomes a shipped feature**](IDEAS.md) — the suggestion
+  pipeline end to end: say it in one sentence, it becomes a public issue, people
+  back it with a 👍, and the label lane tracks it to a release. Includes the
+  honest case for **why a privacy project runs its suggestion box on GitHub**,
+  the maintainer triage loop, and the one string (`idea`) that joins all four
+  moving parts together.
+
 ## Start here
 
 Pick the row that sounds like you (same four paths as the interactive guide):
@@ -82,6 +108,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [Parity by architecture](FLEET_PARITY.md) — how a fleet-wide capability (like the `/api/fleet` self-report) lives in one host-tested `common/` core so one edit reaches every board, never a per-board copy-paste
 - [Which button do I press?](RELEASE_BUTTONS.md) — the operator's index: every release button, when to press it, when not to, and the three failures that cost us time (no signing key, a dark flasher, an app version that already shipped)
 - [Release process & channels](RELEASE_PROCESS.md) — tags → releases; how the dev channel stays invisible to release devices
+- [Apple signing, every target](APPLE_SIGNING.md) — which certificate signs which app and which secret carries it: the split is not Mac-vs-phone but *how the user gets the app* (website download needs Developer ID + notarization, an App Store needs Apple Distribution), why adding an app usually needs no new signing setup, and a symptom→cause table for the four ways this broke — including the `.p12` that `openssl` reads happily and macOS rejects as "wrong password?"
 - [USB evidence drive (design)](design/usb_evidence_drive.md) — the Canary as a read-only USB drive + drop-file signed updates
 - [USB onboarding (design)](design/usb_onboard.md) — "plug me in": consented HID help-launch, read-only drive, guided recovery/unsealing
 - [Serial test console (design)](design/test_console.md) — run tests over serial safely: read-only `t`, tiered demo/mutate gating, the BLE bring-up ladder
@@ -96,6 +123,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [The alert relay (design)](design/alert_relay.md) — RFC: remote "pokes" without a cloud — a metadata-only, pluggable (Apprise-shaped) alert-sink on the hub, ntfy as the flagship free/self-hostable default, GitHub-issue/Trello as an optional durable "away timeline," and the outage-resilient mesh path (WiFi/internet die in the very outage you're reporting, so absence-inference + a powered mesh gateway carry the poke)
 - [Apple Watch app & the notification experience (design)](design/apple_watch_and_notifications.md) — scoping RFC: the quiet-by-default three-tier notification doctrine (Digest/Important/Critical, ack travels, escalate by silence), the Watch app in three phases (mirrored notifications with wrist-ack → Smart Stack widget + Live Activity → three-screen glance app), "live truth, not live video" analytics from the fleet time-machine, and the everything-works-without-Apple path (installable PWA + SSE + Web Push/VAPID on Chrome/Firefox/Safari)
 - [The LAN baby monitor (deferred)](design/lan_baby_monitor.md) — research complete, deliberately out of scope for now: all-night raw A/V streaming is exactly what Invariant I forbids, no device has a speaker for talkback, and the honest slice (radar "no camera to point" nursery care, cry-cadence coarse events) already lives in the wellbeing line — with the revisit triggers recorded
+- [The Tin Can — a kids' wrist Canary (design)](design/canary_tincan_kids_watch.md) — RFC for the Waveshare AMOLED 2.06 watch board: two kids **tie a string** (parent-witnessed, LAN-only pairing) and knock/tug/stamp/doodle at each other with **no voice, no text, no location, no cloud** — the refusal list is the design; plus the parent's one privileged message (the **Ring**: "come inside") with honest delivery states, the tin-can research the vocabulary comes from, the missing haptic motor the board doesn't have, and the CPSIA/ASTM/battery-containment gate before anyone writes "kids" on a store listing
 - [SecuraCV on Apple TV — the Witness Wall (design)](tvos/README.md) — the big-screen witness surface for homes **and venues** (bars, restaurants, shops): the *verified record* on the shared screen, not a wall of feeds; a tamper-evident, dispute-proof timeline over the cameras you already own (RTSP/ONVIF/Frigate); and a never-rot autopipeline ([the self-heal / self-publish / self-update mapping](tvos/AUTOPIPELINE.md))
 - [Secure provisioning](secure_provisioning.md) — how a device earns its keys
 - [Hardware root of trust (design)](design/hardware_root_of_trust.md) — RFC: opt-in Secure Boot / flash encryption / attestation, tiered so the default Canary stays un-brickable

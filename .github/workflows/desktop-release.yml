@@ -180,7 +180,7 @@ jobs:
             older macOS): [`desktop-lab/INSTALL.md`](https://github.com/kmay89/securaCV/blob/main/desktop-lab/INSTALL.md).
           releaseDraft: true
           prerelease: false
-          includeUpdaterJson: true
+          uploadUpdaterJson: true
           args: ${{ matrix.args }}
 
       - name: Verify the macOS signing certificate matches the identity
@@ -254,6 +254,24 @@ jobs:
             echo "::warning::APPLE_SIGNING_IDENTITY is not a 'Developer ID Application' identity. A DMG downloaded outside the App Store needs that one to notarize and open cleanly."
           fi
           echo "Match confirmed."
+          # A Developer ID certificate that lapses fails the signing step with a
+          # message about the identity, not the date — so judge it here, in
+          # seconds. TWO distinct cases, and conflating them was the first
+          # version of this check: already expired is FATAL, because signing
+          # cannot succeed and spending ~8 minutes to discover that proves
+          # nothing; expiring soon only warns, because a release on the last
+          # valid day must still ship. The `.p12` is asserted above to hold only
+          # the wanted identity, so the first certificate is that one.
+          END_DATE="$(openssl x509 -in "$RUNNER_TEMP/certs.pem" -noout -enddate | cut -d= -f2)"
+          if ! openssl x509 -in "$RUNNER_TEMP/certs.pem" -checkend 0 >/dev/null 2>&1; then
+            echo "::error::The macOS signing certificate EXPIRED on $END_DATE, so signing cannot succeed. Create a new Developer ID Application certificate at developer.apple.com, install it, then re-run desktop/scripts/set-desktop-signing-secrets.sh."
+            exit 1
+          fi
+          if openssl x509 -in "$RUNNER_TEMP/certs.pem" -checkend 2592000 >/dev/null 2>&1; then
+            echo "Certificate valid until $END_DATE."
+          else
+            echo "::warning::The macOS signing certificate expires within 30 days ($END_DATE). Renew it at developer.apple.com, install it, then re-run desktop/scripts/set-desktop-signing-secrets.sh."
+          fi
 
           # ── normalize the .p12 so `security import` will take it ───────────
           # openssl and macOS disagree about PKCS#12. OpenSSL 3 writes AES-256
@@ -310,7 +328,7 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID || secrets.APPLE_DEVELOPMENT_TEAM }}
         with:
           projectPath: desktop-lab
           tagName: ${{ (github.event_name == 'push' || inputs.publish) && 'app-v__VERSION__' || '' }}
@@ -322,7 +340,7 @@ jobs:
             - **Linux**: `.AppImage` (runs anywhere) or `.deb` (Debian/Ubuntu).
           releaseDraft: true
           prerelease: false
-          includeUpdaterJson: true
+          uploadUpdaterJson: true
           args: ${{ matrix.args }}
 
       # Always attach the built installers to the workflow run itself, so a
@@ -416,6 +434,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.plan.outputs.tag }}
           VER: ${{ steps.plan.outputs.version }}
+          # Same condition the macOS job signs on. A signed build must NOT carry
+          # quarantine-stripping instructions: telling someone to run
+          # `xattr -dr com.apple.quarantine` on an app that opens fine teaches
+          # them to disarm Gatekeeper by reflex, which is worse than the
+          # inconvenience it was meant to solve.
+          SIGNED: ${{ vars.ENABLE_MACOS_SIGNING }}
         run: |
           set -euo pipefail
           body="$(mktemp)"
@@ -431,17 +455,23 @@ jobs:
             echo "- **macOS**: download the \`.dmg\` (universal — Apple Silicon & Intel)."
             echo "- **Linux**: \`.AppImage\` (runs anywhere) or \`.deb\` (Debian/Ubuntu)."
             echo
-            echo "### macOS: first launch (one time)"
-            echo
-            echo "Unless this build is signed & notarized, macOS quarantines it. Drag the app"
-            echo "to Applications, then in **Terminal** run:"
-            echo
-            echo '```sh'
-            echo 'xattr -dr com.apple.quarantine "/Applications/SecuraCV Lab.app"'
-            echo '```'
-            echo
-            echo "Full steps: [\`desktop-lab/INSTALL.md\`](https://github.com/kmay89/securaCV/blob/main/desktop-lab/INSTALL.md)."
-            echo
+            if [ "${SIGNED:-}" = "true" ]; then
+              echo "**Signed and notarized by Apple** — drag it to Applications and open it."
+              echo "No Terminal, no quarantine warning."
+              echo
+            else
+              echo "### macOS: first launch (one time)"
+              echo
+              echo "This build is unsigned, so macOS quarantines it. Drag the app to"
+              echo "Applications, then in **Terminal** run:"
+              echo
+              echo '```sh'
+              echo 'xattr -dr com.apple.quarantine "/Applications/SecuraCV Lab.app"'
+              echo '```'
+              echo
+              echo "Full steps: [\`desktop-lab/INSTALL.md\`](https://github.com/kmay89/securaCV/blob/main/desktop-lab/INSTALL.md)."
+              echo
+            fi
             echo "Installed Labs pick this version up on their own once it's published —"
             echo "the app checks at launch and every few hours, shows these notes, and"
             echo "installs only after you say yes."

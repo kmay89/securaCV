@@ -826,7 +826,7 @@ fn hub_flash_blocking(
     // wouldn't cleanly unmount still needs a "eject it yourself before pulling
     // it" instruction, or the operator may yank a still-mounted card before
     // the CONFIG writes flush.
-    let (wifi_seeded, mut wifi_note, account_seeded, mut account_note, mut eject_note) =
+    let (wifi_seeded, wifi_note, account_seeded, mut account_note, mut eject_note) =
         if want_wifi || want_account {
             match hub_io::seed::seed_card(
                 &receipt.target_path,
@@ -879,6 +879,30 @@ fn hub_flash_blocking(
             (false, None, false, None, None)
         };
 
+    // A headless hub that never joins a network is not a successful flash.
+    // This step used to be best-effort — "a seeding stumble is a note, NEVER a
+    // failure" — which is right for a convenience and wrong for the ONE thing
+    // that makes a keyboard-less, screen-less Pi reachable. Seeded Wi-Fi IS the
+    // product here: without it the card boots to `wlan0: (No address)` and sits
+    // on the Home Assistant landing page forever, while the app reports
+    // "Done — written, read back, and verified." Fail now, while the card is
+    // still in the reader and the person is still standing there.
+    if want_wifi && !wifi_seeded {
+        return Err(format!(
+            // Deliberately avoids the words the UI's error classifier greps for
+            // (network / timed out / connection): this is a POST-write failure,
+            // and being mistaken for a mid-download stumble would tell the
+            // operator "your card is untouched" when the card is in fact
+            // complete and verified.
+            "The image is written and verified, but your Wi-Fi could not be saved onto the card, \
+             so the hub would start up with nothing to join and never answer at \
+             homeassistant.local. Nothing is broken — the card is good. Flash again (the second \
+             pass almost always mounts fine), or use ethernet for the first boot and set Wi-Fi \
+             inside Home Assistant afterwards. Reason: {}",
+            wifi_note.as_deref().unwrap_or("unknown")
+        ));
+    }
+
     // Turn a raw eject stumble into a plain, alarming-enough instruction.
     if let Some(ej) = eject_note.take() {
         eject_note = Some(format!(
@@ -887,26 +911,13 @@ fn hub_flash_blocking(
         ));
     }
 
-    // Turn the raw seed notes into calm, actionable copy. When BOTH seeds
-    // failed it was one mount failure, not two — say the reason once and keep
-    // the second note short, or the receipt reads as a wall of repeated error.
-    let both_failed = want_wifi && !wifi_seeded && want_account && !account_seeded;
-    if want_wifi && !wifi_seeded {
-        wifi_note = Some(format!(
-            "The card itself is perfect — only the Wi-Fi settings couldn't be added (usually \
-             the computer not re-mounting the freshly written card in time). Easiest fixes: \
-             flash again — the second pass almost always mounts fine — or plug in ethernet for \
-             the first boot and set Wi-Fi inside Home Assistant afterwards. ({})",
-            wifi_note.as_deref().unwrap_or("unknown reason")
-        ));
-    }
+    // Turn the raw seed notes into calm, actionable copy. A failed WI-FI seed
+    // no longer reaches here at all — it returns Err above, because a hub that
+    // can't join a network is a failed flash, not a flash with a footnote. The
+    // ACCOUNT seed is genuinely optional (Home Assistant's own setup wizard is
+    // the fallback), so it keeps the note-and-carry-on treatment.
     if want_account && !account_seeded {
-        account_note = Some(if both_failed {
-            // Same mount failure as the Wi-Fi note — don't repeat the reason.
-            "The experimental account pre-seed hit the same snag, so first boot will show Home \
-             Assistant's normal setup wizard — creating your account there takes under a minute."
-                .to_string()
-        } else {
+        account_note = Some({
             format!(
                 "The card is perfect and (if set) your Wi-Fi is on it — only the experimental \
                  account pre-seed didn't apply, so first boot will show Home Assistant's normal \

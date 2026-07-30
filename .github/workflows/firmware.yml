@@ -1016,6 +1016,60 @@ jobs:
           /tmp/voice_clearance | tee /tmp/voice_clearance.log
           grep -q "ALL .* PASSED" /tmp/voice_clearance.log
 
+      - name: Build + run Canary Link core host test
+        # The generic authenticated-datagram layer under the Tin Can's strings
+        # (firmware/common/link/) — deliberately NOT kid-specific, because
+        # "many nodes, one radio, no broker, no cloud" is a general problem.
+        # This step exists to pin the mistakes that are cheap to make and
+        # catastrophic to ship: a nonce that repeats across the two directions
+        # of a session (fatal under both ChaCha20-Poly1305 and AES-GCM), a send
+        # counter that rewinds after an unclean reboot, a revocation that
+        # quietly un-revokes, and a relay that treats the mutable hops/ttl
+        # bytes — which sit OUTSIDE the AEAD by design — as if they were
+        # evidence. No board, no radio, no crypto library needed.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/common/link \
+              firmware/projects/canary-tincan/tests_host/test_link_core.cpp \
+              -o /tmp/link_core
+          /tmp/link_core | tee /tmp/link_core.log
+          grep -q "ALL .* PASSED" /tmp/link_core.log
+
+      - name: Build + run Tin Can payload cores host test
+        # The kid-facing layer (docs/design/canary_tincan_kids_watch.md): the
+        # knock codec (a tapped rhythm must survive the wire and land on the
+        # far wrist as the same rhythm), the string model's sender-side knock
+        # cooldown and terminal cut, the Ring's delivery honesty (there is no
+        # "Sent" state, and a NotDelivered always carries a reason a parent can
+        # act on), the tie ceremony's parent-window stranger gate, the stamp
+        # table's append-only wire contract, warmer/colder — which asserts a
+        # fingerprint can hold ONLY household Canary fp4s, never an AP
+        # identifier — and the step duel's daily reset.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-tincan/include \
+              firmware/projects/canary-tincan/tests_host/test_tincan_cores.cpp \
+              -o /tmp/tincan_cores
+          /tmp/tincan_cores | tee /tmp/tincan_cores.log
+          grep -q "ALL .* PASSED" /tmp/tincan_cores.log
+
+      - name: Tin Can sketch copy sync
+        # The Arduino bring-up sketch carries a staged copy of knock_codec.h,
+        # because the Arduino IDE compiles what is in the sketch folder and
+        # nothing above it. A staged copy that drifts is worse than no copy:
+        # the bench tool would be testing a rhythm codec the product no longer
+        # uses, and the divergence would surface as "it felt wrong on the
+        # wrist" rather than as a compile error. Same guard, same reason, as
+        # the CSI sketch copies.
+        run: |
+          set -euo pipefail
+          diff -u firmware/projects/canary-tincan/include/canary/tincan/knock_codec.h \
+                  firmware/projects/canary-tincan/arduino/tincan_bringup/knock_codec.h \
+            || { echo "::error::tincan_bringup/knock_codec.h has drifted from the canonical header. Re-copy it."; exit 1; }
+          echo "Tin Can sketch copy is in sync."
+
       - name: Build + run canary-wap provisioning-logic host test
         # The first-run wizard's pure decisions (setup-window keep-alive,
         # scan-cache freshness, AP-only join suppression, AP teardown

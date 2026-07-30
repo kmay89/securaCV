@@ -49,5 +49,14 @@ body:
     attributes:
       value: |
         ---
-        After you click **Submit**, share the link with friends so they can add
-        their 👍 too. Every vote helps us decide what to build next. 🐤
+        **After you click Submit**, we'll reply straight away with what happens
+        next — including where the vote button actually is, which is the one
+        thing that trips everyone up. (It's a 👍 on the *first* message, not on
+        a reply.) Vote for your own idea, then share the link: the most-backed
+        ideas are what get built next. 🐤
+
+        <sub>Wondering why a camera project takes suggestions on a site for
+        programmers? The short answer: your idea ends up in the same place as
+        the code, so you can watch it get built and we can't quietly bin it.
+        The long answer is in
+        [docs/IDEAS.md](https://github.com/kmay89/securaCV/blob/main/docs/IDEAS.md).</sub>

@@ -265,6 +265,15 @@ You don't have to remember these; CI does. Listed so a red run makes sense.
   your machine.
 - **Apple signing.** `ENABLE_IOS_BUILD` / `ENABLE_TVOS_BUILD` plus the `APPLE_*`
   secrets need a developer account. Until then those targets are honest no-ops.
+  **Which certificate signs which app, and which secret carries it, is in
+  [`docs/APPLE_SIGNING.md`](APPLE_SIGNING.md)** — read it before touching an
+  `APPLE_*` secret. Apple's two certificate types have near-identical names and
+  the wrong one fails only *after* a full build; sharing one secret name between
+  the iPhone and Mac pipelines cost five releases. For the Mac apps the whole
+  setup is one command:
+  `bash desktop/scripts/set-desktop-signing-secrets.sh`.
+  Note `ENABLE_MACOS_SIGNING` must be exactly `true` or the desktop apps build
+  **unsigned and still go green** — the release body states which you got.
 - **Publishing the Lab's release.** It's created as a **draft** on purpose;
   a human clicks Publish. (`release-latest-guard.yml` then puts
   `releases/latest` back on the firmware, and
