@@ -1,5 +1,6 @@
 // ============================================================================
 //  Canary — HAMMOND INTERNAL CHASSIS PLATE  ⚠️ IN DEVELOPMENT (v0.1-dev)
+// @env ip="IP66/67/68 (from the bought Hammond box)" note="the rating is the purchased box's, earned only if the gland + vent are installed correctly — not our printed plate's"
 //  The build plan's harsh-outdoor path (ENC1) is a Hammond 1554/1555
 //  polycarbonate box — which arrives EMPTY. This plate screws to the box's
 //  internal bosses and carries the proven Canary rail/clip cradle for a

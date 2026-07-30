@@ -1,5 +1,6 @@
 // ============================================================================
 //  SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.2
+// @env cer=2 ip="~IP54" basis="weather preset"
 //  Stack: OV5647 camera (Pi-cam v1.3 form) + Grove Vision AI V2 (40 x 20)
 //         + a selectable HOST:
 //    host = "xiao"   — XIAO ESP32-C3/S3 seated in the module's stacking

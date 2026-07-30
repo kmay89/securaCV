@@ -998,33 +998,41 @@ VARIANT_SELECTS = {
     "sense-radome": {"radar": "bha2"},  # the MR60BHA2 radome
 }
 
-# Env rating as data (axis: environment). Ratings are DESIGN INTENT unless a
-# row says otherwise — none of our printed cases has passed the
-# field_ratings.md protocol, so `verified` is False everywhere. Keyed by
-# scad; a scad absent here simply has no env field. (Verified against the
-# scad files existing, below.)
-ENV_BY_SCAD = {
-    "canary_wap_enclosure.scad": {
-        "cer": 2, "ip": "~IP54", "verified": False, "basis": "weather preset"},
-    "canary_vision_enclosure.scad": {
-        "cer": 2, "ip": "~IP54", "verified": False, "basis": "weather preset"},
-    "canary_vision_doorbell.scad": {
-        "cer": 2, "ip": "~IP54 (button ~IP65)", "verified": False},
-    "canary_sense_enclosure.scad": {
-        "cer": 2, "ip": "radome (sheltered)", "verified": False},
-    "canary_field_case.scad": {
-        "cer": 4, "ip": "IP67", "mil": "MIL-STD-810H", "verified": False,
-        "note": "design intent — untested; do not claim before the "
-                "field_ratings.md protocol"},
-    "canary_relay_solar.scad": {
-        "cer": 2, "ip": "CER-2 (→3 after test)", "verified": False},
-    "canary_hammond_chassis.scad": {
-        "ip": "IP66/67/68 (from the bought Hammond box)", "verified": False,
-        "note": "the rating is the purchased box's, earned only if the gland "
-                "+ vent are installed correctly — not our printed plate's"},
-    "canary_s3_lcd7.scad": {
-        "env": "indoor; runs hot → print in PETG/ASA", "verified": False},
-}
+# Env rating as data (axis: environment) — read from each model's OWN source,
+# not a table here. Each rated `.scad` carries a machine-readable header line:
+#   // @env cer=2 ip="~IP54" basis="weather preset"
+# so the rating lives next to the geometry it describes and can't drift from it.
+# CER levels are the field_ratings.md ladder (1–4). `verified` is ALWAYS False:
+# a rating is design intent, EARNED per printed unit by the field_ratings.md
+# test protocol, never asserted from the CAD.
+CER_LEVELS = {1, 2, 3, 4}  # docs/hardware/enclosure/field_ratings.md
+_ENV_KEYS = {"ip", "mil", "basis", "note", "env"}
+
+
+def parse_env(scad_text: str):
+    """A model's environment rating from its `// @env …` header line, or None
+    when the model declares none. Values may be bare or double-quoted; `cer`
+    coerces to int and is validated against the CER ladder; `verified` is forced
+    False (honesty invariant)."""
+    m = re.search(r"^\s*//\s*@env\s+(.*)$", scad_text, re.M)
+    if not m:
+        return None
+    out = {}
+    for k, v in re.findall(r'(\w+)=("[^"]*"|\S+)', m.group(1)):
+        val = v[1:-1] if v.startswith('"') else v
+        if k == "cer":
+            cer = int(val)
+            if cer not in CER_LEVELS:
+                raise SystemExit(
+                    f"catalog: @env cer={cer} is not a field_ratings.md CER "
+                    f"level {sorted(CER_LEVELS)}")
+            out["cer"] = cer
+        elif k in _ENV_KEYS:
+            out[k] = val
+        else:
+            raise SystemExit(f"catalog: @env unknown key '{k}=…'")
+    out["verified"] = False
+    return out
 
 # Sideways "which one do I pick?" links (axis 6 — alternative/remix). NOT a
 # step in the narrowing funnel. Keyed by scad → list of alternative scads;
@@ -1196,11 +1204,11 @@ def catalog_main():
     sets = parse_tables(md)
     scad_files = sorted(p.name for p in ENC.glob("*.scad"))
     scads = {name: parse_scad(ENC / name) for name in scad_files}
+    # Environment rating parsed from each model's own `// @env` header line.
+    env_by_scad = {name: parse_env((ENC / name).read_text(errors="replace"))
+                   for name in scad_files}
 
     # Verify every curated overlay points at real sources (fail-fast).
-    for scad in ENV_BY_SCAD:
-        if scad not in scads:
-            raise SystemExit(f"catalog: ENV_BY_SCAD names missing scad {scad}")
     for scad, alts in ALTERNATIVES.items():
         if scad not in scads:
             raise SystemExit(f"catalog: ALTERNATIVES key {scad} is not a scad")
@@ -1280,7 +1288,7 @@ def catalog_main():
             "family": family,
             "device_compat": devices,
             "class": "primary" if variants else "accessory",
-            **({"env": ENV_BY_SCAD[scad]} if scad in ENV_BY_SCAD else {}),
+            **({"env": env_by_scad[scad]} if env_by_scad.get(scad) else {}),
             "fit": "standard",  # → the shared tier (top-level `fit`)
             "variant_axes": vaxes,
             "variants": variants,

@@ -1,5 +1,6 @@
 // ============================================================================
 //  Canary — 7" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)
+// @env env="indoor; runs hot → print in PETG/ASA"
 //  Housing for the Waveshare ESP32-S3-Touch-LCD-7 (7" 800x480 IPS capacitive
 //  touch, ESP32-S3, CAN/RS485/battery). The big-panel "wall dashboard" — the
 //  household event timeline on a glass slab, vs the Dash 4.3" and the C6 pocket

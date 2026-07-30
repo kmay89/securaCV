@@ -1,5 +1,6 @@
 // ============================================================================
 //  SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.2
+// @env cer=2 ip="~IP54 (button ~IP65)"
 //  A slim vertical unit in the Wyze/Ring video-doorbell form factor, holding
 //  the stacked-XIAO Vision build: OV5647 camera (top) + Grove Vision AI V2
 //  with a XIAO ESP32-C3/S3 seated in its socket (middle) + a 12 mm

@@ -379,8 +379,8 @@
     "cer": 4,
     "ip": "IP67",
     "mil": "MIL-STD-810H",
-    "verified": false,
-    "note": "design intent — untested; do not claim before the field_ratings.md protocol"
+    "note": "design intent — untested; do not claim before the field_ratings.md protocol",
+    "verified": false
    },
    "fit": "standard",
    "variant_axes": [],
@@ -478,8 +478,8 @@
    "class": "primary",
    "env": {
     "ip": "IP66/67/68 (from the bought Hammond box)",
-    "verified": false,
-    "note": "the rating is the purchased box's, earned only if the gland + vent are installed correctly — not our printed plate's"
+    "note": "the rating is the purchased box's, earned only if the gland + vent are installed correctly — not our printed plate's",
+    "verified": false
    },
    "fit": "standard",
    "variant_axes": [
@@ -1588,8 +1588,8 @@
    "env": {
     "cer": 2,
     "ip": "~IP54",
-    "verified": false,
-    "basis": "weather preset"
+    "basis": "weather preset",
+    "verified": false
    },
    "fit": "standard",
    "variant_axes": [
@@ -1909,8 +1909,8 @@
    "env": {
     "cer": 2,
     "ip": "~IP54",
-    "verified": false,
-    "basis": "weather preset"
+    "basis": "weather preset",
+    "verified": false
    },
    "fit": "standard",
    "variant_axes": [

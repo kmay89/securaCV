@@ -1,5 +1,6 @@
 // ============================================================================
 //  Canary — SOLAR LoRa/MESHTASTIC RELAY POD  ⚠️ IN DEVELOPMENT (v0.1-dev)
+// @env cer=2 ip="CER-2 (→3 after test)"
 //  Off-grid backhaul for remote witnesses (LoRa-mesh adapter, PR #747): a
 //  pole-mounted sealed pod for a LoRa dev board (default: Heltec V3-class)
 //  + an 18650 holder, with an SMA antenna bulkhead on the TOP wall, an

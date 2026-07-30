@@ -366,7 +366,11 @@ is the faceted browse's job (§6B), not the workshop's — the workshop has no p
 list for an accessory enclosure. Both pickers now read the manifest and classify
 options by `audience`, not the `opt_` prefix, so Phase 3 is closed.
 
-Two honest gaps the manifest still marks rather than hides: `env` ratings come
-from a small curated overlay in the generator (there is no parseable rating
-source yet — a source-annotation pass would move them into the SCAD/README), and
-`remix_of` is `null` everywhere until a `builds.json` remix source exists.
+One honest gap remains. **`env` is now sourced, not curated:** each rated
+`.scad` carries a machine-readable `// @env cer=… ip=…` header line, parsed by
+`gen_enclosures.py`'s `parse_env` (CER validated against the `field_ratings.md`
+ladder, `verified` forced `false` — a rating is design intent, earned per
+printed unit, never asserted from the CAD), so the rating lives next to the
+geometry and can't drift from it. The one still-open gap: `remix_of` is `null`
+everywhere until a `builds.json` remix source exists — deliberately left, since
+inventing remix relationships we don't have would be worse than an honest null.
