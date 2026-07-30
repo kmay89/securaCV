@@ -179,7 +179,11 @@ Frigate 0.16+ ships custom MobileNetV2 classification
 (`frigate/data_processing/real_time/custom_classification.py`) in two shapes:
 
 - **Object classification** — runs on the crop of a *tracked object*. Refines a
-  detection ("this `dog` is Buddy", "this `car` is a mail truck").
+  detection ("this `dog` is Buddy", "this `car` is a mail truck"). Those two examples
+  are Frigate's, and they are **descriptions, not recommendations**: recognizing
+  *which* dog is an identity inference we do not build (§5.2, §6). The mechanism is
+  still useful to us for coarse non-identifying attributes; the recognizer framing is
+  not.
 - **State classification** — runs on a **fixed crop of the frame**, on a schedule
   and/or when motion overlaps that crop. Frigate's own documented examples are garage
   door open/closed, gate open/closed, bins at curb, pool cover on/off.
@@ -213,7 +217,7 @@ code, not a hypothetical.
 |---|---|---|
 | **Motion** | `src/detect/backends/motion.rs` — `FrameHashMotion` declares motion when `SHA-256(frame) != SHA-256(prev_frame)`. | Sensor noise changes the hash every frame. Motion is **always true**, so there is effectively no gate: the detector runs on 100% of frames. It also cannot produce boxes, so there is nothing to build regions from. |
 | **Object detection** | `src/detect/backends/tract.rs` — tiny-YOLOv2, fixed 416×416, `resize_to_input` bilinear-resizes the **whole frame** every time (`tract.rs:118-134`). | A person at the end of a driveway in a 1600×1200 frame is a handful of pixels after the resize. Also: tiny-YOLOv2/VOC-20 has no `package` class, so package detection is not merely untuned, it is unrepresentable. |
-| **Sandbox** | `witnessd` calls `execute_sandboxed` per frame (`src/bin/witnessd.rs:444`), which `fork()`s a seccomp child, pipes the result back, and shuttles detector state across the boundary via `export_state`/`import_state` (`src/detect/backend.rs`). | A per-frame `fork` + `pipe` + `waitpid` is a fixed cost paid on *every* frame — which is fine at the current ~100 ms cadence, and is the dominant per-frame cost the moment you try to go faster. It makes motion gating **more** valuable for us than for Frigate, not less. |
+| **Sandbox** | `witnessd` calls `execute_sandboxed` per frame (`src/bin/witnessd.rs:444`), which `fork()`s a seccomp child, pipes the result back, and shuttles detector state across the boundary via `export_state`/`import_state` (`src/detect/backend.rs`). | A per-frame `fork` + `pipe` + `waitpid` is a fixed cost paid on *every* frame, which is comfortably absorbed at the current ~100 ms cadence. **Hypothesis, not a measurement:** that this fixed cost becomes significant relative to JPEG decode and inference as the cadence rises, and therefore that motion gating is worth *more* to us than to Frigate. Nothing in this repo profiles it on a Pi 5. Per AGENTS.md non-negotiable #4 ("no performance claim without a benchmark") this must be benched before any design leans on it — see the phase-1 bench harness in §7, which should report fork/pipe/waitpid, decode, and inference as separate line items. |
 | **Tracking** | None. | No object identity across frames ⇒ no stationary logic, no zone inertia, no loitering, no `ObjectRemovedFromZone`, no dedup. Every frame is an independent world. |
 | **Regions** | None. Whole-frame inference only. | See above. |
 | **Perspective** | None. | Uniform sensitivity across the frame; far objects are unreachable. |
@@ -266,12 +270,58 @@ fire**.
 The privacy story improves too: a camera that transmits nothing when nothing is
 happening is a stronger statement than one that transmits and is ignored.
 
+**Two firmware preconditions, both real work — this is not a free reuse of the
+existing grid.**
+
+*Precondition A — the mask is not currently computed every frame.* `vision_process()`
+(`securacv_vision.cpp`) returns early, **before** `decode_and_downsample` and
+`layer2_check` ever run, in several cases: the duty-cycle rest window, the
+`process_interval_ms` rate limit (extended to `sustained_backoff_ms` during sustained
+activity), peek-active, non-normal thermal state, and — most importantly — when the
+**Layer 1 JPEG-size-delta gate** fails with no tamper counter pending
+(`securacv_vision.cpp:591-604`). So the block grid today reflects only the frames
+Layer 1 already let through. Publishing that mask as the *sole* transmit gate would
+silently inherit Layer 1's blind spots: slow or small motion that barely moves the
+compressed frame size. Phase 1 must therefore either compute the mask on every
+processed frame (bypassing Layer 1 for mask generation and keeping Layer 1 only as a
+cheap *pre*-filter for the expensive decode) or transmit conservatively whenever
+Layer 1 is uncertain. Decide this deliberately — the duty cycle and rate limit are
+battery features and should stay, but they must then be understood as part of the
+gate's latency budget, not bypassed by accident.
+
+*Precondition B — an empty mask must not mean silence forever.* The block baseline is
+an EMA (`BLOCK_EMA_ALPHA`), so a stationary object is absorbed into the baseline and
+its blocks stop reporting as changed. Under a strictly "transmit only when the mask is
+non-empty" rule the hub would then receive **no image at all** for the stationary
+re-verification promised in §2.4 — and a "package present" state could persist
+indefinitely if the package's removal is occluded or the firmware's own object-removal
+heuristic misses it. The link protocol therefore needs a **periodic keyframe** (a
+frame sent on a slow timer regardless of the mask) and ideally a **hub-requested
+frame**, so the Pi can drive `stationary.interval` re-checks on its own schedule
+rather than hoping the camera volunteers. Size the keyframe interval against
+`stationary.interval`, not against the frame rate.
+
 ### Hop 1 — the hub converts the block mask into motion boxes (Pi 5)
 
-The changed-block mask **is** the motion box set, at 1/16 resolution. Union adjacent
+The changed-block mask **is** the motion box set, at grid resolution. Union adjacent
 changed blocks into rectangles, scale to frame coordinates, and feed them straight
 into region clustering. Frigate spends its motion budget rediscovering what our
 camera already knows.
+
+**Scale each axis independently — the grid is not a uniform fraction of the frame.**
+`VISION_GRID_COLS` is 10 and `VISION_GRID_ROWS` is 8 over a 160×120 decode buffer, so
+a block is 16×15 px *in that intermediate buffer* — neither square nor a uniform 1/16
+of anything. Map straight from grid cell to full-frame coordinates per axis:
+
+```
+x0 = col       * frame_width  / 10        x1 = (col + 1) * frame_width  / 10
+y0 = row       * frame_height /  8        y1 = (row + 1) * frame_height /  8
+```
+
+Treating the mask as a single 1/16-scale image produces vertically shifted or clipped
+regions, which then get handed to region clustering as if they were real motion
+extents. Anything that consumes the mask should take the two grid dimensions as
+inputs rather than assuming a scalar scale factor.
 
 Keep a hub-side `ImprovedMotionDetector` port as the **second opinion** for two
 cases: cameras that can't gate (third-party RTSP via the existing `RtspSource`), and
@@ -358,11 +408,21 @@ door + inertia 3 + `SmallObjectBoundaryCrossing`. The interesting failure is a p
 that lies down in the zone and becomes stationary, then "reappears" when it shifts —
 which the stationary anchor check (§2.4) is precisely designed to suppress.
 
-Distinguishing *our* pet from a neighbor's is an **object classification** problem
-(§2.6), and one to think carefully about before shipping: it is a per-animal identity
-model. It is not a human-identity problem and animals aren't covered by Invariant II
-as written, but "we built a recognizer" deserves a spec-first conversation, not a
-config flag.
+**Distinguishing *our* pet from a neighbor's is out of scope — permanently, not
+pending a spec change.** Frigate does this with object classification (§2.6), and it
+would be easy to bolt on once a tracker exists, which is exactly why it needs saying
+explicitly here. AGENTS.md non-negotiable #1 forbids adding an identity-inferring
+capability and fixes the output vocabulary at `Person | Vehicle | Animal | Package`;
+it is "a rejected PR, not a config flag." A per-animal recognizer is an
+identity-inferring capability and a `pet-identity` sub-label is a vocabulary widening
+past `Animal` — so this is not a candidate for the spec-first path in §7, it is a
+thing we don't build. The guarantee is `can't`, not `won't`: the recognizer isn't
+written, so there's no setting to disable.
+
+The honest capability is coarse and zone-shaped: *an animal arrived at the back door*.
+If a user needs "my dog specifically," that is a collar tag on a different modality
+(BLE presence — `src/adapter/ble_presence.rs`), not a camera learning to tell animals
+apart.
 
 ### 5.3 Litter box
 
@@ -394,6 +454,7 @@ forbid, and the pipeline learnings must not smuggle any of it in:
 |---|---|
 | Recordings, snapshots, thumbnails, Birdseye, restream | Invariant I (No Raw Export). Our region crops must live and die inside the detect call — the `DetectorBackend` audit boundary in `src/detect/backend.rs` already says so. |
 | Face recognition, license plate recognition | Invariant II (No Identity). Not a tuning decision; these capabilities must not exist. |
+| Object classification used as a *recognizer* — per-animal pet identity, "known vs. stranger" person sub-labels, delivery-carrier identification | Same rule. AGENTS.md non-negotiable #1 forbids identity-inferring capabilities outright and fixes the vocabulary at `Person \| Vehicle \| Animal \| Package`. Object classification is only admissible for coarse, non-identifying attributes; the moment it distinguishes *which* individual, it is out. See §5.2. |
 | Semantic search / embeddings, GenAI descriptions | Invariant VII (Non-Queryable). An embedding index over past events is a bulk-search substrate by construction. |
 | Full event DB with boxes, trajectories, precise timestamps | Invariant III (Metadata Minimization). We coarsen to 10-minute buckets and drop coordinates at the trust boundary — see the field table in [`frigate_integration.md`](frigate_integration.md). |
 | Speed estimation | Tempting and cheap once you have a tracker. It is also a trajectory, and it is the feature most likely to attract exactly the customer we don't want. Leave it out. |
@@ -426,13 +487,19 @@ Each phase is independently shippable and independently useful.
 
 **Spec-first checkpoints.** Phases 1–3 produce claims that already exist in
 `ClaimKind`, so they are implementation work. Anything that introduces a *new* claim
-(a distinct "package delivered" versus a generic small-object crossing, a pet-identity
-sub-label, a litter-box visit) is an Invariant VI change and needs
+(a distinct "package delivered" versus a generic small-object crossing, a litter-box
+visit) is an Invariant VI change and needs
 [`spec/event_contract.md`](../spec/event_contract.md) and
 [`spec/witness_dictionary.json`](../spec/witness_dictionary.json) updated **before**
 the code, per the same rule that governs promoting the Vision coarse signals.
 
-**Bench before believing.** Every number in §4 is a target. The first deliverable of
+Note the difference between that path and §6: spec-first is for claims that are
+*coarse but new*. A capability that infers identity is not on the spec-first path at
+all — per AGENTS.md non-negotiable #1 it is simply not built, and no dictionary entry
+makes it acceptable.
+
+**Bench before believing.** Every number in §4 is a target, and the sandbox-cost
+claim in §3 is an explicit hypothesis. The first deliverable of
 phase 1 should be a Pi 5 bench harness reporting frames gated, frames decoded,
 inference count, and end-to-end latency per camera — otherwise "jaw-droppingly fast"
 is a claim rather than a measurement, and this project does not ship claims it
