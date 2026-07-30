@@ -180,7 +180,7 @@ jobs:
             older macOS): [`desktop-lab/INSTALL.md`](https://github.com/kmay89/securaCV/blob/main/desktop-lab/INSTALL.md).
           releaseDraft: true
           prerelease: false
-          includeUpdaterJson: true
+          uploadUpdaterJson: true
           args: ${{ matrix.args }}
 
       - name: Verify the macOS signing certificate matches the identity
@@ -254,6 +254,17 @@ jobs:
             echo "::warning::APPLE_SIGNING_IDENTITY is not a 'Developer ID Application' identity. A DMG downloaded outside the App Store needs that one to notarize and open cleanly."
           fi
           echo "Match confirmed."
+          # A Developer ID certificate that lapses fails the signing step with a
+          # message about the identity, not the date — so surface the date while
+          # it is still cheap to act on. Warn, never gate: a release on the last
+          # valid day must still ship. The `.p12` is asserted above to hold only
+          # the wanted identity, so the first certificate is that one.
+          END_DATE="$(openssl x509 -in "$RUNNER_TEMP/certs.pem" -noout -enddate | cut -d= -f2)"
+          if openssl x509 -in "$RUNNER_TEMP/certs.pem" -checkend 2592000 >/dev/null 2>&1; then
+            echo "Certificate valid until $END_DATE."
+          else
+            echo "::warning::The macOS signing certificate expires within 30 days ($END_DATE). Renew it at developer.apple.com, install it, then re-run desktop/scripts/set-desktop-signing-secrets.sh."
+          fi
 
           # ── normalize the .p12 so `security import` will take it ───────────
           # openssl and macOS disagree about PKCS#12. OpenSSL 3 writes AES-256
@@ -310,7 +321,7 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID || secrets.APPLE_DEVELOPMENT_TEAM }}
         with:
           projectPath: desktop-lab
           tagName: ${{ (github.event_name == 'push' || inputs.publish) && 'app-v__VERSION__' || '' }}
@@ -322,7 +333,7 @@ jobs:
             - **Linux**: `.AppImage` (runs anywhere) or `.deb` (Debian/Ubuntu).
           releaseDraft: true
           prerelease: false
-          includeUpdaterJson: true
+          uploadUpdaterJson: true
           args: ${{ matrix.args }}
 
       # Always attach the built installers to the workflow run itself, so a

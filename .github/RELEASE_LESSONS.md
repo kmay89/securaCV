@@ -1256,3 +1256,11 @@ Two independent failures, one release day, both invisible-by-design.
   artifact**, especially when a library and an OS framework both claim to
   implement the same standard. And distrust the error text: "wrong
   password?" was a guess by code that could not tell the difference.
+- **Outcome:** Flasher 0.3.5 shipped signed and notarized on the next run —
+  the first Apple-signed desktop build this repo has produced. Verified
+  end to end on real machines, not just in CI: the `.dmg` opened on macOS
+  with no Gatekeeper prompt, and on Linux an installed 0.3.4 detected the
+  update, showed these notes, installed on one click, and logged it. All
+  ten release assets were counted, and the updater-URL consistency guard
+  passed. The map of which certificate signs which target now lives in
+  [`docs/APPLE_SIGNING.md`](../docs/APPLE_SIGNING.md).
