@@ -282,8 +282,7 @@ duplicated.
    `canary-local/tests/catalog.test.js`; `enclosures.json`/`workshop.json` remain
    the live views. It also self-reports coverage (`engineering_param_count`) so
    the manifest never pretends to surface knobs it drops.
-3. **Unify the two pickers.** *(Partly done — the `workshop.js` picker is still
-   open; see §9.)* ✅ **`enclosure-lab.js` done** —
+3. **Unify the two pickers.** ✅ **Done.** ✅ **`enclosure-lab.js` done** —
    the lab now reads `catalog.json` (loaded by `app.js`) and renders a live
    configurator in place of the read-only param text: variant-axis selectors
    that jump to the matching committed STL (or flag a custom combo), user-option
@@ -299,12 +298,19 @@ duplicated.
    workshop" / "open in OpenSCAD" handoffs. This is the "generalize to every
    product" path the per-device workshop can't give (it only configures the five
    devices with firmware + a BOM). Guarded by
-   `canary-local/tests/catalog_browse.test.js`. ⬜ **Still to do:** make the
-   per-device `workshop.js` *configurator* itself catalog-driven (today it hand-
-   lists 5 devices and filters options by the `opt_` prefix); note its 3
-   configurable devices already surface their user options, so the practical gap
-   is the non-`opt_` options on the accessory/display products the browse now
-   covers.
+   `canary-local/tests/catalog_browse.test.js`. ✅ **`workshop.js` done** — its
+   configurator now (a) picks options by the manifest's `audience` tag, not the
+   `opt_` name prefix (the generator stamps every emitted option `audience:
+   "user"`; `workshop.js`'s `hasConfigurator`/`optionVector`/seed all filter on
+   it), and (b) reads `catalog.json` to show each device's manifest facts —
+   environment rating (design intent, never "verified") · flavors · options ·
+   see-also — beside its packages. The literal "configure all 29 products in the
+   workshop" is **intentionally not pursued**: the workshop is a per-device build
+   tool (it needs a BOM + firmware, which the accessory/display enclosures don't
+   have), so the faceted browse (§6B) is the manifest-driven surface for every
+   product it doesn't build. Guarded by the audience assertion in
+   `canary-local/tests/workshop.test.js`; the strict `workshop_probe` stays green
+   (the audience filter is behaviorally identical for the five devices).
 4. **Add the guided funnel (§6A) + remix rail (§6D).** ✅ **Done** — a new
    `find.html` / `catalog-funnel.js` asks up to three questions (what you're
    building → where it lives → how you mount it), each narrowing the next over
@@ -329,31 +335,29 @@ duplicated.
 
 Sensible stop points: after 1–2 the catalog is *correct and complete* even
 without new UI; after 3 the option story is coherent; 4–5 are the delight layer.
-**Phases 1, 2, 4 and 5 are fully landed, and Phase 3 is landed except its second
-picker** — the per-device `workshop.js` configurator (§8.3's ⬜) is the single
-open item in the plan. It is real Phase-3 work, not dropped: the faceted browse
-(§6B) covers every product it doesn't configure and its three configurable
-devices already surface their user options, so it's low-urgency — but Phase 3 is
-not closed until it lands.
+**All five phases have landed.** The one scope call worth stating out loud: the
+per-device `workshop.js` builds only the five devices with a BOM + firmware, so
+"configure *every* product" is served by the faceted browse (§6B), not by
+forcing accessory enclosures into a build tool that has no parts list for them.
 
 ---
 
 ## 9. Status & what's next
 
-**Phases 1, 2, 4 and 5 are fully landed; Phase 3 is landed except its second
-picker.** The manifest is real and generated (`canary-local/devices/catalog.json`
-— run `python3 canary-local/tools/gen_enclosures.py` to rebuild), and it drives
-most of the UI: the enclosure lab's live configurator (§8.3), the faceted browse
-(§6B, `catalog.html`), the guided funnel + remix rail (§6A/§6D, `find.html`), and
+**All five phases have landed.** The manifest is real and generated
+(`canary-local/devices/catalog.json` — run
+`python3 canary-local/tools/gen_enclosures.py` to rebuild), and it drives the UI
+end to end: the enclosure lab's live configurator (§8.3), the faceted browse
+(§6B, `catalog.html`), the guided funnel + remix rail (§6A/§6D, `find.html`), the
+`workshop.js` configurator's audience-based options + manifest facts (§8.3), and
 the website showroom's status/facts (§8.5, `securacv_website`). Each was its own
 CI-gated, drift-checked PR.
 
-**The one open item — Phase 3's second picker:** make the per-device
-`workshop.js` *configurator* itself catalog-driven — today it hand-lists five
-devices and filters options by the `opt_` prefix. This is required to close Phase
-3, not an optional extra; it is only low-urgency because its three configurable
-devices already surface their user options and the faceted browse covers every
-product it doesn't configure.
+**One deliberate scope call, not a gap:** the per-device `workshop.js` builds
+only the five devices that have a BOM + firmware, so "configure *every* product"
+is the faceted browse's job (§6B), not the workshop's — the workshop has no parts
+list for an accessory enclosure. Both pickers now read the manifest and classify
+options by `audience`, not the `opt_` prefix, so Phase 3 is closed.
 
 Two honest gaps the manifest still marks rather than hides: `env` ratings come
 from a small curated overlay in the generator (there is no parseable rating

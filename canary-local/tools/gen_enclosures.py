@@ -730,6 +730,10 @@ def scad_options(scads: dict, scad: str, bom_rows_by_dev: dict, dev: str,
                 "group": g["name"].split("—")[0].split(" you have")[0].strip(),
                 "label": label.strip() or p["name"],
                 "consequence": consequence.strip(),
+                # Every option this transform emits is user-facing (opt_* + the
+                # mount_style enum); the tag lets the workshop pick options by
+                # audience instead of the leaky opt_ prefix (see catalog.json).
+                "audience": "user",
                 "default": p["default"] == "true",
                 **({"enum": p["enum"]} if "enum" in p else {}),
                 **({"bom": link["bom"]} if link["bom"] else {}),

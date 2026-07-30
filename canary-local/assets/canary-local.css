@@ -610,6 +610,9 @@ footer p { max-width: 720px; margin: 0 auto; }
   gap: 26px; }
 @media (max-width: 900px) { .ws-configure { grid-template-columns: 1fr; } }
 
+.ws-catfacts { font-size: 12.5px; margin: 2px 0 10px; }
+.ws-catfacts-cap { color: var(--canary-deep); }
+
 .ws-pkgs { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 10px; margin: 8px 0 4px; }
 .ws-pkg { display: flex; flex-direction: column; gap: 4px; text-align: left;
