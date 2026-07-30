@@ -39,6 +39,7 @@ README stays the narrative source for those stories.
 | `esp32-c3` | ESP32-C3 | 15 | 2 (13%) | 6 | 5 | 2 |
 | `waveshare-esp32c6-lcd147` | ESP32-C6 | 24 | 10 (42%) | 2 | 4 | 8 |
 | `waveshare-esp32c6-lcd169` | ESP32-C6 | 24 | 7 (29%) | 0 | 7 | 10 |
+| `waveshare-esp32s3-amoled206` | ESP32-S3 | 33 | 21 (64%) | 0 | 5 | 7 |
 | `waveshare-esp32s3-lcd147` | ESP32-S3 | 38 | 11 (29%) | 1 | 6 | 20 |
 | `waveshare-esp32s3-lcd43` | ESP32-S3 | 33 | 24 (73%) | 0 | 4 | 5 |
 | `waveshare-esp32s3-lcd43b` | ESP32-S3 | 33 | 30 (91%) | 0 | 2 | 1 |
@@ -171,6 +172,57 @@ Capabilities on: `HAS_BACKLIGHT_PWM`, `HAS_BATTERY`, `HAS_BLE`, `HAS_DISPLAY`, `
 Capabilities off (room to grow): `HAS_CAMERA`, `HAS_NATIVE_USB`, `HAS_PSRAM`, `HAS_RGBLED`, `HAS_SD_CARD`, `HAS_TOUCH`.
 
 **Thermals:** Battery charging warms the PCB next to the PCF85063 crystal (clock drift) and the QMI8658 (bias) — charge with the backlight dimmed and don't calibrate the IMU mid-charge. Die-temp watchdog is the runtime gauge.
+
+### `waveshare-esp32s3-amoled206` — Waveshare ESP32-S3-Touch-AMOLED-2.06
+
+ESP32-S3 · flash 32 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32s3-amoled206/pins/pins.h)
+
+**21/33 committed** · 0 assigned · 5 conditional · **7 free** (3 ADC-capable)
+
+| GPIO | bucket | held by / trade | notes |
+|---|---|---|---|
+| 0 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | sleep-wake, strap⚠ |
+| 1 | committed | SD_PIN_CMD | ADC, sleep-wake |
+| 2 | committed | SD_PIN_CLK | ADC, sleep-wake |
+| 3 | committed | SD_PIN_D0 | ADC, sleep-wake, strap⚠ |
+| 4 | committed | LCD_PIN_SDIO0 | ADC, sleep-wake |
+| 5 | committed | LCD_PIN_SDIO1 | ADC, sleep-wake |
+| 6 | committed | LCD_PIN_SDIO2 | ADC, sleep-wake |
+| 7 | committed | LCD_PIN_SDIO3 | ADC, sleep-wake |
+| 8 | committed | LCD_PIN_RST | ADC, sleep-wake |
+| 9 | committed | TOUCH_PIN_RST | ADC, sleep-wake |
+| 10 | **free** | — | ADC, sleep-wake |
+| 11 | committed | LCD_PIN_SCLK | ADC, sleep-wake |
+| 12 | committed | LCD_PIN_CS | ADC, sleep-wake |
+| 13 | **free** | — | ADC, sleep-wake |
+| 14 | committed | I2C_PIN_SCL | ADC, sleep-wake |
+| 15 | committed | I2C_PIN_SDA | ADC, sleep-wake |
+| 16 | committed | I2S_PIN_MCLK | ADC, sleep-wake |
+| 17 | committed | SD_PIN_CS | ADC, sleep-wake |
+| 18 | **free** | — | ADC, sleep-wake |
+| 19 | conditional | USB-Serial/JTAG — free only if you give up USB | ADC, sleep-wake |
+| 20 | conditional | USB-Serial/JTAG — free only if you give up USB | ADC, sleep-wake |
+| 21 | **free** | — | sleep-wake |
+| 38 | committed | TOUCH_PIN_INT |  |
+| 39 | **free** | — |  |
+| 40 | committed | I2S_PIN_DOUT |  |
+| 41 | committed | I2S_PIN_BCLK |  |
+| 42 | committed | I2S_PIN_DIN |  |
+| 43 | conditional | UART0 console — free only if you give up the serial log |  |
+| 44 | conditional | UART0 console — free only if you give up the serial log |  |
+| 45 | committed | I2S_PIN_WS | strap⚠ |
+| 46 | committed | AUDIO_PIN_PA_EN | strap⚠ |
+| 47 | **free** | — |  |
+| 48 | **free** | — |  |
+
+⚠ 1 pin define(s) are `-1` — not wired OR not yet verified (see the comments in pins.h): `LCD_PIN_BL`. Free counts above may shrink as these resolve.
+
+Peripheral demand (declared pin map vs MCU): SPI 1/2 · I2C 1/2 · UART 0/3 · RMT TX 0/4 · LEDC 0/8.
+
+Capabilities on: `HAS_AMOLED`, `HAS_BATTERY`, `HAS_BLE`, `HAS_IMU`, `HAS_PMU`, `HAS_PSRAM`, `HAS_RTC`, `HAS_SD_CARD`, `HAS_SPEAKER`, `HAS_TOUCH`, `HAS_USB_CDC`, `HAS_WIFI`.
+Capabilities off (room to grow): `HAS_CAMERA`, `HAS_HAPTIC`, `HAS_MICROPHONE`.
+
+**Thermals:** Skin contact, so thermals are a comfort question before they are a silicon one. AMOLED on a mostly-black face is cheap and the panel is off most of the time (wake-on-raise); the real budget is radio duty. Charging a Li-po against a wrist is the case to watch — dock it, don't wear it charging.
 
 ### `waveshare-esp32s3-lcd147` — Waveshare ESP32-S3-LCD-1.47
 

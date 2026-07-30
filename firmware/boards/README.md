@@ -32,6 +32,7 @@ if it drifts from the pin maps).
 | `waveshare-esp32s3-lcd147` | ESP32-S3 | compile-tested | canary-display | Nightstand Line 1.47" (USB-A stick) — same ST7789 172x320 panel, all pins differ, 8 MB PSRAM (can animate); `nightstand` flavor (env `canary-display-nightstand-s3`), bench pending |
 | `waveshare-esp32s3-touch-lcd169` | ESP32-S3 | compile-tested | canary-display | Nightstand Line TOUCH member 1.69" (battery) — ST7789V2 240x280 (20-px row offset) + CST816T touch, QMI8658 IMU + PCF85063 RTC, battery charging, S3R8 16MB/8MB octal; `touch169` flavor (env `canary-display-touch169`), pin map VERIFY-tagged (vendor demo layout), bench pending |
 | `waveshare-esp32s3-lcd7` | ESP32-S3 | compile-tested | canary-display | Nightstand Line 7" big glass — 800x480 RGB + GT911 5-point touch + CH422G; electrically the 4.3" Dash at 7", reuses the dash HAL (env `canary-display-dash7`), bench pending |
+| `waveshare-esp32s3-amoled206` | ESP32-S3 | compile-tested | — (Phase 0) | **The Tin Can** wrist board — 2.06" 410x502 AMOLED (CO5300 QSPI, brightness is a panel command), FT3168 touch (NOT the CST9220 the store copy claims), QMI8658 + PCF85063 + AXP2101 + Li-po, 32MB/8MB octal. **No vibration motor** — a DRV2605L + LRA on the I²C port is required hardware. Mics present and deliberately unused. Pin map from the vendor tree, bench pending |
 
 **Tiers** (defined in [`../HARDWARE.md`](../HARDWARE.md)):
 **verified** = CI-built *and* validated on real hardware by a maintainer;
