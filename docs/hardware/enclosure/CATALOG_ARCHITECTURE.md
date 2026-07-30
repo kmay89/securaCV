@@ -290,10 +290,20 @@ duplicated.
    engineering knobs kept in a collapsed read-only block, and an OpenSCAD
    parameter export. Options come from `option.audience`, not the `opt_` prefix,
    so non-prefixed user options finally show. Guarded by
-   `canary-local/tests/catalog_lab.test.js`. ⬜ **Still to do:** generalize
-   `workshop.js`'s configurator to every product via the manifest (today it hand-
-   lists 5 devices and filters options by the `opt_` prefix), and add facets
-   (§6B).
+   `canary-local/tests/catalog_lab.test.js`. ✅ **Faceted browse done (§6B)** —
+   a new `catalog.html` / `catalog-browse.js` renders a gallery over **all** 29
+   manifest products with facets that narrow (family · fits-device · environment
+   · status · type · has-options), plus per-card env badges (honest "target",
+   never verified), sideways `alternatives` links, and "configure in the
+   workshop" / "open in OpenSCAD" handoffs. This is the "generalize to every
+   product" path the per-device workshop can't give (it only configures the five
+   devices with firmware + a BOM). Guarded by
+   `canary-local/tests/catalog_browse.test.js`. ⬜ **Still to do:** make the
+   per-device `workshop.js` *configurator* itself catalog-driven (today it hand-
+   lists 5 devices and filters options by the `opt_` prefix); note its 3
+   configurable devices already surface their user options, so the practical gap
+   is the non-`opt_` options on the accessory/display products the browse now
+   covers.
 4. **Add the guided funnel (§6A) + remix rail (§6D).**
 5. **Make the showroom manifest-driven** — delete the hand `PRODUCTS` array;
    render products/variants/status/choreography from the manifest at the pinned
