@@ -679,6 +679,10 @@ static void render(uint32_t now) {
   st.page = g_page;
   st.night = night_look;
   st.wifi_ok = canary::net::wifi_connected();
+  // Name the cause on the glass, not just the symptom.
+  st.wifi_reason =
+      st.wifi_ok ? nullptr
+                 : canary::net::join_failure_label(canary::net::wifi_last_failure());
   st.mqtt_ok = canary::net::mqtt_connected();
   st.acked = fleet.ack_active(now);
   st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
@@ -689,6 +693,10 @@ static void render(uint32_t now) {
   canary::ui::DashState st;
   st.night = night_look;
   st.wifi_ok = canary::net::wifi_connected();
+  // Name the cause on the glass, not just the symptom.
+  st.wifi_reason =
+      st.wifi_ok ? nullptr
+                 : canary::net::join_failure_label(canary::net::wifi_last_failure());
   st.mqtt_ok = canary::net::mqtt_connected();
   st.acked = fleet.ack_active(now);
   st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
@@ -699,6 +707,10 @@ static void render(uint32_t now) {
   canary::ui::PortraitState st;
   st.night = night_look;
   st.wifi_ok = canary::net::wifi_connected();
+  // Name the cause on the glass, not just the symptom.
+  st.wifi_reason =
+      st.wifi_ok ? nullptr
+                 : canary::net::join_failure_label(canary::net::wifi_last_failure());
   st.mqtt_ok = canary::net::mqtt_connected();
   st.acked = fleet.ack_active(now);
   st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
@@ -1139,6 +1151,26 @@ void loop() {
 
   // ── Network supervision ──
   canary::net::wifi_loop(now);
+
+#if defined(FEATURE_ONBOARDING) && FEATURE_ONBOARDING
+  // The gap the boot-time check above cannot cover. `provision_needed()` is
+  // true only for PLACEHOLDER credentials; credentials that are set but WRONG
+  // — a mistyped password, an SSID that was renamed, a network that turned out
+  // to be 5 GHz-only — sail straight past it into a join that can never
+  // succeed. Before, that meant a reboot loop; now the device stays up, which
+  // is better but still leaves a keyboard-less operator with no way to fix it.
+  //
+  // So once the shared policy says this failure is one a human could fix, and
+  // we have never been online since power-on, raise the same wizard. It is
+  // blocking and returns with credentials persisted, exactly as at boot.
+  // wifi_wants_setup() is false forever after a single successful association,
+  // so a device that has been running for months never does this.
+  if (canary::net::wifi_wants_setup()) {
+    log_line("WIFI", "Can't join with the saved credentials — reopening setup.");
+    canary::net::provision_run(g_display_ok);
+    canary::net::wifi_init_or_reboot();  // adopt whatever the wizard joined
+  }
+#endif
   if ((int32_t)(now - g_last_diag_ms) >= 1000) {
     g_last_diag_ms = now;
     canary::diag::loop(now);

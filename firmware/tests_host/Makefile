@@ -79,6 +79,14 @@ TESTCON_BIN = $(BUILD_DIR)/test_test_console
 BOOTPOL_HDR = ../common/health/boot_policy.h
 BOOTPOL_BIN = $(BUILD_DIR)/test_boot_policy
 
+# Fleet-wide Wi-Fi join/retry rules (common/network/wifi_join_policy.h): which
+# failures a human can fix, how long to back off, and the rule that a link
+# which has NEVER associated must never be rebooted. That last one is the
+# 4-inch display's "setup loop" — boot join times out, board reboots, identical
+# join fails again, forever — reproduced as a unit test so it cannot come back.
+WIFIJOIN_HDR = ../common/network/wifi_join_policy.h
+WIFIJOIN_BIN = $(BUILD_DIR)/test_wifi_join_policy
+
 # Power-event lineage + outage log (common/power/power_events.h): the pure
 # decision half of "harden against brownouts / flickers / outages and keep a
 # correct log of when the power went out." Proves the whole classification table
@@ -212,6 +220,9 @@ $(TESTCON_BIN): test_test_console.cpp $(TESTCON_HDR) Makefile | $(BUILD_DIR)
 $(BOOTPOL_BIN): test_boot_policy.cpp $(BOOTPOL_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_boot_policy.cpp -o $@
 
+$(WIFIJOIN_BIN): test_wifi_join_policy.cpp $(WIFIJOIN_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ test_wifi_join_policy.cpp
+
 $(POWEREVT_BIN): test_power_events.cpp $(POWEREVT_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_power_events.cpp -o $@
 
@@ -248,7 +259,7 @@ $(LOOK_BIN): test_look_engine.cpp $(LOOK_SRC) $(LOOK_HDRS) Makefile | $(BUILD_DI
 $(TUNECON_BIN): test_tuning_console.cpp $(TUNECON_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_tuning_console.cpp -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(TUNECON_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(WIFIJOIN_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(TUNECON_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -257,6 +268,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(USBONB_BIN)
 	./$(TESTCON_BIN)
 	./$(BOOTPOL_BIN)
+	./$(WIFIJOIN_BIN)
 	./$(POWEREVT_BIN)
 	./$(SCENE_BIN)
 	./$(FLEETVIEW_BIN)

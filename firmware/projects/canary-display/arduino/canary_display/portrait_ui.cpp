@@ -267,7 +267,10 @@ void portrait_ui_update(const Fleet& fleet, uint32_t now,
   // Glance line: count, and — honesty first — a dead link is never hidden.
   const bool link_down = !st.wifi_ok || !st.mqtt_ok;
   if (link_down) {
-    lv_label_set_text(s_glance, !st.wifi_ok ? "wifi down" : "broker down");
+    lv_label_set_text(s_glance,
+                      !st.wifi_ok
+                          ? (st.wifi_reason ? st.wifi_reason : "wifi down")
+                          : "broker down");
     lv_obj_set_style_text_color(s_glance, sev_color(Sev::Warn, night), 0);
   } else if (count == 0) {
     lv_label_set_text(s_glance, "no canaries yet");

@@ -31,6 +31,7 @@
 #include "canary/net/provision.h"
 #include "canary/net/provision_core.h"
 #include "canary/runtime_config.h"
+#include "network/wifi_join_policy.h"  // shared join-failure vocabulary (common/)
 #include "canary/hal/chime.h"
 #include "canary/hal/display.h"
 #include "canary/ui/onboard_ui.h"
@@ -434,12 +435,21 @@ void dns_pump() {
   }
 }
 
-const char* sta_failure_reason(wl_status_t st) {
+// Defers to the fleet-wide table. These strings used to be duplicated here and
+// in wifi_mgr.cpp under a comment asking a future reader to keep the two in
+// step by hand — and they had already drifted, so the same failure was
+// described one way on the boot log and another in the portal.
+canary::net::JoinFailure classify_status(wl_status_t st) {
   switch (st) {
-    case WL_NO_SSID_AVAIL: return "Network not found";
-    case WL_CONNECT_FAILED: return "Wrong password";
-    default: return "Couldn't connect";
+    case WL_NO_SSID_AVAIL:  return canary::net::JoinFailure::NotFound;
+    case WL_CONNECT_FAILED: return canary::net::JoinFailure::BadPassword;
+    case WL_IDLE_STATUS:    return canary::net::JoinFailure::NoAddress;
+    default:                return canary::net::JoinFailure::Unknown;
   }
+}
+
+const char* sta_failure_reason(wl_status_t st) {
+  return canary::net::join_failure_label(classify_status(st));
 }
 
 }  // namespace
@@ -582,12 +592,10 @@ void provision_run(bool glass_ok) {
           // Every failure carries its most likely fix (the portal shows a
           // longer version of the same tip). The classic silent killer is
           // a 5 GHz-only network the radio literally cannot see.
-          if (ws == WL_NO_SSID_AVAIL) {
-            ui_hint("it only sees 2.4 GHz wifi - not 5");
-          } else if (ws == WL_CONNECT_FAILED) {
-            ui_hint("passwords are case-sensitive");
-          } else {
-            ui_hint("try moving it closer to the router");
+          // Same shared table the boot path and the glass use, so the hint a
+          // user reads in the portal is the hint the device logs.
+          {
+            ui_hint(canary::net::join_failure_hint(classify_status(ws)));
           }
         }
         break;
