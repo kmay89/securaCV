@@ -102,15 +102,16 @@ export function wizardSteps(facts) {
       title: "Add the MQTT “post office” (Mosquitto)",
       what:
         "This is the mailbox your Canaries drop messages into. Home Assistant offers " +
-        "it as a one-click add-on called Mosquitto broker — you don’t configure " +
+        "it as a one-click app called Mosquitto broker — you don’t configure " +
         "anything, just install and start it.",
       do: [
-        "In HA: Settings → Add-ons → Add-on Store.",
+        "In HA: Settings → Apps → Install app (older Home Assistant calls these “Add-ons”).",
         "Find “Mosquitto broker”, open it, press Install, then Start.",
         "Turn on “Start on boot” and “Watchdog” so it always comes back.",
+        "Leave its Configuration tab alone — the defaults are right, and “Logins” there is the wrong place for your Canary account.",
       ],
       stuck: [
-        "No Add-on Store? You’re on HA Container/Core instead of HAOS — install a standalone Mosquitto, or switch to HAOS (recommended).",
+        "No Apps section (or Add-on Store)? You’re on HA Container/Core instead of HAOS — install a standalone Mosquitto, or switch to HAOS (recommended).",
         "Install spins forever? Give it a minute on slow SD cards, then reload the page.",
       ],
       check: "Mosquitto broker shows “Started”.",
@@ -196,7 +197,7 @@ export function wizardSteps(facts) {
       ],
       stuck: [
         "Nothing after a minute? Power-cycle the Canary; on first boot it can take a moment to join Wi-Fi.",
-        "Still nothing? In HA → Settings → Add-ons → Mosquitto → Log, you should see the Canary connect — if not, re-check the login (Step 3/5).",
+        "Still nothing? In HA → Settings → Apps → Mosquitto broker → Log, you should see the Canary connect — if not, re-check the login (Step 3/5).",
         "Truly stuck? The full guide and a checklist are one click below — you’re close, this is the last mile.",
       ],
       check: "My Canary shows up in Home Assistant. 🎉",

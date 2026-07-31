@@ -3299,18 +3299,24 @@ function hubShowHatch(receipt) {
       "then power it on.";
   const steps = [
     bootStep,
-    "First boot takes 10–20 minutes while Home Assistant unpacks and sets itself up — LED " +
-      "activity is it working, not a problem. Best to leave it plugged in for those minutes; " +
-      "if power does get cut, it nearly always recovers on the next boot, and the true worst " +
-      "case is simply re-flashing this card.",
+    "First boot usually takes under 10 minutes while Home Assistant unpacks and downloads " +
+      "itself, though a slow card can stretch it to 20 — LED activity is it working, not a " +
+      "problem. Best to leave it plugged in for those minutes; if power does get cut, it " +
+      "nearly always recovers on the next boot, and the true worst case is simply " +
+      "re-flashing this card.",
     accountMade
       ? `Open http://${HUB_HOST} and log in with the account you just made.`
       : `Open http://${HUB_HOST} on any device in your home and create your account.`,
     "Once you're in, give your Canaries their meeting point: in Home Assistant go to " +
-      "Settings → Add-ons → Add-on Store, install “Mosquitto broker”, and press Start. When " +
+      "Settings → Apps → Install app, choose “Mosquitto broker”, and press Start. When " +
       "Home Assistant then offers to set up the newly discovered “MQTT” integration, accept " +
       "with the defaults — they're exactly right for Canaries (the broker lives on the hub " +
       "itself, port 1883).",
+    "Now make the login your Canaries will use: the broker refuses anonymous connections, " +
+      "and Home Assistant's own reserved accounts don't apply to them. Turn on Advanced Mode " +
+      "in your profile, then Settings → People → Users → Add user — “securacv” and a " +
+      "password you'll reuse on each device. It needs no administrator rights. Type that " +
+      "same pair into the MQTT fields when you flash each Canary.",
     "Then follow “The Hub” guide to bring in your Canaries — securacv.com/lab → Home Assistant.",
   ];
   $("hub-hatch-steps").innerHTML = steps.map((s) => `<li>${esc(s)}</li>`).join("");
