@@ -148,8 +148,11 @@ the real hardware, not by eye:
 compensation.** Fixing fit in the slicer corrects the same error twice and
 throws off every other fit in the catalog.
 
-You only need to care about the stations a given part uses. For the 7"
-dashboard, that is **SLIDE**, **PRESS** and **SCREW**.
+You only need to care about the stations a given part uses. **For the 7"
+dashboard that is SLIDE and SCREW** — `tol_slide` sizes the glass and board
+pockets, `tol_hole` sizes the M3 clearance through the bezel ears. The case has
+**no press fit at all** (no magnet pocket, no light pipe), so a PRESS result
+changes nothing about it — don't reprint the bezel chasing one.
 
 ---
 
@@ -172,9 +175,10 @@ Retraction distance (anti-stringing): ______ mm
 
 > The catalog's defaults are for a well-calibrated machine and behave
 > conservatively. **The 7" dashboard deliberately runs looser** —
-> `tol_slide 0.25`, `tol_press 0.12`, `tol_hole 0.35` — because a 200 mm part
-> accumulates more thermal contraction across its span than a 70 mm one. If your
-> coupon says you print tight, that is the part that most wants the extra.
+> `tol_slide 0.25`, `tol_hole 0.35` — because a 200 mm part accumulates more
+> thermal contraction across its span than a 70 mm one. If your coupon says you
+> print tight, that is the part that most wants the extra. It declares no
+> `tol_press`, because it has no press fit for one to tune.
 
 ---
 

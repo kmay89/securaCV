@@ -25,6 +25,13 @@
 //            INVERTED: it must be NON-empty, because it is the contact patch
 //            the lip actually bears on. Empty = nothing retains the glass,
 //            which is exactly the v0.1 failure.
+//    locate — the slab pushed sideways by locate_slip. Also INVERTED: it must
+//            be NON-empty, i.e. the bezel's pocket physically stops the panel
+//            from wandering. The lip is flat and only retains the glass
+//            axially, so if the pocket were ever sized to the TRAY cavity
+//            instead of the slab, a board that overhangs the glass would let
+//            the panel slide until the window crossed the active area. This
+//            check fails the moment those two pockets get merged again.
 //
 //  The slab is modelled with the corner radius the source DECLARES (glass_r),
 //  because the question being asked is whether the model is consistent with
@@ -36,7 +43,8 @@
 
 use <canary_s3_lcd7.scad>
 
-check = "tray";   // ["tray","glass","lip"]
+check = "tray";   // ["tray","glass","lip","locate"]
+locate_slip = 1.5;   // mm of sideways wander the pocket must already refuse
 
 // Read the real derived stack out of the source — no duplicated arithmetic.
 S = lcd7_stack();
@@ -60,5 +68,11 @@ else if (check == "glass")
 else if (check == "lip")
     // inverted check — this SHOULD produce geometry (the bearing footprint)
     intersection() { assembled_bezel(); glass_slab(0.5, glass_t); }
+else if (check == "locate")
+    // inverted check — the displaced slab MUST foul the pocket wall
+    intersection() {
+        assembled_bezel();
+        translate([locate_slip, locate_slip, 0]) glass_slab(glass_t);
+    }
 else
-    assert(false, "check must be one of tray / glass / lip");
+    assert(false, "check must be one of tray / glass / lip / locate");

@@ -6472,6 +6472,16 @@
        "name": "vent_side_n",
        "default": "3",
        "comment": "per side, stacked toward the top corners"
+      },
+      {
+       "name": "tol_slide",
+       "default": "0.25",
+       "comment": "the glass/board pockets — the SLIDE station on the coupon"
+      },
+      {
+       "name": "tol_hole",
+       "default": "0.35",
+       "comment": "M3 clearance through the bezel ears — the SCREW station"
       }
      ]
     },
@@ -6498,6 +6508,15 @@
        "name": "r_out",
        "default": "6.0",
        "comment": "outer corner radius"
+      },
+      {
+       "name": "m3_nom",
+       "default": "3.0",
+       "comment": "M3 shank"
+      },
+      {
+       "name": "screw_c",
+       "default": "m3_nom + tol_hole"
       }
      ]
     },
@@ -6522,6 +6541,15 @@
       {
        "name": "yc",
        "default": "max(glass_h, pcb_h) + 2*tol_slide"
+      },
+      {
+       "name": "xg",
+       "default": "glass_w + 2*tol_slide",
+       "comment": "bezel glass pocket — always the slab"
+      },
+      {
+       "name": "yg",
+       "default": "glass_h + 2*tol_slide"
       },
       {
        "name": "cav_d",

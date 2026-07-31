@@ -46,11 +46,10 @@
 //  glass + mount holes precisely but not every connector centre. MEASURE the
 //  USB-C / UART / CAN / RS485 / battery positions on YOUR Rev before printing.
 //  ⚠️ SO IS pcb_h. Published summaries of this board disagree about the PCB
-//  outline height (97.60 vs 126.20), so the cavity is sized to whichever of the
-//  glass and the PCB is larger and the case grows to fit either. MEASURE yours.
-//  If the PCB turns out to overhang the glass, the cavity walls no longer
-//  locate the slab and only the bezel lip centres it — the render echoes a
-//  NOTE with the resulting play when that happens.
+//  outline height (97.60 vs 126.20), so the tray cavity is sized to whichever of
+//  the glass and the PCB is larger and the case grows to fit either, while the
+//  bezel's glass pocket stays sized to the slab so it always locates the panel.
+//  MEASURE yours; the render echoes a NOTE if the board is the bigger part.
 //
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
 //  Orientation: landscape, +X = width, +Y = up, +Z = toward the glass.
@@ -125,8 +124,12 @@ vent_bottom_n = 5;       // per side
 vent_sides = true;       // side (±X) chimneys, kept clear of the port slots
 vent_side_n = 3;         // per side, stacked toward the top corners
 
-/* [Print tolerances] */
-tol_slide = 0.25; tol_press = 0.12; tol_hole = 0.35;
+/* [Print tolerances] — only the two this case actually has fits for. There is
+   no press fit anywhere in this design (no magnet pocket, no light pipe), so
+   tol_press is deliberately absent rather than declared and ignored: a knob
+   that tunes nothing sends you through reprints that cannot change the part. */
+tol_slide = 0.25;    // the glass/board pockets — the SLIDE station on the coupon
+tol_hole  = 0.35;    // M3 clearance through the bezel ears — the SCREW station
 
 /* [Shell] */
 wall   = 3.0;    // side wall thickness (big case → thicker)
@@ -140,7 +143,12 @@ r_out  = 6.0;    // outer corner radius
    an empty gap). Heads sit in a counterbore on the bezel's outboard ears,
    clear of the glass. */
 lob_d = 9.0;  lob_o = 3.0;   // lobe Ø / diagonal offset outboard of the cavity corner
-lob_pilot = 2.7;  screw_c = 3.4;  cb_d = 6.0;  cb_h = 2.0;
+m3_nom = 3.0;                // M3 shank
+lob_pilot = 2.7;  cb_d = 6.0;  cb_h = 2.0;
+// Clearance is DERIVED from the coupon's SCREW tolerance, so dialling tol_hole
+// after a coupon print actually moves this hole. (Self-tap pilots are not:
+// lob_pilot/m3_pilot are undersize on purpose, so the thread forms.)
+screw_c = m3_nom + tol_hole;
 
 /* [Stand] */
 opt_stand = true;
@@ -152,10 +160,17 @@ $fa = 3; $fs = 0.5;
 // ----------------------------------------------------------------------------
 //  Derived. Axis: X = width, Y = height, Z = toward glass.
 // ----------------------------------------------------------------------------
-// The cavity takes whichever is bigger, the glass or the board — normally the
-// glass, but a PCB that overhangs it must still drop in.
+// TWO pockets, not one. The tray cavity takes whichever is bigger, the glass or
+// the board, so an overhanging PCB still drops in. The bezel's pocket is always
+// sized to the GLASS — a shared cavity sized to a taller PCB would leave the
+// slab centimetres of lateral play, and the lip is flat: it retains the glass
+// axially but cannot centre it, so the panel could slide until the window
+// crossed the active area. The glass pocket lives in the glass band, above the
+// PCB plane, so it never fouls the board however big the board is.
 xc = max(glass_w, pcb_w) + 2*tol_slide;
 yc = max(glass_h, pcb_h) + 2*tol_slide;
+xg = glass_w + 2*tol_slide;   // bezel glass pocket — always the slab
+yg = glass_h + 2*tol_slide;
 xo = xc + 2*wall;             yo = yc + 2*wall;             // outer
 // Depths, per the stack-up in the header: cav_d is everything BELOW the glass
 // back, bez_h is the glass and the face above it. glass_t belongs to exactly
@@ -206,16 +221,16 @@ echo(str("Canary 7in touch v0.2-dev — outer ", xo, " x ", yo, " x ", bez_h + c
 echo(str("  stack: floor ", z_floor, " | PCB under ", z_pcb_under, " | PCB top ",
          z_pcb_top, " | glass back ", z_glass, " | closed height ",
          back_t + cav_d + bez_h, " mm"));
-// The cavity walls locate the glass only while the glass is the widest thing in
-// it. If a measured PCB overhangs the slab, the cavity grows to the board and
-// the glass gains that much side-to-side slop — the bezel lip is then the only
-// thing holding it centred. Say so rather than letting it pass silently.
+// When the board is the bigger part, the tray cavity opens up to clear it and
+// stops being what locates the slab — the bezel's glass pocket takes that job.
+// Worth saying out loud, because it changes which part you check first if the
+// panel ends up sitting crooked.
 // (Phrased without the word CI greps for; this is a note, not a build failure.)
 if (pcb_w > glass_w || pcb_h > glass_h)
-    echo(str("  NOTE: PCB overhangs the glass — slab has ",
+    echo(str("  NOTE: PCB overhangs the glass by ",
              max(pcb_w - glass_w, 0)/2, " mm X / ",
-             max(pcb_h - glass_h, 0)/2, " mm Y of play in the cavity; ",
-             "the bezel lip alone centres it"));
+             max(pcb_h - glass_h, 0)/2, " mm Y, so the tray cavity is board-sized; ",
+             "the bezel's glass pocket is what centres the slab"));
 
 // Exported for canary_s3_lcd7_fitcheck.scad, so the assembly check reads the
 // real derived stack instead of a copy that can drift out of step with it.
@@ -247,8 +262,9 @@ module bezel() {
         linear_extrude(bez_h) outline2d();
         // viewing window: the active area opened by win_margin all round
         translate([0, aa_dy, -0.1]) linear_extrude(face_t + 0.2) rrect2d(view_w, view_h, 3);
-        // glass cavity behind the face ledge
-        translate([0, 0, face_t]) linear_extrude(bez_h) rrect2d(xc, yc, r_cav);
+        // glass pocket behind the face ledge — sized to the SLAB, not the tray
+        // cavity, so the bezel locates the panel laterally as well as holding it
+        translate([0, 0, face_t]) linear_extrude(bez_h) rrect2d(xg, yg, r_cav);
         // M3 clearance through each ear + a head counterbore on the front face
         // (the screw threads into the back tray's full-height corner post)
         for (p = lobes()) translate([p[0], p[1], -0.1]) {
