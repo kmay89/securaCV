@@ -162,6 +162,20 @@ function toggleTheme() {
 async function boot() {
   initShell();
 
+  // The shell painted, so this launch actually arrived — tell the launch
+  // guard before doing anything that could fail.
+  //
+  // What it is watching for is the launch where none of this runs at all: a
+  // force quit can leave the webview's saved session mid-write, and the
+  // synchronous `localStorage` read at the top of this file then wedges before
+  // first paint. From outside, that is a Dock icon bouncing forever with no
+  // window and nothing to click. The native side can only recognise it by its
+  // absence, so a good launch has to say so out loud. Deliberately early and
+  // deliberately not awaited: a catalog that won't load is a visible error in
+  // a working window, not a failed launch.
+  // See src-tauri/src/launch_guard.rs.
+  invoke("ui_ready").catch(() => { /* older backend — nothing to report to */ });
+
   try {
     state.catalog = await invoke("load_catalog");
     renderAccessNotes();

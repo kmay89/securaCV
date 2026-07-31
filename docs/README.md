@@ -68,6 +68,15 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 
 ## Set up
 
+- [**Reaching your fleet from away**](away_access.md) — read this *before* you
+  follow anyone's advice about remote access. The popular answer (forward port
+  8123, put a certificate on it) publishes your hub's login form to the
+  internet; the correct answer is free, takes ten minutes, and opens no port
+  at all. One blessed path, the anti-patterns named out loud, an honest
+  accounting of what a subscription would actually buy you — and
+  `tools/away_access_check.py`, which asks your own router what it's
+  forwarding so the answer is a verdict instead of a hope.
+
 <details>
 <summary><strong>Home Assistant</strong> — the best-supported path</summary>
 

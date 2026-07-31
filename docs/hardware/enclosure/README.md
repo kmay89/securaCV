@@ -47,6 +47,7 @@ the website's carried copies after a CAD change.
 - [Engineering & materials](#engineering--materials-security-build) — durability, materials, thermal kit, finish
 - [Best-practice printing tips](./printing_best_practices.md) — the *why* behind a good print: strength, fit, finish, durability (slicer-agnostic)
 - [Printing in PETG — Cura guide](./printing_petg_cura.md) — reasoned settings sheet, per-model cheat-sheet, importable profile
+- [Which printer to buy or support](./printer_selection.md) — what these parts actually demand, upfront vs running vs maintenance cost, and the decision
 - [Field & environmental ratings](./field_ratings.md) — what "IP67"/"MIL-SPEC" honestly means here, the CER ladder + home test protocols
 - [Catalog architecture](./CATALOG_ARCHITECTURE.md) — how models, versions, flavors, options, fit, and remixes are organized, and how a user picks the right case (the selection UX)
 - Device deep-dives: [WAP](#canary-wap--enclosure-v07) · [Vision](#canary-vision--enclosure-v02) · [Doorbell](#canary-vision--doorbell-v01) · [Sense radome](#canary-sense--radome-enclosure-v01)
@@ -807,6 +808,7 @@ exits the bottom wall (`xiao_usb_z` — measure the seated stack).
 ## Links
 - [Best-practice printing tips](./printing_best_practices.md) — the *why*: strength, fit, finish, durability (slicer-agnostic)
 - [Printing in PETG — Cura guide](./printing_petg_cura.md) — settings sheet, per-model cheat-sheet, importable profile
+- [Which printer to buy or support](./printer_selection.md) — cost, reliability and the production decision
 - [Field & environmental ratings](./field_ratings.md) — hardware limits, the CER ladder, home test protocols
 - [Peripheral Build Plan & BOM](../canary_peripheral_build_plan.md) — parts, wiring, climate/IP guidance
 - [Canary Sense design doc](../../canary_sense_mr60bha2_design.md) — the radar witness this houses

@@ -108,6 +108,46 @@ any platform.
 
 ## Entries
 
+### 2026-07-31 — A self-updater that replaces its own bundle in place, with nothing on disk to say it was interrupted
+
+- **Symptom:** the desktop Flasher was force quit, and from then on it never
+  opened again — the Dock icon bounced, no window ever appeared, and the only
+  way out was another force quit. Every launch behaved identically, so it
+  looked permanent, and the app said nothing because the thing that failed was
+  the launch itself.
+- **Cause:** `tauri-plugin-updater`'s `install` **moves the running `.app`
+  bundle**. On macOS 2.10.1 the ordinary path is two `rename`s (current app out
+  to a temp backup, new app in), so a kill between them leaves *no app at that
+  path*; the privileged path (`rm -rf && mv` via AppleScript) is not atomic and
+  can leave a partial bundle that macOS refuses to finish launching. Either
+  way the repair would have to run from the copy that moved, so it can't.
+  Two smaller versions of the same shape were live alongside it: sidecars
+  (`espflash`, `rpiboot`) survive SIGKILL to the parent and keep holding the
+  board — `rpiboot` waits for a Pi *forever* — and a force quit mid-write can
+  leave the webview's `localStorage` SQLite store in a state whose recovery
+  wedges before first paint. Nothing anywhere recorded that a launch had been
+  attempted, so no launch could learn from the last one.
+- **Fix:** `desktop/src-tauri/src/launch_guard.rs` writes a breadcrumb as each
+  launch advances and reads the previous one **before `tauri::Builder`** — the
+  only moment when no webview is holding the store open. An install window is
+  marked on disk before the first byte is written, so an interrupted update is
+  *recognised* on the next launch and the user is told to reinstall (the only
+  cure) instead of guessing; sidecar PIDs are recorded while they run and
+  reaped on the next launch; a launch that never reported a usable window gets
+  its webview store cleared once — once, not in a loop.
+  **Generalize to every app target:** (1) if a target self-updates, something
+  durable must mark the window in which the bundle *moves* — and only that
+  window, not the download that precedes it, or a slow connection reads as a
+  broken install. Pair the marker with the running version: a marker naming the
+  version you are already running means the update landed, and warning there
+  tells the user to reinstall the copy they are using; (2) any app that spawns
+  sidecars must record their PIDs, because a force quit is not a clean exit and
+  nothing else will reap them; (3) a launch that can fail before its window
+  exists needs an on-disk record — an app that can only report failures through
+  its own UI cannot report the failure that matters most.
+  **Still owed:** `desktop-lab/` self-updates the same way (`self_update.rs`)
+  and has no install-window marker yet.
+
 ### 2026-07-27 (b) — An "anti-rot" `release: published` trigger that can never fire for the releases CI publishes
 
 - **Symptom:** every Vision module flash failed with *"no published release
