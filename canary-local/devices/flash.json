@@ -71,6 +71,7 @@
       "provisioning": "ap",
       "provisioning_note": "When it boots it hands you a WiFi network of its own — join it and a setup page opens automatically. Nothing to type here; no secrets ever touch the browser.",
       "wifi_nvs": "blob",
+      "broker_nvs": false,
       "hatch": {
         "kicker": "Canary hatched",
         "title": "Your Canary is on its perch.",
@@ -109,6 +110,7 @@
       "provisioning": "ap",
       "provisioning_note": "When it boots it hands you a WiFi network of its own — join it and a setup page opens automatically. Nothing to type here; no secrets ever touch the browser.",
       "wifi_nvs": "blob",
+      "broker_nvs": false,
       "hatch": {
         "kicker": "Canary hatched",
         "title": "Your Canary is on its perch.",
@@ -147,6 +149,7 @@
       "provisioning": "usb-secrets",
       "provisioning_note": "Fill in WiFi during the install and it’s written straight into the chip’s settings region — the signed generic release then joins YOUR network on first boot, no custom build needed. (Leave it empty and the firmware falls back to its compiled defaults, exactly as before.)",
       "wifi_nvs": "string",
+      "broker_nvs": true,
       "hatch": {
         "kicker": "Vision Canary hatched",
         "title": "Your Vision Canary is waking up.",
@@ -291,6 +294,7 @@
       "provisioning": "usb-secrets",
       "provisioning_note": "Fill in WiFi during the install and it’s written straight into the chip’s settings region — the signed generic release then joins YOUR network on first boot, no custom build needed. (Leave it empty and the firmware falls back to its compiled defaults, exactly as before.)",
       "wifi_nvs": "string",
+      "broker_nvs": true,
       "hatch": {
         "kicker": "Vision Canary hatched",
         "title": "Your Vision Canary is waking up.",
@@ -435,6 +439,7 @@
       "provisioning": "usb-secrets",
       "provisioning_note": "Fill in WiFi during the install and it’s written straight into the chip’s settings region — the signed generic release then joins YOUR network on first boot, no custom build needed. (Leave it empty and the firmware falls back to its compiled defaults, exactly as before.)",
       "wifi_nvs": "string",
+      "broker_nvs": true,
       "hatch": {
         "kicker": "Vision Canary hatched",
         "title": "Your Vision Canary is waking up.",
@@ -579,6 +584,7 @@
       "provisioning": "usb-secrets",
       "provisioning_note": "Fill in WiFi during the install and it’s written straight into the chip’s settings region — the signed generic release then joins YOUR network on first boot, no custom build needed. (Leave it empty and the firmware falls back to its compiled defaults, exactly as before.)",
       "wifi_nvs": "string",
+      "broker_nvs": true,
       "hatch": {
         "kicker": "Sense Canary hatched",
         "title": "Your Sense Canary is listening with radar.",
@@ -789,6 +795,7 @@
       "provisioning": "usb-secrets",
       "provisioning_note": "Fill in WiFi during the install and it’s written straight into the chip’s settings region — the signed generic release then joins YOUR network on first boot, no custom build needed. (Leave it empty and the firmware falls back to its compiled defaults, exactly as before.)",
       "wifi_nvs": "string",
+      "broker_nvs": true,
       "hatch": {
         "kicker": "Wellbeing Canary hatched",
         "title": "Your Sense Wellbeing Canary is listening with radar.",
@@ -1151,6 +1158,7 @@
       "provisioning": "on-glass",
       "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
       "wifi_nvs": "string",
+      "broker_nvs": true,
       "hatch": {
         "kicker": "Display hatched",
         "title": "Your glass is waking up.",
@@ -1190,6 +1198,7 @@
       "provisioning": "on-glass",
       "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
       "wifi_nvs": "string",
+      "broker_nvs": true,
       "hatch": {
         "kicker": "Display hatched",
         "title": "Your glass is waking up.",
@@ -1229,6 +1238,7 @@
       "provisioning": "on-glass",
       "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
       "wifi_nvs": "string",
+      "broker_nvs": true,
       "hatch": {
         "kicker": "Display hatched — with gears",
         "title": "Your glass is waking up, and it's a multi-tool.",
@@ -1268,6 +1278,7 @@
       "provisioning": "on-glass",
       "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
       "wifi_nvs": "string",
+      "broker_nvs": true,
       "hatch": {
         "kicker": "Display hatched",
         "title": "Your glass is waking up.",
@@ -1307,6 +1318,7 @@
       "provisioning": "on-glass",
       "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
       "wifi_nvs": "string",
+      "broker_nvs": true,
       "hatch": {
         "kicker": "Display hatched",
         "title": "Your glass is waking up.",
@@ -1346,6 +1358,7 @@
       "provisioning": "on-glass",
       "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
       "wifi_nvs": "string",
+      "broker_nvs": true,
       "hatch": {
         "kicker": "Display hatched",
         "title": "Your glass is waking up.",
@@ -1385,6 +1398,7 @@
       "provisioning": "on-glass",
       "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
       "wifi_nvs": "string",
+      "broker_nvs": true,
       "hatch": {
         "kicker": "Display hatched",
         "title": "Your glass is waking up.",

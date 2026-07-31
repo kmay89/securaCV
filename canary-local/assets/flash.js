@@ -3505,11 +3505,19 @@ function renderWifiFields(box, product) {
   sec.append(qrRow, qrOut);
 
   // Home Assistant / MQTT + a device id — the SAME NVS keys the native app bakes
-  // (desktop provisioning.rs), so a usb-secrets board flashed here is addressable
-  // on your broker out of the box instead of Wi-Fi-only. Optional; nothing leaves
-  // this page. Only for usb-secrets boards (Vision/Sense learn this from the flash).
+  // (desktop provisioning.rs), so a board flashed here is addressable on your
+  // broker out of the box instead of Wi-Fi-only. Optional; nothing leaves this
+  // page.
+  //
+  // Gated on `broker_nvs` — a CAPABILITY of the firmware, read out of its own
+  // runtime_config by gen_flash.py — and NOT on `provisioning`, which is a
+  // different question. Conflating them hid these fields from every display:
+  // displays are provisioned `on-glass`, yet canary-display reads
+  // mqtt_host/port/user/pass from NVS on every boot, and its glass portal only
+  // ever asked for WiFi. So a display could not be told which hub to talk to by
+  // any route at all, and simply sat there unable to reach one.
   let mqttUI = null;
-  if (prov === "usb-secrets") {
+  if (product && product.broker_nvs === true) {
     const ha = el("div", "flash-mqtt");
     ha.append(el("h3", null, "Home Assistant / MQTT (optional)"));
     ha.append(el("p", "fineprint",
