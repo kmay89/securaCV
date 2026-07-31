@@ -190,6 +190,7 @@ truth is [`firmware/build_matrix.json`](../firmware/build_matrix.json).
 | **Canary WAP** | The recommended first build — captive-portal setup, SD storage, mesh. XIAO ESP32-S3 Sense. |
 | **Canary Vision** | Camera + on-device person detection, reports to Home Assistant. |
 | **Canary Sense** | Presence and breathing radar (60 GHz MR60BHA2) — care and wellbeing without a camera to point. |
+| **Canary Pool** | *Design-stage* — an outdoor pool/spa water-chemistry node (pH · ORP · water temp · TDS) that publishes to the fleet; the Dash already renders its cards. ESP32 + Atlas EZO or industrial differential probes. See [pool water-monitor research](research/pool_water_monitor.md). |
 | **Canary Sentinel** | Multi-sensor fusion guardian: PIR + radar + WiFi CSI + WiFi/BLE + light, scored for corroboration across physically independent channels. Lite / Standard / Heavy tiers. |
 | **Canary Display** | The wall displays and dashes — the ambient surface a household actually looks at. |
 | **Canary OTA** | The signed pull-update path, with rollback. |

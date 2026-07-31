@@ -198,6 +198,19 @@ Only then do the sensor-swap + publish steps below make sense.
    (`securacv/<id>/{status,health,state,events,…}`). No allowlist to edit — the
    Dash auto-discovers via the `securacv/+/status` wildcard.
 
+   **Registration status (2026-07).** The *name* is now registered so it has one
+   spelling everywhere: `DEVICE_TYPE_CANARY_POOL` in the HA integration
+   ([`const.py`](../../custom_components/securacv/const.py)) and a **Canary Pool**
+   row on the glossary [device line](../GLOSSARY.md#the-device-line) + the FAQ
+   "which device" table, both marked design-stage. The Dash-side card layer
+   already renders a `canary-pool` witness (shipped separately). What is *not*
+   yet registered — and cannot be, because the board-registry guard
+   ([`check_board_registry.py`](../../firmware/scripts/check_board_registry.py))
+   requires every `used_by` to be a **buildable flavor** — is the
+   `firmware/flavors.json` env, the `firmware/boards/canary-pool*` board dir +
+   `boards.json` entry, and `config.h`. Those land with the node firmware fork
+   (steps 0–3), since a flavor with no compiling PlatformIO project fails CI.
+
 ---
 
 ## 7. Reference BOMs + rough cost (July-2026 USD, verify)

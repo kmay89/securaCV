@@ -368,6 +368,14 @@ MODALITY_METADATA = {
 # Canonical device_type literal for the MR60BHA2 radar witness (Track A + B).
 DEVICE_TYPE_CANARY_SENSE = "canary-sense"
 
+# Canonical device_type literal for the design-stage pool water-chemistry node
+# (docs/research/pool_water_monitor.md). Reserved here so the name has ONE
+# spelling across the firmware config, the Dash card layer, and this
+# integration. Deliberately NOT added to DEVICE_TYPE_MODALITY: a pool node
+# reports water chemistry, not a presence claim, so it has no sensing modality
+# on the timeline — modality_for() correctly resolves it to MODALITY_UNKNOWN.
+DEVICE_TYPE_CANARY_POOL = "canary-pool"
+
 
 def normalize_modality(value: str | None) -> str:
     """Coerce a free-form modality string to a known MODALITY_* literal.
