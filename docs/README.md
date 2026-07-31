@@ -179,7 +179,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [Tree map & consolidation](CONSOLIDATION.md) — what each similarly-named tree actually is (`src/` vs `kernel/` vs `privacy_witness_kernel/`, the desktop apps, the firmware lanes), plus open cleanup decisions
 - [Manual test plans](manual_test_plan_captive_portal.md) — captive portal · [MQTT](manual_test_plan_mqtt.md)
 - [The ambient display standard](standard/AMBIENT_DISPLAY_STANDARD.md) · [Canary Cards — the widget-card schema](standard/CANARY_CARDS.md)
-- Learnings from elsewhere: [Marlin & Klipper](marlin_klipper_learnings.md) · [OpenIPC](openipc_architecture_learnings.md)
+- Learnings from elsewhere: [Marlin & Klipper](marlin_klipper_learnings.md) · [OpenIPC](openipc_architecture_learnings.md) · [Frigate → a fast Pi 5 + ESP32-S3 daylight pipeline](frigate_pi5_learnings.md)
 
 </details>
 
