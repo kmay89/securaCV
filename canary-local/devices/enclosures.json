@@ -515,9 +515,9 @@
   {
    "id": "7-touch-dashboard-case",
    "name": "7″ touch dashboard case",
-   "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on moulded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Big convection grille (~52 cm² back + side chimney vents — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots, optional 20° desk cradle. Connector centres are NOMINAL — measure yours",
+   "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on moulded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (~52 cm² back grille + bottom-wall intake and top-wall exhaust — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots, optional 20° desk cradle. Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centres and `pcb_h` are NOMINAL — measure yours",
    "status": "in-development",
-   "note": "glass drops in, bezel lip 3.0, M3 corners",
+   "note": "glass drops in, lip 10.4, M3 corners",
    "device": "canary-display-dash",
    "preview": "preview_dev_lcd7.png",
    "parts": [],
@@ -6274,7 +6274,7 @@
    ]
   },
   "canary_s3_lcd7.scad": {
-   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.2-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -6286,6 +6286,9 @@
        "enum": [
         "bezel",
         "back",
+        "gauge",
+        "gauge_bezel",
+        "gauge_tray",
         "stand",
         "all"
        ]
@@ -6312,6 +6315,11 @@
        "comment": "glass + LCD module thickness at the edge — MEASURE"
       },
       {
+       "name": "glass_r",
+       "default": "3.0",
+       "comment": "corner radius of the glass slab — MEASURE. The cavity is"
+      },
+      {
        "name": "aa_w",
        "default": "154.88",
        "comment": "active area width"
@@ -6335,7 +6343,7 @@
       {
        "name": "pcb_standoff",
        "default": "5.0",
-       "comment": "glass back → PCB front (the white M3 standoffs) — MEASURE"
+       "comment": "glass back → PCB front (the white M3 standoffs) — MEASURE."
       },
       {
        "name": "pcb_t",
@@ -6344,7 +6352,7 @@
       {
        "name": "comp_h",
        "default": "11.0",
-       "comment": "tallest thing behind the PCB (USB-C / terminals / batt JST) — MEASURE"
+       "comment": "tallest thing behind the PCB (USB-C / terminals / batt JST) — MEASURE."
       },
       {
        "name": "pcb_w",
@@ -6354,7 +6362,7 @@
       {
        "name": "pcb_h",
        "default": "97.60",
-       "comment": "PCB outline height (Y)"
+       "comment": "PCB outline height (Y) — MEASURE (see the header warning)"
       }
      ]
     },
@@ -6365,7 +6373,7 @@
       {
        "name": "m3_dx",
        "default": "165.72",
-       "comment": "M3 hole pattern width  — MEASURE (drawing: 165.72 span)"
+       "comment": "M3 hole pattern width  — MEASURE. ⚠️ This is EXACTLY"
       },
       {
        "name": "m3_dy",
@@ -6386,7 +6394,12 @@
       {
        "name": "bez_lip",
        "default": "3.0",
-       "comment": "bezel overlap onto the glass border (big slab → wider lip)"
+       "comment": "MINIMUM acceptable overlap of the lip onto the glass border."
+      },
+      {
+       "name": "win_margin",
+       "default": "0.6",
+       "comment": "window opened this much beyond the active area on each"
       },
       {
        "name": "opt_bottom_ports",
@@ -6395,13 +6408,7 @@
       {
        "name": "opt_side_ports",
        "default": "true"
-      }
-     ]
-    },
-    {
-     "name": "Ventilation",
-     "note": "MUST let the backlight/SoC heat convect out",
-     "params": [
+      },
       {
        "name": "vent_back",
        "default": "true",
@@ -6438,13 +6445,43 @@
        "comment": "row pitch"
       },
       {
+       "name": "vent_top",
+       "default": "true",
+       "comment": "EXHAUST — slots through the top (+Y) wall"
+      },
+      {
+       "name": "vent_top_n",
+       "default": "14"
+      },
+      {
+       "name": "vent_bottom",
+       "default": "true",
+       "comment": "INTAKE — slots through the bottom (−Y) wall, placed"
+      },
+      {
+       "name": "vent_bottom_n",
+       "default": "5",
+       "comment": "per side"
+      },
+      {
        "name": "vent_sides",
        "default": "true",
-       "comment": "extra chimney slots high on the side walls"
+       "comment": "side (±X) chimneys, kept clear of the port slots"
       },
       {
        "name": "vent_side_n",
-       "default": "6"
+       "default": "3",
+       "comment": "per side, stacked toward the top corners"
+      },
+      {
+       "name": "tol_slide",
+       "default": "0.25",
+       "comment": "the glass/board pockets — the SLIDE station on the coupon"
+      },
+      {
+       "name": "tol_hole",
+       "default": "0.35",
+       "comment": "M3 clearance through the bezel ears — the SCREW station"
       }
      ]
     },
@@ -6471,6 +6508,15 @@
        "name": "r_out",
        "default": "6.0",
        "comment": "outer corner radius"
+      },
+      {
+       "name": "m3_nom",
+       "default": "3.0",
+       "comment": "M3 shank"
+      },
+      {
+       "name": "screw_c",
+       "default": "m3_nom + tol_hole"
       }
      ]
     },
@@ -6489,23 +6535,105 @@
      "note": "",
      "params": [
       {
+       "name": "xc",
+       "default": "max(glass_w, pcb_w) + 2*tol_slide"
+      },
+      {
+       "name": "yc",
+       "default": "max(glass_h, pcb_h) + 2*tol_slide"
+      },
+      {
+       "name": "xg",
+       "default": "glass_w + 2*tol_slide",
+       "comment": "bezel glass pocket — always the slab"
+      },
+      {
+       "name": "yg",
+       "default": "glass_h + 2*tol_slide"
+      },
+      {
        "name": "cav_d",
-       "default": "glass_t + pcb_standoff + pcb_t + comp_h",
-       "comment": "glass front ledge → back floor"
+       "default": "comp_h + pcb_t + pcb_standoff",
+       "comment": "tray floor top → glass back (= wall top)"
       },
       {
        "name": "bez_h",
-       "default": "face_t + glass_t + 1.0",
-       "comment": "bezel just retains the glass (the deep box is the back)"
+       "default": "face_t + glass_t",
+       "comment": "bezel outer face → glass back"
       },
       {
        "name": "r_in",
        "default": "max(1.0, r_out - wall)"
       },
       {
-       "name": "z_pcb_front",
-       "default": "glass_t + pcb_standoff",
-       "comment": "from the glass ledge (back frame)"
+       "name": "r_cav",
+       "default": "min(r_in, glass_r)",
+       "comment": "cavity corners can't out-round the slab"
+      },
+      {
+       "name": "z_floor",
+       "default": "back_t",
+       "comment": "tray floor top face"
+      },
+      {
+       "name": "z_pcb_under",
+       "default": "back_t + comp_h",
+       "comment": "PCB underside — top of the connector band"
+      },
+      {
+       "name": "z_pcb_top",
+       "default": "z_pcb_under + pcb_t"
+      },
+      {
+       "name": "z_glass",
+       "default": "back_t + cav_d",
+       "comment": "glass back = tray wall top"
+      },
+      {
+       "name": "port_h",
+       "default": "comp_h"
+      },
+      {
+       "name": "port_z",
+       "default": "z_floor + comp_h/2"
+      },
+      {
+       "name": "wall_vent_h",
+       "default": "cav_d - 3"
+      },
+      {
+       "name": "wall_vent_z",
+       "default": "z_floor + cav_d/2"
+      },
+      {
+       "name": "vent_span_x",
+       "default": "xc - 40",
+       "comment": "keep clear of the corner ears"
+      },
+      {
+       "name": "side_vent_y0",
+       "default": "(opt_side_ports ? side_open_dy + side_open_h/2 : 0) + 5"
+      },
+      {
+       "name": "lip_x",
+       "default": "(glass_w - view_w)/2"
+      },
+      {
+       "name": "lip_top",
+       "default": "(glass_h - view_h)/2 - aa_dy"
+      },
+      {
+       "name": "lip_bot",
+       "default": "(glass_h - view_h)/2 + aa_dy"
+      },
+      {
+       "name": "lip_min",
+       "default": "min(lip_x, lip_top, lip_bot)"
+      },
+      {
+       "name": "gauge_in",
+       "default": "34",
+       "comment": "how far inward from the cavity corner the sample reaches"
       }
      ]
     }

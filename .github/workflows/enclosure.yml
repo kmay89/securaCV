@@ -67,6 +67,60 @@ jobs:
           done
           exit $status
 
+      - name: 7in dashboard parts must actually assemble
+        run: |
+          # A valid mesh is not a valid case. v0.1 of the 7" case exported three
+          # watertight, single-part STLs whose bezel lip floated 5 mm clear of
+          # the glass — the depth was counted in both halves of the stack-up.
+          # These checks render the parts in their ASSEMBLED positions:
+          # collisions must be empty, and the lip's bearing patch must not be.
+          set -e
+          # Reading the result needs care. OpenSCAD exits 1 BOTH for a
+          # legitimately empty intersection AND for a source that failed to
+          # evaluate, and prints "Current top level object is empty." either
+          # way — so neither the exit status nor that marker alone proves the
+          # check ran. A silently broken .scad would otherwise report every
+          # collision check as passing while testing nothing.
+          # The discriminator is ERROR/WARNING in the diagnostics, so demand
+          # the full expected outcome: no diagnostics, plus the exact artifact
+          # (a file, or the empty marker) the check is supposed to produce.
+          fit() { # fit <check> <empty|solid>
+            rm -f /tmp/fit.stl
+            out=$(openscad --export-format binstl -o /tmp/fit.stl \
+                  -D "check=\"$1\"" canary_s3_lcd7_fitcheck.scad 2>&1) || true
+            if printf '%s' "$out" | grep -qE 'ERROR|WARNING'; then
+              echo "::error::7in fit check '$1': render failed, so nothing was verified"
+              printf '%s\n' "$out"; return 1
+            fi
+            if [ "$2" = empty ]; then
+              if [ -f /tmp/fit.stl ]; then
+                echo "::error::7in fit check '$1': parts intersect (must be empty)"; return 1
+              fi
+              if ! printf '%s' "$out" | grep -q 'Current top level object is empty'; then
+                echo "::error::7in fit check '$1': no output and no empty marker — did it evaluate?"
+                printf '%s\n' "$out"; return 1
+              fi
+              echo "fit check '$1': empty, as required"
+            else
+              if [ ! -f /tmp/fit.stl ]; then
+                echo "::error::7in fit check '$1': $3"
+                printf '%s\n' "$out"; return 1
+              fi
+              echo "fit check '$1': contact geometry present, as required"
+            fi
+            return 0
+          }
+          fit tray  empty || exit 1   # bezel vs rear tray — must not collide
+          fit glass empty || exit 1   # bezel vs the panel — must not crush it
+          fit lip    solid "nothing bears on the glass — the bezel retains nothing" || exit 1
+          fit locate solid "the pocket does not stop the slab sliding — is it sized to the tray cavity instead of the glass?" || exit 1
+          # And prove the gate can still fail: an unknown check must be
+          # rejected as a broken render, not silently pass as "empty".
+          if fit definitely-not-a-check empty >/dev/null 2>&1; then
+            echo "::error::fit gate is inert — a broken render passed as empty"; exit 1
+          fi
+          echo "fit gate self-test: a failed render is correctly rejected"
+
       - name: Invalid configs must fail their assertions
         run: |
           set -e

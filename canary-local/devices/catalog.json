@@ -828,7 +828,7 @@
   {
    "id": "s3_lcd7",
    "scad": "canary_s3_lcd7.scad",
-   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.2-dev)",
    "family": "canary-display-dash",
    "device_compat": [
     "canary-display-dash"
@@ -844,7 +844,7 @@
     {
      "id": "7-touch-dashboard-case",
      "name": "7″ touch dashboard case",
-     "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on moulded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Big convection grille (~52 cm² back + side chimney vents — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots, optional 20° desk cradle. Connector centres are NOMINAL — measure yours",
+     "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on moulded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (~52 cm² back grille + bottom-wall intake and top-wall exhaust — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots, optional 20° desk cradle. Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centres and `pcb_h` are NOMINAL — measure yours",
      "status": "in-development",
      "device": "canary-display-dash",
      "selects": {},
@@ -855,6 +855,9 @@
    "render_parts": [
     "bezel",
     "back",
+    "gauge",
+    "gauge_bezel",
+    "gauge_tray",
     "stand"
    ],
    "options": [
@@ -883,9 +886,25 @@
      "default": true
     },
     {
+     "id": "vent_top",
+     "type": "bool",
+     "label": "EXHAUST — slots through the top (+Y) wall",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "vent_bottom",
+     "type": "bool",
+     "label": "INTAKE — slots through the bottom (−Y) wall, placed",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "vent_sides",
      "type": "bool",
-     "label": "extra chimney slots high on the side walls",
+     "label": "side (±X) chimneys, kept clear of the port slots",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -899,7 +918,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 30,
+   "engineering_param_count": 57,
    "alternatives": [
     "dash_display"
    ],
@@ -907,8 +926,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 5,
-    "user_options": 5,
+    "options": 7,
+    "user_options": 7,
     "variant_axes": 0
    }
   },

@@ -49,6 +49,16 @@ DEVICE_OF = [
     (r"Combo", "canary-vision"),
 ]
 
+# .scad files in the enclosure folder that are TOOLING, not products — they
+# render no printable part and have no row in README.md's variant tables.
+# enclosures.json builds its scad map from those tables and so skips them
+# naturally; catalog.json globs the folder, so it has to be told. Without this
+# a verification harness shows up in the catalog as a product with no variants,
+# and catalog.test.js fails it for not being in the enclosures.json inventory.
+NON_PRODUCT_SCADS = {
+    "canary_s3_lcd7_fitcheck.scad",   # 7" bezel/tray assembly-interference check
+}
+
 # Preview meshes rendered for in-development designs the device sheets
 # feature. part → -D part=<...>; coarse curves keep files small.
 RENDER_PRESETS = {
@@ -1225,7 +1235,8 @@ def variant_from_set(s: dict, product_scad: str) -> dict:
 def catalog_main():
     md = (ENC / "README.md").read_text(errors="replace")
     sets = parse_tables(md)
-    scad_files = sorted(p.name for p in ENC.glob("*.scad"))
+    scad_files = sorted(p.name for p in ENC.glob("*.scad")
+                        if p.name not in NON_PRODUCT_SCADS)
     scads = {name: parse_scad(ENC / name) for name in scad_files}
     # Environment rating parsed from each model's own `// @env` header line.
     env_by_scad = {name: parse_env((ENC / name).read_text(errors="replace"))
