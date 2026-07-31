@@ -55,6 +55,14 @@ rustls-pemfile = { version = "2.1", optional = true }
 subtle = "2.5"
 tempfile = "3.10"
 
+[lints.rust]
+# `--cfg fuzzing` is set by cargo-fuzz and by nothing else. It gates the one
+# place we widen visibility for a fuzz harness (`vault::format`, so the
+# container parser can be driven directly without standing up a break-glass
+# token). Declaring it here keeps `clippy -D warnings` green — without this,
+# an unexpected-cfg warning is promoted to an error and fails the build.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+
 [dev-dependencies]
 trybuild = "1.0.89"
 proptest = "1"
