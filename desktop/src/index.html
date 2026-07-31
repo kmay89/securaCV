@@ -224,6 +224,45 @@
                 <span id="module-progress" class="muted"></span>
               </div>
               <canvas id="module-preview" class="module-preview hidden" role="img" aria-label="One attended local inference frame from the Vision module, with its detection boxes drawn"></canvas>
+
+              <!-- The live bench: see what it sees, tune the two on-module
+                   thresholds — no reflash needed. Mirrors the browser Lab's
+                   bench (same INVOKE/BREAK/TSCORE/TIOU protocol). -->
+              <div id="bench" class="bench">
+                <h4>Live bench — see what it sees</h4>
+                <p class="muted">Streams camera frames from the module to this app over
+                  your USB cable — the attended, one-time bench check from the guide.
+                  Frames render below and go nowhere else.</p>
+                <details id="bench-guide" class="hint hidden">
+                  <summary>How to get the live preview working</summary>
+                  <div id="bench-guide-body"></div>
+                </details>
+                <div class="row">
+                  <button id="bench-start" class="btn btn-primary btn-small">Start live preview</button>
+                  <button id="bench-stop" class="btn btn-ghost btn-small" disabled>Stop</button>
+                  <span id="bench-fps" class="muted"></span>
+                </div>
+                <p id="bench-id" class="muted"></p>
+                <p id="bench-seen" class="status hidden"></p>
+                <canvas id="bench-canvas" class="module-preview hidden" role="img" aria-label="Live camera frames from the Vision module, with detection boxes drawn"></canvas>
+                <div class="bench-meter">
+                  <div class="bench-meter-track">
+                    <div id="bench-meter-fill" class="bench-meter-fill"></div>
+                    <div id="bench-meter-tick" class="bench-meter-tick" title="the module's reporting floor — TSCORE"></div>
+                  </div>
+                  <p id="bench-meter-label" class="muted">watching… nothing yet</p>
+                </div>
+                <div class="bench-sliders">
+                  <label class="bench-slider"><span>Confidence floor (TSCORE)</span>
+                    <input id="bench-tscore" type="range" min="0" max="100" value="50" disabled>
+                    <output id="bench-tscore-out">50</output></label>
+                  <label class="bench-slider"><span>Overlap merge (TIOU)</span>
+                    <input id="bench-tiou" type="range" min="0" max="100" value="45" disabled>
+                    <output id="bench-tiou-out">45</output></label>
+                </div>
+                <p class="fineprint muted">Thresholds live on the module itself — a slider
+                  writes the value, then reads back what the module actually holds.</p>
+              </div>
             </section>
             <pre id="console" class="console hidden" aria-live="polite"></pre>
             <p id="flash-result" class="status"></p>

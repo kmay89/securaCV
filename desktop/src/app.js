@@ -202,6 +202,10 @@ async function boot() {
 
   $("flash-btn").addEventListener("click", onFlash);
   $("module-flash-btn").addEventListener("click", onFlashModule);
+  $("bench-start").addEventListener("click", onBenchStart);
+  $("bench-stop").addEventListener("click", onBenchStop);
+  $("bench-tscore").addEventListener("change", () => onBenchSlider("tscore"));
+  $("bench-tiou").addEventListener("change", () => onBenchSlider("tiou"));
   $("dev-channel").addEventListener("change", onDevChannelToggle);
   $("local-pick").addEventListener("click", onPickLocalFile);
   $("local-flash-btn").addEventListener("click", onFlashLocalFile);
@@ -634,6 +638,7 @@ async function identify(portInfo) {
 
 function onDisconnect() {
   stopMonitor();
+  stopBenchQuiet(); // the module (and its port) just went away
   state.port = null;
   state.portInfo = null;
   state.portKind = null;
@@ -923,6 +928,7 @@ function showModuleFlow() {
   setStatus("flash-result", "Use the module button below. The host firmware receipt is kept while you move the cable." +
     (state.vision.hostFlash ? "" :
       " (The demo takes two boards — the XIAO host gets the Canary Vision firmware through its own USB-C port, before or after this one.)"));
+  benchReset();
   renderReceipts(true);
 }
 
@@ -1077,24 +1083,54 @@ function clearSecretFields() {
 const MODULE_CLASSES = ["person"];
 const PREVIEW_HUES = [140, 45, 200, 320, 20, 260, 80, 175];
 
-function moduleDetections(boxes) {
+function moduleDetections(boxes, classes = MODULE_CLASSES) {
   const out = [];
   for (const b of boxes || []) {
     if (!Array.isArray(b) || b.length < 6) continue;
     const [x, y, w, h, score, target] = b;
     if (![x, y, w, h].every((n) => typeof n === "number" && Number.isFinite(n))) continue;
     const pct = Math.max(0, Math.min(100, Math.round(Number(score) || 0)));
-    out.push({ x, y, w, h, score: pct, label: MODULE_CLASSES[target] || "object" });
+    out.push({ x, y, w, h, score: pct, label: classes[target] || "object" });
   }
   return out;
 }
 
-function moduleSummary(boxes) {
-  const dets = moduleDetections(boxes);
+function moduleSummary(boxes, classes = MODULE_CLASSES) {
+  const dets = moduleDetections(boxes, classes);
   if (!dets.length) return "nothing in frame";
   const top = dets.reduce((m, d) => Math.max(m, d.score), 0);
   const word = dets[0].label + (dets.length > 1 ? "s" : "");
   return `${dets.length} ${word} · top ${top}%`;
+}
+
+// Draw one frame's detections onto a 2d context — shared by the one-shot
+// receipt preview and the live bench, so the two renders can't drift.
+function paintBoxes(ctx, boxes, classes) {
+  moduleDetections(boxes, classes).forEach((d, i) => {
+    const hue = PREVIEW_HUES[i % PREVIEW_HUES.length];
+    const band = d.score >= 60 ? "ok" : d.score >= 35 ? "soft" : "faint";
+    const color = `hsl(${hue} 90% ${band === "ok" ? 66 : 58}%)`;
+    const x = d.x - d.w / 2, y = d.y - d.h / 2;
+    ctx.lineWidth = band === "ok" ? 3 : 2;
+    ctx.strokeStyle = color;
+    ctx.strokeRect(x, y, d.w, d.h);
+    // corner ticks make thin boxes readable on busy frames
+    ctx.lineWidth = band === "ok" ? 5 : 3;
+    const t = Math.min(14, d.w / 4, d.h / 4);
+    ctx.beginPath();
+    for (const [cx, cy, dx, dy] of [[x, y, 1, 1], [x + d.w, y, -1, 1], [x, y + d.h, 1, -1], [x + d.w, y + d.h, -1, -1]]) {
+      ctx.moveTo(cx + dx * t, cy); ctx.lineTo(cx, cy); ctx.lineTo(cx, cy + dy * t);
+    }
+    ctx.stroke();
+    const text = `#${i + 1} ${d.label} · ${d.score}%`;
+    ctx.font = "700 13px ui-monospace, Menlo, monospace";
+    const tw = ctx.measureText(text).width + 10;
+    const ly = y - 20 >= 0 ? y - 20 : y + d.h + 1;
+    ctx.fillStyle = `hsl(${hue} 65% 14% / ${band === "ok" ? 0.92 : 0.85})`;
+    ctx.fillRect(x, ly, tw, 19);
+    ctx.fillStyle = color;
+    ctx.fillText(text, x + 5, ly + 14);
+  });
 }
 
 function renderModulePreview(receipt) {
@@ -1105,37 +1141,14 @@ function renderModulePreview(receipt) {
     cv.width = img.width; cv.height = img.height;
     const ctx = cv.getContext("2d");
     ctx.drawImage(img, 0, 0);
-    moduleDetections(receipt.boxes).forEach((d, i) => {
-      const hue = PREVIEW_HUES[i % PREVIEW_HUES.length];
-      const band = d.score >= 60 ? "ok" : d.score >= 35 ? "soft" : "faint";
-      const color = `hsl(${hue} 90% ${band === "ok" ? 66 : 58}%)`;
-      const x = d.x - d.w / 2, y = d.y - d.h / 2;
-      ctx.lineWidth = band === "ok" ? 3 : 2;
-      ctx.strokeStyle = color;
-      ctx.strokeRect(x, y, d.w, d.h);
-      // corner ticks make thin boxes readable on busy frames
-      ctx.lineWidth = band === "ok" ? 5 : 3;
-      const t = Math.min(14, d.w / 4, d.h / 4);
-      ctx.beginPath();
-      for (const [cx, cy, dx, dy] of [[x, y, 1, 1], [x + d.w, y, -1, 1], [x, y + d.h, 1, -1], [x + d.w, y + d.h, -1, -1]]) {
-        ctx.moveTo(cx + dx * t, cy); ctx.lineTo(cx, cy); ctx.lineTo(cx, cy + dy * t);
-      }
-      ctx.stroke();
-      const text = `#${i + 1} ${d.label} · ${d.score}%`;
-      ctx.font = "700 13px ui-monospace, Menlo, monospace";
-      const tw = ctx.measureText(text).width + 10;
-      const ly = y - 20 >= 0 ? y - 20 : y + d.h + 1;
-      ctx.fillStyle = `hsl(${hue} 65% 14% / ${band === "ok" ? 0.92 : 0.85})`;
-      ctx.fillRect(x, ly, tw, 19);
-      ctx.fillStyle = color;
-      ctx.fillText(text, x + 5, ly + 14);
-    });
+    paintBoxes(ctx, receipt.boxes, MODULE_CLASSES);
     cv.classList.remove("hidden");
   };
   img.src = "data:image/jpeg;base64," + receipt.preview_image;
 }
 
 async function onFlashModule() {
+  await stopBenchQuiet(); // the bench holds the module's port — release it first
   const btn = $("module-flash-btn");
   btn.disabled = true;
   btn.textContent = "Flashing model…";
@@ -1171,6 +1184,217 @@ async function onFlashModule() {
     btn.textContent = "Flash & prove the Vision module";
     $("dev-channel").disabled = false;
   }
+}
+
+// ── the live bench: see what it sees, tune TSCORE/TIOU — no reflash ─────────
+// Parity with the browser Lab's bench (canary-local/assets/we2-flash.js
+// mountBench): the same protocol — continuous INVOKE=-1,0,0 for frames with
+// boxes, BREAK to stop, TSCORE/TIOU set-then-read-back so the sliders never
+// lie — and the same honesty: labels read "person" only when the module's own
+// model card pins that class. Frames arrive over the we2:bench Tauri event
+// and go nowhere but this window.
+const liveBench = {
+  running: false, pinned: false, seen: false,
+  thr: { tscore: 50, tiou: 45 },
+  lastFrame: null, frames: 0, fpsT0: 0,
+  unlisten: null,
+};
+
+function benchClasses() { return liveBench.pinned ? ["person"] : []; }
+
+function syncSlider(key) {
+  $("bench-" + key).value = String(liveBench.thr[key]);
+  $("bench-" + key + "-out").textContent = String(liveBench.thr[key]);
+  if (key === "tscore") $("bench-meter-tick").style.left = liveBench.thr.tscore + "%";
+}
+
+function benchGuide() {
+  // Catalog-driven steps + troubleshooting (we2_module.bench) — the same spec
+  // the browser bench renders. Defaults seed the sliders until the module's
+  // own values are read back.
+  const guide = (state.catalog && state.catalog.we2_module && state.catalog.we2_module.bench) || null;
+  const body = $("bench-guide-body");
+  body.textContent = "";
+  if (!guide) { $("bench-guide").classList.add("hidden"); return; }
+  if (guide.defaults) {
+    if (typeof guide.defaults.tscore === "number") liveBench.thr.tscore = guide.defaults.tscore;
+    if (typeof guide.defaults.tiou === "number") liveBench.thr.tiou = guide.defaults.tiou;
+  }
+  syncSlider("tscore"); syncSlider("tiou");
+  const ol = document.createElement("ol");
+  for (const s of guide.steps || []) {
+    const li = document.createElement("li");
+    li.textContent = s;
+    ol.append(li);
+  }
+  body.append(ol);
+  for (const t of guide.troubleshooting || []) {
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.textContent = `${t.when} — ${t.fix}`;
+    body.append(p);
+  }
+  $("bench-guide").classList.toggle("hidden", !(guide.steps || []).length);
+}
+
+function benchReset() {
+  liveBench.running = false; liveBench.pinned = false; liveBench.seen = false;
+  liveBench.lastFrame = null; liveBench.frames = 0; liveBench.fpsT0 = 0;
+  $("bench-start").disabled = false;
+  $("bench-stop").disabled = true;
+  $("bench-tscore").disabled = true;
+  $("bench-tiou").disabled = true;
+  $("bench-fps").textContent = "";
+  $("bench-id").textContent = "";
+  $("bench-seen").classList.add("hidden");
+  $("bench-canvas").classList.add("hidden");
+  $("bench-meter-fill").style.width = "0%";
+  $("bench-meter-label").textContent = "watching… nothing yet";
+  benchGuide();
+}
+
+function benchRender(boxes) {
+  const cv = $("bench-canvas");
+  if (!cv.getContext) return;
+  const ctx = cv.getContext("2d");
+  if (liveBench.lastFrame) {
+    cv.width = liveBench.lastFrame.width;
+    cv.height = liveBench.lastFrame.height;
+    ctx.drawImage(liveBench.lastFrame, 0, 0);
+  } else {
+    cv.width = cv.width || 240;
+    cv.height = cv.height || 240;
+    ctx.fillStyle = "#08090b";
+    ctx.fillRect(0, 0, cv.width, cv.height);
+  }
+  cv.classList.remove("hidden");
+  paintBoxes(ctx, boxes, benchClasses());
+  // The meter: best confidence vs the module's own reporting floor (TSCORE),
+  // so the threshold slider visibly MEANS something.
+  const dets = moduleDetections(boxes, benchClasses());
+  const top = dets.reduce((m, d) => Math.max(m, d.score), 0);
+  $("bench-meter-fill").style.width = (dets.length ? top : 0) + "%";
+  $("bench-meter-label").textContent = dets.length
+    ? `${moduleSummary(boxes, benchClasses())} — ${top > liveBench.thr.tscore
+        ? "clears the floor by " + (top - liveBench.thr.tscore) : "at the floor"}`
+    : "watching… nothing above the floor";
+  if (dets.length && !liveBench.seen) {
+    liveBench.seen = true;
+    const seen = $("bench-seen");
+    seen.textContent = liveBench.pinned
+      ? "👁 It sees you — the model is live and working ✓"
+      : "👁 It sees something — the model is live and working ✓";
+    seen.className = "status ok";
+    seen.classList.remove("hidden");
+  }
+}
+
+function onBenchEvent(ev) {
+  const p = (ev && ev.payload) || {};
+  if (p.kind === "log") {
+    appendConsole("console", p.line + "\n");
+  } else if (p.kind === "id") {
+    liveBench.pinned = !!p.pinned;
+    $("bench-id").textContent =
+      "SSCMA firmware " + (p.software || "?") +
+      (p.model ? " · model: " + p.model : " · no model card — labels will read “object”");
+    $("bench-tscore").disabled = false;
+    $("bench-tiou").disabled = false;
+    benchReadThresholds();
+  } else if (p.kind === "event" && p.data) {
+    if (p.data.image) {
+      const img = new Image();
+      img.onload = () => {
+        liveBench.lastFrame = img;
+        liveBench.frames++;
+        const now = performance.now();
+        if (now - liveBench.fpsT0 >= 1000) {
+          $("bench-fps").textContent =
+            Math.round((liveBench.frames * 1000) / (now - liveBench.fpsT0)) + " fps";
+          liveBench.frames = 0;
+          liveBench.fpsT0 = now;
+        }
+        benchRender(p.data.boxes || []);
+      };
+      img.src = "data:image/jpeg;base64," + p.data.image;
+    } else if (p.data.boxes) {
+      benchRender(p.data.boxes); // boxes-only event: repaint over the CURRENT frame
+    }
+  } else if (p.kind === "error") {
+    setStatus("flash-result", String(p.message || "the bench stopped"), "err");
+    logEvent("err", "Live bench: " + (p.message || "stopped"));
+    benchTeardown();
+  } else if (p.kind === "stopped") {
+    benchTeardown();
+  }
+}
+
+async function benchReadThresholds() {
+  // Ask the module for its CURRENT values so the sliders start honest.
+  for (const key of ["tscore", "tiou"]) {
+    try {
+      const q = await invoke("we2_bench_cmd", { body: key.toUpperCase() + "?" });
+      const v = q && q.data;
+      if (typeof v === "number" && v >= 0 && v <= 100) liveBench.thr[key] = v;
+    } catch (_) { /* keep the catalog default */ }
+    syncSlider(key);
+  }
+}
+
+async function onBenchSlider(key) {
+  const input = $("bench-" + key);
+  const cmd = key.toUpperCase();
+  try {
+    await invoke("we2_bench_cmd", { body: cmd + "=" + input.value });
+    // Read back what the module actually holds — the slider never lies.
+    const q = await invoke("we2_bench_cmd", { body: cmd + "?" });
+    const v = q && typeof q.data === "number" ? q.data : Number(input.value);
+    liveBench.thr[key] = v;
+  } catch (e) {
+    setStatus("flash-result", String(e), "err");
+  }
+  syncSlider(key);
+}
+
+async function onBenchStart() {
+  if (liveBench.running || state.portKind !== "we2" || !state.port) return;
+  liveBench.running = true;
+  liveBench.seen = false;
+  liveBench.lastFrame = null;
+  liveBench.frames = 0;
+  liveBench.fpsT0 = performance.now();
+  $("bench-start").disabled = true;
+  $("bench-stop").disabled = false;
+  $("module-flash-btn").disabled = true; // the bench holds the module's port
+  $("bench-seen").classList.add("hidden");
+  $("bench-meter-label").textContent = "watching…";
+  if (!liveBench.unlisten) liveBench.unlisten = await listen("we2:bench", onBenchEvent);
+  try {
+    await invoke("we2_bench_start", { port: state.port });
+  } catch (e) {
+    setStatus("flash-result", String(e), "err");
+    benchTeardown();
+  }
+}
+
+async function onBenchStop() {
+  try { await invoke("we2_bench_stop"); } catch (_) { /* stopping anyway */ }
+  benchTeardown();
+}
+
+function benchTeardown() {
+  liveBench.running = false;
+  $("bench-start").disabled = false;
+  $("bench-stop").disabled = true;
+  $("bench-fps").textContent = "";
+  if (!state.busy) $("module-flash-btn").disabled = false;
+}
+
+// Quietly release the port before anything else needs it (a flash, unplug).
+async function stopBenchQuiet() {
+  if (!liveBench.running) return;
+  try { await invoke("we2_bench_stop"); } catch (_) { /* going away anyway */ }
+  benchTeardown();
 }
 
 // ── Advanced: dev channel + local file ──────────────────────────────────────

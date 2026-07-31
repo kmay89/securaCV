@@ -228,3 +228,7 @@ jobs:
         run: |
           rustc --edition 2021 --test desktop/src-tauri/src/health.rs -o /tmp/health_test
           /tmp/health_test
+      - name: sscma.rs unit tests
+        run: |
+          rustc --edition 2021 --test desktop/src-tauri/src/sscma.rs -o /tmp/sscma_test
+          /tmp/sscma_test
