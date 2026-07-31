@@ -6549,7 +6549,11 @@ static esp_err_t handle_fleet(httpd_req_t* req) {
   // failed verification. No hashes, no seq internals leaked beyond the height.
   self.chain_ok     = (!g_device.tamper_active && g_health.verify_failures == 0) ? 1 : 0;
   self.chain_height = (int)(g_device.seq & 0x7fffffff);
-  char body[256];
+  // Sized by the shared macro for the WORST case: a stored 32-byte name of
+  // all-escaping bytes (the rename path bounds length, not content) expands
+  // 6x and is written twice — a smaller fixed buffer would truncate that
+  // accepted name into invalid JSON served with a 200 (Codex P2 on #1226).
+  char body[FLEET_SELFREPORT_BODY_CAP(setup_wizard::DEVICE_NAME_MAX, 16)];
   fleet_selfreport_build(body, sizeof(body), &self);
   return http_send_json(req, body);
 }
@@ -8211,7 +8215,9 @@ static void start_http_server() {
       httpd_config_t redirect_config = HTTPD_DEFAULT_CONFIG();
       redirect_config.server_port = 80;
       redirect_config.uri_match_fn = httpd_uri_match_wildcard;
-      redirect_config.max_uri_handlers = 10;
+      // 6 captive probes + 2 fleet-discovery routes + 2 wildcard redirects,
+      // plus headroom (check_route_budget.py documents this server's budget).
+      redirect_config.max_uri_handlers = 12;
 
       if (httpd_start(&g_http_server, &redirect_config) == ESP_OK) {
         // Connectivity probes must stay on plain HTTP — the OS never sends
@@ -8231,6 +8237,17 @@ static void start_http_server() {
         httpd_register_uri_handler(g_http_server, &cp_win);
         httpd_uri_t cp_win2    = { .uri = "/ncsi.txt",                  .method = HTTP_GET, .handler = handle_captive_probe };
         httpd_register_uri_handler(g_http_server, &cp_win2);
+        // Fleet discovery must stay on plain HTTP too (Codex P2 on #1226):
+        // the documented path is http://canary.local/api/fleet — exactly what
+        // the Flasher's witness_discover and a LAN browser GET — and a redirect
+        // to self-signed HTTPS fails those clients on every TLS-enabled device.
+        // esp_http_server matches in registration order, so these two must be
+        // registered BEFORE the /* wildcard redirects below. Public, coarse
+        // presence-only (documented in check_route_security.py's allowlist).
+        httpd_uri_t http_fleet_get = { .uri = "/api/fleet", .method = HTTP_GET, .handler = handle_fleet };
+        httpd_register_uri_handler(g_http_server, &http_fleet_get);
+        httpd_uri_t http_fleet_opt = { .uri = "/api/fleet", .method = HTTP_OPTIONS, .handler = handle_fleet_options };
+        httpd_register_uri_handler(g_http_server, &http_fleet_opt);
         // Everything else redirects to HTTPS
         httpd_uri_t redirect_all = { .uri = "/*", .method = HTTP_GET, .handler = handle_https_redirect };
         httpd_register_uri_handler(g_http_server, &redirect_all);

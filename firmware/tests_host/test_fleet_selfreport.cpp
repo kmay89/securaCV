@@ -206,6 +206,40 @@ static void test_bounded_no_overflow() {
   CHECK(big[0] == '{' && big[n - 1] == '}');
 }
 
+// ── FLEET_SELFREPORT_BODY_CAP really covers the worst case ──────────────────
+static void test_body_cap_covers_worst_case() {
+  // The failure this guards (Codex P2 on #1226): a device ACCEPTS a name whose
+  // bytes all need escaping, the glue's fixed buffer is sized for the friendly
+  // case, and /api/fleet serves a silently truncated body with a 200 — clients
+  // fail to parse exactly the device that most needs escaping. The macro exists
+  // so glue sizes its buffer from the name/product bounds; prove the worst case
+  // (every byte a control char → 6-byte \u00XX escapes, name written twice,
+  // widest chain_height) fits and terminates as complete JSON.
+  const size_t NAME_MAX = 47, PROD_MAX = 16;   // display device_id[48] bound
+  char name[NAME_MAX + 1], prod[PROD_MAX + 1];
+  for (size_t i = 0; i < NAME_MAX; ++i) name[i] = '\x01';   // escapes to \\u0001, 6 bytes
+  name[NAME_MAX] = '\0';
+  for (size_t i = 0; i < PROD_MAX; ++i) prod[i] = '\x02';
+  prod[PROD_MAX] = '\0';
+  FleetSelfDevice d{};
+  d.name = name;
+  d.product = prod;
+  d.online = 1;
+  d.chain_ok = 1;
+  d.chain_height = 2147483647;                 // widest legal height
+  char body[FLEET_SELFREPORT_BODY_CAP(NAME_MAX, PROD_MAX)];
+  size_t n = fleet_selfreport_build(body, sizeof body, &d);
+  CHECK(n > 0);
+  CHECK(n < sizeof body);                      // no truncation at the cap
+  CHECK(body[0] == '{' && body[n - 1] == '}'); // complete JSON, closed array
+  CHECK(std::strlen(body) == n);
+  // And the canary-wap bound (name ≤ 32) fits its cap the same way.
+  name[32] = '\0';
+  char wap_body[FLEET_SELFREPORT_BODY_CAP(32, 16)];
+  n = fleet_selfreport_build(wap_body, sizeof wap_body, &d);
+  CHECK(n > 0 && n < sizeof wap_body && wap_body[n - 1] == '}');
+}
+
 // ── cap==0 / null out are no-ops, never a write ─────────────────────────────
 static void test_degenerate_caps() {
   FleetSelfDevice d = sample();
@@ -224,6 +258,7 @@ int main() {
   test_escaping();
   test_multi_device_compose();
   test_bounded_no_overflow();
+  test_body_cap_covers_worst_case();
   test_degenerate_caps();
 
   if (g_failures == 0) { std::printf("ALL fleet-selfreport tests PASSED\n"); return 0; }

@@ -308,7 +308,11 @@ void handle_fleet() {
   self.online       = 1;   // we are answering this request, so we are up
   self.chain_ok     = 0;   // a display holds no witness chain of its own
   self.chain_height = -1;  // omit chain_height
-  char body[256];
+  // Sized by the shared macro for the worst case: device_id[48] of
+  // all-escaping bytes expands 6x and is written twice (kernel + name) — a
+  // smaller fixed buffer would truncate an accepted name into invalid JSON
+  // served with a 200 (Codex P2 on #1226).
+  char body[FLEET_SELFREPORT_BODY_CAP(sizeof(cfg.device_id), 16)];
   fleet_selfreport_build(body, sizeof(body), &self);
   s_server->sendHeader("Access-Control-Allow-Origin", "*");
   s_server->send(200, "application/json", body);

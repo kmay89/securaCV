@@ -254,7 +254,8 @@ def main():
         flags["_TARGET"] = target
 
         # Registrations executed directly on the main active server. The
-        # redirect server (g_http_server) has its own 10-slot budget, so
+        # redirect server (g_http_server) has its own 12-slot budget (6 captive
+        # probes + GET/OPTIONS /api/fleet + 2 wildcard redirects + headroom), so
         # exclude it.
         direct = count_active(ino, "httpd_register_uri_handler(active_server,",
                               flags)
