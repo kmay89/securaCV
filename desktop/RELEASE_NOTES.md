@@ -17,7 +17,7 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
-## 0.3.7 — unreleased
+## 0.3.7 — 2026-07-31
 
 - **Your Wi-Fi is now put into the image before the card is written, so there
   is no re-mount to fail.** Previously the settings were added afterwards, by
