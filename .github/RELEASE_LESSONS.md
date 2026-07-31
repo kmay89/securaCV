@@ -1322,3 +1322,45 @@ Two independent failures, one release day, both invisible-by-design.
   compile to ship, something in PR CI must compile the crate; and if it
   cannot be compiled locally, that is a reason to add the job, not a
   reason to trust review.
+
+### (s) 2026-07-31 — measure the artefact before designing against it
+
+The design note for the hub Wi-Fi seed said "parse the image's **MBR** partition
+table; find partition 1 (the **FAT32** boot volume)". Both halves were wrong.
+`haos_rpi5-64-18.1.img` is **GPT** behind a protective MBR, and `hassos-boot` is
+**FAT16** (32695 clusters — FAT32 starts at 65525). Either mistake alone would
+have produced an injector that refused the real image, with a full green test
+suite behind it, because the tests would have been written from the same wrong
+premise.
+
+Ten minutes with `curl -r`, `xz -dc` and a partition-table dump settled both
+before any code existed. The rule: **when a change depends on the internal
+layout of an artefact you download, dump the artefact first.** Recalling how
+these images are "usually" laid out is not evidence.
+
+Related, same shape: derive a format's variant from the data (FAT width comes
+from the cluster count, per the spec) rather than from a self-declared field —
+the partition type byte and the `FAT16`/`FAT32` ASCII in the boot sector are
+both routinely wrong.
+
+### (t) 2026-07-31 — your own reader agreeing with your own writer proves little
+
+`hub_fat` writes into a FAT filesystem; its unit tests read the result back with
+`hub_fat`. That cannot catch a shared misunderstanding — a writer and reader that
+agree on a *wrong* layout pass every test and still hand the operator a card the
+Pi can't read.
+
+So the suite hands the artefact to code that has never seen ours: `mkfs.fat`
+creates the volume, `fsck.fat -n` audits it (both FAT copies, every cluster
+chain), `mtools` reads the file back. That is what caught the FSInfo free-cluster
+count being left "unknown", which our own reader had no opinion about.
+
+Two traps worth repeating:
+
+- **A skipped test reports green.** These tests skip when the external tools are
+  absent, so CI installs them *and* fails the job if a `SKIP(tooling)` marker
+  appears. Without that second half the check would have been a tick over
+  nothing — the same silent no-op the change existed to remove.
+- **Distinguish kinds of skip.** The first version of that guard failed CI,
+  because the optional real-image test legitimately skips when no multi-gigabyte
+  HAOS image is on the runner. `SKIP(tooling)` fails; `SKIP(optional)` doesn't.

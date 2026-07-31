@@ -65,10 +65,15 @@ fn have(tool: &str) -> bool {
 }
 
 /// Skip (loudly) rather than fail when the external tool isn't installed.
+///
+/// The marker is deliberately distinct from the optional-real-image skip below:
+/// CI greps for `SKIP(tooling)` and fails the job, because a missing tool means
+/// these tests proved nothing while still reporting green. Not having a
+/// multi-gigabyte HAOS image on the runner is expected and is not that.
 macro_rules! need {
     ($($tool:literal),+) => {
         $(if !have($tool) {
-            println!("SKIP: {} is not installed", $tool);
+            println!("SKIP(tooling): {} is not installed", $tool);
             return;
         })+
     };
@@ -314,7 +319,7 @@ fn a_directory_that_outgrows_one_cluster_still_passes_fsck() {
 fn the_real_haos_image_takes_the_seed() {
     need!("fsck.fat", "mcopy", "mdir");
     let Ok(src) = std::env::var("HUB_FAT_REAL_IMAGE") else {
-        println!("SKIP: set HUB_FAT_REAL_IMAGE to a decompressed haos_*.img to run this");
+        println!("SKIP(optional): set HUB_FAT_REAL_IMAGE to a decompressed haos_*.img to run this");
         return;
     };
 

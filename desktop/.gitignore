@@ -17,6 +17,12 @@ src-tauri/binaries/espflash-*
 src-tauri/icons/*.png
 src-tauri/icons/*.icns
 src-tauri/icons/*.ico
+# `tauri icon` also writes ios/ and android/ subdirectories. Without these two
+# lines the top-level rules miss them, and anyone who runs the icon generator
+# locally (or a CI job that does, before committing) sweeps ~23 generated PNGs
+# into the repo.
+src-tauri/icons/ios/
+src-tauri/icons/android/
 !src-tauri/icons/source.png
 
 # Signing keys — never commit these

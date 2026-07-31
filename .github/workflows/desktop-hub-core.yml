@@ -90,8 +90,39 @@ jobs:
         run: cargo doc --no-deps
         env:
           RUSTDOCFLAGS: "-D warnings"
+      - name: Install FAT tooling for the independent-implementation tests
+        # hub-core's `hub_fat` writes the Wi-Fi keyfile into the FAT boot
+        # filesystem inside the HAOS image. Its own tests read back what it
+        # wrote, which cannot catch a shared misunderstanding: a writer and a
+        # reader that agree on a WRONG layout pass every test and still produce
+        # a card the Pi can't read.
+        #
+        # So tests/fat_against_dosfstools.rs hands the result to code that has
+        # never seen ours — mkfs.fat creates the volume, fsck.fat audits it
+        # (both FAT copies, every cluster chain), mtools reads the file back.
+        # Those tests SKIP when the tools are absent, so without this step they
+        # would quietly pass while proving nothing. That silent-skip is exactly
+        # the failure mode this whole change exists to remove, so it must not be
+        # reintroduced in the CI that guards it.
+        run: sudo apt-get update && sudo apt-get install -y dosfstools mtools
       - name: Test
         run: cargo test
+      - name: Prove the FAT tests really ran
+        # A test that skips still counts as passing, so a missing tool would
+        # turn this whole check into a green tick over nothing — the same
+        # silent-no-op shape as the bug the FAT writer exists to fix.
+        # SKIP(tooling) means a tool was absent and is a failure here;
+        # SKIP(optional) is the real-image test, which needs a multi-gigabyte
+        # HAOS download the runner has no reason to hold, and is expected.
+        if: matrix.crate == 'hub-core'
+        run: |
+          set -euo pipefail
+          out="$(cargo test --test fat_against_dosfstools -- --nocapture)"
+          echo "$out"
+          if grep -q "SKIP(tooling)" <<<"$out"; then
+            echo "::error::the FAT round-trip tests skipped — dosfstools/mtools missing, so nothing was verified"
+            exit 1
+          fi
 
   # Self-contained pure modules that live inside the release-only tauri crate
   # (desktop/src-tauri) but depend on nothing but `std`, so `rustc --test` runs

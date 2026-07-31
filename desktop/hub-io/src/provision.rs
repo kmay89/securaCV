@@ -5,7 +5,8 @@
 //! config, the executor that runs them, and a one-line runner. This module turns
 //! that bundle into [`SeedFile`]s under `CONFIG/securacv/`, so they ride the SAME
 //! guarded seed machinery as the Wi-Fi keyfile and the account store
-//! ([`crate::seed::write_account_seed`] / [`crate::seed::seed_card`]).
+//! ([`crate::seed::inject_into_image`], which places them inside the image
+//! before the card is written).
 //!
 //! Single-sourced, not re-implemented. The payload files are embedded VERBATIM
 //! from the repo with `include_str!`, and a host test proves each embedded byte
@@ -58,7 +59,7 @@ pub fn provision_runner() -> String {
 }
 
 /// The bundle as [`SeedFile`]s under [`PROVISION_ROOT`], ready to hand to
-/// [`crate::seed::write_account_seed`] (which drops them into `CONFIG/`).
+/// [`crate::seed::inject_into_image`] (which places them under `CONFIG/`).
 ///
 /// Carries the runnable essentials plus the integrity manifest: the plan, the
 /// curated Frigate config, the executor, the runner, and `MANIFEST.json` — the
@@ -84,7 +85,7 @@ pub fn provision_seed_files() -> Vec<SeedFile> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::seed::write_account_seed;
+    use crate::seed::inject_into_image;
 
     fn paths() -> Vec<String> {
         provision_seed_files()
@@ -95,7 +96,7 @@ mod tests {
 
     #[test]
     fn every_path_is_namespaced_and_seed_safe() {
-        // write_account_seed refuses `..` and absolute paths; ours must pass, and
+        // inject_into_image refuses `..` and absolute paths; ours must pass, and
         // must all sit under securacv/ so they can't collide with HAOS's own
         // CONFIG/ files.
         for p in paths() {
@@ -170,15 +171,37 @@ mod tests {
     }
 
     #[test]
-    fn flows_through_write_account_seed_into_config() {
-        let root = tempfile::tempdir().unwrap();
-        let written = write_account_seed(root.path(), &provision_seed_files()).expect("writes");
-        assert_eq!(written.len(), 5);
+    fn flows_through_injection_into_config() {
+        // End-to-end through the real injector, into a real (synthetic) HAOS
+        // image: these paths are four levels deep, so they also prove the FAT
+        // writer creates a nested directory tree, not just one level.
+        let dir = tempfile::tempdir().unwrap();
+        let img = dir.path().join("haos.img");
+        crate::seed::tests::fake_image(&img);
+
+        let report = inject_into_image(&img, None, &provision_seed_files(), |_| {})
+            .expect("the bundle goes into the image");
+        assert!(report.account_written);
+
+        let mut bytes = std::fs::read(&img).unwrap();
+        let len = bytes.len() as u64;
+        let (_p, vol) = hub_core::hub_fat::find_fat_partition(&mut bytes, len).unwrap();
+        let mut read = |path: &[&str]| {
+            String::from_utf8(hub_core::hub_fat::read_file(&mut bytes, &vol, path).unwrap())
+                .unwrap()
+        };
         // The executor and its plan land where the runner expects them.
-        let base = root.path().join("CONFIG").join("securacv");
-        assert!(base.join("hub_seed_apply.py").exists());
-        assert!(base.join("homeassistant/frigate/config.yaml").exists());
-        let plan = std::fs::read_to_string(base.join("hub_seed.json")).unwrap();
-        assert_eq!(plan, PLAN);
+        assert_eq!(read(&["CONFIG", "securacv", "hub_seed.json"]), PLAN);
+        assert_eq!(
+            read(&[
+                "CONFIG",
+                "securacv",
+                "homeassistant",
+                "frigate",
+                "config.yaml"
+            ]),
+            FRIGATE_CONFIG
+        );
+        assert_eq!(read(&["CONFIG", "securacv", "hub_seed_apply.py"]), EXECUTOR);
     }
 }

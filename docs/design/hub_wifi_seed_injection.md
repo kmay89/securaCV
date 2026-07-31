@@ -1,7 +1,10 @@
 # Seeding the hub's Wi-Fi without mounting the card
 
-**Status:** designed, not built. This is the spec for the work; nothing here
-ships yet.
+**Status:** built. `hub_core::hub_fat` does the injection, `hub_io::seed`
+drives it, and the mount/eject path it replaced is deleted. What follows is the
+spec as written, **corrected where building it proved the spec wrong** — the
+wrong guesses are left visible on purpose, because two of them would each have
+been enough to make the finished code reject the real image.
 
 ## The problem, stated exactly
 
@@ -61,10 +64,32 @@ cooperation involved.
 The hub is the same problem with a FAT32 filesystem instead of an NVS
 partition:
 
-1. Parse the HAOS image's MBR partition table; find partition 1 (the FAT32
-   boot volume).
-2. In memory, add `CONFIG/network/<stem>` to that filesystem.
+1. Parse the HAOS image's partition table; find the boot volume.
+2. Add `CONFIG/network/<stem>` to that filesystem, in place.
 3. Write the image exactly as today.
+
+### Two things this document got wrong
+
+Both were measured from `haos_rpi5-64-18.1.img` before a line was written, and
+either one alone would have produced an injector that refused the real image
+while every test still passed:
+
+- **The partition table is GPT, not MBR.** The MBR at LBA 0 is the *protective*
+  one — a single type-`0xEE` entry spanning the disk. An MBR-only reader finds
+  that one bogus partition and no filesystem at all. Both schemes are now
+  handled, GPT first.
+- **`hassos-boot` is FAT16, not FAT32.** 64 MiB, 512-byte sectors, 4
+  sectors/cluster, 2 FATs of 128 sectors, a **fixed 512-entry root directory**,
+  32695 clusters. FAT32 starts at 65525 clusters. The two formats differ in FAT
+  entry width *and* in whether the root directory can grow at all, so this was
+  not a detail. Both widths are supported, and the width is derived from the
+  cluster count as the specification requires — never from the partition type
+  byte or the `FAT16`/`FAT32` string in the boot sector, both of which lie.
+
+The lesson is cheap to state and was nearly expensive: **the design note was
+written from memory of how these images are usually laid out.** Ten minutes with
+the actual file first would have cost nothing; finding out after the code was
+written would have cost the session.
 
 ### What this buys
 
@@ -105,23 +130,46 @@ write the file's data; add the directory entry; update **both** FAT copies.
   — it needs LFN entries with correct checksums.
 - Directory entries must not be appended past a cluster boundary without
   allocating and chaining the next cluster.
-- The image is ~1 GB and lives in memory during patching; do not copy it more
-  times than necessary.
+- **Never hold the image in memory.** The pipeline streams the ~2.5 GB raw
+  image to a temp file precisely so it does not have to fit in RAM, and a
+  whole-image buffer would exhaust a 4 GB machine before the write began. The
+  injector takes a seek-based `BlockIo` for this reason; the largest buffer it
+  holds is one FAT copy (64 KiB on the real image).
 
-**Tests:** synthetic FAT32 fixtures for the edge cases (existing `CONFIG`
-directory, absent `CONFIG`, entry crossing a cluster boundary, FAT mirror
-consistency), plus a round-trip against the **real HAOS image** the flasher
-already downloads and verifies — inject, then re-read the volume and confirm
-the file is exactly the bytes `wifi_keyfile()` produced.
+**Tests:** synthetic fixtures for the edge cases (existing `CONFIG` directory,
+absent `CONFIG`, an entry run crossing a cluster boundary, FAT mirror
+consistency, a full FAT16 root, a full volume, FAT12), plus a round-trip against
+the **real HAOS image**.
+
+The load-bearing part is that **our reader is not the judge**. A writer and a
+reader that share a wrong idea of the layout agree with each other perfectly and
+still produce a card the Pi cannot read. So `mkfs.fat` creates the volume,
+`fsck.fat -n` audits the result — both FAT copies, every cluster chain, every
+directory entry — and `mtools` reads the file back with an implementation that
+has never seen ours. CI installs those tools and **fails if the tests skip**,
+because a skipped test that reports green is the same silent no-op this whole
+change exists to remove.
+
+Result against the real image: the keyfile round-trips byte-for-byte, `network`
+keeps its lower case, HAOS's own `cmdline.txt` / `config.txt` / `SLOT-A` are
+untouched, and `fsck.fat` reports a clean 387-file volume.
 
 **Keep 0.3.6's posture:** a Wi-Fi that was requested and could not be injected
 still fails the flash, with the reason. Injection makes that check cheaper and
 earlier; it does not make it optional.
 
-**Carry or drop the account seed:** the EXPERIMENTAL Home Assistant account
-pre-seed (`CONFIG/.storage/…`) uses the same mount path. Either move it to
-injection with the Wi-Fi or leave it behind deliberately — and say which, in
-the PR, rather than letting it quietly keep the mount code alive.
+**The account seed came along.** The EXPERIMENTAL Home Assistant account
+pre-seed (`CONFIG/.storage/…`) and the provisioning bundle
+(`CONFIG/securacv/…`, four levels deep) both use the same path, so both are
+injected now and no mount code survives anywhere. They keep their old severity,
+though: Wi-Fi failing is fatal, and the account/bundle seed failing is a note —
+it is opt-in and HA's own setup wizard is a fine fallback, so it must not sink a
+flash that would otherwise work.
+
+**Lower case is load-bearing.** HAOS reads `CONFIG/network`, and a FAT short
+entry stores `NETWORK`. Long-name entries are therefore not cosmetic: without
+them the keyfile is written correctly and ignored completely — the same
+nothing-happened failure in a new costume. There is a test for exactly this.
 
 ## The general lesson
 
