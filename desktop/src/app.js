@@ -2466,7 +2466,11 @@ const HUB_STAGE_COPY = {
 
 // The stages a flash walks, in order — rendered as pills that light up as
 // each one passes, so there's always a visible sense of where you are.
-const HUB_STAGE_ORDER = ["download", "decompress", "write", "verify", "seed"];
+// Settings now go into the IMAGE, before the write — so "Settings" sits between
+// Unpack and Write. The pill row marks everything before the active stage as
+// done, so an order that doesn't match the pipeline makes finished stages
+// un-tick themselves halfway through a flash.
+const HUB_STAGE_ORDER = ["download", "decompress", "seed", "write", "verify"];
 const HUB_STAGE_PILL = {
   download: "Download",
   decompress: "Unpack",
@@ -3266,16 +3270,17 @@ function hubShowHatch(receipt) {
   hatch.classList.remove("alive-pop");
   void hatch.offsetWidth; // restart the animation each success
   hatch.classList.add("alive-pop");
+  // Wi-Fi that was asked for and couldn't be placed now fails the flash before
+  // the card is touched, so reaching this screen without it means none was
+  // asked for. There is no "seeded but maybe not" state left to explain.
   const wifiLine = receipt.wifi_seeded
-    ? " Your Wi-Fi rides along on the card."
-    : receipt.wifi_note
-      ? " " + receipt.wifi_note
-      : " Plug in ethernet before you power it on.";
+    ? " Your Wi-Fi went into the image before the write, so it's covered by the same verification."
+    : " Plug in ethernet before you power it on.";
   const acctLine = receipt.account_note ? " " + receipt.account_note : "";
   const cacheLine = receipt.used_cache ? " (reused your verified local copy — no re-download.)" : "";
-  // The eject note is shown ALWAYS when present — independent of whether the
-  // Wi-Fi/account seed succeeded — because a still-mounted card must be
-  // ejected before it's pulled, or a CONFIG write can be left half-flushed.
+  // Shown whenever present. Advice rather than a warning now: nothing is
+  // written to the card after the verified write, so a card that wouldn't
+  // auto-eject has nothing pending to lose.
   const ejectLine = receipt.eject_note ? " ⚠ " + receipt.eject_note : "";
   $("hub-hatch-body").textContent =
     `${receipt.os_label} is on ${receipt.target_path} — every byte read back and matched ` +

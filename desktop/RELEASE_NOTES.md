@@ -17,15 +17,27 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.3.7 — 2026-07-31
+
+- **Your Wi-Fi is now put into the image before the card is written, so there
+  is no re-mount to fail.** Previously the settings were added afterwards, by
+  asking your computer to mount the card it had just written — a step that
+  failed outright on macOS for at least one person, retry and reseat included,
+  leaving a hub that never joined a network. The keyfile now travels inside
+  the Home Assistant image itself, so it is covered by the same byte-for-byte
+  read-back that already verifies the card, and a setting that can't be placed
+  stops the flash in under a second with your card untouched instead of after
+  a multi-gigabyte write.
+
 ## 0.3.6 — 2026-07-30
 
 - **Your Wi-Fi now has to actually make it onto the hub card.** Saving it was
-  treated as a convenience: if the card couldn't be re-mounted, or the write
-  never reached the media, the flash still said "Done — written, read back,
-  and verified" and you found out at a Pi that never appeared on your network.
-  It is now checked — written, read back off the card, and compared — and a
-  Wi-Fi you asked for that didn't land fails the flash, on the spot, with the
-  reason and what to do next.
+  treated as a convenience: if the card couldn't be re-mounted, the flash still
+  said "Done — written, read back, and verified" and you found out at a Pi that
+  never appeared on your network. It is now checked — written, flushed to the
+  card, and compared against what we meant to write — and a Wi-Fi you asked for
+  that didn't land fails the flash, on the spot, with the reason and what to do
+  next.
 - **Typing Wi-Fi while "wired ethernet" is selected is no longer resolved
   silently.** It used to drop the Wi-Fi. Now it says which one would win.
 - Under the hood: the app's own release build is checked by CI for the first

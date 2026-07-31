@@ -81,6 +81,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [MR60BHA2 radar via ESPHome](integrations/mr60bha2_esphome.md)
 - Onboarding flows: [multiple Canaries](onboarding_multiple_canaries.md) · [the unified wizard](onboarding_unified_wizard.md) · [workflow evaluation](onboarding_workflow_evaluation.md)
 - [The one-flash Pi hub (design)](design/raspberry_pi_hub_flashing.md) — RFC: type Wi-Fi, write the card, boot a self-healing Home Assistant hub — built on HAOS so it never rots
+- [Seeding the hub's Wi-Fi without mounting the card (design)](design/hub_wifi_seed_injection.md) — DESIGNED, NOT BUILT: why the flasher re-mounts a freshly written card to drop in one NetworkManager keyfile, why macOS regularly refuses (stranding a headless Pi at `wlan0: No address` with Home Assistant stuck on its landing page), and the fix — inject the file into the FAT32 boot partition in memory before the write, exactly as the ESP32 path already patches NVS into a firmware image and never fails for this reason
 - [Hub hardware-validation runbook](hub_validation_runbook.md) — the one-Pi-5 session that gates a tagged flasher release: write/read-back, Wi-Fi seed, USB-C gadget, account-restore mechanism
 - [The Hub as network witness (concept)](design/hub_network_witness.md) — CONCEPT, no code: a Hub-hosted DNS witness/shield — see which devices phone home, mute them per-device, verify the fleet's self-manifests over LAN; counters-not-logs by invariant, engine research (Pi-hole vs blocky) recorded
 

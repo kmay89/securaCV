@@ -101,16 +101,14 @@ pub struct HubReceipt {
     bytes_written: u64,
     sha256: String,
     wifi_seeded: bool,
-    /// A non-fatal note about the Wi-Fi seed (e.g. the write verified but
-    /// seeding failed) — the receipt stays a receipt; this is the plan B.
-    wifi_note: Option<String>,
     /// Whether the experimental account pre-seed was written to the card.
     account_seeded: bool,
     /// Non-fatal note about the account seed, if requested.
     account_note: Option<String>,
-    /// Set when the card wouldn't cleanly auto-eject — an "eject it yourself"
-    /// instruction shown INDEPENDENT of seed success (the settings are on the
-    /// card, so pulling it while still mounted risks a half-written CONFIG).
+    /// Set when the card wouldn't cleanly auto-eject. Courtesy only now: the
+    /// settings went into the image before the write, so there is no pending
+    /// filesystem write to lose — but a card the OS auto-mounted should still be
+    /// unmounted before it's pulled.
     eject_note: Option<String>,
     /// True when a locally-cached, re-verified image was reused (no download).
     used_cache: bool,
@@ -756,6 +754,68 @@ fn hub_flash_blocking(
         ));
     }
 
+    // 5b) Put the settings INSIDE the image, before anything is written.
+    //
+    //     This used to happen AFTER the write, by asking the OS to re-mount the
+    //     freshly written card. That step failed on a real operator's Mac every
+    //     time — retry, reseat, both — and a headless hub without its Wi-Fi
+    //     keyfile boots to `wlan0: (No address)` and sits on the landing page
+    //     forever. Doing it here means no mount on any OS, failures that cost
+    //     seconds instead of a multi-GB write plus a 20-second timeout, and a
+    //     seed that is covered by the write's own read-back verification because
+    //     it is part of the image being verified.
+    let wifi_seed = wifi.as_ref().map(|w| WifiSeed {
+        ssid: &w.ssid,
+        passphrase: &w.passphrase,
+        connection_id: "securacv-hub",
+        uuid: wifi_uuid.as_deref(),
+        hidden: w.hidden,
+    });
+    let want_wifi = wifi_seed.is_some();
+    let want_account = !account_files.is_empty();
+
+    // The read-back compares the card against a hash of the image, so once the
+    // image carries the settings that hash has to be the patched one — otherwise
+    // every seeded flash would report a verification failure on a good card.
+    let mut image_sha = raw.sha256.clone();
+    let (wifi_seeded, account_seeded, mut account_note) = if want_wifi || want_account {
+        let report = hub_io::seed::inject_into_image(
+            &raw_path.path,
+            wifi_seed.as_ref(),
+            &account_files,
+            &mut progress,
+        )
+        .map_err(|e| {
+            format!(
+                "Your settings couldn't be added to the Home Assistant image, so nothing was \
+                 written to your card — it is exactly as you put it in. {e}"
+            )
+        })?;
+        if report.wifi_written {
+            log(format!(
+                "✓ Wi-Fi written into the image — {} — the hub will join your network on first boot",
+                report.volume
+            ));
+        }
+        if report.account_written {
+            log("✓ account written into the image (experimental) — first visit should be a login page".to_string());
+        }
+        if let Some(note) = report.account_note.as_ref() {
+            log(format!(
+                "→ the experimental account pre-seed didn't apply: {note}"
+            ));
+        }
+        image_sha = hub_io::seed::rehash_image(&raw_path.path, cancel, &mut progress)?;
+        (
+            report.wifi_written,
+            report.account_written,
+            report.account_note,
+        )
+    } else {
+        log("→ no Wi-Fi or account to seed (wired ethernet assumed)".to_string());
+        (false, false, None)
+    };
+
     // 6) The gate. The download/decompress window is long and /dev paths get
     //    reused, so re-resolve the disk NOW: it must still be present, still
     //    classify eligible (authorize_write re-checks), and still be the SAME
@@ -805,109 +865,48 @@ fn hub_flash_blocking(
         );
     }
     let receipt =
-        hub_io::write::write_image(authz, &raw_path.path, &raw.sha256, cancel, &mut progress)?;
+        hub_io::write::write_image(authz, &raw_path.path, &image_sha, cancel, &mut progress)?;
     log("✓ written and read back — the card verifiably holds the image".to_string());
-
-    // 8) Seed the card in ONE mount — Wi-Fi and (opt-in) the account store —
-    //    then eject. From here the card is verifiably GOOD, so a seeding
-    //    stumble is a note with a plan B, never a failure.
-    let wifi_seed = wifi.as_ref().map(|w| WifiSeed {
-        ssid: &w.ssid,
-        passphrase: &w.passphrase,
-        connection_id: "securacv-hub",
-        uuid: wifi_uuid.as_deref(),
-        hidden: w.hidden,
-    });
-    let want_wifi = wifi_seed.is_some();
-    let want_account = !account_files.is_empty();
-
-    // eject_note is tracked SEPARATELY from seed success and surfaced on its
-    // own always-shown receipt field: a card whose settings wrote fine but
-    // wouldn't cleanly unmount still needs a "eject it yourself before pulling
-    // it" instruction, or the operator may yank a still-mounted card before
-    // the CONFIG writes flush.
-    let (wifi_seeded, wifi_note, account_seeded, mut account_note, mut eject_note) =
-        if want_wifi || want_account {
-            match hub_io::seed::seed_card(
-                &receipt.target_path,
-                wifi_seed.as_ref(),
-                &account_files,
-                &mut progress,
-            ) {
-                Ok(o) => {
-                    if o.wifi_written {
-                        log(
-                            "✓ Wi-Fi seeded — the hub will join your network on first boot"
-                                .to_string(),
-                        );
-                    }
-                    if o.account_written {
-                        log(
-                            "✓ account seeded (experimental) — first visit should be a login page"
-                                .to_string(),
-                        );
-                    }
-                    if let Some(ej) = o.eject_note.as_ref() {
-                        log(format!("→ settings written, but: {ej}"));
-                    }
-                    (
-                        o.wifi_written,
-                        o.wifi_note,
-                        o.account_written,
-                        o.account_note,
-                        o.eject_note,
-                    )
-                }
-                Err(e) => {
-                    // Couldn't even mount — the card is still good; say so plainly.
-                    log(format!(
-                        "→ the image is on the card and verified, but the card couldn't be \
-                         re-mounted to add settings: {e}"
-                    ));
-                    (
-                        false,
-                        if want_wifi { Some(e.clone()) } else { None },
-                        false,
-                        if want_account { Some(e) } else { None },
-                        None,
-                    )
-                }
-            }
-        } else {
-            log("→ no Wi-Fi or account to seed (wired ethernet assumed)".to_string());
-            true_eject(&receipt.target_path, &log);
-            (false, None, false, None, None)
-        };
-
-    // A headless hub that never joins a network is not a successful flash.
-    // This step used to be best-effort — "a seeding stumble is a note, NEVER a
-    // failure" — which is right for a convenience and wrong for the ONE thing
-    // that makes a keyboard-less, screen-less Pi reachable. Seeded Wi-Fi IS the
-    // product here: without it the card boots to `wlan0: (No address)` and sits
-    // on the Home Assistant landing page forever, while the app reports
-    // "Done — written, read back, and verified." Fail now, while the card is
-    // still in the reader and the person is still standing there.
-    if want_wifi && !wifi_seeded {
-        return Err(format!(
-            // Deliberately avoids the words the UI's error classifier greps for
-            // (network / timed out / connection): this is a POST-write failure,
-            // and being mistaken for a mid-download stumble would tell the
-            // operator "your card is untouched" when the card is in fact
-            // complete and verified.
-            "The image is written and verified, but your Wi-Fi could not be saved onto the card, \
-             so the hub would start up with nothing to join and never answer at \
-             homeassistant.local. Nothing is broken — the card is good. Flash again (the second \
-             pass almost always mounts fine), or use ethernet for the first boot and set Wi-Fi \
-             inside Home Assistant afterwards. Reason: {}",
-            wifi_note.as_deref().unwrap_or("unknown")
-        ));
+    if wifi_seeded {
+        // Worth saying plainly: the settings are not a separate step that could
+        // have quietly failed after the write. They were part of the image, so
+        // the read-back above covers them too.
+        log("✓ your Wi-Fi is part of what was just verified on the card".to_string());
     }
 
-    // Turn a raw eject stumble into a plain, alarming-enough instruction.
+    // 8) Offer a clean eject. Nothing depends on it — the card is complete and
+    //    verified — but a card the OS auto-mounted should be unmounted before it
+    //    is pulled, and saying so beats letting the operator find out from a
+    //    filesystem warning.
+    let mut eject_note = match hub_io::seed::eject_card(&receipt.target_path) {
+        Ok(()) => {
+            log(format!(
+                "✓ {} ejected — safe to remove",
+                receipt.target_path
+            ));
+            None
+        }
+        Err(e) => {
+            log(format!("→ {e}"));
+            Some(e)
+        }
+    };
+
+    // A headless hub that never joins a network is not a successful flash — but
+    // that is now decided BEFORE the card is touched: `inject_into_image`
+    // returns Err if requested Wi-Fi can't be placed, so by the time we get here
+    // a wanted seed is a seed that landed. What used to live here was a
+    // post-write apology ("the card is good, flash again") for a step that ran
+    // too late to do anything about.
+    debug_assert!(!want_wifi || wifi_seeded);
+
+    // Turn a raw eject stumble into plain advice. It is only advice now: the
+    // card is complete and verified, and the settings were part of what was
+    // verified, so there is nothing half-written to lose.
     if let Some(ej) = eject_note.take() {
         eject_note = Some(format!(
-            "Your settings are on the card, but it wouldn't auto-eject — please eject it in your \
-             file manager before removing it, so nothing is left half-written. ({ej})"
+            "The card is finished and verified — it just wouldn't auto-eject, so eject it in your \
+             file manager before removing it. ({ej})"
         ));
     }
 
@@ -940,7 +939,6 @@ fn hub_flash_blocking(
         bytes_written: receipt.bytes_written,
         sha256: receipt.sha256,
         wifi_seeded,
-        wifi_note,
         account_seeded,
         account_note,
         eject_note,
@@ -963,28 +961,5 @@ impl Drop for CleanupPath {
         if self.active {
             let _ = std::fs::remove_file(&self.path);
         }
-    }
-}
-
-/// Best-effort eject for the wired-ethernet path (the seed path ejects as part
-/// of its own flow). Failure is a log line, not an error — the write already
-/// verified.
-fn true_eject(device: &str, log: &impl Fn(String)) {
-    #[cfg(target_os = "macos")]
-    let result = std::process::Command::new("diskutil")
-        .args(["eject", device])
-        .output();
-    #[cfg(target_os = "linux")]
-    let result = std::process::Command::new("udisksctl")
-        .args(["power-off", "-b", device])
-        .output();
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    let result: std::io::Result<std::process::Output> = Err(std::io::Error::other("unsupported"));
-
-    match result {
-        Ok(out) if out.status.success() => log(format!("✓ {device} ejected — safe to remove")),
-        _ => log(format!(
-            "→ couldn't auto-eject {device}; eject it in your file manager before removing"
-        )),
     }
 }
