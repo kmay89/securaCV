@@ -45,10 +45,23 @@ static const char* badge_word(Badge b) {
   }
 }
 
-bool has_cards(const Witness& w) {
-  if (w.sense_present) return true;
-  return strcmp(w.device_type, "canary-sense") == 0 ||
+// A canary-sense witness: has published a radar row, or claims the type
+// (hyphen or underscore, matching both wire spellings the fleet uses).
+static bool is_sense_witness(const Witness& w) {
+  return w.sense_present ||
+         strcmp(w.device_type, "canary-sense") == 0 ||
          strcmp(w.device_type, "canary_sense") == 0;
+}
+
+// A canary-pool witness: has published a chemistry row, or claims the type.
+static bool is_pool_witness(const Witness& w) {
+  return w.pool_present ||
+         strcmp(w.device_type, "canary-pool") == 0 ||
+         strcmp(w.device_type, "canary_pool") == 0;
+}
+
+bool has_cards(const Witness& w) {
+  return is_sense_witness(w) || is_pool_witness(w);
 }
 
 // ── the canary-sense card set (mirrors JS senseCards ordering) ─────────────
@@ -165,12 +178,92 @@ static void build_sense_cards(const Witness& w, CardSet& out) {
   }
 }
 
+// ── the canary-pool card set (water chemistry) ─────────────────────────────
+//
+// One entity, one card, same rule as sense — pH / ORP / water temp / TDS, the
+// four keys a pool node publishes (docs/research/pool_water_monitor.md §6). The
+// severity accents are a glance heuristic only: the authoritative alerting is
+// event-driven (the node's threshold/hysteresis machine emits named events that
+// classify_event maps). Bands come straight from the research doc's targets so
+// nothing here invents a number: pH 7.2–7.6 (warn outside 7.0–7.8), sanitizer
+// healthy at ORP ≥ 650 mV. A field the node didn't publish this row renders "—"
+// (have_* false), never a zero — pH 0 or 0 mV would read as an emergency.
+static const int16_t POOL_PH_LO  = 70;   // pH ×10 — below this, warn
+static const int16_t POOL_PH_HI  = 78;   // pH ×10 — above this, warn
+static const int16_t POOL_ORP_LO = 650;  // mV — below this, sanitizer low
+
+static void build_pool_cards(const Witness& w, CardSet& out) {
+  auto push = [&out]() -> Card& {
+    Card& c = out.cards[out.count++];
+    c = Card{};
+    return c;
+  };
+
+  // 1. pH (stat, one decimal, P0)
+  {
+    Card& c = push();
+    c.kind = CardKind::Stat; c.id = "ph"; c.title = "pH";
+    c.icon = "pulse"; c.privacy = CardPrivacy::P0; c.unit = "";
+    c.num_decimals = 1;
+    c.num_known = w.have_ph; c.num = w.ph_x10;
+    c.sev = (w.have_ph && (w.ph_x10 < POOL_PH_LO || w.ph_x10 > POOL_PH_HI))
+                ? CardSev::Warn : CardSev::None;
+  }
+  // 2. ORP / sanitizer proxy (stat mV, P0)
+  {
+    Card& c = push();
+    c.kind = CardKind::Stat; c.id = "orp"; c.title = "ORP";
+    c.icon = "pulse"; c.privacy = CardPrivacy::P0; c.unit = "mV";
+    c.num_known = w.have_orp; c.num = w.orp_mv;
+    c.sev = (w.have_orp && w.orp_mv < POOL_ORP_LO) ? CardSev::Warn
+                                                   : CardSev::None;
+  }
+  // 3. Water temperature (stat °C, one decimal, P0). ASCII "C" — LVGL symbol
+  //    substitution is the caller's job (see format_card_value contract).
+  {
+    Card& c = push();
+    c.kind = CardKind::Stat; c.id = "water_temp"; c.title = "Water temp";
+    c.icon = "sun"; c.privacy = CardPrivacy::P0; c.unit = "C";
+    c.num_decimals = 1;
+    c.num_known = w.have_water_temp; c.num = w.water_temp_c10;
+  }
+  // 4. TDS / salinity (stat ppm, P0). Informational: a healthy value depends on
+  //    pool type (salt vs fresh), so the glance carries the number, not a verdict.
+  {
+    Card& c = push();
+    c.kind = CardKind::Stat; c.id = "tds"; c.title = "TDS";
+    c.icon = "chip"; c.privacy = CardPrivacy::P0; c.unit = "ppm";
+    c.num_known = w.have_tds; c.num = w.tds_ppm;
+  }
+  // 5. Last event (event, P0) — same trust chrome the sense set trails with.
+  {
+    Card& c = push();
+    c.kind = CardKind::Event; c.id = "last_event"; c.title = "Last event";
+    c.icon = "clock"; c.privacy = CardPrivacy::P0;
+    c.ev = w.has_event ? w.last_event : nullptr;
+    c.signed_known = w.has_event;
+  }
+  // 6. Witness chain (trust, P0)
+  {
+    Card& c = push();
+    c.kind = CardKind::Trust; c.id = "chain"; c.title = "Witness chain";
+    c.icon = "shield"; c.privacy = CardPrivacy::P0;
+    c.chain = w.chain_length; c.badge = w.badge;
+  }
+}
+
 void build_cards(const Witness& w, uint32_t now, const FleetLimits& limits,
                  CardSet& out) {
   (void)now;
   (void)limits;
   out.count = 0;
-  if (has_cards(w)) {
+  // Dispatch on device type. Pool first so a witness that somehow claimed both
+  // surfaces still gets a deterministic set; in practice a device is one type.
+  if (is_pool_witness(w)) {
+    build_pool_cards(w, out);
+    return;
+  }
+  if (is_sense_witness(w)) {
     build_sense_cards(w, out);
     return;
   }
@@ -192,9 +285,30 @@ size_t format_card_value(const Card& c, char* buf, size_t cap) {
       break;
     case CardKind::Stat:
     case CardKind::Sparkline:
-      if (!c.num_known) snprintf(buf, cap, "—");
-      else if (c.unit && c.unit[0]) snprintf(buf, cap, "%ld %s", c.num, c.unit);
-      else snprintf(buf, cap, "%ld", c.num);
+      if (!c.num_known) {
+        snprintf(buf, cap, "—");
+      } else if (c.num_decimals > 0) {
+        // Fixed-point: num is scaled by 10^decimals (pH 74 -> "7.4"). Split so
+        // a negative value keeps its sign on the whole part and a magnitude
+        // fraction ("-1.5", not "-1.-5"). Decimals are clamped to a small max
+        // (no card needs more, and it bounds the field width for the buffer).
+        int dec = c.num_decimals > 6 ? 6 : (int)c.num_decimals;
+        long pow = 1;
+        for (int i = 0; i < dec; i++) pow *= 10;
+        const long whole = c.num / pow;
+        long frac = c.num % pow;
+        if (frac < 0) frac = -frac;
+        const bool neg_zero_whole = (c.num < 0 && whole == 0);
+        char num[48];
+        snprintf(num, sizeof(num), "%s%ld.%0*ld", neg_zero_whole ? "-" : "",
+                 whole, dec, frac);
+        if (c.unit && c.unit[0]) snprintf(buf, cap, "%s %s", num, c.unit);
+        else snprintf(buf, cap, "%s", num);
+      } else if (c.unit && c.unit[0]) {
+        snprintf(buf, cap, "%ld %s", c.num, c.unit);
+      } else {
+        snprintf(buf, cap, "%ld", c.num);
+      }
       break;
     case CardKind::Band:
       if (c.band_sel < 0 || c.band_sel >= (int)c.band_count) snprintf(buf, cap, "—");
