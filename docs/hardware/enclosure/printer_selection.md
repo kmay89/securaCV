@@ -28,24 +28,39 @@ concrete answers worth writing down:
 
 ## First: what these parts actually demand
 
-Measured from all 34 committed STLs in this folder. This section is the whole
-argument — most printer-buying advice is written for parts unlike ours, and
-once you have these numbers most of the market's differentiators stop mattering.
+### Scope of these measurements
+
+**This analysis covers the 34 committed, print-validated STLs in this folder**
+(`git ls-files '*.stl'`) — the released WAP, Vision, Doorbell and Sense parts
+plus the workshop coupons. That is the set we would actually put into
+production, and it is exactly reproducible.
+
+It is **not** the whole catalog. Around 60 parts render from the `.scad`
+sources, including the [in-development](./README.md#in-development) designs that
+have no committed STL, and **those are not costed here**. One of them matters
+for printer choice and is called out below: [`canary_s3_lcd7.scad`](./canary_s3_lcd7.scad),
+the 7" wall dashboard, is dimensioned around a **192.96 × 110.76 mm** bonded
+glass slab, so its bezel lands near **200 mm** wide — bigger than anything in
+the released set.
+
+### The constraints
 
 | Constraint | Measured reality | What it rules in / out |
 |---|---|---|
-| **Largest part** | **120.5 × 78.0 × 43.7 mm** (`canary_dash_display_stand`) | Build volume is a **non-constraint**. Every part in the catalog fits a 180 mm cube — the *smallest* modern machine sold. Do not pay for bed size. |
+| **Largest released part** | **120.5 × 78.0 × 43.7 mm** (`canary_dash_display_stand`) | Build volume is **not a constraint for the released set** — it fits any current machine with room to spare. Do not pay for bed size. |
+| **Largest part in the catalog** | ~**200 mm** wide (7" dashboard bezel, in development, no committed STL) | Sets the real floor: a **~220 mm bed or larger** if that design ships. Comfortably inside a 256 mm machine; it rules out the 180 mm mini class. |
 | **Tallest print** | ~44 mm in the modeled orientation | Warping scales with height and footprint. At this size, **an active heated chamber is a nice-to-have, not a requirement** — this is the single biggest cost lever. |
 | **Supports** | Never — geometry self-supports | No soluble material, no second nozzle needed for support interface. |
 | **Materials** | PETG default · ASA outdoor · **TPU 90–95 A** gaskets · **CF-PETG/CF-Nylon** bracket · PC narrowly | Needs: **enclosure** (ASA), **direct drive** (TPU), **hardened nozzle** (CF). |
 | **Finish surface** | The **bed** — visible faces print face-down | A **textured PEI plate is mandatory**, not an upgrade. |
 | **Nozzle / layer** | 0.4 mm / 0.20 mm | Stock hardware on everything. |
-| **Catalog size** | ~60 parts, 34 committed STLs | Throughput comes from **parallel machines**, not one fast one. |
+| **Catalog size** | 34 committed STLs (~60 parts render from source) | Throughput comes from **parallel machines**, not one fast one. |
 
-**The conclusion this forces:** the expensive tier of the market sells build
-volume, active chambers and dual extrusion. This catalog needs **none of the
-three**. What it actually needs is an enclosure, direct drive, a hardened
-nozzle option, a textured PEI plate, and *many cheap reliable units*.
+**The conclusion this forces:** the expensive tier of the market sells large
+build volume, active chambers and dual extrusion. This catalog needs **none of
+the three** — a stock 256 mm bed swallows even the 7" dashboard. What it
+actually needs is an enclosure, direct drive, a hardened nozzle option, a
+textured PEI plate, and *many cheap reliable units*.
 
 ---
 
@@ -117,51 +132,73 @@ For comparison: **one** Prusa CORE One is $1,099–1,199, and three would be
 
 ### Running cost — per device, computed from the meshes
 
-Volumes are exact (signed-tetrahedron integration over the committed STLs).
-Printed mass assumes **62 % of solid volume** for our spec (4 walls, 30 % gyroid,
-1.0 mm top/bottom) at PETG 1.27 g/cm³. PETG at $20/kg, ASA at $41/kg
-([price tracker](https://filamentpricetracker.com/material/petg)).
+Volumes are exact: signed-tetrahedron integration over each committed STL, which
+yields the **solid material volume of the modeled part**. Because these
+enclosures are modeled hollow, that volume is the *wall material only* — the
+interior cavity is not in it.
 
-| Device set | Parts | Printed mass | PETG | ASA | Est. print time |
+**Mass below is quoted at 100 % of solid volume**, i.e. an **upper bound**, at
+PETG 1.27 g/cm³. That is deliberate, and worth explaining: our spec is 4 walls
+(1.6 mm) with 1.0 mm solid top/bottom skins against a 2.0 mm modeled wall, so a
+typical wall section is ~1.6 mm solid perimeter plus ~0.4 mm at 30 % gyroid —
+roughly **85–90 % dense**, not 30 %. Gaskets are TPU at 100 % infill, so they
+are fully solid. Only the few bulky parts (the watch-station stand) sit
+meaningfully below the bound. **Quoting the upper bound means these figures never
+understate cost**; the slicer's own estimate is the authority for any real run.
+
+PETG at $20/kg, ASA at $41/kg ([price tracker](https://filamentpricetracker.com/material/petg)).
+
+| Device set | Parts | Solid volume | Mass (upper bound) | PETG | ASA |
 |---|---|---|---|---|---|
-| WAP (compact) | 2 | 7.1 g | **$0.14** | $0.29 | ~0.7 h |
-| WAP (battery) | 2 | 20.9 g | **$0.42** | $0.86 | ~1.9 h |
-| Sense radome | 2 | 21.8 g | **$0.44** | $0.89 | ~2.0 h |
-| Vision (xiao, indoor) | 3 | 22.8 g | **$0.46** | $0.94 | ~2.1 h |
-| Vision (xiao, weather) | 4 | 36.9 g | **$0.74** | $1.51 | ~3.4 h |
-| WAP (weather) | 4 | 45.5 g | **$0.91** | $1.87 | ~4.1 h |
-| Doorbell | 4 | 45.6 g | **$0.91** | $1.87 | ~4.1 h |
-| **Entire 34-STL catalog** | 34 | **530 g** | **$10.60** | $21.70 | ~48 h |
+| WAP (compact) | 2 | 9.0 cm³ | 11.5 g | **$0.23** | $0.47 |
+| WAP (battery) | 2 | 26.5 cm³ | 33.7 g | **$0.67** | $1.38 |
+| Sense radome | 2 | 27.6 cm³ | 35.1 g | **$0.70** | $1.44 |
+| Vision (xiao, indoor) | 4 | 36.1 cm³ | 45.9 g | **$0.92** | $1.88 |
+| Vision (xiao, weather) | 5 | 57.2 cm³ | 72.6 g | **$1.45** | $2.98 |
+| WAP (weather) | 4 | 57.8 cm³ | 73.4 g | **$1.47** | $3.01 |
+| Doorbell | 4 | 57.9 cm³ | 73.5 g | **$1.47** | $3.01 |
+| **All 34 committed STLs** | 34 | 673.2 cm³ | **855 g** | **$17.10** | $35.05 |
 
-Print time is an **estimate** at ~11 g/h — a realistic PETG rate for small
-walled parts on a CoreXY once travels, cooling minimums and per-part overhead
-are counted. It is not a slicer figure; treat it as ±30 % until we time a real
-plate.
-
-**The headline: the whole catalog is about half a spool of PETG.** Filament is
-not the cost of this operation.
+**The headline: the entire released catalog is under a kilogram of PETG —
+roughly one spool, about $17.** Filament is not the cost of this operation, and
+that conclusion is robust: it holds even at the upper bound, and the true figure
+is at or below it.
 
 **Power** is smaller still. Measured draw on a P1S-class machine is ~105 W
 printing PLA; call it **~120 W** for PETG with an 80 °C bed
 ([Filamino](https://filamino.com/blog/3d-printer-electricity-cost)). At US-average
-~$0.17/kWh that is **~$0.02 per print-hour**, or **under $0.08 of electricity per
-device**. Note the "700 W"/"1000 W" figures on spec sheets are **PSU peak
-ratings, not draw** — a common way these estimates get inflated 5×.
+~$0.17/kWh that is **~$0.02 per print-hour**. Note the "700 W"/"1000 W" figures
+on spec sheets are **PSU peak ratings, not draw** — a common way these estimates
+get inflated 5×.
 
-**Cost per device, all in:**
+**Everything that isn't filament, per print-hour:**
 
-| Component | Vision (weather) | Doorbell |
-|---|---|---|
-| PETG | $0.74 | $0.91 |
-| Electricity | $0.07 | $0.08 |
-| Consumables (below, per print-hour) | ~$0.10 | ~$0.12 |
-| Machine amortization (3 yr, below) | ~$0.31 | ~$0.37 |
-| **Total** | **≈ $1.22** | **≈ $1.48** |
+| Component | Per print-hour |
+|---|---|
+| Electricity (~120 W at $0.17/kWh) | ~$0.02 |
+| Consumables (from $60–100/machine-year, below) | ~$0.04 |
+| Machine amortization ($549 over 3 yr, below) | ~$0.09 |
+| **Total non-material** | **~$0.15** |
 
-**Labour is not in that table, and it dominates it.** Plate changes, part
+**These are deliberately left per-hour rather than per-device.** Converting them
+needs a print time, and we have not benchmarked one — see the note below. What
+the table does establish is the shape of the cost: **material is $0.23–$1.47 per
+device and everything else is cents per hour on top.**
+
+**Labour is in neither table, and it dominates both.** Plate changes, part
 removal, gasket fitting, QC against the fit coupon — at any realistic wage,
-human handling costs several times the ~$1.30 of consumed material and power.
-That single fact drives the decision at the bottom of this page.
+human handling costs several times the ~$1.50 of material, power and machine
+wear. That single fact drives the decision at the bottom of this page.
+
+> **Not benchmarked: print time and daily capacity.** Per
+> [AGENTS.md](../../../AGENTS.md) rule 4 — *no performance claim without a
+> benchmark* — this page does **not** publish a parts-per-day figure. Nothing
+> here has been sliced or timed, and a real number would also have to absorb
+> plate changes, material swaps and failures. **Before planning capacity or
+> committing to a delivery date, slice and time a representative plate**
+> (a PETG enclosure set, a TPU gasket, a CF bracket) on the machine actually
+> bought, and record it here. The recommendation below does not depend on that
+> number.
 
 ### Reliability & maintenance cost
 
@@ -191,8 +228,8 @@ with occasional ASA. Two caveats specific to us:
   swapping** once you count the recalibration.
 
 **Amortization:** a $549 P2S over 3 years is $183/yr. At a conservative 2,000
-print-hours/yr that is **~$0.09 per print-hour** — roughly $0.31 on a Vision
-weather set. Machines are cheap per part; this is why buying more of them wins.
+print-hours/yr that is **~$0.09 per print-hour**. Machines are cheap per part;
+this is why buying more of them wins.
 
 **Known reliability caveats, stated honestly:**
 
@@ -242,12 +279,15 @@ weather set. Machines are cheap per part; this is why buying more of them wins.
 
 The reasoning, in order of weight:
 
-1. **The parts are small.** Nothing exceeds 120 mm or prints taller than ~44 mm.
-   That deletes build volume *and* active chamber heating from the requirements
-   list — which is most of what the premium tier sells.
+1. **The parts are small.** No released part exceeds 120 mm or prints taller than
+   ~44 mm, and the largest thing the catalog could ship (the 7" bezel, ~200 mm)
+   still sits well inside a stock 256 mm bed. That deletes large build volume
+   *and* active chamber heating from the requirements list — most of what the
+   premium tier sells.
 2. **Throughput is parallel, not serial.** A 34-part catalog of small, repetitive
-   parts is embarrassingly parallel. Three machines at ~11 g/h beat one machine
-   that is 30 % faster, for a third of the price premium.
+   parts is embarrassingly parallel. Three machines beat one machine that is
+   30 % faster, for a third of the price premium — and this holds whatever the
+   per-part time turns out to be, because it is a ratio, not a rate.
 3. **Redundancy is the real reliability feature.** With three units, a failed
    hotend costs a third of capacity for the price of a $21 part. With one
    premium unit, it costs all of it.
@@ -258,8 +298,11 @@ The reasoning, in order of weight:
    we can write first-hand documentation for, and it is already the one most
    users have.
 
-**Expected throughput:** ~3.4 h for a Vision weather set → ~5–6 sets per machine
-per day at 20 h uptime → **roughly 15–18 devices/day across three machines**.
+**Throughput: benchmark it, don't estimate it.** Slice and time a representative
+plate on the machine you buy before quoting anyone a parts-per-day figure, and
+record the result here. Note that all five reasons above are *structural* — part
+size, parallelism, redundancy, labour share, reader overlap — so none of them
+moves when that benchmark lands.
 
 **Buy alongside:** one hardened hotend (dedicate a machine to the CF bracket),
 one external spool holder (TPU gaskets — they cannot use an AMS), a spare
@@ -292,11 +335,18 @@ either way: **buy several cheap enclosed machines, not one expensive one.**
 
 ## Confidence and staleness
 
-- **Part measurements** (dimensions, volumes, per-device mass) are computed from
-  the committed STLs and are exact for this tree. Re-run the numbers if the CAD
-  changes materially.
-- **Print times** are estimates at ~11 g/h. Treat as ±30 % until a real plate is
-  timed on the machine we buy.
+- **Part measurements** (dimensions, volumes) are computed by signed-tetrahedron
+  integration over the 34 STLs returned by `git ls-files '*.stl'` and are exact
+  for this tree. Re-run them if the CAD changes materially.
+- **Masses are upper bounds** (100 % of solid volume), not slicer output. True
+  printed mass is at or modestly below them — see the reasoning in the running-cost
+  section. For a real production run, take the figure from the slicer.
+- **Print time and daily capacity are deliberately absent.** Nothing has been
+  sliced or timed; publishing a rate would breach AGENTS.md rule 4. Benchmark
+  before planning capacity.
+- **In-development parts are out of scope** — only the released, print-validated
+  set is costed. The 7" dashboard is noted because it changes the minimum bed
+  size, not because it has been costed.
 - **Prices and specs** are mid-2026 and come partly from secondary review sites;
   two primary sources were unreachable when this was written. **Confirm current
   pricing and the P2S chamber spec on the vendor's own store page before
