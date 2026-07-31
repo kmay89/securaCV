@@ -1166,7 +1166,7 @@ void loop() {
   // wifi_wants_setup() is false forever after a single successful association,
   // so a device that has been running for months never does this.
   if (canary::net::wifi_wants_setup()) {
-    log_line("WIFI", "Can't join with the saved credentials — reopening setup.");
+    canary::log_line("WIFI", "Can't join with the saved credentials — reopening setup.");
     canary::net::provision_run(g_display_ok);
     canary::net::wifi_init_or_reboot();  // adopt whatever the wizard joined
   }
