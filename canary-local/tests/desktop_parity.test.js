@@ -665,3 +665,70 @@ test("board access notes: both flashers explain the radar's hidden flashing port
       `${label} flasher hardcodes access copy that belongs in gen_flash.py's BOARD_ACCESS`);
   }
 });
+
+// ── broker credentials must reach every firmware that reads them ─────────────
+//
+// The displays could not be told which hub to talk to. Both flashers gated the
+// MQTT fields on `provisioning === "usb-secrets"`, and every display is
+// `on-glass` — yet canary-display's runtime_config.h carries mqtt_host / port /
+// user / pass and mqtt_mgr.cpp reads them on every boot. The desktop app went
+// further and hard-coded empty strings into the seed. So the fields were hidden
+// in the app, absent from the on-glass portal, and blank in NVS: three surfaces
+// agreeing on a value the user was never asked for.
+//
+// That is the dangerous shape — not a crash, just a board that quietly never
+// reaches its broker. These pin the capability as a capability: read from each
+// firmware's own source by gen_flash.py, never a hand-kept list, and never
+// conflated with how identity happens to be provisioned.
+
+// The catalog doesn't carry `project` (it stays internal to gen_flash.py), so
+// map the family to the tree the firmware actually lives in.
+const FAMILY_PROJECT = {
+  canary: "firmware/canary",
+  wap: "firmware/projects/canary-wap",
+  vision: "firmware/projects/canary-vision",
+  sense: "firmware/projects/canary-sense",
+  display: "firmware/projects/canary-display",
+};
+
+test("every firmware whose runtime_config reads a broker is tagged broker_nvs", () => {
+  for (const p of catalog.products) {
+    const proj = FAMILY_PROJECT[p.family];
+    assert.ok(proj, `${p.id}: unmapped family "${p.family}" — add it above`);
+    const rc = join(ROOT, proj, "include/canary/runtime_config.h");
+    let reads = false;
+    try {
+      const text = read(rc);
+      reads = text.includes("mqtt_host") && text.includes("mqtt_user");
+    } catch { reads = false; }
+    assert.equal(
+      p.broker_nvs === true, reads,
+      `${p.id}: catalog says broker_nvs=${p.broker_nvs} but its runtime_config ` +
+      `${reads ? "DOES" : "does not"} read mqtt_host/mqtt_user. Regenerate with ` +
+      `canary-local/tools/gen_flash.py — never hand-edit devices/flash.json.`
+    );
+  }
+});
+
+test("displays can be given a broker — the case that was impossible", () => {
+  const displays = catalog.products.filter((p) => p.id.includes("display"));
+  assert.ok(displays.length >= 7, "expected the display line in the catalog");
+  for (const d of displays) {
+    assert.equal(d.provisioning, "on-glass", `${d.id} is on-glass`);
+    assert.equal(d.broker_nvs, true,
+      `${d.id} reads a broker from NVS, so both flashers must offer those fields`);
+  }
+});
+
+test("neither flasher gates the broker fields on the provisioning mode", () => {
+  // The exact regression: `prov === "usb-secrets"` deciding whether a broker
+  // can be entered. Capability and provisioning are different questions.
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  assert.ok(/broker_nvs/.test(appJs),
+    "desktop app must gate broker fields on the broker_nvs capability");
+  assert.ok(/broker_nvs/.test(flashJs),
+    "browser flasher must gate broker fields on the broker_nvs capability");
+  assert.ok(!/mqttHost:\s*usbSecrets\s*\?/.test(appJs),
+    "desktop app must not blank mqttHost for non-usb-secrets boards");
+});

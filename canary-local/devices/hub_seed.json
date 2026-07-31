@@ -33,9 +33,9 @@
   "steps": [
     {
       "id": "add-repositories",
-      "title": "Register the add-on repositories",
-      "what": "Tell Home Assistant where the Frigate and securaCV add-ons come from.",
-      "why": "Home Assistant only installs add-ons from repositories it knows about. Both of ours are third-party, so nothing else in this plan can work until they're registered. The Supervisor API does this unattended; the `ha` command line cannot, which is why the by-hand path makes you click through the store UI.",
+      "title": "Register the app repositories",
+      "what": "Tell Home Assistant where the Frigate and securaCV apps come from.",
+      "why": "Home Assistant only installs apps (older versions call them add-ons) from repositories it knows about. Both of ours are third-party, so nothing else in this plan can work until they're registered. The Supervisor API does this unattended; the `ha` command line cannot, which is why the by-hand path makes you click through the store UI.",
       "for_what": "Makes the next two installs possible.",
       "repositories": [
         "https://github.com/blakeblackshear/frigate-hass-addons",
@@ -90,7 +90,7 @@
       "for_what": "Makes Frigate talk to your hub instead of sitting idle.",
       "source": "homeassistant/frigate/config.yaml",
       "dest": "/addon_configs/ccab4aaf_frigate/config.yml",
-      "dest_note": "The Frigate add-on reads config.yml from its OWN add-on config directory \u2014 NOT /config/frigate.yml. Editing the wrong file is the classic 'I changed it and nothing happened'.",
+      "dest_note": "The Frigate app reads config.yml from its OWN app config directory \u2014 NOT /config/frigate.yml. Editing the wrong file is the classic 'I changed it and nothing happened'.",
       "never_overwrite": true,
       "then_start": "ccab4aaf_frigate",
       "then_start_supervisor_slug": "ccab4aaf_frigate",
@@ -101,7 +101,7 @@
       "id": "install-securacv",
       "title": "Install the securaCV witness kernel",
       "what": "Install the `privacy_witness_kernel` add-on, set it to Frigate mode, and start it.",
-      "why": "This is the part that makes the system a witness rather than a camera system. It subscribes to Frigate's detections, strips identity, and writes each one into a signed, hash-chained log that can be verified later without trusting us. We set it to `frigate` mode BEFORE starting: its factory default is `standalone`, which only serves a setup wizard, so without this the 'unattended' install would quietly stop short of ever producing a claim. In frigate mode it auto-discovers the broker installed above (no MQTT to type) and generates + persists your device signing key automatically \u2014 open the add-on panel afterwards to back that key up, because losing it means you can't verify your own log.",
+      "why": "This is the part that makes the system a witness rather than a camera system. It subscribes to Frigate's detections, strips identity, and writes each one into a signed, hash-chained log that can be verified later without trusting us. We set it to `frigate` mode BEFORE starting: its factory default is `standalone`, which only serves a setup wizard, so without this the 'unattended' install would quietly stop short of ever producing a claim. In frigate mode it auto-discovers the broker installed above (no MQTT to type) and generates + persists your device signing key automatically \u2014 open the app's panel afterwards to back that key up, because losing it means you can't verify your own log.",
       "for_what": "Turns detections into tamper-evident, privacy-preserving claims.",
       "addon": "privacy_witness_kernel",
       "supervisor_slug": "d0491a67_privacy_witness_kernel",

@@ -861,15 +861,29 @@ function onProductChosen(p, ver) {
   // fields always show. Identity + broker stay usb-secrets-only: the other
   // firmwares configure that part themselves (AP portal / on-glass).
   const usbSecrets = p.provisioning === "usb-secrets";
+  // See readProvisioning(): reading a broker out of NVS is a firmware
+  // capability, separate from how identity is provisioned. Displays are
+  // on-glass AND read a broker, and used to fall through the gap.
+  const broker = p.broker_nvs === true;
   $("provisioning").classList.remove("hidden");
   document.querySelectorAll("#provisioning .usb-only").forEach((n) => {
     n.classList.toggle("hidden", !usbSecrets);
     const input = n.querySelector("input");
-    if (input) input.required = usbSecrets && ["device-id", "mqtt-host", "mqtt-port"].includes(input.id);
+    if (input) input.required = usbSecrets && input.id === "device-id";
+  });
+  document.querySelectorAll("#provisioning .broker-only").forEach((n) => {
+    n.classList.toggle("hidden", !broker);
+    const input = n.querySelector("input");
+    // Required only where the board has no other way to be told: a USB-secrets
+    // board configures its broker here or nowhere. A display can also be given
+    // one on the glass, so leaving these blank stays a legitimate choice.
+    if (input) input.required = usbSecrets && ["mqtt-host", "mqtt-port"].includes(input.id);
   });
   $("wifi-ssid").required = usbSecrets;
   $("provision-note").textContent = usbSecrets
     ? "The verified release image is generic. These values are written directly into this board's settings partition, never logged and never saved by the app."
+    : broker
+    ? "Optional, and worth doing: bake in your network AND your hub's broker, and this board comes up already talking to Home Assistant. Skip either and its on-screen setup still works. Written straight into this board's settings partition, never logged and never saved by the app."
     : "Optional: bake your network in and the Canary joins it on first boot — skip it and the board's own setup path (phone portal or on-screen) still works.";
   // Offer the network this computer is on — the common case — so joining is
   // one Tab and a password away (which Keychain/password managers can fill).
@@ -1007,12 +1021,20 @@ async function onFlash() {
 function readProvisioning(product) {
   if (!product) return null;
   const usbSecrets = product.provisioning === "usb-secrets";
+  // Whether THIS firmware reads broker credentials out of NVS — a property of
+  // the firmware, not of how its identity is provisioned. The displays are the
+  // case that made the distinction necessary: they are `on-glass`, so the old
+  // `usbSecrets` gate blanked their broker fields, yet canary-display's
+  // runtime_config.h carries mqtt_host/port/user/pass and mqtt_mgr.cpp reads
+  // them. A display therefore had NO way to be told a broker — not here, and
+  // not on the glass, whose portal only ever asked for Wi-Fi.
+  const broker = product.broker_nvs === true;
   // Wi-Fi-only boards: an empty SSID just means "skip the preload" — the
   // board's own setup path still works, so nothing to validate or write.
-  if (!usbSecrets && !$("wifi-ssid").value) return null;
-  const fields = usbSecrets
-    ? ["device-id", "wifi-ssid", "wifi-pass", "mqtt-host", "mqtt-port", "mqtt-user", "mqtt-pass"]
-    : ["wifi-ssid", "wifi-pass"];
+  if (!usbSecrets && !$("wifi-ssid").value && !$("mqtt-host").value) return null;
+  const fields = ["wifi-ssid", "wifi-pass"]
+    .concat(usbSecrets ? ["device-id"] : [])
+    .concat(broker ? ["mqtt-host", "mqtt-port", "mqtt-user", "mqtt-pass"] : []);
   for (const id of fields) {
     const input = $(id);
     if (!input.checkValidity()) {
@@ -1030,10 +1052,10 @@ function readProvisioning(product) {
     deviceId: usbSecrets ? $("device-id").value.trim() : "",
     wifiSsid: $("wifi-ssid").value,
     wifiPass,
-    mqttHost: usbSecrets ? $("mqtt-host").value.trim() : "",
-    mqttPort: usbSecrets ? Number($("mqtt-port").value) : 1883,
-    mqttUser: usbSecrets ? $("mqtt-user").value : "",
-    mqttPass: usbSecrets ? $("mqtt-pass").value : "",
+    mqttHost: broker ? $("mqtt-host").value.trim() : "",
+    mqttPort: broker ? Number($("mqtt-port").value) || 1883 : 1883,
+    mqttUser: broker ? $("mqtt-user").value : "",
+    mqttPass: broker ? $("mqtt-pass").value : "",
     // Which NVS encoding this firmware reads (catalog, from the source):
     // "blob" for canary/wap, "string" for sense/vision/display.
     wifiNvs: product.wifi_nvs || "string",
@@ -3313,18 +3335,24 @@ function hubShowHatch(receipt) {
       "then power it on.";
   const steps = [
     bootStep,
-    "First boot takes 10–20 minutes while Home Assistant unpacks and sets itself up — LED " +
-      "activity is it working, not a problem. Best to leave it plugged in for those minutes; " +
-      "if power does get cut, it nearly always recovers on the next boot, and the true worst " +
-      "case is simply re-flashing this card.",
+    "First boot usually takes under 10 minutes while Home Assistant unpacks and downloads " +
+      "itself, though a slow card can stretch it to 20 — LED activity is it working, not a " +
+      "problem. Best to leave it plugged in for those minutes; if power does get cut, it " +
+      "nearly always recovers on the next boot, and the true worst case is simply " +
+      "re-flashing this card.",
     accountMade
       ? `Open http://${HUB_HOST} and log in with the account you just made.`
       : `Open http://${HUB_HOST} on any device in your home and create your account.`,
     "Once you're in, give your Canaries their meeting point: in Home Assistant go to " +
-      "Settings → Add-ons → Add-on Store, install “Mosquitto broker”, and press Start. When " +
+      "Settings → Apps → Install app, choose “Mosquitto broker”, and press Start. When " +
       "Home Assistant then offers to set up the newly discovered “MQTT” integration, accept " +
       "with the defaults — they're exactly right for Canaries (the broker lives on the hub " +
       "itself, port 1883).",
+    "Now make the login your Canaries will use: the broker refuses anonymous connections, " +
+      "and Home Assistant's own reserved accounts don't apply to them. Turn on Advanced Mode " +
+      "in your profile, then Settings → People → Users → Add user — “securacv” and a " +
+      "password you'll reuse on each device. It needs no administrator rights. Type that " +
+      "same pair into the MQTT fields when you flash each Canary.",
     "Then follow “The Hub” guide to bring in your Canaries — securacv.com/lab → Home Assistant.",
   ];
   $("hub-hatch-steps").innerHTML = steps.map((s) => `<li>${esc(s)}</li>`).join("");

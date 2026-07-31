@@ -163,10 +163,11 @@ def main() -> None:
     steps = [
         {
             "id": "add-repositories",
-            "title": "Register the add-on repositories",
-            "what": "Tell Home Assistant where the Frigate and securaCV add-ons come from.",
+            "title": "Register the app repositories",
+            "what": "Tell Home Assistant where the Frigate and securaCV apps come from.",
             "why": (
-                "Home Assistant only installs add-ons from repositories it knows about. Both of "
+                "Home Assistant only installs apps (older versions call them add-ons) from "
+                "repositories it knows about. Both of "
                 "ours are third-party, so nothing else in this plan can work until they're "
                 "registered. The Supervisor API does this unattended; the `ha` command line "
                 "cannot, which is why the by-hand path makes you click through the store UI."
@@ -264,7 +265,7 @@ def main() -> None:
             "source": str(FRIGATE_CONFIG.relative_to(REPO)),
             "dest": FRIGATE_CONFIG_DEST.format(slug=frigate["slug"]),
             "dest_note": (
-                "The Frigate add-on reads config.yml from its OWN add-on config directory — NOT "
+                "The Frigate app reads config.yml from its OWN app config directory — NOT "
                 "/config/frigate.yml. Editing the wrong file is the classic 'I changed it and "
                 "nothing happened'."
             ),
@@ -291,7 +292,7 @@ def main() -> None:
                 "serves a setup wizard, so without this the 'unattended' install would quietly stop "
                 "short of ever producing a claim. In frigate mode it auto-discovers the broker "
                 "installed above (no MQTT to type) and generates + persists your device signing key "
-                "automatically — open the add-on panel afterwards to back that key up, because "
+                "automatically — open the app's panel afterwards to back that key up, because "
                 "losing it means you can't verify your own log."
             ),
             "for_what": "Turns detections into tamper-evident, privacy-preserving claims.",

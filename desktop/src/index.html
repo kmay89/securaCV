@@ -201,10 +201,10 @@
                 <label class="usb-only">Canary name<input id="device-id" maxlength="47" autocomplete="off" required></label>
                 <label>Wi-Fi name<input id="wifi-ssid" maxlength="32" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="next"></label>
                 <label>Wi-Fi password<input id="wifi-pass" type="password" maxlength="63" autocomplete="current-password"></label>
-                <label class="usb-only">Home Assistant / MQTT host<input id="mqtt-host" maxlength="63" placeholder="homeassistant.local" autocomplete="off" required></label>
-                <label class="usb-only">MQTT port<input id="mqtt-port" type="number" min="1" max="65535" value="1883" required></label>
-                <label class="usb-only">MQTT username<input id="mqtt-user" maxlength="32" autocomplete="off"></label>
-                <label class="usb-only">MQTT password<input id="mqtt-pass" type="password" maxlength="64" autocomplete="new-password"></label>
+                <label class="broker-only">Home Assistant / MQTT host<input id="mqtt-host" maxlength="63" placeholder="homeassistant.local" autocomplete="off"></label>
+                <label class="broker-only">MQTT port<input id="mqtt-port" type="number" min="1" max="65535" value="1883"></label>
+                <label class="broker-only">MQTT username<input id="mqtt-user" maxlength="32" autocomplete="off"></label>
+                <label class="broker-only">MQTT password<input id="mqtt-pass" type="password" maxlength="64" autocomplete="new-password"></label>
               </div>
             </section>
             <div class="row" id="host-flash-controls">

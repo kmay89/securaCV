@@ -445,6 +445,30 @@ def wifi_scheme(project: str) -> str:
                 return "string"
     return "blob"
 
+
+def reads_broker(project: str) -> bool:
+    """Whether this firmware takes its BROKER out of NVS — read from the
+    project's own runtime_config, for the same reason wifi_scheme is: a
+    hand-maintained list goes stale silently, and the failure it produces is
+    invisible.
+
+    This is deliberately independent of `provisioning`. Conflating the two is
+    what broke the displays: they are provisioned `on-glass`, so the flasher
+    gated their broker fields off and wrote empty strings — while
+    canary-display's runtime_config.h carries mqtt_host/port/user/pass and
+    mqtt_mgr.cpp reads them every boot. The result was a display that could
+    never be told which hub to talk to: not by the flasher, which hid the
+    fields, and not on the glass, whose portal only ever asked for WiFi.
+    """
+    candidates = [REPO / project / "include/canary/runtime_config.h",
+                  *(REPO / project).glob("arduino/*/runtime_config.h")]
+    for rc in candidates:
+        if rc.exists():
+            text = rc.read_text(encoding="utf-8")
+            if "mqtt_host" in text and "mqtt_user" in text:
+                return True
+    return False
+
 # Post-flash "hatching" copy. This lives in the generated catalog instead of
 # desktop/web UI branches so every flasher surface can share the same first-use
 # promise, and CI's catalog drift gate catches missing metadata for new products.
@@ -1614,6 +1638,7 @@ def main() -> None:
             "provisioning": p["provisioning"],
             "provisioning_note": PROVISIONING[p["provisioning"]],
             "wifi_nvs": wifi_scheme(p["project"]),
+            "broker_nvs": reads_broker(p["project"]),
             "hatch": hatch,
             "serial_receipt": supports_serial_receipt(p["project"]),
             "role": role,
