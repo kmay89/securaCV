@@ -16,6 +16,7 @@
 
 import { DeviceScene } from "./scene3d.js";
 import { parseSTL } from "./stl.js";
+import { productSummary } from "./catalog-browse.js";
 
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -81,12 +82,24 @@ const state = {
 
 // ── config resolution ───────────────────────────────────────────────────
 const wsDev = () => state.data.devices[state.dev];
-const hasConfigurator = () => (wsDev().options || []).some((o) => o.id.startsWith("opt_"));
+// A user-facing boolean toggle: driven by the manifest's `audience` tag, not
+// the `opt_` name prefix (the leaky signal catalog.json's audience split
+// replaced). Enum options (mount_style) are user too but ride their own select,
+// so they stay out of the boolean option vector.
+const isUserToggle = (o) => o.audience === "user" && !o.enum;
+const hasConfigurator = () => (wsDev().options || []).some((o) => o.audience === "user");
+
+// The catalog manifest's summary for the current device's enclosure (by scad),
+// or null offline / when the scad isn't in the manifest.
+function catalogFacts() {
+  const p = state.catalogByScad?.get(wsDev().scad);
+  return p ? productSummary(p) : null;
+}
 
 function optionVector() {
   const v = {};
   for (const o of wsDev().options || []) {
-    if (o.id.startsWith("opt_")) v[o.id] = !!state.options[o.id];
+    if (isUserToggle(o)) v[o.id] = !!state.options[o.id];
   }
   return v;
 }
@@ -453,6 +466,30 @@ function renderConfigure(root) {
 
   // left column: packages + options
   const left = el("div", "ws-left");
+
+  // catalog facts (read from the manifest, not retyped): environment rating —
+  // design intent, never "verified" — plus flavors, options and see-also.
+  const cf = catalogFacts();
+  if (cf) {
+    const bits = [];
+    if (cf.envLabel && cf.envLabel !== "unrated")
+      bits.push(`${cf.envLabel} · target`);
+    if (cf.flavors) bits.push(`${cf.flavors} flavor${cf.flavors === 1 ? "" : "s"}`);
+    // Count the options THIS workshop actually exposes, not the catalog's full
+    // user-option inventory — the workshop only builds devices with a BOM +
+    // firmware, so a "5 options" claim beside a package it can't configure
+    // (e.g. the Dash) would mislead. Zero → the line just omits it.
+    const nOpts = (d.options || []).filter((o) => o.audience === "user").length;
+    if (nOpts) bits.push(`${nOpts} option${nOpts === 1 ? "" : "s"}`);
+    if (cf.alternatives.length)
+      bits.push("see also " + cf.alternatives.map((a) => a.replace(/_/g, " ")).join(", "));
+    if (bits.length) {
+      const line = el("p", "ws-catfacts muted");
+      line.append(el("span", "ws-catfacts-cap", "From the catalog: "),
+        document.createTextNode(bits.join(" · ")));
+      left.append(line);
+    }
+  }
 
   left.append(el("h3", null, "Start from a package"));
   const pkgRow = el("div", "ws-pkgs");
@@ -1014,7 +1051,7 @@ function renderBuildCard(root) {
       (m.exact ? `Package: ${m.pkg.label}` : `Custom (nearest: ${m.pkg.label})`)
       + (m.pkg.dims_mm ? ` · ${m.pkg.dims_mm}` : "")));
   }
-  const on = (wsDev().options || []).filter((o) => state.options[o.id] && o.id.startsWith("opt_"));
+  const on = (wsDev().options || []).filter((o) => state.options[o.id] && isUserToggle(o));
   if (on.length) {
     card.append(el("p", "muted", "Options: " + on.map((o) => o.label).join(" · ")));
   }
@@ -1116,18 +1153,23 @@ function pickDevice(id) {
   const pkg = d.packages?.find((p) => p.id === d.default_package) || d.packages?.[0];
   state.pkg = pkg?.id || null;
   if (pkg?.options) state.options = { ...pkg.options };
-  else for (const o of d.options || []) if (o.id.startsWith("opt_")) state.options[o.id] = o.default;
+  else for (const o of d.options || []) if (isUserToggle(o)) state.options[o.id] = o.default;
 }
 
 async function boot() {
-  const [data, registry, enclosures, build] = await Promise.all([
+  const [data, registry, enclosures, build, catalog] = await Promise.all([
     loadJson("devices/workshop.json"),
     loadJson("devices/registry.json"),
     loadJson("devices/enclosures.json"),
     loadJson("devices/build.json"),
+    loadJson("devices/catalog.json").catch(() => null),
   ]);
   state.data = data; state.registry = registry;
   state.enclosures = enclosures; state.build = build;
+  // the catalog manifest, indexed by scad basename — lets the workshop show the
+  // env rating / flavors / alternatives the SCADs declare, not just its options
+  state.catalogByScad = new Map(
+    ((catalog && catalog.products) || []).map((p) => [p.scad, p]));
 
   const [hashDev, hashMode] = location.hash.replace(/^#/, "").split(".");
   pickDevice(data.devices[hashDev] ? hashDev : "canary-wap");
