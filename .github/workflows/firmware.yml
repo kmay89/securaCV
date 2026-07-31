@@ -110,7 +110,23 @@ jobs:
     name: PlatformIO Build (${{ matrix.flavor.name }})
     needs: flavors
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # 90, not 45. Measured on main: canary-display takes 43-44 minutes against
+    # the old 45-minute limit — about 60 seconds of headroom, i.e. one slow
+    # runner away from a red X that reads like a broken build but is really a
+    # stopwatch. Every other flavor finishes in 2-5 minutes.
+    #
+    # The asymmetry is not a slow toolchain, it is arithmetic: canary-display
+    # builds 17 environments in this one job (dash and its nine feature
+    # variants, dash7, watch, watch-modes, two nightstands, touch169,
+    # playground); canary-wap and canary-sense build 2, canary-vision 3.
+    #
+    # The RIGHT fix is to shard those 17 across parallel jobs — it would cut
+    # wall-clock enormously AND tell you WHICH environment broke instead of
+    # "display failed". That changes job names, which can break required-status
+    # checks configured on main, so it is deliberately left as a separate,
+    # reviewable change rather than smuggled in here. Raising the ceiling stops
+    # the bleeding today.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
