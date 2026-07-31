@@ -212,8 +212,9 @@ on macOS, `~/.local/share/com.securacv.flasher/` on Linux):
   launch — once. You'd re-enter the Wi-Fi network name and device names you
   last used; no password was ever stored, so nothing secret is lost.
 - **A self-update that was interrupted.** This is the one nothing in the app
-  can fix: the update replaces the app in place, so a force quit mid-write
-  leaves a copy that macOS won't finish launching. Reinstall from the latest
+  can fix, because the repair would have to run from the copy that moved:
+  installing an update moves the app bundle, so a force quit part-way can leave
+  it missing or incomplete. Reinstall from the latest
   [Flasher release](https://github.com/kmay89/securaCV/releases?q=flasher-v&expanded=true).
   Nothing you have flashed is affected — a Canary keeps the firmware it has,
   and the board can't be bricked.

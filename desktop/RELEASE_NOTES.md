@@ -34,11 +34,14 @@ and what to expect after updating. Heading grammar is
   - **A saved session left half-written.** Cleared automatically, once. You'll
     re-enter the Wi-Fi network name and device names you last used; no password
     was ever stored there, so nothing secret is lost.
-  - **An interrupted update.** Installing an update replaces the app itself, so
-    being killed mid-write can leave a copy your Mac won't finish opening. That
-    one only a reinstall can fix — so the Flasher now recognises it and tells
-    you, instead of leaving you guessing. It also won't let you quit while an
-    update is being written.
+  - **An interrupted update.** Installing an update moves the app itself, so
+    being stopped part-way can leave a copy that won't open at all. That one
+    only a reinstall can fix — the repair would have to run from the copy that
+    moved — so the Flasher now recognises it and tells you, instead of leaving
+    you guessing. It only says so when the update genuinely didn't land: if
+    you're already running the version that was being installed, it stays
+    quiet. And quitting during an install is now refused outright, whether you
+    close the window or press ⌘Q.
 - **If it still can't open, it now says why.** Every launch appends a line to
   `launch.log` beside the app's settings (`~/Library/Application
   Support/com.securacv.flasher/` on macOS), and a window that hasn't finished

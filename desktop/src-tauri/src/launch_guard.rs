@@ -14,12 +14,20 @@
 //!    synchronously before first paint (`src/app.js`). WebKit backs that with
 //!    SQLite; killed mid-write it can leave a store whose recovery wedges the
 //!    web content process, so the window never paints.
-//! 3. **A half-applied self-update.** `download_and_install` replaces this
-//!    app bundle *in place*. Killed inside that window, the bundle on disk is
-//!    incomplete and its signature no longer matches its contents — macOS
-//!    then bounces the icon and never opens anything. No app-side code can
-//!    repair that; only a reinstall can. But we can *recognise* it and say so
-//!    instead of leaving the user guessing.
+//! 3. **A half-applied self-update.** Installing an update moves the app
+//!    bundle itself. On macOS (`tauri-plugin-updater` 2.10.1) the ordinary
+//!    path is two `rename`s — the running `.app` out to a temp backup, the new
+//!    one in — so a kill between them leaves *no app at that path* rather than
+//!    a torn one; the privileged path (`rm -rf && mv` via AppleScript) is not
+//!    atomic and can leave a partial bundle that macOS refuses to finish
+//!    launching. Either way the user is stuck and nothing inside the app can
+//!    undo it, because the thing that would run the repair is the thing that
+//!    moved. All this module can do is *recognise* it afterwards and say so —
+//!    which beats a silent bounce, and is why the marker lives in the app data
+//!    dir and not in the bundle.
+//!
+//! Only the second of those is repairable from here. The first is preventable
+//! and reclaimable; the third is only ever nameable.
 //!
 //! So this module writes a breadcrumb as each launch advances, and reads the
 //! previous one on the way up. The important part is that all of it happens in
@@ -115,13 +123,22 @@ pub enum Verdict {
 
 /// Read a previous record and decide what it means. Pure, so the decision is
 /// testable without a filesystem, a process table, or a window.
-pub fn verdict_for(previous: Option<&LaunchRecord>) -> Verdict {
+///
+/// `running_version` is the version *this* binary was built as, and it is what
+/// makes an interrupted-install marker trustworthy. The marker alone only says
+/// an install was in flight; whether it landed is answered by what is running
+/// now. If we are already the version that was being installed, it finished —
+/// or the user reinstalled into it — and there is nothing to warn about. Only
+/// a marker naming a version we are *not* running means the swap didn't
+/// complete. Without this, the first launch after a successful-but-unrecorded
+/// install would tell the user to reinstall the copy they are already running.
+pub fn verdict_for(previous: Option<&LaunchRecord>, running_version: &str) -> Verdict {
     let Some(prev) = previous else {
         return Verdict::Clean;
     };
-    if let Some(version) = &prev.installing {
+    if let Some(target) = prev.installing.as_deref().filter(|v| *v != running_version) {
         return Verdict::UpdateInterrupted {
-            version: version.clone(),
+            version: target.to_string(),
         };
     }
     match prev.stage {
@@ -131,6 +148,35 @@ pub fn verdict_for(previous: Option<&LaunchRecord>) -> Verdict {
             stage,
             auto_resets: prev.auto_resets,
         },
+    }
+}
+
+// ── is the previous run actually over? ───────────────────────────────────────
+
+/// Whether the process that wrote the previous record is *still running* as
+/// this same app — i.e. we are a second instance, not a relaunch.
+///
+/// This gates every recovery action. A second Flasher (`open -n`, a Linux
+/// launcher, a stray double-click) reads the first one's record, and every
+/// sidecar listed in it is alive *because the first instance is still using
+/// it*. Reaping those would abort a running flash; clearing the webview store
+/// would pull it out from under a live window. Neither is a mistake worth
+/// making, so an ambiguous answer means do nothing.
+///
+/// A PID equal to our own is not another instance — it is a number the OS
+/// handed back to us after the old process died, so recovery proceeds.
+pub fn owner_is_alive(
+    previous: &LaunchRecord,
+    live_exe: Option<&str>,
+    self_exe: Option<&str>,
+    self_pid: u32,
+) -> bool {
+    if previous.pid == 0 || previous.pid == self_pid {
+        return false;
+    }
+    match (live_exe, self_exe) {
+        (Some(live), Some(mine)) => live == mine,
+        _ => false,
     }
 }
 
@@ -333,7 +379,28 @@ impl LaunchGuard {
             // A record from a future version we can't parse is not a crash
             // report — treat it as no record rather than failing the launch.
             .and_then(|text| serde_json::from_str(&text).ok());
-        let verdict = verdict_for(previous.as_ref());
+
+        // Is that record a *previous* run's, or a *concurrent* one's? If the
+        // process that wrote it is still alive as this same app, we are a
+        // second instance and every recovery below would be sabotage: its
+        // sidecars are live because it is using them. Stand down entirely.
+        let self_exe = std::env::current_exe()
+            .ok()
+            .map(|p| p.to_string_lossy().into_owned());
+        let sharing_with_a_live_instance = previous.as_ref().is_some_and(|prev| {
+            owner_is_alive(
+                prev,
+                exe_of(prev.pid).as_deref(),
+                self_exe.as_deref(),
+                std::process::id(),
+            )
+        });
+        let previous = if sharing_with_a_live_instance {
+            None
+        } else {
+            previous
+        };
+        let verdict = verdict_for(previous.as_ref(), version);
 
         let guard = LaunchGuard {
             record_path,
@@ -355,7 +422,11 @@ impl LaunchGuard {
         guard.log(&format!(
             "launch: pid={} v{version} — last exit: {}",
             std::process::id(),
-            describe(&verdict)
+            if sharing_with_a_live_instance {
+                "still running in another instance — standing down".to_string()
+            } else {
+                describe(&verdict)
+            }
         ));
 
         // Reclaim anything the last run stranded. Processes first: a stuck
@@ -487,6 +558,12 @@ impl LaunchGuard {
         self.persist();
     }
 
+    /// Note that a quit was refused because an install was in flight. Worth a
+    /// line: "Cmd-Q did nothing" is otherwise indistinguishable from a hang.
+    pub fn log_quit_blocked(&self) {
+        self.log("quit refused — an install is writing the app bundle");
+    }
+
     /// Whether a self-update is overwriting the bundle right now.
     pub fn is_installing(&self) -> bool {
         self.record
@@ -578,14 +655,19 @@ pub fn begin() -> Arc<LaunchGuard> {
 pub fn report(app: &AppHandle, guard: &Arc<LaunchGuard>) {
     let (title, body, offer_releases) = match guard.verdict() {
         Verdict::UpdateInterrupted { version } => (
-            "This copy may be incomplete",
+            "That update didn't finish",
             format!(
-                "The Flasher was replacing itself with version {version} when it was \
-                 force quit, so this copy of the app may be missing pieces — that's \
-                 why it wouldn't open.\n\n\
-                 Reinstalling from the latest download fixes it, and it's the only \
-                 thing that can. Nothing you've flashed is affected: a Canary keeps \
-                 the firmware it already has, and the board can't be bricked."
+                "The Flasher was being replaced with version {version} when it was \
+                 force quit, and you're still running {}. Installing moves the app \
+                 itself, so being stopped part-way can leave a copy that won't open \
+                 at all.\n\n\
+                 If it's opening now, you're fine — just update again when you're \
+                 ready. If it starts refusing to open, reinstall from the latest \
+                 download: that's the one thing the app can't fix for itself, \
+                 because the repair would have to run from the copy that moved.\n\n\
+                 Nothing you've flashed is affected. A Canary keeps the firmware it \
+                 already has, and the board can't be bricked.",
+                env!("CARGO_PKG_VERSION")
             ),
             true,
         ),
@@ -746,8 +828,11 @@ mod tests {
 
     #[test]
     fn no_previous_record_is_a_clean_launch() {
-        assert_eq!(verdict_for(None), Verdict::Clean);
-        assert_eq!(verdict_for(Some(&record(Stage::Clean))), Verdict::Clean);
+        assert_eq!(verdict_for(None, "0.3.7"), Verdict::Clean);
+        assert_eq!(
+            verdict_for(Some(&record(Stage::Clean)), "0.3.7"),
+            Verdict::Clean
+        );
     }
 
     #[test]
@@ -756,21 +841,21 @@ mod tests {
         // WindowUp is the bounce-with-no-window loop and gets a reset; dying
         // at UiReady is an ordinary force quit and must not.
         assert_eq!(
-            verdict_for(Some(&record(Stage::Starting))),
+            verdict_for(Some(&record(Stage::Starting)), "0.3.7"),
             Verdict::HungAtLaunch {
                 stage: Stage::Starting,
                 auto_resets: 0
             }
         );
         assert_eq!(
-            verdict_for(Some(&record(Stage::WindowUp))),
+            verdict_for(Some(&record(Stage::WindowUp)), "0.3.7"),
             Verdict::HungAtLaunch {
                 stage: Stage::WindowUp,
                 auto_resets: 0
             }
         );
         assert_eq!(
-            verdict_for(Some(&record(Stage::UiReady))),
+            verdict_for(Some(&record(Stage::UiReady)), "0.3.7"),
             Verdict::KilledWhileRunning
         );
     }
@@ -780,11 +865,51 @@ mod tests {
         let mut r = record(Stage::UiReady);
         r.installing = Some("0.3.8".into());
         assert_eq!(
-            verdict_for(Some(&r)),
+            verdict_for(Some(&r), "0.3.7"),
             Verdict::UpdateInterrupted {
                 version: "0.3.8".into()
             }
         );
+    }
+
+    #[test]
+    fn an_install_marker_naming_the_version_we_are_running_is_not_a_warning() {
+        // The marker says an install was in flight; the running version says
+        // whether it landed. Getting this wrong tells someone to reinstall the
+        // copy they are already using — which is the state right after a
+        // *successful* update whose marker never got cleared.
+        let mut r = record(Stage::UiReady);
+        r.installing = Some("0.3.8".into());
+        assert_eq!(verdict_for(Some(&r), "0.3.8"), Verdict::KilledWhileRunning);
+        assert_eq!(
+            verdict_for(Some(&r), "0.3.7"),
+            Verdict::UpdateInterrupted {
+                version: "0.3.8".into()
+            }
+        );
+    }
+
+    #[test]
+    fn a_second_instance_leaves_the_first_instance_alone() {
+        let mut prev = record(Stage::UiReady);
+        prev.pid = 4242;
+        let me = "/Applications/SecuraCV Flasher.app/Contents/MacOS/securacv-flasher";
+
+        // The record's owner is alive, running this same app: we are a second
+        // instance and its sidecars are live because it is *using* them.
+        assert!(owner_is_alive(&prev, Some(me), Some(me), 99));
+        // Owner is gone.
+        assert!(!owner_is_alive(&prev, None, Some(me), 99));
+        // PID reused by something else entirely.
+        assert!(!owner_is_alive(&prev, Some("/usr/bin/vim"), Some(me), 99));
+        // The OS won't say what we are — never guess in the direction of
+        // killing another instance's work.
+        assert!(!owner_is_alive(&prev, Some(me), None, 99));
+        // The PID came back around to us, so there is no other instance.
+        assert!(!owner_is_alive(&prev, Some(me), Some(me), 4242));
+        // A record with no owner recorded at all.
+        prev.pid = 0;
+        assert!(!owner_is_alive(&prev, Some(me), Some(me), 99));
     }
 
     #[test]
@@ -872,7 +997,7 @@ mod tests {
         let text = r#"{"stage":"some-future-stage","pid":1}"#;
         assert!(serde_json::from_str::<LaunchRecord>(text).is_err());
         let parsed: Option<LaunchRecord> = serde_json::from_str(text).ok();
-        assert_eq!(verdict_for(parsed.as_ref()), Verdict::Clean);
+        assert_eq!(verdict_for(parsed.as_ref(), "0.3.7"), Verdict::Clean);
     }
 
     #[test]
@@ -1007,7 +1132,7 @@ mod tests {
         let text = std::fs::read_to_string(dir.join("launch-state.json")).expect("record");
         let mid: LaunchRecord = serde_json::from_str(&text).expect("parse");
         assert_eq!(
-            verdict_for(Some(&mid)),
+            verdict_for(Some(&mid), "0.3.7"),
             Verdict::UpdateInterrupted {
                 version: "0.3.8".into()
             }
@@ -1016,7 +1141,10 @@ mod tests {
         g.end_install();
         let text = std::fs::read_to_string(dir.join("launch-state.json")).expect("record");
         let after: LaunchRecord = serde_json::from_str(&text).expect("parse");
-        assert_eq!(verdict_for(Some(&after)), Verdict::KilledWhileRunning);
+        assert_eq!(
+            verdict_for(Some(&after), "0.3.7"),
+            Verdict::KilledWhileRunning
+        );
     }
 
     #[test]

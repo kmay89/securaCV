@@ -115,11 +115,13 @@ any platform.
   way out was another force quit. Every launch behaved identically, so it
   looked permanent, and the app said nothing because the thing that failed was
   the launch itself.
-- **Cause:** `tauri-plugin-updater`'s `download_and_install` **overwrites the
-  running `.app` bundle in place**. A process killed inside that window leaves
-  a bundle whose contents no longer match its code signature; macOS then
-  refuses to finish launching it, and a refused launch has no window to report
-  from. Two smaller versions of the same shape were live alongside it: sidecars
+- **Cause:** `tauri-plugin-updater`'s `install` **moves the running `.app`
+  bundle**. On macOS 2.10.1 the ordinary path is two `rename`s (current app out
+  to a temp backup, new app in), so a kill between them leaves *no app at that
+  path*; the privileged path (`rm -rf && mv` via AppleScript) is not atomic and
+  can leave a partial bundle that macOS refuses to finish launching. Either
+  way the repair would have to run from the copy that moved, so it can't.
+  Two smaller versions of the same shape were live alongside it: sidecars
   (`espflash`, `rpiboot`) survive SIGKILL to the parent and keep holding the
   board — `rpiboot` waits for a Pi *forever* — and a force quit mid-write can
   leave the webview's `localStorage` SQLite store in a state whose recovery
@@ -133,9 +135,12 @@ any platform.
   cure) instead of guessing; sidecar PIDs are recorded while they run and
   reaped on the next launch; a launch that never reported a usable window gets
   its webview store cleared once — once, not in a loop.
-  **Generalize to every app target:** (1) if a target self-updates in place,
-  something durable must mark that window *before* it opens, or an interrupted
-  update is indistinguishable from a broken install; (2) any app that spawns
+  **Generalize to every app target:** (1) if a target self-updates, something
+  durable must mark the window in which the bundle *moves* — and only that
+  window, not the download that precedes it, or a slow connection reads as a
+  broken install. Pair the marker with the running version: a marker naming the
+  version you are already running means the update landed, and warning there
+  tells the user to reinstall the copy they are using; (2) any app that spawns
   sidecars must record their PIDs, because a force quit is not a clean exit and
   nothing else will reap them; (3) a launch that can fail before its window
   exists needs an on-disk record — an app that can only report failures through

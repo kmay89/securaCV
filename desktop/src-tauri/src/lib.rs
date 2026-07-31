@@ -1045,19 +1045,14 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
         .map_err(|e| format!("update check failed: {e}"))?
         .ok_or_else(|| "already up to date".to_string())?;
 
-    // `download_and_install` replaces this app bundle *in place*. Anything
-    // that kills the process between here and the line that clears this marker
-    // leaves a bundle whose contents no longer match its signature — an app
-    // that bounces in the Dock and never opens, which no amount of app-side
-    // code can repair afterwards. So the marker goes down first, and the next
-    // launch reads it and says "reinstall" instead of leaving the user
-    // guessing. See `launch_guard`.
-    let guard = app.state::<Arc<launch_guard::LaunchGuard>>();
-    guard.begin_install(&update.version);
-
+    // Deliberately NOT `download_and_install`: that would put the download
+    // inside the danger window too. Downloading touches nothing but a buffer —
+    // being killed there costs the user a re-download and nothing else, so
+    // marking it would tell them to reinstall a copy that is perfectly fine.
+    // Only `install` moves the app on disk, so only `install` is marked.
     let app2 = app.clone();
-    let outcome = update
-        .download_and_install(
+    let bytes = update
+        .download(
             move |chunk, total| {
                 let msg = match total {
                     Some(t) => format!("downloading update… {chunk}/{t} bytes"),
@@ -1067,9 +1062,22 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
             },
             || {},
         )
-        .await;
-    // Cleared on failure too: an install that returned an error unwound
-    // without tearing the bundle, so the next launch has nothing to warn about.
+        .await
+        .map_err(|e| format!("update download failed: {e}"))?;
+
+    // From here the app bundle itself moves. On macOS `install` renames the
+    // running `.app` out to a temp backup and renames the new one in — two
+    // atomic steps, but with a window between them where nothing is at the
+    // original path, and a privileged install (`rm -rf` via AppleScript) that
+    // is not atomic at all. A process killed in here leaves the user with an
+    // app that is missing or incomplete, which no code inside that app can
+    // repair afterwards. The marker goes down first so the next launch can at
+    // least *name* what happened. See `launch_guard`.
+    let guard = app.state::<Arc<launch_guard::LaunchGuard>>();
+    guard.begin_install(&update.version);
+    let outcome = update.install(bytes);
+    // Cleared on failure too: an install that returned an error unwound and
+    // put the bundle back, so the next launch has nothing to warn about.
     guard.end_install();
     outcome.map_err(|e| format!("update install failed: {e}"))?;
 
@@ -1586,13 +1594,37 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building SecuraCV Flasher")
-        .run(move |_app, event| {
+        .run(move |app, event| match event {
+            // Cmd-Q and the app menu's Quit do NOT go through a window's
+            // CloseRequested — they request an application exit directly, so
+            // the close guard above never sees them. This is the only place
+            // that can stop them, and `Exit` is already too late to try.
+            //
+            // Refusing outright, with no "quit anyway": every other guard in
+            // this app is advisory because the thing at risk is re-doable (a
+            // half-flashed board is re-flashed, a half-written card rewritten).
+            // A half-moved app bundle is the one exception — it can leave the
+            // Flasher unable to open at all, and nothing inside it can undo
+            // that. The install takes seconds and relaunches itself.
+            tauri::RunEvent::ExitRequested { api, .. } if on_exit.is_installing() => {
+                api.prevent_exit();
+                on_exit.log_quit_blocked();
+                app.dialog()
+                    .message(
+                        "An update is being written over the app right now. \
+                         Quitting mid-write is the one thing that can leave the \
+                         Flasher unable to open at all, so this has to finish — \
+                         it takes a few seconds, then the app relaunches itself.",
+                    )
+                    .title("Finishing the update")
+                    .buttons(MessageDialogButtons::OkCustom("OK".into()))
+                    .show(|_| {});
+            }
             // A clean exit is what makes the next launch silent. Everything
             // else — force quit, crash, power loss — leaves the record showing
             // where this run got to, which is exactly what the next one reads.
-            if let tauri::RunEvent::Exit = event {
-                on_exit.mark_clean();
-            }
+            tauri::RunEvent::Exit => on_exit.mark_clean(),
+            _ => {}
         });
 }
 
