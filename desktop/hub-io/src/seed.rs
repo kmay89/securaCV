@@ -1,20 +1,56 @@
-//! seed — put the "it joins your Wi-Fi by itself" file onto the freshly
-//! written boot partition.
+//! seed — put the "it joins your Wi-Fi by itself" file into the *image*, before
+//! the card is written.
 //!
-//! `hub_core::hub_seed::wifi_keyfile` builds the NetworkManager keyfile; this
-//! module owns getting it into `CONFIG/network/` on the card's first (boot)
-//! partition. The layout logic — which device node is partition one, where the
-//! keyfile lands under a mount root, what the file may be called — is pure and
-//! host-tested. The platform edge (asking the OS to re-read the partition
-//! table, mount, unmount, eject) is thin command glue over `diskutil` /
-//! `udisksctl`, and every failure is a clear sentence: seeding happens AFTER a
-//! verified write, so the worst case is a hub that boots without Wi-Fi and
-//! says so, never a broken card.
+//! `hub_core::hub_seed::wifi_keyfile` builds the NetworkManager keyfile and
+//! `hub_core::hub_fat` knows how to add a file to the FAT boot filesystem inside
+//! a disk image. This module is the thin layer between them and the decompressed
+//! `.img` on disk: open it for random access, find the boot partition, put the
+//! settings in, and prove they read back.
+//!
+//! **This used to work the other way round** — write the card, then ask the
+//! operating system to re-mount its boot partition and drop the keyfile onto it.
+//! That step failed on a real operator's Mac every time, including on retry and
+//! after physically reseating the card:
+//!
+//! ```text
+//! couldn't mount the boot partition /dev/disk4s1: Volume on disk4s1 failed to mount
+//! (tried for ~20 seconds; macOS wouldn't re-mount the freshly written card)
+//! ```
+//!
+//! and the result was a hub that boots to `wlan0: (No address)` and sits on the
+//! Home Assistant landing page forever, because Core downloads itself on first
+//! boot and there was no network to download over. For a headless hub the seed
+//! is not a convenience, it is the product.
+//!
+//! Moving it before the write buys four things, all of which the mount path
+//! could not have:
+//!
+//!   * **No mount, on any OS.** No `diskutil`, no `udisksctl`, no drive letters,
+//!     no DiskArbitration timing. The single most platform-specific code in the
+//!     crate is gone rather than made more patient.
+//!   * **The seed inherits the write's verification.** `write_verified` already
+//!     reads the whole card back and re-hashes it; once the keyfile is *in* the
+//!     image, proving the image proves the keyfile. No separate read-back that
+//!     could be answered from the page cache.
+//!   * **Failures are free.** A seed that can't be built or placed is caught in
+//!     milliseconds, before a single byte is written, instead of after a
+//!     multi-GB write and a 20-second mount timeout.
+//!   * **It is testable without hardware.** See `hub-core`'s `hub_fat` tests and
+//!     `tests/fat_against_dosfstools.rs`, where `fsck.fat` and `mtools` audit the
+//!     result. The mount path could only ever be tested by a human with a card
+//!     reader, which is why it shipped broken.
+//!
+//! What remains platform-specific here is [`eject_card`] — unmounting and
+//! powering down the card so it is safe to pull. That is a courtesy after a
+//! successful flash, not a step anything depends on: the settings were part of
+//! the image, so nothing is pending on the card by the time it is offered.
 
 use crate::account::SeedFile;
-use crate::{Progress, Stage};
+use crate::{sha256_hex, CancelToken, Progress, Stage};
+use hub_core::hub_fat::{self, BlockIo};
 use hub_core::hub_seed::{wifi_keyfile, WifiSeed};
-use std::path::{Path, PathBuf};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::Path;
 
 /// The device node of partition 1 on a whole disk, per platform naming:
 ///
@@ -25,6 +61,7 @@ use std::path::{Path, PathBuf};
 ///
 /// Families whose whole-disk name ends in a digit take a separator (`p` on
 /// Linux, `s` on macOS); plain `sd`/`vd`/`hd` names just append the number.
+/// Only [`eject_card`] needs this now.
 pub fn boot_partition_path(device: &str) -> String {
     let name = device.strip_prefix("/dev/").unwrap_or(device);
     if name.starts_with("disk") {
@@ -60,8 +97,13 @@ pub fn uuid_v4() -> Result<String, String> {
     ))
 }
 
-/// The keyfile's filename stem: the connection id reduced to a safe,
-/// FAT-friendly name. Never empty — falls back to "securacv-hub".
+/// The keyfile's filename stem: the connection id reduced to a safe name.
+/// Never empty — falls back to "securacv-hub".
+///
+/// The FAT writer can store any name a long-name entry can carry, so this is no
+/// longer about what the filesystem will accept; it is about the file NetworkManager
+/// is asked to parse, and keeping it boring keeps it debuggable over a serial
+/// console.
 pub fn keyfile_stem(connection_id: &str) -> String {
     let stem: String = connection_id
         .chars()
@@ -81,302 +123,233 @@ pub fn keyfile_stem(connection_id: &str) -> String {
     }
 }
 
-/// Write the keyfile tree under an already-mounted boot partition root:
-/// `<root>/CONFIG/network/<stem>`. Returns the path written. Pure file I/O —
-/// tested against a temp dir standing in for the mount.
-pub fn write_wifi_seed(mount_root: &Path, seed: &WifiSeed<'_>) -> Result<PathBuf, String> {
-    let keyfile = wifi_keyfile(seed).map_err(|e| e.message())?;
-    let dir = mount_root.join("CONFIG").join("network");
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("couldn't create CONFIG/network on the boot partition: {e}"))?;
-    let path = dir.join(keyfile_stem(seed.connection_id));
-    std::fs::write(&path, &keyfile)
-        .map_err(|e| format!("couldn't write the Wi-Fi keyfile: {e}"))?;
-    // Flush the FILE through to the card, then the DIRECTORY so the new entry
-    // itself is durable — the very next thing that happens to this card is
-    // physical removal. These errors used to be swallowed with `let _ =`,
-    // which meant a failed flush — precisely the case where the bytes never
-    // reach the media — still reported a seeded card.
-    let file = std::fs::File::open(&path)
-        .map_err(|e| format!("wrote the Wi-Fi keyfile but couldn't reopen it to flush: {e}"))?;
-    file.sync_all()
-        .map_err(|e| format!("couldn't flush the Wi-Fi keyfile to the card: {e}"))?;
-    drop(file);
-    if let Ok(d) = std::fs::File::open(&dir) {
-        // Directory fsync is best-effort ONLY because some platforms refuse to
-        // open a directory for this; the file's own sync_all above is the one
-        // that must succeed, and it is now checked.
-        let _ = d.sync_all();
-    }
-    // Compare what is on the filesystem against what we meant to write. Note
-    // honestly what this does and does not prove: after a successful fsync it
-    // catches a truncated or short write (a full card, a dying reader), but a
-    // plain read can still be served from the page cache, so it is NOT by
-    // itself proof the bytes reached the media. Durability rests on the fsync
-    // above being checked and on the unmount that follows in `seed_card`.
-    let read_back = std::fs::read(&path)
-        .map_err(|e| format!("wrote the Wi-Fi keyfile but couldn't read it back: {e}"))?;
-    if read_back != keyfile.as_bytes() {
-        return Err(format!(
-            "the Wi-Fi keyfile read back as {} bytes instead of {} — the card did not take it",
-            read_back.len(),
-            keyfile.len()
-        ));
-    }
-    Ok(path)
-}
-
-/// Write the minted account `.storage` files under the boot partition's
-/// `CONFIG/` tree (so `.storage/auth` becomes `CONFIG/.storage/auth`).
+/// Random access to the decompressed image on disk.
 ///
-/// EXPERIMENTAL: whether HAOS imports these on first boot is exactly what the
-/// hardware-validation runbook decides — this is the boot-partition (FAT,
-/// writable from every OS) candidate. Files HAOS doesn't recognize are simply
-/// ignored, so the worst case is a normal onboarding wizard, never a broken
-/// boot. Never called unless the operator opts in.
-pub fn write_account_seed(mount_root: &Path, files: &[SeedFile]) -> Result<Vec<PathBuf>, String> {
-    let mut written = Vec::new();
-    for f in files {
-        // Guard against any path escaping CONFIG/ (the relative paths are ours,
-        // but treat them as untrusted on principle).
-        if f.relative_path.contains("..") || f.relative_path.starts_with('/') {
-            return Err(format!("refusing an unsafe seed path: {}", f.relative_path));
-        }
-        let dest = mount_root.join("CONFIG").join(&f.relative_path);
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("couldn't create {}: {e}", parent.display()))?;
-        }
-        std::fs::write(&dest, &f.contents)
-            .map_err(|e| format!("couldn't write {}: {e}", dest.display()))?;
-        written.push(dest);
+/// Seek-based on purpose: the image is ~2.5 GB and the pipeline streams it to a
+/// temp file precisely so it never has to fit in memory. Injection touches a few
+/// kilobytes scattered through it, so it reads and writes those and nothing
+/// else.
+struct ImageFile(std::fs::File);
+
+impl BlockIo for ImageFile {
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> std::io::Result<()> {
+        self.0.seek(SeekFrom::Start(offset))?;
+        self.0.read_exact(buf)
     }
-    Ok(written)
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> std::io::Result<()> {
+        self.0.seek(SeekFrom::Start(offset))?;
+        self.0.write_all(buf)
+    }
 }
 
-/// The result of seeding a freshly-written card: what made it on, and the
-/// non-fatal notes for what didn't. The write already verified, so nothing
-/// here is a failure — each note is context + a plan B.
+/// What was put into the image, for the log and the receipt.
 #[derive(Debug, Default, Clone)]
-pub struct SeedOutcome {
+pub struct SeedReport {
     pub wifi_written: bool,
     pub account_written: bool,
-    /// Non-fatal note about the Wi-Fi seed, if it stumbled.
-    pub wifi_note: Option<String>,
-    /// Non-fatal note about the account seed, if requested and it stumbled.
+    /// Why the (experimental, opt-in) account seed didn't go in, if it didn't.
+    /// Non-fatal by design — see [`inject_into_image`].
     pub account_note: Option<String>,
-    /// Set when the settings were written but the card wouldn't cleanly
-    /// eject — the seed still succeeded, so this is "eject it yourself", not
-    /// a failure. (A busy mount right after write is common on Linux.)
-    pub eject_note: Option<String>,
+    /// Where the settings went, e.g. `GPT partition 1 "hassos-boot" (FAT16)` —
+    /// worth logging, because "which partition" is the first question when a
+    /// future HAOS layout change breaks this.
+    pub volume: String,
 }
 
-/// Seed a freshly-written card in ONE mount: re-probe the partition table,
-/// mount partition 1, write whatever was requested (Wi-Fi and/or the
-/// experimental account store), then always unmount/eject. Mounting once
-/// avoids racing the OS's auto-mounter twice.
+/// Put the requested settings into the boot filesystem inside `image`.
 ///
-/// A mount failure is the only hard error (nothing could be written); once
-/// mounted, each item's failure becomes a note so a verified card is never
-/// demoted to a failure over a seed hiccup.
-pub fn seed_card(
-    device: &str,
+/// **Wi-Fi failing is fatal.** Nothing has been written to any card yet, so
+/// there is no "the card is fine, the settings aren't" middle ground worth
+/// preserving — that ambiguity is exactly what the old mount path produced. A
+/// hub whose Wi-Fi didn't land is not a hub, and saying so now costs the
+/// operator seconds instead of a four-minute write and a card they can't use.
+///
+/// **The account seed failing is not.** It is opt-in and experimental, and Home
+/// Assistant's own setup wizard is a perfectly good fallback, so it comes back
+/// as [`SeedReport::account_note`] rather than sinking a flash that would
+/// otherwise work. On the first failure the rest of the batch is skipped: half a
+/// provisioning bundle is worse than none.
+pub fn inject_into_image(
+    image: &Path,
     wifi: Option<&WifiSeed<'_>>,
     account_files: &[SeedFile],
     mut progress: impl FnMut(Progress),
-) -> Result<SeedOutcome, String> {
+) -> Result<SeedReport, String> {
     progress(Progress {
         stage: Stage::Seed,
         done: 0,
-        total: None,
+        total: Some(1),
     });
-    let partition = boot_partition_path(device);
-    let mount_root = mount_partition(&partition)?;
 
-    let mut outcome = SeedOutcome::default();
-    if let Some(seed) = wifi {
-        match write_wifi_seed(&mount_root, seed) {
-            Ok(_) => outcome.wifi_written = true,
-            Err(e) => outcome.wifi_note = Some(e),
+    // Build the keyfile FIRST, so a bad SSID or a too-short passphrase is
+    // reported without having opened anything.
+    let keyfile = match wifi {
+        Some(seed) => Some((
+            keyfile_stem(seed.connection_id),
+            wifi_keyfile(seed).map_err(|e| e.message())?,
+        )),
+        None => None,
+    };
+
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(image)
+        .map_err(|e| format!("couldn't open the prepared image to add your settings: {e}"))?;
+    let len = file
+        .metadata()
+        .map_err(|e| format!("couldn't measure the prepared image: {e}"))?
+        .len();
+    let mut io = ImageFile(file);
+
+    let (part, vol) = hub_fat::find_fat_partition(&mut io, len).map_err(|e| e.message())?;
+    let volume = format!(
+        "{} partition {}{} ({:?}, {} clusters of {} bytes)",
+        part.scheme,
+        part.number,
+        part.name
+            .as_deref()
+            .map(|n| format!(" {n:?}"))
+            .unwrap_or_default(),
+        vol.kind,
+        vol.cluster_count,
+        vol.cluster_bytes()
+    );
+
+    let mut report = SeedReport {
+        volume,
+        ..Default::default()
+    };
+
+    if let Some((stem, text)) = &keyfile {
+        let path = ["CONFIG", "network", stem.as_str()];
+        hub_fat::insert_file(&mut io, &vol, &path, text.as_bytes()).map_err(|e| e.message())?;
+        // Read it straight back out of the image. This is not a durability
+        // claim — the bytes are still in the page cache and the card hasn't been
+        // touched. What it proves is that the directory entries and cluster
+        // chain we just wrote actually resolve to this file's bytes, which is
+        // the failure a hand-rolled FAT writer would plausibly have. Durability
+        // is the write's own read-back, which now covers the keyfile because the
+        // keyfile is part of the image.
+        let back = hub_fat::read_file(&mut io, &vol, &path).map_err(|e| e.message())?;
+        if back != text.as_bytes() {
+            return Err(format!(
+                "the Wi-Fi settings went into the image but read back as {} bytes instead of {} \
+                 — the prepared image looks damaged, so nothing was written to your card",
+                back.len(),
+                text.len()
+            ));
         }
-    }
-    if !account_files.is_empty() {
-        match write_account_seed(&mount_root, account_files) {
-            Ok(_) => outcome.account_written = true,
-            Err(e) => outcome.account_note = Some(e),
-        }
+        report.wifi_written = true;
     }
 
-    // Always try to unmount/eject — but the settings are already written, so an
-    // eject stumble is a note, NOT a failure that discards the outcome (a mount
-    // is often momentarily busy right after write+sync). Never demote a card
-    // whose settings physically made it on.
-    if let Err(e) = eject(device, &partition) {
-        outcome.eject_note = Some(e);
+    for f in account_files {
+        // The relative paths are ours, but treat them as untrusted on principle:
+        // a `..` here would place a file outside CONFIG/ on the boot volume.
+        if f.relative_path.contains("..") || f.relative_path.starts_with('/') {
+            report.account_note =
+                Some(format!("refusing an unsafe seed path: {}", f.relative_path));
+            break;
+        }
+        let mut path = vec!["CONFIG"];
+        path.extend(f.relative_path.split('/').filter(|s| !s.is_empty()));
+        if let Err(e) = hub_fat::insert_file(&mut io, &vol, &path, f.contents.as_bytes()) {
+            report.account_note = Some(format!("{}: {}", f.relative_path, e.message()));
+            break;
+        }
+        report.account_written = true;
     }
+    if report.account_note.is_some() {
+        // All-or-nothing: a partly-written bundle would have the runner find
+        // its plan and not its executor, which is a worse failure to diagnose
+        // than simply not being there.
+        report.account_written = false;
+    }
+
+    io.0.sync_all().map_err(|e| {
+        format!("couldn't flush the prepared image after adding your settings: {e}")
+    })?;
+
     progress(Progress {
         stage: Stage::Seed,
         done: 1,
         total: Some(1),
     });
-    Ok(outcome)
+    Ok(report)
 }
 
-// ── platform edges ──────────────────────────────────────────────────────────
-
-#[cfg(target_os = "linux")]
-fn mount_partition(partition: &str) -> Result<PathBuf, String> {
-    // Give the kernel a beat to re-read the new partition table after the raw
-    // write, then let udisks do a user-session mount (no root needed). The
-    // first mount attempt right after a multi-GB write can still fail while
-    // udev/udisks catch up, so retry a few times before giving up.
-    wait_for_node(partition)?;
-    let mut last = String::new();
-    for attempt in 0..4u32 {
-        if attempt > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(2000));
+/// Re-hash the image after injection.
+///
+/// The post-write read-back compares the card against a hash of the image, so
+/// once the image changes that hash has to change with it — otherwise every
+/// seeded flash would "fail" verification. One extra streaming pass over the
+/// temp file, and only on flashes that actually carry settings.
+pub fn rehash_image(
+    image: &Path,
+    cancel: &CancelToken,
+    mut progress: impl FnMut(Progress),
+) -> Result<String, String> {
+    use sha2::Digest;
+    let mut file = std::fs::File::open(image)
+        .map_err(|e| format!("couldn't reopen the prepared image to re-check it: {e}"))?;
+    let total = file.metadata().ok().map(|m| m.len());
+    let mut hasher = sha2::Sha256::new();
+    let mut buf = vec![0u8; 4 * 1024 * 1024];
+    let mut done: u64 = 0;
+    loop {
+        cancel.checkpoint()?;
+        let n = file
+            .read(&mut buf)
+            .map_err(|e| format!("couldn't read the prepared image: {e}"))?;
+        if n == 0 {
+            break;
         }
-        let out = std::process::Command::new("udisksctl")
-            .args(["mount", "-b", partition])
-            .output()
-            .map_err(|e| format!("couldn't run udisksctl: {e}"))?;
-        if out.status.success() {
-            // "Mounted /dev/sdb1 at /media/user/hassos-boot" (a trailing
-            // period on older udisks). Parse the mount point from udisks'
-            // own answer.
-            let text = String::from_utf8_lossy(&out.stdout);
-            let at = text
-                .split(" at ")
-                .nth(1)
-                .map(|s| s.trim().trim_end_matches('.').to_string())
-                .ok_or_else(|| format!("couldn't read the mount point from: {}", text.trim()))?;
-            return Ok(PathBuf::from(at));
-        }
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        // Already mounted (e.g. the desktop auto-mounter won the race) is a
-        // success in disguise — udisks names the existing mount point.
-        if let Some(at) = stderr.split(" already mounted at ").nth(1) {
-            let at = at
-                .trim()
-                .trim_start_matches('`')
-                .trim_end_matches('.')
-                .trim_end_matches('\'')
-                .trim_end_matches('`');
-            if !at.is_empty() {
-                return Ok(PathBuf::from(at));
-            }
-        }
-        last = format!(
-            "couldn't mount the boot partition {partition}: {}",
-            stderr.trim()
-        );
+        hasher.update(&buf[..n]);
+        done += n as u64;
+        progress(Progress {
+            stage: Stage::Seed,
+            done,
+            total,
+        });
     }
-    Err(last)
+    Ok(sha256_hex(hasher))
+}
+
+// ── platform edge: offering a clean unmount ─────────────────────────────────
+//
+// The only OS-specific code left. Nothing depends on it — the settings are on
+// the card the moment the write verifies — but a card the OS has auto-mounted
+// should be ejected before it is pulled, and saying so is friendlier than
+// letting the operator find out from a filesystem warning.
+
+/// Eject the card. `Err` is advice, not failure: callers surface it as a note.
+pub fn eject_card(device: &str) -> Result<(), String> {
+    eject(device, &boot_partition_path(device))
 }
 
 #[cfg(target_os = "linux")]
-fn eject(_device: &str, partition: &str) -> Result<(), String> {
-    let out = std::process::Command::new("udisksctl")
+fn eject(device: &str, partition: &str) -> Result<(), String> {
+    // Unmount first, then power the device down. `power-off` is the real "safe
+    // to remove" — it detaches the device rather than just releasing a mount —
+    // but it refuses while any partition is mounted, and a desktop
+    // auto-mounter often grabs a freshly written card. The unmount is therefore
+    // best-effort: "Not mounted" is the expected answer now that this code
+    // never mounts anything itself.
+    let _ = std::process::Command::new("udisksctl")
         .args(["unmount", "-b", partition])
+        .output();
+    let out = std::process::Command::new("udisksctl")
+        .args(["power-off", "-b", device])
         .output()
         .map_err(|e| format!("couldn't run udisksctl: {e}"))?;
     if !out.status.success() {
         return Err(format!(
-            "the Wi-Fi seed is written, but unmounting {partition} failed: {} — eject it in your \
-             file manager before removing the card",
+            "powering down {device} failed: {} — eject it in your file manager before removing \
+             the card",
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
     Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn wait_for_node(partition: &str) -> Result<(), String> {
-    for _ in 0..40 {
-        if std::path::Path::new(partition).exists() {
-            return Ok(());
-        }
-        std::thread::sleep(std::time::Duration::from_millis(250));
-    }
-    Err(format!(
-        "the boot partition {partition} never appeared after the write — unplug and replug the \
-         card, then run the Wi-Fi seed step again"
-    ))
-}
-
-#[cfg(target_os = "macos")]
-fn mount_partition(partition: &str) -> Result<PathBuf, String> {
-    // The raw write just replaced the whole partition table under macOS's
-    // feet, and DiskArbitration takes a few seconds to re-probe before the
-    // FAT boot volume becomes mountable. The very first `diskutil mount`
-    // right after the write routinely fails with "Volume on diskXsY failed
-    // to mount" — a timing hiccup, not a damaged card (this is exactly the
-    // failure that used to drop the Wi-Fi seed). So: retry over ~20 s, and
-    // between attempts nudge the OS with `diskutil mountDisk` on the whole
-    // disk, which forces a re-probe of the fresh partition table.
-    let whole_disk = whole_disk_of(partition);
-    let mut last = String::new();
-    for attempt in 0..8u32 {
-        if attempt > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(2500));
-            let _ = std::process::Command::new("diskutil")
-                .args(["mountDisk", &whole_disk])
-                .output();
-        }
-        match try_mount_macos(partition) {
-            Ok(p) => return Ok(p),
-            Err(e) => last = e,
-        }
-    }
-    Err(format!(
-        "{last} (tried for ~20 seconds; macOS wouldn't re-mount the freshly written card)"
-    ))
-}
-
-/// `/dev/disk11s1` → `/dev/disk11` — the whole-disk node a partition sits on.
-#[cfg(target_os = "macos")]
-fn whole_disk_of(partition: &str) -> String {
-    match partition.rfind('s') {
-        Some(i) if i > 0 && partition[i + 1..].chars().all(|c| c.is_ascii_digit()) => {
-            partition[..i].to_string()
-        }
-        _ => partition.to_string(),
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn try_mount_macos(partition: &str) -> Result<PathBuf, String> {
-    use hub_core::hub_enumerate_macos::{parse_plist, Plist};
-
-    let mount = std::process::Command::new("diskutil")
-        .args(["mount", partition])
-        .output()
-        .map_err(|e| format!("couldn't run diskutil: {e}"))?;
-    // Even when `mount` reports failure, the volume may (already) be mounted —
-    // e.g. the auto-mounter won the race — so trust the MountPoint diskutil
-    // reports over the exit status alone.
-    let info = std::process::Command::new("diskutil")
-        .args(["info", "-plist", partition])
-        .output()
-        .map_err(|e| format!("couldn't run diskutil: {e}"))?;
-    if let Ok(plist) = parse_plist(&String::from_utf8_lossy(&info.stdout)) {
-        if let Some(mp) = plist
-            .get("MountPoint")
-            .and_then(Plist::as_str)
-            .filter(|m| !m.is_empty())
-        {
-            return Ok(PathBuf::from(mp));
-        }
-    }
-    if !mount.status.success() {
-        return Err(format!(
-            "couldn't mount the boot partition {partition}: {}",
-            String::from_utf8_lossy(&mount.stderr).trim()
-        ));
-    }
-    Err(format!(
-        "{partition} mounted but macOS reports no mount point"
-    ))
 }
 
 #[cfg(target_os = "macos")]
@@ -387,17 +360,11 @@ fn eject(device: &str, _partition: &str) -> Result<(), String> {
         .map_err(|e| format!("couldn't run diskutil: {e}"))?;
     if !out.status.success() {
         return Err(format!(
-            "the Wi-Fi seed is written, but ejecting {device} failed: {} — eject it in Finder \
-             before removing the card",
+            "ejecting {device} failed: {} — eject it in Finder before removing the card",
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
     Ok(())
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn mount_partition(_partition: &str) -> Result<PathBuf, String> {
-    Err("seeding the boot partition isn't implemented on this OS yet".to_string())
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -406,7 +373,7 @@ fn eject(_device: &str, _partition: &str) -> Result<(), String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -447,46 +414,119 @@ mod tests {
         assert_eq!(keyfile_stem(""), "securacv-hub");
     }
 
-    #[test]
-    fn the_seed_tree_lands_where_haos_reads_it() {
-        let root = tempfile::tempdir().unwrap();
-        let seed = WifiSeed {
-            ssid: "Home Wi-Fi",
-            passphrase: "correct horse battery",
+    /// A stand-in for the decompressed HAOS image: a GPT holding one FAT16
+    /// volume with the geometry `haos_rpi5-64-18.1.img` really has.
+    pub(crate) fn fake_image(path: &Path) {
+        let mut vol = vec![0u8; 131_072 * 512];
+        {
+            let b = &mut vol[..512];
+            b[0..3].copy_from_slice(&[0xeb, 0x3c, 0x90]);
+            b[3..11].copy_from_slice(b"MSWIN4.1");
+            b[0x0b..0x0d].copy_from_slice(&512u16.to_le_bytes());
+            b[0x0d] = 4;
+            b[0x0e..0x10].copy_from_slice(&4u16.to_le_bytes());
+            b[0x10] = 2;
+            b[0x11..0x13].copy_from_slice(&512u16.to_le_bytes());
+            b[0x15] = 0xf8;
+            b[0x16..0x18].copy_from_slice(&128u16.to_le_bytes());
+            b[0x20..0x24].copy_from_slice(&131_072u32.to_le_bytes());
+            b[0x26] = 0x29;
+            b[0x2b..0x36].copy_from_slice(b"hassos-boot");
+            b[0x36..0x3e].copy_from_slice(b"FAT16   ");
+            b[510] = 0x55;
+            b[511] = 0xaa;
+        }
+        for f in 0..2u32 {
+            let at = (4 + f * 128) as usize * 512;
+            vol[at..at + 2].copy_from_slice(&0xfff8u16.to_le_bytes());
+            vol[at + 2..at + 4].copy_from_slice(&0xffffu16.to_le_bytes());
+        }
+
+        let first_lba = 2048usize;
+        let mut img = vec![0u8; (first_lba + vol.len() / 512 + 34) * 512];
+        img[446 + 4] = 0xee; // protective MBR
+        img[510] = 0x55;
+        img[511] = 0xaa;
+        img[512..520].copy_from_slice(b"EFI PART");
+        img[512 + 72..512 + 80].copy_from_slice(&2u64.to_le_bytes());
+        img[512 + 80..512 + 84].copy_from_slice(&128u32.to_le_bytes());
+        img[512 + 84..512 + 88].copy_from_slice(&128u32.to_le_bytes());
+        let at = 1024;
+        img[at..at + 16].copy_from_slice(&[0x0b; 16]);
+        img[at + 32..at + 40].copy_from_slice(&(first_lba as u64).to_le_bytes());
+        img[at + 40..at + 48]
+            .copy_from_slice(&((first_lba + vol.len() / 512 - 1) as u64).to_le_bytes());
+        for (i, u) in "hassos-boot".encode_utf16().enumerate() {
+            img[at + 56 + i * 2..at + 58 + i * 2].copy_from_slice(&u.to_le_bytes());
+        }
+        img[first_lba * 512..first_lba * 512 + vol.len()].copy_from_slice(&vol);
+        std::fs::write(path, &img).unwrap();
+    }
+
+    fn seed<'a>(ssid: &'a str, psk: &'a str) -> WifiSeed<'a> {
+        WifiSeed {
+            ssid,
+            passphrase: psk,
             connection_id: "securacv-hub",
             uuid: None,
             hidden: false,
-        };
-        let path = write_wifi_seed(root.path(), &seed).expect("seed writes");
+        }
+    }
+
+    #[test]
+    fn the_seed_lands_in_the_image_where_haos_reads_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let img = dir.path().join("haos.img");
+        fake_image(&img);
+
+        let report = inject_into_image(
+            &img,
+            Some(&seed("Home Wi-Fi", "correct horse")),
+            &[],
+            |_| {},
+        )
+        .expect("injection");
+        assert!(report.wifi_written);
+        assert!(report.volume.contains("hassos-boot"), "{}", report.volume);
+        assert!(report.volume.contains("Fat16"), "{}", report.volume);
+
+        // Read it back through a fresh handle, the way the card's filesystem
+        // driver will.
+        let mut bytes = std::fs::read(&img).unwrap();
+        let len = bytes.len() as u64;
+        let (_p, vol) = hub_fat::find_fat_partition(&mut bytes, len).unwrap();
+        let text = String::from_utf8(
+            hub_fat::read_file(&mut bytes, &vol, &["CONFIG", "network", "securacv-hub"]).unwrap(),
+        )
+        .unwrap();
+        assert!(text.contains("[802-11-wireless]"));
+        assert!(text.contains("psk=correct horse"));
+        assert!(text.contains("mdns=2"));
+        assert!(!text.contains('\r'), "HAOS ignores CRLF keyfiles");
+    }
+
+    #[test]
+    fn an_invalid_wifi_seed_is_refused_before_the_image_is_opened() {
+        let dir = tempfile::tempdir().unwrap();
+        let img = dir.path().join("haos.img");
+        fake_image(&img);
+        let before = std::fs::read(&img).unwrap();
+
+        let err = inject_into_image(&img, Some(&seed("Home", "short")), &[], |_| {})
+            .expect_err("a WPA-invalid passphrase must be refused");
+        assert!(err.contains("at least 8"), "{err}");
         assert_eq!(
-            path,
-            root.path()
-                .join("CONFIG")
-                .join("network")
-                .join("securacv-hub")
+            std::fs::read(&img).unwrap(),
+            before,
+            "the image was modified"
         );
-        let contents = std::fs::read_to_string(&path).unwrap();
-        assert!(contents.contains("[802-11-wireless]"));
-        assert!(contents.contains("psk=correct horse battery"));
     }
 
     #[test]
-    fn an_invalid_wifi_seed_never_touches_the_tree() {
-        let root = tempfile::tempdir().unwrap();
-        let seed = WifiSeed {
-            ssid: "Home",
-            passphrase: "short", // < 8 chars: WPA-invalid
-            connection_id: "securacv-hub",
-            uuid: None,
-            hidden: false,
-        };
-        assert!(write_wifi_seed(root.path(), &seed).is_err());
-        assert!(!root.path().join("CONFIG").exists());
-    }
-
-    #[test]
-    fn account_seed_lands_under_config_preserving_structure() {
-        let root = tempfile::tempdir().unwrap();
+    fn the_account_seed_lands_under_config_preserving_structure() {
+        let dir = tempfile::tempdir().unwrap();
+        let img = dir.path().join("haos.img");
+        fake_image(&img);
         let files = vec![
             SeedFile {
                 relative_path: ".storage/auth".to_string(),
@@ -497,21 +537,83 @@ mod tests {
                 contents: "{\"done\":[]}".to_string(),
             },
         ];
-        let written = write_account_seed(root.path(), &files).expect("writes");
-        assert_eq!(written.len(), 2);
-        let auth = root.path().join("CONFIG").join(".storage").join("auth");
-        assert_eq!(std::fs::read_to_string(&auth).unwrap(), "{\"auth\":true}");
+        let report = inject_into_image(&img, None, &files, |_| {}).expect("injection");
+        assert!(report.account_written);
+
+        let mut bytes = std::fs::read(&img).unwrap();
+        let len = bytes.len() as u64;
+        let (_p, vol) = hub_fat::find_fat_partition(&mut bytes, len).unwrap();
+        assert_eq!(
+            hub_fat::read_file(&mut bytes, &vol, &["CONFIG", ".storage", "auth"]).unwrap(),
+            b"{\"auth\":true}"
+        );
+        assert_eq!(
+            hub_fat::read_file(&mut bytes, &vol, &["CONFIG", ".storage", "onboarding"]).unwrap(),
+            b"{\"done\":[]}"
+        );
     }
 
     #[test]
-    fn account_seed_refuses_path_traversal() {
-        let root = tempfile::tempdir().unwrap();
+    fn the_account_seed_refuses_path_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        let img = dir.path().join("haos.img");
+        fake_image(&img);
         let files = vec![SeedFile {
             relative_path: "../escape".to_string(),
             contents: "x".to_string(),
         }];
-        assert!(write_account_seed(root.path(), &files).is_err());
-        // Nothing written on a rejected batch member.
-        assert!(!root.path().join("CONFIG").join("escape").exists());
+        let report = inject_into_image(&img, None, &files, |_| {}).expect("not fatal");
+        assert!(!report.account_written);
+        assert!(report.account_note.unwrap().contains("unsafe seed path"));
+    }
+
+    #[test]
+    fn a_failed_account_seed_is_a_note_but_a_failed_wifi_seed_is_fatal() {
+        // The account pre-seed is opt-in and experimental — HA's own wizard is
+        // the fallback — so it must never sink a flash that would otherwise
+        // work. Wi-Fi is the opposite: without it a headless hub is unreachable,
+        // so it fails the flash before the card is touched.
+        let dir = tempfile::tempdir().unwrap();
+        let img = dir.path().join("haos.img");
+        fake_image(&img);
+
+        let files = vec![SeedFile {
+            relative_path: "/absolute".to_string(),
+            contents: "x".to_string(),
+        }];
+        let report = inject_into_image(&img, Some(&seed("Home", "supersecret")), &files, |_| {})
+            .expect("a bad account seed must not fail the flash");
+        assert!(report.wifi_written, "the Wi-Fi still went in");
+        assert!(!report.account_written);
+        assert!(report.account_note.is_some());
+
+        // Whereas a Wi-Fi seed that can't be built stops everything.
+        assert!(inject_into_image(&img, Some(&seed("", "supersecret")), &[], |_| {}).is_err());
+    }
+
+    #[test]
+    fn an_image_with_no_boot_filesystem_fails_before_anything_is_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let img = dir.path().join("not-an-image.img");
+        std::fs::write(&img, vec![0u8; 4 << 20]).unwrap();
+        let err = inject_into_image(&img, Some(&seed("Home", "supersecret")), &[], |_| {})
+            .expect_err("a bogus image must be refused");
+        assert!(err.contains("partition table"), "{err}");
+    }
+
+    #[test]
+    fn rehashing_reflects_the_injected_bytes() {
+        // The post-write read-back compares the card against this hash, so it
+        // has to move when the image does — otherwise every seeded flash would
+        // report a verification failure on a perfectly good card.
+        let dir = tempfile::tempdir().unwrap();
+        let img = dir.path().join("haos.img");
+        fake_image(&img);
+        let cancel = CancelToken::default();
+        let before = rehash_image(&img, &cancel, |_| {}).unwrap();
+        inject_into_image(&img, Some(&seed("Home", "supersecret")), &[], |_| {}).unwrap();
+        let after = rehash_image(&img, &cancel, |_| {}).unwrap();
+        assert_ne!(before, after, "the hash must track the injected bytes");
+        assert_eq!(after.len(), 64);
     }
 }
