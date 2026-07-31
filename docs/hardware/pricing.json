@@ -1,10 +1,10 @@
 {
  "generated_by": "scripts/bom_pricing.py",
- "as_of": "2026-07-31T01:36:07Z",
- "note": "Offline seed from the BOM CSVs — prices are the CSVs' indicative values until distributor credentials are configured.",
+ "as_of": "2026-07-31T11:35:20Z",
+ "note": "Nightly distributor snapshot; provenance marks which rows are distributor-verified vs csv-seed.",
  "sources": {
   "csv": "docs/hardware/bom_*.csv (design intent + indicative seed prices)",
-  "digikey": false,
+  "digikey": true,
   "mouser": false
  },
  "parts": {
@@ -15,7 +15,7 @@
    "seed_usd": 15.99,
    "unit_usd": 15.99,
    "provenance": "digikey",
-   "stock": 146,
+   "stock": 144,
    "lifecycle": "Active",
    "sku": {
     "digikey": "1597-101021112-ND"
@@ -38,11 +38,11 @@
    "seed_usd": 13.99,
    "unit_usd": 15.9,
    "provenance": "digikey",
-   "stock": 1757,
+   "stock": 1748,
    "lifecycle": "Active",
    "sku": {
     "mouser": "713-102010469",
-    "digikey": "102010469-ND"
+    "digikey": "1597-102010469-ND"
    },
    "breaks": [
     {
@@ -61,14 +61,19 @@
    "sourcing": "orderable",
    "seed_usd": 18.0,
    "unit_usd": 18.0,
-   "provenance": "csv-seed",
-   "stock": null,
-   "lifecycle": null,
+   "provenance": "digikey",
+   "stock": 175,
+   "lifecycle": "Active",
    "sku": {
-    "digikey": "104030087"
+    "digikey": "1597-104030087-ND"
    },
-   "breaks": [],
-   "url": null,
+   "breaks": [
+    {
+     "qty": 1,
+     "usd": 18.0
+    }
+   ],
+   "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/104030087/18724505",
    "boms": [
     "bom_canary_display.csv"
    ]
@@ -80,7 +85,7 @@
    "seed_usd": 1.2,
    "unit_usd": 2.0,
    "provenance": "digikey",
-   "stock": 600,
+   "stock": 596,
    "lifecycle": "Active",
    "sku": {
     "mouser": "713-110990210",
@@ -104,10 +109,10 @@
    "seed_usd": 7.49,
    "unit_usd": 7.49,
    "provenance": "digikey",
-   "stock": 5969,
+   "stock": 5942,
    "lifecycle": "Active",
    "sku": {
-    "digikey": "113991114"
+    "digikey": "1597-113991114-ND"
    },
    "breaks": [
     {
@@ -147,7 +152,7 @@
    "lifecycle": "Active",
    "sku": {
     "mouser": "546-1554F2GYCL",
-    "digikey": "HM1276-ND"
+    "digikey": "HM1796-ND"
    },
    "breaks": [
     {
@@ -192,7 +197,7 @@
    "seed_usd": 0.05,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 925152,
+   "stock": 922613,
    "lifecycle": "Active",
    "sku": {
     "mouser": "512-1N4148",
@@ -249,11 +254,11 @@
    "seed_usd": 0.1,
    "unit_usd": 0.16,
    "provenance": "digikey",
-   "stock": 36488,
+   "stock": 36388,
    "lifecycle": "Active",
    "sku": {
     "mouser": "512-2N7002LT1G",
-    "digikey": "2N7002LT1GOSCT-ND",
+    "digikey": "4878-2N7002CT-ND",
     "lcsc": "C8545"
    },
    "breaks": [
@@ -442,7 +447,7 @@
    "seed_usd": 0.12,
    "unit_usd": 0.35,
    "provenance": "digikey",
-   "stock": 40850,
+   "stock": 40064,
    "lifecycle": "Active",
    "sku": {
     "mouser": "653-B3F-1000",
@@ -516,7 +521,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 6961619,
+   "stock": 6944571,
    "lifecycle": "Active",
    "sku": {
     "lcsc": "C49678",
@@ -561,7 +566,7 @@
    "lifecycle": "Active",
    "sku": {
     "mouser": "490-CPT-9019S-SMT-TR",
-    "digikey": "102-CPT-9019S-SMT-TRCT-ND"
+    "digikey": "102-3761-1-ND"
    },
    "breaks": [
     {
@@ -679,7 +684,7 @@
    "lifecycle": "Obsolete",
    "sku": {
     "mouser": "356-ESP32C3DEVKITM1",
-    "digikey": "1965-ESP32-C3-DEVKITM-1ND"
+    "digikey": "1965-ESP32-C3-DEVKITM-1-ND"
    },
    "breaks": [
     {
@@ -1159,7 +1164,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 600513,
+   "stock": 592709,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07100KL",
@@ -1212,7 +1217,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 116461,
+   "stock": 107969,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07100RL",
@@ -1265,7 +1270,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 446183,
+   "stock": 429694,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-071KL",
@@ -1318,7 +1323,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 414151,
+   "stock": 412864,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07330RL",
