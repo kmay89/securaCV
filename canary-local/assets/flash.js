@@ -2292,6 +2292,12 @@ function phaseSenseBench(port, product) {
   row.append(back);
   const senseTwin = twinLink(product);
   if (senseTwin) row.append(senseTwin);
+  // The full post-flash journey — drills, zone calibration, placement
+  // scoring — lives on its own bench (works with this same cable, or the
+  // emulated twin when the board stays in its box).
+  const proving = el("a", "ghost small flash-twin", "🎯 the Proving Ground — drills, calibration, placement");
+  proving.href = "radar-dev.html";
+  row.append(proving);
   box.append(row);
 
   // ── the live model, fed by the console lines ──

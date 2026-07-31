@@ -1,0 +1,181 @@
+/* canary-local/assets/radar-dev.css — the Proving Ground.
+   Rides the canary-local design tokens and flash.css's .flash-sense-* bench
+   styles; only .rdev-* classes (plus this page's layout shims) live here. */
+
+#radar-dev {
+  max-width: 860px;
+  margin: 0 auto 72px;
+  padding: 0 20px;
+}
+
+/* flash.css scopes the aura/wave sizing under .flash-sensebench — restate
+   the responsive rule for this page's standalone canvases. */
+#radar-dev .flash-sense-aura {
+  width: 100%;
+  height: auto;
+  display: block;
+  margin-top: 14px;
+}
+
+/* ── the journey rail ─────────────────────────────────────────────────── */
+
+.rdev-journey {
+  list-style: none;
+  margin: 18px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.rdev-step {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  background: var(--surface, #131316);
+  opacity: 0.62;
+}
+.rdev-step-now { opacity: 1; border-color: rgba(255, 212, 79, 0.5); }
+.rdev-step-done { opacity: 0.9; }
+.rdev-step-dot {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 13px;
+  border: 1.5px solid var(--edge);
+  color: var(--muted);
+}
+.rdev-step-now .rdev-step-dot { border-color: var(--canary); color: var(--canary); }
+.rdev-step-done .rdev-step-dot { border-color: #7cc98b; color: #7cc98b; }
+.rdev-step-body strong { font-size: 15.5px; }
+.rdev-step-body p { margin: 4px 0 0; font-size: 13.5px; }
+.rdev-connect { margin-top: 12px; }
+
+/* ── bench head + twin scene ──────────────────────────────────────────── */
+
+.rdev-bench-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 14px;
+}
+.rdev-cmd {
+  flex: 1 1 200px;
+  min-width: 160px;
+  background: #0d0d0f;
+  border: 1px solid var(--edge);
+  border-radius: 9px;
+  color: var(--ink, #eaeaea);
+  font: 500 13px ui-monospace, Menlo, monospace;
+  padding: 7px 10px;
+}
+.rdev-scene {
+  border: 1px dashed rgba(251, 140, 0, 0.45);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-top: 14px;
+}
+.rdev-scene-grid { display: grid; gap: 10px; margin-top: 10px; }
+.rdev-scene-toggles button.rdev-on,
+.rdev-scenarios button.rdev-on {
+  border-color: var(--canary);
+  box-shadow: 0 0 0 2px rgba(255, 212, 79, 0.25);
+}
+
+/* ── the drill wall ───────────────────────────────────────────────────── */
+
+.rdev-drills { display: grid; gap: 8px; margin-top: 16px; }
+.rdev-drill {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  padding: 10px 14px;
+  background: var(--surface, #131316);
+}
+.rdev-drill-body { flex: 1 1 auto; min-width: 0; font-size: 14px; }
+.rdev-drill-state {
+  flex: 0 0 auto;
+  font: 600 12px ui-monospace, Menlo, monospace;
+  color: var(--faint);
+  max-width: 40%;
+}
+.rdev-drill-state.rdev-armed { color: var(--canary); }
+.rdev-drill-state.rdev-pass { color: #7cc98b; }
+.rdev-drill-state.rdev-fail { color: #ff8a80; }
+.rdev-drill-sum {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+/* ── calibration ──────────────────────────────────────────────────────── */
+
+.rdev-calib { margin-top: 14px; }
+.rdev-plan {
+  border: 1px solid rgba(124, 201, 139, 0.5);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-top: 14px;
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+.rdev-presets, .rdev-playbook { margin-top: 14px; }
+.rdev-presets summary, .rdev-playbook summary { cursor: pointer; color: var(--muted); }
+
+/* ── placement ────────────────────────────────────────────────────────── */
+
+.rdev-mounts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+.rdev-mount {
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  position: relative;
+}
+.rdev-mount .sense-src { position: absolute; top: 12px; right: 12px; }
+.rdev-place-lab { margin-top: 22px; }
+.rdev-place-verdict {
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-top: 14px;
+}
+.rdev-place-head { display: flex; gap: 12px; align-items: center; }
+.rdev-grade {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 17px;
+  flex: 0 0 auto;
+}
+.rdev-grade-A { background: rgba(124, 201, 139, 0.18); color: #7cc98b; border: 1px solid #7cc98b; }
+.rdev-grade-B { background: rgba(255, 212, 79, 0.14); color: var(--canary); border: 1px solid var(--canary); }
+.rdev-grade-C { background: rgba(240, 168, 96, 0.14); color: #f0a860; border: 1px solid #f0a860; }
+.rdev-grade-D { background: rgba(255, 138, 128, 0.12); color: #ff8a80; border: 1px solid #ff8a80; }
+.rdev-fixes { margin: 10px 0 0; padding-left: 20px; font-size: 13.5px; color: var(--muted); }
+.rdev-fixes li { margin: 3px 0; }
+.rdev-avoid { margin-top: 22px; }
+
+@media (max-width: 560px) {
+  .rdev-drill { flex-wrap: wrap; }
+  .rdev-drill-state { max-width: 100%; }
+}

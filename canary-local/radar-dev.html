@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>The Proving Ground — radar dev bench · canary.local</title>
+  <meta name="description" content="The Canary Sense proving ground: connect your freshly-flashed 60 GHz radar over USB and get its honest voice back — or boot the emulated twin, the firmware's own ported pipeline speaking the identical console dialect. Guided onboarding, a nine-drill test suite, zone calibration against your real room, and placement scoring on the real physics. Works offline; nothing here phones anywhere." />
+  <link rel="stylesheet" href="assets/canary-local.css" />
+  <link rel="stylesheet" href="assets/flash.css" />
+  <link rel="stylesheet" href="assets/radar-dev.css" />
+</head>
+<body>
+  <header id="hero" class="hub-hero">
+    <div class="mark" aria-hidden="true">
+      <svg viewBox="0 0 64 64" width="44" height="44">
+        <circle cx="32" cy="30" r="17" fill="none" stroke="#ffd44f" stroke-width="2.5" />
+        <path d="M32 13 A17 17 0 0 1 49 30" fill="none" stroke="#ffd44f" stroke-width="2.5" opacity="0.45" />
+        <path d="M32 6 A24 24 0 0 1 56 30" fill="none" stroke="#ffd44f" stroke-width="2" opacity="0.25" />
+        <circle cx="32" cy="30" r="4" fill="#ffd44f" />
+        <path d="M22 47 l4 6 M32 45 l0 8 M42 47 l-4 6" stroke="#8fd3a8" stroke-width="2.5" stroke-linecap="round" fill="none" />
+      </svg>
+    </div>
+    <h1>The Proving Ground</h1>
+    <p class="lede">
+      You flashed the radar — and it went silent. This is its voice: plug the
+      Sense in over USB and the bench hears every line it speaks, turns every
+      knob it holds, and walks you from <em>“it flashed”</em> to
+      <em>“it works, calibrated, in the right spot.”</em> No board on the
+      cable? Boot the <strong>twin</strong> — the firmware's own pipeline,
+      ported line-for-line, speaking the identical console dialect — and run
+      the same drills to see exactly what passing looks like.
+    </p>
+    <div id="radar-dev-versions" aria-live="polite"></div>
+    <p class="fineprint">
+      <a href="index.html">← the family</a> ·
+      <a href="flash.html">the Nursery — flash it first</a> ·
+      <a href="sense.html">the Sense — radar school</a> ·
+      <a href="senselab.html">the Sense Lab — the deep bench</a> ·
+      works offline · nothing here phones anywhere
+    </p>
+  </header>
+
+  <main id="radar-dev">
+    <noscript><p class="muted">This bench needs JavaScript — the console it
+    drives is also reachable by hand: <code>pio device monitor -b 115200</code>,
+    then type <code>help</code>. The commands and knobs are written out in
+    <code>firmware/projects/canary-sense/README.md</code>.</p></noscript>
+  </main>
+
+  <footer class="fineprint" id="foot">
+    <p>
+      Honest by construction: the twin generates real MR60 wire bytes and runs
+      them through <code>assets/sense-sim.js</code> — the line-for-line port of
+      the firmware's parser and FSMs that CI pins against
+      <code>firmware/tests_host/</code> — and its console is a port of
+      <code>firmware/common/console/tuning_console.h</code>, drift-gated so it
+      can only ever speak the dialect the real cable speaks. Every threshold,
+      bound, placement figure and knob description here is parsed from the
+      firmware and <code>docs/hardware/mr60bha2_radar_notes.md</code>, never
+      written twice. Raw centimetres and BPM appear only under the explicit
+      bench-detail switch, only on this attended cable — the same privacy
+      exception the firmware documents.
+    </p>
+  </footer>
+
+  <script type="module" src="assets/radar-dev.js"></script>
+</body>
+</html>

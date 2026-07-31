@@ -165,6 +165,7 @@ jobs:
           node --test canary-local/tests/we2.test.js
           node --test canary-local/tests/sense.test.js
           node --test canary-local/tests/senselab.test.js
+          node --test canary-local/tests/radar_dev.test.js
           node --test canary-local/tests/vault.test.js
           node --test canary-local/tests/operator.test.js
           node --test canary-local/tests/bench.test.js
@@ -451,6 +452,8 @@ jobs:
         run: node canary-local/tests/sense_probe.mjs
       - name: Sense Lab probe — placement bench, pipeline, cards, stall path
         run: node canary-local/tests/senselab_probe.mjs
+      - name: Proving Ground probe — twin boots, knobs sync, auto drills pass
+        run: node canary-local/tests/radar_dev_probe.mjs
       - name: Audio probe — smoke bench renders, real wasm detects T3 / rejects off-band, mic path
         run: node canary-local/tests/audio_probe.mjs
       - name: Vault probe — seal walkthrough + real Ed25519 break-glass quorum
