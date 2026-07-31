@@ -19,7 +19,7 @@ use base64::Engine as _;
 use serde_json::{json, Value};
 use serialport::SerialPort;
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, State};
@@ -36,10 +36,19 @@ pub struct BenchCmd {
 struct BenchControl {
     cancel: Arc<AtomicBool>,
     send: mpsc::Sender<BenchCmd>,
+    /// The worker's handle — stop/replace JOIN it, so the serial port is
+    /// actually free before whatever needs it next (an immediate restart, a
+    /// module flash) tries to open it.
+    handle: std::thread::JoinHandle<()>,
 }
 
 #[derive(Default)]
 pub struct We2BenchState(Mutex<Option<BenchControl>>);
+
+/// Monotonic bench-session id. Every event a worker emits carries its session,
+/// so a dying worker's tail (its `stopped`, a late frame) can never be mistaken
+/// for — or tear down — a replacement bench the frontend has since started.
+static SESSION: AtomicU64 = AtomicU64::new(0);
 
 fn open_port(port_name: &str) -> Result<Box<dyn SerialPort>, String> {
     serialport::new(port_name, we2::BAUD)
@@ -136,10 +145,15 @@ struct Pending {
 fn bench_thread(
     app: AppHandle,
     port_name: String,
+    session: u64,
     cancel: Arc<AtomicBool>,
     commands: mpsc::Receiver<BenchCmd>,
 ) {
     let emit = |payload: Value| {
+        let mut payload = payload;
+        if let Some(map) = payload.as_object_mut() {
+            map.insert("session".into(), json!(session));
+        }
         let _ = app.emit("we2:bench", payload);
     };
 
@@ -270,33 +284,58 @@ fn bench_thread(
     emit(json!({ "kind": "stopped" }));
 }
 
-/// Start the live bench on the module's port. Replaces any previous bench.
+/// Cancel a bench worker and WAIT for it to finish — i.e. to send `BREAK` and
+/// drop the serial port. Off the async runtime (the join is bounded: the read
+/// loop wakes every 15 ms and the shutdown sleep is 150 ms).
+async fn retire(control: BenchControl) {
+    control.cancel.store(true, Ordering::Relaxed);
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        let _ = control.handle.join();
+    })
+    .await;
+}
+
+/// Start the live bench on the module's port, replacing (and fully retiring)
+/// any previous bench first. Returns the new bench's session id — the frontend
+/// uses it to ignore a previous worker's late events.
 #[tauri::command]
-pub fn we2_bench_start(
+pub async fn we2_bench_start(
     app: AppHandle,
     state: State<'_, We2BenchState>,
     port: String,
-) -> Result<(), String> {
+) -> Result<u64, String> {
     if port.is_empty() {
         return Err("no module port".into());
     }
+    let old = {
+        let mut active = state
+            .0
+            .lock()
+            .map_err(|_| "bench state is unavailable".to_string())?;
+        active.take()
+    };
+    if let Some(old) = old {
+        // The old worker still owns the port until it exits — wait, or the
+        // fresh open below races it and fails busy.
+        retire(old).await;
+    }
+    let session = SESSION.fetch_add(1, Ordering::Relaxed) + 1;
+    let cancel = Arc::new(AtomicBool::new(false));
+    let (send, receive) = mpsc::channel();
+    let thread_cancel = cancel.clone();
+    let handle = std::thread::spawn(move || {
+        bench_thread(app, port, session, thread_cancel, receive);
+    });
     let mut active = state
         .0
         .lock()
         .map_err(|_| "bench state is unavailable".to_string())?;
-    if let Some(old) = active.take() {
-        old.cancel.store(true, Ordering::Relaxed);
-    }
-    let cancel = Arc::new(AtomicBool::new(false));
-    let (send, receive) = mpsc::channel();
     *active = Some(BenchControl {
-        cancel: cancel.clone(),
+        cancel,
         send,
+        handle,
     });
-    std::thread::spawn(move || {
-        bench_thread(app, port, cancel, receive);
-    });
-    Ok(())
+    Ok(session)
 }
 
 /// Send one AT body (the bench dialect only) and return the module's reply —
@@ -331,15 +370,20 @@ pub async fn we2_bench_cmd(state: State<'_, We2BenchState>, body: String) -> Res
     reply
 }
 
-/// Stop the bench: the thread sends `AT+BREAK` and releases the port.
+/// Stop the bench and WAIT for the worker to send `AT+BREAK` and release the
+/// port — so when this returns, an immediate restart or a module flash can
+/// open the port without racing the dying worker.
 #[tauri::command]
-pub fn we2_bench_stop(state: State<'_, We2BenchState>) -> Result<(), String> {
-    let mut active = state
-        .0
-        .lock()
-        .map_err(|_| "bench state is unavailable".to_string())?;
-    if let Some(control) = active.take() {
-        control.cancel.store(true, Ordering::Relaxed);
+pub async fn we2_bench_stop(state: State<'_, We2BenchState>) -> Result<(), String> {
+    let control = {
+        let mut active = state
+            .0
+            .lock()
+            .map_err(|_| "bench state is unavailable".to_string())?;
+        active.take()
+    };
+    if let Some(control) = control {
+        retire(control).await;
     }
     Ok(())
 }

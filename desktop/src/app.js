@@ -1198,6 +1198,7 @@ const liveBench = {
   thr: { tscore: 50, tiou: 45 },
   lastFrame: null, frames: 0, fpsT0: 0,
   unlisten: null,
+  session: null, // the backend worker's id — a dead worker's tail is ignored
 };
 
 function benchClasses() { return liveBench.pinned ? ["person"] : []; }
@@ -1291,6 +1292,10 @@ function benchRender(boxes) {
 
 function onBenchEvent(ev) {
   const p = (ev && ev.payload) || {};
+  // A retired worker's tail (its `stopped`, a late frame) must never touch a
+  // replacement bench: every backend event names its session, and only the
+  // current one is heard.
+  if (p.session != null && liveBench.session != null && p.session !== liveBench.session) return;
   if (p.kind === "log") {
     appendConsole("console", p.line + "\n");
   } else if (p.kind === "id") {
@@ -1370,7 +1375,7 @@ async function onBenchStart() {
   $("bench-meter-label").textContent = "watching…";
   if (!liveBench.unlisten) liveBench.unlisten = await listen("we2:bench", onBenchEvent);
   try {
-    await invoke("we2_bench_start", { port: state.port });
+    liveBench.session = await invoke("we2_bench_start", { port: state.port });
   } catch (e) {
     setStatus("flash-result", String(e), "err");
     benchTeardown();
@@ -1384,6 +1389,7 @@ async function onBenchStop() {
 
 function benchTeardown() {
   liveBench.running = false;
+  liveBench.session = null; // everything after this is a dead worker's tail
   $("bench-start").disabled = false;
   $("bench-stop").disabled = true;
   $("bench-fps").textContent = "";
