@@ -194,6 +194,35 @@ kits under the free "Works with SecuraCV" badge.
 
 → [the glossary's device line](GLOSSARY.md#the-device-line)
 
+### I force quit the Flasher and now it won't open — it just bounces
+
+Open it again. From version 0.3.8 the Flasher repairs this itself: it leaves a
+breadcrumb as each launch advances and reads the last one on the way up, before
+it builds a window, so a launch that never arrived gets fixed rather than
+repeated. You may see a short note telling you what it found.
+
+If it still won't open, one of three things happened, and the app's own
+`launch.log` says which (`~/Library/Application Support/com.securacv.flasher/`
+on macOS, `~/.local/share/com.securacv.flasher/` on Linux):
+
+- **A leftover `espflash` or `rpiboot`** from the killed run is still holding
+  your board. The Flasher now reaps these at startup; to check by hand,
+  `pgrep -fl 'espflash|rpiboot'`.
+- **A saved session left mid-write.** Cleared automatically on the next
+  launch — once. You'd re-enter the Wi-Fi network name and device names you
+  last used; no password was ever stored, so nothing secret is lost.
+- **A self-update that was interrupted.** This is the one nothing in the app
+  can fix, because the repair would have to run from the copy that moved:
+  installing an update moves the app bundle, so a force quit part-way can leave
+  it missing or incomplete. Reinstall from the latest
+  [Flasher release](https://github.com/kmay89/securaCV/releases?q=flasher-v&expanded=true).
+  Nothing you have flashed is affected — a Canary keeps the firmware it has,
+  and the board can't be bricked.
+
+Force quitting is never dangerous to a device. A flash interrupted at any stage
+is re-flashable: the ESP32's first-stage bootloader is mask ROM, and a
+half-written hub card is simply written again.
+
 ---
 
 ## Contributing & agents

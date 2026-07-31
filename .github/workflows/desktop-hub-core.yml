@@ -199,6 +199,17 @@ jobs:
       - name: cargo check
         working-directory: desktop/src-tauri
         run: cargo check --all-targets
+      - name: cargo test
+        # `check` proves the crate compiles; it never runs an assertion. The
+        # modules whose logic decides something — whether a previous launch
+        # hung, whether a PID is still our sidecar, whether an image is a
+        # factory build — carry unit tests that were compiling and never
+        # executing here. `tauri-pure-modules` below runs the three modules
+        # that stand alone without tauri; this covers the rest, and costs
+        # nothing extra: the dependency graph is already built and cached by
+        # the check above.
+        working-directory: desktop/src-tauri
+        run: cargo test
 
   tauri-pure-modules:
     runs-on: ubuntu-latest
