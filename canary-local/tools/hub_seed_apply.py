@@ -120,7 +120,8 @@ def options_satisfied(desired: dict, current: dict) -> bool:
 class Action:
     """One concrete thing to do (or skip). The atom the executor performs."""
 
-    kind: str  # register_repo | install_addon | set_options | start_addon | write_config
+    kind: str  # register_repo | install_addon | set_options | start_addon |
+               # write_config | core_config_entry
     label: str  # human-facing target (a URL, a slug, a path)
     already: bool = False  # true => this is already satisfied; skip it
     reason: str = ""  # why it is being skipped, or an extra note
@@ -130,6 +131,8 @@ class Action:
     src: str = ""  # write_config: repo-relative source
     dest: str = ""  # write_config: absolute on-device destination
     options: dict = field(default_factory=dict)  # set_options: the options to apply
+    handler: str = ""  # core_config_entry: the integration domain (e.g. "mqtt")
+    data: dict = field(default_factory=dict)  # core_config_entry: the flow answers
 
 
 @dataclass
@@ -148,7 +151,13 @@ class StepPlan:
 # A fresh hub: nothing registered, nothing installed, no config written, no
 # options set. This is the assumption --dry-run makes so it always prints the
 # FULL plan.
-FRESH_HUB: dict = {"repositories": set(), "addons": {}, "existing_files": set(), "addon_options": {}}
+FRESH_HUB: dict = {
+    "repositories": set(),
+    "addons": {},
+    "existing_files": set(),
+    "addon_options": {},
+    "config_entries": set(),
+}
 
 
 def plan_actions(seed: dict, observed: dict) -> list[StepPlan]:
@@ -194,6 +203,25 @@ def plan_actions(seed: dict, observed: dict) -> list[StepPlan]:
                         reason="already registered" if present else "",
                     )
                 )
+
+        # A step may connect Home Assistant to an integration. This is NOT an
+        # add-on operation: the Supervisor installs add-ons but knows nothing
+        # about Core's integrations, which is exactly how a hub ends up running
+        # a broker that Home Assistant never subscribes to.
+        entry = step.get("core_config_entry")
+        if entry:
+            handler = entry.get("handler", "")
+            have = handler in observed.get("config_entries", set())
+            sp.actions.append(
+                Action(
+                    kind="core_config_entry",
+                    label=f"{handler} integration",
+                    already=have,
+                    reason="Home Assistant is already connected to it" if have else "",
+                    handler=handler,
+                    data=dict(entry.get("data", {})),
+                )
+            )
 
         if "addon" in step:
             sup = step.get("supervisor_slug") or step["addon"]
@@ -282,6 +310,8 @@ def describe(action: Action, base_url: str) -> str:
         return f"register repository {action.url}  (POST {base_url}/store/repositories)"
     if action.kind == "install_addon":
         return f"install add-on {action.slug}  (POST {base_url}/store/addons/{action.slug}/install)"
+    if action.kind == "core_config_entry":
+        return f"connect Home Assistant to {action.label}"
     if action.kind == "set_options":
         opts = json.dumps(action.options, separators=(",", ":"), sort_keys=True)
         return f"set options {opts} on {action.slug}  (POST {base_url}/addons/{action.slug}/options)"
@@ -374,6 +404,56 @@ class SupervisorClient:
     def set_addon_options(self, slug: str, options: dict) -> None:
         self._req("POST", f"/addons/{slug}/options", {"options": options})
 
+    # ── Home Assistant Core, through the Supervisor's proxy ────────────────
+    #
+    # An add-on's SUPERVISOR_TOKEN is accepted by `http://supervisor/core/api/…`,
+    # which forwards to Core. That is how this reaches config entries at all:
+    # the Supervisor API can install add-ons but knows nothing about Core's
+    # integrations, and installing a broker Core never connects to is exactly
+    # the gap this closes.
+
+    def get_config_entry_domains(self) -> set[str]:
+        """Domains Home Assistant already has a config entry for."""
+        try:
+            data = self._req("GET", "/core/api/config/config_entries/entry")
+        except SupervisorError:
+            # Core may still be starting on a first boot. Treat as "none yet"
+            # rather than failing the run: the create below is the thing that
+            # must succeed, and it reports its own error.
+            return set()
+        if not isinstance(data, list):
+            return set()
+        return {e.get("domain", "") for e in data if isinstance(e, dict)}
+
+    def create_config_entry(self, handler: str, data: dict) -> None:
+        """Drive a config flow to completion: start it, then answer it.
+
+        Home Assistant has no "just make me this entry" endpoint — an
+        integration is set up by walking its config flow, the same steps the
+        browser dialog walks. Two calls: POST the handler to open a flow, then
+        POST the answers to the flow id it returns.
+        """
+        flow = self._req("POST", "/core/api/config/config_entries/flow",
+                         {"handler": handler, "show_advanced_options": False})
+        if not isinstance(flow, dict):
+            raise SupervisorError(f"{handler}: unexpected config-flow response")
+        # A flow that is already finished (some integrations self-complete) has
+        # no id to answer and nothing left to do.
+        if flow.get("type") == "create_entry":
+            return
+        flow_id = flow.get("flow_id")
+        if not flow_id:
+            raise SupervisorError(
+                f"{handler}: Home Assistant did not return a config flow to answer "
+                f"(got {flow.get('reason') or flow.get('type') or 'nothing'})"
+            )
+        result = self._req("POST", f"/core/api/config/config_entries/flow/{flow_id}", data)
+        if isinstance(result, dict) and result.get("type") == "form":
+            raise SupervisorError(
+                f"{handler}: Home Assistant asked for more than the plan supplies "
+                f"(step {result.get('step_id')!r}) — finish it in the UI"
+            )
+
     def start_addon(self, slug: str) -> None:
         self._req("POST", f"/addons/{slug}/start")
 
@@ -390,9 +470,16 @@ def observe(client: SupervisorClient, seed: dict) -> dict:
             sup = s.get("supervisor_slug") or s.get("addon")
             if sup in addons:
                 addon_options[sup] = client.get_addon_options(sup)
+    # Integrations Home Assistant is already connected to. Without this the
+    # connect step would re-run on every pass and pile up duplicate entries —
+    # the executor's whole contract is that a second run is a no-op.
+    wants_entries = any(s.get("core_config_entry") for s in seed.get("steps", []))
+    config_entries = client.get_config_entry_domains() if wants_entries else set()
+
     return {
         "repositories": client.get_repositories(),
         "addons": addons,
+        "config_entries": config_entries,
         # A config is "present" if EITHER accepted extension exists (see
         # config_siblings) — otherwise we'd write a duplicate config.yml.
         "existing_files": {d for d in dests if any(os.path.exists(p) for p in config_siblings(d))},
@@ -470,6 +557,8 @@ def _perform(a: Action, client: SupervisorClient, assets_root: Path) -> None:
         # mean to (e.g. `mode`) and never wipe a user's other options.
         merged = {**client.get_addon_options(a.slug), **a.options}
         client.set_addon_options(a.slug, merged)
+    elif a.kind == "core_config_entry":
+        client.create_config_entry(a.handler, a.data)
     elif a.kind == "start_addon":
         client.start_addon(a.slug)
     elif a.kind == "write_config":

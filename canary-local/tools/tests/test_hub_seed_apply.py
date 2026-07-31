@@ -56,7 +56,17 @@ class PlanOnFreshHub(unittest.TestCase):
     def test_step_order(self):
         self.assertEqual(
             [s.id for s in self.steps],
-            ["add-repositories", "install-broker", "install-frigate", "write-frigate-config", "install-securacv"],
+            [
+                "add-repositories",
+                "install-broker",
+                # Connecting Home Assistant to the broker sits between installing
+                # it and installing anything that publishes to it: Frigate coming
+                # up first would publish into a broker nobody is listening to.
+                "connect-mqtt",
+                "install-frigate",
+                "write-frigate-config",
+                "install-securacv",
+            ],
         )
 
     def test_nothing_already_satisfied(self):
@@ -107,6 +117,9 @@ class Idempotency(unittest.TestCase):
             "addons": {MOSQUITTO_SUP: "started", FRIGATE_SUP: "started", SECURACV_SUP: "started"},
             "existing_files": {"/addon_configs/ccab4aaf_frigate/config.yml"},
             "addon_options": {SECURACV_SUP: {"mode": "frigate"}},
+            # Home Assistant is already connected to the broker. Without this the
+            # connect step would re-run forever and stack duplicate entries.
+            "config_entries": {"mqtt"},
         }
 
     def test_all_actions_skip(self):
@@ -187,6 +200,14 @@ class FakeClient:
             raise hsa.SupervisorError(f"boom on {kind}")
 
     # observe() surface
+    def get_config_entry_domains(self):
+        self.calls.append(("get_config_entry_domains",))
+        return set()
+
+    def create_config_entry(self, handler, data):
+        self._maybe_fail("core_config_entry")
+        self.calls.append(("create_config_entry", handler, dict(data)))
+
     def get_repositories(self):
         return set()
 
@@ -351,3 +372,104 @@ class ConfigExtension(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MqttConnect(unittest.TestCase):
+    """Installing a broker is not the same as USING one.
+
+    A running Mosquitto with no MQTT integration is a post office nobody has an
+    address for: Frigate publishes detections, every Canary publishes events,
+    and Home Assistant subscribes to none of it — so no entities appear and the
+    hub looks empty. On a hub with a keyboard you click through a dialog. There
+    is no dialog on a headless hub, which is why this is a plan step.
+    """
+
+    def step(self):
+        return next(s for s in REAL_PLAN["steps"] if s["id"] == "connect-mqtt")
+
+    def test_the_plan_carries_a_config_entry_for_mqtt(self):
+        entry = self.step()["core_config_entry"]
+        self.assertEqual(entry["handler"], "mqtt")
+        self.assertEqual(entry["data"]["port"], 1883)
+
+    def test_the_broker_address_is_the_addon_not_localhost(self):
+        # Core runs in a different container from the add-on, so 127.0.0.1 would
+        # point Core at itself and time out with a very unhelpful message.
+        broker = self.step()["core_config_entry"]["data"]["broker"]
+        self.assertEqual(broker, "core-mosquitto")
+        self.assertNotIn(broker, ("localhost", "127.0.0.1", "::1"))
+
+    def test_it_runs_on_a_fresh_hub(self):
+        steps = hsa.plan_actions(REAL_PLAN, hsa.FRESH_HUB)
+        step = next(s for s in steps if s.id == "connect-mqtt")
+        actions = [a for a in step.actions if a.kind == "core_config_entry"]
+        self.assertEqual(len(actions), 1)
+        self.assertFalse(actions[0].already)
+        self.assertEqual(actions[0].handler, "mqtt")
+
+    def test_it_is_skipped_once_home_assistant_is_connected(self):
+        observed = dict(hsa.FRESH_HUB, config_entries={"mqtt"})
+        steps = hsa.plan_actions(REAL_PLAN, observed)
+        step = next(s for s in steps if s.id == "connect-mqtt")
+        action = next(a for a in step.actions if a.kind == "core_config_entry")
+        self.assertTrue(action.already)
+        self.assertTrue(action.reason)
+
+    def test_it_comes_before_anything_that_publishes(self):
+        ids = [s.id for s in hsa.plan_actions(REAL_PLAN, hsa.FRESH_HUB)]
+        self.assertLess(ids.index("install-broker"), ids.index("connect-mqtt"))
+        for publisher in ("install-frigate", "install-securacv"):
+            self.assertLess(
+                ids.index("connect-mqtt"),
+                ids.index(publisher),
+                f"{publisher} would publish into a broker nobody is listening to",
+            )
+
+    def test_describe_says_something_a_person_can_read(self):
+        steps = hsa.plan_actions(REAL_PLAN, hsa.FRESH_HUB)
+        action = next(
+            a for s in steps for a in s.actions if a.kind == "core_config_entry"
+        )
+        text = hsa.describe(action, "http://supervisor")
+        self.assertIn("mqtt", text.lower())
+        self.assertNotIn("None", text)
+
+
+class MqttConnectExecution(unittest.TestCase):
+    """The planned config entry actually reaches a client call."""
+
+    def test_perform_routes_the_action_to_the_core_api(self):
+        # Real assets root so the whole plan runs to completion rather than
+        # dying on write_config and hiding whatever came after it.
+        repo = Path(hsa.__file__).resolve().parents[2]
+        client = FakeClient()
+        steps = hsa.plan_actions(REAL_PLAN, hsa.FRESH_HUB)
+        with tempfile.TemporaryDirectory() as tmp:
+            for st in steps:
+                for a in st.actions:
+                    if a.kind == "write_config":
+                        a.dest = str(Path(tmp) / Path(a.dest).name)
+            hsa.execute(steps, client, repo)
+        made = [c for c in client.calls if c[0] == "create_config_entry"]
+        self.assertEqual(len(made), 1, f"calls were: {client.calls}")
+        self.assertEqual(made[0][1], "mqtt")
+        self.assertEqual(made[0][2]["broker"], "core-mosquitto")
+
+    def test_a_failing_core_api_is_reported_not_swallowed(self):
+        # A hub that silently "provisioned" without connecting MQTT is the exact
+        # failure this step exists to remove; it must be loud.
+        client = FakeClient(fail_on="core_config_entry")
+        steps = hsa.plan_actions(REAL_PLAN, hsa.FRESH_HUB)
+        repo = Path(hsa.__file__).resolve().parents[2]
+        # execute() turns a failed action into a non-zero exit, which is what a
+        # provisioning run must do: a hub that reports success without MQTT
+        # connected is the precise failure this step exists to remove.
+        with self.assertRaises(SystemExit) as cm:
+            hsa.execute(steps, client, repo)
+        self.assertNotEqual(cm.exception.code, 0)
+
+    def test_observe_asks_home_assistant_what_is_already_connected(self):
+        client = FakeClient()
+        observed = hsa.observe(client, REAL_PLAN)
+        self.assertIn("config_entries", observed)
+        self.assertIn(("get_config_entry_domains",), client.calls)

@@ -192,6 +192,41 @@ def main() -> None:
             "reversible": True,
         },
         {
+            "id": "connect-mqtt",
+            "title": "Connect Home Assistant to the broker",
+            "what": (
+                "Create Home Assistant's MQTT integration entry pointing at the "
+                f"`{mosquitto['slug']}` add-on."
+            ),
+            "why": (
+                "Installing the broker is not the same as USING it. A running Mosquitto with no "
+                "MQTT integration is a post office nobody has an address for: Frigate publishes "
+                "detections, every Canary publishes events, and Home Assistant subscribes to "
+                "none of it — so no entities appear and the hub looks empty and broken. On a "
+                "hub with a keyboard you'd click through a dialog to fix that. Headless, nobody "
+                "ever sees the dialog, which is why it has to be part of the plan."
+            ),
+            "for_what": "Turns broker traffic into Home Assistant entities.",
+            "core_config_entry": {
+                "handler": "mqtt",
+                "data": {
+                    # The add-on's in-cluster hostname, not localhost: Core runs
+                    # in a different container from the add-on, so 127.0.0.1
+                    # would point Core at itself and time out.
+                    "broker": "core-mosquitto",
+                    "port": 1883,
+                    # Mosquitto's add-on defaults to authenticating against Home
+                    # Assistant's own users, and Core reaches it over the
+                    # internal network, so no separate credential is minted here.
+                    # Deliberate: inventing a password would either commit a
+                    # secret to this repo or leave one the operator can't find.
+                    "discovery": True,
+                },
+            },
+            "start": False,
+            "reversible": True,
+        },
+        {
             "id": "install-frigate",
             "title": "Install Frigate (the camera eyes)",
             "what": f"Install the `{frigate['slug']}` add-on.",

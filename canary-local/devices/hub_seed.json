@@ -55,6 +55,23 @@
       "reversible": true
     },
     {
+      "id": "connect-mqtt",
+      "title": "Connect Home Assistant to the broker",
+      "what": "Create Home Assistant's MQTT integration entry pointing at the `core_mosquitto` add-on.",
+      "why": "Installing the broker is not the same as USING it. A running Mosquitto with no MQTT integration is a post office nobody has an address for: Frigate publishes detections, every Canary publishes events, and Home Assistant subscribes to none of it \u2014 so no entities appear and the hub looks empty and broken. On a hub with a keyboard you'd click through a dialog to fix that. Headless, nobody ever sees the dialog, which is why it has to be part of the plan.",
+      "for_what": "Turns broker traffic into Home Assistant entities.",
+      "core_config_entry": {
+        "handler": "mqtt",
+        "data": {
+          "broker": "core-mosquitto",
+          "port": 1883,
+          "discovery": true
+        }
+      },
+      "start": false,
+      "reversible": true
+    },
+    {
       "id": "install-frigate",
       "title": "Install Frigate (the camera eyes)",
       "what": "Install the `ccab4aaf_frigate` add-on.",
