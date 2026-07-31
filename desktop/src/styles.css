@@ -287,6 +287,18 @@ kbd {
 .form-grid input:focus { border-color: var(--brand); outline: none; }
 @media (max-width: 620px) { .form-grid { grid-template-columns: 1fr; } }
 
+/* Wi-Fi / broker secrets are EXISTING passwords, not new-account credentials:
+   a text input masked via -webkit-text-security so the OS never offers to
+   "generate a strong password" for a key the router already owns
+   (firmware/LESSONS_LEARNED.md, "iOS offers to invent a password"). */
+.pw-masked { -webkit-text-security: disc; text-security: disc; }
+.pw-row { display: flex; gap: 6px; align-items: end; }
+.pw-row input { flex: 1; min-width: 0; }
+.pw-row .btn {
+  margin-top: 4px; padding: 8px 10px; font-size: 12px; font-weight: 500;
+  white-space: nowrap; flex-shrink: 0;
+}
+
 .receipts { display: grid; gap: 7px; }
 .receipt {
   display: flex; gap: 12px; justify-content: space-between; align-items: baseline;

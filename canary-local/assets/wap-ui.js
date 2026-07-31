@@ -319,8 +319,16 @@ export function buildPhone(data, bus) {
       body.append(el("p", "fineprint muted", "GET /api/wifi/scan"), list,
         chip("Scan again", () => next(1)));
     } else if (i === 2) {
-      const inp = el("input", "wap-input");
-      inp.type = "password"; inp.placeholder = "Network password";
+      const inp = el("input", "wap-input pw-masked");
+      // Masked text, not type=password: even in this simulated portal the input
+      // is real DOM, and a real browser would offer to "generate" a password
+      // for it (firmware/LESSONS_LEARNED.md). Mirrors the actual firmware
+      // wizard (companion_pwa.h wiz-pw).
+      inp.type = "text"; inp.placeholder = "Network password";
+      inp.autocomplete = "off";
+      inp.setAttribute("autocapitalize", "none");
+      inp.setAttribute("autocorrect", "off");
+      inp.spellcheck = false;
       const row = el("div", "wap-wiz-btns");
       const back = el("button", "ghost", "Back"); back.addEventListener("click", () => next(1));
       const conn = el("button", "primary", "Connect"); conn.addEventListener("click", () => connect(ctx.ssid));

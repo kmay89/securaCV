@@ -348,6 +348,11 @@ button.flash-map-key:hover { color: var(--text); }
   border-radius: 10px; color: var(--text); padding: 9px 12px; font-size: 14px;
 }
 .flash-wifi-inputs input:focus { outline: none; border-color: var(--canary-deep); }
+/* Existing-secret fields (Wi-Fi key, broker password) are TEXT inputs masked
+   here, never type=password — the OS reads a bare password field as sign-up
+   and offers to invent a key the router has never seen
+   (firmware/LESSONS_LEARNED.md, "iOS offers to invent a password"). */
+.pw-masked { -webkit-text-security: disc; text-security: disc; }
 .flash-wifi-qr { margin-top: 12px; text-align: center; }
 .flash-wifi-qr svg { background: #fff; border-radius: 10px; padding: 2px; }
 .flash-wifi-remember { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 10px; }

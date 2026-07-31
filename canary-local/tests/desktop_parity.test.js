@@ -732,3 +732,44 @@ test("neither flasher gates the broker fields on the provisioning mode", () => {
   assert.ok(!/mqttHost:\s*usbSecrets\s*\?/.test(appJs),
     "desktop app must not blank mqttHost for non-usb-secrets boards");
 });
+
+test("no surface ever summons the OS password generator for an existing secret", () => {
+  // The lesson (firmware/LESSONS_LEARNED.md "iOS offers to invent a password"):
+  // a Wi-Fi key or broker secret is an EXISTING credential. `type="password"`
+  // (worse, autocomplete="new-password") reads as sign-up to the OS, which then
+  // offers to GENERATE a key no router has ever seen — and real users accepted
+  // it. House pattern: type="text" + .pw-masked + autocomplete="off", with a
+  // Show/Hide that flips the class, never the type. The ONLY legitimate
+  // new-password fields are the hub's Home Assistant account creation pair
+  // (hub-acct-pass / hub-acct-pass2) — those really are new accounts.
+  const indexHtml = read(join(ROOT, "desktop/src/index.html"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const wapUi = read(join(CANARY, "assets/wap-ui.js"));
+
+  const newPwCount = (indexHtml.match(/autocomplete="new-password"/g) || []).length;
+  assert.equal(newPwCount, 2,
+    'desktop/src/index.html: autocomplete="new-password" is allowed ONLY on the ' +
+    "two hub account-creation fields — a Wi-Fi/broker secret must use the " +
+    ".pw-masked text pattern instead");
+  for (const id of ["wifi-pass", "mqtt-pass", "hub-pass"]) {
+    const field = indexHtml.match(new RegExp(`<input id="${id}"[^>]*>`));
+    assert.ok(field, `desktop/src/index.html: missing #${id}`);
+    assert.ok(!/type="password"/.test(field[0]) && /pw-masked/.test(field[0]),
+      `#${id} must be a masked text input (class="pw-masked"), never type="password"`);
+    assert.ok(/autocomplete="off"/.test(field[0]), `#${id} must set autocomplete="off"`);
+  }
+
+  assert.ok(!/new-password/.test(flashJs),
+    'browser flasher must never mark a field autocomplete="new-password"');
+  assert.ok(/pass\.classList\.add\("pw-masked"\)/.test(flashJs),
+    "browser flasher Wi-Fi key must use the .pw-masked text pattern");
+  assert.ok(!/pass\.type\s*=\s*pass\.type\s*===\s*"password"/.test(flashJs),
+    "browser flasher Show toggle must flip the masking class, never input.type");
+  assert.ok(!/type\s*=\s*"password"/.test(wapUi),
+    "the WAP portal simulator renders real DOM — its password field must be masked text");
+
+  // Both frontends keep the class-flip rule in the toggle handlers.
+  assert.ok(/classList\.toggle\("pw-masked"\)/.test(appJs),
+    "desktop Show/Hide must flip the pw-masked class");
+});

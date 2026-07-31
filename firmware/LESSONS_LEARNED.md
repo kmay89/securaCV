@@ -683,6 +683,18 @@
   type (flipping to `type="password"` re-summons the generator). Applied to
   the canary dashboard's Wi-Fi field and the first-boot wizard
   (`securacv_setup_page.cpp`); copy the pattern to any future field like it.
+- **2026-07 sweep:** the pattern now also covers every surface *outside* the
+  firmware pages — the desktop Flasher's provisioning, hub-wizard and MQTT
+  fields (`desktop/src/index.html`, which shipped a Wi-Fi key marked
+  `autocomplete="new-password"`), the browser flasher's Wi-Fi and broker
+  fields (`canary-local/assets/flash.js`), the WAP portal simulator
+  (`canary-local/assets/wap-ui.js`), and the one firmware page that missed
+  the first migration (`csi_mqtt.cpp` `/mqtt`). Both flashers additionally
+  help users *retrieve* the real key instead of typing blind: the browser has
+  wifi-memory recall, and the desktop app's "Use saved" button reads the
+  OS's own store (macOS Keychain / NetworkManager) behind the system consent
+  prompt. Guarded by `canary-local/tests/desktop_parity.test.js` ("no surface
+  ever summons the OS password generator").
 - **Date learned:** 2026-07
 
 ### Captive DNS redirector must answer A queries only — NODATA for AAAA/HTTPS

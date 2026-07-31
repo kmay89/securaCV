@@ -221,6 +221,68 @@ fn current_ssid() -> Option<String> {
     }
 }
 
+// The saved password for a Wi-Fi network, read from the OS's own store — the
+// macOS Keychain via `security` (the system shows its consent prompt first)
+// or NetworkManager via `nmcli -s` (polkit may prompt). Runs only on an
+// explicit "Use saved" click in the frontend; the value goes straight into
+// the field and is never logged or persisted by the app.
+#[tauri::command]
+fn saved_wifi_password(ssid: String) -> Result<String, String> {
+    let ssid = ssid.trim().to_string();
+    if ssid.is_empty() {
+        return Err("type the Wi-Fi name first".to_string());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let out = std::process::Command::new("security")
+            .args([
+                "find-generic-password",
+                "-D",
+                "AirPort network password",
+                "-a",
+                &ssid,
+                "-w",
+            ])
+            .output()
+            .map_err(|e| format!("couldn't ask the keychain: {e}"))?;
+        let pw = String::from_utf8_lossy(&out.stdout)
+            .trim_end_matches(['\r', '\n'])
+            .to_string();
+        if out.status.success() && !pw.is_empty() {
+            Ok(pw)
+        } else {
+            Err(format!(
+                "no saved password for \u{201c}{ssid}\u{201d} — or the keychain prompt was declined. Typing it works too."
+            ))
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let out = std::process::Command::new("nmcli")
+            .args(["-s", "-g", "802-11-wireless-security.psk", "connection", "show", &ssid])
+            .output()
+            .map_err(|e| format!("couldn't ask NetworkManager: {e}"))?;
+        // Strip only the command's trailing newline — a PSK may legitimately
+        // begin or end with a space (hub-core's seed tests cover exactly
+        // that), and trimming it would provision a different credential.
+        let pw = String::from_utf8_lossy(&out.stdout)
+            .trim_end_matches(['\r', '\n'])
+            .to_string();
+        if out.status.success() && !pw.is_empty() {
+            Ok(pw)
+        } else {
+            Err(format!(
+                "no saved password for \u{201c}{ssid}\u{201d} here (open network, different connection name, or permission declined). Typing it works too."
+            ))
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = ssid;
+        Err("reading saved Wi-Fi passwords isn't supported on this platform".to_string())
+    }
+}
+
 #[tauri::command]
 fn app_info() -> AppInfo {
     let fw_train = serde_json::from_str::<Value>(EMBEDDED_CATALOG)
@@ -1563,6 +1625,7 @@ pub fn run() {
             load_hatch,
             app_info,
             current_ssid,
+            saved_wifi_password,
             list_ports,
             detect_chip,
             fetch_manifest,

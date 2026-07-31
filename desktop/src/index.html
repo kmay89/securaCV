@@ -200,11 +200,15 @@
               <div class="form-grid">
                 <label class="usb-only">Canary name<input id="device-id" maxlength="47" autocomplete="off" required></label>
                 <label>Wi-Fi name<input id="wifi-ssid" maxlength="32" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="next"></label>
-                <label>Wi-Fi password<input id="wifi-pass" type="password" maxlength="63" autocomplete="current-password"></label>
+                <!-- An EXISTING network key, not an account credential: masked text
+                     (never type=password) so the OS offers nothing to "generate" —
+                     grab it from your router sticker or phone, or just type it.
+                     Pattern: firmware/LESSONS_LEARNED.md "iOS offers to invent a password". -->
+                <label>Wi-Fi password<span class="pw-row"><input id="wifi-pass" class="pw-masked" maxlength="63" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"><button type="button" class="btn btn-ghost pw-toggle" data-pw="wifi-pass" aria-label="Show the password">Show</button><button type="button" class="btn btn-ghost pw-fetch" data-pw="wifi-pass" data-ssid="wifi-ssid" title="Fill with this computer's saved password for the Wi-Fi name above — the system asks permission first, and it goes only to the board.">Use saved</button></span></label>
                 <label class="broker-only">Home Assistant / MQTT host<input id="mqtt-host" maxlength="63" placeholder="homeassistant.local" autocomplete="off"></label>
                 <label class="broker-only">MQTT port<input id="mqtt-port" type="number" min="1" max="65535" value="1883"></label>
                 <label class="broker-only">MQTT username<input id="mqtt-user" maxlength="32" autocomplete="off"></label>
-                <label class="broker-only">MQTT password<input id="mqtt-pass" type="password" maxlength="64" autocomplete="new-password"></label>
+                <label class="broker-only">MQTT password<span class="pw-row"><input id="mqtt-pass" class="pw-masked" maxlength="64" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"><button type="button" class="btn btn-ghost pw-toggle" data-pw="mqtt-pass" aria-label="Show the password">Show</button></span></label>
               </div>
             </section>
             <div class="row" id="host-flash-controls">
@@ -476,8 +480,11 @@
             <p class="muted">All written onto the card only — never logged, never sent anywhere.
               The hub joins your Wi-Fi the moment it boots.</p>
             <div class="form-grid">
-              <label>Wi-Fi name<input id="hub-ssid" maxlength="32" autocomplete="off"></label>
-              <label>Wi-Fi password<input id="hub-pass" type="password" maxlength="64" autocomplete="new-password"></label>
+              <label>Wi-Fi name<input id="hub-ssid" maxlength="32" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
+              <!-- Same rule as the Canary form: an existing home Wi-Fi key gets a
+                   masked text field, never a type=password the OS reads as
+                   "new account — let me invent one". -->
+              <label>Wi-Fi password<span class="pw-row"><input id="hub-pass" class="pw-masked" maxlength="64" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"><button type="button" class="btn btn-ghost pw-toggle" data-pw="hub-pass" aria-label="Show the password">Show</button><button type="button" class="btn btn-ghost pw-fetch" data-pw="hub-pass" data-ssid="hub-ssid" title="Fill with this computer's saved password for the Wi-Fi name above — the system asks permission first, and it goes only onto the card.">Use saved</button></span></label>
             </div>
             <div class="row">
               <label class="check"><input type="checkbox" id="hub-hidden-net"> Hidden network</label>

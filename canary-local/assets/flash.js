@@ -3399,11 +3399,19 @@ function renderWifiFields(box, product) {
   ssid.setAttribute("autocorrect", "off");
   ssid.spellcheck = false;
   ssid.enterKeyHint = "next";
-  pass.type = "password"; pass.placeholder = "password";
-  // current-password (not new-): this is an EXISTING network's password, so
-  // Keychain / password managers offer their saved entry instead of proposing
-  // a generated one.
-  pass.autocomplete = "current-password";
+  // An EXISTING network's key, not an account credential: a text input masked
+  // by CSS (-webkit-text-security via .pw-masked), never type=password — a
+  // bare password field on an unfamiliar page reads as "sign-up" to the OS,
+  // which then offers to INVENT a password no router has ever seen. Real users
+  // accepted that suggestion and the join failed. Grab yours from the router
+  // sticker / your phone, or let "Remember on this computer" recall it.
+  // (Pattern: firmware/LESSONS_LEARNED.md "iOS offers to invent a password".)
+  pass.type = "text"; pass.placeholder = "password";
+  pass.classList.add("pw-masked");
+  pass.autocomplete = "off";
+  pass.setAttribute("autocapitalize", "none");
+  pass.setAttribute("autocorrect", "off");
+  pass.spellcheck = false;
   // Remember-across-boards: pre-fill from the home Wi-Fi we already know — this
   // tab's session, or a copy saved on this computer if the user opted in — so a
   // whole batch of Canaries provisions without re-typing it into each one.
@@ -3425,8 +3433,10 @@ function renderWifiFields(box, product) {
   pass.addEventListener("input", refreshBanner);
   const showBtn = el("button", "ghost small", "show");
   showBtn.addEventListener("click", () => {
-    pass.type = pass.type === "password" ? "text" : "password";
-    showBtn.textContent = pass.type === "password" ? "show" : "hide";
+    // Flip the masking CLASS, never the input type — switching to
+    // type="password" re-summons the OS's password generator.
+    const masked = pass.classList.toggle("pw-masked");
+    showBtn.textContent = masked ? "show" : "hide";
   });
   const rowIn = el("div", "flash-wifi-inputs");
   rowIn.append(ssid, pass, showBtn);
@@ -3532,9 +3542,17 @@ function renderWifiFields(box, product) {
       "Bake in your broker and a device id and the Canary reports to Home Assistant on " +
       "its first boot — no extra setup. Leave blank to configure later. Written into the " +
       "chip’s settings exactly the way the native app does; it goes only to the chip."));
-    const mk = (ph, type) => {
-      const i = el("input"); i.type = type || "text"; i.placeholder = ph;
-      i.autocomplete = type === "password" ? "new-password" : "off";
+    const mk = (ph, kind) => {
+      const i = el("input"); i.type = "text"; i.placeholder = ph;
+      i.autocomplete = "off";
+      if (kind === "password") {
+        // A broker secret, not an account credential: masked text, same as the
+        // Wi-Fi key above, so nothing ever offers to "generate" one.
+        i.classList.add("pw-masked");
+        i.setAttribute("autocapitalize", "none");
+        i.setAttribute("autocorrect", "off");
+        i.spellcheck = false;
+      }
       return i;
     };
     const devId = mk("device id (e.g. canary_vision_ab12)");
