@@ -1,0 +1,8 @@
+# Working state, not source. `corpus/` is the fuzzer's own growing input pool
+# and `artifacts/` is where a crash lands — a crashing input belongs in
+# seeds/ as a committed regression case, not here.
+corpus/
+artifacts/
+coverage/
+target/
+Cargo.lock

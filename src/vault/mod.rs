@@ -18,7 +18,15 @@ use crate::{break_glass::BreakGlassToken, BreakGlassOutcome, RawFrame, RawMediaB
 use ed25519_dalek::VerifyingKey;
 
 pub mod crypto;
-mod format;
+// Not part of the supported API — `#[doc(hidden)]`, and nothing outside this
+// module should build a container by hand. It is reachable only so `fuzz/` can
+// drive the decoder directly: `unseal()` decodes the on-disk container *before*
+// any break-glass check runs, so these bytes are attacker-controlled the moment
+// someone has touched the card, which is the exact adversary the vault exists
+// for. Fuzzing through `unseal()` instead would mean standing up a token, a
+// verifying key, and a receipt lookup just to reach the parser.
+#[doc(hidden)]
+pub mod format;
 
 use crate::vault::crypto::{decrypt_v1, decrypt_v2, seal_v2, KemKeypair, VaultCryptoMode};
 use crate::vault::format::VaultEnvelope;
