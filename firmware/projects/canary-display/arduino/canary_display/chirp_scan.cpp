@@ -60,6 +60,11 @@ portMUX_TYPE s_q_mux = portMUX_INITIALIZER_UNLOCKED;
 bool s_ble_up = false;
 bool s_ble_failed = false;   // a failed bring-up disables bursts for this boot
 volatile bool s_scanning = false;
+// True when the RUNNING scan was started with duration 0 (fully off-grid).
+// Such a scan never ends on its own, so nothing would ever clear s_scanning
+// and the duty cycle could not resume once connectivity came back — it has to
+// be stopped explicitly when the regime changes.
+bool s_scan_continuous = false;
 uint32_t s_next_burst_ms = 0;
 uint32_t s_seen = 0;
 
@@ -244,6 +249,19 @@ void chirp_scan_loop(uint32_t now_ms, bool broker_down, bool wifi_up) {
   const bool continuous = broker_down && !wifi_up;
   const uint32_t period = broker_down ? PERIOD_MS : PERIOD_BROKER_UP_MS;
 
+  // A continuous scan has no end callback to clear s_scanning, so if the
+  // regime has since narrowed — WiFi or the broker came back — it would run
+  // forever and the bounded duty cycle would never be restored, leaving BLE
+  // competing with WiFi on the shared radio indefinitely. Stop it here and let
+  // the normal cadence take over. (The old code got this for free from the
+  // `if (!broker_down) stop()` branch that this rework removed.)
+  if (s_scanning && s_scan_continuous && !continuous) {
+    NimBLEDevice::getScan()->stop();
+    s_scanning = false;
+    s_scan_continuous = false;
+    s_next_burst_ms = now_ms;  // first bounded burst may start immediately
+  }
+
   if (s_scanning) return;
   if (!continuous && (int32_t)(now_ms - s_next_burst_ms) < 0) return;
 
@@ -254,6 +272,7 @@ void chirp_scan_loop(uint32_t now_ms, bool broker_down, bool wifi_up) {
   if (!ble_up()) return;
 
   s_scanning = true;
+  s_scan_continuous = continuous;
   // Async scan. NimBLE 1.x start() takes seconds + an end callback; 2.x takes
   // milliseconds + is_continue, with onScanEnd clearing the flag. Duration 0
   // means "scan until stopped" on both majors (continuous, fully-off-grid).
@@ -261,11 +280,13 @@ void chirp_scan_loop(uint32_t now_ms, bool broker_down, bool wifi_up) {
   const uint32_t dur_ms = continuous ? 0 : BURST_MS;
   if (!NimBLEDevice::getScan()->start(dur_ms, /*is_continue=*/false)) {
     s_scanning = false;
+    s_scan_continuous = false;
   }
 #else
   const uint32_t dur_s = continuous ? 0 : (BURST_MS / 1000);
   if (!NimBLEDevice::getScan()->start(dur_s, scan_ended, false)) {
     s_scanning = false;
+    s_scan_continuous = false;
   }
 #endif
 }

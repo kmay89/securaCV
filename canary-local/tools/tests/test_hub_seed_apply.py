@@ -455,15 +455,47 @@ class MqttConnectExecution(unittest.TestCase):
         self.assertEqual(made[0][1], "mqtt")
         self.assertEqual(made[0][2]["broker"], "core-mosquitto")
 
-    def test_a_failing_core_api_is_reported_not_swallowed(self):
-        # A hub that silently "provisioned" without connecting MQTT is the exact
-        # failure this step exists to remove; it must be loud.
+    def test_a_failing_connect_is_reported_but_does_not_sink_the_run(self):
+        """Loud, but not fatal — and the distinction matters a lot here.
+
+        Home Assistant can answer a hand-started MQTT flow with a form asking
+        for broker credentials: the Mosquitto add-on authenticates against HA
+        users, and a manual flow does not inherit the add-on discovery that
+        would supply them. If that aborted the run, provisioning would stop
+        BEFORE Frigate and the witness kernel install — leaving a hub with far
+        less on it than if we had never attempted the connect at all.
+
+        So the connect is best-effort: it says what happened, and the steps
+        after it still run.
+        """
+        import io
+        import contextlib
+
         client = FakeClient(fail_on="core_config_entry")
         steps = hsa.plan_actions(REAL_PLAN, hsa.FRESH_HUB)
         repo = Path(hsa.__file__).resolve().parents[2]
-        # execute() turns a failed action into a non-zero exit, which is what a
-        # provisioning run must do: a hub that reports success without MQTT
-        # connected is the precise failure this step exists to remove.
+        with tempfile.TemporaryDirectory() as tmp:
+            for st in steps:
+                for a in st.actions:
+                    if a.kind == "write_config":
+                        a.dest = str(Path(tmp) / Path(a.dest).name)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                hsa.execute(steps, client, repo)  # must NOT raise SystemExit
+        text = out.getvalue()
+        self.assertIn("could not finish", text)
+        self.assertIn("continuing", text)
+        # And the steps after it really did run.
+        kinds = [c[0] for c in client.calls]
+        self.assertIn("install_addon", kinds)
+        self.assertIn("start_addon", kinds)
+
+    def test_a_failing_install_still_stops_the_run(self):
+        # Only the advisory action is forgiven. A real install failure must
+        # still fail closed, or a half-built hub reports success.
+        client = FakeClient(fail_on="install_addon")
+        steps = hsa.plan_actions(REAL_PLAN, hsa.FRESH_HUB)
+        repo = Path(hsa.__file__).resolve().parents[2]
         with self.assertRaises(SystemExit) as cm:
             hsa.execute(steps, client, repo)
         self.assertNotEqual(cm.exception.code, 0)

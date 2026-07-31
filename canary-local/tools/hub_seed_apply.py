@@ -131,6 +131,7 @@ class Action:
     src: str = ""  # write_config: repo-relative source
     dest: str = ""  # write_config: absolute on-device destination
     options: dict = field(default_factory=dict)  # set_options: the options to apply
+    optional: bool = False  # a failure here is a note, not a stopped run
     handler: str = ""  # core_config_entry: the integration domain (e.g. "mqtt")
     data: dict = field(default_factory=dict)  # core_config_entry: the flow answers
 
@@ -217,6 +218,17 @@ def plan_actions(seed: dict, observed: dict) -> list[StepPlan]:
                     kind="core_config_entry",
                     label=f"{handler} integration",
                     already=have,
+                    # Best-effort ON PURPOSE. Home Assistant may answer this
+                    # manually-started flow with a form asking for broker
+                    # credentials — the Mosquitto add-on authenticates against
+                    # HA users, and a hand-started flow doesn't inherit the
+                    # add-on discovery that would supply them. Treating that as
+                    # fatal would abort provisioning BEFORE Frigate and the
+                    # witness kernel install, which is strictly worse than not
+                    # attempting the connect at all. So: try it, and if Home
+                    # Assistant wants more than the plan can supply, say so and
+                    # keep going.
+                    optional=True,
                     reason="Home Assistant is already connected to it" if have else "",
                     handler=handler,
                     data=dict(entry.get("data", {})),
@@ -437,10 +449,21 @@ class SupervisorClient:
                          {"handler": handler, "show_advanced_options": False})
         if not isinstance(flow, dict):
             raise SupervisorError(f"{handler}: unexpected config-flow response")
-        # A flow that is already finished (some integrations self-complete) has
-        # no id to answer and nothing left to do.
+        # Two shapes that both mean "nothing left to do":
+        #   create_entry — the flow self-completed (discovery already supplied
+        #                  everything, which is the happy path on a hub where
+        #                  the Mosquitto add-on was found automatically);
+        #   abort        — usually single_instance_allowed / already_configured,
+        #                  i.e. Home Assistant is ALREADY connected. Treating
+        #                  that as an error would fail a correctly-provisioned
+        #                  hub, which is the opposite of the point.
         if flow.get("type") == "create_entry":
             return
+        if flow.get("type") == "abort":
+            reason = flow.get("reason", "")
+            if reason in ("single_instance_allowed", "already_configured"):
+                return
+            raise SupervisorError(f"{handler}: Home Assistant refused the setup ({reason})")
         flow_id = flow.get("flow_id")
         if not flow_id:
             raise SupervisorError(
@@ -449,9 +472,15 @@ class SupervisorClient:
             )
         result = self._req("POST", f"/core/api/config/config_entries/flow/{flow_id}", data)
         if isinstance(result, dict) and result.get("type") == "form":
+            errs = result.get("errors") or {}
             raise SupervisorError(
-                f"{handler}: Home Assistant asked for more than the plan supplies "
-                f"(step {result.get('step_id')!r}) — finish it in the UI"
+                f"{handler}: Home Assistant wants more than the plan supplies "
+                f"(step {result.get('step_id')!r}"
+                + (f", {errs}" if errs else "")
+                + "). The Mosquitto add-on authenticates against Home Assistant "
+                "users, and a hand-started flow does not inherit the add-on "
+                "discovery that supplies them — so finish MQTT in Settings > "
+                "Devices & Services. Everything else in this plan still applied."
             )
 
     def start_addon(self, slug: str) -> None:
@@ -535,6 +564,13 @@ def execute(steps: list[StepPlan], client: SupervisorClient, assets_root: Path) 
             try:
                 _perform(a, client, assets_root)
             except (SupervisorError, OSError) as e:
+                if a.optional:
+                    # Advisory: say it clearly and carry on. A hub that stopped
+                    # here would have no Frigate and no witness kernel, which is
+                    # a far worse outcome than one where MQTT needs a click.
+                    print(f"    ! could not finish: {e}")
+                    print("      (continuing — the rest of the plan does not depend on it)")
+                    continue
                 print(f"    x FAILED: {e}", file=sys.stderr)
                 print(
                     "\nStopped. Nothing here is half-done in a way a re-run can't fix: "
