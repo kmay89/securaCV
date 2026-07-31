@@ -62,6 +62,9 @@ struct Card {
   bool        num_known = false; // false => "—"
   long        num = 0;
   const char* unit = "";
+  uint8_t     num_decimals = 0;  // fixed-point: num is scaled by 10^decimals
+                                 // (pH 7.4 -> num=74, num_decimals=1). 0 =
+                                 // integer, so existing stat cards are unchanged.
 
   // band: an ordered vocabulary + the lit slot (-1 => "—")
   const char* const* band_options = nullptr;

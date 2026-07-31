@@ -255,6 +255,34 @@ static void dispatch_fleet(const char* device_id, const char* suffix,
     }
     fleet.on_sense_state(device_id, ss, now);
   }
+  // Pool water-chemistry surface (canary-pool): pH / ORP / water temp / TDS
+  // (docs/research/pool_water_monitor.md §6). Detect a chemistry row on any of
+  // its keys, so a non-pool variant is never marked pool-bearing. Values may
+  // serialize as float ("7.4") or int; a key the node omitted this row (e.g.
+  // no confirmed flow) stays absent, never a fabricated zero.
+  if (doc["ph"].is<float>() || doc["ph"].is<int>() ||
+      doc["orp"].is<float>() || doc["orp"].is<int>() ||
+      doc["water_temp_c"].is<float>() || doc["water_temp_c"].is<int>() ||
+      doc["tds"].is<float>() || doc["tds"].is<int>()) {
+    canary::fleet::PoolState ps;
+    if (doc["ph"].is<float>() || doc["ph"].is<int>()) {
+      ps.have_ph = true;
+      ps.ph_x10 = (int16_t)(doc["ph"].as<float>() * 10.0f + 0.5f);
+    }
+    if (doc["orp"].is<float>() || doc["orp"].is<int>()) {
+      ps.have_orp = true;
+      ps.orp_mv = (int16_t)doc["orp"].as<int>();
+    }
+    if (doc["water_temp_c"].is<float>() || doc["water_temp_c"].is<int>()) {
+      ps.have_water_temp = true;
+      ps.water_temp_c10 = (int16_t)(doc["water_temp_c"].as<float>() * 10.0f + 0.5f);
+    }
+    if (doc["tds"].is<float>() || doc["tds"].is<int>()) {
+      ps.have_tds = true;
+      ps.tds_ppm = (int16_t)doc["tds"].as<int>();
+    }
+    fleet.on_pool_state(device_id, ps, now);
+  }
   // Room comfort, when the variant reports it (spellings differ; °C either
   // way). Tenths keep 21.5° honest on the glass.
   {
