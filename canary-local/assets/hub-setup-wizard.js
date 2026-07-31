@@ -85,7 +85,7 @@ export function wizardSteps(facts) {
         "itself on your network by itself.",
       do: [
         "Follow HA’s official installer for your device, or flash our ready Hub image. Heads up on Wi-Fi: seeding it onto the card at flash time is a desktop Flasher app feature — the browser guide writes stock HAOS, so on that route plug in an ethernet cable for the first boot (you can switch to Wi-Fi inside HA afterwards).",
-        "Power it on and give the first boot 10–20 minutes — it’s setting itself up; the blinking light is normal.",
+        "Power it on and give the first boot under 10 minutes as a rule, up to 20 on a slow card — it’s setting itself up; the blinking light is normal.",
         "Then open Home Assistant in your browser (usually http://homeassistant.local:8123) and create your account — that account is local, stored on your box.",
       ],
       link: { label: "Use our ready Hub image →", href: "start.html" },
@@ -125,8 +125,9 @@ export function wizardSteps(facts) {
         "just for the devices — the Canary signs in to the broker with it. Pick " +
         "anything you’ll remember; you’ll type it once more in Step 5.",
       do: [
+        "First turn on Advanced Mode: click your name at the bottom-left, then the Advanced Mode switch — without it the Users list is hidden and this step looks impossible.",
         "In HA: Settings → People → Users → Add User.",
-        "Name it something like “canary”, give it a password, and (optional) mark it “Local only”.",
+        "Name it something like “canary”, give it a password, and leave Administrator off — the broker login needs no admin rights.",
         "Write the username and password down — Step 5 asks for them.",
       ],
       values: [
