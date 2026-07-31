@@ -39,9 +39,11 @@ const EMBEDDED_HUB_CATALOG: &str = include_str!(concat!(env!("OUT_DIR"), "/hub_i
 const RPIBOOT: &str = "rpiboot";
 
 /// The one rpiboot process we may have waiting. One at a time on purpose: two
-/// concurrent rpiboots would race for the same USB device.
+/// concurrent rpiboots would race for the same USB device. The ticket rides
+/// along with the child so the launch record stops listing it the moment it is
+/// stopped, however it is stopped.
 #[derive(Default)]
-pub struct PiUsbState(std::sync::Mutex<Option<CommandChild>>);
+pub struct PiUsbState(std::sync::Mutex<Option<(CommandChild, crate::launch_guard::Ticket)>>);
 
 /// The running flash's stop signal, if one is running. The UI's Stop button
 /// flips it via [`hub_flash_cancel`]; every chunk loop in hub-io checks it, so
@@ -311,10 +313,11 @@ pub async fn hub_pi_boot_start(
         .sidecar(RPIBOOT)
         .map_err(|e| format!("bundled rpiboot missing: {e}"))?
         .args(["-d".to_string(), gadget.to_string_lossy().into_owned()]);
-    let (mut rx, child) = cmd
-        .spawn()
-        .map_err(|e| format!("could not start rpiboot: {e}"))?;
-    *state.0.lock().map_err(|_| "Pi USB state poisoned")? = Some(child);
+    // rpiboot waits for a Pi *indefinitely* — it is the one sidecar that never
+    // exits on its own, so it is the one a force quit is guaranteed to strand
+    // on the USB bus. Tracked, so the next launch reaps it (`launch_guard`).
+    let (mut rx, child, ticket) = crate::launch_guard::spawn_tracked(&app, cmd, RPIBOOT)?;
+    *state.0.lock().map_err(|_| "Pi USB state poisoned")? = Some((child, ticket));
 
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -358,7 +361,7 @@ pub async fn hub_pi_boot_start(
 /// mind). Killing a waiting rpiboot is harmless — nothing has been served yet.
 #[tauri::command]
 pub fn hub_pi_boot_stop(state: tauri::State<'_, PiUsbState>) -> Result<(), String> {
-    if let Some(child) = state.0.lock().map_err(|_| "Pi USB state poisoned")?.take() {
+    if let Some((child, _ticket)) = state.0.lock().map_err(|_| "Pi USB state poisoned")?.take() {
         child
             .kill()
             .map_err(|e| format!("couldn't stop rpiboot: {e}"))?;

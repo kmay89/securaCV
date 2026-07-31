@@ -17,6 +17,36 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.3.8 — 2026-07-31
+
+- **Force quitting the Flasher can no longer stop it from opening again.** If
+  the app was killed rather than closed, the next launch could get stuck
+  bouncing in the Dock with no window and no way in except another force quit —
+  the same way every time, with nothing on screen to explain it. The Flasher now
+  leaves a breadcrumb as it starts and reads the last one on the way up, before
+  it builds a window, so a launch that never arrived gets repaired instead of
+  repeated. Three things a force quit used to leave behind are handled:
+  - **A flashing tool still holding your board.** `espflash` and `rpiboot` are
+    separate programs the Flasher starts; killing the app never killed them, and
+    `rpiboot` waits for a Raspberry Pi indefinitely. Their IDs are now recorded
+    while they run and cleaned up at the next launch — so "no board found" right
+    after a force quit is one less thing that can happen.
+  - **A saved session left half-written.** Cleared automatically, once. You'll
+    re-enter the Wi-Fi network name and device names you last used; no password
+    was ever stored there, so nothing secret is lost.
+  - **An interrupted update.** Installing an update replaces the app itself, so
+    being killed mid-write can leave a copy your Mac won't finish opening. That
+    one only a reinstall can fix — so the Flasher now recognises it and tells
+    you, instead of leaving you guessing. It also won't let you quit while an
+    update is being written.
+- **If it still can't open, it now says why.** Every launch appends a line to
+  `launch.log` beside the app's settings (`~/Library/Application
+  Support/com.securacv.flasher/` on macOS), and a window that hasn't finished
+  loading after 20 seconds offers to clear its saved session and reopen rather
+  than leaving you with a bouncing icon.
+- Nothing about this affects a device you've flashed. A Canary keeps the
+  firmware it already has, and an interrupted flash is always re-flashable.
+
 ## 0.3.7 — 2026-07-31
 
 - **Your Wi-Fi is now put into the image before the card is written, so there

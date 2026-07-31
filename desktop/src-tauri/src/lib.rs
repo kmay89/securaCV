@@ -21,6 +21,7 @@
 
 mod health;
 mod hub;
+mod launch_guard;
 mod port_hint;
 mod provisioning;
 mod release;
@@ -31,8 +32,10 @@ mod we2;
 use provisioning::Provisioning;
 use serde::Serialize;
 use serde_json::{json, Map, Value};
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_updater::UpdaterExt;
@@ -297,9 +300,10 @@ async fn run_sidecar_capture(app: &AppHandle, args: Vec<String>) -> Result<(i32,
         .sidecar(ESPFLASH)
         .map_err(|e| format!("bundled espflash missing: {e}"))?
         .args(args);
-    let (mut rx, _child) = cmd
-        .spawn()
-        .map_err(|e| format!("could not start espflash: {e}"))?;
+    // Tracked, not bare: espflash's PID is on disk for as long as it runs, so
+    // a force quit can't strand it holding the board's serial port with
+    // nothing left to clean it up. `_ticket` un-records it on the way out.
+    let (mut rx, _child, _ticket) = launch_guard::spawn_tracked(app, cmd, ESPFLASH)?;
 
     let mut buf = String::new();
     let mut code = -1;
@@ -664,9 +668,10 @@ async fn flash(
         .sidecar(ESPFLASH)
         .map_err(|e| format!("bundled espflash missing: {e}"))?
         .args(args);
-    let (mut rx, _child) = cmd
-        .spawn()
-        .map_err(|e| format!("could not start espflash: {e}"))?;
+    // Tracked, not bare: espflash's PID is on disk for as long as it runs, so
+    // a force quit can't strand it holding the board's serial port with
+    // nothing left to clean it up. `_ticket` un-records it on the way out.
+    let (mut rx, _child, _ticket) = launch_guard::spawn_tracked(&app, cmd, ESPFLASH)?;
 
     let mut code = -1;
     while let Some(event) = rx.recv().await {
@@ -847,9 +852,10 @@ async fn flash_local_file(
         .sidecar(ESPFLASH)
         .map_err(|e| format!("bundled espflash missing: {e}"))?
         .args(args);
-    let (mut rx, _child) = cmd
-        .spawn()
-        .map_err(|e| format!("could not start espflash: {e}"))?;
+    // Tracked, not bare: espflash's PID is on disk for as long as it runs, so
+    // a force quit can't strand it holding the board's serial port with
+    // nothing left to clean it up. `_ticket` un-records it on the way out.
+    let (mut rx, _child, _ticket) = launch_guard::spawn_tracked(&app, cmd, ESPFLASH)?;
 
     let mut code = -1;
     while let Some(event) = rx.recv().await {
@@ -1039,8 +1045,18 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
         .map_err(|e| format!("update check failed: {e}"))?
         .ok_or_else(|| "already up to date".to_string())?;
 
+    // `download_and_install` replaces this app bundle *in place*. Anything
+    // that kills the process between here and the line that clears this marker
+    // leaves a bundle whose contents no longer match its signature — an app
+    // that bounces in the Dock and never opens, which no amount of app-side
+    // code can repair afterwards. So the marker goes down first, and the next
+    // launch reads it and says "reinstall" instead of leaving the user
+    // guessing. See `launch_guard`.
+    let guard = app.state::<Arc<launch_guard::LaunchGuard>>();
+    guard.begin_install(&update.version);
+
     let app2 = app.clone();
-    update
+    let outcome = update
         .download_and_install(
             move |chunk, total| {
                 let msg = match total {
@@ -1051,8 +1067,11 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
             },
             || {},
         )
-        .await
-        .map_err(|e| format!("update install failed: {e}"))?;
+        .await;
+    // Cleared on failure too: an install that returned an error unwound
+    // without tearing the bundle, so the next launch has nothing to warn about.
+    guard.end_install();
+    outcome.map_err(|e| format!("update install failed: {e}"))?;
 
     // Relaunch into the freshly-installed version. `restart()` diverges (`!`),
     // so it stands in for the `Result` return as the tail expression.
@@ -1076,9 +1095,10 @@ async fn run_sidecar_streaming(
         .sidecar(ESPFLASH)
         .map_err(|e| format!("bundled espflash missing: {e}"))?
         .args(args);
-    let (mut rx, _child) = cmd
-        .spawn()
-        .map_err(|e| format!("could not start espflash: {e}"))?;
+    // Tracked, not bare: espflash's PID is on disk for as long as it runs, so
+    // a force quit can't strand it holding the board's serial port with
+    // nothing left to clean it up. `_ticket` un-records it on the way out.
+    let (mut rx, _child, _ticket) = launch_guard::spawn_tracked(app, cmd, ESPFLASH)?;
     let mut code = -1;
     while let Some(ev) = rx.recv().await {
         match ev {
@@ -1421,18 +1441,49 @@ async fn health_check(
     }))
 }
 
+/// Where a user gets a fresh copy of the app. The versioned `flasher-v*`
+/// releases, not the rolling `flasher-latest` pointer — that one exists for
+/// the updater and carries no installer (see `docs/RELEASE_BUTTONS.md`).
+pub(crate) fn open_releases_page(app: &AppHandle) {
+    let _ = app.opener().open_url(
+        "https://github.com/kmay89/securaCV/releases?q=flasher-v&expanded=true",
+        None::<&str>,
+    );
+}
+
+/// The frontend finished `boot()` and the window is usable. This is the signal
+/// the launch guard waits for: without it, a launch counts as one that never
+/// arrived, and the next one repairs rather than repeating.
+#[tauri::command]
+fn ui_ready(guard: tauri::State<'_, Arc<launch_guard::LaunchGuard>>) {
+    guard.note(launch_guard::Stage::UiReady);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Before Tauri builds anything. A launch that dies before its window
+    // appears can't report itself from inside the app, so the record of the
+    // *last* launch is read — and acted on — while there is still no webview
+    // to be holding a wedged store open. See `launch_guard`.
+    let guard = launch_guard::begin();
+    let on_exit = Arc::clone(&guard);
+
     tauri::Builder::default()
+        .manage(Arc::clone(&guard))
         .manage(serial_monitor::SerialMonitorState::default())
         .manage(hub::PiUsbState::default())
         .manage(hub::HubFlashState::default())
         // On launch, reclaim anything a crash or pulled plug orphaned (a
         // ~2.5 GB raw staging image, a half-finished .partial download). Off
-        // the main thread so it never delays the window.
-        .setup(|app| {
+        // the main thread so it never delays the window. Orphaned *processes*
+        // are already gone by now — the launch guard reaps those first, before
+        // the UI enumerates ports and finds the board still held.
+        .setup(move |app| {
             let handle = app.handle().clone();
             std::thread::spawn(move || hub::cleanup_orphans(&handle));
+            guard.note(launch_guard::Stage::WindowUp);
+            launch_guard::report(app.handle(), &guard);
+            launch_guard::watch(app.handle(), &guard);
             Ok(())
         })
         // If the operator tries to quit while a hub flash is running, don't
@@ -1441,6 +1492,29 @@ pub fn run() {
         // exiting. A flash-free window closes instantly as usual.
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // An update is mid-write over this very bundle. Closing now is
+                // how you get an app that never opens again — nothing in the
+                // bundle is guaranteed complete until the install returns. This
+                // one is not negotiable, so there's no "quit anyway".
+                let installing = window
+                    .try_state::<Arc<launch_guard::LaunchGuard>>()
+                    .map(|g| g.is_installing())
+                    .unwrap_or(false);
+                if installing {
+                    api.prevent_close();
+                    window
+                        .dialog()
+                        .message(
+                            "An update is being written over the app right now. \
+                             Quitting mid-write is the one thing that can leave the \
+                             Flasher unable to open at all, so this has to finish — \
+                             it takes a few seconds, then the app relaunches itself.",
+                        )
+                        .title("Finishing the update")
+                        .buttons(MessageDialogButtons::OkCustom("OK".into()))
+                        .show(|_| {});
+                    return;
+                }
                 let running = window
                     .try_state::<hub::HubFlashState>()
                     .map(|s| s.is_running())
@@ -1507,10 +1581,19 @@ pub fn run() {
             health_check,
             save_text_file,
             check_update,
-            install_update
+            install_update,
+            ui_ready
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running SecuraCV Flasher");
+        .build(tauri::generate_context!())
+        .expect("error while building SecuraCV Flasher")
+        .run(move |_app, event| {
+            // A clean exit is what makes the next launch silent. Everything
+            // else — force quit, crash, power loss — leaves the record showing
+            // where this run got to, which is exactly what the next one reads.
+            if let tauri::RunEvent::Exit = event {
+                on_exit.mark_clean();
+            }
+        });
 }
 
 #[cfg(test)]
