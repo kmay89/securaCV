@@ -325,6 +325,30 @@ int main() {
     CHECK(classify_event("chem_cleared") == Sev::Ok, "chem_cleared -> ok");
   }
 
+  // ── on_pool_state overwrites: a later all-null row clears stale readings ──
+  // Flow-gating honesty (docs §8): when flow stops the node republishes the
+  // sample as null, so the Dash must drop the last good pH/ORP to unknown
+  // rather than keep presenting it as current.
+  {
+    FleetModel<8, 16> m;
+    PoolState valid;
+    valid.have_ph = true;  valid.ph_x10 = 74;
+    valid.have_orp = true; valid.orp_mv = 712;
+    m.on_pool_state("pool1", valid, 1000);
+    const Witness* w = m.at(0);
+    CHECK(w && w->pool_present && w->have_ph && w->ph_x10 == 74 && w->have_orp,
+          "a valid chemistry row stores pH/ORP");
+    PoolState cleared;  // all have_* false — the null "flow stopped" snapshot
+    m.on_pool_state("pool1", cleared, 2000);
+    w = m.at(0);
+    CHECK(w && !w->have_ph && !w->have_orp,
+          "a flow-stop row clears cached pH/ORP (no stale-good reading)");
+    CHECK(w && w->pool_present, "the device stays pool-bearing after the clear");
+    CardSet s; build_cards(*w, 3000, limits, s);
+    char v[32]; format_card_value(*find(s, "ph"), v, sizeof(v));
+    CHECK(strcmp(v, "—") == 0, "cleared pH renders — on the card, not a stale value");
+  }
+
   if (g_failures == 0) printf("ALL FLEET CARDS TESTS PASSED\n");
   else printf("%d FAILURE(S)\n", g_failures);
   return g_failures ? 1 : 0;

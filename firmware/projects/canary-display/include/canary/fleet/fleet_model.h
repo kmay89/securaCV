@@ -395,30 +395,35 @@ class FleetModel {
   }
 
   // Pool water-chemistry surface (canary-pool state topic): pH / ORP / water
-  // temp / TDS, each present only when the node actually published it this row
-  // (a reading is trustworthy only under confirmed flow — the node marks an
-  // unflowed sample absent, and we keep it absent here). Marks the witness
-  // pool-bearing (pool_present) so a detail page renders chemistry cards
-  // instead of the generic field list. Sticky per field: a row that omits a
-  // sensor leaves the last known value in place rather than blanking it, the
-  // same "keep the last good reading" shape the radar block uses.
+  // temp / TDS. Marks the witness pool-bearing (pool_present) so a detail page
+  // renders chemistry cards instead of the generic field list.
+  //
+  // The state row is the device's CURRENT full snapshot, so this is
+  // authoritative, NOT sticky: each field's have_* is overwritten every row.
+  // A reading is trustworthy only under confirmed flow — when flow stops the
+  // node republishes the sample as null (docs/research/pool_water_monitor.md
+  // §8), so PoolState arrives with have_* cleared, and we clear the witness's
+  // flag too. Rendering pH 0 / 0 mV, or a *stale* pre-pump-off pH presented as
+  // current, would both read as a lie; clearing to have_*==false renders "—"
+  // (honestly unknown). The stale value bytes are left in place but are gated
+  // by have_*, so they can never reach the glass.
   void on_pool_state(const char* id, const PoolState& s, uint32_t now) {
     Witness* w = upsert(id);
     if (!w) return;
     w->last_seen_ms = now;
-    bool changed = !w->pool_present;
-    if (s.have_ph && (!w->have_ph || w->ph_x10 != s.ph_x10)) changed = true;
-    if (s.have_orp && (!w->have_orp || w->orp_mv != s.orp_mv)) changed = true;
-    if (s.have_water_temp &&
-        (!w->have_water_temp || w->water_temp_c10 != s.water_temp_c10))
-      changed = true;
-    if (s.have_tds && (!w->have_tds || w->tds_ppm != s.tds_ppm)) changed = true;
+    const bool changed =
+        !w->pool_present ||
+        w->have_ph != s.have_ph || (s.have_ph && w->ph_x10 != s.ph_x10) ||
+        w->have_orp != s.have_orp || (s.have_orp && w->orp_mv != s.orp_mv) ||
+        w->have_water_temp != s.have_water_temp ||
+            (s.have_water_temp && w->water_temp_c10 != s.water_temp_c10) ||
+        w->have_tds != s.have_tds || (s.have_tds && w->tds_ppm != s.tds_ppm);
     w->pool_present = true;
-    if (s.have_ph)         { w->have_ph = true;         w->ph_x10 = s.ph_x10; }
-    if (s.have_orp)        { w->have_orp = true;        w->orp_mv = s.orp_mv; }
-    if (s.have_water_temp) { w->have_water_temp = true;
-                             w->water_temp_c10 = s.water_temp_c10; }
-    if (s.have_tds)        { w->have_tds = true;        w->tds_ppm = s.tds_ppm; }
+    w->have_ph = s.have_ph;                 if (s.have_ph) w->ph_x10 = s.ph_x10;
+    w->have_orp = s.have_orp;               if (s.have_orp) w->orp_mv = s.orp_mv;
+    w->have_water_temp = s.have_water_temp; if (s.have_water_temp)
+                                              w->water_temp_c10 = s.water_temp_c10;
+    w->have_tds = s.have_tds;               if (s.have_tds) w->tds_ppm = s.tds_ppm;
     if (changed) dirty_ = true;
   }
 
