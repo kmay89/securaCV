@@ -255,10 +255,14 @@ void fleet_link_request(const char* fp) {
 
 void fleet_link_loop(uint32_t now, bool broker_down, bool /*wifi_up*/) {
   if (!s_have_pending) return;      // nothing to do — cheap early-out
-  if (!broker_down) {               // broker is the richer channel when present
-    s_have_pending = false;
-    return;
-  }
+  // Deliberately NOT gated on the broker. This path only ever runs because
+  // someone tapped a specific device on the glass, and if the broker already
+  // had that device's detail the display would be showing it — so the tap is
+  // evidence the broker does NOT have it (a Canary that talks BLE but was
+  // never pointed at this hub). Dropping the request when a hub is present
+  // made the hub actively worse than no hub for those devices. Bounded: one
+  // attempt per request, and the request only exists because a human asked.
+  (void)broker_down;
   if (!ble_ready()) return;         // heap not ready / stack down — retry later
 
   char fp4[5];

@@ -24,6 +24,15 @@ namespace {
 
 constexpr uint32_t BURST_MS  = 4000;   // scan window
 constexpr uint32_t PERIOD_MS = 20000;  // burst cadence while broker down
+// Burst cadence while the broker is UP. The scan used to stop dead here, which
+// meant a Canary that speaks only BLE — never provisioned onto the broker, or
+// out of WiFi range — disappeared from the display the moment a hub arrived.
+// A hub is supposed to ADD information, never subtract it. So keep listening,
+// just rarely: one 4 s window a minute is a ~7% duty cycle on the shared
+// 2.4 GHz radio, low enough to stay out of WiFi's way and often enough that a
+// beacon (broadcast every few seconds) is still caught well inside the
+// roster's expiry.
+constexpr uint32_t PERIOD_BROKER_UP_MS = 60000;
 
 // BLE controller heap gate lives in ble_gate.h now (ble_heap_ok()), shared
 // with the fleet-link GATT path; the rationale comment moved there too.
@@ -192,7 +201,7 @@ bool ble_up() {
   scan->setWindow(99);
 #endif
   s_ble_up = true;
-  log_line("CHIRP", "BLE listener up (passive, broker-down bursts only).");
+  log_line("CHIRP", "BLE listener up (passive presence bursts, hub or no hub).");
   return true;
 }
 
@@ -222,22 +231,18 @@ void chirp_scan_loop(uint32_t now_ms, bool broker_down, bool wifi_up) {
     }
   }
 
-  if (!broker_down) {
-    if (s_ble_up && s_scanning) {
-      NimBLEDevice::getScan()->stop();
-      s_scanning = false;
-    }
-    return;
-  }
-
-  // Broker down. Two regimes:
+  // Three regimes, not two. The broker being up no longer silences BLE — see
+  // PERIOD_BROKER_UP_MS: a hub must never make a device you own invisible.
   //  - WiFi also down (fully off-grid): the beacon/chirp is the ONLY channel
   //    left and there's no WiFi to coexist with, so run a CONTINUOUS passive
   //    scan (duration 0) rather than duty-cycling — nothing is lost between
   //    bursts.
   //  - WiFi up (broker unreachable but associated): keep today's 4 s / 20 s
   //    bursts so BLE and WiFi don't fight over the shared 2.4 GHz radio.
-  const bool continuous = !wifi_up;
+  //  - Broker up: the same 4 s bursts, but only once a minute — presence only,
+  //    staying out of the way of a healthy display's traffic.
+  const bool continuous = broker_down && !wifi_up;
+  const uint32_t period = broker_down ? PERIOD_MS : PERIOD_BROKER_UP_MS;
 
   if (s_scanning) return;
   if (!continuous && (int32_t)(now_ms - s_next_burst_ms) < 0) return;
@@ -245,7 +250,7 @@ void chirp_scan_loop(uint32_t now_ms, bool broker_down, bool wifi_up) {
   // Schedule the next window up front so a skipped attempt — heap gate not met,
   // or the stack disabled for this boot — waits a full period instead of
   // re-probing the heap (or re-initializing a failing radio) every loop pass.
-  s_next_burst_ms = now_ms + PERIOD_MS;
+  s_next_burst_ms = now_ms + period;
   if (!ble_up()) return;
 
   s_scanning = true;

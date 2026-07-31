@@ -1212,13 +1212,14 @@ void loop() {
 #endif
 
 #if defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
-  // Broker-less fleet enumeration (WiFi analog of the BLE presence beacon):
-  // once every device is on the home WiFi, browse the fleet's mDNS adverts
-  // directly and show every nearby Canary even with NO broker/Home Assistant.
-  // Gated on the broker being DOWN — when it's up, MQTT is the richer source,
-  // so skip the mDNS enumeration to avoid churn. Self-rate-limits (~20 s) and
-  // only actually queries when due; the query blocks ~3 s inside ESPmDNS.
-  if (!broker) canary::net::discovery_scan_witnesses(now);
+  // Fleet enumeration straight off the LAN, hub or no hub (the WiFi analog of
+  // the BLE presence beacon). Runs ALWAYS, not just when the broker is down:
+  // MQTT reports only the Canaries configured to talk to that broker, so
+  // gating this on a dead broker meant a healthy hub could HIDE devices that
+  // were sitting on the network announcing themselves. The hub is an upgrade
+  // on top of the fleet, never the thing that defines it. `broker` only picks
+  // the cadence inside (60 s vs 20 s); the call self-rate-limits.
+  canary::net::discovery_scan_witnesses(now, broker);
 #endif
 
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO

@@ -187,17 +187,29 @@ bool discovery_find_broker(char* host_out, size_t host_cap, uint16_t* port_out) 
   return false;
 }
 
-void discovery_scan_witnesses(uint32_t now) {
+void discovery_scan_witnesses(uint32_t now, bool broker_up) {
   if (!s_up) return;
 
   // Rate-limit the whole scan: the ESPmDNS query blocks ~3 s, so it must not
-  // run every loop. First call fires immediately (s_next_due == 0), then at
-  // most ~once per 20 s.
+  // run every loop. First call fires immediately (s_next_due == 0).
+  //
+  // This used to be skipped ENTIRELY while the broker was up, on the reasoning
+  // that MQTT is the richer source. It is richer, but it is not a superset:
+  // MQTT only ever shows Canaries that are configured to talk to THAT broker. A
+  // Canary sitting on the same LAN, advertising itself over mDNS, but not
+  // pointed at the hub was invisible to the display for exactly as long as the
+  // hub was healthy — so adding a hub REDUCED what the display could see. That
+  // is backwards: the fleet is what is on the network, and the hub is an
+  // upgrade on top of it, never a precondition for seeing your own devices.
+  //
+  // So the browse always runs; it just runs less often when the broker is
+  // carrying the load (60 s vs 20 s), which keeps the ~3 s blocking query off
+  // the critical path of a healthy display.
   static uint32_t s_next_due = 0;
   static bool s_armed = false;
   if (s_armed && (int32_t)(now - s_next_due) < 0) return;
   s_armed = true;
-  s_next_due = now + 20000UL;
+  s_next_due = now + (broker_up ? 60000UL : 20000UL);
 
   auto& fleet = canary::fleet::the_fleet();
 
