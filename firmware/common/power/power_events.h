@@ -124,6 +124,73 @@ inline bool is_power_incident(BootPower k) {
   return k == BootPower::OutageRestored || k == BootPower::Brownout;
 }
 
+// ── What to tell the person standing in front of it ─────────────────────────
+//
+// boot_power_name() above is the LOG name; these two are the OPERATOR's. The
+// gap between them cost real time: a 7" Dash blanked and reset in a loop, and
+// every observable symptom — dark screen, restart, repeat — was identical to a
+// firmware crash. The board had classified the reset correctly the whole time
+// and only ever said "brownout reset", which is not a remedy. The investigation
+// went to panel timings and RGB bounce buffers; the answer was amperage.
+//
+// A brownout is the one cause where NO firmware change can help, so it must be
+// unmistakable. An under-powered board is not a broken board, and telling
+// someone to reflash it wastes their evening and convinces them the hardware
+// is faulty.
+
+// One sentence of plain explanation. Never implies a dead board — the device is
+// running well enough to say this.
+inline const char* boot_power_detail(BootPower k) {
+  switch (k) {
+    case BootPower::ColdBoot:       return "Started up normally.";
+    case BootPower::CleanReboot:    return "Restarted on purpose — an update or a settings change.";
+    case BootPower::OutageRestored: return "Mains power came back after an outage.";
+    case BootPower::Brownout:       return "The supply dipped and the board reset itself to protect what it had saved.";
+    case BootPower::Fault:          return "The last run hit a fault and restarted itself.";
+    case BootPower::Unknown:        return "Restarted for a reason this board didn't recognise.";
+  }
+  return "Restarted for a reason this board didn't recognise.";
+}
+
+// What to actually DO. The brownout text is the whole point: it names a CURRENT
+// rating, because "try another cable" sends people in circles when the answer is
+// amps, and it names the port that usually can't deliver — the larger screens
+// draw most of a laptop port's budget before WiFi has transmitted anything.
+inline const char* boot_power_hint(BootPower k) {
+  switch (k) {
+    case BootPower::ColdBoot:
+    case BootPower::CleanReboot:
+    case BootPower::OutageRestored:
+      return "Nothing to do.";
+    case BootPower::Brownout:
+      return "Use a 5V supply rated for at least 2A. A laptop or monitor USB "
+             "port often can't deliver enough, especially on the larger screens "
+             "once WiFi starts transmitting.";
+    case BootPower::Fault:
+    case BootPower::Unknown:
+      return "If this keeps happening, reflash from the released firmware.";
+  }
+  return "If this keeps happening, reflash from the released firmware.";
+}
+
+// Whether to put this on the glass rather than only in the log.
+//
+// A brownout warns on the FIRST occurrence: unlike a crash it will not resolve
+// itself, and every retry is another brownout — waiting for a third means two
+// more resets and an operator who has already decided the board is dead. A
+// fault waits, because one crash after a yanked cable is noise and three in a
+// row is a report. Ordinary boots never warn: a device that shouts on every
+// power-on trains people to ignore it, and the one message that mattered goes
+// unread with the rest.
+//
+// `consecutive` counts resets of the same troubling kind since the last clean
+// run.
+inline bool boot_power_should_warn(BootPower k, uint32_t consecutive) {
+  if (k == BootPower::Brownout) return true;
+  if (k == BootPower::Fault)    return consecutive >= 3;
+  return false;
+}
+
 // ── Signals in, lineage out ─────────────────────────────────────────────────
 struct Signals {
   ResetKind reset             = ResetKind::Unknown;

@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 #include "power/power_events.h"
 
@@ -220,7 +221,71 @@ static void test_counters_track_the_right_axes() {
   CHECK(L.count == 7, "every event is stored in the ring regardless of kind");
 }
 
+// ── the words an operator actually acts on ──────────────────────────────────
+//
+// The 7" Dash blanked and reset in a loop. Dark screen, restart, repeat — from
+// the outside, indistinguishable from a firmware crash. The board had already
+// classified it correctly and only ever said "brownout reset", which is a name,
+// not a remedy, so the hunt went to panel timings and RGB bounce buffers when
+// the answer was amperage. These pin the difference.
+
+static void test_a_brownout_names_the_power_supply() {
+  // The hint IS the remedy. It has to carry a current rating — "try another
+  // cable" is exactly what sends people in circles — and name the port that
+  // usually can't deliver it.
+  const std::string hint = boot_power_hint(BootPower::Brownout);
+  CHECK(hint.find("5V") != std::string::npos, "hint must name the voltage");
+  CHECK(hint.find("2A") != std::string::npos, "hint must name a current rating");
+  CHECK(hint.find("USB") != std::string::npos, "hint must name the usual culprit");
+  // No firmware change can fix an under-powered board, so this hint must never
+  // send someone down the reflash path a crash would deserve.
+  CHECK(hint.find("reflash") == std::string::npos,
+        "never tell someone to reflash their way out of a power problem");
+  CHECK(std::string(boot_power_hint(BootPower::Fault)).find("reflash") != std::string::npos,
+        "a fault, by contrast, IS worth a reflash");
+}
+
+static void test_a_power_fault_warns_the_first_time() {
+  // A crash might be a one-off; a brownout recurs on the very next transmit.
+  CHECK(boot_power_should_warn(BootPower::Brownout, 0),
+        "the FIRST brownout must warn — it will not resolve itself");
+  CHECK(!boot_power_should_warn(BootPower::Fault, 0), "one crash is not a pattern");
+  CHECK(!boot_power_should_warn(BootPower::Fault, 2), "two is still not a pattern");
+  CHECK(boot_power_should_warn(BootPower::Fault, 3), "three consecutive faults is a report");
+}
+
+static void test_an_ordinary_boot_stays_quiet() {
+  // Warn on every power-on and nobody reads the one that mattered.
+  for (uint32_t n = 0; n < 50; ++n) {
+    CHECK(!boot_power_should_warn(BootPower::ColdBoot, n), "cold boot never warns");
+    CHECK(!boot_power_should_warn(BootPower::CleanReboot, n), "clean reboot never warns");
+    CHECK(!boot_power_should_warn(BootPower::OutageRestored, n),
+          "a restored outage is logged, not shouted — the power is back");
+  }
+}
+
+static void test_operator_text_is_total_and_never_says_dead() {
+  const BootPower all[] = {BootPower::ColdBoot, BootPower::CleanReboot,
+                           BootPower::OutageRestored, BootPower::Brownout,
+                           BootPower::Fault, BootPower::Unknown};
+  for (BootPower k : all) {
+    // A value that falls through a switch reaches the glass as a blank line,
+    // which reads as a hung device — the very failure this text prevents.
+    CHECK(boot_power_detail(k) && *boot_power_detail(k), "detail present");
+    CHECK(boot_power_hint(k) && *boot_power_hint(k), "hint present");
+    // The device is running well enough to display this. Copy implying a
+    // corpse gets a working board thrown away.
+    const std::string all_text = std::string(boot_power_detail(k)) + " " + boot_power_hint(k);
+    CHECK(all_text.find("dead") == std::string::npos, "never calls the board dead");
+    CHECK(all_text.find("broken") == std::string::npos, "never calls the board broken");
+  }
+}
+
 int main() {
+  test_a_brownout_names_the_power_supply();
+  test_a_power_fault_warns_the_first_time();
+  test_an_ordinary_boot_stays_quiet();
+  test_operator_text_is_total_and_never_says_dead();
   test_cold_boot_wins_when_no_prior_session();
   test_explicit_hardware_causes_reported_verbatim();
   test_deep_sleep_is_always_a_clean_return();
