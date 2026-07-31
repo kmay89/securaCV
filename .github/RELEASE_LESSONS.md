@@ -1364,3 +1364,29 @@ Two traps worth repeating:
 - **Distinguish kinds of skip.** The first version of that guard failed CI,
   because the optional real-image test legitimately skips when no multi-gigabyte
   HAOS image is on the runner. `SKIP(tooling)` fails; `SKIP(optional)` doesn't.
+
+### (u) 2026-07-31 — a workflow that pushes to your branch leaves CI gated
+
+`emulator-dist-refresh.yml` (and any workflow that commits back — the model
+regenerators do the same) pushes with `GITHUB_TOKEN`. The run it creates on the
+new head does not simply start: GitHub parks it at **`action_required`**,
+awaiting manual approval, because the push actor is a bot.
+
+The failure mode is quiet and specific. The PR head now has **zero completed
+checks**, so `get_check_runs` returns nothing and the PR reads as "CI hasn't
+started yet" rather than "CI is waiting for you". Wait long enough and it still
+says nothing. Meanwhile the *previous* head's green ticks are what a reviewer
+remembers, and those were for different bytes.
+
+What to do:
+
+- **Treat zero completed checks on a head as a red flag, never as "too early".**
+  Twice in this session a PR with no checks turned out to be a PR whose CI could
+  not run — once from squash-merge divergence (`mergeable_state: dirty`), once
+  from this approval gate.
+- **Push a commit from your own token to un-gate it.** A normal PR push runs the
+  full suite without approval. Approving the held run works too if you have the
+  permission and would rather not add a commit.
+- **Re-sync before committing.** That workflow pushed directly to the branch, so
+  a local tree from before it is behind; commit on top of a `git fetch` +
+  reset, not on top of your stale HEAD.
