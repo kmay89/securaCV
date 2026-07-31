@@ -190,6 +190,7 @@ kits under the free "Works with SecuraCV" badge.
 | Presence/breathing care with no camera | **Canary Sense** |
 | A doorway that's very hard to sneak past | **Canary Sentinel** |
 | A wall display for the household | **Canary Display** |
+| Pool/spa water chemistry (pH, ORP, temp) | **Canary Pool** *(design-stage)* |
 
 → [the glossary's device line](GLOSSARY.md#the-device-line)
 

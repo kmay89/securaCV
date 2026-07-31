@@ -7,11 +7,17 @@ at-a-glance "pool OK?" card + threshold alerts on the Dash.
 
 > **Scope note (this is a research plan, not a built feature).** A `canary-pool`
 > fork inherits the fleet's signed-chain *machinery*, but three things called out
-> below are **net-new firmware work, not free**: (a) retained `state` samples are
+> below were **net-new firmware work, not free**: (a) retained `state` samples are
 > **not individually signed** — tamper-evidence for chemistry needs the samples
 > folded into the signed chain or periodic signed digests (§6); (b) Dash cards
-> and (c) threshold→event alerts both require Dash-side + node code (§6). The
+> and (c) threshold→event alerts each needed Dash-side + node code (§6). The
 > earlier drafts overstated these as "zero-change"; corrected here.
+>
+> **Update (2026-07): the Dash side of (b) and (c) has shipped** — the display
+> now parses the chemistry keys, cards a `canary-pool` device, and classifies
+> the pool events (§6 steps 2a/2b, marked ✅ below). What remains is the **node
+> firmware** (steps 0–3: strip radar, read the probes, publish the keys + emit
+> the threshold events) and the (a) tamper-evidence design choice (2c).
 
 > **Prices are July-2026 USD list/street, agent-gathered — verify before
 > purchase, they drift.** Each row keeps one representative source. This is a
@@ -133,9 +139,11 @@ So graphing is two paths:
   self-describes sensors via MQTT discovery
   ([`canary-sense/src/ha/ha_discovery.cpp`](../../firmware/projects/canary-sense/src/ha/ha_discovery.cpp)),
   and **HA graphs any `sensor.*` entity automatically** — *this* part is ~zero new
-  UI. The Dash's *current-value card* and *threshold alerts*, however, are **not**
-  free (see build steps 2a/2b below): the Dash doesn't parse chemistry keys or
-  card a new device type yet.
+  UI. The Dash's *current-value card* and *event severities* were **not** free
+  (build steps 2a/2b) — but the Dash side of both now **ships**: the display
+  parses the chemistry keys, cards a `canary-pool` device, and classifies the
+  pool events. What's left for the Dash to *show* alerts is the node actually
+  emitting the threshold events (still node work, step 2b).
 - **Path B — a trend widget on the Dash glass (net-new firmware).** A new
   `lv_chart` + a numeric ring buffer in the fleet model. Real work; only if the
   rolling graph must live on the wall display.
@@ -169,19 +177,21 @@ Only then do the sensor-swap + publish steps below make sense.
    retained `state` publish
    ([`canary-sense/src/net/mqtt_mgr.cpp` `publish_state_retained()`](../../firmware/projects/canary-sense/src/net/mqtt_mgr.cpp)).
    This gets you the HA graphs (step 3) but **nothing on the Dash by itself** —
-   the three items below are the net-new Dash/node work:
-   - **2a — Dash card (net-new):** the Dash `mqtt_mgr` parses `temperature`/`temp_c`
-     but **not** `ph`/`orp`/`water_temp_c`
+   the items below split into shipped Dash support and the remaining node work:
+   - **2a — Dash card ✅ SHIPPED (Dash side):** the Dash `mqtt_mgr` now parses
+     `ph`/`orp`/`water_temp_c`/`tds`
      ([`display .../mqtt_mgr.cpp`](../../firmware/projects/canary-display/src/net/mqtt_mgr.cpp)),
-     and [`fleet_cards.cpp::has_cards()`](../../firmware/projects/canary-display/src/fleet/fleet_cards.cpp)
-     recognizes **only** `canary-sense` — a `canary-pool` device gets no card. A
-     pool card = parse the keys into the model + add a `canary-pool` card set
-     (the file notes a card set is ~one builder branch).
-   - **2b — threshold alerts (net-new):** publishing `state` fires no alerts. The
-     node needs a **threshold/hysteresis state machine** that publishes named
-     events to the `events` topic; and each new name must be added to
-     [`fleet_model.cpp::classify_event()`](../../firmware/projects/canary-display/src/fleet/fleet_model.cpp)
-     or it defaults to `Notice` severity.
+     [`fleet_cards.cpp::has_cards()`](../../firmware/projects/canary-display/src/fleet/fleet_cards.cpp)
+     recognizes `canary-pool`, and `build_pool_cards()` renders the pH/ORP/
+     water-temp/TDS card set (null-when-absent, host-tested). No further Dash
+     work is needed to *card* a pool device — it just needs one publishing.
+   - **2b — threshold alerts (partly shipped):** the Dash-side classifier is
+     **done** — [`fleet_model.cpp::classify_event()`](../../firmware/projects/canary-display/src/fleet/fleet_model.cpp)
+     maps the pool event names (`sanitizer_low`/`orp_low`/`ph_high`/`ph_low`/
+     `ph_out_of_range`/`no_flow`/…) to `Warn` rather than defaulting to `Notice`.
+     What remains is **node work**: a **threshold/hysteresis state machine** that
+     publishes those named events to the `events` topic (publishing `state`
+     alone fires no alerts).
    - **2c — tamper-evidence (design choice):** retained `state` values are **not
      individually signed** (a broker/subscriber could alter a graphed reading
      without breaking the chain). For tamper-evident chemistry, fold samples into
@@ -197,6 +207,19 @@ Only then do the sensor-swap + publish steps below make sense.
    [`topics.h`](../../firmware/projects/canary-display/include/canary/topics.h)
    (`securacv/<id>/{status,health,state,events,…}`). No allowlist to edit — the
    Dash auto-discovers via the `securacv/+/status` wildcard.
+
+   **Registration status (2026-07).** The *name* is now registered so it has one
+   spelling everywhere: `DEVICE_TYPE_CANARY_POOL` in the HA integration
+   ([`const.py`](../../custom_components/securacv/const.py)) and a **Canary Pool**
+   row on the glossary [device line](../GLOSSARY.md#the-device-line) + the FAQ
+   "which device" table, both marked design-stage. The Dash-side card layer
+   already renders a `canary-pool` witness (shipped separately). What is *not*
+   yet registered — and cannot be, because the board-registry guard
+   ([`check_board_registry.py`](../../firmware/scripts/check_board_registry.py))
+   requires every `used_by` to be a **buildable flavor** — is the
+   `firmware/flavors.json` env, the `firmware/boards/canary-pool*` board dir +
+   `boards.json` entry, and `config.h`. Those land with the node firmware fork
+   (steps 0–3), since a flavor with no compiling PlatformIO project fails CI.
 
 ---
 
