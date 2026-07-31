@@ -26,6 +26,8 @@ on:
       - ".github/workflows/fuzz.yml"
   push:
     branches: [ "main" ]
+    # Identical to the pull_request list above (CI.md R6) — including this
+    # file itself (R7), so editing the workflow runs it.
     paths:
       - "fuzz/**"
       - "src/tsa.rs"
@@ -33,6 +35,7 @@ on:
       - "src/transport/frigate.rs"
       - "src/canonical_json.rs"
       - "src/module_runtime/**"
+      - ".github/workflows/fuzz.yml"
   schedule:
     # 04:20 UTC daily — the hunt runs while nobody is waiting on it.
     - cron: "20 4 * * *"
@@ -91,11 +94,15 @@ jobs:
           status=0
           for target in $(cargo +nightly fuzz list); do
             seeds="fuzz/seeds/${target}"
-            if [ ! -d "${seeds}" ] || [ -z "$(ls -A "${seeds}" 2>/dev/null)" ]; then
+            # `find`, not `ls` — shellcheck SC2012, and it is right: a seed
+            # filename is whatever a crashing input got named, which is not
+            # something to assume is well behaved.
+            count=$(find "${seeds}" -type f 2>/dev/null | wc -l)
+            if [ "${count}" -eq 0 ]; then
               echo "::warning::${target} has no seed corpus — it is being fuzzed from nothing"
               continue
             fi
-            echo "--- replaying $(ls -1 "${seeds}" | wc -l) seed(s) through ${target}"
+            echo "--- replaying ${count} seed(s) through ${target}"
             cargo +nightly fuzz run "${target}" "${seeds}" -- -runs=0 || status=1
           done
           exit "${status}"
