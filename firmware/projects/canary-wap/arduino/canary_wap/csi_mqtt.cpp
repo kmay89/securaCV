@@ -1791,6 +1791,7 @@ p{color:#3a311e;margin:8px 0 18px;}
 form{display:grid;gap:14px;}
 label{display:grid;gap:4px;font-size:13px;color:#6b6049;}
 input[type=text],input[type=password],input[type=number]{font:inherit;padding:10px;border:1px solid #d4c994;border-radius:8px;background:#fff;}
+.pw-masked{-webkit-text-security:disc;text-security:disc;}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
 .row.toggle{grid-template-columns:auto auto;justify-content:start;align-items:center;gap:10px;}
 .actions{display:flex;gap:10px;margin-top:12px;}
@@ -1819,7 +1820,7 @@ button.test{background:transparent;color:#3a311e;border:1px solid #d4c994;}
   </div>
   <div class="row">
     <label>Username (optional)<input type="text" id="user"></label>
-    <label>Password (optional)<input type="password" id="password" placeholder="leave blank to keep"></label>
+    <label>Password (optional)<input type="text" class="pw-masked" id="password" placeholder="leave blank to keep" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></label>
   </div>
   <div class="row">
     <label>Topic prefix<input type="text" id="prefix" value="securacv"></label>

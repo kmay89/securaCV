@@ -1106,6 +1106,9 @@ button.ghost.small.bench-ff { font-size: 12px; }
 .wap-wiz-btns .primary, .wap-wiz-btns .ghost { flex: 1; }
 .wap-input { width: 100%; padding: 11px 13px; border-radius: 10px; background: rgba(0, 0, 0, 0.35);
   border: 1px solid rgba(255, 255, 255, 0.14); color: #f0f2f5; font-size: 14px; }
+/* Masked-text secret fields — see firmware/LESSONS_LEARNED.md ("iOS offers
+   to invent a password"): never type=password for an existing Wi-Fi key. */
+.pw-masked { -webkit-text-security: disc; text-security: disc; }
 .wap-chip { align-self: flex-start; }
 .wap-spinner { width: 26px; height: 26px; border-radius: 50%; border: 3px solid rgba(255, 255, 255, 0.15);
   border-top-color: var(--canary); animation: wap-spin 0.8s linear infinite; }

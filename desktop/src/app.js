@@ -2552,6 +2552,15 @@ function hubInit() {
   });
   ["hub-ssid", "hub-pass"].forEach((id) => $(id).addEventListener("input", hubArm));
   $("hub-ssid").addEventListener("input", persistProv);
+  // Same courtesy the Canary form gets: offer the network this computer is on,
+  // but never over a remembered SSID or an explicit "wired" choice.
+  if (!$("hub-ssid").value && !$("hub-ethernet").checked) {
+    invoke("current_ssid").then((ssid) => {
+      if (ssid && !$("hub-ssid").value && !$("hub-ethernet").checked) {
+        $("hub-ssid").value = ssid;
+      }
+    }).catch(() => {});
+  }
   // Account fields: live-validate on every keystroke.
   ["hub-acct-name", "hub-acct-user", "hub-acct-pass", "hub-acct-pass2"].forEach((id) =>
     $(id).addEventListener("input", () => {
@@ -3374,7 +3383,60 @@ function hubFmtBytes(n) {
   return (u ? v.toFixed(1) : v) + " " + units[u];
 }
 
+// Wi-Fi / broker secrets are masked TEXT inputs (see index.html): the Show
+// toggle flips the masking class, NEVER the input type — flipping to
+// type="password" re-summons the OS's "invent a strong password" sheet for a
+// key the router already owns (firmware/LESSONS_LEARNED.md). "Use saved"
+// fills the field from the OS's own Wi-Fi store (Keychain / NetworkManager),
+// behind the system's consent prompt, on an explicit click only.
+function pwInit() {
+  document.querySelectorAll(".pw-toggle").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const input = $(btn.dataset.pw);
+      if (!input) return;
+      const masked = input.classList.toggle("pw-masked");
+      btn.textContent = masked ? "Show" : "Hide";
+      btn.setAttribute("aria-label", masked ? "Show the password" : "Hide the password");
+    });
+  });
+  document.querySelectorAll(".pw-fetch").forEach((btn) => {
+    const idle = btn.textContent;
+    let restore = null;
+    const note = (text) => {
+      btn.textContent = text;
+      clearTimeout(restore);
+      restore = setTimeout(() => { btn.textContent = idle; }, 4000);
+    };
+    btn.addEventListener("click", async () => {
+      const pass = $(btn.dataset.pw);
+      const ssidField = $(btn.dataset.ssid);
+      const ssid = ssidField ? ssidField.value.trim() : "";
+      if (!pass) return;
+      if (!ssid) {
+        note("type the Wi-Fi name first");
+        ssidField?.focus();
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = "asking the system…";
+      try {
+        const pw = await invoke("saved_wifi_password", { ssid });
+        pass.value = pw;
+        // Fire the same event typing would, so arming/validation listeners see it.
+        pass.dispatchEvent(new Event("input", { bubbles: true }));
+        clearTimeout(restore);
+        btn.textContent = idle;
+      } catch (e) {
+        note(String(e));
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
 window.addEventListener("DOMContentLoaded", () => {
   boot();
   hubInit();
+  pwInit();
 });
