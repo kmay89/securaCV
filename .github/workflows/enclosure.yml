@@ -67,6 +67,34 @@ jobs:
           done
           exit $status
 
+      - name: 7in dashboard parts must actually assemble
+        run: |
+          # A valid mesh is not a valid case. v0.1 of the 7" case exported three
+          # watertight, single-part STLs whose bezel lip floated 5 mm clear of
+          # the glass — the depth was counted in both halves of the stack-up.
+          # These checks render the parts in their ASSEMBLED positions:
+          # collisions must be empty, and the lip's bearing patch must not be.
+          set -e
+          empty() { # empty <check> — OpenSCAD writes no file for empty geometry
+            rm -f /tmp/fit.stl
+            openscad --export-format binstl -o /tmp/fit.stl -D "check=\"$1\"" \
+                canary_s3_lcd7_fitcheck.scad >/dev/null 2>&1 || true
+            if [ -f /tmp/fit.stl ]; then
+              echo "::error::7in fit check '$1': parts intersect (must be empty)"; exit 1
+            fi
+            echo "fit check '$1': empty, as required"
+          }
+          empty tray     # bezel vs rear tray — must not collide
+          empty glass    # bezel vs the panel — must not crush it
+          rm -f /tmp/fit.stl
+          openscad --export-format binstl -o /tmp/fit.stl -D 'check="lip"' \
+              canary_s3_lcd7_fitcheck.scad >/dev/null 2>&1 || true
+          if [ ! -f /tmp/fit.stl ]; then
+            echo "::error::7in fit check 'lip': nothing bears on the glass — the bezel retains nothing"
+            exit 1
+          fi
+          echo "fit check 'lip': bezel bears on the glass, as required"
+
       - name: Invalid configs must fail their assertions
         run: |
           set -e

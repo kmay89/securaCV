@@ -86,9 +86,17 @@ documented. That is a **documentation** fix, not a change of stance:
 
 - **Keep** [`printing_petg_cura.md`](./printing_petg_cura.md) — it is the
   settings *sheet*, and the sheet is the source of truth.
-- **Add** an Orca/Bambu Studio companion. The values port directly; the
-  machine-specific rows (retraction, first-layer squish) are already marked
-  `[YOURS]`.
+- ✅ **Done:** [`printing_petg_orca.md`](./printing_petg_orca.md) is the
+  Orca/Bambu Studio companion. The values port directly; the machine-specific
+  rows (retraction, first-layer squish) are marked `[YOURS]`. It also carries a
+  Cura↔Orca name map and, more usefully, the **four stock-preset rows that are
+  wrong for this catalog** — chief among them **elephant-foot compensation,
+  which Cura ships at 0 and Bambu ships at 0.2 mm**. Our parts carry a modeled
+  chamfer, so Bambu's default silently double-corrects and loosens every
+  press fit.
+- ✅ **Also added:** [`bambu_p2s_bringup.md`](./bambu_p2s_bringup.md) — the
+  ordered first-print path for a new P2S, since "which printer" and "it arrived,
+  now what" are different questions.
 - **Keep the agnostic framing.** "These are principles, not a printer" stays
   true — we are adding the slicer most readers actually run, not blessing a
   vendor.
@@ -115,6 +123,13 @@ AMS / AMS 2 Pro** — soft filament buckles in the long PTFE path and jams the h
 ([Bambu TPU guide](https://filamentpicks.com/how-to-print-tpu-on-bambu-lab/)).
 Gaskets must run from an **external spool holder** regardless of what we buy.
 Only the stiffer TPU-for-AMS 68 D feeds through, and that is not our gasket spec.
+
+> **This is advice about buying a production fleet, not about a bench machine.**
+> If you already have an AMS on a single development printer, keeping it is
+> reasonable — it holds PETG, ASA and a contrast colour for debossed labels
+> without a spool swap per print. The TPU rule is the part that still binds:
+> gaskets run from an external spool holder regardless. See
+> [`bambu_p2s_bringup.md` §0](./bambu_p2s_bringup.md#0--about-the-ams-you-bought).
 
 **A three-machine fleet, all-in:**
 

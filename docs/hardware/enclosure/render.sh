@@ -135,6 +135,9 @@ devstl dev_c6_147_back.stl   canary_c6_display.scad -D 'model="1.47"' -D 'part="
 devstl dev_lcd7_bezel.stl    canary_s3_lcd7.scad -D 'part="bezel"'
 devstl dev_lcd7_back.stl     canary_s3_lcd7.scad -D 'part="back"'
 devstl dev_lcd7_stand.stl    canary_s3_lcd7.scad -D 'part="stand"'
+# corner gauge — the ~16.5 g sanity print that comes before the ~158 g case pair
+devstl dev_lcd7_gauge_bezel.stl canary_s3_lcd7.scad -D 'part="gauge_bezel"'
+devstl dev_lcd7_gauge_tray.stl  canary_s3_lcd7.scad -D 'part="gauge_tray"'
 devstl dev_t169_bezel.stl    canary_s3_touch169.scad -D 'part="bezel"'
 devstl dev_t169_back.stl     canary_s3_touch169.scad -D 'part="back"'
 devstl dev_t169_stand.stl    canary_s3_touch169.scad -D 'part="stand"'
@@ -195,4 +198,4 @@ if [[ "${1:-}" != "--no-png" ]]; then
   (SRC="canary_dock.scad";          png "preview_dev_dock.png")
 fi
 
-echo "Done: released STLs (WAP 10 / Vision 9 / Doorbell 5 / Sense 2) + 48 dev renders + 3 SVG templates + previews."
+echo "Done: released STLs (WAP 10 / Vision 9 / Doorbell 5 / Sense 2) + 50 dev renders + 3 SVG templates + previews."
