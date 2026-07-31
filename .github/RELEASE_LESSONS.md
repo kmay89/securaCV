@@ -1451,3 +1451,46 @@ Two things worth carrying:
   "display failed". It changes job names, which can break required-status checks
   on main — so it belongs in its own reviewable change, not bundled into an
   unrelated PR.
+
+### (x) 2026-07-31 — a lint is code, and it needs its own tests
+
+`scripts/lint_wifi_join_policy.py` decides whether an `ESP.restart()` is
+legitimately gated by walking C++ brace depth with regexes. It took **four**
+attempts to get right, and the first three were all wrong in ways that would
+have gone unnoticed, because the clean tree passed each time:
+
+1. **A proximity window missed its own bug class.** v1 accepted any restart
+   with `ever_online` within 20 lines above it — which includes the lines that
+   populate the `WifiRetry` struct. An ungated reboot placed just above the
+   shared switch sailed straight through. A false negative on the exact defect
+   the lint exists to prevent.
+2. **Checking only the innermost enclosing block rejected correct code.** v2
+   flagged `if (s_ever_online && …) { if (radio_ok()) { restart } }`, because
+   the inner `if` says nothing about being online. **False positives are the
+   worse failure**: they block correct work and train people to route around
+   the check.
+3. **`\bever_online\b` does not match `s_ever_online`.** `_` is a word
+   character, so there is no boundary before `ever`. The real tree hid this
+   because its reboot routes through `wifi_next_action`; only an adversarial
+   fixture surfaced it.
+4. **"Opener plus two lines above" re-admitted defect 1.** Allowing two lines
+   of context for a split condition pulled `st.ever_online = s_ever_online;`
+   back into scope. The fix is to reconstruct the header exactly — walk back
+   only while the parentheses are unbalanced.
+
+Defects 3 and 4 were both caught by `scripts/tests/test_lint_wifi_join_policy.py`,
+which is why it exists. The tests are the fixtures, not the tree: every real
+call site is one shape, and a heuristic needs the shapes that are *not* in the
+tree yet.
+
+The rules that fall out of this:
+
+- **Write the adversarial fixture, not just the happy one.** For every guard,
+  ask what the *broken* code looks like — and then also what *correct but
+  unusual* code looks like, because that is where false positives live.
+- **A guard nobody has watched fail is a guard nobody has tested.** Verify by
+  reintroducing the original bug. If it stays green, the guard is decoration.
+- **Prefer checking the property over the mechanism.** This lint asks "does
+  this file speak the shared vocabulary?" rather than "does it contain this
+  include line" — the latter would have forced a cosmetic edit to a file the
+  committed wasm `dist/` artifacts are built from, for no behavioural gain.

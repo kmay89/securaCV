@@ -68,6 +68,15 @@ jobs:
         # rule now lives once in common/network/wifi_join_policy.h, and this
         # lint is what stops a fifth copy appearing.
         run: python3 scripts/lint_wifi_join_policy.py
+      - name: Tests for the lints themselves
+        # The Wi-Fi lint decides whether a reboot is gated by walking C++ brace
+        # depth with regexes — a heuristic, and an untested heuristic is a guard
+        # that reads as covered while catching nothing. THREE defects were found
+        # in that one lint before it worked: a proximity window that missed its
+        # own bug class, an innermost-block check that rejected correct code,
+        # and `\bever_online\b` failing to match `s_ever_online` because `_` is
+        # a word character. Each is pinned as a test.
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
 
       - name: Witness Dictionary sync (Rust / Python / JS / firmware)
         run: python3 scripts/lint_dictionary_sync.py

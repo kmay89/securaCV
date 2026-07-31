@@ -70,8 +70,12 @@ GENERATED_COPIES = [
 # lint that reads as covered while missing the real case is worse than none.
 GATE_PATTERNS = [
     re.compile(r"WifiAction::Reboot"),
-    re.compile(r"\bever_online\b"),
-    re.compile(r"\bg_wifi_ever_up\b"),
+    # No LEADING \b: `_` is a word character, so `\bever_online\b` does not
+    # match `s_ever_online` — the actual spelling of the flag on every board.
+    # The real tree hid this because its reboot routes through the shared
+    # switch, so only an adversarial probe surfaced it.
+    re.compile(r"ever_online\b"),
+    re.compile(r"ever_up\b"),
     # The shared dispatcher itself: reaching a restart through
     # `switch (wifi_next_action(...))` IS the gate, since the policy only ever
     # returns Reboot for a link that has been up.
@@ -95,41 +99,93 @@ POLICY_USE = re.compile(
 )
 
 
-def enclosing_guard(lines: list[str], i: int) -> bool:
-    """Is line `i` inside a construct that gates on ever-having-been-online?
-
-    Walks real brace depth rather than a fixed window: find the `{` that opens
-    the block containing this line, then read that opener (plus the two lines
-    above it, for conditions split across lines). Also accepts a `case
-    WifiAction::Reboot:` label governing the line inside a switch.
-    """
-    # Depth *before* each line.
-    depth_before: list[int] = []
-    d = 0
+def _depths(lines: list[str]) -> list[int]:
+    """Brace depth at the START of each line, comments stripped."""
+    out, d = [], 0
     for ln in lines:
-        depth_before.append(d)
+        out.append(d)
         code = re.sub(r"//.*$", "", ln)
         d += code.count("{") - code.count("}")
+    return out
 
+
+def _header_text(lines: list[str], opener: int) -> str:
+    """The FULL header of the construct opening at `opener`, and nothing else.
+
+    A blunt "opener plus the two lines above" was the third defect in this
+    lint: those two lines are often `st.ever_online = s_ever_online;` from the
+    WifiRetry population, which re-admits the very proximity false-negative the
+    brace walk was written to remove.
+
+    Instead, reconstruct the header exactly: a condition split across lines
+    leaves the opener with more `)` than `(`, so walk back only while that is
+    true. `if (a &&\n    b) {` picks up both lines; `if (x) {` picks up one.
+    """
+    text = re.sub(r"//.*$", "", lines[opener])
+    j = opener
+    while j > 0 and text.count(")") > text.count("("):
+        j -= 1
+        text = re.sub(r"//.*$", "", lines[j]) + "\n" + text
+    return text
+
+
+def enclosing_guard(lines: list[str], i: int) -> bool:
+    """Is line `i` governed by ANY construct that gates on ever-having-been-online?
+
+    Walks real brace depth outward through every enclosing construct, not just
+    the innermost one. Both halves of that matter, and both were learned the
+    hard way:
+
+    * A fixed proximity window (v1) MISSED an ungated reboot placed beside the
+      shared switch, because the lines populating WifiRetry mention
+      `ever_online` — a false negative on the exact bug this exists to catch.
+    * Checking only the INNERMOST block (v2) FLAGGED correct code of the shape
+      `if (s_ever_online && ...) { if (radio_ok()) { restart } }`, because the
+      inner `if` says nothing about being online. A false positive is the worse
+      failure: it blocks correct work and teaches people to route around the
+      check.
+
+    So: any enclosing `if`/`while`/`switch` header, or any governing `case`
+    label, that shows a gate makes the call site legitimate.
+    """
+    depth_before = _depths(lines)
     target = depth_before[i]
 
-    # A `case` label governing this line, at the same depth, above it.
-    for j in range(i - 1, -1, -1):
-        if depth_before[j] < target:
-            break
-        # Greedy to the LAST colon on the line: a non-greedy match stops at the
-        # first `:` of `canary::net::WifiAction::Reboot` and reads the label as
-        # "canary", which silently turns every correct call site into a
-        # violation. Caught because the clean tree went red.
-        m = re.match(r"\s*case\s+(.+):\s*$", lines[j])
-        if m and depth_before[j] == target:
-            return bool(re.search(r"WifiAction::Reboot", m.group(1)))
+    def governing_case(level: int, upto: int) -> bool:
+        """A `case X:` at `level`, above `upto`, before leaving that block."""
+        for j in range(upto - 1, -1, -1):
+            if depth_before[j] < level:
+                return False
+            if depth_before[j] != level:
+                continue
+            # Greedy to the LAST colon: a non-greedy match stops at the first
+            # `:` of `canary::net::WifiAction::Reboot` and reads the label as
+            # "canary", which turns every correct call site into a violation.
+            m = re.match(r"\s*case\s+(.+):\s*$", lines[j])
+            if m and re.search(r"WifiAction::Reboot", m.group(1)):
+                return True
+        return False
 
-    # Otherwise, the opener of the enclosing block.
-    for j in range(i - 1, -1, -1):
-        if depth_before[j] == target - 1 and "{" in re.sub(r"//.*$", "", lines[j]):
-            head = "\n".join(lines[max(0, j - 2) : j + 1])
-            return any(p.search(head) for p in GATE_PATTERNS)
+    if governing_case(target, i):
+        return True
+
+    # Walk outward: nearest opener at each successively shallower depth.
+    j, level = i - 1, target - 1
+    while level >= 0 and j >= 0:
+        opener = None
+        while j >= 0:
+            if depth_before[j] == level and "{" in re.sub(r"//.*$", "", lines[j]):
+                opener = j
+                break
+            j -= 1
+        if opener is None:
+            break
+        head = _header_text(lines, opener)
+        if any(p.search(head) for p in GATE_PATTERNS):
+            return True
+        if governing_case(level, opener):
+            return True
+        j, level = opener - 1, level - 1
     return False
 
 
