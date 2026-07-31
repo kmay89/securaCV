@@ -1,0 +1,72 @@
+[package]
+name = "witness-kernel-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+license = "Apache-2.0"
+
+# Detached from the parent package on purpose: cargo-fuzz builds with
+# `-Z sanitizer=address` on nightly, and pulling that into the normal build
+# graph would make every ordinary `cargo build` inherit a nightly-only flag.
+[workspace]
+members = []
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1.0"
+
+[dependencies.witness-kernel]
+path = ".."
+
+# Fuzz targets are their own binaries and must not be picked up as tests.
+[[bin]]
+name = "tsa_parse_response"
+path = "fuzz_targets/tsa_parse_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tsa_parse_token"
+path = "fuzz_targets/tsa_parse_token.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vault_envelope_decode"
+path = "fuzz_targets/vault_envelope_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vault_decode_aad"
+path = "fuzz_targets/vault_decode_aad.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "frigate_event"
+path = "fuzz_targets/frigate_event.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "canonical_json"
+path = "fuzz_targets/canonical_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "event_payload"
+path = "fuzz_targets/event_payload.rs"
+test = false
+doc = false
+bench = false

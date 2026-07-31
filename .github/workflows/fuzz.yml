@@ -1,0 +1,171 @@
+name: Fuzz
+
+# Two jobs with different purposes, and it matters that they stay separate:
+#
+#   seeds  — a REGRESSION GATE. Runs on every PR that touches a fuzzed parser,
+#            replays the committed corpus, and finishes in seconds. Its job is
+#            to prove a fixed bug stays fixed, not to find new ones.
+#   hunt   — the actual SEARCH. Nightly and on demand, time-boxed per target.
+#            Never blocks a PR, because a fuzzer that fails the build when it
+#            gets lucky teaches people to distrust the build.
+#
+# Everything here is dynamic assurance. The rest of the security CI (CodeQL,
+# cargo-audit, cargo-deny, the firmware route-auth lint) is static: it reads
+# the code. Nothing else runs these parsers against input chosen to break them.
+
+on:
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "fuzz/**"
+      - "src/tsa.rs"
+      - "src/vault/**"
+      - "src/transport/frigate.rs"
+      - "src/canonical_json.rs"
+      - "src/module_runtime/**"
+      - ".github/workflows/fuzz.yml"
+  push:
+    branches: [ "main" ]
+    # Identical to the pull_request list above (CI.md R6) — including this
+    # file itself (R7), so editing the workflow runs it.
+    paths:
+      - "fuzz/**"
+      - "src/tsa.rs"
+      - "src/vault/**"
+      - "src/transport/frigate.rs"
+      - "src/canonical_json.rs"
+      - "src/module_runtime/**"
+      - ".github/workflows/fuzz.yml"
+  schedule:
+    # 04:20 UTC daily — the hunt runs while nobody is waiting on it.
+    - cron: "20 4 * * *"
+  workflow_dispatch:
+    inputs:
+      minutes_per_target:
+        description: "Minutes to fuzz each target"
+        default: "5"
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  seeds:
+    name: Replay the seed corpus
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: System libraries
+        # libseccomp-dev is not optional here: the kernel links libseccomp on
+        # Linux (the witnessd syscall filter), so without the headers every
+        # target compiles cleanly and then dies at link with `unable to find
+        # library -lseccomp`. Found by building this suite for the first time.
+        run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
+      - name: Install nightly (libFuzzer needs it)
+        run: |
+          rustup toolchain install nightly --profile minimal
+          rustup component add --toolchain nightly rust-src
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/bin/cargo-fuzz
+            ~/.cargo/registry
+            ~/.cargo/git
+            fuzz/target
+          key: fuzz-${{ runner.os }}-${{ hashFiles('Cargo.toml', 'fuzz/Cargo.toml') }}
+      - name: Install cargo-fuzz
+        run: command -v cargo-fuzz >/dev/null || cargo install cargo-fuzz --locked
+      - name: Build every target
+        # A target that stops compiling is the most common way a fuzz suite
+        # silently stops testing anything, so building is its own step.
+        run: cargo +nightly fuzz build
+      - name: Replay committed seeds
+        # `fuzz run <target> <dir>` runs the inputs in <dir> once and exits.
+        # Every seed is a case we already care about: a real DER response, a
+        # real vault header, and any input that ever crashed a target.
+        run: |
+          set -euo pipefail
+          status=0
+          for target in $(cargo +nightly fuzz list); do
+            seeds="fuzz/seeds/${target}"
+            # `find`, not `ls` — shellcheck SC2012, and it is right: a seed
+            # filename is whatever a crashing input got named, which is not
+            # something to assume is well behaved.
+            count=$(find "${seeds}" -type f 2>/dev/null | wc -l)
+            if [ "${count}" -eq 0 ]; then
+              echo "::warning::${target} has no seed corpus — it is being fuzzed from nothing"
+              continue
+            fi
+            echo "--- replaying ${count} seed(s) through ${target}"
+            cargo +nightly fuzz run "${target}" "${seeds}" -- -runs=0 || status=1
+          done
+          exit "${status}"
+
+  hunt:
+    name: Hunt for new inputs
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - name: System libraries
+        # libseccomp-dev is not optional here: the kernel links libseccomp on
+        # Linux (the witnessd syscall filter), so without the headers every
+        # target compiles cleanly and then dies at link with `unable to find
+        # library -lseccomp`. Found by building this suite for the first time.
+        run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
+      - name: Install nightly (libFuzzer needs it)
+        run: |
+          rustup toolchain install nightly --profile minimal
+          rustup component add --toolchain nightly rust-src
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/bin/cargo-fuzz
+            ~/.cargo/registry
+            ~/.cargo/git
+            fuzz/target
+          key: fuzz-${{ runner.os }}-${{ hashFiles('Cargo.toml', 'fuzz/Cargo.toml') }}
+      - name: Install cargo-fuzz
+        run: command -v cargo-fuzz >/dev/null || cargo install cargo-fuzz --locked
+      - name: Fuzz each target, seeded
+        # Seeds are copied into the working corpus first. Without them a
+        # structured format like DER is effectively unreachable from random
+        # bytes, and the run reports a confident green having tested the first
+        # length check and nothing else.
+        run: |
+          set -euo pipefail
+          minutes="${{ github.event.inputs.minutes_per_target || '5' }}"
+          seconds=$(( minutes * 60 ))
+          status=0
+          for target in $(cargo +nightly fuzz list); do
+            mkdir -p "fuzz/corpus/${target}"
+            if [ -d "fuzz/seeds/${target}" ]; then
+              cp -f "fuzz/seeds/${target}"/* "fuzz/corpus/${target}/" 2>/dev/null || true
+            fi
+            echo "--- fuzzing ${target} for ${minutes}m"
+            cargo +nightly fuzz run "${target}" -- \
+              -max_total_time="${seconds}" -print_final_stats=1 || status=1
+          done
+          exit "${status}"
+      - name: Upload any crashing input
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: What to do with a failure
+        if: failure()
+        run: |
+          echo "::notice::A target found a crashing input. Download the"
+          echo "::notice::fuzz-artifacts bundle, commit the input to"
+          echo "::notice::fuzz/seeds/<target>/ as a regression case, and fix it"
+          echo "::notice::in the same PR — see fuzz/README.md."

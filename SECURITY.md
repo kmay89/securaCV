@@ -25,13 +25,65 @@ or extract information the system claims is impossible to obtain:
 
 **That is a security issue.**
 
-Please report it with:
+### If it is exploitable against a device someone is relying on — report it privately
+
+Use one of these, **not** a public issue:
+
+- **[GitHub private vulnerability reporting](https://github.com/kmay89/securaCV/security/advisories/new)** — preferred; it gives us a private fork to fix in and issues the CVE if one is warranted.
+- **errerlabs@gmail.com** — if you'd rather not use GitHub. Put `security` in the subject. We don't publish a PGP key today; if you need an encrypted channel, say so in a first mail with no details in it and we'll arrange one.
+
+A public issue is a disclosure. For anything a stranger could turn around and
+use against a live Canary — key extraction, an auth bypass, a way to forge a
+record that verifies — filing publicly hands it to them before there is a fix.
+That matters more here than in most projects: the people this system is
+designed to protect are, by construction, people someone is actively trying to
+watch. **Please don't do the disclosure for them.**
+
+Everything else — a hardening idea, a doc that overstates a guarantee, a lint
+that should exist, a finding against a device only you own — is welcome in the
+open, and the structured form is the best place for it:
+
+- [Security Report form](.github/ISSUE_TEMPLATE/security_report.yml)
+
+Either way, please include:
 - A minimal reproduction
 - The invariant you believe is violated
 - Whether the failure is compile-time or runtime
 
-Use the GitHub issue form for structured reports:
-- [Security Report](.github/ISSUE_TEMPLATE/security_report.yml)
+### What to expect back
+
+This is a small project, so these are honest commitments rather than
+enterprise-grade ones:
+
+| | |
+|---|---|
+| **First human response** | Within 5 days. If you haven't heard anything in 10, assume the mail went astray and ping the other channel. |
+| **Assessment and a plan** | Within 14 days of that first response — including "we don't consider this a vulnerability, and here's why," which you're free to disagree with publicly. |
+| **Fix or a written reason it isn't fixed** | 90 days for anything exploitable. If we need longer we will say so and why, before the 90 days are up, not after. |
+| **Disclosure** | Whenever you like after 90 days, with or without our agreement. Report first, coordinate if you can, but the clock is yours to run out — we would rather be embarrassed on schedule than have a real hole sit quiet. |
+| **Credit** | Named in the advisory and the release notes, unless you'd rather not be. |
+
+There is no bug bounty. We can't afford one, and saying so plainly beats
+implying one exists.
+
+### Safe harbor
+
+If you are researching in good faith under this policy, we will not pursue or
+support legal action against you, and we will say so on the record if someone
+else does. Good faith means: work against **your own devices**, don't access
+or exfiltrate anyone else's data, don't degrade a service anyone is depending
+on, and give us the reporting window above before going public.
+
+If a live-device test would put someone else's evidence or safety at risk,
+stop and describe the attack instead — a written explanation of a plausible
+break is worth more to us than a demonstration that cost somebody their
+recording.
+
+### Testing scope and rules of engagement
+
+For structured security testing — what's in scope, what a tester is handed,
+what is explicitly out of bounds, and what counts as a finding —
+see [`docs/security/PENTEST_SCOPE.md`](docs/security/PENTEST_SCOPE.md).
 
 ## Known dependency advisories
 

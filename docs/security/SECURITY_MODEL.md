@@ -121,8 +121,18 @@ requires a new device with a new identity.
 
 **Why no backup?** Because a key that can be exported can be compelled.
 A court order, a warrant, or physical coercion — if the key CAN leave
-the device, an adversary with sufficient power WILL extract it. The
-only defense is making extraction impossible by design.
+the device, an adversary with sufficient power WILL extract it. So there
+is no software path that will hand it over: no API, no export, no
+diagnostic, no debug interface, and nothing to compel us to hand over
+because we never had it.
+
+**The limit of that promise.** It is a statement about software. Someone
+who physically takes the device and reads the flash chip directly is a
+different adversary, and on a default-configured Canary they can recover
+the key. That is a deliberate trade — the alternative permanently bricks
+devices whose owners lose a key — and it is spelled out, with what it does
+and doesn't let an attacker do, under
+[Physical extraction and the flash-encryption default](#physical-extraction-and-the-flash-encryption-default).
 
 ---
 
@@ -223,15 +233,17 @@ The device is built on the Espressif ESP32-S3 microcontroller.
 Espressif is a Chinese semiconductor company. The WiFi firmware contains
 proprietary binary blobs from Espressif. A sufficiently resourced
 state-level adversary could theoretically compromise these blobs.
-Mitigations include: no outbound network connections (a compromised blob
-has nowhere to send data), secure boot (firmware is verified before
-execution), and flash encryption (firmware cannot be trivially extracted).
+The mitigation that always applies is architectural: the device makes
+**no outbound network connections**, so a compromised blob has nowhere
+to send anything. Secure boot and flash encryption are additional
+mitigations, but they are **off unless you turn them on** — see
+[Physical extraction and the flash-encryption default](#physical-extraction-and-the-flash-encryption-default).
 
 ### Physical Access
 Physical possession of the device enables forensic analysis of the
-SD card and flash storage. Secure boot and flash encryption raise the
-difficulty but cannot guarantee protection against a state-level
-adversary with unlimited physical access time.
+SD card and flash storage. On a device in its default configuration this
+includes recovering the device's private key; the section below states
+exactly what that does and does not let an attacker do.
 
 ### GPS Spoofing
 The device cannot independently verify GPS signals. A sophisticated
@@ -248,6 +260,64 @@ timestamps are coarsened to 5-second buckets regardless of source.
 The device records metadata about events, not comprehensive multimedia
 evidence. It proves that *something was recorded at a time and place*,
 not necessarily *what happened* in full detail.
+
+### Physical extraction and the flash-encryption default
+
+**The honest statement: on a Canary in its default configuration, someone
+who takes the device away and opens it up can read the private key out of
+the flash chip.**
+
+This is a deliberate default, not an oversight, and the trade is worth
+understanding because it is the one place where "keys never leave the
+device" needs an asterisk.
+
+The ESP32-S3 supports Secure Boot and flash encryption, which together
+make the flash contents unreadable and stop unsigned firmware running.
+They are also **irreversible**: they are burned into one-time fuses. A
+device with them enabled and a lost key is a brick, permanently, with no
+recovery path — not for you, and not for us. We decided that a default
+that can permanently destroy an owner's device is the wrong default for a
+device people are supposed to be able to keep, repair, and re-flash. So
+[the tiered design](../design/hardware_root_of_trust.md) puts the
+reversible protections in the default path and leaves the irreversible
+lockdown as an explicit, key-backup-enforced opt-in. The settings are
+staged and commented in `firmware/provisioning/sdkconfig.defaults.secure`.
+
+**What key recovery gets an attacker.** They can sign new records as that
+device. From that point on, a chain they produce is cryptographically
+indistinguishable from one the real device produced.
+
+**What it does not get them.** It does not rewrite the past. The log is
+hash-chained, so altering an existing record breaks every record after it;
+and where chain heads have been anchored to an external timestamp
+authority (`log_anchor`, RFC 3161), the history up to each anchor is
+pinned by a signature that is not the device's and that key theft does not
+provide. Forging *forward* from a stolen key is achievable. Forging
+*backward* past an anchor means defeating the timestamp authority as well.
+It also does not decrypt sealed material, and that holds on both sides
+for the same structural reason — the decryption key is somewhere the
+device isn't. Sealed snapshots on the device are encrypted to an
+**operator-held X25519 public key whose private half never touches the
+device at all** (see [`../sealed_snapshot_vault.md`](../sealed_snapshot_vault.md)),
+so there is nothing on the flash to recover that would open them. Vault
+material on the hub is protected by a separate hub-held key under the
+break-glass policy. Neither is the device identity key, so stealing the
+identity key opens neither.
+
+**It is also detectable, after the fact.** A cloned identity produces two
+divergent chains from the same device key. Two chains that share a prefix
+and then disagree is not something the real device can do, so if both ever
+reach a verifier, the clone is provable.
+
+**If your threat model includes device seizure**, this is the case the
+opt-in tiers exist for. Turn them on deliberately, back up the key first,
+and understand that you are trading recoverability for extraction
+resistance. Read [`../design/hardware_root_of_trust.md`](../design/hardware_root_of_trust.md)
+before you burn a fuse — that decision cannot be walked back.
+
+**If your threat model is an intruder, a landlord, or a domestic abuser
+who does not take the device to a lab**, the default is the right one for
+you, and the tamper-evidence properties are unaffected.
 
 ---
 

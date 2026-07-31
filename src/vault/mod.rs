@@ -18,7 +18,31 @@ use crate::{break_glass::BreakGlassToken, BreakGlassOutcome, RawFrame, RawMediaB
 use ed25519_dalek::VerifyingKey;
 
 pub mod crypto;
+
+// `format` stays private in every build that ships.
+//
+// The parser genuinely needs to be fuzzable: `unseal()` decodes the on-disk
+// container *before* any break-glass check runs, so those bytes are
+// attacker-controlled the moment someone has touched the card — the exact
+// adversary the vault exists for. But `#[doc(hidden)] pub` was the wrong way
+// to get there, and the reason is Invariant V (`AGENTS.md`: raw media access
+// requires N-of-M trustee approval). `crypto::decrypt_v1`/`decrypt_v2` are
+// already public and take these envelope types directly, and the master key
+// sits under a known vault root — so a public `VaultEnvelope::decode` completes
+// an in-process path from container bytes to plaintext that never presents a
+// `BreakGlassToken`. `#[doc(hidden)]` hides a symbol from rustdoc; it does not
+// restrict access to it.
+//
+// A determined attacker could reimplement this format from the source, so the
+// delta is defense-in-depth rather than a hard boundary — which is exactly the
+// kind of change `docs/governance_and_invariants.md` says to reject when it
+// buys nothing. Gating on `--cfg fuzzing` (set by cargo-fuzz, and by nothing
+// else) costs nothing and keeps the shipped API honest.
+#[cfg(not(fuzzing))]
 mod format;
+#[cfg(fuzzing)]
+#[doc(hidden)]
+pub mod format;
 
 use crate::vault::crypto::{decrypt_v1, decrypt_v2, seal_v2, KemKeypair, VaultCryptoMode};
 use crate::vault::format::VaultEnvelope;
