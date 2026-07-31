@@ -84,6 +84,15 @@ jobs:
         run: python3 scripts/dbc_signal_resolve.py selftest
       - name: Vehicle profiles match their vendored DBC excerpts
         run: python3 scripts/dbc_signal_resolve.py check-profiles
+      - name: Away-access checker (the guide's verifier)
+        # tools/away_access_check.py is what turns docs/away_access.md from
+        # advice into a verdict: it tells an owner whether their hub is
+        # actually reachable from the internet. A security check that reads as
+        # covered while catching nothing is worse than no check, so every
+        # parser (three `ss` dialects, both /proc tables, two router SOAP
+        # shapes) and every branch of the verdict is pinned — including the
+        # promise that the tool never fetches a non-private URL.
+        run: python3 tools/test_away_access_check.py
       - name: Docs index — no stragglers, no dead links
         run: python3 scripts/lint_docs_index.py
       - name: Agent entrypoints match AGENTS.md
