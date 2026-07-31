@@ -29,6 +29,19 @@
 
 #include <stddef.h>
 
+// Worst-case buffer size for a SINGLE-device body whose name is at most
+// name_max bytes and product at most product_max bytes. Every name/product
+// byte can JSON-escape to 6 bytes (\u00XX), and the name is written TWICE
+// (as "kernel" and as devices[0].name) — so an under-sized buffer would make
+// the clamp-safe writer truncate a stored-and-accepted device name into
+// invalid JSON served with a 200. Size the glue's buffer with this macro and
+// truncation is impossible by construction (pinned by the host test's
+// worst-case check). The constant covers every fixed byte of the skeleton
+// ({"kernel":"…","verified_through":"now","devices":[{…}]}), the widest
+// chain_height, and the NUL, with headroom.
+#define FLEET_SELFREPORT_BODY_CAP(name_max, product_max) \
+  (12u * (size_t)(name_max) + 6u * (size_t)(product_max) + 160u)
+
 // Coarse, non-extractive self-state — presence + health only, never raw media.
 typedef struct {
   const char* name;         // human name, e.g. "Front Door" or "SCV-1A2B"
