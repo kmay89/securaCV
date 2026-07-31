@@ -7,8 +7,27 @@ body:
   - type: markdown
     attributes:
       value: |
-        Use this form to report invariant violations, bypasses, or security regressions.
-        Provide the minimum detail needed to reproduce the issue.
+        ## ⛔ Stop if this is exploitable against someone else's device
+
+        **This form is public. Filing here is disclosing.**
+
+        If a stranger could use what you found against a Canary someone is
+        relying on — key extraction, an auth bypass, forging a record that
+        verifies — close this and report it privately instead:
+
+        - [**Private vulnerability report**](https://github.com/kmay89/securaCV/security/advisories/new) (preferred)
+        - **errerlabs@gmail.com**
+
+        The people this system protects are, by definition, people someone is
+        actively trying to watch. Response times and safe-harbor terms are in
+        [SECURITY.md](https://github.com/kmay89/securaCV/blob/main/SECURITY.md).
+
+        ---
+
+        Otherwise this is the right place. Use it for invariant violations,
+        hardening ideas, docs that overstate a guarantee, a lint that should
+        exist, or a finding against a device only you own. Provide the minimum
+        detail needed to reproduce the issue.
   - type: input
     id: invariant_violated
     attributes:

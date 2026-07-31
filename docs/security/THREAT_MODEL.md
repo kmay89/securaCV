@@ -59,6 +59,16 @@ There is no export function, backdoor, recovery key, escrow, or master key.
 national security letters, rubber-hose attacks — if the key CAN leave
 the device, an adversary with sufficient power WILL extract it.
 
+**Scope of this principle:** every item above is a statement about
+*software* paths. It is not a claim that the key survives an adversary who
+takes the device to a bench: flash encryption is an opt-in tier, so on a
+default Canary the key is recoverable by reading the flash directly. What
+that does and does not buy an attacker — forward forgery yes, rewriting
+anchored history no — is stated in
+[`SECURITY_MODEL.md`](SECURITY_MODEL.md#physical-extraction-and-the-flash-encryption-default).
+Reviewers should hold this principle to the software boundary and treat
+physical extraction as the separately-documented trade it is.
+
 ### 2. Zero Phone-Home
 
 The device makes **zero outbound network connections**:
