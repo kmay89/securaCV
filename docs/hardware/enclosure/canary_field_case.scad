@@ -5,6 +5,7 @@
 //  1 m / 30 min) + MIL-STD-810H 516.8 Procedure IV transit drop (1.22 m,
 //  boot fitted). A rating is EARNED per printed unit by running the test
 //  protocol in field_ratings.md — never assumed from the CAD.
+//  @env cer=4 ip="IP67" mil="MIL-STD-810H" note="design intent — untested; do not claim before the field_ratings.md protocol"
 //
 //  Why this can honestly aim at IP67 where the other cases can't:
 //    - ZERO external penetrations except the bonded lens disc and a Ø3 mm

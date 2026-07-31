@@ -1,5 +1,6 @@
 // ============================================================================
 //  SecuraCV Canary WAP — 3D-printable enclosure (parametric)  v0.7
+//  @env cer=2 ip="~IP54" basis="weather preset"
 //  Board: Seeed XIAO ESP32-S3 Sense + optional LiPo (placed beside the board)
 //  Features: light-pipe port, buzzer/pressure vent, camera/sensor window with
 //            sealed-disc seat, USB-C access, board standoffs + snap clips,

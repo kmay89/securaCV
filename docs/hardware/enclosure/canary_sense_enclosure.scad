@@ -1,5 +1,6 @@
 // ============================================================================
 //  SecuraCV Canary Sense — 3D-printable RADOME enclosure (parametric)  v0.1
+// @env cer=2 ip="radome (sheltered)"
 //  Hardware: Seeed MR60BHA2 60 GHz mmWave kit — radar carrier board with a
 //  XIAO ESP32-C6 seated in its stacking socket (design doc:
 //  docs/canary_sense_mr60bha2_design.md). Ceiling or wall mounted; bedside

@@ -86,6 +86,21 @@ test("env ratings are honest: verified is boolean and never true (untested)", ()
   }
 });
 
+test("env comes from the model's own @env header (source of truth, not a table)", () => {
+  for (const p of cat.products) {
+    const scadText = readFileSync(join(ENC, p.scad), "utf8");
+    const annotated = /^\s*\/\/\s*@env\s/m.test(scadText);
+    if (p.env) {
+      assert.ok(annotated, `${p.id}: env must be declared by an @env line in ${p.scad}`);
+      if (p.env.cer != null)
+        assert.ok([1, 2, 3, 4].includes(p.env.cer),
+          `${p.id}: cer ${p.env.cer} is a field_ratings.md ladder level`);
+    } else {
+      assert.ok(!annotated, `${p.id}: no @env line, so no env field either`);
+    }
+  }
+});
+
 test("option requires/excludes/requires_parts reference real things on the product", () => {
   for (const p of cat.products) {
     const optIds = new Set(p.options.map((o) => o.id));
