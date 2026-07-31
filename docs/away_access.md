@@ -133,6 +133,7 @@ somewhere on the internet.
 | **DuckDNS + Let's Encrypt + a port forward** | The most-recommended dangerous setup in this whole ecosystem. The padlock makes it *feel* solved, and that's the trap: **TLS protects the traffic, not the door.** You have encrypted the conversation between a stranger and your front door. The exposure is unchanged. |
 | **Leave UPnP enabled** | You never chose a hole; a device chose one for you. UPnP lets anything on your LAN open an inbound port with no confirmation and no notification — a console, an add-on, a torrent client. This is why the checker asks your router directly instead of trusting your memory. |
 | **Forward RTSP (554) or MQTT (1883)** | That's live camera video and every event on the hub, usually with no authentication in front of either. |
+| **Assume NAT is protecting you** | It isn't, on IPv6. If your ISP gives LAN devices real IPv6 addresses — increasingly the default — then a service bound to `0.0.0.0`/`[::]` can be reachable from the internet **with no port forward at all**, because there's no NAT in the path to require one. Your firewall is the only thing standing there. The checker flags this case specifically, since "nothing is forwarded" is exactly the reasoning that misses it. |
 | **"Just for a week"** | There is no such thing. Nobody comes back to close it. Set the overlay up instead — it's faster than the port forward was. |
 
 The kernel's own services default to loopback for exactly this reason: the
@@ -151,9 +152,19 @@ python3 tools/away_access_check.py
 
 It reports three things: which sensitive services are listening and on what
 address, **what your router's port-forward table actually contains**, and
-whether an encrypted overlay is up. Exit status is `0` when nothing is
-reachable from outside and `1` when something is, so it drops straight into a
-cron job or a health check. `--json` for machine-readable output.
+whether an encrypted overlay is up (up *and* addressed — a `wg0` that exists
+but is down is not a way home, and counting it as one would hide the warning
+you needed). Exit status is `0` when nothing reachable was found and `1` when
+something is, so it drops straight into a cron job or a health check. `--json`
+for machine-readable output.
+
+**It will not give you a clean bill for a check it couldn't run.** Reading a
+router's table means asking for mapping 0, 1, 2… until the router says the
+index is invalid — so "the list ended" and "the request timed out" arrive by
+the same door, and a tool that conflates them will happily truncate the table
+and still print a confident summary. This one insists on the router's own
+end-of-list answer; anything else, along with a gateway that never replied or
+a run with `--no-router`, comes back **INCONCLUSIVE** rather than OK.
 
 ```
 SecuraCV away-access check

@@ -244,14 +244,116 @@ def test_overlay_interfaces() -> None:
     names = ["lo", "eth0", "wlan0", "tailscale0", "wg0", "docker0", "br-1a2b"]
     check(
         aac.parse_overlay_interfaces(names) == ["tailscale0", "wg0"],
-        "only encrypted overlays are recognised",
+        "only encrypted overlays are recognized",
     )
     check(aac.parse_overlay_interfaces(["lo", "eth0"]) == [], "no overlay is empty")
+
+    # A name is not a working tunnel. IFF_UP is bit 0 of the flags word.
+    check(aac.parse_iface_flags("0x1003") is True, "IFF_UP set reads as up")
+    check(aac.parse_iface_flags("0x1002") is False, "IFF_UP clear reads as down")
+    check(aac.parse_iface_flags("junk") is False, "unreadable flags read as down, not up")
+
+    addrs = aac.parse_ip_addr_addresses(
+        "2: eth0    inet 192.168.1.50/24 brd 192.168.1.255 scope global eth0\n"
+        "3: eth0    inet6 2001:db8::1/64 scope global \n"
+        "1: lo      inet 127.0.0.1/8 scope host lo\n"
+    )
+    check(
+        addrs == {"192.168.1.50", "2001:db8::1", "127.0.0.1"},
+        f"`ip -o addr` addresses parsed without prefixes (got {sorted(addrs)})",
+    )
+    check(aac.parse_ip_addr_addresses("") == set(), "empty addr output is empty")
+
+
+def test_globally_routable() -> None:
+    print("global-address detection (exposure with no port forward)")
+    check(aac.is_globally_routable("93.184.216.34"), "a public v4 address is global")
+    check(aac.is_globally_routable("2606:4700:4700::1111"), "a public v6 address is global")
+    check(not aac.is_globally_routable("2001:db8::1"), "the IPv6 documentation prefix is not global")
+    check(not aac.is_globally_routable("192.168.1.50"), "RFC1918 is not global")
+    check(not aac.is_globally_routable("127.0.0.1"), "loopback is not global")
+    check(not aac.is_globally_routable("fd00::1"), "an IPv6 ULA is not global")
+    check(not aac.is_globally_routable("fe80::1"), "link-local is not global")
+    check(not aac.is_globally_routable("100.101.102.103"), "Tailscale CGNAT is not global")
+    check(not aac.is_globally_routable("nonsense"), "junk is not global, and does not raise")
 
 
 # --------------------------------------------------------------------------
 # The promise: never talk to the internet
 # --------------------------------------------------------------------------
+
+
+UPNP_FAULT_END = """<?xml version="1.0"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+ <s:Body><s:Fault>
+  <faultcode>s:Client</faultcode><faultstring>UPnPError</faultstring>
+  <detail><UPnPError xmlns="urn:schemas-upnp-org:control-1-0">
+    <errorCode>713</errorCode>
+    <errorDescription>SpecifiedArrayIndexInvalid</errorDescription>
+  </UPnPError></detail>
+ </s:Fault></s:Body>
+</s:Envelope>
+"""
+
+UPNP_FAULT_OTHER = UPNP_FAULT_END.replace(
+    "<errorCode>713</errorCode>", "<errorCode>501</errorCode>"
+)
+
+
+def test_end_of_list_vs_failure() -> None:
+    """The bug this file exists to prevent: a truncated table calling itself complete.
+
+    Enumerating mappings means asking for index 0, 1, 2… until the router
+    objects, so "the list ended" and "the request died" arrive through the
+    same channel. If a timeout at index 3 is read as the end, a port forward
+    at index 4 disappears — and the report still prints a confident summary.
+    """
+    print("router enumeration — the end of the table vs. a failure to read it")
+    check(aac.parse_upnp_error_code(UPNP_FAULT_END) == 713, "errorCode 713 parsed from a fault")
+    check(aac.parse_upnp_error_code(UPNP_FAULT_OTHER) == 501, "errorCode 501 parsed from a fault")
+    check(aac.parse_upnp_error_code("<not-xml") is None, "an unparseable fault yields None")
+    check(aac.parse_upnp_error_code("<a><b>x</b></a>") is None, "a fault with no code yields None")
+
+    check(713 in aac.END_OF_LIST_CODES, "713 SpecifiedArrayIndexInvalid ends the list")
+    check(714 in aac.END_OF_LIST_CODES, "714 NoSuchEntryInArray ends the list")
+    check(
+        501 not in aac.END_OF_LIST_CODES,
+        "501 ActionFailed does NOT end the list — it is a failure to read it",
+    )
+
+    # SoapResult keeps the three outcomes distinct at the type level, so a
+    # caller cannot accidentally collapse them with a truthiness check.
+    ended = aac.SoapResult(end_of_list=True)
+    failed = aac.SoapResult(failed=True)
+    check(ended.body is None and failed.body is None, "neither outcome carries a body")
+    check(
+        ended.end_of_list and not ended.failed and failed.failed and not failed.end_of_list,
+        "end-of-list and failure are separately represented, not two falsey bodies",
+    )
+
+
+def test_redirects_are_refused() -> None:
+    """The no-internet promise has to survive a hostile gateway.
+
+    _is_private_url() checks the URL we ask for, but urllib follows redirects
+    by itself — so a compromised gateway answering `302 Location: <public>`
+    would have the checker fetch the internet on its behalf. The opener is
+    built to refuse redirects outright; UPnP never needs them.
+    """
+    print("redirect refusal (the no-internet promise, part two)")
+    handlers = [type(h).__name__ for h in aac._OPENER.handlers]
+    check(
+        any(h == "_NoRedirects" for h in handlers),
+        f"the shared opener installs the no-redirect handler (got {handlers})",
+    )
+    check(
+        aac._NoRedirects().redirect_request(None, None, 302, "Found", {}, "http://8.8.8.8/") is None,
+        "a redirect returns None, which makes urllib raise instead of following",
+    )
+    check(
+        issubclass(aac._NoRedirects, __import__("urllib.request", fromlist=["x"]).HTTPRedirectHandler),
+        "it overrides the real redirect handler rather than sitting beside it",
+    )
 
 
 def test_private_url_guard() -> None:
@@ -272,9 +374,11 @@ def test_private_url_guard() -> None:
         aac._http_get("http://8.8.8.8/rootDesc.xml", 0.1) is None,
         "the fetcher itself refuses a public URL before any socket is opened",
     )
+    refused = aac._soap_call("http://8.8.8.8/ctl", "urn:x", "Act", "", 0.1)
     check(
-        aac._soap_call("http://8.8.8.8/ctl", "urn:x", "Act", "", 0.1) is None,
-        "the SOAP caller refuses a public URL before any socket is opened",
+        refused.body is None and refused.failed and not refused.end_of_list,
+        "the SOAP caller refuses a public URL, and reports it as a failure — "
+        "never as the end of the mapping table",
     )
 
 
@@ -346,14 +450,80 @@ def test_classify_warnings() -> None:
     quiet = aac.classify(wide, [], ["tailscale0"], local_addresses=US)
     check(
         quiet.verdict == aac.PASS,
-        "wildcard binds stop mattering once an overlay is the way in",
+        "behind NAT with an overlay up, a wildcard bind is not worth nagging about",
     )
 
-    skipped = aac.classify(SAFE_LISTENERS, [], ["tailscale0"], router_checked=False, local_addresses=US)
+
+def test_wildcard_bind_on_a_public_address() -> None:
+    """An overlay does not un-expose a wildcard socket.
+
+    The NAT-shaped assumption ("no port forward, so nothing is reachable")
+    breaks on IPv6, where a LAN host routinely holds a real global address
+    and there is no NAT in the path at all. Nothing needs to be forwarded for
+    port 8123 to be answering the internet, so the presence of Tailscale must
+    not suppress this.
+    """
+    print("verdict — a wildcard bind on a globally routable host")
+    wide = [aac.Listener("::", 8123), aac.Listener("0.0.0.0", 1883)]
+    public = {"192.168.1.50", "2606:4700:4700::1111"}
+
+    report = aac.classify(wide, [], ["tailscale0"], local_addresses=public)
+    check(report.verdict == aac.WARN, "a public address plus a wildcard bind is not a PASS")
+    titles = " ".join(f.title for f in report.findings)
+    check("public address" in titles, "the finding names the public address as the reason")
+    detail = " ".join(f.detail for f in report.findings)
+    check("2606:4700:4700::1111" in detail, "the offending global address is quoted back")
+    check("8123" in detail and "1883" in detail, "every wildcard-bound port is named")
     check(
-        any("skipped" in n for n in skipped.notes),
-        "--no-router is disclosed in the output rather than passing silently",
+        "firewall" in detail,
+        "the finding admits a firewall may still block it rather than overclaiming",
     )
+    check(
+        report.global_addresses == ["2606:4700:4700::1111"],
+        "only the global address is listed, not the RFC1918 one",
+    )
+
+    # Same listeners, no global address: the softer NAT-era wording, and
+    # silence once an overlay exists.
+    private_only = aac.classify(wide, [], ["tailscale0"], local_addresses=US)
+    check(private_only.verdict == aac.PASS, "behind NAT the same binds are unremarkable")
+
+
+def test_router_state_is_never_confused_with_a_clean_table() -> None:
+    """'We found nothing' and 'we could not look' must not render the same.
+
+    Every branch here could otherwise print PASS and exit 0 on a hub with a
+    hand-configured port forward sitting in a table nobody read.
+    """
+    print("verdict — an unread router table is never an all-clear")
+    for state, word in (
+        (aac.ROUTER_SKIPPED, "not checked"),
+        (aac.ROUTER_UNANSWERED, "never read"),
+        (aac.ROUTER_PARTIAL, "incomplete"),
+    ):
+        report = aac.classify(
+            SAFE_LISTENERS, [], ["tailscale0"], router_state=state, local_addresses=US
+        )
+        check(
+            report.verdict == aac.WARN,
+            f"router_state={state} cannot produce PASS even with an overlay up",
+        )
+        text = aac.render_text(report)
+        check(word in text, f"router_state={state} explains itself in the output ({word!r})")
+        check("UNKNOWN" in text or "not checked" in text, f"the summary line flags {state}")
+        check(
+            text.startswith("SecuraCV away-access check") and "INCONCLUSIVE" in text,
+            f"router_state={state} headlines as INCONCLUSIVE, not as a qualified all-clear",
+        )
+        check(
+            "no inbound exposure found" not in text,
+            f"router_state={state} never claims no exposure was found — it didn't look",
+        )
+
+    clean = aac.classify(
+        SAFE_LISTENERS, [], ["tailscale0"], router_state=aac.ROUTER_READ, local_addresses=US
+    )
+    check(clean.verdict == aac.PASS, "only a fully read table earns a PASS")
 
 
 # --------------------------------------------------------------------------
@@ -381,6 +551,8 @@ def test_rendering() -> None:
     check(payload["mappings"][0]["external_port"] == 8123, "JSON carries the mapping")
     check(payload["listeners"][0]["scope"] == "all", "JSON carries the listener scope")
     check(len(payload["findings"]) >= 1, "JSON carries the findings")
+    check(payload["router_state"] == "read", "JSON carries how much of the table was read")
+    check("global_addresses" in payload, "JSON carries any globally routable addresses")
 
     clean = aac.classify(SAFE_LISTENERS, [], ["tailscale0"], local_addresses=US)
     check("PASS" in aac.render_text(clean), "a clean hub renders as PASS")
@@ -401,11 +573,16 @@ def main() -> int:
     test_proc_parsing()
     test_upnp_parsing()
     test_overlay_interfaces()
+    test_globally_routable()
+    test_end_of_list_vs_failure()
+    test_redirects_are_refused()
     test_private_url_guard()
     test_classify_clean()
     test_classify_forward_to_us()
     test_classify_forward_elsewhere()
     test_classify_warnings()
+    test_wildcard_bind_on_a_public_address()
+    test_router_state_is_never_confused_with_a_clean_table()
     test_rendering()
     test_cli_argument_errors()
 

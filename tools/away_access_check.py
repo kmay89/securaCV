@@ -20,9 +20,14 @@ WHAT IT CHECKS (three things, in increasing order of how much they matter)
   1. LISTENERS — which SecuraCV/hub services are listening, and on what
      address. A service bound to 0.0.0.0 is reachable from your LAN, which
      is normal and fine on its own. Bound to 127.0.0.1 it is reachable from
-     nothing but this machine. This check is context for the next one, not
-     a verdict: a wildcard bind is only dangerous when something is also
-     forwarding traffic to it from outside.
+     nothing but this machine.
+
+     The exception that matters: if this host holds a globally routable
+     address — which is ordinary for IPv6, where there is no NAT to hide
+     behind — then a wildcard bind is reachable from the internet with no
+     port forward anywhere in the picture. That case is reported on its own
+     merits, because NAT-shaped intuition ("nothing is forwarded, so nothing
+     is exposed") is exactly what misses it.
 
   2. ROUTER PORT MAPPINGS — the actual hole. We ask the LAN gateway, over
      UPnP-IGD, for its port-mapping table. This is where the real damage
@@ -31,9 +36,20 @@ WHAT IT CHECKS (three things, in increasing order of how much they matter)
      or a well-meaning add-on can forward a port you never chose to forward.
      A mapping that lands on this host, or on any sensitive port, is a FAIL.
 
-  3. AN ENCRYPTED OVERLAY — whether Tailscale or WireGuard is actually up.
-     Without one you have no blessed way in from away, and the temptation
-     to open a hole is exactly what the guide is trying to head off.
+     Reading that table is a walk over indices that ends when the router says
+     the index is invalid, so "the end of the list" and "the request failed"
+     arrive by the same door. We insist on telling them apart: anything other
+     than the router's own end-of-list answer leaves the table PARTIAL and
+     the run cannot report a clean bill. A truncated table that called itself
+     complete is the one bug that would make this tool actively harmful.
+
+  3. AN ENCRYPTED OVERLAY — whether Tailscale or WireGuard is actually up,
+     which means up *and* addressed, not merely present in /sys/class/net.
+     A down or unconfigured `wg0` counted as a working overlay would suppress
+     the "you have no way in" warning and tell an owner remote access is
+     ready — a lie they'd discover from a hotel. Without an overlay you have
+     no blessed way in from away, and the temptation to open a hole is
+     exactly what the guide is trying to head off.
 
 WHAT IT WILL NOT DO — this tool makes NO connection to the internet, ever.
 It talks to two things: this machine, and the gateway on your own LAN. It
@@ -55,6 +71,10 @@ EXIT STATUS
   0  no inbound exposure found (warnings may still be printed)
   1  exposure found — something is reachable from the internet
   2  the check could not run (usage error)
+
+A clean exit means "nothing exposed was found", and it is only ever printed
+for checks that actually ran: a skipped, unanswered, or truncated router read
+each raise a warning of their own, so an unknown never renders as an all-clear.
 
 Stdlib only, no install step: this has to run on a hub that may be a stock
 HAOS box, so it must not need pip. Both `ss` and a /proc parser are
@@ -141,6 +161,33 @@ class PortMapping:
     enabled: bool = True
 
 
+# How much of the router's port-forward table we actually managed to read.
+# This is a four-state fact, not a boolean, because "we asked" and "we know"
+# are different things and conflating them is how a tool like this reports
+# PASS on an exposed hub.
+ROUTER_READ = "read"  # walked to the router's own end-of-list marker
+ROUTER_PARTIAL = "partial"  # enumeration broke off mid-table — table unknown
+ROUTER_UNANSWERED = "unanswered"  # no gateway answered; nothing was read
+ROUTER_SKIPPED = "skipped"  # --no-router; the operator declined the check
+ROUTER_CONCLUSIVE = frozenset({ROUTER_READ})
+
+
+@dataclass(frozen=True)
+class SoapResult:
+    """One SOAP call's outcome, keeping 'the end' apart from 'it broke'.
+
+    UPnP has no "count the mappings" call: you request index 0, 1, 2… until
+    the router says the index is invalid, and *that error is the end of the
+    list*. Which means every other error looks identical unless you insist on
+    telling them apart — and if you don't, one timed-out request truncates the
+    table and the mapping at the next index becomes invisible.
+    """
+
+    body: str | None = None
+    end_of_list: bool = False
+    failed: bool = False
+
+
 @dataclass
 class Finding:
     level: str
@@ -155,7 +202,8 @@ class Report:
     listeners: list[Listener] = field(default_factory=list)
     mappings: list[PortMapping] = field(default_factory=list)
     overlays: list[str] = field(default_factory=list)
-    router_checked: bool = True
+    router_state: str = ROUTER_READ
+    global_addresses: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
     @property
@@ -328,8 +376,51 @@ def parse_port_mapping(soap_xml: str) -> PortMapping | None:
 
 
 def parse_overlay_interfaces(names: Iterable[str]) -> list[str]:
-    """Keep only interface names that are encrypted overlays."""
+    """Keep only interface names that look like encrypted overlays.
+
+    Name-shape only — whether the interface is up and addressed is a separate
+    question, answered by read_overlay_interfaces().
+    """
     return sorted(n for n in names if n.startswith(OVERLAY_IFACE_PREFIXES))
+
+
+def parse_iface_flags(text: str) -> bool:
+    """IFF_UP (bit 0) from the hex value in /sys/class/net/<if>/flags."""
+    try:
+        return bool(int(text.strip(), 16) & 0x1)
+    except ValueError:
+        return False
+
+
+def parse_ip_addr_addresses(text: str) -> set[str]:
+    """Pull bare addresses out of `ip -o addr show` output.
+
+    Each line looks like:
+      2: eth0    inet 192.168.1.50/24 brd … scope global eth0
+      3: eth0    inet6 2001:db8::1/64 scope global
+    """
+    found: set[str] = set()
+    for line in text.splitlines():
+        parts = line.split()
+        for i, token in enumerate(parts):
+            if token in ("inet", "inet6") and i + 1 < len(parts):
+                found.add(parts[i + 1].split("/")[0])
+    return found
+
+
+def parse_upnp_error_code(xml: str) -> int | None:
+    """The UPnPError errorCode from a SOAP fault body, if there is one."""
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return None
+    for el in root.iter():
+        if el.tag.rpartition("}")[2] == "errorCode" and el.text:
+            try:
+                return int(el.text.strip())
+            except ValueError:
+                return None
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -342,17 +433,25 @@ def classify(
     mappings: list[PortMapping],
     overlays: list[str],
     *,
-    router_checked: bool = True,
+    router_state: str = ROUTER_READ,
     local_addresses: set[str] | None = None,
 ) -> Report:
-    """Turn raw observations into findings. This is the whole opinion of the tool."""
+    """Turn raw observations into findings. This is the whole opinion of the tool.
+
+    One rule governs the rest: **this function never reports PASS for something
+    it did not look at.** An unread router table, a truncated enumeration, or a
+    skipped check all produce a warning of their own, because "we found no
+    exposure" and "we could not tell" are answers an owner would act on very
+    differently, and only one of them is what silence means.
+    """
     report = Report(
         listeners=listeners,
         mappings=mappings,
         overlays=overlays,
-        router_checked=router_checked,
+        router_state=router_state,
     )
     local_addresses = local_addresses or set()
+    report.global_addresses = sorted(a for a in local_addresses if is_globally_routable(a))
 
     # (1) The hole itself. A mapping pointed at this host is a FAIL whatever
     #     port it lands on — we know something here is internet-reachable.
@@ -411,39 +510,112 @@ def classify(
             )
         )
 
-    # (4) Sensitive services on a wildcard bind. Fine by itself, and we say
-    #     so — the point is that it is the half of the exposure that is
-    #     already true, so a future port forward is instantly fatal.
-    wide = [
-        l
-        for l in listeners
-        if l.port in SENSITIVE_PORTS and l.scope == "all"
-    ]
-    if wide and not overlays:
-        listed = ", ".join(f"{l.port}" for l in sorted(wide, key=lambda x: x.port))
+    # (4) Sensitive services on a wildcard bind. What this means depends
+    #     entirely on whether this host has a globally routable address, and
+    #     an overlay has nothing to do with it either way — a wildcard socket
+    #     accepts traffic from every interface the host has, including a
+    #     public one. This is the exposure that needs no port forward at all,
+    #     which is exactly why NAT-shaped intuition misses it: an ISP that
+    #     hands out real IPv6 to LAN hosts gives you no NAT to hide behind.
+    wide = [l for l in listeners if l.port in SENSITIVE_PORTS and l.scope == "all"]
+    if wide:
+        listed = ", ".join(str(l.port) for l in sorted(wide, key=lambda x: x.port))
+        if report.global_addresses:
+            report.findings.append(
+                Finding(
+                    level=WARN,
+                    title="Sensitive services are on a wildcard bind, and this host has a public address",
+                    detail=(
+                        f"Port(s) {listed} are bound to every interface, and this host holds a "
+                        f"globally routable address ({', '.join(report.global_addresses)}). "
+                        "A wildcard socket answers on that address too, so these services may be "
+                        "reachable from the internet with no port forward involved — this is the "
+                        "usual shape of accidental IPv6 exposure. Whether traffic actually "
+                        "arrives depends on a firewall this tool cannot inspect, so treat it as "
+                        "unresolved rather than safe."
+                    ),
+                    fix=(
+                        "Confirm your firewall drops inbound connections on that address, or bind "
+                        "these services to the overlay/loopback address instead of 0.0.0.0."
+                    ),
+                )
+            )
+        elif not overlays:
+            report.findings.append(
+                Finding(
+                    level=WARN,
+                    title="Sensitive services are listening on every interface",
+                    detail=(
+                        f"Port(s) {listed} are bound to 0.0.0.0, so anything that can route to "
+                        "this host can reach them. On a LAN with no public address that is normal "
+                        "and expected; it becomes the whole problem the moment a port forward or "
+                        "a tunnel appears."
+                    ),
+                    fix=(
+                        "Nothing to do if you're on a trusted LAN. If you want belt and braces, "
+                        "bind them to the overlay address once Tailscale is up."
+                    ),
+                )
+            )
+
+    # (5) The check we could not complete. This must be a finding rather than
+    #     a footnote: notes do not move the verdict, so an unread table would
+    #     otherwise let an exposed hub print PASS and exit 0 — the single
+    #     worst thing this tool could do.
+    if router_state != ROUTER_READ:
+        unread = {
+            ROUTER_SKIPPED: (
+                "The router's port-forward table was not checked (--no-router). That is the "
+                "check that finds actual exposure, so this run cannot tell you whether any "
+                "exists."
+            ),
+            ROUTER_UNANSWERED: (
+                "No gateway answered the UPnP query, so the port-forward table was never read. "
+                "That is good news if UPnP is switched off — but a port forward configured by "
+                "hand lives in that same table, and this run did not see it."
+            ),
+            ROUTER_PARTIAL: (
+                "Reading the router's port-forward table broke off partway through, so the "
+                "mappings listed here are an incomplete prefix of the real table. A forward "
+                "after the point it stopped would not appear."
+            ),
+        }[router_state]
         report.findings.append(
             Finding(
                 level=WARN,
-                title="Sensitive services are listening on every interface",
-                detail=(
-                    f"Port(s) {listed} are bound to 0.0.0.0, so anything that can route to this "
-                    "host can reach them. On a LAN that is normal and expected; it becomes the "
-                    "whole problem the moment a port forward or a tunnel appears."
-                ),
+                title="The router's port-forward table is unknown",
+                detail=unread,
                 fix=(
-                    "Nothing to do if you're on a trusted LAN. If you want belt and braces, bind "
-                    "them to the overlay address once Tailscale is up."
+                    "Open your router's admin page and read the port-forwarding list yourself. "
+                    "It should be empty."
                 ),
             )
         )
 
-    if not router_checked:
-        report.notes.append(
-            "Router port-mapping check was skipped (--no-router), so an existing "
-            "port forward would not have been seen."
-        )
-
     return report
+
+
+def is_globally_routable(address: str) -> bool:
+    """True when an address is reachable from the internet at large.
+
+    Deliberately conservative in the safe direction: anything unparseable is
+    treated as not-global, so this can never manufacture a scary finding out
+    of a string we failed to understand — it can only fail to raise one.
+    """
+    try:
+        ip = ipaddress.ip_address(address.strip("[]"))
+    except ValueError:
+        return False
+    if ip.version == 4 and ip in TAILSCALE_CGNAT:
+        return False
+    return not (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -473,20 +645,89 @@ def read_listeners() -> list[Listener]:
 
 
 def read_overlay_interfaces() -> list[str]:
+    """Overlay interfaces that are actually usable, not merely present.
+
+    A `wg0` that exists but is administratively down, or up with no address,
+    is not a way home. Counting it as one is worse than counting nothing: it
+    suppresses the "you have no way in" warning and tells the owner remote
+    access is ready, which they find out is false at the worst moment.
+    """
     try:
-        return parse_overlay_interfaces(os.listdir("/sys/class/net"))
+        candidates = parse_overlay_interfaces(os.listdir("/sys/class/net"))
     except OSError:
         return []
 
+    usable: list[str] = []
+    for name in candidates:
+        if not _iface_is_up(name):
+            continue
+        if not _iface_has_address(name):
+            continue
+        usable.append(name)
+    return usable
+
+
+def _iface_is_up(name: str) -> bool:
+    """IFF_UP from /sys/class/net/<if>/flags.
+
+    operstate is the tempting field and the wrong one: WireGuard and
+    Tailscale interfaces report "unknown" even when perfectly healthy, so
+    an operstate check would reject every working overlay on the hub.
+    """
+    try:
+        with open(f"/sys/class/net/{name}/flags", encoding="utf-8") as fh:
+            return parse_iface_flags(fh.read())
+    except OSError:
+        return False
+
+
+def _iface_has_address(name: str) -> bool:
+    """Does this interface hold any IP address?
+
+    IPv6 is readable from /proc without tooling; IPv4 needs an ioctl, so we
+    ask `ip` and — if it isn't installed — fall back to accepting the
+    interface on its up-state alone rather than rejecting a healthy overlay
+    because the box is missing iproute2.
+    """
+    try:
+        with open("/proc/net/if_inet6", encoding="utf-8") as fh:
+            if any(line.split()[-1:] == [name] for line in fh if line.strip()):
+                return True
+    except OSError:
+        pass
+    try:
+        out = subprocess.run(
+            ["ip", "-o", "-4", "addr", "show", "dev", name],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if out.returncode == 0:
+            return bool(out.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        return True  # no iproute2 — don't punish a probably-fine interface
+    return False
+
 
 def read_local_addresses() -> set[str]:
-    """Every IP this host answers on — used to tell 'forwarded to us' apart."""
+    """Every IP this host answers on — used to tell 'forwarded to us' apart,
+    and to spot a globally routable address that makes a wildcard bind
+    reachable with no port forward at all."""
     addrs: set[str] = set()
     try:
         hostname = socket.gethostname()
         for info in socket.getaddrinfo(hostname, None):
             addrs.add(info[4][0])
     except OSError:
+        pass
+    try:
+        out = subprocess.run(
+            ["ip", "-o", "addr", "show"], capture_output=True, text=True, timeout=5, check=False
+        )
+        if out.returncode == 0:
+            addrs.update(parse_ip_addr_addresses(out.stdout))
+    except (OSError, subprocess.SubprocessError):
         pass
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -543,19 +784,47 @@ def _is_private_url(url: str) -> bool:
     return ip.is_private or ip.is_link_local or ip.is_loopback
 
 
+class _NoRedirects(urllib.request.HTTPRedirectHandler):
+    """Refuse to follow redirects at all.
+
+    _is_private_url() validates the URL we *ask* for, but urllib follows
+    redirects on its own — so a malicious or compromised gateway could answer
+    a LAN request with `302 Location: https://somewhere-public/` and urllib
+    would dutifully fetch it, breaking the promise this tool makes about
+    never contacting the internet. UPnP has no legitimate need for redirects,
+    so the safest handling is also the simplest: don't follow any. Returning
+    None here makes urllib raise the HTTPError instead, which our callers
+    already treat as a failure rather than as data.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102 - urllib hook
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirects)
+
+
 def _http_get(url: str, timeout: float) -> str | None:
     if not _is_private_url(url):
         return None
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310 - LAN-only, guarded above
+        with _OPENER.open(url, timeout=timeout) as resp:  # noqa: S310 - LAN-only, guarded above
             return resp.read().decode("utf-8", "replace")
     except (urllib.error.URLError, OSError, ValueError):
         return None
 
 
-def _soap_call(url: str, service_type: str, action: str, body: str, timeout: float) -> str | None:
+# Error codes a router returns for "that index does not exist", i.e. the
+# documented end of the mapping table. 713 SpecifiedArrayIndexInvalid and
+# 714 NoSuchEntryInArray are the specified ones; 402 InvalidArgs is what a
+# number of consumer routers send instead. Our arguments are fixed and
+# well-formed, so a 402 here can only mean the index ran off the end.
+END_OF_LIST_CODES = frozenset({402, 713, 714})
+
+
+def _soap_call(url: str, service_type: str, action: str, body: str, timeout: float) -> SoapResult:
     if not _is_private_url(url):
-        return None
+        return SoapResult(failed=True)
     envelope = (
         '<?xml version="1.0"?>'
         '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" '
@@ -572,48 +841,69 @@ def _soap_call(url: str, service_type: str, action: str, body: str, timeout: flo
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - LAN-only, guarded above
-            return resp.read().decode("utf-8", "replace")
-    except urllib.error.HTTPError:
-        return None  # the documented way the mapping list ends
+        with _OPENER.open(req, timeout=timeout) as resp:  # noqa: S310 - LAN-only, guarded above
+            return SoapResult(body=resp.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as exc:
+        # A SOAP fault. Only the router's own "no such index" is the end of
+        # the table; every other fault (including a refused redirect) is a
+        # failure we must not mistake for having reached the end.
+        try:
+            fault = exc.read().decode("utf-8", "replace")
+        except (OSError, ValueError):
+            return SoapResult(failed=True)
+        code = parse_upnp_error_code(fault)
+        if code in END_OF_LIST_CODES:
+            return SoapResult(end_of_list=True)
+        return SoapResult(failed=True)
     except (urllib.error.URLError, OSError, ValueError):
-        return None
+        return SoapResult(failed=True)
 
 
-def read_port_mappings(timeout: float = 3.0, max_entries: int = 128) -> tuple[list[PortMapping], bool]:
+def read_port_mappings(
+    timeout: float = 3.0, max_entries: int = 128
+) -> tuple[list[PortMapping], str]:
     """Ask the LAN gateway for its port-mapping table.
 
-    Returns (mappings, gateway_answered). Walking the table means calling
-    GetGenericPortMappingEntry with an increasing index until the router
-    returns an error — that error is the end-of-list signal, not a failure.
+    Returns (mappings, router_state). Walking the table means calling
+    GetGenericPortMappingEntry with an increasing index until the router says
+    the index is invalid — and *only* that answer ends the walk. A timeout,
+    an unexpected fault, or a body we can't parse leaves the table PARTIAL,
+    because a mapping sitting at the next index would otherwise vanish from a
+    report that still called itself complete.
     """
     location = discover_igd(timeout)
     if not location:
-        return [], False
+        return [], ROUTER_UNANSWERED
     description = _http_get(location, timeout)
     if not description:
-        return [], False
+        return [], ROUTER_UNANSWERED
     found = parse_igd_control_url(description, location)
     if not found:
-        return [], True
+        # The gateway is there but exposes no WAN connection service, so it
+        # has no mapping table to read — not the same as reading an empty one.
+        return [], ROUTER_PARTIAL
     control_url, service_type = found
 
     mappings: list[PortMapping] = []
     for index in range(max_entries):
-        xml = _soap_call(
+        result = _soap_call(
             control_url,
             service_type,
             "GetGenericPortMappingEntry",
             f"<NewPortMappingIndex>{index}</NewPortMappingIndex>",
             timeout,
         )
-        if not xml:
-            break
-        mapping = parse_port_mapping(xml)
+        if result.end_of_list:
+            return mappings, ROUTER_READ
+        if result.failed or result.body is None:
+            return mappings, ROUTER_PARTIAL
+        mapping = parse_port_mapping(result.body)
         if mapping is None:
-            break
+            return mappings, ROUTER_PARTIAL
         mappings.append(mapping)
-    return mappings, True
+    # Ran to the cap without the router ever saying "no such index" — a table
+    # this long is not something to quietly truncate and call complete.
+    return mappings, ROUTER_PARTIAL
 
 
 # ---------------------------------------------------------------------------
@@ -627,23 +917,44 @@ VERDICT_LINE = {
 }
 
 
+def headline(report: Report) -> str:
+    """The one line most people will read. It must not overstate the run.
+
+    "No inbound exposure found" is a claim about the whole hub, and it is only
+    honest when the router's table was actually read. When it wasn't, the same
+    warning-level verdict means something quite different — not "you're fine,
+    with notes" but "the main question went unanswered" — and the headline is
+    where that distinction has to land, because it's the part a hurried reader
+    takes away.
+    """
+    if report.verdict == WARN and report.router_state not in ROUTER_CONCLUSIVE:
+        return (
+            "INCONCLUSIVE — nothing exposed turned up in what could be checked, "
+            "but the router's port-forward table was not one of those things."
+        )
+    return VERDICT_LINE[report.verdict]
+
+
 def render_text(report: Report) -> str:
     out: list[str] = []
     out.append("SecuraCV away-access check")
     out.append("=" * 60)
     out.append("")
-    out.append(VERDICT_LINE[report.verdict])
+    out.append(headline(report))
     out.append("")
 
     if report.overlays:
         out.append(f"  Encrypted overlay : up ({', '.join(report.overlays)})")
     else:
         out.append("  Encrypted overlay : none found")
-    if report.router_checked:
-        enabled = [m for m in report.mappings if m.enabled]
-        out.append(f"  Router forwards   : {len(enabled)} active inbound mapping(s)")
-    else:
-        out.append("  Router forwards   : not checked (--no-router)")
+    enabled = [m for m in report.mappings if m.enabled]
+    router_line = {
+        ROUTER_READ: f"{len(enabled)} active inbound mapping(s)",
+        ROUTER_PARTIAL: f"UNKNOWN — read broke off after {len(enabled)} mapping(s)",
+        ROUTER_UNANSWERED: "UNKNOWN — no gateway answered",
+        ROUTER_SKIPPED: "not checked (--no-router)",
+    }[report.router_state]
+    out.append(f"  Router forwards   : {router_line}")
     watched = [l for l in report.listeners if l.port in SENSITIVE_PORTS]
     out.append(f"  Services watched  : {len(watched)} listening on sensitive ports")
     out.append("")
@@ -689,7 +1000,8 @@ def render_json(report: Report) -> str:
         {
             "verdict": report.verdict,
             "overlays": report.overlays,
-            "router_checked": report.router_checked,
+            "router_state": report.router_state,
+            "global_addresses": report.global_addresses,
             "findings": [
                 {"level": f.level, "title": f.title, "detail": f.detail, "fix": f.fix}
                 for f in report.findings
@@ -734,25 +1046,22 @@ def run_check(*, check_router: bool = True, timeout: float = 3.0) -> Report:
     local_addresses = read_local_addresses()
 
     mappings: list[PortMapping] = []
-    gateway_answered = False
+    router_state = ROUTER_SKIPPED
     if check_router:
-        mappings, gateway_answered = read_port_mappings(timeout)
+        mappings, router_state = read_port_mappings(timeout)
 
     report = classify(
         listeners,
         mappings,
         overlays,
-        router_checked=check_router,
+        router_state=router_state,
         local_addresses=local_addresses,
     )
 
-    if check_router and not gateway_answered:
-        report.notes.append(
-            "Your gateway did not answer the UPnP query. That is good news if UPnP is "
-            "switched off, but it also means we could not read the port-forward table — "
-            "check it by hand in your router's admin page."
-        )
-    elif check_router and gateway_answered:
+    # A gateway that answered at all is a gateway with UPnP switched on, and
+    # that is worth saying even when today's table is clean: it means any
+    # device here can open a hole tomorrow without telling anyone.
+    if router_state in (ROUTER_READ, ROUTER_PARTIAL):
         report.findings.append(
             Finding(
                 level=WARN,
@@ -760,7 +1069,7 @@ def run_check(*, check_router: bool = True, timeout: float = 3.0) -> Report:
                 detail=(
                     "Your gateway answered a UPnP query, which means any device on this "
                     "network can open an inbound port by itself, with no confirmation and no "
-                    "notification. Today's table is clean; that is not a property that stays "
+                    "notification. Whatever the table says today is not a property that stays "
                     "true on its own."
                 ),
                 fix="Turn UPnP off in your router's admin page. Nothing in SecuraCV needs it.",
