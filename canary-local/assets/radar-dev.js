@@ -176,6 +176,14 @@ function onLine(line) {
     if (state.transport && state.transport.kind === "usb") {
       state.wellbeing = Number.isFinite(cfg.values.vlock);
     }
+    // The drill list depends on the detected flavor: an engine built before
+    // this first [cfg] (or inherited across a reconnect) may carry the wrong
+    // drills — rebuild it so a wellbeing board gets its vitals drill and a
+    // presence board doesn't inherit one.
+    if (state.engine && state.engine.wellbeing !== state.wellbeing) {
+      state.engine = null;
+      if (ui.renderDrills) ui.renderDrills();
+    }
     ui.syncKnobs(cfg);
     ui.renderJourney();
   }
@@ -517,10 +525,23 @@ function buildBench(s) {
   // ── render hooks ──
   ui.logLine = logLine;
 
+  // Disarm every tuning control until the CURRENT cable's [cfg] sync — a
+  // knob left enabled from the previous board must not be able to write
+  // values onto the next one during the handshake.
+  ui.resetTuning = () => {
+    rebuildKnobs(); // inputs come back disabled while !state.synced
+    resetBtn.disabled = true;
+    streamSel.disabled = true;
+    streamSel.value = "1000";
+    rawChk.disabled = true;
+    rawChk.checked = false;
+  };
+
   ui.renderBenchHead = () => {
     const t = state.transport;
     discBtn.hidden = !t;
     scenePanel.box.hidden = !t || t.kind !== "twin";
+    if (!state.synced) ui.resetTuning();
     if (!t) {
       srcBadge.textContent = "no cable, no twin — start above";
       srcBadge.className = "flash-passport-chip";
@@ -598,7 +619,9 @@ function startAura(aura) {
 
   function draw(now) {
     const m = state.model;
-    const t = calm ? 0 : (now - t0) / 1000;
+    // The first rAF timestamp can precede the t0 captured above — a negative
+    // t makes sweepT % 1 negative and arc() throws on the negative radius.
+    const t = calm ? 0 : Math.max(0, now - t0) / 1000;
     const W = aura.width, H = aura.height;
     const cx = W / 2, cy = H - 14, R = H - 40;
     actx.clearRect(0, 0, W, H);
@@ -835,7 +858,7 @@ function buildCalibrate(s) {
       el("li", null, "The wizard flips on bench detail (raw cm — stays on this cable) and a fast stream."),
       el("li", null, "Stand at the edge of your CLOSE zone (arm's reach of the thing you care about). Hold still ~4 s."),
       el("li", null, "Walk to the far edge of the zone you want watched. Hold still ~4 s."),
-      el("li", null, "Review the numbers, apply — they land on the chip and survive reboots."),
+      el("li", null, "Review the numbers, apply — they hit the live FSMs at once and are written to the chip's settings (best-effort NVS); the [cfg] echo is the confirmation of what it now holds."),
     );
     wrap.append(steps);
 
