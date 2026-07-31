@@ -7,7 +7,7 @@
  },
  "pricing": {
   "source": "docs/hardware/pricing.json",
-  "as_of": "2026-07-30T11:20:30Z",
+  "as_of": "2026-07-31T01:36:07Z",
   "note": "Nightly distributor snapshot (scripts/bom_pricing.py); rows without a live match keep the CSV's indicative price."
  },
  "devices": {
@@ -500,7 +500,7 @@
     "full_usd": 101.98,
     "required_usd_live": 27.9,
     "full_usd_live": 116.28,
-    "pricing_as_of": "2026-07-30T11:20:30Z",
+    "pricing_as_of": "2026-07-31T01:36:07Z",
     "recipes": [
      {
       "label": "Required-only",
@@ -869,7 +869,7 @@
     "full_usd": 80.15,
     "required_usd_live": 29.49,
     "full_usd_live": 91.83,
-    "pricing_as_of": "2026-07-30T11:20:30Z",
+    "pricing_as_of": "2026-07-31T01:36:07Z",
     "recipes": [
      {
       "label": "Required-only",
@@ -1028,7 +1028,7 @@
     "full_usd": 40.0,
     "required_usd_live": 36.4,
     "full_usd_live": 41.75,
-    "pricing_as_of": "2026-07-30T11:20:30Z",
+    "pricing_as_of": "2026-07-31T01:36:07Z",
     "recipes": [
      {
       "label": "Required-only",
@@ -1079,10 +1079,10 @@
       "required": true,
       "category": "Display",
       "desc": "Seeed Round Display for XIAO (1.28in 240x240 GC9A01, CST816S touch, PCF8563 RTC, microSD, LiPo charger, JST 1.25)",
-      "mpn": "104040143",
+      "mpn": "104030087",
       "mfr": "Seeed Studio",
       "usd": 18.0,
-      "notes": "ORDERED 2026-07 (bench validation unit). Seeed list $18.00 (street $24-26). Firmware: canary-display-watch. Backlight on D6/GPIO43 is PWM-dimmable = bedside night floor. VERIFY pin map against board revision (docs/../boards/xiao-esp32s3-round)",
+      "notes": "ORDERED 2026-07 (bench validation unit). Seeed list $18.00 (street $24-26). 104030087 is the distributor-orderable SKU (DigiKey/Newark/TME; DigiKey hosts the datasheet under it) - 104040143 is a retail-channel alias for the same product that does not resolve at distributors. Firmware: canary-display-watch. Backlight on D6/GPIO43 is PWM-dimmable = bedside night floor. VERIFY pin map against board revision (docs/../boards/xiao-esp32s3-round)",
       "orderable": true
      },
      {
@@ -1156,7 +1156,7 @@
     "full_usd": 41.94,
     "required_usd_live": 34.99,
     "full_usd_live": 44.14,
-    "pricing_as_of": "2026-07-30T11:20:30Z"
+    "pricing_as_of": "2026-07-31T01:36:07Z"
    }
   },
   "canary-display-dash": {
@@ -1252,7 +1252,7 @@
     "full_usd": 45.5,
     "required_usd_live": 42.5,
     "full_usd_live": 45.5,
-    "pricing_as_of": "2026-07-30T11:20:30Z"
+    "pricing_as_of": "2026-07-31T01:36:07Z"
    }
   }
  }
