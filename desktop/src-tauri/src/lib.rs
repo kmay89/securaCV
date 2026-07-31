@@ -262,7 +262,12 @@ fn saved_wifi_password(ssid: String) -> Result<String, String> {
             .args(["-s", "-g", "802-11-wireless-security.psk", "connection", "show", &ssid])
             .output()
             .map_err(|e| format!("couldn't ask NetworkManager: {e}"))?;
-        let pw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        // Strip only the command's trailing newline — a PSK may legitimately
+        // begin or end with a space (hub-core's seed tests cover exactly
+        // that), and trimming it would provision a different credential.
+        let pw = String::from_utf8_lossy(&out.stdout)
+            .trim_end_matches(['\r', '\n'])
+            .to_string();
         if out.status.success() && !pw.is_empty() {
             Ok(pw)
         } else {
