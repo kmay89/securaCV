@@ -84,6 +84,25 @@ struct SenseState {
   uint8_t  heart_bpm  = 0;
 };
 
+// Decoded canary-pool water-chemistry state row (mqtt_mgr fills this from the
+// retained securacv/<id>/state payload of a pool node — see
+// docs/research/pool_water_monitor.md §6). Pure values, no wire types, so the
+// model stays dependency-free and host-testable. Each field carries its own
+// `have_*` flag: a pump-off / not-yet-published reading is honestly unknown
+// (—), never a real zero (pH 0 or 0 mV would read as an emergency, not
+// silence). Fixed-point mirrors the comfort-temp convention (tenths) so a
+// pH 7.4 or 28.5 °C never rounds to a lie on the glass.
+struct PoolState {
+  bool     have_ph = false;
+  int16_t  ph_x10 = 0;          // pH ×10 (7.4 -> 74)
+  bool     have_orp = false;
+  int16_t  orp_mv = 0;          // oxidation-reduction potential, millivolts
+  bool     have_water_temp = false;
+  int16_t  water_temp_c10 = 0;  // water temperature, tenths of °C (28.5° = 285)
+  bool     have_tds = false;
+  int16_t  tds_ppm = 0;         // total dissolved solids / salinity, ppm
+};
+
 struct Witness {
   bool     used = false;
   char     id[48] = {0};
@@ -118,6 +137,20 @@ struct Witness {
   bool     bpm_offered    = false;  // this build publishes BPM entities at all
   uint8_t  breath_bpm     = 0;      // P1 breaths/min (0 unless bpm_valid)
   uint8_t  heart_bpm      = 0;      // P1 beats/min  (0 unless bpm_valid)
+
+  // Pool water-chemistry surface (canary-pool state topic) — the glance
+  // vocabulary the glass renders as Canary Cards, exactly like the radar
+  // block above. Compact fixed-point; `have_*` keeps "not published / no flow"
+  // (—) distinct from a real zero. Set by on_pool_state; drives has_cards().
+  bool     pool_present   = false;  // has published at least one chemistry row
+  bool     have_ph        = false;
+  int16_t  ph_x10         = 0;      // pH ×10 (7.4 -> 74); have_ph gates it
+  bool     have_orp       = false;
+  int16_t  orp_mv         = 0;      // sanitizer proxy, millivolts
+  bool     have_water_temp = false;
+  int16_t  water_temp_c10 = 0;      // water temp, tenths of °C (28.5° = 285)
+  bool     have_tds       = false;
+  int16_t  tds_ppm        = 0;      // total dissolved solids / salinity, ppm
 
   // Liveness
   Link     link = Link::Unknown;
@@ -359,6 +392,39 @@ class FleetModel {
     w->bpm_valid  = s.bpm_valid;
     w->breath_bpm = s.bpm_valid ? s.breath_bpm : 0;
     w->heart_bpm  = s.bpm_valid ? s.heart_bpm : 0;
+  }
+
+  // Pool water-chemistry surface (canary-pool state topic): pH / ORP / water
+  // temp / TDS. Marks the witness pool-bearing (pool_present) so a detail page
+  // renders chemistry cards instead of the generic field list.
+  //
+  // The state row is the device's CURRENT full snapshot, so this is
+  // authoritative, NOT sticky: each field's have_* is overwritten every row.
+  // A reading is trustworthy only under confirmed flow — when flow stops the
+  // node republishes the sample as null (docs/research/pool_water_monitor.md
+  // §8), so PoolState arrives with have_* cleared, and we clear the witness's
+  // flag too. Rendering pH 0 / 0 mV, or a *stale* pre-pump-off pH presented as
+  // current, would both read as a lie; clearing to have_*==false renders "—"
+  // (honestly unknown). The stale value bytes are left in place but are gated
+  // by have_*, so they can never reach the glass.
+  void on_pool_state(const char* id, const PoolState& s, uint32_t now) {
+    Witness* w = upsert(id);
+    if (!w) return;
+    w->last_seen_ms = now;
+    const bool changed =
+        !w->pool_present ||
+        w->have_ph != s.have_ph || (s.have_ph && w->ph_x10 != s.ph_x10) ||
+        w->have_orp != s.have_orp || (s.have_orp && w->orp_mv != s.orp_mv) ||
+        w->have_water_temp != s.have_water_temp ||
+            (s.have_water_temp && w->water_temp_c10 != s.water_temp_c10) ||
+        w->have_tds != s.have_tds || (s.have_tds && w->tds_ppm != s.tds_ppm);
+    w->pool_present = true;
+    w->have_ph = s.have_ph;                 if (s.have_ph) w->ph_x10 = s.ph_x10;
+    w->have_orp = s.have_orp;               if (s.have_orp) w->orp_mv = s.orp_mv;
+    w->have_water_temp = s.have_water_temp; if (s.have_water_temp)
+                                              w->water_temp_c10 = s.water_temp_c10;
+    w->have_tds = s.have_tds;               if (s.have_tds) w->tds_ppm = s.tds_ppm;
+    if (changed) dirty_ = true;
   }
 
   // Chirp ingest (spec §6): an off-grid BLE advert — coarse and UNSIGNED,

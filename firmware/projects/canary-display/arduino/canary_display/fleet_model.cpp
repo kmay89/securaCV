@@ -30,7 +30,16 @@ Sev classify_event(const char* e) {
     return Sev::Alert;
   if (contains(e, "restricted") || contains(e, "after_hours") ||
       contains(e, "boundary") || contains(e, "removed") ||
-      contains(e, "knock") || contains(e, "doorbell"))
+      contains(e, "knock") || contains(e, "doorbell") ||
+      // canary-pool chemistry thresholds (docs/research/pool_water_monitor.md
+      // §6 2b): sanitizer/pH out of range and lost flow are "needs a look",
+      // not an alarm — a pool going out of balance is not life-safety. Without
+      // these a pool node's events would all fall through to Notice and never
+      // draw the eye. "no_flow"/"flow_lost" matter because the node marks
+      // readings absent under no flow, so a flow event is the real signal.
+      contains(e, "sanitizer") || contains(e, "orp") ||
+      contains(e, "chlorine") || contains(e, "ph_high") ||
+      contains(e, "ph_low") || contains(e, "ph_out") || contains(e, "flow"))
     return Sev::Warn;
   if (contains(e, "cleared") || contains(e, "boot")) return Sev::Ok;
   // presence_detected, occupancy_changed, motion, contact_state_change,

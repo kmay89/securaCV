@@ -24,11 +24,13 @@ MODEL_BIN     = test_fleet_beacon_model
 MODEL_SOURCES = test_fleet_beacon_model.cpp ../src/fleet/fleet_model.cpp
 
 # Canary Cards firmware builder (canary/fleet/fleet_cards.h): the type-aware
-# widget layer the glass renders for a canary-sense witness. Pinned to the
-# schema (docs/standard/CANARY_CARDS.md) and to parity with the JS reference
-# renderer (canary-local/assets/canary-cards.js). Pure logic, no LVGL.
+# widget layer the glass renders for canary-sense + canary-pool witnesses.
+# Pinned to the schema (docs/standard/CANARY_CARDS.md) and to parity with the
+# JS reference renderer (canary-local/assets/canary-cards.js). Pure logic, no
+# LVGL. Links fleet_model.cpp too so the pool section can drift-lock its
+# threshold events against the real classify_event().
 CARDS_BIN     = test_fleet_cards
-CARDS_SOURCES = test_fleet_cards.cpp ../src/fleet/fleet_cards.cpp
+CARDS_SOURCES = test_fleet_cards.cpp ../src/fleet/fleet_cards.cpp ../src/fleet/fleet_model.cpp
 
 # Mode registry (canary/mode/mode_registry.h): boot-gear resolution (NVS token
 # + legacy devmode migration), the capability gate, and the per-mode policy

@@ -46,6 +46,24 @@ static Witness mk_sense(uint8_t presence, uint8_t occ, uint8_t range,
   return w;
 }
 
+// A canary-pool witness with a chemistry state row (any field can be absent).
+static Witness mk_pool(bool have_ph, int16_t ph_x10, bool have_orp, int16_t orp,
+                       bool have_wt, int16_t wt_c10, bool have_tds,
+                       int16_t tds) {
+  Witness w;
+  w.used = true;
+  strcpy(w.id, "canary_pool_001");
+  strcpy(w.device_type, "canary-pool");
+  w.pool_present = true;
+  w.have_ph = have_ph; w.ph_x10 = ph_x10;
+  w.have_orp = have_orp; w.orp_mv = orp;
+  w.have_water_temp = have_wt; w.water_temp_c10 = wt_c10;
+  w.have_tds = have_tds; w.tds_ppm = tds;
+  w.badge = Badge::Verified;
+  w.chain_length = 7;
+  return w;
+}
+
 static const Card* find(const CardSet& s, const char* id) {
   for (int i = 0; i < s.count; i++)
     if (strcmp(s.cards[i].id, id) == 0) return &s.cards[i];
@@ -198,6 +216,137 @@ int main() {
     format_card_strip(ps, true, strip, sizeof(strip));
     CHECK(strstr(strip, "bpm") == nullptr, "presence-only strip carries no BPM");
     CHECK(strstr(strip, "not in build") == nullptr, "absent cards never reach the strip");
+  }
+
+  // ── canary-pool: has_cards by state row and by device_type ─────────────
+  {
+    Witness pool = mk_pool(true, 74, true, 712, true, 285, true, 3200);
+    CHECK(has_cards(pool), "canary-pool witness has a card set");
+    Witness by_type;
+    by_type.used = true; strcpy(by_type.device_type, "canary-pool");
+    CHECK(has_cards(by_type), "canary-pool device_type alone marks card-bearing");
+    // A pool witness must NOT be routed to the sense builder (dispatch order).
+    CardSet s;
+    build_cards(by_type, 1000, limits, s);
+    CHECK(find(s, "ph") != nullptr && find(s, "presence") == nullptr,
+          "pool witness builds pool cards, not sense cards");
+  }
+
+  // ── the pool card set: ids/kinds/privacy, in order ─────────────────────
+  {
+    Witness w = mk_pool(true, 74, true, 712, true, 285, true, 3200);
+    CardSet s;
+    build_cards(w, 1000, limits, s);
+    CHECK(s.count == 6, "pool build yields 6 cards");
+    struct Spec { const char* id; CardKind kind; CardPrivacy priv; };
+    const Spec want[] = {
+      {"ph",         CardKind::Stat,  CardPrivacy::P0},
+      {"orp",        CardKind::Stat,  CardPrivacy::P0},
+      {"water_temp", CardKind::Stat,  CardPrivacy::P0},
+      {"tds",        CardKind::Stat,  CardPrivacy::P0},
+      {"last_event", CardKind::Event, CardPrivacy::P0},
+      {"chain",      CardKind::Trust, CardPrivacy::P0},
+    };
+    bool order_ok = (s.count == 6);
+    for (int i = 0; i < s.count && i < 6; i++)
+      if (strcmp(s.cards[i].id, want[i].id) != 0 ||
+          s.cards[i].kind != want[i].kind ||
+          s.cards[i].privacy != want[i].priv)
+        order_ok = false;
+    CHECK(order_ok, "pool cards match the documented id/kind/privacy order");
+  }
+
+  // ── fixed-point formatting: pH + water temp render one decimal ─────────
+  {
+    Witness w = mk_pool(true, 74, true, 712, true, 285, true, 3200);
+    CardSet s;
+    build_cards(w, 1000, limits, s);
+    char v[32];
+    format_card_value(*find(s, "ph"), v, sizeof(v));
+    CHECK(strcmp(v, "7.4") == 0, "pH formats as 7.4 (one decimal, no unit)");
+    format_card_value(*find(s, "orp"), v, sizeof(v));
+    CHECK(strcmp(v, "712 mV") == 0, "ORP formats as integer + unit");
+    format_card_value(*find(s, "water_temp"), v, sizeof(v));
+    CHECK(strcmp(v, "28.5 C") == 0, "water temp formats as 28.5 C");
+    format_card_value(*find(s, "tds"), v, sizeof(v));
+    CHECK(strcmp(v, "3200 ppm") == 0, "TDS formats as integer ppm");
+  }
+
+  // ── null-vs-zero honesty: an unpublished field is —, not 0.0 ───────────
+  {
+    Witness w = mk_pool(false, 0, false, 0, false, 0, false, 0);
+    CardSet s;
+    build_cards(w, 1000, limits, s);
+    char v[32];
+    format_card_value(*find(s, "ph"), v, sizeof(v));
+    CHECK(strcmp(v, "—") == 0, "absent pH formats as — (not 0.0)");
+    format_card_value(*find(s, "orp"), v, sizeof(v));
+    CHECK(strcmp(v, "—") == 0, "absent ORP formats as — (not 0 mV)");
+    const Card* ph = find(s, "ph");
+    CHECK(ph && ph->sev == CardSev::None,
+          "absent pH carries no severity accent (nothing to warn about)");
+  }
+
+  // ── severity bands come from the research doc's targets ────────────────
+  {
+    // pH out of the 7.0–7.8 band warns; inside is quiet.
+    Witness lowph = mk_pool(true, 68, true, 712, false, 0, false, 0);
+    CardSet s; build_cards(lowph, 1000, limits, s);
+    CHECK(find(s, "ph")->sev == CardSev::Warn, "pH 6.8 warns (below 7.0)");
+    Witness okph = mk_pool(true, 74, true, 712, false, 0, false, 0);
+    build_cards(okph, 1000, limits, s);
+    CHECK(find(s, "ph")->sev == CardSev::None, "pH 7.4 is quiet (in band)");
+    // ORP below 650 mV = sanitizer low.
+    Witness loworp = mk_pool(true, 74, true, 600, false, 0, false, 0);
+    build_cards(loworp, 1000, limits, s);
+    CHECK(find(s, "orp")->sev == CardSev::Warn, "ORP 600 mV warns (sanitizer low)");
+    Witness okorp = mk_pool(true, 74, true, 700, false, 0, false, 0);
+    build_cards(okorp, 1000, limits, s);
+    CHECK(find(s, "orp")->sev == CardSev::None, "ORP 700 mV is quiet");
+    // TDS never self-warns (verdict depends on pool type).
+    Witness salt = mk_pool(true, 74, true, 712, false, 0, true, 5200);
+    build_cards(salt, 1000, limits, s);
+    CHECK(find(s, "tds")->sev == CardSev::None, "TDS carries no verdict severity");
+  }
+
+  // ── classify_event: pool threshold events warn, don't fall to Notice ───
+  {
+    CHECK(classify_event("sanitizer_low") == Sev::Warn, "sanitizer_low -> warn");
+    CHECK(classify_event("orp_low") == Sev::Warn, "orp_low -> warn");
+    CHECK(classify_event("chlorine_low") == Sev::Warn, "chlorine_low -> warn");
+    CHECK(classify_event("ph_high") == Sev::Warn, "ph_high -> warn");
+    CHECK(classify_event("ph_low") == Sev::Warn, "ph_low -> warn");
+    CHECK(classify_event("ph_out_of_range") == Sev::Warn, "ph_out_of_range -> warn");
+    CHECK(classify_event("no_flow") == Sev::Warn, "no_flow -> warn");
+    CHECK(classify_event("flow_lost") == Sev::Warn, "flow_lost -> warn");
+    // The ladder is still worst-first: a pool tamper isn't downgraded to warn.
+    CHECK(classify_event("pool_tamper") == Sev::Tamper, "pool_tamper stays tamper");
+    // A cleared / boot event is Ok, unchanged by the new branch.
+    CHECK(classify_event("chem_cleared") == Sev::Ok, "chem_cleared -> ok");
+  }
+
+  // ── on_pool_state overwrites: a later all-null row clears stale readings ──
+  // Flow-gating honesty (docs §8): when flow stops the node republishes the
+  // sample as null, so the Dash must drop the last good pH/ORP to unknown
+  // rather than keep presenting it as current.
+  {
+    FleetModel<8, 16> m;
+    PoolState valid;
+    valid.have_ph = true;  valid.ph_x10 = 74;
+    valid.have_orp = true; valid.orp_mv = 712;
+    m.on_pool_state("pool1", valid, 1000);
+    const Witness* w = m.at(0);
+    CHECK(w && w->pool_present && w->have_ph && w->ph_x10 == 74 && w->have_orp,
+          "a valid chemistry row stores pH/ORP");
+    PoolState cleared;  // all have_* false — the null "flow stopped" snapshot
+    m.on_pool_state("pool1", cleared, 2000);
+    w = m.at(0);
+    CHECK(w && !w->have_ph && !w->have_orp,
+          "a flow-stop row clears cached pH/ORP (no stale-good reading)");
+    CHECK(w && w->pool_present, "the device stays pool-bearing after the clear");
+    CardSet s; build_cards(*w, 3000, limits, s);
+    char v[32]; format_card_value(*find(s, "ph"), v, sizeof(v));
+    CHECK(strcmp(v, "—") == 0, "cleared pH renders — on the card, not a stale value");
   }
 
   if (g_failures == 0) printf("ALL FLEET CARDS TESTS PASSED\n");

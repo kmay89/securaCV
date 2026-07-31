@@ -255,6 +255,45 @@ static void dispatch_fleet(const char* device_id, const char* suffix,
     }
     fleet.on_sense_state(device_id, ss, now);
   }
+  // Pool water-chemistry surface (canary-pool): pH / ORP / water temp / TDS
+  // (docs/research/pool_water_monitor.md §6). A chemistry row is recognized
+  // either by the device_type (so an all-null "flow stopped" snapshot — where
+  // every value is JSON null, §8 — is still a pool row and clears the cards)
+  // or by any numeric chemistry key (so a pool node is recognized before its
+  // type is known). A non-pool variant carries neither, so it is never marked
+  // pool-bearing. Each value is taken only when it is a real number; a null or
+  // omitted key leaves have_* false, and on_pool_state OVERWRITES every flag,
+  // so a value that was valid and is now null renders "—", never stale-good.
+  {
+    const bool ph_num  = doc["ph"].is<float>() || doc["ph"].is<int>();
+    const bool orp_num = doc["orp"].is<float>() || doc["orp"].is<int>();
+    const bool wt_num  = doc["water_temp_c"].is<float>() ||
+                         doc["water_temp_c"].is<int>();
+    const bool tds_num = doc["tds"].is<float>() || doc["tds"].is<int>();
+    const bool pool_type = strcmp(dt, "canary-pool") == 0 ||
+                           strcmp(dt, "canary_pool") == 0;
+    if (pool_type || ph_num || orp_num || wt_num || tds_num) {
+      canary::fleet::PoolState ps;
+      if (ph_num) {
+        ps.have_ph = true;
+        ps.ph_x10 = (int16_t)(doc["ph"].as<float>() * 10.0f + 0.5f);
+      }
+      if (orp_num) {
+        ps.have_orp = true;
+        ps.orp_mv = (int16_t)doc["orp"].as<int>();
+      }
+      if (wt_num) {
+        ps.have_water_temp = true;
+        ps.water_temp_c10 =
+            (int16_t)(doc["water_temp_c"].as<float>() * 10.0f + 0.5f);
+      }
+      if (tds_num) {
+        ps.have_tds = true;
+        ps.tds_ppm = (int16_t)doc["tds"].as<int>();
+      }
+      fleet.on_pool_state(device_id, ps, now);
+    }
+  }
   // Room comfort, when the variant reports it (spellings differ; °C either
   // way). Tenths keep 21.5° honest on the glass.
   {
