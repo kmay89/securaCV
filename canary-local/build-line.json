@@ -97,7 +97,9 @@
               "desc": "60 GHz presence. Drag people through the cone; watch the real FSM decide.",
               "depths": [
                 { "label": "Basic — radar school", "lab": "sense.html" },
-                { "label": "Advanced — the deep lab", "lab": "senselab.html", "real": true, "wasNamed": "The Sense Lab", "status": "fold" }
+                { "label": "Advanced — the deep lab", "lab": "senselab.html", "real": true, "wasNamed": "The Sense Lab", "status": "fold" },
+                { "label": "Dev — the Proving Ground: test your flashed Sense, live or emulated", "lab": "radar-dev.html", "real": true,
+                  "desc": "Post-flash bench: Web Serial to the real radar or the emulated twin — same console dialect, drills, zone calibration, placement scoring." }
               ] }
           ]
         }

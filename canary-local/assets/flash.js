@@ -2292,6 +2292,12 @@ function phaseSenseBench(port, product) {
   row.append(back);
   const senseTwin = twinLink(product);
   if (senseTwin) row.append(senseTwin);
+  // The full post-flash journey — drills, zone calibration, placement
+  // scoring — lives on its own bench (works with this same cable, or the
+  // emulated twin when the board stays in its box).
+  const proving = el("a", "ghost small flash-twin", "🎯 the Proving Ground — drills, calibration, placement");
+  proving.href = "radar-dev.html";
+  row.append(proving);
   box.append(row);
 
   // ── the live model, fed by the console lines ──
@@ -2455,8 +2461,10 @@ function phaseSenseBench(port, product) {
   function draw(now) {
     if (!model.alive) return;
     // Under prefers-reduced-motion the informative state still renders and
-    // updates — only the decorative time-based motion freezes.
-    const t = calm ? 0 : (now - t0) / 1000;
+    // updates — only the decorative time-based motion freezes. The first rAF
+    // timestamp can precede t0 — clamp, or sweepT % 1 goes negative and
+    // arc() throws on the negative radius.
+    const t = calm ? 0 : Math.max(0, now - t0) / 1000;
     const W = aura.width, H = aura.height;
     const cx = W / 2, cy = H - 14, R = H - 40;
     actx.clearRect(0, 0, W, H);
