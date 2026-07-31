@@ -679,6 +679,10 @@ static void render(uint32_t now) {
   st.page = g_page;
   st.night = night_look;
   st.wifi_ok = canary::net::wifi_connected();
+  // Name the cause on the glass, not just the symptom.
+  st.wifi_reason =
+      st.wifi_ok ? nullptr
+                 : canary::net::join_failure_label(canary::net::wifi_last_failure());
   st.mqtt_ok = canary::net::mqtt_connected();
   st.acked = fleet.ack_active(now);
   st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
@@ -689,6 +693,10 @@ static void render(uint32_t now) {
   canary::ui::DashState st;
   st.night = night_look;
   st.wifi_ok = canary::net::wifi_connected();
+  // Name the cause on the glass, not just the symptom.
+  st.wifi_reason =
+      st.wifi_ok ? nullptr
+                 : canary::net::join_failure_label(canary::net::wifi_last_failure());
   st.mqtt_ok = canary::net::mqtt_connected();
   st.acked = fleet.ack_active(now);
   st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
@@ -699,6 +707,10 @@ static void render(uint32_t now) {
   canary::ui::PortraitState st;
   st.night = night_look;
   st.wifi_ok = canary::net::wifi_connected();
+  // Name the cause on the glass, not just the symptom.
+  st.wifi_reason =
+      st.wifi_ok ? nullptr
+                 : canary::net::join_failure_label(canary::net::wifi_last_failure());
   st.mqtt_ok = canary::net::mqtt_connected();
   st.acked = fleet.ack_active(now);
   st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
@@ -1139,6 +1151,26 @@ void loop() {
 
   // ── Network supervision ──
   canary::net::wifi_loop(now);
+
+#if defined(FEATURE_ONBOARDING) && FEATURE_ONBOARDING
+  // The gap the boot-time check above cannot cover. `provision_needed()` is
+  // true only for PLACEHOLDER credentials; credentials that are set but WRONG
+  // — a mistyped password, an SSID that was renamed, a network that turned out
+  // to be 5 GHz-only — sail straight past it into a join that can never
+  // succeed. Before, that meant a reboot loop; now the device stays up, which
+  // is better but still leaves a keyboard-less operator with no way to fix it.
+  //
+  // So once the shared policy says this failure is one a human could fix, and
+  // we have never been online since power-on, raise the same wizard. It is
+  // blocking and returns with credentials persisted, exactly as at boot.
+  // wifi_wants_setup() is false forever after a single successful association,
+  // so a device that has been running for months never does this.
+  if (canary::net::wifi_wants_setup()) {
+    canary::log_line("WIFI", "Can't join with the saved credentials — reopening setup.");
+    canary::net::provision_run(g_display_ok);
+    canary::net::wifi_init_or_reboot();  // adopt whatever the wizard joined
+  }
+#endif
   if ((int32_t)(now - g_last_diag_ms) >= 1000) {
     g_last_diag_ms = now;
     canary::diag::loop(now);
@@ -1180,13 +1212,14 @@ void loop() {
 #endif
 
 #if defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
-  // Broker-less fleet enumeration (WiFi analog of the BLE presence beacon):
-  // once every device is on the home WiFi, browse the fleet's mDNS adverts
-  // directly and show every nearby Canary even with NO broker/Home Assistant.
-  // Gated on the broker being DOWN — when it's up, MQTT is the richer source,
-  // so skip the mDNS enumeration to avoid churn. Self-rate-limits (~20 s) and
-  // only actually queries when due; the query blocks ~3 s inside ESPmDNS.
-  if (!broker) canary::net::discovery_scan_witnesses(now);
+  // Fleet enumeration straight off the LAN, hub or no hub (the WiFi analog of
+  // the BLE presence beacon). Runs ALWAYS, not just when the broker is down:
+  // MQTT reports only the Canaries configured to talk to that broker, so
+  // gating this on a dead broker meant a healthy hub could HIDE devices that
+  // were sitting on the network announcing themselves. The hub is an upgrade
+  // on top of the fleet, never the thing that defines it. `broker` only picks
+  // the cadence inside (60 s vs 20 s); the call self-rate-limits.
+  canary::net::discovery_scan_witnesses(now, broker);
 #endif
 
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO

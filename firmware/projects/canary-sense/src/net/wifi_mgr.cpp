@@ -7,6 +7,7 @@
 
 #include "canary/config.h"
 #include "canary/runtime_config.h"  // NVS-backed credentials (OTA-safe)
+#include "network/wifi_join_policy.h"  // fleet-wide join/retry rules (common/)
 
 namespace canary::net {
 
@@ -15,9 +16,13 @@ namespace {
 // STA supervision state (see wifi_loop). All timestamp math is wrap-safe
 // signed-delta, per the firmware idiom for millis() arithmetic.
 bool     s_online          = false;
+// Have we EVER associated on this power cycle? The outage watchdog may only
+// reboot a link that once worked — see common/network/wifi_join_policy.h.
+bool     s_ever_online     = false;
 uint32_t s_lost_since_ms   = 0;   // start of the current outage
 uint32_t s_last_attempt_ms = 0;   // last reconnect attempt
 uint32_t s_attempts        = 0;   // consecutive failed attempts this outage
+uint32_t s_jitter          = 0;   // re-sampled once per attempt (see wifi_loop)
 
 // Modem sleep + TX power cap, from canary/config.h. Same semantics as the
 // ESP32-S3 tree's network_set_wifi_power_save / network_set_tx_power.
@@ -44,10 +49,36 @@ void apply_power_policy() {
   }
 }
 
+uint32_t next_jitter() { return esp_random(); }
+
 void begin_sta() {
   const auto& cfg = canary::cfg::get();
   WiFi.disconnect();
   WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
+}
+
+
+// The one board-specific line: this radio's status -> the fleet's shared
+// vocabulary. Everything downstream (the words, the retry schedule, whether a
+// reboot could possibly help) lives in common/network/wifi_join_policy.h so
+// three boards cannot drift apart again.
+canary::net::JoinFailure classify(wl_status_t st) {
+  switch (st) {
+    case WL_NO_SSID_AVAIL:  return canary::net::JoinFailure::NotFound;
+    case WL_CONNECT_FAILED: return canary::net::JoinFailure::BadPassword;
+    case WL_IDLE_STATUS:    return canary::net::JoinFailure::NoAddress;
+    default:                return canary::net::JoinFailure::Unknown;
+  }
+}
+
+// Defaults come from the shared policy; the per-board config still wins where
+// it is set, so a board with a different outage tolerance keeps it.
+canary::net::WifiRetryPolicy retry_policy() {
+  canary::net::WifiRetryPolicy p;
+  p.base_ms          = WIFI_RETRY_BASE_MS;
+  p.max_ms           = WIFI_RETRY_MAX_MS;
+  p.outage_reboot_ms = WIFI_OUTAGE_REBOOT_MS;
+  return p;
 }
 
 }  // namespace
@@ -69,9 +100,17 @@ void wifi_init_or_reboot(void (*idle_poll)()) {
 
     if ((canary::ms_now() - start) > WIFI_BOOT_TIMEOUT_MS) {
       canary::dbg_serial().println();
-      log_line("WIFI", "Timeout. Rebooting...");
-      delay(200);
-      ESP.restart();
+      // Do NOT reboot. A reboot re-runs this exact join against the exact
+      // same network with the exact same credentials, so a wrong password, a
+      // renamed SSID, or a 5 GHz-only AP this radio cannot see becomes a
+      // silent ~30-second reboot cycle with no way out and nothing to look
+      // at. Boot is not the retry policy — wifi_loop owns retry with backoff,
+      // and the sensor has no reason to be denied a boot because the uplink
+      // is unhappy. (This is the same defect that stranded the 4-inch
+      // display; the rule now lives in common/, once.)
+      log_line("WIFI", canary::net::join_failure_detail(classify(WiFi.status())));
+      s_online = false;
+      return;
     }
   }
 
@@ -85,12 +124,14 @@ void wifi_init_or_reboot(void (*idle_poll)()) {
 
   apply_power_policy();
   s_online = true;
+  s_ever_online = true;
 }
 
 void wifi_loop(uint32_t now_ms) {
   if (WiFi.status() == WL_CONNECTED) {
     if (!s_online) {
       s_online = true;
+      s_ever_online = true;
       s_attempts = 0;
       log_header("WIFI");
       canary::dbg_serial().printf(
@@ -114,35 +155,44 @@ void wifi_loop(uint32_t now_ms) {
     return;
   }
 
-  // Sustained outage: reboot as a last resort — same recovery philosophy as
-  // the boot-time timeout above.
-  if ((int32_t)(now_ms - s_lost_since_ms) >= (int32_t)WIFI_OUTAGE_REBOOT_MS) {
-    log_line("WIFI", "Outage persisted. Rebooting...");
-    delay(200);
-    ESP.restart();
-  }
+  // One shared decision for the whole fleet — see
+  // common/network/wifi_join_policy.h, and the host test that proves a link
+  // which never associated is never rebooted.
+  canary::net::WifiRetry st;
+  st.online          = s_online;
+  st.ever_online     = s_ever_online;
+  st.lost_since_ms   = s_lost_since_ms;
+  st.last_attempt_ms = s_last_attempt_ms;
+  st.attempts        = s_attempts;
 
-  /* Exponential backoff: 2 s → 4 s → 8 s → 16 s → 30 s cap. `s_attempts`
-   * counts consecutive failures this outage; a reconnect resets it. Same
-   * schedule as the S3 tree's WIFI_PROV_FAILED branch. */
-  uint32_t attempt = s_attempts;
-  if (attempt > 5) attempt = 5;
-  uint32_t backoff_ms = WIFI_RETRY_BASE_MS << (attempt > 0 ? (attempt - 1) : 0);
-  if (backoff_ms > WIFI_RETRY_MAX_MS) backoff_ms = WIFI_RETRY_MAX_MS;
-  // Decorrelate a fleet's reconnects after a shared outage: add up to a
-  // fraction of the backoff as random jitter so N devices don't retry in
-  // lockstep (same esp_random() jitter the OTA manifest fetch already applies).
-  backoff_ms += esp_random() % (backoff_ms / 4 + 1);
+  switch (canary::net::wifi_next_action(retry_policy(), st, now_ms, s_jitter)) {
+    case canary::net::WifiAction::Reboot:
+      // Only reachable for a link that WAS associated and then dropped, where
+      // a reboot plausibly clears a wedged radio or a stale lease.
+      log_line("WIFI", "Outage persisted on a link that was working. Rebooting...");
+      delay(200);
+      ESP.restart();
+      break;
 
-  if ((int32_t)(now_ms - s_last_attempt_ms) >= (int32_t)backoff_ms) {
-    s_last_attempt_ms = now_ms;
-    s_attempts++;
-    log_header("WIFI");
-    canary::dbg_serial().printf("Reconnect attempt %lu ...\n",
-                                (unsigned long)s_attempts);
-    begin_sta();
+    case canary::net::WifiAction::Retry:
+      s_last_attempt_ms = now_ms;
+      s_attempts++;
+      // Re-sample jitter ONCE per attempt, not once per loop iteration. The
+      // old code re-rolled it on every pass, so the effective deadline was the
+      // minimum of hundreds of samples — which collapses toward zero jitter and
+      // quietly defeats the decorrelation it was added for.
+      s_jitter = next_jitter();
+      log_header("WIFI");
+      canary::dbg_serial().printf("Reconnect attempt %lu ...\n",
+                                  (unsigned long)s_attempts);
+      begin_sta();
+      break;
+
+    case canary::net::WifiAction::Wait:
+      break;
   }
 }
+
 
 bool wifi_connected() { return WiFi.status() == WL_CONNECTED; }
 

@@ -1364,3 +1364,133 @@ Two traps worth repeating:
 - **Distinguish kinds of skip.** The first version of that guard failed CI,
   because the optional real-image test legitimately skips when no multi-gigabyte
   HAOS image is on the runner. `SKIP(tooling)` fails; `SKIP(optional)` doesn't.
+
+### (u) 2026-07-31 — a workflow that pushes to your branch leaves CI gated
+
+`emulator-dist-refresh.yml` (and any workflow that commits back — the model
+regenerators do the same) pushes with `GITHUB_TOKEN`. The run it creates on the
+new head does not simply start: GitHub parks it at **`action_required`**,
+awaiting manual approval, because the push actor is a bot.
+
+The failure mode is quiet and specific. The PR head now has **zero completed
+checks**, so `get_check_runs` returns nothing and the PR reads as "CI hasn't
+started yet" rather than "CI is waiting for you". Wait long enough and it still
+says nothing. Meanwhile the *previous* head's green ticks are what a reviewer
+remembers, and those were for different bytes.
+
+What to do:
+
+- **Treat zero completed checks on a head as a red flag, never as "too early".**
+  Twice in this session a PR with no checks turned out to be a PR whose CI could
+  not run — once from squash-merge divergence (`mergeable_state: dirty`), once
+  from this approval gate.
+- **Push a commit from your own token to un-gate it.** A normal PR push runs the
+  full suite without approval. Approving the held run works too if you have the
+  permission and would rather not add a commit.
+- **Re-sync before committing.** That workflow pushed directly to the branch, so
+  a local tree from before it is behind; commit on top of a `git fetch` +
+  reset, not on top of your stale HEAD.
+
+### (v) 2026-07-31 — the guards this session's bugs earned
+
+Four things went wrong that CI could not have caught, and three of them now have
+a guard. Recording which, because "we fixed it" and "it cannot come back" are
+different claims.
+
+**Guarded now:**
+
+- **`scripts/lint_wifi_join_policy.py`** — no board may `ESP.restart()` on a
+  Wi-Fi link that has never associated. That reboot loop shipped on the 4-inch
+  display: boot join times out, board reboots, identical join fails again,
+  forever, so the setup wizard that could fix the password never appears. Three
+  firmwares had copy-pasted the retry logic and drifted apart, and a fourth copy
+  sat in the wasm emulator under a comment claiming it was "the same as glass"
+  when it no longer was. The lint checks every supervisor file, the generated
+  Arduino sketch, and the emulator.
+- **`release_notes.py` now rejects malformed headings.** `## 0.3.7 —
+  unreleased` did not fail the check; it was **invisible** to it, parsed as *no
+  section at all*. The bill arrives later, on release day, as "no section for
+  0.3.7". Anything starting `## <digit>` must now parse strictly or it is an
+  error immediately.
+- **`check_app_versions.py` covers `Cargo.lock`** (lesson (u)'s sibling): it
+  printed "in all three files ✓" over a stale lockfile — the exact bug it was
+  written to prevent, one file further along.
+
+**Not guarded, and honestly can't be by a lint:** the design note that said
+"MBR / FAT32" when the image is GPT / FAT16 (lesson (s)). No static check knows
+what a downloaded artefact contains. The mitigation is procedural — dump the
+artefact before designing against it — plus tests that pin the *measured*
+geometry so a future HAOS change fails on a runner instead of on a card.
+
+**The shape all of these share.** Every one was a step that did nothing while
+reporting success: a reboot that looked like recovery, a heading that looked
+like a section, a version check that looked complete, a skipped test that
+looked green. When adding a guard, the question is not "does it pass?" but
+**"if the thing it guards were broken right now, would it fail?"** Both new
+lints were verified by reintroducing the original bug and watching them go red.
+A guard nobody has seen fail is a guard nobody has tested.
+
+### (w) 2026-07-31 — CI timeouts are a cliff, not a slope
+
+`PlatformIO Build (canary-display)` ran 43–44 minutes against `timeout-minutes:
+45`. It passed every time, so nothing ever drew attention to it — and it was one
+slow runner away from a red X that reads like a broken build but is really a
+stopwatch. Raised to 90.
+
+The asymmetry was arithmetic, not toolchain: that job builds **17** environments
+(dash plus nine feature variants, dash7, watch, watch-modes, two nightstands,
+touch169, playground) while every other flavor builds 2–3 and finishes in under
+five minutes.
+
+Two things worth carrying:
+
+- **A job at >90% of its timeout is a latent red, not a pass.** If you notice
+  one, treat the margin as the finding.
+- **The real fix is sharding, not a bigger ceiling.** Splitting those 17 across
+  parallel jobs would cut wall-clock and say WHICH environment broke instead of
+  "display failed". It changes job names, which can break required-status checks
+  on main — so it belongs in its own reviewable change, not bundled into an
+  unrelated PR.
+
+### (x) 2026-07-31 — a lint is code, and it needs its own tests
+
+`scripts/lint_wifi_join_policy.py` decides whether an `ESP.restart()` is
+legitimately gated by walking C++ brace depth with regexes. It took **four**
+attempts to get right, and the first three were all wrong in ways that would
+have gone unnoticed, because the clean tree passed each time:
+
+1. **A proximity window missed its own bug class.** v1 accepted any restart
+   with `ever_online` within 20 lines above it — which includes the lines that
+   populate the `WifiRetry` struct. An ungated reboot placed just above the
+   shared switch sailed straight through. A false negative on the exact defect
+   the lint exists to prevent.
+2. **Checking only the innermost enclosing block rejected correct code.** v2
+   flagged `if (s_ever_online && …) { if (radio_ok()) { restart } }`, because
+   the inner `if` says nothing about being online. **False positives are the
+   worse failure**: they block correct work and train people to route around
+   the check.
+3. **`\bever_online\b` does not match `s_ever_online`.** `_` is a word
+   character, so there is no boundary before `ever`. The real tree hid this
+   because its reboot routes through `wifi_next_action`; only an adversarial
+   fixture surfaced it.
+4. **"Opener plus two lines above" re-admitted defect 1.** Allowing two lines
+   of context for a split condition pulled `st.ever_online = s_ever_online;`
+   back into scope. The fix is to reconstruct the header exactly — walk back
+   only while the parentheses are unbalanced.
+
+Defects 3 and 4 were both caught by `scripts/tests/test_lint_wifi_join_policy.py`,
+which is why it exists. The tests are the fixtures, not the tree: every real
+call site is one shape, and a heuristic needs the shapes that are *not* in the
+tree yet.
+
+The rules that fall out of this:
+
+- **Write the adversarial fixture, not just the happy one.** For every guard,
+  ask what the *broken* code looks like — and then also what *correct but
+  unusual* code looks like, because that is where false positives live.
+- **A guard nobody has watched fail is a guard nobody has tested.** Verify by
+  reintroducing the original bug. If it stays green, the guard is decoration.
+- **Prefer checking the property over the mechanism.** This lint asks "does
+  this file speak the shared vocabulary?" rather than "does it contain this
+  include line" — the latter would have forced a cosmetic edit to a file the
+  committed wasm `dist/` artifacts are built from, for no behavioural gain.

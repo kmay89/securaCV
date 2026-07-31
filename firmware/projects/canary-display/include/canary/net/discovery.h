@@ -42,16 +42,24 @@ void discovery_clear_broker();
 bool discovery_find_broker(char* host_out, size_t host_cap, uint16_t* port_out);
 
 // Enumerate the fleet DIRECTLY from mDNS: browse `_securacv._tcp`, and feed
-// every OTHER witness's advert into the fleet model (on_status/on_meta) so a
-// display shows every nearby Canary even with NO broker on the LAN — the WiFi
-// analog of the BLE presence beacon. Call only while the broker is down (when
-// a broker is up, MQTT is the richer source). Blocks a few seconds inside the
-// ESPmDNS query, so this self-rate-limits to at most ~once per 20 s: passing a
-// `now` earlier than the internal next-due timestamp returns immediately.
+// every OTHER Canary's advert into the fleet model (on_status/on_meta) so a
+// display shows every nearby device — the WiFi analog of the BLE presence
+// beacon.
+//
+// Call this EVERY pass, hub or no hub. It used to be gated on the broker being
+// down, which quietly made a hub a precondition for seeing devices rather than
+// an upgrade: MQTT only ever reports Canaries configured to talk to that
+// broker, so any Canary on the LAN that wasn't pointed at the hub stayed
+// invisible for as long as the hub was healthy.
+//
+// `broker_up` only sets the cadence (60 s when the broker is carrying the load,
+// 20 s when it isn't) — the ESPmDNS query blocks a few seconds, so it is kept
+// off a healthy display's critical path without being skipped. Self-rate-
+// limiting: passing a `now` earlier than the internal next-due returns at once.
 //
 // SECURITY: mDNS TXT is UNAUTHENTICATED LAN input (like the broker gossip), so
 // this only ever marks devices seen/named — never trusted. It never sets the
 // Verified badge.
-void discovery_scan_witnesses(uint32_t now);
+void discovery_scan_witnesses(uint32_t now, bool broker_up);
 
 }  // namespace canary::net

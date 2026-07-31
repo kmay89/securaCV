@@ -32,6 +32,10 @@
 // ── Scenario state (set from JS via emu_bindings.cpp) ───────────────────
 namespace {
 volatile int g_wifi_up = 1;
+// Has the emulated link ever been up? Gates the outage reboot, mirroring the
+// firmware's rule that a link which never associated must never be rebooted.
+// Starts at 1 because the emulator boots connected by default.
+volatile int g_wifi_ever_up = 1;
 volatile int g_rssi = -52;
 volatile int g_broker_up = 1;
 
@@ -75,15 +79,20 @@ void wifi_init_or_reboot() {
   const uint32_t t0 = millis();
   while (!g_wifi_up) {
     if ((int32_t)(millis() - t0) >= (int32_t)WIFI_BOOT_TIMEOUT_MS) {
-      // Same recovery of last resort as hardware: a witness that can't
-      // reach its network retries from a clean slate.
-      log_line("WiFi", "Boot connect timed out — rebooting (same as glass).");
+      // Same as glass — and the glass no longer reboots here. Rebooting on a
+      // join that has never succeeded re-runs the identical join forever, so
+      // the device never finishes booting and the setup wizard that could fix
+      // the credentials never appears. Boot completes; wifi_loop owns retry.
+      // (firmware/common/network/wifi_join_policy.h)
+      log_line("WiFi",
+               canary::net::join_failure_detail(canary::net::JoinFailure::Unknown));
       js_net_event("wifi-boot-timeout", "");
-      ESP.restart();
+      return;
     }
     delay(250);
   }
   log_line("WiFi", "Connected (emulated).");
+  g_wifi_ever_up = 1;
   js_net_event("wifi-up", "");
 }
 
@@ -91,14 +100,19 @@ void wifi_loop(uint32_t now_ms) {
   if (g_wifi_up) {
     if (g_wifi_down_since) js_net_event("wifi-up", "reconnected");
     g_wifi_down_since = 0;
+    g_wifi_ever_up = 1;
     return;
   }
   if (!g_wifi_down_since) {
     g_wifi_down_since = now_ms ? now_ms : 1;
     js_net_event("wifi-down", "");
   }
-  if ((int32_t)(now_ms - g_wifi_down_since) >= (int32_t)WIFI_OUTAGE_REBOOT_MS) {
-    log_line("WiFi", "Outage past deadline — rebooting (recovery of last resort).");
+  // Only a link that WAS up may be rebooted — the shared rule the firmware
+  // now follows. A link that never associated is a wrong configuration, not a
+  // wedged radio, and rebooting it is the same failed join on a timer.
+  if (g_wifi_ever_up &&
+      (int32_t)(now_ms - g_wifi_down_since) >= (int32_t)WIFI_OUTAGE_REBOOT_MS) {
+    log_line("WiFi", "Outage past deadline on a link that was working — rebooting.");
     js_net_event("wifi-outage-reboot", "");
     ESP.restart();
   }
@@ -106,6 +120,17 @@ void wifi_loop(uint32_t now_ms) {
 
 bool wifi_connected() { return g_wifi_up != 0; }
 int wifi_rssi() { return g_wifi_up ? g_rssi : 0; }
+
+// The emulator's uplink is a toggle on the page, not a radio, so there is no
+// authentic failure cause to report. Unknown is the honest answer: it renders
+// "Couldn't connect" on the glass rather than inventing a wrong password the
+// visitor never typed.
+JoinFailure wifi_last_failure() { return JoinFailure::Unknown; }
+
+// The setup fallback exists for credentials that are set but WRONG. The
+// emulator has no credentials to be wrong, and raising a SoftAP wizard in a
+// browser tab would be theatre, so this is honestly false.
+bool wifi_wants_setup() { return false; }
 
 // ── tz_auto contract ────────────────────────────────────────────────────
 // The page hands over the browser's own zone; "learning" it once Wi-Fi is
@@ -184,7 +209,9 @@ bool discovery_find_broker(char* host_out, size_t host_cap,
 // Broker-free mDNS fleet enumeration: on silicon this browses _securacv._tcp
 // and feeds witnesses straight into the fleet. The emulator has no LAN to
 // browse, so it's an honest no-op.
-void discovery_scan_witnesses(uint32_t) {}
+// The second arg is broker_up, which on silicon only picks the browse cadence
+// (the browse itself always runs — a hub must never hide devices from you).
+void discovery_scan_witnesses(uint32_t, bool) {}
 
 // ── chirp_scan contract ─────────────────────────────────────────────────
 // Off-grid BLE fallback: scenario wave 2 (documented in the architecture

@@ -50,6 +50,46 @@ HEADING = re.compile(
 )
 
 
+# Any line that LOOKS like a version heading. Deliberately loose: its job is to
+# find headings the strict HEADING pattern would silently ignore.
+LOOSE_HEADING = re.compile(r"^##\s+\S.*$", re.MULTILINE)
+# Headings that are legitimately not version sections (the file's own preamble).
+ALLOWED_PROSE_HEADINGS = re.compile(r"^##\s+(How|Format|Notes?|About|Template)\b")
+
+
+def malformed_headings(text: str) -> list[str]:
+    """`## ` lines that look like a version section but don't parse as one.
+
+    A heading the strict pattern misses is not a warning, it is INVISIBLE: the
+    section simply doesn't exist as far as this tool is concerned. That bit
+    during this file's own history — `## 0.3.7 — unreleased` was written, and
+    `check` passed, because it parsed as "no section at all" rather than as a
+    bad one. The release for 0.3.7 would then have failed with "no section for
+    0.3.7" at the worst possible moment, long after the mistake was made.
+
+    So: anything that starts with a version-looking token must parse strictly,
+    or it is an error here and now.
+    """
+    problems: list[str] = []
+    strict_spans = {m.start() for m in HEADING.finditer(text)}
+    for m in LOOSE_HEADING.finditer(text):
+        if m.start() in strict_spans:
+            continue
+        line = m.group(0).strip()
+        if ALLOWED_PROSE_HEADINGS.match(line):
+            continue
+        # Only complain about headings that are trying to be version sections.
+        if not re.match(r"^##\s+v?\d", line):
+            continue
+        problems.append(
+            f"{line!r} is not a valid release-notes heading, so it is INVISIBLE "
+            f"to this tool — not a bad section, no section. Use exactly "
+            f"`## <x.y.z> — <YYYY-MM-DD>` (em dash, real date). An unparsed "
+            f"heading passes `check` today and fails the release later."
+        )
+    return problems
+
+
 def parse_sections(text: str) -> list[tuple[str, str, str]]:
     """[(version, date, body)] in file order (newest first by contract)."""
     matches = list(HEADING.finditer(text))
@@ -68,12 +108,19 @@ def check_app(app: str, notes_rel: str, conf_rel: str) -> list[str]:
     except (OSError, json.JSONDecodeError, KeyError):
         return [f"{app}: cannot read a version out of {conf_rel}."]
     try:
-        sections = parse_sections(notes_path.read_text(encoding="utf-8"))
+        raw = notes_path.read_text(encoding="utf-8")
     except OSError:
         return [
             f"{app}: {notes_rel} is missing — every released version must say "
             "what it changes. Add a `## <version> — <YYYY-MM-DD>` section."
         ]
+    # Diagnose unparseable headings FIRST. Otherwise a typo'd heading surfaces
+    # downstream as the confusing "no section for <version>" — or, worse, as
+    # nothing at all until release day.
+    bad = [f"{app}: {notes_rel}: {m}" for m in malformed_headings(raw)]
+    if bad:
+        return bad
+    sections = parse_sections(raw)
     if not sections:
         return [
             f"{app}: {notes_rel} has no `## <version> — <YYYY-MM-DD>` sections; "

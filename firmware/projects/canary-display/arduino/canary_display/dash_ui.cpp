@@ -704,7 +704,10 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
   if (n == 0) {
     lv_label_set_text(s_headline,
                       st.mqtt_ok ? "Listening for canaries"
-                                 : (st.wifi_ok ? "Can't reach your hub" : "No WiFi"));
+                                 : (st.wifi_ok
+                                        ? "Can't reach your hub"
+                                        : (st.wifi_reason ? st.wifi_reason
+                                                          : "No WiFi")));
   } else if (worst <= Sev::Notice) {
     // The calm sentence speaks in the Character's voice; the trouble
     // branch below never does (sev_name is invariant by rule).

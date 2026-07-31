@@ -67,6 +67,7 @@ flatten_includes() {
   sed -i -E 's|#include "core/|#include "|g' "$f"
   sed -i -E 's|#include "provision_qr/|#include "|g' "$f"
   sed -i -E 's|#include "fleet_selfreport/|#include "|g' "$f"
+  sed -i -E 's|#include "network/|#include "|g' "$f"
   # <config.h> is the FLAVOR config (angle brackets skip this dir on purpose);
   # in the flat sketch it lives as flavor_config.h to avoid colliding with the
   # composition header canary/config.h (-> config.h).
@@ -124,6 +125,7 @@ generate_shared() {
     "${FIRMWARE_ROOT}/common/ota/src/ota_release_key.h"
     "${FIRMWARE_ROOT}/common/provision_qr/provision_qr.h"
     "${FIRMWARE_ROOT}/common/fleet_selfreport/fleet_selfreport.h"
+    "${FIRMWARE_ROOT}/common/network/wifi_join_policy.h"
   )
   for cf in "${common_files[@]}"; do
     cp "$cf" "${SKETCH_DIR}/$(basename "$cf")"

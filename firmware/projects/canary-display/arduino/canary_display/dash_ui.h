@@ -12,6 +12,12 @@ namespace canary::ui {
 struct DashState {
   bool night = false;     // dark theme (the backlight-off part is the HAL's job)
   bool wifi_ok = false;
+  // When the uplink is down, WHY — the shared label from
+  // common/network/wifi_join_policy.h ("Wrong password", "Network not found").
+  // A bare "No WiFi" tells an operator standing in front of the glass nothing
+  // they can act on; the cause is the entire diagnostic a screen this size can
+  // give. Null while the link is up.
+  const char* wifi_reason = nullptr;
   bool mqtt_ok = false;
   bool acked = false;
   bool time_valid = false;

@@ -325,7 +325,9 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
     lv_label_set_text(s_hero, "Listening");
     lv_label_set_text(s_hero_sub,
                       st.mqtt_ok ? "for canaries" :
-                      (st.wifi_ok ? "finding your hub" : "waiting for wifi"));
+                      (st.wifi_ok ? "finding your hub"
+                                  : (st.wifi_reason ? st.wifi_reason
+                                                    : "waiting for wifi")));
     lv_label_set_text(s_hero_badge, "");
   } else if (worst <= Sev::Notice) {
     // Standalone-first (nightstand wave): with a clock but no canaries yet,
