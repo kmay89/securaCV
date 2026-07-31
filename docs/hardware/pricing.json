@@ -1,10 +1,10 @@
 {
  "generated_by": "scripts/bom_pricing.py",
- "as_of": "2026-07-30T11:20:30Z",
- "note": "Nightly distributor snapshot; provenance marks which rows are distributor-verified vs csv-seed.",
+ "as_of": "2026-07-31T01:36:07Z",
+ "note": "Offline seed from the BOM CSVs — prices are the CSVs' indicative values until distributor credentials are configured.",
  "sources": {
   "csv": "docs/hardware/bom_*.csv (design intent + indicative seed prices)",
-  "digikey": true,
+  "digikey": false,
   "mouser": false
  },
  "parts": {
@@ -42,7 +42,7 @@
    "lifecycle": "Active",
    "sku": {
     "mouser": "713-102010469",
-    "digikey": "1597-102010469-ND"
+    "digikey": "102010469-ND"
    },
    "breaks": [
     {
@@ -55,7 +55,7 @@
     "bom_canary_wap.csv"
    ]
   },
-  "104040143": {
+  "104030087": {
    "mfr": "Seeed Studio",
    "desc": "Seeed Round Display for XIAO (1.28in 240x240 GC9A01, CST816S touch, PCF8563 RTC, microSD, LiPo charger, JST 1.25)",
    "sourcing": "orderable",
@@ -64,7 +64,9 @@
    "provenance": "csv-seed",
    "stock": null,
    "lifecycle": null,
-   "sku": {},
+   "sku": {
+    "digikey": "104030087"
+   },
    "breaks": [],
    "url": null,
    "boms": [
@@ -105,7 +107,7 @@
    "stock": 5969,
    "lifecycle": "Active",
    "sku": {
-    "digikey": "1597-113991114-ND"
+    "digikey": "113991114"
    },
    "breaks": [
     {
@@ -145,7 +147,7 @@
    "lifecycle": "Active",
    "sku": {
     "mouser": "546-1554F2GYCL",
-    "digikey": "HM1796-ND"
+    "digikey": "HM1276-ND"
    },
    "breaks": [
     {
@@ -251,7 +253,7 @@
    "lifecycle": "Active",
    "sku": {
     "mouser": "512-2N7002LT1G",
-    "digikey": "4878-2N7002CT-ND",
+    "digikey": "2N7002LT1GOSCT-ND",
     "lcsc": "C8545"
    },
    "breaks": [
@@ -559,7 +561,7 @@
    "lifecycle": "Active",
    "sku": {
     "mouser": "490-CPT-9019S-SMT-TR",
-    "digikey": "102-3761-1-ND"
+    "digikey": "102-CPT-9019S-SMT-TRCT-ND"
    },
    "breaks": [
     {
@@ -677,7 +679,7 @@
    "lifecycle": "Obsolete",
    "sku": {
     "mouser": "356-ESP32C3DEVKITM1",
-    "digikey": "1965-ESP32-C3-DEVKITM-1-ND"
+    "digikey": "1965-ESP32-C3-DEVKITM-1ND"
    },
    "breaks": [
     {
