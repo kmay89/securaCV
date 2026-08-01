@@ -92,7 +92,7 @@
   {
    "id": "c6_display",
    "scad": "canary_c6_display.scad",
-   "title": "Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.3-dev)",
    "family": "canary-display-watch",
    "device_compat": [
     "canary-display-watch"
@@ -109,13 +109,22 @@
      "default": "1.47",
      "audience": "user",
      "note": "board preset"
+    },
+    {
+     "param": "headers",
+     "values": [
+      "none",
+      "male"
+     ],
+     "default": "none",
+     "audience": "user"
     }
    ],
    "variants": [
     {
      "id": "c6-display-pocket-case",
      "name": "C6 display pocket case",
-     "for": "Waveshare ESP32-C6-LCD-1.47 (portrait), flat-bottom board (no down-facing male headers): face-down bezel over the active-area window, edge-captured board (no screws into the board), snap-in vented back, USB-C + BOOT/RST access, blind keyhole. `model=\"1.47\"` is drawn from the Waveshare mechanical drawing; a `\"1.69\"` preset is parameterised. Heat-escape slots on the sides + a back grille",
+     "for": "Waveshare ESP32-C6-LCD-1.47 (portrait), both board builds: `headers=\"none\"` (stripped: no headers, corner pillars removed) or `headers=\"male\"` (as shipped: down-facing pin headers + brass M2 corner pillars — deeper cavity, press bosses land on the pillar tops). Face-down bezel over the active-area window, edge-captured board (no screws into the board), snap-in vented back, blind keyhole. The overhanging BOOT/RST buttons and the USB-C shell (both BACK-mounted — photo-verified) get full-depth insertion channels behind \"ear\"/\"chin\" wall bulges, and the USB-C port is a true stadium (full-round ends) sized shell + tolerance. `model=\"1.47\"` is drawn from the Waveshare mechanical drawing; a `\"1.69\"` preset is parameterised. Heat-escape slots on the sides + a back grille",
      "status": "in-development",
      "device": "canary-display-watch",
      "selects": {},
@@ -153,7 +162,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 26,
+   "engineering_param_count": 57,
    "alternatives": [
     "s3_touch169",
     "watch_station"
@@ -164,7 +173,7 @@
     "released": 0,
     "options": 3,
     "user_options": 3,
-    "variant_axes": 1
+    "variant_axes": 2
    }
   },
   {
