@@ -958,6 +958,14 @@
      "default": true
     },
     {
+     "id": "sd_tether",
+     "type": "bool",
+     "label": "sd_tether",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "opt_stand",
      "type": "bool",
      "label": "opt_stand",
@@ -974,7 +982,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 161,
+   "engineering_param_count": 164,
    "alternatives": [
     "dash_display"
    ],
@@ -982,8 +990,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 12,
-    "user_options": 12,
+    "options": 13,
+    "user_options": 13,
     "variant_axes": 0
    }
   },
