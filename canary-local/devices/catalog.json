@@ -920,30 +920,6 @@
      "default": true
     },
     {
-     "id": "ledge_ribs",
-     "type": "bool",
-     "label": "dashed 0.5 mm sacrificial walls standing under the wide",
-     "consequence": "",
-     "audience": "user",
-     "default": true
-    },
-    {
-     "id": "svc_windows",
-     "type": "bool",
-     "label": "+x wall: service side",
-     "consequence": "",
-     "audience": "user",
-     "default": true
-    },
-    {
-     "id": "field_windows",
-     "type": "bool",
-     "label": "-x wall: field-wiring side",
-     "consequence": "",
-     "audience": "user",
-     "default": true
-    },
-    {
      "id": "opt_stand",
      "type": "bool",
      "label": "opt_stand",
@@ -952,7 +928,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 93,
+   "engineering_param_count": 97,
    "alternatives": [
     "dash_display"
    ],
@@ -960,8 +936,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 11,
-    "user_options": 11,
+    "options": 8,
+    "user_options": 8,
     "variant_axes": 0
    }
   },

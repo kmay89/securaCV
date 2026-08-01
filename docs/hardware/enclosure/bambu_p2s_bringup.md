@@ -285,23 +285,23 @@ native mounting — with debossed labels (back view: **BOOT left, RESET
 right**), gill vents on the side walls, intake/exhaust slot rows, a back
 grille, two **keyhole wall mounts** near the top corners (hang the case over
 two pan-head screws and slide it down; the catches point up at the button
-edge), and **paired bevelled service windows in each short wall**, placed
-from the Rev1.2 board photos: microSD + UART1 and the two USB-C ports on the
-right (back view), the CAN/I²C/sensor cluster and battery/RS-485 terminals
-on the left. The SD socket sits ~14 mm inboard, so the card window is sized
-for a fingertip to reach in and work the push-push socket — an "SD" deboss
-marks it. Window positions are photo-derived: **measure your board** before
-printing. The shell carries the catalog's modelled foot chamfer (slicer
-elephant-foot compensation stays 0) and a matching back-rim chamfer.
+edge), and a **microSD opening through the back plate** covering the socket,
+the card's downward slide travel and room for a fingertip — so the card goes
+in and out without ever being dropped inside the case. An "SD" deboss marks
+it; its position is photo-derived, so **measure your board** before printing.
+The side walls carry vents only — note that leaves the USB-C ports without
+external access. The shell carries chamfers at both the plate edge and the
+opposite rim.
 
 The glass lands on an **adhesive ledge** matched to the panel's own adhesive
 strips (10 mm down each side, 6 mm along the button edge, 2 mm over the FPC
 at the bottom): peel the liners, drop the panel in, press — the screws
-become backup rather than the only thing setting the glass depth. **Before
-the panel goes in, snap out the dashed ribs** standing in the glass pocket:
-they exist only to hold the wide ledge up during printing (a 10 mm shelf
-cannot print over air), and they break out cleanly from the front opening.
-The frame is branded on the back plate and on the visible bottom edge.
+become backup rather than the only thing setting the glass depth. Every
+ledge carries a solid 45° wedge down to its wall, which is why **the frame
+prints back-plate-down** (the exported STL is already in that orientation):
+that way up, the ledges are fully self-supporting — no slicer supports, no
+sacrificial geometry. The frame is branded on the back plate and on the
+visible bottom edge.
 
 ```sh
 openscad --export-format binstl -o lcd7_frame_gauge.stl -D 'part="frame_gauge"' canary_s3_lcd7.scad
@@ -313,7 +313,8 @@ boss and a wall keyhole; assembled on the panel's corner with one screw it
 proves the glass corner radius (`glass_r`), the mount-offset **signs**
 (`m3_ox`/`m3_oy` — the screw only threads home if they're right), and
 `standoff_len` (the glass sits flush with the rim only if that's right). The
-frame prints **face-down**, no supports, no brim unless a corner lifts.
+frame and gauge print **back-plate-down, as exported** — no supports, no
+brim unless a corner lifts.
 
 ### 7c · Print the case
 
