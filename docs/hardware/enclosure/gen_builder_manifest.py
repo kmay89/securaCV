@@ -321,7 +321,8 @@ CURATED = [
                    "the fleet's cases, as labelled test stations — print "
                    "this first, tune the three tolerances, reuse everywhere.",
         "about": "Every fit the fleet's cases use, gathered on one branded "
-                 "test plate: snap clips, keyholes, magnet and light-pipe "
+                 "test plate: the WAP's two-sided snap-clip channel, "
+                 "click-retained keyholes, magnet and light-pipe "
                  "pockets, insert bores, the lid lip, the USB-C port "
                  "opening, a −/0/+ screw-pilot ladder, and the embossed/"
                  "debossed wordmarks every case's branding uses. A tight or "
@@ -329,7 +330,8 @@ CURATED = [
                  "for every case after.",
         "print_plan": "Print the Base in PETG first — it's small next to "
                       "any case. The Mate "
-                      "tests the keyholes and slide rib against it; the "
+                      "tests the keyholes (slide to the click) and its "
+                      "edge tongue tests the lid-lip channel; the "
                       "Strip is the TPU gasket-squeeze test. Adjust the "
                       "three tolerances and reprint until stations fit.",
         "simple": ["part", "tol_slide", "tol_press", "tol_hole"],
@@ -338,7 +340,7 @@ CURATED = [
         "part_labels": {
             "all": "Base + mate + strip",
             "base": "Base plate (rigid)",
-            "mate": "Mate — studs + slide rib",
+            "mate": "Mate — studs + slide tongue",
             "strip": "Gasket bar — print in TPU",
         },
         "part_info": {
@@ -347,8 +349,10 @@ CURATED = [
             "base": "The station plate: clip, pocket, bore, port and "
                     "wordmark tests, each labelled with the parameter it "
                     "exercises.",
-            "mate": "T-studs and a slide rib that mate into the base's "
-                    "keyhole and groove stations.",
+            "mate": "T-studs that hang in the base's keyholes and click "
+                    "past the retention detent, plus a bottom-edge tongue "
+                    "for the slide channel — the stud face stays flat so "
+                    "the hang test seats fully.",
             "strip": "A soft TPU bar for the gasket groove — tests the "
                      "squeeze that seals the weather builds.",
         },

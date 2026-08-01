@@ -570,7 +570,7 @@
   {
    "id": "universal-fit-coupon",
    "name": "Universal fit coupon",
-   "for": "ONE small print that calibrates every fit in the catalog: clip, keyhole+stud, slide, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labelled with the parameter it tunes",
+   "for": "ONE small print that calibrates every fit in the catalog: the WAP's two-sided clip channel, keyhole+stud with a click detent (slide the mate on, it clicks and stays — the doorbell-plate retention test), slide tongue, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labelled with the parameter it tunes",
    "status": "in-development",
    "note": "**print this before any case**",
    "device": null,
@@ -7911,7 +7911,7 @@
    ]
   },
   "canary_fit_coupon.scad": {
-   "title": "Canary — UNIVERSAL FIT-CHECK COUPON  ⚠️ IN DEVELOPMENT (v0.2-dev)",
+   "title": "Canary — UNIVERSAL FIT-CHECK COUPON  ⚠️ IN DEVELOPMENT (v0.3-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -7954,6 +7954,16 @@
       {
        "name": "stud_gap",
        "default": "30.0"
+      },
+      {
+       "name": "kh_click",
+       "default": "0.25",
+       "comment": "detent bump proud of the head-channel ceiling (0 = no click)"
+      },
+      {
+       "name": "clip_bw",
+       "default": "17.5",
+       "comment": "the WAP's board width — the CLIP station is its coupon verbatim"
       },
       {
        "name": "screw_step",
