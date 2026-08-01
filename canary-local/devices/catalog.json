@@ -912,9 +912,9 @@
      "default": true
     },
     {
-     "id": "cable_slots",
+     "id": "mount_keyholes",
      "type": "bool",
-     "label": "two rounded pass-throughs in the back plate (cable exit /",
+     "label": "wall-mount keyholes through the back plate, up near",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -928,7 +928,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 81,
+   "engineering_param_count": 84,
    "alternatives": [
     "dash_display"
    ],

@@ -6333,8 +6333,8 @@
       },
       {
        "name": "aa_dy",
-       "default": "1.02",
-       "comment": "AA centre offset from glass centre. Waveshare-native the"
+       "default": "-1.02",
+       "comment": "AA centre offset from glass centre — native mounting:"
       }
      ]
     },
@@ -6384,13 +6384,13 @@
       },
       {
        "name": "m3_ox",
-       "default": "1.5",
+       "default": "-1.5",
        "comment": "pattern centre offset from the GLASS centre, stated in"
       },
       {
        "name": "m3_oy",
-       "default": "0.9",
-       "comment": "FRONT view with the panel mounted buttons-down:"
+       "default": "-0.9",
+       "comment": "FRONT view, panel mounted NATIVE (buttons at the top):"
       },
       {
        "name": "m3_pilot",
@@ -6563,7 +6563,7 @@
       {
        "name": "btn_w",
        "default": "25.0",
-       "comment": "BOOT/RESET access window through the BOTTOM wall (measured)"
+       "comment": "BOOT/RESET access window through the TOP wall (measured)"
       },
       {
        "name": "btn_h",
@@ -6573,7 +6573,7 @@
       {
        "name": "btn_dx",
        "default": "0.0",
-       "comment": "window centre offset along the bottom wall"
+       "comment": "window centre offset along the top wall"
       },
       {
        "name": "btn_lbl_dx",
@@ -6581,34 +6581,49 @@
        "comment": "BOOT/RESET label centres, ± of the window centre"
       },
       {
-       "name": "cable_slots",
+       "name": "mount_keyholes",
        "default": "true",
-       "comment": "two rounded pass-throughs in the back plate (cable exit /"
+       "comment": "wall-mount keyholes through the back plate, up near"
       },
       {
-       "name": "cable_dx",
+       "name": "khm_dx",
        "default": "78.5",
-       "comment": "hanging) at the board's connector edges — positions"
+       "comment": "the top corners. Head hole LOW, slide runs UP so the"
       },
       {
-       "name": "cable_dy",
-       "default": "25.2",
-       "comment": "measured from the reference case"
+       "name": "khm_y",
+       "default": "34.0",
+       "comment": "catch points at the button edge: hang the case over"
+      },
+      {
+       "name": "khm_head_d",
+       "default": "9.5",
+       "comment": "two screws and slide it DOWN to seat. The head hole"
+      },
+      {
+       "name": "khm_slide_w",
+       "default": "4.5",
+       "comment": "passes a #8 / M4 pan head; the slide, its shank."
+      },
+      {
+       "name": "khm_len",
+       "default": "13.0",
+       "comment": "head-hole centre → catch centre"
       },
       {
        "name": "gill_n",
        "default": "6",
-       "comment": "raked \"gill\" vents per side (±x) wall, upper half"
+       "comment": "straight \"gill\" vents per side (±x) wall, upper half"
       },
       {
-       "name": "frame_vent_top_n",
+       "name": "frame_vent_row_n",
        "default": "10",
-       "comment": "exhaust slots through the top wall"
+       "comment": "intake slots in a row along the bottom wall"
       },
       {
-       "name": "frame_vent_bot_n",
+       "name": "frame_vent_flank_n",
        "default": "4",
-       "comment": "intake slots per side, flanking the button window"
+       "comment": "exhaust slots per side, flanking the button window"
       },
       {
        "name": "label_depth",

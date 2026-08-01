@@ -27,11 +27,12 @@
 //            the board hangs on the panel's OWN white M3 standoffs, and
 //            4x M3x8-10 from the back thread into those standoffs — the
 //            screws, not a ledge, pull the glass flush with the front face.
-//            Buttons-down BOOT/RESET window in the bottom wall with debossed
-//            labels, raked side gills, chimney intake/exhaust, back grille.
-//    frame_gauge — one corner of the frame including one boss and a cable
-//            slot. Print FIRST (~10 % of the frame's filament): it proves the
-//            glass corner radius, the boss offset signs and the screw reach.
+//            BOOT/RESET window in the top wall with debossed labels, side
+//            gill vents, chimney intake/exhaust, back grille, and keyhole
+//            wall mounts (hang on two screws, slide down; catches point up).
+//    frame_gauge — one corner of the frame including one boss and a wall
+//            keyhole. Print FIRST (~10 % of the frame's filament): it proves
+//            the glass corner radius, the boss offset signs and screw reach.
 //
 //  THE Z STACK-UP (read before changing any depth). Datum = the GLASS BACK
 //  face, which is exactly where the tray's wall top ends and the bezel begins:
@@ -64,11 +65,14 @@
 //
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
 //  Orientation: landscape, +X = width, +Y = up, +Z = toward the glass.
-//  MOUNTING DOCTRINE: the panel mounts BUTTONS-DOWN — rotated 180° from
-//  Waveshare-native, with the image rotated to match in firmware — so
-//  BOOT/RESET end up reachable at the bottom edge instead of on top. aa_dy
-//  and the m3_ox/m3_oy offsets are stated in THIS orientation; flipping the
-//  panel back flips their signs.
+//  MOUNTING DOCTRINE: the panel mounts in its NATIVE orientation — no image
+//  rotation in firmware — which puts BOOT/RESET at the TOP edge in use. The
+//  frame's button window, labels and wall keyholes are all drawn for that:
+//  window and labels on the top wall (back view: BOOT left, RESET right),
+//  keyhole catches pointing up toward the button edge so the case hangs on
+//  two screws and slides DOWN to seat. aa_dy and m3_ox/m3_oy are stated in
+//  this orientation; a buttons-down build (panel rotated 180°, image flipped
+//  in firmware) negates their signs and mirrors the frame's features.
 // ============================================================================
 
 /* [What to render] */
@@ -88,10 +92,10 @@ glass_r = 2.0;       // corner radius of the glass slab — MEASURE. A reference
                      // near-square pocket.
 aa_w = 154.88;       // active area width
 aa_h = 86.72;        // active area height
-aa_dy = 1.02;        // AA centre offset from glass centre. Waveshare-native the
-                     // borders are 13.04 top / 11.00 bottom (aa_dy -1.02); the
-                     // buttons-down mounting doctrine flips the panel 180°, so
-                     // the wide border lands at the BOTTOM and the sign flips.
+aa_dy = -1.02;       // AA centre offset from glass centre — native mounting:
+                     // borders 13.04 top / 11.00 bottom. (A buttons-down
+                     // build — panel rotated 180°, image flipped in firmware —
+                     // negates this.)
 
 /* [PCB stack behind the glass] */
 pcb_standoff = 5.0;  // glass back → PCB front (the white M3 standoffs) — MEASURE.
@@ -111,13 +115,12 @@ m3_dx = 126.20;      // M3 hole pattern width — MEASURED from a reference case
                      // the board's edge; see the header for how 126.20 also
                      // resolves the old pcb_h dispute). Verify on your board.
 m3_dy = 65.65;       // M3 hole pattern height — measured with m3_dx; verify
-m3_ox = 1.5;         // pattern centre offset from the GLASS centre, stated in
-m3_oy = 0.9;         // FRONT view with the panel mounted buttons-down:
+m3_ox = -1.5;        // pattern centre offset from the GLASS centre, stated in
+m3_oy = -0.9;        // FRONT view, panel mounted NATIVE (buttons at the top):
                      // +x = right, +y = up. The pattern is NOT symmetric about
                      // the glass centre — this offset is exactly why a panel
                      // can't be flipped 180° inside a case drawn for the other
-                     // orientation, and why the buttons-down doctrine needs
-                     // its own geometry. VERIFY the signs on your board with
+                     // orientation. VERIFY the signs on your board with
                      // calipers before printing a tray or frame.
 m3_pilot = 2.7;      // self-tap pilot for M3 into printed bosses
 
@@ -189,18 +192,22 @@ frame_reveal = 0.15; // per-side glass↔opening clearance. The opening AND its
 standoff_len = 6.9;  // the panel's own white M3 standoffs, PCB back → tip — MEASURE
 frame_boss_h = 3.0;  // boss standing proud of the back plate's inner face
 frame_boss_d = 8.0;
-btn_w  = 25.0;       // BOOT/RESET access window through the BOTTOM wall (measured)
+btn_w  = 25.0;       // BOOT/RESET access window through the TOP wall (measured)
 btn_h  = 13.5;       // window height across the wall's depth
-btn_dx = 0.0;        // window centre offset along the bottom wall
+btn_dx = 0.0;        // window centre offset along the top wall
 btn_lbl_dx = 9.0;    // BOOT/RESET label centres, ± of the window centre
-cable_slots = true;  // two rounded pass-throughs in the back plate (cable exit /
-cable_dx = 78.5;     // hanging) at the board's connector edges — positions
-cable_dy = 25.2;     // measured from the reference case
-cable_w  = 10.0;  cable_l = 22.0;
-gill_n = 6;          // raked "gill" vents per side (±x) wall, upper half
-gill_w = 2.4;  gill_l = 9.0;  gill_rake = 25;   // slot width / length / rake °
-frame_vent_top_n = 10;   // exhaust slots through the top wall
-frame_vent_bot_n = 4;    // intake slots per side, flanking the button window
+mount_keyholes = true;  // wall-mount keyholes through the back plate, up near
+khm_dx = 78.5;          // the top corners. Head hole LOW, slide runs UP so the
+khm_y  = 34.0;          // catch points at the button edge: hang the case over
+khm_head_d  = 9.5;      // two screws and slide it DOWN to seat. The head hole
+khm_slide_w = 4.5;      // passes a #8 / M4 pan head; the slide, its shank.
+khm_len = 13.0;         // head-hole centre → catch centre
+gill_n = 6;          // straight "gill" vents per side (±x) wall, upper half
+gill_w = 2.4;  gill_l = 9.0;  gill_rake = 0;    // rake 0: vertical slots print
+                     // cleanest face-down (the raked look read as slashes and
+                     // bought nothing thermally)
+frame_vent_row_n   = 10; // intake slots in a row along the bottom wall
+frame_vent_flank_n = 4;  // exhaust slots per side, flanking the button window
 label_depth = 0.5;
 label_font  = "Liberation Sans:style=Bold";
 
@@ -288,8 +295,11 @@ assert(abs(btn_dx) + btn_w/2 + 3 < fr_xi/2 - fr_ri,
        "frame: button window overruns the bottom wall's flat span");
 assert((btn_z0 + btn_z1)/2 + btn_h/2 < fz_plate - 0.5,
        "frame: button window cuts into the back plate");
-assert(!cable_slots || (cable_dx + cable_w/2 + 2 < fr_xi/2 && cable_dy + cable_l/2 + 2 < fr_yi/2),
-       "frame: cable slot runs off the back plate");
+assert(!mount_keyholes || (khm_dx + khm_head_d/2 + 2 < fr_xi/2
+       && khm_y + khm_len + khm_slide_w/2 + 2 < fr_yi/2
+       && khm_y - khm_head_d/2 > 4),
+       "frame: keyhole runs off the back plate");
+assert(khm_slide_w < khm_head_d, "frame: keyhole slide wider than its head hole");
 assert(cb_h + 1.0 <= bez_h, "counterbore deeper than the bezel ear");
 assert(cav_d > comp_h + pcb_t, "no air gap left between the PCB and the glass");
 echo(str("Canary 7in touch v0.3-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
@@ -502,47 +512,53 @@ module frame() {
             translate([p[0], p[1], fz_boss - 0.1]) cylinder(d = screw_c, h = frame_boss_h + 0.2);
             translate([p[0], p[1], fz_plate - 0.01]) cylinder(d = cb_d + 0.4, h = back_t + 0.11);
         }
-        // BOOT/RESET window through the BOTTOM wall, with a 45° bevelled
-        // surround on the outer face
-        translate([btn_dx, -fr_yi/2 + 0.1, btn_zc]) rotate([90, 0, 0])
+        // BOOT/RESET window through the TOP wall (the button edge in native
+        // mounting), with a 45° bevelled surround on the outer face
+        translate([btn_dx, fr_yi/2 - 0.1, btn_zc]) rotate([-90, 0, 0])
             linear_extrude(frame_wall + 0.3) rrect2d(btn_w, btn_h, 3);
         hull() {
-            translate([btn_dx, -fr_yo/2 + 0.01, btn_zc]) rotate([90, 0, 0])
+            translate([btn_dx, fr_yo/2 - 0.01, btn_zc]) rotate([-90, 0, 0])
                 linear_extrude(0.02) rrect2d(btn_w + 2.4, btn_h + 2.4, 4);
-            translate([btn_dx, -fr_yo/2 + 1.2, btn_zc]) rotate([90, 0, 0])
+            translate([btn_dx, fr_yo/2 - 1.2, btn_zc]) rotate([-90, 0, 0])
                 linear_extrude(0.02) rrect2d(btn_w, btn_h, 3);
         }
-        // raked gill vents through the ±x walls, upper half (chimney exhaust)
+        // gill vents through the ±x walls, upper half (chimney exhaust)
         for (sx = [1, -1], i = [0 : gill_n - 1])
             translate([sx*(fr_xo/2 - frame_wall/2), 12 + i*7, gz])
                 rotate([sx*gill_rake, 0, 0]) rotate([0, 90, 0])
                     translate([0, 0, -frame_wall]) linear_extrude(2*frame_wall)
                         pill2d(gill_l, gill_w);
-        // intake through the bottom wall, flanking the button window
-        for (sx = [1, -1], i = [0 : frame_vent_bot_n - 1])
-            translate([btn_dx + sx*(btn_w/2 + 9 + i*6.5), -fr_yi/2 + 0.1, gz])
-                rotate([90, 0, 0]) linear_extrude(frame_wall + 0.3) pill2d(gh, gill_w);
-        // exhaust through the top wall
-        for (i = [0 : frame_vent_top_n - 1])
-            translate([(i - (frame_vent_top_n - 1)/2) * 9, fr_yi/2 - 0.1, gz])
+        // exhaust through the top wall, flanking the button window
+        for (sx = [1, -1], i = [0 : frame_vent_flank_n - 1])
+            translate([btn_dx + sx*(btn_w/2 + 9 + i*6.5), fr_yi/2 - 0.1, gz])
                 rotate([-90, 0, 0]) linear_extrude(frame_wall + 0.3) pill2d(gh, gill_w);
-        // back grille (dodging bosses and the cable slots — note -m3_ox: this
+        // intake row along the bottom wall
+        for (i = [0 : frame_vent_row_n - 1])
+            translate([(i - (frame_vent_row_n - 1)/2) * 9, -fr_yi/2 + 0.1, gz])
+                rotate([90, 0, 0]) linear_extrude(frame_wall + 0.3) pill2d(gh, gill_w);
+        // back grille (dodging bosses and the keyholes — note -m3_ox: this
         // part is modelled print-side, x mirrored vs the two-part tray)
         translate([0, 0, fz_plate]) vent_grille(-m3_ox, m3_oy,
-            keepouts = cable_slots ? [for (sx = [1,-1]) [sx*cable_dx, cable_dy, 8, 17.5]] : []);
-        // cable / hanging slots through the back plate
-        if (cable_slots) for (sx = [1, -1])
-            translate([sx*cable_dx, cable_dy, fz_plate - 0.1])
-                linear_extrude(back_t + 0.2) pill2d(cable_l, cable_w);
-        // debossed labels on the back face — back view, buttons at the bottom:
-        // BOOT on the right (+x here), RESET on the left, as on the board
-        frame_lbl(btn_dx + btn_lbl_dx, -fr_yo/2 + 6.5, "BOOT");
-        frame_lbl(btn_dx - btn_lbl_dx, -fr_yo/2 + 6.5, "RESET");
+            keepouts = mount_keyholes
+                ? [for (sx = [1,-1]) [sx*khm_dx, khm_y + khm_len/2, 8, 17]] : []);
+        // wall-mount keyholes through the back plate: head hole LOW, slide
+        // running UP so the catch points at the button edge — hang the case
+        // over two screws and slide it DOWN to seat
+        if (mount_keyholes) for (sx = [1, -1])
+            translate([sx*khm_dx, khm_y, fz_plate - 0.1]) linear_extrude(back_t + 0.2) {
+                circle(d = khm_head_d);
+                hull() { circle(d = khm_slide_w);
+                         translate([0, khm_len]) circle(d = khm_slide_w); }
+            }
+        // debossed labels on the back face — back view, buttons at the TOP:
+        // BOOT on the left (-x here), RESET on the right, as on the board
+        frame_lbl(btn_dx - btn_lbl_dx, fr_yo/2 - 6.5, "BOOT");
+        frame_lbl(btn_dx + btn_lbl_dx, fr_yo/2 - 6.5, "RESET");
     }
 }
 
 // One corner of the frame, cut from the real geometry by intersection — the
-// (+x,+y) corner, chosen because it contains a boss AND a cable slot. Assemble
+// (+x,+y) corner, chosen because it contains a boss AND a wall keyhole. Assemble
 // it on the panel's corner with one M3x8-10: the glass corner proves glass_r,
 // the screw only threads home if the m3 offsets have the right SIGNS, and the
 // glass sits flush with the rim only if standoff_len is right.
