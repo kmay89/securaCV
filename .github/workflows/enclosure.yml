@@ -116,6 +116,16 @@ jobs:
           fit locate solid "the pocket does not stop the slab sliding — is it sized to the tray cavity instead of the glass?" || exit 1
           fit frame_glass empty || exit 1   # one-piece frame vs the panel — cavity, ledge and windows must clear it
           fit frame_ledge solid "the adhesive ledge is missing from under the panel border — did the ledge/boss datum drift?" || exit 1
+          # TPU fitments: every opening gets TWO gates — one probe vs the FRAME
+          # (the aperture really is open) and one vs the installed fitment (it
+          # really engages it). One without the other passes a deleted window.
+          fit frame_usb_head empty || exit 1   # head-sized prism through the port — must pass clean
+          fit frame_btn_window empty || exit 1 # BOOT/RESET window really open through the wall
+          fit frame_sd_window empty || exit 1  # SD opening really open through the plate
+          fit frame_usb_seal solid "the grommet no longer fills the USB port — waist or installed transform drifted" || exit 1
+          fit frame_btn_plug solid "the BOOT/RESET plug misses its window — waist or installed transform drifted" || exit 1
+          fit btn_plug_glass empty || exit 1   # the plug (pips, lip included) must never touch the panel
+          fit frame_sd_seal solid "the SD cover misses its opening/recess — waist or installed transform drifted" || exit 1
           # And prove the gate can still fail: an unknown check must be
           # rejected as a broken render, not silently pass as "empty".
           if fit definitely-not-a-check empty >/dev/null 2>&1; then

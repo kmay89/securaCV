@@ -837,7 +837,7 @@
   {
    "id": "s3_lcd7",
    "scad": "canary_s3_lcd7.scad",
-   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.3-dev)",
+   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.4-dev)",
    "family": "canary-display-dash",
    "device_compat": [
     "canary-display-dash"
@@ -853,7 +853,7 @@
     {
      "id": "7-touch-dashboard-case",
      "name": "7″ touch dashboard case",
-     "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on moulded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (~52 cm² back grille + bottom-wall intake and top-wall exhaust — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots, optional 20° desk cradle. Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centres and `pcb_h` are NOMINAL — measure yours",
+     "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on moulded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (~52 cm² back grille + bottom-wall intake and top-wall exhaust — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots on the tray, optional 20° desk cradle. The one-piece `frame` adds a bottom-centred USB pass-through (the brand lettering is the intake vents flanking it) and three TPU fitments: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive press-through BOOT/RESET plug, and a peel-open SD cover that stays attached. Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centres and `pcb_h` are NOMINAL — measure yours",
      "status": "in-development",
      "device": "canary-display-dash",
      "selects": {},
@@ -869,7 +869,10 @@
     "gauge",
     "gauge_bezel",
     "gauge_tray",
-    "stand"
+    "stand",
+    "grommet_usb",
+    "plug_buttons",
+    "plug_sd"
    ],
    "options": [
     {
@@ -929,6 +932,14 @@
      "default": true
     },
     {
+     "id": "usb_port",
+     "type": "bool",
+     "label": "pass-through for the power cable, centred on the bottom wall.",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "opt_stand",
      "type": "bool",
      "label": "opt_stand",
@@ -937,7 +948,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 97,
+   "engineering_param_count": 123,
    "alternatives": [
     "dash_display"
    ],
@@ -945,8 +956,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 8,
-    "user_options": 8,
+    "options": 9,
+    "user_options": 9,
     "variant_axes": 0
    }
   },

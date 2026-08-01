@@ -275,23 +275,57 @@ and most of a day.
 
 ### 7b′ · Or: the one-piece frame
 
-v0.3 adds a **`part="frame"`** alternative to the bezel + tray pair, based on a
-case layout print-proven against the real panel: the slab drops in face-first
+v0.3 added a **`part="frame"`** alternative to the bezel + tray pair, based on
+a case layout print-proven against the real panel: the slab drops in face-first
 through the front opening, the board hangs on the panel's **own white M3
 standoffs**, and **4 × M3×8–10 driven from the back** thread into those
 standoffs — the screws, not a ledge, pull the glass flush with the front rim.
 It carries a bevelled BOOT/RESET window in the top wall — the button edge in
 native mounting — with debossed labels (back view: **BOOT left, RESET
-right**), gill vents on the side walls, intake/exhaust slot rows, a back
-grille, two **keyhole wall mounts** near the top corners (hang the case over
-two pan-head screws and slide it down; the catches point up at the button
-edge), and a **microSD opening through the back plate** covering the socket,
-the card's downward slide travel and room for a fingertip — so the card goes
-in and out without ever being dropped inside the case. An "SD" deboss marks
-it; its position is photo-derived, so **measure your board** before printing.
-The side walls carry vents only — note that leaves the USB-C ports without
-external access. The shell carries chamfers at both the plate edge and the
+right**), gill vents on the side walls, exhaust slots flanking the button
+window, a back grille, two **keyhole wall mounts** near the top corners (hang
+the case over two pan-head screws and slide it down; the catches point up at
+the button edge), and a **microSD opening through the back plate** covering
+the socket, the card's downward slide travel and room for a fingertip — so the
+card goes in and out without ever being dropped inside the case. An "SD"
+deboss marks it; its position is photo-derived, so **measure your board**
+before printing. The shell carries chamfers at both the plate edge and the
 opposite rim.
+
+v0.4 gives the frame its power story and closes v0.3's "USB-C has no external
+access" gap. Centred on the bottom wall is a **USB pass-through**: a bevelled
+stadium opening sized to pass the power cable's **overmold head**
+(`usb_head_w`/`usb_head_h` — **measure your cable**, overmolds vary), and the
+brand lettering is now **cut through the wall as slat-stencil intake vents**
+flanking it — the bottom edge breathes through its own name, and the old
+debossed edge brand and pill intakes are gone. Horizontal tie bands interrupt
+every glyph, so letter counters stay attached and nothing needs bridging.
+
+Three **TPU fitments** finish the openings (TPU 90–95 A, **external spool —
+never the AMS**, §0):
+
+- **`grommet_usb`** — a slit wire grommet for the port. Assembly order
+  matters: with the case still empty, feed the head in through the port,
+  plug it into the panel, **leave a service loop**, seat the panel, then open
+  the grommet at its slit, wrap it around the wire and press it in. Its inner
+  flange bears flat on the wall's inner face, so a yank on the cable loads
+  the frame — not the board's connector. Tune `usb_wire_d` to your cable
+  jacket. Note the trade: once the panel is adhered, replacing the *cable*
+  means pulling the panel — treat the cable as semi-permanent and the
+  grommet as the serviceable part.
+- **`plug_buttons`** — a captive plug for the BOOT/RESET window: its cap
+  nests the window's bevel, a 45° lip snaps in behind the wall (it cannot
+  fall out or be pushed inside), and the buttons are pressed **through** the
+  plug via two pips under the face dimples — it never needs to come out.
+  Set `btn_reach` to your measured wall-to-button gap minus ~0.5.
+- **`plug_sd`** — a peel-open cover for the SD opening, flush in its own
+  recess: battery-door motion (hinge tongue in first at the top end, press
+  the lip home), fingernail scoop under the peel tab at the card end. It
+  stays attached while open, so there is nothing to lose.
+
+TPU fits are tuned by `tpu_squeeze` (waist interference) and `tpu_grip`
+(grommet bore vs jacket) — TPU seats by squeeze, so its knobs are
+interferences, not clearances; your PETG coupon numbers do not transfer.
 
 The glass lands on an **adhesive ledge** matched to the panel's own adhesive
 strips (10 mm down each side, 6 mm along the button edge, 2 mm over the FPC
@@ -300,12 +334,16 @@ become backup rather than the only thing setting the glass depth. Every
 ledge carries a solid 45° wedge down to its wall, which is why **the frame
 prints back-plate-down** (the exported STL is already in that orientation):
 that way up, the ledges are fully self-supporting — no slicer supports, no
-sacrificial geometry. The frame is branded on the back plate and on the
-visible bottom edge.
+sacrificial geometry. The frame is branded debossed on the back plate, and on
+the visible bottom edge by the stencil vent lettering itself.
 
 ```sh
 openscad --export-format binstl -o lcd7_frame_gauge.stl -D 'part="frame_gauge"' canary_s3_lcd7.scad
 openscad --export-format binstl -o lcd7_frame.stl       -D 'part="frame"'       canary_s3_lcd7.scad
+# TPU fitments — print these on their OWN plate, TPU from the external spool
+openscad --export-format binstl -o lcd7_grommet_usb.stl  -D 'part="grommet_usb"'  canary_s3_lcd7.scad
+openscad --export-format binstl -o lcd7_plug_buttons.stl -D 'part="plug_buttons"' canary_s3_lcd7.scad
+openscad --export-format binstl -o lcd7_plug_sd.stl      -D 'part="plug_sd"'      canary_s3_lcd7.scad
 ```
 
 Same doctrine as 7b: **print the gauge first.** It is one corner containing a
