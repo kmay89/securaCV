@@ -202,11 +202,15 @@ the 7" model, not the printer.
 
 ## 7 · Print #3 — the 7" dashboard
 
-> ⚠️ **Status: in development.** `canary_s3_lcd7.scad` is render-, mesh- and
-> assembly-checked in CI, but **not print-validated** — nobody has yet held one.
-> There is no committed STL for it, by the same convention that covers every
-> in-development design. You are printing the first one; expect to iterate, and
-> please record what you find.
+> ⚠️ **Status: in development — FIRST REAL PRINT DONE (2026-08).** That print
+> corrected three things the drawings could not: the M3 offset **signs** (the
+> pattern matched only with the panel upside down), the glass **corner
+> radius** (r2.0 was the wrong direction — now 3.2, bracketed by the
+> `radius_gauge`), and the SD cover's recess (an unprintable cantilever — now
+> a 45° countersink). The model is still **not fully print-validated**; there
+> is no committed STL, by the same convention that covers every
+> in-development design. Expect to iterate, and keep recording what you find —
+> it is exactly what turned v0.4 into v0.5.
 
 ### 7a · Measure your panel first
 
@@ -224,13 +228,13 @@ the values echoed when you render:
 |---|---|---|
 | Touch-glass width × height | `glass_w` / `glass_h` | 192.96 × 110.76 |
 | Glass thickness at the edge | `glass_t` | 4.0 |
-| Glass corner radius | `glass_r` | 2.0 (a fitting case's r≈2.7 cavity still gaps — the slab is sharper) |
+| Glass corner radius | `glass_r` | 3.2 — settled by the FIRST REAL PRINT: r2.0 was the wrong direction. Confirm on `part="radius_gauge"` (four sockets, −0.4…+0.2 around the default, ~6 g) before any slab print |
 | Active (lit) area | `aa_w` / `aa_h` | 154.88 × 86.72 |
 | PCB outline | `pcb_w` / `pcb_h` | 165.72 × 97.60 |
 | Tallest rear-side component | `comp_h` | 11.0 |
 | Glass back → PCB front | `pcb_standoff` | 5.0 |
 | M3 mount-hole spacing | `m3_dx` / `m3_dy` | 126.20 × 65.65 (measured) |
-| M3 pattern offset from glass centre | `m3_ox` / `m3_oy` | −1.5 / −0.9 (measured, native mounting — verify signs) |
+| M3 pattern offset from glass centre | `m3_ox` / `m3_oy` | +1.5 / +0.9 — signs SETTLED by the first real print (the earlier −/− pattern matched only with the panel upside down) |
 | Panel's own standoffs, PCB back → tip | `standoff_len` | 6.9 (frame only) |
 | USB-C / UART / CAN / RS485 / battery centres | `bottom_open_*`, `side_open_*` | nominal ⚠️ |
 
@@ -243,12 +247,13 @@ filament. Two parameters deserve individual attention:
   leaves it rattling. Get this one right.
 - **`m3_ox` / `m3_oy`** — the mount pattern is **not centred on the glass**,
   and that offset is why a panel cannot simply be rotated 180° inside a case
-  drawn for the other orientation: the holes stop lining up. Every part in
-  v0.3 assumes the panel's **native** mounting — no image rotation in
-  firmware — which puts BOOT/RESET at the **top** edge in use; the frame's
-  window, labels and keyhole wall mounts are all drawn for that. Verify the
-  offset signs on your board; a sign error moves every boss by twice the
-  offset.
+  drawn for the other orientation: the holes stop lining up. The signs are
+  now **settled by the first real print** — v0.4's −1.5/−0.9 matched the
+  panel only upside down, exactly the failure a sign error produces (every
+  boss moves by twice the offset) — v0.5 ships +1.5/+0.9. Every part still
+  assumes the panel's **native** mounting — no image rotation in firmware —
+  which puts BOOT/RESET at the **top** edge in use; the frame's window,
+  labels and keyhole wall mounts are all drawn for that.
 
 ### 7b · Print the corner gauge — not the case
 
@@ -283,14 +288,15 @@ standoffs — the screws, not a ledge, pull the glass flush with the front rim.
 It carries a bevelled BOOT/RESET window in the top wall — the button edge in
 native mounting — with debossed labels (back view: **BOOT left, RESET
 right**), gill vents on the side walls, exhaust slots flanking the button
-window, a back grille, two **keyhole wall mounts** near the top corners (hang
-the case over two pan-head screws and slide it down; the catches point up at
-the button edge), and a **microSD opening through the back plate** covering
-the socket, the card's downward slide travel and room for a fingertip — so the
-card goes in and out without ever being dropped inside the case. An "SD"
-deboss marks it; its position is photo-derived, so **measure your board**
-before printing. The shell carries chamfers at both the plate edge and the
-opposite rim.
+window, a back grille, **keyhole wall mounts in all four corners** (hang the
+case over the top pair — or all four — and slide it down; every catch points
+up at the button edge, and the bottom pair pins the case flat against the
+wall: first-print feedback), and a **microSD opening through the back plate**
+covering the socket, the card's downward slide travel and room for a
+fingertip — so the card goes in and out without ever being dropped inside the
+case. An "SD" deboss marks it; the first print corrected its position 6.35 mm
+toward the plate's centre — still confirm against **your** board. The shell
+carries chamfers at both the plate edge and the opposite rim.
 
 v0.4 gives the frame its power story and closes v0.3's "USB-C has no external
 access" gap. Centred on the bottom wall is a **USB pass-through**: a bevelled
@@ -318,10 +324,15 @@ never the AMS**, §0):
   fall out or be pushed inside), and the buttons are pressed **through** the
   plug via two pips under the face dimples — it never needs to come out.
   Set `btn_reach` to your measured wall-to-button gap minus ~0.5.
-- **`plug_sd`** — a peel-open cover for the SD opening, flush in its own
-  recess: battery-door motion (hinge tongue in first at the top end, press
-  the lip home), fingernail scoop under the peel tab at the card end. It
-  stays attached while open, so there is nothing to lose.
+- **`plug_sd`** — a peel-open cover for the SD opening, **countersunk
+  flush**: the plate carries a 45° rim and the cap a matching tapered edge,
+  so both print clean back-plate-down and the taper self-centres the cap.
+  (The v0.4 flat-floored recess left a cantilevered ring hanging over the
+  opening — it drooped on the first real print; this replaces it.)
+  Battery-door motion: hinge tongue in first at the top end, press the lip
+  home. To open, a fingernail scoop bites the rim at the card end — the nail
+  lands directly under the cap's tapered edge; peel, and the cover hinges
+  open still attached, so there is nothing to lose.
 
 TPU fits are tuned by `tpu_squeeze` (waist interference) and `tpu_grip`
 (grommet bore vs jacket) — TPU seats by squeeze, so its knobs are
@@ -338,6 +349,10 @@ sacrificial geometry. The frame is branded debossed on the back plate, and on
 the visible bottom edge by the stencil vent lettering itself.
 
 ```sh
+# ~6 g, print FIRST after any radius doubt: four corner sockets bracketing
+# glass_r — the one that hugs the panel's corner with no daylight and no
+# bind is your radius
+openscad --export-format binstl -o lcd7_radius_gauge.stl -D 'part="radius_gauge"' canary_s3_lcd7.scad
 openscad --export-format binstl -o lcd7_frame_gauge.stl -D 'part="frame_gauge"' canary_s3_lcd7.scad
 openscad --export-format binstl -o lcd7_frame.stl       -D 'part="frame"'       canary_s3_lcd7.scad
 # TPU fitments — print these on their OWN plate, TPU from the external spool
@@ -346,13 +361,15 @@ openscad --export-format binstl -o lcd7_plug_buttons.stl -D 'part="plug_buttons"
 openscad --export-format binstl -o lcd7_plug_sd.stl      -D 'part="plug_sd"'      canary_s3_lcd7.scad
 ```
 
-Same doctrine as 7b: **print the gauge first.** It is one corner containing a
-boss and a wall keyhole; assembled on the panel's corner with one screw it
-proves the glass corner radius (`glass_r`), the mount-offset **signs**
-(`m3_ox`/`m3_oy` — the screw only threads home if they're right), and
-`standoff_len` (the glass sits flush with the rim only if that's right). The
-frame and gauge print **back-plate-down, as exported** — no supports, no
-brim unless a corner lifts.
+Same doctrine as 7b: **gauges before the slab, smallest first.** The
+`radius_gauge` (~6 g) settles the corner **shape**; the `frame_gauge` (one
+corner containing a boss and a wall keyhole, ~10 %) then proves the whole
+corner — assembled on the panel's corner with one screw it checks `glass_r`
+in context, the mount-offset **signs** (`m3_ox`/`m3_oy` — the screw only
+threads home if they're right), and `standoff_len` (the glass sits flush
+with the rim only if that's right). The frame and gauge print
+**back-plate-down, as exported** — no supports, no brim unless a corner
+lifts.
 
 ### 7c · Print the case
 

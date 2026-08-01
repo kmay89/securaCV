@@ -1,5 +1,5 @@
 // ============================================================================
-//  Canary — 7" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.4-dev)
+//  Canary — 7" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.5-dev)
 // @env env="indoor; runs hot → print in PETG/ASA"
 //  Housing for the Waveshare ESP32-S3-Touch-LCD-7 (7" 800x480 IPS capacitive
 //  touch, ESP32-S3, CAN/RS485/battery). The big-panel "wall dashboard" — the
@@ -52,7 +52,9 @@
 //            vents down each side wall; top-wall exhaust; back grille;
 //            a microSD access opening through the BACK PLATE covering the
 //            socket, the card's slide travel and a fingertip ("SD" deboss);
-//            keyhole wall mounts (hang on two screws, slide down); an
+//            keyhole wall mounts in all FOUR corners (hang on the top pair
+//            or all four, slide down — the bottom pair pins the case flat
+//            against the wall); an
 //            adhesive LEDGE behind the glass matched to the panel's own
 //            adhesive strips (10 mm sides, 6 mm button edge, 2 mm over the
 //            FPC), each with a 45° back-slope wedge to its wall; a USB
@@ -73,13 +75,20 @@
 //            out, can't be pushed inside), and two press pips under the
 //            face dimples actuate BOOT/RESET THROUGH the plug — it never
 //            needs to come out.
-//      plug_sd      — peel-open cover for the SD opening: flush cap in a
-//            recess, battery-door hinge tongue at the top end (stays
-//            anchored — can't get lost), fingernail peel tab at the card
-//            end.
+//      plug_sd      — peel-open cover for the SD opening: countersunk cap
+//            flush in a 45° rim (the flat-floored recess it replaces left a
+//            cantilevered ring over the opening that drooped on the first
+//            real print), battery-door hinge tongue at the top end (stays
+//            anchored — can't get lost), fingernail scoop biting the rim at
+//            the card end to peel it by the cap edge.
 //    frame_gauge — one corner of the frame including one boss and a wall
 //            keyhole. Print FIRST (~10 % of the frame's filament): it proves
 //            the glass corner radius, the boss offset signs and screw reach.
+//    radius_gauge — four corner sockets at glass_r −0.4/−0.2/+0/+0.2 (each
+//            opened by frame_reveal, exactly as the frame's opening is).
+//            ~6 g: drop the panel's corner in each — the right radius hugs
+//            it with no daylight and no bind. Settle the shape here, never
+//            on the slab.
 //
 //  THE Z STACK-UP (read before changing any depth). Datum = the GLASS BACK
 //  face, which is exactly where the tray's wall top ends and the bezel begins:
@@ -110,7 +119,12 @@
 //  itself to the larger of glass and board, so an oversized board grows the
 //  case rather than jamming it.
 //
-//  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
+//  ⚠️ DEV STATUS: FIRST REAL PRINT DONE (2026-08). It corrected three things
+//  the drawings could not: the M3 offset signs (pattern matched only with the
+//  panel upside down — signs flipped), the glass corner radius (r2.0 was the
+//  wrong direction; r3.2, verify on the radius_gauge), and the SD cover's
+//  flat-floored recess (unprintable cantilever — now a 45° countersink).
+//  Still NOT fully print-validated; expect further iteration.
 //  Orientation: landscape, +X = width, +Y = up, +Z = toward the glass.
 //  MOUNTING DOCTRINE: the panel mounts in its NATIVE orientation — no image
 //  rotation in firmware — which puts BOOT/RESET at the TOP edge in use. The
@@ -123,20 +137,22 @@
 // ============================================================================
 
 /* [What to render] */
-part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","grommet_usb","plug_buttons","plug_sd","all"]
+part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_buttons","plug_sd","all"]
 
 /* [Glass slab] — bonded touch panel, from the Waveshare drawing (mm) */
 glass_w = 192.96;    // touch-glass width  (X)
 glass_h = 110.76;    // touch-glass height (Y)
 glass_t = 4.0;       // glass + LCD module thickness at the edge — MEASURE
-glass_r = 2.0;       // corner radius of the glass slab — MEASURE. A reference
-                     // case whose cavity corners measure r≈2.7 still shows a
-                     // sliver of daylight at each corner, so the slab is
-                     // sharper than that — and sharper than the r3.0 v0.2
-                     // assumed. The cavity is never rounded more than this: a
-                     // pocket with a bigger radius than the glass binds (or
-                     // gaps) on all four corners; a near-square panel needs a
-                     // near-square pocket.
+glass_r = 3.2;       // corner radius of the glass slab. The FIRST REAL PRINT
+                     // settled the direction of travel: the r2.0 the
+                     // reference-case daylight story argued for was WRONG —
+                     // the slab is rounder, not sharper. Back past the r3.0
+                     // v0.2 assumed, to 3.2. Confirm on part="radius_gauge"
+                     // (four sockets, −0.4..+0.2 around this value) before
+                     // committing a slab print; the corner that hugs with no
+                     // daylight and no bind is the answer. The cavity is
+                     // never rounded more than this: a pocket rounder than
+                     // the glass binds (or gaps) on all four corners.
 aa_w = 154.88;       // active area width
 aa_h = 86.72;        // active area height
 aa_dy = -1.02;       // AA centre offset from glass centre — native mounting:
@@ -162,13 +178,16 @@ m3_dx = 126.20;      // M3 hole pattern width — MEASURED from a reference case
                      // the board's edge; see the header for how 126.20 also
                      // resolves the old pcb_h dispute). Verify on your board.
 m3_dy = 65.65;       // M3 hole pattern height — measured with m3_dx; verify
-m3_ox = -1.5;        // pattern centre offset from the GLASS centre, stated in
-m3_oy = -0.9;        // FRONT view, panel mounted NATIVE (buttons at the top):
-                     // +x = right, +y = up. The pattern is NOT symmetric about
-                     // the glass centre — this offset is exactly why a panel
-                     // can't be flipped 180° inside a case drawn for the other
-                     // orientation. VERIFY the signs on your board with
-                     // calipers before printing a tray or frame.
+m3_ox = 1.5;         // pattern centre offset from the GLASS centre, stated in
+m3_oy = 0.9;         // FRONT view, panel mounted NATIVE (buttons at the top):
+                     // +x = right, +y = up. SIGNS SETTLED BY THE FIRST REAL
+                     // PRINT: with the v0.4 signs (−1.5/−0.9) the panel only
+                     // matched the printed pattern upside down — the offsets
+                     // are flipped 180° from what the reference-case reading
+                     // recorded. The pattern is NOT symmetric about the glass
+                     // centre, which is exactly why that mistake is visible
+                     // at all — and why a panel can't be flipped inside a
+                     // case drawn for the other orientation.
 m3_pilot = 2.7;      // self-tap pilot for M3 into printed bosses
 
 /* [Screen] */
@@ -243,12 +262,16 @@ btn_w  = 25.0;       // BOOT/RESET access window through the TOP wall (measured)
 btn_h  = 13.5;       // window height across the wall's depth
 btn_dx = 0.0;        // window centre offset along the top wall
 btn_lbl_dx = 9.0;    // BOOT/RESET label centres, ± of the window centre
-mount_keyholes = true;  // wall-mount keyholes through the back plate, up near
-khm_dx = 78.5;          // the top corners. Head hole LOW, slide runs UP so the
-khm_y  = 34.0;          // catch points at the button edge: hang the case over
-khm_head_d  = 9.5;      // two screws and slide it DOWN to seat. The head hole
-khm_slide_w = 4.5;      // passes a #8 / M4 pan head; the slide, its shank.
-khm_len = 13.0;         // head-hole centre → catch centre
+mount_keyholes = true;  // wall-mount keyholes through the back plate, one in
+khm_dx = 78.5;          // EACH of the four corners (first-print feedback: two
+khm_y  = 34.0;          // held the case but let the bottom float off the wall).
+khm_head_d  = 9.5;      // All four share one orientation — head hole LOW,
+khm_slide_w = 4.5;      // slide running UP, catch at the button edge — so the
+khm_len = 13.0;         // case hangs over the screws and slides DOWN to seat.
+                        // khm_y sets the TOP pair (head-hole centre); the
+                        // bottom pair mirrors the feature about y=0. The head
+                        // hole passes a #8 / M4 pan head; the slide, its
+                        // shank; khm_len is head-hole centre → catch centre.
 // Adhesive ledge — the panel ships with adhesive strips on its BACK border
 // (≈10 mm down each side, ≈6 mm along the button edge, none over the FPC at
 // the bottom — see the Rev1.2 photos). The ledge is the landing for them:
@@ -271,8 +294,10 @@ brand_edge = "SecuraCV Canary";               // debossed on the visible bottom 
 // purple-rectangle zone on the Rev1.2 board photo: right side, below centre,
 // in-use back view). The opening in the BACK PLATE covers the socket, the
 // card's slide travel, and room for a fingertip to keep hold of the card so
-// it never drops inside the case. Photo-derived — MEASURE your board.
-sd_dx = 42.0;   // opening centre, + = back-view right
+// it never drops inside the case. Position corrected by the FIRST REAL PRINT:
+// the photo-derived 42.0 sat 1/4" too far outboard — the print lined up with
+// the socket 6.35 mm nearer the plate's centre.
+sd_dx = 35.65;  // opening centre, + = back-view right (42.0 − 6.35, measured)
 sd_dy = -26.0;
 sd_w  = 18.0;   // width — fingertip-sized, not card-sized
 sd_l  = 40.0;   // length along the slide direction
@@ -295,7 +320,9 @@ frame_vent_flank_n = 4;  // exhaust slots per side, flanking the button window
 //              the dock's well ribs — which sit stand_rib_drop below the pad
 //              plane so those studs clear the solid bottom wall in landscape.
 dock_keys   = true;
-dock_key_dx = 48.0;   // portrait slots' ±dy on the side walls (past the gills)
+dock_key_dx = 46.5;   // portrait slots' ±dy on the side walls (past the gills;
+                      // pulled inboard when glass_r 3.2 grew the corner —
+                      // the slot must stay on the wall's flat span)
 dock_key_bx = 84.0;   // landscape slots' ±dx on the bottom wall (on the pads)
 label_depth = 0.5;
 label_font  = "Liberation Sans:style=Bold";
@@ -324,8 +351,11 @@ btn_reach  = 2.0;    // press-pip stand-off, wall inner face → just shy of the
 btn_pip_d  = 5.0;    // press-pip Ø (face dimples mark them outside)
 btn_pip_dz = 0.0;    // pip centre offset across the wall band, from the window centre
 // SD cover — peel tab at the card (fingertip) end, hinge tongue at the other.
-sd_lip    = 2.0;     // cover cap border beyond the opening, per side (flush recess)
-sd_tab    = 4.0;     // peel-tab length beyond the cap
+sd_lip    = 1.2;     // countersunk rim: 45° reach AND depth around the opening.
+                     // The flush flat-floored recess this replaces left a
+                     // cantilevered ring hanging over the opening — unprintable
+                     // back-plate-down (drooped on the first real print). A 45°
+                     // countersink prints clean and self-centres the cap.
 sd_hinge  = 3.0;     // hinge-tongue hook depth beyond the opening (stays anchored)
 // Bottom-edge stencil vents — the intake air path IS the lettering. Horizontal
 // tie bands interrupt every glyph, so no counter (the island inside an A or R)
@@ -362,12 +392,22 @@ stand_fin_h   = 78.0;  // back-fin support height along the case back (68 % of
                        // the landscape keyholes at 91.5)
 stand_fin_t   = 8.0;   // back fin blade thickness
 stand_gusset_h = 52.0; // cheek back edges buttress the fin up to this height
-stand_rib_x   = 48.25; // ± KEYED RIBS: blades across the well that carry the
-stand_rib_w   = 9.5;   // case in PORTRAIT (its 115 mm width misses the cheeks
+stand_rib_x   = 47.7;  // ± KEYED RIBS: blades across the well that carry the
+stand_rib_w   = 8.0;   // case in PORTRAIT (its 115 mm width misses the cheeks
                        // entirely) and carry the PORTRAIT centring keys on
-                       // top. Each blade straddles its key's side-wall slot —
-                       // bearing on solid wall on BOTH sides of it — and
-                       // clears the gill row (asserted).
+                       // top. LOAD PATH, precisely — a blade CROSSES the
+                       // case's full depth, while the keying slot it rises
+                       // into is only a gill_w-wide band at the wall's
+                       // mid-depth: the rib bears full-width solid wall on
+                       // both sides of that NARROW band (~21 of 23.5 mm of
+                       // depth), so the case cannot tilt and the key stud
+                       // never carries weight. Along the slot's LONG axis
+                       // the rib sits mostly within the slot's span by
+                       // construction — the gill row pins the rib's inner
+                       // edge, so both-sides bearing IN the band was never
+                       // available at any rib width; it is not the load
+                       // path and not required. Clears the gill row and the
+                       // wall's corner flat (both asserted).
 stand_rib_drop = 2.0;  // rib tops sit this far below the pad plane, so the
                        // rib keys (1.5 proud) clear the LANDSCAPE case's
                        // solid bottom wall — in landscape the case rests on
@@ -500,17 +540,17 @@ assert(abs(btn_dx) + btn_w/2 + 3 < fr_xi/2 - fr_ri,
 assert((btn_z0 + btn_z1)/2 + btn_h/2 < fz_plate - 0.5,
        "frame: button window cuts into the back plate");
 assert(!mount_keyholes || (khm_dx + khm_head_d/2 + 2 < fr_xi/2
-       && khm_y + khm_len + khm_slide_w/2 + 2 < fr_yi/2
+       && khm_y + khm_len + max(khm_slide_w, khm_head_d)/2 + 2 < fr_yi/2
        && khm_y - khm_head_d/2 > 4),
-       "frame: keyhole runs off the back plate");
+       "frame: a keyhole runs off the back plate (the bottom pair mirrors the top, so one bound covers all four)");
 assert(khm_slide_w < khm_head_d, "frame: keyhole slide wider than its head hole");
 assert(sd_dx + sd_w/2 + sd_lip + 2 < fr_xi/2
        && sd_dy + sd_l/2 + sd_lip + sd_hinge + 2 < fr_yi/2
-       && sd_dy - sd_l/2 - sd_lip - sd_tab - 4 > -fr_yo/2 + frame_rim,
-       "frame: SD cover (cap, hinge tongue or peel tab) runs off the back plate");
+       && sd_dy - sd_l/2 - sd_lip - 6 > -fr_yo/2 + frame_rim,
+       "frame: SD cover (mouth, hinge tongue or nail scoop) runs off the back plate");
 assert(min([for (p = fr_bosses) max(abs(sd_dx - p[0]) - sd_w/2 - sd_lip - frame_boss_d/2,
-                                    abs(sd_dy - p[1]) - sd_l/2 - sd_lip - sd_tab - frame_boss_d/2)]) > 1,
-       "frame: SD cover recess collides with a boss");
+                                    abs(sd_dy - p[1]) - sd_l/2 - sd_lip - 2 - frame_boss_d/2)]) > 1,
+       "frame: SD cover countersink collides with a boss");
 assert(!usb_port || (usb_zc - usb_open_h/2 - grom_lip > glass_t + 0.4
        && usb_zc + usb_open_h/2 + grom_lip < fz_boss - 0.2),
        "frame: USB port (plus its grommet flange) runs out of the bottom wall band");
@@ -601,7 +641,7 @@ assert(!dock_keys || (dock_key_bx - 2 > std_open/2 && dock_key_bx + 2 < stand_w/
        "stand: landscape key misses the cheek pad — move dock_key_bx over it");
 assert(fr_yo/2 + 2 < std_open/2,
        "stand: the portrait case no longer misses the cheeks — the well ribs cannot carry it");
-echo(str("Canary 7in touch v0.4-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
+echo(str("Canary 7in touch v0.5-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
          " mm, window ", view_w, " x ", view_h, ", lip ", lip_min,
          " mm, vent area ~",
          round(vent_back ? vent_rows*vent_cols*vent_slot_w*vent_slot_l/100 : 0), " cm2",
@@ -980,26 +1020,37 @@ module frame() {
         translate([0, 0, fz_plate]) vent_grille(-m3_ox, m3_oy,
             keepouts = concat(
                 mount_keyholes
-                    ? [for (sx = [1,-1]) [sx*khm_dx, khm_y + khm_len/2, 8, 17]] : [],
-                // the SD keepout reaches past the tab end to cover the cover's
-                // flush recess and the nail scoop below it
-                [[sd_dx, sd_dy - (sd_tab + 6)/2, sd_w/2 + 3.4,
-                  sd_l/2 + 6.7 + (sd_tab + 6)/2]]));
+                    ? [for (sx = [1,-1], sy = [1,-1])
+                       [sx*khm_dx, sy*(khm_y + khm_len/2), 8, 17]] : [],
+                // the SD keepout covers the countersunk mouth and the nail
+                // scoop biting its card end
+                [[sd_dx, sd_dy, sd_w/2 + 3.4, sd_l/2 + 6.7]]));
         // microSD access through the back plate: socket + slide travel +
         // fingertip, so the card comes out without being dropped inside
         translate([sd_dx, sd_dy, fz_plate - 0.1])
             linear_extrude(back_t + 0.2) rrect2d(sd_w, sd_l, 5);
-        // flush recess for the SD cover's cap + peel tab (hairline reveal),
-        // and a fingernail scoop just past the tab tip to get under it
-        translate([sd_dx, sd_dy, fr_depth - 0.8]) linear_extrude(0.9)
-            sd_cap_2d(0.3);
-        translate([sd_dx, sd_dy - sd_l/2 - sd_lip - sd_tab - 1.0, fr_depth + 7.2])
+        // countersunk seat for the SD cover: a 45° rim from the outer skin
+        // down to the opening. Prints back-plate-down with ZERO bridges —
+        // the flat-floored recess this replaces left a cantilevered ring
+        // hanging over the opening, which drooped on the first real print.
+        hull() {
+            translate([sd_dx, sd_dy, fr_depth - sd_lip]) linear_extrude(0.01)
+                rrect2d(sd_w + 0.2, sd_l + 0.2, 5.1);
+            translate([sd_dx, sd_dy, fr_depth - 0.01]) linear_extrude(0.02)
+                rrect2d(sd_w + 2*sd_lip + 0.2, sd_l + 2*sd_lip + 0.2, 5 + sd_lip);
+        }
+        // fingernail scoop biting the mouth's card end — the nail lands
+        // under the cover's tapered cap edge to peel it
+        translate([sd_dx, sd_dy - sd_l/2 - sd_lip - 2.2, fr_depth + 7.0])
             sphere(r = 7.8);
-        // wall-mount keyholes through the back plate: head hole LOW, slide
-        // running UP so the catch points at the button edge — hang the case
-        // over two screws and slide it DOWN to seat
-        if (mount_keyholes) for (sx = [1, -1])
-            translate([sx*khm_dx, khm_y, fz_plate - 0.1]) linear_extrude(back_t + 0.2) {
+        // wall-mount keyholes through the back plate, one per corner — the
+        // bottom pair mirrors the top pair's POSITION but keeps the same
+        // orientation (head hole low, slide running up, catch at the button
+        // edge), so the case still hangs over the screws and slides DOWN,
+        // now pinned flat to the wall at all four corners
+        if (mount_keyholes) for (sx = [1, -1], sy = [1, -1])
+            translate([sx*khm_dx, sy > 0 ? khm_y : -(khm_y + khm_len),
+                       fz_plate - 0.1]) linear_extrude(back_t + 0.2) {
                 circle(d = khm_head_d);
                 hull() { circle(d = khm_slide_w);
                          translate([0, khm_len]) circle(d = khm_slide_w); }
@@ -1124,30 +1175,26 @@ module button_plug() {
     }
 }
 
-// SD cover cap outline (cap + peel tab), shared with the frame's flush recess
-// cut so the two cannot drift apart. Local +y = the hinge end.
-module sd_cap_2d(o = 0) {
-    offset(r = o) union() {
-        rrect2d(sd_w + 2*sd_lip, sd_l + 2*sd_lip, 5 + sd_lip);
-        hull() {
-            translate([0, -(sd_l/2 + sd_lip - 0.5)]) square([11, 1], center = true);
-            translate([0, -(sd_l/2 + sd_lip + sd_tab - 4)]) circle(d = 8);
-        }
-    }
-}
-
-// SD peel cover. Local z: 0 = cap face (on the bed). Battery-door motion:
-// tilt the hinge tongue in under the plate's top edge first, then press the
-// perimeter lip home — the cap sits flush in its recess. To open, get a nail
-// into the scoop, peel the tab up: the shallow lip pops progressively and the
-// cover hinges open on the tongue, still attached — nothing to lose, and the
-// tongue stops it being pushed inside.
+// SD peel cover. Local z: 0 = cap face (on the bed). The cap is COUNTERSUNK:
+// its 45° tapered edge nests the plate's 45° rim, flush at the skin — the
+// taper self-centres it and both sides print without a single bridge (the
+// flat-floored recess + tab this replaces drooped on the first real print).
+// Battery-door motion: tilt the hinge tongue in under the plate's top edge
+// first, then press the perimeter lip home. To open, get a nail into the
+// plate's scoop — it bites the rim at the card end, so the nail lands
+// directly under the cap's tapered edge — and peel: the shallow lip pops
+// progressively and the cover hinges open on the tongue, still attached —
+// nothing to lose, and the tongue stops it being pushed inside.
 module sd_cover() {
     ww = sd_w + 2*tpu_squeeze;  wl = sd_l + 2*tpu_squeeze;
     union() {
-        linear_extrude(0.8) sd_cap_2d();                       // flush cap + tab
-        translate([0, 0, 0.8 - 0.01])
-            linear_extrude(2.22) rrect2d(ww, wl, 5.2);         // waist
+        hull() {   // countersunk cap: flush face on the bed, 45° edge
+            linear_extrude(0.01)
+                rrect2d(sd_w + 2*sd_lip - 0.2, sd_l + 2*sd_lip - 0.2, 5 + sd_lip);
+            translate([0, 0, sd_lip]) linear_extrude(0.01) rrect2d(ww, wl, 5.1);
+        }
+        translate([0, 0, sd_lip - 0.01])
+            linear_extrude(3.0 - sd_lip + 0.02) rrect2d(ww, wl, 5.2);   // waist
         hull() {   // shallow snap lip, 45° — pops out under a peel
             translate([0, 0, 3.0 - 0.01]) linear_extrude(0.01) rrect2d(ww, wl, 5.2);
             translate([0, 0, 4.2]) linear_extrude(0.4)
@@ -1172,6 +1219,39 @@ module button_plug_installed() {
 }
 module sd_cover_installed() {
     translate([sd_dx, sd_dy, fr_depth]) rotate([0, 180, 0]) sd_cover();
+}
+
+// ----------------------------------------------------------------------------
+//  RADIUS GAUGE — the ~6 g answer to "what is the slab's corner radius,
+//  really". Four corner sockets bracketing glass_r (−0.4 / −0.2 / +0 / +0.2),
+//  each opened by frame_reveal exactly as the frame's opening is, walls tall
+//  enough to read daylight against. Drop the panel's corner in each: the
+//  right radius hugs it with no daylight at the arc and no bind on the flats.
+//  The first print showed the radius argument must be settled here — a wrong
+//  guess on the slab costs 150 g and a day.
+// ----------------------------------------------------------------------------
+module rg_corner2d(rr) {   // the glass corner at this radius, opened by the reveal
+    offset(r = frame_reveal) translate([20, 20]) rrect2d(40, 40, rr);
+}
+module radius_gauge() {
+    for (i = [0 : 3]) {
+        rr = glass_r + (i - 2)*0.2;
+        translate([i*34, 0, 0]) {
+            // base pad — 1 mm wider than the station pitch, so the four pads
+            // fuse into one printable strip (and one watertight STL)
+            linear_extrude(1.6) rrect2d(35, 30, 3);
+            // L-walls following the pocket boundary — the concave corner is
+            // the true fr_ri of a frame built at this radius
+            translate([0, 0, 1.59]) linear_extrude(8) intersection() {
+                difference() { offset(r = 2.4) rg_corner2d(rr); rg_corner2d(rr); }
+                square([26, 26], center = true);
+            }
+            translate([7, -9, 1.6 - label_depth])
+                linear_extrude(label_depth + 0.1)
+                    text(str(rr), size = 4, font = label_font,
+                         halign = "center", valign = "center");
+        }
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -1360,6 +1440,7 @@ else if (part == "gauge_tray")  gauge_corner("back");
 else if (part == "gauge_bezel") gauge_corner("bezel");
 else if (part == "stand") stand();
 else if (part == "stand_gauge") stand_gauge();
+else if (part == "radius_gauge") radius_gauge();
 // TPU fitments export in their print orientation (A-face down), as modelled
 else if (part == "grommet_usb")  usb_grommet();
 else if (part == "plug_buttons") button_plug();
