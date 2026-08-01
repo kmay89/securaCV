@@ -1,6 +1,6 @@
 // ============================================================================
 //  Canary — UNIVERSAL FIT-CHECK COUPON  ⚠️ IN DEVELOPMENT (v0.2-dev)
-//  ONE ~35-minute print that calibrates your printer for the ENTIRE Canary
+//  ONE small print that calibrates your printer for the ENTIRE Canary
 //  catalog before you commit to any case. Every fit the enclosures use is
 //  exercised on a labelled station, laid out on a branded 90 × 68 plate:
 //
@@ -106,11 +106,15 @@ module base() {
             translate([-24, 16, base_t - lip_h + 1]) linear_extrude(lip_h)
                 rrect2d(30 + 2*tol_slide, lip_t + 2*tol_slide, 0.3);
             // PORT station: the WAP's USB-C opening through a case-typical wall —
-            // counterbored from the back so the web is port_wall thick, like a case
+            // counterbored from the back so the web is port_wall thick, like a case.
+            // The through profile is the WAP's port VERBATIM (square lower corners,
+            // 45°-chamfered top corners) so a boot that passes here passes the case.
             translate([2, 16, -0.1]) linear_extrude(base_t - port_wall + 0.1)
                 rrect2d(usb_w + 6, usb_h + 5, 2);
             translate([2, 16, -0.1]) linear_extrude(base_t + 0.2)
-                rrect2d(usb_w, usb_h, min(usb_h/2 - 0.1, 2.5));
+                polygon([[-usb_w/2, -usb_h/2], [usb_w/2, -usb_h/2],
+                         [usb_w/2, usb_h/2 - 2.5], [usb_w/2 - 2.5, usb_h/2],
+                         [-usb_w/2 + 2.5, usb_h/2], [-usb_w/2, usb_h/2 - 2.5]]);
             // PRESS station: magnet pocket + light-pipe hole
             translate([26, 16, base_t - 2.2]) cylinder(d = mag_d + 2*tol_press, h = 2.3);   // matches mag_h 2.2
             translate([35, 16, -0.1]) cylinder(d = lp_d + 2*tol_press, h = base_t + 0.2);

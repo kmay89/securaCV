@@ -317,7 +317,7 @@ CURATED = [
         "id": "coupon",
         "file": "canary_fit_coupon.scad",
         "name": "Fit coupon",
-        "tagline": "The ~35-minute calibration print. Every fit used across "
+        "tagline": "The first-print calibration plate. Every fit used across "
                    "the fleet's cases, as labelled test stations — print "
                    "this first, tune the three tolerances, reuse everywhere.",
         "about": "Every fit the fleet's cases use, gathered on one branded "
@@ -327,7 +327,8 @@ CURATED = [
                  "debossed wordmarks every case's branding uses. A tight or "
                  "loose station tells you which number to change — once, "
                  "for every case after.",
-        "print_plan": "Print the Base in PETG first (~35 minutes). The Mate "
+        "print_plan": "Print the Base in PETG first — it's small next to "
+                      "any case. The Mate "
                       "tests the keyholes and slide rib against it; the "
                       "Strip is the TPU gasket-squeeze test. Adjust the "
                       "three tolerances and reprint until stations fit.",

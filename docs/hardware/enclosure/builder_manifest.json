@@ -3279,9 +3279,9 @@
       "id": "coupon",
       "file": "canary_fit_coupon.scad",
       "name": "Fit coupon",
-      "tagline": "The ~35-minute calibration print. Every fit used across the fleet's cases, as labelled test stations — print this first, tune the three tolerances, reuse everywhere.",
+      "tagline": "The first-print calibration plate. Every fit used across the fleet's cases, as labelled test stations — print this first, tune the three tolerances, reuse everywhere.",
       "about": "Every fit the fleet's cases use, gathered on one branded test plate: snap clips, keyholes, magnet and light-pipe pockets, insert bores, the lid lip, the USB-C port opening, a −/0/+ screw-pilot ladder, and the embossed/debossed wordmarks every case's branding uses. A tight or loose station tells you which number to change — once, for every case after.",
-      "print_plan": "Print the Base in PETG first (~35 minutes). The Mate tests the keyholes and slide rib against it; the Strip is the TPU gasket-squeeze test. Adjust the three tolerances and reprint until stations fit.",
+      "print_plan": "Print the Base in PETG first — it's small next to any case. The Mate tests the keyholes and slide rib against it; the Strip is the TPU gasket-squeeze test. Adjust the three tolerances and reprint until stations fit.",
       "simple": [
         "part",
         "tol_slide",
@@ -3319,7 +3319,7 @@
         "tol_press": "mm",
         "tol_hole": "mm"
       },
-      "sha256": "cf0bf9e8be3014cdf7ee6977dbf38dce893131e5a95bfeed2830f3c04870b359",
+      "sha256": "4aa41a3e7653caa6c28deab32b65ed5a615a66043ca7a50141e621dfec95ae8e",
       "groups": [
         {
           "name": "What to render",
