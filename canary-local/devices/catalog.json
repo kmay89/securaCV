@@ -439,7 +439,7 @@
   {
    "id": "fit_coupon",
    "scad": "canary_fit_coupon.scad",
-   "title": "Canary — UNIVERSAL FIT-CHECK COUPON  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — UNIVERSAL FIT-CHECK COUPON  ⚠️ IN DEVELOPMENT (v0.2-dev)",
    "family": "universal",
    "device_compat": [
     "_universal"
@@ -451,7 +451,7 @@
     {
      "id": "universal-fit-coupon",
      "name": "Universal fit coupon",
-     "for": "ONE ~25 min print that calibrates every fit in the catalog: clip, keyhole+stud, slide, gasket, press, screw, insert — each station labelled with the parameter it tunes",
+     "for": "ONE ~35 min print that calibrates every fit in the catalog: clip, keyhole+stud, slide, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labelled with the parameter it tunes",
      "status": "in-development",
      "device": "_universal",
      "selects": {},
@@ -465,7 +465,7 @@
     "strip"
    ],
    "options": [],
-   "engineering_param_count": 7,
+   "engineering_param_count": 16,
    "alternatives": [],
    "remix_of": null,
    "counts": {

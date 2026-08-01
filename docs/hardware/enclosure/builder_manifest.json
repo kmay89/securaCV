@@ -3279,9 +3279,9 @@
       "id": "coupon",
       "file": "canary_fit_coupon.scad",
       "name": "Fit coupon",
-      "tagline": "The ~25-minute calibration print. Every fit used across the fleet's cases, as labelled test stations — print this first, tune the three tolerances, reuse everywhere.",
-      "about": "Every fit the fleet's cases use, gathered on one small test plate: snap clips, keyholes, magnet and light-pipe pockets, insert bores, the lid lip. A tight or loose station tells you which number to change — once, for every case after.",
-      "print_plan": "Print the Base in PETG first (~25 minutes). The Mate tests the keyholes and slide rib against it; the Strip is the TPU gasket-squeeze test. Adjust the three tolerances and reprint until stations fit.",
+      "tagline": "The ~35-minute calibration print. Every fit used across the fleet's cases, as labelled test stations — print this first, tune the three tolerances, reuse everywhere.",
+      "about": "Every fit the fleet's cases use, gathered on one branded test plate: snap clips, keyholes, magnet and light-pipe pockets, insert bores, the lid lip, the USB-C port opening, a −/0/+ screw-pilot ladder, and the embossed/debossed wordmarks every case's branding uses. A tight or loose station tells you which number to change — once, for every case after.",
+      "print_plan": "Print the Base in PETG first (~35 minutes). The Mate tests the keyholes and slide rib against it; the Strip is the TPU gasket-squeeze test. Adjust the three tolerances and reprint until stations fit.",
       "simple": [
         "part",
         "tol_slide",
@@ -3298,7 +3298,7 @@
       },
       "part_info": {
         "all": "Base, mate and strip laid out together — in practice print them separately (the strip is TPU).",
-        "base": "The station plate: clip, pocket and bore tests, each labelled with the parameter it exercises.",
+        "base": "The station plate: clip, pocket, bore, port and wordmark tests, each labelled with the parameter it exercises.",
         "mate": "T-studs and a slide rib that mate into the base's keyhole and groove stations.",
         "strip": "A soft TPU bar for the gasket groove — tests the squeeze that seals the weather builds."
       },
@@ -3319,7 +3319,7 @@
         "tol_press": "mm",
         "tol_hole": "mm"
       },
-      "sha256": "42e241d785a8134851c22899cc62120cdc710a8bf9a56537ab0b64161034a4b0",
+      "sha256": "cf0bf9e8be3014cdf7ee6977dbf38dce893131e5a95bfeed2830f3c04870b359",
       "groups": [
         {
           "name": "What to render",
@@ -3437,6 +3437,12 @@
               "default": 4.0
             },
             {
+              "name": "screw_step",
+              "type": "number",
+              "default": 0.15,
+              "desc": "pilot ladder: three holes at screw_d − step / screw_d / + step"
+            },
+            {
               "name": "insert_d",
               "type": "number",
               "default": 3.5
@@ -3480,6 +3486,22 @@
               "name": "gasket_proud",
               "type": "number",
               "default": 0.3
+            },
+            {
+              "name": "usb_w",
+              "type": "number",
+              "default": 12.0
+            },
+            {
+              "name": "usb_h",
+              "type": "number",
+              "default": 6.5
+            },
+            {
+              "name": "port_wall",
+              "type": "number",
+              "default": 2.0,
+              "desc": "case-typical wall the PORT opening is cut through"
             }
           ]
         },
@@ -3498,9 +3520,27 @@
               "default": 0.5
             },
             {
+              "name": "emboss_h",
+              "type": "number",
+              "default": 0.6,
+              "desc": "raised-wordmark height (EMBOSS station)"
+            },
+            {
               "name": "label_font",
               "type": "string",
               "default": "Liberation Sans:style=Bold"
+            },
+            {
+              "name": "brand_raised",
+              "type": "string",
+              "default": "CANARY",
+              "desc": "the EMBOSS station's wordmark"
+            },
+            {
+              "name": "brand_sunk",
+              "type": "string",
+              "default": "SecuraCV",
+              "desc": "the DEBOSS station's wordmark"
             }
           ]
         },
@@ -3510,12 +3550,12 @@
             {
               "name": "bw",
               "type": "number",
-              "default": 74
+              "default": 90
             },
             {
               "name": "bh",
               "type": "number",
-              "default": 58
+              "default": 68
             }
           ]
         }
