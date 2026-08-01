@@ -837,7 +837,7 @@
   {
    "id": "s3_lcd7",
    "scad": "canary_s3_lcd7.scad",
-   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.7-dev)",
+   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.8-dev)",
    "family": "canary-display-dash",
    "device_compat": [
     "canary-display-dash"
@@ -982,7 +982,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 164,
+   "engineering_param_count": 167,
    "alternatives": [
     "dash_display"
    ],

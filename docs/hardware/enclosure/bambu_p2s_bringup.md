@@ -286,7 +286,8 @@ v0.3 added a **`part="frame"`** alternative to the bezel + tray pair, based on
 a case layout print-proven against the real panel: the slab drops in face-first
 through the front opening, the board hangs on the panel's **own white M3
 standoffs**, and **4 × M3×8–10 driven from the back** thread into those
-standoffs — the screws, not a ledge, pull the glass flush with the front rim.
+standoffs — the screws, not a ledge, set the glass depth: it lands 0.6 mm
+(`glass_guard`) below the front rim, the intentional drop-protection recess.
 It carries a bevelled BOOT/RESET window in the top wall — the button edge in
 native mounting — with debossed labels (back view: **BOOT left, RESET
 right**), gill vents on the side walls, exhaust slots flanking the button
@@ -458,8 +459,10 @@ Same doctrine as 7b: **gauges before the slab, smallest first.** The
 corner containing a boss and a wall keyhole, ~10 %) then proves the whole
 corner — assembled on the panel's corner with one screw it checks `glass_r`
 in context, the mount-offset **signs** (`m3_ox`/`m3_oy` — the screw only
-threads home if they're right), and `standoff_len` (the glass sits flush
-with the rim only if that's right). The frame and gauge print
+threads home if they're right), and `standoff_len` (the glass sits exactly
+`glass_guard` — 0.6 mm — **below** the rim only if that's right; that recess
+is the v0.8 drop-protection guard, so flush or proud glass means the stack
+is off, not that the print is good). The frame and gauge print
 **back-plate-down, as exported** — no supports, no brim unless a corner
 lifts.
 
@@ -498,6 +501,16 @@ the released set's largest part at 120.5 mm. Two consequences:
 - **Print in PETG or ASA — never PLA.** This panel's backlight, the ESP32-S3 and
   its regulators all run hot in a closed box. PLA creeps at temperatures this
   case will reach.
+- **The material call is also the drop call.** A handling drop loads exactly
+  the places PLA fails brittle: the wall corners and the plate rim. PETG bends
+  where PLA snaps; ASA adds UV life for a sunny room. Give the case **4 wall
+  loops** (the 2 mm walls then print as solid perimeters — stronger and cleaner
+  than loops + gap fill) and don't lower the layer height below 0.2 to "add
+  strength": more, hotter-bonded layers beat many cold thin ones for impact.
+  The geometry does its part (v0.8: the front rim stands 0.6 mm proud so a
+  face-down drop lands on plastic, not glass; a 45° fillet ring ties the walls
+  into the back plate; the SD leash carries root fillets) — the slicer settings
+  are the other half of the deal.
 
 **Keep the vents clear** when you mount it. The convection path is real and
 directional: **intake along the bottom wall, exhaust along the top wall**, back
