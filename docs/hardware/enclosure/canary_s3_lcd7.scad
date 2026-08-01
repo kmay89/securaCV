@@ -685,9 +685,17 @@ assert(!adh_rails || (adh_rail_dx - adh_rail_w/2 - adh_mark_w > 1
 assert(label_back_depth > frame_rim + 0.3 && label_back_depth <= back_t - 1.2,
        "frame: label_back_depth must clear the rim-chamfer band (the two-colour swap) yet leave 1.2 mm of plate");
 assert(sd_dx + sd_w/2 + sd_lip + 2 < fr_xi/2
+       && sd_dy + sd_l/2 + sd_lip + 2 < fr_yi/2
        && (!sd_tether || sd_teth_y + sd_teth_hole/2 + 3 < fr_yi/2)
        && sd_dy - sd_l/2 - sd_lip - 6 > -fr_yo/2 + frame_rim,
        "frame: SD cover (mouth, tether anchor or nail scoop) runs off the back plate");
+// retention is geometry, not hope: the shaft must ride loose in the hole,
+// the arrowhead must carry real interference over it (or the "captive"
+// cover pulls straight back through — both gates would still pass), and
+// the head must fit down the 5.0 strap channel to be inserted at all
+assert(!sd_tether || (sd_teth_hole >= 3.1
+       && sd_teth_head >= sd_teth_hole + 1.0 && sd_teth_head <= 5.0),
+       "frame: tether retention broken — need hole >= 3.1 (Ø2.8 shaft clearance), head >= hole + 1.0, head <= 5.0 (channel width)");
 // the barb pops out just inside the plate and must stop short of the
 // component band; its head must also ride clear of the nearest boss fillet
 assert(!sd_tether || fr_depth - 5.2 >= fz_boss + 0.5,
