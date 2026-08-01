@@ -872,7 +872,14 @@ function onProductChosen(p, ver) {
   const broker = p.broker_nvs === true;
   $("provisioning").classList.remove("hidden");
   document.querySelectorAll("#provisioning .usb-only").forEach((n) => {
-    n.classList.toggle("hidden", !usbSecrets);
+    // The name row also shows for broker-capable boards (displays): their
+    // firmware derives its MQTT topics from dev_id, and without a seeded one
+    // the flavor's SHARED compiled id (canary_dash_001) goes sticky on first
+    // boot — two of the same display would collide on the same topics. The
+    // glass setup only ever asks for Wi-Fi, so this is the one place a
+    // display can be named. Optional there; clearing it writes nothing.
+    const isIdentity = !!n.querySelector("#device-id");
+    n.classList.toggle("hidden", !(usbSecrets || (broker && isIdentity)));
     const input = n.querySelector("input");
     if (input) input.required = usbSecrets && input.id === "device-id";
   });
@@ -897,17 +904,22 @@ function onProductChosen(p, ver) {
       if (ssid && !$("wifi-ssid").value) $("wifi-ssid").value = ssid;
     }).catch(() => {});
   }
-  if (usbSecrets && !$("device-id").value) {
-    const family = p.id.includes("vision")
-      ? "canary_vision"
-      : p.id.includes("sense")
-        ? "canary_sense"
-        : "canary";
+  if ((usbSecrets || broker) && !$("device-id").value) {
+    const family = p.id.includes("display")
+      ? "canary_display"
+      : p.id.includes("vision")
+        ? "canary_vision"
+        : p.id.includes("sense")
+          ? "canary_sense"
+          : "canary";
     const suffix = Array.from(crypto.getRandomValues(new Uint8Array(2)))
       .map((b) => b.toString(16).padStart(2, "0")).join("");
     $("device-id").value = `${family}_${suffix}`;
-    $("mqtt-host").value ||= "homeassistant.local";
   }
+  // The broker default is the broker CAPABILITY's default, not usb-secrets':
+  // a display gets homeassistant.local suggested too (the browser flasher
+  // suggests the same), and clearing it means "skip — nothing is written".
+  if (usbSecrets || broker) $("mqtt-host").value ||= "homeassistant.local";
   const btn = $("flash-btn");
   btn.disabled = !ver;
   $("flash-target").textContent = ver
@@ -1039,7 +1051,7 @@ function readProvisioning(product) {
   // board's own setup path still works, so nothing to validate or write.
   if (!usbSecrets && !$("wifi-ssid").value && !$("mqtt-host").value) return null;
   const fields = ["wifi-ssid", "wifi-pass"]
-    .concat(usbSecrets ? ["device-id"] : [])
+    .concat(usbSecrets || broker ? ["device-id"] : [])
     .concat(broker ? ["mqtt-host", "mqtt-port", "mqtt-user", "mqtt-pass"] : []);
   for (const id of fields) {
     const input = $(id);
@@ -1055,7 +1067,10 @@ function readProvisioning(product) {
     return false; // same: an answer the user gave, not an answer to drop
   }
   return {
-    deviceId: usbSecrets ? $("device-id").value.trim() : "",
+    // Identity rides along for broker-capable boards too (displays): their
+    // MQTT topics derive from dev_id, and the alternative is the flavor's
+    // shared compiled id going sticky. Cleared field → empty → not written.
+    deviceId: usbSecrets || broker ? $("device-id").value.trim() : "",
     wifiSsid: $("wifi-ssid").value,
     wifiPass,
     mqttHost: broker ? $("mqtt-host").value.trim() : "",

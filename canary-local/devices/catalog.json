@@ -92,7 +92,7 @@
   {
    "id": "c6_display",
    "scad": "canary_c6_display.scad",
-   "title": "Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.3-dev)",
+   "title": "Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.4-dev)",
    "family": "canary-display-watch",
    "device_compat": [
     "canary-display-watch"
@@ -162,7 +162,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 57,
+   "engineering_param_count": 62,
    "alternatives": [
     "s3_touch169",
     "watch_station"

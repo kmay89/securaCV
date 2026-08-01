@@ -6068,7 +6068,7 @@
    ]
   },
   "canary_c6_display.scad": {
-   "title": "Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.3-dev)",
+   "title": "Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.4-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -6132,7 +6132,7 @@
       {
        "name": "hdr_drop",
        "default": "8.8",
-       "comment": "cavity depth below the PCB back that swallows base + pins — MEASURE"
+       "comment": "cavity depth below the PCB back that swallows base + pins"
       },
       {
        "name": "hdr_inset",
@@ -6172,13 +6172,13 @@
       },
       {
        "name": "usb_w",
-       "default": "9.4",
-       "comment": "stadium opening width — shell + tolerance"
+       "default": "9.15",
+       "comment": "stadium opening width — shell + 0.2 (fit-tested: 9.4 showed a gap)"
       },
       {
        "name": "usb_h",
-       "default": "3.7",
-       "comment": "stadium opening height — shell + tolerance (+Z print squish)"
+       "default": "3.45",
+       "comment": "stadium opening height — shell + 0.2"
       },
       {
        "name": "usb_dx",
@@ -6201,13 +6201,13 @@
       },
       {
        "name": "btn_d",
-       "default": "3.6",
-       "comment": "side access hole Ø (through the ear skin)"
+       "default": "3.0",
+       "comment": "access hole Ø — big enough for a tool tip, small enough to shield"
       },
       {
        "name": "btn_up",
-       "default": "6.0",
-       "comment": "button centre up from the USB (−Y) end (photo ≈6.0) — MEASURE"
+       "default": "7.0",
+       "comment": "button centre up from the USB (−Y) end (fit-tested: 6.0 sat 1 low) — MEASURE"
       },
       {
        "name": "btn_dz",
@@ -6217,12 +6217,22 @@
       {
        "name": "btn_proud",
        "default": "1.8",
-       "comment": "button overhang past the PCB edge (photo ≈1.8) — MEASURE"
+       "comment": "BLACK ACTUATOR overhang past the PCB edge (photo ≈1.8) — MEASURE"
       },
       {
        "name": "btn_ch_w",
-       "default": "7.0",
-       "comment": "clearance channel width along the wall (Y)"
+       "default": "3.4",
+       "comment": "actuator channel width (Y) — hugs the black nub, nothing more"
+      },
+      {
+       "name": "btn_body_w",
+       "default": "5.2",
+       "comment": "shallow relief width for the switch's metal body — MEASURE"
+      },
+      {
+       "name": "btn_body_p",
+       "default": "0.4",
+       "comment": "metal body overhang past the PCB edge — MEASURE"
       }
      ]
     },
@@ -6327,8 +6337,7 @@
       },
       {
        "name": "z_usb",
-       "default": "z_pcb_back + usb_h/2 + usb_dz",
-       "comment": "opening centre — shell rests on the PCB back"
+       "default": "z_pcb_back + 3.26/2 + usb_dz"
       },
       {
        "name": "z_btn",
@@ -6343,11 +6352,21 @@
       {
        "name": "btn_reach",
        "default": "btn_proud + tol_slide",
-       "comment": "channel depth past the cavity face"
+       "comment": "actuator channel depth past the cavity face"
+      },
+      {
+       "name": "btn_body_reach",
+       "default": "btn_body_p + tol_slide",
+       "comment": "shallow body-relief depth"
       },
       {
        "name": "usb_reach",
        "default": "usb_proud + tol_slide"
+      },
+      {
+       "name": "usb_slide",
+       "default": "usb_w + 0.35",
+       "comment": "insertion-notch width — a hair looser than the"
       },
       {
        "name": "ear_bump",
@@ -6399,12 +6418,17 @@
       },
       {
        "name": "stand_d",
-       "default": "(headers == \"male\") ? 5.2 : 4.2",
-       "comment": "boss Ø (wider = covers the pillar top)"
+       "default": "(headers == \"male\") ? 4.6 : 4.2",
+       "comment": "boss Ø — covers the pillar top but stays"
       },
       {
        "name": "stand_len",
        "default": "stack_eff - ((headers == \"male\") ? brass_h : 0)"
+      },
+      {
+       "name": "nub_y0",
+       "default": "5.0",
+       "comment": "clear of the button channel below and the vents above"
       },
       {
        "name": "vent_z0",

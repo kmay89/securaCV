@@ -934,6 +934,11 @@ export function buildNvsSeedImage(opts, partitionSize) {
       writeBlob("wifi_ssid", ssidB);
       writeBlob("wifi_pass", passB);
       writeInt("wifi_en", 0x01, 1, 1); // Preferences putBool stores a u8
+      // These firmwares also latch a first-boot flag: without it a fully
+      // seeded board still boots shouting "SETUP MODE" and raising its
+      // captive portal even though the STA join succeeds. Seeded Wi-Fi IS
+      // the setup, so mark it done.
+      writeInt("setup_ok", 0x01, 1, 1);
     }
   }
   // String entries (dev_id, mqtt_*) — type 0x21, byte-identical to the native
