@@ -6447,7 +6447,7 @@
    ]
   },
   "canary_s3_lcd7.scad": {
-   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.4-dev)",
+   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.5-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -6466,6 +6466,7 @@
         "gauge_tray",
         "stand",
         "stand_gauge",
+        "radius_gauge",
         "grommet_usb",
         "plug_buttons",
         "plug_sd",
@@ -6495,8 +6496,8 @@
       },
       {
        "name": "glass_r",
-       "default": "2.0",
-       "comment": "corner radius of the glass slab — MEASURE. A reference"
+       "default": "3.2",
+       "comment": "corner radius of the glass slab. The FIRST REAL PRINT"
       },
       {
        "name": "aa_w",
@@ -6561,12 +6562,12 @@
       },
       {
        "name": "m3_ox",
-       "default": "-1.5",
+       "default": "1.5",
        "comment": "pattern centre offset from the GLASS centre, stated in"
       },
       {
        "name": "m3_oy",
-       "default": "-0.9",
+       "default": "0.9",
        "comment": "FRONT view, panel mounted NATIVE (buttons at the top):"
       },
       {
@@ -6760,32 +6761,32 @@
       {
        "name": "mount_keyholes",
        "default": "true",
-       "comment": "wall-mount keyholes through the back plate, up near"
+       "comment": "wall-mount keyholes through the back plate, one in"
       },
       {
        "name": "khm_dx",
        "default": "78.5",
-       "comment": "the top corners. Head hole LOW, slide runs UP so the"
+       "comment": "EACH of the four corners (first-print feedback: two"
       },
       {
        "name": "khm_y",
        "default": "34.0",
-       "comment": "catch points at the button edge: hang the case over"
+       "comment": "held the case but let the bottom float off the wall)."
       },
       {
        "name": "khm_head_d",
        "default": "9.5",
-       "comment": "two screws and slide it DOWN to seat. The head hole"
+       "comment": "All four share one orientation — head hole LOW,"
       },
       {
        "name": "khm_slide_w",
        "default": "4.5",
-       "comment": "passes a #8 / M4 pan head; the slide, its shank."
+       "comment": "slide running UP, catch at the button edge — so the"
       },
       {
        "name": "khm_len",
        "default": "13.0",
-       "comment": "head-hole centre → catch centre"
+       "comment": "case hangs over the screws and slides DOWN to seat."
       },
       {
        "name": "adh_t",
@@ -6824,8 +6825,8 @@
       },
       {
        "name": "sd_dx",
-       "default": "42.0",
-       "comment": "opening centre, + = back-view right"
+       "default": "35.65",
+       "comment": "opening centre, + = back-view right (42.0 − 6.35, measured)"
       },
       {
        "name": "sd_dy",
@@ -6862,8 +6863,8 @@
       },
       {
        "name": "dock_key_dx",
-       "default": "48.0",
-       "comment": "portrait slots' ±dy on the side walls (past the gills)"
+       "default": "46.5",
+       "comment": "portrait slots' ±dy on the side walls (past the gills;"
       },
       {
        "name": "dock_key_bx",
@@ -6956,13 +6957,8 @@
       },
       {
        "name": "sd_lip",
-       "default": "2.0",
-       "comment": "cover cap border beyond the opening, per side (flush recess)"
-      },
-      {
-       "name": "sd_tab",
-       "default": "4.0",
-       "comment": "peel-tab length beyond the cap"
+       "default": "1.2",
+       "comment": "countersunk rim: 45° reach AND depth around the opening."
       },
       {
        "name": "sd_hinge",
@@ -7054,12 +7050,12 @@
       },
       {
        "name": "stand_rib_x",
-       "default": "48.25",
+       "default": "47.7",
        "comment": "± KEYED RIBS: blades across the well that carry the"
       },
       {
        "name": "stand_rib_w",
-       "default": "9.5",
+       "default": "8.0",
        "comment": "case in PORTRAIT (its 115 mm width misses the cheeks"
       },
       {

@@ -837,7 +837,7 @@
   {
    "id": "s3_lcd7",
    "scad": "canary_s3_lcd7.scad",
-   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.4-dev)",
+   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.5-dev)",
    "family": "canary-display-dash",
    "device_compat": [
     "canary-display-dash"
@@ -871,6 +871,7 @@
     "gauge_tray",
     "stand",
     "stand_gauge",
+    "radius_gauge",
     "grommet_usb",
     "plug_buttons",
     "plug_sd"
@@ -927,7 +928,7 @@
     {
      "id": "mount_keyholes",
      "type": "bool",
-     "label": "wall-mount keyholes through the back plate, up near",
+     "label": "wall-mount keyholes through the back plate, one in",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -965,7 +966,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 145,
+   "engineering_param_count": 144,
    "alternatives": [
     "dash_display"
    ],
