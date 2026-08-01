@@ -30,7 +30,12 @@ jobs:
   render:
     name: Render + mesh check
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The 7in seated-fit suite is the long pole: the two portrait dock poses
+    # and the TPU gates are full-assembly CGAL intersections that take tens of
+    # minutes on a 2-core runner. 30 min was enough for either branch's gates
+    # alone; the merged suite (5 dock + 7 fitment gates) blew straight through
+    # it — the job died as "cancelled" at 30:15 with the geometry all green.
+    timeout-minutes: 75
     defaults:
       run:
         working-directory: docs/hardware/enclosure
