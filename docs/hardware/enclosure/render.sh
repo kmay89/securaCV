@@ -134,6 +134,8 @@ devstl dev_c6_147_bezel.stl  canary_c6_display.scad -D 'model="1.47"' -D 'part="
 devstl dev_c6_147_back.stl   canary_c6_display.scad -D 'model="1.47"' -D 'part="back"'
 devstl dev_lcd7_bezel.stl    canary_s3_lcd7.scad -D 'part="bezel"'
 devstl dev_lcd7_back.stl     canary_s3_lcd7.scad -D 'part="back"'
+devstl dev_lcd7_frame.stl    canary_s3_lcd7.scad -D 'part="frame"'
+devstl dev_lcd7_frame_gauge.stl canary_s3_lcd7.scad -D 'part="frame_gauge"'
 devstl dev_lcd7_stand.stl    canary_s3_lcd7.scad -D 'part="stand"'
 # corner gauge — the ~16.5 g sanity print that comes before the ~158 g case pair
 devstl dev_lcd7_gauge_bezel.stl canary_s3_lcd7.scad -D 'part="gauge_bezel"'

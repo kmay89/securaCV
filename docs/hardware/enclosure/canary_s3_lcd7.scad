@@ -1,5 +1,5 @@
 // ============================================================================
-//  Canary — 7" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.2-dev)
+//  Canary — 7" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.3-dev)
 // @env env="indoor; runs hot → print in PETG/ASA"
 //  Housing for the Waveshare ESP32-S3-Touch-LCD-7 (7" 800x480 IPS capacitive
 //  touch, ESP32-S3, CAN/RS485/battery). The big-panel "wall dashboard" — the
@@ -22,6 +22,16 @@
 //            active area, the screw threads, and the closed stack height is
 //            what the echo says. See bambu_p2s_bringup.md §7.
 //    stand — free-standing desk cradle, reclined, no hardware (optional).
+//    frame — ONE-PIECE drop-in case, the layout a fitting reference print
+//            validated: the slab enters face-first through the front opening,
+//            the board hangs on the panel's OWN white M3 standoffs, and
+//            4x M3x8-10 from the back thread into those standoffs — the
+//            screws, not a ledge, pull the glass flush with the front face.
+//            Buttons-down BOOT/RESET window in the bottom wall with debossed
+//            labels, raked side gills, chimney intake/exhaust, back grille.
+//    frame_gauge — one corner of the frame including one boss and a cable
+//            slot. Print FIRST (~10 % of the frame's filament): it proves the
+//            glass corner radius, the boss offset signs and the screw reach.
 //
 //  THE Z STACK-UP (read before changing any depth). Datum = the GLASS BACK
 //  face, which is exactly where the tray's wall top ends and the bezel begins:
@@ -45,30 +55,43 @@
 //  ⚠️ CONNECTOR POSITIONS ARE NOMINAL — Waveshare's drawing dimensions the
 //  glass + mount holes precisely but not every connector centre. MEASURE the
 //  USB-C / UART / CAN / RS485 / battery positions on YOUR Rev before printing.
-//  ⚠️ SO IS pcb_h. Published summaries of this board disagree about the PCB
-//  outline height (97.60 vs 126.20), so the tray cavity is sized to whichever of
-//  the glass and the PCB is larger and the case grows to fit either, while the
-//  bezel's glass pocket stays sized to the slab so it always locates the panel.
-//  MEASURE yours; the render echoes a NOTE if the board is the bigger part.
+//  The old pcb_h dispute (97.60 vs 126.20) is RESOLVED: 126.20 is the M3
+//  mount-hole X SPAN, measured off a reference case print that fits the real
+//  panel — a published summary had recorded the hole span as an outline
+//  height. pcb_h stays 97.60 nominal (MEASURE); the tray cavity still sizes
+//  itself to the larger of glass and board, so an oversized board grows the
+//  case rather than jamming it.
 //
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
 //  Orientation: landscape, +X = width, +Y = up, +Z = toward the glass.
+//  MOUNTING DOCTRINE: the panel mounts BUTTONS-DOWN — rotated 180° from
+//  Waveshare-native, with the image rotated to match in firmware — so
+//  BOOT/RESET end up reachable at the bottom edge instead of on top. aa_dy
+//  and the m3_ox/m3_oy offsets are stated in THIS orientation; flipping the
+//  panel back flips their signs.
 // ============================================================================
 
 /* [What to render] */
-part = "all";        // ["bezel","back","gauge","gauge_bezel","gauge_tray","stand","all"]
+part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","all"]
 
 /* [Glass slab] — bonded touch panel, from the Waveshare drawing (mm) */
 glass_w = 192.96;    // touch-glass width  (X)
 glass_h = 110.76;    // touch-glass height (Y)
 glass_t = 4.0;       // glass + LCD module thickness at the edge — MEASURE
-glass_r = 3.0;       // corner radius of the glass slab — MEASURE. The cavity is
-                     // never rounded more than this: a pocket with a bigger
-                     // radius than the glass binds on all four corners, and a
-                     // near-square panel needs a near-square pocket.
+glass_r = 2.0;       // corner radius of the glass slab — MEASURE. A reference
+                     // case whose cavity corners measure r≈2.7 still shows a
+                     // sliver of daylight at each corner, so the slab is
+                     // sharper than that — and sharper than the r3.0 v0.2
+                     // assumed. The cavity is never rounded more than this: a
+                     // pocket with a bigger radius than the glass binds (or
+                     // gaps) on all four corners; a near-square panel needs a
+                     // near-square pocket.
 aa_w = 154.88;       // active area width
 aa_h = 86.72;        // active area height
-aa_dy = -1.02;       // AA centre offset from glass centre (top border 13.04, bottom 11.00)
+aa_dy = 1.02;        // AA centre offset from glass centre. Waveshare-native the
+                     // borders are 13.04 top / 11.00 bottom (aa_dy -1.02); the
+                     // buttons-down mounting doctrine flips the panel 180°, so
+                     // the wide border lands at the BOTTOM and the sign flips.
 
 /* [PCB stack behind the glass] */
 pcb_standoff = 5.0;  // glass back → PCB front (the white M3 standoffs) — MEASURE.
@@ -81,13 +104,21 @@ comp_h  = 11.0;      // tallest thing behind the PCB (USB-C / terminals / batt J
 pcb_w   = 165.72;    // PCB outline width  (X) — from the drawing
 pcb_h   = 97.60;     // PCB outline height (Y) — MEASURE (see the header warning)
 
-/* [Board mounts] — 4x M3 corner standoffs carry the PCB (nominal pattern) */
-m3_dx = 165.72;      // M3 hole pattern width  — MEASURE. ⚠️ This is EXACTLY
-                     // pcb_w, which cannot be a real hole spacing: holes do not
-                     // sit on the board outline. It was almost certainly copied
-                     // from the outline dimension. Expect the true span to be
-                     // ~6-10 mm smaller and measure it before you print a tray.
-m3_dy = 88.0;        // M3 hole pattern height — MEASURE
+/* [Board mounts] — 4x M3 corner standoffs carry the PCB (measured pattern) */
+m3_dx = 126.20;      // M3 hole pattern width — MEASURED from a reference case
+                     // print that fits the real panel (v0.2 shipped 165.72
+                     // here — the outline width, which put every boss under
+                     // the board's edge; see the header for how 126.20 also
+                     // resolves the old pcb_h dispute). Verify on your board.
+m3_dy = 65.65;       // M3 hole pattern height — measured with m3_dx; verify
+m3_ox = 1.5;         // pattern centre offset from the GLASS centre, stated in
+m3_oy = 0.9;         // FRONT view with the panel mounted buttons-down:
+                     // +x = right, +y = up. The pattern is NOT symmetric about
+                     // the glass centre — this offset is exactly why a panel
+                     // can't be flipped 180° inside a case drawn for the other
+                     // orientation, and why the buttons-down doctrine needs
+                     // its own geometry. VERIFY the signs on your board with
+                     // calipers before printing a tray or frame.
 m3_pilot = 2.7;      // self-tap pilot for M3 into printed bosses
 
 /* [Screen] */
@@ -150,6 +181,29 @@ lob_pilot = 2.7;  cb_d = 6.0;  cb_h = 2.0;
 // lob_pilot/m3_pilot are undersize on purpose, so the thread forms.)
 screw_c = m3_nom + tol_hole;
 
+/* [Frame — one-piece drop-in case (part="frame")] */
+frame_wall   = 2.0;  // sleeve wall (also the visible front rim around the glass)
+frame_reveal = 0.15; // per-side glass↔opening clearance. The opening AND its
+                     // corner radius both track the slab by this much, so the
+                     // reference case's corner gap cannot come back.
+standoff_len = 6.9;  // the panel's own white M3 standoffs, PCB back → tip — MEASURE
+frame_boss_h = 3.0;  // boss standing proud of the back plate's inner face
+frame_boss_d = 8.0;
+btn_w  = 25.0;       // BOOT/RESET access window through the BOTTOM wall (measured)
+btn_h  = 13.5;       // window height across the wall's depth
+btn_dx = 0.0;        // window centre offset along the bottom wall
+btn_lbl_dx = 9.0;    // BOOT/RESET label centres, ± of the window centre
+cable_slots = true;  // two rounded pass-throughs in the back plate (cable exit /
+cable_dx = 78.5;     // hanging) at the board's connector edges — positions
+cable_dy = 25.2;     // measured from the reference case
+cable_w  = 10.0;  cable_l = 22.0;
+gill_n = 6;          // raked "gill" vents per side (±x) wall, upper half
+gill_w = 2.4;  gill_l = 9.0;  gill_rake = 25;   // slot width / length / rake °
+frame_vent_top_n = 10;   // exhaust slots through the top wall
+frame_vent_bot_n = 4;    // intake slots per side, flanking the button window
+label_depth = 0.5;
+label_font  = "Liberation Sans:style=Bold";
+
 /* [Stand] */
 opt_stand = true;
 stand_ang = 20;  stand_w = 210.0;  stand_d = 120.0;  stand_t = 5.0;
@@ -204,16 +258,41 @@ lip_top = (glass_h - view_h)/2 - aa_dy;
 lip_bot = (glass_h - view_h)/2 + aa_dy;
 lip_min = min(lip_x, lip_top, lip_bot);
 
+// Frame (one-piece) derived. NOTE the frame is modelled PRINT-SIDE: z0 = the
+// front face on the build plate, +z toward the back — so viewed from the BACK
+// +x is right (from the front, +x is left). Board-relative x features
+// therefore use -m3_ox where the two-part tray uses +m3_ox.
+fr_xi = glass_w + 2*frame_reveal;  fr_yi = glass_h + 2*frame_reveal;
+fr_ri = glass_r + frame_reveal;    // opening corners track the slab
+fr_xo = fr_xi + 2*frame_wall;      fr_yo = fr_yi + 2*frame_wall;
+fr_ro = fr_ri + frame_wall;
+fr_depth = glass_t + pcb_standoff + pcb_t + standoff_len + frame_boss_h + back_t;
+fz_boss  = fr_depth - back_t - frame_boss_h;   // boss face the standoffs land on
+fz_plate = fr_depth - back_t;                  // inner face of the back plate
+fr_bosses = [for (sx = [1,-1], sy = [1,-1]) [-m3_ox + sx*m3_dx/2, m3_oy + sy*m3_dy/2]];
+btn_z0 = glass_t + 1;  btn_z1 = fz_boss + 1;   // the band the buttons live in
+
 assert(bez_lip >= 2.0, "bezel lip < 2 mm won't retain a 7in slab");
 assert(lip_min >= bez_lip, str("bezel lip is only ", lip_min,
        " mm at its tightest edge — widen the glass border, shrink win_margin, ",
        "or lower bez_lip"));
 assert(aa_w < glass_w && aa_h < glass_h, "active area must sit inside the glass");
-assert(m3_dx + lob_d < xo && m3_dy + lob_d < yo, "M3 pattern doesn't fit the shell");
-assert(m3_dx <= pcb_w && m3_dy <= pcb_h, "M3 pattern falls outside the PCB outline");
+assert(m3_dx + 2*abs(m3_ox) + lob_d < xo && m3_dy + 2*abs(m3_oy) + lob_d < yo,
+       "M3 pattern doesn't fit the shell");
+assert(m3_dx/2 + abs(m3_ox) <= pcb_w/2 && m3_dy/2 + abs(m3_oy) <= pcb_h/2,
+       "M3 pattern falls outside the PCB outline");
+assert(frame_reveal > 0 && frame_reveal <= 0.6, "frame_reveal out of sane range");
+assert(min([for (p = fr_bosses) min(fr_xi/2 - abs(p[0]), fr_yi/2 - abs(p[1]))])
+       > frame_boss_d/2 + 1, "frame: a boss lands under the sleeve wall — check m3_* / offsets");
+assert(abs(btn_dx) + btn_w/2 + 3 < fr_xi/2 - fr_ri,
+       "frame: button window overruns the bottom wall's flat span");
+assert((btn_z0 + btn_z1)/2 + btn_h/2 < fz_plate - 0.5,
+       "frame: button window cuts into the back plate");
+assert(!cable_slots || (cable_dx + cable_w/2 + 2 < fr_xi/2 && cable_dy + cable_l/2 + 2 < fr_yi/2),
+       "frame: cable slot runs off the back plate");
 assert(cb_h + 1.0 <= bez_h, "counterbore deeper than the bezel ear");
 assert(cav_d > comp_h + pcb_t, "no air gap left between the PCB and the glass");
-echo(str("Canary 7in touch v0.2-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
+echo(str("Canary 7in touch v0.3-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
          " mm, window ", view_w, " x ", view_h, ", lip ", lip_min,
          " mm, vent area ~",
          round(vent_back ? vent_rows*vent_cols*vent_slot_w*vent_slot_l/100 : 0), " cm2",
@@ -221,6 +300,10 @@ echo(str("Canary 7in touch v0.2-dev — outer ", xo, " x ", yo, " x ", bez_h + c
 echo(str("  stack: floor ", z_floor, " | PCB under ", z_pcb_under, " | PCB top ",
          z_pcb_top, " | glass back ", z_glass, " | closed height ",
          back_t + cav_d + bez_h, " mm"));
+echo(str("  frame: ", fr_xo, " x ", fr_yo, " x ", fr_depth,
+         " mm one-piece; glass opening ", fr_xi, " x ", fr_yi, " r", fr_ri,
+         "; 4x M3x8-10 from the back into the panel standoffs (boss face at ",
+         fz_boss, ", head seat at ", fz_plate, ")"));
 // When the board is the bigger part, the tray cavity opens up to clear it and
 // stops being what locates the slab — the bezel's glass pocket takes that job.
 // Worth saying out loud, because it changes which part you check first if the
@@ -278,13 +361,21 @@ module bezel_print() { bezel(); }
 // ----------------------------------------------------------------------------
 //  BACK — deep vented rear tray, prints outer-face-down (z0 = outer back face)
 // ----------------------------------------------------------------------------
-module vent_grille() {
-    // staggered slot grille centred on the back plate
+// ox/oy: where the M3 boss pattern actually sits (the measured pattern lands
+// INSIDE the grille field, so slots must now dodge the bosses — the v0.2
+// pattern sat outside it and never could collide). keepouts: extra [x,y,hw,hh]
+// rectangles to dodge (the frame passes its cable slots).
+module vent_grille(ox = m3_ox, oy = m3_oy, keepouts = []) {
     for (r = [0:vent_rows-1], c = [0:vent_cols-1]) {
         x = (c - (vent_cols-1)/2) * vent_pitch_x;
         y = (r - (vent_rows-1)/2) * vent_pitch_y;
-        // keep the grille inside the PCB footprint and off the lobes
-        if (abs(x) < pcb_w/2 - 6 && abs(y) < pcb_h/2 - 6)
+        // keep the grille inside the PCB footprint, off the bosses, and out of
+        // any caller-supplied keepout rectangles
+        clear_boss = min([for (sx = [1,-1], sy = [1,-1])
+            max(abs(x - (ox + sx*m3_dx/2)) - 6, abs(y - (oy + sy*m3_dy/2)) - 9)]) > 0;
+        clear_keep = len(keepouts) == 0 ||
+            min([for (k = keepouts) max(abs(x - k[0]) - k[2], abs(y - k[1]) - k[3])]) > 0;
+        if (abs(x) < pcb_w/2 - 6 && abs(y) < pcb_h/2 - 6 && clear_boss && clear_keep)
             translate([x, y, -0.1]) linear_extrude(back_t + 0.2) hull()
                 for (dy = [-(vent_slot_l - vent_slot_w)/2, (vent_slot_l - vent_slot_w)/2])
                     translate([0, dy]) circle(d = vent_slot_w);
@@ -300,14 +391,14 @@ module back() {
             // cavity so the case screw threads into solid material all the way)
             translate([0, 0, back_t - 0.01]) linear_extrude(cav_d + 0.01)
                 difference() { outline2d(); rrect2d(xc, yc, r_cav); }
-            // PCB standoff bosses at the M3 pattern
+            // PCB standoff bosses at the M3 pattern (offset — see m3_ox/m3_oy)
             for (sx = [1,-1], sy = [1,-1])
-                translate([sx*m3_dx/2, sy*m3_dy/2, back_t - 0.01])
+                translate([m3_ox + sx*m3_dx/2, m3_oy + sy*m3_dy/2, back_t - 0.01])
                     cylinder(d = 7.0, h = comp_h);
         }
         // M3 boss pilots
         for (sx = [1,-1], sy = [1,-1])
-            translate([sx*m3_dx/2, sy*m3_dy/2, back_t + comp_h - 6]) cylinder(d = m3_pilot, h = 6.2);
+            translate([m3_ox + sx*m3_dx/2, m3_oy + sy*m3_dy/2, back_t + comp_h - 6]) cylinder(d = m3_pilot, h = 6.2);
         // case-screw self-tap pilots down the TOP of each full-height corner post
         // (the bezel's counterbored ear delivers the M3 into these)
         for (p = lobes())
@@ -368,6 +459,103 @@ module gauge() {
 }
 
 // ----------------------------------------------------------------------------
+//  FRAME — one-piece drop-in case (prints FACE-DOWN: z0 = front outer face,
+//  +z toward the back; +x = BACK-view right). No ledge holds the glass: the
+//  4 screws pull the panel's standoffs onto the boss faces, and that stack —
+//  glass_t + pcb_standoff + pcb_t + standoff_len — is exactly what sets the
+//  glass flush with the front rim. Get standoff_len right or the glass sits
+//  proud/sunken by the same error.
+// ----------------------------------------------------------------------------
+module pill2d(l, w) { hull() for (d = [-1, 1]) translate([0, d*(l - w)/2]) circle(d = w); }
+module frame_lbl(x, y, s) {
+    translate([x, y, fr_depth - label_depth]) linear_extrude(label_depth + 0.1)
+        text(s, size = 4.0, font = label_font, halign = "center", valign = "center");
+}
+
+module frame() {
+    gz = (glass_t + fz_boss)/2;        // centre of the clear air band in the walls
+    gh = fz_boss - glass_t - 4;        // wall-vent height inside that band
+    btn_zc = (btn_z0 + btn_z1)/2;
+    difference() {
+        union() {
+            difference() {
+                linear_extrude(fr_depth) rrect2d(fr_xo, fr_yo, fr_ro);
+                // one straight cavity, snug to the SLAB (the widest thing in
+                // the stack — the board hangs inboard of it on its standoffs)
+                translate([0, 0, -0.1]) linear_extrude(fz_plate + 0.1)
+                    rrect2d(fr_xi, fr_yi, fr_ri);
+            }
+            // bosses hanging from the back plate's inner face
+            for (p = fr_bosses) translate([p[0], p[1], fz_boss])
+                cylinder(d = frame_boss_d, h = frame_boss_h + 0.01);
+        }
+        // glass entry chamfer around the front rim
+        hull() {
+            translate([0, 0, -0.01]) linear_extrude(0.02)
+                rrect2d(fr_xi + 1.2, fr_yi + 1.2, fr_ri + 0.6);
+            translate([0, 0, 0.6]) linear_extrude(0.02) rrect2d(fr_xi, fr_yi, fr_ri);
+        }
+        // M3 clearance through each boss; head pocket through the plate. The
+        // head bears on the step where the two meet — that is what closes the
+        // stack (see the module header).
+        for (p = fr_bosses) {
+            translate([p[0], p[1], fz_boss - 0.1]) cylinder(d = screw_c, h = frame_boss_h + 0.2);
+            translate([p[0], p[1], fz_plate - 0.01]) cylinder(d = cb_d + 0.4, h = back_t + 0.11);
+        }
+        // BOOT/RESET window through the BOTTOM wall, with a 45° bevelled
+        // surround on the outer face
+        translate([btn_dx, -fr_yi/2 + 0.1, btn_zc]) rotate([90, 0, 0])
+            linear_extrude(frame_wall + 0.3) rrect2d(btn_w, btn_h, 3);
+        hull() {
+            translate([btn_dx, -fr_yo/2 + 0.01, btn_zc]) rotate([90, 0, 0])
+                linear_extrude(0.02) rrect2d(btn_w + 2.4, btn_h + 2.4, 4);
+            translate([btn_dx, -fr_yo/2 + 1.2, btn_zc]) rotate([90, 0, 0])
+                linear_extrude(0.02) rrect2d(btn_w, btn_h, 3);
+        }
+        // raked gill vents through the ±x walls, upper half (chimney exhaust)
+        for (sx = [1, -1], i = [0 : gill_n - 1])
+            translate([sx*(fr_xo/2 - frame_wall/2), 12 + i*7, gz])
+                rotate([sx*gill_rake, 0, 0]) rotate([0, 90, 0])
+                    translate([0, 0, -frame_wall]) linear_extrude(2*frame_wall)
+                        pill2d(gill_l, gill_w);
+        // intake through the bottom wall, flanking the button window
+        for (sx = [1, -1], i = [0 : frame_vent_bot_n - 1])
+            translate([btn_dx + sx*(btn_w/2 + 9 + i*6.5), -fr_yi/2 + 0.1, gz])
+                rotate([90, 0, 0]) linear_extrude(frame_wall + 0.3) pill2d(gh, gill_w);
+        // exhaust through the top wall
+        for (i = [0 : frame_vent_top_n - 1])
+            translate([(i - (frame_vent_top_n - 1)/2) * 9, fr_yi/2 - 0.1, gz])
+                rotate([-90, 0, 0]) linear_extrude(frame_wall + 0.3) pill2d(gh, gill_w);
+        // back grille (dodging bosses and the cable slots — note -m3_ox: this
+        // part is modelled print-side, x mirrored vs the two-part tray)
+        translate([0, 0, fz_plate]) vent_grille(-m3_ox, m3_oy,
+            keepouts = cable_slots ? [for (sx = [1,-1]) [sx*cable_dx, cable_dy, 8, 17.5]] : []);
+        // cable / hanging slots through the back plate
+        if (cable_slots) for (sx = [1, -1])
+            translate([sx*cable_dx, cable_dy, fz_plate - 0.1])
+                linear_extrude(back_t + 0.2) pill2d(cable_l, cable_w);
+        // debossed labels on the back face — back view, buttons at the bottom:
+        // BOOT on the right (+x here), RESET on the left, as on the board
+        frame_lbl(btn_dx + btn_lbl_dx, -fr_yo/2 + 6.5, "BOOT");
+        frame_lbl(btn_dx - btn_lbl_dx, -fr_yo/2 + 6.5, "RESET");
+    }
+}
+
+// One corner of the frame, cut from the real geometry by intersection — the
+// (+x,+y) corner, chosen because it contains a boss AND a cable slot. Assemble
+// it on the panel's corner with one M3x8-10: the glass corner proves glass_r,
+// the screw only threads home if the m3 offsets have the right SIGNS, and the
+// glass sits flush with the rim only if standoff_len is right.
+module frame_gauge() {
+    bx = -m3_ox + m3_dx/2;  by = m3_oy + m3_dy/2;
+    intersection() {
+        frame();
+        translate([bx - 12, by - 22, -1])
+            cube([fr_xo/2 - bx + 14, fr_yo/2 - by + 24, fr_depth + 2]);
+    }
+}
+
+// ----------------------------------------------------------------------------
 //  STAND — free-standing desk cradle (prints flat)
 // ----------------------------------------------------------------------------
 module stand() {
@@ -384,6 +572,8 @@ module stand() {
 // ----------------------------------------------------------------------------
 if      (part == "bezel") bezel_print();
 else if (part == "back")  back();
+else if (part == "frame")       frame();
+else if (part == "frame_gauge") frame_gauge();
 else if (part == "gauge")       gauge();
 else if (part == "gauge_tray")  gauge_corner("back");
 else if (part == "gauge_bezel") gauge_corner("bezel");
@@ -391,5 +581,6 @@ else if (part == "stand") stand();
 else {
     bezel_print();
     translate([xo + 16, 0, 0]) back();
+    translate([-(xo + 20), 0, 0]) frame();
     if (opt_stand) translate([0, -(yo/2 + stand_d/2 + 16), 0]) stand();
 }

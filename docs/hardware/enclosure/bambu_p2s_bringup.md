@@ -210,22 +210,28 @@ the 7" model, not the printer.
 
 ### 7a · Measure your panel first
 
-The model's dimensions come from a vendor drawing, not from a board on our
-bench, and **one of them is actively disputed**: published summaries of this
-board disagree about the PCB outline height (97.60 mm vs 126.20 mm). Before
-anything else, put calipers on your actual board and check these against the
-values echoed when you render:
+Most of the model's dimensions come from a vendor drawing, not from a board on
+our bench. The one that was **actively disputed** — published summaries
+disagreed about a "PCB height" of 97.60 mm vs 126.20 mm — is now resolved:
+**126.20 mm is the M3 mount-hole X span**, measured off a reference case print
+that fits the real panel; a summary had recorded the hole span as an outline
+height. v0.3 ships the measured mount pattern (126.20 × 65.65 mm, centred
+1.5 mm right / 0.9 mm up of the glass centre with the panel mounted
+buttons-down). Still put calipers on your actual board and check these against
+the values echoed when you render:
 
 | Measure | Parameter | Model default |
 |---|---|---|
 | Touch-glass width × height | `glass_w` / `glass_h` | 192.96 × 110.76 |
 | Glass thickness at the edge | `glass_t` | 4.0 |
-| Glass corner radius | `glass_r` | 3.0 |
+| Glass corner radius | `glass_r` | 2.0 (a fitting case's r≈2.7 cavity still gaps — the slab is sharper) |
 | Active (lit) area | `aa_w` / `aa_h` | 154.88 × 86.72 |
-| PCB outline | `pcb_w` / `pcb_h` | 165.72 × **97.60 ⚠️** |
+| PCB outline | `pcb_w` / `pcb_h` | 165.72 × 97.60 |
 | Tallest rear-side component | `comp_h` | 11.0 |
 | Glass back → PCB front | `pcb_standoff` | 5.0 |
-| M3 mount-hole spacing | `m3_dx` / `m3_dy` | 165.72 ⚠️ × 88.0 |
+| M3 mount-hole spacing | `m3_dx` / `m3_dy` | 126.20 × 65.65 (measured) |
+| M3 pattern offset from glass centre | `m3_ox` / `m3_oy` | +1.5 / +0.9 (measured — verify signs) |
+| Panel's own standoffs, PCB back → tip | `standoff_len` | 6.9 (frame only) |
 | USB-C / UART / CAN / RS485 / battery centres | `bottom_open_*`, `side_open_*` | nominal ⚠️ |
 
 The model asserts on the fatal combinations — a mount pattern that falls outside
@@ -235,12 +241,13 @@ filament. Two parameters deserve individual attention:
 
 - **`pcb_standoff`** alone decides whether the bezel lip reaches the glass or
   leaves it rattling. Get this one right.
-- **`m3_dx` ⚠️** is currently **165.72, which is exactly `pcb_w`** — and a mount
-  hole cannot sit on the board's outline, so that value was almost certainly
-  copied from the outline dimension rather than a hole table. Expect the true
-  span to be several mm smaller. **Measure it**, or the tray's standoff bosses
-  will land under the board's edge instead of under its holes. This is the
-  single most likely reason a first tray won't accept the board.
+- **`m3_ox` / `m3_oy`** — the mount pattern is **not centred on the glass**,
+  and that offset is why a panel cannot simply be rotated 180° inside a case
+  drawn for the other orientation: the holes stop lining up. Every part in
+  v0.3 assumes the **buttons-down** mounting (panel rotated 180° from
+  Waveshare-native, image rotated to match in firmware) so BOOT/RESET sit at
+  the bottom edge in use, not the top. Verify the offset signs on your board;
+  a sign error moves every boss by twice the offset.
 
 ### 7b · Print the corner gauge — not the case
 
@@ -264,6 +271,29 @@ order:
 
 Anything wrong here is a 16 g mistake. The same thing wrong on the slab is 158 g
 and most of a day.
+
+### 7b′ · Or: the one-piece frame
+
+v0.3 adds a **`part="frame"`** alternative to the bezel + tray pair, based on a
+case layout print-proven against the real panel: the slab drops in face-first
+through the front opening, the board hangs on the panel's **own white M3
+standoffs**, and **4 × M3×8–10 driven from the back** thread into those
+standoffs — the screws, not a ledge, pull the glass flush with the front rim.
+It carries a bevelled BOOT/RESET window in the bottom wall with debossed
+labels (back view: **BOOT right, RESET left**), raked gill vents on the side
+walls, intake/exhaust slot rows, a back grille, and two cable/hanging slots.
+
+```sh
+openscad --export-format binstl -o lcd7_frame_gauge.stl -D 'part="frame_gauge"' canary_s3_lcd7.scad
+openscad --export-format binstl -o lcd7_frame.stl       -D 'part="frame"'       canary_s3_lcd7.scad
+```
+
+Same doctrine as 7b: **print the gauge first.** It is one corner containing a
+boss and a cable slot; assembled on the panel's corner with one screw it
+proves the glass corner radius (`glass_r`), the mount-offset **signs**
+(`m3_ox`/`m3_oy` — the screw only threads home if they're right), and
+`standoff_len` (the glass sits flush with the rim only if that's right). The
+frame prints **face-down**, no supports, no brim unless a corner lifts.
 
 ### 7c · Print the case
 
