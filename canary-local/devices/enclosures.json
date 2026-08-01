@@ -570,7 +570,7 @@
   {
    "id": "universal-fit-coupon",
    "name": "Universal fit coupon",
-   "for": "ONE ~25 min print that calibrates every fit in the catalog: clip, keyhole+stud, slide, gasket, press, screw, insert — each station labelled with the parameter it tunes",
+   "for": "ONE small print that calibrates every fit in the catalog: clip, keyhole+stud, slide, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labelled with the parameter it tunes",
    "status": "in-development",
    "note": "**print this before any case**",
    "device": null,
@@ -7911,7 +7911,7 @@
    ]
   },
   "canary_fit_coupon.scad": {
-   "title": "Canary — UNIVERSAL FIT-CHECK COUPON  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — UNIVERSAL FIT-CHECK COUPON  ⚠️ IN DEVELOPMENT (v0.2-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -7954,6 +7954,16 @@
       {
        "name": "stud_gap",
        "default": "30.0"
+      },
+      {
+       "name": "screw_step",
+       "default": "0.15",
+       "comment": "pilot ladder: three holes at screw_d − step / screw_d / + step"
+      },
+      {
+       "name": "port_wall",
+       "default": "2.0",
+       "comment": "case-typical wall the PORT opening is cut through"
       }
      ]
     },
@@ -7971,8 +7981,47 @@
        "default": "0.5"
       },
       {
+       "name": "emboss_h",
+       "default": "0.6",
+       "comment": "raised-wordmark height (EMBOSS station)"
+      },
+      {
        "name": "label_font",
        "default": "Liberation Sans:style=Bold"
+      },
+      {
+       "name": "brand_raised",
+       "default": "CANARY",
+       "comment": "the EMBOSS station's wordmark"
+      },
+      {
+       "name": "brand_sunk",
+       "default": "SecuraCV",
+       "comment": "the DEBOSS station's wordmark"
+      }
+     ]
+    },
+    {
+     "name": "Quality",
+     "note": "",
+     "params": [
+      {
+       "name": "pocket_cx",
+       "default": "-1",
+       "comment": "keyholes at pocket_cx ± stud_gap/2"
+      },
+      {
+       "name": "ladder_x",
+       "default": "[31, 36, 41]",
+       "comment": "SCREW pilot ladder columns"
+      },
+      {
+       "name": "ladder_d",
+       "default": "[screw_d - screw_step, screw_d, screw_d + screw_step]"
+      },
+      {
+       "name": "ladder_tag",
+       "default": "[\"-\", \"0\", \"+\"]"
       }
      ]
     }
