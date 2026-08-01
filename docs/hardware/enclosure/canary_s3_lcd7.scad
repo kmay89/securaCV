@@ -59,11 +59,14 @@
 //            adhesive strips (10 mm sides, 6 mm button edge, 2 mm over the
 //            FPC), each with a 45° back-slope wedge to its wall; a USB
 //            PASS-THROUGH centred on the bottom wall sized to pass the power
-//            cable's overmold head, with the brand lettering cut THROUGH the
-//            wall as slat-stencil intake vents flanking it — the bottom edge
-//            breathes through its own name. Branding stays debossed on the
-//            back plate. PRINTS BACK-PLATE-DOWN — the orientation the ledge
-//            wedges self-support in.
+//            cable's overmold head, with the brand words flanking it as
+//            CRISP DEBOSS (v0.6 — the slat-stencil vents' tie bands read as
+//            horizontal scan lines on the first print; a deboss needs no
+//            ties, so counters stay attached and the letters print clean)
+//            while a SHADOW GILL intake row tucked against the back plate
+//            keeps the bottom edge breathing. Branding stays debossed on
+//            the back plate. PRINTS BACK-PLATE-DOWN — the orientation the
+//            ledge wedges self-support in.
 //            v0.6 hardens mounting and finish: every keyhole bears on a
 //            DOUBLER PAD (back_t + khm_pad_t of material under the screw
 //            head, lead-in chamfer at the mouth), the M3 bosses and the
@@ -136,8 +139,10 @@
 //  wrong direction; r3.2, verify on the radius_gauge), and the SD cover's
 //  flat-floored recess (unprintable cantilever — now a 45° countersink).
 //  v0.6 is a durability/finish pass on top — keyhole doublers, boss root
-//  fillets, adhesive rails, two-colour swap bands — with NO fit knob moved.
-//  Still NOT fully print-validated; expect further iteration.
+//  fillets, adhesive rails, two-colour swap bands, and the bottom-edge
+//  brand went from slat-stencil vents to crisp deboss + a shadow gill
+//  intake row (print feedback: the tie bands read as scan lines) — with NO
+//  fit knob moved. Still NOT fully print-validated; expect iteration.
 //  Orientation: landscape, +X = width, +Y = up, +Z = toward the glass.
 //  MOUNTING DOCTRINE: the panel mounts in its NATIVE orientation — no image
 //  rotation in firmware — which puts BOOT/RESET at the TOP edge in use. The
@@ -367,7 +372,7 @@ frame_vent_flank_n = 4;  // exhaust slots per side, flanking the button window
 // slide sideways — the same doctrine as hanging the board on the panel's own
 // standoffs: let the part's own features locate it.
 //   landscape: the BOTTOM wall gets one keying slot each side at
-//              ±dock_key_bx — outboard of the stencil-vent words, over the
+//              ±dock_key_bx — outboard of the brand deboss words, over the
 //              dock's cheek pads, whose studs rise into them. (They double
 //              as two more intake slots on a wall-mount build.)
 //   portrait:  the ±x walls get one keying slot each at dy = ±dock_key_dx,
@@ -391,13 +396,13 @@ label_back_depth = 1.2;  // BACK-plate deboss depth (BOOT/RESET/SD/brand and
                      // are echoed at render time.
 label_font  = "Liberation Sans:style=Bold";
 
-/* [Frame — bottom USB port, stencil vents, TPU fitments] */
+/* [Frame — bottom USB port, edge brand, TPU fitments] */
 usb_port   = true;   // pass-through for the power cable, centred on the bottom wall.
                      // Feed the head through BEFORE the panel goes in, plug it,
                      // leave a service loop, then wrap the grommet on the wire.
 usb_dx     = 0.0;    // port centre along the bottom wall — 0 = centred
 usb_zc     = 11.0;   // port axis across the wall band (front face → back). The
-                     // stencil vent words centre on this same line.
+                     // brand deboss words centre on this same line.
 usb_head_w = 13.0;   // widest overmold head that must PASS — MEASURE your cable
 usb_head_h = 7.0;    // overmold head thickness — MEASURE
 usb_pass_c = 0.3;    // per-side clearance around the head through the opening
@@ -421,14 +426,27 @@ sd_lip    = 1.2;     // countersunk rim: 45° reach AND depth around the opening
                      // back-plate-down (drooped on the first real print). A 45°
                      // countersink prints clean and self-centres the cap.
 sd_hinge  = 3.0;     // hinge-tongue hook depth beyond the opening (stays anchored)
-// Bottom-edge stencil vents — the intake air path IS the lettering. Horizontal
-// tie bands interrupt every glyph, so no counter (the island inside an A or R)
-// is ever left floating: nothing to fall out, nothing for the slicer to bridge.
-vent_text_l = "SECURACV";  // front-view left of the port
-vent_text_r = "CANARY";    // front-view right
-vent_text_size = 7.0;
-vent_slat = 1.6;     // open slat height cut through each glyph
-vent_tie  = 0.8;     // uncut tie band between slats (keeps counters attached)
+// Bottom-edge brand — CRISP DEBOSS into the wall's outer skin. v0.6: the
+// slat-stencil vents this replaces cut the letters THROUGH the wall, which
+// forced tie bands across every glyph (or the counters fall out) — and on
+// the first print those ties read as horizontal scan lines. A deboss stays
+// attached everywhere by the wall web behind it: no ties, no lines, clean
+// letters. The intake the stencil carried moves to a SHADOW GILL row in
+// the wall band's last few mm before the back plate — invisible against a
+// wall or over the dock's well, roughly the stencil's open area, still
+// feeding the same bottom-in → top-out convection path.
+// With an AMS: Color Painting → Smart Fill floods each deboss floor with
+// an accent filament in one click — see bambu_p2s_bringup.md §7b′.
+edge_text_l = "SECURACV";  // front-view left of the port
+edge_text_r = "CANARY";    // front-view right
+edge_text_size = 7.0;
+edge_lbl_depth = 1.0;   // deboss depth into the frame_wall skin (web asserted)
+edge_vent_n = 16;       // shadow gills: count / pitch / pill w x h / band
+edge_vent_pitch = 8.0;
+edge_vent_w = 2.6;
+edge_vent_h = 3.0;
+edge_vent_z = 18.7;     // band centre across the wall — behind the grommet's
+                        // outer flange, shy of the back plate (both asserted)
 vent_gap  = 8.0;     // clear space between the port flange and each word
 
 /* [Stand] — desk dock for the FRAME case (see the header). The slot is sized
@@ -577,15 +595,15 @@ btn_zc = (btn_z0 + btn_z1)/2;                  // window centre across the wall
 // actually is — the cable routes inside, and the case never has to know.
 usb_open_w = usb_head_w + 2*usb_pass_c;
 usb_open_h = usb_head_h + 2*usb_pass_c;
-// Stencil vent words: each centred between the port flange and the desk
-// dock's WELL edge — the words are the intake, so they must end inside the
-// span the dock's well leaves breathing (the seat pads would smother letters
-// that reach under them; asserted below). Width is estimated (no textmetrics
-// in the render pipeline's OpenSCAD): bold caps advance ≈ 0.70 em × 1.12
+// Brand deboss words: each centred between the port flange and the desk
+// dock's well edge — the placement the stencil vents established (and the
+// first print validated visually); as deboss they no longer need to stay
+// inside the well's breathing span. Width is estimated (no textmetrics in
+// the render pipeline's OpenSCAD): bold caps advance ≈ 0.70 em × 1.12
 // tracking.
 vword_x    = ((usb_open_w/2 + grom_lip + vent_gap)
               + ((stand_w - 2*stand_cheek_t)/2 - 2))/2;
-vword_half = 0.392 * vent_text_size * max(len(vent_text_l), len(vent_text_r));
+vword_half = 0.392 * edge_text_size * max(len(edge_text_l), len(edge_text_r));
 
 // Stand derived. The dock is drawn in ITS print orientation (base on the
 // plate, +z up, +y toward the back fin); the "seat frame" is the tilted
@@ -594,10 +612,11 @@ vword_half = 0.392 * vent_text_size * max(len(vent_text_l), len(vent_text_r));
 std_cd   = fr_depth + 2*stand_clear;      // slot gap: the frame's outer depth + slack
 std_ys   = -stand_d/2 + stand_slot_y;     // seat centreline in plate coords
 std_open = stand_w - 2*stand_cheek_t;     // clear span between the seat pads
-// outermost bottom-wall intake opening on the frame — the stencil words' far
-// end (the ±dock_key_bx slots sit under the pads BY DESIGN: a key fills each,
-// so they are not intake the well must span) — the well must clear it
-std_intake_x = vword_x + vword_half;
+// outermost bottom-wall intake opening on the frame — the shadow gill row's
+// far end (the brand words are deboss now, not intake, and the ±dock_key_bx
+// slots sit under the pads BY DESIGN: a key fills each, so they are not
+// intake the well must span) — the well must clear it
+std_intake_x = (edge_vent_n - 1)/2*edge_vent_pitch + edge_vent_w/2;
 // where the lip's outer face meets the desk (the dock's front-most point)
 std_front_foot = std_ys - (std_cd/2 + stand_lip_t)*cos(stand_ang)
     - (stand_floor_h + (std_cd/2 + stand_lip_t)*sin(stand_ang))*tan(stand_ang);
@@ -653,12 +672,18 @@ assert(!usb_port || usb_wire_d - tpu_grip >= 1.0,
        "frame: grommet bore closes up — usb_wire_d vs tpu_grip");
 assert(!usb_port || usb_wire_d + 2 < usb_open_h,
        "frame: cable jacket barely fits the opening the grommet must fill");
-assert(vent_slat >= 1.2 && vent_tie >= 0.6,
-       "frame: stencil vent slats/ties below printable feature size");
+assert(edge_lbl_depth <= frame_wall - 0.8 && edge_lbl_depth >= 0.4,
+       "frame: bottom-edge deboss out of range — leave at least 0.8 of wall web");
 assert(vword_x - vword_half > usb_open_w/2 + grom_lip + 2
-       && vword_x + vword_half + 2 < fr_xi/2 - fr_ri
-       && vword_x + vword_half + 2 < std_open/2,
-       "frame: stencil vent words don't fit between the USB port and the dock's well edge");
+       && vword_x + vword_half + 2 < fr_xi/2 - fr_ri,
+       "frame: brand deboss words don't fit between the USB port and the wall's flat span");
+assert(!usb_port || edge_vent_z - edge_vent_h/2
+       > usb_zc + usb_open_h/2 + grom_lip + 0.3,
+       "frame: shadow gill row collides with the grommet's outer flange");
+assert(edge_vent_z + edge_vent_h/2 < fz_plate - 0.2,
+       "frame: shadow gill row cuts into the back plate");
+assert((edge_vent_n - 1)/2*edge_vent_pitch + edge_vent_w/2 < fr_xi/2 - fr_ri - 2,
+       "frame: shadow gill row runs off the bottom wall's flat span");
 assert(btn_reach >= 0.5 && btn_reach < 12,
        "frame: btn_reach out of sane range — measure wall inner face to button cap");
 // the whole panel assembly (glass + standoffs + board) enters through the
@@ -729,13 +754,13 @@ assert(!dock_keys
      && -(dock_key_dx + gill_w/2) < gill_y0 - gill_w/2 - 1
      && dock_key_dx + gill_l/2 + 0.5 < fr_yi/2 - fr_ri),
        "frame: portrait keying slot collides with the gill row or the wall corner");
-// the landscape keying slots: between the stencil words and the wall corner
+// the landscape keying slots: between the brand words and the wall corner
 // on the case, and on the cheek pads (not the well, not off the dock) on the
 // stand — and the portrait case must still miss the cheeks entirely, or the
 // ribs no longer carry it
 assert(!dock_keys || (dock_key_bx - gill_w/2 - 2 > vword_x + vword_half
     && dock_key_bx + gill_w/2 + 2 < fr_xi/2 - fr_ri),
-       "frame: landscape keying slot lands on the stencil words or off the wall's flat span");
+       "frame: landscape keying slot lands on the brand words or off the wall's flat span");
 assert(!dock_keys || (dock_key_bx - 2 > std_open/2 && dock_key_bx + 2 < stand_w/2),
        "stand: landscape key misses the cheek pad — move dock_key_bx over it");
 assert(fr_yo/2 + 2 < std_open/2,
@@ -975,20 +1000,6 @@ module gauge() {
 //  proud/sunken by the same error.
 // ----------------------------------------------------------------------------
 module pill2d(l, w) { hull() for (d = [-1, 1]) translate([0, d*(l - w)/2]) circle(d = w); }
-// A word as a slat stencil: the glyphs intersected with horizontal bands, so
-// the cut-through letters double as vent slots. The uncut tie bands run the
-// full width of every glyph, which is what keeps counters (the island inside
-// an A or R) attached to the wall — no stencil font needed, no islands ever.
-module slat_text(s) {
-    n = max(2, floor((vent_text_size + vent_tie) / (vent_slat + vent_tie)));
-    intersection() {
-        text(s, size = vent_text_size, font = label_font, spacing = 1.12,
-             halign = "center", valign = "center");
-        for (i = [0 : n - 1])
-            translate([0, (i - (n - 1)/2)*(vent_slat + vent_tie)])
-                square([400, vent_slat], center = true);
-    }
-}
 // Back-plate deboss: label_back_depth, not label_depth — the floors must sit
 // above the two-colour swap band (see the knob's comment).
 module frame_lbl(x, y, s) {
@@ -1133,9 +1144,9 @@ module frame() {
                     linear_extrude(2*(ledge_side + frame_wall))
                         pill2d(gill_l, gill_w);
         // ...and LANDSCAPE: one through the bottom wall at ±dock_key_bx,
-        // outboard of the stencil words, engaged by the studs on the dock's
-        // cheek pads. Cut through the FPC-edge ledge band like the stencil
-        // vents, so on a wall-mount build they breathe as two more intakes.
+        // outboard of the brand words, engaged by the studs on the dock's
+        // cheek pads. Cut through the FPC-edge ledge band like the shadow
+        // gills, so on a wall-mount build they breathe as two more intakes.
         if (dock_keys) for (sx = [1, -1])
             translate([sx*dock_key_bx, -fr_yi/2 + ledge_bot + 0.6, gz])
                 rotate([90, 0, 0]) linear_extrude(frame_wall + ledge_bot + 1.2)
@@ -1165,15 +1176,30 @@ module frame() {
                 cube([usb_open_w + 2*grom_lip + 2, ledge_bot + 1,
                       ledge_t + ledge_bot + 0.6], center = true);
         }
-        // the bottom edge breathes through its own name: the brand words are
-        // cut THROUGH the wall as slat-stencil intake vents flanking the port,
-        // centred on its axis. Readable standing below and in front, letter
-        // tops toward the screen — where the debossed edge brand used to be.
+        // the brand words flank the port as CRISP DEBOSS — the slat-stencil
+        // vents this replaces needed tie bands across every glyph, which
+        // read as horizontal scan lines on the first print. A deboss stays
+        // attached by the wall web behind it: no ties, no lines. Readable
+        // standing below and in front, letter tops toward the screen.
         for (s = [1, -1])
-            translate([0, -fr_yi/2 + ledge_bot + 0.6, usb_zc])
+            translate([0, -fr_yo/2 + edge_lbl_depth, usb_zc])
                 rotate([90, 0, 0]) rotate([0, 0, 180]) translate([-s*vword_x, 0])
-                    linear_extrude(frame_wall + ledge_bot + 1.2)
-                        slat_text(s > 0 ? vent_text_l : vent_text_r);
+                    linear_extrude(edge_lbl_depth + 0.1)
+                        text(s > 0 ? edge_text_l : edge_text_r,
+                             size = edge_text_size, font = label_font,
+                             spacing = 1.12, halign = "center",
+                             valign = "center");
+        // ...and the intake the stencil carried moves to a SHADOW GILL row
+        // tucked into the wall band's last few mm before the back plate:
+        // invisible against a wall or over the dock's well, roughly the
+        // stencil's open area, clear of the grommet's flange and the plate
+        // (all asserted). Cut through the FPC-edge ledge band like every
+        // bottom-wall opening, so it vents the cavity.
+        for (i = [0 : edge_vent_n - 1])
+            translate([(i - (edge_vent_n - 1)/2)*edge_vent_pitch,
+                       -fr_yi/2 + ledge_bot + 0.6, edge_vent_z])
+                rotate([90, 0, 0]) linear_extrude(frame_wall + ledge_bot + 1.2)
+                    pill2d(edge_vent_h, edge_vent_w);
         // back grille (dodging bosses and the keyholes — note -m3_ox: this
         // part is modelled print-side, x mirrored vs the two-part tray)
         // (keepouts hoisted to fr_keepouts, where the open-area echo reads

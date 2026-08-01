@@ -6926,7 +6926,7 @@
      ]
     },
     {
-     "name": "Frame — bottom USB port, stencil vents, TPU fitments",
+     "name": "Frame — bottom USB port, edge brand, TPU fitments",
      "note": "",
      "params": [
       {
@@ -7010,28 +7010,45 @@
        "comment": "hinge-tongue hook depth beyond the opening (stays anchored)"
       },
       {
-       "name": "vent_text_l",
+       "name": "edge_text_l",
        "default": "SECURACV",
        "comment": "front-view left of the port"
       },
       {
-       "name": "vent_text_r",
+       "name": "edge_text_r",
        "default": "CANARY",
        "comment": "front-view right"
       },
       {
-       "name": "vent_text_size",
+       "name": "edge_text_size",
        "default": "7.0"
       },
       {
-       "name": "vent_slat",
-       "default": "1.6",
-       "comment": "open slat height cut through each glyph"
+       "name": "edge_lbl_depth",
+       "default": "1.0",
+       "comment": "deboss depth into the frame_wall skin (web asserted)"
       },
       {
-       "name": "vent_tie",
-       "default": "0.8",
-       "comment": "uncut tie band between slats (keeps counters attached)"
+       "name": "edge_vent_n",
+       "default": "16",
+       "comment": "shadow gills: count / pitch / pill w x h / band"
+      },
+      {
+       "name": "edge_vent_pitch",
+       "default": "8.0"
+      },
+      {
+       "name": "edge_vent_w",
+       "default": "2.6"
+      },
+      {
+       "name": "edge_vent_h",
+       "default": "3.0"
+      },
+      {
+       "name": "edge_vent_z",
+       "default": "18.7",
+       "comment": "band centre across the wall — behind the grommet's"
       },
       {
        "name": "vent_gap",
@@ -7285,7 +7302,7 @@
       },
       {
        "name": "vword_half",
-       "default": "0.392 * vent_text_size * max(len(vent_text_l), len(vent_text_r))"
+       "default": "0.392 * edge_text_size * max(len(edge_text_l), len(edge_text_r))"
       },
       {
        "name": "std_cd",
@@ -7304,7 +7321,7 @@
       },
       {
        "name": "std_intake_x",
-       "default": "vword_x + vword_half"
+       "default": "(edge_vent_n - 1)/2*edge_vent_pitch + edge_vent_w/2"
       },
       {
        "name": "gauge_in",
