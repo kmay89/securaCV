@@ -227,9 +227,11 @@ the values echoed when you render:
 | Measure | Parameter | Model default |
 |---|---|---|
 | Touch-glass width × height | `glass_w` / `glass_h` | 192.96 × 110.76 |
-| Glass thickness at the edge | `glass_t` | 4.0 |
+| Full panel thickness where the LCD module reaches — glass front → module can back | `glass_t` | 4.0 |
+| Bare-glass BORDER thickness at the adhesive band — glass front → glass back, calipers on the edge, NOT over the module | `glass_edge_t` | 0.8 — these are **two different measurements**: the border is just glass, the middle is glass + module. `glass_edge_t` sets the adhesive-ledge depth (`glass_edge_t + adh_t` behind the front face); `glass_t` sets the cavity and the whole rear stack. Assigning the thin edge reading to `glass_t` shortens the rear stack ~3.2 mm and the frame cannot seat the module |
 | Glass corner radius | `glass_r` | 3.2 — settled by the FIRST REAL PRINT: r2.0 was the wrong direction. Confirm on `part="radius_gauge"` (four sockets, −0.4…+0.2 around the default, ~6 g) before any slab print |
 | Active (lit) area | `aa_w` / `aa_h` | 154.88 × 86.72 |
+| LCD module can outline + centre offset | `panel_core_w` / `panel_core_h` / `panel_core_dy` | 165.0 × 100.0, dy −1.0 ⚠️ nominal — the `frame_glass` CI gate and the insertion asserts check the ledge ring against THIS outline, so measure the can, not the ledge |
 | PCB outline | `pcb_w` / `pcb_h` | 165.72 × 97.60 |
 | Tallest rear-side component | `comp_h` | 11.0 |
 | Glass back → PCB front | `pcb_standoff` | 5.0 |
@@ -329,10 +331,12 @@ never the AMS**, §0):
   so both print clean back-plate-down and the taper self-centres the cap.
   (The v0.4 flat-floored recess left a cantilevered ring hanging over the
   opening — it drooped on the first real print; this replaces it.)
-  Battery-door motion: hinge tongue in first at the top end, press the lip
-  home. To open, a fingernail scoop bites the rim at the card end — the nail
-  lands directly under the cap's tapered edge; peel, and the cover hinges
-  open still attached, so there is nothing to lose.
+  Since v0.6 the cover is **leashed**: push its arrowhead barb through the
+  plate's anchor hole with a thumb (it mushrooms inside — captive from that
+  moment), lay the strap in its skin channel, press the cap home. To open,
+  a fingernail scoop bites the rim at the card end — the nail lands
+  directly under the cap's tapered edge; peel, and the cover dangles on its
+  leash, attached. A deliberate yank cams the barb free for service.
 
 TPU fits are tuned by `tpu_squeeze` (waist interference) and `tpu_grip`
 (grommet bore vs jacket) — TPU seats by squeeze, so its knobs are
@@ -406,6 +410,18 @@ durability/finish features landed:
   band's last few millimetres before the back plate: invisible against a
   wall and over the dock's well, still feeding the same bottom-in → top-out
   convection path, and asserted clear of the grommet flange and the plate.
+- **The SD cover is leashed.** The v0.5 hinge tongue only *hooked* under the
+  plate edge — a full peel could slide it out and the cover is gone. It is
+  replaced by a strap ending in an **arrowhead barb** that pushes through a
+  small anchor hole in the plate and mushrooms inside: the peeled cover
+  dangles, captive, and only a deliberate yank (45° cam faces) frees it.
+  **The frame carries the hole and the strap channel — re-export the frame
+  before printing**, or the barb has nowhere to go; two CI gates
+  (`sd_tether_hole`, `sd_tether_barb`) keep hole and barb aligned forever.
+  The other fitments already pass the stays-attached test: the button plug
+  is snap-captive behind its wall and never needs to come out, and the
+  grommet lives wrapped around the cable itself — pulled from the port, it
+  stays on the cord.
 
 **With an AMS** (§0 — rigid filaments only; TPU still prints from the
 external spool), the whole two-tone story runs itself, no pauses:

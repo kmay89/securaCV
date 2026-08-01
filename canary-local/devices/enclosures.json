@@ -6447,7 +6447,7 @@
    ]
   },
   "canary_s3_lcd7.scad": {
-   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.6-dev)",
+   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.7-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -6492,7 +6492,27 @@
       {
        "name": "glass_t",
        "default": "4.0",
-       "comment": "glass + LCD module thickness at the edge — MEASURE"
+       "comment": "glass + LCD module thickness where the module reaches —"
+      },
+      {
+       "name": "glass_edge_t",
+       "default": "0.8",
+       "comment": "the BARE-GLASS border the adhesive strips land on —"
+      },
+      {
+       "name": "panel_core_w",
+       "default": "165.0",
+       "comment": "module can width  (X)"
+      },
+      {
+       "name": "panel_core_h",
+       "default": "100.0",
+       "comment": "module can height (Y)"
+      },
+      {
+       "name": "panel_core_dy",
+       "default": "-1.0",
+       "comment": "can centre offset from glass centre (tracks aa_dy)"
       },
       {
        "name": "glass_r",
@@ -7005,9 +7025,23 @@
        "comment": "countersunk rim: 45° reach AND depth around the opening."
       },
       {
-       "name": "sd_hinge",
-       "default": "3.0",
-       "comment": "hinge-tongue hook depth beyond the opening (stays anchored)"
+       "name": "sd_tether",
+       "default": "true"
+      },
+      {
+       "name": "sd_teth_gap",
+       "default": "3.5",
+       "comment": "countersink rim outer edge → anchor hole centre"
+      },
+      {
+       "name": "sd_teth_hole",
+       "default": "3.2",
+       "comment": "anchor hole Ø through the plate (the Ø2.8 shaft rides"
+      },
+      {
+       "name": "sd_teth_head",
+       "default": "4.6",
+       "comment": "arrowhead Ø — 1.4x the hole: firm thumb-push in, stays"
       },
       {
        "name": "edge_text_l",
@@ -7262,7 +7296,7 @@
       },
       {
        "name": "ledge_z",
-       "default": "glass_t + adh_t",
+       "default": "glass_edge_t + adh_t",
        "comment": "ledge front face"
       },
       {
@@ -7282,6 +7316,11 @@
       {
        "name": "fr_bosses",
        "default": "[for (sx = [1,-1], sy = [1,-1]) [-m3_ox + sx*m3_dx/2, m3_oy + sy*m3_dy/2]]"
+      },
+      {
+       "name": "sd_teth_y",
+       "default": "sd_dy + sd_l/2 + sd_lip + sd_teth_gap",
+       "comment": "tether anchor hole centre"
       },
       {
        "name": "fr_keepouts",
