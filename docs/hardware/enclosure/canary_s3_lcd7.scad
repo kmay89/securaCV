@@ -1334,23 +1334,30 @@ module stand() {
         // the blades, the FULL width — the case overhangs both cheeks
         stand_seatframe() translate([-stand_w/2 - 1, -std_cd/2, 0])
             cube([stand_w + 2, std_cd, 200]);
-        // sky cut: in front of the pocket, everything above the lip's capture
+        // sky cut: in front of the pocket, everything above the lip's capture.
+        // It reaches 0.04 PAST the slot's front plane, INTO the pocket's
+        // territory — already void, so no fit surface moves — because two
+        // cuts ending on the exact same plane leave a zero-volume facet
+        // sheet in the CGAL export: phantom "walls" over the cheeks that
+        // render (and confuse a slicer) but hold no material. Same 0.04
+        // overlap on both entry flares below, which shared the slot planes
+        // the same way.
         stand_seatframe() translate([-stand_w/2 - 1, -300 - std_cd/2, stand_lip_h])
-            cube([stand_w + 2, 300, 300]);
+            cube([stand_w + 2, 300.04, 300]);
         // entry flares: lead-in chamfers on the lip top and the fin top, so
         // the case finds a ~30 mm mouth instead of a 25 mm slot
         stand_seatframe() {
             hull() {
                 translate([-stand_w/2 - 1, -std_cd/2 - 0.04, stand_lip_h - 2.5])
-                    cube([stand_w + 2, 0.04, 2.6]);
+                    cube([stand_w + 2, 0.08, 2.6]);
                 translate([-stand_w/2 - 1, -std_cd/2 - 2.5, stand_lip_h - 0.04])
-                    cube([stand_w + 2, 2.5, 0.04]);
+                    cube([stand_w + 2, 2.54, 0.04]);
             }
             hull() {
-                translate([-stand_w/2 - 1, std_cd/2, stand_fin_h - 2.5])
-                    cube([stand_w + 2, 0.04, 2.6]);
-                translate([-stand_w/2 - 1, std_cd/2, stand_fin_h - 0.04])
-                    cube([stand_w + 2, 2.5, 0.04]);
+                translate([-stand_w/2 - 1, std_cd/2 - 0.04, stand_fin_h - 2.5])
+                    cube([stand_w + 2, 0.08, 2.6]);
+                translate([-stand_w/2 - 1, std_cd/2 - 0.04, stand_fin_h - 0.04])
+                    cube([stand_w + 2, 2.54, 0.04]);
             }
             // the WELL: a clear shaft under the seated case, walls parallel
             // to the slot, kept 1.5 mm inside the case footprint so it never
