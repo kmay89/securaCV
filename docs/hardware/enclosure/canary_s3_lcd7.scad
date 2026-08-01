@@ -440,10 +440,11 @@ assert(ledge_z + ledge_t < glass_t + pcb_standoff,
 function lcd7_frame_stack() = [ledge_z, ledge_t, fr_xi, fr_yi, fr_ri, fr_depth];
 // ...and the port/fitment geometry the TPU fit gates need, same doctrine.
 // [usb_dx, usb_zc, usb_head_w, usb_head_h, fr_yi, fr_yo, ledge_bot,
-//  btn_dx, btn_zc, sd_dx, sd_dy, fz_plate, usb_port]
+//  btn_dx, btn_zc, sd_dx, sd_dy, fz_plate, usb_port, btn_w, btn_h, sd_w,
+//  sd_l, ledge_top]
 function lcd7_ports() = [usb_dx, usb_zc, usb_head_w, usb_head_h, fr_yi, fr_yo,
                          ledge_bot, btn_dx, btn_zc, sd_dx, sd_dy, fz_plate,
-                         usb_port ? 1 : 0];
+                         usb_port ? 1 : 0, btn_w, btn_h, sd_w, sd_l, ledge_top];
 assert(cb_h + 1.0 <= bez_h, "counterbore deeper than the bezel ear");
 assert(cav_d > comp_h + pcb_t, "no air gap left between the PCB and the glass");
 echo(str("Canary 7in touch v0.4-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
@@ -731,6 +732,18 @@ module frame() {
             translate([btn_dx, fr_yo/2 - 1.2, btn_zc]) rotate([-90, 0, 0])
                 linear_extrude(0.02) rrect2d(btn_w, btn_h, 3);
         }
+        // relieve the ledge landing + wedge behind the window's span — the
+        // top-edge wedge (ledge_z up to ledge_z+ledge_t+ledge_top) otherwise
+        // stands right behind the window's lower half, blocking finger and
+        // plug-pip access to the buttons (the frame_btn_window gate caught
+        // this). The landing goes with the wedge: kept alone it would print
+        // as an unsupported shelf back-plate-down. The panel's button-edge
+        // adhesive strip simply skips the window span, same trade as the
+        // USB port's relief on the FPC edge.
+        translate([btn_dx, fr_yi/2 - (ledge_top + 1)/2 + 0.01,
+                   ledge_z + (ledge_t + ledge_top)/2])
+            cube([btn_w + 4, ledge_top + 1, ledge_t + ledge_top + 0.6],
+                 center = true);
         // gill vents down each ±x wall — cut deep enough to pass through the
         // ledge wedge behind the wall, so they vent the cavity, not the wedge
         if (gill_n > 0) for (sx = [1, -1], i = [0 : gill_n - 1])

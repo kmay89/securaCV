@@ -40,12 +40,22 @@
 //            border — e.g. the ledge/boss datum drifted apart (the adh_t
 //            stack-up bug this gate exists to catch).
 //    frame_usb_head — a prism the size of the declared cable HEAD, swept
-//            through the bottom-wall port. Non-empty = the head no longer
-//            passes (opening shrank under the head knobs, or the ledge/wedge
-//            relief behind it regressed).
+//            through the bottom-wall port, vs the FRAME. Non-empty = the head
+//            no longer passes (opening shrank under the head knobs, or the
+//            ledge/wedge relief behind it regressed).
+//    frame_btn_window / frame_sd_window — the same doctrine for the other two
+//            openings: a probe prism just under the declared window size,
+//            swept through the wall/plate, vs the FRAME. Non-empty = the
+//            opening is missing, shrunken or obstructed. These exist because
+//            the *_seal gates below deliberately do NOT look at the frame —
+//            each opening needs one gate against the aperture and one against
+//            the fitment, or a deleted window would still "seal".
 //    frame_usb_seal — INVERTED: the installed grommet must cross the bottom
-//            wall's mid-plane. Empty = the grommet no longer fills the port
-//            (its waist or installed transform drifted off the opening).
+//            wall's mid-plane. Empty = the grommet's waist or installed
+//            transform drifted off the opening. (Fitment-vs-frame overlap
+//            can't be the test: the TPU waists carry deliberate interference,
+//            so they intersect the frame BY DESIGN — aperture-open is what
+//            the *_window/_head gates above assert.)
 //    frame_btn_plug — INVERTED: the installed BOOT/RESET plug must cross the
 //            top wall's mid-plane. Empty = the plug misses its window.
 //    btn_plug_glass — the installed plug (pips included) vs the glass slab.
@@ -64,7 +74,7 @@
 
 use <canary_s3_lcd7.scad>
 
-check = "tray";   // ["tray","glass","lip","locate","frame_glass","frame_ledge","frame_usb_head","frame_usb_seal","frame_btn_plug","btn_plug_glass","frame_sd_seal"]
+check = "tray";   // ["tray","glass","lip","locate","frame_glass","frame_ledge","frame_usb_head","frame_btn_window","frame_sd_window","frame_usb_seal","frame_btn_plug","btn_plug_glass","frame_sd_seal"]
 locate_slip = 1.5;   // mm of sideways wander the pocket must already refuse
 
 // Read the real derived stack out of the source — no duplicated arithmetic.
@@ -119,7 +129,8 @@ else if (check == "frame_ledge") {
 // (lcd7_ports), and place the fitments with the source's own *_installed
 // transforms — so a knob or datum change is tested, not a copy of it.
 // P = [usb_dx, usb_zc, usb_head_w, usb_head_h, fr_yi, fr_yo, ledge_bot,
-//      btn_dx, btn_zc, sd_dx, sd_dy, fz_plate, usb_port]
+//      btn_dx, btn_zc, sd_dx, sd_dy, fz_plate, usb_port, btn_w, btn_h,
+//      sd_w, sd_l]
 else if (check == "frame_usb_head") {
     P = lcd7_ports();
     // the declared head, swept through the port from outside to past the
@@ -130,6 +141,32 @@ else if (check == "frame_usb_head") {
         translate([P[0], -P[4]/2 + P[6] + 0.4, P[1]]) rotate([90, 0, 0])
             linear_extrude(P[6] + (P[5] - P[4])/2 + 2.4)
                 rotate(90) pill2d(P[2], P[3]);
+    }
+}
+else if (check == "frame_btn_window") {
+    // a probe just under the declared window size, swept from outside the
+    // top wall all the way through the ledge-wedge band behind it, vs the
+    // frame — non-empty means the BOOT/RESET window is missing, shrunken or
+    // obstructed (the *_seal gates never look at the frame). The inboard
+    // reach matters: a mouth-deep probe would miss the top-edge wedge that
+    // originally stood behind the window's lower half — the obstruction
+    // this gate caught on its first run.
+    P = lcd7_ports();
+    intersection() {
+        frame();
+        translate([P[7], P[4]/2 - P[17] - 0.5, P[8]]) rotate([-90, 0, 0])
+            linear_extrude(P[17] + 0.5 + (P[5] - P[4])/2 + 1.2)
+                rrect2d(P[13] - 0.4, P[14] - 0.4, 2.8);
+    }
+}
+else if (check == "frame_sd_window") {
+    // same doctrine through the back plate for the SD opening
+    P = lcd7_ports();
+    FS = lcd7_frame_stack();   // [.., fr_depth] at [5]
+    intersection() {
+        frame();
+        translate([P[9], P[10], P[11] - 0.5]) linear_extrude(FS[5] - P[11] + 1.5)
+            rrect2d(P[15] - 0.4, P[16] - 0.4, 4.8);
     }
 }
 else if (check == "frame_usb_seal") {
@@ -167,4 +204,4 @@ else if (check == "frame_sd_seal") {
     }
 }
 else
-    assert(false, "check must be one of tray / glass / lip / locate / frame_glass / frame_ledge / frame_usb_head / frame_usb_seal / frame_btn_plug / btn_plug_glass / frame_sd_seal");
+    assert(false, "check must be one of tray / glass / lip / locate / frame_glass / frame_ledge / frame_usb_head / frame_btn_window / frame_sd_window / frame_usb_seal / frame_btn_plug / btn_plug_glass / frame_sd_seal");
