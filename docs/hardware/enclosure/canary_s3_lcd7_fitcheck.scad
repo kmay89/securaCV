@@ -32,6 +32,16 @@
 //            instead of the slab, a board that overhangs the glass would let
 //            the panel slide until the window crossed the active area. This
 //            check fails the moment those two pockets get merged again.
+//    stand — the FRAME, seated in the desk dock, vs the stand. Non-empty =
+//            they collide and the case cannot drop in. The seated pose is
+//            lifted seat_lift off the pads, because exact face-on-face
+//            contact through a floating-point rotation can manufacture a
+//            zero-ish sliver that fails an honest fit.
+//    seat  — the frame pressed seat_press INTO the pads. INVERTED: it must
+//            be NON-empty — it is the bearing patch the case actually sits
+//            on. Empty = the dock carries nothing and the case free-falls to
+//            the base plate. (This output is legitimately TWO patches, one
+//            per pad — only its existence is checked, not its mesh.)
 //
 //  The slab is modelled with the corner radius the source DECLARES (glass_r),
 //  because the question being asked is whether the model is consistent with
@@ -43,8 +53,10 @@
 
 use <canary_s3_lcd7.scad>
 
-check = "tray";   // ["tray","glass","lip","locate"]
+check = "tray";   // ["tray","glass","lip","locate","stand","seat"]
 locate_slip = 1.5;   // mm of sideways wander the pocket must already refuse
+seat_lift  = 0.2;    // dock collision check: hover this far off the pads
+seat_press = 0.4;    // dock bearing check: push this far into the pads
 
 // Read the real derived stack out of the source — no duplicated arithmetic.
 S = lcd7_stack();
@@ -61,6 +73,20 @@ module glass_slab(t, dz = 0) {
         rrect2d(glass_w, glass_h, glass_r);
 }
 
+// The dock stack, read out of the source the same way. The frame is modelled
+// print-side (z0 = front face, +y = up); docking it means standing it up,
+// reclining it by stand_ang, and setting its bottom face's centre onto the
+// pad plane's origin. seat > 0 presses the case into the pads along the
+// slot's own axis; seat < 0 hovers it off them.
+ST = lcd7_stand_stack();
+st_ang = ST[0]; st_ys = ST[1]; st_zf = ST[2]; st_fd = ST[3]; st_fy = ST[4];
+module docked_frame(seat = 0) {
+    yq = -(st_fy/2)*sin(st_ang) + (st_fd/2)*cos(st_ang);
+    zq = -(st_fy/2)*cos(st_ang) - (st_fd/2)*sin(st_ang);
+    translate([0, st_ys - yq - seat*sin(st_ang), st_zf - zq - seat*cos(st_ang)])
+        rotate([270 - st_ang, 0, 0]) rotate([0, 0, 180]) frame();
+}
+
 if (check == "tray")
     intersection() { assembled_bezel(); back(); }
 else if (check == "glass")
@@ -74,5 +100,10 @@ else if (check == "locate")
         assembled_bezel();
         translate([locate_slip, locate_slip, 0]) glass_slab(glass_t);
     }
+else if (check == "stand")
+    intersection() { docked_frame(-seat_lift); stand(); }
+else if (check == "seat")
+    // inverted check — this SHOULD produce geometry (the pads' bearing patch)
+    intersection() { docked_frame(seat_press); stand(); }
 else
-    assert(false, "check must be one of tray / glass / lip / locate");
+    assert(false, "check must be one of tray / glass / lip / locate / stand / seat");
