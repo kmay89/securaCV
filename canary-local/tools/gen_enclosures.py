@@ -709,6 +709,7 @@ def parse_features(project: str, flavor: str):
 # silently diverge from the manifest.
 VARIANT_SELECTOR_PARAMS = {
     "preset", "host", "radar", "stack", "model", "variant", "mode", "mount",
+    "headers",  # C6 display: stripped board vs as-shipped (headers + pillars)
 }
 OPTION_ENUM_PARAMS = {"mount_style"}
 ENGINEERING_OPTIONS = {

@@ -32,6 +32,13 @@
 //            instead of the slab, a board that overhangs the glass would let
 //            the panel slide until the window crossed the active area. This
 //            check fails the moment those two pockets get merged again.
+//    frame_glass — the one-piece frame vs the slab in the frame's own coords.
+//            Non-empty = the cavity or an adhesive-ledge wedge bites into
+//            the panel.
+//    frame_ledge — INVERTED: a wafer just behind the adhesive plane must land
+//            on the ledge. Empty = nothing carries the panel's adhesive
+//            border — e.g. the ledge/boss datum drifted apart (the adh_t
+//            stack-up bug this gate exists to catch).
 //
 //  The slab is modelled with the corner radius the source DECLARES (glass_r),
 //  because the question being asked is whether the model is consistent with
@@ -43,7 +50,7 @@
 
 use <canary_s3_lcd7.scad>
 
-check = "tray";   // ["tray","glass","lip","locate"]
+check = "tray";   // ["tray","glass","lip","locate","frame_glass","frame_ledge"]
 locate_slip = 1.5;   // mm of sideways wander the pocket must already refuse
 
 // Read the real derived stack out of the source — no duplicated arithmetic.
@@ -74,5 +81,25 @@ else if (check == "locate")
         assembled_bezel();
         translate([locate_slip, locate_slip, 0]) glass_slab(glass_t);
     }
+// The one-piece frame is modelled with the glass at z 0..glass_t in its own
+// coords, so the slab needs no repositioning.
+else if (check == "frame_glass")
+    // frame vs the slab — the cavity and the ledge wedges must clear it
+    intersection() {
+        frame();
+        linear_extrude(glass_t) rrect2d(glass_w, glass_h, glass_r);
+    }
+else if (check == "frame_ledge") {
+    // inverted — a wafer just behind the adhesive plane must land on the
+    // ledge, or nothing carries the panel's adhesive border. FS reads the
+    // frame's real derived stack, so a datum change can't silently detach
+    // the bosses from the panel (the adh_t bug this gate exists to catch).
+    FS = lcd7_frame_stack();   // [ledge_z, ledge_t, ...]
+    intersection() {
+        frame();
+        translate([0, 0, FS[0] + 0.1]) linear_extrude(0.2)
+            rrect2d(glass_w, glass_h, glass_r);
+    }
+}
 else
-    assert(false, "check must be one of tray / glass / lip / locate");
+    assert(false, "check must be one of tray / glass / lip / locate / frame_glass / frame_ledge");
