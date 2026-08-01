@@ -32,21 +32,11 @@
 ## Enclosure CAD
 
 - **Always send rendering previews.** Any change to an enclosure `.scad`
-  (`docs/hardware/enclosure/`) ships with PNG previews of every affected
-  part, shared with the requester in the conversation — the change must be
-  *seeable*, not just readable. Case-like parts get both faces (front and
-  back); small fitments get an angle that shows the changed feature.
-  Headless render:
-
-  ```sh
-  xvfb-run -a openscad -o out.png --imgsize 1400,1000 --autocenter --viewall \
-    --camera=0,0,0,<rotx>,0,<rotz>,120 --colorscheme "Tomorrow Night" \
-    -D 'part="<part>"' <file>.scad
-  ```
-
-  (`rotx≈62` for a top three-quarter view, `rotx≈245` to look at the
-  underside; PNG export is a fast OpenCSG preview, not a full CGAL render,
-  so it costs seconds even for the big parts.)
+  ships with PNG previews of every affected part, shared with the requester
+  in the conversation. This is a repo-wide rule — it lives in the AGENTS.md
+  brief ("Before you commit"), and the render recipe is in
+  [`docs/hardware/enclosure/README.md`](docs/hardware/enclosure/README.md)
+  under "Preview renders".
 
 ## Release & packaging
 

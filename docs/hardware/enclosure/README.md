@@ -459,6 +459,22 @@ openscad --export-format binstl -o my_gasket.stl \
 openscad --export-format binstl -o coupon.stl -D 'part="coupon"' canary_wap_enclosure.scad
 ```
 
+### Preview renders (required with every `.scad` change)
+
+Any change to a `.scad` in this directory ships with PNG previews of every
+affected part, shared with whoever asked for the change — the change must be
+*seeable*, not just readable. Case-like parts get both faces (front and
+back); small fitments get an angle that shows the changed feature. PNG export
+is a fast OpenCSG preview, not a full CGAL render, so it costs seconds even
+for the largest parts. Headless (no display):
+
+```bash
+xvfb-run -a openscad -o preview.png --imgsize 1400,1000 --autocenter --viewall \
+    --camera=0,0,0,ROTX,0,ROTZ,120 --colorscheme "Tomorrow Night" \
+    -D 'part="PART"' FILE.scad
+# ROTX ≈ 62 → top three-quarter view; ROTX ≈ 245 → underside
+```
+
 ## Key parameters to check first
 
 | Param | Default | Why you'd change it |
