@@ -1,5 +1,5 @@
 // ============================================================================
-//  Canary — 7" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.8-dev)
+//  Canary — 7" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.9-dev)
 // @env env="indoor; runs hot → print in PETG/ASA"
 //  Housing for the Waveshare ESP32-S3-Touch-LCD-7 (7" 800x480 IPS capacitive
 //  touch, ESP32-S3, CAN/RS485/battery). The big-panel "wall dashboard" — the
@@ -169,7 +169,14 @@
 //  the walls meet the back plate (plate_fillet — corner-drop crack starter,
 //  boss-root doctrine applied to the perimeter), and root reinforcement on
 //  the SD leash (cap flare + shaft cone, both inside envelopes that were
-//  already asserted). Still NOT fully print-validated; expect iteration.
+//  already asserted). v0.9 is the PLUMAGE pass: the brand vent pattern
+//  (canary_vent_lib.scad — teardrop feathers, point-up, offset rows)
+//  replaces the slat grid on BOTH back grilles and the frame's side
+//  gills. Open area holds or rises (echoes exact, via feather_area);
+//  the dock-key slots, top exhaust, bottom intake and the whole
+//  bottom-in → top-out convection doctrine are untouched, so the case
+//  breathes the same wall-mounted (back blocked) and better on the
+//  dock. Still NOT fully print-validated; expect iteration.
 //  Orientation: landscape, +X = width, +Y = up, +Z = toward the glass.
 //  MOUNTING DOCTRINE: the panel mounts in its NATIVE orientation — no image
 //  rotation in firmware — which puts BOOT/RESET at the TOP edge in use. The
@@ -180,6 +187,8 @@
 //  this orientation; a buttons-down build (panel rotated 180°, image flipped
 //  in firmware) negates their signs and mirrors the frame's features.
 // ============================================================================
+
+use <canary_vent_lib.scad>  // the brand vent shape: feather2d / feather_area
 
 /* [What to render] */
 part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_buttons","plug_sd","all"]
@@ -274,10 +283,18 @@ side_open_h = 40.0;     side_open_dy = 0.0;     // tall slot on each short wall
    outlet, so the bottom wall takes air in and the top wall lets it out. */
 vent_back = true;        // large grille in the back plate
 vent_rows = 11;          // grille rows
-vent_cols = 22;          // grille columns
-vent_slot_w = 2.4;       // slot width
-vent_slot_l = 9.0;       // slot length
-vent_pitch_x = 7.0;      // column pitch
+vent_cols = 20;          // grille columns
+vent_slot_w = 5.2;       // feather base width — the grille is the PLUMAGE
+                         // pattern (canary_vent_lib.scad): teardrop
+                         // feathers, point-up, in offset rows. One feather
+                         // passes 27% more air than the slat it replaces
+                         // (25.9 vs 20.4 mm2 per cell) with no slot
+                         // corners to shed vortices or collect dust lines
+vent_slot_l = 7.2;       // feather length (point-up: sheds drips on a
+                         // vertical face; see the lib header for limits)
+vent_tip    = 0.28;      // tip/base ratio — the ONE brand constant; keep
+                         // it default so every Canary wears the same mark
+vent_pitch_x = 7.6;      // column pitch
 vent_pitch_y = 8.0;      // row pitch
 vent_top = true;         // EXHAUST — slots through the top (+Y) wall
 vent_top_n = 14;
@@ -430,7 +447,13 @@ gill_n  = 8;         // straight "gill" vents per side (±x) wall — the sides
 gill_y0 = -35.0;     // carry vents only; SD access is through the back plate
 gill_w = 2.4;  gill_l = 9.0;  gill_rake = 0;    // rake 0: vertical slots print
                      // cleanest; the raked look read as slashes and bought
-                     // nothing thermally
+                     // nothing thermally. gill_w still sizes the DOCK KEY
+                     // slots (the stand's studs mate them — do not move);
+                     // the visible side gills themselves are feathers:
+gill_vw = 3.6;       // side-gill feather base width — area matches the old
+                     // 2.4-wide pill (21.2 vs 20.4 mm2), point-up when
+                     // wall-mounted so a drip running down the wall splits
+                     // around the opening
 frame_vent_flank_n = 4;  // exhaust slots per side, flanking the button window
 // Dock keying — chamfered centring keys on the desk dock rise into gill-style
 // slots the case walls carry, so the docked case self-centres and cannot
@@ -804,6 +827,10 @@ assert(ledge_z + ledge_t < glass_guard + glass_t + pcb_standoff,
        "frame: ledge intrudes into the board plane");
 assert(glass_edge_t > 0 && glass_edge_t < glass_t,
        "frame: glass_edge_t is the panel's bare-glass border — it must be thinner than the full module stack (glass_t) and non-zero");
+assert(vent_pitch_x - vent_slot_w >= 2.39 && vent_pitch_y - vent_slot_l >= 0.79,
+       "grille: feather webs too thin — grow the pitches or shrink the feather");
+assert(vent_tip > 0.15 && vent_tip < 0.6,
+       "grille: vent_tip is the brand constant — a tip outside 0.15..0.6 is not the mark");
 assert(glass_guard >= 0 && glass_guard <= 1.2,
        "frame: glass_guard is a trim reveal, not a bumper — keep it under 1.2 (or 0 for a flush face)");
 // the fillet ring lives in the same clear band as the keyhole pads; it must
@@ -906,10 +933,10 @@ assert(!dock_keys || (dock_key_bx - 2 > std_open/2 && dock_key_bx + 2 < stand_w/
        "stand: landscape key misses the cheek pad — move dock_key_bx over it");
 assert(fr_yo/2 + 2 < std_open/2,
        "stand: the portrait case no longer misses the cheeks — the well ribs cannot carry it");
-echo(str("Canary 7in touch v0.8-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
+echo(str("Canary 7in touch v0.9-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
          " mm, window ", view_w, " x ", view_h, ", lip ", lip_min,
          " mm, tray grille ~",
-         round(vent_back ? len(grille_cells())*vent_slot_w*vent_slot_l/100 : 0),
+         round(vent_back ? len(grille_cells())*feather_area(vent_slot_l, vent_slot_w, vent_tip)/100 : 0),
          " cm2 open (computed, boss dodges included)",
          "  (IN DEVELOPMENT — MEASURE CONNECTORS)"));
 echo(str("  stack: floor ", z_floor, " | PCB under ", z_pcb_under, " | PCB top ",
@@ -934,13 +961,13 @@ echo(str("  frame mounting: 4x keyhole, ", back_t + khm_pad_t,
                    : "off"));
 echo(str("  frame back grille: ", len(grille_cells(-m3_ox, m3_oy, fr_keepouts)),
          " slots ≈ ", round(len(grille_cells(-m3_ox, m3_oy, fr_keepouts))
-                            *vent_slot_w*vent_slot_l/100), " cm2 open",
+                            *feather_area(vent_slot_l, vent_slot_w, vent_tip)/100), " cm2 open",
          adh_rails ? str(" — the adhesive rails cost ",
              len(grille_cells(-m3_ox, m3_oy, fr_keep_base))
              - len(grille_cells(-m3_ox, m3_oy, fr_keepouts)), " slots ≈ ",
              round((len(grille_cells(-m3_ox, m3_oy, fr_keep_base))
                     - len(grille_cells(-m3_ox, m3_oy, fr_keepouts)))
-                   *vent_slot_w*vent_slot_l/100),
+                   *feather_area(vent_slot_l, vent_slot_w, vent_tip)/100),
              " cm2 (adh_rails=false reclaims them); the bottom-intake → ",
              "top-exhaust wall vents are untouched either way") : ""));
 echo(str("  frame two-colour (optional, single extruder): prints back-plate-",
@@ -1039,7 +1066,8 @@ module bezel_print() { bezel(); }
 // out of every caller-supplied [x, y, half_w, half_h] keepout rectangle.
 function grille_cells(ox = m3_ox, oy = m3_oy, keepouts = []) =
     [for (r = [0:vent_rows-1], c = [0:vent_cols-1])
-        let (x = (c - (vent_cols-1)/2) * vent_pitch_x,
+        let (x = (c - (vent_cols-1)/2) * vent_pitch_x
+                 + (r % 2 == 1 ? vent_pitch_x/2 : 0) - vent_pitch_x/4,
              y = (r - (vent_rows-1)/2) * vent_pitch_y)
         if (abs(x) < pcb_w/2 - 6 && abs(y) < pcb_h/2 - 6
             && min([for (sx = [1,-1], sy = [1,-1])
@@ -1051,9 +1079,9 @@ function grille_cells(ox = m3_ox, oy = m3_oy, keepouts = []) =
         [x, y]];
 module vent_grille(ox = m3_ox, oy = m3_oy, keepouts = []) {
     for (p = grille_cells(ox, oy, keepouts))
-        translate([p[0], p[1], -0.1]) linear_extrude(back_t + 0.2) hull()
-            for (dy = [-(vent_slot_l - vent_slot_w)/2, (vent_slot_l - vent_slot_w)/2])
-                translate([0, dy]) circle(d = vent_slot_w);
+        translate([p[0], p[1] - vent_slot_l/2 + vent_slot_w/2, -0.1])
+            linear_extrude(back_t + 0.2)
+                feather2d(vent_slot_l, vent_slot_w, vent_tip);
 }
 module back() {
     total_d = cav_d + back_t;   // full tray depth (floor + cavity to glass ledge)
@@ -1295,7 +1323,8 @@ module frame() {
                 rotate([sx*gill_rake, 0, 0]) rotate([0, 90, 0])
                     translate([0, 0, -(ledge_side + frame_wall)])
                         linear_extrude(2*(ledge_side + frame_wall))
-                            pill2d(gill_l, gill_w);
+                            translate([0, -gill_l/2 + gill_vw/2])
+                                feather2d(gill_l, gill_vw, vent_tip);
         // exhaust through the top wall, flanking the button window
         for (sx = [1, -1], i = [0 : frame_vent_flank_n - 1])
             translate([btn_dx + sx*(btn_w/2 + 9 + i*6.5), fr_yi/2 - 0.1, gz])

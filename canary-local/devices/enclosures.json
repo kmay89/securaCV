@@ -6447,7 +6447,7 @@
    ]
   },
   "canary_s3_lcd7.scad": {
-   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.8-dev)",
+   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.9-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -6631,22 +6631,27 @@
       },
       {
        "name": "vent_cols",
-       "default": "22",
+       "default": "20",
        "comment": "grille columns"
       },
       {
        "name": "vent_slot_w",
-       "default": "2.4",
-       "comment": "slot width"
+       "default": "5.2",
+       "comment": "feather base width — the grille is the PLUMAGE"
       },
       {
        "name": "vent_slot_l",
-       "default": "9.0",
-       "comment": "slot length"
+       "default": "7.2",
+       "comment": "feather length (point-up: sheds drips on a"
+      },
+      {
+       "name": "vent_tip",
+       "default": "0.28",
+       "comment": "tip/base ratio — the ONE brand constant; keep"
       },
       {
        "name": "vent_pitch_x",
-       "default": "7.0",
+       "default": "7.6",
        "comment": "column pitch"
       },
       {
@@ -6920,6 +6925,11 @@
        "name": "gill_y0",
        "default": "-35.0",
        "comment": "carry vents only; SD access is through the back plate"
+      },
+      {
+       "name": "gill_vw",
+       "default": "3.6",
+       "comment": "side-gill feather base width — area matches the old"
       },
       {
        "name": "frame_vent_flank_n",
