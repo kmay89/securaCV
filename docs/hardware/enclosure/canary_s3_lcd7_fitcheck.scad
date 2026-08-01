@@ -32,9 +32,10 @@
 //            instead of the slab, a board that overhangs the glass would let
 //            the panel slide until the window crossed the active area. This
 //            check fails the moment those two pockets get merged again.
-//    frame_glass — the one-piece frame vs the slab in the frame's own coords.
-//            Non-empty = the cavity or an adhesive-ledge wedge bites into
-//            the panel.
+//    frame_glass — the one-piece frame vs the STEPPED panel (thin bare-glass
+//            border + thicker LCD-module core) in the frame's own coords.
+//            Non-empty = the cavity, the raised adhesive ledge or a ledge
+//            wedge bites into the panel.
 //    frame_ledge — INVERTED: a wafer just behind the adhesive plane must land
 //            on the ledge. Empty = nothing carries the panel's adhesive
 //            border — e.g. the ledge/boss datum drifted apart (the adh_t
@@ -160,14 +161,27 @@ else if (check == "locate")
         assembled_bezel();
         translate([locate_slip, locate_slip, 0]) glass_slab(glass_t);
     }
-// The one-piece frame is modelled with the glass at z 0..glass_t in its own
-// coords, so the slab needs no repositioning.
-else if (check == "frame_glass")
-    // frame vs the slab — the cavity and the ledge wedges must clear it
+// The one-piece frame is modelled with the panel at z 0.. in its own coords,
+// so the slab needs no repositioning. The panel is STEPPED, and the check
+// must model both steps: a bare-glass BORDER (glass_edge_t thin — the band
+// the adhesive ledge rises to within adh_t of) around the thicker LCD-module
+// core (glass_t). A uniform glass_t slab would false-fail against the raised
+// ledge; a uniform border-thin slab would let the cavity close onto the
+// module. The core outline comes from lcd7_panel_core() — the MEASURED can,
+// stated independently of the ledge geometry — so widening a ledge cannot
+// shrink the probe in lockstep and sneak past this gate.
+else if (check == "frame_glass") {
+    ge = lcd7_frame_stack()[6];   // bare-glass border thickness
+    PC = lcd7_panel_core();       // [core_w, core_h, core_dy]
     intersection() {
         frame();
-        linear_extrude(glass_t) rrect2d(glass_w, glass_h, glass_r);
+        union() {
+            linear_extrude(ge) rrect2d(glass_w, glass_h, glass_r);
+            translate([0, PC[2], 0]) linear_extrude(glass_t)
+                rrect2d(PC[0], PC[1], 2);
+        }
     }
+}
 else if (check == "frame_ledge") {
     // inverted — a wafer just behind the adhesive plane must land on the
     // ledge, or nothing carries the panel's adhesive border. FS reads the
