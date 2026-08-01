@@ -189,6 +189,11 @@
 // ============================================================================
 
 use <canary_vent_lib.scad>  // the brand vent shape: feather2d / feather_area
+// Downloaded this file on its own? It CUTS ITS VENTS with that library — a
+// missing lib would render a sealed, overheating case with only a console
+// warning. This guard turns that into a hard stop instead:
+assert(is_num(feather_area(7, 4)),
+       "canary_vent_lib.scad is MISSING — this case cuts its grille and gills with it. Download canary_vent_lib.scad from the same folder and keep the two files side by side.");
 
 /* [What to render] */
 part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_buttons","plug_sd","all"]
