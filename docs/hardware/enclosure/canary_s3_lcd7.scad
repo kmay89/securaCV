@@ -202,6 +202,10 @@ khm_y  = 34.0;          // catch points at the button edge: hang the case over
 khm_head_d  = 9.5;      // two screws and slide it DOWN to seat. The head hole
 khm_slide_w = 4.5;      // passes a #8 / M4 pan head; the slide, its shank.
 khm_len = 13.0;         // head-hole centre → catch centre
+frame_cable = true;  // cable pass-through in the back plate, low, over the
+fcable_w = 40.0;     // bottom-edge USB/UART cluster — the keyholes can't
+fcable_h = 12.0;     // double as cable exits once screws occupy them
+fcable_dx = 0.0;     // offset along the bottom edge (centre it on your plug)
 gill_n = 6;          // straight "gill" vents per side (±x) wall, upper half
 gill_w = 2.4;  gill_l = 9.0;  gill_rake = 0;    // rake 0: vertical slots print
                      // cleanest face-down (the raked look read as slashes and
@@ -300,6 +304,8 @@ assert(!mount_keyholes || (khm_dx + khm_head_d/2 + 2 < fr_xi/2
        && khm_y - khm_head_d/2 > 4),
        "frame: keyhole runs off the back plate");
 assert(khm_slide_w < khm_head_d, "frame: keyhole slide wider than its head hole");
+assert(!frame_cable || abs(fcable_dx) + fcable_w/2 + 2 < fr_xi/2,
+       "frame: cable pass-through runs off the back plate");
 assert(cb_h + 1.0 <= bez_h, "counterbore deeper than the bezel ear");
 assert(cav_d > comp_h + pcb_t, "no air gap left between the PCB and the glass");
 echo(str("Canary 7in touch v0.3-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
@@ -539,8 +545,11 @@ module frame() {
         // back grille (dodging bosses and the keyholes — note -m3_ox: this
         // part is modelled print-side, x mirrored vs the two-part tray)
         translate([0, 0, fz_plate]) vent_grille(-m3_ox, m3_oy,
-            keepouts = mount_keyholes
-                ? [for (sx = [1,-1]) [sx*khm_dx, khm_y + khm_len/2, 8, 17]] : []);
+            keepouts = concat(
+                mount_keyholes
+                    ? [for (sx = [1,-1]) [sx*khm_dx, khm_y + khm_len/2, 8, 17]] : [],
+                frame_cable
+                    ? [[fcable_dx, -(fr_yi/2 - 4 - fcable_h/2), fcable_w/2 + 3.4, fcable_h/2 + 6.7]] : []));
         // wall-mount keyholes through the back plate: head hole LOW, slide
         // running UP so the catch points at the button edge — hang the case
         // over two screws and slide it DOWN to seat
@@ -550,6 +559,11 @@ module frame() {
                 hull() { circle(d = khm_slide_w);
                          translate([0, khm_len]) circle(d = khm_slide_w); }
             }
+        // cable pass-through low in the back plate: power/flash without
+        // opening the case (the USB/UART cluster lives on the bottom edge)
+        if (frame_cable)
+            translate([fcable_dx, -(fr_yi/2 - 4 - fcable_h/2), fz_plate - 0.1])
+                linear_extrude(back_t + 0.2) rrect2d(fcable_w, fcable_h, 5);
         // debossed labels on the back face — back view, buttons at the TOP:
         // BOOT on the left (-x here), RESET on the right, as on the board
         frame_lbl(btn_dx - btn_lbl_dx, fr_yo/2 - 6.5, "BOOT");

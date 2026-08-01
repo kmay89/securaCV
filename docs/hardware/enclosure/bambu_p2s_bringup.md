@@ -283,9 +283,10 @@ standoffs — the screws, not a ledge, pull the glass flush with the front rim.
 It carries a bevelled BOOT/RESET window in the top wall — the button edge in
 native mounting — with debossed labels (back view: **BOOT left, RESET
 right**), gill vents on the side walls, intake/exhaust slot rows, a back
-grille, and two **keyhole wall mounts** near the top corners: hang the case
-over two pan-head screws and slide it down; the catches point up at the
-button edge.
+grille, two **keyhole wall mounts** near the top corners (hang the case over
+two pan-head screws and slide it down; the catches point up at the button
+edge), and a **cable pass-through** low in the back plate so USB-C power and
+flashing reach the bottom-edge connector cluster without opening the case.
 
 ```sh
 openscad --export-format binstl -o lcd7_frame_gauge.stl -D 'part="frame_gauge"' canary_s3_lcd7.scad

@@ -920,6 +920,14 @@
      "default": true
     },
     {
+     "id": "frame_cable",
+     "type": "bool",
+     "label": "cable pass-through in the back plate, low, over the",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "opt_stand",
      "type": "bool",
      "label": "opt_stand",
@@ -928,7 +936,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 84,
+   "engineering_param_count": 87,
    "alternatives": [
     "dash_display"
    ],
@@ -936,8 +944,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 8,
-    "user_options": 8,
+    "options": 9,
+    "user_options": 9,
     "variant_axes": 0
    }
   },

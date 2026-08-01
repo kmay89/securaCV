@@ -6611,6 +6611,26 @@
        "comment": "head-hole centre → catch centre"
       },
       {
+       "name": "frame_cable",
+       "default": "true",
+       "comment": "cable pass-through in the back plate, low, over the"
+      },
+      {
+       "name": "fcable_w",
+       "default": "40.0",
+       "comment": "bottom-edge USB/UART cluster — the keyholes can't"
+      },
+      {
+       "name": "fcable_h",
+       "default": "12.0",
+       "comment": "double as cable exits once screws occupy them"
+      },
+      {
+       "name": "fcable_dx",
+       "default": "0.0",
+       "comment": "offset along the bottom edge (centre it on your plug)"
+      },
+      {
        "name": "gill_n",
        "default": "6",
        "comment": "straight \"gill\" vents per side (±x) wall, upper half"
