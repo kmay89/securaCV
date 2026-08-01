@@ -27,9 +27,13 @@
 //            the board hangs on the panel's OWN white M3 standoffs, and
 //            4x M3x8-10 from the back thread into those standoffs — the
 //            screws, not a ledge, pull the glass flush with the front face.
-//            BOOT/RESET window in the top wall with debossed labels, side
-//            gill vents, chimney intake/exhaust, back grille, and keyhole
-//            wall mounts (hang on two screws, slide down; catches point up).
+//            BOOT/RESET window in the top wall with debossed labels; paired
+//            bevelled service windows in each short wall (microSD + UART1 and
+//            the USB-C pair on the right, CAN/I2C/sensor and battery/RS-485
+//            on the left — a fingertip works the push-push SD socket through
+//            its window); gill vents, chimney intake/exhaust, back grille;
+//            keyhole wall mounts (hang on two screws, slide down); modelled
+//            foot and back-rim chamfers.
 //    frame_gauge — one corner of the frame including one boss and a wall
 //            keyhole. Print FIRST (~10 % of the frame's filament): it proves
 //            the glass corner radius, the boss offset signs and screw reach.
@@ -202,14 +206,24 @@ khm_y  = 34.0;          // catch points at the button edge: hang the case over
 khm_head_d  = 9.5;      // two screws and slide it DOWN to seat. The head hole
 khm_slide_w = 4.5;      // passes a #8 / M4 pan head; the slide, its shank.
 khm_len = 13.0;         // head-hole centre → catch centre
-frame_cable = true;  // cable pass-through in the back plate, low, over the
-fcable_w = 40.0;     // bottom-edge USB/UART cluster — the keyholes can't
-fcable_h = 12.0;     // double as cable exits once screws occupy them
-fcable_dx = 0.0;     // offset along the bottom edge (centre it on your plug)
-gill_n = 6;          // straight "gill" vents per side (±x) wall, upper half
-gill_w = 2.4;  gill_l = 9.0;  gill_rake = 0;    // rake 0: vertical slots print
-                     // cleanest face-down (the raked look read as slashes and
-                     // bought nothing thermally)
+// Side access windows — connector map from the Rev1.2 board, in-use (native,
+// buttons-top) back view: the +x (right) SHORT edge carries UART1, the
+// microSD socket and both USB-C ports; the -x (left) short edge carries the
+// sensor/CAN/I2C cluster, battery JST and the RS-485/CAN terminals. The SD
+// socket sits ~14 mm inboard of the wall, so a card-width slot would swallow
+// the card unreachably — a WINDOW lets a fingertip reach in and work the
+// push-push socket. Two windows per side keep every bridge short and the
+// wall stiff. Positions are photo-derived — MEASURE against your board.
+svc_windows = true;      // +x wall: service side
+svc1_dy = -24.0;  svc1_l = 28.0;   // microSD + UART1 window (y centre / length)
+svc2_dy = 7.0;    svc2_l = 26.0;   // USB-C pair window
+field_windows = true;    // -x wall: field-wiring side
+fld1_dy = -22.0;  fld1_l = 30.0;   // sensor / CAN / I2C connector cluster
+fld2_dy = 19.0;   fld2_l = 26.0;   // battery JST + RS-485/CAN terminals
+gill_n  = 2;         // straight "gill" vents per side (±x) wall, in the strip
+gill_y0 = 38.0;      // above the side windows (rake 0: vertical slots print
+gill_w = 2.4;  gill_l = 9.0;  gill_rake = 0;    // cleanest face-down; the
+                     // raked look read as slashes and bought nothing thermally)
 frame_vent_row_n   = 10; // intake slots in a row along the bottom wall
 frame_vent_flank_n = 4;  // exhaust slots per side, flanking the button window
 label_depth = 0.5;
@@ -304,8 +318,17 @@ assert(!mount_keyholes || (khm_dx + khm_head_d/2 + 2 < fr_xi/2
        && khm_y - khm_head_d/2 > 4),
        "frame: keyhole runs off the back plate");
 assert(khm_slide_w < khm_head_d, "frame: keyhole slide wider than its head hole");
-assert(!frame_cable || abs(fcable_dx) + fcable_w/2 + 2 < fr_xi/2,
-       "frame: cable pass-through runs off the back plate");
+assert(!svc_windows || (abs(svc1_dy) + svc1_l/2 < fr_yi/2 - fr_ri - 2
+                     && abs(svc2_dy) + svc2_l/2 < fr_yi/2 - fr_ri - 2
+                     && svc1_dy + svc1_l/2 + 4 <= svc2_dy - svc2_l/2),
+       "frame: service windows overlap or overrun the wall");
+assert(!field_windows || (abs(fld1_dy) + fld1_l/2 < fr_yi/2 - fr_ri - 2
+                       && abs(fld2_dy) + fld2_l/2 < fr_yi/2 - fr_ri - 2
+                       && fld1_dy + fld1_l/2 + 4 <= fld2_dy - fld2_l/2),
+       "frame: field windows overlap or overrun the wall");
+assert(gill_n == 0 || gill_y0 > max(svc_windows ? svc2_dy + svc2_l/2 : 0,
+                                    field_windows ? fld2_dy + fld2_l/2 : 0) + 3,
+       "frame: gills collide with a side window");
 assert(cb_h + 1.0 <= bez_h, "counterbore deeper than the bezel ear");
 assert(cav_d > comp_h + pcb_t, "no air gap left between the PCB and the glass");
 echo(str("Canary 7in touch v0.3-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
@@ -488,6 +511,41 @@ module frame_lbl(x, y, s) {
         text(s, size = 4.0, font = label_font, halign = "center", valign = "center");
 }
 
+// The shell, finished at both ends: a modelled foot chamfer at the plate (the
+// catalog's standing elephant-foot allowance — slicer compensation stays 0)
+// and a matching chamfer around the back rim so the printed part reads as a
+// finished object from every side.
+frame_foot = 0.6;  frame_rim = 0.8;
+module frame_body() {
+    hull() {
+        linear_extrude(0.01)
+            rrect2d(fr_xo - 2*frame_foot, fr_yo - 2*frame_foot, max(1, fr_ro - frame_foot));
+        translate([0, 0, frame_foot]) linear_extrude(0.01) rrect2d(fr_xo, fr_yo, fr_ro);
+    }
+    translate([0, 0, frame_foot])
+        linear_extrude(fr_depth - frame_foot - frame_rim) rrect2d(fr_xo, fr_yo, fr_ro);
+    hull() {
+        translate([0, 0, fr_depth - frame_rim]) linear_extrude(0.01)
+            rrect2d(fr_xo, fr_yo, fr_ro);
+        translate([0, 0, fr_depth - 0.01]) linear_extrude(0.01)
+            rrect2d(fr_xo - 2*frame_rim, fr_yo - 2*frame_rim, max(1, fr_ro - frame_rim));
+    }
+}
+
+// Bevelled access window through a ±x wall, same styling as the button
+// window: straight tunnel plus a 45° surround on the outer face.
+module xwall_window(sx, dy, l) {
+    zc = (btn_z0 + btn_z1)/2;
+    translate([sx*(fr_xi/2 - 0.1), dy, zc]) rotate([0, sx*90, 0])
+        linear_extrude(frame_wall + 0.3) rrect2d(btn_h, l, 3);
+    hull() {
+        translate([sx*(fr_xo/2 - 0.01), dy, zc]) rotate([0, sx*90, 0])
+            linear_extrude(0.02) rrect2d(btn_h + 2.4, l + 2.4, 4);
+        translate([sx*(fr_xo/2 - 1.2), dy, zc]) rotate([0, sx*90, 0])
+            linear_extrude(0.02) rrect2d(btn_h, l, 3);
+    }
+}
+
 module frame() {
     gz = (glass_t + fz_boss)/2;        // centre of the clear air band in the walls
     gh = fz_boss - glass_t - 4;        // wall-vent height inside that band
@@ -495,7 +553,7 @@ module frame() {
     difference() {
         union() {
             difference() {
-                linear_extrude(fr_depth) rrect2d(fr_xo, fr_yo, fr_ro);
+                frame_body();
                 // one straight cavity, snug to the SLAB (the widest thing in
                 // the stack — the board hangs inboard of it on its standoffs)
                 translate([0, 0, -0.1]) linear_extrude(fz_plate + 0.1)
@@ -528,9 +586,14 @@ module frame() {
             translate([btn_dx, fr_yo/2 - 1.2, btn_zc]) rotate([-90, 0, 0])
                 linear_extrude(0.02) rrect2d(btn_w, btn_h, 3);
         }
-        // gill vents through the ±x walls, upper half (chimney exhaust)
-        for (sx = [1, -1], i = [0 : gill_n - 1])
-            translate([sx*(fr_xo/2 - frame_wall/2), 12 + i*7, gz])
+        // side access windows: service (+x) and field wiring (-x)
+        if (svc_windows)   { xwall_window( 1, svc1_dy, svc1_l);
+                             xwall_window( 1, svc2_dy, svc2_l); }
+        if (field_windows) { xwall_window(-1, fld1_dy, fld1_l);
+                             xwall_window(-1, fld2_dy, fld2_l); }
+        // gill vents through the ±x walls, in the strip above the windows
+        if (gill_n > 0) for (sx = [1, -1], i = [0 : gill_n - 1])
+            translate([sx*(fr_xo/2 - frame_wall/2), gill_y0 + i*7, gz])
                 rotate([sx*gill_rake, 0, 0]) rotate([0, 90, 0])
                     translate([0, 0, -frame_wall]) linear_extrude(2*frame_wall)
                         pill2d(gill_l, gill_w);
@@ -545,11 +608,8 @@ module frame() {
         // back grille (dodging bosses and the keyholes — note -m3_ox: this
         // part is modelled print-side, x mirrored vs the two-part tray)
         translate([0, 0, fz_plate]) vent_grille(-m3_ox, m3_oy,
-            keepouts = concat(
-                mount_keyholes
-                    ? [for (sx = [1,-1]) [sx*khm_dx, khm_y + khm_len/2, 8, 17]] : [],
-                frame_cable
-                    ? [[fcable_dx, -(fr_yi/2 - 4 - fcable_h/2), fcable_w/2 + 3.4, fcable_h/2 + 6.7]] : []));
+            keepouts = mount_keyholes
+                ? [for (sx = [1,-1]) [sx*khm_dx, khm_y + khm_len/2, 8, 17]] : []);
         // wall-mount keyholes through the back plate: head hole LOW, slide
         // running UP so the catch points at the button edge — hang the case
         // over two screws and slide it DOWN to seat
@@ -559,15 +619,12 @@ module frame() {
                 hull() { circle(d = khm_slide_w);
                          translate([0, khm_len]) circle(d = khm_slide_w); }
             }
-        // cable pass-through low in the back plate: power/flash without
-        // opening the case (the USB/UART cluster lives on the bottom edge)
-        if (frame_cable)
-            translate([fcable_dx, -(fr_yi/2 - 4 - fcable_h/2), fz_plate - 0.1])
-                linear_extrude(back_t + 0.2) rrect2d(fcable_w, fcable_h, 5);
         // debossed labels on the back face — back view, buttons at the TOP:
-        // BOOT on the left (-x here), RESET on the right, as on the board
+        // BOOT on the left (-x here), RESET on the right, as on the board;
+        // "SD" beside the card window so nobody hunts for the socket
         frame_lbl(btn_dx - btn_lbl_dx, fr_yo/2 - 6.5, "BOOT");
         frame_lbl(btn_dx + btn_lbl_dx, fr_yo/2 - 6.5, "RESET");
+        if (svc_windows) frame_lbl(fr_xi/2 - 8, svc1_dy, "SD");
     }
 }
 

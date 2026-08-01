@@ -920,9 +920,17 @@
      "default": true
     },
     {
-     "id": "frame_cable",
+     "id": "svc_windows",
      "type": "bool",
-     "label": "cable pass-through in the back plate, low, over the",
+     "label": "+x wall: service side",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "field_windows",
+     "type": "bool",
+     "label": "-x wall: field-wiring side",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -936,7 +944,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 87,
+   "engineering_param_count": 85,
    "alternatives": [
     "dash_display"
    ],
@@ -944,8 +952,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 9,
-    "user_options": 9,
+    "options": 10,
+    "user_options": 10,
     "variant_axes": 0
    }
   },
