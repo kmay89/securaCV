@@ -6636,11 +6636,6 @@
        "comment": "along the FPC (bottom) edge — keep small, the FPC lives there"
       },
       {
-       "name": "ledge_ribs",
-       "default": "true",
-       "comment": "dashed 0.5 mm sacrificial walls standing under the wide"
-      },
-      {
        "name": "brand_back",
        "default": "SecuraCV Canary 7\\\" Display",
        "comment": "debossed across the back plate"
@@ -6651,24 +6646,33 @@
        "comment": "debossed on the visible bottom edge"
       },
       {
-       "name": "svc_windows",
-       "default": "true",
-       "comment": "+x wall: service side"
+       "name": "sd_dx",
+       "default": "42.0",
+       "comment": "opening centre, + = back-view right"
       },
       {
-       "name": "field_windows",
-       "default": "true",
-       "comment": "-x wall: field-wiring side"
+       "name": "sd_dy",
+       "default": "-26.0"
+      },
+      {
+       "name": "sd_w",
+       "default": "18.0",
+       "comment": "width — fingertip-sized, not card-sized"
+      },
+      {
+       "name": "sd_l",
+       "default": "40.0",
+       "comment": "length along the slide direction"
       },
       {
        "name": "gill_n",
-       "default": "2",
-       "comment": "straight \"gill\" vents per side (±x) wall, in the strip"
+       "default": "8",
+       "comment": "straight \"gill\" vents per side (±x) wall — the sides"
       },
       {
        "name": "gill_y0",
-       "default": "38.0",
-       "comment": "above the side windows (rake 0: vertical slots print"
+       "default": "-35.0",
+       "comment": "carry vents only; SD access is through the back plate"
       },
       {
        "name": "frame_vent_row_n",
@@ -6812,11 +6816,11 @@
       {
        "name": "ledge_z",
        "default": "glass_t + adh_t",
-       "comment": "ledge front face: the glass-back datum"
+       "comment": "ledge front face"
       },
       {
        "name": "fr_depth",
-       "default": "ledge_z + pcb_standoff + pcb_t + standoff_len + frame_boss_h + back_t"
+       "default": "glass_t + pcb_standoff + pcb_t + standoff_len + frame_boss_h + back_t"
       },
       {
        "name": "fz_boss",
