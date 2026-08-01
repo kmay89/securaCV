@@ -874,10 +874,29 @@ test("pre-configured Wi-Fi is honored: present-but-empty keys, and identity neve
   assert.match(provRs, /if !config\.mqtt_host\.is_empty\(\)/,
     "provisioning.rs must validate/write the broker only when present");
 
-  // Browser: an invented device id may be auto-suggested ONLY for usb-secrets
-  // boards — dev_id is sticky forever, and a display names itself on-glass.
+  // Broker-only provisioning must build: a display kept on its on-glass
+  // Wi-Fi setup can still be told its hub here. An unconditional SSID check
+  // made that abort ("Wi-Fi name must be 1–32 bytes") — the Wi-Fi block must
+  // be as optional as the others.
+  assert.match(provRs, /if !config\.wifi_ssid\.is_empty\(\)/,
+    "provisioning.rs must treat Wi-Fi itself as optional (broker-only flashes)");
+
+  // BOTH flashers suggest a UNIQUE per-device id for every broker-capable
+  // board — displays included. Their MQTT topics derive from dev_id, the
+  // glass setup only ever asks for Wi-Fi, and with nothing seeded first boot
+  // persists the flavor's SHARED compiled id (canary_dash_001) — so two
+  // same-flavor displays collide on the same topics. The id must be visible
+  // and clearable, and the family map must know displays.
   const flashJs = read(join(CANARY, "assets/flash.js"));
-  assert.match(flashJs, /product\.provisioning === "usb-secrets"\)\s*\{[\s\S]{0,300}devId\.value/,
-    "flash.js auto-suggests a device id for non-usb-secrets boards again — " +
-    "a browser-flashed display would be branded with a sticky name nobody chose");
+  assert.match(flashJs,
+    /(provisioning === "usb-secrets" \|\| product\.broker_nvs === true)[\s\S]{0,400}canary_display/,
+    "flash.js no longer suggests a unique dev_id for broker-capable displays — " +
+    "same-flavor displays would share the compiled id and collide on MQTT");
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  assert.match(appJs, /\(usbSecrets \|\| broker\) && !\$\("device-id"\)\.value/,
+    "app.js no longer suggests a unique dev_id for broker-capable displays");
+  assert.match(appJs, /includes\("display"\)[\s\S]{0,80}canary_display/,
+    "app.js dev_id family map lost the display family");
+  assert.match(appJs, /deviceId: usbSecrets \|\| broker \?/,
+    "app.js readProvisioning no longer sends the display's device id");
 });
