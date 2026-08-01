@@ -6274,7 +6274,7 @@
    ]
   },
   "canary_s3_lcd7.scad": {
-   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.2-dev)",
+   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.3-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -6286,6 +6286,8 @@
        "enum": [
         "bezel",
         "back",
+        "frame",
+        "frame_gauge",
         "gauge",
         "gauge_bezel",
         "gauge_tray",
@@ -6316,8 +6318,8 @@
       },
       {
        "name": "glass_r",
-       "default": "3.0",
-       "comment": "corner radius of the glass slab — MEASURE. The cavity is"
+       "default": "2.0",
+       "comment": "corner radius of the glass slab — MEASURE. A reference"
       },
       {
        "name": "aa_w",
@@ -6331,8 +6333,8 @@
       },
       {
        "name": "aa_dy",
-       "default": "-1.02",
-       "comment": "AA centre offset from glass centre (top border 13.04, bottom 11.00)"
+       "default": "1.02",
+       "comment": "AA centre offset from glass centre. Waveshare-native the"
       }
      ]
     },
@@ -6368,17 +6370,27 @@
     },
     {
      "name": "Board mounts",
-     "note": "4x M3 corner standoffs carry the PCB (nominal pattern)",
+     "note": "4x M3 corner standoffs carry the PCB (measured pattern)",
      "params": [
       {
        "name": "m3_dx",
-       "default": "165.72",
-       "comment": "M3 hole pattern width  — MEASURE. ⚠️ This is EXACTLY"
+       "default": "126.20",
+       "comment": "M3 hole pattern width — MEASURED from a reference case"
       },
       {
        "name": "m3_dy",
-       "default": "88.0",
-       "comment": "M3 hole pattern height — MEASURE"
+       "default": "65.65",
+       "comment": "M3 hole pattern height — measured with m3_dx; verify"
+      },
+      {
+       "name": "m3_ox",
+       "default": "1.5",
+       "comment": "pattern centre offset from the GLASS centre, stated in"
+      },
+      {
+       "name": "m3_oy",
+       "default": "0.9",
+       "comment": "FRONT view with the panel mounted buttons-down:"
       },
       {
        "name": "m3_pilot",
@@ -6521,6 +6533,94 @@
      ]
     },
     {
+     "name": "Frame — one-piece drop-in case (part=\"frame\")",
+     "note": "",
+     "params": [
+      {
+       "name": "frame_wall",
+       "default": "2.0",
+       "comment": "sleeve wall (also the visible front rim around the glass)"
+      },
+      {
+       "name": "frame_reveal",
+       "default": "0.15",
+       "comment": "per-side glass↔opening clearance. The opening AND its"
+      },
+      {
+       "name": "standoff_len",
+       "default": "6.9",
+       "comment": "the panel's own white M3 standoffs, PCB back → tip — MEASURE"
+      },
+      {
+       "name": "frame_boss_h",
+       "default": "3.0",
+       "comment": "boss standing proud of the back plate's inner face"
+      },
+      {
+       "name": "frame_boss_d",
+       "default": "8.0"
+      },
+      {
+       "name": "btn_w",
+       "default": "25.0",
+       "comment": "BOOT/RESET access window through the BOTTOM wall (measured)"
+      },
+      {
+       "name": "btn_h",
+       "default": "13.5",
+       "comment": "window height across the wall's depth"
+      },
+      {
+       "name": "btn_dx",
+       "default": "0.0",
+       "comment": "window centre offset along the bottom wall"
+      },
+      {
+       "name": "btn_lbl_dx",
+       "default": "9.0",
+       "comment": "BOOT/RESET label centres, ± of the window centre"
+      },
+      {
+       "name": "cable_slots",
+       "default": "true",
+       "comment": "two rounded pass-throughs in the back plate (cable exit /"
+      },
+      {
+       "name": "cable_dx",
+       "default": "78.5",
+       "comment": "hanging) at the board's connector edges — positions"
+      },
+      {
+       "name": "cable_dy",
+       "default": "25.2",
+       "comment": "measured from the reference case"
+      },
+      {
+       "name": "gill_n",
+       "default": "6",
+       "comment": "raked \"gill\" vents per side (±x) wall, upper half"
+      },
+      {
+       "name": "frame_vent_top_n",
+       "default": "10",
+       "comment": "exhaust slots through the top wall"
+      },
+      {
+       "name": "frame_vent_bot_n",
+       "default": "4",
+       "comment": "intake slots per side, flanking the button window"
+      },
+      {
+       "name": "label_depth",
+       "default": "0.5"
+      },
+      {
+       "name": "label_font",
+       "default": "Liberation Sans:style=Bold"
+      }
+     ]
+    },
+    {
      "name": "Stand",
      "note": "",
      "params": [
@@ -6629,6 +6729,33 @@
       {
        "name": "lip_min",
        "default": "min(lip_x, lip_top, lip_bot)"
+      },
+      {
+       "name": "fr_ri",
+       "default": "glass_r + frame_reveal",
+       "comment": "opening corners track the slab"
+      },
+      {
+       "name": "fr_ro",
+       "default": "fr_ri + frame_wall"
+      },
+      {
+       "name": "fr_depth",
+       "default": "glass_t + pcb_standoff + pcb_t + standoff_len + frame_boss_h + back_t"
+      },
+      {
+       "name": "fz_boss",
+       "default": "fr_depth - back_t - frame_boss_h",
+       "comment": "boss face the standoffs land on"
+      },
+      {
+       "name": "fz_plate",
+       "default": "fr_depth - back_t",
+       "comment": "inner face of the back plate"
+      },
+      {
+       "name": "fr_bosses",
+       "default": "[for (sx = [1,-1], sy = [1,-1]) [-m3_ox + sx*m3_dx/2, m3_oy + sy*m3_dy/2]]"
       },
       {
        "name": "gauge_in",
