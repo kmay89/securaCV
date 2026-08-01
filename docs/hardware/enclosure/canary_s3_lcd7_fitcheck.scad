@@ -158,20 +158,18 @@ else if (check == "locate")
 // the adhesive ledge rises to within adh_t of) around the thicker LCD-module
 // core (glass_t). A uniform glass_t slab would false-fail against the raised
 // ledge; a uniform border-thin slab would let the cavity close onto the
-// module. The module outline is the ledge ring's inner opening minus a
-// clearance — read from the same accessor that builds the ledge, so the
-// pocket and the probe cannot drift apart.
+// module. The core outline comes from lcd7_panel_core() — the MEASURED can,
+// stated independently of the ledge geometry — so widening a ledge cannot
+// shrink the probe in lockstep and sneak past this gate.
 else if (check == "frame_glass") {
-    FS = lcd7_frame_stack();   // [.., glass_edge_t, ledge_side, ledge_top, ledge_bot]
-    ge = FS[6]; l_s = FS[7]; l_t = FS[8]; l_b = FS[9];
-    core_c = 0.4;              // module core ↔ ledge inner edge clearance, per side
+    ge = lcd7_frame_stack()[6];   // bare-glass border thickness
+    PC = lcd7_panel_core();       // [core_w, core_h, core_dy]
     intersection() {
         frame();
         union() {
             linear_extrude(ge) rrect2d(glass_w, glass_h, glass_r);
-            translate([0, (l_b - l_t)/2, 0]) linear_extrude(glass_t)
-                rrect2d(FS[2] - 2*l_s - 2*core_c,
-                        FS[3] - l_t - l_b - 2*core_c, 2);
+            translate([0, PC[2], 0]) linear_extrude(glass_t)
+                rrect2d(PC[0], PC[1], 2);
         }
     }
 }

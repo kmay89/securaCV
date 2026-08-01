@@ -227,9 +227,11 @@ the values echoed when you render:
 | Measure | Parameter | Model default |
 |---|---|---|
 | Touch-glass width × height | `glass_w` / `glass_h` | 192.96 × 110.76 |
-| Glass thickness at the edge | `glass_t` | 4.0 |
+| Full panel thickness where the LCD module reaches — glass front → module can back | `glass_t` | 4.0 |
+| Bare-glass BORDER thickness at the adhesive band — glass front → glass back, calipers on the edge, NOT over the module | `glass_edge_t` | 0.8 — these are **two different measurements**: the border is just glass, the middle is glass + module. `glass_edge_t` sets the adhesive-ledge depth (`glass_edge_t + adh_t` behind the front face); `glass_t` sets the cavity and the whole rear stack. Assigning the thin edge reading to `glass_t` shortens the rear stack ~3.2 mm and the frame cannot seat the module |
 | Glass corner radius | `glass_r` | 3.2 — settled by the FIRST REAL PRINT: r2.0 was the wrong direction. Confirm on `part="radius_gauge"` (four sockets, −0.4…+0.2 around the default, ~6 g) before any slab print |
 | Active (lit) area | `aa_w` / `aa_h` | 154.88 × 86.72 |
+| LCD module can outline + centre offset | `panel_core_w` / `panel_core_h` / `panel_core_dy` | 165.0 × 100.0, dy −1.0 ⚠️ nominal — the `frame_glass` CI gate and the insertion asserts check the ledge ring against THIS outline, so measure the can, not the ledge |
 | PCB outline | `pcb_w` / `pcb_h` | 165.72 × 97.60 |
 | Tallest rear-side component | `comp_h` | 11.0 |
 | Glass back → PCB front | `pcb_standoff` | 5.0 |

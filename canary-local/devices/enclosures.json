@@ -6500,6 +6500,21 @@
        "comment": "the BARE-GLASS border the adhesive strips land on —"
       },
       {
+       "name": "panel_core_w",
+       "default": "165.0",
+       "comment": "module can width  (X)"
+      },
+      {
+       "name": "panel_core_h",
+       "default": "100.0",
+       "comment": "module can height (Y)"
+      },
+      {
+       "name": "panel_core_dy",
+       "default": "-1.0",
+       "comment": "can centre offset from glass centre (tracks aa_dy)"
+      },
+      {
        "name": "glass_r",
        "default": "3.2",
        "comment": "corner radius of the glass slab. The FIRST REAL PRINT"

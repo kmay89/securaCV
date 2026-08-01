@@ -177,6 +177,16 @@ glass_edge_t = 0.8;  // the BARE-GLASS border the adhesive strips land on —
                      // ledge face sits 1.3 mm behind the front face, i.e.
                      // this + adh_t. (v0.6 chained the ledge off glass_t and
                      // left it floating 3.2 mm clear of the panel.)
+// The LCD module can behind the glass — stated INDEPENDENTLY of the ledge
+// geometry, deliberately: the frame_glass fit gate probes the frame against
+// THIS outline, so a ledge widened past the bare border collides in CI
+// instead of shrinking its own probe (and the insertion asserts below keep
+// the can's path through the ledge ring open). Nominal from the 7" module
+// family + the Rev1.2 adhesive photos (~10 mm bare sides / ~6 mm button
+// edge); put calipers on the can — MEASURE.
+panel_core_w  = 165.0;  // module can width  (X)
+panel_core_h  = 100.0;  // module can height (Y)
+panel_core_dy = -1.0;   // can centre offset from glass centre (tracks aa_dy)
 glass_r = 3.2;       // corner radius of the glass slab. The FIRST REAL PRINT
                      // settled the direction of travel: the r2.0 the
                      // reference-case daylight story argued for was WRONG —
@@ -712,13 +722,25 @@ assert(ledge_z + ledge_t < glass_t + pcb_standoff,
        "frame: ledge intrudes into the board plane");
 assert(glass_edge_t > 0 && glass_edge_t < glass_t,
        "frame: glass_edge_t is the panel's bare-glass border — it must be thinner than the full module stack (glass_t) and non-zero");
+// With the ledge at the bare-glass border, the module can passes THROUGH the
+// ledge ring going in (it did not when the ring sat behind the whole module
+// stack) — so the ring's opening must clear the can, with insertion room.
+assert(fr_xi - 2*ledge_side > panel_core_w + 0.6,
+       "frame: side ledges close on the LCD module can — panel cannot insert");
+assert(fr_yi/2 - ledge_top > panel_core_dy + panel_core_h/2 + 0.3
+    && -fr_yi/2 + ledge_bot < panel_core_dy - panel_core_h/2 - 0.3,
+       "frame: top/bottom ledge closes on the LCD module can — panel cannot insert");
 
 // Exported for canary_s3_lcd7_fitcheck.scad — the frame's own derived stack,
 // so the frame fit gates read the real values instead of copies.
-// (indices 6..9 carry the stepped-panel model the frame_glass gate needs:
-//  the bare-glass border thickness and how far each ledge reaches inboard)
+// (index 6 is the bare-glass border thickness the frame_glass gate probes
+//  with; 7..9 are the ledge reaches, exported for completeness)
 function lcd7_frame_stack() = [ledge_z, ledge_t, fr_xi, fr_yi, fr_ri, fr_depth,
                                glass_edge_t, ledge_side, ledge_top, ledge_bot];
+// The LCD module can, stated independently of the ledge geometry — the
+// frame_glass gate's core probe, so an enclosure edit can never shrink the
+// panel it is checked against.
+function lcd7_panel_core() = [panel_core_w, panel_core_h, panel_core_dy];
 // ...and the port/fitment geometry the TPU fit gates need, same doctrine.
 // [usb_dx, usb_zc, usb_head_w, usb_head_h, fr_yi, fr_yo, ledge_bot,
 //  btn_dx, btn_zc, sd_dx, sd_dy, fz_plate, usb_port, btn_w, btn_h, sd_w,
