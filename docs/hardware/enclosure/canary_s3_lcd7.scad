@@ -47,7 +47,8 @@
 //            validated: the slab enters face-first through the front opening,
 //            the board hangs on the panel's OWN white M3 standoffs, and
 //            4x M3x8-10 from the back thread into those standoffs — the
-//            screws, not a ledge, pull the glass flush with the front face.
+//            screws, not a ledge, set the glass glass_guard below the
+//            front rim (the drop-protection recess).
 //            BOOT/RESET window in the top wall with debossed labels; gill
 //            vents down each side wall; top-wall exhaust; back grille;
 //            a microSD access opening through the BACK PLATE covering the
@@ -1140,8 +1141,8 @@ module gauge() {
 //  +z toward the back; +x = BACK-view right). No ledge holds the glass: the
 //  4 screws pull the panel's standoffs onto the boss faces, and that stack —
 //  glass_t + pcb_standoff + pcb_t + standoff_len — is exactly what sets the
-//  glass flush with the front rim. Get standoff_len right or the glass sits
-//  proud/sunken by the same error.
+//  glass glass_guard below the front rim (the guard recess is by design —
+//  v0.8). Get standoff_len right or the recess is off by the same error.
 // ----------------------------------------------------------------------------
 module pill2d(l, w) { hull() for (d = [-1, 1]) translate([0, d*(l - w)/2]) circle(d = w); }
 // Back-plate deboss: label_back_depth, not label_depth — the floors must sit
@@ -1464,7 +1465,8 @@ module frame() {
 // (+x,+y) corner, chosen because it contains a boss AND a wall keyhole. Assemble
 // it on the panel's corner with one M3x8-10: the glass corner proves glass_r,
 // the screw only threads home if the m3 offsets have the right SIGNS, and the
-// glass sits flush with the rim only if standoff_len is right.
+// glass sits exactly glass_guard below the rim only if standoff_len is right
+// (the recess IS the pass criterion — flush glass means the stack is off).
 module frame_gauge() {
     bx = -m3_ox + m3_dx/2;  by = m3_oy + m3_dy/2;
     intersection() {
