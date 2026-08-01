@@ -874,7 +874,10 @@
     "radius_gauge",
     "grommet_usb",
     "plug_buttons",
-    "plug_sd"
+    "plug_sd",
+    "bat_probe_fit",
+    "bat_probe_seat",
+    "bat_probe_grip"
    ],
    "options": [
     {
@@ -980,9 +983,25 @@
      "consequence": "",
      "audience": "user",
      "default": true
+    },
+    {
+     "id": "qr_help",
+     "type": "bool",
+     "label": "deboss the help QR into the deck",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "qr_back",
+     "type": "bool",
+     "label": "deboss the help QR into the back plate too",
+     "consequence": "",
+     "audience": "user",
+     "default": true
     }
    ],
-   "engineering_param_count": 167,
+   "engineering_param_count": 187,
    "alternatives": [
     "dash_display"
    ],
@@ -990,8 +1009,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 13,
-    "user_options": 13,
+    "options": 15,
+    "user_options": 15,
     "variant_axes": 0
    }
   },

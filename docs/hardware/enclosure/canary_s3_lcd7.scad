@@ -182,7 +182,7 @@
 // ============================================================================
 
 /* [What to render] */
-part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_buttons","plug_sd","all"]
+part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","all"]
 
 /* [Glass slab] — bonded touch panel, from the Waveshare drawing (mm) */
 glass_w = 192.96;    // touch-glass width  (X)
@@ -596,8 +596,46 @@ stand_feet    = true;  // 4x shallow recesses for adhesive rubber feet
 // debossed or cut inside it (asserted below).
 qr_help = true;   // deboss the help QR into the deck
 qr_cell = 1.6;    // module size — 4 line-widths at a 0.4 mm nozzle
-qr_dx   = 46.0;   // field centre, plate coords (+x = front-view right wing)
-qr_dy   = 38.0;   // field centre, +y = toward the back edge
+qr_dx   = 43.5;   // field centre, plate coords (+x = front-view right wing)
+qr_dy   = 39.0;   // field centre, +y = toward the back edge (a battery
+                  // dock's deck grows rearward — the field rides along,
+                  // see qr_dy_eff)
+// ...and the same code on the CASE BACK, for wall-mounted cases that never
+// meet the dock: debossed into the outer skin exactly like BOOT/RESET and
+// the brand line (floors at label_back_depth read in the body colour
+// through the accent back skin — the existing single-swap recipe, zero
+// extra waste), and printed as the FIRST layers on the textured plate, so
+// the modules come out crisp. Placed on the plate's left band as the SD
+// opening's visual counterweight, outboard of the left rail's moat; the
+// smooth keepout it claims from the grille IS its quiet zone.
+qr_back      = true;   // deboss the help QR into the back plate too
+qr_back_cell = 1.2;    // module size — 3 line-widths; the plate is busier
+qr_back_dx   = -40.0;  // field centre, back-view coords (+x = back-view right)
+qr_back_dy   = 0.0;
+qr_back_reach = 21*qr_back_cell/2 + 4*qr_back_cell;   // field/2 + quiet zone
+
+/* [Battery bay — click-in, no hardware] */
+// A moulded bay on the back plate's inner face for the MakerFocus 1S packs
+// (PH2.0 lead to the panel's battery header). The pack lies against the
+// PLATE — the cool side, away from the backlight — held bat_rib off it on
+// rails so the grille slots directly beneath become its own convection
+// channel, with bat_air of open air on the board side: air on BOTH faces.
+// Retention is printed, not bought: a low curb boxes it in XY (cut back at
+// the four boss corners, opened at the short ends for the lead) and one
+// cantilever finger per long edge clicks over the pack — wedge-faced, so
+// the vendor's ±2 mm thickness stays preloaded against the rails and the
+// pack cannot shift in ANY case orientation. Selecting a pack DEEPENS the
+// case by exactly what the stack needs (echoed); print the desk dock with
+// the SAME battery setting and its slot follows automatically.
+battery  = "none";  // ["none","3000","10000"]
+// MakerFocus nominals — 10000: model 9065115, 112-115 x 65 x 8.8-9.0;
+// 3000: the 1S 3C pack, 65 x 35 x 10. Both quoted ±2 — MEASURE YOURS.
+bat_dims = battery == "10000" ? [115, 65, 9.0] : [65, 35, 10.0];
+bat_tol  = 2.0;   // the vendor's stated thickness tolerance, held as margin
+bat_over = 3.0;   // tallest PCB component under the bay footprint — MEASURE
+bat_air  = 2.0;   // battery ↔ component air gap (the board-side channel)
+bat_rib  = 1.2;   // battery ↔ plate air channel (the grille-side channel)
+bat_clr  = 1.0;   // per-side XY pocket clearance
 
 include <canary_s3_lcd7_qr.scad>   // qr_url() / qr_bits() — generated, committed
 
@@ -669,8 +707,19 @@ fr_ro = fr_ri + frame_wall;
 // (both offset by glass_guard: the guard rim pushes the whole panel stack
 // that far behind the front face, without moving anything relative to it)
 ledge_z  = glass_guard + glass_edge_t + adh_t;  // ledge front face
-fr_depth = glass_guard + glass_t + pcb_standoff + pcb_t + standoff_len
-         + frame_boss_h + back_t;
+bat_on  = battery != "none";
+bat_l   = bat_dims[0];  bat_w = bat_dims[1];
+bat_t   = bat_dims[2] + bat_tol;               // worst-case thick pack
+fr_depth0 = glass_guard + glass_t + pcb_standoff + pcb_t + standoff_len
+          + frame_boss_h + back_t;
+// The battery stack, front face -> plate inner face: component ceiling
+// under the bay, board-side air, the pack itself, the rail channel. The
+// case deepens only by what that stack needs beyond the stock cavity.
+bat_extra = bat_on
+    ? max(0, glass_guard + glass_t + pcb_standoff + bat_over + bat_air
+             + bat_t + bat_rib - (fr_depth0 - back_t))
+    : 0;
+fr_depth = fr_depth0 + bat_extra;
 // The wall-band knobs usb_zc / edge_vent_z are measured from the GLASS face
 // (= the front face when glass_guard is 0); these are their absolute z.
 usb_z    = glass_guard + usb_zc;
@@ -691,7 +740,9 @@ fr_keep_base = concat(
     [[sd_dx, sd_dy, sd_w/2 + 3.4, sd_l/2 + 6.7]],
     // ...and the tether zone: strap channel + anchor hole past the rim
     sd_tether ? [[sd_dx, (sd_dy + sd_l/2 - 1 + sd_teth_y + 2)/2, 4.3,
-                  (sd_teth_y + 2 - (sd_dy + sd_l/2 - 1))/2 + 5.1]] : []);
+                  (sd_teth_y + 2 - (sd_dy + sd_l/2 - 1))/2 + 5.1]] : [],
+    // the back QR's field + quiet zone: smooth skin, no slot may enter
+    qr_back ? [[qr_back_dx, qr_back_dy, qr_back_reach, qr_back_reach]] : []);
 fr_keep_rails = adh_rails ? [for (sx = [1,-1])
     [sx*adh_rail_dx, 0,
      adh_rail_w/2 + adh_mark_w + vent_slot_w/2 + 0.6,
@@ -719,7 +770,13 @@ vword_half = 0.392 * edge_text_size * max(len(edge_text_l), len(edge_text_r));
 // coordinate system of the docked case — origin on the seat pads' plane at
 // the seat centreline, local +z running up the reclined case.
 std_cd   = fr_depth + 2*stand_clear;      // slot gap: the frame's outer depth + slack
-std_ys   = -stand_d/2 + stand_slot_y;     // seat centreline in plate coords
+// A battery case is DEEPER, so its dock grows with it: the base gains
+// bat_extra split across both ends, and the seat centreline shifts back by
+// the front half — the lip's front-edge margin stays exactly what the
+// stock dock has, and the rear anti-tip margin only ever improves.
+bat_dg = bat_on ? ceil(bat_extra/2) : 0;
+std_d  = stand_d + 2*bat_dg;
+std_ys = -std_d/2 + stand_slot_y + bat_dg;   // seat centreline in plate coords
 std_open = stand_w - 2*stand_cheek_t;     // clear span between the seat pads
 // outermost bottom-wall intake opening on the frame — the shadow gill row's
 // far end (the brand words are deboss now, not intake, and the ±dock_key_bx
@@ -876,15 +933,15 @@ assert(stand_lip_h + stand_rib_drop + stand_clear <= fr_xo/2 - view_w/2 - 1.0,
 // the dock smothers the convection path the case depends on
 assert(std_open/2 >= std_intake_x + 2,
        "stand: the seat pads sit on the case's intake vents — widen stand_w or thin the cheeks");
-assert(std_front_foot > -stand_d/2 + 2,
+assert(std_front_foot > -std_d/2 + 2,
        "stand: the front lip runs off the base plate — deepen stand_d or raise stand_slot_y");
 // anti-tip, BOTH orientations: the base must extend well behind the reclined
 // case's centre line — portrait stands a 197 mm slab on its side, so it gets
 // the bigger margin (a fingertip pressing the top of the touchscreen pries
 // against exactly this lever)
-assert(stand_d/2 - (std_ys + sin(stand_ang)*fr_yo/2) >= 12,
+assert(std_d/2 - (std_ys + sin(stand_ang)*fr_yo/2) >= 12,
        "stand: base too short behind the reclined case — it will tip backward");
-assert(stand_d/2 - (std_ys + sin(stand_ang)*fr_xo/2) >= 20,
+assert(std_d/2 - (std_ys + sin(stand_ang)*fr_xo/2) >= 20,
        "stand: base too short for PORTRAIT — deepen stand_d");
 assert(stand_floor_h >= 20,
        "stand: no headroom under the case for the USB power plug");
@@ -896,14 +953,44 @@ assert(stand_gusset_h < stand_fin_h, "stand: cheek gusset overruns the fin");
 // clear of the RECLINED fin's overhang, which reaches fin_h*sin(a) behind
 // its own foot.
 qr_n = len(qr_bits());  qr_field = qr_n*qr_cell;  qr_reach = qr_field/2 + 4*qr_cell;
+qr_dy_eff = qr_dy + bat_dg;   // the deck's rear half-growth, when a battery deepens the dock
 assert(!qr_help || (qr_dx - qr_reach > stand_cable_w/2
     && qr_dx + qr_reach < stand_w/2
-    && qr_dy + qr_reach < stand_d/2
-    && norm([qr_dx + qr_reach - (stand_w/2 - 10),
-             qr_dy + qr_reach - (stand_d/2 - 10)]) > 10
-    && qr_dy - qr_reach > std_ys + (std_cd/2 + stand_fin_t)*cos(stand_ang)
+    && qr_dy_eff + qr_reach < std_d/2
+    // the quiet corner must lie ON the plate: either clear of the corner
+    // square entirely, or inside the corner arc with margin
+    && (qr_dx + qr_reach <= stand_w/2 - 10
+        || qr_dy_eff + qr_reach <= std_d/2 - 10
+        || norm([qr_dx + qr_reach - (stand_w/2 - 10),
+                 qr_dy_eff + qr_reach - (std_d/2 - 10)]) <= 9.5)
+    && qr_dy_eff - qr_reach > std_ys + (std_cd/2 + stand_fin_t)*cos(stand_ang)
                           + stand_fin_h*sin(stand_ang)),
        "stand: help QR (field + quiet zone) runs off the deck — into the cable channel, an edge, the back-corner round, or under the fin's overhang");
+// The back-plate QR's quiet zone is smooth ACCENT skin, so nothing that
+// reads in the body colour may enter it: the rail moats, the brand line,
+// the keyhole keepout features. The grille dodges it via its keepout.
+assert(!qr_back || (qr_back_dx + qr_back_reach
+                        < -(adh_rail_dx + adh_rail_w/2 + adh_mark_w + 0.6)
+                    || qr_back_dx - qr_back_reach
+                        > adh_rail_dx + adh_rail_w/2 + adh_mark_w + 0.6),
+       "frame: back QR quiet zone crosses an adhesive rail moat line");
+assert(!qr_back || (abs(qr_back_dx) + qr_back_reach < fr_xi/2 - fr_ri
+                    && abs(qr_back_dy) + qr_back_reach < fr_yi/2 - 9),
+       "frame: back QR (field + quiet zone) runs into the plate rim band or the brand line's row");
+assert(!qr_back || !mount_keyholes
+       || abs(qr_back_dx) + qr_back_reach < khm_dx - 10,
+       "frame: back QR quiet zone reaches a keyhole keepout");
+// Battery bay: every furniture span must clear the four M3 boss towers
+// (root fillets included), and the pack's own stack must have grown the
+// case instead of eating the board-side air gap.
+// Long-edge curbs stop at |x| ≤ 48 and short-end curbs at |y| ≤ 24; both
+// caps must clear the nearest boss tower footprint (root fillet = d+3).
+assert(!bat_on || (48 < min([for (p = fr_bosses) abs(p[0])]) - (frame_boss_d + 3)/2 - 1
+                   && 24 < min([for (p = fr_bosses) abs(p[1])]) - (frame_boss_d + 3)/2 - 1),
+       "frame: battery curb reaches a boss tower — shorten the curb caps");
+assert(!bat_on || bat_l/2 + bat_clr + 2.8 < fr_xi/2 - plate_fillet - 1
+                  && bat_w/2 + bat_clr + 2.8 + 1.6 < fr_yi/2 - plate_fillet - 1,
+       "frame: battery bay (curb/fingers included) runs into the wall fillet ring");
 // keyed ribs: each blade must straddle its portrait key's side-wall slot with
 // bearing both sides, clear of the gill row, and its key must clear the
 // LANDSCAPE case's solid bottom wall (the rib drop covers the key's 1.5
@@ -980,7 +1067,7 @@ echo(str("  frame two-colour (optional, single extruder): prints back-plate-",
          "to the accent at z = ", fr_depth - frame_foot, " mm — the last ",
          frame_foot, " mm of the print is only the front rim and its entry ",
          "chamfer"));
-echo(str("  stand: ", stand_w, " x ", stand_d, " base, ", stand_ang,
+echo(str("  stand: ", stand_w, " x ", std_d, " base, ", stand_ang,
          "° recline, slot ", std_cd, " mm for the ", fr_depth,
          " mm frame, seat ", stand_floor_h, " mm over the desk (plug room), ",
          "well ", std_open - 6, " mm across the intake vents; landscape on the",
@@ -990,13 +1077,35 @@ echo(str("  stand: ", stand_w, " x ", stand_d, " base, ", stand_ang,
 if (qr_help)
     echo(str("  stand help QR: \"", qr_url(), "\" — ", qr_n, "x", qr_n, " at ",
          qr_cell, " mm (", qr_field, " mm field) on the deck at (", qr_dx,
-         ", ", qr_dy, "); the bare deck is the quiet zone. TWO-COLOUR (single",
+         ", ", qr_dy_eff, "); the bare deck is the quiet zone. TWO-COLOUR (single",
          " extruder, zero purge): print base-down in the BODY colour, swap to",
          " the ACCENT at z = ", stand_plate_t - 0.4, " — the deck skin prints",
          " light and the module floors stay dark. Swap back at z = ",
          stand_plate_t, " to keep the blades in the body colour (two swaps),",
          " or ride the accent to the top for a two-tone dock (one swap);",
          " either way the only filament spent is the filament in the part"));
+if (bat_on)
+    echo(str("  battery bay: MakerFocus ", battery, " mAh (", bat_dims[0],
+         " x ", bat_dims[1], " x ", bat_dims[2], " nominal, thickness held at +",
+         bat_tol, " tol) against the back plate — case deepened ", bat_extra,
+         " mm to ", fr_depth, ". Air BOTH faces: ", bat_rib,
+         " mm rail channel over the grille slots, ", bat_air,
+         " mm to the board over a ", bat_over,
+         " mm component ceiling (MEASURE yours). Click in over the two",
+         " wedge-faced fingers, press both to release; PH2.0 lead exits at",
+         " either short-end curb gap to the panel's battery header.",
+         " Print the desk dock with the SAME battery setting — its slot",
+         " tracks fr_depth. Heat/care: 1C pack, ≤3 A draw, charge ≤2 A;",
+         " if the pack area runs warm to the touch, stop and re-measure",
+         " bat_over — the board-side gap is the one that matters"));
+if (qr_back)
+    echo(str("  frame help QR: \"", qr_url(), "\" — ", qr_n, "x", qr_n, " at ",
+         qr_back_cell, " mm (", qr_n*qr_back_cell, " mm field) on the back",
+         " plate at (", qr_back_dx, ", ", qr_back_dy, "), its grille keepout",
+         " doubling as the quiet zone. Prints in the FIRST layers on the",
+         " textured plate; the standard back swap (accent skin, body-colour",
+         " deboss floors) gives dark modules in the light skin — no extra",
+         " swap, no extra filament"));
 if (usb_port)
     echo(str("  USB port: ", usb_open_w, " x ", usb_open_h,
              " stadium at (", usb_dx, ", z ", usb_z, ") — passes a ",
@@ -1213,6 +1322,50 @@ module frame_body() {
     }
 }
 
+// Battery bay furniture on the back plate's inner face. The frame prints
+// back-plate-down, so every piece here rises straight off the bed side —
+// self-supporting, like the bosses. All spans are cut to clear the four
+// M3 boss towers (asserted) and the plate fillet ring.
+module frame_bat_bay() {
+    px = bat_l/2 + bat_clr;  py = bat_w/2 + bat_clr;   // pocket half-extents
+    curb_h = bat_rib + 2.5;
+    xr = min(px - 2, 48);    // long-edge curb reach (stops short of the bosses)
+    yr = min(py - 2, 24);    // short-end curb reach (ditto)
+    // rails: the pack rides these, the grille beneath breathes through
+    for (rx = [-0.35*bat_l, 0, 0.35*bat_l])
+        translate([rx - 2, -py + 1, fz_plate - bat_rib])
+            cube([4, 2*py - 2, bat_rib + 0.01]);
+    // curb: two segments per long edge (finger gap at centre), one per
+    // short end split by the PH2.0 lead gap
+    for (sy = [1, -1], sx = [1, -1])
+        translate([sx == 1 ? 6 : -xr, sy*(py + 0.2) - (sy == 1 ? 0 : 2),
+                   fz_plate - curb_h])
+            cube([xr - 6, 2, curb_h + 0.01]);
+    for (sx = [1, -1], sy = [1, -1])
+        translate([sx*(px + 0.2) - (sx == 1 ? 0 : 2), sy == 1 ? 8 : -yr,
+                   fz_plate - curb_h])
+            cube([2, yr - 8, curb_h + 0.01]);
+    // one cantilever finger per long edge: 45° lead-in below the tip, then
+    // a shallow wedge grip face — a thick pack meets it near the tip, a
+    // thin one rides 2 mm further up the same wedge, so the vendor's ±2
+    // stays preloaded against the rails. Press both fingers to release.
+    grip = 1.6;
+    zh   = fz_plate - bat_rib - bat_t;         // thickest pack's front face
+    for (sy = [1, -1]) scale([1, sy, 1])
+        translate([-5, 0, 0]) rotate([90, 0, 90]) linear_extrude(10)
+            polygon([[py + 0.4, fz_plate],            // root, inner face
+                     [py + 0.4, zh + 3.5],            // wedge start
+                     [py + 0.4 - grip, zh],           // hook tip
+                     [py + 0.4, zh - grip],           // 45° lead-in
+                     [py + 0.4, zh - 2.5],            // post tip, inner
+                     [py + 2.8, zh - 2.5],            // post tip, outer
+                     [py + 2.8, fz_plate]]);          // root, outer
+}
+// The pack itself, seated: shared by the three battery fit gates below.
+module bat_brick(inset = 0, t = bat_t)
+    translate([-(bat_l/2 - inset), -(bat_w/2 - inset), fz_plate - bat_rib - t])
+        cube([bat_l - 2*inset, bat_w - 2*inset, t]);
+
 module frame() {
     gz = (glass_guard + glass_t + fz_boss)/2;   // centre of the clear air band
     gh = fz_boss - glass_guard - glass_t - 4;   // wall-vent height inside it
@@ -1233,6 +1386,7 @@ module frame() {
                 translate([0, 0, frame_boss_h - 1.5])
                     cylinder(d1 = frame_boss_d, d2 = frame_boss_d + 3, h = 1.51);
             }
+            if (bat_on) frame_bat_bay();
             // keyhole DOUBLER pads on the plate's inner face: the wall
             // screw's head clamps back_t + khm_pad_t of material and the
             // slide's catch shears a wider section. They sit in the clear
@@ -1497,6 +1651,16 @@ module frame() {
         // of the plate (the default string renders ±36.8 wide at size 4, so
         // its centre sits where the right edge clears the recess by ≥1)
         frame_lbl(min(0, sd_dx - sd_w/2 - sd_lip - 1.5 - 37), -(fr_yi/2 - 6), brand_back);
+        // help QR — module cells debossed into the outer skin like every
+        // other back label; the two-colour back swap turns them dark in
+        // the light accent skin for free. In back-view coords, no mirror:
+        // viewed from the back, +x is right (see the axis note above).
+        if (qr_back) for (r = [0:qr_n-1], c = [0:qr_n-1])
+            if (qr_bits()[r][c] == 1)
+                translate([qr_back_dx - qr_n*qr_back_cell/2 + c*qr_back_cell,
+                           qr_back_dy + qr_n*qr_back_cell/2 - (r+1)*qr_back_cell,
+                           fr_depth - label_back_depth])
+                    cube([qr_back_cell, qr_back_cell, label_back_depth + 0.1]);
     }
 }
 
@@ -1745,7 +1909,7 @@ module stand_wellblade(x0, w, drop = 0) {
     difference() {
         stand_seatframe() translate([x0 - w/2, -std_cd/2 - 2, -45])
             cube([w, std_cd + 4, 45 - drop]);
-        translate([0, 0, -50]) cube([stand_w + 40, stand_d + 300, 100], center = true);
+        translate([0, 0, -50]) cube([stand_w + 40, std_d + 300, 100], center = true);
     }
 }
 // A centring-key stud: a chamfered wedge rising key_h proud of z0 in the seat
@@ -1771,11 +1935,11 @@ module stand() {
         union() {
             // base plate with a modelled foot chamfer (slicer compensation 0)
             hull() {
-                linear_extrude(0.01) rrect2d(stand_w - 1.2, stand_d - 1.2, 9.4);
-                translate([0, 0, 0.6]) linear_extrude(0.01) rrect2d(stand_w, stand_d, 10);
+                linear_extrude(0.01) rrect2d(stand_w - 1.2, std_d - 1.2, 9.4);
+                translate([0, 0, 0.6]) linear_extrude(0.01) rrect2d(stand_w, std_d, 10);
             }
             translate([0, 0, 0.6]) linear_extrude(stand_plate_t - 0.6)
-                rrect2d(stand_w, stand_d, 10);
+                rrect2d(stand_w, std_d, 10);
             // lip + fin: full-width raked blades, run long below the seat so
             // they fuse with the plate at any recline (trimmed at the desk).
             // Each blade's top corners carry the SAME r10 the base plate
@@ -1799,7 +1963,7 @@ module stand() {
                              [gy, gz], [std_front_foot + 60*tan(a), 60]]);
         }
         // one trim for every blade/cheek foot: everything below the desk
-        translate([0, 0, -50]) cube([stand_w + 40, stand_d + 200, 100], center = true);
+        translate([0, 0, -50]) cube([stand_w + 40, std_d + 200, 100], center = true);
         // the seat pocket: everything above the tilted pad plane, between
         // the blades, the FULL width — the case overhangs both cheeks
         stand_seatframe() translate([-stand_w/2 - 1, -std_cd/2, 0])
@@ -1859,10 +2023,10 @@ module stand() {
         // cable channel: desk-level, from the well out the back edge,
         // tunnelling under the fin's foot
         translate([-stand_cable_w/2, std_ys, -1])
-            cube([stand_cable_w, stand_d/2 - std_ys + 2, 10]);
+            cube([stand_cable_w, std_d/2 - std_ys + 2, 10]);
         // rubber-foot recesses in the corners, clear of well and channel
         if (stand_feet) for (sx = [1, -1], sy = [1, -1])
-            translate([sx*(stand_w/2 - 14), sy*(stand_d/2 - 12), -0.1])
+            translate([sx*(stand_w/2 - 14), sy*(std_d/2 - 12), -0.1])
                 cylinder(d = 10.5, h = 0.9);
         // help QR: module cells debossed 0.4 into the deck skin. Dark-on-
         // light polarity comes from the colour swap (see the echo): the
@@ -1871,7 +2035,7 @@ module stand() {
         if (qr_help) for (r = [0:qr_n-1], c = [0:qr_n-1])
             if (qr_bits()[r][c] == 1)
                 translate([qr_dx - qr_field/2 + c*qr_cell,
-                           qr_dy + qr_field/2 - (r+1)*qr_cell,
+                           qr_dy_eff + qr_field/2 - (r+1)*qr_cell,
                            stand_plate_t - 0.4])
                     cube([qr_cell, qr_cell, 0.5]);
     }
@@ -1897,7 +2061,7 @@ module stand() {
     }
     // one plan-silhouette trim for everything: the blades' and cheeks' feet
     // follow the base plate's rounded corners instead of overhanging them
-    translate([0, 0, -1]) linear_extrude(300) rrect2d(stand_w, stand_d, 10);
+    translate([0, 0, -1]) linear_extrude(300) rrect2d(stand_w, std_d, 10);
     }
 }
 
@@ -1909,8 +2073,8 @@ module stand() {
 module stand_gauge() {
     intersection() {
         stand();
-        translate([std_open/2 - 6, -stand_d/2 - 1, -1])
-            cube([stand_cheek_t + 8, stand_d + 60, 120]);
+        translate([std_open/2 - 6, -std_d/2 - 1, -1])
+            cube([stand_cheek_t + 8, std_d + 60, 120]);
     }
 }
 
@@ -1927,6 +2091,32 @@ else if (part == "gauge_tray")  gauge_corner("back");
 else if (part == "gauge_bezel") gauge_corner("bezel");
 else if (part == "stand") stand();
 else if (part == "stand_gauge") stand_gauge();
+// Battery fit gates — parts, not fitcheck checks, deliberately: -D only
+// reaches the file it is given, so gating a battery VARIANT means the
+// probe must live where -D 'battery=...' lands. Same doctrine as the
+// fitcheck: file-appears/file-empty is the verdict.
+//   bat_probe_fit  — the pack, inset under the hook reach, vs the frame:
+//                    must be EMPTY (cavity, curb, rails all clear it)
+//   bat_probe_seat — a wafer at the rail plane vs the frame: must be
+//                    SOLID (the rails actually carry the pack)
+//   bat_probe_grip — the full pack grown past the hook plane vs the
+//                    frame: must be SOLID (the fingers actually retain it)
+else if (part == "bat_probe_fit") {
+    assert(bat_on, "battery gates need -D battery=\"3000\" or \"10000\"");
+    intersection() { frame(); bat_brick(2.4, bat_t - 0.05); }
+}
+else if (part == "bat_probe_seat") {
+    assert(bat_on, "battery gates need -D battery=\"3000\" or \"10000\"");
+    intersection() {
+        frame();
+        translate([-bat_l/2 + 2, -bat_w/2 + 2, fz_plate - bat_rib])
+            cube([bat_l - 4, bat_w - 4, 0.2]);
+    }
+}
+else if (part == "bat_probe_grip") {
+    assert(bat_on, "battery gates need -D battery=\"3000\" or \"10000\"");
+    intersection() { frame(); bat_brick(0, bat_t + 0.5); }
+}
 else if (part == "radius_gauge") radius_gauge();
 // TPU fitments export in their print orientation (A-face down), as modelled
 else if (part == "grommet_usb")  usb_grommet();
@@ -1943,5 +2133,5 @@ else {
         button_plug();
         translate([65, 0, 0]) sd_cover();
     }
-    if (opt_stand) translate([0, -(yo/2 + stand_d/2 + 16), 0]) stand();
+    if (opt_stand) translate([0, -(yo/2 + std_d/2 + 16), 0]) stand();
 }
