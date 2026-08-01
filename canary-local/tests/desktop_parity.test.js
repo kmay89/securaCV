@@ -147,11 +147,14 @@ test("provisioning NVS: the browser writes the same key-set as native build_nvs"
   const flashCoreSrc = read(join(CANARY, "assets/flash-core.js"));
   assert.match(flashCoreSrc, /writeInt\("wifi_en"/,
     "flash-core.js buildNvsSeedImage lost the blob-scheme wifi_en write (canary/wap)");
+  assert.match(flashCoreSrc, /writeInt\("setup_ok"/,
+    "flash-core.js buildNvsSeedImage lost the blob-scheme setup_ok latch — a seeded " +
+    "canary/wap would boot into SETUP MODE despite joining");
   const { mqttProvisioningToNvs } = await import("../assets/flash-core.js");
   const { strings, u16 } = mqttProvisioningToNvs({
     deviceId: "d", mqttHost: "h", mqttPort: 1, mqttUser: "u", mqttPass: "p",
   });
-  const browserKeys = new Set(["wifi_ssid", "wifi_pass", "wifi_en",
+  const browserKeys = new Set(["wifi_ssid", "wifi_pass", "wifi_en", "setup_ok",
     ...Object.keys(strings), ...Object.keys(u16)]);
 
   assert.deepStrictEqual([...browserKeys].sort(), [...nativeKeys].sort(),
@@ -827,4 +830,54 @@ test("WE2 live bench: both flashers speak the same stream protocol, sliders read
     "browser bench no longer checks the model card for the person class");
   assert.match(benchRs, /Some\("person"\)/,
     "native bench no longer checks the model card for the person class");
+});
+
+test("pre-configured Wi-Fi is honored: present-but-empty keys, and identity never gates the broker", () => {
+  // The bring-up contract behind "bake Wi-Fi in and it just joins":
+  //   1. FIRMWARE side — a seeded key that EXISTS is the answer, even empty.
+  //      The flashers seed an empty wifi_pass for an open network; a loader
+  //      that treats empty as absent substitutes the compiled ci-placeholder
+  //      and the join fails with a password no router has ever seen. Every
+  //      string-scheme loader must gate its fallback on Preferences::isKey.
+  //   2. WRITER side — both flashers must WRITE that empty key (skipping it
+  //      recreates the same bug through the other door), and neither may tie
+  //      the broker to a device id: a display is told a broker with no
+  //      identity at all (PR #1351's capability split, finished).
+  const loaders = [
+    "firmware/projects/canary-display/src/runtime_config.cpp",
+    "firmware/projects/canary-display/arduino/canary_display/runtime_config.cpp",
+    "firmware/projects/canary-vision/src/runtime_config.cpp",
+    "firmware/projects/canary-sense/src/runtime_config.cpp",
+  ];
+  for (const path of loaders) {
+    const src = read(join(ROOT, path));
+    assert.match(src, /prefs\.isKey\(key\)/,
+      `${path}: load_credential no longer distinguishes present-but-empty from absent — ` +
+      "an open network's seeded empty password would be replaced by the compiled placeholder");
+  }
+
+  // Both writers write the wifi_pass key unconditionally inside the wifi block.
+  const flashCoreSrc = read(join(CANARY, "assets/flash-core.js"));
+  assert.match(flashCoreSrc, /writeString\("wifi_pass", passB\)/,
+    "flash-core.js no longer writes the (possibly empty) wifi_pass string key");
+  const provRs = read(join(ROOT, "desktop/src-tauri/src/provisioning.rs"));
+  assert.match(provRs, /writer\.string\("wifi_pass", &config\.wifi_pass\)\?/,
+    "provisioning.rs no longer writes the (possibly empty) wifi_pass string key");
+
+  // Native: identity and broker validated/written independently — the old
+  // wifi_only() coupling aborted a display's whole flash (Wi-Fi included)
+  // over a device-id field its UI deliberately hides.
+  assert.ok(!/fn wifi_only\(/.test(provRs),
+    "provisioning.rs regrew the wifi_only() coupling of device id + broker");
+  assert.match(provRs, /if !config\.device_id\.is_empty\(\)/,
+    "provisioning.rs must validate/write dev_id only when present");
+  assert.match(provRs, /if !config\.mqtt_host\.is_empty\(\)/,
+    "provisioning.rs must validate/write the broker only when present");
+
+  // Browser: an invented device id may be auto-suggested ONLY for usb-secrets
+  // boards — dev_id is sticky forever, and a display names itself on-glass.
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  assert.match(flashJs, /product\.provisioning === "usb-secrets"\)\s*\{[\s\S]{0,300}devId\.value/,
+    "flash.js auto-suggests a device id for non-usb-secrets boards again — " +
+    "a browser-flashed display would be branded with a sticky name nobody chose");
 });

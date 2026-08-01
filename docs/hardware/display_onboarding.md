@@ -7,7 +7,19 @@
 > the LAN — WiFi itself needed a human, and until now that human needed a
 > compiled `secrets.h`.
 
-## The promise
+## Zero-touch first: flasher-seeded Wi-Fi wins
+
+The portal below is the *fallback*, not the front door. Both flashers bake
+Wi-Fi (and optionally the broker) straight into the image's NVS at install
+time — namespace `securacv`, keys `wifi_ssid`/`wifi_pass` as strings — and the
+boot loader honors them **before** onboarding is consulted: `provision_run()`
+only starts when the stored SSID is a placeholder. A seeded key that exists is
+taken at face value even when empty (an open network's password *is* empty;
+substituting the compiled placeholder was the bug that made seeded open
+networks fail). So the expected first boot for a flasher-installed display is:
+no QR, no portal — it just joins, and the on-glass setup never appears.
+
+## The promise (when nothing was seeded)
 
 Plug the display in. It says hello, shows a QR code, and ninety seconds later
 it's watching your canaries — **without the user typing an IP, installing an

@@ -906,8 +906,11 @@ function onProductChosen(p, ver) {
     const suffix = Array.from(crypto.getRandomValues(new Uint8Array(2)))
       .map((b) => b.toString(16).padStart(2, "0")).join("");
     $("device-id").value = `${family}_${suffix}`;
-    $("mqtt-host").value ||= "homeassistant.local";
   }
+  // The broker default is the broker CAPABILITY's default, not usb-secrets':
+  // a display gets homeassistant.local suggested too (the browser flasher
+  // suggests the same), and clearing it means "skip — nothing is written".
+  if (usbSecrets || broker) $("mqtt-host").value ||= "homeassistant.local";
   const btn = $("flash-btn");
   btn.disabled = !ver;
   $("flash-target").textContent = ver

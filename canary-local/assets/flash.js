@@ -3556,8 +3556,13 @@ function renderWifiFields(box, product) {
       return i;
     };
     const devId = mk("device id (e.g. canary_vision_ab12)");
-    // Auto-suggest a stable per-family id, like the native app's onProductChosen.
-    if (product && product.id) {
+    // Auto-suggest a stable per-family id ONLY for usb-secrets boards, like
+    // the native app's onProductChosen. An on-glass board (display) names
+    // itself in its own setup — and dev_id is sticky forever once written
+    // ("identity is sticky: NVS always wins"), so silently baking an invented
+    // one here would brand every display with a name nobody chose. Left
+    // blank, the key simply isn't written.
+    if (product && product.id && product.provisioning === "usb-secrets") {
       const fam = /vision/.test(product.id) ? "canary_vision"
         : /sense/.test(product.id) ? "canary_sense" : "canary";
       const sfx = Array.from(crypto.getRandomValues(new Uint8Array(2)),
