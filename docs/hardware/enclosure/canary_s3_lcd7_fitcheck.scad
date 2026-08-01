@@ -36,12 +36,20 @@
 //            they collide and the case cannot drop in. The seated pose is
 //            lifted seat_lift off the pads, because exact face-on-face
 //            contact through a floating-point rotation can manufacture a
-//            zero-ish sliver that fails an honest fit.
+//            zero-ish sliver that fails an honest fit. This check is also
+//            what proves the dock's centring keys line up with the frame's
+//            keying slots — a misplaced key IS a collision.
 //    seat  — the frame pressed seat_press INTO the pads. INVERTED: it must
 //            be NON-empty — it is the bearing patch the case actually sits
 //            on. Empty = the dock carries nothing and the case free-falls to
 //            the base plate. (This output is legitimately TWO patches, one
 //            per pad — only its existence is checked, not its mesh.)
+//    stand_p / stand_p2 — the stand collision again, case docked in PORTRAIT
+//            (turned +90° / -90°). Non-empty = a key or rib lands on solid
+//            wall instead of inside a side window / between the gills, and
+//            portrait cannot sit flat. Both turns are checked because the
+//            side windows are not symmetric.
+//    seat_p — portrait bearing patch on the well ribs. INVERTED: non-empty.
 //
 //  The slab is modelled with the corner radius the source DECLARES (glass_r),
 //  because the question being asked is whether the model is consistent with
@@ -53,7 +61,7 @@
 
 use <canary_s3_lcd7.scad>
 
-check = "tray";   // ["tray","glass","lip","locate","stand","seat"]
+check = "tray";   // ["tray","glass","lip","locate","stand","seat","stand_p","stand_p2","seat_p"]
 locate_slip = 1.5;   // mm of sideways wander the pocket must already refuse
 seat_lift  = 0.2;    // dock collision check: hover this far off the pads
 seat_press = 0.4;    // dock bearing check: push this far into the pads
@@ -79,12 +87,14 @@ module glass_slab(t, dz = 0) {
 // pad plane's origin. seat > 0 presses the case into the pads along the
 // slot's own axis; seat < 0 hovers it off them.
 ST = lcd7_stand_stack();
-st_ang = ST[0]; st_ys = ST[1]; st_zf = ST[2]; st_fd = ST[3]; st_fy = ST[4];
-module docked_frame(seat = 0) {
-    yq = -(st_fy/2)*sin(st_ang) + (st_fd/2)*cos(st_ang);
-    zq = -(st_fy/2)*cos(st_ang) - (st_fd/2)*sin(st_ang);
+st_ang = ST[0]; st_ys = ST[1]; st_zf = ST[2]; st_fd = ST[3]; st_fy = ST[4]; st_fx = ST[5];
+module docked_frame(seat = 0, portrait = 0) {   // portrait: ±1 = which way it turned
+    fy = portrait == 0 ? st_fy : st_fx;
+    yq = -(fy/2)*sin(st_ang) + (st_fd/2)*cos(st_ang);
+    zq = -(fy/2)*cos(st_ang) - (st_fd/2)*sin(st_ang);
     translate([0, st_ys - yq - seat*sin(st_ang), st_zf - zq - seat*cos(st_ang)])
-        rotate([270 - st_ang, 0, 0]) rotate([0, 0, 180]) frame();
+        rotate([270 - st_ang, 0, 0]) rotate([0, 0, 180])
+            rotate([0, 0, 90*portrait]) frame();
 }
 
 if (check == "tray")
@@ -105,5 +115,12 @@ else if (check == "stand")
 else if (check == "seat")
     // inverted check — this SHOULD produce geometry (the pads' bearing patch)
     intersection() { docked_frame(seat_press); stand(); }
+else if (check == "stand_p")
+    intersection() { docked_frame(-seat_lift, 1); stand(); }
+else if (check == "stand_p2")
+    intersection() { docked_frame(-seat_lift, -1); stand(); }
+else if (check == "seat_p")
+    // inverted check — portrait must bear on the well ribs
+    intersection() { docked_frame(seat_press, 1); stand(); }
 else
-    assert(false, "check must be one of tray / glass / lip / locate / stand / seat");
+    assert(false, "check must be one of tray / glass / lip / locate / stand / seat / stand_p / stand_p2 / seat_p");

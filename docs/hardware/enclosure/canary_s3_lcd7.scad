@@ -26,12 +26,19 @@
 //            outer depth; the case rests on two tilted seat pads (the cheek
 //            tops) with an open well between them, so the bottom-wall intake
 //            vents keep their convection path AND the USB power lead that
-//            leaves through the case's bottom wall has plug headroom, then
-//            routes out the back through a desk-level cable channel. Vented
-//            back fin, entry flares, foot-chamfered base, rubber-foot
-//            recesses, branding front and back. Narrower than the case on
-//            purpose: both short-wall service/field windows stay reachable
-//            while docked.
+//            leaves through the frame's bottom cable port has plug headroom,
+//            then routes out the back through a desk-level cable channel.
+//            Two chamfered CENTRING KEYS rise into the frame's ±dock_key_dx
+//            keying slots: the case finds its own centre and cannot slide
+//            out sideways. PORTRAIT works too: two ribs across the well
+//            (parked in the web between intake slots) seat the 115 mm-wide
+//            slab, the keys land inside the side service windows either way
+//            round, and the base is deep enough that both orientations pass
+//            the tip-over asserts. Vented back fin, entry flares, foot-
+//            chamfered base, rubber-foot recesses, branding front and back.
+//            Narrower than the case on purpose: both short-wall windows
+//            stay reachable while docked (in portrait the cable port faces
+//            sideways — the lead drapes beside the dock instead).
 //    stand_gauge — one cheek's slice of the dock (~15 % of its filament).
 //            Print FIRST: it proves the slot width against your frame print,
 //            the recline, the seat height and the lip capture.
@@ -261,7 +268,26 @@ gill_y0 = 38.0;      // above the side windows (rake 0: vertical slots print
 gill_w = 2.4;  gill_l = 9.0;  gill_rake = 0;    // cleanest face-down; the
                      // raked look read as slashes and bought nothing thermally)
 frame_vent_row_n   = 10; // intake slots in a row along the bottom wall
+fv_x0    = 34.0;     // first intake slot's ± position — the stand's well and
+fv_pitch = 7.0;      // seat ribs are laid out against these, so they are
+                     // named, not literals
 frame_vent_flank_n = 4;  // exhaust slots per side, flanking the button window
+// Bottom cable port — the power lead leaves through the BOTTOM wall, straight
+// down into the desk dock's well and out its cable channel (a reference case
+// print has a solid 3 mm bottom wall and the cable has nowhere to go — this
+// is the opening the dock is designed around). Sized to pass a USB-C plug so
+// the lead can be threaded after assembly. Wall-mount builds can turn it off
+// and get the TV-style edge brand back — port and brand share the wall's
+// centre, so only one of them can exist at a time.
+opt_bottom_cable = true;
+cable_port_w = 14.0;  cable_port_h = 9.0;  cable_port_dx = 0.0;
+// Dock keying — two extra intake-style slots at ±dock_key_dx. The dock's
+// chamfered centring keys rise into them, so the docked case self-centres
+// and cannot slide sideways. The position is shared with the stand and is
+// chosen to land INSIDE the side service/field windows when the case is
+// docked in portrait (asserted), so portrait still seats flat on its ribs.
+dock_keys   = true;
+dock_key_dx = 15.0;
 label_depth = 0.5;
 label_font  = "Liberation Sans:style=Bold";
 
@@ -274,16 +300,27 @@ stand_ang     = 20;    // recline from vertical
 stand_w       = 174.0; // dock width — DELIBERATELY narrower than the case, so
                        // the microSD/USB service windows (+x wall) and the
                        // field-wiring windows (-x wall) stay reachable docked
-stand_d       = 92.0;  // base plate depth (front edge -> back edge)
+stand_d       = 126.0; // base plate depth — sized so the base reaches well
+                       // behind the reclined case's centre line in PORTRAIT
+                       // too (a 197 mm slab on its side), not just landscape;
+                       // both orientations are tip-checked by the asserts
 stand_plate_t = 6.0;   // base plate thickness
 stand_cheek_t = 16.0;  // side cheek thickness; the cheeks' tilted tops ARE the
-                       // seat pads the case rests on
-stand_lip_h   = 10.0;  // front lip capture up the case face — must stay under
-                       // the window's bottom border (asserted against it)
+                       // seat pads the case rests on in landscape
+stand_lip_h   = 9.0;   // front lip capture up the case face — must stay under
+                       // the window's bottom border in BOTH orientations
+                       // (asserted; landscape border 12.6, portrait 20.6)
 stand_lip_t   = 6.0;   // front lip blade thickness
-stand_fin_h   = 62.0;  // back-fin support height along the case back
+stand_fin_h   = 78.0;  // back-fin support height along the case back (68 % of
+                       // the landscape height, 40 % of portrait; stays under
+                       // the landscape keyholes at 91.5)
 stand_fin_t   = 8.0;   // back fin blade thickness
-stand_gusset_h = 40.0; // cheek back edges buttress the fin up to this height
+stand_gusset_h = 52.0; // cheek back edges buttress the fin up to this height
+stand_rib_x   = 44.5;  // ± portrait seat ribs: blades across the well whose
+stand_rib_w   = 3.0;   // tops carry the case in PORTRAIT (its 115 mm width
+                       // misses the cheeks entirely). Placed in the solid gap
+                       // BETWEEN two intake slots (asserted), so landscape
+                       // convection loses nothing.
 stand_floor_h = 26.0;  // seat height: case bottom edge -> desk. This is the
                        // headroom for the USB power plug leaving the hole in
                        // the case's bottom wall — a straight plug + strain
@@ -366,7 +403,7 @@ std_cd   = fr_depth + 2*stand_clear;      // slot gap: the frame's outer depth +
 std_ys   = -stand_d/2 + stand_slot_y;     // seat centreline in plate coords
 std_open = stand_w - 2*stand_cheek_t;     // clear span between the seat pads
 // outermost bottom-wall intake slot on the frame — the well must clear it
-std_intake_x = 34 + (frame_vent_row_n/2 - 1)*7 + gill_w/2;
+std_intake_x = fv_x0 + (frame_vent_row_n/2 - 1)*fv_pitch + gill_w/2;
 // where the lip's outer face meets the desk (the dock's front-most point)
 std_front_foot = std_ys - (std_cd/2 + stand_lip_t)*cos(stand_ang)
     - (stand_floor_h + (std_cd/2 + stand_lip_t)*sin(stand_ang))*tan(stand_ang);
@@ -411,22 +448,51 @@ assert(ledge_z + ledge_t < ledge_z + pcb_standoff,
        "frame: ledge intrudes into the board plane");
 assert(cb_h + 1.0 <= bez_h, "counterbore deeper than the bezel ear");
 assert(cav_d > comp_h + pcb_t, "no air gap left between the PCB and the glass");
-// the lip climbs the case's front border — it must never reach the window
+// the lip climbs the case's front border — it must never reach the window,
+// in landscape OR portrait (portrait's border is the short-edge border)
 assert(stand_lip_h + stand_clear <= fr_yo/2 - view_h/2 + aa_dy - 1.0,
        "stand: the front lip would cover the bottom of the screen window");
+assert(stand_lip_h + stand_clear <= fr_xo/2 - view_w/2 - 1.0,
+       "stand: the front lip would cover the window in portrait");
 // the well between the pads must span every bottom-wall intake slot, or the
 // dock smothers the convection path the case depends on
 assert(std_open/2 >= std_intake_x + 2,
        "stand: the seat pads sit on the case's intake vents — widen stand_w or thin the cheeks");
 assert(std_front_foot > -stand_d/2 + 2,
        "stand: the front lip runs off the base plate — deepen stand_d or raise stand_slot_y");
-// anti-tip: the base must extend well behind the reclined case's centre line
+// anti-tip, BOTH orientations: the base must extend well behind the reclined
+// case's centre line — portrait stands a 197 mm slab on its side, so it gets
+// the bigger margin (a fingertip pressing the top of the touchscreen pries
+// against exactly this lever)
 assert(stand_d/2 - (std_ys + sin(stand_ang)*fr_yo/2) >= 12,
        "stand: base too short behind the reclined case — it will tip backward");
+assert(stand_d/2 - (std_ys + sin(stand_ang)*fr_xo/2) >= 20,
+       "stand: base too short for PORTRAIT — deepen stand_d");
 assert(stand_floor_h >= 20,
        "stand: no headroom under the case for the USB power plug");
 assert(stand_cable_w + 8 < std_open, "stand: cable channel wider than the well");
 assert(stand_gusset_h < stand_fin_h, "stand: cheek gusset overruns the fin");
+// portrait seat ribs: in the solid web between the 2nd and 3rd intake slots
+// (landscape loses no vent), inside the portrait footprint, wide stance
+assert(stand_rib_x - stand_rib_w/2 > fv_x0 + fv_pitch + gill_w/2 + 0.4
+    && stand_rib_x + stand_rib_w/2 < fv_x0 + 2*fv_pitch - gill_w/2 - 0.4,
+       "stand: portrait rib lands on an intake slot — move stand_rib_x into the web between slots");
+assert(stand_rib_x + stand_rib_w/2 < fr_yo/2 - 3 && stand_rib_x > fr_yo/4,
+       "stand: portrait ribs miss the case or stand too narrow a stance");
+// centring keys: engage the frame's ±dock_key_dx keying slots in landscape,
+// and must fall INSIDE a service/field window in portrait (either way round),
+// or portrait would sit tilted on a key point
+assert(!dock_keys || dock_key_dx + gill_w/2 + 2 < fv_x0 - gill_w/2,
+       "frame: keying slots merge with the intake row");
+assert(!opt_bottom_cable || !dock_keys
+    || abs(cable_port_dx) + cable_port_w/2 + 2 < dock_key_dx - gill_w/2,
+       "frame: cable port runs into a keying slot");
+assert(!dock_keys ||
+       ( dock_key_dx - 2 > svc2_dy - svc2_l/2 && dock_key_dx + 2 < svc2_dy + svc2_l/2
+      && -dock_key_dx + 2 < svc1_dy + svc1_l/2 && -dock_key_dx - 2 > svc1_dy - svc1_l/2
+      &&  dock_key_dx - 2 > fld2_dy - fld2_l/2 && dock_key_dx + 2 < fld2_dy + fld2_l/2
+      && -dock_key_dx + 2 < fld1_dy + fld1_l/2 && -dock_key_dx - 2 > fld1_dy - fld1_l/2),
+       "dock keys must land inside the side windows in portrait — move dock_key_dx");
 echo(str("Canary 7in touch v0.3-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
          " mm, window ", view_w, " x ", view_h, ", lip ", lip_min,
          " mm, vent area ~",
@@ -442,7 +508,11 @@ echo(str("  frame: ", fr_xo, " x ", fr_yo, " x ", fr_depth,
 echo(str("  stand: ", stand_w, " x ", stand_d, " base, ", stand_ang,
          "° recline, slot ", std_cd, " mm for the ", fr_depth,
          " mm frame, seat ", stand_floor_h, " mm over the desk (plug room), ",
-         "well ", std_open - 6, " mm across the intake vents"));
+         "well ", std_open - 6, " mm across the intake vents; landscape on the",
+         " cheek pads keyed at ±", dock_key_dx, ", portrait on ribs at ±",
+         stand_rib_x, " (cable exits sideways in portrait)"));
+if (opt_bottom_cable)
+    echo("  frame: bottom cable port ON — the TV-style edge brand is off (they share the wall centre); wall-mount builds set opt_bottom_cable=false to get it back");
 // When the board is the bigger part, the tray cavity opens up to clear it and
 // stops being what locates the slab — the bezel's glass pocket takes that job.
 // Worth saying out loud, because it changes which part you check first if the
@@ -460,9 +530,10 @@ if (pcb_w > glass_w || pcb_h > glass_h)
 function lcd7_stack() = [back_t, cav_d, bez_h, glass_t,
                          glass_w, glass_h, glass_r, z_glass];
 // Same idea for the dock, so the fitcheck can seat the real frame in the real
-// stand instead of trusting a re-derived copy of either.
-// [stand_ang, std_ys, stand_floor_h, fr_depth, fr_yo]
-function lcd7_stand_stack() = [stand_ang, std_ys, stand_floor_h, fr_depth, fr_yo];
+// stand instead of trusting a re-derived copy of either. fr_xo rides along so
+// the portrait pose (case on its side) can be checked too.
+// [stand_ang, std_ys, stand_floor_h, fr_depth, fr_yo, fr_xo]
+function lcd7_stand_stack() = [stand_ang, std_ys, stand_floor_h, fr_depth, fr_yo, fr_xo];
 
 module rrect2d(x, y, r) { offset(r = r) offset(r = -r) square([x, y], center = true); }
 function lobes() = [for (sx = [1,-1], sy = [1,-1]) [sx*(xc/2 + lob_o), sy*(yc/2 + lob_o)]];
@@ -724,16 +795,40 @@ module frame() {
         for (sx = [1, -1], i = [0 : frame_vent_flank_n - 1])
             translate([btn_dx + sx*(btn_w/2 + 9 + i*6.5), fr_yi/2 - 0.1, gz])
                 rotate([-90, 0, 0]) linear_extrude(frame_wall + 0.3) pill2d(gh, gill_w);
-        // intake rows along the bottom wall, split to flank the edge brand
+        // intake rows along the bottom wall, split to flank the centre band
         for (sx = [1, -1], i = [0 : frame_vent_row_n/2 - 1])
-            translate([sx*(34 + i*7), -fr_yi/2 + 0.1, gz])
+            translate([sx*(fv_x0 + i*fv_pitch), -fr_yi/2 + 0.1, gz])
                 rotate([90, 0, 0]) linear_extrude(frame_wall + 0.3) pill2d(gh, gill_w);
+        // dock keying slots: two more intake-style pills at ±dock_key_dx.
+        // The desk dock's chamfered keys rise into them, so the docked case
+        // finds centre by itself and cannot slide out sideways — the same
+        // philosophy as the frame hanging on the panel's own standoffs: let
+        // the part's own features locate it.
+        if (dock_keys) for (sx = [1, -1])
+            translate([sx*dock_key_dx, -fr_yi/2 + 0.1, gz])
+                rotate([90, 0, 0]) linear_extrude(frame_wall + 0.3) pill2d(gh, gill_w);
+        // power-cable port through the bottom wall's centre, bevelled like
+        // the other windows: the USB lead drops straight down into the desk
+        // dock's well and leaves through its cable channel. Sized to pass
+        // the PLUG, so the lead threads through after assembly.
+        if (opt_bottom_cable) {
+            translate([cable_port_dx, -fr_yi/2 + 0.1, gz]) rotate([90, 0, 0])
+                linear_extrude(frame_wall + 0.3) rrect2d(cable_port_w, cable_port_h, 3);
+            hull() {
+                translate([cable_port_dx, -fr_yo/2 + 0.01, gz]) rotate([90, 0, 0])
+                    linear_extrude(0.02) rrect2d(cable_port_w + 2.4, cable_port_h + 2.4, 4);
+                translate([cable_port_dx, -fr_yo/2 + 1.2, gz]) rotate([90, 0, 0])
+                    linear_extrude(0.02) rrect2d(cable_port_w, cable_port_h, 3);
+            }
+        }
         // branding, TV-style on the visible bottom edge: readable standing
-        // below and in front, letter tops toward the screen
-        translate([0, -fr_yo/2 + label_depth, gz])
-            rotate([90, 0, 0]) rotate([0, 0, 180]) linear_extrude(label_depth + 0.2)
-                text(brand_edge, size = 5.5, font = label_font,
-                     halign = "center", valign = "center");
+        // below and in front, letter tops toward the screen. The cable port
+        // owns the wall's centre when it is on — one or the other.
+        if (!opt_bottom_cable)
+            translate([0, -fr_yo/2 + label_depth, gz])
+                rotate([90, 0, 0]) rotate([0, 0, 180]) linear_extrude(label_depth + 0.2)
+                    text(brand_edge, size = 5.5, font = label_font,
+                         halign = "center", valign = "center");
         // back grille (dodging bosses and the keyholes — note -m3_ox: this
         // part is modelled print-side, x mirrored vs the two-part tray)
         translate([0, 0, fz_plate]) vent_grille(-m3_ox, m3_oy,
@@ -793,6 +888,16 @@ module frame_gauge() {
 module stand_seatframe() {
     translate([0, std_ys, stand_floor_h]) rotate([-stand_ang, 0, 0]) children();
 }
+// A blade standing in the well, from the desk up to the tilted pad plane:
+// the portrait seat ribs and the centring-key posts. It overruns the slot by
+// 2 mm at each end so it welds into the lip's and fin's feet.
+module stand_wellblade(x0, w) {
+    difference() {
+        stand_seatframe() translate([x0 - w/2, -std_cd/2 - 2, -45])
+            cube([w, std_cd + 4, 45]);
+        translate([0, 0, -50]) cube([stand_w + 40, stand_d + 300, 100], center = true);
+    }
+}
 module stand() {
     a = stand_ang;
     // cheek gusset point: where the cheek's back edge meets the fin's BACK
@@ -800,6 +905,8 @@ module stand() {
     // that same raked plane, so cheek and fin read as one surface
     gy = std_ys + (std_cd/2 + stand_fin_t)*cos(a) + stand_gusset_h*sin(a);
     gz = stand_floor_h - (std_cd/2 + stand_fin_t)*sin(a) + stand_gusset_h*cos(a);
+    intersection() {
+    union() {
     difference() {
         union() {
             // base plate with a modelled foot chamfer (slicer compensation 0)
@@ -883,6 +990,25 @@ module stand() {
         if (stand_feet) for (sx = [1, -1], sy = [1, -1])
             translate([sx*(stand_w/2 - 14), sy*(stand_d/2 - 12), -0.1])
                 cylinder(d = 10.5, h = 0.9);
+    }
+    // well furniture, added AFTER the cuts (the well would otherwise carve
+    // it away): the portrait seat ribs, and the key posts with their keys
+    for (sx = [1, -1]) stand_wellblade(sx*stand_rib_x, stand_rib_w);
+    if (dock_keys) for (sx = [1, -1]) {
+        stand_wellblade(sx*dock_key_dx, 5.5);
+        // the centring key: a chamfered wedge rising off its post into the
+        // frame's ±dock_key_dx keying slot (1.5 proud of a 2 mm wall — it
+        // never bottoms out). The taper is what makes the case FIND centre:
+        // drop it anywhere close and it slides home.
+        stand_seatframe() hull() {
+            translate([sx*dock_key_dx - 0.9, -4.5, -0.5]) cube([1.8, 7.0, 0.5]);
+            translate([sx*dock_key_dx - 0.3, -3.9, 1.5])  cube([0.6, 5.8, 0.02]);
+        }
+    }
+    }
+    // one plan-silhouette trim for everything: the blades' and cheeks' feet
+    // follow the base plate's rounded corners instead of overhanging them
+    translate([0, 0, -1]) linear_extrude(300) rrect2d(stand_w, stand_d, 10);
     }
 }
 

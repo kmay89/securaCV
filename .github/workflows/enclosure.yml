@@ -30,7 +30,7 @@ jobs:
   render:
     name: Render + mesh check
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: docs/hardware/enclosure
@@ -114,8 +114,11 @@ jobs:
           fit glass empty || exit 1   # bezel vs the panel — must not crush it
           fit lip    solid "nothing bears on the glass — the bezel retains nothing" || exit 1
           fit locate solid "the pocket does not stop the slab sliding — is it sized to the tray cavity instead of the glass?" || exit 1
-          fit stand empty || exit 1   # frame seated in the desk dock — must not collide
+          fit stand empty || exit 1   # frame seated in the desk dock — must not collide (also proves key/slot alignment)
           fit seat  solid "the dock's pads never touch the seated frame — nothing carries the case" || exit 1
+          fit stand_p  empty || exit 1   # PORTRAIT dock pose, turned one way — keys/ribs must miss solid wall
+          fit stand_p2 empty || exit 1   # ...and turned the other way (the side windows are asymmetric)
+          fit seat_p solid "portrait: the well ribs never touch the case — nothing carries it" || exit 1
           # And prove the gate can still fail: an unknown check must be
           # rejected as a broken render, not silently pass as "empty".
           if fit definitely-not-a-check empty >/dev/null 2>&1; then

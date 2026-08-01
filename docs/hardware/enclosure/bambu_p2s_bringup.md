@@ -328,8 +328,8 @@ openscad --export-format binstl -o lcd7_stand_gauge.stl -D 'part="stand_gauge"' 
 |---|---|---|---|---|---|
 | **bezel** | 208.5 × 126.3 × 7.0 | 37.8 cm³ | ~48 g | **face-down** | no ² |
 | **back** | 208.5 × 126.3 × 20.6 | 86.5 cm³ | ~110 g | outer face **down** | no ² |
-| stand (optional) | 174 × 92 × 79.1 | 210.0 cm³ | ~267 g ¹ | flat (base down) | no |
-| stand_gauge | 22 × 92 × 79.1 | 38.2 cm³ | ~49 g ¹ | flat (base down) | no |
+| stand (optional) | 174 × 126 × 94.2 | 264.1 cm³ | ~336 g ¹ | flat (base down) | no |
+| stand_gauge | 22 × 126 × 94.2 | 45.3 cm³ | ~58 g ¹ | flat (base down) | no |
 
 ¹ Quoted at 100 % of solid volume, the same upper-bound convention as
 [printer_selection.md](./printer_selection.md#running-cost--per-device-computed-from-the-meshes).
