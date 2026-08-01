@@ -294,6 +294,15 @@ marks it. Window positions are photo-derived: **measure your board** before
 printing. The shell carries the catalog's modelled foot chamfer (slicer
 elephant-foot compensation stays 0) and a matching back-rim chamfer.
 
+The glass lands on an **adhesive ledge** matched to the panel's own adhesive
+strips (10 mm down each side, 6 mm along the button edge, 2 mm over the FPC
+at the bottom): peel the liners, drop the panel in, press — the screws
+become backup rather than the only thing setting the glass depth. **Before
+the panel goes in, snap out the dashed ribs** standing in the glass pocket:
+they exist only to hold the wide ledge up during printing (a 10 mm shelf
+cannot print over air), and they break out cleanly from the front opening.
+The frame is branded on the back plate and on the visible bottom edge.
+
 ```sh
 openscad --export-format binstl -o lcd7_frame_gauge.stl -D 'part="frame_gauge"' canary_s3_lcd7.scad
 openscad --export-format binstl -o lcd7_frame.stl       -D 'part="frame"'       canary_s3_lcd7.scad

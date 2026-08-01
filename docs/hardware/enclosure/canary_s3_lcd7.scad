@@ -33,7 +33,11 @@
 //            on the left — a fingertip works the push-push SD socket through
 //            its window); gill vents, chimney intake/exhaust, back grille;
 //            keyhole wall mounts (hang on two screws, slide down); modelled
-//            foot and back-rim chamfers.
+//            foot and back-rim chamfers; an adhesive LEDGE behind the glass
+//            matched to the panel's own adhesive strips (10 mm sides, 6 mm
+//            button edge, 2 mm over the FPC), held up during printing by
+//            dashed snap-out ribs; branded on the back plate and, TV-style,
+//            on the visible bottom edge.
 //    frame_gauge — one corner of the frame including one boss and a wall
 //            keyhole. Print FIRST (~10 % of the frame's filament): it proves
 //            the glass corner radius, the boss offset signs and screw reach.
@@ -206,6 +210,25 @@ khm_y  = 34.0;          // catch points at the button edge: hang the case over
 khm_head_d  = 9.5;      // two screws and slide it DOWN to seat. The head hole
 khm_slide_w = 4.5;      // passes a #8 / M4 pan head; the slide, its shank.
 khm_len = 13.0;         // head-hole centre → catch centre
+// Adhesive ledge — the panel ships with adhesive strips on its BACK border
+// (≈10 mm down each side, ≈6 mm along the button edge, none over the FPC at
+// the bottom — see the Rev1.2 photos). The ledge is the landing for them:
+// the glass drops in from the front, rests on the ledge, the adhesive bonds
+// it, and the 4 screws become backup instead of the only thing setting the
+// glass depth. The glass only sweeps the front glass_t of the case going in,
+// so a rear ledge never blocks insertion.
+adh_t      = 0.5;   // adhesive pad thickness — MEASURE; sets the glass-back datum
+ledge_t    = 2.5;   // ledge thickness behind the panel
+ledge_side = 10.0;  // ledge width along each short (±x) edge
+ledge_top  = 6.0;   // along the button (top) edge
+ledge_bot  = 2.0;   // along the FPC (bottom) edge — keep small, the FPC lives there
+ledge_ribs = true;  // dashed 0.5 mm sacrificial walls standing under the wide
+                    // ledges: they hold the ledge up DURING PRINTING (a 10 mm
+                    // shelf over the glass cavity cannot print over air).
+                    // SNAP THEM OUT before the panel goes in — they live in
+                    // the glass pocket and are right at the front opening.
+brand_back = "SecuraCV Canary 7\" Display";   // debossed across the back plate
+brand_edge = "SecuraCV Canary";               // debossed on the visible bottom edge
 // Side access windows — connector map from the Rev1.2 board, in-use (native,
 // buttons-top) back view: the +x (right) SHORT edge carries UART1, the
 // microSD socket and both USB-C ports; the -x (left) short edge carries the
@@ -291,7 +314,8 @@ fr_xi = glass_w + 2*frame_reveal;  fr_yi = glass_h + 2*frame_reveal;
 fr_ri = glass_r + frame_reveal;    // opening corners track the slab
 fr_xo = fr_xi + 2*frame_wall;      fr_yo = fr_yi + 2*frame_wall;
 fr_ro = fr_ri + frame_wall;
-fr_depth = glass_t + pcb_standoff + pcb_t + standoff_len + frame_boss_h + back_t;
+ledge_z  = glass_t + adh_t;                    // ledge front face: the glass-back datum
+fr_depth = ledge_z + pcb_standoff + pcb_t + standoff_len + frame_boss_h + back_t;
 fz_boss  = fr_depth - back_t - frame_boss_h;   // boss face the standoffs land on
 fz_plate = fr_depth - back_t;                  // inner face of the back plate
 fr_bosses = [for (sx = [1,-1], sy = [1,-1]) [-m3_ox + sx*m3_dx/2, m3_oy + sy*m3_dy/2]];
@@ -329,6 +353,12 @@ assert(!field_windows || (abs(fld1_dy) + fld1_l/2 < fr_yi/2 - fr_ri - 2
 assert(gill_n == 0 || gill_y0 > max(svc_windows ? svc2_dy + svc2_l/2 : 0,
                                     field_windows ? fld2_dy + fld2_l/2 : 0) + 3,
        "frame: gills collide with a side window");
+// the whole panel assembly (glass + standoffs + board) enters through the
+// ledge opening, so the opening must clear the BOARD, not just the glass
+assert(fr_xi - 2*ledge_side > pcb_w + 2 && fr_yi - ledge_top - ledge_bot > pcb_h + 2,
+       "frame: adhesive ledge blocks the board's insertion path");
+assert(ledge_z + ledge_t < ledge_z + pcb_standoff,
+       "frame: ledge intrudes into the board plane");
 assert(cb_h + 1.0 <= bez_h, "counterbore deeper than the bezel ear");
 assert(cav_d > comp_h + pcb_t, "no air gap left between the PCB and the glass");
 echo(str("Canary 7in touch v0.3-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
@@ -562,6 +592,25 @@ module frame() {
             // bosses hanging from the back plate's inner face
             for (p = fr_bosses) translate([p[0], p[1], fz_boss])
                 cylinder(d = frame_boss_d, h = frame_boss_h + 0.01);
+            // adhesive ledge behind the glass: a full ring at the glass-back
+            // datum, widened where the panel's adhesive strips are (10 mm
+            // sides, 6 mm button edge, 2 mm over the FPC)
+            translate([0, 0, ledge_z]) linear_extrude(ledge_t) difference() {
+                rrect2d(fr_xi, fr_yi, fr_ri);
+                translate([0, (ledge_bot - ledge_top)/2])
+                    rrect2d(fr_xi - 2*ledge_side, fr_yi - ledge_top - ledge_bot, 2);
+            }
+            // dashed sacrificial ribs standing under the wide ledges — print
+            // supports the model carries itself. SNAP OUT before the panel
+            // goes in; they sit in the glass pocket, right at the opening.
+            if (ledge_ribs) {
+                for (sx = [1, -1], i = [0 : 6])
+                    translate([sx*(fr_xi/2 - ledge_side) - 0.25, -36 + i*12, 0])
+                        cube([0.5, 8, ledge_z + 0.01]);
+                for (i = [0 : 6])
+                    translate([-39 + i*12, fr_yi/2 - ledge_top - 0.25, 0])
+                        cube([8, 0.5, ledge_z + 0.01]);
+            }
         }
         // glass entry chamfer around the front rim
         hull() {
@@ -601,10 +650,16 @@ module frame() {
         for (sx = [1, -1], i = [0 : frame_vent_flank_n - 1])
             translate([btn_dx + sx*(btn_w/2 + 9 + i*6.5), fr_yi/2 - 0.1, gz])
                 rotate([-90, 0, 0]) linear_extrude(frame_wall + 0.3) pill2d(gh, gill_w);
-        // intake row along the bottom wall
-        for (i = [0 : frame_vent_row_n - 1])
-            translate([(i - (frame_vent_row_n - 1)/2) * 9, -fr_yi/2 + 0.1, gz])
+        // intake rows along the bottom wall, split to flank the edge brand
+        for (sx = [1, -1], i = [0 : frame_vent_row_n/2 - 1])
+            translate([sx*(34 + i*7), -fr_yi/2 + 0.1, gz])
                 rotate([90, 0, 0]) linear_extrude(frame_wall + 0.3) pill2d(gh, gill_w);
+        // branding, TV-style on the visible bottom edge: readable standing
+        // below and in front, letter tops toward the screen
+        translate([0, -fr_yo/2 + label_depth, gz])
+            rotate([90, 0, 0]) rotate([0, 0, 180]) linear_extrude(label_depth + 0.2)
+                text(brand_edge, size = 5.5, font = label_font,
+                     halign = "center", valign = "center");
         // back grille (dodging bosses and the keyholes — note -m3_ox: this
         // part is modelled print-side, x mirrored vs the two-part tray)
         translate([0, 0, fz_plate]) vent_grille(-m3_ox, m3_oy,
@@ -625,6 +680,8 @@ module frame() {
         frame_lbl(btn_dx - btn_lbl_dx, fr_yo/2 - 6.5, "BOOT");
         frame_lbl(btn_dx + btn_lbl_dx, fr_yo/2 - 6.5, "RESET");
         if (svc_windows) frame_lbl(fr_xi/2 - 8, svc1_dy, "SD");
+        // full product mark across the clear band under the grille
+        frame_lbl(0, -(fr_yi/2 - 6), brand_back);
     }
 }
 

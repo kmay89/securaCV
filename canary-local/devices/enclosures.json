@@ -6611,6 +6611,46 @@
        "comment": "head-hole centre → catch centre"
       },
       {
+       "name": "adh_t",
+       "default": "0.5",
+       "comment": "adhesive pad thickness — MEASURE; sets the glass-back datum"
+      },
+      {
+       "name": "ledge_t",
+       "default": "2.5",
+       "comment": "ledge thickness behind the panel"
+      },
+      {
+       "name": "ledge_side",
+       "default": "10.0",
+       "comment": "ledge width along each short (±x) edge"
+      },
+      {
+       "name": "ledge_top",
+       "default": "6.0",
+       "comment": "along the button (top) edge"
+      },
+      {
+       "name": "ledge_bot",
+       "default": "2.0",
+       "comment": "along the FPC (bottom) edge — keep small, the FPC lives there"
+      },
+      {
+       "name": "ledge_ribs",
+       "default": "true",
+       "comment": "dashed 0.5 mm sacrificial walls standing under the wide"
+      },
+      {
+       "name": "brand_back",
+       "default": "SecuraCV Canary 7\\\" Display",
+       "comment": "debossed across the back plate"
+      },
+      {
+       "name": "brand_edge",
+       "default": "SecuraCV Canary",
+       "comment": "debossed on the visible bottom edge"
+      },
+      {
        "name": "svc_windows",
        "default": "true",
        "comment": "+x wall: service side"
@@ -6770,8 +6810,13 @@
        "default": "fr_ri + frame_wall"
       },
       {
+       "name": "ledge_z",
+       "default": "glass_t + adh_t",
+       "comment": "ledge front face: the glass-back datum"
+      },
+      {
        "name": "fr_depth",
-       "default": "glass_t + pcb_standoff + pcb_t + standoff_len + frame_boss_h + back_t"
+       "default": "ledge_z + pcb_standoff + pcb_t + standoff_len + frame_boss_h + back_t"
       },
       {
        "name": "fz_boss",
