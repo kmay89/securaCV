@@ -504,9 +504,9 @@
   {
    "id": "c6-display-pocket-case",
    "name": "C6 display pocket case",
-   "for": "Waveshare ESP32-C6-LCD-1.47 (portrait), flat-bottom board (no down-facing male headers): face-down bezel over the active-area window, edge-captured board (no screws into the board), snap-in vented back, USB-C + BOOT/RST access, blind keyhole. `model=\"1.47\"` is drawn from the Waveshare mechanical drawing; a `\"1.69\"` preset is parameterised. Heat-escape slots on the sides + a back grille",
+   "for": "Waveshare ESP32-C6-LCD-1.47 (portrait), both board builds: `headers=\"none\"` (stripped: no headers, corner pillars removed) or `headers=\"male\"` (as shipped: down-facing pin headers + brass M2 corner pillars — deeper cavity, press bosses land on the pillar tops). Face-down bezel over the active-area window, edge-captured board (no screws into the board), snap-in vented back, blind keyhole. The overhanging BOOT/RST buttons and the USB-C shell (both BACK-mounted — photo-verified) get full-depth insertion channels behind \"ear\"/\"chin\" wall bulges, and the USB-C port is a true stadium (full-round ends) sized shell + tolerance. `model=\"1.47\"` is drawn from the Waveshare mechanical drawing; a `\"1.69\"` preset is parameterised. Heat-escape slots on the sides + a back grille",
    "status": "in-development",
-   "note": "snap-fit, vented",
+   "note": "snap-fit, vented, 2 board builds",
    "device": "canary-display-watch",
    "preview": "preview_dev_c6_147.png",
    "parts": [],
@@ -6068,7 +6068,7 @@
    ]
   },
   "canary_c6_display.scad": {
-   "title": "Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.4-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -6091,12 +6091,20 @@
         "1.69"
        ],
        "comment": "board preset"
+      },
+      {
+       "name": "headers",
+       "default": "none",
+       "enum": [
+        "none",
+        "male"
+       ]
       }
      ]
     },
     {
      "name": "Board",
-     "note": "ESP32-C6-LCD-1.47, flat-bottom. From the Waveshare drawing (mm).",
+     "note": "ESP32-C6-LCD-1.47. From the Waveshare drawing (mm).",
      "params": [
       {
        "name": "board_l",
@@ -6118,8 +6126,23 @@
       },
       {
        "name": "back_stack",
-       "default": "2.2",
-       "comment": "back-side component clearance below the PCB — MEASURE"
+       "default": "4.8",
+       "comment": "back-side clearance below the PCB, stripped board: the"
+      },
+      {
+       "name": "hdr_drop",
+       "default": "8.8",
+       "comment": "cavity depth below the PCB back that swallows base + pins"
+      },
+      {
+       "name": "hdr_inset",
+       "default": "1.6",
+       "comment": "PCB edge → header row centreline — MEASURE"
+      },
+      {
+       "name": "brass_h",
+       "default": "5.0",
+       "comment": "factory corner pillar height above the PCB back (0 = pillars removed) — MEASURE"
       }
      ]
     },
@@ -6146,26 +6169,70 @@
        "name": "lcm_w",
        "default": "(model == \"1.69\") ? 28.0   : 19.39",
        "comment": "LCD module outline short"
-      }
-     ]
-    },
-    {
-     "name": "Buttons",
-     "note": "BOOT/RST flank the USB end on the two side (±X) walls",
-     "params": [
+      },
+      {
+       "name": "usb_w",
+       "default": "9.15",
+       "comment": "stadium opening width — shell + 0.2 (fit-tested: 9.4 showed a gap)"
+      },
+      {
+       "name": "usb_h",
+       "default": "3.45",
+       "comment": "stadium opening height — shell + 0.2"
+      },
+      {
+       "name": "usb_dx",
+       "default": "0.0",
+       "comment": "sideways offset of the connector centre — MEASURE"
+      },
+      {
+       "name": "usb_dz",
+       "default": "0.0",
+       "comment": "depth offset from shell-on-back-face nominal (+ = toward the back) — MEASURE"
+      },
+      {
+       "name": "usb_proud",
+       "default": "1.9",
+       "comment": "shell overhang past the PCB edge (photo ≈1.8) — MEASURE"
+      },
       {
        "name": "opt_btn",
        "default": "true"
       },
       {
        "name": "btn_d",
-       "default": "3.6",
-       "comment": "side access hole Ø"
+       "default": "3.0",
+       "comment": "access hole Ø — big enough for a tool tip, small enough to shield"
       },
       {
        "name": "btn_up",
-       "default": "6.5",
-       "comment": "button centre up from the USB (−Y) end — MEASURE"
+       "default": "7.0",
+       "comment": "button centre up from the USB (−Y) end (fit-tested: 6.0 sat 1 low) — MEASURE"
+      },
+      {
+       "name": "btn_dz",
+       "default": "1.0",
+       "comment": "actuator centre behind the PCB BACK face — MEASURE"
+      },
+      {
+       "name": "btn_proud",
+       "default": "1.8",
+       "comment": "BLACK ACTUATOR overhang past the PCB edge (photo ≈1.8) — MEASURE"
+      },
+      {
+       "name": "btn_ch_w",
+       "default": "3.4",
+       "comment": "actuator channel width (Y) — hugs the black nub, nothing more"
+      },
+      {
+       "name": "btn_body_w",
+       "default": "5.2",
+       "comment": "shallow relief width for the switch's metal body — MEASURE"
+      },
+      {
+       "name": "btn_body_p",
+       "default": "0.4",
+       "comment": "metal body overhang past the PCB edge — MEASURE"
       }
      ]
     },
@@ -6227,6 +6294,11 @@
        "name": "lid_edge",
        "default": "0.8",
        "comment": "bezel face edge chamfer"
+      },
+      {
+       "name": "ear_skin",
+       "default": "1.2",
+       "comment": "wall skin left outside a button/USB clearance channel"
       }
      ]
     },
@@ -6235,8 +6307,12 @@
      "note": "",
      "params": [
       {
+       "name": "stack_eff",
+       "default": "(headers == \"male\") ? max(back_stack, hdr_drop) : back_stack"
+      },
+      {
        "name": "cav_d",
-       "default": "lcd_rise + pcb_t + back_stack",
+       "default": "lcd_rise + pcb_t + stack_eff",
        "comment": "glass ledge → back-plate inner"
       },
       {
@@ -6255,9 +6331,62 @@
        "comment": "PCB front plane"
       },
       {
+       "name": "z_pcb_back",
+       "default": "z_pcb_front + pcb_t",
+       "comment": "PCB back plane"
+      },
+      {
        "name": "z_usb",
-       "default": "face_t + lcd_rise + pcb_t/2",
-       "comment": "USB-C centre (mid-PCB)"
+       "default": "z_pcb_back + 3.26/2 + usb_dz"
+      },
+      {
+       "name": "z_btn",
+       "default": "z_pcb_back + btn_dz",
+       "comment": "button actuator centre (back-mounted)"
+      },
+      {
+       "name": "btn_y",
+       "default": "-board_l/2 + btn_up",
+       "comment": "button centre (Y)"
+      },
+      {
+       "name": "btn_reach",
+       "default": "btn_proud + tol_slide",
+       "comment": "actuator channel depth past the cavity face"
+      },
+      {
+       "name": "btn_body_reach",
+       "default": "btn_body_p + tol_slide",
+       "comment": "shallow body-relief depth"
+      },
+      {
+       "name": "usb_reach",
+       "default": "usb_proud + tol_slide"
+      },
+      {
+       "name": "usb_slide",
+       "default": "usb_w + 0.35",
+       "comment": "insertion-notch width — a hair looser than the"
+      },
+      {
+       "name": "ear_bump",
+       "default": "max(0, btn_reach + ear_skin - wall)",
+       "comment": "side-wall bulge"
+      },
+      {
+       "name": "chin_bump",
+       "default": "max(0, usb_reach + ear_skin - wall)",
+       "comment": "bottom-wall bulge"
+      },
+      {
+       "name": "ear_w",
+       "default": "btn_ch_w + 4",
+       "comment": "ear bulge width along the wall"
+      },
+      {
+       "name": "chin_w",
+       "default": "usb_w + 4",
+       "comment": "chin bulge width along the wall"
       },
       {
        "name": "lip_l",
@@ -6268,6 +6397,50 @@
        "name": "lip_w",
        "default": "(lcm_w - aa_w)/2",
        "comment": "short-side lip (X)"
+      },
+      {
+       "name": "skirt_wall",
+       "default": "(headers == \"male\") ? 1.0 : 1.6"
+      },
+      {
+       "name": "skirt_dep",
+       "default": "snap_depth + snap_h/2 + 0.4"
+      },
+      {
+       "name": "stand_ix",
+       "default": "2.6",
+       "comment": "inset from ±X edge (M2 pattern) — MEASURE"
+      },
+      {
+       "name": "stand_iy",
+       "default": "2.6",
+       "comment": "inset from ±Y edge (M2 pattern) — MEASURE"
+      },
+      {
+       "name": "stand_d",
+       "default": "(headers == \"male\") ? 4.6 : 4.2",
+       "comment": "boss Ø — covers the pillar top but stays"
+      },
+      {
+       "name": "stand_len",
+       "default": "stack_eff - ((headers == \"male\") ? brass_h : 0)"
+      },
+      {
+       "name": "nub_y0",
+       "default": "5.0",
+       "comment": "clear of the button channel below and the vents above"
+      },
+      {
+       "name": "vent_z0",
+       "default": "face_t + 1.0"
+      },
+      {
+       "name": "vent_z1",
+       "default": "bez_h - (snap_depth + snap_h/2) - 0.8"
+      },
+      {
+       "name": "vent_dy",
+       "default": "opt_btn ? (btn_y + ear_w/2) + (vent_n-1)*vent_pitch/2 + vent_w/2 + 1.2 : 0"
       }
      ]
     }
@@ -6636,11 +6809,6 @@
        "comment": "along the FPC (bottom) edge — keep small, the FPC lives there"
       },
       {
-       "name": "ledge_ribs",
-       "default": "true",
-       "comment": "dashed 0.5 mm sacrificial walls standing under the wide"
-      },
-      {
        "name": "brand_back",
        "default": "SecuraCV Canary 7\\\" Display",
        "comment": "debossed across the back plate"
@@ -6651,24 +6819,33 @@
        "comment": "debossed on the visible bottom edge"
       },
       {
-       "name": "svc_windows",
-       "default": "true",
-       "comment": "+x wall: service side"
+       "name": "sd_dx",
+       "default": "42.0",
+       "comment": "opening centre, + = back-view right"
       },
       {
-       "name": "field_windows",
-       "default": "true",
-       "comment": "-x wall: field-wiring side"
+       "name": "sd_dy",
+       "default": "-26.0"
+      },
+      {
+       "name": "sd_w",
+       "default": "18.0",
+       "comment": "width — fingertip-sized, not card-sized"
+      },
+      {
+       "name": "sd_l",
+       "default": "40.0",
+       "comment": "length along the slide direction"
       },
       {
        "name": "gill_n",
-       "default": "2",
-       "comment": "straight \"gill\" vents per side (±x) wall, in the strip"
+       "default": "8",
+       "comment": "straight \"gill\" vents per side (±x) wall — the sides"
       },
       {
        "name": "gill_y0",
-       "default": "38.0",
-       "comment": "above the side windows (rake 0: vertical slots print"
+       "default": "-35.0",
+       "comment": "carry vents only; SD access is through the back plate"
       },
       {
        "name": "frame_vent_row_n",
@@ -6812,11 +6989,11 @@
       {
        "name": "ledge_z",
        "default": "glass_t + adh_t",
-       "comment": "ledge front face: the glass-back datum"
+       "comment": "ledge front face"
       },
       {
        "name": "fr_depth",
-       "default": "ledge_z + pcb_standoff + pcb_t + standoff_len + frame_boss_h + back_t"
+       "default": "glass_t + pcb_standoff + pcb_t + standoff_len + frame_boss_h + back_t"
       },
       {
        "name": "fz_boss",

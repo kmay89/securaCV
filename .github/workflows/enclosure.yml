@@ -114,6 +114,8 @@ jobs:
           fit glass empty || exit 1   # bezel vs the panel — must not crush it
           fit lip    solid "nothing bears on the glass — the bezel retains nothing" || exit 1
           fit locate solid "the pocket does not stop the slab sliding — is it sized to the tray cavity instead of the glass?" || exit 1
+          fit frame_glass empty || exit 1   # one-piece frame vs the panel — cavity, ledge and windows must clear it
+          fit frame_ledge solid "the adhesive ledge is missing from under the panel border — did the ledge/boss datum drift?" || exit 1
           fit stand empty || exit 1   # frame seated in the desk dock — must not collide (also proves key/slot alignment)
           fit seat  solid "the dock's pads never touch the seated frame — nothing carries the case" || exit 1
           fit stand_p  empty || exit 1   # PORTRAIT dock pose, turned one way — keys/ribs must miss solid wall

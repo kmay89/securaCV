@@ -807,3 +807,34 @@ kbd {
 .sense-knob input[type="range"]:disabled { opacity: 0.4; }
 .sense-tune-ctl { gap: 10px; align-items: center; flex-wrap: wrap; }
 .sense-raw-toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+
+/* ── the WE2 live bench (module flow) ─────────────────────────────────── */
+.bench { margin-top: 14px; display: grid; gap: 10px; }
+.bench h4 { margin: 0; font-size: 14.5px; }
+.bench-meter { display: grid; gap: 5px; }
+.bench-meter-track {
+  position: relative; height: 10px; border-radius: 6px;
+  background: var(--bg-alt); border: 1px solid var(--border);
+  overflow: hidden;
+}
+.bench-meter-fill {
+  position: absolute; inset: 0 auto 0 0; width: 0%;
+  background: linear-gradient(90deg, var(--caution), var(--success));
+  transition: width .18s ease;
+}
+.bench-meter-tick {
+  position: absolute; top: -2px; bottom: -2px; width: 2px; left: 50%;
+  background: var(--text); opacity: .6;
+}
+.bench-sliders { display: grid; gap: 8px; }
+.bench-slider {
+  display: grid; grid-template-columns: minmax(150px, 220px) 1fr 44px;
+  align-items: center; gap: 10px; font-size: 13px; color: var(--text-secondary);
+}
+.bench-slider input[type="range"] { width: 100%; accent-color: var(--brand); }
+.bench-slider output {
+  text-align: right;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
+  color: var(--text);
+}
+@media (max-width: 620px) { .bench-slider { grid-template-columns: 1fr 1fr 44px; } }

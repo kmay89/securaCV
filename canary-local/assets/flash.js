@@ -3556,9 +3556,17 @@ function renderWifiFields(box, product) {
       return i;
     };
     const devId = mk("device id (e.g. canary_vision_ab12)");
-    // Auto-suggest a stable per-family id, like the native app's onProductChosen.
-    if (product && product.id) {
-      const fam = /vision/.test(product.id) ? "canary_vision"
+    // Auto-suggest a UNIQUE per-device id for every board whose firmware
+    // derives its MQTT topics from dev_id (broker_nvs) — displays included.
+    // A display's glass setup only ever asks for Wi-Fi, and dev_id is sticky
+    // forever once written — so with nothing seeded, first boot persists the
+    // flavor's SHARED compiled id (canary_dash_001) and two of the same
+    // display collide on the same topics, acting on each other's traffic.
+    // The suggestion is visible and editable; clearing it writes nothing.
+    if (product && product.id &&
+        (product.provisioning === "usb-secrets" || product.broker_nvs === true)) {
+      const fam = /display/.test(product.id) ? "canary_display"
+        : /vision/.test(product.id) ? "canary_vision"
         : /sense/.test(product.id) ? "canary_sense" : "canary";
       const sfx = Array.from(crypto.getRandomValues(new Uint8Array(2)),
         (b) => b.toString(16).padStart(2, "0")).join("");

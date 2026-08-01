@@ -28,17 +28,18 @@
 //            vents keep their convection path AND the USB power lead that
 //            leaves through the frame's bottom cable port has plug headroom,
 //            then routes out the back through a desk-level cable channel.
-//            Two chamfered CENTRING KEYS rise into the frame's ±dock_key_dx
-//            keying slots: the case finds its own centre and cannot slide
-//            out sideways. PORTRAIT works too: two ribs across the well
-//            (parked in the web between intake slots) seat the 115 mm-wide
-//            slab, the keys land inside the side service windows either way
-//            round, and the base is deep enough that both orientations pass
-//            the tip-over asserts. Vented back fin, entry flares, foot-
-//            chamfered base, rubber-foot recesses, branding front and back.
-//            Narrower than the case on purpose: both short-wall windows
-//            stay reachable while docked (in portrait the cable port faces
-//            sideways — the lead drapes beside the dock instead).
+//            Two chamfered CENTRING KEYS on the keyed ribs rise into the
+//            case's ±dock_key_dx openings — intake slots in landscape, the
+//            side-wall keying slots in portrait — so either way up, the
+//            case finds its own centre and cannot slide out sideways.
+//            PORTRAIT: the keyed ribs across the well seat the 115 mm-wide
+//            slab, and the base is deep enough that both orientations pass
+//            the tip-over asserts. Vented back fin (its ±|sd_dx| pills keep
+//            the back-plate microSD opening reachable while docked), entry
+//            flares, foot-chamfered base, rubber-foot recesses, branding
+//            front and back. Narrower than the case on purpose (in portrait
+//            the cable port faces sideways — the lead drapes beside the
+//            dock instead).
 //    stand_gauge — one cheek's slice of the dock (~15 % of its filament).
 //            Print FIRST: it proves the slot width against your frame print,
 //            the recline, the seat height and the lip capture.
@@ -47,17 +48,16 @@
 //            the board hangs on the panel's OWN white M3 standoffs, and
 //            4x M3x8-10 from the back thread into those standoffs — the
 //            screws, not a ledge, pull the glass flush with the front face.
-//            BOOT/RESET window in the top wall with debossed labels; paired
-//            bevelled service windows in each short wall (microSD + UART1 and
-//            the USB-C pair on the right, CAN/I2C/sensor and battery/RS-485
-//            on the left — a fingertip works the push-push SD socket through
-//            its window); gill vents, chimney intake/exhaust, back grille;
-//            keyhole wall mounts (hang on two screws, slide down); modelled
-//            foot and back-rim chamfers; an adhesive LEDGE behind the glass
-//            matched to the panel's own adhesive strips (10 mm sides, 6 mm
-//            button edge, 2 mm over the FPC), held up during printing by
-//            dashed snap-out ribs; branded on the back plate and, TV-style,
-//            on the visible bottom edge.
+//            BOOT/RESET window in the top wall with debossed labels; gill
+//            vents down each side wall; chimney intake/exhaust; back grille;
+//            a microSD access opening through the BACK PLATE covering the
+//            socket, the card's slide travel and a fingertip ("SD" deboss);
+//            keyhole wall mounts (hang on two screws, slide down); an
+//            adhesive LEDGE behind the glass matched to the panel's own
+//            adhesive strips (10 mm sides, 6 mm button edge, 2 mm over the
+//            FPC), each with a 45° back-slope wedge to its wall; branding on
+//            the back plate and the visible bottom edge. PRINTS BACK-PLATE-
+//            DOWN — the orientation the ledge wedges self-support in.
 //    frame_gauge — one corner of the frame including one boss and a wall
 //            keyhole. Print FIRST (~10 % of the frame's filament): it proves
 //            the glass corner radius, the boss offset signs and screw reach.
@@ -242,31 +242,26 @@ ledge_t    = 2.5;   // ledge thickness behind the panel
 ledge_side = 10.0;  // ledge width along each short (±x) edge
 ledge_top  = 6.0;   // along the button (top) edge
 ledge_bot  = 2.0;   // along the FPC (bottom) edge — keep small, the FPC lives there
-ledge_ribs = true;  // dashed 0.5 mm sacrificial walls standing under the wide
-                    // ledges: they hold the ledge up DURING PRINTING (a 10 mm
-                    // shelf over the glass cavity cannot print over air).
-                    // SNAP THEM OUT before the panel goes in — they live in
-                    // the glass pocket and are right at the front opening.
+// Every ledge carries a 45° back-slope wedge down to its wall, so the frame
+// prints BACK-PLATE-DOWN with the ledges fully self-supporting — solid
+// material under the adhesive landing, no overhang, no sacrificial geometry.
+// (Face-down would hang the ledges over the glass pocket; don't.)
 brand_back = "SecuraCV Canary 7\" Display";   // debossed across the back plate
 brand_edge = "SecuraCV Canary";               // debossed on the visible bottom edge
-// Side access windows — connector map from the Rev1.2 board, in-use (native,
-// buttons-top) back view: the +x (right) SHORT edge carries UART1, the
-// microSD socket and both USB-C ports; the -x (left) short edge carries the
-// sensor/CAN/I2C cluster, battery JST and the RS-485/CAN terminals. The SD
-// socket sits ~14 mm inboard of the wall, so a card-width slot would swallow
-// the card unreachably — a WINDOW lets a fingertip reach in and work the
-// push-push socket. Two windows per side keep every bridge short and the
-// wall stiff. Positions are photo-derived — MEASURE against your board.
-svc_windows = true;      // +x wall: service side
-svc1_dy = -24.0;  svc1_l = 28.0;   // microSD + UART1 window (y centre / length)
-svc2_dy = 7.0;    svc2_l = 26.0;   // USB-C pair window
-field_windows = true;    // -x wall: field-wiring side
-fld1_dy = -22.0;  fld1_l = 30.0;   // sensor / CAN / I2C connector cluster
-fld2_dy = 19.0;   fld2_l = 26.0;   // battery JST + RS-485/CAN terminals
-gill_n  = 2;         // straight "gill" vents per side (±x) wall, in the strip
-gill_y0 = 38.0;      // above the side windows (rake 0: vertical slots print
-gill_w = 2.4;  gill_l = 9.0;  gill_rake = 0;    // cleanest face-down; the
-                     // raked look read as slashes and bought nothing thermally)
+// microSD access — the card slides DOWNWARD out of its push-push socket (the
+// purple-rectangle zone on the Rev1.2 board photo: right side, below centre,
+// in-use back view). The opening in the BACK PLATE covers the socket, the
+// card's slide travel, and room for a fingertip to keep hold of the card so
+// it never drops inside the case. Photo-derived — MEASURE your board.
+sd_dx = 42.0;   // opening centre, + = back-view right
+sd_dy = -26.0;
+sd_w  = 18.0;   // width — fingertip-sized, not card-sized
+sd_l  = 40.0;   // length along the slide direction
+gill_n  = 8;         // straight "gill" vents per side (±x) wall — the sides
+gill_y0 = -35.0;     // carry vents only; SD access is through the back plate
+gill_w = 2.4;  gill_l = 9.0;  gill_rake = 0;    // rake 0: vertical slots print
+                     // cleanest; the raked look read as slashes and bought
+                     // nothing thermally
 frame_vent_row_n   = 10; // intake slots in a row along the bottom wall
 fv_x0    = 34.0;     // first intake slot's ± position — the stand's well and
 fv_pitch = 7.0;      // seat ribs are laid out against these, so they are
@@ -281,13 +276,17 @@ frame_vent_flank_n = 4;  // exhaust slots per side, flanking the button window
 // centre, so only one of them can exist at a time.
 opt_bottom_cable = true;
 cable_port_w = 14.0;  cable_port_h = 9.0;  cable_port_dx = 0.0;
-// Dock keying — two extra intake-style slots at ±dock_key_dx. The dock's
-// chamfered centring keys rise into them, so the docked case self-centres
-// and cannot slide sideways. The position is shared with the stand and is
-// chosen to land INSIDE the side service/field windows when the case is
-// docked in portrait (asserted), so portrait still seats flat on its ribs.
+// Dock keying — the dock's two chamfered centring keys rise into openings the
+// case already has (or gets here), so the docked case self-centres and cannot
+// slide sideways — the same doctrine as hanging the board on the panel's own
+// standoffs: let the part's own features locate it.
+//   landscape: the keys engage the ±(fv_x0 + 2*fv_pitch) INTAKE slots — no
+//              extra bottom-wall openings at all.
+//   portrait:  the ±x walls get one gill-style KEYING SLOT each at
+//              dy = ±dock_key_dx, past the end of the gill row (asserted),
+//              so whichever side wall faces down, the keys engage it too.
 dock_keys   = true;
-dock_key_dx = 15.0;
+dock_key_dx = fv_x0 + 2*fv_pitch;   // 48 — shared by both engagements above
 label_depth = 0.5;
 label_font  = "Liberation Sans:style=Bold";
 
@@ -298,8 +297,8 @@ label_font  = "Liberation Sans:style=Bold";
 opt_stand = true;
 stand_ang     = 20;    // recline from vertical
 stand_w       = 174.0; // dock width — DELIBERATELY narrower than the case, so
-                       // the microSD/USB service windows (+x wall) and the
-                       // field-wiring windows (-x wall) stay reachable docked
+                       // the side-wall gills stay in clear air and the case
+                       // lifts straight out by its overhanging ends
 stand_d       = 126.0; // base plate depth — sized so the base reaches well
                        // behind the reclined case's centre line in PORTRAIT
                        // too (a 197 mm slab on its side), not just landscape;
@@ -316,11 +315,13 @@ stand_fin_h   = 78.0;  // back-fin support height along the case back (68 % of
                        // the landscape keyholes at 91.5)
 stand_fin_t   = 8.0;   // back fin blade thickness
 stand_gusset_h = 52.0; // cheek back edges buttress the fin up to this height
-stand_rib_x   = 44.5;  // ± portrait seat ribs: blades across the well whose
-stand_rib_w   = 3.0;   // tops carry the case in PORTRAIT (its 115 mm width
-                       // misses the cheeks entirely). Placed in the solid gap
-                       // BETWEEN two intake slots (asserted), so landscape
-                       // convection loses nothing.
+stand_rib_x   = 48.25; // ± KEYED RIBS: blades across the well that carry the
+stand_rib_w   = 9.5;   // case in PORTRAIT (its 115 mm width misses the cheeks
+                       // entirely) and carry the centring keys on top. Each
+                       // blade straddles the key's slot — bearing on solid
+                       // wall on BOTH sides of it, in both orientations —
+                       // and clears the neighbouring intake slots and the
+                       // gill row (all asserted).
 stand_floor_h = 26.0;  // seat height: case bottom edge -> desk. This is the
                        // headroom for the USB power plug leaving the hole in
                        // the case's bottom wall — a straight plug + strain
@@ -388,8 +389,13 @@ fr_xi = glass_w + 2*frame_reveal;  fr_yi = glass_h + 2*frame_reveal;
 fr_ri = glass_r + frame_reveal;    // opening corners track the slab
 fr_xo = fr_xi + 2*frame_wall;      fr_yo = fr_yi + 2*frame_wall;
 fr_ro = fr_ri + frame_wall;
-ledge_z  = glass_t + adh_t;                    // ledge front face: the glass-back datum
-fr_depth = ledge_z + pcb_standoff + pcb_t + standoff_len + frame_boss_h + back_t;
+// The rear stack chains from the GLASS BACK: the PCB hangs from the glass on
+// its own standoffs, so adhesive thickness moves the LEDGE, not the board —
+// adh_t only sets where the ledge face sits, and the adhesive fills the gap
+// between glass back and ledge. (Chaining the bosses from the ledge instead
+// would open a screw gap equal to adh_t, or peel the adhesive closing it.)
+ledge_z  = glass_t + adh_t;                    // ledge front face
+fr_depth = glass_t + pcb_standoff + pcb_t + standoff_len + frame_boss_h + back_t;
 fz_boss  = fr_depth - back_t - frame_boss_h;   // boss face the standoffs land on
 fz_plate = fr_depth - back_t;                  // inner face of the back plate
 fr_bosses = [for (sx = [1,-1], sy = [1,-1]) [-m3_ox + sx*m3_dx/2, m3_oy + sy*m3_dy/2]];
@@ -429,23 +435,21 @@ assert(!mount_keyholes || (khm_dx + khm_head_d/2 + 2 < fr_xi/2
        && khm_y - khm_head_d/2 > 4),
        "frame: keyhole runs off the back plate");
 assert(khm_slide_w < khm_head_d, "frame: keyhole slide wider than its head hole");
-assert(!svc_windows || (abs(svc1_dy) + svc1_l/2 < fr_yi/2 - fr_ri - 2
-                     && abs(svc2_dy) + svc2_l/2 < fr_yi/2 - fr_ri - 2
-                     && svc1_dy + svc1_l/2 + 4 <= svc2_dy - svc2_l/2),
-       "frame: service windows overlap or overrun the wall");
-assert(!field_windows || (abs(fld1_dy) + fld1_l/2 < fr_yi/2 - fr_ri - 2
-                       && abs(fld2_dy) + fld2_l/2 < fr_yi/2 - fr_ri - 2
-                       && fld1_dy + fld1_l/2 + 4 <= fld2_dy - fld2_l/2),
-       "frame: field windows overlap or overrun the wall");
-assert(gill_n == 0 || gill_y0 > max(svc_windows ? svc2_dy + svc2_l/2 : 0,
-                                    field_windows ? fld2_dy + fld2_l/2 : 0) + 3,
-       "frame: gills collide with a side window");
+assert(sd_dx + sd_w/2 + 2 < fr_xi/2 && abs(sd_dy) + sd_l/2 + 2 < fr_yi/2,
+       "frame: SD opening runs off the back plate");
+assert(min([for (p = fr_bosses) max(abs(sd_dx - p[0]) - sd_w/2 - frame_boss_d/2,
+                                    abs(sd_dy - p[1]) - sd_l/2 - frame_boss_d/2)]) > 1,
+       "frame: SD opening collides with a boss");
 // the whole panel assembly (glass + standoffs + board) enters through the
 // ledge opening, so the opening must clear the BOARD, not just the glass
 assert(fr_xi - 2*ledge_side > pcb_w + 2 && fr_yi - ledge_top - ledge_bot > pcb_h + 2,
        "frame: adhesive ledge blocks the board's insertion path");
-assert(ledge_z + ledge_t < ledge_z + pcb_standoff,
+assert(ledge_z + ledge_t < glass_t + pcb_standoff,
        "frame: ledge intrudes into the board plane");
+
+// Exported for canary_s3_lcd7_fitcheck.scad — the frame's own derived stack,
+// so the frame fit gates read the real values instead of copies.
+function lcd7_frame_stack() = [ledge_z, ledge_t, fr_xi, fr_yi, fr_ri, fr_depth];
 assert(cb_h + 1.0 <= bez_h, "counterbore deeper than the bezel ear");
 assert(cav_d > comp_h + pcb_t, "no air gap left between the PCB and the glass");
 // the lip climbs the case's front border — it must never reach the window,
@@ -472,27 +476,29 @@ assert(stand_floor_h >= 20,
        "stand: no headroom under the case for the USB power plug");
 assert(stand_cable_w + 8 < std_open, "stand: cable channel wider than the well");
 assert(stand_gusset_h < stand_fin_h, "stand: cheek gusset overruns the fin");
-// portrait seat ribs: in the solid web between the 2nd and 3rd intake slots
-// (landscape loses no vent), inside the portrait footprint, wide stance
+// keyed ribs: each blade must straddle its key's opening — clear of the
+// NEIGHBOURING intake slots in landscape and clear of the gill row in
+// portrait — and the key must sit inside the blade with bearing both sides
 assert(stand_rib_x - stand_rib_w/2 > fv_x0 + fv_pitch + gill_w/2 + 0.4
-    && stand_rib_x + stand_rib_w/2 < fv_x0 + 2*fv_pitch - gill_w/2 - 0.4,
-       "stand: portrait rib lands on an intake slot — move stand_rib_x into the web between slots");
-assert(stand_rib_x + stand_rib_w/2 < fr_yo/2 - 3 && stand_rib_x > fr_yo/4,
-       "stand: portrait ribs miss the case or stand too narrow a stance");
-// centring keys: engage the frame's ±dock_key_dx keying slots in landscape,
-// and must fall INSIDE a service/field window in portrait (either way round),
-// or portrait would sit tilted on a key point
-assert(!dock_keys || dock_key_dx + gill_w/2 + 2 < fv_x0 - gill_w/2,
-       "frame: keying slots merge with the intake row");
+    && stand_rib_x + stand_rib_w/2 < fv_x0 + 3*fv_pitch - gill_w/2 - 0.4,
+       "stand: keyed rib lands on a neighbouring intake slot — re-centre stand_rib_x");
+assert(!dock_keys || abs(dock_key_dx - stand_rib_x) < stand_rib_w/2 - 2.5,
+       "stand: the centring key overhangs its rib — re-centre stand_rib_x on dock_key_dx");
+assert(stand_rib_x - stand_rib_w/2 > gill_y0 + (gill_n - 1)*11 + gill_w/2 + 0.2
+    && -(stand_rib_x - stand_rib_w/2) < gill_y0 - gill_w/2,
+       "stand: keyed rib lands on the gill row in portrait");
+assert(stand_rib_x + stand_rib_w/2 < fr_yo/2 - fr_ro && stand_rib_x > fr_yo/4,
+       "stand: keyed ribs miss the portrait case's flat or stand too narrow a stance");
+// the keys engage an EXISTING intake slot pair in landscape; the portrait
+// keying slots on the ±x walls must sit past the gill row and off the corner
+assert(!dock_keys
+    || (dock_key_dx - gill_w/2 > gill_y0 + (gill_n - 1)*11 + gill_w/2 + 1
+     && -(dock_key_dx + gill_w/2) < gill_y0 - gill_w/2 - 1
+     && dock_key_dx + gill_l/2 + 0.5 < fr_yi/2 - fr_ri),
+       "frame: portrait keying slot collides with the gill row or the wall corner");
 assert(!opt_bottom_cable || !dock_keys
     || abs(cable_port_dx) + cable_port_w/2 + 2 < dock_key_dx - gill_w/2,
-       "frame: cable port runs into a keying slot");
-assert(!dock_keys ||
-       ( dock_key_dx - 2 > svc2_dy - svc2_l/2 && dock_key_dx + 2 < svc2_dy + svc2_l/2
-      && -dock_key_dx + 2 < svc1_dy + svc1_l/2 && -dock_key_dx - 2 > svc1_dy - svc1_l/2
-      &&  dock_key_dx - 2 > fld2_dy - fld2_l/2 && dock_key_dx + 2 < fld2_dy + fld2_l/2
-      && -dock_key_dx + 2 < fld1_dy + fld1_l/2 && -dock_key_dx - 2 > fld1_dy - fld1_l/2),
-       "dock keys must land inside the side windows in portrait — move dock_key_dx");
+       "frame: cable port runs into the keys' intake slots");
 echo(str("Canary 7in touch v0.3-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
          " mm, window ", view_w, " x ", view_h, ", lip ", lip_min,
          " mm, vent area ~",
@@ -707,20 +713,6 @@ module frame_body() {
     }
 }
 
-// Bevelled access window through a ±x wall, same styling as the button
-// window: straight tunnel plus a 45° surround on the outer face.
-module xwall_window(sx, dy, l) {
-    zc = (btn_z0 + btn_z1)/2;
-    translate([sx*(fr_xi/2 - 0.1), dy, zc]) rotate([0, sx*90, 0])
-        linear_extrude(frame_wall + 0.3) rrect2d(btn_h, l, 3);
-    hull() {
-        translate([sx*(fr_xo/2 - 0.01), dy, zc]) rotate([0, sx*90, 0])
-            linear_extrude(0.02) rrect2d(btn_h + 2.4, l + 2.4, 4);
-        translate([sx*(fr_xo/2 - 1.2), dy, zc]) rotate([0, sx*90, 0])
-            linear_extrude(0.02) rrect2d(btn_h, l, 3);
-    }
-}
-
 module frame() {
     gz = (glass_t + fz_boss)/2;        // centre of the clear air band in the walls
     gh = fz_boss - glass_t - 4;        // wall-vent height inside that band
@@ -745,17 +737,23 @@ module frame() {
                 translate([0, (ledge_bot - ledge_top)/2])
                     rrect2d(fr_xi - 2*ledge_side, fr_yi - ledge_top - ledge_bot, 2);
             }
-            // dashed sacrificial ribs standing under the wide ledges — print
-            // supports the model carries itself. SNAP OUT before the panel
-            // goes in; they sit in the glass pocket, right at the opening.
-            if (ledge_ribs) {
-                for (sx = [1, -1], i = [0 : 6])
-                    translate([sx*(fr_xi/2 - ledge_side) - 0.25, -36 + i*12, 0])
-                        cube([0.5, 8, ledge_z + 0.01]);
-                for (i = [0 : 6])
-                    translate([-39 + i*12, fr_yi/2 - ledge_top - 0.25, 0])
-                        cube([8, 0.5, ledge_z + 0.01]);
-            }
+            // ...and each ledge's 45° back-slope wedge to its wall: solid
+            // support under the adhesive landing, self-supporting when the
+            // frame prints back-plate-down. Profile: flat landing at ledge_z,
+            // inner face ledge_t tall, then 45° back up to the wall.
+            for (sx = [1, -1])
+                translate([sx*fr_xi/2, (fr_yi - 2*fr_ri)/2, ledge_z])
+                    rotate([90, 0, 0]) linear_extrude(fr_yi - 2*fr_ri)
+                        polygon([[0, 0], [-sx*ledge_side, 0],
+                                 [-sx*ledge_side, ledge_t], [0, ledge_t + ledge_side]]);
+            translate([-(fr_xi - 2*fr_ri)/2, fr_yi/2, ledge_z])
+                rotate([90, 0, 90]) linear_extrude(fr_xi - 2*fr_ri)
+                    polygon([[0, 0], [-ledge_top, 0],
+                             [-ledge_top, ledge_t], [0, ledge_t + ledge_top]]);
+            translate([(fr_xi - 2*fr_ri)/2, -fr_yi/2, ledge_z])
+                rotate([90, 0, -90]) linear_extrude(fr_xi - 2*fr_ri)
+                    polygon([[0, 0], [-ledge_bot, 0],
+                             [-ledge_bot, ledge_t], [0, ledge_t + ledge_bot]]);
         }
         // glass entry chamfer around the front rim
         hull() {
@@ -780,17 +778,14 @@ module frame() {
             translate([btn_dx, fr_yo/2 - 1.2, btn_zc]) rotate([-90, 0, 0])
                 linear_extrude(0.02) rrect2d(btn_w, btn_h, 3);
         }
-        // side access windows: service (+x) and field wiring (-x)
-        if (svc_windows)   { xwall_window( 1, svc1_dy, svc1_l);
-                             xwall_window( 1, svc2_dy, svc2_l); }
-        if (field_windows) { xwall_window(-1, fld1_dy, fld1_l);
-                             xwall_window(-1, fld2_dy, fld2_l); }
-        // gill vents through the ±x walls, in the strip above the windows
+        // gill vents down each ±x wall — cut deep enough to pass through the
+        // ledge wedge behind the wall, so they vent the cavity, not the wedge
         if (gill_n > 0) for (sx = [1, -1], i = [0 : gill_n - 1])
-            translate([sx*(fr_xo/2 - frame_wall/2), gill_y0 + i*7, gz])
+            translate([sx*(fr_xo/2 - frame_wall/2), gill_y0 + i*11, gz])
                 rotate([sx*gill_rake, 0, 0]) rotate([0, 90, 0])
-                    translate([0, 0, -frame_wall]) linear_extrude(2*frame_wall)
-                        pill2d(gill_l, gill_w);
+                    translate([0, 0, -(ledge_side + frame_wall)])
+                        linear_extrude(2*(ledge_side + frame_wall))
+                            pill2d(gill_l, gill_w);
         // exhaust through the top wall, flanking the button window
         for (sx = [1, -1], i = [0 : frame_vent_flank_n - 1])
             translate([btn_dx + sx*(btn_w/2 + 9 + i*6.5), fr_yi/2 - 0.1, gz])
@@ -799,14 +794,16 @@ module frame() {
         for (sx = [1, -1], i = [0 : frame_vent_row_n/2 - 1])
             translate([sx*(fv_x0 + i*fv_pitch), -fr_yi/2 + 0.1, gz])
                 rotate([90, 0, 0]) linear_extrude(frame_wall + 0.3) pill2d(gh, gill_w);
-        // dock keying slots: two more intake-style pills at ±dock_key_dx.
-        // The desk dock's chamfered keys rise into them, so the docked case
-        // finds centre by itself and cannot slide out sideways — the same
-        // philosophy as the frame hanging on the panel's own standoffs: let
-        // the part's own features locate it.
-        if (dock_keys) for (sx = [1, -1])
-            translate([sx*dock_key_dx, -fr_yi/2 + 0.1, gz])
-                rotate([90, 0, 0]) linear_extrude(frame_wall + 0.3) pill2d(gh, gill_w);
+        // dock keying, PORTRAIT: one gill-style slot in each ±x wall at
+        // dy = ±dock_key_dx, past the end of the gill row. In landscape the
+        // dock's centring keys engage the ±dock_key_dx INTAKE slots above —
+        // the case's own vents locate it; these four slots do the same job
+        // for whichever side wall faces down in portrait.
+        if (dock_keys) for (sx = [1, -1], sy = [1, -1])
+            translate([sx*(fr_xo/2 - frame_wall/2), sy*dock_key_dx, gz])
+                rotate([0, 90, 0]) translate([0, 0, -(ledge_side + frame_wall)])
+                    linear_extrude(2*(ledge_side + frame_wall))
+                        pill2d(gill_l, gill_w);
         // power-cable port through the bottom wall's centre, bevelled like
         // the other windows: the USB lead drops straight down into the desk
         // dock's well and leaves through its cable channel. Sized to pass
@@ -832,8 +829,14 @@ module frame() {
         // back grille (dodging bosses and the keyholes — note -m3_ox: this
         // part is modelled print-side, x mirrored vs the two-part tray)
         translate([0, 0, fz_plate]) vent_grille(-m3_ox, m3_oy,
-            keepouts = mount_keyholes
-                ? [for (sx = [1,-1]) [sx*khm_dx, khm_y + khm_len/2, 8, 17]] : []);
+            keepouts = concat(
+                mount_keyholes
+                    ? [for (sx = [1,-1]) [sx*khm_dx, khm_y + khm_len/2, 8, 17]] : [],
+                [[sd_dx, sd_dy, sd_w/2 + 3.4, sd_l/2 + 6.7]]));
+        // microSD access through the back plate: socket + slide travel +
+        // fingertip, so the card comes out without being dropped inside
+        translate([sd_dx, sd_dy, fz_plate - 0.1])
+            linear_extrude(back_t + 0.2) rrect2d(sd_w, sd_l, 5);
         // wall-mount keyholes through the back plate: head hole LOW, slide
         // running UP so the catch points at the button edge — hang the case
         // over two screws and slide it DOWN to seat
@@ -848,7 +851,7 @@ module frame() {
         // "SD" beside the card window so nobody hunts for the socket
         frame_lbl(btn_dx - btn_lbl_dx, fr_yo/2 - 6.5, "BOOT");
         frame_lbl(btn_dx + btn_lbl_dx, fr_yo/2 - 6.5, "RESET");
-        if (svc_windows) frame_lbl(fr_xi/2 - 8, svc1_dy, "SD");
+        frame_lbl(sd_dx, sd_dy + sd_l/2 + 4, "SD");
         // full product mark across the clear band under the grille
         frame_lbl(0, -(fr_yi/2 - 6), brand_back);
     }
@@ -961,16 +964,17 @@ module stand() {
             // nicks a blade's foot into a floating bridge
             translate([-(std_open/2 - 3), -std_cd/2 + 1.5, -100])
                 cube([std_open - 6, std_cd - 3, 200]);
-            // fin vents: six tall pills, not one big window — a window's top
+            // fin vents: tall pills, not one big window — a window's top
             // edge would be a 100+ mm bridge on this near-vertical print,
             // while a pill's top is a self-supporting arc. The case's back
-            // grille breathes through them, and the fin loses a third of its
-            // filament.
-            for (i = [0 : 5])
-                translate([(i - 2.5)*22, std_cd/2 + stand_fin_t + 1,
+            // grille breathes through them, and the ±|sd_dx| pair is placed
+            // ON the back plate's microSD opening (whichever way the case
+            // mirrors), so the card stays reachable while docked.
+            for (px = [[14, 16], [abs(sd_dx), 16], [63, 10]], sx = [1, -1])
+                translate([sx*px[0], std_cd/2 + stand_fin_t + 1,
                            16 + (stand_fin_h - 26)/2])
                     rotate([90, 0, 0]) linear_extrude(stand_fin_t + 2)
-                        pill2d(stand_fin_h - 26, 14);
+                        pill2d(stand_fin_h - 26, px[1]);
             // branding: on the lip's front face, read standing in front...
             translate([0, -(std_cd/2 + stand_lip_t) + label_depth, -8])
                 rotate([90, 0, 0]) linear_extrude(label_depth + 0.2)
@@ -992,17 +996,23 @@ module stand() {
                 cylinder(d = 10.5, h = 0.9);
     }
     // well furniture, added AFTER the cuts (the well would otherwise carve
-    // it away): the portrait seat ribs, and the key posts with their keys
-    for (sx = [1, -1]) stand_wellblade(sx*stand_rib_x, stand_rib_w);
-    if (dock_keys) for (sx = [1, -1]) {
-        stand_wellblade(sx*dock_key_dx, 5.5);
-        // the centring key: a chamfered wedge rising off its post into the
-        // frame's ±dock_key_dx keying slot (1.5 proud of a 2 mm wall — it
-        // never bottoms out). The taper is what makes the case FIND centre:
-        // drop it anywhere close and it slides home.
-        stand_seatframe() hull() {
-            translate([sx*dock_key_dx - 0.9, -4.5, -0.5]) cube([1.8, 7.0, 0.5]);
-            translate([sx*dock_key_dx - 0.3, -3.9, 1.5])  cube([0.6, 5.8, 0.02]);
+    // it away): the two KEYED RIBS — each blade seats the portrait case AND
+    // carries a centring key. The key is a chamfered wedge rising into the
+    // case's opening at ±dock_key_dx — an intake slot in landscape, the
+    // side-wall keying slot in portrait — 1.5 proud of a 2 mm wall, so it
+    // never bottoms out. The taper is what makes the case FIND centre:
+    // drop it anywhere close and it slides home; the blade bears on solid
+    // wall on both sides of the slot, so nothing sits tilted on a key.
+    for (sx = [1, -1]) {
+        stand_wellblade(sx*stand_rib_x, stand_rib_w);
+        // the key is a compact stud, not a long fin, because it engages two
+        // DIFFERENTLY-ORIENTED slots: the bottom intake slot is 2.4 wide
+        // ACROSS the wall (landscape), the side keying slot is 2.4 wide
+        // ACROSS the depth band (portrait). Both are centred on the same
+        // depth (gz), so a stud at local y = -1 sits in either.
+        if (dock_keys) stand_seatframe() hull() {
+            translate([sx*dock_key_dx - 0.9, -1.95, -0.5]) cube([1.8, 1.9, 0.5]);
+            translate([sx*dock_key_dx - 0.3, -1.35, 1.5])  cube([0.6, 0.7, 0.02]);
         }
     }
     }
@@ -1028,8 +1038,11 @@ module stand_gauge() {
 // ----------------------------------------------------------------------------
 if      (part == "bezel") bezel_print();
 else if (part == "back")  back();
-else if (part == "frame")       frame();
-else if (part == "frame_gauge") frame_gauge();
+// the frame and its gauge EXPORT back-plate-down: the print orientation the
+// ledge wedges are self-supporting in (face-down would hang them over the
+// glass pocket)
+else if (part == "frame")       rotate([180, 0, 0]) translate([0, 0, -fr_depth]) frame();
+else if (part == "frame_gauge") rotate([180, 0, 0]) translate([0, 0, -fr_depth]) frame_gauge();
 else if (part == "gauge")       gauge();
 else if (part == "gauge_tray")  gauge_corner("back");
 else if (part == "gauge_bezel") gauge_corner("bezel");

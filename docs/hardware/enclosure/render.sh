@@ -132,6 +132,9 @@ devstl dev_wear_clip.stl     canary_wear_clip.scad -D 'part="clip"'
 devstl dev_wear_molle.stl    canary_wear_clip.scad -D 'part="molle"'
 devstl dev_c6_147_bezel.stl  canary_c6_display.scad -D 'model="1.47"' -D 'part="bezel"'
 devstl dev_c6_147_back.stl   canary_c6_display.scad -D 'model="1.47"' -D 'part="back"'
+# same board sold with factory down-facing pin headers → deeper case
+devstl dev_c6_147_hdr_bezel.stl canary_c6_display.scad -D 'model="1.47"' -D 'headers="male"' -D 'part="bezel"'
+devstl dev_c6_147_hdr_back.stl  canary_c6_display.scad -D 'model="1.47"' -D 'headers="male"' -D 'part="back"'
 devstl dev_lcd7_bezel.stl    canary_s3_lcd7.scad -D 'part="bezel"'
 devstl dev_lcd7_back.stl     canary_s3_lcd7.scad -D 'part="back"'
 devstl dev_lcd7_frame.stl    canary_s3_lcd7.scad -D 'part="frame"'
@@ -201,4 +204,4 @@ if [[ "${1:-}" != "--no-png" ]]; then
   (SRC="canary_dock.scad";          png "preview_dev_dock.png")
 fi
 
-echo "Done: released STLs (WAP 10 / Vision 9 / Doorbell 5 / Sense 2) + 50 dev renders + 3 SVG templates + previews."
+echo "Done: released STLs (WAP 10 / Vision 9 / Doorbell 5 / Sense 2) + 52 dev renders + 3 SVG templates + previews."
