@@ -89,6 +89,15 @@
 //            the frame, must vanish. Non-empty = something cut a zone — a
 //            grille slot that lost its keepout, a drifted deboss, the moat
 //            itself — and an adhesive strip would land on an edge.
+//    sd_tether_hole — a probe just under the anchor hole's size, swept
+//            through the plate at the tether position, vs the FRAME.
+//            Non-empty = the hole is missing or off-position — the cover's
+//            barb would have nowhere to go (exactly the print-the-case-
+//            without-the-hole mistake this gate exists to stop).
+//    sd_tether_barb — INVERTED: the installed SD cover must cross the
+//            plate band at the anchor hole position. Empty = the barb
+//            misses its hole — the strap length, hole position or install
+//            transform drifted, and the "captive" cover isn't.
 //
 //  The slab is modelled with the corner radius the source DECLARES (glass_r),
 //  because the question being asked is whether the model is consistent with
@@ -100,7 +109,7 @@
 
 use <canary_s3_lcd7.scad>
 
-check = "tray";   // ["tray","glass","lip","locate","frame_glass","frame_ledge","stand","seat","stand_p","stand_p2","seat_p","frame_usb_head","frame_btn_window","frame_sd_window","frame_usb_seal","frame_btn_plug","btn_plug_glass","frame_sd_seal","frame_adh_rail"]
+check = "tray";   // ["tray","glass","lip","locate","frame_glass","frame_ledge","stand","seat","stand_p","stand_p2","seat_p","frame_usb_head","frame_btn_window","frame_sd_window","frame_usb_seal","frame_btn_plug","btn_plug_glass","frame_sd_seal","frame_adh_rail","sd_tether_hole","sd_tether_barb"]
 locate_slip = 1.5;   // mm of sideways wander the pocket must already refuse
 seat_lift  = 0.2;    // dock collision check: hover this far off the pads
 seat_press = 0.4;    // dock bearing check: push this far into the pads
@@ -285,5 +294,29 @@ else if (check == "frame_adh_rail") {
         frame();
     }
 }
+else if (check == "sd_tether_hole") {
+    // probe just under the anchor hole's size, swept from mid-plate out
+    // past the skin (the strap channel above the hole is open by design,
+    // so the probe proves hole + channel both) — vs the FRAME, must vanish
+    T = lcd7_sd_tether();   // [on, x, y, hole_d, fz_plate]
+    FS = lcd7_frame_stack();
+    if (T[0] > 0) intersection() {
+        frame();
+        translate([T[1], T[2], T[4] - 0.5])
+            cylinder(d = T[3] - 0.4, h = FS[5] - T[4] + 1.5);
+    }
+}
+else if (check == "sd_tether_barb") {
+    // inverted — the installed cover's barb must cross the plate band at
+    // the anchor hole position, or the leash anchors nothing
+    T = lcd7_sd_tether();
+    FS = lcd7_frame_stack();
+    if (T[0] > 0) intersection() {
+        sd_cover_installed();
+        translate([T[1], T[2], (T[4] + FS[5])/2])
+            cube([6, 6, 0.4], center = true);
+    }
+    else translate([0, 0, 0]) cube(1);   // tether off: gate must stay solid-true
+}
 else
-    assert(false, "check must be one of tray / glass / lip / locate / frame_glass / frame_ledge / stand / seat / stand_p / stand_p2 / seat_p / frame_usb_head / frame_btn_window / frame_sd_window / frame_usb_seal / frame_btn_plug / btn_plug_glass / frame_sd_seal / frame_adh_rail");
+    assert(false, "check must be one of tray / glass / lip / locate / frame_glass / frame_ledge / stand / seat / stand_p / stand_p2 / seat_p / frame_usb_head / frame_btn_window / frame_sd_window / frame_usb_seal / frame_btn_plug / btn_plug_glass / frame_sd_seal / frame_adh_rail / sd_tether_hole / sd_tether_barb");

@@ -92,9 +92,15 @@
 //      plug_sd      — peel-open cover for the SD opening: countersunk cap
 //            flush in a 45° rim (the flat-floored recess it replaces left a
 //            cantilevered ring over the opening that drooped on the first
-//            real print), battery-door hinge tongue at the top end (stays
-//            anchored — can't get lost), fingernail scoop biting the rim at
-//            the card end to peel it by the cap edge.
+//            real print), a LEASH at the top end — flat strap into a skin
+//            channel, arrowhead barb through an anchor hole in the plate,
+//            mushroomed inside, so the peeled cover dangles captive (v0.6;
+//            the v0.5 hinge tongue only hooked the plate edge and could
+//            slide free) — and a fingernail scoop biting the rim at the
+//            card end to peel it by the cap edge. The other two fitments
+//            need no leash: the button plug is snap-captive behind its
+//            wall and never comes out; the grommet lives wrapped on the
+//            cable itself.
 //    frame_gauge — one corner of the frame including one boss and a wall
 //            keyhole. Print FIRST (~10 % of the frame's filament): it proves
 //            the glass corner radius, the boss offset signs and screw reach.
@@ -419,13 +425,29 @@ btn_reach  = 2.0;    // press-pip stand-off, wall inner face → just shy of the
                      // button cap — MEASURE the gap and subtract ~0.5
 btn_pip_d  = 5.0;    // press-pip Ø (face dimples mark them outside)
 btn_pip_dz = 0.0;    // pip centre offset across the wall band, from the window centre
-// SD cover — peel tab at the card (fingertip) end, hinge tongue at the other.
+// SD cover — peel scoop at the card (fingertip) end, TETHER at the other.
 sd_lip    = 1.2;     // countersunk rim: 45° reach AND depth around the opening.
                      // The flush flat-floored recess this replaces left a
                      // cantilevered ring hanging over the opening — unprintable
                      // back-plate-down (drooped on the first real print). A 45°
                      // countersink prints clean and self-centres the cap.
-sd_hinge  = 3.0;     // hinge-tongue hook depth beyond the opening (stays anchored)
+// The cover stays on a LEASH: a flat strap off the cap's top end carries an
+// ARROWHEAD BARB that pushes through a small anchor hole in the plate and
+// mushrooms on the inside — peel the cover and it dangles, captive; the
+// barb's 45° cam faces free it only under a deliberate yank (service), never
+// a dangle. This replaces the v0.5 hinge tongue, which only HOOKED under the
+// plate edge — a full peel could slide it out and lose the cover — and whose
+// anti-push-in job the countersink already does (the cap's taper seats on
+// the rim: it cannot pass inward). The strap lies in a shallow channel cut
+// below the outer skin, so a wall or mounting strip never pinches it, and
+// the anchor hole is what the FRAME must carry — print the case AFTER this
+// change or the barb has nowhere to go (gated: sd_tether_hole/sd_tether_barb).
+sd_tether    = true;
+sd_teth_gap  = 3.5;  // countersink rim outer edge → anchor hole centre
+sd_teth_hole = 3.2;  // anchor hole Ø through the plate (the Ø2.8 shaft rides
+                     // loose in it; the Ø4.6 arrowhead squeezes through once)
+sd_teth_head = 4.6;  // arrowhead Ø — 1.4x the hole: firm thumb-push in, stays
+                     // put dangling, yanks free for service
 // Bottom-edge brand — CRISP DEBOSS into the wall's outer skin. v0.6: the
 // slat-stencil vents this replaces cut the letters THROUGH the wall, which
 // forced tie bands across every glyph (or the counters fall out) — and on
@@ -577,12 +599,16 @@ fr_bosses = [for (sx = [1,-1], sy = [1,-1]) [-m3_ox + sx*m3_dx/2, m3_oy + sy*m3_
 // computed from the SAME lists the cutter uses — the reported number cannot
 // drift from the geometry. Split so the echo can also say what the rails
 // cost (their keepouts are the one deliberate vent trade in this case).
+sd_teth_y = sd_dy + sd_l/2 + sd_lip + sd_teth_gap;   // tether anchor hole centre
 fr_keep_base = concat(
     // grown with the doubler pads + mouth chamfers
     mount_keyholes ? [for (sx = [1,-1], sy = [1,-1])
         [sx*khm_dx, sy*(khm_y + khm_len/2), 10, 20]] : [],
     // the SD keepout covers the countersunk mouth and the nail scoop
-    [[sd_dx, sd_dy, sd_w/2 + 3.4, sd_l/2 + 6.7]]);
+    [[sd_dx, sd_dy, sd_w/2 + 3.4, sd_l/2 + 6.7]],
+    // ...and the tether zone: strap channel + anchor hole past the rim
+    sd_tether ? [[sd_dx, (sd_dy + sd_l/2 - 1 + sd_teth_y + 2)/2, 4.3,
+                  (sd_teth_y + 2 - (sd_dy + sd_l/2 - 1))/2 + 5.1]] : []);
 fr_keep_rails = adh_rails ? [for (sx = [1,-1])
     [sx*adh_rail_dx, 0,
      adh_rail_w/2 + adh_mark_w + vent_slot_w/2 + 0.6,
@@ -659,9 +685,17 @@ assert(!adh_rails || (adh_rail_dx - adh_rail_w/2 - adh_mark_w > 1
 assert(label_back_depth > frame_rim + 0.3 && label_back_depth <= back_t - 1.2,
        "frame: label_back_depth must clear the rim-chamfer band (the two-colour swap) yet leave 1.2 mm of plate");
 assert(sd_dx + sd_w/2 + sd_lip + 2 < fr_xi/2
-       && sd_dy + sd_l/2 + sd_lip + sd_hinge + 2 < fr_yi/2
+       && (!sd_tether || sd_teth_y + sd_teth_hole/2 + 3 < fr_yi/2)
        && sd_dy - sd_l/2 - sd_lip - 6 > -fr_yo/2 + frame_rim,
-       "frame: SD cover (mouth, hinge tongue or nail scoop) runs off the back plate");
+       "frame: SD cover (mouth, tether anchor or nail scoop) runs off the back plate");
+// the barb pops out just inside the plate and must stop short of the
+// component band; its head must also ride clear of the nearest boss fillet
+assert(!sd_tether || fr_depth - 5.2 >= fz_boss + 0.5,
+       "frame: tether barb reaches the component band — shorten it or thicken the stack");
+assert(!sd_tether || min([for (p = fr_bosses)
+       max(abs(sd_dx - p[0]), abs(sd_teth_y - p[1]))])
+       > sd_teth_head/2 + frame_boss_d/2 + 2.5,
+       "frame: tether anchor hole lands on a boss");
 assert(min([for (p = fr_bosses) max(abs(sd_dx - p[0]) - sd_w/2 - sd_lip - frame_boss_d/2,
                                     abs(sd_dy - p[1]) - sd_l/2 - sd_lip - 2 - frame_boss_d/2)]) > 1,
        "frame: SD cover countersink collides with a boss");
@@ -707,6 +741,10 @@ function lcd7_ports() = [usb_dx, usb_zc, usb_head_w, usb_head_h, fr_yi, fr_yo,
 // [on, adh_rail_dx, adh_rail_w, adh_rail_l, fr_depth]
 function lcd7_adh_rails() = [adh_rails ? 1 : 0, adh_rail_dx, adh_rail_w,
                              adh_rail_l, fr_depth];
+// ...and the SD tether anchor for the sd_tether_hole / sd_tether_barb gates.
+// [on, hole_x, hole_y, hole_d, fz_plate]
+function lcd7_sd_tether() = [sd_tether ? 1 : 0, sd_dx, sd_teth_y,
+                             sd_teth_hole, fz_plate];
 assert(cb_h + 1.0 <= bez_h, "counterbore deeper than the bezel ear");
 assert(cav_d > comp_h + pcb_t, "no air gap left between the PCB and the glass");
 // the lip climbs the case's front border — it must never reach the window,
@@ -1224,6 +1262,22 @@ module frame() {
         // under the cover's tapered cap edge to peel it
         translate([sd_dx, sd_dy - sd_l/2 - sd_lip - 2.2, fr_depth + 7.0])
             sphere(r = 7.8);
+        // tether anchor (see the sd_tether knobs): a shallow channel below
+        // the outer skin, from the countersink's top rim to past the anchor
+        // hole — the strap lies in it flush, so a wall or mounting strip
+        // never pinches it — then the hole itself, entry-chamfered at the
+        // channel floor so the arrowhead finds it; the barb mushrooms
+        // against the plate's inner face
+        if (sd_tether) {
+            translate([sd_dx, (sd_dy + sd_l/2 - 1 + sd_teth_y + 2)/2,
+                       fr_depth - 1.4]) linear_extrude(1.5)
+                square([5.0, (sd_teth_y + 2) - (sd_dy + sd_l/2 - 1)],
+                       center = true);
+            translate([sd_dx, sd_teth_y, fz_plate - 0.1])
+                cylinder(d = sd_teth_hole, h = back_t + 0.2);
+            translate([sd_dx, sd_teth_y, fr_depth - 1.4 - 0.45])
+                cylinder(d1 = sd_teth_hole, d2 = sd_teth_hole + 0.9, h = 0.46);
+        }
         // wall-mount keyholes through the back plate, one per corner — the
         // bottom pair mirrors the top pair's POSITION but keeps the same
         // orientation (head hole low, slide running up, catch at the button
@@ -1268,7 +1322,9 @@ module frame() {
         // "SD" beside the card window so nobody hunts for the socket
         frame_lbl(btn_dx - btn_lbl_dx, fr_yo/2 - 6.5, "BOOT");
         frame_lbl(btn_dx + btn_lbl_dx, fr_yo/2 - 6.5, "RESET");
-        frame_lbl(sd_dx, sd_dy + sd_l/2 + sd_lip + 4.7, "SD");
+        // "SD" sits beside the tether channel (its old spot above the mouth
+        // is exactly where the strap now runs)
+        frame_lbl(sd_dx - 8, sd_teth_y, "SD");
         // full product mark across the clear band under the grille — shifted
         // left of the SD cover's recess/tab zone, which owns the lower-right
         // of the plate (the default string renders ±36.8 wide at size 4, so
@@ -1387,12 +1443,14 @@ module button_plug() {
 // its 45° tapered edge nests the plate's 45° rim, flush at the skin — the
 // taper self-centres it and both sides print without a single bridge (the
 // flat-floored recess + tab this replaces drooped on the first real print).
-// Battery-door motion: tilt the hinge tongue in under the plate's top edge
-// first, then press the perimeter lip home. To open, get a nail into the
-// plate's scoop — it bites the rim at the card end, so the nail lands
-// directly under the cap's tapered edge — and peel: the shallow lip pops
-// progressively and the cover hinges open on the tongue, still attached —
-// nothing to lose, and the tongue stops it being pushed inside.
+// Install: push the arrowhead barb through the plate's anchor hole with a
+// thumb (it mushrooms inside — the cover is now captive), lay the strap in
+// its channel, press the cap home. To open, get a nail into the plate's
+// scoop — it bites the rim at the card end, so the nail lands directly
+// under the cap's tapered edge — and peel: the shallow lip pops
+// progressively and the cover dangles on its leash, still attached. The
+// countersink itself stops the cap being pushed inside; a deliberate yank
+// on the cover cams the barb's 45° faces out of the hole for service.
 module sd_cover() {
     ww = sd_w + 2*tpu_squeeze;  wl = sd_l + 2*tpu_squeeze;
     union() {
@@ -1408,10 +1466,21 @@ module sd_cover() {
             translate([0, 0, 4.2]) linear_extrude(0.4)
                 rrect2d(ww + 1.8, wl + 1.8, 6.1);
         }
-        hull() {   // hinge tongue — 45° underside, slides in under the plate
-            translate([0, wl/2 - 0.6, 3.0]) cube([14, 1.2, 0.01], center = true);
-            translate([0, wl/2 + sd_hinge/2 - 0.6, 3.0 + sd_hinge])
-                cube([14, sd_hinge + 1.2, 0.01], center = true);
+        // leash: flat strap off the cap's top end, arrowhead barb at its
+        // end. Printed cap-face-down everything stays 45°-safe: the strap
+        // lies on the bed, the arrowhead's under-flare is the 45° cam face
+        // (a deliberate yank frees it, a dangle never does) and the tip
+        // tapers steeply for the thumb-push through the hole.
+        if (sd_tether) {
+            translate([-2, sd_l/2 + sd_lip - 0.6, 0])
+                cube([4, sd_teth_gap + 1.6, 1.2]);              // strap
+            translate([0, sd_l/2 + sd_lip + sd_teth_gap, 0]) {
+                cylinder(d = 2.8, h = 3.2);                     // shaft
+                translate([0, 0, 3.2 - 0.01])                   // 45° under-flare
+                    cylinder(d1 = 2.8, d2 = sd_teth_head, h = 1.0);
+                translate([0, 0, 4.2 - 0.02])                   // insertion tip
+                    cylinder(d1 = sd_teth_head, d2 = 1.6, h = 1.0);
+            }
         }
     }
 }

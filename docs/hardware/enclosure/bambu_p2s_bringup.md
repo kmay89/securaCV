@@ -329,10 +329,12 @@ never the AMS**, §0):
   so both print clean back-plate-down and the taper self-centres the cap.
   (The v0.4 flat-floored recess left a cantilevered ring hanging over the
   opening — it drooped on the first real print; this replaces it.)
-  Battery-door motion: hinge tongue in first at the top end, press the lip
-  home. To open, a fingernail scoop bites the rim at the card end — the nail
-  lands directly under the cap's tapered edge; peel, and the cover hinges
-  open still attached, so there is nothing to lose.
+  Since v0.6 the cover is **leashed**: push its arrowhead barb through the
+  plate's anchor hole with a thumb (it mushrooms inside — captive from that
+  moment), lay the strap in its skin channel, press the cap home. To open,
+  a fingernail scoop bites the rim at the card end — the nail lands
+  directly under the cap's tapered edge; peel, and the cover dangles on its
+  leash, attached. A deliberate yank cams the barb free for service.
 
 TPU fits are tuned by `tpu_squeeze` (waist interference) and `tpu_grip`
 (grommet bore vs jacket) — TPU seats by squeeze, so its knobs are
@@ -406,6 +408,18 @@ durability/finish features landed:
   band's last few millimetres before the back plate: invisible against a
   wall and over the dock's well, still feeding the same bottom-in → top-out
   convection path, and asserted clear of the grommet flange and the plate.
+- **The SD cover is leashed.** The v0.5 hinge tongue only *hooked* under the
+  plate edge — a full peel could slide it out and the cover is gone. It is
+  replaced by a strap ending in an **arrowhead barb** that pushes through a
+  small anchor hole in the plate and mushrooms inside: the peeled cover
+  dangles, captive, and only a deliberate yank (45° cam faces) frees it.
+  **The frame carries the hole and the strap channel — re-export the frame
+  before printing**, or the barb has nowhere to go; two CI gates
+  (`sd_tether_hole`, `sd_tether_barb`) keep hole and barb aligned forever.
+  The other fitments already pass the stays-attached test: the button plug
+  is snap-captive behind its wall and never needs to come out, and the
+  grommet lives wrapped around the cable itself — pulled from the port, it
+  stays on the cord.
 
 **With an AMS** (§0 — rigid filaments only; TPU still prints from the
 external spool), the whole two-tone story runs itself, no pauses:
