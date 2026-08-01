@@ -6131,7 +6131,7 @@
       },
       {
        "name": "hdr_drop",
-       "default": "13.8",
+       "default": "8.8",
        "comment": "cavity depth below the PCB back that swallows base + pins"
       },
       {

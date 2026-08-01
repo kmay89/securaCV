@@ -45,8 +45,9 @@
 //      a shallow relief for the metal body edge), the actuator ends up
 //      slightly recessed behind a small tool hole — pressable, not bumpable
 //      — and the stadium tightened to shell + 0.2 (the wider insertion
-//      notch hides behind the skin). Header pins fouled the lid bosses at
-//      hdr_drop 8.8 → 13.8.
+//      notch hides behind the skin). What looked like "pins too long" was
+//      the pins catching the fat Ø5.2 boss SIDES — slimming the bosses to
+//      Ø4.6 fixed it at the original hdr_drop 8.8; don't deepen the case.
 //    * The lid is 180°-rotation SYMMETRIC (nubs at ±nub_y0, mirrored skirt
 //      reliefs, centred grille, plain plate outline) so it clicks on either
 //      way and the keyhole can hang the case port-up or port-down. Keep any
@@ -84,8 +85,9 @@ back_stack = 4.8;    // back-side clearance below the PCB, stripped board: the
 /* [Headers] — the "male" variant only: rows run along the two long (±X)
    edges, pins point down toward the back cover, and the factory brass M2
    pillars stand on the four corners. All are MEASURE. */
-hdr_drop = 13.8;     // cavity depth below the PCB back that swallows base + pins
-                     // (fit-tested: 8.8 left the pins fouling the lid bosses) — MEASURE
+hdr_drop = 8.8;      // cavity depth below the PCB back that swallows base + pins
+                     // (fit-tested: 8.8 closes fine — the earlier "pins foul the
+                     // lid" was the boss Ø, fixed by the slimmer Ø4.6 bosses) — MEASURE
 hdr_inset = 1.6;     // PCB edge → header row centreline — MEASURE
 brass_h = 5.0;       // factory corner pillar height above the PCB back (0 = pillars removed) — MEASURE
 
