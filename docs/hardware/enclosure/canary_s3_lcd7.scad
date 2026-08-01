@@ -1,5 +1,5 @@
 // ============================================================================
-//  Canary — 7" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.3-dev)
+//  Canary — 7" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.4-dev)
 // @env env="indoor; runs hot → print in PETG/ASA"
 //  Housing for the Waveshare ESP32-S3-Touch-LCD-7 (7" 800x480 IPS capacitive
 //  touch, ESP32-S3, CAN/RS485/battery). The big-panel "wall dashboard" — the
@@ -28,15 +28,34 @@
 //            4x M3x8-10 from the back thread into those standoffs — the
 //            screws, not a ledge, pull the glass flush with the front face.
 //            BOOT/RESET window in the top wall with debossed labels; gill
-//            vents down each side wall; chimney intake/exhaust; back grille;
+//            vents down each side wall; top-wall exhaust; back grille;
 //            a microSD access opening through the BACK PLATE covering the
 //            socket, the card's slide travel and a fingertip ("SD" deboss);
 //            keyhole wall mounts (hang on two screws, slide down); an
 //            adhesive LEDGE behind the glass matched to the panel's own
 //            adhesive strips (10 mm sides, 6 mm button edge, 2 mm over the
-//            FPC), each with a 45° back-slope wedge to its wall; branding on
-//            the back plate and the visible bottom edge. PRINTS BACK-PLATE-
-//            DOWN — the orientation the ledge wedges self-support in.
+//            FPC), each with a 45° back-slope wedge to its wall; a USB
+//            PASS-THROUGH centred on the bottom wall sized to pass the power
+//            cable's overmold head, with the brand lettering cut THROUGH the
+//            wall as slat-stencil intake vents flanking it — the bottom edge
+//            breathes through its own name. Branding stays debossed on the
+//            back plate. PRINTS BACK-PLATE-DOWN — the orientation the ledge
+//            wedges self-support in.
+//    TPU fitments (print in TPU 90–95 A from an EXTERNAL spool — never the
+//            AMS; see bambu_p2s_bringup.md §0):
+//      grommet_usb  — slit wire grommet for the USB pass-through: feed the
+//            head through the port, plug it, wrap the grommet around the
+//            wire and press it in. Inner flange carries tug loads so cable
+//            yanks fatigue the frame, not the board's connector.
+//      plug_buttons — captive plug for the BOOT/RESET window: cap nests the
+//            window's bevel, a 45° lip snaps in behind the wall (can't fall
+//            out, can't be pushed inside), and two press pips under the
+//            face dimples actuate BOOT/RESET THROUGH the plug — it never
+//            needs to come out.
+//      plug_sd      — peel-open cover for the SD opening: flush cap in a
+//            recess, battery-door hinge tongue at the top end (stays
+//            anchored — can't get lost), fingernail peel tab at the card
+//            end.
 //    frame_gauge — one corner of the frame including one boss and a wall
 //            keyhole. Print FIRST (~10 % of the frame's filament): it proves
 //            the glass corner radius, the boss offset signs and screw reach.
@@ -83,7 +102,7 @@
 // ============================================================================
 
 /* [What to render] */
-part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","all"]
+part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","grommet_usb","plug_buttons","plug_sd","all"]
 
 /* [Glass slab] — bonded touch panel, from the Waveshare drawing (mm) */
 glass_w = 192.96;    // touch-glass width  (X)
@@ -241,10 +260,46 @@ gill_y0 = -35.0;     // carry vents only; SD access is through the back plate
 gill_w = 2.4;  gill_l = 9.0;  gill_rake = 0;    // rake 0: vertical slots print
                      // cleanest; the raked look read as slashes and bought
                      // nothing thermally
-frame_vent_row_n   = 10; // intake slots in a row along the bottom wall
 frame_vent_flank_n = 4;  // exhaust slots per side, flanking the button window
 label_depth = 0.5;
 label_font  = "Liberation Sans:style=Bold";
+
+/* [Frame — bottom USB port, stencil vents, TPU fitments] */
+usb_port   = true;   // pass-through for the power cable, centred on the bottom wall.
+                     // Feed the head through BEFORE the panel goes in, plug it,
+                     // leave a service loop, then wrap the grommet on the wire.
+usb_dx     = 0.0;    // port centre along the bottom wall — 0 = centred
+usb_zc     = 11.0;   // port axis across the wall band (front face → back). The
+                     // stencil vent words centre on this same line.
+usb_head_w = 13.0;   // widest overmold head that must PASS — MEASURE your cable
+usb_head_h = 7.0;    // overmold head thickness — MEASURE
+usb_pass_c = 0.3;    // per-side clearance around the head through the opening
+usb_wire_d = 3.8;    // cable jacket Ø the grommet grips — MEASURE
+grom_lip   = 2.0;    // grommet flange width per side (both flanges)
+grom_bell  = 3.2;    // strain-relief bell beyond the outer flange
+// TPU fit system — these two do for the TPU parts what tol_slide/tol_hole do
+// for the rigid ones. TPU seats by squeeze, so its knobs are interferences,
+// not clearances.
+tpu_squeeze = 0.2;   // per-side interference each TPU waist carries in its opening
+tpu_grip    = 0.4;   // how much smaller the grommet bore is than the cable jacket
+// BOOT/RESET plug — the buttons are pressed THROUGH the installed plug.
+btn_reach  = 2.0;    // press-pip stand-off, wall inner face → just shy of the
+                     // button cap — MEASURE the gap and subtract ~0.5
+btn_pip_d  = 5.0;    // press-pip Ø (face dimples mark them outside)
+btn_pip_dz = 0.0;    // pip centre offset across the wall band, from the window centre
+// SD cover — peel tab at the card (fingertip) end, hinge tongue at the other.
+sd_lip    = 2.0;     // cover cap border beyond the opening, per side (flush recess)
+sd_tab    = 4.0;     // peel-tab length beyond the cap
+sd_hinge  = 3.0;     // hinge-tongue hook depth beyond the opening (stays anchored)
+// Bottom-edge stencil vents — the intake air path IS the lettering. Horizontal
+// tie bands interrupt every glyph, so no counter (the island inside an A or R)
+// is ever left floating: nothing to fall out, nothing for the slicer to bridge.
+vent_text_l = "SECURACV";  // front-view left of the port
+vent_text_r = "CANARY";    // front-view right
+vent_text_size = 7.0;
+vent_slat = 1.6;     // open slat height cut through each glyph
+vent_tie  = 0.8;     // uncut tie band between slats (keeps counters attached)
+vent_gap  = 8.0;     // clear space between the port flange and each word
 
 /* [Stand] */
 opt_stand = true;
@@ -319,6 +374,17 @@ fz_boss  = fr_depth - back_t - frame_boss_h;   // boss face the standoffs land o
 fz_plate = fr_depth - back_t;                  // inner face of the back plate
 fr_bosses = [for (sx = [1,-1], sy = [1,-1]) [-m3_ox + sx*m3_dx/2, m3_oy + sy*m3_dy/2]];
 btn_z0 = glass_t + 1;  btn_z1 = fz_boss + 1;   // the band the buttons live in
+btn_zc = (btn_z0 + btn_z1)/2;                  // window centre across the wall
+// USB pass-through: the opening passes the HEAD; the grommet then fills it
+// around just the wire, so the port needs no relation to where the connector
+// actually is — the cable routes inside, and the case never has to know.
+usb_open_w = usb_head_w + 2*usb_pass_c;
+usb_open_h = usb_head_h + 2*usb_pass_c;
+// Stencil vent words: each centred between the port flange and the wall's flat
+// span end, on the port's own axis line. Width is estimated (no textmetrics in
+// the render pipeline's OpenSCAD): bold caps advance ≈ 0.70 em × 1.12 tracking.
+vword_x    = ((usb_open_w/2 + grom_lip + vent_gap) + (fr_xi/2 - fr_ri - 3))/2;
+vword_half = 0.392 * vent_text_size * max(len(vent_text_l), len(vent_text_r));
 
 assert(bez_lip >= 2.0, "bezel lip < 2 mm won't retain a 7in slab");
 assert(lip_min >= bez_lip, str("bezel lip is only ", lip_min,
@@ -341,11 +407,27 @@ assert(!mount_keyholes || (khm_dx + khm_head_d/2 + 2 < fr_xi/2
        && khm_y - khm_head_d/2 > 4),
        "frame: keyhole runs off the back plate");
 assert(khm_slide_w < khm_head_d, "frame: keyhole slide wider than its head hole");
-assert(sd_dx + sd_w/2 + 2 < fr_xi/2 && abs(sd_dy) + sd_l/2 + 2 < fr_yi/2,
-       "frame: SD opening runs off the back plate");
-assert(min([for (p = fr_bosses) max(abs(sd_dx - p[0]) - sd_w/2 - frame_boss_d/2,
-                                    abs(sd_dy - p[1]) - sd_l/2 - frame_boss_d/2)]) > 1,
-       "frame: SD opening collides with a boss");
+assert(sd_dx + sd_w/2 + sd_lip + 2 < fr_xi/2
+       && sd_dy + sd_l/2 + sd_lip + sd_hinge + 2 < fr_yi/2
+       && sd_dy - sd_l/2 - sd_lip - sd_tab - 4 > -fr_yo/2 + frame_rim,
+       "frame: SD cover (cap, hinge tongue or peel tab) runs off the back plate");
+assert(min([for (p = fr_bosses) max(abs(sd_dx - p[0]) - sd_w/2 - sd_lip - frame_boss_d/2,
+                                    abs(sd_dy - p[1]) - sd_l/2 - sd_lip - sd_tab - frame_boss_d/2)]) > 1,
+       "frame: SD cover recess collides with a boss");
+assert(!usb_port || (usb_zc - usb_open_h/2 - grom_lip > glass_t + 0.4
+       && usb_zc + usb_open_h/2 + grom_lip < fz_boss - 0.2),
+       "frame: USB port (plus its grommet flange) runs out of the bottom wall band");
+assert(!usb_port || usb_wire_d - tpu_grip >= 1.0,
+       "frame: grommet bore closes up — usb_wire_d vs tpu_grip");
+assert(!usb_port || usb_wire_d + 2 < usb_open_h,
+       "frame: cable jacket barely fits the opening the grommet must fill");
+assert(vent_slat >= 1.2 && vent_tie >= 0.6,
+       "frame: stencil vent slats/ties below printable feature size");
+assert(vword_x - vword_half > usb_open_w/2 + grom_lip + 2
+       && vword_x + vword_half + 2 < fr_xi/2 - fr_ri,
+       "frame: stencil vent words don't fit between the USB port and the wall end");
+assert(btn_reach >= 0.5 && btn_reach < 12,
+       "frame: btn_reach out of sane range — measure wall inner face to button cap");
 // the whole panel assembly (glass + standoffs + board) enters through the
 // ledge opening, so the opening must clear the BOARD, not just the glass
 assert(fr_xi - 2*ledge_side > pcb_w + 2 && fr_yi - ledge_top - ledge_bot > pcb_h + 2,
@@ -356,9 +438,15 @@ assert(ledge_z + ledge_t < glass_t + pcb_standoff,
 // Exported for canary_s3_lcd7_fitcheck.scad — the frame's own derived stack,
 // so the frame fit gates read the real values instead of copies.
 function lcd7_frame_stack() = [ledge_z, ledge_t, fr_xi, fr_yi, fr_ri, fr_depth];
+// ...and the port/fitment geometry the TPU fit gates need, same doctrine.
+// [usb_dx, usb_zc, usb_head_w, usb_head_h, fr_yi, fr_yo, ledge_bot,
+//  btn_dx, btn_zc, sd_dx, sd_dy, fz_plate, usb_port]
+function lcd7_ports() = [usb_dx, usb_zc, usb_head_w, usb_head_h, fr_yi, fr_yo,
+                         ledge_bot, btn_dx, btn_zc, sd_dx, sd_dy, fz_plate,
+                         usb_port ? 1 : 0];
 assert(cb_h + 1.0 <= bez_h, "counterbore deeper than the bezel ear");
 assert(cav_d > comp_h + pcb_t, "no air gap left between the PCB and the glass");
-echo(str("Canary 7in touch v0.3-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
+echo(str("Canary 7in touch v0.4-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
          " mm, window ", view_w, " x ", view_h, ", lip ", lip_min,
          " mm, vent area ~",
          round(vent_back ? vent_rows*vent_cols*vent_slot_w*vent_slot_l/100 : 0), " cm2",
@@ -370,6 +458,12 @@ echo(str("  frame: ", fr_xo, " x ", fr_yo, " x ", fr_depth,
          " mm one-piece; glass opening ", fr_xi, " x ", fr_yi, " r", fr_ri,
          "; 4x M3x8-10 from the back into the panel standoffs (boss face at ",
          fz_boss, ", head seat at ", fz_plate, ")"));
+if (usb_port)
+    echo(str("  USB port: ", usb_open_w, " x ", usb_open_h,
+             " stadium at (", usb_dx, ", z ", usb_zc, ") — passes a ",
+             usb_head_w, " x ", usb_head_h, " head; grommet grips a Ø",
+             usb_wire_d, " jacket. TPU fitments (grommet_usb / plug_buttons / ",
+             "plug_sd): TPU 90-95A, EXTERNAL spool, never the AMS"));
 // When the board is the bigger part, the tray cavity opens up to clear it and
 // stops being what locates the slab — the bezel's glass pocket takes that job.
 // Worth saying out loud, because it changes which part you check first if the
@@ -533,6 +627,20 @@ module gauge() {
 //  proud/sunken by the same error.
 // ----------------------------------------------------------------------------
 module pill2d(l, w) { hull() for (d = [-1, 1]) translate([0, d*(l - w)/2]) circle(d = w); }
+// A word as a slat stencil: the glyphs intersected with horizontal bands, so
+// the cut-through letters double as vent slots. The uncut tie bands run the
+// full width of every glyph, which is what keeps counters (the island inside
+// an A or R) attached to the wall — no stencil font needed, no islands ever.
+module slat_text(s) {
+    n = max(2, floor((vent_text_size + vent_tie) / (vent_slat + vent_tie)));
+    intersection() {
+        text(s, size = vent_text_size, font = label_font, spacing = 1.12,
+             halign = "center", valign = "center");
+        for (i = [0 : n - 1])
+            translate([0, (i - (n - 1)/2)*(vent_slat + vent_tie)])
+                square([400, vent_slat], center = true);
+    }
+}
 module frame_lbl(x, y, s) {
     translate([x, y, fr_depth - label_depth]) linear_extrude(label_depth + 0.1)
         text(s, size = 4.0, font = label_font, halign = "center", valign = "center");
@@ -562,7 +670,6 @@ module frame_body() {
 module frame() {
     gz = (glass_t + fz_boss)/2;        // centre of the clear air band in the walls
     gh = fz_boss - glass_t - 4;        // wall-vent height inside that band
-    btn_zc = (btn_z0 + btn_z1)/2;
     difference() {
         union() {
             difference() {
@@ -636,27 +743,60 @@ module frame() {
         for (sx = [1, -1], i = [0 : frame_vent_flank_n - 1])
             translate([btn_dx + sx*(btn_w/2 + 9 + i*6.5), fr_yi/2 - 0.1, gz])
                 rotate([-90, 0, 0]) linear_extrude(frame_wall + 0.3) pill2d(gh, gill_w);
-        // intake rows along the bottom wall, split to flank the edge brand
-        for (sx = [1, -1], i = [0 : frame_vent_row_n/2 - 1])
-            translate([sx*(34 + i*7), -fr_yi/2 + 0.1, gz])
-                rotate([90, 0, 0]) linear_extrude(frame_wall + 0.3) pill2d(gh, gill_w);
-        // branding, TV-style on the visible bottom edge: readable standing
-        // below and in front, letter tops toward the screen
-        translate([0, -fr_yo/2 + label_depth, gz])
-            rotate([90, 0, 0]) rotate([0, 0, 180]) linear_extrude(label_depth + 0.2)
-                text(brand_edge, size = 5.5, font = label_font,
-                     halign = "center", valign = "center");
+        // USB pass-through, centred on the bottom wall: a true stadium sized
+        // to pass the power cable's overmold head, cut through the wall AND
+        // the FPC-edge ledge/wedge behind it. The grommet fills it afterwards.
+        if (usb_port) {
+            translate([usb_dx, -fr_yi/2 + ledge_bot + 0.6, usb_zc])
+                rotate([90, 0, 0]) linear_extrude(frame_wall + ledge_bot + 1.2)
+                    rotate(90) pill2d(usb_open_w, usb_open_h);
+            // 45° mouth bevel at the skin — the grommet's cone lands on it,
+            // and the empty port reads finished when no cable is fitted
+            hull() {
+                translate([usb_dx, -fr_yo/2 + 0.01, usb_zc]) rotate([90, 0, 0])
+                    linear_extrude(0.02) rotate(90)
+                        pill2d(usb_open_w + 1.6, usb_open_h + 1.6);
+                translate([usb_dx, -fr_yo/2 + 0.81, usb_zc]) rotate([90, 0, 0])
+                    linear_extrude(0.02) rotate(90) pill2d(usb_open_w, usb_open_h);
+            }
+            // relieve the ledge ring + wedge behind the port so the grommet's
+            // inner flange lands on a flat wall face. The panel carries no
+            // adhesive on this stretch of the border — the FPC owns it — so
+            // nothing structural is lost.
+            translate([usb_dx, -fr_yi/2 + (ledge_bot + 1)/2 - 0.01,
+                       ledge_z + (ledge_t + ledge_bot)/2])
+                cube([usb_open_w + 2*grom_lip + 2, ledge_bot + 1,
+                      ledge_t + ledge_bot + 0.6], center = true);
+        }
+        // the bottom edge breathes through its own name: the brand words are
+        // cut THROUGH the wall as slat-stencil intake vents flanking the port,
+        // centred on its axis. Readable standing below and in front, letter
+        // tops toward the screen — where the debossed edge brand used to be.
+        for (s = [1, -1])
+            translate([0, -fr_yi/2 + ledge_bot + 0.6, usb_zc])
+                rotate([90, 0, 0]) rotate([0, 0, 180]) translate([-s*vword_x, 0])
+                    linear_extrude(frame_wall + ledge_bot + 1.2)
+                        slat_text(s > 0 ? vent_text_l : vent_text_r);
         // back grille (dodging bosses and the keyholes — note -m3_ox: this
         // part is modelled print-side, x mirrored vs the two-part tray)
         translate([0, 0, fz_plate]) vent_grille(-m3_ox, m3_oy,
             keepouts = concat(
                 mount_keyholes
                     ? [for (sx = [1,-1]) [sx*khm_dx, khm_y + khm_len/2, 8, 17]] : [],
-                [[sd_dx, sd_dy, sd_w/2 + 3.4, sd_l/2 + 6.7]]));
+                // the SD keepout reaches past the tab end to cover the cover's
+                // flush recess and the nail scoop below it
+                [[sd_dx, sd_dy - (sd_tab + 6)/2, sd_w/2 + 3.4,
+                  sd_l/2 + 6.7 + (sd_tab + 6)/2]]));
         // microSD access through the back plate: socket + slide travel +
         // fingertip, so the card comes out without being dropped inside
         translate([sd_dx, sd_dy, fz_plate - 0.1])
             linear_extrude(back_t + 0.2) rrect2d(sd_w, sd_l, 5);
+        // flush recess for the SD cover's cap + peel tab (hairline reveal),
+        // and a fingernail scoop just past the tab tip to get under it
+        translate([sd_dx, sd_dy, fr_depth - 0.8]) linear_extrude(0.9)
+            sd_cap_2d(0.3);
+        translate([sd_dx, sd_dy - sd_l/2 - sd_lip - sd_tab - 1.0, fr_depth + 7.2])
+            sphere(r = 7.8);
         // wall-mount keyholes through the back plate: head hole LOW, slide
         // running UP so the catch points at the button edge — hang the case
         // over two screws and slide it DOWN to seat
@@ -671,9 +811,12 @@ module frame() {
         // "SD" beside the card window so nobody hunts for the socket
         frame_lbl(btn_dx - btn_lbl_dx, fr_yo/2 - 6.5, "BOOT");
         frame_lbl(btn_dx + btn_lbl_dx, fr_yo/2 - 6.5, "RESET");
-        frame_lbl(sd_dx, sd_dy + sd_l/2 + 4, "SD");
-        // full product mark across the clear band under the grille
-        frame_lbl(0, -(fr_yi/2 - 6), brand_back);
+        frame_lbl(sd_dx, sd_dy + sd_l/2 + sd_lip + 4.7, "SD");
+        // full product mark across the clear band under the grille — shifted
+        // left of the SD cover's recess/tab zone, which owns the lower-right
+        // of the plate (the default string renders ±36.8 wide at size 4, so
+        // its centre sits where the right edge clears the recess by ≥1)
+        frame_lbl(min(0, sd_dx - sd_w/2 - sd_lip - 1.5 - 37), -(fr_yi/2 - 6), brand_back);
     }
 }
 
@@ -689,6 +832,148 @@ module frame_gauge() {
         translate([bx - 12, by - 22, -1])
             cube([fr_xo/2 - bx + 14, fr_yo/2 - by + 24, fr_depth + 2]);
     }
+}
+
+// ----------------------------------------------------------------------------
+//  TPU FITMENTS — print in TPU 90–95 A from an EXTERNAL spool (never the AMS;
+//  it jams the hub — bambu_p2s_bringup.md §0). Each part exports in its print
+//  orientation: A-face down on the textured plate, every retention feature
+//  chamfered so nothing needs support. Their fits are tuned by tpu_squeeze
+//  (waist interference) and tpu_grip (grommet bore), not tol_slide/tol_hole —
+//  TPU seats by squeeze, rigid parts by clearance.
+// ----------------------------------------------------------------------------
+module stadium2d(w, h) { rotate(90) pill2d(w, h); }   // width w along x
+
+// USB wire grommet. Local z: 0 = the inner flange's bearing face (on the bed).
+// Install: unplugged, feed the cable head in through the port; plug it; open
+// the grommet at its slit, wrap it around the wire, slide it to the wall and
+// press the inner flange through the opening. A tug on the cable pulls the
+// inner flange flat against the wall's inner face — the frame takes the load,
+// not the board's connector. The slit faces the back plate when installed.
+module usb_grommet() {
+    fw = usb_open_w + 2*grom_lip;  fh = usb_open_h + 2*grom_lip;
+    ww = usb_open_w + 2*tpu_squeeze;  wh = usb_open_h + 2*tpu_squeeze;
+    difference() {
+        union() {
+            // inner flange — flat bearing face on the bed: this is the face
+            // that carries cable tugs, so it is square, not chamfered
+            linear_extrude(1.6) stadium2d(fw, fh);
+            // waist, interference-fit through the wall
+            translate([0, 0, 1.6 - 0.01])
+                linear_extrude(frame_wall + 0.02) stadium2d(ww, wh);
+            // 45° cone up to the outer flange — its tip lands in the port's
+            // mouth bevel, so the two 45° faces meet in a clean shadow line
+            hull() {
+                translate([0, 0, 1.6 + frame_wall - 0.01])
+                    linear_extrude(0.01) stadium2d(ww, wh);
+                translate([0, 0, 1.6 + frame_wall + grom_lip - 0.2])
+                    linear_extrude(0.01) stadium2d(fw, fh);
+            }
+            translate([0, 0, 1.6 + frame_wall + grom_lip - 0.21])
+                linear_extrude(1.0) stadium2d(fw, fh);        // outer flange
+            // strain-relief bell: supports the exiting wire's bend radius
+            hull() {
+                translate([0, 0, 1.6 + frame_wall + grom_lip + 0.78])
+                    linear_extrude(0.01)
+                        stadium2d(usb_open_w - 1, usb_open_h - 1);
+                translate([0, 0, 1.6 + frame_wall + grom_lip + 0.79 + grom_bell])
+                    linear_extrude(0.01) circle(d = usb_wire_d + 2.6);
+            }
+        }
+        // bore grips the jacket; the slit lets the grommet open like a C and
+        // wrap the wire after the head is already plugged in
+        cylinder(d = usb_wire_d - tpu_grip, h = 40, center = true);
+        translate([-0.2, 0, -0.1]) cube([0.4, fh/2 + 1, 20]);
+    }
+}
+
+// BOOT/RESET plug. Local z: 0 = cap face (on the bed). The cap nests the
+// window's 45° bevel with a hairline reveal; the waist squeezes the straight
+// land; the 45° lip snaps out behind the wall — push it in from outside and
+// it is captive: the cap can't pass inward, the lip won't fall out, and it
+// never needs to come out, because the buttons are pressed THROUGH it: two
+// pips under the face dimples carry the press to BOOT and RESET.
+module button_plug() {
+    ww = btn_w + 2*tpu_squeeze;  wh = btn_h + 2*tpu_squeeze;
+    difference() {
+        union() {
+            hull() {   // bevel-nesting cap
+                linear_extrude(0.01) rrect2d(btn_w + 2.2, btn_h + 2.2, 4.1);
+                translate([0, 0, 1.2]) linear_extrude(0.01) rrect2d(ww, wh, 3.1);
+            }
+            // waist through the wall's remaining straight land
+            translate([0, 0, 1.2 - 0.01]) linear_extrude(0.82) rrect2d(ww, wh, 3.1);
+            hull() {   // captive lip, ≤45° so it prints cap-down unsupported.
+                // The flare is asymmetric on purpose: 1.2/side along the
+                // window's length, but only 0.6/side across the wall band —
+                // the glass slab's edge lives 0.15 off the wall's inner face,
+                // and a full flare there would press on the panel's border
+                // (the btn_plug_glass gate catches exactly this).
+                translate([0, 0, 2.0 - 0.01]) linear_extrude(0.01) rrect2d(ww, wh, 3.1);
+                translate([0, 0, 3.2]) linear_extrude(0.4)
+                    rrect2d(ww + 2.4, wh + 1.2, 3.7);
+            }
+            // press pips — stepped nose so the tip is narrow where it meets
+            // the button cap. Reach is a MEASURE knob (btn_reach).
+            for (sx = [1, -1]) translate([sx*btn_lbl_dx, btn_pip_dz, 3.6 - 0.01]) {
+                cylinder(d = btn_pip_d, h = max(0.4, btn_reach - 0.5));
+                cylinder(d = btn_pip_d - 1.2, h = btn_reach);
+            }
+        }
+        // finger-findable dimples on the cap face, one over each pip
+        for (sx = [1, -1])
+            translate([sx*btn_lbl_dx, btn_pip_dz, -7.31]) sphere(r = 7.81);
+    }
+}
+
+// SD cover cap outline (cap + peel tab), shared with the frame's flush recess
+// cut so the two cannot drift apart. Local +y = the hinge end.
+module sd_cap_2d(o = 0) {
+    offset(r = o) union() {
+        rrect2d(sd_w + 2*sd_lip, sd_l + 2*sd_lip, 5 + sd_lip);
+        hull() {
+            translate([0, -(sd_l/2 + sd_lip - 0.5)]) square([11, 1], center = true);
+            translate([0, -(sd_l/2 + sd_lip + sd_tab - 4)]) circle(d = 8);
+        }
+    }
+}
+
+// SD peel cover. Local z: 0 = cap face (on the bed). Battery-door motion:
+// tilt the hinge tongue in under the plate's top edge first, then press the
+// perimeter lip home — the cap sits flush in its recess. To open, get a nail
+// into the scoop, peel the tab up: the shallow lip pops progressively and the
+// cover hinges open on the tongue, still attached — nothing to lose, and the
+// tongue stops it being pushed inside.
+module sd_cover() {
+    ww = sd_w + 2*tpu_squeeze;  wl = sd_l + 2*tpu_squeeze;
+    union() {
+        linear_extrude(0.8) sd_cap_2d();                       // flush cap + tab
+        translate([0, 0, 0.8 - 0.01])
+            linear_extrude(2.22) rrect2d(ww, wl, 5.2);         // waist
+        hull() {   // shallow snap lip, 45° — pops out under a peel
+            translate([0, 0, 3.0 - 0.01]) linear_extrude(0.01) rrect2d(ww, wl, 5.2);
+            translate([0, 0, 4.2]) linear_extrude(0.4)
+                rrect2d(ww + 1.8, wl + 1.8, 6.1);
+        }
+        hull() {   // hinge tongue — 45° underside, slides in under the plate
+            translate([0, wl/2 - 0.6, 3.0]) cube([14, 1.2, 0.01], center = true);
+            translate([0, wl/2 + sd_hinge/2 - 0.6, 3.0 + sd_hinge])
+                cube([14, sd_hinge + 1.2, 0.01], center = true);
+        }
+    }
+}
+
+// The fitments in their INSTALLED positions in the frame's coordinates —
+// used by canary_s3_lcd7_fitcheck.scad's TPU gates, so the gates test the
+// exact transforms these comments claim.
+module usb_grommet_installed() {
+    translate([usb_dx, -fr_yi/2 + 1.6, usb_zc]) rotate([90, 0, 0]) usb_grommet();
+}
+module button_plug_installed() {
+    translate([btn_dx, fr_yo/2, btn_zc]) rotate([90, 0, 0]) button_plug();
+}
+module sd_cover_installed() {
+    translate([sd_dx, sd_dy, fr_depth]) rotate([0, 180, 0]) sd_cover();
 }
 
 // ----------------------------------------------------------------------------
@@ -717,9 +1002,20 @@ else if (part == "gauge")       gauge();
 else if (part == "gauge_tray")  gauge_corner("back");
 else if (part == "gauge_bezel") gauge_corner("bezel");
 else if (part == "stand") stand();
+// TPU fitments export in their print orientation (A-face down), as modelled
+else if (part == "grommet_usb")  usb_grommet();
+else if (part == "plug_buttons") button_plug();
+else if (part == "plug_sd")      sd_cover();
 else {
     bezel_print();
     translate([xo + 16, 0, 0]) back();
     translate([-(xo + 20), 0, 0]) frame();
+    // the TPU trio, laid out under the frame (preview only — TPU prints on
+    // its own plate, from the external spool)
+    translate([-(xo + 20), -(yo/2 + 36), 0]) {
+        translate([-65, 0, 0]) usb_grommet();
+        button_plug();
+        translate([65, 0, 0]) sd_cover();
+    }
     if (opt_stand) translate([0, -(yo/2 + stand_d/2 + 16), 0]) stand();
 }

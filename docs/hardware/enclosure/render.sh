@@ -143,6 +143,11 @@ devstl dev_lcd7_stand.stl    canary_s3_lcd7.scad -D 'part="stand"'
 # corner gauge — the ~16.5 g sanity print that comes before the ~158 g case pair
 devstl dev_lcd7_gauge_bezel.stl canary_s3_lcd7.scad -D 'part="gauge_bezel"'
 devstl dev_lcd7_gauge_tray.stl  canary_s3_lcd7.scad -D 'part="gauge_tray"'
+# frame TPU fitments — TPU 90-95A from an EXTERNAL spool (never the AMS):
+# USB wire grommet, captive BOOT/RESET press-through plug, SD peel cover
+devstl dev_lcd7_grommet_usb.stl  canary_s3_lcd7.scad -D 'part="grommet_usb"'
+devstl dev_lcd7_plug_buttons.stl canary_s3_lcd7.scad -D 'part="plug_buttons"'
+devstl dev_lcd7_plug_sd.stl      canary_s3_lcd7.scad -D 'part="plug_sd"'
 devstl dev_t169_bezel.stl    canary_s3_touch169.scad -D 'part="bezel"'
 devstl dev_t169_back.stl     canary_s3_touch169.scad -D 'part="back"'
 devstl dev_t169_stand.stl    canary_s3_touch169.scad -D 'part="stand"'
