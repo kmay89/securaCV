@@ -145,6 +145,38 @@ jobs:
             echo "::error::fit gate is inert — a broken render passed as empty"; exit 1
           fi
           echo "fit gate self-test: a failed render is correctly rejected"
+          # Battery bay gates — parts on the SOURCE file, deliberately: -D
+          # only reaches the file it is given, and these check battery
+          # VARIANTS, so the probe and the override must live together.
+          bfit() { # bfit <battery> <part> <empty|solid> [msg]
+            rm -f /tmp/fit.stl
+            out=$(openscad --export-format binstl -o /tmp/fit.stl \
+                  -D "battery=\"$1\"" -D "part=\"$2\"" canary_s3_lcd7.scad 2>&1) || true
+            if printf '%s' "$out" | grep -qE 'ERROR|WARNING'; then
+              echo "::error::7in battery gate '$1/$2': render failed, so nothing was verified"
+              printf '%s\n' "$out"; return 1
+            fi
+            if [ "$3" = empty ]; then
+              if [ -f /tmp/fit.stl ]; then
+                echo "::error::7in battery gate '$1/$2': parts intersect (must be empty)"; return 1
+              fi
+              printf '%s' "$out" | grep -q 'Current top level object is empty' || {
+                echo "::error::7in battery gate '$1/$2': no output and no empty marker — did it evaluate?"
+                printf '%s\n' "$out"; return 1; }
+              echo "battery gate '$1/$2': empty, as required"
+            else
+              if [ ! -f /tmp/fit.stl ]; then
+                echo "::error::7in battery gate '$1/$2': $4"; return 1
+              fi
+              echo "battery gate '$1/$2': contact geometry present, as required"
+            fi
+            return 0
+          }
+          for b in 3000 10000; do
+            bfit $b bat_probe_fit  empty || exit 1   # cavity, curb and rails must clear the pack
+            bfit $b bat_probe_seat solid "the rails never touch the pack — nothing carries it" || exit 1
+            bfit $b bat_probe_grip solid "the fingers never reach the pack — nothing retains it" || exit 1
+          done
 
       - name: Invalid configs must fail their assertions
         run: |

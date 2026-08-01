@@ -6470,6 +6470,9 @@
         "grommet_usb",
         "plug_buttons",
         "plug_sd",
+        "bat_probe_fit",
+        "bat_probe_seat",
+        "bat_probe_grip",
         "all"
        ]
       }
@@ -7192,6 +7195,105 @@
        "name": "stand_feet",
        "default": "true",
        "comment": "4x shallow recesses for adhesive rubber feet"
+      },
+      {
+       "name": "qr_n",
+       "default": "len(qr_bits())",
+       "comment": "symbol size — defined HERE, above every use"
+      }
+     ]
+    },
+    {
+     "name": "Help QR — dock deck",
+     "note": "",
+     "params": [
+      {
+       "name": "qr_help",
+       "default": "true",
+       "comment": "deboss the help QR into the deck"
+      },
+      {
+       "name": "qr_cell",
+       "default": "1.6",
+       "comment": "module size — 4 line-widths at a 0.4 mm nozzle"
+      },
+      {
+       "name": "qr_dx",
+       "default": "43.5",
+       "comment": "field centre, plate coords (+x = front-view right wing)"
+      },
+      {
+       "name": "qr_dy",
+       "default": "39.0",
+       "comment": "field centre, +y = toward the back edge (a battery"
+      },
+      {
+       "name": "qr_back",
+       "default": "true",
+       "comment": "deboss the help QR into the back plate too"
+      },
+      {
+       "name": "qr_back_cell",
+       "default": "1.2",
+       "comment": "module size — 3 line-widths; the plate is busier"
+      },
+      {
+       "name": "qr_back_dx",
+       "default": "-40.0",
+       "comment": "field centre, back-view coords (+x = back-view right)"
+      },
+      {
+       "name": "qr_back_dy",
+       "default": "0.0"
+      },
+      {
+       "name": "qr_back_reach",
+       "default": "qr_n*qr_back_cell/2 + 4*qr_back_cell",
+       "comment": "field/2 + quiet zone,"
+      }
+     ]
+    },
+    {
+     "name": "Battery bay — click-in, no hardware",
+     "note": "",
+     "params": [
+      {
+       "name": "battery",
+       "default": "none",
+       "enum": [
+        "none",
+        "3000",
+        "10000"
+       ]
+      },
+      {
+       "name": "bat_dims",
+       "default": "battery == \"10000\" ? [115, 65, 9.0] : [65, 35, 10.0]"
+      },
+      {
+       "name": "bat_tol",
+       "default": "2.0",
+       "comment": "the vendor's stated thickness tolerance, held as margin"
+      },
+      {
+       "name": "bat_over",
+       "default": "3.0",
+       "comment": "tallest PCB component under the bay footprint — MEASURE"
+      },
+      {
+       "name": "bat_air",
+       "default": "2.0",
+       "comment": "battery ↔ component air gap (the board-side channel)"
+      },
+      {
+       "name": "bat_rib",
+       "default": "1.2",
+       "comment": "battery ↔ plate air channel (the grille-side channel)"
+      },
+      {
+       "name": "bat_clr",
+       "default": "1.0",
+       "comment": "per-side XY pocket clearance"
       }
      ]
     },
@@ -7310,6 +7412,19 @@
        "comment": "ledge front face"
       },
       {
+       "name": "bat_on",
+       "default": "battery != \"none"
+      },
+      {
+       "name": "bat_t",
+       "default": "bat_dims[2] + bat_tol",
+       "comment": "worst-case thick pack"
+      },
+      {
+       "name": "fr_depth",
+       "default": "fr_depth0 + bat_extra"
+      },
+      {
        "name": "usb_z",
        "default": "glass_guard + usb_zc"
       },
@@ -7319,7 +7434,7 @@
       },
       {
        "name": "fz_boss",
-       "default": "fr_depth - back_t - frame_boss_h",
+       "default": "fr_depth0 - back_t - frame_boss_h",
        "comment": "boss face the standoffs land on"
       },
       {
@@ -7363,8 +7478,16 @@
        "comment": "slot gap: the frame's outer depth + slack"
       },
       {
+       "name": "bat_dg",
+       "default": "bat_on ? ceil(bat_extra/2) : 0"
+      },
+      {
+       "name": "std_d",
+       "default": "stand_d + 2*bat_dg"
+      },
+      {
        "name": "std_ys",
-       "default": "-stand_d/2 + stand_slot_y",
+       "default": "-std_d/2 + stand_slot_y + bat_dg",
        "comment": "seat centreline in plate coords"
       },
       {
@@ -7375,6 +7498,11 @@
       {
        "name": "std_intake_x",
        "default": "(edge_vent_n - 1)/2*edge_vent_pitch + edge_vent_w/2"
+      },
+      {
+       "name": "qr_dy_eff",
+       "default": "qr_dy + bat_dg",
+       "comment": "the deck's rear half-growth, when a battery deepens the dock"
       },
       {
        "name": "gauge_in",
