@@ -515,7 +515,7 @@
   {
    "id": "7-touch-dashboard-case",
    "name": "7″ touch dashboard case",
-   "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on moulded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (~52 cm² back grille + bottom-wall intake and top-wall exhaust — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots on the tray, optional 20° desk cradle. The one-piece `frame` adds a bottom-centred USB pass-through (the brand lettering is the intake vents flanking it) and three TPU fitments: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive press-through BOOT/RESET plug, and a peel-open SD cover that stays attached. Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centres and `pcb_h` are NOMINAL — measure yours",
+   "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on moulded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (~52 cm² back grille + bottom-wall intake and top-wall exhaust — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centred USB pass-through (the brand lettering is the intake vents flanking it) and three TPU fitments: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive press-through BOOT/RESET plug, and a peel-open SD cover that stays attached. Optional 20° desk dock for the frame (drop-in slot on tilted seat pads, self-centring keys into the frame's keying slots, landscape and portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centres and `pcb_h` are NOMINAL — measure yours",
    "status": "in-development",
    "note": "glass drops in, lip 10.4, TPU-fitted ports",
    "device": "canary-display-dash",
@@ -6465,6 +6465,7 @@
         "gauge_bezel",
         "gauge_tray",
         "stand",
+        "stand_gauge",
         "grommet_usb",
         "plug_buttons",
         "plug_sd",
@@ -6856,6 +6857,20 @@
        "comment": "exhaust slots per side, flanking the button window"
       },
       {
+       "name": "dock_keys",
+       "default": "true"
+      },
+      {
+       "name": "dock_key_dx",
+       "default": "48.0",
+       "comment": "portrait slots' ±dy on the side walls (past the gills)"
+      },
+      {
+       "name": "dock_key_bx",
+       "default": "84.0",
+       "comment": "landscape slots' ±dx on the bottom wall (on the pads)"
+      },
+      {
        "name": "label_depth",
        "default": "0.5"
       },
@@ -6982,16 +6997,100 @@
        "name": "vent_gap",
        "default": "8.0",
        "comment": "clear space between the port flange and each word"
-      }
-     ]
-    },
-    {
-     "name": "Stand",
-     "note": "",
-     "params": [
+      },
       {
        "name": "opt_stand",
        "default": "true"
+      },
+      {
+       "name": "stand_ang",
+       "default": "20",
+       "comment": "recline from vertical"
+      },
+      {
+       "name": "stand_w",
+       "default": "174.0",
+       "comment": "dock width — DELIBERATELY narrower than the case, so"
+      },
+      {
+       "name": "stand_d",
+       "default": "126.0",
+       "comment": "base plate depth — sized so the base reaches well"
+      },
+      {
+       "name": "stand_plate_t",
+       "default": "6.0",
+       "comment": "base plate thickness"
+      },
+      {
+       "name": "stand_cheek_t",
+       "default": "16.0",
+       "comment": "side cheek thickness; the cheeks' tilted tops ARE the"
+      },
+      {
+       "name": "stand_lip_h",
+       "default": "9.0",
+       "comment": "front lip capture up the case face — must stay under"
+      },
+      {
+       "name": "stand_lip_t",
+       "default": "6.0",
+       "comment": "front lip blade thickness"
+      },
+      {
+       "name": "stand_fin_h",
+       "default": "78.0",
+       "comment": "back-fin support height along the case back (68 % of"
+      },
+      {
+       "name": "stand_fin_t",
+       "default": "8.0",
+       "comment": "back fin blade thickness"
+      },
+      {
+       "name": "stand_gusset_h",
+       "default": "52.0",
+       "comment": "cheek back edges buttress the fin up to this height"
+      },
+      {
+       "name": "stand_rib_x",
+       "default": "48.25",
+       "comment": "± KEYED RIBS: blades across the well that carry the"
+      },
+      {
+       "name": "stand_rib_w",
+       "default": "9.5",
+       "comment": "case in PORTRAIT (its 115 mm width misses the cheeks"
+      },
+      {
+       "name": "stand_rib_drop",
+       "default": "2.0",
+       "comment": "rib tops sit this far below the pad plane, so the"
+      },
+      {
+       "name": "stand_floor_h",
+       "default": "26.0",
+       "comment": "seat height: case bottom edge -> desk. This is the"
+      },
+      {
+       "name": "stand_slot_y",
+       "default": "32.0",
+       "comment": "seat centreline, measured from the plate's front edge"
+      },
+      {
+       "name": "stand_clear",
+       "default": "0.5",
+       "comment": "per-face case<->slot clearance (drop-in, not press)"
+      },
+      {
+       "name": "stand_cable_w",
+       "default": "16.0",
+       "comment": "desk-level cable channel width (through plate + fin foot)"
+      },
+      {
+       "name": "stand_feet",
+       "default": "true",
+       "comment": "4x shallow recesses for adhesive rubber feet"
       }
      ]
     },
@@ -7141,12 +7240,27 @@
        "default": "usb_head_h + 2*usb_pass_c"
       },
       {
-       "name": "vword_x",
-       "default": "((usb_open_w/2 + grom_lip + vent_gap) + (fr_xi/2 - fr_ri - 3))/2"
-      },
-      {
        "name": "vword_half",
        "default": "0.392 * vent_text_size * max(len(vent_text_l), len(vent_text_r))"
+      },
+      {
+       "name": "std_cd",
+       "default": "fr_depth + 2*stand_clear",
+       "comment": "slot gap: the frame's outer depth + slack"
+      },
+      {
+       "name": "std_ys",
+       "default": "-stand_d/2 + stand_slot_y",
+       "comment": "seat centreline in plate coords"
+      },
+      {
+       "name": "std_open",
+       "default": "stand_w - 2*stand_cheek_t",
+       "comment": "clear span between the seat pads"
+      },
+      {
+       "name": "std_intake_x",
+       "default": "vword_x + vword_half"
       },
       {
        "name": "gauge_in",
