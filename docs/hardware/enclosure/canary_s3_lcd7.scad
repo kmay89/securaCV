@@ -1,5 +1,5 @@
 // ============================================================================
-//  Canary — 7" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.6-dev)
+//  Canary — 7" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.7-dev)
 // @env env="indoor; runs hot → print in PETG/ASA"
 //  Housing for the Waveshare ESP32-S3-Touch-LCD-7 (7" 800x480 IPS capacitive
 //  touch, ESP32-S3, CAN/RS485/battery). The big-panel "wall dashboard" — the
@@ -142,7 +142,15 @@
 //  fillets, adhesive rails, two-colour swap bands, and the bottom-edge
 //  brand went from slat-stencil vents to crisp deboss + a shadow gill
 //  intake row (print feedback: the tie bands read as scan lines) — with NO
-//  fit knob moved. Still NOT fully print-validated; expect iteration.
+//  fit knob moved. v0.7 moves ONE fit knob, from print feedback: the
+//  adhesive ledge sat at 4.5 mm because glass_t lumped the LCD module into
+//  the border thickness, so the ledge floated 3.2 mm clear of the panel and
+//  the adhesive touched nothing. The border is bare glass, far thinner —
+//  glass_edge_t below — and the ledge face now sits 1.3 mm behind the front,
+//  matching the reference case print that fits the real panel. The rear
+//  stack (boss face 17.5, head seat 20.5, depth 23.5 — all confirmed against
+//  that same reference) does NOT move: it chains from the module stack, not
+//  the border. Still NOT fully print-validated; expect iteration.
 //  Orientation: landscape, +X = width, +Y = up, +Z = toward the glass.
 //  MOUNTING DOCTRINE: the panel mounts in its NATIVE orientation — no image
 //  rotation in firmware — which puts BOOT/RESET at the TOP edge in use. The
@@ -160,7 +168,15 @@ part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bez
 /* [Glass slab] — bonded touch panel, from the Waveshare drawing (mm) */
 glass_w = 192.96;    // touch-glass width  (X)
 glass_h = 110.76;    // touch-glass height (Y)
-glass_t = 4.0;       // glass + LCD module thickness at the edge — MEASURE
+glass_t = 4.0;       // glass + LCD module thickness where the module reaches —
+                     // sets the cavity depth and the rear stack datum. MEASURE
+glass_edge_t = 0.8;  // the BARE-GLASS border the adhesive strips land on —
+                     // much thinner than the module stack, and what the
+                     // adhesive ledge must rise to meet. Set from the
+                     // reference case print that fits the real panel: its
+                     // ledge face sits 1.3 mm behind the front face, i.e.
+                     // this + adh_t. (v0.6 chained the ledge off glass_t and
+                     // left it floating 3.2 mm clear of the panel.)
 glass_r = 3.2;       // corner radius of the glass slab. The FIRST REAL PRINT
                      // settled the direction of travel: the r2.0 the
                      // reference-case daylight story argued for was WRONG —
@@ -563,12 +579,14 @@ fr_xi = glass_w + 2*frame_reveal;  fr_yi = glass_h + 2*frame_reveal;
 fr_ri = glass_r + frame_reveal;    // opening corners track the slab
 fr_xo = fr_xi + 2*frame_wall;      fr_yo = fr_yi + 2*frame_wall;
 fr_ro = fr_ri + frame_wall;
-// The rear stack chains from the GLASS BACK: the PCB hangs from the glass on
-// its own standoffs, so adhesive thickness moves the LEDGE, not the board —
-// adh_t only sets where the ledge face sits, and the adhesive fills the gap
-// between glass back and ledge. (Chaining the bosses from the ledge instead
-// would open a screw gap equal to adh_t, or peel the adhesive closing it.)
-ledge_z  = glass_t + adh_t;                    // ledge front face
+// TWO front datums, one panel: the LEDGE chains from the bare-glass BORDER
+// (glass_edge_t — the strips bond glass to ledge across adh_t), while the
+// REAR stack chains from the full module thickness (glass_t) because the PCB
+// hangs from the panel on its own standoffs. adh_t only sets where the ledge
+// face sits, and the adhesive fills the gap between glass back and ledge.
+// (Chaining the bosses from the ledge instead would open a screw gap equal
+// to adh_t, or peel the adhesive closing it.)
+ledge_z  = glass_edge_t + adh_t;               // ledge front face
 fr_depth = glass_t + pcb_standoff + pcb_t + standoff_len + frame_boss_h + back_t;
 fz_boss  = fr_depth - back_t - frame_boss_h;   // boss face the standoffs land on
 fz_plate = fr_depth - back_t;                  // inner face of the back plate
@@ -692,10 +710,15 @@ assert(fr_xi - 2*ledge_side > pcb_w + 2 && fr_yi - ledge_top - ledge_bot > pcb_h
        "frame: adhesive ledge blocks the board's insertion path");
 assert(ledge_z + ledge_t < glass_t + pcb_standoff,
        "frame: ledge intrudes into the board plane");
+assert(glass_edge_t > 0 && glass_edge_t < glass_t,
+       "frame: glass_edge_t is the panel's bare-glass border — it must be thinner than the full module stack (glass_t) and non-zero");
 
 // Exported for canary_s3_lcd7_fitcheck.scad — the frame's own derived stack,
 // so the frame fit gates read the real values instead of copies.
-function lcd7_frame_stack() = [ledge_z, ledge_t, fr_xi, fr_yi, fr_ri, fr_depth];
+// (indices 6..9 carry the stepped-panel model the frame_glass gate needs:
+//  the bare-glass border thickness and how far each ledge reaches inboard)
+function lcd7_frame_stack() = [ledge_z, ledge_t, fr_xi, fr_yi, fr_ri, fr_depth,
+                               glass_edge_t, ledge_side, ledge_top, ledge_bot];
 // ...and the port/fitment geometry the TPU fit gates need, same doctrine.
 // [usb_dx, usb_zc, usb_head_w, usb_head_h, fr_yi, fr_yo, ledge_bot,
 //  btn_dx, btn_zc, sd_dx, sd_dy, fz_plate, usb_port, btn_w, btn_h, sd_w,
@@ -765,7 +788,7 @@ assert(!dock_keys || (dock_key_bx - 2 > std_open/2 && dock_key_bx + 2 < stand_w/
        "stand: landscape key misses the cheek pad — move dock_key_bx over it");
 assert(fr_yo/2 + 2 < std_open/2,
        "stand: the portrait case no longer misses the cheeks — the well ribs cannot carry it");
-echo(str("Canary 7in touch v0.6-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
+echo(str("Canary 7in touch v0.7-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
          " mm, window ", view_w, " x ", view_h, ", lip ", lip_min,
          " mm, tray grille ~",
          round(vent_back ? len(grille_cells())*vent_slot_w*vent_slot_l/100 : 0),
@@ -776,7 +799,9 @@ echo(str("  stack: floor ", z_floor, " | PCB under ", z_pcb_under, " | PCB top "
          back_t + cav_d + bez_h, " mm"));
 echo(str("  frame: ", fr_xo, " x ", fr_yo, " x ", fr_depth,
          " mm one-piece; glass opening ", fr_xi, " x ", fr_yi, " r", fr_ri,
-         "; 4x M3x8-10 from the back into the panel standoffs (boss face at ",
+         ", adhesive ledge face ", ledge_z, " mm behind the front (bare-glass ",
+         "border ", glass_edge_t, " + adhesive ", adh_t,
+         "); 4x M3x8-10 from the back into the panel standoffs (boss face at ",
          fz_boss, ", head seat at ", fz_plate, ")"));
 echo(str("  frame mounting: 4x keyhole, ", back_t + khm_pad_t,
          " mm bearing under each screw head (", back_t, " plate + ", khm_pad_t,
