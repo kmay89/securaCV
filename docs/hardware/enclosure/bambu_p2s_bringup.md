@@ -345,8 +345,84 @@ become backup rather than the only thing setting the glass depth. Every
 ledge carries a solid 45° wedge down to its wall, which is why **the frame
 prints back-plate-down** (the exported STL is already in that orientation):
 that way up, the ledges are fully self-supporting — no slicer supports, no
-sacrificial geometry. The frame is branded debossed on the back plate, and on
-the visible bottom edge by the stencil vent lettering itself.
+sacrificial geometry. The frame is branded debossed on the back plate and on
+the visible bottom edge (crisp deboss since v0.6 — see below; v0.4–v0.5
+cut the words through the wall as slat-stencil vents).
+
+v0.6 is the production-hardening pass — **no fit knob moved**, three
+durability/finish features landed:
+
+- **Keyhole doublers.** Every wall keyhole now bears on a pad on the plate's
+  inner face: the screw head clamps **5 mm of material** (3 mm plate + 2 mm
+  doubler, `khm_pad_t`) instead of 3, the slide's catch shears a wider
+  section, and each mouth carries a lead-in chamfer so the case slips over
+  the screw heads without catching an elephant-footed rim. The frame's M3
+  bosses and the tray's PCB bosses also gained 45° root fillets — a boss
+  fails by shearing at its root, so that section now spreads into the plate.
+- **Adhesive rails.** Two outlined zones on the back plate (17 × 74 mm at
+  x ±12) are guaranteed **smooth and uninterrupted** — no grille slot,
+  keyhole, boss pocket or deboss ever lands inside one, and a CI fit gate
+  (`frame_adh_rail`) fails any change that cuts a zone. They fit 15.9 × 70 mm
+  **interlocking picture-hanging strip pairs** (e.g. Command Medium) — pairs,
+  not single stretch-release foam strips, deliberately: the mounted case
+  fully covers its strips, so a single strip's pull tab would be sealed
+  behind it, unreachable. With pairs, removal follows the product's own
+  doctrine: pull the case straight off its wall halves (grip it by the side
+  gills / bottom port), and every wall tab is then exposed for its stretch
+  release. Stick inside the moat outlines, strips vertical, tabs down, and
+  wipe the zone with IPA first. The zone's finish is the build plate's
+  finish — a smooth sheet gives the best bond, but the foam bonds through
+  light texture too. No screws, no drill: the renter's wall mount.
+  **The trade, stated plainly:** the rails' keepouts cost the back grille
+  6 of its columns — 66 slots, ≈ 14 cm² of its ≈ 40 cm² at stock dims (the
+  render echo computes the exact numbers for your config from the same
+  predicate that cuts the slots). The convection path proper — bottom-wall
+  intake → top-wall exhaust — is untouched, and there is no better spot:
+  the SD zone, boss pockets and keyhole pads own every other clear column.
+  Screw-mount builds should set `adh_rails=false` and reclaim every slot.
+- **Two-colour, one extruder.** The frame prints back-plate-down, and two
+  z-bands are deliberately isolated so plain filament-change pauses (or AMS
+  layer swaps — §0) give a finished two-tone part with no painting:
+  - **Accent back skin** — start in the accent colour and swap to the body
+    colour at **z = 0.8 mm** (the rim-chamfer band). The back face and its
+    edge chamfer print in the accent; every back deboss floor sits at
+    1.2 mm (`label_back_depth`), so BOOT/RESET, SD, the brand line and the
+    rail moats all show through in the body colour.
+  - **Accent front ring** — swap back to the accent at **z = 22.9 mm**
+    (`fr_depth − 0.6` — the render echo prints your exact number if you
+    changed the stack). The last 0.6 mm of the print is only the front rim
+    and its glass entry chamfer, so the swap paints a clean accent ring
+    around the glass and nothing else.
+
+  Use either band alone or both; skipping both swaps prints the ordinary
+  single-colour part.
+- **Crisp edge lettering.** The bottom-edge brand is now a clean 1.0 mm
+  **deboss** — the slat-stencil vents are gone. Print feedback drove this:
+  the tie bands every through-cut glyph needed (or its counters fall out)
+  read as horizontal scan lines across the letters in the flesh. A deboss
+  stays attached everywhere by the wall web behind it — no ties, no lines,
+  no islands. The intake the stencil carried moved to a **shadow gill row**
+  (16 small pills, ≈1 cm² — the stencil's open area) tucked into the wall
+  band's last few millimetres before the back plate: invisible against a
+  wall and over the dock's well, still feeding the same bottom-in → top-out
+  convection path, and asserted clear of the grommet flange and the plate.
+
+**With an AMS** (§0 — rigid filaments only; TPU still prints from the
+external spool), the whole two-tone story runs itself, no pauses:
+
+- **The two z-bands** — in Bambu Studio right-click the layer slider at the
+  two echoed heights (0.8 mm and 22.9 mm at stock dims) and *Add color
+  change*; the AMS swaps automatically. Accent back skin, body-colour words
+  in the debosses, accent front ring.
+- **The lettering** — *Color Painting → Smart Fill* on the frame body: one
+  click per debossed letter (the bottom-edge words, and BOOT/RESET/SD/brand
+  on the back plate if you like) floods that recess with the accent
+  filament. Expect a prime tower and purge waste on every colour-change
+  layer — that is the AMS working, not a mis-slice.
+- **Filament picks**: the case must stay **PETG** (it runs hot — never the
+  PLA slot). White PETG body + canary-yellow PETG accents is the house
+  look; black reads more muted. Load body and accent in any two AMS slots
+  and map them in the slicer's filament list.
 
 ```sh
 # ~6 g, print FIRST after any radius doubt: four corner sockets bracketing

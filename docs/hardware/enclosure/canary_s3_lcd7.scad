@@ -1,5 +1,5 @@
 // ============================================================================
-//  Canary — 7" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.5-dev)
+//  Canary — 7" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.6-dev)
 // @env env="indoor; runs hot → print in PETG/ASA"
 //  Housing for the Waveshare ESP32-S3-Touch-LCD-7 (7" 800x480 IPS capacitive
 //  touch, ESP32-S3, CAN/RS485/battery). The big-panel "wall dashboard" — the
@@ -59,11 +59,25 @@
 //            adhesive strips (10 mm sides, 6 mm button edge, 2 mm over the
 //            FPC), each with a 45° back-slope wedge to its wall; a USB
 //            PASS-THROUGH centred on the bottom wall sized to pass the power
-//            cable's overmold head, with the brand lettering cut THROUGH the
-//            wall as slat-stencil intake vents flanking it — the bottom edge
-//            breathes through its own name. Branding stays debossed on the
-//            back plate. PRINTS BACK-PLATE-DOWN — the orientation the ledge
-//            wedges self-support in.
+//            cable's overmold head, with the brand words flanking it as
+//            CRISP DEBOSS (v0.6 — the slat-stencil vents' tie bands read as
+//            horizontal scan lines on the first print; a deboss needs no
+//            ties, so counters stay attached and the letters print clean)
+//            while a SHADOW GILL intake row tucked against the back plate
+//            keeps the bottom edge breathing. Branding stays debossed on
+//            the back plate. PRINTS BACK-PLATE-DOWN — the orientation the
+//            ledge wedges self-support in.
+//            v0.6 hardens mounting and finish: every keyhole bears on a
+//            DOUBLER PAD (back_t + khm_pad_t of material under the screw
+//            head, lead-in chamfer at the mouth), the M3 bosses and the
+//            tray's PCB bosses carry 45° root fillets, two outlined
+//            ADHESIVE RAILS on the back plate stay smooth and uninterrupted
+//            for 15.9 x 70 mm interlocking picture-hanging strip pairs
+//            (wall mounting with no screws — gated by the frame_adh_rail
+//            fit check; the echo reports the grille slots they cost), and the back
+//            deboss floors sit DEEPER than the rim-chamfer band, so a single
+//            filament swap prints an accent back skin with the words showing
+//            through in the body colour. Exact swap heights are echoed.
 //    TPU fitments (print in TPU 90–95 A from an EXTERNAL spool — never the
 //            AMS; see bambu_p2s_bringup.md §0):
 //      grommet_usb  — slit wire grommet for the USB pass-through: feed the
@@ -124,7 +138,11 @@
 //  panel upside down — signs flipped), the glass corner radius (r2.0 was the
 //  wrong direction; r3.2, verify on the radius_gauge), and the SD cover's
 //  flat-floored recess (unprintable cantilever — now a 45° countersink).
-//  Still NOT fully print-validated; expect further iteration.
+//  v0.6 is a durability/finish pass on top — keyhole doublers, boss root
+//  fillets, adhesive rails, two-colour swap bands, and the bottom-edge
+//  brand went from slat-stencil vents to crisp deboss + a shadow gill
+//  intake row (print feedback: the tie bands read as scan lines) — with NO
+//  fit knob moved. Still NOT fully print-validated; expect iteration.
 //  Orientation: landscape, +X = width, +Y = up, +Z = toward the glass.
 //  MOUNTING DOCTRINE: the panel mounts in its NATIVE orientation — no image
 //  rotation in firmware — which puts BOOT/RESET at the TOP edge in use. The
@@ -272,6 +290,16 @@ khm_len = 13.0;         // case hangs over the screws and slides DOWN to seat.
                         // bottom pair mirrors the feature about y=0. The head
                         // hole passes a #8 / M4 pan head; the slide, its
                         // shank; khm_len is head-hole centre → catch centre.
+khm_pad_t = 2.0;        // keyhole DOUBLER pads on the plate's inner face —
+khm_pad_w = 3.5;        // the screw head bears on back_t + khm_pad_t of
+                        // material (5 mm, not 3) and the slide's catch shears
+                        // a wider section; khm_pad_w is the pad's reach beyond
+                        // the keyhole outline. The pads live in the clear band
+                        // behind the plate (asserted against the component
+                        // band below).
+khm_mouth_c = 0.8;      // lead-in chamfer around each keyhole's mouth on the
+                        // outer skin, so the case slips over the screw heads
+                        // without catching on an elephant-footed rim
 // Adhesive ledge — the panel ships with adhesive strips on its BACK border
 // (≈10 mm down each side, ≈6 mm along the button edge, none over the FPC at
 // the bottom — see the Rev1.2 photos). The ledge is the landing for them:
@@ -290,6 +318,38 @@ ledge_bot  = 2.0;   // along the FPC (bottom) edge — keep small, the FPC lives
 // (Face-down would hang the ledges over the glass pocket; don't.)
 brand_back = "SecuraCV Canary 7\" Display";   // debossed across the back plate
 brand_edge = "SecuraCV Canary";               // debossed on the visible bottom edge
+// Adhesive WALL mounting — the no-screws alternative to the keyholes. Two
+// outlined rails on the back plate are kept smooth and uninterrupted: no
+// grille slot, keyhole pad, boss pocket or deboss ever lands inside one
+// (asserted below, and gated in CI by the frame_adh_rail fit check). Sized
+// for 15.9 x 70 mm INTERLOCKING picture-hanging strip PAIRS (e.g. Command
+// Medium) — pairs, not single stretch-release foam strips, deliberately:
+// the mounted case fully covers its strips, so a single strip's pull tab
+// would be sealed behind it, unreachable, and "damage-free removal" would
+// mean prying. With pairs the case pulls straight off its wall halves
+// first (grip it by the side gills / bottom port), and THEN every wall
+// tab is exposed for its stretch release — removal by the product's own
+// doctrine. Mount tabs DOWN, strips vertical, inside the moat outlines;
+// wipe the zone with IPA first. The zone's finish IS the build plate's
+// finish — a smooth sheet bonds best; the foam also bonds through light
+// texture. A hairline moat outlines each zone so the strip lands in the
+// right place; it is label_back_depth deep, so it reads in the body
+// colour on a two-colour print.
+// THE TRADE: the rails' keepouts cost the back grille 6 of its columns
+// (66 slots ≈ 14 cm² at stock dims — the echo computes the exact numbers
+// for your config from the same predicate that cuts the slots). The
+// convection path proper — bottom-wall intake → top-wall exhaust — is
+// untouched, and relocation was checked and loses as much or more: the
+// plate has no other clear 70 mm column (the SD zone, boss pockets and
+// keyhole pads own the rest). Screw-mount builds can set adh_rails=false
+// and reclaim every slot.
+adh_rails   = true;
+adh_rail_dx = 12.0;  // rail centres at ±this — the only clear full-height
+                     // columns on the plate: inboard of the SD mouth, the
+                     // boss head pockets and the keyhole pads (all asserted)
+adh_rail_w  = 17.0;  // zone width  — 15.9 strip + placement slack
+adh_rail_l  = 74.0;  // zone length — 70 strip + placement slack
+adh_mark_w  = 0.8;   // outline moat width
 // microSD access — the card slides DOWNWARD out of its push-push socket (the
 // purple-rectangle zone on the Rev1.2 board photo: right side, below centre,
 // in-use back view). The opening in the BACK PLATE covers the socket, the
@@ -312,7 +372,7 @@ frame_vent_flank_n = 4;  // exhaust slots per side, flanking the button window
 // slide sideways — the same doctrine as hanging the board on the panel's own
 // standoffs: let the part's own features locate it.
 //   landscape: the BOTTOM wall gets one keying slot each side at
-//              ±dock_key_bx — outboard of the stencil-vent words, over the
+//              ±dock_key_bx — outboard of the brand deboss words, over the
 //              dock's cheek pads, whose studs rise into them. (They double
 //              as two more intake slots on a wall-mount build.)
 //   portrait:  the ±x walls get one keying slot each at dy = ±dock_key_dx,
@@ -325,15 +385,24 @@ dock_key_dx = 46.5;   // portrait slots' ±dy on the side walls (past the gills;
                       // the slot must stay on the wall's flat span)
 dock_key_bx = 84.0;   // landscape slots' ±dx on the bottom wall (on the pads)
 label_depth = 0.5;
+label_back_depth = 1.2;  // BACK-plate deboss depth (BOOT/RESET/SD/brand and
+                     // the rail moats) — deliberately DEEPER than the
+                     // frame_rim chamfer band. That is the two-colour hook:
+                     // the frame prints back-plate-down, so one filament
+                     // swap at z = frame_rim prints the whole back skin and
+                     // edge chamfer in an accent colour while every deboss
+                     // floor, sitting above the swap, prints in the body
+                     // colour — the words show through. Exact swap heights
+                     // are echoed at render time.
 label_font  = "Liberation Sans:style=Bold";
 
-/* [Frame — bottom USB port, stencil vents, TPU fitments] */
+/* [Frame — bottom USB port, edge brand, TPU fitments] */
 usb_port   = true;   // pass-through for the power cable, centred on the bottom wall.
                      // Feed the head through BEFORE the panel goes in, plug it,
                      // leave a service loop, then wrap the grommet on the wire.
 usb_dx     = 0.0;    // port centre along the bottom wall — 0 = centred
 usb_zc     = 11.0;   // port axis across the wall band (front face → back). The
-                     // stencil vent words centre on this same line.
+                     // brand deboss words centre on this same line.
 usb_head_w = 13.0;   // widest overmold head that must PASS — MEASURE your cable
 usb_head_h = 7.0;    // overmold head thickness — MEASURE
 usb_pass_c = 0.3;    // per-side clearance around the head through the opening
@@ -357,14 +426,27 @@ sd_lip    = 1.2;     // countersunk rim: 45° reach AND depth around the opening
                      // back-plate-down (drooped on the first real print). A 45°
                      // countersink prints clean and self-centres the cap.
 sd_hinge  = 3.0;     // hinge-tongue hook depth beyond the opening (stays anchored)
-// Bottom-edge stencil vents — the intake air path IS the lettering. Horizontal
-// tie bands interrupt every glyph, so no counter (the island inside an A or R)
-// is ever left floating: nothing to fall out, nothing for the slicer to bridge.
-vent_text_l = "SECURACV";  // front-view left of the port
-vent_text_r = "CANARY";    // front-view right
-vent_text_size = 7.0;
-vent_slat = 1.6;     // open slat height cut through each glyph
-vent_tie  = 0.8;     // uncut tie band between slats (keeps counters attached)
+// Bottom-edge brand — CRISP DEBOSS into the wall's outer skin. v0.6: the
+// slat-stencil vents this replaces cut the letters THROUGH the wall, which
+// forced tie bands across every glyph (or the counters fall out) — and on
+// the first print those ties read as horizontal scan lines. A deboss stays
+// attached everywhere by the wall web behind it: no ties, no lines, clean
+// letters. The intake the stencil carried moves to a SHADOW GILL row in
+// the wall band's last few mm before the back plate — invisible against a
+// wall or over the dock's well, roughly the stencil's open area, still
+// feeding the same bottom-in → top-out convection path.
+// With an AMS: Color Painting → Smart Fill floods each deboss floor with
+// an accent filament in one click — see bambu_p2s_bringup.md §7b′.
+edge_text_l = "SECURACV";  // front-view left of the port
+edge_text_r = "CANARY";    // front-view right
+edge_text_size = 7.0;
+edge_lbl_depth = 1.0;   // deboss depth into the frame_wall skin (web asserted)
+edge_vent_n = 16;       // shadow gills: count / pitch / pill w x h / band
+edge_vent_pitch = 8.0;
+edge_vent_w = 2.6;
+edge_vent_h = 3.0;
+edge_vent_z = 18.7;     // band centre across the wall — behind the grommet's
+                        // outer flange, shy of the back plate (both asserted)
 vent_gap  = 8.0;     // clear space between the port flange and each word
 
 /* [Stand] — desk dock for the FRAME case (see the header). The slot is sized
@@ -491,6 +573,21 @@ fr_depth = glass_t + pcb_standoff + pcb_t + standoff_len + frame_boss_h + back_t
 fz_boss  = fr_depth - back_t - frame_boss_h;   // boss face the standoffs land on
 fz_plate = fr_depth - back_t;                  // inner face of the back plate
 fr_bosses = [for (sx = [1,-1], sy = [1,-1]) [-m3_ox + sx*m3_dx/2, m3_oy + sy*m3_dy/2]];
+// The frame's grille keepouts, hoisted so the open-area echo below is
+// computed from the SAME lists the cutter uses — the reported number cannot
+// drift from the geometry. Split so the echo can also say what the rails
+// cost (their keepouts are the one deliberate vent trade in this case).
+fr_keep_base = concat(
+    // grown with the doubler pads + mouth chamfers
+    mount_keyholes ? [for (sx = [1,-1], sy = [1,-1])
+        [sx*khm_dx, sy*(khm_y + khm_len/2), 10, 20]] : [],
+    // the SD keepout covers the countersunk mouth and the nail scoop
+    [[sd_dx, sd_dy, sd_w/2 + 3.4, sd_l/2 + 6.7]]);
+fr_keep_rails = adh_rails ? [for (sx = [1,-1])
+    [sx*adh_rail_dx, 0,
+     adh_rail_w/2 + adh_mark_w + vent_slot_w/2 + 0.6,
+     adh_rail_l/2 + adh_mark_w + vent_slot_l/2 + 0.6]] : [];
+fr_keepouts = concat(fr_keep_base, fr_keep_rails);
 btn_z0 = glass_t + 1;  btn_z1 = fz_boss + 1;   // the band the buttons live in
 btn_zc = (btn_z0 + btn_z1)/2;                  // window centre across the wall
 // USB pass-through: the opening passes the HEAD; the grommet then fills it
@@ -498,15 +595,15 @@ btn_zc = (btn_z0 + btn_z1)/2;                  // window centre across the wall
 // actually is — the cable routes inside, and the case never has to know.
 usb_open_w = usb_head_w + 2*usb_pass_c;
 usb_open_h = usb_head_h + 2*usb_pass_c;
-// Stencil vent words: each centred between the port flange and the desk
-// dock's WELL edge — the words are the intake, so they must end inside the
-// span the dock's well leaves breathing (the seat pads would smother letters
-// that reach under them; asserted below). Width is estimated (no textmetrics
-// in the render pipeline's OpenSCAD): bold caps advance ≈ 0.70 em × 1.12
+// Brand deboss words: each centred between the port flange and the desk
+// dock's well edge — the placement the stencil vents established (and the
+// first print validated visually); as deboss they no longer need to stay
+// inside the well's breathing span. Width is estimated (no textmetrics in
+// the render pipeline's OpenSCAD): bold caps advance ≈ 0.70 em × 1.12
 // tracking.
 vword_x    = ((usb_open_w/2 + grom_lip + vent_gap)
               + ((stand_w - 2*stand_cheek_t)/2 - 2))/2;
-vword_half = 0.392 * vent_text_size * max(len(vent_text_l), len(vent_text_r));
+vword_half = 0.392 * edge_text_size * max(len(edge_text_l), len(edge_text_r));
 
 // Stand derived. The dock is drawn in ITS print orientation (base on the
 // plate, +z up, +y toward the back fin); the "seat frame" is the tilted
@@ -515,10 +612,11 @@ vword_half = 0.392 * vent_text_size * max(len(vent_text_l), len(vent_text_r));
 std_cd   = fr_depth + 2*stand_clear;      // slot gap: the frame's outer depth + slack
 std_ys   = -stand_d/2 + stand_slot_y;     // seat centreline in plate coords
 std_open = stand_w - 2*stand_cheek_t;     // clear span between the seat pads
-// outermost bottom-wall intake opening on the frame — the stencil words' far
-// end (the ±dock_key_bx slots sit under the pads BY DESIGN: a key fills each,
-// so they are not intake the well must span) — the well must clear it
-std_intake_x = vword_x + vword_half;
+// outermost bottom-wall intake opening on the frame — the shadow gill row's
+// far end (the brand words are deboss now, not intake, and the ±dock_key_bx
+// slots sit under the pads BY DESIGN: a key fills each, so they are not
+// intake the well must span) — the well must clear it
+std_intake_x = (edge_vent_n - 1)/2*edge_vent_pitch + edge_vent_w/2;
 // where the lip's outer face meets the desk (the dock's front-most point)
 std_front_foot = std_ys - (std_cd/2 + stand_lip_t)*cos(stand_ang)
     - (stand_floor_h + (std_cd/2 + stand_lip_t)*sin(stand_ang))*tan(stand_ang);
@@ -539,11 +637,27 @@ assert(abs(btn_dx) + btn_w/2 + 3 < fr_xi/2 - fr_ri,
        "frame: button window overruns the bottom wall's flat span");
 assert((btn_z0 + btn_z1)/2 + btn_h/2 < fz_plate - 0.5,
        "frame: button window cuts into the back plate");
-assert(!mount_keyholes || (khm_dx + khm_head_d/2 + 2 < fr_xi/2
-       && khm_y + khm_len + max(khm_slide_w, khm_head_d)/2 + 2 < fr_yi/2
-       && khm_y - khm_head_d/2 > 4),
-       "frame: a keyhole runs off the back plate (the bottom pair mirrors the top, so one bound covers all four)");
+assert(!mount_keyholes || (khm_dx + khm_head_d/2 + khm_pad_w + 1.5 < fr_xi/2
+       && khm_y + khm_len + khm_slide_w/2 + khm_pad_w + 1.5 < fr_yi/2
+       && khm_y - khm_head_d/2 - khm_pad_w > 2),
+       "frame: a keyhole (or its doubler pad) runs off the back plate (the bottom pair mirrors the top, so one bound covers all four)");
 assert(khm_slide_w < khm_head_d, "frame: keyhole slide wider than its head hole");
+assert(!mount_keyholes || fz_plate - khm_pad_t >= fz_boss + 0.5,
+       "frame: keyhole doubler pads reach into the component band behind the board — thin khm_pad_t");
+// the adhesive rails must own their columns outright: clear of the SD mouth
+// (lip included), the boss head pockets, the keyhole pads, the brand deboss
+// line under the grille, and each other across the centre
+assert(!adh_rails || (adh_rail_dx - adh_rail_w/2 - adh_mark_w > 1
+       && adh_rail_dx + adh_rail_w/2 + adh_mark_w + 1 < abs(sd_dx) - sd_w/2 - sd_lip
+       && adh_rail_dx + adh_rail_w/2 + adh_mark_w + 1
+          < min([for (p = fr_bosses) abs(p[0])]) - (cb_d + 0.4)/2
+       && (!mount_keyholes
+           || adh_rail_dx + adh_rail_w/2 + adh_mark_w + 1
+              < khm_dx - khm_head_d/2 - khm_pad_w)
+       && adh_rail_l/2 + adh_mark_w + 1 < fr_yi/2 - 9),
+       "frame: an adhesive rail collides with the SD mouth, a boss pocket, a keyhole pad, the brand deboss or the plate edge");
+assert(label_back_depth > frame_rim + 0.3 && label_back_depth <= back_t - 1.2,
+       "frame: label_back_depth must clear the rim-chamfer band (the two-colour swap) yet leave 1.2 mm of plate");
 assert(sd_dx + sd_w/2 + sd_lip + 2 < fr_xi/2
        && sd_dy + sd_l/2 + sd_lip + sd_hinge + 2 < fr_yi/2
        && sd_dy - sd_l/2 - sd_lip - 6 > -fr_yo/2 + frame_rim,
@@ -558,12 +672,18 @@ assert(!usb_port || usb_wire_d - tpu_grip >= 1.0,
        "frame: grommet bore closes up — usb_wire_d vs tpu_grip");
 assert(!usb_port || usb_wire_d + 2 < usb_open_h,
        "frame: cable jacket barely fits the opening the grommet must fill");
-assert(vent_slat >= 1.2 && vent_tie >= 0.6,
-       "frame: stencil vent slats/ties below printable feature size");
+assert(edge_lbl_depth <= frame_wall - 0.8 && edge_lbl_depth >= 0.4,
+       "frame: bottom-edge deboss out of range — leave at least 0.8 of wall web");
 assert(vword_x - vword_half > usb_open_w/2 + grom_lip + 2
-       && vword_x + vword_half + 2 < fr_xi/2 - fr_ri
-       && vword_x + vword_half + 2 < std_open/2,
-       "frame: stencil vent words don't fit between the USB port and the dock's well edge");
+       && vword_x + vword_half + 2 < fr_xi/2 - fr_ri,
+       "frame: brand deboss words don't fit between the USB port and the wall's flat span");
+assert(!usb_port || edge_vent_z - edge_vent_h/2
+       > usb_zc + usb_open_h/2 + grom_lip + 0.3,
+       "frame: shadow gill row collides with the grommet's outer flange");
+assert(edge_vent_z + edge_vent_h/2 < fz_plate - 0.2,
+       "frame: shadow gill row cuts into the back plate");
+assert((edge_vent_n - 1)/2*edge_vent_pitch + edge_vent_w/2 < fr_xi/2 - fr_ri - 2,
+       "frame: shadow gill row runs off the bottom wall's flat span");
 assert(btn_reach >= 0.5 && btn_reach < 12,
        "frame: btn_reach out of sane range — measure wall inner face to button cap");
 // the whole panel assembly (glass + standoffs + board) enters through the
@@ -583,6 +703,10 @@ function lcd7_frame_stack() = [ledge_z, ledge_t, fr_xi, fr_yi, fr_ri, fr_depth];
 function lcd7_ports() = [usb_dx, usb_zc, usb_head_w, usb_head_h, fr_yi, fr_yo,
                          ledge_bot, btn_dx, btn_zc, sd_dx, sd_dy, fz_plate,
                          usb_port ? 1 : 0, btn_w, btn_h, sd_w, sd_l, ledge_top];
+// ...and the adhesive-rail zones for the frame_adh_rail gate.
+// [on, adh_rail_dx, adh_rail_w, adh_rail_l, fr_depth]
+function lcd7_adh_rails() = [adh_rails ? 1 : 0, adh_rail_dx, adh_rail_w,
+                             adh_rail_l, fr_depth];
 assert(cb_h + 1.0 <= bez_h, "counterbore deeper than the bezel ear");
 assert(cav_d > comp_h + pcb_t, "no air gap left between the PCB and the glass");
 // the lip climbs the case's front border — it must never reach the window,
@@ -630,21 +754,22 @@ assert(!dock_keys
      && -(dock_key_dx + gill_w/2) < gill_y0 - gill_w/2 - 1
      && dock_key_dx + gill_l/2 + 0.5 < fr_yi/2 - fr_ri),
        "frame: portrait keying slot collides with the gill row or the wall corner");
-// the landscape keying slots: between the stencil words and the wall corner
+// the landscape keying slots: between the brand words and the wall corner
 // on the case, and on the cheek pads (not the well, not off the dock) on the
 // stand — and the portrait case must still miss the cheeks entirely, or the
 // ribs no longer carry it
 assert(!dock_keys || (dock_key_bx - gill_w/2 - 2 > vword_x + vword_half
     && dock_key_bx + gill_w/2 + 2 < fr_xi/2 - fr_ri),
-       "frame: landscape keying slot lands on the stencil words or off the wall's flat span");
+       "frame: landscape keying slot lands on the brand words or off the wall's flat span");
 assert(!dock_keys || (dock_key_bx - 2 > std_open/2 && dock_key_bx + 2 < stand_w/2),
        "stand: landscape key misses the cheek pad — move dock_key_bx over it");
 assert(fr_yo/2 + 2 < std_open/2,
        "stand: the portrait case no longer misses the cheeks — the well ribs cannot carry it");
-echo(str("Canary 7in touch v0.5-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
+echo(str("Canary 7in touch v0.6-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
          " mm, window ", view_w, " x ", view_h, ", lip ", lip_min,
-         " mm, vent area ~",
-         round(vent_back ? vent_rows*vent_cols*vent_slot_w*vent_slot_l/100 : 0), " cm2",
+         " mm, tray grille ~",
+         round(vent_back ? len(grille_cells())*vent_slot_w*vent_slot_l/100 : 0),
+         " cm2 open (computed, boss dodges included)",
          "  (IN DEVELOPMENT — MEASURE CONNECTORS)"));
 echo(str("  stack: floor ", z_floor, " | PCB under ", z_pcb_under, " | PCB top ",
          z_pcb_top, " | glass back ", z_glass, " | closed height ",
@@ -653,6 +778,34 @@ echo(str("  frame: ", fr_xo, " x ", fr_yo, " x ", fr_depth,
          " mm one-piece; glass opening ", fr_xi, " x ", fr_yi, " r", fr_ri,
          "; 4x M3x8-10 from the back into the panel standoffs (boss face at ",
          fz_boss, ", head seat at ", fz_plate, ")"));
+echo(str("  frame mounting: 4x keyhole, ", back_t + khm_pad_t,
+         " mm bearing under each screw head (", back_t, " plate + ", khm_pad_t,
+         " doubler), chamfered mouths; adhesive rails ",
+         adh_rails ? str("2x ", adh_rail_w, " x ", adh_rail_l, " at x = ±",
+                         adh_rail_dx, " — fits 15.9 x 70 mm interlocking ",
+                         "picture-hanging strip pairs, kept smooth inside ",
+                         "the moat outlines (case pulls off its wall halves ",
+                         "first; the tabs are then exposed)")
+                   : "off"));
+echo(str("  frame back grille: ", len(grille_cells(-m3_ox, m3_oy, fr_keepouts)),
+         " slots ≈ ", round(len(grille_cells(-m3_ox, m3_oy, fr_keepouts))
+                            *vent_slot_w*vent_slot_l/100), " cm2 open",
+         adh_rails ? str(" — the adhesive rails cost ",
+             len(grille_cells(-m3_ox, m3_oy, fr_keep_base))
+             - len(grille_cells(-m3_ox, m3_oy, fr_keepouts)), " slots ≈ ",
+             round((len(grille_cells(-m3_ox, m3_oy, fr_keep_base))
+                    - len(grille_cells(-m3_ox, m3_oy, fr_keepouts)))
+                   *vent_slot_w*vent_slot_l/100),
+             " cm2 (adh_rails=false reclaims them); the bottom-intake → ",
+             "top-exhaust wall vents are untouched either way") : ""));
+echo(str("  frame two-colour (optional, single extruder): prints back-plate-",
+         "down — ACCENT BACK SKIN: start in the accent colour, swap to the ",
+         "body colour at z = ", frame_rim, " mm (every deboss floor sits at ",
+         label_back_depth, " mm, so BOOT/RESET/SD, the brand line and the ",
+         "rail moats read in the body colour); ACCENT FRONT RING: swap back ",
+         "to the accent at z = ", fr_depth - frame_foot, " mm — the last ",
+         frame_foot, " mm of the print is only the front rim and its entry ",
+         "chamfer"));
 echo(str("  stand: ", stand_w, " x ", stand_d, " base, ", stand_ang,
          "° recline, slot ", std_cd, " mm for the ", fr_depth,
          " mm frame, seat ", stand_floor_h, " mm over the desk (plug room), ",
@@ -734,21 +887,28 @@ module bezel_print() { bezel(); }
 // INSIDE the grille field, so slots must now dodge the bosses — the v0.2
 // pattern sat outside it and never could collide). keepouts: extra [x,y,hw,hh]
 // rectangles to dodge (the frame passes its cable slots).
+// The grille's surviving slot centres — a FUNCTION, shared by the cutter
+// below and the open-area echoes, so the area the console reports is
+// computed by the same predicate that cuts the slots and cannot drift.
+// A slot survives if it sits inside the PCB footprint, off the bosses, and
+// out of every caller-supplied [x, y, half_w, half_h] keepout rectangle.
+function grille_cells(ox = m3_ox, oy = m3_oy, keepouts = []) =
+    [for (r = [0:vent_rows-1], c = [0:vent_cols-1])
+        let (x = (c - (vent_cols-1)/2) * vent_pitch_x,
+             y = (r - (vent_rows-1)/2) * vent_pitch_y)
+        if (abs(x) < pcb_w/2 - 6 && abs(y) < pcb_h/2 - 6
+            && min([for (sx = [1,-1], sy = [1,-1])
+                   max(abs(x - (ox + sx*m3_dx/2)) - 6,
+                       abs(y - (oy + sy*m3_dy/2)) - 9)]) > 0
+            && (len(keepouts) == 0 ||
+                min([for (k = keepouts)
+                    max(abs(x - k[0]) - k[2], abs(y - k[1]) - k[3])]) > 0))
+        [x, y]];
 module vent_grille(ox = m3_ox, oy = m3_oy, keepouts = []) {
-    for (r = [0:vent_rows-1], c = [0:vent_cols-1]) {
-        x = (c - (vent_cols-1)/2) * vent_pitch_x;
-        y = (r - (vent_rows-1)/2) * vent_pitch_y;
-        // keep the grille inside the PCB footprint, off the bosses, and out of
-        // any caller-supplied keepout rectangles
-        clear_boss = min([for (sx = [1,-1], sy = [1,-1])
-            max(abs(x - (ox + sx*m3_dx/2)) - 6, abs(y - (oy + sy*m3_dy/2)) - 9)]) > 0;
-        clear_keep = len(keepouts) == 0 ||
-            min([for (k = keepouts) max(abs(x - k[0]) - k[2], abs(y - k[1]) - k[3])]) > 0;
-        if (abs(x) < pcb_w/2 - 6 && abs(y) < pcb_h/2 - 6 && clear_boss && clear_keep)
-            translate([x, y, -0.1]) linear_extrude(back_t + 0.2) hull()
-                for (dy = [-(vent_slot_l - vent_slot_w)/2, (vent_slot_l - vent_slot_w)/2])
-                    translate([0, dy]) circle(d = vent_slot_w);
-    }
+    for (p = grille_cells(ox, oy, keepouts))
+        translate([p[0], p[1], -0.1]) linear_extrude(back_t + 0.2) hull()
+            for (dy = [-(vent_slot_l - vent_slot_w)/2, (vent_slot_l - vent_slot_w)/2])
+                translate([0, dy]) circle(d = vent_slot_w);
 }
 module back() {
     total_d = cav_d + back_t;   // full tray depth (floor + cavity to glass ledge)
@@ -760,10 +920,14 @@ module back() {
             // cavity so the case screw threads into solid material all the way)
             translate([0, 0, back_t - 0.01]) linear_extrude(cav_d + 0.01)
                 difference() { outline2d(); rrect2d(xc, yc, r_cav); }
-            // PCB standoff bosses at the M3 pattern (offset — see m3_ox/m3_oy)
+            // PCB standoff bosses at the M3 pattern (offset — see m3_ox/m3_oy),
+            // each with a 45° root fillet: a self-tapped boss fails by
+            // shearing at its root, so spread that section into the floor
             for (sx = [1,-1], sy = [1,-1])
-                translate([m3_ox + sx*m3_dx/2, m3_oy + sy*m3_dy/2, back_t - 0.01])
+                translate([m3_ox + sx*m3_dx/2, m3_oy + sy*m3_dy/2, back_t - 0.01]) {
                     cylinder(d = 7.0, h = comp_h);
+                    cylinder(d1 = 7.0 + 3, d2 = 7.0, h = 1.51);
+                }
         }
         // M3 boss pilots
         for (sx = [1,-1], sy = [1,-1])
@@ -836,22 +1000,11 @@ module gauge() {
 //  proud/sunken by the same error.
 // ----------------------------------------------------------------------------
 module pill2d(l, w) { hull() for (d = [-1, 1]) translate([0, d*(l - w)/2]) circle(d = w); }
-// A word as a slat stencil: the glyphs intersected with horizontal bands, so
-// the cut-through letters double as vent slots. The uncut tie bands run the
-// full width of every glyph, which is what keeps counters (the island inside
-// an A or R) attached to the wall — no stencil font needed, no islands ever.
-module slat_text(s) {
-    n = max(2, floor((vent_text_size + vent_tie) / (vent_slat + vent_tie)));
-    intersection() {
-        text(s, size = vent_text_size, font = label_font, spacing = 1.12,
-             halign = "center", valign = "center");
-        for (i = [0 : n - 1])
-            translate([0, (i - (n - 1)/2)*(vent_slat + vent_tie)])
-                square([400, vent_slat], center = true);
-    }
-}
+// Back-plate deboss: label_back_depth, not label_depth — the floors must sit
+// above the two-colour swap band (see the knob's comment).
 module frame_lbl(x, y, s) {
-    translate([x, y, fr_depth - label_depth]) linear_extrude(label_depth + 0.1)
+    translate([x, y, fr_depth - label_back_depth])
+        linear_extrude(label_back_depth + 0.1)
         text(s, size = 4.0, font = label_font, halign = "center", valign = "center");
 }
 
@@ -888,9 +1041,26 @@ module frame() {
                 translate([0, 0, -0.1]) linear_extrude(fz_plate + 0.1)
                     rrect2d(fr_xi, fr_yi, fr_ri);
             }
-            // bosses hanging from the back plate's inner face
-            for (p = fr_bosses) translate([p[0], p[1], fz_boss])
+            // bosses hanging from the back plate's inner face, each with a
+            // 45° root fillet — the screws' clamp load spreads into the
+            // plate through a wider section instead of a sharp corner
+            for (p = fr_bosses) translate([p[0], p[1], fz_boss]) {
                 cylinder(d = frame_boss_d, h = frame_boss_h + 0.01);
+                translate([0, 0, frame_boss_h - 1.5])
+                    cylinder(d1 = frame_boss_d, d2 = frame_boss_d + 3, h = 1.51);
+            }
+            // keyhole DOUBLER pads on the plate's inner face: the wall
+            // screw's head clamps back_t + khm_pad_t of material and the
+            // slide's catch shears a wider section. They sit in the clear
+            // band behind the plate, above the component band (asserted).
+            if (mount_keyholes) for (sx = [1, -1], sy = [1, -1])
+                translate([sx*khm_dx, sy > 0 ? khm_y : -(khm_y + khm_len),
+                           fz_plate - khm_pad_t])
+                    linear_extrude(khm_pad_t + 0.01) hull() {
+                        circle(d = khm_head_d + 2*khm_pad_w);
+                        translate([0, khm_len])
+                            circle(d = khm_slide_w + 2*khm_pad_w);
+                    }
             // adhesive ledge behind the glass: a full ring at the glass-back
             // datum, widened where the panel's adhesive strips are (10 mm
             // sides, 6 mm button edge, 2 mm over the FPC)
@@ -974,9 +1144,9 @@ module frame() {
                     linear_extrude(2*(ledge_side + frame_wall))
                         pill2d(gill_l, gill_w);
         // ...and LANDSCAPE: one through the bottom wall at ±dock_key_bx,
-        // outboard of the stencil words, engaged by the studs on the dock's
-        // cheek pads. Cut through the FPC-edge ledge band like the stencil
-        // vents, so on a wall-mount build they breathe as two more intakes.
+        // outboard of the brand words, engaged by the studs on the dock's
+        // cheek pads. Cut through the FPC-edge ledge band like the shadow
+        // gills, so on a wall-mount build they breathe as two more intakes.
         if (dock_keys) for (sx = [1, -1])
             translate([sx*dock_key_bx, -fr_yi/2 + ledge_bot + 0.6, gz])
                 rotate([90, 0, 0]) linear_extrude(frame_wall + ledge_bot + 1.2)
@@ -1006,25 +1176,36 @@ module frame() {
                 cube([usb_open_w + 2*grom_lip + 2, ledge_bot + 1,
                       ledge_t + ledge_bot + 0.6], center = true);
         }
-        // the bottom edge breathes through its own name: the brand words are
-        // cut THROUGH the wall as slat-stencil intake vents flanking the port,
-        // centred on its axis. Readable standing below and in front, letter
-        // tops toward the screen — where the debossed edge brand used to be.
+        // the brand words flank the port as CRISP DEBOSS — the slat-stencil
+        // vents this replaces needed tie bands across every glyph, which
+        // read as horizontal scan lines on the first print. A deboss stays
+        // attached by the wall web behind it: no ties, no lines. Readable
+        // standing below and in front, letter tops toward the screen.
         for (s = [1, -1])
-            translate([0, -fr_yi/2 + ledge_bot + 0.6, usb_zc])
+            translate([0, -fr_yo/2 + edge_lbl_depth, usb_zc])
                 rotate([90, 0, 0]) rotate([0, 0, 180]) translate([-s*vword_x, 0])
-                    linear_extrude(frame_wall + ledge_bot + 1.2)
-                        slat_text(s > 0 ? vent_text_l : vent_text_r);
+                    linear_extrude(edge_lbl_depth + 0.1)
+                        text(s > 0 ? edge_text_l : edge_text_r,
+                             size = edge_text_size, font = label_font,
+                             spacing = 1.12, halign = "center",
+                             valign = "center");
+        // ...and the intake the stencil carried moves to a SHADOW GILL row
+        // tucked into the wall band's last few mm before the back plate:
+        // invisible against a wall or over the dock's well, roughly the
+        // stencil's open area, clear of the grommet's flange and the plate
+        // (all asserted). Cut through the FPC-edge ledge band like every
+        // bottom-wall opening, so it vents the cavity.
+        for (i = [0 : edge_vent_n - 1])
+            translate([(i - (edge_vent_n - 1)/2)*edge_vent_pitch,
+                       -fr_yi/2 + ledge_bot + 0.6, edge_vent_z])
+                rotate([90, 0, 0]) linear_extrude(frame_wall + ledge_bot + 1.2)
+                    pill2d(edge_vent_h, edge_vent_w);
         // back grille (dodging bosses and the keyholes — note -m3_ox: this
         // part is modelled print-side, x mirrored vs the two-part tray)
+        // (keepouts hoisted to fr_keepouts, where the open-area echo reads
+        // the same lists — see the derived section)
         translate([0, 0, fz_plate]) vent_grille(-m3_ox, m3_oy,
-            keepouts = concat(
-                mount_keyholes
-                    ? [for (sx = [1,-1], sy = [1,-1])
-                       [sx*khm_dx, sy*(khm_y + khm_len/2), 8, 17]] : [],
-                // the SD keepout covers the countersunk mouth and the nail
-                // scoop biting its card end
-                [[sd_dx, sd_dy, sd_w/2 + 3.4, sd_l/2 + 6.7]]));
+            keepouts = fr_keepouts);
         // microSD access through the back plate: socket + slide travel +
         // fingertip, so the card comes out without being dropped inside
         translate([sd_dx, sd_dy, fz_plate - 0.1])
@@ -1050,11 +1231,38 @@ module frame() {
         // now pinned flat to the wall at all four corners
         if (mount_keyholes) for (sx = [1, -1], sy = [1, -1])
             translate([sx*khm_dx, sy > 0 ? khm_y : -(khm_y + khm_len),
-                       fz_plate - 0.1]) linear_extrude(back_t + 0.2) {
+                       fz_plate - khm_pad_t - 0.1])
+                linear_extrude(back_t + khm_pad_t + 0.2) {
                 circle(d = khm_head_d);
                 hull() { circle(d = khm_slide_w);
                          translate([0, khm_len]) circle(d = khm_slide_w); }
             }
+        // ...each with a lead-in chamfer around its mouth on the outer skin,
+        // so the case slips over the screw heads without catching
+        if (mount_keyholes) for (sx = [1, -1], sy = [1, -1])
+            translate([sx*khm_dx, sy > 0 ? khm_y : -(khm_y + khm_len), 0]) {
+                translate([0, 0, fr_depth - khm_mouth_c])
+                    cylinder(d1 = khm_head_d,
+                             d2 = khm_head_d + 2*(khm_mouth_c + 0.05),
+                             h = khm_mouth_c + 0.05);
+                hull() for (e = [0, 1])
+                    translate([0, 0, fr_depth - khm_mouth_c
+                                     + e*(khm_mouth_c + 0.05)])
+                        linear_extrude(0.01) hull()
+                            for (dy = [0, khm_len]) translate([0, dy])
+                                circle(d = khm_slide_w + e*2*(khm_mouth_c + 0.05));
+            }
+        // adhesive-rail outline moats: a hairline frame OUTSIDE each smooth
+        // zone (the zone itself is never cut — the frame_adh_rail gate holds
+        // that), label_back_depth deep so the outline also reads in the body
+        // colour on a two-colour print
+        if (adh_rails) for (sx = [1, -1])
+            translate([sx*adh_rail_dx, 0, fr_depth - label_back_depth])
+                linear_extrude(label_back_depth + 0.1) difference() {
+                    rrect2d(adh_rail_w + 2*adh_mark_w, adh_rail_l + 2*adh_mark_w,
+                            2 + adh_mark_w);
+                    rrect2d(adh_rail_w, adh_rail_l, 2);
+                }
         // debossed labels on the back face — back view, buttons at the TOP:
         // BOOT on the left (-x here), RESET on the right, as on the board;
         // "SD" beside the card window so nobody hunts for the socket

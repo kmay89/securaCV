@@ -837,7 +837,7 @@
   {
    "id": "s3_lcd7",
    "scad": "canary_s3_lcd7.scad",
-   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.5-dev)",
+   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.6-dev)",
    "family": "canary-display-dash",
    "device_compat": [
     "canary-display-dash"
@@ -934,6 +934,14 @@
      "default": true
     },
     {
+     "id": "adh_rails",
+     "type": "bool",
+     "label": "adh_rails",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "dock_keys",
      "type": "bool",
      "label": "dock_keys",
@@ -966,7 +974,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 144,
+   "engineering_param_count": 157,
    "alternatives": [
     "dash_display"
    ],
@@ -974,8 +982,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 11,
-    "user_options": 11,
+    "options": 12,
+    "user_options": 12,
     "variant_axes": 0
    }
   },
