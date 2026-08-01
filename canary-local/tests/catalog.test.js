@@ -74,6 +74,14 @@ test("the axes stay distinct: `part` and mount_style are never variant axes", ()
         `${p.id}/${ax.param}: has enum values`);
     }
   }
+  // A string enum that IS a part-set selector must be surfaced, not dropped
+  // as an unclassified "invisible" axis: the C6 case's headers build changes
+  // the printed geometry, so the configurator must be able to select it.
+  const c6 = cat.products.find((p) => p.id === "c6_display");
+  const hdr = c6.variant_axes.find((a) => a.param === "headers");
+  assert.ok(hdr, "c6_display surfaces the headers board-build variant axis");
+  assert.deepStrictEqual([...hdr.values].sort(), ["male", "none"],
+    "c6_display headers axis carries both board builds");
 });
 
 test("env ratings are honest: verified is boolean and never true (untested)", () => {

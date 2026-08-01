@@ -504,7 +504,7 @@
   {
    "id": "c6-display-pocket-case",
    "name": "C6 display pocket case",
-   "for": "Waveshare ESP32-C6-LCD-1.47 (portrait), both board builds: `headers=\"none\"` (flat-bottom) or `headers=\"male\"` (factory down-facing pin headers — deeper cavity, standoffs inboard of the rows). Face-down bezel over the active-area window, edge-captured board (no screws into the board), snap-in vented back, blind keyhole. The overhanging BOOT/RST buttons and USB-C shell get full-depth insertion channels behind \"ear\"/\"chin\" wall bulges, and the USB-C port is a true stadium (full-round ends) sized shell + tolerance. `model=\"1.47\"` is drawn from the Waveshare mechanical drawing; a `\"1.69\"` preset is parameterised. Heat-escape slots on the sides + a back grille",
+   "for": "Waveshare ESP32-C6-LCD-1.47 (portrait), both board builds: `headers=\"none\"` (stripped: no headers, corner pillars removed) or `headers=\"male\"` (as shipped: down-facing pin headers + brass M2 corner pillars — deeper cavity, press bosses land on the pillar tops). Face-down bezel over the active-area window, edge-captured board (no screws into the board), snap-in vented back, blind keyhole. The overhanging BOOT/RST buttons and the USB-C shell (both BACK-mounted — photo-verified) get full-depth insertion channels behind \"ear\"/\"chin\" wall bulges, and the USB-C port is a true stadium (full-round ends) sized shell + tolerance. `model=\"1.47\"` is drawn from the Waveshare mechanical drawing; a `\"1.69\"` preset is parameterised. Heat-escape slots on the sides + a back grille",
    "status": "in-development",
    "note": "snap-fit, vented, 2 board builds",
    "device": "canary-display-watch",
@@ -6068,7 +6068,7 @@
    ]
   },
   "canary_c6_display.scad": {
-   "title": "Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.2-dev)",
+   "title": "Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.3-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -6126,8 +6126,8 @@
       },
       {
        "name": "back_stack",
-       "default": "2.2",
-       "comment": "back-side component clearance below the PCB (flat board) — MEASURE"
+       "default": "4.8",
+       "comment": "back-side clearance below the PCB, stripped board: the"
       },
       {
        "name": "hdr_drop",
@@ -6140,9 +6140,9 @@
        "comment": "PCB edge → header row centreline — MEASURE"
       },
       {
-       "name": "hdr_keepout",
-       "default": "4.2",
-       "comment": "no-press strip along each ±X edge (header body + margin)"
+       "name": "brass_h",
+       "default": "5.0",
+       "comment": "factory corner pillar height above the PCB back (0 = pillars removed) — MEASURE"
       }
      ]
     },
@@ -6172,13 +6172,13 @@
       },
       {
        "name": "usb_w",
-       "default": "9.2",
+       "default": "9.4",
        "comment": "stadium opening width — shell + tolerance"
       },
       {
        "name": "usb_h",
-       "default": "3.6",
-       "comment": "stadium opening height — shell + tolerance"
+       "default": "3.7",
+       "comment": "stadium opening height — shell + tolerance (+Z print squish)"
       },
       {
        "name": "usb_dx",
@@ -6188,12 +6188,12 @@
       {
        "name": "usb_dz",
        "default": "0.0",
-       "comment": "depth offset from mid-PCB (+ = toward the back) — MEASURE"
+       "comment": "depth offset from shell-on-back-face nominal (+ = toward the back) — MEASURE"
       },
       {
        "name": "usb_proud",
-       "default": "1.4",
-       "comment": "shell overhang past the PCB edge (insertion channel depth) — MEASURE"
+       "default": "1.9",
+       "comment": "shell overhang past the PCB edge (photo ≈1.8) — MEASURE"
       },
       {
        "name": "opt_btn",
@@ -6206,13 +6206,18 @@
       },
       {
        "name": "btn_up",
-       "default": "6.5",
-       "comment": "button centre up from the USB (−Y) end — MEASURE"
+       "default": "6.0",
+       "comment": "button centre up from the USB (−Y) end (photo ≈6.0) — MEASURE"
+      },
+      {
+       "name": "btn_dz",
+       "default": "1.0",
+       "comment": "actuator centre behind the PCB BACK face — MEASURE"
       },
       {
        "name": "btn_proud",
        "default": "1.8",
-       "comment": "button overhang past the PCB edge — MEASURE"
+       "comment": "button overhang past the PCB edge (photo ≈1.8) — MEASURE"
       },
       {
        "name": "btn_ch_w",
@@ -6316,9 +6321,19 @@
        "comment": "PCB front plane"
       },
       {
+       "name": "z_pcb_back",
+       "default": "z_pcb_front + pcb_t",
+       "comment": "PCB back plane"
+      },
+      {
        "name": "z_usb",
-       "default": "face_t + lcd_rise + pcb_t/2 + usb_dz",
-       "comment": "USB-C opening centre"
+       "default": "z_pcb_back + usb_h/2 + usb_dz",
+       "comment": "opening centre — shell rests on the PCB back"
+      },
+      {
+       "name": "z_btn",
+       "default": "z_pcb_back + btn_dz",
+       "comment": "button actuator centre (back-mounted)"
       },
       {
        "name": "btn_y",
@@ -6370,17 +6385,26 @@
       },
       {
        "name": "skirt_dep",
-       "default": "(headers == \"male\") ? snap_depth + snap_h/2 + 0.4 : back_stack"
+       "default": "snap_depth + snap_h/2 + 0.4"
       },
       {
        "name": "stand_ix",
-       "default": "(headers == \"male\") ? hdr_keepout + 2.1 : 2.6",
-       "comment": "inset from ±X edge"
+       "default": "2.6",
+       "comment": "inset from ±X edge (M2 pattern) — MEASURE"
       },
       {
        "name": "stand_iy",
        "default": "2.6",
-       "comment": "inset from ±Y edge"
+       "comment": "inset from ±Y edge (M2 pattern) — MEASURE"
+      },
+      {
+       "name": "stand_d",
+       "default": "(headers == \"male\") ? 5.2 : 4.2",
+       "comment": "boss Ø (wider = covers the pillar top)"
+      },
+      {
+       "name": "stand_len",
+       "default": "stack_eff - ((headers == \"male\") ? brass_h : 0)"
       },
       {
        "name": "vent_z0",

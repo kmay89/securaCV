@@ -1,12 +1,15 @@
 // ============================================================================
-//  Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.2-dev)
+//  Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.3-dev)
 //  A pocket portrait-display witness for the Waveshare ESP32-C6-LCD boards —
 //  our newest firmware-display target. Two board variants, one file:
-//    headers="none" — flat-bottom board (no male header pins soldered): the
-//                     PCB back is close to flat, so the case is shallow.
-//    headers="male" — factory pin headers soldered pointing DOWN (away from
-//                     the glass). The cavity deepens to swallow base + pins,
-//                     the press standoffs move inboard of the header rows,
+//    headers="none" — stripped board: header pins NOT soldered and the four
+//                     factory brass M2 corner pillars removed, so the case
+//                     stays shallow (the back-mounted USB shell sets depth).
+//    headers="male" — the board as it ships assembled: pin headers soldered
+//                     pointing DOWN (away from the glass) AND the brass M2
+//                     corner pillars installed. The cavity deepens to swallow
+//                     header base + pins, the press bosses land on the pillar
+//                     TOPS (flat brass — the best press pads on the board),
 //                     and the snap skirt goes shallow/thin to clear the pins.
 //  Either way the board is captured by its edges, not by screwing into its
 //  M2 holes.
@@ -20,16 +23,23 @@
 //            forward against the bezel's glass ledge. A blind keyhole
 //            wall-mounts it.
 //
-//  FIT LESSONS from the first print (don't undo these):
-//    * The BOOT/RST buttons overhang the PCB edge, so the board could not
-//      reach its seat — the side walls now carry full-depth clearance
-//      channels ("ears"): the wall bulges outward locally and the channel
-//      runs from the rear opening all the way to the seat, so the button
-//      overhangs slide in. The round access holes drill through the ear skin.
-//    * The USB-C shell overhangs the bottom edge the same way — the bottom
-//      wall gets the same treatment (a "chin"), and the port opening is now a
-//      true stadium (full-round ends, like the connector itself) instead of a
-//      rectangle, sized shell + tolerance.
+//  FIT LESSONS from the first print + the board photos (don't undo these):
+//    * The BOOT/RST buttons overhang the PCB edge (~1.8 mm), so the board
+//      could not reach its seat — the side walls now carry full-depth
+//      clearance channels ("ears"): the wall bulges outward locally and the
+//      channel runs from the rear opening all the way to the seat, so the
+//      button overhangs slide in. The access holes drill through the ear skin.
+//    * The USB-C shell overhangs the bottom edge the same way (~1.8 mm) —
+//      the bottom wall gets the same treatment (a "chin"), and the port
+//      opening is now a true stadium (full-round ends, like the connector
+//      itself) instead of a rectangle, sized shell + tolerance.
+//    * USB-C and BOTH buttons are mounted on the BACK of the PCB (photo-
+//      verified), not the front: the port centre sits ~usb_h/2 behind the
+//      PCB back face and the button actuators ~btn_dz behind it. That also
+//      means even the stripped board needs back clearance for the shell
+//      (back_stack ≥ ~4.7 keeps a printable bridge above the port), and the
+//      snap skirt gets relief windows over the USB / button spans so it
+//      can't land on back-mounted bodies at the board edges.
 //
 //  Model presets are parametric — `model = "1.47"` is dimensioned from the
 //  Waveshare mechanical drawing; the 1.69 preset lands when its drawing does.
@@ -46,7 +56,7 @@
 /* [What to render] */
 part  = "all";      // ["bezel","back","all"]
 model = "1.47";     // ["1.47","1.69"]  board preset
-// board variant: "none" = flat-bottom, "male" = factory down-facing pin headers
+// board variant: "none" = stripped (no headers, corner pillars removed), "male" = as shipped (down-facing headers + brass corner pillars)
 headers = "none";   // ["none","male"]
 
 /* [Board] — ESP32-C6-LCD-1.47. From the Waveshare drawing (mm). */
@@ -55,13 +65,16 @@ board_l = (model == "1.69") ? 36.0  : 36.37;   // 1.69 = MEASURE (placeholder)
 board_w = (model == "1.69") ? 25.0  : 20.32;
 pcb_t   = 1.45;
 lcd_rise   = 3.65;   // LCD glass front above the PCB front face (5.10 stack − 1.45 PCB)
-back_stack = 2.2;    // back-side component clearance below the PCB (flat board) — MEASURE
+back_stack = 4.8;    // back-side clearance below the PCB, stripped board: the
+                     // BACK-mounted USB shell (≈3.3) is the tallest thing, plus
+                     // a printable bridge over the port opening — MEASURE
 
 /* [Headers] — the "male" variant only: rows run along the two long (±X)
-   edges, pins point down toward the back cover. All four are MEASURE. */
+   edges, pins point down toward the back cover, and the factory brass M2
+   pillars stand on the four corners. All are MEASURE. */
 hdr_drop = 8.8;      // cavity depth below the PCB back that swallows base + pins — MEASURE
 hdr_inset = 1.6;     // PCB edge → header row centreline — MEASURE
-hdr_keepout = 4.2;   // no-press strip along each ±X edge (header body + margin)
+brass_h = 5.0;       // factory corner pillar height above the PCB back (0 = pillars removed) — MEASURE
 
 /* [Screen] — active area = the window; the LCD module border sits under the lip */
 aa_l  = (model == "1.69") ? 27.972 : 32.35;    // active-area long (Y) — 1.69 = MEASURE
@@ -69,22 +82,28 @@ aa_w  = (model == "1.69") ? 27.972 : 17.39;    // active-area short (X)
 lcm_l = (model == "1.69") ? 32.0   : 36.28;    // LCD module outline long
 lcm_w = (model == "1.69") ? 28.0   : 19.39;    // LCD module outline short
 
-/* [USB-C] — on the BOTTOM (−Y) short wall. The opening is a stadium (full-
-   round ends, radius = half its height) hugging the receptacle shell —
-   nominal shell is 8.94 × 3.26, so the defaults leave ~0.15–0.3 a side. */
-usb_w  = 9.2;    // stadium opening width — shell + tolerance
-usb_h  = 3.6;    // stadium opening height — shell + tolerance
+/* [USB-C] — on the BOTTOM (−Y) short wall, mounted on the BACK of the PCB
+   (photo-verified): the shell rests on the PCB back face, so the opening
+   centres ~usb_h/2 behind it. The opening is a stadium (full-round ends,
+   radius = half its height) hugging the receptacle shell — nominal shell is
+   8.94 × 3.26; usb_h carries extra because the bezel prints face-down and
+   holes shrink a touch along the print Z. */
+usb_w  = 9.4;    // stadium opening width — shell + tolerance
+usb_h  = 3.7;    // stadium opening height — shell + tolerance (+Z print squish)
 usb_dx = 0.0;    // sideways offset of the connector centre — MEASURE
-usb_dz = 0.0;    // depth offset from mid-PCB (+ = toward the back) — MEASURE
-usb_proud = 1.4; // shell overhang past the PCB edge (insertion channel depth) — MEASURE
+usb_dz = 0.0;    // depth offset from shell-on-back-face nominal (+ = toward the back) — MEASURE
+usb_proud = 1.9; // shell overhang past the PCB edge (photo ≈1.8) — MEASURE
 
-/* [Buttons] — BOOT/RST flank the USB end on the two side (±X) walls. They
-   overhang the PCB edge, so each side wall carries a full-depth clearance
-   channel (an "ear") the overhang slides down during insertion. */
+/* [Buttons] — BOOT/RST flank the USB end on the two side (±X) walls,
+   mounted on the BACK of the PCB (photo-verified) with side-facing
+   actuators. They overhang the PCB edge, so each side wall carries a
+   full-depth clearance channel (an "ear") the overhang slides down during
+   insertion. */
 opt_btn = true;
 btn_d   = 3.6;                 // side access hole Ø (through the ear skin)
-btn_up  = 6.5;                 // button centre up from the USB (−Y) end — MEASURE
-btn_proud = 1.8;               // button overhang past the PCB edge — MEASURE
+btn_up  = 6.0;                 // button centre up from the USB (−Y) end (photo ≈6.0) — MEASURE
+btn_dz  = 1.0;                 // actuator centre behind the PCB BACK face — MEASURE
+btn_proud = 1.8;               // button overhang past the PCB edge (photo ≈1.8) — MEASURE
 btn_ch_w  = 7.0;               // clearance channel width along the wall (Y)
 
 /* [Mount] */
@@ -109,16 +128,15 @@ r_out  = 3.0;    // outer corner radius
 lid_edge = 0.8;  // bezel face edge chamfer
 ear_skin = 1.2;  // wall skin left outside a button/USB clearance channel
 
-/* [Snap fit] — back skirt into the bezel walls.
-   Flat board: skirt_dep = back_stack — the skirt rides directly behind the
-   PCB edge and may only reach the PCB back plane (the cavity is only
-   board+2·tol_slide wide, ~0.2 mm/side over the PCB) — any deeper and it
-   drives into the board and the cover can't seat.
-   headers="male": the header pins descend right at the board edges, through
-   the zone the skirt occupies — so the skirt goes SHALLOW (just enough to
-   carry the nubs) and THIN (1.0 wall), staying outboard of the pin rows.
-   The nub sits at back_t + snap_depth so it lands on the skirt AND lines up
-   with the bezel window; keep snap_depth + snap_h/2 ≤ skirt_dep. */
+/* [Snap fit] — back skirt into the bezel walls. The skirt is SHALLOW in
+   both variants — just deep enough to carry the nubs: the board's edge zone
+   behind the PCB is busy (back-mounted USB shell and buttons on the
+   stripped board; descending header pins on the assembled one), so a deep
+   edge-riding skirt has nothing safe to ride on. It also gets relief
+   windows over the USB and button spans, and goes THIN (1.0 wall) in the
+   headers variant to stay outboard of the pin rows. The nub sits at
+   back_t + snap_depth so it lands on the skirt AND lines up with the bezel
+   window; keep snap_depth + snap_h/2 ≤ skirt_dep. */
 snap_n = 4; snap_w = 5.0; snap_h = 1.6; snap_depth = 1.4; snap_proud = 0.5;
 
 /* [Quality] */
@@ -137,7 +155,9 @@ bez_h = face_t + cav_d;                          // bezel wall height
 r_in  = max(0.6, r_out - wall);                  // cavity corner radius
 
 z_pcb_front = face_t + lcd_rise;                 // PCB front plane
-z_usb       = face_t + lcd_rise + pcb_t/2 + usb_dz;   // USB-C opening centre
+z_pcb_back  = z_pcb_front + pcb_t;               // PCB back plane
+z_usb       = z_pcb_back + usb_h/2 + usb_dz;     // opening centre — shell rests on the PCB back
+z_btn       = z_pcb_back + btn_dz;               // button actuator centre (back-mounted)
 
 // button / USB overhang clearance: how far each channel reaches past the
 // cavity wall face, and how far the wall must bulge to keep ear_skin of skin
@@ -154,14 +174,19 @@ chin_w = usb_w + 4;                      // chin bulge width along the wall
 lip_l = (lcm_l - aa_l)/2;   // long-side lip (Y)
 lip_w = (lcm_w - aa_w)/2;   // short-side lip (X)
 
-// snap skirt: shallow/thin in headers mode (see the [Snap fit] note)
+// snap skirt: shallow in both variants, thin in headers mode (see [Snap fit])
 skirt_wall = (headers == "male") ? 1.0 : 1.6;
-skirt_dep  = (headers == "male") ? snap_depth + snap_h/2 + 0.4 : back_stack;
+skirt_dep  = snap_depth + snap_h/2 + 0.4;
 skirt_x = xc - 2*tol_press;   skirt_y = yc - 2*tol_press;
 
-// press standoffs: inboard of the header rows when the board has them
-stand_ix = (headers == "male") ? hdr_keepout + 2.1 : 2.6;   // inset from ±X edge
-stand_iy = 2.6;                                             // inset from ±Y edge
+// press bosses sit over the M2 corner pillar positions in both variants: on
+// the assembled board they land on the flat brass pillar TOPS (boss length
+// shortens by brass_h and widens to cover the pillar); on the stripped board
+// they press the bare PCB corners
+stand_ix = 2.6;                                  // inset from ±X edge (M2 pattern) — MEASURE
+stand_iy = 2.6;                                  // inset from ±Y edge (M2 pattern) — MEASURE
+stand_d  = (headers == "male") ? 5.2 : 4.2;      // boss Ø (wider = covers the pillar top)
+stand_len = stack_eff - ((headers == "male") ? brass_h : 0);
 
 // snap windows / nubs live on the two long (±X) side walls; the bottom pair
 // shifts up above the button channel so nub and channel never overlap
@@ -179,19 +204,24 @@ assert(aa_l < lcm_l && aa_w < lcm_w, "active area must be inside the module outl
 assert(lip_w >= 0.8, "short-side lip < 0.8 mm won't retain the glass — check aa_w/lcm_w");
 assert(lcm_l <= yc && lcm_w <= xc, "LCD module larger than the board cavity — check dims");
 assert(z_usb - usb_h/2 >= face_t - 0.01, "USB opening cuts into the bezel face — check usb_h/usb_dz");
-assert(z_usb + usb_h/2 <= face_t + cav_d, "USB opening overruns the cavity depth — check usb_h/usb_dz");
+assert(z_usb + usb_h/2 <= face_t + cav_d - 0.8,
+       "no printable bridge left between the USB opening and the rear rim — raise back_stack/hdr_drop or lower usb_dz");
+assert(z_btn + btn_d/2 <= face_t + cav_d, "button hole overruns the cavity depth — check btn_dz/back_stack");
 assert(skirt_dep <= stack_eff + 0.01, "skirt_dep > component clearance — the skirt would drive into the PCB");
 assert(skirt_dep >= snap_depth + snap_h/2, "skirt too short to carry the snap nub (nub sits at back_t + snap_depth)");
+assert(stand_len >= 0.6, "press bosses shorter than 0.6 — brass_h nearly fills the cavity; check hdr_drop/brass_h");
+assert(headers != "male" || hdr_drop >= brass_h + 0.5,
+       "corner pillars taller than the cavity below the PCB — check brass_h/hdr_drop");
 assert(!opt_btn || min([for (y = nub_ys()) abs(y - btn_y)]) >= btn_ch_w/2 + snap_w/2 + 1.5,
        "a snap window overlaps the button clearance channel — shift nub_ys()/btn_up");
 assert(!opt_vent || vent_z1 - vent_z0 >= 1.5, "no room for wall vents between ledge and snap band — set opt_vent=false");
 assert(!opt_vent || vent_dy + (vent_n-1)*vent_pitch/2 + vent_w/2 <= yc/2 - 0.8,
        "vent row overruns the side wall — fewer slots (vent_n) or tighter pitch");
-assert(headers != "male" || hdr_drop > back_stack, "headers=male but hdr_drop is shallower than the flat clearance");
+assert(headers != "male" || hdr_drop > back_stack, "headers=male but hdr_drop is shallower than the stripped-board clearance");
 assert(headers != "male" || tol_slide + hdr_inset - 0.35 >= tol_press + skirt_wall + 0.25,
        "skirt would sit in the header pin row — thin skirt_wall or re-measure hdr_inset");
-assert(board_w/2 - stand_ix - 2.1 > 0, "press standoffs collide at the board centre — check hdr_keepout");
-echo(str("Canary C6 display (", model, ", headers=", headers, ") v0.2-dev — outer ",
+assert(board_w/2 - stand_ix - stand_d/2 > 0, "press bosses collide at the board centre — check stand_ix/stand_d");
+echo(str("Canary C6 display (", model, ", headers=", headers, ") v0.3-dev — outer ",
          xo, " x ", yo, " x ", bez_h + back_t, " mm, window ", aa_w, " x ", aa_l,
          " (lip X ", lip_w, " / Y ", lip_l, "), cavity depth ", cav_d,
          "  (IN DEVELOPMENT — MEASURE)"));
@@ -244,9 +274,10 @@ module bezel() {
         // USB-C stadium opening through the bottom (−Y) wall + chin
         translate([usb_dx, -yo/2, z_usb]) rotate([90, 0, 0])
             linear_extrude(2*(wall + chin_bump + 1), center = true) stadium2d(usb_w, usb_h);
-        // BOOT / RST side access holes near the USB end, through the ear skin
+        // BOOT / RST side access holes near the USB end, through the ear
+        // skin — the actuators sit BEHIND the PCB (back-mounted switches)
         if (opt_btn) for (sx = [1, -1])
-            translate([sx*xo/2, btn_y, z_pcb_front + 0.5])
+            translate([sx*xo/2, btn_y, z_btn])
                 rotate([0, 90, 0]) cylinder(d = btn_d, h = 2*(wall + ear_bump + 1), center = true);
         // heat-escape slots: a row on each side wall (convection in the
         // bottom, out the top) — kept clear of the ledge, the ears and the
@@ -276,13 +307,18 @@ module back() {
                 difference() {
                     rrect2d(skirt_x, skirt_y, r_in);
                     rrect2d(skirt_x - 2*skirt_wall, skirt_y - 2*skirt_wall, max(0.4, r_in - skirt_wall));
+                    // relief windows: the back-mounted USB shell / buttons
+                    // occupy the edge zone the skirt passes through
+                    translate([usb_dx, -skirt_y/2]) square([usb_w + 2, 3*skirt_wall], center = true);
+                    if (opt_btn) for (sx = [1, -1])
+                        translate([sx*skirt_x/2, btn_y]) square([3*skirt_wall, btn_ch_w + 2], center = true);
                 }
-            // standoffs press the PCB forward onto the bezel glass ledge —
-            // inboard of the header rows when the board has them (MEASURE:
-            // the pads must land on bare PCB; move via stand_ix / stand_iy)
+            // press bosses over the M2 corner pillar positions push the board
+            // forward onto the bezel glass ledge — onto the flat brass pillar
+            // tops on the assembled board, onto bare PCB on the stripped one
             for (sx = [1, -1], sy = [1, -1])
                 translate([sx*(board_w/2 - stand_ix), sy*(board_l/2 - stand_iy), back_t - 0.01])
-                    cylinder(d = 4.2, h = stack_eff + 0.01);
+                    cylinder(d = stand_d, h = stand_len + 0.01);
             // snap nubs on the short-wall (±X) skirt faces, chamfered both ways
             for (sx = [1, -1], yc0 = nub_ys())
                 translate([sx*(skirt_x/2 - 0.3), yc0, back_t + snap_depth]) hull() {
@@ -292,12 +328,11 @@ module back() {
                 }
         }
         // heat-escape grille in the back plate, over the component zone —
-        // skipping any slot that would undermine a standoff foot (the
-        // headers variant pulls the standoffs inboard, over the grille)
+        // skipping any slot that would undermine a press-boss foot
         if (opt_vent) for (i = [0:vent_n], sx = [1, -1])
             let (gy = -(vent_n)*vent_pitch/2 + i*vent_pitch,
-                 over_feet = board_w/2 - stand_ix - 2.1 < 5.4)
-            if (!over_feet || gy + vent_w <= board_l/2 - stand_iy - 2.2)
+                 over_feet = board_w/2 - stand_ix - stand_d/2 < 5.4)
+            if (!over_feet || gy + vent_w <= board_l/2 - stand_iy - stand_d/2 - 0.2)
                 translate([sx*3.2, gy, -0.1])
                     cube([2.0, vent_w, back_t + 0.2], center = false);
         // through keyhole in the back plate (wall hang; slot toward +Y/up):
