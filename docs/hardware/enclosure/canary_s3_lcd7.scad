@@ -395,9 +395,19 @@ stand_gusset_h = 52.0; // cheek back edges buttress the fin up to this height
 stand_rib_x   = 47.7;  // ± KEYED RIBS: blades across the well that carry the
 stand_rib_w   = 8.0;   // case in PORTRAIT (its 115 mm width misses the cheeks
                        // entirely) and carry the PORTRAIT centring keys on
-                       // top. Each blade straddles its key's side-wall slot —
-                       // bearing on solid wall on BOTH sides of it — and
-                       // clears the gill row (asserted).
+                       // top. LOAD PATH, precisely — a blade CROSSES the
+                       // case's full depth, while the keying slot it rises
+                       // into is only a gill_w-wide band at the wall's
+                       // mid-depth: the rib bears full-width solid wall on
+                       // both sides of that NARROW band (~21 of 23.5 mm of
+                       // depth), so the case cannot tilt and the key stud
+                       // never carries weight. Along the slot's LONG axis
+                       // the rib sits mostly within the slot's span by
+                       // construction — the gill row pins the rib's inner
+                       // edge, so both-sides bearing IN the band was never
+                       // available at any rib width; it is not the load
+                       // path and not required. Clears the gill row and the
+                       // wall's corner flat (both asserted).
 stand_rib_drop = 2.0;  // rib tops sit this far below the pad plane, so the
                        // rib keys (1.5 proud) clear the LANDSCAPE case's
                        // solid bottom wall — in landscape the case rests on
