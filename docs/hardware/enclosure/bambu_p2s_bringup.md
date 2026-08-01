@@ -348,6 +348,42 @@ that way up, the ledges are fully self-supporting — no slicer supports, no
 sacrificial geometry. The frame is branded debossed on the back plate, and on
 the visible bottom edge by the stencil vent lettering itself.
 
+v0.6 is the production-hardening pass — **no fit knob moved**, three
+durability/finish features landed:
+
+- **Keyhole doublers.** Every wall keyhole now bears on a pad on the plate's
+  inner face: the screw head clamps **5 mm of material** (3 mm plate + 2 mm
+  doubler, `khm_pad_t`) instead of 3, the slide's catch shears a wider
+  section, and each mouth carries a lead-in chamfer so the case slips over
+  the screw heads without catching an elephant-footed rim. The frame's M3
+  bosses and the tray's PCB bosses also gained 45° root fillets — a boss
+  fails by shearing at its root, so that section now spreads into the plate.
+- **Adhesive rails.** Two outlined zones on the back plate (17 × 74 mm at
+  x ±12) are guaranteed **smooth and uninterrupted** — no grille slot,
+  keyhole, boss pocket or deboss ever lands inside one, and a CI fit gate
+  (`frame_adh_rail`) fails any change that cuts a zone. They fit 15.9 × 70 mm
+  stretch-release strips (Command Medium): stick inside the moat outlines,
+  strips vertical, pull-tabs toward the bottom edge, and wipe the zone with
+  IPA first. The zone's finish is the build plate's finish — a smooth sheet
+  gives the best bond, but stretch-release foam bonds through light texture
+  too. No screws, no drill: the renter's wall mount.
+- **Two-colour, one extruder.** The frame prints back-plate-down, and two
+  z-bands are deliberately isolated so plain filament-change pauses (or AMS
+  layer swaps — §0) give a finished two-tone part with no painting:
+  - **Accent back skin** — start in the accent colour and swap to the body
+    colour at **z = 0.8 mm** (the rim-chamfer band). The back face and its
+    edge chamfer print in the accent; every back deboss floor sits at
+    1.2 mm (`label_back_depth`), so BOOT/RESET, SD, the brand line and the
+    rail moats all show through in the body colour.
+  - **Accent front ring** — swap back to the accent at **z = 22.9 mm**
+    (`fr_depth − 0.6` — the render echo prints your exact number if you
+    changed the stack). The last 0.6 mm of the print is only the front rim
+    and its glass entry chamfer, so the swap paints a clean accent ring
+    around the glass and nothing else.
+
+  Use either band alone or both; skipping both swaps prints the ordinary
+  single-colour part.
+
 ```sh
 # ~6 g, print FIRST after any radius doubt: four corner sockets bracketing
 # glass_r — the one that hugs the panel's corner with no daylight and no

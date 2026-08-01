@@ -6447,7 +6447,7 @@
    ]
   },
   "canary_s3_lcd7.scad": {
-   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.5-dev)",
+   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.6-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -6789,6 +6789,21 @@
        "comment": "case hangs over the screws and slides DOWN to seat."
       },
       {
+       "name": "khm_pad_t",
+       "default": "2.0",
+       "comment": "keyhole DOUBLER pads on the plate's inner face —"
+      },
+      {
+       "name": "khm_pad_w",
+       "default": "3.5",
+       "comment": "the screw head bears on back_t + khm_pad_t of"
+      },
+      {
+       "name": "khm_mouth_c",
+       "default": "0.8",
+       "comment": "lead-in chamfer around each keyhole's mouth on the"
+      },
+      {
        "name": "adh_t",
        "default": "0.5",
        "comment": "adhesive pad thickness — MEASURE; sets the glass-back datum"
@@ -6822,6 +6837,30 @@
        "name": "brand_edge",
        "default": "SecuraCV Canary",
        "comment": "debossed on the visible bottom edge"
+      },
+      {
+       "name": "adh_rails",
+       "default": "true"
+      },
+      {
+       "name": "adh_rail_dx",
+       "default": "12.0",
+       "comment": "rail centres at ±this — the only clear full-height"
+      },
+      {
+       "name": "adh_rail_w",
+       "default": "17.0",
+       "comment": "zone width  — 15.9 strip + placement slack"
+      },
+      {
+       "name": "adh_rail_l",
+       "default": "74.0",
+       "comment": "zone length — 70 strip + placement slack"
+      },
+      {
+       "name": "adh_mark_w",
+       "default": "0.8",
+       "comment": "outline moat width"
       },
       {
        "name": "sd_dx",
@@ -6874,6 +6913,11 @@
       {
        "name": "label_depth",
        "default": "0.5"
+      },
+      {
+       "name": "label_back_depth",
+       "default": "1.2",
+       "comment": "BACK-plate deboss depth (BOOT/RESET/SD/brand and"
       },
       {
        "name": "label_font",

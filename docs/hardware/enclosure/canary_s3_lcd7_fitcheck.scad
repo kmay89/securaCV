@@ -83,6 +83,12 @@
 //    frame_sd_seal — INVERTED: the installed SD cover must cross the back
 //            plate's mid-plane over the opening. Empty = the cover misses
 //            its recess/opening.
+//    frame_adh_rail — the adhesive rails' promise is SMOOTH, UNINTERRUPTED
+//            plate, so this one is a DIFFERENCE, not an intersection: a
+//            wafer just under the outer skin across each rail zone, minus
+//            the frame, must vanish. Non-empty = something cut a zone — a
+//            grille slot that lost its keepout, a drifted deboss, the moat
+//            itself — and an adhesive strip would land on an edge.
 //
 //  The slab is modelled with the corner radius the source DECLARES (glass_r),
 //  because the question being asked is whether the model is consistent with
@@ -94,7 +100,7 @@
 
 use <canary_s3_lcd7.scad>
 
-check = "tray";   // ["tray","glass","lip","locate","frame_glass","frame_ledge","stand","seat","stand_p","stand_p2","seat_p","frame_usb_head","frame_btn_window","frame_sd_window","frame_usb_seal","frame_btn_plug","btn_plug_glass","frame_sd_seal"]
+check = "tray";   // ["tray","glass","lip","locate","frame_glass","frame_ledge","stand","seat","stand_p","stand_p2","seat_p","frame_usb_head","frame_btn_window","frame_sd_window","frame_usb_seal","frame_btn_plug","btn_plug_glass","frame_sd_seal","frame_adh_rail"]
 locate_slip = 1.5;   // mm of sideways wander the pocket must already refuse
 seat_lift  = 0.2;    // dock collision check: hover this far off the pads
 seat_press = 0.4;    // dock bearing check: push this far into the pads
@@ -265,5 +271,19 @@ else if (check == "frame_sd_seal") {
             cube([60, 80, 0.4], center = true);
     }
 }
+else if (check == "frame_adh_rail") {
+    // a wafer just under the outer skin across each adhesive-rail zone,
+    // MINUS the frame, must vanish — anything that cuts a zone survives the
+    // difference and fails the gate. The wafer stops 0.02 below the skin
+    // (so it never pokes out of an intact plate) and reaches 0.5 deep (so
+    // any deboss-depth cut into the zone intersects it). If adh_rails is
+    // off there is nothing to test and the gate stays empty by construction.
+    A = lcd7_adh_rails();   // [on, dx, w, l, fr_depth]
+    if (A[0] > 0) difference() {
+        for (sx = [1, -1]) translate([sx*A[1], 0, A[4] - 0.5])
+            linear_extrude(0.48) rrect2d(A[2] - 0.4, A[3] - 0.4, 2);
+        frame();
+    }
+}
 else
-    assert(false, "check must be one of tray / glass / lip / locate / frame_glass / frame_ledge / stand / seat / stand_p / stand_p2 / seat_p / frame_usb_head / frame_btn_window / frame_sd_window / frame_usb_seal / frame_btn_plug / btn_plug_glass / frame_sd_seal");
+    assert(false, "check must be one of tray / glass / lip / locate / frame_glass / frame_ledge / stand / seat / stand_p / stand_p2 / seat_p / frame_usb_head / frame_btn_window / frame_sd_window / frame_usb_seal / frame_btn_plug / btn_plug_glass / frame_sd_seal / frame_adh_rail");
