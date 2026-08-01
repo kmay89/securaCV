@@ -39,6 +39,26 @@
 //            on the ledge. Empty = nothing carries the panel's adhesive
 //            border — e.g. the ledge/boss datum drifted apart (the adh_t
 //            stack-up bug this gate exists to catch).
+//    stand — the FRAME, seated in the desk dock, vs the stand. Non-empty =
+//            they collide and the case cannot drop in. The seated pose is
+//            lifted seat_lift off the pads, because exact face-on-face
+//            contact through a floating-point rotation can manufacture a
+//            zero-ish sliver that fails an honest fit. This check is also
+//            what proves the dock's centring keys line up with the frame's
+//            keying slots — a misplaced key IS a collision.
+//    seat  — the frame pressed seat_press INTO the pads. INVERTED: it must
+//            be NON-empty — it is the bearing patch the case actually sits
+//            on. Empty = the dock carries nothing and the case free-falls to
+//            the base plate. (This output is legitimately TWO patches, one
+//            per pad — only its existence is checked, not its mesh.)
+//    stand_p / stand_p2 — the stand collision again, case docked in PORTRAIT
+//            (turned +90° / -90°). Non-empty = a key or rib lands on solid
+//            wall instead of inside a side window / between the gills, and
+//            portrait cannot sit flat. Both turns are checked because the
+//            side windows are not symmetric.
+//    seat_p — portrait bearing patch on the well ribs, probed with a wafer
+//            over the portrait bottom face (see the check for why not the
+//            full frame). INVERTED: non-empty.
 //    frame_usb_head — a prism the size of the declared cable HEAD, swept
 //            through the bottom-wall port, vs the FRAME. Non-empty = the head
 //            no longer passes (opening shrank under the head knobs, or the
@@ -74,8 +94,10 @@
 
 use <canary_s3_lcd7.scad>
 
-check = "tray";   // ["tray","glass","lip","locate","frame_glass","frame_ledge","frame_usb_head","frame_btn_window","frame_sd_window","frame_usb_seal","frame_btn_plug","btn_plug_glass","frame_sd_seal"]
+check = "tray";   // ["tray","glass","lip","locate","frame_glass","frame_ledge","stand","seat","stand_p","stand_p2","seat_p","frame_usb_head","frame_btn_window","frame_sd_window","frame_usb_seal","frame_btn_plug","btn_plug_glass","frame_sd_seal"]
 locate_slip = 1.5;   // mm of sideways wander the pocket must already refuse
+seat_lift  = 0.2;    // dock collision check: hover this far off the pads
+seat_press = 0.4;    // dock bearing check: push this far into the pads
 
 // Read the real derived stack out of the source — no duplicated arithmetic.
 S = lcd7_stack();
@@ -90,6 +112,24 @@ module assembled_bezel() {
 module glass_slab(t, dz = 0) {
     translate([0, 0, z_glass + dz]) linear_extrude(t)
         rrect2d(glass_w, glass_h, glass_r);
+}
+
+// The dock stack, read out of the source the same way. The frame is modelled
+// print-side (z0 = front face, +y = up); docking it means standing it up,
+// reclining it by stand_ang, and setting its bottom face's centre onto the
+// pad plane's origin. seat > 0 presses the case into the pads along the
+// slot's own axis; seat < 0 hovers it off them.
+ST = lcd7_stand_stack();
+st_ang = ST[0]; st_ys = ST[1]; st_zf = ST[2]; st_fd = ST[3]; st_fy = ST[4]; st_fx = ST[5];
+st_drop = ST[6];   // portrait seats this far below the pad plane, on the ribs
+module docked_frame(seat = 0, portrait = 0) {   // portrait: ±1 = which way it turned
+    fy = portrait == 0 ? st_fy : st_fx;
+    dn = seat + (portrait == 0 ? 0 : st_drop);   // rib drop is part of the pose
+    yq = -(fy/2)*sin(st_ang) + (st_fd/2)*cos(st_ang);
+    zq = -(fy/2)*cos(st_ang) - (st_fd/2)*sin(st_ang);
+    translate([0, st_ys - yq - dn*sin(st_ang), st_zf - zq - dn*cos(st_ang)])
+        rotate([270 - st_ang, 0, 0]) rotate([0, 0, 180])
+            rotate([0, 0, 90*portrait]) frame();
 }
 
 if (check == "tray")
@@ -125,6 +165,28 @@ else if (check == "frame_ledge") {
             rrect2d(glass_w, glass_h, glass_r);
     }
 }
+else if (check == "stand")
+    intersection() { docked_frame(-seat_lift); stand(); }
+else if (check == "seat")
+    // inverted check — this SHOULD produce geometry (the pads' bearing patch)
+    intersection() { docked_frame(seat_press); stand(); }
+else if (check == "stand_p")
+    intersection() { docked_frame(-seat_lift, 1); stand(); }
+else if (check == "stand_p2")
+    intersection() { docked_frame(-seat_lift, -1); stand(); }
+else if (check == "seat_p")
+    // inverted check — portrait must bear on the well ribs. Probed with a
+    // WAFER over the portrait bottom face's footprint rather than the full
+    // frame: the stand_p/stand_p2 checks already prove the real case clears
+    // everything, and the full-frame intersection here trips CGAL's
+    // non-manifold export warning on coincident slot/blade edges, which the
+    // CI gate correctly refuses to distinguish from a broken render.
+    intersection() {
+        stand_seatframe()
+            translate([-st_fy/2, -st_fd/2, -st_drop - seat_press])
+                cube([st_fy, st_fd, seat_press]);
+        stand();
+    }
 // The TPU gates read the port geometry out of the source the same way
 // (lcd7_ports), and place the fitments with the source's own *_installed
 // transforms — so a knob or datum change is tested, not a copy of it.
@@ -204,4 +266,4 @@ else if (check == "frame_sd_seal") {
     }
 }
 else
-    assert(false, "check must be one of tray / glass / lip / locate / frame_glass / frame_ledge / frame_usb_head / frame_btn_window / frame_sd_window / frame_usb_seal / frame_btn_plug / btn_plug_glass / frame_sd_seal");
+    assert(false, "check must be one of tray / glass / lip / locate / frame_glass / frame_ledge / stand / seat / stand_p / stand_p2 / seat_p / frame_usb_head / frame_btn_window / frame_sd_window / frame_usb_seal / frame_btn_plug / btn_plug_glass / frame_sd_seal");

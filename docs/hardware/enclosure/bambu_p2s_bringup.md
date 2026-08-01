@@ -360,13 +360,15 @@ brim unless a corner lifts.
 openscad --export-format binstl -o lcd7_bezel.stl -D 'part="bezel"' canary_s3_lcd7.scad
 openscad --export-format binstl -o lcd7_back.stl  -D 'part="back"'  canary_s3_lcd7.scad
 openscad --export-format binstl -o lcd7_stand.stl -D 'part="stand"' canary_s3_lcd7.scad   # optional
+openscad --export-format binstl -o lcd7_stand_gauge.stl -D 'part="stand_gauge"' canary_s3_lcd7.scad  # print BEFORE the stand
 ```
 
 | Part | Footprint | Solid volume | Mass (upper bound) | Orient | Brim |
 |---|---|---|---|---|---|
 | **bezel** | 208.5 × 126.3 × 7.0 | 37.8 cm³ | ~48 g | **face-down** | no ² |
 | **back** | 208.5 × 126.3 × 20.6 | 86.5 cm³ | ~110 g | outer face **down** | no ² |
-| stand (optional) | 210 × 131.2 × 63.1 | 238.2 cm³ | ~303 g ¹ | flat | no |
+| stand (optional) | 174 × 126 × 94.2 | 265.4 cm³ | ~338 g ¹ | flat (base down) | no |
+| stand_gauge | 22 × 126 × 94.2 | 44.0 cm³ | ~56 g ¹ | flat (base down) | no |
 
 ¹ Quoted at 100 % of solid volume, the same upper-bound convention as
 [printer_selection.md](./printer_selection.md#running-cost--per-device-computed-from-the-meshes).
