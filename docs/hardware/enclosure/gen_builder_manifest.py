@@ -317,15 +317,18 @@ CURATED = [
         "id": "coupon",
         "file": "canary_fit_coupon.scad",
         "name": "Fit coupon",
-        "tagline": "The ~25-minute calibration print. Every fit used across "
+        "tagline": "The first-print calibration plate. Every fit used across "
                    "the fleet's cases, as labelled test stations — print "
                    "this first, tune the three tolerances, reuse everywhere.",
-        "about": "Every fit the fleet's cases use, gathered on one small "
+        "about": "Every fit the fleet's cases use, gathered on one branded "
                  "test plate: snap clips, keyholes, magnet and light-pipe "
-                 "pockets, insert bores, the lid lip. A tight or loose "
-                 "station tells you which number to change — once, for "
-                 "every case after.",
-        "print_plan": "Print the Base in PETG first (~25 minutes). The Mate "
+                 "pockets, insert bores, the lid lip, the USB-C port "
+                 "opening, a −/0/+ screw-pilot ladder, and the embossed/"
+                 "debossed wordmarks every case's branding uses. A tight or "
+                 "loose station tells you which number to change — once, "
+                 "for every case after.",
+        "print_plan": "Print the Base in PETG first — it's small next to "
+                      "any case. The Mate "
                       "tests the keyholes and slide rib against it; the "
                       "Strip is the TPU gasket-squeeze test. Adjust the "
                       "three tolerances and reprint until stations fit.",
@@ -341,8 +344,9 @@ CURATED = [
         "part_info": {
             "all": "Base, mate and strip laid out together — in practice "
                    "print them separately (the strip is TPU).",
-            "base": "The station plate: clip, pocket and bore tests, each "
-                    "labelled with the parameter it exercises.",
+            "base": "The station plate: clip, pocket, bore, port and "
+                    "wordmark tests, each labelled with the parameter it "
+                    "exercises.",
             "mate": "T-studs and a slide rib that mate into the base's "
                     "keyhole and groove stations.",
             "strip": "A soft TPU bar for the gasket groove — tests the "
