@@ -334,7 +334,7 @@ CURATED = [
                       "edge tongue tests the lid-lip channel; the "
                       "Strip is the TPU gasket-squeeze test. Adjust the "
                       "three tolerances and reprint until stations fit.",
-        "simple": ["part", "tol_slide", "tol_press", "tol_hole"],
+        "simple": ["part", "tol_slide", "tol_press", "tol_hole", "kh_click"],
         "preset_param": None,
         "preset_controls": [],
         "part_labels": {
@@ -359,6 +359,7 @@ CURATED = [
         "labels": {
             "part": "Part to print", "tol_slide": "Sliding fits",
             "tol_press": "Press fits", "tol_hole": "Screw holes",
+            "kh_click": "Keyhole click",
         },
         "hints": {
             "tol_slide": "Parts that slide or snap: lid lips, board clips, "
@@ -367,9 +368,13 @@ CURATED = [
                          "They should seat firmly by thumb.",
             "tol_hole": "Self-tapping M2 pilots: threads should bite "
                         "without splitting the post.",
+            "kh_click": "The keyhole retention bump. Mate won't slide past "
+                        "it → smaller number; slides back off too easily → "
+                        "bigger. 0 removes the click.",
         },
         "choices": {},
-        "units": {"tol_slide": "mm", "tol_press": "mm", "tol_hole": "mm"},
+        "units": {"tol_slide": "mm", "tol_press": "mm", "tol_hole": "mm",
+                  "kh_click": "mm"},
     },
 ]
 

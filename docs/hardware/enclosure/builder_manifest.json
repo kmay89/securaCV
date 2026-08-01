@@ -3286,7 +3286,8 @@
         "part",
         "tol_slide",
         "tol_press",
-        "tol_hole"
+        "tol_hole",
+        "kh_click"
       ],
       "preset_param": null,
       "preset_controls": [],
@@ -3306,18 +3307,21 @@
         "part": "Part to print",
         "tol_slide": "Sliding fits",
         "tol_press": "Press fits",
-        "tol_hole": "Screw holes"
+        "tol_hole": "Screw holes",
+        "kh_click": "Keyhole click"
       },
       "hints": {
         "tol_slide": "Parts that slide or snap: lid lips, board clips, keyholes. Loose station → smaller number.",
         "tol_press": "Parts pushed in to stay: magnets, light pipes. They should seat firmly by thumb.",
-        "tol_hole": "Self-tapping M2 pilots: threads should bite without splitting the post."
+        "tol_hole": "Self-tapping M2 pilots: threads should bite without splitting the post.",
+        "kh_click": "The keyhole retention bump. Mate won't slide past it → smaller number; slides back off too easily → bigger. 0 removes the click."
       },
       "choices": {},
       "units": {
         "tol_slide": "mm",
         "tol_press": "mm",
-        "tol_hole": "mm"
+        "tol_hole": "mm",
+        "kh_click": "mm"
       },
       "sha256": "a96885dee53d1b145af0def9a9aa94345f50cea738e5c07a2fd0b1cad96453d1",
       "groups": [
