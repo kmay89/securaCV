@@ -230,7 +230,7 @@ the values echoed when you render:
 | Tallest rear-side component | `comp_h` | 11.0 |
 | Glass back → PCB front | `pcb_standoff` | 5.0 |
 | M3 mount-hole spacing | `m3_dx` / `m3_dy` | 126.20 × 65.65 (measured) |
-| M3 pattern offset from glass centre | `m3_ox` / `m3_oy` | +1.5 / +0.9 (measured — verify signs) |
+| M3 pattern offset from glass centre | `m3_ox` / `m3_oy` | −1.5 / −0.9 (measured, native mounting — verify signs) |
 | Panel's own standoffs, PCB back → tip | `standoff_len` | 6.9 (frame only) |
 | USB-C / UART / CAN / RS485 / battery centres | `bottom_open_*`, `side_open_*` | nominal ⚠️ |
 
@@ -244,10 +244,11 @@ filament. Two parameters deserve individual attention:
 - **`m3_ox` / `m3_oy`** — the mount pattern is **not centred on the glass**,
   and that offset is why a panel cannot simply be rotated 180° inside a case
   drawn for the other orientation: the holes stop lining up. Every part in
-  v0.3 assumes the **buttons-down** mounting (panel rotated 180° from
-  Waveshare-native, image rotated to match in firmware) so BOOT/RESET sit at
-  the bottom edge in use, not the top. Verify the offset signs on your board;
-  a sign error moves every boss by twice the offset.
+  v0.3 assumes the panel's **native** mounting — no image rotation in
+  firmware — which puts BOOT/RESET at the **top** edge in use; the frame's
+  window, labels and keyhole wall mounts are all drawn for that. Verify the
+  offset signs on your board; a sign error moves every boss by twice the
+  offset.
 
 ### 7b · Print the corner gauge — not the case
 
@@ -279,9 +280,13 @@ case layout print-proven against the real panel: the slab drops in face-first
 through the front opening, the board hangs on the panel's **own white M3
 standoffs**, and **4 × M3×8–10 driven from the back** thread into those
 standoffs — the screws, not a ledge, pull the glass flush with the front rim.
-It carries a bevelled BOOT/RESET window in the bottom wall with debossed
-labels (back view: **BOOT right, RESET left**), raked gill vents on the side
-walls, intake/exhaust slot rows, a back grille, and two cable/hanging slots.
+It carries a bevelled BOOT/RESET window in the top wall — the button edge in
+native mounting — with debossed labels (back view: **BOOT left, RESET
+right**), gill vents on the side walls, intake/exhaust slot rows, a back
+grille, two **keyhole wall mounts** near the top corners (hang the case over
+two pan-head screws and slide it down; the catches point up at the button
+edge), and a **cable pass-through** low in the back plate so USB-C power and
+flashing reach the bottom-edge connector cluster without opening the case.
 
 ```sh
 openscad --export-format binstl -o lcd7_frame_gauge.stl -D 'part="frame_gauge"' canary_s3_lcd7.scad
@@ -289,7 +294,7 @@ openscad --export-format binstl -o lcd7_frame.stl       -D 'part="frame"'       
 ```
 
 Same doctrine as 7b: **print the gauge first.** It is one corner containing a
-boss and a cable slot; assembled on the panel's corner with one screw it
+boss and a wall keyhole; assembled on the panel's corner with one screw it
 proves the glass corner radius (`glass_r`), the mount-offset **signs**
 (`m3_ox`/`m3_oy` — the screw only threads home if they're right), and
 `standoff_len` (the glass sits flush with the rim only if that's right). The
