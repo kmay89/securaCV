@@ -7267,6 +7267,10 @@
        "default": "[for (sx = [1,-1], sy = [1,-1]) [-m3_ox + sx*m3_dx/2, m3_oy + sy*m3_dy/2]]"
       },
       {
+       "name": "fr_keepouts",
+       "default": "concat(fr_keep_base, fr_keep_rails)"
+      },
+      {
        "name": "btn_zc",
        "default": "(btn_z0 + btn_z1)/2",
        "comment": "window centre across the wall"

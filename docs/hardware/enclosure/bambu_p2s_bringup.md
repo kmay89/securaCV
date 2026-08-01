@@ -362,11 +362,23 @@ durability/finish features landed:
   x ±12) are guaranteed **smooth and uninterrupted** — no grille slot,
   keyhole, boss pocket or deboss ever lands inside one, and a CI fit gate
   (`frame_adh_rail`) fails any change that cuts a zone. They fit 15.9 × 70 mm
-  stretch-release strips (Command Medium): stick inside the moat outlines,
-  strips vertical, pull-tabs toward the bottom edge, and wipe the zone with
-  IPA first. The zone's finish is the build plate's finish — a smooth sheet
-  gives the best bond, but stretch-release foam bonds through light texture
-  too. No screws, no drill: the renter's wall mount.
+  **interlocking picture-hanging strip pairs** (e.g. Command Medium) — pairs,
+  not single stretch-release foam strips, deliberately: the mounted case
+  fully covers its strips, so a single strip's pull tab would be sealed
+  behind it, unreachable. With pairs, removal follows the product's own
+  doctrine: pull the case straight off its wall halves (grip it by the side
+  gills / bottom port), and every wall tab is then exposed for its stretch
+  release. Stick inside the moat outlines, strips vertical, tabs down, and
+  wipe the zone with IPA first. The zone's finish is the build plate's
+  finish — a smooth sheet gives the best bond, but the foam bonds through
+  light texture too. No screws, no drill: the renter's wall mount.
+  **The trade, stated plainly:** the rails' keepouts cost the back grille
+  6 of its columns — 66 slots, ≈ 14 cm² of its ≈ 40 cm² at stock dims (the
+  render echo computes the exact numbers for your config from the same
+  predicate that cuts the slots). The convection path proper — bottom-wall
+  intake → top-wall exhaust — is untouched, and there is no better spot:
+  the SD zone, boss pockets and keyhole pads own every other clear column.
+  Screw-mount builds should set `adh_rails=false` and reclaim every slot.
 - **Two-colour, one extruder.** The frame prints back-plate-down, and two
   z-bands are deliberately isolated so plain filament-change pauses (or AMS
   layer swaps — §0) give a finished two-tone part with no painting:

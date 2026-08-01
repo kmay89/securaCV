@@ -69,8 +69,9 @@
 //            head, lead-in chamfer at the mouth), the M3 bosses and the
 //            tray's PCB bosses carry 45° root fillets, two outlined
 //            ADHESIVE RAILS on the back plate stay smooth and uninterrupted
-//            for 15.9 x 70 mm stretch-release strips (wall mounting with no
-//            screws — gated by the frame_adh_rail fit check), and the back
+//            for 15.9 x 70 mm interlocking picture-hanging strip pairs
+//            (wall mounting with no screws — gated by the frame_adh_rail
+//            fit check; the echo reports the grille slots they cost), and the back
 //            deboss floors sit DEEPER than the rim-chamfer band, so a single
 //            filament swap prints an accent back skin with the words showing
 //            through in the body colour. Exact swap heights are echoed.
@@ -316,13 +317,27 @@ brand_edge = "SecuraCV Canary";               // debossed on the visible bottom 
 // outlined rails on the back plate are kept smooth and uninterrupted: no
 // grille slot, keyhole pad, boss pocket or deboss ever lands inside one
 // (asserted below, and gated in CI by the frame_adh_rail fit check). Sized
-// for 15.9 mm-wide stretch-release foam strips (Command Medium, 70 mm),
-// mounted vertical, pull-tabs toward the bottom edge. A hairline moat
-// outlines each zone so the strip lands in the right place; the moat is
-// label_back_depth deep, so it reads in the body colour on a two-colour
-// print. The zone's finish IS the build plate's finish — use a smooth sheet
-// if you have one (stretch-release foam also bonds through light texture)
-// and wipe with IPA before sticking.
+// for 15.9 x 70 mm INTERLOCKING picture-hanging strip PAIRS (e.g. Command
+// Medium) — pairs, not single stretch-release foam strips, deliberately:
+// the mounted case fully covers its strips, so a single strip's pull tab
+// would be sealed behind it, unreachable, and "damage-free removal" would
+// mean prying. With pairs the case pulls straight off its wall halves
+// first (grip it by the side gills / bottom port), and THEN every wall
+// tab is exposed for its stretch release — removal by the product's own
+// doctrine. Mount tabs DOWN, strips vertical, inside the moat outlines;
+// wipe the zone with IPA first. The zone's finish IS the build plate's
+// finish — a smooth sheet bonds best; the foam also bonds through light
+// texture. A hairline moat outlines each zone so the strip lands in the
+// right place; it is label_back_depth deep, so it reads in the body
+// colour on a two-colour print.
+// THE TRADE: the rails' keepouts cost the back grille 6 of its columns
+// (66 slots ≈ 14 cm² at stock dims — the echo computes the exact numbers
+// for your config from the same predicate that cuts the slots). The
+// convection path proper — bottom-wall intake → top-wall exhaust — is
+// untouched, and relocation was checked and loses as much or more: the
+// plate has no other clear 70 mm column (the SD zone, boss pockets and
+// keyhole pads own the rest). Screw-mount builds can set adh_rails=false
+// and reclaim every slot.
 adh_rails   = true;
 adh_rail_dx = 12.0;  // rail centres at ±this — the only clear full-height
                      // columns on the plate: inboard of the SD mouth, the
@@ -540,6 +555,21 @@ fr_depth = glass_t + pcb_standoff + pcb_t + standoff_len + frame_boss_h + back_t
 fz_boss  = fr_depth - back_t - frame_boss_h;   // boss face the standoffs land on
 fz_plate = fr_depth - back_t;                  // inner face of the back plate
 fr_bosses = [for (sx = [1,-1], sy = [1,-1]) [-m3_ox + sx*m3_dx/2, m3_oy + sy*m3_dy/2]];
+// The frame's grille keepouts, hoisted so the open-area echo below is
+// computed from the SAME lists the cutter uses — the reported number cannot
+// drift from the geometry. Split so the echo can also say what the rails
+// cost (their keepouts are the one deliberate vent trade in this case).
+fr_keep_base = concat(
+    // grown with the doubler pads + mouth chamfers
+    mount_keyholes ? [for (sx = [1,-1], sy = [1,-1])
+        [sx*khm_dx, sy*(khm_y + khm_len/2), 10, 20]] : [],
+    // the SD keepout covers the countersunk mouth and the nail scoop
+    [[sd_dx, sd_dy, sd_w/2 + 3.4, sd_l/2 + 6.7]]);
+fr_keep_rails = adh_rails ? [for (sx = [1,-1])
+    [sx*adh_rail_dx, 0,
+     adh_rail_w/2 + adh_mark_w + vent_slot_w/2 + 0.6,
+     adh_rail_l/2 + adh_mark_w + vent_slot_l/2 + 0.6]] : [];
+fr_keepouts = concat(fr_keep_base, fr_keep_rails);
 btn_z0 = glass_t + 1;  btn_z1 = fz_boss + 1;   // the band the buttons live in
 btn_zc = (btn_z0 + btn_z1)/2;                  // window centre across the wall
 // USB pass-through: the opening passes the HEAD; the grommet then fills it
@@ -712,8 +742,9 @@ assert(fr_yo/2 + 2 < std_open/2,
        "stand: the portrait case no longer misses the cheeks — the well ribs cannot carry it");
 echo(str("Canary 7in touch v0.6-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
          " mm, window ", view_w, " x ", view_h, ", lip ", lip_min,
-         " mm, vent area ~",
-         round(vent_back ? vent_rows*vent_cols*vent_slot_w*vent_slot_l/100 : 0), " cm2",
+         " mm, tray grille ~",
+         round(vent_back ? len(grille_cells())*vent_slot_w*vent_slot_l/100 : 0),
+         " cm2 open (computed, boss dodges included)",
          "  (IN DEVELOPMENT — MEASURE CONNECTORS)"));
 echo(str("  stack: floor ", z_floor, " | PCB under ", z_pcb_under, " | PCB top ",
          z_pcb_top, " | glass back ", z_glass, " | closed height ",
@@ -726,9 +757,22 @@ echo(str("  frame mounting: 4x keyhole, ", back_t + khm_pad_t,
          " mm bearing under each screw head (", back_t, " plate + ", khm_pad_t,
          " doubler), chamfered mouths; adhesive rails ",
          adh_rails ? str("2x ", adh_rail_w, " x ", adh_rail_l, " at x = ±",
-                         adh_rail_dx, " — fits 15.9 x 70 mm stretch-release ",
-                         "strips, kept smooth inside the moat outlines")
+                         adh_rail_dx, " — fits 15.9 x 70 mm interlocking ",
+                         "picture-hanging strip pairs, kept smooth inside ",
+                         "the moat outlines (case pulls off its wall halves ",
+                         "first; the tabs are then exposed)")
                    : "off"));
+echo(str("  frame back grille: ", len(grille_cells(-m3_ox, m3_oy, fr_keepouts)),
+         " slots ≈ ", round(len(grille_cells(-m3_ox, m3_oy, fr_keepouts))
+                            *vent_slot_w*vent_slot_l/100), " cm2 open",
+         adh_rails ? str(" — the adhesive rails cost ",
+             len(grille_cells(-m3_ox, m3_oy, fr_keep_base))
+             - len(grille_cells(-m3_ox, m3_oy, fr_keepouts)), " slots ≈ ",
+             round((len(grille_cells(-m3_ox, m3_oy, fr_keep_base))
+                    - len(grille_cells(-m3_ox, m3_oy, fr_keepouts)))
+                   *vent_slot_w*vent_slot_l/100),
+             " cm2 (adh_rails=false reclaims them); the bottom-intake → ",
+             "top-exhaust wall vents are untouched either way") : ""));
 echo(str("  frame two-colour (optional, single extruder): prints back-plate-",
          "down — ACCENT BACK SKIN: start in the accent colour, swap to the ",
          "body colour at z = ", frame_rim, " mm (every deboss floor sits at ",
@@ -818,21 +862,28 @@ module bezel_print() { bezel(); }
 // INSIDE the grille field, so slots must now dodge the bosses — the v0.2
 // pattern sat outside it and never could collide). keepouts: extra [x,y,hw,hh]
 // rectangles to dodge (the frame passes its cable slots).
+// The grille's surviving slot centres — a FUNCTION, shared by the cutter
+// below and the open-area echoes, so the area the console reports is
+// computed by the same predicate that cuts the slots and cannot drift.
+// A slot survives if it sits inside the PCB footprint, off the bosses, and
+// out of every caller-supplied [x, y, half_w, half_h] keepout rectangle.
+function grille_cells(ox = m3_ox, oy = m3_oy, keepouts = []) =
+    [for (r = [0:vent_rows-1], c = [0:vent_cols-1])
+        let (x = (c - (vent_cols-1)/2) * vent_pitch_x,
+             y = (r - (vent_rows-1)/2) * vent_pitch_y)
+        if (abs(x) < pcb_w/2 - 6 && abs(y) < pcb_h/2 - 6
+            && min([for (sx = [1,-1], sy = [1,-1])
+                   max(abs(x - (ox + sx*m3_dx/2)) - 6,
+                       abs(y - (oy + sy*m3_dy/2)) - 9)]) > 0
+            && (len(keepouts) == 0 ||
+                min([for (k = keepouts)
+                    max(abs(x - k[0]) - k[2], abs(y - k[1]) - k[3])]) > 0))
+        [x, y]];
 module vent_grille(ox = m3_ox, oy = m3_oy, keepouts = []) {
-    for (r = [0:vent_rows-1], c = [0:vent_cols-1]) {
-        x = (c - (vent_cols-1)/2) * vent_pitch_x;
-        y = (r - (vent_rows-1)/2) * vent_pitch_y;
-        // keep the grille inside the PCB footprint, off the bosses, and out of
-        // any caller-supplied keepout rectangles
-        clear_boss = min([for (sx = [1,-1], sy = [1,-1])
-            max(abs(x - (ox + sx*m3_dx/2)) - 6, abs(y - (oy + sy*m3_dy/2)) - 9)]) > 0;
-        clear_keep = len(keepouts) == 0 ||
-            min([for (k = keepouts) max(abs(x - k[0]) - k[2], abs(y - k[1]) - k[3])]) > 0;
-        if (abs(x) < pcb_w/2 - 6 && abs(y) < pcb_h/2 - 6 && clear_boss && clear_keep)
-            translate([x, y, -0.1]) linear_extrude(back_t + 0.2) hull()
-                for (dy = [-(vent_slot_l - vent_slot_w)/2, (vent_slot_l - vent_slot_w)/2])
-                    translate([0, dy]) circle(d = vent_slot_w);
-    }
+    for (p = grille_cells(ox, oy, keepouts))
+        translate([p[0], p[1], -0.1]) linear_extrude(back_t + 0.2) hull()
+            for (dy = [-(vent_slot_l - vent_slot_w)/2, (vent_slot_l - vent_slot_w)/2])
+                translate([0, dy]) circle(d = vent_slot_w);
 }
 module back() {
     total_d = cav_d + back_t;   // full tray depth (floor + cavity to glass ledge)
@@ -1125,21 +1176,10 @@ module frame() {
                         slat_text(s > 0 ? vent_text_l : vent_text_r);
         // back grille (dodging bosses and the keyholes — note -m3_ox: this
         // part is modelled print-side, x mirrored vs the two-part tray)
+        // (keepouts hoisted to fr_keepouts, where the open-area echo reads
+        // the same lists — see the derived section)
         translate([0, 0, fz_plate]) vent_grille(-m3_ox, m3_oy,
-            keepouts = concat(
-                // grown with the doubler pads + mouth chamfers
-                mount_keyholes
-                    ? [for (sx = [1,-1], sy = [1,-1])
-                       [sx*khm_dx, sy*(khm_y + khm_len/2), 10, 20]] : [],
-                // the adhesive rails' smooth zones, moat included
-                adh_rails
-                    ? [for (sx = [1,-1])
-                       [sx*adh_rail_dx, 0,
-                        adh_rail_w/2 + adh_mark_w + vent_slot_w/2 + 0.6,
-                        adh_rail_l/2 + adh_mark_w + vent_slot_l/2 + 0.6]] : [],
-                // the SD keepout covers the countersunk mouth and the nail
-                // scoop biting its card end
-                [[sd_dx, sd_dy, sd_w/2 + 3.4, sd_l/2 + 6.7]]));
+            keepouts = fr_keepouts);
         // microSD access through the back plate: socket + slide travel +
         // fingertip, so the card comes out without being dropped inside
         translate([sd_dx, sd_dy, fz_plate - 0.1])
