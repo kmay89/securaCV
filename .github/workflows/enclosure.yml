@@ -133,6 +133,8 @@ jobs:
           fit frame_btn_window empty || exit 1 # BOOT/RESET window really open through the wall
           fit frame_sd_window empty || exit 1  # SD opening really open through the plate
           fit frame_adh_rail empty || exit 1   # adhesive rails: the smooth zones really are uncut plate
+          fit sd_tether_hole empty || exit 1   # tether anchor hole really open through the plate
+          fit sd_tether_barb solid "the SD cover's barb misses its anchor hole — strap length, hole position or install transform drifted" || exit 1
           fit frame_usb_seal solid "the grommet no longer fills the USB port — waist or installed transform drifted" || exit 1
           fit frame_btn_plug solid "the BOOT/RESET plug misses its window — waist or installed transform drifted" || exit 1
           fit btn_plug_glass empty || exit 1   # the plug (pips, lip included) must never touch the panel
