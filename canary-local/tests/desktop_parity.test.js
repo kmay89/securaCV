@@ -773,3 +773,58 @@ test("no surface ever summons the OS password generator for an existing secret",
   assert.ok(/classList\.toggle\("pw-masked"\)/.test(appJs),
     "desktop Show/Hide must flip the pw-masked class");
 });
+
+test("WE2 live bench: both flashers speak the same stream protocol, sliders read back", () => {
+  // The bench is how a Vision module gets aimed and tuned without a reflash.
+  // Its protocol is a shared contract: continuous `INVOKE=-1,0,0` starts the
+  // frame stream, `BREAK` ends it, and the two on-module thresholds are set
+  // AND read back (`TSCORE`/`TIOU` then `TSCORE?`/`TIOU?`) so a slider shows
+  // what the module actually holds, never what the UI hoped. CLAUDE.md's
+  // two-flashers rule: the browser has had this bench; the native app now has
+  // it too, and neither side may drop or drift the protocol.
+  const we2FlashJs = read(join(CANARY, "assets/we2-flash.js"));
+  const benchRs = read(join(ROOT, "desktop/src-tauri/src/we2_bench.rs"));
+  const sscmaRs = read(join(ROOT, "desktop/src-tauri/src/sscma.rs"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+
+  // The protocol strings, pinned on BOTH surfaces.
+  for (const [label, src] of [["browser we2-flash.js", we2FlashJs], ["native we2_bench.rs", benchRs]]) {
+    assert.ok(src.includes("INVOKE=-1,0,0"),
+      `${label} lost the continuous-invoke start (INVOKE=-1,0,0)`);
+    assert.ok(src.includes("BREAK"), `${label} lost the BREAK stop`);
+  }
+  for (const [label, src] of [["browser we2-flash.js", we2FlashJs], ["native app.js", appJs]]) {
+    for (const knob of ["TSCORE", "TIOU"]) {
+      assert.ok(src.includes(knob), `${label} lost the ${knob} threshold`);
+    }
+  }
+  // Read-back after a set — the "slider never lies" rule, on both sides.
+  assert.match(we2FlashJs, /cmd\s*\+\s*"\?"/,
+    "browser bench no longer reads a threshold back after setting it");
+  assert.match(appJs, /body:\s*cmd\s*\+\s*"\?"/,
+    "native bench no longer reads a threshold back after setting it");
+
+  // Native wiring end-to-end: pure framing module → commands → UI.
+  assert.match(sscmaRs, /pub struct FrameScanner\b/,
+    "native lost the host-tested SSCMA frame scanner (sscma.rs)");
+  for (const cmd of ["we2_bench_start", "we2_bench_cmd", "we2_bench_stop"]) {
+    assert.match(benchRs, new RegExp(`pub (async )?fn ${cmd}\\b`),
+      `desktop/src-tauri/src/we2_bench.rs lost the ${cmd} command`);
+    assert.match(libRs, new RegExp(`we2_bench::${cmd}\\b`),
+      `desktop/src-tauri/src/lib.rs no longer registers ${cmd}`);
+    assert.match(appJs, new RegExp(`invoke\\(\\s*["']${cmd}["']`),
+      `desktop/src/app.js never invokes ${cmd} — the bench UI is dead`);
+  }
+  for (const id of ["bench-start", "bench-stop", "bench-tscore", "bench-tiou", "bench-canvas"]) {
+    assert.match(html, new RegExp(`id="${id}"`),
+      `desktop/src/index.html is missing the bench control #${id}`);
+  }
+
+  // Label honesty on both surfaces: "person" only when the module's own model
+  // card pins that class — an unknown model's boxes must read "object".
+  assert.match(we2FlashJs, /classes\.includes\("person"\)/,
+    "browser bench no longer checks the model card for the person class");
+  assert.match(benchRs, /Some\("person"\)/,
+    "native bench no longer checks the model card for the person class");
+});
