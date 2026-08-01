@@ -76,6 +76,9 @@ beacon or chirp code, read the Beacon section of `AGENTS.md` in full first.
 - `python3 scripts/lint_docs_index.py` if you touched anything under `docs/`
 - `python3 scripts/lint_dictionary_sync.py` if you touched a vocabulary
 - `python3 scripts/gen_agent_entrypoints.py` if you edited this brief
+- Changed an enclosure `.scad`? Attach PNG previews of every affected part
+  for the requester — the change must be seeable, not just readable
+  (recipe: `docs/hardware/enclosure/README.md`, "Preview renders")
 - Commit format: `<type>(<scope>): <description>` — `feat`, `fix`, `docs`,
   `test`, `refactor`, `chore`
 

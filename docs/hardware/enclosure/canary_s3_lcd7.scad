@@ -1,5 +1,5 @@
 // ============================================================================
-//  Canary — 7" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.7-dev)
+//  Canary — 7" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.8-dev)
 // @env env="indoor; runs hot → print in PETG/ASA"
 //  Housing for the Waveshare ESP32-S3-Touch-LCD-7 (7" 800x480 IPS capacitive
 //  touch, ESP32-S3, CAN/RS485/battery). The big-panel "wall dashboard" — the
@@ -47,7 +47,8 @@
 //            validated: the slab enters face-first through the front opening,
 //            the board hangs on the panel's OWN white M3 standoffs, and
 //            4x M3x8-10 from the back thread into those standoffs — the
-//            screws, not a ledge, pull the glass flush with the front face.
+//            screws, not a ledge, set the glass glass_guard below the
+//            front rim (the drop-protection recess).
 //            BOOT/RESET window in the top wall with debossed labels; gill
 //            vents down each side wall; top-wall exhaust; back grille;
 //            a microSD access opening through the BACK PLATE covering the
@@ -128,6 +129,11 @@
 //  Heat: cool air in through the bottom-wall intake, up past the board, out
 //  the top-wall exhaust, with the back grille radiating in between. Do NOT
 //  print this in PLA for a hot-running panel; PETG/ASA. Keep the vents clear.
+//  The material call is also the DROP call: PLA is brittle exactly where a
+//  handling drop loads this case (wall corners, the plate rim), and heat
+//  ages it harder. PETG bends where PLA snaps; ASA adds UV life. Print the
+//  case in PETG/ASA with 4 wall loops, and treat every crack as a material
+//  answer before a geometry one.
 //
 //  ⚠️ CONNECTOR POSITIONS ARE NOMINAL — Waveshare's drawing dimensions the
 //  glass + mount holes precisely but not every connector centre. MEASURE the
@@ -156,7 +162,14 @@
 //  matching the reference case print that fits the real panel. The rear
 //  stack (boss face 17.5, head seat 20.5, depth 23.5 — all confirmed against
 //  that same reference) does NOT move: it chains from the module stack, not
-//  the border. Still NOT fully print-validated; expect iteration.
+//  the border. v0.8 is a DROP-PROTECTION pass, three additive moves: a
+//  guard rim (glass_guard — the front rim stands 0.6 proud of the glass, so
+//  a face-down drop lands on plastic; the whole panel stack sits that much
+//  deeper, nothing moves relative to the panel), a 45° fillet ring where
+//  the walls meet the back plate (plate_fillet — corner-drop crack starter,
+//  boss-root doctrine applied to the perimeter), and root reinforcement on
+//  the SD leash (cap flare + shaft cone, both inside envelopes that were
+//  already asserted). Still NOT fully print-validated; expect iteration.
 //  Orientation: landscape, +X = width, +Y = up, +Z = toward the glass.
 //  MOUNTING DOCTRINE: the panel mounts in its NATIVE orientation — no image
 //  rotation in firmware — which puts BOOT/RESET at the TOP edge in use. The
@@ -305,6 +318,17 @@ frame_wall   = 2.0;  // sleeve wall (also the visible front rim around the glass
 frame_reveal = 0.15; // per-side glass↔opening clearance. The opening AND its
                      // corner radius both track the slab by this much, so the
                      // reference case's corner gap cannot come back.
+glass_guard  = 0.6;  // GUARD RIM: the front rim stands this proud of the
+                     // glass, so a face-down drop lands on the case's rim,
+                     // not the panel — the raised-lip trick every phone case
+                     // uses, executed as trim: the rim keeps its 45° entry
+                     // chamfer, so it reads as a picture-frame reveal, not a
+                     // bumper. Internally the whole panel stack just sits
+                     // this much deeper (fr_depth grows by it; the rear
+                     // stack still chains from the glass, so nothing moves
+                     // RELATIVE to the panel). usb_zc and edge_vent_z are
+                     // measured from the GLASS face, so their values survive
+                     // this knob. 0 restores a flush face.
 standoff_len = 6.9;  // the panel's own white M3 standoffs, PCB back → tip — MEASURE
 frame_boss_h = 3.0;  // boss standing proud of the back plate's inner face
 frame_boss_d = 8.0;
@@ -329,6 +353,15 @@ khm_pad_w = 3.5;        // the screw head bears on back_t + khm_pad_t of
                         // the keyhole outline. The pads live in the clear band
                         // behind the plate (asserted against the component
                         // band below).
+plate_fillet = 1.6;     // 45° fillet ring where the walls meet the back
+                        // plate's inner face — the drop-load path. A corner
+                        // drop flexes the walls against the plate; a square
+                        // internal corner there is a crack starter (same
+                        // doctrine as the boss root fillets). Sized to stay
+                        // clear of the button window's back edge and the
+                        // keyhole pads' band (both asserted below); the back
+                        // grille never reaches the perimeter, so no vent is
+                        // lost. 0 disables.
 khm_mouth_c = 0.8;      // lead-in chamfer around each keyhole's mouth on the
                         // outer skin, so the case slips over the screw heads
                         // without catching on an elephant-footed rim
@@ -618,8 +651,15 @@ fr_ro = fr_ri + frame_wall;
 // face sits, and the adhesive fills the gap between glass back and ledge.
 // (Chaining the bosses from the ledge instead would open a screw gap equal
 // to adh_t, or peel the adhesive closing it.)
-ledge_z  = glass_edge_t + adh_t;               // ledge front face
-fr_depth = glass_t + pcb_standoff + pcb_t + standoff_len + frame_boss_h + back_t;
+// (both offset by glass_guard: the guard rim pushes the whole panel stack
+// that far behind the front face, without moving anything relative to it)
+ledge_z  = glass_guard + glass_edge_t + adh_t;  // ledge front face
+fr_depth = glass_guard + glass_t + pcb_standoff + pcb_t + standoff_len
+         + frame_boss_h + back_t;
+// The wall-band knobs usb_zc / edge_vent_z are measured from the GLASS face
+// (= the front face when glass_guard is 0); these are their absolute z.
+usb_z    = glass_guard + usb_zc;
+edge_vz  = glass_guard + edge_vent_z;
 fz_boss  = fr_depth - back_t - frame_boss_h;   // boss face the standoffs land on
 fz_plate = fr_depth - back_t;                  // inner face of the back plate
 fr_bosses = [for (sx = [1,-1], sy = [1,-1]) [-m3_ox + sx*m3_dx/2, m3_oy + sy*m3_dy/2]];
@@ -642,7 +682,7 @@ fr_keep_rails = adh_rails ? [for (sx = [1,-1])
      adh_rail_w/2 + adh_mark_w + vent_slot_w/2 + 0.6,
      adh_rail_l/2 + adh_mark_w + vent_slot_l/2 + 0.6]] : [];
 fr_keepouts = concat(fr_keep_base, fr_keep_rails);
-btn_z0 = glass_t + 1;  btn_z1 = fz_boss + 1;   // the band the buttons live in
+btn_z0 = glass_guard + glass_t + 1;  btn_z1 = fz_boss + 1;   // the band the buttons live in
 btn_zc = (btn_z0 + btn_z1)/2;                  // window centre across the wall
 // USB pass-through: the opening passes the HEAD; the grommet then fills it
 // around just the wire, so the port needs no relation to where the connector
@@ -736,7 +776,7 @@ assert(min([for (p = fr_bosses) max(abs(sd_dx - p[0]) - sd_w/2 - sd_lip - frame_
                                     abs(sd_dy - p[1]) - sd_l/2 - sd_lip - 2 - frame_boss_d/2)]) > 1,
        "frame: SD cover countersink collides with a boss");
 assert(!usb_port || (usb_zc - usb_open_h/2 - grom_lip > glass_t + 0.4
-       && usb_zc + usb_open_h/2 + grom_lip < fz_boss - 0.2),
+       && usb_z + usb_open_h/2 + grom_lip < fz_boss - 0.2),
        "frame: USB port (plus its grommet flange) runs out of the bottom wall band");
 assert(!usb_port || usb_wire_d - tpu_grip >= 1.0,
        "frame: grommet bore closes up — usb_wire_d vs tpu_grip");
@@ -750,7 +790,7 @@ assert(vword_x - vword_half > usb_open_w/2 + grom_lip + 2
 assert(!usb_port || edge_vent_z - edge_vent_h/2
        > usb_zc + usb_open_h/2 + grom_lip + 0.3,
        "frame: shadow gill row collides with the grommet's outer flange");
-assert(edge_vent_z + edge_vent_h/2 < fz_plate - 0.2,
+assert(edge_vz + edge_vent_h/2 < fz_plate - 0.2,
        "frame: shadow gill row cuts into the back plate");
 assert((edge_vent_n - 1)/2*edge_vent_pitch + edge_vent_w/2 < fr_xi/2 - fr_ri - 2,
        "frame: shadow gill row runs off the bottom wall's flat span");
@@ -760,10 +800,17 @@ assert(btn_reach >= 0.5 && btn_reach < 12,
 // ledge opening, so the opening must clear the BOARD, not just the glass
 assert(fr_xi - 2*ledge_side > pcb_w + 2 && fr_yi - ledge_top - ledge_bot > pcb_h + 2,
        "frame: adhesive ledge blocks the board's insertion path");
-assert(ledge_z + ledge_t < glass_t + pcb_standoff,
+assert(ledge_z + ledge_t < glass_guard + glass_t + pcb_standoff,
        "frame: ledge intrudes into the board plane");
 assert(glass_edge_t > 0 && glass_edge_t < glass_t,
        "frame: glass_edge_t is the panel's bare-glass border — it must be thinner than the full module stack (glass_t) and non-zero");
+assert(glass_guard >= 0 && glass_guard <= 1.2,
+       "frame: glass_guard is a trim reveal, not a bumper — keep it under 1.2 (or 0 for a flush face)");
+// the fillet ring lives in the same clear band as the keyhole pads; it must
+// stop short of the button window's back edge or the window loses its corner
+assert(plate_fillet == 0
+       || (plate_fillet <= khm_pad_t + 1 && fz_plate - plate_fillet >= btn_z1 + 0.3),
+       "frame: plate_fillet reaches the button window band — shrink it");
 // With the ledge at the bare-glass border, the module can passes THROUGH the
 // ledge ring going in (it did not when the ring sat behind the whole module
 // stack) — so the ring's opening must clear the can, with insertion room.
@@ -777,8 +824,11 @@ assert(fr_yi/2 - ledge_top > panel_core_dy + panel_core_h/2 + 0.3
 // so the frame fit gates read the real values instead of copies.
 // (index 6 is the bare-glass border thickness the frame_glass gate probes
 //  with; 7..9 are the ledge reaches, exported for completeness)
+// (index 10 is the guard rim height — the panel probes in the fit gates sit
+//  this far behind the front face)
 function lcd7_frame_stack() = [ledge_z, ledge_t, fr_xi, fr_yi, fr_ri, fr_depth,
-                               glass_edge_t, ledge_side, ledge_top, ledge_bot];
+                               glass_edge_t, ledge_side, ledge_top, ledge_bot,
+                               glass_guard];
 // The LCD module can, stated independently of the ledge geometry — the
 // frame_glass gate's core probe, so an enclosure edit can never shrink the
 // panel it is checked against.
@@ -787,7 +837,7 @@ function lcd7_panel_core() = [panel_core_w, panel_core_h, panel_core_dy];
 // [usb_dx, usb_zc, usb_head_w, usb_head_h, fr_yi, fr_yo, ledge_bot,
 //  btn_dx, btn_zc, sd_dx, sd_dy, fz_plate, usb_port, btn_w, btn_h, sd_w,
 //  sd_l, ledge_top]
-function lcd7_ports() = [usb_dx, usb_zc, usb_head_w, usb_head_h, fr_yi, fr_yo,
+function lcd7_ports() = [usb_dx, usb_z, usb_head_w, usb_head_h, fr_yi, fr_yo,
                          ledge_bot, btn_dx, btn_zc, sd_dx, sd_dy, fz_plate,
                          usb_port ? 1 : 0, btn_w, btn_h, sd_w, sd_l, ledge_top];
 // ...and the adhesive-rail zones for the frame_adh_rail gate.
@@ -856,7 +906,7 @@ assert(!dock_keys || (dock_key_bx - 2 > std_open/2 && dock_key_bx + 2 < stand_w/
        "stand: landscape key misses the cheek pad — move dock_key_bx over it");
 assert(fr_yo/2 + 2 < std_open/2,
        "stand: the portrait case no longer misses the cheeks — the well ribs cannot carry it");
-echo(str("Canary 7in touch v0.7-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
+echo(str("Canary 7in touch v0.8-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
          " mm, window ", view_w, " x ", view_h, ", lip ", lip_min,
          " mm, tray grille ~",
          round(vent_back ? len(grille_cells())*vent_slot_w*vent_slot_l/100 : 0),
@@ -867,7 +917,9 @@ echo(str("  stack: floor ", z_floor, " | PCB under ", z_pcb_under, " | PCB top "
          back_t + cav_d + bez_h, " mm"));
 echo(str("  frame: ", fr_xo, " x ", fr_yo, " x ", fr_depth,
          " mm one-piece; glass opening ", fr_xi, " x ", fr_yi, " r", fr_ri,
-         ", adhesive ledge face ", ledge_z, " mm behind the front (bare-glass ",
+         "; guard rim ", glass_guard, " mm proud of the glass, plate fillet ",
+         plate_fillet, "; adhesive ledge face ", ledge_z,
+         " mm behind the front (bare-glass ",
          "border ", glass_edge_t, " + adhesive ", adh_t,
          "); 4x M3x8-10 from the back into the panel standoffs (boss face at ",
          fz_boss, ", head seat at ", fz_plate, ")"));
@@ -908,7 +960,7 @@ echo(str("  stand: ", stand_w, " x ", stand_d, " base, ", stand_ang,
          " (cable exits sideways in portrait)"));
 if (usb_port)
     echo(str("  USB port: ", usb_open_w, " x ", usb_open_h,
-             " stadium at (", usb_dx, ", z ", usb_zc, ") — passes a ",
+             " stadium at (", usb_dx, ", z ", usb_z, ") — passes a ",
              usb_head_w, " x ", usb_head_h, " head; grommet grips a Ø",
              usb_wire_d, " jacket. TPU fitments (grommet_usb / plug_buttons / ",
              "plug_sd): TPU 90-95A, EXTERNAL spool, never the AMS"));
@@ -1089,8 +1141,8 @@ module gauge() {
 //  +z toward the back; +x = BACK-view right). No ledge holds the glass: the
 //  4 screws pull the panel's standoffs onto the boss faces, and that stack —
 //  glass_t + pcb_standoff + pcb_t + standoff_len — is exactly what sets the
-//  glass flush with the front rim. Get standoff_len right or the glass sits
-//  proud/sunken by the same error.
+//  glass glass_guard below the front rim (the guard recess is by design —
+//  v0.8). Get standoff_len right or the recess is off by the same error.
 // ----------------------------------------------------------------------------
 module pill2d(l, w) { hull() for (d = [-1, 1]) translate([0, d*(l - w)/2]) circle(d = w); }
 // Back-plate deboss: label_back_depth, not label_depth — the floors must sit
@@ -1123,8 +1175,8 @@ module frame_body() {
 }
 
 module frame() {
-    gz = (glass_t + fz_boss)/2;        // centre of the clear air band in the walls
-    gh = fz_boss - glass_t - 4;        // wall-vent height inside that band
+    gz = (glass_guard + glass_t + fz_boss)/2;   // centre of the clear air band
+    gh = fz_boss - glass_guard - glass_t - 4;   // wall-vent height inside it
     difference() {
         union() {
             difference() {
@@ -1154,6 +1206,27 @@ module frame() {
                         translate([0, khm_len])
                             circle(d = khm_slide_w + 2*khm_pad_w);
                     }
+            // 45° fillet ring where the walls meet the back plate — the
+            // drop-load path: a corner drop flexes the walls against the
+            // plate, and the square internal corner there is the crack
+            // starter (boss-root doctrine, applied to the whole perimeter).
+            // It lives in the clear band with the keyhole pads, behind the
+            // component tip plane (fz_boss), and the wall openings are cut
+            // AFTER this union, so every vent/port that crosses the band
+            // pierces it — nothing seals. Prints plate-down: the ring
+            // tapers as it rises, so it needs no support.
+            if (plate_fillet > 0) difference() {
+                translate([0, 0, fz_plate - plate_fillet])
+                    linear_extrude(plate_fillet + 0.01)
+                        rrect2d(fr_xi + 0.04, fr_yi + 0.04, fr_ri);
+                hull() {
+                    translate([0, 0, fz_plate - plate_fillet - 0.02])
+                        linear_extrude(0.01) rrect2d(fr_xi + 0.1, fr_yi + 0.1, fr_ri);
+                    translate([0, 0, fz_plate + 0.02]) linear_extrude(0.01)
+                        rrect2d(fr_xi - 2*plate_fillet, fr_yi - 2*plate_fillet,
+                                max(0.8, fr_ri - plate_fillet));
+                }
+            }
             // adhesive ledge behind the glass: a full ring at the glass-back
             // datum, widened where the panel's adhesive strips are (10 mm
             // sides, 6 mm button edge, 2 mm over the FPC)
@@ -1248,16 +1321,16 @@ module frame() {
         // to pass the power cable's overmold head, cut through the wall AND
         // the FPC-edge ledge/wedge behind it. The grommet fills it afterwards.
         if (usb_port) {
-            translate([usb_dx, -fr_yi/2 + ledge_bot + 0.6, usb_zc])
+            translate([usb_dx, -fr_yi/2 + ledge_bot + 0.6, usb_z])
                 rotate([90, 0, 0]) linear_extrude(frame_wall + ledge_bot + 1.2)
                     rotate(90) pill2d(usb_open_w, usb_open_h);
             // 45° mouth bevel at the skin — the grommet's cone lands on it,
             // and the empty port reads finished when no cable is fitted
             hull() {
-                translate([usb_dx, -fr_yo/2 + 0.01, usb_zc]) rotate([90, 0, 0])
+                translate([usb_dx, -fr_yo/2 + 0.01, usb_z]) rotate([90, 0, 0])
                     linear_extrude(0.02) rotate(90)
                         pill2d(usb_open_w + 1.6, usb_open_h + 1.6);
-                translate([usb_dx, -fr_yo/2 + 0.81, usb_zc]) rotate([90, 0, 0])
+                translate([usb_dx, -fr_yo/2 + 0.81, usb_z]) rotate([90, 0, 0])
                     linear_extrude(0.02) rotate(90) pill2d(usb_open_w, usb_open_h);
             }
             // relieve the ledge ring + wedge behind the port so the grommet's
@@ -1275,7 +1348,7 @@ module frame() {
         // attached by the wall web behind it: no ties, no lines. Readable
         // standing below and in front, letter tops toward the screen.
         for (s = [1, -1])
-            translate([0, -fr_yo/2 + edge_lbl_depth, usb_zc])
+            translate([0, -fr_yo/2 + edge_lbl_depth, usb_z])
                 rotate([90, 0, 0]) rotate([0, 0, 180]) translate([-s*vword_x, 0])
                     linear_extrude(edge_lbl_depth + 0.1)
                         text(s > 0 ? edge_text_l : edge_text_r,
@@ -1290,7 +1363,7 @@ module frame() {
         // bottom-wall opening, so it vents the cavity.
         for (i = [0 : edge_vent_n - 1])
             translate([(i - (edge_vent_n - 1)/2)*edge_vent_pitch,
-                       -fr_yi/2 + ledge_bot + 0.6, edge_vent_z])
+                       -fr_yi/2 + ledge_bot + 0.6, edge_vz])
                 rotate([90, 0, 0]) linear_extrude(frame_wall + ledge_bot + 1.2)
                     pill2d(edge_vent_h, edge_vent_w);
         // back grille (dodging bosses and the keyholes — note -m3_ox: this
@@ -1392,7 +1465,8 @@ module frame() {
 // (+x,+y) corner, chosen because it contains a boss AND a wall keyhole. Assemble
 // it on the panel's corner with one M3x8-10: the glass corner proves glass_r,
 // the screw only threads home if the m3 offsets have the right SIGNS, and the
-// glass sits flush with the rim only if standoff_len is right.
+// glass sits exactly glass_guard below the rim only if standoff_len is right
+// (the recess IS the pass criterion — flush glass means the stack is off).
 module frame_gauge() {
     bx = -m3_ox + m3_dx/2;  by = m3_oy + m3_dy/2;
     intersection() {
@@ -1528,8 +1602,20 @@ module sd_cover() {
         // tapers steeply for the thumb-push through the hole.
         if (sd_tether) {
             translate([-2, sd_l/2 + sd_lip - 0.6, 0])
-                cube([4, sd_teth_gap + 1.6, 1.2]);              // strap
+                cube([4, sd_teth_gap + 2.2, 1.2]);              // strap
+            // root flare into the cap: the fold concentrates at stiffness
+            // steps, and a square plan corner there is where a fatigue
+            // crack would start — trumpet the junction instead (both roots
+            // stay inside the 5.0 strap channel, asserted with the head)
+            hull() {
+                translate([-2.4, sd_l/2 + sd_lip - 0.6, 0]) cube([4.8, 0.01, 1.2]);
+                translate([-2, sd_l/2 + sd_lip + 1.0, 0]) cube([4, 0.01, 1.2]);
+            }
             translate([0, sd_l/2 + sd_lip + sd_teth_gap, 0]) {
+                // ...and a root cone where the strap meets the shaft — sized
+                // to NEST inside the anchor hole's 45° mouth chamfer, so the
+                // strap still lies flush and the barb's reach is unchanged
+                translate([0, 0, 1.2 - 0.01]) cylinder(d1 = 4.0, d2 = 2.8, h = 0.6);
                 cylinder(d = 2.8, h = 3.2);                     // shaft
                 translate([0, 0, 3.2 - 0.01])                   // 45° under-flare
                     cylinder(d1 = 2.8, d2 = sd_teth_head, h = 1.0);
@@ -1544,7 +1630,7 @@ module sd_cover() {
 // used by canary_s3_lcd7_fitcheck.scad's TPU gates, so the gates test the
 // exact transforms these comments claim.
 module usb_grommet_installed() {
-    translate([usb_dx, -fr_yi/2 + 1.6, usb_zc]) rotate([90, 0, 0]) usb_grommet();
+    translate([usb_dx, -fr_yi/2 + 1.6, usb_z]) rotate([90, 0, 0]) usb_grommet();
 }
 module button_plug_installed() {
     translate([btn_dx, fr_yo/2, btn_zc]) rotate([90, 0, 0]) button_plug();

@@ -161,8 +161,10 @@ else if (check == "locate")
         assembled_bezel();
         translate([locate_slip, locate_slip, 0]) glass_slab(glass_t);
     }
-// The one-piece frame is modelled with the panel at z 0.. in its own coords,
-// so the slab needs no repositioning. The panel is STEPPED, and the check
+// The one-piece frame is modelled with the panel glass_guard behind the
+// front face (the guard rim stands proud of the glass), so the slab probes
+// sit at that offset — read from the stack, never assumed flush. The panel
+// is STEPPED, and the check
 // must model both steps: a bare-glass BORDER (glass_edge_t thin — the band
 // the adhesive ledge rises to within adh_t of) around the thicker LCD-module
 // core (glass_t). A uniform glass_t slab would false-fail against the raised
@@ -172,10 +174,11 @@ else if (check == "locate")
 // shrink the probe in lockstep and sneak past this gate.
 else if (check == "frame_glass") {
     ge = lcd7_frame_stack()[6];   // bare-glass border thickness
+    gg = lcd7_frame_stack()[10];  // guard rim: the panel sits this far back
     PC = lcd7_panel_core();       // [core_w, core_h, core_dy]
     intersection() {
         frame();
-        union() {
+        translate([0, 0, gg]) union() {
             linear_extrude(ge) rrect2d(glass_w, glass_h, glass_r);
             translate([0, PC[2], 0]) linear_extrude(glass_t)
                 rrect2d(PC[0], PC[1], 2);
@@ -279,10 +282,12 @@ else if (check == "frame_btn_plug") {
     }
 }
 else if (check == "btn_plug_glass")
-    // the plug, pips included, must never reach the panel
+    // the plug, pips included, must never reach the panel (which sits
+    // glass_guard behind the front face — same offset as frame_glass)
     intersection() {
         button_plug_installed();
-        linear_extrude(glass_t) rrect2d(glass_w, glass_h, glass_r);
+        translate([0, 0, lcd7_frame_stack()[10]])
+            linear_extrude(glass_t) rrect2d(glass_w, glass_h, glass_r);
     }
 else if (check == "frame_sd_seal") {
     // inverted — the installed SD cover must cross the back plate mid-plane

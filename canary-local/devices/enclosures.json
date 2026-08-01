@@ -6447,7 +6447,7 @@
    ]
   },
   "canary_s3_lcd7.scad": {
-   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.7-dev)",
+   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.8-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -6745,6 +6745,11 @@
        "comment": "per-side glass↔opening clearance. The opening AND its"
       },
       {
+       "name": "glass_guard",
+       "default": "0.6",
+       "comment": "GUARD RIM: the front rim stands this proud of the"
+      },
+      {
        "name": "standoff_len",
        "default": "6.9",
        "comment": "the panel's own white M3 standoffs, PCB back → tip — MEASURE"
@@ -6817,6 +6822,11 @@
        "name": "khm_pad_w",
        "default": "3.5",
        "comment": "the screw head bears on back_t + khm_pad_t of"
+      },
+      {
+       "name": "plate_fillet",
+       "default": "1.6",
+       "comment": "45° fillet ring where the walls meet the back"
       },
       {
        "name": "khm_mouth_c",
@@ -7296,12 +7306,16 @@
       },
       {
        "name": "ledge_z",
-       "default": "glass_edge_t + adh_t",
+       "default": "glass_guard + glass_edge_t + adh_t",
        "comment": "ledge front face"
       },
       {
-       "name": "fr_depth",
-       "default": "glass_t + pcb_standoff + pcb_t + standoff_len + frame_boss_h + back_t"
+       "name": "usb_z",
+       "default": "glass_guard + usb_zc"
+      },
+      {
+       "name": "edge_vz",
+       "default": "glass_guard + edge_vent_z"
       },
       {
        "name": "fz_boss",
