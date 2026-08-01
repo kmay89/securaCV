@@ -45,7 +45,11 @@ bool is_placeholder(const char* v) {
 
 /* Credentials: a real compiled value wins and is persisted (a fresh
  * secrets build over USB reconfigures the unit); a placeholder defers
- * to whatever NVS already holds. */
+ * to whatever NVS already holds. A key that EXISTS in NVS is a real
+ * answer even when its value is empty: the flashers seed an empty
+ * wifi_pass for an open network, and substituting the compiled
+ * placeholder here made the join fail with a password no router has
+ * ever seen. Only a key that is genuinely absent falls back. */
 void load_credential(Preferences& prefs, const char* key,
                      char* dst, size_t cap, const char* compiled) {
   if (!is_placeholder(compiled)) {
@@ -54,9 +58,12 @@ void load_credential(Preferences& prefs, const char* key,
     if (stored != dst) prefs.putString(key, dst);
     return;
   }
-  String stored = prefs.getString(key, "");
-  if (stored.length() > 0) copy_str(dst, cap, stored.c_str());
-  else copy_str(dst, cap, compiled);
+  if (prefs.isKey(key)) {
+    String stored = prefs.getString(key, "");
+    copy_str(dst, cap, stored.c_str());
+  } else {
+    copy_str(dst, cap, compiled);
+  }
 }
 
 }  // namespace
