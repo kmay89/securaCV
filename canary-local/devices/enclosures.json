@@ -6447,7 +6447,7 @@
    ]
   },
   "canary_s3_lcd7.scad": {
-   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.6-dev)",
+   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.7-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -6492,7 +6492,12 @@
       {
        "name": "glass_t",
        "default": "4.0",
-       "comment": "glass + LCD module thickness at the edge — MEASURE"
+       "comment": "glass + LCD module thickness where the module reaches —"
+      },
+      {
+       "name": "glass_edge_t",
+       "default": "0.8",
+       "comment": "the BARE-GLASS border the adhesive strips land on —"
       },
       {
        "name": "glass_r",
@@ -7262,7 +7267,7 @@
       },
       {
        "name": "ledge_z",
-       "default": "glass_t + adh_t",
+       "default": "glass_edge_t + adh_t",
        "comment": "ledge front face"
       },
       {
