@@ -57,6 +57,7 @@ DEVICE_OF = [
 # and catalog.test.js fails it for not being in the enclosures.json inventory.
 NON_PRODUCT_SCADS = {
     "canary_s3_lcd7_fitcheck.scad",   # 7" bezel/tray assembly-interference check
+    "canary_s3_lcd7_qr.scad",         # generated help-QR bit matrix (gen_qr.py)
 }
 
 # Preview meshes rendered for in-development designs the device sheets
