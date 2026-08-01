@@ -224,7 +224,7 @@ the values echoed when you render:
 |---|---|---|
 | Touch-glass width × height | `glass_w` / `glass_h` | 192.96 × 110.76 |
 | Glass thickness at the edge | `glass_t` | 4.0 |
-| Glass corner radius | `glass_r` | 3.0 |
+| Glass corner radius | `glass_r` | 2.0 (a fitting case's r≈2.7 cavity still gaps — the slab is sharper) |
 | Active (lit) area | `aa_w` / `aa_h` | 154.88 × 86.72 |
 | PCB outline | `pcb_w` / `pcb_h` | 165.72 × 97.60 |
 | Tallest rear-side component | `comp_h` | 11.0 |
