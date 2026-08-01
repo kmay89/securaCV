@@ -285,8 +285,14 @@ native mounting — with debossed labels (back view: **BOOT left, RESET
 right**), gill vents on the side walls, intake/exhaust slot rows, a back
 grille, two **keyhole wall mounts** near the top corners (hang the case over
 two pan-head screws and slide it down; the catches point up at the button
-edge), and a **cable pass-through** low in the back plate so USB-C power and
-flashing reach the bottom-edge connector cluster without opening the case.
+edge), and **paired bevelled service windows in each short wall**, placed
+from the Rev1.2 board photos: microSD + UART1 and the two USB-C ports on the
+right (back view), the CAN/I²C/sensor cluster and battery/RS-485 terminals
+on the left. The SD socket sits ~14 mm inboard, so the card window is sized
+for a fingertip to reach in and work the push-push socket — an "SD" deboss
+marks it. Window positions are photo-derived: **measure your board** before
+printing. The shell carries the catalog's modelled foot chamfer (slicer
+elephant-foot compensation stays 0) and a matching back-rim chamfer.
 
 ```sh
 openscad --export-format binstl -o lcd7_frame_gauge.stl -D 'part="frame_gauge"' canary_s3_lcd7.scad
