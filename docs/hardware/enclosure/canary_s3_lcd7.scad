@@ -586,6 +586,9 @@ stand_clear   = 0.5;   // per-face case<->slot clearance (drop-in, not press)
 stand_cable_w = 16.0;  // desk-level cable channel width (through plate + fin foot)
 stand_feet    = true;  // 4x shallow recesses for adhesive rubber feet
 
+include <canary_s3_lcd7_qr.scad>   // qr_url() / qr_bits() — generated, committed
+qr_n = len(qr_bits());             // symbol size — defined HERE, above every use
+
 /* [Help QR — dock deck] */
 // A scannable help code debossed into the flat deck BEHIND the fin, on the
 // right wing of the cable channel — the one place on either part with a big
@@ -612,7 +615,8 @@ qr_back      = true;   // deboss the help QR into the back plate too
 qr_back_cell = 1.2;    // module size — 3 line-widths; the plate is busier
 qr_back_dx   = -40.0;  // field centre, back-view coords (+x = back-view right)
 qr_back_dy   = 0.0;
-qr_back_reach = 21*qr_back_cell/2 + 4*qr_back_cell;   // field/2 + quiet zone
+qr_back_reach = qr_n*qr_back_cell/2 + 4*qr_back_cell;   // field/2 + quiet zone,
+                  // sized from the GENERATED matrix — a bigger symbol grows it
 
 /* [Battery bay — click-in, no hardware] */
 // A moulded bay on the back plate's inner face for the MakerFocus 1S packs
@@ -637,7 +641,6 @@ bat_air  = 2.0;   // battery ↔ component air gap (the board-side channel)
 bat_rib  = 1.2;   // battery ↔ plate air channel (the grille-side channel)
 bat_clr  = 1.0;   // per-side XY pocket clearance
 
-include <canary_s3_lcd7_qr.scad>   // qr_url() / qr_bits() — generated, committed
 
 /* [Quality] */
 $fa = 3; $fs = 0.5;
@@ -716,15 +719,19 @@ fr_depth0 = glass_guard + glass_t + pcb_standoff + pcb_t + standoff_len
 // under the bay, board-side air, the pack itself, the rail channel. The
 // case deepens only by what that stack needs beyond the stock cavity.
 bat_extra = bat_on
-    ? max(0, glass_guard + glass_t + pcb_standoff + bat_over + bat_air
-             + bat_t + bat_rib - (fr_depth0 - back_t))
+    ? max(0, glass_guard + glass_t + pcb_standoff + pcb_t + bat_over
+             + bat_air + bat_t + bat_rib - (fr_depth0 - back_t))
     : 0;
 fr_depth = fr_depth0 + bat_extra;
 // The wall-band knobs usb_zc / edge_vent_z are measured from the GLASS face
 // (= the front face when glass_guard is 0); these are their absolute z.
 usb_z    = glass_guard + usb_zc;
 edge_vz  = glass_guard + edge_vent_z;
-fz_boss  = fr_depth - back_t - frame_boss_h;   // boss face the standoffs land on
+// The boss FACES live at the PANEL's datum — the standoff tips — which a
+// battery case must NOT move: only the towers lengthen to reach the deeper
+// plate. (Chaining fz_boss off fr_depth would leave the screws clamping
+// bat_extra of air.)
+fz_boss  = fr_depth0 - back_t - frame_boss_h;  // boss face the standoffs land on
 fz_plate = fr_depth - back_t;                  // inner face of the back plate
 fr_bosses = [for (sx = [1,-1], sy = [1,-1]) [-m3_ox + sx*m3_dx/2, m3_oy + sy*m3_dy/2]];
 // The frame's grille keepouts, hoisted so the open-area echo below is
@@ -952,7 +959,7 @@ assert(stand_gusset_h < stand_fin_h, "stand: cheek gusset overruns the fin");
 // the plate edges, the back-corner radius, and — for a straight-down scan —
 // clear of the RECLINED fin's overhang, which reaches fin_h*sin(a) behind
 // its own foot.
-qr_n = len(qr_bits());  qr_field = qr_n*qr_cell;  qr_reach = qr_field/2 + 4*qr_cell;
+qr_field = qr_n*qr_cell;  qr_reach = qr_field/2 + 4*qr_cell;
 qr_dy_eff = qr_dy + bat_dg;   // the deck's rear half-growth, when a battery deepens the dock
 assert(!qr_help || (qr_dx - qr_reach > stand_cable_w/2
     && qr_dx + qr_reach < stand_w/2
@@ -1362,8 +1369,13 @@ module frame_bat_bay() {
                      [py + 2.8, fz_plate]]);          // root, outer
 }
 // The pack itself, seated: shared by the three battery fit gates below.
-module bat_brick(inset = 0, t = bat_t)
-    translate([-(bat_l/2 - inset), -(bat_w/2 - inset), fz_plate - bat_rib - t])
+// `drop` hovers the brick below the rail plane — the fit probe needs it,
+// because a face lying EXACTLY on the rails' undersides makes CGAL emit
+// zero-volume phantom sheets (the #1373 failure class), which read as a
+// collision that holds no material.
+module bat_brick(inset = 0, t = bat_t, drop = 0)
+    translate([-(bat_l/2 - inset), -(bat_w/2 - inset),
+               fz_plate - bat_rib - t - drop])
         cube([bat_l - 2*inset, bat_w - 2*inset, t]);
 
 module frame() {
@@ -1382,8 +1394,8 @@ module frame() {
             // 45° root fillet — the screws' clamp load spreads into the
             // plate through a wider section instead of a sharp corner
             for (p = fr_bosses) translate([p[0], p[1], fz_boss]) {
-                cylinder(d = frame_boss_d, h = frame_boss_h + 0.01);
-                translate([0, 0, frame_boss_h - 1.5])
+                cylinder(d = frame_boss_d, h = fz_plate - fz_boss + 0.01);
+                translate([0, 0, fz_plate - fz_boss - 1.5])
                     cylinder(d1 = frame_boss_d, d2 = frame_boss_d + 3, h = 1.51);
             }
             if (bat_on) frame_bat_bay();
@@ -2103,7 +2115,7 @@ else if (part == "stand_gauge") stand_gauge();
 //                    frame: must be SOLID (the fingers actually retain it)
 else if (part == "bat_probe_fit") {
     assert(bat_on, "battery gates need -D battery=\"3000\" or \"10000\"");
-    intersection() { frame(); bat_brick(2.4, bat_t - 0.05); }
+    intersection() { frame(); bat_brick(2.4, bat_t - 0.1, 0.05); }
 }
 else if (part == "bat_probe_seat") {
     assert(bat_on, "battery gates need -D battery=\"3000\" or \"10000\"");

@@ -7195,6 +7195,11 @@
        "name": "stand_feet",
        "default": "true",
        "comment": "4x shallow recesses for adhesive rubber feet"
+      },
+      {
+       "name": "qr_n",
+       "default": "len(qr_bits())",
+       "comment": "symbol size — defined HERE, above every use"
       }
      ]
     },
@@ -7243,8 +7248,8 @@
       },
       {
        "name": "qr_back_reach",
-       "default": "21*qr_back_cell/2 + 4*qr_back_cell",
-       "comment": "field/2 + quiet zone"
+       "default": "qr_n*qr_back_cell/2 + 4*qr_back_cell",
+       "comment": "field/2 + quiet zone,"
       }
      ]
     },
@@ -7429,7 +7434,7 @@
       },
       {
        "name": "fz_boss",
-       "default": "fr_depth - back_t - frame_boss_h",
+       "default": "fr_depth0 - back_t - frame_boss_h",
        "comment": "boss face the standoffs land on"
       },
       {
