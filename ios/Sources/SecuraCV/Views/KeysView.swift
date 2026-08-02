@@ -80,18 +80,8 @@ struct AboutSection: View {
     }
 }
 
-enum BuildInfo {
-    static var version: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
-    }
-    /// Baked at build time by scripts/stamp_build.sh into Info.plist.
-    static var buildRev: String {
-        Bundle.main.object(forInfoDictionaryKey: "SECURACV_BUILD_REV") as? String ?? "dev"
-    }
-    static var firmwareTrain: String {
-        Bundle.main.object(forInfoDictionaryKey: "SECURACV_FW_TRAIN") as? String ?? "0.x"
-    }
-}
+// BuildInfo moved to Shared/BuildInfo.swift — the watch About screen shows
+// the same stamp, from the same code.
 
 #Preview("Keys — demo fleet") {
     KeysView().environmentObject(DemoFleet.previewStore())

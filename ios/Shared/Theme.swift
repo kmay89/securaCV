@@ -1,10 +1,12 @@
-// Theme.swift
+// Theme.swift  (SHARED — compiled into the app, both widget targets, and the
+// watch app; everything here is SwiftUI that exists on iOS and watchOS alike)
 //
 // One place for color, type, and spacing so light/dark and Dynamic Type stay
-// coherent on every screen size. Colors are SEMANTIC (calm/info/warn/alert/
-// tamper) — views ask for a role, never a raw hex — which is how the palette
-// stays honest and how "pure red only for a real alarm" (a firmware lint,
-// scripts/lint_no_impersonation.sh) is respected on the phone too.
+// coherent on every screen size — phone, pad, and wrist. Colors are SEMANTIC
+// (calm/info/warn/alert/tamper) — views ask for a role, never a raw hex —
+// which is how the palette stays honest and how "pure red only for a real
+// alarm" (a firmware lint, scripts/lint_no_impersonation.sh) is respected on
+// every Apple surface too.
 
 import SwiftUI
 

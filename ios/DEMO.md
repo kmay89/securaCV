@@ -59,6 +59,27 @@ on your Wi-Fi is discoverable and pairable from inside the Simulator** —
 mDNS discovery, HTTP pairing, and chain verification all work. Only BLE is
 Simulator-impossible.
 
+### The watch app in the Simulator
+
+The wrist app is a target in the same project (no separate checkout, no
+separate version — it ships inside the iPhone `.ipa`). To see it:
+
+1. In Xcode's scheme picker choose **SecuraCVWatch**, and pick a watch
+   simulator that is *paired* to an iPhone simulator (Xcode's default watch
+   sims are; Devices & Simulators shows the pairing).
+2. ⌘R. Run the **SecuraCV** scheme on the paired iPhone simulator too — the
+   moment the phone app is up, WatchConnectivity carries the demo fleet to
+   the wrist, banner and all ("Sample data — pair a Canary from your
+   iPhone"). The watch renders whatever the phone believes; it has no demo
+   switch of its own, because it has no state of its own.
+3. Complications: long-press the watch face in the simulator → edit → add
+   the **SecuraCV Fleet** complication. It renders from the last snapshot the
+   watch app cached, so open the watch app once first.
+
+On real hardware it's the same story: install on the iPhone (TestFlight or
+⌘R), and the Watch app appears in the Watch app's "Available Apps" list —
+it installs from the phone, never separately.
+
 ## Your iPhone
 
 1. Plug the phone in (or use Wi-Fi debugging), select it as the run
@@ -195,3 +216,11 @@ regenerate + build + test as the nightly, unsigned, on a Simulator. PR runs
 always build (no Apple credentials needed); the `ENABLE_IOS_BUILD=true`
 repo-variable gate applies only to the scheduled nightly, so it never nags
 before iOS is enabled.
+
+The same run covers the wrist: building the SecuraCV scheme builds the
+embedded watch app + complications, `heal.sh` fails if they didn't land
+inside `SecuraCV.app` (an un-embedded watch app is otherwise silent), the
+icon gate (`scripts/check_app_icon.py`) asserts both app-icon catalogs
+structurally, and the wrist contract (`Shared/WristSnapshot.swift`) is
+unit-tested in `SecuraCVTests`. The release workflow re-proves the embed on
+the exported `.ipa` before validate/upload.

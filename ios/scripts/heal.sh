@@ -57,15 +57,34 @@ sim_destination() {
 
 build() {
   generate
+  # -derivedDataPath is pinned (git-ignored build/) so the embed proof below
+  # can find the products without guessing at DerivedData hashes.
   xcodebuild \
     -project SecuraCV.xcodeproj \
     -scheme SecuraCV \
     -destination "$(sim_destination)" \
     -configuration Debug \
+    -derivedDataPath build \
     SECURACV_BUILD_REV="${SECURACV_BUILD_REV:-dev}" \
     SECURACV_FW_TRAIN="${SECURACV_FW_TRAIN:-0.x}" \
     CODE_SIGNING_ALLOWED=NO \
     clean build test
+
+  # Prove the watch app actually EMBEDDED (Embed Watch Content), not merely
+  # compiled — a watch app missing from the bundle ships an iPhone-only app
+  # with nothing red anywhere (RELEASE_LESSONS Principle 4: verify a bundled
+  # payload where it's bundled). The release workflow re-proves this on the
+  # exported .ipa; this catches it at PR time, on the simulator products.
+  local app="build/Build/Products/Debug-iphonesimulator/SecuraCV.app"
+  local watch_app="$app/Watch/SecuraCVWatch.app"
+  local complications="$watch_app/PlugIns/SecuraCVWatchWidgets.appex"
+  for bundle in "$app" "$watch_app" "$complications"; do
+    if [ ! -d "$bundle" ]; then
+      echo "[heal] ERROR: expected bundle missing after build: $bundle" >&2
+      exit 1
+    fi
+  done
+  echo "[heal] watch app + complications embedded in SecuraCV.app"
 }
 
 check() {

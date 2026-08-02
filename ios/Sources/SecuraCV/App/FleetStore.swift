@@ -62,6 +62,7 @@ final class FleetStore: ObservableObject {
     func onAppear() {
         discovery.start()
         ble.startScan()
+        WatchLink.shared.activate(store: self)
         Task { await alerts.requestAuthorization() }
         Task { await hydrateFromCloud() }
         recordDemoBeatIfHarmless()
@@ -217,7 +218,14 @@ final class FleetStore: ObservableObject {
 
         witnesses = next.sorted { $0.effectiveSeverity > $1.effectiveSeverity }
         timeline = events.sorted { $0.timeBucket > $1.timeBucket }
+        // Re-evaluate the dead-man's-switch EVERY cycle, not just on scene
+        // changes: the island and the wrist serialize its state, and a phone
+        // that stays foregrounded past the dark window must never keep
+        // exporting `.alive` (the wrist would show a green glyph beside its
+        // own "last beat 47 min ago" text).
+        heartbeat.tick()
         pushLiveActivity()
+        WatchLink.shared.pushCurrent()   // content-deduped; free when nothing moved
         evaluateAlerts()
     }
 
@@ -285,7 +293,9 @@ final class FleetStore: ObservableObject {
     }
 
     /// Coarse 10-minute bucket — never a precise second (Invariant III).
-    private static func bucket(_ date: Date) -> Date {
+    /// Internal (not private) because the wrist snapshot builder applies the
+    /// SAME coarsening to every timestamp it puts on the wire.
+    static func bucket(_ date: Date) -> Date {
         let t = date.timeIntervalSince1970
         return Date(timeIntervalSince1970: (t / 600).rounded(.down) * 600)
     }
@@ -324,5 +334,9 @@ final class FleetStore: ObservableObject {
             }
         }
         pushLiveActivity()
+        // Forced: the wrist is waiting on this exact push to leave its
+        // "Testing…" state, and a repeat failure with the same reason would
+        // be byte-identical to the last snapshot and vanish into the dedup.
+        WatchLink.shared.pushCurrent(force: true)
     }
 }

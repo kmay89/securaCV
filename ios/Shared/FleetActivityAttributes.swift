@@ -4,7 +4,13 @@
 // BOTH targets compile, so the app that starts an activity and the widget that
 // renders it can never disagree about its shape. ActivityKit requires this type
 // to be Codable + Hashable; keep it small — Live Activity payloads are tiny.
+//
+// The whole file is guarded on ActivityKit because Shared/ also compiles into
+// the watchOS targets, where ActivityKit does not exist — the system mirrors
+// the iPhone's Live Activities into the watch Smart Stack by itself, so the
+// wrist needs no code here (docs/design/apple_watch_and_notifications.md §3.2).
 
+#if canImport(ActivityKit)
 import Foundation
 import ActivityKit
 
@@ -24,13 +30,16 @@ struct FleetActivityAttributes: ActivityAttributes {
         /// Seconds since the last verified end-to-end heartbeat — the
         /// smoke-alarm "provably alive" number. nil = never verified.
         var lastVerifiedAgo: Int?
-
-        // NOTE: `severityRaw` is deliberately a plain UInt8 and this struct
-        // stays free of the Severity enum, because this file compiles into BOTH
-        // the app and the widget target and each defines its own Severity. Each
-        // target adds its own `severity` accessor over severityRaw.
     }
 
     /// A short name for the household/fleet, set when the activity starts.
     var fleetName: String
 }
+
+extension FleetActivityAttributes.State {
+    /// The one Severity-ladder view of the raw byte. Severity itself lives in
+    /// Shared/FleetEnums.swift and compiles into every target, so this
+    /// accessor can too — the per-target mirrors it replaced are gone for good.
+    var severity: Severity { Severity(tolerant: Int(severityRaw)) }
+}
+#endif
