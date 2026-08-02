@@ -529,7 +529,7 @@ blocked converts a ventilated case into an oven.
 
 ### 7c″ · The colour + fit coupon — print this before the frame
 
-One part answers two questions at ~16 cm³, a sixth of a frame:
+One part answers two questions at **20.9 cm³ — a fifth of a frame** (body 20.56, ink 0.31, accent 0.02):
 
 ```sh
 for f in body ink accent; do
