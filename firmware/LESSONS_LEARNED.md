@@ -426,6 +426,39 @@
 
 ## Build System
 
+### Whether `common/` needs an explicit build_src_filter depends on the env's LDF mode — and getting it wrong fails at LINK, in either direction
+- **What happened:** `canary-display-nightstand7` was added with the same
+  `build_src_filter` block its siblings carry:
+  ```
+  +<../../../common/color/color_engine.cpp>
+  +<../../../common/color/look_engine.cpp>
+  ```
+  It failed to link with `multiple definition of
+  canary::color::gamma8` — and of every other symbol in the pair. The build
+  had compiled the color engine **twice**: once as `.pio/common/color/*.o`
+  from that filter, and once as an ordinary LDF library
+  (`.pio/build/canary-display-nightstand7/lib2ce/color/*`).
+- **Why the siblings are different:** `nightstand-s3` and `touch169` extend
+  `canary_display_base` on the core-2 platform, where the LDF runs `deep+`
+  and does **not** map `common/color` to a library — those envs genuinely
+  need the explicit sources, and the long warning above them (a
+  library-manifest route that was tried twice and failed) is still correct
+  *for them*. `nightstand7` extends the **dash**, which adds
+  `lib_ldf_mode = chain` on top of the base's
+  `lib_extra_dirs = ../../common`, and that combination *does* resolve the
+  directory as a library. Same rule, different mechanism.
+- **Both directions are link-time, not compile-time.** Too few sources gives
+  undefined references; too many gives multiple definitions. Neither shows up
+  while the files are compiling, which is the part everyone watches.
+- **The rule:** before adding a `common/` entry to a new env, look at what it
+  `extends` — specifically `lib_ldf_mode` and whether `lib_extra_dirs`
+  reaches `firmware/common`. With both, the LDF already compiles it; add
+  nothing. Without them, name the sources. `scripts/lint_common_lib_manifests.py`
+  guards the undefined-reference direction (it asks whether *any* env compiles
+  a path-prefixed library) but cannot see the duplicate direction, so it stays
+  green either way.
+
+
 ### A flavor config's plain `#define` silently beats an env's `-D`
 - **What happened:** The compile-verification envs that exist to prove
   bench-gated code actually builds were proving nothing. `canary-display-dash-vault`
