@@ -644,6 +644,21 @@ qr_dy   = 39.0;   // field centre, +y = toward the back edge (a battery
 // the modules come out crisp. Placed on the plate's left band as the SD
 // opening's visual counterweight, outboard of the left rail's moat; the
 // smooth keepout it claims from the grille IS its quiet zone.
+// ⚠️ POLARITY IS A SCANNING REQUIREMENT, not a taste. A reader needs DARK
+// modules on a LIGHT field and refuses the inverse (verified: invert this
+// symbol and cv2 will not read it at any size). The modules here are the
+// deboss FLOORS, so the floor colour must be the DARK one:
+//   two-colour  — floors print in the BODY filament, skin in the ACCENT, so
+//                 the BODY must be darker than the ACCENT. The house pairing
+//                 (white body + canary-yellow accent) is BACKWARDS for this
+//                 and gives white-on-yellow: unscannable, and every other
+//                 back label is nearly invisible too. Use a dark body
+//                 (graphite/black) with a light skin.
+//   one colour  — the 1.2 deep floors read dark by SHADOW alone, which does
+//                 scan in decent light; it is the two-colour build that can
+//                 silently come out inverted.
+// The module SHAPE is safe either way: the opening in qr_field2d was decode-
+// tested at 0.22/0.30/0.40 rounding and reads at all three.
 qr_back      = true;   // deboss the help QR into the back plate too
 qr_back_cell = 1.4;    // module size — 3.3 line-widths at 0.42. Was 1.2
                        // (2.9 lines): printable in theory, marginal in fact,
