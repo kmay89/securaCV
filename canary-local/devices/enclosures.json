@@ -6534,8 +6534,8 @@
       },
       {
        "name": "glass_r",
-       "default": "3.2",
-       "comment": "corner radius of the glass slab. The FIRST REAL PRINT"
+       "default": "8.2",
+       "comment": "corner radius of the glass slab — MEASURED against the"
       },
       {
        "name": "rg_centre",
@@ -6961,12 +6961,12 @@
       },
       {
        "name": "gill_n",
-       "default": "8",
+       "default": "7",
        "comment": "straight \"gill\" vents per side (±x) wall — the sides"
       },
       {
        "name": "gill_y0",
-       "default": "-35.0",
+       "default": "-33.0",
        "comment": "carry vents only; SD access is through the back plate"
       },
       {
@@ -6985,8 +6985,8 @@
       },
       {
        "name": "dock_key_dx",
-       "default": "46.5",
-       "comment": "portrait slots' ±dy on the side walls (past the gills;"
+       "default": "40.4",
+       "comment": "tracks stand_rib_x (asserted within half a rib) — both"
       },
       {
        "name": "dock_key_bx",
@@ -7325,8 +7325,8 @@
       },
       {
        "name": "stand_rib_x",
-       "default": "47.7",
-       "comment": "± KEYED RIBS: blades across the well that carry the"
+       "default": "40.4",
+       "comment": "moved in from 47.7 with the r9.05 corner: the wall's"
       },
       {
        "name": "stand_rib_w",
