@@ -182,6 +182,11 @@ jobs:
           # driven from the fitcheck can only ever test the no-battery case, which
           # is exactly how a deeper case drifted off the dock's centring keys
           # unnoticed. none is included so the stock build is covered too.
+          # leash gates: the frame must carry the anchor hole, and the
+          # fitment's barb must actually reach it — one without the other
+          # passes a case nobody can make captive
+          bfit none port_teth_hole empty || exit 1
+          bfit none port_teth_barb solid "the port fitment's barb misses its anchor hole — strap length or anchor position drifted" || exit 1
           for b in none 3000 10000; do
             bfit $b dock_probe_fit  empty || exit 1   # seated case must not collide
             bfit $b dock_probe_seat solid "the dock's pads never touch the seated case — nothing carries it" || exit 1

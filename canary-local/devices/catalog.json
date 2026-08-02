@@ -882,7 +882,9 @@
     "dock_probe_fit",
     "dock_probe_seat",
     "dock_probe_p",
-    "dock_probe_p2"
+    "dock_probe_p2",
+    "port_teth_hole",
+    "port_teth_barb"
    ],
    "options": [
     {
@@ -1011,6 +1013,14 @@
      "default": true
     },
     {
+     "id": "port_tether",
+     "type": "bool",
+     "label": "port_tether",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "opt_stand",
      "type": "bool",
      "label": "opt_stand",
@@ -1064,7 +1074,7 @@
      "default": "none"
     }
    ],
-   "engineering_param_count": 200,
+   "engineering_param_count": 201,
    "alternatives": [
     "dash_display"
    ],
@@ -1072,8 +1082,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 21,
-    "user_options": 21,
+    "options": 22,
+    "user_options": 22,
     "variant_axes": 0
    }
   },
