@@ -5,14 +5,23 @@ page + `js/tv-emulator.js` + `js/highlight.js` + `demo-fleet.json`, no build
 step, no framework, CSP-safe (`script-src 'self'`). That makes it a drop-in for
 both Tauri apps, which are already web-frontend shells.
 
-> **Status: Flasher — wired; web layer verified. Lab — same pattern, pending.**
-> The Flasher integration below is implemented and the web layer is verified in
-> a headless browser (the `witness:appear` postMessage makes a just-flashed
-> Canary show up on the wall; skins, connect, and the highlighted JSON all
-> work inside the app-origin iframe). The remaining gate is a real **macOS +
-> Tauri build/run** of the Flasher (per [`../CLAUDE.md`](../CLAUDE.md) /
-> `RELEASE_LESSONS`) — that can't be done from CI or a browser. The Lab is the
-> identical pattern; wire it the same way once the Flasher build is confirmed.
+> **Status: BOTH apps wired — Flasher and Lab — from one canonical emulator,
+> with always-on native LAN discovery; web layer verified headless.**
+> One command re-vendors every copy from the website checkout
+> (`scripts/vendor_witness_emulator.sh`), CI keeps the two app copies
+> byte-identical (`scripts/check_witness_emulator_sync.sh` +
+> `desktop_parity.test.js`'s witness-wall gate), and both apps discover the
+> LAN fleet through the same `witness_discover` Rust command — the Flasher on
+> Fleet-tab open *and* post-flash, the Lab on its Witness Wall bench
+> (`canary-local/witness-wall.html`, in the build-line manifest). Profiles are
+> host-selectable (`?profile=home|business|apartment` / `witness:profile`), so
+> each surface boots the wall into its use case and a discovered fleet updates
+> that view in place. Verified headless: profile boot, no home-yank on a
+> pinned view, live business zones + attention counts, mock-kernel connect,
+> XSS discipline, and the vendored copy behaving identically. The remaining
+> gate is a real **macOS/Linux Tauri build/run** of each app (per
+> [`../CLAUDE.md`](../CLAUDE.md) / `RELEASE_LESSONS`) — that can't be done
+> from CI or a browser (the Lab's Rust side does pass `cargo check`).
 
 ## As wired in the Flasher (this repo)
 
@@ -29,11 +38,16 @@ both Tauri apps, which are already web-frontend shells.
   iframe + `demo-fleet.json` fetch; no CSP change. A real LAN kernel needs
   `connect-src` widened (a deliberate, separate change).
 
-## Real LAN discovery after a flash (native, not simulated)
+## Real LAN discovery (native, not simulated)
 
 The Flasher is a **native app**, so — unlike the sandboxed browser page — it can
-reach the LAN. And it just provisioned the device's Wi-Fi, so it knows the
-Canary is about to join the same network. So the appear can be **real**:
+reach the LAN. Discovery runs in TWO modes, one controller
+(`witnessDiscovery` in `desktop/src/app.js`): opening the **Your Fleet tab**
+starts a continuous scan (every 10 s while the tab is open, with an honest
+"scanning… / ● Live" status line above the wall), and a **successful flash**
+triggers a fast 30 s burst with the new device highlighted — the Flasher just
+provisioned the device's Wi-Fi, so it knows the Canary is about to join the
+same network. The post-flash appear can therefore be **real**:
 
 1. `onFlash` fires `announceToWitness()` (instant, simulated) so the wall reacts
    immediately, then `discoverAndPopulate()`.
@@ -103,10 +117,17 @@ the Lab ships.
 
 ## What's shared, so it can't drift
 
-Keep **one** copy of the emulator assets and have both apps reference it (a
-shared folder or a build step that copies `witness-wall.html` + the two JS
-modules + `demo-fleet.json` into each app's frontend), mirroring the Lab's
-"one frontend, N platforms" rule. Fix a bug once, both apps get it.
+**Built.** The website emulator is canonical;
+`scripts/vendor_witness_emulator.sh` stamps it into every app surface in one
+pass (`desktop/src/witness/` for the Flasher, `canary-local/witness/` for the
+Lab + browser Lab) with one deterministic transform (site chrome stripped,
+script path flattened, root-relative links absolutized) and a PROVENANCE
+recording the source sha256s. Two gates keep it honest:
+`scripts/check_witness_emulator_sync.sh` (byte-compare, wired into
+`canary-local.yml`) and the witness-wall test in
+`canary-local/tests/desktop_parity.test.js` (same discovery command in both
+Rust shells, same postMessage contract in both hosts, same emulator bytes).
+Fix a bug once — on the website — re-run the script, and every app gets it.
 
 ## Verify before shipping
 

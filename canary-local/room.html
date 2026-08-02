@@ -1092,7 +1092,7 @@
 (function(){
   if (window.parent === window) return;
   document.documentElement.setAttribute('data-embedded','1');
-  var FILE2SLUG = {'boards':'boards','vision':'vision','sense':'sense','senselab':'sense','radar-dev':'sense','eyes':'vision','smoke':'smoke','homeassistant':'hub','house':'house','scenes':'house','vault':'vault','operator':'vault','workshop':'workshop','catalog':'catalog','find':'catalog','start':'start','flash':'flash','wap':'first-boot','fleet':'fleet','choose':'choose','dash-mic':'fleet'};
+  var FILE2SLUG = {'boards':'boards','vision':'vision','sense':'sense','senselab':'sense','radar-dev':'sense','eyes':'vision','smoke':'smoke','homeassistant':'hub','house':'house','scenes':'house','vault':'vault','operator':'vault','workshop':'workshop','catalog':'catalog','find':'catalog','start':'start','flash':'flash','wap':'first-boot','fleet':'fleet','choose':'choose','dash-mic':'fleet','witness-wall':'witness-wall'};
   document.addEventListener('click', function(e){
     var a = e.target.closest && e.target.closest('a[href]'); if(!a) return;
     var slug = a.getAttribute('data-slug') || null;   // manifest-driven tools carry their slug

@@ -37,12 +37,45 @@ fn native_capabilities() -> serde_json::Value {
     serde_json::json!({
         "shell": "tauri",
         "serial": false,     // Phase 2: serialport
-        "discovery": false,  // Phase 2: mDNS + BLE
+        // LAN fleet discovery is live: witness_discover polls /api/fleet on
+        // the LAN (the DISCOVERY.md contract). mDNS browse + BLE stay future.
+        "discovery": true,
         "notifications": false,
         // Signed self-update via the rolling lab-latest pointer (desktop
         // builds only — the App Store owns updates on iOS/iPadOS).
         "self_update": cfg!(desktop)
     })
+}
+
+/// Find Canaries on the LAN and return the first kernel fleet that answers.
+///
+/// Byte-for-byte the same command as the Flasher's
+/// (`desktop/src-tauri/src/lib.rs`) — the two apps must discover the SAME way
+/// (`canary-local/tests/desktop_parity.test.js` pins that). Unlike the
+/// browser Lab (which can't scan a LAN), the native shell can reach it
+/// directly; `.local` hostnames resolve through the OS resolver (Bonjour /
+/// avahi), so no mDNS crate is needed. ONE pass over the candidate bases,
+/// first `/api/fleet` that answers wins; the frontend polls while the Witness
+/// Wall bench is open. Coarse presence/health only — see
+/// `tvos/discovery/DISCOVERY.md`.
+#[tauri::command]
+async fn witness_discover(bases: Vec<String>) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("SecuraCV-Lab")
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .map_err(|e| e.to_string())?;
+    for base in &bases {
+        let url = format!("{}/api/fleet", base.trim_end_matches('/'));
+        if let Ok(resp) = client.get(&url).send().await {
+            if resp.status().is_success() {
+                if let Ok(v) = resp.json::<serde_json::Value>().await {
+                    return Ok(v);
+                }
+            }
+        }
+    }
+    Err("no kernel answered on the LAN yet".to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -58,13 +91,15 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_version,
             native_capabilities,
+            witness_discover,
             self_update::check_update,
             self_update::install_update
         ]);
     #[cfg(not(desktop))]
     let builder = builder.invoke_handler(tauri::generate_handler![
         app_version,
-        native_capabilities
+        native_capabilities,
+        witness_discover
     ]);
 
     builder
