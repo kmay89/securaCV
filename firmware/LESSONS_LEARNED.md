@@ -453,10 +453,18 @@
 - **The rule:** before adding a `common/` entry to a new env, look at what it
   `extends` — specifically `lib_ldf_mode` and whether `lib_extra_dirs`
   reaches `firmware/common`. With both, the LDF already compiles it; add
-  nothing. Without them, name the sources. `scripts/lint_common_lib_manifests.py`
-  guards the undefined-reference direction (it asks whether *any* env compiles
-  a path-prefixed library) but cannot see the duplicate direction, so it stays
-  green either way.
+  nothing. Without them, name the sources.
+- **Both directions are linted now.** `scripts/lint_common_lib_manifests.py`
+  already guarded the undefined-reference direction; it also flags the
+  duplicate one, by resolving each env's *effective* `lib_ldf_mode` and
+  `lib_extra_dirs` through the `extends` chain. It catches this in seconds —
+  the build that found it took ~50 minutes and landed on main twice first.
+  The guard's own fixtures live in
+  `scripts/tests/test_lint_common_lib_manifests.py`, and they earned their
+  keep immediately: the first version of the check followed
+  `extends = env:<name>` to a key that does not exist, so it passed the tree,
+  passed a direct hand-written case, and was blind to the real bug — the one
+  where both halves are inherited and the offending section states neither.
 
 
 ### A flavor config's plain `#define` silently beats an env's `-D`
