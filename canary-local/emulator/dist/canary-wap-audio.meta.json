@@ -1,6 +1,6 @@
 {
   "flavor": "wap-audio",
   "fw_version": "2.4.3-wap",
-  "git": "e3f75b8",
+  "git": "1998321",
   "source": "firmware/projects/canary-wap"
 }
