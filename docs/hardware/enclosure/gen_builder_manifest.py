@@ -378,8 +378,8 @@ CURATED = [
             "glyph_h": "How tall the embossed Canary prints. At the default "
                        "7 mm it spans 12.9 mm — the clear air between the two "
                        "wordmarks. 0 removes the station.",
-            "glyph_rib": "Every stroke of the mark is exactly this wide, so "
-                         "one number decides the whole glyph. Blobbed and "
+            "glyph_rib": "No part of the mark is drawn narrower than this, "
+                         "so one number decides the whole glyph. Blobbed and "
                          "closed up → smaller; broken or missing → bigger. "
                          "Below 0.4 mm is thinner than one extrusion.",
         },

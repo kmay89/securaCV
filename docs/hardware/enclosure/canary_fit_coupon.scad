@@ -7,8 +7,8 @@
 //    BASE (part="base", rigid) — stations left→right, top→bottom:
 //      EMBOSS  — raised "CANARY" wordmark (emboss_h): crisp or blobby?
 //      GLYPH   — the Canary mark in uniform strokes, raised at emboss_h:
-//                every feature is one rib wide, so the rib is the whole
-//                test — crisp bird, or a blob?         -> glyph_rib/glyph_h
+//                NO feature is narrower than one rib, so the rib is the
+//                whole test — crisp bird, or a blob? -> glyph_rib/glyph_h
 //      DEBOSS  — sunk "SecuraCV" wordmark (label_depth): every label's fate
 //      SLIDE   — lip channel: the MATE's edge tongue slides in snugly -> tol_slide
 //      PORT    — the cases' USB-C opening through a case wall: your
@@ -70,7 +70,8 @@ glyph_h = 7.0;       // GLYPH station: mark height (0 removes the station).
                      // The mark is ~1.8x wider than tall — at 7 it spans
                      // 12.9 mm, which is the clear air between the wordmarks.
 glyph_rib = 0.7;     // stroke width, in mm. THE number this station tests:
-                     // every feature of the mark is exactly one rib wide, so
+                     // no feature of the mark is drawn narrower than this
+                     // (tail and beak taper down to it, never past it), so
                      // if the rib survives, the whole glyph survives.
 
 /* [Quality] */
@@ -88,8 +89,9 @@ if (glyph_h > 0) {
 // ---------------------------------------------------------------------------
 //  GLYPH station — the Canary mark, drawn the way it has to be drawn to
 //  survive a nozzle: uniform-width strokes with round caps, no fine detail.
-//  Every visible feature is one stroke wide, so there is exactly ONE number
-//  that decides whether this prints (glyph_rib below, echoed at render).
+//  The mark's NARROWEST feature is one stroke wide — tapers stop at it rather
+//  than running to a point — so there is exactly ONE number that decides
+//  whether this prints (glyph_rib below, echoed at render).
 //  Authored here as paths rather than traced from the brand artwork — that
 //  art is line work ~0.08 mm wide at badge size, which no nozzle can lay down.
 //  Chaikin corner-cutting rounds the polylines; three passes is plenty.
@@ -115,21 +117,24 @@ module _gstroke(pts, t, closed = false) {
     for (i = [0:n-2]) hull() { translate(pts[i]) circle(d = t); translate(pts[i+1]) circle(d = t); }
     if (closed) hull() { translate(pts[n-1]) circle(d = t); translate(pts[0]) circle(d = t); }
 }
-module _gtaper(pts, t0, t1) {           // the tail thins to a point
+module _gtaper(pts, t0, t1) {           // width runs t0 -> t1 along the path
     n = len(pts);
     for (i = [0:n-2]) hull() {
         translate(pts[i])   circle(d = t0 + (t1-t0)*i/(n-1));
         translate(pts[i+1]) circle(d = t0 + (t1-t0)*(i+1)/(n-1));
     }
 }
+// Nothing here may be drawn thinner than t. The tail and beak taper, so they
+// bottom out AT t rather than running to a point — a point is a feature the
+// slicer drops, and one dropped feature would make the rib reading a lie.
 module bird_glyph_2d(t) {
     union() {
-        _gtaper(_smooth(g_tail, false), t*1.5, t*0.42);
+        _gtaper(_smooth(g_tail, false), t*1.6, t);   // tail: thick root -> t tip
         _gstroke(_smooth(g_outline, true), t, true);
         _gstroke(_smooth(g_wing, false), t);
-        polygon([[50,29],[74,22],[50,17]]);        // beak
-        translate([37,27]) circle(d = t*1.3);      // eye
-        _gstroke([[4,-26],[0,-46]], t);            // legs
+        _gtaper([[50,23],[69,22]], t*2.8, t);        // beak: cone -> t tip
+        translate([37,27]) circle(d = t*1.4);        // eye (a dot, so >= t)
+        _gstroke([[4,-26],[0,-46]], t);              // legs
         _gstroke([[24,-23],[23,-45]], t);
     }
 }

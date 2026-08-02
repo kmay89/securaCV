@@ -3319,7 +3319,7 @@
         "tol_hole": "Self-tapping M2 pilots: threads should bite without splitting the post.",
         "kh_click": "The keyhole retention bump. Mate won't slide past it → smaller number; slides back off too easily → bigger. 0 removes the click.",
         "glyph_h": "How tall the embossed Canary prints. At the default 7 mm it spans 12.9 mm — the clear air between the two wordmarks. 0 removes the station.",
-        "glyph_rib": "Every stroke of the mark is exactly this wide, so one number decides the whole glyph. Blobbed and closed up → smaller; broken or missing → bigger. Below 0.4 mm is thinner than one extrusion."
+        "glyph_rib": "No part of the mark is drawn narrower than this, so one number decides the whole glyph. Blobbed and closed up → smaller; broken or missing → bigger. Below 0.4 mm is thinner than one extrusion."
       },
       "choices": {},
       "units": {
@@ -3330,7 +3330,7 @@
         "glyph_h": "mm",
         "glyph_rib": "mm"
       },
-      "sha256": "b5e7ccd7a22d762cfe8a1471e325ae899247eba6046e4cf712308d4fb8a16d8b",
+      "sha256": "2566abe95554218e367c5b92335ad95fd03c9c3dd6a669c19cd638f6b0a91202",
       "groups": [
         {
           "name": "What to render",
