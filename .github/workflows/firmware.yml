@@ -42,7 +42,25 @@ on:
 # know whether main compiles. This matches what nearly every other workflow
 # here already does, and what the website's site-checks.yml does.
 concurrency:
-  group: firmware-${{ github.ref }}
+  # PRs collapse per branch: a new push makes the old build irrelevant, so
+  # cancelling it is free. Pushes to a BRANCH (main) get a group per COMMIT,
+  # which looks redundant next to `cancel-in-progress: false` and is not.
+  #
+  # `cancel-in-progress: false` only promises not to cancel the RUNNING run.
+  # GitHub keeps at most one PENDING run per group, so with a shared group and
+  # commits landing faster than the build takes, each new commit evicts the
+  # one waiting behind it. The display build takes ~50 minutes — long enough
+  # that this happened for real: the run verifying a fix to a red main
+  # (fw 2.4.3 era) was cancelled by the next two merges, so the fix sat
+  # unverified and the repair looked stalled. A merged commit whose build
+  # never ran is the failure this exists to prevent, and it is silent —
+  # "cancelled" reads like housekeeping, not like a gap in coverage.
+  #
+  # Per-commit groups cost concurrent runners on a busy day; an unverified
+  # main costs a bad release. Revisit if runner minutes become the binding
+  # constraint — sharding the 18-env display job would shorten the window
+  # that makes this bite at all.
+  group: firmware-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
