@@ -6489,6 +6489,8 @@
         "coupon_body",
         "coupon_ink",
         "coupon_accent",
+        "coupon_qr_body",
+        "coupon_qr_ink",
         "frame_colour",
         "fil_overlap",
         "fil_gap",
@@ -7802,6 +7804,10 @@
        "name": "coupon_h",
        "default": "34",
        "comment": "tall enough to contain the whole corner arc"
+      },
+      {
+       "name": "coupon_qr_margin",
+       "default": "0"
       },
       {
        "name": "pal_preview_lift",
