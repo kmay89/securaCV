@@ -731,9 +731,21 @@ pal_ink    = "Black";
 pal_accent = "Signal Yellow";
 // Preview RGB only — these never reach the mesh, they just make `frame_colour`
 // look like the real thing so a palette can be judged before it is printed.
+//
+// The accent tracks its NAME: RAL 1003 Signal Yellow is #F9A800, a warm amber
+// gold. It used to be #FFC70A here, which is lighter and lemon-ier — so the
+// preview had been quietly showing a different yellow from the one the recipe
+// asks you to load, and a palette you cannot trust the preview of is the one
+// thing this block exists to prevent.
+//
+// These are EYEBALLED, and it matters that you know that: a filament photo is
+// white-balanced and saturation-boosted, and PETG extrudes slightly lighter
+// and more translucent than it looks on the spool. The colour coupon is the
+// real instrument — print it, hold it next to the render, and set the numbers
+// from the part rather than from a picture of a part.
 pal_body_rgb   = [0.95, 0.95, 0.93];
 pal_ink_rgb    = [0.11, 0.11, 0.12];
-pal_accent_rgb = [1.00, 0.78, 0.04];
+pal_accent_rgb = [0.976, 0.659, 0.000];   // RAL 1003 — #F9A800
 // How deep the INK reaches in from the FRONT face. This is a visible-surface
 // depth, not a structural one: 0.6 is three layers at 0.2 and matches the
 // existing front-ring swap band exactly, so the AMS build and the

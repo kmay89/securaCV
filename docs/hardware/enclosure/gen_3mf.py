@@ -79,9 +79,9 @@ QR_COUPON = [("body", "coupon_qr_body", 1),
 SETS = {
     "tests": [
         ("ring gauge",    [("ring", "ring_gauge", 1)],   (128, 190)),
-        ("colour coupon", COUPON,                        (128, 100)),
-        ("corner gauge",  [("corner", "frame_gauge", 1)], (128, 50)),
-        ("QR coupon",     QR_COUPON,                     (60, 50)),
+        ("colour coupon", COUPON,                        (78, 100)),
+        ("corner gauge",  [("corner", "frame_gauge", 1)], (35, 50)),
+        ("QR coupon",     QR_COUPON,                     (95, 50)),
     ],
     "coupon": [("colour coupon", COUPON, (128, 128))],
     "qr":     [("QR coupon", QR_COUPON, (128, 128))],
@@ -89,6 +89,19 @@ SETS = {
 }
 BED = 256.0          # P2S build plate, mm square
 PLATE_MARGIN = 4.0   # keep parts off the very edge
+
+# THE PURGE TOWER NEEDS A PLACE TO STAND, and a packer that ignores it has not
+# finished packing. A multi-filament plate always grows one, the slicer
+# auto-places it, and if every open pocket is small it wedges the tower against
+# a part and warns "Prime Tower is too close to others, collisions may be
+# caused". That is what this layout did on its first real slice: four objects
+# arranged only against each OTHER, leaving no deliberate gap.
+#
+# So the tower is now a first-class occupant of the plate — a declared zone that
+# parts are asserted out of, not whatever space happens to be left. Sized
+# generously: a tall three-filament tower wants far more footprint than people
+# expect, and unused bed is free.
+TOWER_ZONE = (150.0, 8.0, 252.0, 118.0)   # x0, y0, x1, y1
 
 
 def _sources_mtime() -> float:
@@ -195,6 +208,23 @@ def build(setname: str) -> Path:
             raise SystemExit(f"plate layout: '{g[0]}' runs off the {BED:.0f} mm "
                              f"bed at x {f[0]:.1f}..{f[1]:.1f} "
                              f"y {f[2]:.1f}..{f[3]:.1f}")
+
+    # ...and out of the tower's zone, for any plate that actually changes tool.
+    tx0, ty0, tx1, ty1 = TOWER_ZONE
+    multi = len({s for g in groups for (_o, _n, s, _v, _t) in g[1]}) > 1
+    if multi:
+        for g in groups:
+            f = g[3]
+            if f[0] < tx1 and tx0 < f[1] and f[2] < ty1 and ty0 < f[3]:
+                raise SystemExit(
+                    f"plate layout: '{g[0]}' sits in the purge tower's zone "
+                    f"(x {tx0:.0f}..{tx1:.0f}, y {ty0:.0f}..{ty1:.0f}) — move a "
+                    f"centre in SETS. The tower is not optional on a "
+                    f"multi-filament plate; leaving it nowhere to stand is how "
+                    f"you get 'Prime Tower is too close to others'.")
+        print(f"  purge tower zone kept clear: x {tx0:.0f}..{tx1:.0f}, "
+              f"y {ty0:.0f}..{ty1:.0f}  "
+              f"({tx1-tx0:.0f} x {ty1-ty0:.0f} mm)")
 
     objs = [m for g in groups for m in g[1]]
 

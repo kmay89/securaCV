@@ -7074,7 +7074,8 @@
       },
       {
        "name": "pal_accent_rgb",
-       "default": "[1.00, 0.78, 0.04]"
+       "default": "[0.976, 0.659, 0.000]",
+       "comment": "RAL 1003 — #F9A800"
       },
       {
        "name": "bezel_ink_t",
