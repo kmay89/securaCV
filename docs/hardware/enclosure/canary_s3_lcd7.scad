@@ -2178,8 +2178,15 @@ module stand_wellblade(x0, w, drop = 0) {
 // case's front face sits at -std_cd/2, so the slot's centre lands here. With
 // a fixed y this silently walked off the slot as soon as a battery deepened
 // the case — the 3000 build put the stud 4.4 mm out and it hit solid wall.
+// key_trim: the studs historically sat 0.2 forward of the pure derivation,
+// and the PORTRAIT pose is tuned to that — moving them onto the derived
+// centre by itself made stand_p collide (32 slivers at ±47.3, the portrait
+// studs). So keep the trim: this change is meant to make the position TRACK
+// the case's depth, not to re-tune a pose that already worked. Landscape had
+// 4.35 mm of error before it failed, so 0.2 is well inside its margin.
 module stand_keystud(x0, z0) {
-    ky = -std_cd/2 + key_gz;
+    key_trim = 0.2;
+    ky = -std_cd/2 + key_gz + key_trim;
     stand_seatframe() hull() {
         translate([x0 - 0.9, ky - 0.95, z0 - 0.5]) cube([1.8, 1.9, 0.5]);
         translate([x0 - 0.3, ky - 0.35, z0 + 1.5]) cube([0.6, 0.7, 0.02]);
