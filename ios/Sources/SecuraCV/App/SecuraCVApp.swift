@@ -32,12 +32,17 @@ struct RootView: View {
     // either way — designed FOR iPad never means a second implementation
     // (the two-flashers lesson, kept on purpose).
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    // Owned HERE, above the idiom switch, so a window crossing the
+    // regular/compact boundary (a Split View drag, a Stage Manager resize,
+    // rotating a Max phone) stays on the section in use — swapping the
+    // container must never navigate the user away.
+    @State private var section: AppSection = .today
 
     var body: some View {
         if horizontalSizeClass == .regular {
-            SidebarRootView()
+            SidebarRootView(section: $section)
         } else {
-            TabRootView()
+            TabRootView(section: $section)
         }
     }
 }
@@ -82,11 +87,14 @@ struct AppSectionView: View {
 }
 
 struct TabRootView: View {
+    @Binding var section: AppSection
+
     var body: some View {
-        TabView {
-            ForEach(AppSection.allCases) { section in
-                AppSectionView(section: section)
-                    .tabItem { Label(section.title, systemImage: section.systemImage) }
+        TabView(selection: $section) {
+            ForEach(AppSection.allCases) { s in
+                AppSectionView(section: s)
+                    .tabItem { Label(s.title, systemImage: s.systemImage) }
+                    .tag(s)
             }
         }
     }
@@ -99,27 +107,40 @@ struct TabRootView: View {
 /// do inside the tabs.
 struct SidebarRootView: View {
     @EnvironmentObject var store: FleetStore
-    @State private var selection: AppSection? = .today
+    @Binding var section: AppSection
+
+    /// The sidebar list wants an optional selection; the app never has "no
+    /// section", so a nil set (a transient deselection) keeps the last one.
+    private var selection: Binding<AppSection?> {
+        Binding(get: { section }, set: { if let s = $0 { section = s } })
+    }
 
     var body: some View {
         NavigationSplitView {
-            List(AppSection.allCases, selection: $selection) { section in
+            List(AppSection.allCases, selection: selection) { s in
                 HStack {
-                    Label(section.title, systemImage: section.systemImage)
+                    Label(s.title, systemImage: s.systemImage)
                     Spacer()
-                    if section == .fleet && !store.allQuiet {
+                    if s == .fleet && !store.allQuiet {
                         SeverityPip(severity: store.worstSeverity)
                     }
                 }
-                .tag(section)
+                .tag(s)
             }
             .navigationTitle("SecuraCV")
         } detail: {
-            AppSectionView(section: selection ?? .today)
+            AppSectionView(section: section)
         }
     }
 }
 
 #Preview("Sidebar (iPad) — demo fleet") {
-    SidebarRootView().environmentObject(DemoFleet.previewStore())
+    struct Host: View {
+        @State private var section: AppSection = .today
+        var body: some View {
+            SidebarRootView(section: $section)
+                .environmentObject(DemoFleet.previewStore())
+        }
+    }
+    return Host()
 }
