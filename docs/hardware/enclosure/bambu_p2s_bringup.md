@@ -88,6 +88,95 @@ last week fails today and nothing changed, suspect moisture first.
 **Run the printer's flow-dynamics / pressure-advance calibration for the exact
 spool you are using**, once. It is the difference between corners that are
 square and corners that bulge, and it is per-filament, not per-material.
+**§2b below is the procedure** — and note the ordering trap it opens with:
+dry the spool *before* you calibrate it, or the numbers encode the moisture.
+
+---
+
+## 2b · Calibrate — machine once, then every spool
+
+Two different things are called "calibration" and they are not
+interchangeable. The machine one makes the printer move correctly. The
+filament one makes *this spool* extrude correctly. A new P2S needs both, in
+this order, and the order is the part people get wrong.
+
+### Sequence — dry, then calibrate, then print
+
+**Dry the filament BEFORE you calibrate it, not after.** This is the one
+that silently wastes a day. Calibration measures how the filament behaves
+*right now*, so calibrating a damp spool bakes the moisture into your K-factor
+and flow ratio. Dry it later and the numbers you carefully measured are now
+wrong, in a way that looks like the printer drifting. 60–65 °C for 4–6 h
+first (§2), then calibrate.
+
+### Step 1 — the machine, from the printer's own screen
+
+Do this on the printer, not in the slicer. **Calibration → Full/Auto
+calibration**, and let all of it finish:
+
+| Routine | What it fixes | Re-run when |
+|---|---|---|
+| Motor noise cancellation | stepper resonance | after firmware updates |
+| **Vibration compensation** (input shaping) | ringing/ghosting on corners | printer moved or re-sited |
+| **Auto bed levelling** | first-layer squash across the plate | plate swapped, printer moved |
+
+Ten to fifteen minutes, once. Re-run it after you move the machine — including
+across a room. Anything that shook in transit is why step 1 exists.
+
+### Step 2 — Flow Dynamics (pressure advance / K-factor), per spool
+
+In **Bambu Studio → Calibration → Flow Dynamics Calibration**. This is the one
+that decides whether corners come out square or bulge, and it is the single
+highest-value calibration for this catalog, because every fit in it is a
+corner or an edge.
+
+Bambu ships two paths and which you get depends on the machine's sensing
+hardware. **Open the dialog and look:**
+
+- If it offers **Auto** — the printer prints a pattern, reads it itself, and
+  writes the K-factor back. Take it. Minutes, no judgement required.
+- If it only offers **Manual / Complete** — it prints a numbered pattern and
+  you pick the cleanest line by eye. Pick the number where the corners stop
+  bulging and *before* they start looking gappy; if two look equal, take the
+  lower.
+
+I'm not going to tell you which one a P2S has — I don't have that confirmed,
+and sending you to a menu that isn't there wastes more time than looking.
+Whichever appears is the right one.
+
+### Step 3 — Flow Rate, per spool
+
+**Calibration → Flow Rate.** Two passes: coarse, then fine on the winner.
+You are looking for a top surface that is smooth and continuous — not
+pin-holed (under), not ridged and rough (over). Under-extrusion is the one
+that hurts here: it thins walls and every clearance in the catalog opens up.
+
+### Step 4 — record it, per slot
+
+Write the numbers down against **the spool**, not the material. Brand, colour
+and even batch change them — a black PETG and a white PETG from the same
+maker will not share a flow ratio, which matters directly for the 7″ frame's
+three-filament print. If you are running the AMS, each slot's filament needs
+its own numbers. §5's record card is there for exactly this.
+
+**Max Volumetric Speed** is the one you can skip. It only binds when you are
+pushing speed, and [`printing_petg_orca.md`](./printing_petg_orca.md) already
+argues these parts do not need the P2S to be fast.
+
+### Step 5 — prove it on a part, not a test pattern
+
+A passing calibration pattern is not a passing fit. Print, in this order:
+
+1. **§4's fit coupon** — the tolerance system's acceptance test. For the 7″
+   dashboard the stations that matter are **SLIDE** and **SCREW**.
+2. **The ring gauge** (§7b″) — five grams, and it checks the whole display
+   outline against the real panel. If flow is off, this is where you see it
+   as a contour that will not sit down.
+
+**Do not fix a fit by changing calibration, and do not fix calibration by
+changing the slicer's XY compensation.** They are three separate errors and
+correcting one with another leaves you with two. Calibration belongs to the
+spool, tolerance belongs to the `.scad`, and XY compensation stays at 0.
 
 ---
 
