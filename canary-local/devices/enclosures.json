@@ -6817,6 +6817,16 @@
        "comment": "case hangs over the screws and slides DOWN to seat."
       },
       {
+       "name": "mount_portrait",
+       "default": "true",
+       "comment": "PORTRAIT hanging: each keyhole gains a second"
+      },
+      {
+       "name": "khm_plen",
+       "default": "10.0",
+       "comment": "the portrait slides run SHORTER than the vertical"
+      },
+      {
        "name": "khm_pad_t",
        "default": "2.0",
        "comment": "keyhole DOUBLER pads on the plate's inner face —"

@@ -346,6 +346,20 @@ khm_len = 13.0;         // case hangs over the screws and slides DOWN to seat.
                         // bottom pair mirrors the feature about y=0. The head
                         // hole passes a #8 / M4 pan head; the slide, its
                         // shank; khm_len is head-hole centre → catch centre.
+mount_portrait = true;  // PORTRAIT hanging: each keyhole gains a second
+                        // slide running OUTBOARD (±x). Rotate the case 90°
+                        // and a SIDE pair of keyholes becomes the level top
+                        // pair — mouths 81 mm apart (khm_y + khm_y + khm_len)
+                        // — with the outboard slides then pointing world-up,
+                        // so the same hang-and-drop works in BOTH portrait
+                        // directions (and 4-screw portrait pins flat, same
+                        // as landscape: the second row lands 157 mm below).
+                        // Geometry only — the UI stays landscape until the
+                        // firmware grows a mount_rotation setting.
+khm_plen = 10.0;        // the portrait slides run SHORTER than the vertical
+                        // ones — the side walls are close, and 10 mm of drop
+                        // still parks the shank on a full catch (asserted
+                        // clear of the wall fillet ring below).
 khm_pad_t = 2.0;        // keyhole DOUBLER pads on the plate's inner face —
 khm_pad_w = 3.5;        // the screw head bears on back_t + khm_pad_t of
                         // material (5 mm, not 3) and the slide's catch shears
@@ -742,7 +756,8 @@ sd_teth_y = sd_dy + sd_l/2 + sd_lip + sd_teth_gap;   // tether anchor hole centr
 fr_keep_base = concat(
     // grown with the doubler pads + mouth chamfers
     mount_keyholes ? [for (sx = [1,-1], sy = [1,-1])
-        [sx*khm_dx, sy*(khm_y + khm_len/2), 10, 20]] : [],
+        [sx*(khm_dx + (mount_portrait ? khm_plen/2 : 0)),
+         sy*(khm_y + khm_len/2), 10 + (mount_portrait ? khm_plen/2 : 0), 20]] : [],
     // the SD keepout covers the countersunk mouth and the nail scoop
     [[sd_dx, sd_dy, sd_w/2 + 3.4, sd_l/2 + 6.7]],
     // ...and the tether zone: strap channel + anchor hole past the rim
@@ -987,6 +1002,12 @@ assert(!qr_back || (abs(qr_back_dx) + qr_back_reach < fr_xi/2 - fr_ri
 assert(!qr_back || !mount_keyholes
        || abs(qr_back_dx) + qr_back_reach < khm_dx - 10,
        "frame: back QR quiet zone reaches a keyhole keepout");
+// Portrait slides: cut + doubler pad must stay inside the plate's flat
+// field, clear of the wall fillet ring.
+assert(!mount_portrait || !mount_keyholes
+       || khm_dx + khm_plen + khm_slide_w/2 + khm_pad_w
+          < fr_xi/2 - plate_fillet - 0.5,
+       "frame: portrait slide (pad included) reaches the wall fillet ring — shorten khm_plen");
 // Battery bay: every furniture span must clear the four M3 boss towers
 // (root fillets included), and the pack's own stack must have grown the
 // case instead of eating the board-side air gap.
@@ -1091,6 +1112,13 @@ if (qr_help)
          stand_plate_t, " to keep the blades in the body colour (two swaps),",
          " or ride the accent to the top for a two-tone dock (one swap);",
          " either way the only filament spent is the filament in the part"));
+if (mount_portrait && mount_keyholes)
+    echo(str("  portrait hanging: each keyhole carries a second ", khm_plen,
+         " mm OUTBOARD slide — rotate the case 90° either way and a side",
+         " pair becomes the level top pair, mouths ", 2*khm_y + khm_len,
+         " mm apart (second row ", khm_dx*2, " mm below for 4-screw).",
+         " Same screws, same hang-and-drop. Screen rotation is a firmware",
+         " setting the UI does not have yet — the hardware is ready first"));
 if (bat_on)
     echo(str("  battery bay: MakerFocus ", battery, " mAh (", bat_dims[0],
          " x ", bat_dims[1], " x ", bat_dims[2], " nominal, thickness held at +",
@@ -1410,6 +1438,8 @@ module frame() {
                         circle(d = khm_head_d + 2*khm_pad_w);
                         translate([0, khm_len])
                             circle(d = khm_slide_w + 2*khm_pad_w);
+                        if (mount_portrait) translate([sx*khm_plen, 0])
+                            circle(d = khm_slide_w + 2*khm_pad_w);
                     }
             // 45° fillet ring where the walls meet the back plate — the
             // drop-load path: a corner drop flexes the walls against the
@@ -1623,6 +1653,11 @@ module frame() {
                 circle(d = khm_head_d);
                 hull() { circle(d = khm_slide_w);
                          translate([0, khm_len]) circle(d = khm_slide_w); }
+                // portrait slide: outboard, so the side pair that becomes
+                // the TOP pair in a rotated hang gets its world-up slides
+                if (mount_portrait)
+                    hull() { circle(d = khm_slide_w);
+                             translate([sx*khm_plen, 0]) circle(d = khm_slide_w); }
             }
         // ...each with a lead-in chamfer around its mouth on the outer skin,
         // so the case slips over the screw heads without catching
@@ -1638,6 +1673,13 @@ module frame() {
                         linear_extrude(0.01) hull()
                             for (dy = [0, khm_len]) translate([0, dy])
                                 circle(d = khm_slide_w + e*2*(khm_mouth_c + 0.05));
+                if (mount_portrait)
+                    hull() for (e = [0, 1])
+                        translate([0, 0, fr_depth - khm_mouth_c
+                                         + e*(khm_mouth_c + 0.05)])
+                            linear_extrude(0.01) hull()
+                                for (dx = [0, sx*khm_plen]) translate([dx, 0])
+                                    circle(d = khm_slide_w + e*2*(khm_mouth_c + 0.05));
             }
         // adhesive-rail outline moats: a hairline frame OUTSIDE each smooth
         // zone (the zone itself is never cut — the frame_adh_rail gate holds
@@ -2127,7 +2169,10 @@ else if (part == "bat_probe_seat") {
 }
 else if (part == "bat_probe_grip") {
     assert(bat_on, "battery gates need -D battery=\"3000\" or \"10000\"");
-    intersection() { frame(); bat_brick(0, bat_t + 0.5); }
+    // drop 0.1 — a top face EXACTLY on the rail undersides mints phantom
+    // zero-volume sheets (the #1373 class) and their manifold warning
+    // fails the gate; the hooks live well below the rail plane anyway
+    intersection() { frame(); bat_brick(0, bat_t + 0.5, 0.1); }
 }
 else if (part == "radius_gauge") radius_gauge();
 // TPU fitments export in their print orientation (A-face down), as modelled
