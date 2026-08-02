@@ -13,7 +13,33 @@
 //  an empty top-level object, so the CI test is simply "no file appeared":
 //
 //      openscad --export-format binstl -o /tmp/c.stl -D 'check="tray"' \
-//          canary_s3_lcd7_fitcheck.scad && test ! -f /tmp/c.stl
+//          canary_s3_lcd7_fitcheck.scad
+//      test ! -f /tmp/c.stl
+//
+//  ⚠️  DO NOT JOIN THOSE TWO LINES WITH &&, and do not "fix" a runner by
+//  checking openscad's exit status. A PASSING check exits 1: OpenSCAD prints
+//  "Current top level object is empty" and returns non-zero whenever it has
+//  nothing to export, which for an empty-expected gate is precisely success.
+//  Under && the test never runs and every green gate reads as red. This page
+//  carried the && form for a long time and it cost real debugging — twice in
+//  one evening, once on frame_glass after a four-minute render that had in
+//  fact passed.
+//
+//  So a runner judges these ways, and exit status is not among them:
+//    · ERROR or WARNING in the output  -> FAIL (a dirty render verified nothing)
+//    · the file exists                 -> FAIL for a normal check, PASS for an
+//                                         INVERTED one (marked below)
+//    · no file AND the output contains "Current top level object is empty"
+//                                      -> PASS for a normal check
+//    · no file and NO empty marker     -> FAIL. Absence of a file is not
+//                                         evidence: a run killed by a timeout,
+//                                         or one that never evaluated at all,
+//                                         leaves exactly the same nothing
+//                                         behind as a clean pass. Demand the
+//                                         marker and that ambiguity is gone.
+//
+//  .github/workflows/enclosure.yml's fit() is the reference implementation and
+//  already does all of the above — read it before writing another runner.
 //
 //  checks:
 //    tray  — bezel vs back tray. Non-empty = the two collide and the case

@@ -111,14 +111,26 @@ PLATE_MARGIN = 4.0   # keep parts off the very edge
 # finished packing. A multi-filament plate always grows one, the slicer
 # auto-places it, and if every open pocket is small it wedges the tower against
 # a part and warns "Prime Tower is too close to others, collisions may be
-# caused". That is what this layout did on its first real slice: four objects
+# caused". That is what the tests plate did on its first real slice: objects
 # arranged only against each OTHER, leaving no deliberate gap.
 #
-# So the tower is now a first-class occupant of the plate — a declared zone that
-# parts are asserted out of, not whatever space happens to be left. Sized
-# generously: a tall three-filament tower wants far more footprint than people
-# expect, and unused bed is free.
-TOWER_ZONE = (150.0, 8.0, 252.0, 118.0)   # x0, y0, x1, y1
+# PER SET, not one constant. The first version of this was a single global
+# zone, generalised from the small tests plate — and it immediately rejected
+# the frame, which is 197 x 115 on a 256 bed and cannot leave a 102 x 110
+# pocket anywhere. There is no one rectangle that suits both a plate of small
+# coupons and a plate holding a part that nearly fills the bed; the zone is a
+# property of the LAYOUT, so it lives with the layout.
+#
+# Sized generously where there is room: a tall three-filament tower wants more
+# footprint than people expect, and unused bed is free.
+TOWER_ZONES = {
+    "colour": (150.0, 8.0, 252.0, 118.0),   # right of the coupons
+    "coupon": (150.0, 8.0, 252.0, 118.0),
+    "qr":     (150.0, 8.0, 252.0, 118.0),
+    # The frame spans y 70.5 … 185.5, so the tower goes in the clear strip
+    # BELOW it — the only place on the plate big enough once the case is down.
+    "frame":  (40.0, 8.0, 216.0, 64.0),
+}
 
 
 def _sources_mtime() -> float:
@@ -237,9 +249,16 @@ def build(setname: str) -> Path:
                              f"y {f[2]:.1f}..{f[3]:.1f}")
 
     # ...and out of the tower's zone, for any plate that actually changes tool.
-    tx0, ty0, tx1, ty1 = TOWER_ZONE
+    zone = TOWER_ZONES.get(setname)
     multi = len({s for g in groups for (_o, _n, s, _v, _t) in g[1]}) > 1
+    if multi and zone is None:
+        raise SystemExit(
+            f"plate layout: set '{setname}' changes filament but declares no "
+            f"purge-tower zone. Add one to TOWER_ZONES — the tower is not "
+            f"optional, and leaving it nowhere to stand is how you get "
+            f"'Prime Tower is too close to others'.")
     if multi:
+        tx0, ty0, tx1, ty1 = zone
         for g in groups:
             f = g[3]
             if f[0] < tx1 and tx0 < f[1] and f[2] < ty1 and ty0 < f[3]:
