@@ -197,7 +197,7 @@ assert(is_num(feather_area(7, 4)),
        "canary_vent_lib.scad is MISSING — this case cuts its grille and gills with it. Download canary_vent_lib.scad from the same folder and keep the two files side by side.");
 
 /* [What to render] */
-part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_port","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","dock_probe_fit","dock_probe_seat","dock_probe_p","dock_probe_p2","port_teth_hole","port_teth_barb","all"]
+part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_port","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","dock_probe_fit","dock_probe_seat","dock_probe_p","dock_probe_p2","port_teth_hole","port_teth_barb","port_barb_proud","back_flush","all"]
 
 /* [Glass slab] — bonded touch panel, from the Waveshare drawing (mm) */
 glass_w = 192.96;    // touch-glass width  (X)
@@ -601,6 +601,31 @@ sd_teth_head = 4.6;  // arrowhead Ø — 1.4x the hole: firm thumb-push in, stay
 port_tether  = true;
 port_teth_dx = -12.6;  // anchor hole centre along the wall, from the port
                        // centre — asserted clear of the brand words below
+port_teth_cb = 1.4;    // counterbore depth at the anchor's OUTER mouth. The
+                       // barb's mushroom has to flare INSIDE this pocket: the
+                       // shaft stops at its floor, so the head seats flush
+                       // with the skin instead of standing proud of the face
+                       // you look at. It stood 0.6..2.8 mm proud before —
+                       // the shaft ran 1.0 mm PAST the wall and the whole
+                       // mushroom flared in open air, with this counterbore
+                       // sitting uselessly behind it. Gated by
+                       // port_barb_proud, which must render empty.
+                       // Leaves frame_wall - port_teth_cb of full-diameter
+                       // land for the shaft, so keep it under frame_wall.
+// PEEL SCOOP — a fingernail dish in the skin just outboard of the grommet's
+// flange, so the grommet and the blank can be got back out of a port you
+// opened to service a cable. The SD cover has had one since v0.6; the port
+// fitments had nothing, and a flush-ish TPU part in a 2 mm wall is not
+// something fingers alone win against. Same sphere cut as the SD mouth's.
+// It sits on the side AWAY from the leash anchor, so the nail peels the
+// fitment off its strap rather than against it — and that is the only side
+// with room: the anchor leaves 2.2 mm on its own side, this one has ~12.
+port_scoop    = true;
+port_scoop_dx = 11.0;  // scoop centre from the port centre — just past the
+                       // flange edge at usb_open_w/2 + grom_lip = 8.8, so
+                       // the dish undercuts the flange's rim by ~1.2 mm
+port_scoop_r  = 7.8;   // sphere radius / stand-off: r - port_scoop_d sets the
+port_scoop_d  = 7.0;   // dish depth (0.8 mm), sqrt(r^2 - d^2) its footprint
 // Bottom-edge brand — CRISP DEBOSS into the wall's outer skin. v0.6: the
 // slat-stencil vents this replaces cut the letters THROUGH the wall, which
 // forced tie bands across every glyph (or the counters fall out) — and on
@@ -1179,6 +1204,29 @@ assert(!port_tether || !usb_port
        "frame: the port leash anchor lands on a brand word — move port_teth_dx inboard");
 assert(!port_tether || abs(port_teth_dx) + sd_teth_hole/2 + 2 < fr_xi/2 - fr_ri,
        "frame: the port leash anchor runs off the wall's flat span");
+// the counterbore must leave real land for the shaft, or the anchor is a
+// funnel the barb pulls straight back out of
+assert(!port_tether || port_teth_cb < frame_wall - 0.4,
+       "frame: the anchor counterbore eats the wall — no land left to hold the barb's shaft");
+// The peel scoop is placed against the geometry, not by eye: it has to clear
+// the brand words, clear the leash anchor's own mouth, and stay on the flat
+// span. port_scoop_ftp is the dish's radius WHERE IT MEETS THE SKIN — the
+// sphere is bigger than its own footprint, and using the radius here would
+// reserve room the scoop never touches.
+port_scoop_ftp = sqrt(port_scoop_r*port_scoop_r - port_scoop_d*port_scoop_d);
+assert(!port_scoop || port_scoop_r > port_scoop_d,
+       "frame: the peel scoop's sphere never reaches the skin — port_scoop_d exceeds its radius");
+assert(!port_scoop || !usb_port
+       || abs(usb_dx + port_scoop_dx) + port_scoop_ftp + 1 < vword_x - vword_half,
+       "frame: the peel scoop runs into a brand word — move port_scoop_dx inboard");
+assert(!port_scoop || !port_tether
+       || abs(port_scoop_dx - port_teth_dx) > port_scoop_ftp + sd_teth_head/2 + 1,
+       "frame: the peel scoop breaks into the leash anchor's mouth — they are on the same wall");
+assert(!port_scoop || abs(port_scoop_dx) + port_scoop_ftp + 2 < fr_xi/2 - fr_ri,
+       "frame: the peel scoop runs off the wall's flat span onto the corner round");
+// and it must stay a DISH, not a hole: the wall keeps most of its section
+assert(!port_scoop || port_scoop_r - port_scoop_d < frame_wall - 0.8,
+       "frame: the peel scoop cuts too deep — it would breach the port wall");
 // the bottom-wall port label sits beyond the brand words; it must still land
 // on the wall's flat span, not run onto the corner round
 assert(!port_labels || !usb_port
@@ -1691,12 +1739,22 @@ module port_cut(edge = 0, pos = 0) {
             translate([(pos + port_teth_dx)*sgn, -ri - 1, usb_z])
                 rotate([-90, 0, 0])
                     cylinder(d = sd_teth_hole, h = frame_wall + lg + 3);
-            // and a shallow counterbore at the OUTER mouth, so the pushed-in
-            // barb's mushroom parks flush with the skin rather than standing
-            // proud on the edge in plain view
+            // and a counterbore at the OUTER mouth that the mushroom seats
+            // INSIDE — the barb's shaft is cut to stop on this pocket's
+            // floor, so the head parks flush with the skin. (It used to run
+            // past the wall and flare in open air, 2.8 mm proud of the face
+            // in plain view, with this pocket behind it doing nothing.)
             translate([(pos + port_teth_dx)*sgn, -ro - 0.01, usb_z])
-                rotate([-90, 0, 0]) cylinder(d = sd_teth_head + 0.8, h = 1.4);
+                rotate([-90, 0, 0])
+                    cylinder(d = sd_teth_head + 0.8, h = port_teth_cb + 0.01);
         }
+        // fingernail peel dish, opposite the anchor — the nail lands under
+        // the flange's rim and levers the fitment out. sgn carries it to
+        // whichever wall the port is in, keeping it opposite the anchor on
+        // both.
+        if (port_scoop)
+            translate([(pos + port_scoop_dx)*sgn, -ro - port_scoop_d, usb_z])
+                sphere(r = port_scoop_r);
     }
 }
 
@@ -2092,10 +2150,20 @@ module usb_grommet(bore = true) {
                     translate([-fw/4, -2, 0]) cube([fw/2, 4, 1.2]);   // root
                     translate([port_teth_dx - 2, -2, 0]) cube([4, 4, 1.2]);
                 }
+                // Shaft stops on the counterbore FLOOR so the mushroom flares
+                // inside the pocket. The datum matters: installed, this part's
+                // local z = 0 sits 1.6 mm inside the wall's inner face (the
+                // inner flange's thickness), so the wall spans z 1.6 .. 1.6 +
+                // frame_wall and the pocket floor is port_teth_cb below its
+                // outer skin. The old h = 1.2 + frame_wall + 1.0 was measured
+                // from no datum at all: it put the shaft's top 0.6 mm PAST the
+                // skin and left the entire head standing in open air.
                 translate([port_teth_dx, 0, 0]) {
-                    cylinder(d = sd_teth_hole - 0.4, h = 1.2 + frame_wall + 1.0);
-                    translate([0, 0, 1.2 + frame_wall + 1.0 - 0.01])
-                        cylinder(d1 = sd_teth_head, d2 = 0.8, h = 2.2);
+                    cylinder(d = sd_teth_hole - 0.4,
+                             h = 1.6 + frame_wall - port_teth_cb);
+                    translate([0, 0, 1.6 + frame_wall - port_teth_cb - 0.01])
+                        cylinder(d1 = sd_teth_head, d2 = 0.8,
+                                 h = port_teth_cb);
                 }
             }
             // inner flange — flat bearing face on the bed: this is the face
@@ -2557,6 +2625,43 @@ else if (part == "port_teth_barb") {
             rotate([-90, 0, 0]) cylinder(d = sd_teth_head + 2, h = 0.8);
     }
 }
+// ...and a THIRD, because the pair above still passed a barb that reached
+// its hole and then kept going: nothing of the fitment may sit outside the
+// skin in the anchor's column. Sliced to that column on purpose — the
+// grommet's strain-relief bell is deliberately proud, and a whole-part probe
+// would be masked by it.
+else if (part == "port_barb_proud") {
+    assert(port_tether && usb_port, "needs port_tether and usb_port");
+    // The column is DERIVED, not guessed: wide enough to hold the whole
+    // mushroom, but stopping short of the flange edge at usb_open_w/2 +
+    // grom_lip. A fixed +-4 reached 0.2 mm onto that flange and reported a
+    // failure against geometry that is deliberately proud — the probe has to
+    // exclude the strain relief to say anything about the barb.
+    col = abs(port_teth_dx) - (usb_open_w/2 + grom_lip) - 0.8;
+    assert(col > sd_teth_head/2,
+           "port_barb_proud: no clear column between the anchor and the flange — the probe cannot see the head without clipping the strain relief");
+    intersection() {
+        usb_grommet_installed();
+        translate([usb_dx + port_teth_dx - col, -fr_yo/2 - 20, usb_z - 6])
+            cube([2*col, 20, 12]);
+    }
+}
+// WALL-MOUNT FLUSHNESS: hung on its keyholes the case bears on the back
+// plate, so nothing — no fitment, no leash head, no strap — may stand proud
+// of it, or the case rocks on that point instead of lying flat. Must be
+// EMPTY. The slab starts 0.02 clear of the plate so a coplanar face cannot
+// mint the zero-volume sheets that fail the render instead of the check.
+else if (part == "back_flush")
+    intersection() {
+        union() {
+            frame();
+            usb_grommet_installed();
+            button_plug_installed();
+            sd_cover_installed();
+        }
+        translate([-fr_xo/2 - 5, -fr_yo/2 - 5, fr_depth + 0.02])
+            cube([fr_xo + 10, fr_yo + 10, 10]);
+    }
 else if (part == "dock_probe_fit")
     intersection() { lcd7_docked(-0.2); stand(); }
 else if (part == "dock_probe_seat")
