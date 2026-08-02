@@ -8,6 +8,7 @@
 
 #include "canary/fleet/fleet_instance.h"
 #include "canary/fleet/journal_store.h"
+#include "canary/fleet/sd_archive.h"
 #include "canary/log.h"
 
 namespace canary::fleet {
@@ -50,6 +51,9 @@ void on_fleet_event(const char* id, const char* name, Sev sev,
   }
   s_journal.append(r);
   journal_store_append(r);
+  // Deep tier last: the RAM ring and LittleFS slice are already safe, so a
+  // slow or absent card can never delay what the review UI shows.
+  sd_archive_append(r);
 }
 
 }  // namespace
@@ -59,15 +63,20 @@ EventJournal& the_journal() { return s_journal; }
 void journal_begin() {
   const bool persisted = journal_store_init();
   if (persisted) journal_store_load();
+  // The SD deep archive is append-only breadth, not a load source: reloads
+  // come from the bounded LittleFS slice (the ring never holds more anyway).
+  const bool archived = sd_archive_init();
   the_fleet().set_event_sink(&on_fleet_event);
-  char msg[64];
-  snprintf(msg, sizeof(msg), "time machine up (%s, %d loaded)",
-           persisted ? "persisted" : "RAM-only", s_journal.count());
+  char msg[80];
+  snprintf(msg, sizeof(msg), "time machine up (%s%s, %d loaded)",
+           persisted ? "persisted" : "RAM-only",
+           archived ? " + SD archive" : "", s_journal.count());
   log_line("JRNL", msg);
 }
 
 void journal_wipe_all() {
   journal_store_wipe();
+  sd_archive_wipe();  // the deep copy forgets too — sovereignty is all-tier
   s_journal.clear();
   the_fleet().mark_dirty();
   log_line("JRNL", "history erased by user");

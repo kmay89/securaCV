@@ -40,11 +40,22 @@
 #ifndef FEATURE_CHIME  // -D overridable so the emulator (not real hardware) can force the chime on
 #define FEATURE_CHIME               0   // piezo unpopulated; engine compiled (spec 5)
 #endif
+// #ifndef-guarded like the dash config: any flag a compile-verification env
+// sets with -D must be overridable, or the file's #define silently wins the
+// redefinition and the env verifies stubs (see the dash config's note).
+#ifndef FEATURE_CHIRP_SCAN
 #define FEATURE_CHIRP_SCAN          1   // off-grid BLE chirp fallback (spec 6)
+#endif
+#ifndef FEATURE_BLE5_SCAN
 #define FEATURE_BLE5_SCAN           0   // BLE 5 ext/Coded-PHY long-range scan; bench-gated (spec 6, like CHIME)
+#endif
+#ifndef FEATURE_FLEET_LINK
 #define FEATURE_FLEET_LINK          1   // off-grid BLE GATT pull of WAP status (spec 6)
+#endif
 #define FEATURE_TIME_MACHINE        1   // proof-carrying event journal + history UI (spec 7)
+#ifndef FEATURE_TIME_MACHINE_PERSIST
 #define FEATURE_TIME_MACHINE_PERSIST 0  // LittleFS durability; bench-gated (like CHIME)
+#endif
 #define FEATURE_ONBOARDING          1   // first-boot SoftAP wizard + on-glass guide
 #define FEATURE_CARE                1   // attention policy: night-silent maintenance,
                                         // morning summary, per-witness mute, Roll Call,
@@ -68,7 +79,12 @@
 #define FEATURE_VISION_AI           0
 #define FEATURE_CAMERA_PEEK         0
 #define FEATURE_MMWAVE_RADAR        0
-#define FEATURE_SD_STORAGE          0   // slot exists; event cache is a follow-up
+#define FEATURE_SD_STORAGE          0   // slot exists, but it SHARES the panel's SPI
+                                        // pins and the GC9A01 runs on Arduino_GFX's
+                                        // private bus handle - no shared arbiter, so
+                                        // the deep archive is dash-only for now
+                                        // (fleet/sd_archive.h has the full story;
+                                        // sd_archive.cpp #errors if forced on here)
 #define FEATURE_WIFI_AP             0
 #define FEATURE_HTTP_SERVER         0
 #define FEATURE_MESH_NETWORK        0

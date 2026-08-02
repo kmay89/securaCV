@@ -6,6 +6,9 @@
 //
 //    BASE (part="base", rigid) — stations left→right, top→bottom:
 //      EMBOSS  — raised "CANARY" wordmark (emboss_h): crisp or blobby?
+//      GLYPH   — the Canary mark in uniform strokes, raised at emboss_h:
+//                NO feature is narrower than one rib, so the rib is the
+//                whole test — crisp bird, or a blob? -> glyph_rib/glyph_h
 //      DEBOSS  — sunk "SecuraCV" wordmark (label_depth): every label's fate
 //      SLIDE   — lip channel: the MATE's edge tongue slides in snugly -> tol_slide
 //      PORT    — the cases' USB-C opening through a case wall: your
@@ -71,6 +74,13 @@ emboss_h = 0.6;      // raised-wordmark height (EMBOSS station)
 label_font = "Liberation Sans:style=Bold";
 brand_raised = "CANARY";     // the EMBOSS station's wordmark
 brand_sunk   = "SecuraCV";   // the DEBOSS station's wordmark
+glyph_h = 7.0;       // GLYPH station: mark height (0 removes the station).
+                     // The mark is ~1.8x wider than tall — at 7 it spans
+                     // 12.9 mm, which is the clear air between the wordmarks.
+glyph_rib = 0.7;     // stroke width, in mm. THE number this station tests:
+                     // no feature of the mark is drawn narrower than this
+                     // (tail and beak taper down to it, never past it), so
+                     // if the rib survives, the whole glyph survives.
 
 /* [GLYPH station — the bird, debossed into the BED-SIDE face] */
 // Why the underside: the mark is LINE ART, and its strokes are ~0.2 mm at
@@ -96,12 +106,81 @@ $fa = 3; $fs = 0.4;
 
 bw = 90; bh = 68;
 echo(str("Canary fit coupon v0.3-dev — base ", bw, "x", bh, "  (IN DEVELOPMENT)"));
+if (glyph_h > 0) {
+    echo(str("GLYPH station: mark ", glyph_h, " tall x ", glyph_h*160/87,
+             " wide, ", glyph_rib, " mm ribs"));
+    assert(glyph_rib >= 0.4,
+           "glyph_rib below 0.4 mm — thinner than one 0.4 mm extrusion, the mark will not print");
+}
+
+// ---------------------------------------------------------------------------
+//  GLYPH station — the Canary mark, drawn the way it has to be drawn to
+//  survive a nozzle: uniform-width strokes with round caps, no fine detail.
+//  The mark's NARROWEST feature is one stroke wide — tapers stop at it rather
+//  than running to a point — so there is exactly ONE number that decides
+//  whether this prints (glyph_rib below, echoed at render).
+//  Authored here as paths rather than traced from the brand artwork — that
+//  art is line work ~0.08 mm wide at badge size, which no nozzle can lay down.
+//  Chaikin corner-cutting rounds the polylines; three passes is plenty.
+// ---------------------------------------------------------------------------
+function _chaik(p, cl) = let(n = len(p))
+    [ for (i = [0 : (cl ? n-1 : n-2)]) each
+        let(a = p[i], b = p[(i+1) % n])
+        [ [0.75*a[0] + 0.25*b[0], 0.75*a[1] + 0.25*b[1]],
+          [0.25*a[0] + 0.75*b[0], 0.25*a[1] + 0.75*b[1]] ] ];
+function _smooth(p, cl, k = 3) = k <= 0 ? p : _smooth(_chaik(p, cl), cl, k-1);
+
+// the mark in design units — 87 tall, drawn facing right
+g_outline = [[52,28],[46,36],[36,41],[24,37],[14,29],[0,21],[-16,11],[-30,1],
+             [-26,-12],[-10,-22],[6,-26],[22,-22],[34,-11],[40,4],[46,18]];
+g_tail    = [[-18,-2],[-40,-12],[-62,-24],[-86,-36]];
+g_wing    = [[30,4],[12,14],[-8,10],[-22,0],[-6,-8],[14,-4],[30,4]];
+g_span    = 87;      // design-unit height the above spans
+g_cx      = -6;      // design-unit bbox centre
+g_cy      = -2.5;
+
+module _gstroke(pts, t, closed = false) {
+    n = len(pts);
+    for (i = [0:n-2]) hull() { translate(pts[i]) circle(d = t); translate(pts[i+1]) circle(d = t); }
+    if (closed) hull() { translate(pts[n-1]) circle(d = t); translate(pts[0]) circle(d = t); }
+}
+module _gtaper(pts, t0, t1) {           // width runs t0 -> t1 along the path
+    n = len(pts);
+    for (i = [0:n-2]) hull() {
+        translate(pts[i])   circle(d = t0 + (t1-t0)*i/(n-1));
+        translate(pts[i+1]) circle(d = t0 + (t1-t0)*(i+1)/(n-1));
+    }
+}
+// Nothing here may be drawn thinner than t. The tail and beak taper, so they
+// bottom out AT t rather than running to a point — a point is a feature the
+// slicer drops, and one dropped feature would make the rib reading a lie.
+module bird_glyph_2d(t) {
+    union() {
+        _gtaper(_smooth(g_tail, false), t*1.6, t);   // tail: thick root -> t tip
+        _gstroke(_smooth(g_outline, true), t, true);
+        _gstroke(_smooth(g_wing, false), t);
+        _gtaper([[50,23],[69,22]], t*2.8, t);        // beak: cone -> t tip
+        translate([37,27]) circle(d = t*1.4);        // eye (a dot, so >= t)
+        _gstroke([[4,-26],[0,-46]], t);              // legs
+        _gstroke([[24,-23],[23,-45]], t);
+    }
+}
+// ---------------------------------------------------------------------------
 
 module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
 module lbl(x, y, s, size = 4.5) { translate([x, y, base_t - label_depth]) linear_extrude(label_depth + 0.1)
     text(s, size = size, font = label_font, halign = "center", valign = "center"); }
 module emb(x, y, s, size = 7) { translate([x, y, base_t - 0.05]) linear_extrude(emboss_h + 0.05)
     text(s, size = size, font = label_font, halign = "center", valign = "center"); }
+// GLYPH station: the bird raised at the SAME height the cases' brand marks use
+// (emboss_h), so the wordmark beside it and the bird ask the same question two
+// ways. Text has stroke width to spare; a silhouette with tapering wing and
+// tail tips does not — which is exactly why it earns its own station.
+module bird_emb(px, py, h) {
+    s = h / g_span;
+    translate([px, py, base_t - 0.05]) linear_extrude(emboss_h + 0.05)
+        scale([s, s]) translate([-g_cx, -g_cy]) bird_glyph_2d(glyph_rib / s);
+}
 module keyhole_pocket(px, py) {         // blind, from the back (z=0 face)
     translate([px, py, 0]) union() {
         translate([0, -kh_slot_l/2, -0.1]) linear_extrude(kh_face + 0.1) {
@@ -174,7 +253,7 @@ module base() {
             keyhole_pocket(pocket_cx - stud_gap/2, -14);
             keyhole_pocket(pocket_cx + stud_gap/2, -14);
             // labels — grid-aligned, none touching a neighbour
-            lbl(-24, 21, "EMBOSS", 3);  lbl(22, 21, "DEBOSS", 3);
+            lbl(-24, 21, "EMBOSS", 3);  lbl(-3, 21, "GLYPH", 3);  lbl(22, 21, "DEBOSS", 3);
             lbl(-24, 9.5, "SLIDE");     lbl(2, 9.5, "PORT");     lbl(30, 9.5, "PRESS");
             lbl(-24, -4.5, "GROOVE", 3);   lbl(19, -5.5, "SCREW");
             for (i = [0:2]) lbl(ladder_x[i], -4.5, ladder_tag[i], 3);   // on the SCREW line, under their holes
@@ -190,6 +269,9 @@ module base() {
         }
         // EMBOSS station: raised wordmark at the height case branding uses
         emb(-24, 27, brand_raised, 7);
+        // GLYPH station: the bird, same emboss_h, in the clear air between the
+        // two wordmarks (CANARY ends ≈−11.5, SecuraCV starts ≈+5)
+        if (glyph_h > 0) bird_emb(-3, 27, glyph_h);
         // CLIP station — the WAP clip coupon, both sides: board-rest rails flush
         // to the board's edge lines and a snap clip on EACH long edge. Press a
         // 1.2 mm scrap (or real board edge) past the lead-ins and feel the click.

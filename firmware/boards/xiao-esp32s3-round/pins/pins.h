@@ -76,8 +76,15 @@
 #define RTC_I2C_ADDR            0x51  // PCF8563
 
 // ============================================================================
-// microSD — shared SPI bus (event cache; unused in v0.1)
+// microSD — shared SPI bus (deep archive NOT available on this flavor yet)
 // ============================================================================
+//
+// The slot shares SCK/MOSI/MISO with the GC9A01 panel, which the HAL drives
+// through Arduino_GFX's private bus handle (Arduino_ESP32SPI) — two masters,
+// one set of pins, no shared transaction arbiter. Until panel + card ride one
+// bus handle, FEATURE_SD_STORAGE must stay 0 here (sd_archive.cpp refuses it
+// at compile time with this explanation). The dash TF slot, which has its own
+// data pins, carries the deep archive first — fleet/sd_archive.h.
 
 #define SD_PIN_CS               3     // D2
 
@@ -104,7 +111,7 @@
 
 #define HAS_CAMERA              0     // No camera — this Canary shows, it doesn't watch
 #define HAS_MICROPHONE          0     // No microphone — bedroom-safe by construction
-#define HAS_SD_CARD             1     // on the display board (unused in v0.1)
+#define HAS_SD_CARD             1     // on the display board (archive blocked on the shared panel bus - see microSD note above)
 #define HAS_PSRAM               1     // 8 MB on the XIAO ESP32-S3
 #define HAS_USB_CDC             1
 #define HAS_WIFI                1

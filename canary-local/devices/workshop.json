@@ -980,7 +980,7 @@
       },
       "FEATURE_SD_STORAGE": {
        "on": false,
-       "note": "slot exists; event cache is a follow-up"
+       "note": "slot exists, but it SHARES the panel's SPI"
       },
       "FEATURE_WIFI_AP": {
        "on": false
@@ -1146,7 +1146,8 @@
        "on": false
       },
       "FEATURE_SD_STORAGE": {
-       "on": false
+       "on": false,
+       "note": "TF-slot deep archive (fleet/sd_archive.cpp,"
       },
       "FEATURE_WIFI_AP": {
        "on": false

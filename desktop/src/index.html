@@ -461,8 +461,22 @@
             <span class="dot reading" id="hub-resume-dot"></span>
             <span class="resume-grow" id="hub-resume-text">Picking up where you left off — still watching for the hub you just made…</span>
             <button id="hub-resume-open" class="btn btn-small hidden">Open your hub →</button>
+            <button id="hub-resume-setup" class="btn btn-small hidden">Run self-setup again</button>
             <button id="hub-resume-dismiss" class="link-btn">Dismiss</button>
             <span id="hub-resume-count" class="fb-count hidden" role="timer"></span>
+          </div>
+
+          <!-- Standing self-setup: a hub flashed with the self-setup option can be
+               finished from here at ANY later time — a card flashed today and first
+               booted next weekend falls outside the resume window, and its bundle
+               still deserves a one-click run. Hidden unless this computer holds a
+               maintenance key. -->
+          <div id="hub-standing" class="resume-banner hidden">
+            <span class="resume-grow" id="hub-standing-text">Flashed a self-setup card before?
+              Power that hub on, then finish its setup from here — no monitor needed.</span>
+            <input id="hub-standing-host" class="confirm-input" autocomplete="off" spellcheck="false"
+                   placeholder="homeassistant.local" aria-label="Hub address — an IP works too">
+            <button id="hub-standing-run" class="btn btn-small">Finish hub setup</button>
           </div>
 
           <section class="card" id="hub-step-what">
@@ -545,6 +559,39 @@
               </div>
               <p id="hub-acct-hint" class="muted"></p>
             </details>
+
+            <details id="hub-provision-panel" class="hint">
+              <summary>Let this app finish hub setup by itself — broker, MQTT, securaCV
+                <span class="chip-badge">experimental</span></summary>
+              <p class="muted">The card also carries the securaCV <strong>self-setup bundle</strong> and a
+                <strong>maintenance key</strong> made on this computer. Once the hub is online, this app
+                connects to it over your network and installs everything — the Mosquitto broker, the MQTT
+                connection, Frigate, and the securaCV witness kernel — narrating why at every step. The Pi
+                never needs a monitor or keyboard; this screen is the screen.</p>
+              <p class="muted">The key's private half stays in this app's data folder and never leaves this
+                computer. To revoke it later, delete <span class="mono">authorized_keys</span> from the
+                card's boot partition (or re-flash without this option).</p>
+              <label class="check"><input type="checkbox" id="hub-provision"> Put the self-setup bundle and maintenance key on the card</label>
+              <p class="muted" style="margin-top:12px"><strong>Recommended companion — Pi-hole.</strong>
+                A small open-source DNS service millions of people run. Your devices ask it
+                “where is this website?”, it answers, and it refuses known ad and tracker domains
+                along the way. It's here because securaCV's promise is devices that
+                <strong>don't talk out</strong> — and Pi-hole is how you check that promise instead of
+                taking our word: one page shows every domain every device (Canaries included) tries
+                to reach, so anything quietly phoning home shows up in plain sight. It changes
+                nothing until you point your router's DNS at the hub, and skipping it changes
+                nothing at all.</p>
+              <p class="muted"><strong>What it records, plainly:</strong> to tell you <em>which</em>
+                device asked for a domain, Pi-hole has to log the asking device — so its query log
+                holds the client's IP address (and hostname, if your network supplies one), the
+                domain, and the time. It does not see what's on a page, only the names looked up.
+                That log is the feature, and it is also a log of your household's browsing: it stays
+                on your hub, nothing is uploaded, and you control how long it's kept — Pi-hole's own
+                settings let you shorten retention or turn query logging off entirely (blocking
+                still works without it).</p>
+              <label class="check"><input type="checkbox" id="hub-provision-pihole" checked> Also install Pi-hole</label>
+              <p id="hub-provision-hint" class="muted"></p>
+            </details>
           </section>
 
           <section class="card disabled" id="hub-step-write">
@@ -594,6 +641,9 @@
                 <div id="hub-fb-qr" class="fb-qr hidden" role="img" aria-label="QR code linking to your hub"></div>
                 <div class="row">
                   <button id="hub-fb-open" class="btn btn-primary hidden">Open your hub →</button>
+                  <input id="hub-fb-host" class="confirm-input hidden" autocomplete="off" spellcheck="false"
+                         placeholder="hub address — an IP works" aria-label="Hub address">
+                  <button id="hub-fb-setup" class="btn btn-small hidden">Run self-setup again</button>
                   <button id="hub-fb-stop" class="link-btn">Stop watching</button>
                 </div>
               </div>

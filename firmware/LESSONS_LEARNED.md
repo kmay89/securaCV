@@ -426,6 +426,32 @@
 
 ## Build System
 
+### A flavor config's plain `#define` silently beats an env's `-D`
+- **What happened:** The compile-verification envs that exist to prove
+  bench-gated code actually builds were proving nothing. `canary-display-dash-vault`
+  passes `-DFEATURE_TIME_MACHINE_PERSIST=1` to compile the LittleFS
+  persistence body — but `configs/canary-display/dash/config.h` then said
+  `#define FEATURE_TIME_MACHINE_PERSIST 0` with no guard. The file wins, so
+  the env compiled the *inert no-op stubs* while its comment claimed it
+  verified the real body. `-DFEATURE_BLE5_SCAN=1` had the same problem. Both
+  had been green in CI for months, guarding nothing. Found while adding the
+  SD-archive env (PR: hub self-setup / SD deep archive).
+- **Root cause:** A `-D` on the command line is just a predefine; a later
+  unguarded `#define` of the same name in a header replaces it (GCC emits a
+  "redefined" warning, which is lost in a full-project build log). Only
+  `FEATURE_CHIME` had the `#ifndef` guard, and its comment explains it was
+  added for the emulator — the general rule was never generalized.
+- **Fix:** Every flag any env sets with `-D` is now `#ifndef`-guarded in both
+  flavor configs (`CHIRP_SCAN`, `BLE5_SCAN`, `FLEET_LINK`,
+  `TIME_MACHINE_PERSIST`, `SD_STORAGE`), with a load-bearing comment saying
+  why the guard is not stylistic.
+- **Regression check:** `scripts/lint_build_matrix.py` already parses both the
+  envs' `-D` flags and the configs' defines; the guard is what makes those two
+  agree at compile time. The rule to apply when adding a flag: **if any env
+  `-D`s it, the config must `#ifndef` it** — an unguarded define is a silent
+  override, not a default.
+- **Date learned:** 2026-08
+
 ### Gate on a HAS_* board capability only AFTER including pins.h
 - **What happened:** `ambient_led.cpp` guarded its whole body with
   `#if defined(HAS_RGBLED) && HAS_RGBLED` — but `HAS_RGBLED` lives in the
