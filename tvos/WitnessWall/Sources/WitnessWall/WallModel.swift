@@ -11,6 +11,11 @@ import Observation
 
 /// The Wall's whole world.
 enum WallState: Equatable {
+    /// Nothing saved yet and the Wall is looking for the fleet by itself —
+    /// probing the well-known LAN addresses every Canary install answers
+    /// (tvos/discovery/DISCOVERY.md). Typing an address with a TV remote is
+    /// the industry's worst setup step; the Wall's is: turn it on.
+    case searching
     /// Nothing configured yet — the Wall asks for a hub address.
     case needsHub
     /// Trying, with nothing good to show yet.
@@ -44,6 +49,13 @@ final class WallModel {
 
     private static let hubKey = "SecuraCVHubAddress"
 
+    /// Where a fleet answers on a standard install, most-specific first: the
+    /// hub's kernel port, then a lone canary-wap fronting its own fleet at
+    /// canary.local. The SAME list the desktop Flasher and Lab probe
+    /// (witnessBases / witness-host.js) — one discovery story on every
+    /// surface, so "it found it on my Mac but not my TV" can't happen.
+    static let wellKnownCandidates = ["canary.local:8099", "canary.local"]
+
     init(
         transport: FleetTransport = URLSessionFleetTransport(),
         defaults: UserDefaults = .standard,
@@ -62,13 +74,18 @@ final class WallModel {
     // run while a loop is in flight. The lifecycle is `start()`/`stop()`,
     // driven by the view's `onAppear`/`onDisappear`.
 
-    /// Start (or restart) the poll loop for the saved address. Safe to call
-    /// repeatedly — an in-flight loop is always cancelled first, so a viewer
-    /// mashing Connect can't leave two loops fighting over `state`.
+    /// Start (or restart) the Wall. With a saved address it polls that hub;
+    /// with nothing saved it SEARCHES the LAN first — the setup step is
+    /// "turn the TV on". Safe to call repeatedly — an in-flight loop is
+    /// always cancelled first, so a viewer mashing Connect can't leave two
+    /// loops fighting over `state`.
     func start() {
         pollTask?.cancel()
         guard !hubAddress.isEmpty else {
-            state = .needsHub
+            state = .searching
+            pollTask = Task { [weak self] in
+                await self?.searchThenPoll()
+            }
             return
         }
         let address = hubAddress
@@ -96,6 +113,49 @@ final class WallModel {
         backoff.reset()
         state = .connecting(to: typed)
         start()
+    }
+
+    /// One pass over the well-known candidates. On the first address that
+    /// answers with a real fleet, the address is persisted (so the next boot
+    /// skips the search) and the Wall goes live. Exposed (internal) so tests
+    /// can step the search deterministically.
+    ///
+    /// A candidate that answers with a NON-fleet (a captive portal, someone
+    /// else's web server on canary.local) is skipped, not trusted — parse
+    /// failure is a "keep looking", never a "close enough".
+    @discardableResult
+    func searchOnce() async -> Bool {
+        for candidate in Self.wellKnownCandidates {
+            if Task.isCancelled { return false }
+            guard let url = try? FleetAddress.normalize(candidate) else { continue }
+            guard let body = try? await transport.fetchFleet(from: url),
+                  let snapshot = try? WitnessCore.parseFleet(json: body) else { continue }
+            hubAddress = candidate
+            defaults.set(candidate, forKey: Self.hubKey)
+            backoff.reset()
+            state = .live(snapshot, asOf: Date())
+            return true
+        }
+        if case .searching = state { state = .needsHub }
+        return false
+    }
+
+    /// The self-setup loop: search until a fleet appears, then poll it. While
+    /// nothing answers the screen shows the manual-entry prompt, but the Wall
+    /// keeps quietly re-searching on the backoff ladder — plug a Canary in a
+    /// week later and the Wall finds it by itself.
+    private func searchThenPoll() async {
+        while !Task.isCancelled {
+            if await searchOnce() {
+                await pollLoop(address: hubAddress)
+                return
+            }
+            do {
+                try await Task.sleep(nanoseconds: UInt64(backoff.nextDelay() * 1_000_000_000))
+            } catch {
+                return   // cancelled
+            }
+        }
     }
 
     /// One fetch-verify-publish cycle. Exposed (internal) so tests can step the
@@ -127,7 +187,7 @@ final class WallModel {
             state = .stale(snapshot, since: asOf, reason: reason)
         case .stale(let snapshot, let since, _):
             state = .stale(snapshot, since: since, reason: reason)
-        case .needsHub, .connecting, .unreachable:
+        case .searching, .needsHub, .connecting, .unreachable:
             state = .unreachable(reason: reason)
         }
     }
