@@ -367,13 +367,16 @@ function announceToWitness(product) {
   } catch (_) { /* the wall must never break a flash */ }
 }
 
-// The real thing: the device we just flashed joins the Wi-Fi we provisioned,
-// so — because this is the native app, not a sandboxed browser — we can find it
-// on the LAN and populate the wall with the REAL fleet. The Rust `witness_discover`
-// command does the LAN reach (no CSP; `.local` resolves via the OS). We poll it
-// while the board boots + joins Wi-Fi; if nothing answers (or an older build),
-// the simulated appearance from announceToWitness() stands. Never throws into
-// the flash flow.
+// The real thing: because this is the native app, not a sandboxed browser, we
+// can reach the LAN and populate the wall with the REAL fleet. The Rust
+// `witness_discover` command does the LAN reach (no CSP; `.local` resolves via
+// the OS — Bonjour on macOS, avahi on Linux). ONE controller owns all of it:
+//   - opening the Fleet tab starts a continuous scan (and stops on tab leave),
+//     so the tab shows your actual Canaries without ever flashing anything;
+//   - a successful flash triggers a fast 30 s burst with the new device
+//     highlighted, while the board boots and joins Wi-Fi.
+// If nothing answers (or an older firmware build), the wall keeps its demo /
+// simulated state. Every path is wrapped: discovery can NEVER affect flashing.
 function witnessBases() {
   const bases = [];
   const host = $("mqtt-host") && $("mqtt-host").value && $("mqtt-host").value.trim();
@@ -381,21 +384,74 @@ function witnessBases() {
   bases.push("http://canary.local:8099", "http://canary.local");
   return bases;
 }
-function discoverAndPopulate(product) {
-  try {
-    const frame = $("witness-frame");
-    const post = (m) => { try { if (frame && frame.contentWindow) frame.contentWindow.postMessage(m, "*"); } catch (_) {} };
-    const bases = witnessBases();
-    const deadline = Date.now() + 30000;
-    const tick = async () => {
-      let fleet = null;
-      try { fleet = await invoke("witness_discover", { bases }); } catch (_) { /* not up yet, or older build */ }
-      if (fleet) { post({ type: "witness:fleet", fleet, highlight: witnessName(product) }); return; }
-      if (Date.now() < deadline) setTimeout(tick, 2500);
-    };
-    tick();
-  } catch (_) { /* discovery is best-effort — never affects flashing */ }
-}
+const witnessDiscovery = {
+  timer: null,        // next scheduled tick
+  scanning: false,    // continuous mode (fleet tab open)
+  burstUntil: 0,      // fast-poll deadline after a flash
+  highlight: null,    // device name to highlight on next find
+  inFlight: false,    // a witness_discover call is running (they can take ~8 s)
+  found: false,
+  post(m) { try { const f = $("witness-frame"); if (f && f.contentWindow) f.contentWindow.postMessage(m, "*"); } catch (_) {} },
+  status(msg, live) {
+    try {
+      const el = $("fleet-scan-status");
+      if (el) { el.textContent = msg; el.classList.toggle("live", !!live); }
+    } catch (_) {}
+  },
+  async tick() {
+    if (this.inFlight) return this.schedule();
+    this.inFlight = true;
+    let fleet = null;
+    try { fleet = await invoke("witness_discover", { bases: witnessBases() }); }
+    catch (_) { /* nothing answering yet, or an older build without the command */ }
+    this.inFlight = false;
+    if (fleet) {
+      const n = (fleet.devices || fleet.canaries || (Array.isArray(fleet) ? fleet : [])).length;
+      this.post({ type: "witness:fleet", fleet, highlight: this.highlight });
+      this.highlight = null;
+      this.found = true;
+      this.status("● Live — " + (n || "your") + " Canar" + (n === 1 ? "y" : "ies") + " on your network", true);
+    } else if (!this.found) {
+      this.status("Scanning your network for Canaries… nothing answering yet — flash one, or make sure a Canary is on this Wi-Fi.");
+    }
+    this.schedule();
+  },
+  schedule() {
+    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    const bursting = Date.now() < this.burstUntil;
+    if (!this.scanning && !bursting) return;
+    this.timer = setTimeout(() => this.tick().catch(() => {}), bursting ? 2500 : 10000);
+  },
+  start() {          // fleet tab opened — continuous scan
+    try {
+      this.scanning = true;
+      if (!this.found) this.status("Scanning your network for Canaries…");
+      this.tick().catch(() => {});
+    } catch (_) {}
+  },
+  stop() {           // fleet tab left — stop unless a post-flash burst is live
+    try {
+      this.scanning = false;
+      if (Date.now() >= this.burstUntil && this.timer) { clearTimeout(this.timer); this.timer = null; }
+    } catch (_) {}
+  },
+  burst(product) {   // just flashed — poll fast while the board boots + joins
+    try {
+      this.highlight = witnessName(product);
+      this.burstUntil = Date.now() + 30000;
+      this.tick().catch(() => {});
+    } catch (_) { /* discovery is best-effort — never affects flashing */ }
+  },
+};
+function discoverAndPopulate(product) { witnessDiscovery.burst(product); }
+// The wall announces witness:ready when its iframe boots; re-sync anything the
+// host already knows (a host post fired before boot would have been dropped).
+window.addEventListener("message", (e) => {
+  const d = e && e.data;
+  if (d && d.type === "witness:ready" && (witnessDiscovery.scanning || Date.now() < witnessDiscovery.burstUntil)) {
+    witnessDiscovery.tick().catch(() => {});
+  }
+});
 
 function initShell() {
   document.querySelectorAll(".nav-item").forEach((b) =>
@@ -457,7 +513,13 @@ function navigate(view) {
   }
   if (view === "atlas") renderAtlas();
   if (view === "about") renderAbout();
-  if (view === "fleet") { const b = $("badge-fleet"); if (b) b.classList.add("hidden"); }
+  if (view === "fleet") {
+    const b = $("badge-fleet");
+    if (b) b.classList.add("hidden");
+    witnessDiscovery.start();   // scan the LAN while the tab is open
+  } else {
+    witnessDiscovery.stop();    // (a live post-flash burst keeps running)
+  }
 
   prefs.view = view;
   savePrefs();

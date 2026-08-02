@@ -24,6 +24,11 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# LAN fleet discovery (witness_discover): same pinned shape as the Flasher's
+# (desktop/src-tauri/Cargo.toml) — rustls, JSON only, no default features.
+# Local-first still means local-first: this client only ever GETs /api/fleet
+# on LAN addresses the frontend hands it, never anything on the internet.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
 # Self-update, the same shape as the Flasher (desktop/): the updater plugin
 # polls the rolling `lab-latest` release pointer, the dialog plugin asks the

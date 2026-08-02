@@ -131,7 +131,9 @@
           "depths": [
             { "label": "Watch it work", "lab": "scenes.html", "wasNamed": "Scenes", "status": "fold",
               "desc": "Zoom into one witness doing its one honest thing." }
-          ] }
+          ] },
+        { "noun": "The Witness Wall", "slug": "witness-wall", "lab": "witness-wall.html", "real": true, "kind": "sim", "status": "keep",
+          "desc": "Your fleet on the TV — home, business, and apartment views; the desktop Lab finds your real Canaries on the Wi-Fi." }
       ],
       "site": [
         { "noun": "Why Canary", "slug": "why-canary", "href": "/watch-over.html", "wasNamed": "Watched over, never watched" },
