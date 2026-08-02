@@ -64,6 +64,17 @@ final class WristSnapshotTests: XCTestCase {
         XCTAssertGreaterThan(version ?? 0, WristSnapshot.schemaVersion)
     }
 
+    func testAStructurallyDecodableFutureSchemaIsStillRefused() throws {
+        // A schema bump is reserved for changes an old reader would MISread —
+        // so a future payload must be refused even when it happens to decode,
+        // never rendered with old semantics.
+        var fromTheFuture = WristSnapshot.sample(now: now)
+        fromTheFuture.schema = WristSnapshot.schemaVersion + 1
+        let context = try WristSync.context(for: fromTheFuture)
+        XCTAssertNil(WristSync.snapshot(fromContext: context))
+        XCTAssertEqual(WristSync.contextVersion(of: context), WristSnapshot.schemaVersion + 1)
+    }
+
     // MARK: - adoption ordering
 
     func testHigherRevisionIsNews() {

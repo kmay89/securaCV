@@ -22,6 +22,14 @@
 //     counters — a counter goes stale in transit and would make every
 //     snapshot look different from the last (defeating push dedup); a date
 //     stays true and each side renders its own "ago".
+//   * Two kinds of time, two precisions. WITNESS EVENT times are the coarse
+//     10-minute buckets every surface renders (Invariant III — metadata
+//     minimization of the witnessed world). LINK-HEALTH times (`sentAt`,
+//     `lastVerifiedAt`) are the operational state of the user's own
+//     phone↔watch path and delivery heartbeat — the same precision the
+//     phone's provably-alive card and the Live Activity already show; they
+//     describe the app, not the world, and coarsening them would only make
+//     the staleness and dead-man's-switch displays dishonest.
 //   * Encoding is pinned (JSON, sorted keys, dates as secondsSince1970) so
 //     both ends agree byte-for-byte across OS versions.
 
@@ -210,11 +218,16 @@ enum WristSync {
         context[contextVersionKey] as? Int
     }
 
-    /// Decode an envelope. Returns nil for anything unreadable — including a
-    /// FUTURE schema whose payload no longer decodes here; callers can use
-    /// `contextVersion(of:)` to tell the user "update the other side" instead
-    /// of showing nothing.
+    /// Decode an envelope. Returns nil for anything unreadable — and for any
+    /// FUTURE schema, even one this build could structurally decode: a schema
+    /// bump is RESERVED for changes an old reader would misread, so decoding
+    /// it with old semantics is exactly the failure the version exists to
+    /// prevent. Callers use `contextVersion(of:)` to tell the user "update
+    /// the other side" instead of showing nothing.
     static func snapshot(fromContext context: [String: Any]) -> WristSnapshot? {
+        if let version = contextVersion(of: context), version > WristSnapshot.schemaVersion {
+            return nil
+        }
         guard let data = context[contextPayloadKey] as? Data else { return nil }
         return try? makeDecoder().decode(WristSnapshot.self, from: data)
     }

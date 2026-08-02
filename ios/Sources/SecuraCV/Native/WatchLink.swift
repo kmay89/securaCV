@@ -48,10 +48,13 @@ final class WatchLink: NSObject {
 
     /// Push the store's current truth if it changed (or the quiet re-send
     /// interval elapsed). Call after every fleet refresh — cheap when nothing
-    /// moved.
-    func pushCurrent() {
+    /// moved. `force: true` bypasses the content dedup: use it when the PUSH
+    /// itself is the answer to something the watch asked for (a finished path
+    /// test whose outcome happens to equal the last one would otherwise be
+    /// deduped away, leaving the wrist stuck on "Testing…").
+    func pushCurrent(force: Bool = false) {
         guard let store else { return }
-        push(WristSnapshot(store: store))
+        push(WristSnapshot(store: store), force: force)
     }
 
     private func push(_ snapshot: WristSnapshot, force: Bool = false) {
@@ -155,6 +158,6 @@ extension WatchLink: WCSessionDelegate {
 final class WatchLink {
     static let shared = WatchLink()
     func activate(store: FleetStore) {}
-    func pushCurrent() {}
+    func pushCurrent(force: Bool = false) {}
 }
 #endif

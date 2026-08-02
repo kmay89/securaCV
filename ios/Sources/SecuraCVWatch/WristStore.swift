@@ -26,6 +26,7 @@ final class WristStore: NSObject, ObservableObject {
     /// A path self-test was requested from the wrist and hasn't reported
     /// back as state yet.
     @Published private(set) var testRequestInFlight = false
+    private var testTimeoutTask: Task<Void, Never>?
 
     func activate() {
         if snapshot == nil { snapshot = WristCache.load() }
@@ -57,6 +58,16 @@ final class WristStore: NSObject, ObservableObject {
         guard WCSession.isSupported(),
               session.activationState == .activated, session.isReachable else { return }
         testRequestInFlight = true
+        // Belt for the wedge case: if the phone dies mid-test (or its result
+        // push never arrives), the flag must not pin the UI on "Testing…"
+        // forever — after the timeout the screen honestly re-renders whatever
+        // state the last snapshot carries.
+        testTimeoutTask?.cancel()
+        testTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(45))
+            guard !Task.isCancelled else { return }
+            self?.testRequestInFlight = false
+        }
         session.sendMessage([WristSync.messageCommandKey: WristSync.commandTestAlertPath],
                             replyHandler: { _ in },
                             errorHandler: { [weak self] _ in
@@ -74,6 +85,7 @@ final class WristStore: NSObject, ObservableObject {
         phoneSpeaksNewerSchema = false
         lastHeardFromPhone = Date()
         testRequestInFlight = false
+        testTimeoutTask?.cancel()
         guard incoming.isNewer(than: snapshot) else { return }
         snapshot = incoming
         WristCache.save(incoming)

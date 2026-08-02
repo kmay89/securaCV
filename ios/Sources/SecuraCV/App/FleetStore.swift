@@ -218,6 +218,12 @@ final class FleetStore: ObservableObject {
 
         witnesses = next.sorted { $0.effectiveSeverity > $1.effectiveSeverity }
         timeline = events.sorted { $0.timeBucket > $1.timeBucket }
+        // Re-evaluate the dead-man's-switch EVERY cycle, not just on scene
+        // changes: the island and the wrist serialize its state, and a phone
+        // that stays foregrounded past the dark window must never keep
+        // exporting `.alive` (the wrist would show a green glyph beside its
+        // own "last beat 47 min ago" text).
+        heartbeat.tick()
         pushLiveActivity()
         WatchLink.shared.pushCurrent()   // content-deduped; free when nothing moved
         evaluateAlerts()
@@ -328,6 +334,9 @@ final class FleetStore: ObservableObject {
             }
         }
         pushLiveActivity()
-        WatchLink.shared.pushCurrent()   // the wrist sees the test result too
+        // Forced: the wrist is waiting on this exact push to leave its
+        // "Testing…" state, and a repeat failure with the same reason would
+        // be byte-identical to the last snapshot and vanish into the dedup.
+        WatchLink.shared.pushCurrent(force: true)
     }
 }
