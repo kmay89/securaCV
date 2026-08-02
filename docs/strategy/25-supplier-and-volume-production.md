@@ -83,17 +83,36 @@ which is exactly the dual-source in Principle 2.
 
 ### 1.3 The regulatory cliff (don't get surprised)
 
-1000 **assembled** radios crosses FCC/CE intentional-radiator testing
-(**$5–20k**, doc 18 §4). Two escapes we already hold:
+**Corrected — this section previously named "ship it as a kit" as an escape. It
+is not one.** Full reasoning in
+[doc 29](29-fcc-and-product-compliance-diligence.md); the short version:
 
-- **Ship it as a kit.** Unassembled sidesteps most assembled-product regulatory
-  + liability burden (doc 18 §4) — and assembling *is the lab* for the education
-  buyer (doc 22 §3).
-- **Standardize on a pre-certified ESP32 WROOM module** for modular approval,
-  saving ~$5–15k of intentional-radiator work.
+- **One escape is real.** **Standardize on a pre-certified ESP32 WROOM module**
+  for modular approval, saving ~$5–15k of intentional-radiator work. This holds.
+- **The kit escape is not real.**
+  [15.23](https://www.ecfr.gov/current/title-47/chapter-I/subchapter-A/part-15/subpart-A/section-15.23)
+  excludes kits *by name* and covers only ≤5 units built for personal use and not
+  marketed. Marketing an RF device is regulated by state of *marketing*, not
+  state of *assembly* — a pre-flashed board and a printed case is a radio we
+  sold. Assembling still *is* the lab for the education buyer (doc 22 §3); it
+  just isn't a regulatory shield.
 
-Decide this **before** committing, because it changes which SKU (kit vs.
-assembled) the 1000 even is.
+What that leaves for a committed 1000:
+
+- Any SKU with a radio in the box — **kit or assembled** — needs its own
+  **Part 15 Subpart B SDoC** on the finished product (~$1.5–4k per SKU, one
+  time), plus enclosure labeling and manual statements (doc 29 §2, §4).
+- Any SKU that is **printed enclosures only** carries none of it — a plastic
+  shell is not a digital device (doc 29 §8). This is the posture to hold by
+  default.
+- **Check each board's own FCC status before committing** (doc 29 §3): some
+  dev/eval boards are marketed under
+  [2.803](https://www.ecfr.gov/current/title-47/chapter-I/subchapter-A/part-2/subpart-I/section-2.803)
+  provisions that **prohibit sale to end users in residential environments**.
+  That is a hard blocker on a 1000-unit order, and it is a five-minute lookup.
+
+Decide this **before** committing, because it changes what the 1000 even is —
+and the fork is plastic-vs-radio, not kit-vs-assembled.
 
 ## 2. Testing the designs — four gates, cheapest first, and *who* does each
 
@@ -166,7 +185,10 @@ real RFQs replace the placeholders.
 Per doc 18 §6, **stay module-based and kit-first** — do **not** spin a custom
 PCB or cut a mold until >500 *committed* units. For a first 1000:
 
-1. Keep it a **kit** (or WROOM-module assembled) to dodge the FCC cliff.
+1. Stay on a **pre-certified WROOM-class module** — that is the escape that
+   actually works. Budget a **Part 15B SDoC (~$1.5–4k)** for any SKU with a radio
+   in the box, kit or assembled; a kit does not dodge it (§1.3, doc 29). If that
+   budget isn't committed, the 1000 is an **enclosure-only** order.
 2. Enclosures **3D-printed at a farm**: dropship parts-packs via **Slant 3D
    Teleport** (zero-touch); batch-to-stock **MJF (JLC3DP/PCBWay)** for kit
    cases. Buy another printer only when §3's tool says it beats the farm.
@@ -186,7 +208,11 @@ PCB or cut a mold until >500 *committed* units. For a first 1000:
       §7's open quote items too).
 - [ ] Draft the first-article defect checklist (adapt Voron's; fit coupon as the
       sample part) and name a QC steward (doc 19 §3.1).
-- [ ] Decide kit-vs-assembled for the first ≥1000 order (the FCC/liability fork).
+- [ ] Decide **plastic-only vs. radio-in-the-box** for the first ≥1000 order —
+      that, not kit-vs-assembled, is the real FCC/liability fork (§1.3, doc 29
+      §7). If radio: book the Part 15B SDoC before the PO.
+- [ ] Look up every candidate board on `fccid.io` and record grant status; reject
+      any marked evaluation-only / not-for-resale (doc 29 §3).
 - [ ] Print in-house vs pay a farm: run the quote tool at the real quantity and
       record the buy-a-printer crossover before adding printers or committing a
       batch.
