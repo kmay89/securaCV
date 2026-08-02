@@ -6545,7 +6545,7 @@
       {
        "name": "rg_step",
        "default": "0.2",
-       "comment": "...and its step. Four sockets at centre + (i-2)*step"
+       "comment": "...and its step. Four sockets at centre ± 0.5·step"
       },
       {
        "name": "aa_w",

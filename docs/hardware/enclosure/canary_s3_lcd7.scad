@@ -232,12 +232,22 @@ glass_r = 3.2;       // corner radius of the glass slab. The FIRST REAL PRINT
                      // the glass binds (or gaps) on all four corners.
 // ⚠️  IF EVERY SOCKET ON THE GAUGE SHOWS THE SAME OBVIOUS GAP, do not nudge
 // glass_r by 0.2 and reprint. The gauge is telling you the answer is nowhere
-// near its window — and by default that window is only 0.8 mm wide. Sweep
+// near its window — and by default that window is only 1.2 mm wide. Sweep
 // COARSE first, fine second:
 //     openscad --export-format binstl -o rg_coarse.stl \
 //              -D 'part="radius_gauge"' -D rg_centre=8 -D rg_step=1 \
-//              canary_s3_lcd7.scad                       # sockets 6/7/8/9
-// then re-run with rg_step=0.2 around whichever socket won.
+//              canary_s3_lcd7.scad              # sockets 6.5/7.5/8.5/9.5
+//     ...then with rg_centre=<winner> and rg_step=<coarse step / 3>.
+//
+// THE /3 IS NOT A ROUNDING — it is what makes the second pass provably
+// cover the first. The four sockets sit at centre ± 0.5·step and ± 1.5·step,
+// so they span 3·step, SYMMETRIC about the centre. A coarse winner W only
+// tells you the truth lies within ±step/2 of W, so the fine pass must span
+// at least that: 3·fine ≥ coarse, i.e. fine ≥ coarse/3. Coarse 1 → fine
+// 0.34 covers ±0.51 around W, which contains the whole ±0.5 the coarse pass
+// left open. (An earlier draft of this note said "re-run with rg_step=0.2",
+// which spans only ±0.3 — a true 8.4 would have escaped BOTH passes. Exactly
+// the failure this whole knob is about, one level up.)
 // FASTER, before printing anything: measure it. Sit a square into the slab's
 // corner to find where the sharp bounding-box corner WOULD be, and measure
 // the shortest distance d from that point to the glass. A radius r pulls the
@@ -249,7 +259,12 @@ glass_r = 3.2;       // corner radius of the glass slab. The FIRST REAL PRINT
 // could ever see. A tool that can only resolve the error it already assumes
 // will walk toward the answer forever without arriving.
 rg_centre = glass_r;  // radius-gauge sweep centre — override it to hunt wide
-rg_step   = 0.2;      // ...and its step. Four sockets at centre + (i-2)*step
+rg_step   = 0.2;      // ...and its step. Four sockets at centre ± 0.5·step
+                      // and ± 1.5·step: SYMMETRIC, spanning 3·step. The
+                      // symmetry is the point — an asymmetric sweep leaves
+                      // more room on one side of the centre than the other,
+                      // so "the winner is within half a step" stops being
+                      // true and a two-pass search can skip the answer.
 aa_w = 154.88;       // active area width
 aa_h = 86.72;        // active area height
 aa_dy = -1.02;       // AA centre offset from glass centre — native mounting:
@@ -2529,12 +2544,12 @@ module rg_corner2d(rr) {   // the glass corner at this radius, opened by the rev
 }
 module radius_gauge() {
     assert(rg_step > 0, "radius_gauge: rg_step must be positive");
-    assert(rg_centre - 2*rg_step > 0.4,
+    assert(rg_centre - 1.5*rg_step > 0.4,
            "radius_gauge: the sweep reaches a radius at or below zero — raise rg_centre or shrink rg_step");
-    assert(rg_centre + rg_step < 19,
+    assert(rg_centre + 1.5*rg_step < 19,
            "radius_gauge: the sweep exceeds what a 40 mm corner block can round — the socket would stop being a corner");
     for (i = [0 : 3]) {
-        rr = rg_centre + (i - 2)*rg_step;
+        rr = rg_centre + (i - 1.5)*rg_step;
         translate([i*34, 0, 0]) {
             // base pad — 1 mm wider than the station pitch, so the four pads
             // fuse into one printable strip (and one watertight STL)
