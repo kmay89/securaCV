@@ -1,4 +1,5 @@
 #pragma once
+#include <config.h>   // CD_FLAVOR_* selectors
 #include <stdint.h>
 
 class Arduino_GFX;  // moononournation GFX — the one graphics type the UI sees
@@ -43,8 +44,19 @@ struct TouchSample {
   int16_t y = 0;
 };
 
-// Poll the touch controller (cheap; called every loop pass).
+// Poll the touch controller (cheap; called every loop pass). On the RGB dash
+// glass the returned x/y are already un-rotated into the current logical
+// frame (see touch_set_rotation), so callers never orientation-correct taps.
 TouchSample touch_read();
+
+#ifdef CD_FLAVOR_DASH
+// Tell the touch layer the active display rotation (canary::glass::Rotation)
+// and the panel's native landscape size, so touch_read() maps raw GT911
+// coordinates back into the rotated logical frame the UI drew in. Called by
+// lvgl_port_set_rotation whenever orientation changes. Landscape (0) is the
+// identity, so this only matters once a user turns the glass.
+void touch_set_rotation(uint8_t rot, int16_t native_w, int16_t native_h);
+#endif
 
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
 // ── Isolated IO (Waveshare 4.3B terminal block, via the CH422G) ─────────
