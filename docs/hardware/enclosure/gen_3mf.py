@@ -256,9 +256,12 @@ def main() -> int:
     print(f"packaging {which}:")
     out = build(which)
     print(f"OK {out.name}  {out.stat().st_size / 1e6:.2f} MB")
-    print("  open it directly — three parts, already on filaments 1/2/3.")
-    print("  Add the filament slots in Bambu Studio FIRST, or there is "
-          "nothing for parts 2 and 3 to point at.")
+    print("  open it directly — already positioned and already on their "
+          "filaments.")
+    print("  Add the filament SLOTS in Bambu Studio first: with one slot "
+          "loaded there is")
+    print("  nothing for parts 2 and 3 to point at, and it reads as 'the "
+          "parts are missing'.")
     return 0
 
 
