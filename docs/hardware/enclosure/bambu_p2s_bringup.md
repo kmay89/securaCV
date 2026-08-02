@@ -527,6 +527,38 @@ directional: **intake along the bottom wall, exhaust along the top wall**, back
 grille radiating in between. Mounting it flat against a wall with the top slots
 blocked converts a ventilated case into an oven.
 
+### 7c″ · The colour + fit coupon — print this before the frame
+
+One part answers two questions at ~16 cm³, a sixth of a frame:
+
+```sh
+for f in body ink accent; do
+  openscad --export-format binstl -o lcd7_coupon_$f.stl \
+           -D "part=\"coupon_$f\"" canary_s3_lcd7.scad
+done
+```
+
+It is cut from the bottom edge, running from the centre lockup **out through a
+corner**, at full depth — so it carries the glass pocket, the front bezel band
+and the back plate all on one piece.
+
+| end | what it proves |
+|---|---|
+| centre | the lockup: INK product name over the ACCENT company line, and the USB port for a grommet trial-fit |
+| corner | the glass pocket's radius and the front bezel — offer the panel's own corner into it |
+
+Load `coupon_body`, then **Add part → Load** the ink and accent, assign
+filaments, slice. Same rule as the real print: **do not re-centre or
+drop-to-bed** the added parts.
+
+Read it for: black bleeding into white on the deboss floors (raise the flush
+volume), the lockup sitting flush rather than proud or sunk, where the bezel
+swap landed, and whether the panel corner drops into the pocket with the glass
+sitting 0.6 mm below the front rim.
+
+Do **not** judge bed adhesion from it — it is a slice out of a larger part, so
+its sawn edges behave nothing like the frame's continuous perimeter.
+
 ### 7c′ · The three-colour case (AMS)
 
 The one-piece frame can print as a **white case with a black bezel, black

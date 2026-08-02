@@ -1958,11 +1958,20 @@ module back_inlay(groups) {
 
 // The colour coupon's clip — the bottom-centre band. See the part dispatch
 // for what it is for and why a corner coupon cannot do the same job.
-coupon_w = 76;   // spans the lockup (renders ±28) with room either side
-coupon_h = 30;   // up from the bottom edge: catches both brand rows
+// The clip reaches from the centre lockup OUT TO A CORNER, deliberately
+// asymmetric. A centred band proves the colours but nothing about fit; a
+// corner proves the fit but has no accent word on it (SECURACV lives at
+// x = 0). Spanning both makes one print answer both questions:
+//   · centre end — the lockup: INK product name over ACCENT company line
+//   · corner end — the glass pocket's radius and the front bezel band, so
+//     the panel's own corner can be offered up to it
+// It runs the full depth, so the front rim and the back plate are both on it.
+coupon_x0 = -40;              // just past the lockup's centre
+coupon_x1 = fr_xo/2 + 1;      // ...out through the corner
+coupon_h  = 34;               // tall enough to contain the whole corner arc
 module coupon_clip() {
-    translate([-coupon_w/2, -fr_yo/2 - 1, -1])
-        cube([coupon_w, coupon_h, fr_depth + 2]);
+    translate([coupon_x0, -fr_yo/2 - 1, -1])
+        cube([coupon_x1 - coupon_x0, coupon_h, fr_depth + 2]);
 }
 
 module frame_ink()    { union() { back_inlay(ink_groups);
