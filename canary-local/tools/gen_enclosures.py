@@ -712,7 +712,7 @@ VARIANT_SELECTOR_PARAMS = {
     "preset", "host", "radar", "stack", "model", "variant", "mode", "mount",
     "headers",  # C6 display: stripped board vs as-shipped (headers + pillars)
 }
-OPTION_ENUM_PARAMS = {"mount_style", "battery"}
+OPTION_ENUM_PARAMS = {"mount_style", "battery", "side_exit"}
 ENGINEERING_OPTIONS = {
     "lid_ribs", "kh_lock", "hinge_teeth", "bracket_tripod", "screw_insert",
     "board_clips", "usb_cover",
