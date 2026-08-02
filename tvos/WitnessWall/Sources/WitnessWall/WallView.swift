@@ -3,24 +3,40 @@
 //  A calm, shared, always-on view of the fleet's verified record — NOT a video
 //  wall (docs/tvos/README.md). Everything here is derived from `WallModel.state`
 //  so there is no way to draw "verified" while the model knows better.
+//
+//  Three profiles (WallStyle.swift) dress the SAME data for the room the TV is
+//  in — home wall, business board, apartment peephole — and four skins dress
+//  the light. Setup is: turn it on (the model searches the LAN by itself).
 
 import SwiftUI
+import UIKit
 
 struct WallView: View {
     @State private var model = WallModel()
     @State private var typedAddress = ""
 
+    // The room this TV serves, and how it dresses. Persisted like the hub
+    // address: a power cut must not reset a bar's board to the home wall.
+    @AppStorage("SecuraCVWallProfile") private var profileRaw = WallProfile.home.rawValue
+    @AppStorage("SecuraCVWallSkin") private var skinRaw = WallSkin.midnight.rawValue
+
+    private var profile: WallProfile { WallProfile(rawValue: profileRaw) ?? .home }
+    private var skin: WallSkin { WallSkin(rawValue: skinRaw) ?? .midnight }
+
     var body: some View {
         ZStack {
-            // Deep, dim background: this is furniture in a room, on for hours.
+            // Deep, dim background by default: this is furniture in a room,
+            // on for hours. Skins retint it; the structure never changes.
             LinearGradient(
-                colors: [Color(white: 0.04), Color(white: 0.10)],
+                colors: [skin.backgroundTop, skin.backgroundBottom],
                 startPoint: .top,
                 endPoint: .bottom
             )
             .ignoresSafeArea()
 
             switch model.state {
+            case .searching:
+                searchingCard
             case .needsHub:
                 hubPrompt
             case .connecting(let address):
@@ -33,19 +49,45 @@ struct WallView: View {
                 doctorCard(reason: reason)
             }
         }
-        .onAppear { model.start() }
-        .onDisappear { model.stop() }
+        .preferredColorScheme(skin.isLight ? .light : .dark)
+        .onAppear {
+            // Furniture must not doze: the whole point of a wall is that it
+            // is still there when you look up.
+            UIApplication.shared.isIdleTimerDisabled = true
+            model.start()
+        }
+        .onDisappear {
+            UIApplication.shared.isIdleTimerDisabled = false
+            model.stop()
+        }
     }
 
     // MARK: - States
+
+    /// The zero-typing path: the Wall is looking for the fleet by itself.
+    private var searchingCard: some View {
+        VStack(spacing: 24) {
+            ProgressView()
+            Text("Looking for your Canaries…")
+                .font(.system(size: 56, weight: .semibold))
+            Text("The Wall is checking your network — a hub or Canary at canary.local answers by itself. Nothing leaves this room.")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 1100)
+        }
+        .padding(80)
+    }
 
     private var hubPrompt: some View {
         VStack(spacing: 28) {
             Text("Connect your fleet")
                 .font(.system(size: 64, weight: .semibold))
-            Text("Enter your hub's address — something like http://canary.local:8099")
+            Text("Nothing answered at canary.local yet — the Wall keeps looking. If your hub lives somewhere else, enter its address:")
                 .font(.title3)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 1100)
             TextField("http://canary.local:8099", text: $typedAddress)
                 .textContentType(.URL)
                 .frame(maxWidth: 900)
@@ -65,13 +107,14 @@ struct WallView: View {
     }
 
     private func fleetWall(_ fleet: FleetSnapshot, asOf: Date, stale: String?) -> some View {
-        VStack(alignment: .leading, spacing: 36) {
+        VStack(alignment: .leading, spacing: profile == .business ? 24 : 36) {
             header(fleet, asOf: asOf, stale: stale)
 
             // Devices, largest-first in importance: anything troubled leads.
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 380), spacing: 28)], spacing: 28) {
-                ForEach(sorted(fleet.devices)) { device in
-                    DeviceCard(device: device)
+            // The profile sets density and ordering; the data is the data.
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: profile.tileMinimum), spacing: 28)], spacing: 28) {
+                ForEach(profile.sorted(fleet.devices)) { device in
+                    DeviceCard(device: device, skin: skin, hero: profile == .apartment && WallProfile.isDoorish(device.name))
                 }
             }
 
@@ -83,9 +126,14 @@ struct WallView: View {
 
     private func header(_ fleet: FleetSnapshot, asOf: Date, stale: String?) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(fleet.kernel ?? "Your fleet")
-                .font(.system(size: 72, weight: .bold))
-            Text(fleet.summary)
+            HStack(alignment: .firstTextBaseline) {
+                Text(fleet.kernel ?? "Your fleet")
+                    .font(.system(size: profile == .business ? 56 : 72, weight: .bold))
+                    .foregroundStyle(skin.ink)
+                Spacer()
+                stylePicker
+            }
+            Text(headline(fleet))
                 .font(.title2)
                 .foregroundStyle(.secondary)
 
@@ -113,6 +161,41 @@ struct WallView: View {
         }
     }
 
+    /// The line under the fleet name, phrased for the room. Counts come from
+    /// the snapshot — a profile may choose WHICH honest sentence to lead
+    /// with, never invent one.
+    private func headline(_ fleet: FleetSnapshot) -> String {
+        let attention = fleet.devices.filter { $0.chainIsTroubled || !$0.online }.count
+        switch profile {
+        case .business:
+            return attention == 0
+                ? "\(fleet.summary) · nothing needs attention"
+                : "\(fleet.summary) · \(attention) need\(attention == 1 ? "s" : "") attention"
+        case .apartment, .home:
+            return fleet.summary
+        }
+    }
+
+    /// Profile + skin chips, tucked at the header's edge. Focusable with the
+    /// remote; a click cycles. Two controls, zero settings screens.
+    private var stylePicker: some View {
+        HStack(spacing: 14) {
+            Button(profile.label) {
+                profileRaw = next(after: profile, in: WallProfile.allCases).rawValue
+            }
+            Button(skin.label) {
+                skinRaw = next(after: skin, in: WallSkin.allCases).rawValue
+            }
+        }
+        .font(.caption)
+        .buttonStyle(.bordered)
+    }
+
+    private func next<T: Equatable>(after current: T, in all: [T]) -> T {
+        guard let i = all.firstIndex(of: current) else { return all[0] }
+        return all[(i + 1) % all.count]
+    }
+
     private func doctorCard(reason: String) -> some View {
         VStack(spacing: 24) {
             Text("The Wall can't see your fleet")
@@ -134,6 +217,9 @@ struct WallView: View {
         HStack(spacing: 24) {
             Text("SecuraCV Witness Wall")
             Text("core \(model.coreVersion)")
+            if !model.hubAddress.isEmpty {
+                Text(model.hubAddress)   // where "live" comes from — never a mystery
+            }
             if let report = model.report {
                 Text(report.ok ? "chain ok · \(report.verified) entries" : report.message)
                     .foregroundStyle(report.ok ? Color.secondary : Color.orange)
@@ -144,22 +230,16 @@ struct WallView: View {
         .font(.caption)
         .foregroundStyle(.tertiary)
     }
-
-    /// Troubled first, then offline, then the rest alphabetically — what needs
-    /// a person is what a person should see from across the room.
-    private func sorted(_ devices: [FleetSnapshot.Device]) -> [FleetSnapshot.Device] {
-        devices.sorted { a, b in
-            if a.chainIsTroubled != b.chainIsTroubled { return a.chainIsTroubled }
-            if a.online != b.online { return !a.online }
-            return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
-        }
-    }
 }
 
 // MARK: - Pieces
 
 struct DeviceCard: View {
     let device: FleetSnapshot.Device
+    let skin: WallSkin
+    /// The apartment's door Canary draws larger type — the room's one question
+    /// ("who's at the door?") should be answerable from the couch.
+    let hero: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -168,7 +248,8 @@ struct DeviceCard: View {
                     .fill(dotColor)
                     .frame(width: 18, height: 18)
                 Text(device.name)
-                    .font(.title2.weight(.semibold))
+                    .font(hero ? .title.weight(.bold) : .title2.weight(.semibold))
+                    .foregroundStyle(skin.ink)
                     .lineLimit(1)
             }
             Text(statusLine)
@@ -182,12 +263,12 @@ struct DeviceCard: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(white: 0.13), in: RoundedRectangle(cornerRadius: 20))
+        .background(skin.tile, in: RoundedRectangle(cornerRadius: 20))
     }
 
     private var dotColor: Color {
         if device.chainIsTroubled { return .orange }
-        return device.online ? .green : Color(white: 0.4)
+        return device.online ? skin.ok : Color(white: 0.4)
     }
 
     private var statusLine: String {

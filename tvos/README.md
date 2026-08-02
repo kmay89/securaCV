@@ -18,6 +18,37 @@ self-update design is in [`../docs/tvos/AUTOPIPELINE.md`](../docs/tvos/AUTOPIPEL
 > from CI or this repo alone. The checklist below is the whole remaining gap,
 > and it's the same shape as [`../desktop-lab/MOBILE.md`](../desktop-lab/MOBILE.md).
 
+## What makes this the best at what it does
+
+We surveyed the field (Aug 2026): Ring has **no** Apple TV app and the one
+approved third-party viewer stacks a second subscription on a Ring plan;
+Nest's TV story is cloud-only and its history tier took a 25% price hike;
+eufy/Wyze/Tapo/Reolink have no TV app at all; Apple's own Home tab is
+live-view-only with **no history on tvOS**; and the one good first-party app
+(UniFi Protect) still demands cloud SSO login and $200+ hardware. Three
+categories are simply **empty**, and this app sits in all three:
+
+1. **Integrity you can see.** No shipping product on any TV platform renders
+   cryptographic proof that the record is intact. The Wall's "verified ✓" is
+   the Rust core actually verifying the kernel's chain — pinned by CI to the
+   kernel's own test vectors, never a hardcoded string.
+2. **Zero-typing, zero-cloud setup.** Turn it on: the Wall probes the same
+   well-known LAN addresses the desktop Flasher and Lab probe
+   (`canary.local`), finds the fleet by itself, and remembers it. No account,
+   no subscription, nothing leaves the room — and tvOS's own constraints
+   (storage the OS may purge, foreground-only apps) match the architecture:
+   the TV never holds the record, it witnesses, displays, and proves.
+3. **Built for the rooms TVs are actually in.** One wall, three profiles —
+   the living-room **Home** wall, the behind-the-counter **Business** board
+   (denser, attention-first), the **Apartment** peephole (the door leads) —
+   plus four skins. A profile changes layout and emphasis, never the data,
+   so no mode can claim what another wouldn't.
+
+The honesty rules are tests, not intentions: stale data is announced in the
+loudest element on screen, a hub that vanishes can never keep drawing a green
+fleet, and a squatted `canary.local` that answers with a login page is
+skipped, not trusted (`Tests/WitnessWallTests/`).
+
 ## Layout
 
 ```
