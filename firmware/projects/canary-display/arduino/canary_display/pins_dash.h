@@ -123,6 +123,23 @@
 #define CH422G_BIT_SD_CS        (1 << 5)
 
 // ============================================================================
+// microSD (TF) slot
+// ============================================================================
+//
+// Wiring per Waveshare demo sources for this panel family (same routing as
+// the 4.3B — VERIFY on your board revision). Macro names are SPI-era; the
+// deep archive (fleet/sd_archive.cpp) drives the slot with the S3's SDMMC
+// host in 1-BIT mode instead, because CS/DAT3 rides the CH422G (EXIO5 here)
+// and the write-only expander cannot do per-transaction CS: CLK=SCK(12),
+// CMD=MOSI(11), D0=MISO(13), DAT3 held high by the expander latch keeps the
+// card in SD mode. Bench-gated: FEATURE_SD_STORAGE stays 0 until validated.
+
+#define SD_PIN_MOSI             11    // SDMMC CMD
+#define SD_PIN_SCK              12    // SDMMC CLK
+#define SD_PIN_MISO             13    // SDMMC D0
+#define SD_PIN_CS               -1    // DAT3 via CH422G EXIO5, not a native GPIO
+
+// ============================================================================
 // ONBOARD PERIPHERALS
 // ============================================================================
 
@@ -142,7 +159,7 @@
 
 #define HAS_CAMERA              0     // No camera — this Canary shows, it doesn't watch
 #define HAS_MICROPHONE          0     // No microphone — quiet-room-safe by construction
-#define HAS_SD_CARD             1     // TF slot (unused in v0.1)
+#define HAS_SD_CARD             1     // TF slot (deep archive; bench-gated FEATURE_SD_STORAGE)
 #define HAS_PSRAM               1     // 8 MB octal — hosts the 800x480 framebuffer
 #define HAS_USB_CDC             1
 #define HAS_WIFI                1

@@ -53,6 +53,7 @@
       "canary-display-dash-rs485",
       "canary-display-dash-can",
       "canary-display-dash-vault",
+      "canary-display-dash-sd",
       "canary-display-dash-rtc",
       "canary-display-dash-espnow",
       "canary-display-dash-ble5",
@@ -87,7 +88,8 @@
       "canary-display-dash-ble5": "display-pio3",
       "canary-display-dash-modes": "display-pio3",
       "canary-display-dash-mic": "display-pio3",
-      "canary-display-dash7": "display-pio3"
+      "canary-display-dash7": "display-pio3",
+      "canary-display-dash-sd": "display-pio3"
     }
   },
   {
