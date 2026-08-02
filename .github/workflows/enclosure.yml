@@ -195,6 +195,17 @@ jobs:
           # passes a case nobody can make captive
           bfit none port_teth_hole empty || exit 1
           bfit none port_teth_barb solid "the port fitment's barb misses its anchor hole — strap length or anchor position drifted" || exit 1
+          # ...and a third, because the pair above passed a barb that reached
+          # its hole and then kept going: the head stood up to 2.8 mm proud of
+          # the wall you look at, with the counterbore sitting behind it doing
+          # nothing. "Reaches" is not "stops there".
+          bfit none port_barb_proud empty || exit 1
+          # Hung on its keyholes the case bears on the back plate, so nothing
+          # may stand proud of it — a leash head or a cover lip that does makes
+          # the case rock on that point instead of lying flat on the wall.
+          for b in none 3000 10000; do
+            bfit $b back_flush empty || exit 1
+          done
           for b in none 3000 10000; do
             bfit $b dock_probe_fit  empty || exit 1   # seated case must not collide
             bfit $b dock_probe_seat solid "the dock's pads never touch the seated case — nothing carries it" || exit 1
