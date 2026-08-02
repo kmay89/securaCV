@@ -49,6 +49,11 @@ jobs:
       - name: Install cargo-audit
         if: steps.tool.outputs.cache-hit != 'true'
         run: cargo install cargo-audit --locked
+      # Ignores live in .cargo/audit.toml, one entry per advisory, each
+      # requiring a written reachability analysis in SECURITY.md ("Known
+      # dependency advisories"). Never add an ignore to silence a red gate —
+      # add it only when there is no reachable fix and the vulnerable path
+      # provably isn't ours, and delete it the moment a fix lands.
       - name: Audit Cargo.lock against the RustSec advisory DB
         run: cargo audit
 
