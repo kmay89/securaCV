@@ -1591,3 +1591,49 @@ order you'd *produce* the items in is a plausible-but-wrong order to *declare*
 them in — and a structural gate that checks presence without checking ORDER
 passes both. When you add a "does every piece exist" gate, ask what the
 pieces' arrangement means, and gate that too.
+
+### (z) 2026-08-02 — a `lipo` with one slice still produces a file called "universal"
+
+**What happened:** a user on a 2017 Intel MacBook Pro updated to the latest
+Flasher and the Pi-over-USB-C panel failed instantly with
+
+```
+could not start rpiboot: Bad CPU type in executable (os error 86)
+```
+
+The macOS app is built `--target universal-apple-darwin`, so the sidecar Tauri
+bundles is the file named `rpiboot-universal-apple-darwin`. The release job
+built `rpiboot` once, natively, on the arm64 runner and then did
+`lipo -create -output rpiboot-universal-apple-darwin rpiboot-aarch64-apple-darwin`
+— a one-slice `lipo`, which succeeds and yields a perfectly valid Mach-O that
+is arm64-only. It then `cp`'d that same arm64 binary to the
+`rpiboot-x86_64-apple-darwin` name. Every artifact had the right filename and
+the wrong contents. The reason was real (Homebrew's libusb only ever has the
+runner's own arch, so there was nothing to link an x86_64 build against) and
+was written down in a code comment claiming Intel Macs would "get a clear
+error" — but os error 86 is not a clear error, and the sidecar next to it
+(`espflash`) had been genuinely universal all along, so nothing looked odd.
+
+**The fix:** build libusb from a pinned tarball once per arch, build `rpiboot`
+once per arch against the matching one, and `lipo` both the dylib and the
+binary. Pass the architecture through `CFLAGS`, never `CC` — upstream usbboot's
+`CC_FOR_BUILD ?= $(CC)` would otherwise build the `bin2c` codegen helper for
+x86_64 and then fail trying to *run* it on the arm64 runner. The step now
+asserts `lipo -archs` lists both slices on the universal sidecar and on the
+bundled dylib, asserts each per-arch file really is that arch, and asserts the
+binary still points at `@executable_path/../Frameworks/libusb-1.0.0.dylib` and
+at no build-machine path. Separately, `hub_core::hub_sidecar` turns this whole
+error class into a sentence with a fix in it, for every sidecar, so the next
+one is legible even before anyone reads a workflow.
+
+**The generalized part:** two of these at once. First — **`lipo -create` with a
+single input is not an error**, and neither is `cp a b`; a build step that
+*names* an artifact for a property has to *verify* the property, because the
+filename will keep the promise long after the contents stop. `file` printing
+the answer into the log is not verification; nobody reads a green step. Second
+— **a known limitation recorded only in a code comment is a limitation nobody
+knows about.** If a platform is genuinely unsupported on a path, the app has to
+say so in words the user can act on at the moment it fails; a comment in a
+workflow reaches exactly the people who don't need it. Applies to every app
+target that ships a bundled binary: Flasher, Lab, and the iPhone / iPad /
+tvOS / Mac targets.

@@ -441,7 +441,12 @@ Raspberry Pi Imager.
     (`USBBOOT_REF`, honest-before-pin: tracks upstream until the validation
     session pins the exact tag it proved; every build logs the resolved SHA).
     macOS bundles its own libusb (re-pointed into Resources) so nothing
-    depends on a user's Homebrew; the deb declares `libusb-1.0-0`.
+    depends on a user's Homebrew; the deb declares `libusb-1.0-0`. Both the
+    sidecar and that libusb are built **once per architecture** and `lipo`'d,
+    because the app ships as one universal download: an arm64-only helper
+    fails on Intel Macs with `Bad CPU type in executable`, which is precisely
+    what shipped in 0.3.9 and is fixed in 0.3.10. The build asserts both
+    slices are present rather than printing them (RELEASE_LESSONS 2026-08-02).
   - *On-ramp (implemented):* `hub_pi_boot_start`/`stop` commands spawn the
     sidecar with the bundled gadget — rpiboot itself does the waiting, so no
     separate USB watcher is needed; its narration streams to the UI and the

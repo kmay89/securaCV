@@ -25,4 +25,5 @@ pub mod hub_flash;
 pub mod hub_headless;
 pub mod hub_image;
 pub mod hub_seed;
+pub mod hub_sidecar;
 pub mod hub_usbboot;

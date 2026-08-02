@@ -8,8 +8,10 @@ Pi-over-USB-C gadget flow, and the zero-touch account restore mechanism.
 Design: [the one-flash Pi hub](design/raspberry_pi_hub_flashing.md) (§7, §9).
 
 **Kit:** Raspberry Pi 5 · a 32 GB+ microSD you can destroy (64 GB A2
-preferred) · USB-C↔USB-C *data* cable · a Mac (Apple silicon) and a Linux
-machine · optionally an NVMe in the Pi and a USB card reader for the
+preferred) · USB-C↔USB-C *data* cable · a Mac and a Linux machine — **both a
+an Apple-silicon and an Intel Mac if you can get one**, since the USB-C path is
+the one flow that has broken on Intel alone (RELEASE_LESSONS 2026-08-02) ·
+optionally an NVMe in the Pi and a USB card reader for the
 reader-path comparison. Build the flasher from this branch with the sidecars
 populated (run the release workflow with `dry_run=true` and grab the
 artifacts, or build locally per `desktop/README.md`).
@@ -135,3 +137,9 @@ check each once on real hardware:
   cleared, with the date and the hardware used.
 - ☐ Tag `flasher-v*`; verify the published macOS build's rpiboot runs on a
   clean machine (no Homebrew) — the bundled-libusb check.
+- ☐ On the published macOS build, confirm the sidecar is genuinely universal:
+  `lipo -archs "SecuraCV Flasher.app/Contents/MacOS/rpiboot"` lists **both**
+  `arm64` and `x86_64`, and the same for
+  `Contents/Frameworks/libusb-1.0.0.dylib`. CI asserts this, but this is the
+  check that would have caught 0.3.9 shipping an arm64-only "universal"
+  helper. Best done by running the panel once on an Intel Mac.

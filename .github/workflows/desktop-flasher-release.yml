@@ -42,6 +42,11 @@ env:
   # that session MUST replace this with the exact tag it validated, and each
   # build logs the resolved commit SHA so a working build is reproducible.
   USBBOOT_REF: ""
+  # libusb, built from source on macOS so the rpiboot sidecar gets a real
+  # x86_64 slice. Homebrew only ever has the runner's own arch, which is what
+  # shipped an arm64-only "universal" sidecar and broke every Intel Mac.
+  # Pinned deliberately (RELEASE_LESSONS Principle 2).
+  LIBUSB_VERSION: "1.0.27"
 
 jobs:
   build:
@@ -200,18 +205,51 @@ jobs:
       # Build Raspberry Pi's official rpiboot host tool and vendor its signed
       # mass-storage-gadget payload from ONE pinned usbboot checkout. rpiboot
       # turns a Pi connected over USB-C (power button held) into an ordinary
-      # USB disk, so the hub writer needs no card reader. macOS note: the
-      # runner is arm64 and brew has no cross libusb, so the sidecar is
-      # arm64-only lipo'd into the "universal" slot — Intel Macs keep every
-      # other flow and get a clear error from this one. The libusb dylib is
-      # bundled into Resources and the binary re-pointed at it, so the app
-      # never depends on a user's Homebrew.
-      - name: Bundle rpiboot sidecar + gadget (macOS)
+      # USB disk, so the hub writer needs no card reader.
+      #
+      # macOS: the app is built `--target universal-apple-darwin`, so the file
+      # Tauri actually bundles is `rpiboot-universal-apple-darwin` — and if that
+      # file has no x86_64 slice, every Intel Mac gets "could not start rpiboot:
+      # Bad CPU type in executable (os error 86)" the moment it opens the Pi
+      # panel. It used to have none: the runner is arm64, Homebrew's libusb is
+      # single-arch, and the step lipo'd one arm64 slice into the "universal"
+      # name. So we do NOT use brew's libusb — we build libusb from a pinned
+      # tarball once per arch and lipo BOTH the dylib and rpiboot, exactly like
+      # the espflash sidecar above. The arch goes through CFLAGS, never CC,
+      # because upstream's `CC_FOR_BUILD ?= $(CC)` would otherwise build the
+      # bin2c codegen helper for x86_64 and then fail trying to run it on the
+      # arm64 runner. (RELEASE_LESSONS 2026-08-02.)
+      - name: Bundle rpiboot sidecar + gadget (macOS universal)
         if: matrix.platform == 'macos-latest'
         shell: bash
         run: |
           set -euo pipefail
-          brew install libusb pkg-config
+          brew list pkg-config >/dev/null 2>&1 || brew install pkg-config
+          root="$PWD"
+          bin=desktop/src-tauri/binaries
+          res=desktop/src-tauri/resources/mass-storage-gadget64
+          mkdir -p "$bin" "$res"
+
+          # ── libusb, one build per arch (brew only ever has the runner's) ────
+          curl -fL "https://github.com/libusb/libusb/releases/download/v${LIBUSB_VERSION}/libusb-${LIBUSB_VERSION}.tar.bz2" \
+            -o libusb.tar.bz2
+          mkdir -p libusb-src
+          tar -xjf libusb.tar.bz2 -C libusb-src --strip-components=1
+          for pair in "arm64:aarch64-apple-darwin" "x86_64:x86_64-apple-darwin"; do
+            arch="${pair%%:*}"; host="${pair##*:}"
+            rm -rf "build-libusb-$arch"; mkdir -p "build-libusb-$arch"
+            (
+              cd "build-libusb-$arch"
+              "$root/libusb-src/configure" --host="$host" \
+                --prefix="$root/libusb-$arch" \
+                --disable-static --enable-shared --disable-udev \
+                CC="clang -arch $arch" >/dev/null
+              make -j3 >/dev/null
+              make install >/dev/null
+            )
+          done
+
+          # ── usbboot: rpiboot host tool + the signed gadget payload ──────────
           git clone --depth 1 ${USBBOOT_REF:+--branch "$USBBOOT_REF"} \
             https://github.com/raspberrypi/usbboot usbboot-src
           # Surface the resolved commit rather than burying it in build output —
@@ -221,32 +259,76 @@ jobs:
           usbboot_sha=$(cd usbboot-src && git rev-parse HEAD)
           echo "::notice title=usbboot resolved::${usbboot_sha} (USBBOOT_REF='${USBBOOT_REF:-<upstream default branch>}') — pin USBBOOT_REF to this once validated on real hardware"
           echo "- \`usbboot\` @ \`${usbboot_sha}\` (ref: \`${USBBOOT_REF:-upstream default branch}\`)" >> "$GITHUB_STEP_SUMMARY"
-          (cd usbboot-src && make rpiboot)
-          bin=desktop/src-tauri/binaries
-          res=desktop/src-tauri/resources/mass-storage-gadget64
-          mkdir -p "$bin" "$res"
-          cp usbboot-src/rpiboot "$bin/rpiboot-aarch64-apple-darwin"
+
+          # rpiboot links straight from source in one command (no .o files), so
+          # deleting the binary is enough to force a clean rebuild per arch.
+          # PKG_CONFIG_PATH is what points each build at the matching libusb.
+          for pair in "arm64:aarch64-apple-darwin" "x86_64:x86_64-apple-darwin"; do
+            arch="${pair%%:*}"; triple="${pair##*:}"
+            rm -f usbboot-src/rpiboot
+            PKG_CONFIG_PATH="$root/libusb-$arch/lib/pkgconfig" \
+              make -C usbboot-src rpiboot \
+                CFLAGS="-arch $arch" LDFLAGS="-arch $arch"
+            cp usbboot-src/rpiboot "$bin/rpiboot-$triple"
+            # Make the sidecar self-contained: it must load the libusb we ship,
+            # not a build path that exists only on this runner. Per-arch, before
+            # the lipo, because each slice links its own prefix.
+            old=$(otool -L "$bin/rpiboot-$triple" | awk '/libusb/ {print $1}')
+            install_name_tool -change "$old" \
+              "@executable_path/../Frameworks/libusb-1.0.0.dylib" \
+              "$bin/rpiboot-$triple"
+          done
+
           # -L dereferences symlinks: upstream ships bootfiles.bin as a symlink
           # into ../firmware/, which a plain -R copies as a dangling link that
           # Tauri's resource bundler then rejects ("resource path … doesn't exist").
           cp -RL usbboot-src/mass-storage-gadget64/. "$res/"
-          # Make the sidecar self-contained: ship libusb in Resources and
-          # point the binary at it relative to the app bundle.
-          libusb=$(otool -L "$bin/rpiboot-aarch64-apple-darwin" | awk '/libusb/ {print $1}')
-          cp "$libusb" desktop/src-tauri/resources/libusb-1.0.0.dylib
+          test -s "$res/bootfiles.bin" || { echo "::error::gadget payload missing"; exit 1; }
+
+          # ── the universal slices Tauri actually bundles ─────────────────────
           # tauri.macos.conf.json bundles the dylib as a signed FRAMEWORK at
           # Contents/Frameworks/libusb-1.0.0.dylib; sidecars live in Contents/MacOS,
           # one level below Contents/Frameworks. Bundling it as a framework (not a
           # plain resource) is what lets Tauri code-sign it with our Developer ID —
           # notarization rejects any unsigned nested Mach-O, and a dylib parked in
           # Resources/ would be exactly that. (RELEASE_LESSONS 2026-07-25.)
-          install_name_tool -change "$libusb" \
-            "@executable_path/../Frameworks/libusb-1.0.0.dylib" \
-            "$bin/rpiboot-aarch64-apple-darwin"
-          lipo -create -output "$bin/rpiboot-universal-apple-darwin" "$bin/rpiboot-aarch64-apple-darwin"
-          cp "$bin/rpiboot-aarch64-apple-darwin" "$bin/rpiboot-x86_64-apple-darwin"
+          lipo -create -output desktop/src-tauri/resources/libusb-1.0.0.dylib \
+            "$root/libusb-arm64/lib/libusb-1.0.0.dylib" \
+            "$root/libusb-x86_64/lib/libusb-1.0.0.dylib"
+          install_name_tool -id "@executable_path/../Frameworks/libusb-1.0.0.dylib" \
+            desktop/src-tauri/resources/libusb-1.0.0.dylib
+          lipo -create -output "$bin/rpiboot-universal-apple-darwin" \
+            "$bin/rpiboot-aarch64-apple-darwin" "$bin/rpiboot-x86_64-apple-darwin"
           chmod +x "$bin"/rpiboot-*
-          file "$bin"/rpiboot-*
+          file "$bin"/rpiboot-* desktop/src-tauri/resources/libusb-1.0.0.dylib
+
+          # ── prove it, or this regresses silently again ──────────────────────
+          # An arm64-only "universal" sidecar is invisible until an Intel Mac
+          # opens the Pi panel. Assert the slices here instead.
+          for f in "$bin/rpiboot-universal-apple-darwin" \
+                   desktop/src-tauri/resources/libusb-1.0.0.dylib; do
+            archs=$(lipo -archs "$f")
+            for want in arm64 x86_64; do
+              case " $archs " in
+                *" $want "*) ;;
+                *) echo "::error::$f has no $want slice (has: $archs)"; exit 1 ;;
+              esac
+            done
+            echo "ok: $f [$archs]"
+          done
+          # Each per-arch sidecar must really be that arch — the old bug was a
+          # plain `cp` of the arm64 binary into the x86_64 name.
+          [ "$(lipo -archs "$bin/rpiboot-aarch64-apple-darwin")" = "arm64" ] \
+            || { echo "::error::aarch64 sidecar is not arm64"; exit 1; }
+          [ "$(lipo -archs "$bin/rpiboot-x86_64-apple-darwin")" = "x86_64" ] \
+            || { echo "::error::x86_64 sidecar is not x86_64"; exit 1; }
+          # And it must load the libusb we ship, not a runner-only build path.
+          otool -L "$bin/rpiboot-universal-apple-darwin" \
+            | grep -q "@executable_path/../Frameworks/libusb-1.0.0.dylib" \
+            || { echo "::error::rpiboot does not reference the bundled libusb"; exit 1; }
+          if otool -L "$bin/rpiboot-universal-apple-darwin" | grep -qE "$root|/opt/homebrew|/usr/local/Cellar"; then
+            echo "::error::rpiboot still references a build-machine libusb path"; exit 1
+          fi
 
       - name: Bundle rpiboot sidecar + gadget (Linux x86_64)
         if: matrix.platform == 'ubuntu-22.04'
