@@ -1567,3 +1567,27 @@ The rules that fall out of this:
   this file speak the shared vocabulary?" rather than "does it contain this
   include line" — the latter would have forced a cosmetic edit to a file the
   committed wasm `dist/` artifacts are built from, for no behavioural gain.
+
+### (y) 2026-08-02 — imagestack layers are declared front-to-back, and the painting order is the exact opposite
+
+**What happened:** the tvOS icon generator wrote the imagestack `Contents.json`
+layers in painting order — `[Back, Middle, Front]`, back plate first, the way
+you'd composite them. Apple's imagestack format lists layers **front-to-back**:
+the FIRST entry is the front-most, and actool requires the LAST entry (the back
+plate) to be fully opaque. With the order inverted, our transparent bird art
+was being treated as the back plate — the simulator build passed, the
+structural icon gate passed (it checked presence and sizes, not order), and the
+failure surfaced as a build error in PR CI: *"The last image stack layer with
+content, 'Front', must be a fully opaque bitmap."* Had it not failed there, the
+shipped parallax would have rendered the canary BEHIND its background.
+
+**The fix:** `make_app_icon.py` now keeps two orders — `LAYERS` (painting
+order, for compositing the flat top-shelf image) and `STACK_ORDER`
+(front-to-back, for the manifest) — and `check_app_icon.py` asserts the
+declared order structurally, so the bug class fails by name in seconds.
+
+**The generalized part:** when a format's list order is semantic, the natural
+order you'd *produce* the items in is a plausible-but-wrong order to *declare*
+them in — and a structural gate that checks presence without checking ORDER
+passes both. When you add a "does every piece exist" gate, ask what the
+pieces' arrangement means, and gate that too.

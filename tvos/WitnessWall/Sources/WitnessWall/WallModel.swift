@@ -187,7 +187,7 @@ final class WallModel {
             state = .stale(snapshot, since: asOf, reason: reason)
         case .stale(let snapshot, let since, _):
             state = .stale(snapshot, since: since, reason: reason)
-        case .needsHub, .connecting, .unreachable:
+        case .searching, .needsHub, .connecting, .unreachable:
             state = .unreachable(reason: reason)
         }
     }
