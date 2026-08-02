@@ -110,7 +110,8 @@
 
 use <canary_s3_lcd7.scad>
 
-check = "tray";   // ["tray","glass","lip","locate","frame_glass","frame_ledge","stand","seat","stand_p","stand_p2","seat_p","frame_usb_head","frame_btn_window","frame_sd_window","frame_usb_seal","frame_btn_plug","btn_plug_glass","frame_sd_seal","frame_adh_rail","sd_tether_hole","sd_tether_barb"]
+check = "tray";   // ["tray","glass","lip","locate","frame_glass","frame_ledge","section","stand","seat","stand_p","stand_p2","seat_p","frame_usb_head","frame_btn_window","frame_sd_window","frame_usb_seal","frame_btn_plug","btn_plug_glass","frame_sd_seal","frame_adh_rail","sd_tether_hole","sd_tether_barb"]
+sect_layer = "all";   // check="section" only: "all" | "frame" | "panel" | "adh"
 locate_slip = 1.5;   // mm of sideways wander the pocket must already refuse
 seat_lift  = 0.2;    // dock collision check: hover this far off the pads
 seat_press = 0.4;    // dock bearing check: push this far into the pads
@@ -124,6 +125,23 @@ glass_w = S[4]; glass_h = S[5]; glass_r = S[6]; z_glass = S[7];
 // its top face (z = bez_h) is the glass-back datum the tray's walls end at.
 module assembled_bezel() {
     translate([0, 0, z_glass + bez_h]) scale([1, 1, -1]) bezel_print();
+}
+// Half-space keeper for check="section": drops everything at y < 0, leaving
+// the profile facing -y. Two preview traps are baked into this shape, both
+// already paid for once:
+//   1. It is applied to each layer SEPARATELY, because OpenCSG shows only the
+//      FIRST child's colour through a boolean — cutting a pre-coloured union
+//      renders the whole section frame-grey.
+//   2. It SUBTRACTS a half-space rather than intersecting a keep-box. Under
+//      intersection() OpenCSG draws the uncoloured cutting box in the parent's
+//      colour, so the "section" came out as a solid orange field with the case
+//      hidden behind it. difference() has no such stray child to draw, and the
+//      exposed cut face inherits the layer's own colour — which is the whole
+//      point of the picture.
+module cut() difference() {
+    children();
+    translate([-2*glass_w, -glass_h, -20])
+        cube([4*glass_w, glass_h, lcd7_frame_stack()[5] + 40]);
 }
 module glass_slab(t, dz = 0) {
     translate([0, 0, z_glass + dz]) linear_extrude(t)
@@ -191,6 +209,53 @@ else if (check == "frame_ledge") {
         translate([0, 0, FS[0] + 0.1]) linear_extrude(0.2)
             rrect2d(glass_w, glass_h, glass_r);
     }
+}
+// NOT a gate — a PICTURE, and the only one that answers "how deep does the
+// glass actually sit?" Everything above proves the stack with booleans, which
+// is why the stack was right and still looked wrong: you cannot judge a 1.2 mm
+// recess from a three-quarter view of an opaque case, and the review that
+// caught the last front-face error was someone eyeballing exactly that. So
+// this cuts the assembled frame + stepped panel + adhesive on the y = 0 plane
+// and leaves the profile facing -y, where glass_guard, glass_edge_t, adh_t and
+// the ledge face are all four visible at once and measurable off the image.
+// The cut runs through the SIDE borders, where the ledge is widest.
+//
+// RENDER ONE LAYER AT A TIME (sect_layer). Compositing all three in an
+// OpenCSG *preview* does not work and is not worth retrying: the frame is a
+// deep CSG tree, and adding it overflows OpenCSG's depth complexity so the
+// last-drawn layer smears across the whole viewport. The adhesive band renders
+// as a correct 0.5 mm stripe on its own and as a full-screen orange field
+// composited — same geometry, same camera. This is the same preview limit
+// already documented for frame_colour in README.md; the rule there applies
+// here too, that per-part output is the authoritative one. Use --render
+// (CGAL) if you want a single composited image, and accept one colour.
+//   xvfb-run -a openscad -o section.png --imgsize 1600,900 --projection=ortho \
+//       --colorscheme "Tomorrow Night" --camera=-90,0,3,90,0,0,30 \
+//       -D 'check="section"' -D 'sect_layer="frame"' canary_s3_lcd7_fitcheck.scad
+// Ortho + this camera puts ~12 mm of depth across the frame height, so the
+// bands are measurable off the image: at D=30 one millimetre is height/12 px.
+else if (check == "section") {
+    FS = lcd7_frame_stack();
+    ge = FS[6];                    // bare-glass border thickness
+    gg = FS[10];                   // guard rim: the panel sits this far back
+    at = FS[0] - gg - ge;          // adhesive — DERIVED, never restated
+    PC = lcd7_panel_core();
+    if (sect_layer == "all" || sect_layer == "frame")
+        color("Gainsboro")        cut() frame();
+    // the panel, stepped: thin bare-glass border, thick module core
+    if (sect_layer == "all" || sect_layer == "panel")
+        color([0.30, 0.70, 0.85]) cut() translate([0, 0, gg]) {
+            linear_extrude(ge) rrect2d(glass_w, glass_h, glass_r);
+            translate([0, PC[2], 0]) linear_extrude(glass_t)
+                rrect2d(PC[0], PC[1], 2);
+        }
+    // the adhesive band bridging glass border to ledge face
+    if (sect_layer == "all" || sect_layer == "adh")
+        color([0.95, 0.35, 0.15]) cut()
+            translate([0, 0, gg + ge]) linear_extrude(at) difference() {
+                rrect2d(glass_w, glass_h, glass_r);
+                translate([0, PC[2]]) rrect2d(PC[0], PC[1], 2);
+            }
 }
 else if (check == "stand")
     intersection() { docked_frame(-seat_lift); stand(); }
