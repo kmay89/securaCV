@@ -119,7 +119,6 @@ lv_obj_t* s_bird = nullptr;
 lv_obj_t* s_dot[ROWS] = {nullptr};
 lv_obj_t* s_name[ROWS] = {nullptr};
 lv_obj_t* s_word[ROWS] = {nullptr};
-lv_obj_t* s_more = nullptr;
 lv_obj_t* s_glance = nullptr;
 #ifdef CD_NIGHTSTAND7
 lv_obj_t* s_wx = nullptr;        // "21.4° · some clouds · 24°/13°" (day)
@@ -246,9 +245,6 @@ void portrait7_ui_create() {
     lv_obj_align(s_word[i], LV_ALIGN_TOP_RIGHT, -40, y);
     lv_obj_add_flag(s_word[i], LV_OBJ_FLAG_HIDDEN);
   }
-  s_more = mk_label(scr, font_label(), col_muted());
-  lv_obj_align(s_more, LV_ALIGN_TOP_LEFT, 66, y0 + LIST_CAP * pitch);
-  lv_obj_add_flag(s_more, LV_OBJ_FLAG_HIDDEN);
 
 #ifdef CD_NIGHTSTAND7
   // Bedside foot: the day's weather + how the bedroom actually feels, stacked
@@ -268,7 +264,14 @@ void portrait7_ui_create() {
 void portrait7_ui_update(const Fleet& fleet, uint32_t now,
                          const Portrait7State& st) {
   if (!s_state) return;
+  // Two distinct signals: `night` is the red-shift LOOK preference (which
+  // palette), `quiet` is the real quiet-hours state (whether to go dark).
+  // Dark-when-safe must key off quiet hours, never the color preference —
+  // st.night is night && red_shift, so a plain-look user would otherwise
+  // keep the bird, list and weather lit all night. character_night() is the
+  // schedule-driven flag main.cpp sets, the same one the landscape face uses.
   const bool night = st.night;
+  const bool quiet = character_night();
   const Sev worst = fleet.worst(now);
   const bool link_down = !st.wifi_ok || !st.mqtt_ok;
 
@@ -276,10 +279,10 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
   const lv_color_t clk = night ? ncol_text() : col_text();
   const int hh = st.time_valid ? st.clock_hh : -1;
   const int mm = st.time_valid ? st.clock_mm : -1;
-  set_digit(&s_digit[0], hh < 0 ? -1 : hh / 10, clk, night);
-  set_digit(&s_digit[1], hh < 0 ? -1 : hh % 10, clk, night);
-  set_digit(&s_digit[2], mm < 0 ? -1 : mm / 10, clk, night);
-  set_digit(&s_digit[3], mm < 0 ? -1 : mm % 10, clk, night);
+  set_digit(&s_digit[0], hh < 0 ? -1 : hh / 10, clk, quiet);
+  set_digit(&s_digit[1], hh < 0 ? -1 : hh % 10, clk, quiet);
+  set_digit(&s_digit[2], mm < 0 ? -1 : mm / 10, clk, quiet);
+  set_digit(&s_digit[3], mm < 0 ? -1 : mm % 10, clk, quiet);
   if (s_colon) {
     lv_obj_t* c0 = lv_obj_get_child(s_colon, 0);
     lv_obj_t* c1 = lv_obj_get_child(s_colon, 1);
@@ -332,24 +335,28 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
     }
   }
 
-  // Night strips the column to the clock + the honest state channel; the bird
-  // sleeps and the witness list stands down (dark-when-safe).
-  const bool show_list = !night;
+  // Quiet hours strip the column to the clock + the honest state channel;
+  // the bird sleeps and the witness list stands down (dark-when-safe, keyed
+  // on the schedule, not the red-shift look).
+  const bool show_list = !quiet;
   if (s_bird) {
-    if (night) lv_obj_add_flag(s_bird, LV_OBJ_FLAG_HIDDEN);
+    if (quiet) lv_obj_add_flag(s_bird, LV_OBJ_FLAG_HIDDEN);
     else       lv_obj_clear_flag(s_bird, LV_OBJ_FLAG_HIDDEN);
   }
-  canary_mark_mood(night ? CanaryMood::Asleep : st.bird);
+  canary_mark_mood(quiet ? CanaryMood::Asleep : st.bird);
 
-  // Witness list.
-  int shown = 0, total = 0;
+  // Witness list. When the fleet overflows the cap, the LAST shown slot
+  // becomes a "+N more" summary (name only) rather than a separate label
+  // below the list — that kept the overflow row inside the list band, off
+  // the bedside weather foot and the glance line.
   if (show_list) {
     int order[CD_FLEET_MAX_DEVICES];
-    total = order_by_severity(fleet, now, order,
-                              (int)(sizeof(order) / sizeof(order[0])));
-    shown = total < LIST_CAP ? total : LIST_CAP;
+    const int total = order_by_severity(fleet, now, order,
+                                        (int)(sizeof(order) / sizeof(order[0])));
+    const bool overflow = total > LIST_CAP;
+    const int witnesses = overflow ? LIST_CAP - 1 : total;  // reserve a slot
     for (int i = 0; i < ROWS; i++) {
-      if (i < shown) {
+      if (i < witnesses) {
         const Witness* w = fleet.at(order[i]);
         const Sev s = w ? fleet.witness_sev(*w, now) : Sev::Ok;
         lv_obj_set_style_bg_color(s_dot[i], sev_color(s, false), 0);
@@ -361,17 +368,17 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
         lv_obj_clear_flag(s_dot[i], LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(s_name[i], LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(s_word[i], LV_OBJ_FLAG_HIDDEN);
+      } else if (overflow && i == witnesses) {
+        lv_label_set_text_fmt(s_name[i], "+%d more", total - witnesses);
+        lv_obj_set_style_text_color(s_name[i], col_muted(), 0);
+        lv_obj_add_flag(s_dot[i], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(s_name[i], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_word[i], LV_OBJ_FLAG_HIDDEN);
       } else {
         lv_obj_add_flag(s_dot[i], LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_name[i], LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_word[i], LV_OBJ_FLAG_HIDDEN);
       }
-    }
-    if (total > LIST_CAP) {
-      lv_label_set_text_fmt(s_more, "+%d more", total - LIST_CAP);
-      lv_obj_clear_flag(s_more, LV_OBJ_FLAG_HIDDEN);
-    } else {
-      lv_obj_add_flag(s_more, LV_OBJ_FLAG_HIDDEN);
     }
   } else {
     for (int i = 0; i < ROWS; i++) {
@@ -379,14 +386,13 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
       lv_obj_add_flag(s_name[i], LV_OBJ_FLAG_HIDDEN);
       lv_obj_add_flag(s_word[i], LV_OBJ_FLAG_HIDDEN);
     }
-    lv_obj_add_flag(s_more, LV_OBJ_FLAG_HIDDEN);
   }
 
   // Glance line — honesty first, then the count. The ambient-life status
   // glance brightens it briefly, then it settles back to muted.
   if (s_glance) {
     const bool bright = (int32_t)(now - s_glance_bright_until) < 0;
-    if (night) {
+    if (quiet) {
       lv_label_set_text(s_glance, "");
     } else if (link_down) {
       lv_label_set_text(s_glance, "not everything is reporting in");
@@ -405,7 +411,7 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
   // source the landscape bedside face reads. Day-only and only when this
   // really is the bedside personality; night blacks them out with the rest.
   if (s_wx && s_comfort) {
-    if (night || !st.bedside) {
+    if (quiet || !st.bedside) {
       lv_label_set_text(s_wx, "");
       lv_label_set_text(s_comfort, "");
     } else {
