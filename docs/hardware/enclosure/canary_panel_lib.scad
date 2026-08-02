@@ -221,9 +221,29 @@ function pnl_port_note(p, n) = pnl_port(p, n)[PT_NOTE];
 function pnl_has_port(p, n)  = len([for (q = pnl_ports(p))
                                     if (q[PT_NAME] == n) 1]) > 0;
 
-// Pixel density, for the docs. Stated as a function rather than a field so it
-// cannot disagree with res and aa.
-function pnl_ppi(p) = pnl_res_w(p) / (pnl_aa_w(p) / 25.4);
+// Pixel geometry, derived from res and aa so it cannot disagree with either.
+//
+// TWO NUMBERS, DELIBERATELY. The first version of this returned one ppi
+// computed from the width, and that single number quietly concealed a 7.2%
+// difference between the axes on the very first record: 0.1936 mm/px across,
+// 0.1807 down. Reporting "131 ppi" for a panel whose vertical density is 141
+// is not a rounding, it is an average of two things that are not the same.
+//
+// It is also a free cross-check on the ACTIVE AREA. Most panels are close to
+// square-pixel, so a large skew is either a real property of a cheap TFT (the
+// 7" 800x480 class is genuinely non-square) or a sign that one of aa_w/aa_h
+// was measured across the wrong rectangle. This project has already made that
+// exact error once, recording a caliper reading of the ACTIVE AREA as the
+// module can — so a number that makes the mistake visible is worth having.
+// Not an assert: non-square really happens, and a gate that cries wolf on a
+// legitimate panel would be turned off within a week.
+function pnl_pitch_x(p) = pnl_aa_w(p) / pnl_res_w(p);   // mm per pixel
+function pnl_pitch_y(p) = pnl_aa_h(p) / pnl_res_h(p);
+function pnl_ppi_x(p)   = 25.4 / pnl_pitch_x(p);
+function pnl_ppi_y(p)   = 25.4 / pnl_pitch_y(p);
+// How far from square the pixels are, as a fraction. 0 = square.
+function pnl_pixel_skew(p) =
+    abs(pnl_pitch_x(p) / pnl_pitch_y(p) - 1);
 
 // The four mount-hole centres, in the mounting pose.
 function pnl_m3_holes(p) =
@@ -344,6 +364,12 @@ function panel_summary(p) =
         pnl_glass_w(p), " x ", pnl_glass_h(p), " r", pnl_glass_r(p),
         ", active ", pnl_aa_w(p), " x ", pnl_aa_h(p),
         " (", pnl_res_w(p), " x ", pnl_res_h(p), " px, ",
-        round(pnl_ppi(p)), " ppi), board ", pnl_pcb_w(p), " x ", pnl_pcb_h(p),
+        round(pnl_ppi_x(p)), " x ", round(pnl_ppi_y(p)), " ppi",
+        pnl_pixel_skew(p) > 0.02
+            ? str(" — NON-SQUARE pixels, ", round(pnl_pixel_skew(p)*1000)/10,
+                  "%; expected on this panel class, but if it is a surprise, ",
+                  "re-measure the active area")
+            : "",
+        "), board ", pnl_pcb_w(p), " x ", pnl_pcb_h(p),
         ", M3 span ", pnl_m3_dx(p), " x ", pnl_m3_dy(p),
         ", depth ", pnl_depth(p), " mm, ", len(pnl_ports(p)), " ports");
