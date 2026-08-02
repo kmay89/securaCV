@@ -6482,6 +6482,12 @@
         "port_teth_barb",
         "port_barb_proud",
         "back_flush",
+        "fil_body",
+        "fil_ink",
+        "fil_accent",
+        "frame_colour",
+        "fil_overlap",
+        "fil_gap",
         "all"
        ]
       }
@@ -6989,6 +6995,53 @@
       {
        "name": "label_font",
        "default": "Liberation Sans:style=Bold"
+      }
+     ]
+    },
+    {
+     "name": "Print colours — the AMS palette",
+     "note": "",
+     "params": [
+      {
+       "name": "print_colours",
+       "default": "true",
+       "comment": "build the per-filament parts and colour the preview"
+      },
+      {
+       "name": "pal_body",
+       "default": "White"
+      },
+      {
+       "name": "pal_ink",
+       "default": "Black"
+      },
+      {
+       "name": "pal_accent",
+       "default": "Signal Yellow"
+      },
+      {
+       "name": "pal_body_rgb",
+       "default": "[0.95, 0.95, 0.93]"
+      },
+      {
+       "name": "pal_ink_rgb",
+       "default": "[0.11, 0.11, 0.12]"
+      },
+      {
+       "name": "pal_accent_rgb",
+       "default": "[1.00, 0.78, 0.04]"
+      },
+      {
+       "name": "bezel_ink_t",
+       "default": "0.6"
+      },
+      {
+       "name": "ink_groups",
+       "default": "[\"text\", \"qr\", \"moat\"]"
+      },
+      {
+       "name": "accent_groups",
+       "default": "[\"mark\"]"
       }
      ]
     },
@@ -7691,6 +7744,10 @@
        "name": "qr_round",
        "default": "0.22",
        "comment": "module corner radius, as a fraction of the module"
+      },
+      {
+       "name": "pal_preview_lift",
+       "default": "0.02"
       }
      ]
     }

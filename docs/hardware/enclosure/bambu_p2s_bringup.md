@@ -527,6 +527,59 @@ directional: **intake along the bottom wall, exhaust along the top wall**, back
 grille radiating in between. Mounting it flat against a wall with the top slots
 blocked converts a ventilated case into an oven.
 
+### 7c′ · The three-colour case (AMS)
+
+The one-piece frame can print as a **white case with a black bezel, black
+lettering and one yellow word**. It is a genuine three-filament print, but it is
+laid out so the AMS barely works: colour changes are confined to two thin bands
+and the ~110 layers in between never change tools.
+
+```sh
+openscad --export-format binstl -o lcd7_fil_body.stl   -D 'part="fil_body"'   canary_s3_lcd7.scad
+openscad --export-format binstl -o lcd7_fil_ink.stl    -D 'part="fil_ink"'    canary_s3_lcd7.scad
+openscad --export-format binstl -o lcd7_fil_accent.stl -D 'part="fil_accent"' canary_s3_lcd7.scad
+```
+
+In Bambu Studio:
+
+1. Load `lcd7_fil_body.stl`.
+2. Right-click it → **Add part → Load**, and add the ink and accent STLs.
+3. Assign a filament to each part.
+4. Slice.
+
+**Do not re-centre, rotate, or drop-to-bed the added parts.** All three are
+exported in the same coordinate frame as `part="frame"`, so they arrive already
+registered to each other. Moving one moves the lettering out of its own recess.
+
+| Band (print z) | What is there | Filaments in play |
+|---|---|---|
+| 0 – 1.2 | back skin, every deboss floor | body + ink + accent |
+| 1.2 – 23.5 | the shell — nothing but wall | body only |
+| 23.5 – 24.1 | front bezel ring + edge chamfer | ink only |
+
+That middle band is the whole point: it is 22.3 mm of a 24 mm part with **zero**
+tool changes, so the purge tower stays short. The bezel is the full ring rather
+than "top and bottom bands" for the same reason — the front rim is a uniform
+2 mm all the way round, so bands would not be a visible distinction, they would
+just add a tool change to every one of those last layers.
+
+**Why this needs the AMS at all.** The single-extruder recipe (§7b′, colour
+swaps at fixed heights) cannot produce a white case with a scannable QR. The
+QR's modules are the deboss *floors*, and on a z-swap they print in whichever
+filament is running at floor height — so a white body puts **white modules on a
+dark field**, which no reader will decode. There is no swap height that fixes
+it; the field and the modules are at different heights, but the wrong way
+round. Giving the modules their own filament is what makes the combination
+possible. For the same reason, **the finder patterns must stay black** —
+yellow-on-white has nowhere near enough contrast.
+
+**The AMS carries the case's three rigid filaments and nothing else.** The TPU
+fitments still come off the external spool (§0), and they print on their own
+plate regardless.
+
+If you have no AMS, print `fil_body` alone and follow §7b′. You get the black
+bezel and the body-colour back skin; you do not get the scannable code.
+
 ### 7d · Assembly order
 
 1. Seat the PCB on the four moulded bosses; drive **M3 into the boss pilots**.

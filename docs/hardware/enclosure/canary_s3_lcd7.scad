@@ -197,7 +197,7 @@ assert(is_num(feather_area(7, 4)),
        "canary_vent_lib.scad is MISSING — this case cuts its grille and gills with it. Download canary_vent_lib.scad from the same folder and keep the two files side by side.");
 
 /* [What to render] */
-part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_port","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","dock_probe_fit","dock_probe_seat","dock_probe_p","dock_probe_p2","port_teth_hole","port_teth_barb","port_barb_proud","back_flush","all"]
+part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_port","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","dock_probe_fit","dock_probe_seat","dock_probe_p","dock_probe_p2","port_teth_hole","port_teth_barb","port_barb_proud","back_flush","fil_body","fil_ink","fil_accent","frame_colour","fil_overlap","fil_gap","all"]
 
 /* [Glass slab] — bonded touch panel, from the Waveshare drawing (mm) */
 glass_w = 192.96;    // touch-glass width  (X)
@@ -511,6 +511,95 @@ label_back_depth = 1.2;  // BACK-plate deboss depth (BOOT/RESET/SD/brand and
                      // colour — the words show through. Exact swap heights
                      // are echoed at render time.
 label_font  = "Liberation Sans:style=Bold";
+
+/* [Print colours — the AMS palette] */
+// ════════════════════════════════════════════════════════════════════════════
+//  PRINT COLOURS — three filaments, and why it costs almost nothing
+// ════════════════════════════════════════════════════════════════════════════
+//
+//  THE PALETTE
+//    BODY   white   the case itself — every surface you touch
+//    INK    black   the front bezel, every back-plate word, the QR's modules
+//    ACCENT yellow  the SECURACV company line, and nothing else
+//
+//  The accent is deliberately ONE word. A yellow case is a toy; a white case
+//  with one yellow word is a product. Spending the third filament on the
+//  smallest element on the part is the whole idea — it reads as intent rather
+//  than decoration, and it costs a few tool changes on three layers.
+//
+//  WHY THIS IS CHEAP (the part that matters on a P2S)
+//  Every AMS tool change purges filament, so the cost of a multi-colour print
+//  is set by HOW MANY LAYERS mix colours — not by how many colours you use.
+//  This part is laid out so that almost none of them do. It prints
+//  BACK-PLATE-DOWN, and in that orientation:
+//
+//    print z          what is there                        filaments in play
+//    ───────────────────────────────────────────────────────────────────────
+//    0 .. 1.2         back skin + every deboss floor       BODY + INK + ACCENT
+//    1.2 .. 23.5      the shell. Nothing but wall.         BODY only
+//    23.5 .. 24.1     the front bezel ring + edge chamfer  INK only
+//
+//  So the three-colour work is confined to the first 1.2 mm of a 24 mm part —
+//  about 6 layers at 0.2 — and the bezel is a single clean swap with no
+//  in-layer changes at all. The other ~110 layers never change tools. That is
+//  why the bezel is the whole RING rather than "top and bottom bands": the
+//  front rim is a uniform 2 mm all the way round (outer 197.26 x 115.06 vs a
+//  193.26 x 111.06 opening), so bands would not be a visible distinction —
+//  they would just add tool changes to every one of those last layers.
+//
+//  ⚠️  QR POLARITY IS STILL A HARD REQUIREMENT, and it is the reason this
+//  needs the AMS at all. A reader wants DARK modules on a LIGHT field and
+//  refuses the inverse. The modules are the deboss FLOORS, so on the old
+//  single-extruder z-swap recipe the floors print in the BODY filament — and
+//  a WHITE body puts white modules on a dark skin, which does not scan. There
+//  is no swap height that fixes it, because the field and the modules are at
+//  different heights but the wrong way round. Assigning the modules their own
+//  filament is what makes a white case with a scannable code possible.
+//  Corollary, and please do not "improve" this: the finder patterns must stay
+//  INK. Yellow-on-white is far too low a contrast to decode.
+//
+//  HOW TO RE-COLOUR
+//  Regrouping the palette is a one-word edit in back_graphics()'s `ink`
+//  argument — move a label between the "text" and "mark" groups and it
+//  changes filament. Nothing here is positional; no number has to be kept in
+//  sync anywhere else, because each inlay is cut from the same solid as the
+//  recess it fills.
+//
+//  PRINTING IT — Bambu Studio, P2S + AMS
+//    1. Export the three parts:  fil_body / fil_ink / fil_accent
+//    2. Load fil_body, then right-click → Add part → Load, and add the other
+//       two. They arrive already in position: all three are exported in the
+//       SAME coordinate frame, so do NOT re-centre or drop-to-bed any of them.
+//    3. Assign a filament to each part.
+//    4. Slice. Expect the purge tower to be short — see the table above.
+//  Single-extruder fallback (no AMS): print fil_body alone and use the z-swap
+//  recipe echoed at render time. You get the black bezel and a body-colour
+//  back skin, but NOT the scannable QR — see the polarity note.
+//
+//  ⚠️  TPU fitments are NEVER part of this. 90-95A must come off an EXTERNAL
+//  spool: it buckles in the AMS's long PTFE path and jams the hub
+//  (bambu_p2s_bringup.md §0). The AMS carries the case's three rigid
+//  filaments and nothing else.
+// ════════════════════════════════════════════════════════════════════════════
+print_colours = true;   // build the per-filament parts and colour the preview
+// Names are what you load in the slicer; they appear in the render-time echo
+// so the printed part and the recipe cannot disagree about what goes where.
+pal_body   = "White";
+pal_ink    = "Black";
+pal_accent = "Signal Yellow";
+// Preview RGB only — these never reach the mesh, they just make `frame_colour`
+// look like the real thing so a palette can be judged before it is printed.
+pal_body_rgb   = [0.95, 0.95, 0.93];
+pal_ink_rgb    = [0.11, 0.11, 0.12];
+pal_accent_rgb = [1.00, 0.78, 0.04];
+// How deep the INK reaches in from the FRONT face. This is a visible-surface
+// depth, not a structural one: 0.6 is three layers at 0.2 and matches the
+// existing front-ring swap band exactly, so the AMS build and the
+// single-extruder build put their colour boundary in the same place.
+bezel_ink_t = 0.6;
+// Which back-plate groups take which filament. Edit these, not the geometry.
+ink_groups    = ["text", "qr", "moat"];
+accent_groups = ["mark"];
 
 /* [Frame — bottom USB port, edge brand, TPU fitments] */
 usb_port   = true;   // pass-through for the power cable, centred on the bottom wall.
@@ -1340,6 +1429,22 @@ echo(str("  frame two-colour (optional, single extruder): prints back-plate-",
          "to the accent at z = ", fr_depth - frame_foot, " mm — the last ",
          frame_foot, " mm of the print is only the front rim and its entry ",
          "chamfer"));
+if (print_colours)
+    echo(str("  frame THREE-COLOUR (P2S + AMS): export fil_body (", pal_body,
+             "), fil_ink (", pal_ink, "), fil_accent (", pal_accent,
+             ") — all three share part=\"frame\"'s orientation, so load ",
+             "fil_body then Add part → Load the other two and do NOT re-centre",
+             " or drop-to-bed. INK takes the front bezel ring (the last ",
+             bezel_ink_t, " mm of the print) plus ", ink_groups,
+             "; ACCENT takes ", accent_groups, ". Tool changes are confined to",
+             " print z 0..", label_back_depth, " (the back skin, ~",
+             ceil(label_back_depth/0.2), " layers at 0.2) and the single swap",
+             " at z = ", fr_depth - bezel_ink_t, " — the ",
+             fr_depth - label_back_depth - bezel_ink_t,
+             " mm of shell between them never changes filament, so the purge ",
+             "tower stays short. The QR's modules are INK on a ", pal_body,
+             " field: dark-on-light, which is the only polarity a reader ",
+             "accepts — do not put the accent on the finder patterns"));
 echo(str("  stand: ", stand_w, " x ", std_d, " base, ", stand_ang,
          "° recline, slot ", std_cd, " mm for the ", fr_depth,
          " mm frame, seat ", stand_floor_h, " mm over the desk (plug room), ",
@@ -1624,6 +1729,129 @@ module frame_lbl(x, y, s, size = 4.0, spacing = 1.0) {
         linear_extrude(label_back_depth + 0.1)
         text(s, size = size, font = label_font, spacing = spacing,
              halign = "center", valign = "center");
+}
+
+// ----------------------------------------------------------------------------
+//  BACK-PLATE GRAPHICS — ONE tool, two consumers.
+//
+//  frame() SUBTRACTS this to cut the debosses. The colour parts INTERSECT the
+//  same volume to fill them. That is the whole trick: an inlay cut from the
+//  same solid as its recess cannot drift from it, so "the yellow part fits the
+//  yellow hole" is true by construction rather than by a number kept in sync
+//  in two places.
+//
+//  `ink` selects a colour group, so regrouping the palette is a one-word edit
+//  here rather than a hunt through frame():
+//    "text"  BOOT / RESET / SD, the product name, the rating block
+//    "mark"  the SECURACV company line — the accent word
+//    "qr"    the help symbol's modules
+//    "moat"  the adhesive rails' outline hairlines
+//    "all"   every group (what frame() cuts)
+//
+//  Everything here lands in the same z band — the outer skin, label_back_depth
+//  deep — which is why a three-colour print costs so little: every tool change
+//  is confined to the first ~1.2 mm of a 24 mm part. See PRINT COLOURS.
+// ----------------------------------------------------------------------------
+module back_graphics(ink = "all") {
+    all = ink == "all";
+    if (all || ink == "moat")
+        if (adh_rails) for (sx = [1, -1])
+            translate([sx*adh_rail_dx, 0, fr_depth - label_back_depth])
+                linear_extrude(label_back_depth + 0.1) difference() {
+                    rrect2d(adh_rail_w + 2*adh_mark_w, adh_rail_l + 2*adh_mark_w,
+                            2 + adh_mark_w);
+                    rrect2d(adh_rail_w, adh_rail_l, 2);
+                }
+    if (all || ink == "text") {
+        // back view, buttons at the TOP: BOOT on the left (-x here), RESET on
+        // the right, as on the board; "SD" beside the card window so nobody
+        // hunts for the socket
+        frame_lbl(btn_dx - btn_lbl_dx, fr_yo/2 - 6.5, "BOOT");
+        frame_lbl(btn_dx + btn_lbl_dx, fr_yo/2 - 6.5, "RESET");
+        // "SD" sits beside the tether channel (its old spot above the mouth
+        // is exactly where the strap now runs)
+        frame_lbl(sd_dx - 8, sd_teth_y, "SD");
+        // the hero product name, DEAD CENTRE on the plate. It sits BELOW the
+        // SD recess where only the nail scoop is left — at this row the scoop
+        // spans x 32.3..39.0 and the line renders ±28, so ~4 of daylight.
+        // Grow it and it walks into the SD: this layout is preview-verified.
+        frame_lbl(0, -(fr_yi/2 - 5.4), brand_back, size = 4.0, spacing = 1.15);
+        // rating stamp — stacked lines in the upper-right clear gap
+        if (rating_stamp) for (i = [0:len(rating_lines)-1])
+            frame_lbl(rating_dx, rating_dy + rating_h/2 - 1
+                                 - (i + 0.5)*rating_lh,
+                      rating_lines[i], rating_sz);
+    }
+    if (all || ink == "mark")
+        // the company line, over the product name. It sits beside the SD
+        // recess (mouth bottom -47.2), so it must stay inside x ±23.2 — it
+        // renders ±17. This is the word that carries the accent colour.
+        frame_lbl(0, -(fr_yi/2 - 10.2), brand_sub, size = 2.4, spacing = 2.0);
+    if (all || ink == "qr")
+        // In back-view coords, no mirror: viewed from the back, +x is right.
+        if (qr_back)
+            translate([qr_back_dx - qr_n*qr_back_cell/2,
+                       qr_back_dy + qr_n*qr_back_cell/2,
+                       fr_depth - label_back_depth])
+                linear_extrude(label_back_depth + 0.1)
+                    qr_field2d(qr_back_cell);
+}
+
+// ----------------------------------------------------------------------------
+//  PER-FILAMENT PARTS — see PRINT COLOURS for the palette and the recipe.
+//
+//  The three parts PARTITION the frame: no overlap, no gap, and their union is
+//  frame() exactly. That is not a claim, it is gated (fil_overlap / fil_gap).
+//  It matters because a gap prints as a void inside a wall and an overlap
+//  prints twice — neither is visible in a slicer preview until it is a part.
+// ----------------------------------------------------------------------------
+
+// The INK band at the front face. ONE slab serves both sides of the split, so
+// the bezel and the body are exact complements — the same plane, evaluated
+// once, rather than two numbers that agree until someone edits one.
+module bezel_slab() {
+    translate([-fr_xo/2 - 1, -fr_yo/2 - 1, -1])
+        cube([fr_xo + 2, fr_yo + 2, 1 + bezel_ink_t]);
+}
+
+// A deboss group, filled flush with the skin. Clipped to the skin band because
+// the cut tools deliberately overshoot by 0.1 to keep the difference clean —
+// an inlay that inherited that overshoot would stand proud of the plate.
+module back_inlay(groups) {
+    intersection() {
+        union() { for (g = groups) back_graphics(g); }
+        translate([-fr_xo/2 - 1, -fr_yo/2 - 1, fr_depth - label_back_depth])
+            cube([fr_xo + 2, fr_yo + 2, label_back_depth]);
+    }
+}
+
+module frame_ink()    { union() { back_inlay(ink_groups);
+                                  intersection() { frame(); bezel_slab(); } } }
+module frame_accent() { back_inlay(accent_groups); }
+module frame_bodycol(){ difference() { frame(); bezel_slab(); } }
+
+// A rough colour key. PREVIEW ONLY — never export from this module.
+//
+// ⚠️  READ BEFORE TRUSTING A RENDER OF THIS. OpenSCAD's OpenCSG preview does
+// not reliably attribute colour to these inlays: they sit inside the recesses
+// they were cut from, sharing side walls with the body, and the preview pass
+// hands the whole set whichever colour was applied last. Renders of this
+// module have shown every back-plate group in the ACCENT colour when only the
+// company line is accent. Raising pal_preview_lift to stand the inlays clear
+// of their recesses does NOT fix it — tried at 0.02, 0.35 and 4.0.
+//
+// The exported meshes are unaffected and correct: render part="fil_ink" and
+// part="fil_accent" separately and each contains exactly its own groups.
+// Those per-part renders — not this one — are what to check a palette against,
+// and they are what the fil_overlap / fil_gap gates prove.
+//
+// Kept because the silhouette and the bezel band do read correctly, which is
+// enough to judge proportion. Do not use it to judge which word is yellow.
+pal_preview_lift = 0.02;
+module frame_colour() {
+    color(pal_body_rgb)   frame_bodycol();
+    color(pal_ink_rgb)    translate([0, 0, pal_preview_lift]) frame_ink();
+    color(pal_accent_rgb) translate([0, 0, pal_preview_lift]) frame_accent();
 }
 
 // The shell, finished at both ends: a modelled foot chamfer at the plate (the
@@ -2032,57 +2260,10 @@ module frame() {
                                 for (dx = [0, px*khm_plen]) translate([dx, 0])
                                     circle(d = khm_slide_w + e*2*(khm_mouth_c + 0.05));
             }
-        // adhesive-rail outline moats: a hairline frame OUTSIDE each smooth
-        // zone (the zone itself is never cut — the frame_adh_rail gate holds
-        // that), label_back_depth deep so the outline also reads in the body
-        // colour on a two-colour print
-        if (adh_rails) for (sx = [1, -1])
-            translate([sx*adh_rail_dx, 0, fr_depth - label_back_depth])
-                linear_extrude(label_back_depth + 0.1) difference() {
-                    rrect2d(adh_rail_w + 2*adh_mark_w, adh_rail_l + 2*adh_mark_w,
-                            2 + adh_mark_w);
-                    rrect2d(adh_rail_w, adh_rail_l, 2);
-                }
-        // debossed labels on the back face — back view, buttons at the TOP:
-        // BOOT on the left (-x here), RESET on the right, as on the board;
-        // "SD" beside the card window so nobody hunts for the socket
-        frame_lbl(btn_dx - btn_lbl_dx, fr_yo/2 - 6.5, "BOOT");
-        frame_lbl(btn_dx + btn_lbl_dx, fr_yo/2 - 6.5, "RESET");
-        // "SD" sits beside the tether channel (its old spot above the mouth
-        // is exactly where the strap now runs)
-        frame_lbl(sd_dx - 8, sd_teth_y, "SD");
-        // the back lockup, DEAD CENTRE on the plate (x = 0): small tracked
-        // company line over the hero product name. Two different bounds set
-        // the two rows, which is why they are sized apart:
-        //   SECURACV      sits beside the SD recess (mouth bottom -47.2), so
-        //                 it must stay inside x ±23.2 — it renders ±17.
-        //   CANARY DISPLAY sits BELOW the recess, where only the nail scoop
-        //                 is left — at this row the scoop spans x 32.3..39.0
-        //                 and the line renders ±28, so ~4 of daylight.
-        // Nothing else can intrude: grille_cells stops at |y| 42.8, so the
-        // whole band is feather-free by construction.
-        // The name has no panel size in it: the case family is one Display
-        // line, and 7" is a spec, not a name. Grow either row and it walks
-        // into the SD — this layout is preview-verified, so re-render.
-        frame_lbl(0, -(fr_yi/2 - 10.2), brand_sub,  size = 2.4, spacing = 2.0);
-        frame_lbl(0, -(fr_yi/2 - 5.4),  brand_back, size = 4.0, spacing = 1.15);
-        // rating stamp — stacked lines in the back plate's upper-right
-        // clear gap (rating_dy says why it is not in the lower band: that
-        // row is the brand lockup's)
-        if (rating_stamp) for (i = [0:len(rating_lines)-1])
-            frame_lbl(rating_dx, rating_dy + rating_h/2 - 1
-                                 - (i + 0.5)*rating_lh,
-                      rating_lines[i], rating_sz);
-        // help QR — module cells debossed into the outer skin like every
-        // other back label; the two-colour back swap turns them dark in
-        // the light accent skin for free. In back-view coords, no mirror:
-        // viewed from the back, +x is right (see the axis note above).
-        if (qr_back)
-            translate([qr_back_dx - qr_n*qr_back_cell/2,
-                       qr_back_dy + qr_n*qr_back_cell/2,
-                       fr_depth - label_back_depth])
-                linear_extrude(label_back_depth + 0.1)
-                    qr_field2d(qr_back_cell);
+        // Every deboss on the back skin — rail moats, labels, the lockup, the
+        // rating block and the help QR — in one tool, so the colour inlays
+        // can be cut from the same solid. The layout notes live at the module.
+        back_graphics();
         // build stamp, into the plate's INNER face (see the knobs)
         if (stamp_show) translate([0, stamp_dy, fz_plate - 0.01])
             mirror([1, 0, 0]) linear_extrude(stamp_depth + 0.01) {
@@ -2585,6 +2766,25 @@ else if (part == "back")  back();
 // glass pocket)
 else if (part == "frame")       rotate([180, 0, 0]) translate([0, 0, -fr_depth]) frame();
 else if (part == "frame_gauge") rotate([180, 0, 0]) translate([0, 0, -fr_depth]) frame_gauge();
+// Per-filament parts, in the SAME frame as part="frame" — that shared
+// orientation is what lets the slicer take all three without re-aligning
+// anything. Do not drop-to-bed them individually.
+else if (part == "fil_body")   rotate([180, 0, 0]) translate([0, 0, -fr_depth]) frame_bodycol();
+else if (part == "fil_ink")    rotate([180, 0, 0]) translate([0, 0, -fr_depth]) frame_ink();
+else if (part == "fil_accent") rotate([180, 0, 0]) translate([0, 0, -fr_depth]) frame_accent();
+else if (part == "frame_colour") rotate([180, 0, 0]) translate([0, 0, -fr_depth]) frame_colour();
+// PARTITION GATES. A three-part object is only correct if the parts tile the
+// solid: fil_overlap catches material claimed by two filaments (prints twice,
+// and the slicer picks one arbitrarily), fil_gap catches material claimed by
+// none (prints as a void sealed inside a wall). Both must be EMPTY.
+else if (part == "fil_overlap")
+    union() {
+        intersection() { frame_bodycol(); frame_ink(); }
+        intersection() { frame_bodycol(); frame_accent(); }
+        intersection() { frame_ink();     frame_accent(); }
+    }
+else if (part == "fil_gap")
+    difference() { frame(); frame_bodycol(); frame_ink(); frame_accent(); }
 else if (part == "gauge")       gauge();
 else if (part == "gauge_tray")  gauge_corner("back");
 else if (part == "gauge_bezel") gauge_corner("bezel");
