@@ -1,4 +1,5 @@
 #pragma once
+#include <config.h>   // CD_FLAVOR_* selectors
 #include <stdint.h>
 
 class Arduino_GFX;  // moononournation GFX — the one graphics type the UI sees
@@ -37,14 +38,35 @@ void backlight_set(uint8_t level);
 // Duty range 0..8191 (canary::glass::NIGHT_DUTY_MAX).
 void backlight_night_set(uint16_t duty13);
 
+// ── SD slot (dash TF card) ──────────────────────────────────────────────
+// Release the slot's DAT3/CS line — on the dash it rides the CH422G latch —
+// so an inserted card negotiates SD mode for the SDMMC 1-bit deep archive
+// (fleet/sd_archive.cpp). Returns true when the line is released (including
+// boards where it isn't expander-routed and there is nothing to do), false
+// on an expander write failure. Only the dash flavor compiles a caller: the
+// watch slot shares the panel's SPI bus and stays unsupported for now (the
+// full reasoning lives in fleet/sd_archive.h).
+bool sd_dat3_release();
+
 struct TouchSample {
   bool touched = false;
   int16_t x = 0;
   int16_t y = 0;
 };
 
-// Poll the touch controller (cheap; called every loop pass).
+// Poll the touch controller (cheap; called every loop pass). On the RGB dash
+// glass the returned x/y are already un-rotated into the current logical
+// frame (see touch_set_rotation), so callers never orientation-correct taps.
 TouchSample touch_read();
+
+#ifdef CD_FLAVOR_DASH
+// Tell the touch layer the active display rotation (canary::glass::Rotation)
+// and the panel's native landscape size, so touch_read() maps raw GT911
+// coordinates back into the rotated logical frame the UI drew in. Called by
+// lvgl_port_set_rotation whenever orientation changes. Landscape (0) is the
+// identity, so this only matters once a user turns the glass.
+void touch_set_rotation(uint8_t rot, int16_t native_w, int16_t native_h);
+#endif
 
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
 // ── Isolated IO (Waveshare 4.3B terminal block, via the CH422G) ─────────

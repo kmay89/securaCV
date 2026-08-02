@@ -1,24 +1,51 @@
-# canary.local — the family's guide, built from the firmware
+# canary.local — the Lab, built from the firmware
 
-A local, offline page where you **meet your Canary before you meet your
+A local, offline **Lab** where you **meet your Canary before you meet your
 Canary**: every device is a live 3D pairing card; the displays run their
 *actual firmware* in the browser; guided tours and symptom-first fix-it
 flows stage the device into the exact state they're describing.
 
+The whole Lab is one **six-stage build line** — Choose · Build · Flash ·
+Sense · Home · Prove — described once in `build-line.json` and rendered
+everywhere from that single manifest: the adaptive shell (`lab.html`), the
+isometric room, the site map, the desktop app, and the marketing site's
+`/lab` page. If a page isn't on the manifest, it isn't on the line —
+and `tests/build_line.test.js` fails CI the moment a committed page and
+the manifest disagree. See [`build-line.README.md`](build-line.README.md).
+
 ```
 canary-local/
-  index.html            the page (vanilla JS, no frameworks, no build step)
+  lab.html              THE front door — the adaptive Lab shell (source-list
+                        sidebar at desktop widths, six-stage tab bar on
+                        phones), rendered from build-line.json
+  build-line.json       the Lab's single source of truth: six stages, every
+                        bench and depth, site handoffs, redirects, and the
+                        HTML documentation inventory
+  site-map.html         the complete Lab map, rendered from the same manifest
+  room.html             the isometric workshop (the shell's Overview iframe)
+  index.html            legacy front door — redirects to lab.html (or to
+                        fleet.html#… for old card deep-links)
+  fleet.html            "Meet the fleet" — every device as a live 3D pairing card
   start.html            "Get started" — mission picker, 3-OS paths, one-tap-copy gates
   choose.html           "Find your Canary" — the four-question front door
-  boards.html           "The Board Room" — every board + pin flags + wiring (§4g)
-  house.html            "The Canary House" — isometric home, whole fleet in place
+  workshop.html         "The Workshop" — spec options, watch the case respond (§4c)
+  catalog.html          "The Case Catalog" — browse every enclosure (§4b)
+  find.html             "Find your case" — three questions → one recommended case
+  boards.html           "Boards" — every board + pin flags + wiring (§4g)
+  flash.html            "Flash over USB" — the real in-browser flasher
+  wap.html              "First boot" — captive-portal setup, serial + MQTT (§4i)
+  vision.html           "The Vision" — model load, aim card, tuning (§4k)
+  eyes.html             "Through Canary eyes" — your webcam feeding the real firmware wasm
+  sense.html            "The Sense" — radar school: meet it, place it, set it up
+  senselab.html         the Sense's advanced depth — the radar dev bench (§4l)
+  radar-dev.html        "The Proving Ground" — test a flashed Sense, live or emulated
+  smoke.html            "Listen for a smoke alarm" — the WAP's ears, real firmware wasm
+  dash-mic.html         "What a listening Canary hears" — the 4.3C decision core
   homeassistant.html    "The Hub" — Home Assistant on a Raspberry Pi (§4f)
-  wap.html              "The WAP — first boot" — captive-portal setup, serial + MQTT (§4i)
-  sense.html            "The Sense — radar school" — meet it, place it, set it up
-  senselab.html         "The Sense Lab" — the radar pipeline dev bench (§4l)
-  vision.html           "The Vision — first watch" — model load, aim card, tuning (§4k)
+  house.html            "The Canary House" — isometric home, whole fleet in place
+  scenes.html           "Watch it work" — zoom into one witness doing its one honest thing
   vault.html            "The Vault" — sealed evidence + break-glass by quorum (§4j)
-  operator.html         "The Operator's Bench" — set up break-glass, then rehearse it (§4j·2)
+  operator.html         "Set up break-glass" — the Vault's operator depth (§4j·2)
   assets/
     app.js              card gallery + device sheets + guide player
     start.js            the Get Started driver (copy-gate policy + deep links, DOM-free core tested)

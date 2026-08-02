@@ -377,23 +377,41 @@ test("flash.json: every product declares its wifi NVS scheme, honestly", () => {
 
 test("flash.json: the display boards are flashable products now", () => {
   const displays = catalog.products.filter((p) => p.role === "display");
-  assert.strictEqual(displays.length, 7,
-    "watch + dash + dash-modes + dash7 + nightstand-s3 + touch169 + nightstand-c6");
+  assert.strictEqual(displays.length, 8,
+    "watch + dash + dash-modes + dash7 + nightstand7 + nightstand-s3 + touch169 "
+    + "+ nightstand-c6");
   for (const p of displays) {
     assert.ok(["ESP32-S3", "ESP32-C6"].includes(p.chip), `${p.id}: chip ${p.chip}`);
     assert.strictEqual(p.provisioning, "on-glass");
     assert.ok(p.provisioning_note.length > 40, `${p.id}: provisioning copy`);
     assert.ok(p.hatch && /glass/i.test(p.hatch.title), `${p.id}: a display's hatch is the glass`);
   }
-  // Every display product keeps a 1:1 emulator twin: the profile-built
-  // displays, the portrait boards (nightstand / touch169 wasm flavors),
-  // and dash7 (electrically the 4.3″ Dash — the dash twin is its honest
-  // preview). The one exception is the nightstand C6, whose glass is the
-  // S3 stick's — its preview is the same nightstand twin, wired when the
-  // picker learns module aliasing.
-  for (const p of displays.filter((d) => !/nightstand-c6/.test(d.id))) {
-    const twin = catalog.displays.find((d) => p.id.includes(d.id));
-    assert.ok(twin, `${p.id}: no emulator twin in catalog.displays`);
+  // The twin link must never overclaim. A display either links to a twin
+  // that REALLY boots (its own, or an aliased sibling that shares its glass
+  // and face), or it carries no emulated link at all — what it must never
+  // do is deep-link `fleet.html#<id>` for an id the registry has never
+  // heard of, which lands on the generic gallery while the copy promises
+  // "the same firmware, in the browser".
+  const twinIds = new Set(catalog.displays.map((d) => d.id));
+  for (const p of displays) {
+    const emu = p.prove && p.prove.emulated;
+    if (!emu) continue;                       // honest silence is allowed
+    const hash = emu.href.split("#")[1];
+    assert.ok(hash, `${p.id}: emulated proof must deep-link a twin`);
+    assert.ok(twinIds.has(hash),
+      `${p.id}: links twin '${hash}' which is not in catalog.displays`);
+    // An aliased twin (a sibling's build) must not claim to be the 1:1 one.
+    const own = p.id.replace(/^securacv-/, "");
+    if (hash !== own) {
+      assert.ok(!/1:1/.test(emu.label),
+        `${p.id}: borrows ${hash}'s twin, so it must not say "1:1"`);
+    }
+  }
+  // ...and at least the flagships really do have their own.
+  for (const id of ["securacv-canary-display-watch", "securacv-canary-display-dash"]) {
+    const p = displays.find((d) => d.id === id);
+    assert.ok(p.prove.emulated.href.endsWith(id.replace(/^securacv-/, "")),
+      `${id}: the flagship displays keep their own 1:1 twin`);
   }
 });
 
@@ -625,20 +643,35 @@ test("pickLesson: stage-matched first, generic after, never repeats, ends honest
 
 test("flash.json: PARITY — every Canary proves itself two ways, real + emulated twin", () => {
   const REAL_KINDS = new Set(["monitor", "bench-field", "bench-camera", "bench-radar", "glass"]);
+  const twinIds = new Set(catalog.displays.map((d) => d.id));
   for (const p of catalog.products) {
     const pr = p.prove;
-    assert.ok(pr && pr.real && pr.emulated, `${p.id}: no prove block — parity broken`);
+    assert.ok(pr && pr.real, `${p.id}: no real proof — parity broken`);
     assert.ok(REAL_KINDS.has(pr.real.kind), `${p.id}: unknown real proof kind ${pr.real.kind}`);
     assert.ok(pr.real.label && pr.real.how, `${p.id}: real proof needs label + how`);
+    if (p.role !== "display") {
+      // Every non-display Canary proves itself both ways: its twin is a
+      // whole lab page (vision / senselab / …), not a per-board WASM build,
+      // so there is never a reason for one to be missing.
+      assert.ok(pr.emulated, `${p.id}: no emulated twin — parity broken`);
+    }
+    if (!pr.emulated) continue;
     assert.ok(pr.emulated.label && pr.emulated.how, `${p.id}: twin needs label + how`);
     // the twin page must actually exist — no dead links, ever
     const page = pr.emulated.href.split("#")[0];
     assert.ok(existsSync(join(ROOT, page)), `${p.id}: twin page missing: ${page}`);
   }
-  // displays deep-link to their own sheet on the fleet page
+  // A display's twin link must reach a twin that REALLY boots. Its own is
+  // the 1:1 case; a sibling that shares its glass and face is allowed but
+  // must not call itself 1:1; and a board still waiting on its WASM build
+  // carries no emulated link at all rather than a link to nowhere. (Before
+  // this, every display deep-linked `#<its own id>` whether the registry
+  // knew that id or not — dash-modes and the nightstand C6 both quietly
+  // landed on the generic gallery under "the same firmware, in the browser".)
   for (const p of catalog.products.filter((x) => x.role === "display")) {
-    assert.ok(p.prove.emulated.href.includes("#" + p.id.replace("securacv-", "")),
-      `${p.id}: twin should deep-link its own glass`);
+    if (!p.prove.emulated) continue;
+    const hash = p.prove.emulated.href.split("#")[1];
+    assert.ok(twinIds.has(hash), `${p.id}: twin '${hash}' is not a real emulator`);
   }
 });
 

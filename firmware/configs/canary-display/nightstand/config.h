@@ -84,6 +84,11 @@
 #define FEATURE_HUB_WEATHER         1   // hub-republished forecast
 #define FEATURE_WAKE_ALARM          1   // on-device two-phase gentle wake (visual
                                         // ramp works without a piezo)
+#define FEATURE_LANTERN             1   // the honest night light: this glass is
+                                        // the lamp (hallway / bedside), summoned
+                                        // by a BOOT double-press and timed out.
+                                        // The WS2812 stays a pure attention
+                                        // beacon — it is never part of the lamp.
 
 // Features NOT used by this device — a display witnesses nothing itself.
 #define FEATURE_VISION_AI           0
@@ -126,7 +131,15 @@
 #define CD_BRIGHT_AMBIENT       100     // idle daytime dim (illumination ladder)
 #define CD_BRIGHT_NIGHT         3       // near-dark glance floor (same as watch)
 #define CD_TOUCH_WAKE_MS        15000   // full brightness after a wake, then re-dim
-#define CD_LONGPRESS_MS         900     // acknowledge gesture (BOOT button — follow-up)
+#define CD_LONGPRESS_MS         900     // acknowledge gesture (BOOT button hold)
+
+// Lantern seeds (runtime prefs live in NVS; see care/lantern.h). The warm
+// Lantern scene, 15 minutes, and NO auto schedule by default — "lantern
+// hours" trades away the dark-means-safe signal, so it is opt-in, never a
+// shipped default.
+#define CD_LANTERN_SCENE        6       // look_engine kScenes[6] = "Lantern"
+#define CD_LANTERN_MINUTES      15
+#define CD_LANTERN_AUTO         0
 
 // Quiet hours (local time; requires SNTP). First-boot seeds — the settings
 // surface owns the runtime schedule (glass_settings.h).

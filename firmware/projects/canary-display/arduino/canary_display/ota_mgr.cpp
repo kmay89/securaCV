@@ -214,4 +214,37 @@ void ota_loop(uint32_t now_ms) {
   }
 }
 
+// ── On-glass settings facade ─────────────────────────────────────────────
+
+OtaStatus ota_status() {
+  OtaStatus s{};
+  s.installed = CANARY_FW_VERSION;
+  const securacv_ota_manifest_t* m = securacv_ota_get_manifest();
+  s.update_available = securacv_ota_update_available();
+  s.latest = (m != nullptr && s.update_available) ? m->version : CANARY_FW_VERSION;
+  const securacv_ota_state_t st = securacv_ota_get_state();
+  s.busy = (st != SECURACV_OTA_IDLE);
+  s.progress = securacv_ota_get_progress();
+  s.auto_update = securacv_ota_get_auto_update();
+  s.dev_channel = (securacv_ota_get_channel() == SECURACV_OTA_CHANNEL_DEV);
+  if (s.busy)                  s.state_text = securacv_ota_friendly_state(st);
+  else if (s.update_available) s.state_text = "update ready";
+  else                         s.state_text = "up to date";
+  return s;
+}
+
+void ota_request_check() { securacv_ota_check(); }
+
+void ota_request_install() { securacv_ota_check_and_install(); }
+
+void ota_set_auto_update(bool on) {
+  if (securacv_ota_get_auto_update() != on) {
+    securacv_ota_set_auto_update(on);
+    log_line("OTA", on ? "Auto-update turned on (settings)."
+                       : "Auto-update turned off (settings).");
+  }
+  publish_update_auto_retained(g_topics, on);
+  g_publish_pending = true;
+}
+
 } // namespace canary::net

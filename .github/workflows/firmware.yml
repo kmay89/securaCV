@@ -116,11 +116,13 @@ jobs:
     # stopwatch. Every other flavor finishes in 2-5 minutes.
     #
     # The asymmetry is not a slow toolchain, it is arithmetic: canary-display
-    # builds 17 environments in this one job (dash and its nine feature
-    # variants, dash7, watch, watch-modes, two nightstands, touch169,
-    # playground); canary-wap and canary-sense build 2, canary-vision 3.
+    # builds 18 environments in this one job (dash and its nine feature
+    # variants, dash7, nightstand7, watch, watch-modes, two nightstands,
+    # touch169, playground); canary-wap and canary-sense build 2,
+    # canary-vision 3. The 18th (nightstand7) shares dash7's core-3 platform,
+    # so it costs a compile, not another toolchain download.
     #
-    # The RIGHT fix is to shard those 17 across parallel jobs — it would cut
+    # The RIGHT fix is to shard those 18 across parallel jobs — it would cut
     # wall-clock enormously AND tell you WHICH environment broke instead of
     # "display failed". That changes job names, which can break required-status
     # checks configured on main, so it is deliberately left as a separate,
@@ -1070,6 +1072,27 @@ jobs:
               -o /tmp/tincan_cores
           /tmp/tincan_cores | tee /tmp/tincan_cores.log
           grep -q "ALL .* PASSED" /tmp/tincan_cores.log
+
+      - name: Build + run Canary Companion cores host test
+        # The Night Watch bedside clock and the Pocket Canary
+        # (docs/design/canary_companion.md). Every check here is named after a
+        # mistake rather than after a function, because each of these is a
+        # one-line change to make and a very hard thing to notice afterwards:
+        # a pet that can die or that scores absence against a child; an "ask"
+        # that quietly becomes a notification; a night screen that goes dark
+        # for trouble as readily as for wellness (a dark screen is a CLAIM OF
+        # WELLNESS, so trouble and an unsure clock must both break blackout);
+        # a wake-on-raise that fires when a sleeper rolls over; a voice that
+        # claims it buzzed on a board with no motor fitted; and a settings
+        # mis-tap that wipes a device. No board, no panel, no I2C needed.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-companion/include \
+              firmware/projects/canary-companion/tests_host/test_companion_cores.cpp \
+              -o /tmp/companion_cores
+          /tmp/companion_cores | tee /tmp/companion_cores.log
+          grep -q "ALL .* PASSED" /tmp/companion_cores.log
 
       - name: Tin Can sketch copy sync
         # The Arduino bring-up sketch carries a staged copy of knock_codec.h,

@@ -90,6 +90,60 @@ actions:
             "ts": now().timestamp() | int} | to_json }}
 ```
 
+#### Optional fields: right now, tomorrow, and advisories
+
+Four optional keys ride the same blob. Every one of them degrades to
+*absent* — the automation above keeps working untouched, and a hub that
+stops sending a field re-arms its sentinel rather than leaving a stale
+value on the glass:
+
+| Key | Meaning | Rendered by |
+|---|---|---|
+| `t_now` | current outdoor temperature (°C) | the Nightstand 7 hero column, and its night whisper |
+| `hi2` / `lo2` / `rain2` / `cond2` | **tomorrow's** forecast | `tomorrow 26°/14° · rain 10% · sunny` — the night face's "what am I waking into" line |
+| `alert` | an active advisory / warning | a banner by day, a dim line at night |
+
+`alert` is an object: `{"event": "Wind Advisory", "sev": 0, "until": <epoch>}`,
+where `sev` is `0` for an advisory/watch and `1` for a warning. It renders
+only while `until` is still ahead of a valid wall clock — no clock, no claim,
+the same honesty rule the forecast itself follows.
+
+**Weather never chimes.** The advisory is visual only, on every flavor. It
+is not a fleet severity, it does not enter `worst()`, it does not wake the
+glass, and it does not survive into quiet hours as noise. A storm warning
+is information you want when you look; it is not your Canary telling you
+something is wrong in the house — and blurring those two would cost the
+alarm channel its meaning.
+
+```yaml
+# Extends the payload above with tomorrow + any active advisory.
+  - variables:
+      today: "{{ fc['weather.forecast_home'].forecast[0] }}"
+      tmrw: "{{ fc['weather.forecast_home'].forecast[1] }}"
+      # Any binary_sensor/sensor your weather integration exposes for
+      # advisories; NWS, Met Éireann and Environment Canada all provide one.
+      wx_alert: "{{ states('sensor.weather_alerts') }}"
+  - action: mqtt.publish
+    data:
+      topic: securacv/env/weather
+      retain: true
+      qos: 1
+      payload: >-
+        {{ {"cond": states('weather.forecast_home'),
+            "t_now": state_attr('weather.forecast_home', 'temperature'),
+            "hi": today.temperature, "lo": today.templow,
+            "rain": today.precipitation_probability | default(0) | int,
+            "hi2": tmrw.temperature, "lo2": tmrw.templow,
+            "rain2": tmrw.precipitation_probability | default(0) | int,
+            "cond2": tmrw.condition,
+            "alert": ({"event": wx_alert,
+                       "sev": 1 if 'Warning' in wx_alert else 0,
+                       "until": (now().timestamp() + 3600) | int}
+                      if wx_alert not in ['unknown', 'unavailable', 'none', '']
+                      else None),
+            "ts": now().timestamp() | int} | to_json }}
+```
+
 ### Sun times, computed on the glass
 
 The simplified NOAA sunrise equation runs on-device once a day (±2 min

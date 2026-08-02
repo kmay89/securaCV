@@ -13,7 +13,7 @@ You need: a filament printer (PETG recommended), the boards for whichever
 Canary you're building (see the [hardware guide](../README.md)), and 4× M2
 screws per case. Then:
 
-1. **Print the [fit coupon](./canary_fit_coupon.scad)** (~25 min). Its
+1. **Print the [fit coupon](./canary_fit_coupon.scad)** (one small plate). Its
    labelled stations test every fit used across this folder; if a station is
    tight or loose it names the parameter to adjust. Calibrate once, reuse for
    every part below.
@@ -95,6 +95,7 @@ the `.scad`, no committed STLs; see the [dev gallery](#in-development)):
 | [`canary_bench_fixture.scad`](./canary_bench_fixture.scad) | Labelled **bring-up plate** holding the XIAO + buzzer/LED/button/reed while you wire and test ([bench guide](../bench_bringup.md)) |
 | [`canary_dock.scad`](./canary_dock.scad) | Numbered **provisioning dock** for flashing a fleet of XIAOs in order |
 | [`canary_inserts.scad`](./canary_inserts.scad) | Small **glue/press-in parts**: buzzer horn, anti-glare ring, printed cable gland |
+| [`canary_vent_lib.scad`](./canary_vent_lib.scad) | **The brand vent pattern** — plumage grille: teardrop feathers, point-up, offset rows. `use` it wherever a case vents; exact open-area maths included. Not a printable part |
 | [`canary_shop_tools.scad`](./canary_shop_tools.scad) | Heat-set **insert press guide** + doorbell button accent ring |
 | [`canary_templates_2d.scad`](./canary_templates_2d.scad) → [studs](./template_studs.svg) · [bracket](./template_bracket.svg) · [doorbell](./template_doorbell.svg) | **1:1 paper drill templates** — print the SVG at 100 % (check the 20 mm square), tape to the wall, drill |
 | [`canary_s3_lcd7_fitcheck.scad`](./canary_s3_lcd7_fitcheck.scad) | **Not a printable part** — renders the 7" bezel and tray in their *assembled* positions and intersects them, so CI can catch a case whose parts are each a perfect mesh but don't clamp anything. Collisions must be empty; the lip's bearing patch must not be |
@@ -153,12 +154,12 @@ measurements welcome.
 | **Field case** — bag-carry rugged witness at the honest top of the FDM ceiling: Ø1.5 O-ring cord (27 % squeeze), six-lobe clamp, zero external ports (open to charge), bonded PC lens disc behind a contrast-color trim bezel, ePTFE vent, 4 mm walls, TPU impact boot + lanyard. CER‑4 intent: IP67 + MIL‑STD‑810H transit drop — [earn the rating, don't assume it](./field_ratings.md) | 72 × 39 × 21 body; boot on ≈ 94 wide | <img src="./preview_dev_field.png" width="230"> | [`canary_field_case.scad`](./canary_field_case.scad) |
 | **Dashboard display case** — Waveshare ESP32-S3-Touch-LCD-4.3 (the [display research](../display_research.md) step-up dashboard): face-down bezel frame, vented screw-on back with keyholes + 75 mm M4 pair, free-standing 25° desk cradle. Panel dims are NOMINAL — measure yours | glass drops in, bezel lip 2.5 | <img src="./preview_dev_dash.png" width="230"> | [`canary_dash_display.scad`](./canary_dash_display.scad) |
 | **C6 display pocket case** — Waveshare **ESP32-C6-LCD-1.47** (portrait), both board builds: `headers="none"` (stripped: no headers, corner pillars removed) or `headers="male"` (as shipped: down-facing pin headers + brass M2 corner pillars — deeper cavity, press bosses land on the pillar tops). Face-down bezel over the active-area window, edge-captured board (no screws into the board), snap-in vented back, blind keyhole. The overhanging BOOT/RST buttons and the USB-C shell (both BACK-mounted — photo-verified) get full-depth insertion channels behind "ear"/"chin" wall bulges, and the USB-C port is a true stadium (full-round ends) sized shell + tolerance. `model="1.47"` is drawn from the Waveshare mechanical drawing; a `"1.69"` preset is parameterised. Heat-escape slots on the sides + a back grille | snap-fit, vented, 2 board builds | <img src="./preview_dev_c6_147.png" width="230"> | [`canary_c6_display.scad`](./canary_c6_display.scad) |
-| **7″ touch dashboard case** — Waveshare **ESP32-S3-Touch-LCD-7** (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on moulded M3 standoffs and screws to four **gusseted** outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (~52 cm² back grille + **bottom-wall intake and top-wall exhaust** — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots on the tray, optional 20° desk cradle. The one-piece `frame` adds a bottom-centred **USB pass-through** (the brand lettering is the intake vents flanking it) and three **TPU fitments**: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive press-through BOOT/RESET plug, and a peel-open SD cover that stays attached. **Print the `gauge` corner pair first** (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centres and `pcb_h` are NOMINAL — measure yours | glass drops in, lip 10.4, TPU-fitted ports | <img src="./preview_dev_lcd7.png" width="230"> | [`canary_s3_lcd7.scad`](./canary_s3_lcd7.scad) |
+| **7″ touch dashboard case** — Waveshare **ESP32-S3-Touch-LCD-7** (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on moulded M3 standoffs and screws to four **gusseted** outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (~52 cm² back grille + **bottom-wall intake and top-wall exhaust** — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centred **USB pass-through** (the brand lettering is the intake vents flanking it) and three **TPU fitments**: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive press-through BOOT/RESET plug, and a peel-open SD cover that stays attached. Optional 20° desk **dock** for the frame (drop-in slot on tilted seat pads, self-centring keys into the frame's keying slots, landscape **and** portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). **Print the `gauge` corner pair first** (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centres and `pcb_h` are NOMINAL — measure yours | glass drops in, lip 10.4, TPU-fitted ports | <img src="./preview_dev_lcd7.png" width="230"> | [`canary_s3_lcd7.scad`](./canary_s3_lcd7.scad) |
 | **1.69″ touch watch-display puck** — Waveshare **ESP32-S3-Touch-LCD-1.69** (rounded-square 240×280 capacitive-touch smartwatch board — S3, IMU, RTC, battery/charger). The bonded glass slab (41.13 × 33.13) overhangs the smaller PCB (37.12 × 29.83) by ~2 mm, so the face lip captures it — no screws (this board has no mount holes). Face-down bezel + snap-in vented back (skirt rides the overhang, 4 nubs, standoffs press the board forward, blind keyhole). USB-C (bottom) + PWR/BOOT/RST (top) + battery/RTC/pin slot (side); side heat slots + back grille; optional 22° cradle. Connector centres NOMINAL — measure yours | snap-fit, vented, edge-captured | <img src="./preview_dev_t169.png" width="230"> | [`canary_s3_touch169.scad`](./canary_s3_touch169.scad) |
 | **Vehicle mount kit** — VHB-taped dash plate with a 10° stud riser + an air-vent louver clip (extruded spring prongs snap over one blade). ⚠️ cabins exceed +60 °C: USB power only, ASA, light colors | set `stud_gap` per case (36 = field) | <img src="./preview_dev_veh.png" width="230"> | [`canary_vehicle_mount.scad`](./canary_vehicle_mount.scad) |
 | **Body-worn clips** — belt leaf-spring clip (prints on its side: flex stays in-plane) + MOLLE/PALS weave plate, both on the two-stud interface; made for the field case's floor keyholes | check local recording law; pair with the sign | <img src="./preview_dev_wear.png" width="230"> | [`canary_wear_clip.scad`](./canary_wear_clip.scad) |
 | **Vision Pro mount** — bridges a Seeed reCamera Pro onto the shared stud interface: keyhole pockets on the back (hangs on any existing stud surface in this catalog), 1/4"-20 tripod counterbore and/or magnet pocket on the front (reCamera's confirmed mount options, [Canary Vision Pro doc](../canary_vision_pro_recamera.md)). No confirmed body dimensions yet — mounting interface only | measure your screw/nut; no bench unit yet | <img src="./preview_dev_visionpro.png" width="230"> | [`canary_vision_pro_mount.scad`](./canary_vision_pro_mount.scad) |
-| **Universal fit coupon** — ONE ~25 min print that calibrates every fit in the catalog: clip, keyhole+stud, slide, gasket, press, screw, insert — each station labelled with the parameter it tunes | **print this before any case** | <img src="./preview_dev_coupon.png" width="230"> | [`canary_fit_coupon.scad`](./canary_fit_coupon.scad) |
+| **Universal fit coupon** — ONE small print that calibrates every fit in the catalog: the **Canary mark embossed in uniform domed strokes** (no feature narrower than one rib, so that single width decides the whole emblem), the WAP's two-sided clip channel, keyhole+stud **with a click detent** (slide the mate on, it clicks and stays — the doorbell-plate retention test), slide tongue, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labelled with the parameter it tunes | **print this before any case** | <img src="./preview_dev_coupon.png" width="230"> | [`canary_fit_coupon.scad`](./canary_fit_coupon.scad) |
 | **Bench bring-up fixture** — labelled stations for XIAO + BZ1/DLED1/SW1/SW2 with a sliding magnet carriage for repeatable tamper tests (companion to [bench_bringup.md](../bench_bringup.md)) | wire channels per §5 pin map | <img src="./preview_dev_fixture.png" width="230"> | [`canary_bench_fixture.scad`](./canary_bench_fixture.scad) |
 | **Fleet provisioning dock** — N numbered reclined bays for bare XIAOs beside a USB hub (v1 runbook fleet flashing) | `n_bays` parametric | <img src="./preview_dev_dock.png" width="230"> | [`canary_dock.scad`](./canary_dock.scad) |
 | **Shop tools** — heat-set insert press guide (keeps inserts square) + doorbell button accent ring | tiny prints | — | [`canary_shop_tools.scad`](./canary_shop_tools.scad) |
@@ -458,6 +459,58 @@ openscad --export-format binstl -o my_gasket.stl \
 # or the clip test coupon:
 openscad --export-format binstl -o coupon.stl -D 'part="coupon"' canary_wap_enclosure.scad
 ```
+
+### Preview renders (required with every `.scad` change)
+
+Any change to a `.scad` in this directory ships with PNG previews of every
+affected part, shared with whoever asked for the change — the change must be
+*seeable*, not just readable. Case-like parts get both faces (front and
+back); small fitments get an angle that shows the changed feature. PNG export
+is a fast OpenCSG preview, not a full CGAL render, so it costs seconds even
+for the largest parts. Headless (no display):
+
+```bash
+xvfb-run -a openscad -o preview.png --imgsize 1400,1000 --autocenter --viewall \
+    --camera=0,0,0,ROTX,0,ROTZ,120 --colorscheme "Tomorrow Night" \
+    -D 'part="PART"' FILE.scad
+# ROTX ≈ 62 → top three-quarter view; ROTX ≈ 245 → underside
+```
+
+For the 7" frame's three-colour build, render each filament part on its own —
+`part="fil_body"`, `"fil_ink"`, `"fil_accent"`. Those are the reliable views:
+each contains exactly the graphics assigned to that filament, so what you see
+is what that spool prints.
+
+**Do not judge the palette from `part="frame_colour"`.** It composites the
+three parts, but OpenCSG will not reliably colour inlays sitting inside the
+recesses they were cut from — it has rendered every back-plate group in the
+accent colour when only the company line is accent, and standing the inlays
+proud does not fix it. It is useful for silhouette and for the bezel band,
+and misleading for anything else. The caveat is written at the module too.
+
+### Three-colour printing (7" frame, P2S + AMS)
+
+The one-piece frame can print white-bodied with a black bezel, black lettering
+and one yellow word. Three parts, loaded into Bambu Studio as one object:
+
+```bash
+for f in body ink accent; do
+  openscad --export-format binstl -o lcd7_fil_$f.stl -D "part=\"fil_$f\"" canary_s3_lcd7.scad
+done
+```
+
+Load `fil_body`, then **Add part → Load** the other two, assign a filament to
+each, slice. They share `part="frame"`'s coordinate frame, so **do not
+re-centre or drop-to-bed** the added parts — moving one moves the lettering out
+of its own recess.
+
+The palette, the layer-band table showing why this costs so little purge, and
+the QR polarity constraint that makes the AMS necessary are documented at the
+`PRINT COLOURS` block in `canary_s3_lcd7.scad`, and the operator walkthrough is
+[`bambu_p2s_bringup.md`](./bambu_p2s_bringup.md) §7c′. To re-group the palette,
+edit `ink_groups` / `accent_groups` — each inlay is cut from the same solid as
+the recess it fills, so nothing has to be kept in sync by hand. `fil_overlap`
+and `fil_gap` gate that the three parts tile the frame exactly.
 
 ## Key parameters to check first
 

@@ -105,6 +105,66 @@ class PlanOnFreshHub(unittest.TestCase):
         self.assertEqual(todo, sum(len(s.actions) for s in self.steps))
 
 
+class OptionalFeatures(unittest.TestCase):
+    """Opt-in extras (Pi-hole): zero footprint unless asked for, loud on typos."""
+
+    def test_default_plan_has_no_feature_steps(self):
+        steps = hsa.plan_actions(REAL_PLAN, hsa.FRESH_HUB)
+        ids = {s.id for s in steps}
+        self.assertNotIn("install-pihole", ids)
+        # And no feature-tagged repository leaks into the core register step:
+        # an un-enabled feature must leave ZERO footprint on the hub.
+        reg = next(s for s in steps if s.id == "add-repositories")
+        for a in reg.actions:
+            self.assertNotIn("Poeschl", a.url)
+
+    def test_with_pihole_appends_the_full_step(self):
+        steps = hsa.plan_actions(REAL_PLAN, hsa.FRESH_HUB, frozenset({"pihole"}))
+        pihole = next(s for s in steps if s.id == "install-pihole")
+        kinds = [a.kind for a in pihole.actions]
+        # Its OWN repo registration rides inside the step (order matters:
+        # register before install), then the install, then the start.
+        self.assertEqual(kinds, ["register_repo", "install_addon", "start_addon"])
+        slug = next(a for a in pihole.actions if a.kind == "install_addon").slug
+        self.assertTrue(slug.endswith("_pihole"), slug)
+        self.assertNotEqual(slug, "pihole", "must be the hashed Supervisor slug")
+        # The trust framing is the point of the step — the narration must give
+        # the user a way to CHECK the quiet promise, not just block ads.
+        narration = (pihole.why + pihole.for_what).lower()
+        self.assertIn("phoning home", narration)
+        self.assertIn("instead of taking our word", narration)
+        self.assertTrue(pihole.user_must_finish, "router DNS change is the user's")
+
+    def test_core_plan_is_identical_with_and_without_features(self):
+        base = [s.id for s in hsa.plan_actions(REAL_PLAN, hsa.FRESH_HUB)]
+        extra = [
+            s.id
+            for s in hsa.plan_actions(REAL_PLAN, hsa.FRESH_HUB, frozenset({"pihole"}))
+            if s.id != "install-pihole"
+        ]
+        self.assertEqual(base, extra)
+
+    def test_unknown_feature_fails_loudly_before_touching_anything(self):
+        rc = hsa.main(["--dry-run", "--with", "typo-hole"])
+        self.assertEqual(rc, 2)
+
+    def test_dry_run_with_pihole_narrates_it(self):
+        import contextlib, io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = hsa.main(["--dry-run", "--with", "pihole"])
+        self.assertEqual(rc, 0)
+        self.assertIn("pihole", buf.getvalue().lower())
+
+    def test_dry_run_without_pihole_mentions_it_is_available(self):
+        import contextlib, io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = hsa.main(["--dry-run"])
+        self.assertEqual(rc, 0)
+        self.assertIn("--with pihole", buf.getvalue())
+
+
 class Idempotency(unittest.TestCase):
     """Re-running against a provisioned hub skips everything."""
 

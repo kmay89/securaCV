@@ -367,13 +367,16 @@ function announceToWitness(product) {
   } catch (_) { /* the wall must never break a flash */ }
 }
 
-// The real thing: the device we just flashed joins the Wi-Fi we provisioned,
-// so — because this is the native app, not a sandboxed browser — we can find it
-// on the LAN and populate the wall with the REAL fleet. The Rust `witness_discover`
-// command does the LAN reach (no CSP; `.local` resolves via the OS). We poll it
-// while the board boots + joins Wi-Fi; if nothing answers (or an older build),
-// the simulated appearance from announceToWitness() stands. Never throws into
-// the flash flow.
+// The real thing: because this is the native app, not a sandboxed browser, we
+// can reach the LAN and populate the wall with the REAL fleet. The Rust
+// `witness_discover` command does the LAN reach (no CSP; `.local` resolves via
+// the OS — Bonjour on macOS, avahi on Linux). ONE controller owns all of it:
+//   - opening the Fleet tab starts a continuous scan (and stops on tab leave),
+//     so the tab shows your actual Canaries without ever flashing anything;
+//   - a successful flash triggers a fast 30 s burst with the new device
+//     highlighted, while the board boots and joins Wi-Fi.
+// If nothing answers (or an older firmware build), the wall keeps its demo /
+// simulated state. Every path is wrapped: discovery can NEVER affect flashing.
 function witnessBases() {
   const bases = [];
   const host = $("mqtt-host") && $("mqtt-host").value && $("mqtt-host").value.trim();
@@ -381,21 +384,74 @@ function witnessBases() {
   bases.push("http://canary.local:8099", "http://canary.local");
   return bases;
 }
-function discoverAndPopulate(product) {
-  try {
-    const frame = $("witness-frame");
-    const post = (m) => { try { if (frame && frame.contentWindow) frame.contentWindow.postMessage(m, "*"); } catch (_) {} };
-    const bases = witnessBases();
-    const deadline = Date.now() + 30000;
-    const tick = async () => {
-      let fleet = null;
-      try { fleet = await invoke("witness_discover", { bases }); } catch (_) { /* not up yet, or older build */ }
-      if (fleet) { post({ type: "witness:fleet", fleet, highlight: witnessName(product) }); return; }
-      if (Date.now() < deadline) setTimeout(tick, 2500);
-    };
-    tick();
-  } catch (_) { /* discovery is best-effort — never affects flashing */ }
-}
+const witnessDiscovery = {
+  timer: null,        // next scheduled tick
+  scanning: false,    // continuous mode (fleet tab open)
+  burstUntil: 0,      // fast-poll deadline after a flash
+  highlight: null,    // device name to highlight on next find
+  inFlight: false,    // a witness_discover call is running (they can take ~8 s)
+  found: false,
+  post(m) { try { const f = $("witness-frame"); if (f && f.contentWindow) f.contentWindow.postMessage(m, "*"); } catch (_) {} },
+  status(msg, live) {
+    try {
+      const el = $("fleet-scan-status");
+      if (el) { el.textContent = msg; el.classList.toggle("live", !!live); }
+    } catch (_) {}
+  },
+  async tick() {
+    if (this.inFlight) return this.schedule();
+    this.inFlight = true;
+    let fleet = null;
+    try { fleet = await invoke("witness_discover", { bases: witnessBases() }); }
+    catch (_) { /* nothing answering yet, or an older build without the command */ }
+    this.inFlight = false;
+    if (fleet) {
+      const n = (fleet.devices || fleet.canaries || (Array.isArray(fleet) ? fleet : [])).length;
+      this.post({ type: "witness:fleet", fleet, highlight: this.highlight });
+      this.highlight = null;
+      this.found = true;
+      this.status("● Live — " + (n || "your") + " Canar" + (n === 1 ? "y" : "ies") + " on your network", true);
+    } else if (!this.found) {
+      this.status("Scanning your network for Canaries… nothing answering yet — flash one, or make sure a Canary is on this Wi-Fi.");
+    }
+    this.schedule();
+  },
+  schedule() {
+    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    const bursting = Date.now() < this.burstUntil;
+    if (!this.scanning && !bursting) return;
+    this.timer = setTimeout(() => this.tick().catch(() => {}), bursting ? 2500 : 10000);
+  },
+  start() {          // fleet tab opened — continuous scan
+    try {
+      this.scanning = true;
+      if (!this.found) this.status("Scanning your network for Canaries…");
+      this.tick().catch(() => {});
+    } catch (_) {}
+  },
+  stop() {           // fleet tab left — stop unless a post-flash burst is live
+    try {
+      this.scanning = false;
+      if (Date.now() >= this.burstUntil && this.timer) { clearTimeout(this.timer); this.timer = null; }
+    } catch (_) {}
+  },
+  burst(product) {   // just flashed — poll fast while the board boots + joins
+    try {
+      this.highlight = witnessName(product);
+      this.burstUntil = Date.now() + 30000;
+      this.tick().catch(() => {});
+    } catch (_) { /* discovery is best-effort — never affects flashing */ }
+  },
+};
+function discoverAndPopulate(product) { witnessDiscovery.burst(product); }
+// The wall announces witness:ready when its iframe boots; re-sync anything the
+// host already knows (a host post fired before boot would have been dropped).
+window.addEventListener("message", (e) => {
+  const d = e && e.data;
+  if (d && d.type === "witness:ready" && (witnessDiscovery.scanning || Date.now() < witnessDiscovery.burstUntil)) {
+    witnessDiscovery.tick().catch(() => {});
+  }
+});
 
 function initShell() {
   document.querySelectorAll(".nav-item").forEach((b) =>
@@ -457,7 +513,13 @@ function navigate(view) {
   }
   if (view === "atlas") renderAtlas();
   if (view === "about") renderAbout();
-  if (view === "fleet") { const b = $("badge-fleet"); if (b) b.classList.add("hidden"); }
+  if (view === "fleet") {
+    const b = $("badge-fleet");
+    if (b) b.classList.add("hidden");
+    witnessDiscovery.start();   // scan the LAN while the tab is open
+  } else {
+    witnessDiscovery.stop();    // (a live post-flash burst keeps running)
+  }
 
   prefs.view = view;
   savePrefs();
@@ -2724,6 +2786,12 @@ const hub = {
   fbTimer: null, // first-boot poll
   fbCountStop: null, // stops the escalation countdown paint (hubCountdownStart)
   resumeTimer: null, // resume-across-restart poll
+  // True while the self-setup run (over the hub's service console) is going —
+  // one at a time, and the backend enforces the same.
+  headlessBusy: false,
+  // The last flash's receipt, so the first-boot watch knows whether this card
+  // carries the self-setup bundle it should run when the hub answers.
+  lastReceipt: null,
 };
 
 const HUB_HOST = "homeassistant.local:8123";
@@ -2813,9 +2881,50 @@ function hubInit() {
       hubArm();
     })
   );
+  // Self-setup opt-in: arm/summary refresh, and remembered like the other
+  // non-secret fields.
+  $("hub-provision").addEventListener("change", () => {
+    $("hub-provision-hint").textContent = $("hub-provision").checked
+      ? "After the flash, keep this app open: it watches for the hub and finishes setup the moment it answers."
+      : "";
+    hubArm();
+  });
+  // Self-setup narration rides the same console as the flash itself.
+  listen("hub:headless-log", (e) => {
+    const el = $("hub-console");
+    el.classList.remove("hidden");
+    el.textContent += e.payload + "\n";
+    el.scrollTop = el.scrollHeight;
+  });
   // First-boot companion controls.
   $("hub-fb-open").addEventListener("click", () => openExternal("http://" + HUB_HOST));
+  $("hub-fb-setup").addEventListener("click", () => {
+    $("hub-fb-setup").classList.add("hidden");
+    hubRunHeadlessSetup($("hub-fb-text"), $("hub-fb-setup"), $("hub-fb-host").value).then(
+      (report) => {
+        // A reachability failure is the moment the address field earns its
+        // place: mDNS-blocked networks need the IP from the router.
+        if (!(report && report.ok)) $("hub-fb-host").classList.remove("hidden");
+      }
+    );
+  });
   $("hub-fb-stop").addEventListener("click", hubStopFirstBoot);
+  // Standing self-setup: shown whenever this computer holds a maintenance key,
+  // so a hub first-booted long after its flash (outside the resume window) can
+  // still be finished with one click.
+  invoke("hub_headless_available")
+    .then((ok) => {
+      if (ok) $("hub-standing").classList.remove("hidden");
+    })
+    .catch(() => {});
+  $("hub-standing-run").addEventListener("click", async () => {
+    const btn = $("hub-standing-run");
+    btn.disabled = true;
+    btn.textContent = "Setting up…";
+    await hubRunHeadlessSetup($("hub-standing-text"), null, $("hub-standing-host").value);
+    btn.disabled = false;
+    btn.textContent = "Finish hub setup";
+  });
   // Restore remembered non-secret fields.
   hubRestoreSettings();
   // If we were reopened soon after a flash, quietly resume watching for it.
@@ -2896,9 +3005,24 @@ function hubInit() {
 // A flash writes a tiny "last flash" record; on the next launch, if it's
 // recent and the hub isn't up yet, we quietly re-offer to watch for it — so a
 // crash, quit, or reboot mid-first-boot never loses the thread.
-function hubRecordFlash() {
+function hubRecordFlash(provisionPending, piholeChoice) {
   try {
-    localStorage.setItem(HUB_LASTFLASH_KEY, JSON.stringify({ host: HUB_HOST, at: Date.now() }));
+    localStorage.setItem(
+      HUB_LASTFLASH_KEY,
+      JSON.stringify({
+        host: HUB_HOST,
+        at: Date.now(),
+        // True when the card carries the self-setup bundle and this app still
+        // owes the hub a setup run — survives a quit/relaunch mid-first-boot.
+        provision: !!provisionPending,
+        // The Pi-hole decision travels WITH the pending run, not with the
+        // remembered-settings blob. "Remember these" may be off, and the
+        // checkbox's HTML default is checked — so relying on the live checkbox
+        // after a relaunch would silently install Pi-hole for someone who
+        // explicitly unticked it. An opt-out has to survive the restart.
+        pihole: !!piholeChoice,
+      })
+    );
   } catch (_) {}
 }
 function hubClearFlashRecord() {
@@ -2908,10 +3032,33 @@ async function hubMaybeResume() {
   let rec;
   try { rec = JSON.parse(localStorage.getItem(HUB_LASTFLASH_KEY) || "null"); } catch (_) { rec = null; }
   if (!rec || !rec.at || Date.now() - rec.at > HUB_RESUME_WINDOW_MS) { hubClearFlashRecord(); return; }
-  // If it's already up, there's nothing to resume — just tidy the record.
+  // If it's already up, there's nothing to resume — unless this app still owes
+  // that hub its self-setup run (quit mid-first-boot with the bundle seeded).
   let up = false;
   try { up = await invoke("hub_probe_hub", { host: rec.host || HUB_HOST }); } catch (_) {}
-  if (up) { hubClearFlashRecord(); return; }
+  if (up && !rec.provision) { hubClearFlashRecord(); return; }
+  if (up && rec.provision) {
+    const banner = $("hub-resume");
+    banner.classList.remove("hidden");
+    $("hub-resume-dot").className = "dot connected";
+    $("hub-resume-text").textContent =
+      "The hub you flashed earlier is up — finishing its setup from this computer…";
+    $("hub-resume-open").classList.remove("hidden");
+    $("hub-resume-open").addEventListener("click", () => openExternal("http://" + (rec.host || HUB_HOST)));
+    $("hub-resume-dismiss").addEventListener("click", () => {
+      hubClearFlashRecord();
+      banner.classList.add("hidden");
+    });
+    $("hub-resume-setup").addEventListener("click", () => {
+      $("hub-resume-setup").classList.add("hidden");
+      hubRunHeadlessSetup($("hub-resume-text"), $("hub-resume-setup"), undefined, rec.pihole);
+    });
+    const report = await hubRunHeadlessSetup(
+      $("hub-resume-text"), $("hub-resume-setup"), undefined, rec.pihole
+    );
+    if (report && report.ok) hubClearFlashRecord();
+    return;
+  }
   const banner = $("hub-resume");
   banner.classList.remove("hidden");
   // Same countdown as the live watch, from the persisted flash time — the
@@ -2939,11 +3086,25 @@ async function hubMaybeResume() {
       if (hub.resumeTimer) { clearInterval(hub.resumeTimer); hub.resumeTimer = null; }
       stopCount();
       $("hub-resume-dot").className = "dot connected";
-      $("hub-resume-text").textContent = "Your hub from earlier is up. 🐤";
       $("hub-resume-open").classList.remove("hidden");
-      hubNotify("Your hub is ready", "Open " + (rec.host || HUB_HOST) + " to log in.");
-      hubChime();
-      hubClearFlashRecord();
+      if (rec.provision) {
+        // The relaunched app still owes this hub its self-setup run.
+        $("hub-resume-text").textContent =
+          "Your hub from earlier is up — finishing its setup from this computer…";
+        $("hub-resume-setup").addEventListener("click", () => {
+          $("hub-resume-setup").classList.add("hidden");
+          hubRunHeadlessSetup($("hub-resume-text"), $("hub-resume-setup"), undefined, rec.pihole);
+        });
+        const report = await hubRunHeadlessSetup(
+          $("hub-resume-text"), $("hub-resume-setup"), undefined, rec.pihole
+        );
+        if (report && report.ok) hubClearFlashRecord();
+      } else {
+        $("hub-resume-text").textContent = "Your hub from earlier is up. 🐤";
+        hubNotify("Your hub is ready", "Open " + (rec.host || HUB_HOST) + " to log in.");
+        hubChime();
+        hubClearFlashRecord();
+      }
     }
   };
   hub.resumeTimer = setInterval(tick, 6000);
@@ -3130,6 +3291,10 @@ function hubSaveSettings() {
         boardId: hub.boardId,
         acctName: $("hub-acct-name").value.trim(),
         acctUser: $("hub-acct-user").value.trim(),
+        provision: $("hub-provision").checked,
+        // Stored even when unchecked: an explicit "no Pi-hole" must survive
+        // a restart just like a yes.
+        pihole: $("hub-provision-pihole").checked,
       })
     );
   } catch (_) {}
@@ -3144,6 +3309,8 @@ function hubRestoreSettings() {
     if (s.hidden) $("hub-hidden-net").checked = true;
     if (s.acctName) $("hub-acct-name").value = s.acctName;
     if (s.acctUser) $("hub-acct-user").value = s.acctUser;
+    if (s.provision) $("hub-provision").checked = true;
+    if ("pihole" in s) $("hub-provision-pihole").checked = !!s.pihole;
     if (s.boardId) hub.boardId = s.boardId; // applied when the board list renders
     // Restored account fields must re-validate, or the panel reads as
     // "untouched" and the account is silently skipped despite showing values.
@@ -3182,8 +3349,12 @@ async function hubPreflight() {
 // Close the loop across the silent 10–20 min: poll the hub until it answers,
 // then invite the user in. Nothing here can hurt the card — it's read-only.
 function hubStartFirstBoot() {
-  // Leave a breadcrumb so a restart/quit mid-first-boot can resume the watch.
-  hubRecordFlash();
+  // Leave a breadcrumb so a restart/quit mid-first-boot can resume the watch —
+  // including whether this app still owes the hub its self-setup run.
+  hubRecordFlash(
+    hub.lastReceipt && hub.lastReceipt.provision_seeded,
+    $("hub-provision-pihole").checked
+  );
   const panel = $("hub-firstboot");
   panel.classList.remove("hidden");
   $("hub-fb-dot").className = "dot reading";
@@ -3213,19 +3384,92 @@ function hubStartFirstBoot() {
     if (up) {
       hubStopFirstBoot(true);
       $("hub-fb-dot").className = "dot connected";
-      $("hub-fb-text").textContent = "It's alive! Your hub is up. 🐤";
       const openBtn = $("hub-fb-open");
       openBtn.classList.remove("hidden");
       openBtn.classList.remove("alive-pop");
       void openBtn.offsetWidth;
       openBtn.classList.add("alive-pop");
-      hubNotify("Your hub is ready", "Open " + HUB_HOST + " to log in.");
-      hubChime();
-      hubClearFlashRecord(); // it's up — nothing left to resume
+      const wantSetup = hub.lastReceipt && hub.lastReceipt.provision_seeded;
+      if (wantSetup) {
+        // The hub is up and the card carries the self-setup bundle — this is
+        // the moment the whole option exists for. Run it now; the record is
+        // cleared only once setup actually finished, so a quit mid-run still
+        // resumes into "run self-setup" rather than losing the thread.
+        $("hub-fb-text").textContent =
+          "It's alive! Finishing setup from this computer — broker, MQTT, Frigate, securaCV…";
+        hubNotify("Your hub is ready", "Finishing setup automatically — no monitor needed.");
+        const report = await hubRunHeadlessSetup($("hub-fb-text"), $("hub-fb-setup"));
+        if (report && report.ok) hubClearFlashRecord();
+        else $("hub-fb-host").classList.remove("hidden");
+      } else {
+        $("hub-fb-text").textContent = "It's alive! Your hub is up. 🐤";
+        hubNotify("Your hub is ready", "Open " + HUB_HOST + " to log in.");
+        hubChime();
+        hubClearFlashRecord(); // it's up — nothing left to resume
+      }
     }
   };
   hub.fbTimer = setInterval(tick, 5000);
   tick();
+}
+
+// ── self-setup over the hub's service console ───────────────────────────────
+// The card carried the bundle; the hub is answering; now this computer is the
+// "other screen" that finishes the job: it connects to the hub's service
+// console (port 22222, unlocked by the maintenance key made at flash time) and
+// runs the bundle's own host_provision.sh — Mosquitto, the MQTT integration,
+// Frigate, securaCV, each step narrated in the console below. Idempotent on
+// the hub side, so retrying after any stumble is always safe.
+// A pasted address arrives however the user found it — "http://10.0.0.5:8123",
+// "homeassistant.local/", a bare IP. Reduce it to the bare host the console
+// connection needs; the backend validates it again.
+function hubCleanHost(raw) {
+  return (raw || "").trim().replace(/^https?:\/\//i, "").replace(/[/:].*$/, "");
+}
+
+async function hubRunHeadlessSetup(statusEl, retryBtn, hostOverride, piholeOverride) {
+  if (hub.headlessBusy) return null;
+  hub.headlessBusy = true;
+  const el = $("hub-console");
+  el.classList.remove("hidden");
+  el.textContent += "\n— finishing hub setup from this computer —\n";
+  el.scrollTop = el.scrollHeight;
+  try {
+    // Console port is fixed; strip :8123 from the probe host. An override (an
+    // IP found in the router when mDNS is blocked) wins when given.
+    const host = hubCleanHost(hostOverride) || HUB_HOST.replace(/:\d+$/, "");
+    // A resumed run passes the choice recorded at flash time; only a live,
+    // in-session run reads the checkbox.
+    const withPihole =
+      piholeOverride === undefined ? !!$("hub-provision-pihole").checked : !!piholeOverride;
+    const report = await invoke("hub_headless_setup", { host, dryRun: false, withPihole });
+    if (report.ok) {
+      statusEl.textContent =
+        "Setup finished — Mosquitto, MQTT, Frigate, and securaCV are installed" +
+        (withPihole
+          ? ", plus Pi-hole. To switch Pi-hole on, point your router's DNS at the hub's IP — until then it sits idle."
+          : ".") +
+        " Open your hub and the SecuraCV panel is waiting. 🐤";
+      hubNotify(
+        "Hub setup finished",
+        "Broker, MQTT, Frigate, and securaCV are installed — open " + HUB_HOST + "."
+      );
+      hubChime();
+      logEvent("ok", "Hub self-setup finished over the service console");
+    } else {
+      statusEl.textContent =
+        (report.note || "The setup run didn't finish.") + " Details are in the console below.";
+      if (retryBtn) retryBtn.classList.remove("hidden");
+      logEvent("err", "Hub self-setup didn't finish (safe to retry)");
+    }
+    return report;
+  } catch (e) {
+    statusEl.textContent = "Couldn't run self-setup: " + e + " — it's safe to try again.";
+    if (retryBtn) retryBtn.classList.remove("hidden");
+    return null;
+  } finally {
+    hub.headlessBusy = false;
+  }
 }
 
 function hubStopFirstBoot(keepPanel) {
@@ -3488,7 +3732,8 @@ function hubArm() {
     ? `${hub.plan ? hub.plan.os_label : "Home Assistant OS"} → ${target.model} ` +
       `(${target.path}, ${hubFmtBytes(target.size_bytes)})` +
       (wifi === null ? " · wired ethernet" : "") +
-      (hub.accountRequested && hub.accountValid ? " · account pre-made" : "")
+      (hub.accountRequested && hub.accountValid ? " · account pre-made" : "") +
+      ($("hub-provision").checked ? " · self-setup" : "")
     : "Pick a disk above first.";
 }
 
@@ -3516,8 +3761,10 @@ async function hubFlash() {
       confirmed: true,
       wifi: hubWifiValue(),
       account: hubAccountValue(),
+      provision: $("hub-provision").checked,
     });
     hub.done = true;
+    hub.lastReceipt = receipt;
     setStatus("hub-result", "Done — written, read back, and verified.", "ok");
     logEvent("ok", "Home Assistant hub written to " + target.model);
     hubShowHatch(receipt);
@@ -3567,6 +3814,7 @@ function hubShowHatch(receipt) {
     ? " Your Wi-Fi went into the image before the write, so it's covered by the same verification."
     : " Plug in ethernet before you power it on.";
   const acctLine = receipt.account_note ? " " + receipt.account_note : "";
+  const provLine = receipt.provision_note ? " " + receipt.provision_note : "";
   const cacheLine = receipt.used_cache ? " (reused your verified local copy — no re-download.)" : "";
   // Shown whenever present. Advice rather than a warning now: nothing is
   // written to the card after the verified write, so a card that wouldn't
@@ -3574,7 +3822,7 @@ function hubShowHatch(receipt) {
   const ejectLine = receipt.eject_note ? " ⚠ " + receipt.eject_note : "";
   $("hub-hatch-body").textContent =
     `${receipt.os_label} is on ${receipt.target_path} — every byte read back and matched ` +
-    `(SHA-256 ${receipt.sha256.slice(0, 16)}…).${cacheLine}${wifiLine}${acctLine}${ejectLine}`;
+    `(SHA-256 ${receipt.sha256.slice(0, 16)}…).${cacheLine}${wifiLine}${acctLine}${provLine}${ejectLine}`;
   // If the account was pre-made, the third step is "log in", not "create".
   const accountMade = receipt.account_seeded;
   // The first step depends on HOW we reached the Pi's storage: a card in a
@@ -3587,6 +3835,9 @@ function hubShowHatch(receipt) {
       "is what starts the first boot."
     : "Take the card out of the reader and put it in your Raspberry Pi (or connect the SSD), " +
       "then power it on.";
+  // With the self-setup seed on the card, the broker/MQTT installs below are
+  // not the user's job — this app does them the moment the hub answers.
+  const selfSetup = receipt.provision_seeded;
   const steps = [
     bootStep,
     "First boot usually takes under 10 minutes while Home Assistant unpacks and downloads " +
@@ -3594,14 +3845,36 @@ function hubShowHatch(receipt) {
       "problem. Best to leave it plugged in for those minutes; if power does get cut, it " +
       "nearly always recovers on the next boot, and the true worst case is simply " +
       "re-flashing this card.",
+    ...(selfSetup
+      ? [
+          "Keep this app open. The moment the hub answers, this app connects to its service " +
+            "console and installs everything itself — Mosquitto broker, the MQTT connection, " +
+            "Frigate, and securaCV" +
+            ($("hub-provision-pihole").checked ? ", plus Pi-hole" : "") +
+            " — narrated in the console below. Nothing to click on the hub.",
+        ]
+      : []),
+    ...(selfSetup && $("hub-provision-pihole").checked
+      ? [
+          "When setup finishes, switch Pi-hole on by pointing your router's DNS at the hub's " +
+            "IP (in the router's DHCP settings). From then on, Pi-hole's page shows every " +
+            "domain every device on your network asks for — the way to see that nothing, " +
+            "Canaries included, is quietly talking out — and known ad/tracker domains are " +
+            "refused for the whole house. Until the router change it sits idle.",
+        ]
+      : []),
     accountMade
       ? `Open http://${HUB_HOST} and log in with the account you just made.`
       : `Open http://${HUB_HOST} on any device in your home and create your account.`,
-    "Once you're in, give your Canaries their meeting point: in Home Assistant go to " +
-      "Settings → Apps → Install app, choose “Mosquitto broker”, and press Start. When " +
-      "Home Assistant then offers to set up the newly discovered “MQTT” integration, accept " +
-      "with the defaults — they're exactly right for Canaries (the broker lives on the hub " +
-      "itself, port 1883).",
+    ...(selfSetup
+      ? []
+      : [
+          "Once you're in, give your Canaries their meeting point: in Home Assistant go to " +
+            "Settings → Apps → Install app, choose “Mosquitto broker”, and press Start. When " +
+            "Home Assistant then offers to set up the newly discovered “MQTT” integration, accept " +
+            "with the defaults — they're exactly right for Canaries (the broker lives on the hub " +
+            "itself, port 1883).",
+        ]),
     "Now make the login your Canaries will use: the broker refuses anonymous connections, " +
       "and Home Assistant's own reserved accounts don't apply to them. Turn on Advanced Mode " +
       "in your profile, then Settings → People → Users → Add user — “securacv” and a " +

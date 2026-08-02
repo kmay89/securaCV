@@ -107,6 +107,14 @@ pub struct HubReceipt {
     account_seeded: bool,
     /// Non-fatal note about the account seed, if requested.
     account_note: Option<String>,
+    /// Whether the self-setup bundle (broker + securaCV + Frigate plan) was
+    /// written to the card.
+    provision_seeded: bool,
+    /// Whether the maintenance key that lets this app finish setup over the
+    /// hub's service console was written to the card.
+    ssh_key_seeded: bool,
+    /// Non-fatal note about the self-setup seed, if requested.
+    provision_note: Option<String>,
     /// Set when the card wouldn't cleanly auto-eject. Courtesy only now: the
     /// settings went into the image before the write, so there is no pending
     /// filesystem write to lose — but a card the OS auto-mounted should still be
@@ -383,6 +391,7 @@ pub async fn hub_flash(
     confirmed: bool,
     wifi: Option<HubWifi>,
     account: Option<HubAccount>,
+    provision: Option<bool>,
 ) -> Result<HubReceipt, String> {
     let cancel = hub_io::CancelToken::default();
     {
@@ -392,8 +401,11 @@ pub async fn hub_flash(
         }
         *guard = Some(cancel.clone());
     }
+    let provision = provision.unwrap_or(false);
     let result = tauri::async_runtime::spawn_blocking(move || {
-        hub_flash_blocking(&app, board_id, disk_path, confirmed, wifi, account, &cancel)
+        hub_flash_blocking(
+            &app, board_id, disk_path, confirmed, wifi, account, provision, &cancel,
+        )
     })
     .await
     .map_err(|e| format!("hub writer worker failed: {e}"));
@@ -543,6 +555,7 @@ pub fn hub_flash_cancel(state: tauri::State<'_, HubFlashState>) -> Result<(), St
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn hub_flash_blocking(
     app: &AppHandle,
     board_id: String,
@@ -550,6 +563,7 @@ fn hub_flash_blocking(
     confirmed: bool,
     wifi: Option<HubWifi>,
     account: Option<HubAccount>,
+    provision: bool,
     cancel: &hub_io::CancelToken,
 ) -> Result<HubReceipt, String> {
     let log = |line: String| {
@@ -627,6 +641,17 @@ fn hub_flash_blocking(
             password: &a.password,
         })?,
         None => Vec::new(),
+    };
+    // The self-setup seed (opt-in): the provisioning bundle plus the
+    // maintenance key that unlocks the hub's service console so THIS app can
+    // run the bundle once the hub is online. The key is minted (or reused)
+    // now, before any bytes move — a machine without ssh-keygen fails in
+    // milliseconds, not after a multi-GB write.
+    let (provision_files, authorized_keys) = if provision {
+        let keys = ensure_maintenance_key(app)?;
+        (hub_io::provision::provision_seed_files(), Some(keys))
+    } else {
+        (Vec::new(), None)
     };
 
     // 3) Get the image — reuse a locally cached, RE-VERIFIED copy when we have
@@ -776,29 +801,39 @@ fn hub_flash_blocking(
     });
     let want_wifi = wifi_seed.is_some();
     let want_account = !account_files.is_empty();
+    let want_provision = !provision_files.is_empty();
 
     // The read-back compares the card against a hash of the image, so once the
     // image carries the settings that hash has to be the patched one — otherwise
     // every seeded flash would report a verification failure on a good card.
     let mut image_sha = raw.sha256.clone();
-    let (wifi_seeded, account_seeded, mut account_note) = if want_wifi || want_account {
+    let (
+        wifi_seeded,
+        account_seeded,
+        mut account_note,
+        provision_seeded,
+        ssh_key_seeded,
+        mut provision_note,
+    ) = if want_wifi || want_account || want_provision {
         let report = hub_io::seed::inject_into_image(
             &raw_path.path,
             wifi_seed.as_ref(),
             &account_files,
+            &provision_files,
+            authorized_keys.as_deref(),
             &mut progress,
         )
         .map_err(|e| {
             format!(
                 "Your settings couldn't be added to the Home Assistant image, so nothing was \
-                 written to your card — it is exactly as you put it in. {e}"
+                     written to your card — it is exactly as you put it in. {e}"
             )
         })?;
         if report.wifi_written {
             log(format!(
-                "✓ Wi-Fi written into the image — {} — the hub will join your network on first boot",
-                report.volume
-            ));
+                    "✓ Wi-Fi written into the image — {} — the hub will join your network on first boot",
+                    report.volume
+                ));
         }
         if report.account_written {
             log("✓ account written into the image (experimental) — first visit should be a login page".to_string());
@@ -808,15 +843,29 @@ fn hub_flash_blocking(
                 "→ the experimental account pre-seed didn't apply: {note}"
             ));
         }
+        if report.provision_written {
+            log("✓ self-setup bundle written into the image (experimental) — this app can finish hub setup once it's online".to_string());
+        }
+        if report.ssh_key_written {
+            log("✓ maintenance key written into the image — delete authorized_keys from the card's boot partition to revoke it".to_string());
+        }
+        if let Some(note) = report.provision_note.as_ref() {
+            log(format!(
+                "→ the experimental self-setup seed didn't apply: {note}"
+            ));
+        }
         image_sha = hub_io::seed::rehash_image(&raw_path.path, cancel, &mut progress)?;
         (
             report.wifi_written,
             report.account_written,
             report.account_note,
+            report.provision_written,
+            report.ssh_key_written,
+            report.provision_note,
         )
     } else {
         log("→ no Wi-Fi or account to seed (wired ethernet assumed)".to_string());
-        (false, false, None)
+        (false, false, None, false, false, None)
     };
 
     // 6) The gate. The download/decompress window is long and /dev paths get
@@ -935,6 +984,25 @@ fn hub_flash_blocking(
         );
     }
 
+    // Same treatment for the self-setup seed: genuinely optional (the by-hand
+    // setup in the guide is the fallback), so a stumble is a note, never a
+    // failed flash.
+    if want_provision && !(provision_seeded && ssh_key_seeded) {
+        provision_note = Some(format!(
+            "The card is perfect and (if set) your Wi-Fi is on it — only the experimental \
+             self-setup seed didn't fully apply, so set up the broker and securaCV from the \
+             guide instead. ({})",
+            provision_note.as_deref().unwrap_or("unknown reason")
+        ));
+    } else if want_provision {
+        provision_note = Some(
+            "Experimental: the self-setup bundle and this app's maintenance key are on the card. \
+             Once the hub is online, this app will offer to finish setup itself — broker, MQTT, \
+             Frigate, and securaCV, narrated step by step."
+                .to_string(),
+        );
+    }
+
     Ok(HubReceipt {
         board_id: receipt.board_id,
         os_label: receipt.os_label,
@@ -944,9 +1012,305 @@ fn hub_flash_blocking(
         wifi_seeded,
         account_seeded,
         account_note,
+        provision_seeded,
+        ssh_key_seeded,
+        provision_note,
         eject_note,
         used_cache,
     })
+}
+
+// ── the self-setup companion: mint the maintenance key, run the bundle ──────
+//
+// The decisions (key validation, host validation, the exact ssh argument list,
+// reflash detection) live in hub_core::hub_headless, host-tested on every PR.
+// What lives here is the thin I/O edge: a keypair on disk, a spawned `ssh`,
+// and lines streamed to the UI.
+
+/// Where the maintenance keypair and the hubs' host keys live: the app's own
+/// data dir, never the user's `~/.ssh`.
+fn ssh_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|d| d.join("hub-ssh"))
+        .map_err(|e| format!("no app data directory for the maintenance key: {e}"))
+}
+
+/// Mint (or reuse) the maintenance keypair and return the `authorized_keys`
+/// content to seed. The private key never leaves this computer; only the
+/// public half goes onto the card. Minting shells out to the OS's own
+/// `ssh-keygen` — present on every macOS and Linux install — so the crate
+/// carries no key-generation cryptography of its own.
+fn ensure_maintenance_key(app: &AppHandle) -> Result<String, String> {
+    let dir = ssh_dir(app)?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("couldn't create the maintenance key folder: {e}"))?;
+    let key = dir.join("id_ed25519");
+    let pubkey = dir.join("id_ed25519.pub");
+    if !key.exists() || !pubkey.exists() {
+        // A half-pair (crash mid-mint) would make ssh-keygen prompt; clear it.
+        let _ = std::fs::remove_file(&key);
+        let _ = std::fs::remove_file(&pubkey);
+        let out = std::process::Command::new("ssh-keygen")
+            .args(["-q", "-t", "ed25519", "-N", "", "-C", "securacv-flasher"])
+            .arg("-f")
+            .arg(&key)
+            .output()
+            .map_err(|e| format!("couldn't run ssh-keygen to mint the maintenance key: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "ssh-keygen couldn't mint the maintenance key: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+    }
+    let contents = std::fs::read_to_string(&pubkey)
+        .map_err(|e| format!("couldn't read the maintenance public key: {e}"))?;
+    hub_core::hub_headless::authorized_keys_content(&contents)
+        .map_err(|e| format!("the maintenance public key looks wrong: {}", e.message()))
+}
+
+/// What a self-setup run reported, for the UI.
+#[derive(Serialize)]
+pub struct HeadlessReport {
+    /// True when the remote runner finished with exit code 0.
+    ok: bool,
+    /// The remote exit code, when ssh got far enough to run anything.
+    exit_code: Option<i32>,
+    /// Calm advice when not ok — reachability vs. a partway stop.
+    note: Option<String>,
+}
+
+/// Guard: one self-setup run at a time.
+#[derive(Default)]
+pub struct HeadlessState(pub std::sync::Mutex<bool>);
+
+/// Whether this computer holds a maintenance key — i.e., whether it has ever
+/// flashed a self-setup card. Cheap and read-only; the UI uses it to offer
+/// "finish hub setup" as a standing action, not only in the minutes right
+/// after a flash. (A hub flashed today and first booted next weekend would
+/// otherwise fall outside the resume window and nobody would run its bundle.)
+#[tauri::command]
+pub fn hub_headless_available(app: AppHandle) -> bool {
+    ssh_dir(&app)
+        .map(|d| d.join("id_ed25519").exists())
+        .unwrap_or(false)
+}
+
+/// Run the seeded bundle on the hub, from this computer, over the hub's
+/// service console — the step that makes a monitor-less first boot end with
+/// the broker, MQTT, Frigate, and securaCV installed. Output streams over
+/// `hub:headless-log`; the run is idempotent on the hub side, so a retry after
+/// any failure is always safe.
+#[tauri::command]
+pub async fn hub_headless_setup(
+    app: AppHandle,
+    state: tauri::State<'_, HeadlessState>,
+    host: String,
+    dry_run: Option<bool>,
+    with_pihole: Option<bool>,
+) -> Result<HeadlessReport, String> {
+    {
+        let mut busy = state.0.lock().map_err(|_| "headless state poisoned")?;
+        if *busy {
+            return Err("a self-setup run is already in progress".to_string());
+        }
+        *busy = true;
+    }
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        hub_headless_blocking(
+            &app,
+            &host,
+            dry_run.unwrap_or(false),
+            with_pihole.unwrap_or(false),
+        )
+    })
+    .await
+    .map_err(|e| format!("self-setup worker failed: {e}"));
+    if let Ok(mut busy) = state.0.lock() {
+        *busy = false;
+    }
+    result?
+}
+
+fn hub_headless_blocking(
+    app: &AppHandle,
+    host: &str,
+    dry_run: bool,
+    with_pihole: bool,
+) -> Result<HeadlessReport, String> {
+    let log = |line: String| {
+        let _ = app.emit("hub:headless-log", line);
+    };
+    let dir = ssh_dir(app)?;
+    let key = dir.join("id_ed25519");
+    if !key.exists() {
+        return Err(
+            "this computer has no maintenance key, so it can't reach that hub's service \
+             console — the key is made when you flash a card with self-setup turned on"
+                .to_string(),
+        );
+    }
+    let known_hosts = dir.join("known_hosts");
+    let args = hub_core::hub_headless::ssh_args(
+        host,
+        &key.to_string_lossy(),
+        &known_hosts.to_string_lossy(),
+        dry_run,
+        with_pihole,
+    )?;
+
+    log(format!(
+        "→ connecting to the hub's service console (port {})…",
+        hub_core::hub_headless::CONSOLE_PORT
+    ));
+    let (code, transcript) = run_ssh(&log, &args)?;
+    if code != 0 && hub_core::hub_headless::host_key_changed(&transcript) {
+        // A changed host key is AMBIGUOUS. A reflash produces it — but so does
+        // mDNS/DHCP handing this name to another machine, or a LAN peer
+        // answering for the hub. Auto-clearing the pin (and, worse, the whole
+        // file, discarding every other hub's pin) would silently trust
+        // whatever replied. So: stop, say exactly what happened, and let the
+        // operator re-pair deliberately. Re-running self-setup after a genuine
+        // reflash is a decision, not a default.
+        return Ok(HeadlessReport {
+            ok: false,
+            exit_code: Some(code),
+            note: Some(format!(
+                "This hub's identity is not the one we saw last time. After re-flashing the \
+                 same hub that is expected — but the same thing happens if another device on \
+                 your network answered to that address, so we won't trust it automatically. \
+                 If you just re-flashed it, forget the old identity and try again: delete \
+                 {}. If you did not, stop and check what is answering at that address first.",
+                known_hosts.display()
+            )),
+        });
+    }
+
+    let note = if code == 0 && transcript.contains("INCOMPLETE_OPTIONAL:") {
+        // The executor finished, but deliberately carried on past a step it
+        // could not complete (today: Home Assistant's MQTT config flow, which
+        // may ask for credentials a headless run can't answer). Exit 0 means
+        // "nothing is half-built", NOT "everything is connected" — so report
+        // the remainder instead of claiming success. Without this the user is
+        // told MQTT is installed while HA is subscribed to nothing.
+        Some(
+            transcript
+                .lines()
+                .find(|l| l.contains("INCOMPLETE_OPTIONAL:"))
+                .map(|l| {
+                    let rest = l.split("INCOMPLETE_OPTIONAL:").nth(1).unwrap_or("").trim();
+                    format!("Setup finished, with one thing left for you: {rest}")
+                })
+                .unwrap_or_else(|| {
+                    "Setup finished, but one optional step needs finishing by hand in Home \
+                     Assistant."
+                        .to_string()
+                }),
+        )
+    } else if code == 0 {
+        None
+    } else if transcript.contains("isn't running yet") {
+        // host_provision.sh's own "too early" answer: the console is up but
+        // Home Assistant Core hasn't finished its first-boot download. Purely
+        // a matter of waiting — say so instead of sounding broken.
+        Some(
+            "The hub is still finishing its first boot — everything is fine, it just isn't \
+             ready to be set up yet. Try again in a few minutes."
+                .to_string(),
+        )
+    } else if code == 255 && !hub_core::hub_headless::host_key_changed(&transcript) {
+        // 255 is ssh's own "couldn't connect/authenticate" — most often the
+        // console isn't up yet (it opens during boot) or the card was flashed
+        // without the self-setup option.
+        Some(
+            "Couldn't reach the hub's service console. It opens a minute or two into boot — \
+             wait a moment and try again. If this card was flashed without self-setup, the \
+             console never opens: set the hub up from the guide instead."
+                .to_string(),
+        )
+    } else {
+        Some(
+            "The setup run stopped partway. That's safe — it never does the same step twice — \
+             so once the cause above is fixed, run it again and it picks up where it left off."
+                .to_string(),
+        )
+    };
+    Ok(HeadlessReport {
+        // Fully-finished only: a run that skipped an optional step is reported
+        // as not-ok WITH a note, so the UI offers the retry/guidance path
+        // rather than a clean "all done".
+        ok: code == 0 && !transcript.contains("INCOMPLETE_OPTIONAL:"),
+        exit_code: Some(code),
+        note,
+    })
+}
+
+/// Spawn `ssh` and stream every line of output (both channels) to the UI,
+/// returning the exit code and the collected transcript. The transcript is
+/// only for failure classification — secrets never appear in it because the
+/// remote runner never prints any.
+fn run_ssh(log: &dyn Fn(String), args: &[String]) -> Result<(i32, String), String> {
+    use std::io::BufRead;
+    let mut child = std::process::Command::new("ssh")
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("couldn't run ssh (is OpenSSH installed?): {e}"))?;
+    let transcript = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let mut readers = Vec::new();
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    for stream in [
+        stdout.map(|s| Box::new(s) as Box<dyn std::io::Read + Send>),
+        stderr.map(|s| Box::new(s) as Box<dyn std::io::Read + Send>),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let transcript = transcript.clone();
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        readers.push(rx);
+        std::thread::spawn(move || {
+            for line in std::io::BufReader::new(stream)
+                .lines()
+                .map_while(Result::ok)
+            {
+                if let Ok(mut t) = transcript.lock() {
+                    t.push_str(&line);
+                    t.push('\n');
+                }
+                let _ = tx.send(line);
+            }
+        });
+    }
+    // Drain both channels as lines arrive, in this thread, so emission order
+    // roughly follows real output order without the UI needing to merge.
+    let mut open = readers;
+    while !open.is_empty() {
+        open.retain(
+            |rx| match rx.recv_timeout(std::time::Duration::from_millis(200)) {
+                Ok(line) => {
+                    log(line);
+                    // Drain any burst that queued behind it, so narration keeps
+                    // pace with the remote run instead of trickling out.
+                    while let Ok(more) = rx.try_recv() {
+                        log(more);
+                    }
+                    true
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => true,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => false,
+            },
+        );
+    }
+    let status = child
+        .wait()
+        .map_err(|e| format!("couldn't wait for ssh: {e}"))?;
+    let t = transcript.lock().map(|t| t.clone()).unwrap_or_default();
+    Ok((status.code().unwrap_or(-1), t))
 }
 
 /// A path that deletes its file when dropped — used for the ~2.5 GB raw image

@@ -23,6 +23,27 @@ enum NightScreen : uint8_t {
   NIGHT_SCREEN_OFF = 1,
 };
 
+// Display orientation — the 7"/dash RGB glass only (the round watch and the
+// fixed-portrait SPI nightstands ignore it). 0..3 = 0°/90°/180°/270°
+// clockwise; the odd values are portrait, the 800x480 landscape glass turned
+// on its side for a wall column or a tall bedside face. Rotation is rendered
+// in software (LVGL) — the panel always scans its native landscape.
+enum Rotation : uint8_t {
+  ROT_LANDSCAPE     = 0,   // 0°   — the native wall/desk poster (default)
+  ROT_PORTRAIT      = 1,   // 90°  — turned clockwise; the column face
+  ROT_LANDSCAPE_INV = 2,   // 180° — upside down (ceiling / cable-up mounts)
+  ROT_PORTRAIT_INV  = 3,   // 270° — turned counter-clockwise
+};
+
+// "Up to 50% sustained": the 7"/dash backlight is binary (CH422G, no PWM),
+// so daytime brightness is a RENDERED luminance scrim, not a driven level.
+// The slider dims the always-on glass down to half and no darker — going
+// darker than this is Night's job, not a brightness a wall panel should sit
+// at all day (and a rendered scrim can't lower real backlight power).
+constexpr uint8_t BRIGHT_PCT_MIN  = 50;
+constexpr uint8_t BRIGHT_PCT_MAX  = 100;
+constexpr uint8_t BRIGHT_PCT_STEP = 10;
+
 struct Settings {
   uint8_t  day_pct;        // 20..100 — scales day + ambient brightness
   uint8_t  night_screen;   // NightScreen
@@ -32,6 +53,8 @@ struct Settings {
   uint8_t  night_end_hh;   // 0..23 local
   uint16_t night_duty;     // night-profile duty (13-bit), floor-clamped
   uint8_t  character;      // canary::ui::Character; 0 = Quiet Glass (default)
+  uint8_t  rotation;       // Rotation; 0 = landscape (default). Dash glass only.
+  uint8_t  bright_pct;     // 50..100 rendered daytime luminance. Dash glass only.
 };
 
 struct NightCal {
@@ -106,6 +129,72 @@ inline bool hours_in_window(int hh, int start_hh, int end_hh) {
   if (start_hh == end_hh) return false;
   if (start_hh < end_hh) return hh >= start_hh && hh < end_hh;
   return hh >= start_hh || hh < end_hh;
+}
+
+// ── Orientation geometry (host-testable; no LVGL, no Arduino) ────────────
+
+inline bool rotation_is_portrait(uint8_t rot) { return (rot & 1) != 0; }
+
+inline const char* rotation_name(uint8_t rot) {
+  switch (rot & 3) {
+    case ROT_PORTRAIT:      return "portrait";
+    case ROT_LANDSCAPE_INV: return "landscape flipped";
+    case ROT_PORTRAIT_INV:  return "portrait flipped";
+    default:                return "landscape";
+  }
+}
+
+// The logical LVGL canvas for a rotation, given the panel's native landscape
+// size. Portrait swaps the axes; the UI lays itself out in these dimensions.
+inline void rotation_logical_dims(uint8_t rot, int native_w, int native_h,
+                                  int* out_w, int* out_h) {
+  if (rotation_is_portrait(rot)) { *out_w = native_h; *out_h = native_w; }
+  else                          { *out_w = native_w; *out_h = native_h; }
+}
+
+// Map a raw native-panel touch (0..native_w-1, 0..native_h-1) into the
+// rotated logical frame the UI drew itself in — the exact inverse of the
+// software render rotation, so a tap lands where the finger points at any
+// orientation. (Bench note: if an axis reads mirrored on real glass, flip
+// the sign on that branch — the panel's touch origin is validated there.)
+inline void rotation_map_touch(uint8_t rot, int native_w, int native_h,
+                               int raw_x, int raw_y, int* out_x, int* out_y) {
+  switch (rot & 3) {
+    case ROT_PORTRAIT:  // 90° CW: (px,py) -> (py, native_w-1-px)
+      *out_x = raw_y;
+      *out_y = native_w - 1 - raw_x;
+      break;
+    case ROT_LANDSCAPE_INV:  // 180°
+      *out_x = native_w - 1 - raw_x;
+      *out_y = native_h - 1 - raw_y;
+      break;
+    case ROT_PORTRAIT_INV:  // 270° CW: (px,py) -> (native_h-1-py, px)
+      *out_x = native_h - 1 - raw_y;
+      *out_y = raw_x;
+      break;
+    default:  // ROT_LANDSCAPE
+      *out_x = raw_x;
+      *out_y = raw_y;
+      break;
+  }
+}
+
+// ── Rendered brightness (host-testable) ──────────────────────────────────
+
+// Clamp a brightness percent to the [50..100] sustained range.
+inline uint8_t bright_pct_clamp(int pct) {
+  if (pct < BRIGHT_PCT_MIN) return BRIGHT_PCT_MIN;
+  if (pct > BRIGHT_PCT_MAX) return BRIGHT_PCT_MAX;
+  return (uint8_t)pct;
+}
+
+// Black-overlay opacity (0..255) for a brightness percent: 100% = clear,
+// 50% floor = a half-strength scrim (LVGL LV_OPA_50 territory). This is the
+// sustained daytime dimming the binary backlight can't do in hardware.
+inline uint8_t bright_scrim_opa(uint8_t bright_pct) {
+  if (bright_pct >= BRIGHT_PCT_MAX) return 0;
+  const uint8_t p = bright_pct_clamp(bright_pct);
+  return (uint8_t)(((100 - (int)p) * 255) / 100);
 }
 
 }  // namespace canary::glass

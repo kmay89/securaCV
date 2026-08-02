@@ -151,13 +151,47 @@ so this was a v5→v5 port (namespace, `MqttOptions::new`/`Broker`,
   `backend-tract` detector (`src/detect/backends/tract.rs`) compiles unchanged
   against the new major version.
 
+### Group 3 — `rsa 0.9.10` (RUSTSEC-2023-0071, Medium) — NOT REACHABLE, IGNORED
+
+- **Bug:** the Marvin Attack. `rsa`'s private-key operations are not
+  constant-time, so an attacker who can submit ciphertexts and measure how
+  long the victim takes to process them can recover the RSA **private key**.
+  CVSS 5.9 (medium).
+- **Where it comes from:** exactly one crate — `c2pa 0.90.3`, the Content
+  Credentials SDK behind the optional, non-default `c2pa-export` feature.
+  `c2pa` requires `rsa ^0.9.10` as a **non-optional** dependency (it must be
+  able to *verify* manifests signed with RSA-PSS by other producers), so no
+  feature flag of ours drops it from `Cargo.lock`.
+- **Why securaCV is not exposed:** the attack recovers an RSA private key by
+  timing repeated private-key operations, and **securaCV holds no RSA private
+  key at all.** The C2PA credential chain is Ed25519 end to end — the CA and
+  the signing leaf are `PKCS_ED25519` certificates derived from the device
+  seed, and every manifest is signed with `SigningAlg::Ed25519`
+  (`src/c2pa_export.rs`). The only way `rsa` code can run is verifying a
+  third-party RSA-signed manifest, which is a *public*-key operation: there
+  is no secret in the process for a timing sidechannel to leak. On top of
+  that, `c2pa` is compiled in only when someone opts into `c2pa-export`; it
+  is not in the default feature set.
+- **Fix not yet possible:** there is no fixed release on the `0.9` line. The
+  constant-time rewrite lands in `rsa 0.10`, still a release candidate
+  (`0.10.0-rc.18`), and `c2pa 0.90.3` — the newest published version — pins
+  `rsa ^0.9.10`. Nothing we can bump changes the resolved version. The real
+  fix is upstream: `c2pa` adopting `rsa 0.10` once it ships stable.
+- **What we did instead:** the advisory is ignored explicitly and in the open,
+  in [`.cargo/audit.toml`](.cargo/audit.toml), with this analysis as its
+  justification. It is an entry with a name on it, not a silenced gate —
+  **delete it the moment `c2pa` ships a release that resolves `rsa` past the
+  advisory.** Everything else `cargo audit` reports stays fatal.
+
 ### Status
 
-All five alerts above are resolved by dependency migrations (no securaCV code
-was ever on a reachable path). Both vulnerable crate versions —
-`rustls-webpki 0.102.8` and `time 0.3.41` — are absent from `Cargo.lock`. This
-section is retained as an audit record; remove entries once the corresponding
-Dependabot alerts are closed.
+The five alerts in Groups 1 and 2 are resolved by dependency migrations (no
+securaCV code was ever on a reachable path). Both vulnerable crate versions —
+`rustls-webpki 0.102.8` and `time 0.3.41` — are absent from `Cargo.lock`.
+Group 3 has no reachable fix and is ignored under the reasoning recorded
+above. This section is retained as an audit record; remove entries once the
+corresponding Dependabot alerts are closed, or — for Group 3 — once an
+upstream fix lets the ignore go.
 
 ## Non-goals
 

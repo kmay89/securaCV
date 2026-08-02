@@ -5,11 +5,16 @@ it** so they can never drift apart:
 
 - the isometric **room** (`lab-3d`) — one station per stage
 - the stage **rail** + the **all-pages index** on the Lab landing
-- the **Mac app**'s toolbar tab bar (`app.nav: "stage-tabs"` → one tab per stage)
+- the **desktop app** (`desktop-lab/`), which opens the same adaptive shell in
+  a native window (`app.nav: "lab-shell"` — the sidebar/tab bar the shell
+  already renders from this manifest, not a second native nav)
 - the marketing site's **`/lab`** page (the linear "stops")
 
 If it's not in here, it doesn't appear on the line. That's the point: nothing gets
-orphaned, and the six surfaces stay in lockstep.
+orphaned, and the six surfaces stay in lockstep. **This is enforced, not hoped:**
+`tests/build_line.test.js` fails CI if a committed page is missing from the
+manifest, a manifest reference points at nothing, a redirect target doesn't
+resolve, or the room's offline slug map drops a bench.
 
 ## Shape
 
@@ -32,7 +37,9 @@ orphaned, and the six surfaces stay in lockstep.
   "lab":  "boards.html",       // the canary-local page it opens
   "real": false,               // true = boots the actual firmware (WASM) or real hardware
   "kind": "viewer",            // firmware | hardware | sim | configurator | chooser | setup | crypto
-  "status": "rename",          // keep | rename | fold | promote  (matches the page ledger)
+  "status": "rename",          // keep (name stands) | rename (new noun, old slug
+                               // redirected) | fold (became a depth of another
+                               // bench) | promote (grew from a sub-page to a bench)
   "redirectFrom": "board-room",// old slug → auto-redirect (only when renamed)
   "wasNamed": "The Board Room",// for the changelog / redirect note
   "desc": "Spin every real board in 3D; ‘Wire it’ stages the harness.",
@@ -43,7 +50,8 @@ orphaned, and the six surfaces stay in lockstep.
 ### Stage 4 is options, not a fork
 
 Stage 4 (`Sense`) sets `"options": true` and uses `tracks` instead of
-`benches` — one track per sense (camera, radar, and whatever docks next).
+`benches` — one track per sense (camera, radar and sound today; whatever
+docks next).
 The build line itself stays straight: tracks are options **at** the stage,
 never separate paths **through** it, so renderers draw one line 1→6 and
 list the senses side by side. `optionsNote` carries the one-line explainer
@@ -57,6 +65,7 @@ basic↔advanced or understand↔do toggle) instead of two competing entries:
 - `sense.html` + `senselab.html` → **The Sense** (Basic ↔ Advanced)
 - `house.html` + `scenes.html` → **The Canary House** (+ "Watch it work")
 - `vault.html` + `operator.html` → **The Vault** (Understand it ↔ Set up break-glass)
+- `catalog.html` + `find.html` → **The Case Catalog** (Browse ↔ the guided finder)
 
 ## HTML documentation inventory
 
@@ -91,4 +100,5 @@ same source of truth instead of maintaining a separate tablet map.
 
 `noun` is what a first-time visitor already pictures; the file name is plumbing.
 Where they diverged (`homeassistant.html` = "The Hub", `wap.html` = "First boot"),
-the manifest carries the real noun and a redirect — see the vocabulary audit.
+the manifest carries the real noun and a redirect, and `wasNamed` records what
+the page used to call itself so old references stay traceable.

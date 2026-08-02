@@ -17,6 +17,46 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.3.9 — 2026-08-01
+
+- **The hub can now set itself up — no monitor, ever.** A new opt-in on Build a
+  Hub, "Let this app finish hub setup by itself," puts two more things on the
+  card next to your Wi-Fi: the securaCV **self-setup bundle** (the same narrated,
+  never-does-a-step-twice installer the guide documents) and a **maintenance
+  key** minted on your computer. After first boot, the app's own "watching for
+  your hub" step doesn't stop at "It's alive!" — it connects to the hub's
+  service console over your network and installs the whole stack itself: the
+  Mosquitto broker, the MQTT connection Home Assistant needs to actually *use*
+  the broker, Frigate, and the securaCV witness kernel, each step narrated in
+  the console so you can watch your house being configured and know why.
+  Experimental until it's been proven on a real first boot — everything is
+  verified up to the card (the bundle rides the same read-back verification as
+  the Wi-Fi), and the fallback is exactly the by-hand setup the guide already
+  walks; a stumble is a note, never a failed flash.
+- **Pi-hole, offered honestly.** Self-setup can also install Pi-hole — the
+  widely-used open-source DNS service — as a recommended companion, on by
+  default in the panel and skippable with one untick. The pitch is deliberately
+  not "ad blocking": securaCV's promise is devices that don't talk out, and
+  Pi-hole's local query log is how you *check* that promise instead of taking
+  our word — every domain every device (Canaries included) asks for, on one
+  page that never leaves your house. The panel is equally plain about the
+  trade: to say *which* device asked, Pi-hole logs client IP + domain + time
+  (never page contents), that log stays on the hub, and retention is yours to
+  shorten or switch off. It installs idle and does nothing until you point
+  your router's DNS at the hub; the app says exactly that.
+- **Quit mid-first-boot and nothing is lost.** The resume banner now remembers
+  when a hub still needs its self-setup run, and picks it up the moment the hub
+  answers — with a "Run self-setup again" button if a run stops partway (safe:
+  it never repeats a finished step).
+- **Honest about the key.** The maintenance key's private half stays in the
+  app's data folder and never leaves your computer; only the public half goes
+  on the card, and deleting `authorized_keys` from the card's boot partition
+  revokes it. And if the hub's identity ever differs from the one seen last
+  time, the app **stops and tells you** rather than trusting the new one: after
+  re-flashing that's expected, but the same signal appears if something else on
+  your network answered to that address, so re-pairing is your call, not a
+  silent default.
+
 ## 0.3.8 — 2026-07-31
 
 - **Force quitting the Flasher can no longer stop it from opening again.** If

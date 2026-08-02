@@ -30,7 +30,12 @@ jobs:
   render:
     name: Render + mesh check
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The 7in seated-fit suite is the long pole: the two portrait dock poses
+    # and the TPU gates are full-assembly CGAL intersections that take tens of
+    # minutes on a 2-core runner. 30 min was enough for either branch's gates
+    # alone; the merged suite (5 dock + 7 fitment gates) blew straight through
+    # it — the job died as "cancelled" at 30:15 with the geometry all green.
+    timeout-minutes: 75
     defaults:
       run:
         working-directory: docs/hardware/enclosure
@@ -39,6 +44,14 @@ jobs:
 
       - name: Web-builder manifest is in sync with the sources
         run: python3 gen_builder_manifest.py --check
+
+      # The 7" case debosses its own revision. gen_stamp.py refuses to
+      # regenerate when the geometry moved and STAMP_REV did not, so a stale
+      # stamp cannot reach a print: either the committed file is out of date
+      # (caught here) or the revision was never bumped (caught by the
+      # generator, locally and here).
+      - name: Build stamp matches the geometry it claims
+        run: python3 gen_stamp.py --check
 
       - name: Install OpenSCAD + admesh
         run: |
@@ -116,12 +129,20 @@ jobs:
           fit locate solid "the pocket does not stop the slab sliding — is it sized to the tray cavity instead of the glass?" || exit 1
           fit frame_glass empty || exit 1   # one-piece frame vs the panel — cavity, ledge and windows must clear it
           fit frame_ledge solid "the adhesive ledge is missing from under the panel border — did the ledge/boss datum drift?" || exit 1
+          fit stand empty || exit 1   # frame seated in the desk dock — must not collide (also proves key/slot alignment)
+          fit seat  solid "the dock's pads never touch the seated frame — nothing carries the case" || exit 1
+          fit stand_p  empty || exit 1   # PORTRAIT dock pose, turned one way — keys/ribs must miss solid wall
+          fit stand_p2 empty || exit 1   # ...and turned the other way (the side windows are asymmetric)
+          fit seat_p solid "portrait: the well ribs never touch the case — nothing carries it" || exit 1
           # TPU fitments: every opening gets TWO gates — one probe vs the FRAME
           # (the aperture really is open) and one vs the installed fitment (it
           # really engages it). One without the other passes a deleted window.
           fit frame_usb_head empty || exit 1   # head-sized prism through the port — must pass clean
           fit frame_btn_window empty || exit 1 # BOOT/RESET window really open through the wall
           fit frame_sd_window empty || exit 1  # SD opening really open through the plate
+          fit frame_adh_rail empty || exit 1   # adhesive rails: the smooth zones really are uncut plate
+          fit sd_tether_hole empty || exit 1   # tether anchor hole really open through the plate
+          fit sd_tether_barb solid "the SD cover's barb misses its anchor hole — strap length, hole position or install transform drifted" || exit 1
           fit frame_usb_seal solid "the grommet no longer fills the USB port — waist or installed transform drifted" || exit 1
           fit frame_btn_plug solid "the BOOT/RESET plug misses its window — waist or installed transform drifted" || exit 1
           fit btn_plug_glass empty || exit 1   # the plug (pips, lip included) must never touch the panel
@@ -132,6 +153,72 @@ jobs:
             echo "::error::fit gate is inert — a broken render passed as empty"; exit 1
           fi
           echo "fit gate self-test: a failed render is correctly rejected"
+          # Battery bay gates — parts on the SOURCE file, deliberately: -D
+          # only reaches the file it is given, and these check battery
+          # VARIANTS, so the probe and the override must live together.
+          bfit() { # bfit <battery> <part> <empty|solid> [msg]
+            rm -f /tmp/fit.stl
+            out=$(openscad --export-format binstl -o /tmp/fit.stl \
+                  -D "battery=\"$1\"" -D "part=\"$2\"" canary_s3_lcd7.scad 2>&1) || true
+            if printf '%s' "$out" | grep -qE 'ERROR|WARNING'; then
+              echo "::error::7in battery gate '$1/$2': render failed, so nothing was verified"
+              printf '%s\n' "$out"; return 1
+            fi
+            if [ "$3" = empty ]; then
+              if [ -f /tmp/fit.stl ]; then
+                echo "::error::7in battery gate '$1/$2': parts intersect (must be empty)"; return 1
+              fi
+              printf '%s' "$out" | grep -q 'Current top level object is empty' || {
+                echo "::error::7in battery gate '$1/$2': no output and no empty marker — did it evaluate?"
+                printf '%s\n' "$out"; return 1; }
+              echo "battery gate '$1/$2': empty, as required"
+            else
+              if [ ! -f /tmp/fit.stl ]; then
+                echo "::error::7in battery gate '$1/$2': $4"; return 1
+              fi
+              echo "battery gate '$1/$2': contact geometry present, as required"
+            fi
+            return 0
+          }
+          for b in 3000 10000; do
+            bfit $b bat_probe_fit  empty || exit 1   # cavity, curb and rails must clear the pack
+            bfit $b bat_probe_seat solid "the rails never touch the pack — nothing carries it" || exit 1
+            bfit $b bat_probe_grip solid "the fingers never reach the pack — nothing retains it" || exit 1
+          done
+          # ...and the DOCK, for every build. These run here rather than through
+          # the fitcheck because -D does not cross a use<> boundary: a dock check
+          # driven from the fitcheck can only ever test the no-battery case, which
+          # is exactly how a deeper case drifted off the dock's centring keys
+          # unnoticed. none is included so the stock build is covered too.
+          # leash gates: the frame must carry the anchor hole, and the
+          # fitment's barb must actually reach it — one without the other
+          # passes a case nobody can make captive
+          bfit none port_teth_hole empty || exit 1
+          bfit none port_teth_barb solid "the port fitment's barb misses its anchor hole — strap length or anchor position drifted" || exit 1
+          # ...and a third, because the pair above passed a barb that reached
+          # its hole and then kept going: the head stood up to 2.8 mm proud of
+          # the wall you look at, with the counterbore sitting behind it doing
+          # nothing. "Reaches" is not "stops there".
+          bfit none port_barb_proud empty || exit 1
+          # Hung on its keyholes the case bears on the back plate, so nothing
+          # may stand proud of it — a leash head or a cover lip that does makes
+          # the case rock on that point instead of lying flat on the wall.
+          for b in none 3000 10000; do
+            bfit $b back_flush empty || exit 1
+          done
+          # THREE-COLOUR PARTITION. fil_body/fil_ink/fil_accent are loaded into
+          # the slicer as parts of ONE object, so they have to tile the frame
+          # exactly: overlap prints twice (and the slicer picks a filament
+          # arbitrarily), a gap prints as a void sealed inside a wall. Neither
+          # shows up in a slicer preview until it is a part in your hand.
+          bfit none fil_overlap empty || exit 1
+          bfit none fil_gap     empty || exit 1
+          for b in none 3000 10000; do
+            bfit $b dock_probe_fit  empty || exit 1   # seated case must not collide
+            bfit $b dock_probe_seat solid "the dock's pads never touch the seated case — nothing carries it" || exit 1
+            bfit $b dock_probe_p    empty || exit 1   # portrait, turned one way
+            bfit $b dock_probe_p2   empty || exit 1   # ...and the other
+          done
 
       - name: Invalid configs must fail their assertions
         run: |

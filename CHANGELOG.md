@@ -2,6 +2,111 @@
 
 ## [Unreleased]
 
+### `cargo audit` goes green again — with the one unfixable advisory named, not hidden
+
+The weekly dependency audit has been failing since 2026-07-27 on a single
+advisory, which meant every lockfile-touching PR inherited a red security
+gate that had nothing to do with it — the exact way a real finding gets
+missed.
+
+- **The advisory:** RUSTSEC-2023-0071, the Marvin Attack — `rsa 0.9.10`'s
+  private-key operations aren't constant-time, so timing can leak the RSA
+  private key (5.9 medium).
+- **There is no bump that fixes it.** `rsa` enters the tree through exactly
+  one crate, `c2pa 0.90.3` (newest published), which requires `rsa ^0.9.10`
+  non-optionally. The constant-time rewrite is in `rsa 0.10`, still a
+  release candidate. Upstream `c2pa` is the only real fix.
+- **securaCV was never on the vulnerable path.** The attack recovers an RSA
+  *private* key, and we hold none: the C2PA credential chain is Ed25519 end
+  to end (`PKCS_ED25519` certs, `SigningAlg::Ed25519`), and `c2pa` compiles
+  in only behind the optional, non-default `c2pa-export` feature. `rsa` can
+  only ever run a public-key verification here — no secret to leak.
+- **So it is ignored in the open**, in the new `.cargo/audit.toml`, with the
+  full reachability analysis recorded in SECURITY.md as "Group 3" and a
+  standing instruction to delete the entry once `c2pa` moves off `rsa 0.9`.
+  Every other advisory stays fatal; the 9 informational warnings are
+  unchanged. Verified locally: `cargo audit` exits 1 without the config and
+  0 with it, on the same `Cargo.lock`.
+
+### The Lab's build line is finally complete — and it can't silently rot again
+
+The bench migration begun with the Lab shell is finished: every committed
+page now lives on the six-stage build line, and a new CI gate keeps it that
+way.
+
+- **Three finished benches come out of the shadows.** The Case Catalog
+  (browse every enclosure, with the three-question finder as its guided
+  depth) docks at Build; "Listen for a smoke alarm" — the WAP's ears, real
+  firmware wasm — docks at Sense as the new **Sound** track, alongside
+  camera and radar. All three were built, tested and cross-linked, but
+  absent from `build-line.json`, so the shell, the room, the site map and
+  the desktop app never showed them.
+- **The map now contains itself.** `site-map.html` is listed in the
+  manifest's HTML inventory it renders.
+- **The completeness gate the design always promised.**
+  `canary-local/tests/build_line.test.js` fails CI when a committed page is
+  missing from the manifest, a manifest reference points at nothing, a
+  redirect target doesn't resolve, slugs collide, or the room's offline
+  slug map drops a bench — the "if it's not in here, it doesn't appear on
+  the line" rule, enforced instead of hoped. Three existing test files that
+  were never enumerated in CI (`vision_checklist`, `vision_session`,
+  `wifi_memory`) are now wired in too.
+- **Every bench exits to the Lab, not through the old front door.** The
+  fineprint back-links that pointed at the deprecated `index.html` redirect
+  now land on `lab.html` directly; the House's "meet them live" door goes
+  straight to the fleet cards.
+- **The room's degraded mode matches the manifest.** The isometric room's
+  hardcoded fallback tools had drifted (old nouns, missing stations); they
+  now mirror the manifest, and its offline slug map covers every bench and
+  depth page.
+- **The manifest stops promising a surface that doesn't exist.** `app.nav`
+  no longer declares a native "stage-tabs" toolbar the desktop app never
+  grew; it documents the real architecture — the same adaptive shell,
+  rendered from the same manifest, in a native window.
+
+## [2.4.3] - 2026-08-02
+
+### The Canary Nightstand 7 — the 7" glass, turned toward the bed
+
+The 7" board now ships as two products. The Dash 7 stays the wall panel; the
+new **Nightstand 7** is the same hardware wearing a bedside face, with its own
+OTA product so a bedroom glass can never cross-grade into a wall dashboard.
+
+- **A clock you can read from bed.** The hero is drawn in seven segments from
+  UI primitives rather than typed in a font — the built-in faces stop at 48 px,
+  nowhere near a 7" bedside clock — so it stays crisp at any size and
+  red-shifts after dark with the rest of the palette.
+- **Day complications, night focus.** By day: the temperature now, today's
+  high and low, tomorrow, comfort words for the bedroom, sun times, and a quiet
+  strip of the fleet. After dark it becomes a clock — red digits, tomorrow's
+  weather in a whisper, everything else black.
+- **Every kind of dim on this board is drawn**, because its backlight is on/off
+  only. That includes the gentle wake's sunrise, which is now rendered as a
+  warm field rising rather than a backlight ramp.
+
+### A night light that never lies about your fleet
+
+The honest night light the nightstand line specified is built, on the 7" glass
+and on the small portrait displays that live in hallways — where the screen
+itself *is* the lamp. You summon it, it times out, and it never comes back on
+its own after a reboot. Its light is a decorative scene, never a state colour,
+so it cannot say "safe" by glowing — and the instant anything needs attention
+it hands the glass back and stays out until you ask again. The across-the-room
+beacon is never part of the lamp: dark still means all is well.
+
+### The glass checks in
+
+On an idle, lit display the canary now stirs every few minutes, or the status
+quietly surfaces and fades — minutes apart by day, rarer at night, and never
+over an alarm or into a dark room. Two displays on one dresser won't move in
+lockstep.
+
+Also: the BOOT button finally does something on the boards without a touch
+panel (tap to peek, double-press for the light, hold to acknowledge); the hub
+weather feed can carry tomorrow's forecast and weather advisories, shown but
+never sounded; and the colour engine gained a Rainbow scene.
+
+
 ## [2.4.2] - 2026-07-29
 
 ### The Canary Watch Station is back in the train

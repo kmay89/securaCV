@@ -32,13 +32,34 @@
 //            instead of the slab, a board that overhangs the glass would let
 //            the panel slide until the window crossed the active area. This
 //            check fails the moment those two pockets get merged again.
-//    frame_glass — the one-piece frame vs the slab in the frame's own coords.
-//            Non-empty = the cavity or an adhesive-ledge wedge bites into
-//            the panel.
+//    frame_glass — the one-piece frame vs the STEPPED panel (thin bare-glass
+//            border + thicker LCD-module core) in the frame's own coords.
+//            Non-empty = the cavity, the raised adhesive ledge or a ledge
+//            wedge bites into the panel.
 //    frame_ledge — INVERTED: a wafer just behind the adhesive plane must land
 //            on the ledge. Empty = nothing carries the panel's adhesive
 //            border — e.g. the ledge/boss datum drifted apart (the adh_t
 //            stack-up bug this gate exists to catch).
+//    stand — the FRAME, seated in the desk dock, vs the stand. Non-empty =
+//            they collide and the case cannot drop in. The seated pose is
+//            lifted seat_lift off the pads, because exact face-on-face
+//            contact through a floating-point rotation can manufacture a
+//            zero-ish sliver that fails an honest fit. This check is also
+//            what proves the dock's centring keys line up with the frame's
+//            keying slots — a misplaced key IS a collision.
+//    seat  — the frame pressed seat_press INTO the pads. INVERTED: it must
+//            be NON-empty — it is the bearing patch the case actually sits
+//            on. Empty = the dock carries nothing and the case free-falls to
+//            the base plate. (This output is legitimately TWO patches, one
+//            per pad — only its existence is checked, not its mesh.)
+//    stand_p / stand_p2 — the stand collision again, case docked in PORTRAIT
+//            (turned +90° / -90°). Non-empty = a key or rib lands on solid
+//            wall instead of inside a side window / between the gills, and
+//            portrait cannot sit flat. Both turns are checked because the
+//            side windows are not symmetric.
+//    seat_p — portrait bearing patch on the well ribs, probed with a wafer
+//            over the portrait bottom face (see the check for why not the
+//            full frame). INVERTED: non-empty.
 //    frame_usb_head — a prism the size of the declared cable HEAD, swept
 //            through the bottom-wall port, vs the FRAME. Non-empty = the head
 //            no longer passes (opening shrank under the head knobs, or the
@@ -63,6 +84,21 @@
 //    frame_sd_seal — INVERTED: the installed SD cover must cross the back
 //            plate's mid-plane over the opening. Empty = the cover misses
 //            its recess/opening.
+//    frame_adh_rail — the adhesive rails' promise is SMOOTH, UNINTERRUPTED
+//            plate, so this one is a DIFFERENCE, not an intersection: a
+//            wafer just under the outer skin across each rail zone, minus
+//            the frame, must vanish. Non-empty = something cut a zone — a
+//            grille slot that lost its keepout, a drifted deboss, the moat
+//            itself — and an adhesive strip would land on an edge.
+//    sd_tether_hole — a probe just under the anchor hole's size, swept
+//            through the plate at the tether position, vs the FRAME.
+//            Non-empty = the hole is missing or off-position — the cover's
+//            barb would have nowhere to go (exactly the print-the-case-
+//            without-the-hole mistake this gate exists to stop).
+//    sd_tether_barb — INVERTED: the installed SD cover must cross the
+//            plate band at the anchor hole position. Empty = the barb
+//            misses its hole — the strap length, hole position or install
+//            transform drifted, and the "captive" cover isn't.
 //
 //  The slab is modelled with the corner radius the source DECLARES (glass_r),
 //  because the question being asked is whether the model is consistent with
@@ -74,8 +110,10 @@
 
 use <canary_s3_lcd7.scad>
 
-check = "tray";   // ["tray","glass","lip","locate","frame_glass","frame_ledge","frame_usb_head","frame_btn_window","frame_sd_window","frame_usb_seal","frame_btn_plug","btn_plug_glass","frame_sd_seal"]
+check = "tray";   // ["tray","glass","lip","locate","frame_glass","frame_ledge","stand","seat","stand_p","stand_p2","seat_p","frame_usb_head","frame_btn_window","frame_sd_window","frame_usb_seal","frame_btn_plug","btn_plug_glass","frame_sd_seal","frame_adh_rail","sd_tether_hole","sd_tether_barb"]
 locate_slip = 1.5;   // mm of sideways wander the pocket must already refuse
+seat_lift  = 0.2;    // dock collision check: hover this far off the pads
+seat_press = 0.4;    // dock bearing check: push this far into the pads
 
 // Read the real derived stack out of the source — no duplicated arithmetic.
 S = lcd7_stack();
@@ -92,6 +130,19 @@ module glass_slab(t, dz = 0) {
         rrect2d(glass_w, glass_h, glass_r);
 }
 
+// The dock stack, read out of the source the same way. The frame is modelled
+// print-side (z0 = front face, +y = up); docking it means standing it up,
+// reclining it by stand_ang, and setting its bottom face's centre onto the
+// pad plane's origin. seat > 0 presses the case into the pads along the
+// slot's own axis; seat < 0 hovers it off them.
+ST = lcd7_stand_stack();
+st_ang = ST[0]; st_ys = ST[1]; st_zf = ST[2]; st_fd = ST[3]; st_fy = ST[4]; st_fx = ST[5];
+st_drop = ST[6];   // portrait seats this far below the pad plane, on the ribs
+// Delegates to the source's lcd7_docked() — the pose lives THERE so that
+// battery variants can be gated with -D (see the dock_probe_* parts). Kept as
+// a thin wrapper because every stand check below reads this name.
+module docked_frame(seat = 0, portrait = 0) lcd7_docked(seat, portrait);
+
 if (check == "tray")
     intersection() { assembled_bezel(); back(); }
 else if (check == "glass")
@@ -105,14 +156,30 @@ else if (check == "locate")
         assembled_bezel();
         translate([locate_slip, locate_slip, 0]) glass_slab(glass_t);
     }
-// The one-piece frame is modelled with the glass at z 0..glass_t in its own
-// coords, so the slab needs no repositioning.
-else if (check == "frame_glass")
-    // frame vs the slab — the cavity and the ledge wedges must clear it
+// The one-piece frame is modelled with the panel glass_guard behind the
+// front face (the guard rim stands proud of the glass), so the slab probes
+// sit at that offset — read from the stack, never assumed flush. The panel
+// is STEPPED, and the check
+// must model both steps: a bare-glass BORDER (glass_edge_t thin — the band
+// the adhesive ledge rises to within adh_t of) around the thicker LCD-module
+// core (glass_t). A uniform glass_t slab would false-fail against the raised
+// ledge; a uniform border-thin slab would let the cavity close onto the
+// module. The core outline comes from lcd7_panel_core() — the MEASURED can,
+// stated independently of the ledge geometry — so widening a ledge cannot
+// shrink the probe in lockstep and sneak past this gate.
+else if (check == "frame_glass") {
+    ge = lcd7_frame_stack()[6];   // bare-glass border thickness
+    gg = lcd7_frame_stack()[10];  // guard rim: the panel sits this far back
+    PC = lcd7_panel_core();       // [core_w, core_h, core_dy]
     intersection() {
         frame();
-        linear_extrude(glass_t) rrect2d(glass_w, glass_h, glass_r);
+        translate([0, 0, gg]) union() {
+            linear_extrude(ge) rrect2d(glass_w, glass_h, glass_r);
+            translate([0, PC[2], 0]) linear_extrude(glass_t)
+                rrect2d(PC[0], PC[1], 2);
+        }
     }
+}
 else if (check == "frame_ledge") {
     // inverted — a wafer just behind the adhesive plane must land on the
     // ledge, or nothing carries the panel's adhesive border. FS reads the
@@ -125,6 +192,28 @@ else if (check == "frame_ledge") {
             rrect2d(glass_w, glass_h, glass_r);
     }
 }
+else if (check == "stand")
+    intersection() { docked_frame(-seat_lift); stand(); }
+else if (check == "seat")
+    // inverted check — this SHOULD produce geometry (the pads' bearing patch)
+    intersection() { docked_frame(seat_press); stand(); }
+else if (check == "stand_p")
+    intersection() { docked_frame(-seat_lift, 1); stand(); }
+else if (check == "stand_p2")
+    intersection() { docked_frame(-seat_lift, -1); stand(); }
+else if (check == "seat_p")
+    // inverted check — portrait must bear on the well ribs. Probed with a
+    // WAFER over the portrait bottom face's footprint rather than the full
+    // frame: the stand_p/stand_p2 checks already prove the real case clears
+    // everything, and the full-frame intersection here trips CGAL's
+    // non-manifold export warning on coincident slot/blade edges, which the
+    // CI gate correctly refuses to distinguish from a broken render.
+    intersection() {
+        stand_seatframe()
+            translate([-st_fy/2, -st_fd/2, -st_drop - seat_press])
+                cube([st_fy, st_fd, seat_press]);
+        stand();
+    }
 // The TPU gates read the port geometry out of the source the same way
 // (lcd7_ports), and place the fitments with the source's own *_installed
 // transforms — so a knob or datum change is tested, not a copy of it.
@@ -188,10 +277,12 @@ else if (check == "frame_btn_plug") {
     }
 }
 else if (check == "btn_plug_glass")
-    // the plug, pips included, must never reach the panel
+    // the plug, pips included, must never reach the panel (which sits
+    // glass_guard behind the front face — same offset as frame_glass)
     intersection() {
         button_plug_installed();
-        linear_extrude(glass_t) rrect2d(glass_w, glass_h, glass_r);
+        translate([0, 0, lcd7_frame_stack()[10]])
+            linear_extrude(glass_t) rrect2d(glass_w, glass_h, glass_r);
     }
 else if (check == "frame_sd_seal") {
     // inverted — the installed SD cover must cross the back plate mid-plane
@@ -203,5 +294,43 @@ else if (check == "frame_sd_seal") {
             cube([60, 80, 0.4], center = true);
     }
 }
+else if (check == "frame_adh_rail") {
+    // a wafer just under the outer skin across each adhesive-rail zone,
+    // MINUS the frame, must vanish — anything that cuts a zone survives the
+    // difference and fails the gate. The wafer stops 0.02 below the skin
+    // (so it never pokes out of an intact plate) and reaches 0.5 deep (so
+    // any deboss-depth cut into the zone intersects it). If adh_rails is
+    // off there is nothing to test and the gate stays empty by construction.
+    A = lcd7_adh_rails();   // [on, dx, w, l, fr_depth]
+    if (A[0] > 0) difference() {
+        for (sx = [1, -1]) translate([sx*A[1], 0, A[4] - 0.5])
+            linear_extrude(0.48) rrect2d(A[2] - 0.4, A[3] - 0.4, 2);
+        frame();
+    }
+}
+else if (check == "sd_tether_hole") {
+    // probe just under the anchor hole's size, swept from mid-plate out
+    // past the skin (the strap channel above the hole is open by design,
+    // so the probe proves hole + channel both) — vs the FRAME, must vanish
+    T = lcd7_sd_tether();   // [on, x, y, hole_d, fz_plate]
+    FS = lcd7_frame_stack();
+    if (T[0] > 0) intersection() {
+        frame();
+        translate([T[1], T[2], T[4] - 0.5])
+            cylinder(d = T[3] - 0.4, h = FS[5] - T[4] + 1.5);
+    }
+}
+else if (check == "sd_tether_barb") {
+    // inverted — the installed cover's barb must cross the plate band at
+    // the anchor hole position, or the leash anchors nothing
+    T = lcd7_sd_tether();
+    FS = lcd7_frame_stack();
+    if (T[0] > 0) intersection() {
+        sd_cover_installed();
+        translate([T[1], T[2], (T[4] + FS[5])/2])
+            cube([6, 6, 0.4], center = true);
+    }
+    else translate([0, 0, 0]) cube(1);   // tether off: gate must stay solid-true
+}
 else
-    assert(false, "check must be one of tray / glass / lip / locate / frame_glass / frame_ledge / frame_usb_head / frame_btn_window / frame_sd_window / frame_usb_seal / frame_btn_plug / btn_plug_glass / frame_sd_seal");
+    assert(false, "check must be one of tray / glass / lip / locate / frame_glass / frame_ledge / stand / seat / stand_p / stand_p2 / seat_p / frame_usb_head / frame_btn_window / frame_sd_window / frame_usb_seal / frame_btn_plug / btn_plug_glass / frame_sd_seal / frame_adh_rail / sd_tether_hole / sd_tether_barb");

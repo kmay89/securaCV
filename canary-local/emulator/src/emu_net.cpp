@@ -177,6 +177,36 @@ void ota_loop(uint32_t) {
   (void)take_pending_auto();
 }
 
+// On-glass settings facade — the Settings "firmware" page reads these. With
+// no flash slots the emulator reports the installed version, shows "up to
+// date", and declines an install the same way ota_loop does.
+OtaStatus ota_status() {
+  OtaStatus s{};
+  s.installed = CANARY_FW_VERSION;
+  s.latest = CANARY_FW_VERSION;
+  s.update_available = false;
+  s.busy = false;
+  s.progress = 0;
+  s.auto_update = false;
+  s.dev_channel = false;
+  s.state_text = "up to date";
+  return s;
+}
+
+void ota_request_check() {
+  log_line("OTA", "Check requested — emulator reports up to date.");
+  js_net_event("ota-check", "emulator");
+}
+
+void ota_request_install() {
+  log_line("OTA", "Install requested — declined: emulator has no flash slots.");
+  js_net_event("ota-install-declined", "emulator");
+}
+
+void ota_set_auto_update(bool on) {
+  publish_update_auto_retained(g_ota_topics, on);
+}
+
 // ── discovery contract ──────────────────────────────────────────────────
 bool discovery_init(const char* device_id, const char* device_type,
                     const char* role) {

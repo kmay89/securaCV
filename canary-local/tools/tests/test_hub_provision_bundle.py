@@ -29,7 +29,9 @@ class Manifest(unittest.TestCase):
 
     def test_carries_plan_config_executor_runner(self):
         roles = {f["role"] for f in self.m["files"]}
-        self.assertEqual(roles, {"plan", "frigate-config", "executor", "runner"})
+        self.assertEqual(
+            roles, {"plan", "frigate-config", "executor", "runner", "host-runner"}
+        )
 
     def test_no_readme_in_bundle(self):
         # provision.sh is self-documenting; the bundle carries no separate README,
@@ -79,7 +81,8 @@ class Bundle(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             b = self.build(Path(tmp))
             for name in ("hub_seed.json", "hub_seed_apply.py", "provision.sh",
-                         "MANIFEST.json", "homeassistant/frigate/config.yaml"):
+                         "host_provision.sh", "MANIFEST.json",
+                         "homeassistant/frigate/config.yaml"):
                 self.assertTrue((b / name).exists(), f"bundle missing {name}")
             self.assertFalse((b / "README.md").exists(), "bundle should carry no README")
 
@@ -98,6 +101,33 @@ class Bundle(unittest.TestCase):
             self.assertIn("hub_seed_apply.py", runner)
             self.assertIn("--plan", runner)
             self.assertIn("--assets-root", runner)
+
+    def test_host_runner_borrows_the_stack_and_passes_args_through(self):
+        # The host runner's whole contract: run from the HAOS host shell (no
+        # python3, no token), it must (1) take the token from the Core container
+        # rather than print or invent one, (2) run the bundled executor with the
+        # Core image's python3, (3) mount the add-on config tree at the absolute
+        # path the plan's write step names, and (4) pass args through so
+        # --dry-run previews. All checkable from the bytes, no docker needed.
+        with tempfile.TemporaryDirectory() as tmp:
+            b = self.build(Path(tmp))
+            hr = (b / "host_provision.sh").read_text()
+            self.assertTrue(hr.startswith("#!/bin/sh\n"))
+            self.assertIn("SUPERVISOR_TOKEN=", hr)
+            self.assertNotIn("echo \"$token\"", hr, "the token must never be printed")
+            self.assertIn("--entrypoint python3", hr)
+            self.assertIn("hub_seed_apply.py", hr)
+            self.assertIn("/addon_configs", hr)
+            self.assertIn('"$@"', hr)
+            # It must run the *bundled* copies, not repo paths.
+            self.assertIn("/securacv/hub_seed.json", hr)
+            self.assertIn("--assets-root /securacv", hr)
+
+    def test_host_runner_is_lf_only(self):
+        # It lands on the card's FAT partition next to the Wi-Fi keyfile, and the
+        # shell that runs it is busybox ash — a CR would become part of a token.
+        src = (gb.REPO / "canary-local/tools/hub_host_provision.sh").read_bytes()
+        self.assertNotIn(b"\r", src)
 
     def test_self_contained_dry_run(self):
         # The load-bearing test: build the bundle, run ITS OWN runner with no repo

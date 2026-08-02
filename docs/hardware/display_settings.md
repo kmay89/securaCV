@@ -92,6 +92,67 @@ see the Waveshare wiki / ESP32_Display_Panel discussion #185) that enables
 true PWM; the firmware's day/night profile plumbing would drive it
 unchanged, but the mod is documented, not required.
 
+## The 7" wave — orientation, brightness, firmware (dash glass)
+
+The 7" Dash 7 (wall) and Nightstand 7 (bedside) ride the same RGB HAL as the
+4.3" Dash, so the settings sheet grows three rows on every `CD_FLAVOR_DASH`
+build. They follow the same five principles — one screen, one decision, and
+*the screen is the preview*, taken literally.
+
+```
+settings  (dash family: 4.3" · Dash 7 · Nightstand 7)
+├─ … the shared rows above …
+├─ orientation   (landscape · portrait · their two flips — live)
+├─ brightness    (50–100% sustained — a rendered dim, not backlight PWM)
+└─ firmware      (installed version · check · install · auto-update)
+```
+
+**Orientation.** The 800×480 glass turns into a 480×800 column for a wall
+mount stood on end or a tall bedside face. LVGL software-rotates the whole UI
+(`lvgl_port_set_rotation` → `lv_display_set_rotation`); the panel keeps
+scanning its native landscape, and raw GT911 touch is un-rotated back into the
+logical frame in the HAL (`touch_set_rotation` → `rotation_map_touch`, the
+exact inverse of the render turn — host-tested by round-trip). Landing on an
+option *is* choosing: the glass — settings sheet and all — turns under your
+thumb. Portrait swaps the landscape poster (`dash_ui` / `nightstand7_ui`) for
+one shared portrait column, `portrait7_ui`: a segment-clock hero, the
+household's one-word state in its own hue, the living canary, a vertical
+witness list (worst floated to the top), and an honest glance line — the same
+instrument whether it's on a wall or a nightstand. Night red-shifts it and
+strips it to the clock + the state channel; dark-when-safe still holds.
+
+> **Bench-validation pending**, like the rest of the 7" line. LVGL's software
+> rotation in partial-render mode is the intended path; the coordinate + touch
+> math is proven on the host, but the panel render itself must be confirmed on
+> real glass. Landscape (rotation 0) is the default and a no-op, so boot is
+> never sideways.
+
+**Brightness — "up to 50% sustained."** The 7"/dash backlight is binary
+(CH422G, no PWM — see *Dash hardware truth* above), so a brightness setting
+can't lower real backlight power. Instead it's an honest *rendered* dim: a
+black scrim on LVGL's top layer, live as you step it, over the always-on
+glass. It bottoms out at 50% on purpose (`BRIGHT_PCT_MIN`) — darker than that
+is Night's job, and a wall panel sitting all day behind a heavier scrim would
+be dishonest about a backlight that's still at full. Honesty outranks the dim:
+an unacked Alert/Tamper takes the scrim fully off, and the night face (already
+dark, backlight possibly cut) never carries a day scrim on top.
+
+**Firmware.** The version the glass is running, and the one signed,
+rollback-safe path to a newer one — the same pull-OTA engine Home Assistant
+drives (`securacv_ota`, `docs/firmware_ota.md`), surfaced to the sheet through
+a thin `canary::net` facade so the UI never touches the raw engine header. The
+page reads live (installed vs. available, a status line, install progress) and
+offers exactly one action for the state — *check for updates* or *install now*
+— plus the nightly *auto-update* toggle. No version strings are typed on the
+glass; the signed manifest and the pinned release key are the only truth. A
+wall Dash 7 and a bedside Nightstand 7 are distinct OTA products, so neither
+can cross-grade into the other.
+
+Settings model: `rotation` and `bright_pct` join the versioned `Settings`
+blob (`glass_settings.h`), which steps to v3 and migrates a v1/v2 blob
+field-for-field — turning the glass or dimming it never costs a user the night
+hours, glow, or Character they already tuned.
+
 ## Honesty contract (unchanged by any setting)
 
 - "Go dark" only darkens a healthy, configured glass: any Warn+ condition

@@ -66,6 +66,7 @@ firmware/projects/canary-wap/tests_host/test_chirp_protocol_invariants
 firmware/projects/canary-wap/tests_host/test_mesh_coexistence
 firmware/projects/canary-wap/tests_host/test_evidence_drive_logic
 firmware/projects/canary-wap/tests_host/test_evidence_update_verify
+firmware/projects/canary-companion/tests_host/test_companion_cores
 
 # Fetched detection models (scripts/fetch_detection_model.sh) — not committed
 vendor/models/*.onnx

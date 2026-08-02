@@ -4,15 +4,15 @@
   "product": "SecuraCV Lab",
   "app": {
     "surface": "SecuraCV Lab (Tauri, macOS + Linux)",
-    "nav": "stage-tabs",
-    "note": "The desktop app renders the six stages below as a native toolbar tab bar; each tab shows that stage's benches. The isometric room is the default 'Overview' surface."
+    "nav": "lab-shell",
+    "note": "The desktop app opens lab.html and gets the same adaptive shell the web gets: a source-list sidebar of the six stages at desktop widths, a six-stage tab bar on narrow ones — both rendered from this manifest. One shell, every surface; the isometric room is the default 'Overview'."
   },
   "$room_note": "Maps each isometric-room station (room.html) to the benches/site links it opens, by slug + emoji. The room reads this so its tool lists stay in lockstep with the manifest; it falls back to its own hardcoded tools if the manifest can't load. The room is ONE straight line, stations 1–6; stage 4 is a single options bench (camera + radar today, more senses later), never a fork.",
   "room": {
     "1": [{ "e": "🐦", "slug": "fleet" }, { "e": "🧭", "slug": "choose" }],
-    "2": [{ "e": "🧱", "slug": "workshop" }, { "e": "💎", "slug": "see-it-in-3d" }],
+    "2": [{ "e": "🧱", "slug": "workshop" }, { "e": "🗂️", "slug": "catalog" }, { "e": "💎", "slug": "see-it-in-3d" }],
     "3": [{ "e": "📌", "slug": "boards" }, { "e": "🎛️", "slug": "test-bench" }],
-    "4": [{ "e": "📷", "slug": "vision" }, { "e": "📡", "slug": "sense" }],
+    "4": [{ "e": "📷", "slug": "vision" }, { "e": "📡", "slug": "sense" }, { "e": "👂", "slug": "smoke" }],
     "5": [{ "e": "🏠", "slug": "hub" }, { "e": "🏡", "slug": "house" }],
     "6": [{ "e": "🔐", "slug": "vault" }, { "e": "🧠", "slug": "how-it-works" }]
   },
@@ -49,6 +49,13 @@
       "benches": [
         { "noun": "The Workshop", "slug": "workshop", "lab": "workshop.html", "real": false, "kind": "configurator", "status": "keep",
           "desc": "Spec options and watch the print-validated enclosure respond in 3D." },
+        { "noun": "The Case Catalog", "slug": "catalog", "lab": "catalog.html", "real": false, "kind": "chooser", "status": "keep",
+          "desc": "Browse every enclosure in one place — narrow by family, device, environment, status and options. Generated from the catalog manifest, so it can't drift from the OpenSCAD sources.",
+          "depths": [
+            { "label": "Browse every case", "lab": "catalog.html" },
+            { "label": "Find your case — three questions", "lab": "find.html",
+              "desc": "Answer three questions — what you're building, where it lives, how you mount it — and get one recommended, print-validated case with its options pre-checked." }
+          ] },
         { "noun": "Boards", "slug": "boards", "lab": "boards.html", "real": false, "kind": "viewer", "status": "rename", "redirectFrom": "board-room",
           "wasNamed": "The Board Room",
           "desc": "Spin every real board in 3D; ‘Wire it’ stages the harness." }
@@ -66,6 +73,7 @@
       "accent": "#8b5cf6", "icon": "bolt",
       "benches": [
         { "noun": "Flash over USB", "slug": "flash", "lab": "flash.html", "real": true, "kind": "hardware", "status": "keep",
+          "wasNamed": "The Canary Nursery",
           "desc": "The real in-browser USB flasher — detect, back up, write signed image, verify. The canonical one." },
         { "noun": "First boot", "slug": "first-boot", "lab": "wap.html", "real": false, "kind": "sim", "status": "rename", "redirectFrom": "wap",
           "wasNamed": "The WAP", "desc": "Guided first boot: meet the board, watch it come up, drive the phone setup wizard." }
@@ -77,7 +85,7 @@
     {
       "id": "sense", "n": 4, "name": "Sense", "verb": "pick its sense",
       "accent": "#2563eb", "icon": "eye", "options": true,
-      "optionsNote": "Camera and radar are options at this one stage, not separate paths — pick the sense your Canary carries. More senses will dock here. The line runs straight on to Home.",
+      "optionsNote": "Camera, radar and sound are options at this one stage, not separate paths — pick the sense your Canary carries. More senses will dock here. The line runs straight on to Home.",
       "tracks": [
         {
           "track": "vision", "label": "Camera", "accent": "#2563eb",
@@ -102,6 +110,13 @@
                   "desc": "Post-flash bench: Web Serial to the real radar or the emulated twin — same console dialect, drills, zone calibration, placement scoring." }
               ] }
           ]
+        },
+        {
+          "track": "sound", "label": "Sound", "accent": "#1d4ed8",
+          "benches": [
+            { "noun": "Listen for a smoke alarm", "slug": "smoke", "lab": "smoke.html", "real": true, "kind": "firmware", "status": "keep",
+              "desc": "The WAP's ears: the real firmware acoustic detector — the 3.4 kHz alarm-band tone gate and the T3/T4 cadence templates — compiled to WebAssembly, fed by your own microphone. Audio is processed locally, frame by frame, and never recorded, stored, or sent anywhere." }
+          ]
         }
       ]
     },
@@ -116,7 +131,9 @@
           "depths": [
             { "label": "Watch it work", "lab": "scenes.html", "wasNamed": "Scenes", "status": "fold",
               "desc": "Zoom into one witness doing its one honest thing." }
-          ] }
+          ] },
+        { "noun": "The Witness Wall", "slug": "witness-wall", "lab": "witness-wall.html", "real": true, "kind": "sim", "status": "keep",
+          "desc": "Your fleet on the TV — home, business, and apartment views; the desktop Lab finds your real Canaries on the Wi-Fi." }
       ],
       "site": [
         { "noun": "Why Canary", "slug": "why-canary", "href": "/watch-over.html", "wasNamed": "Watched over, never watched" },
@@ -146,7 +163,7 @@
     { "label": "How it works", "href": "/how-it-works.html" },
     { "label": "The Lab", "href": "/lab.html" },
     { "label": "Compare", "href": "/compare.html" },
-    { "label": "Build it yourself", "href": "/maker.html", "gathers": ["workshop", "boards", "first-boot", "test-bench", "print", "gallery", "makers"] },
+    { "label": "Build it yourself", "href": "/maker.html", "gathers": ["workshop", "catalog", "boards", "first-boot", "test-bench", "print", "gallery", "makers"] },
     { "label": "Store", "href": "/store.html" },
     { "label": "Download", "href": "/download.html" }
   ],
@@ -169,6 +186,7 @@
         "label": "Lab shell and compatibility",
         "items": [
           { "noun": "Lab shell", "href": "lab.html", "purpose": "Canonical adaptive Lab shell; iPad sidebar and phone tab bar come from the same bundle." },
+          { "noun": "Site map", "href": "site-map.html", "purpose": "The complete Lab sitemap, rendered from this manifest: every bench, depth, site handoff, redirect and documentation page." },
           { "noun": "Legacy Lab front door", "href": "index.html", "purpose": "Redirects old links to the Lab shell or fleet cards." },
           { "noun": "Isometric room", "href": "room.html", "purpose": "Embedded workshop overview used by the Lab shell." },
           { "noun": "Emulator harness", "href": "emulator/web/harness.html", "purpose": "Developer/CI boot harness for real display firmware compiled to WebAssembly." },
