@@ -26,6 +26,7 @@
 #include "pins.h"
 #include "lvgl_port.h"
 #include "display.h"
+#include "glass_settings.h"  // Rotation, rotation_is_portrait
 #include "log.h"
 
 namespace canary::ui {
@@ -51,11 +52,21 @@ constexpr size_t BUF_PX = (size_t)SCR_W * 80;
 // RGB565 (v8: LV_COLOR_16_SWAP 0), GFX blits it verbatim.
 constexpr size_t BUF_BYTES = BUF_PX * 2;
 
+// Live orientation state. Native = the panel's own scan dims (landscape);
+// logical = what the UI draws in (axes swapped in portrait). The default is
+// landscape, so every non-rotating flavor keeps the values it always had.
+uint8_t s_rot = 0;                 // canary::glass::Rotation
+int16_t s_logical_w = SCR_W;
+int16_t s_logical_h = SCR_H;
+lv_obj_t* s_scrim = nullptr;       // rendered brightness dim (top layer)
+
 #if LVGL_VERSION_MAJOR >= 9
 
 #if defined(CD_FLAVOR_WATCH) || defined(CD_FLAVOR_NIGHTSTAND)
 alignas(4) uint8_t s_buf[BUF_BYTES];
 #endif
+
+lv_display_t* s_disp = nullptr;    // captured for runtime rotation (v9)
 
 uint32_t tick_cb() { return millis(); }
 
@@ -130,6 +141,7 @@ bool lvgl_port_init() {
   lv_display_set_flush_cb(disp, flush_cb);
   lv_display_set_buffers(disp, buf, nullptr, (uint32_t)buf_bytes,
                          LV_DISPLAY_RENDER_MODE_PARTIAL);
+  s_disp = disp;
 #else
   lv_disp_draw_buf_init(&s_draw_buf, (lv_color_t*)buf, nullptr,
                         (uint32_t)(buf_bytes / sizeof(lv_color_t)));
@@ -143,6 +155,65 @@ bool lvgl_port_init() {
 
   canary::log_line("LVGL", "Renderer up (dirty-region, anti-aliased).");
   return true;
+}
+
+// ── Orientation ──────────────────────────────────────────────────────────
+
+void lvgl_port_set_rotation(uint8_t rot) {
+  rot &= 3;
+  s_rot = rot;
+  // Recompute the logical canvas the UI lays out in. Native is always the
+  // panel's landscape; portrait swaps the axes.
+  int lw = SCR_W, lh = SCR_H;
+  canary::glass::rotation_logical_dims(rot, SCR_W, SCR_H, &lw, &lh);
+  s_logical_w = (int16_t)lw;
+  s_logical_h = (int16_t)lh;
+
+#if defined(CD_FLAVOR_DASH) && LVGL_VERSION_MAJOR >= 9
+  // Only the RGB dash glass rotates; the round watch and the fixed-portrait
+  // SPI nightstands ignore it. LVGL software-rotates the render into the
+  // native framebuffer — the panel keeps scanning landscape.
+  if (s_disp) {
+    lv_display_rotation_t r = LV_DISPLAY_ROTATION_0;
+    switch (rot) {
+      case canary::glass::ROT_PORTRAIT:      r = LV_DISPLAY_ROTATION_90;  break;
+      case canary::glass::ROT_LANDSCAPE_INV: r = LV_DISPLAY_ROTATION_180; break;
+      case canary::glass::ROT_PORTRAIT_INV:  r = LV_DISPLAY_ROTATION_270; break;
+      default:                               r = LV_DISPLAY_ROTATION_0;   break;
+    }
+    lv_display_set_rotation(s_disp, r);
+  }
+  // Un-rotate raw touch to match, so a tap lands in the logical frame.
+  canary::hal::touch_set_rotation(rot, SCR_W, SCR_H);
+#endif
+
+  // Keep a live scrim covering the (possibly re-oriented) glass.
+  if (s_scrim) lv_obj_set_size(s_scrim, 960, 960);
+}
+
+uint8_t lvgl_port_rotation() { return s_rot; }
+int16_t lvgl_port_width() { return s_logical_w; }
+int16_t lvgl_port_height() { return s_logical_h; }
+
+// ── Rendered brightness scrim ────────────────────────────────────────────
+
+void lvgl_port_set_dim(uint8_t opa) {
+  if (opa == 0 && !s_scrim) return;  // nothing to dim, nothing built yet
+  if (!s_scrim) {
+    // Top layer sits above every screen, including the settings sheet, so a
+    // live drag previews on whatever is on the glass. It never eats a tap:
+    // this project polls touch itself and hit-tests its own objects.
+    s_scrim = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_scrim);
+    lv_obj_set_style_bg_color(s_scrim, lv_color_black(), 0);
+    lv_obj_set_style_border_width(s_scrim, 0, 0);
+    lv_obj_set_style_radius(s_scrim, 0, 0);
+    lv_obj_clear_flag(s_scrim, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(s_scrim, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_pos(s_scrim, 0, 0);
+    lv_obj_set_size(s_scrim, 960, 960);  // overdraws both orientations; clipped
+  }
+  lv_obj_set_style_bg_opa(s_scrim, opa, 0);
 }
 
 }  // namespace canary::ui

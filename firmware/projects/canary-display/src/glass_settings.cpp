@@ -22,7 +22,7 @@ struct Blob {
   Settings s;
 };
 constexpr uint16_t BLOB_MAGIC   = 0x5347;
-constexpr uint8_t  BLOB_VERSION = 2;  // v2: +character (v1 migrates below)
+constexpr uint8_t  BLOB_VERSION = 3;  // v3: +rotation +bright_pct (v1/v2 migrate)
 
 // Frozen v1 layout (pre-Character). Kept verbatim so a v1 blob migrates
 // field-for-field instead of being rejected — an upgrade must never cost
@@ -41,6 +41,26 @@ struct BlobV1 {
   uint8_t  version;
   uint8_t  size;
   SettingsV1 s;
+};
+
+// Frozen v2 layout (pre-orientation/brightness). Same reason as v1: a v2
+// blob migrates field-for-field so the 7"/dash rotation + brightness wave
+// never resets the night hours, glow, or Character a user already tuned.
+struct SettingsV2 {
+  uint8_t  day_pct;
+  uint8_t  night_screen;
+  uint8_t  red_shift;
+  uint8_t  peek_s;
+  uint8_t  night_start_hh;
+  uint8_t  night_end_hh;
+  uint16_t night_duty;
+  uint8_t  character;
+};
+struct BlobV2 {
+  uint16_t magic;
+  uint8_t  version;
+  uint8_t  size;
+  SettingsV2 s;
 };
 
 struct CalBlob {
@@ -71,6 +91,8 @@ Settings defaults() {
   // near the bench-tuned CD_BRIGHT_NIGHT (3/255 == 96/8191) territory.
   d.night_duty = night_step_duty(NIGHT_FLOOR_DFLT, 4);
   d.character = 0;  // Character::QuietGlass
+  d.rotation = ROT_LANDSCAPE;   // the native wall/desk poster
+  d.bright_pct = BRIGHT_PCT_MAX;  // full glass; dim it deliberately, not by default
   return d;
 }
 
@@ -86,6 +108,11 @@ void sanitize(Settings& s) {
   // with canary::ui::Character: glass sits BELOW ui, so no ui include here
   // (character_apply re-clamps defensively at the ui layer anyway).
   if (s.character >= 7) s.character = 0;  // = Character::Count (wave 4: 7 ages)
+  s.rotation &= 3;  // 0..3 = 0/90/180/270; any other bit pattern is noise
+  // bright_pct lives on a [50..100] grid; a value off the grid (or the 0 a
+  // migrated blob leaves) snaps to full rather than a random dim.
+  if (s.bright_pct < BRIGHT_PCT_MIN || s.bright_pct > BRIGHT_PCT_MAX)
+    s.bright_pct = BRIGHT_PCT_MAX;
 }
 
 // Returns true when the blob actually landed in flash. On failure the
@@ -115,19 +142,39 @@ void settings_init() {
   if (!p.begin(STORE_NS, /*readOnly=*/true)) return;
   Blob b = {};
   BlobV1 b1 = {};
+  BlobV2 b2 = {};
   if (p.getBytesLength("cfg") == sizeof(Blob) &&
       p.getBytes("cfg", &b, sizeof(b)) == sizeof(Blob) &&
       b.magic == BLOB_MAGIC && b.version == BLOB_VERSION &&
       b.size == sizeof(Blob)) {
     s_settings = b.s;
     sanitize(s_settings);
+  } else if (p.getBytesLength("cfg") == sizeof(BlobV2) &&
+             p.getBytes("cfg", &b2, sizeof(b2)) == sizeof(BlobV2) &&
+             b2.magic == BLOB_MAGIC && b2.version == 2 &&
+             b2.size == sizeof(BlobV2)) {
+    // v2 -> v3: field-for-field; rotation stays landscape and brightness
+    // stays full (the sanitize below snaps the zero-initialized new fields
+    // to their defaults). Marked dirty so the committer rewrites it as v3.
+    s_settings.day_pct        = b2.s.day_pct;
+    s_settings.night_screen   = b2.s.night_screen;
+    s_settings.red_shift      = b2.s.red_shift;
+    s_settings.peek_s         = b2.s.peek_s;
+    s_settings.night_start_hh = b2.s.night_start_hh;
+    s_settings.night_end_hh   = b2.s.night_end_hh;
+    s_settings.night_duty     = b2.s.night_duty;
+    s_settings.character      = b2.s.character;
+    sanitize(s_settings);
+    settings_mark_dirty();
+    canary::log_line("GLASS",
+                     "Settings upgraded from v2 - your preferences kept.");
   } else if (p.getBytesLength("cfg") == sizeof(BlobV1) &&
              p.getBytes("cfg", &b1, sizeof(b1)) == sizeof(BlobV1) &&
              b1.magic == BLOB_MAGIC && b1.version == 1 &&
              b1.size == sizeof(BlobV1)) {
-    // v1 -> v2: field-for-field; character stays the default (Quiet
-    // Glass). Marked dirty so the debounced committer rewrites the blob
-    // as v2 — one upgrade write, through the same retry-safe path.
+    // v1 -> v3: field-for-field; character, rotation and brightness stay at
+    // their defaults. Marked dirty so the debounced committer rewrites the
+    // blob as v3 — one upgrade write, through the same retry-safe path.
     s_settings.day_pct        = b1.s.day_pct;
     s_settings.night_screen   = b1.s.night_screen;
     s_settings.red_shift      = b1.s.red_shift;
