@@ -570,7 +570,7 @@
   {
    "id": "universal-fit-coupon",
    "name": "Universal fit coupon",
-   "for": "ONE small print that calibrates every fit in the catalog: the WAP's two-sided clip channel, keyhole+stud with a click detent (slide the mate on, it clicks and stays — the doorbell-plate retention test), slide tongue, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labelled with the parameter it tunes",
+   "for": "ONE small print that calibrates every fit in the catalog: the Canary mark embossed in uniform strokes (no feature narrower than one rib, so that single width decides the whole glyph), the WAP's two-sided clip channel, keyhole+stud with a click detent (slide the mate on, it clicks and stays — the doorbell-plate retention test), slide tongue, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labelled with the parameter it tunes",
    "status": "in-development",
    "note": "**print this before any case**",
    "device": null,
@@ -8242,6 +8242,16 @@
        "name": "brand_sunk",
        "default": "SecuraCV",
        "comment": "the DEBOSS station's wordmark"
+      },
+      {
+       "name": "glyph_h",
+       "default": "7.0",
+       "comment": "GLYPH station: mark height (0 removes the station)."
+      },
+      {
+       "name": "glyph_rib",
+       "default": "0.7",
+       "comment": "stroke width, in mm. THE number this station tests:"
       }
      ]
     },
@@ -8249,6 +8259,28 @@
      "name": "Quality",
      "note": "",
      "params": [
+      {
+       "name": "g_tail",
+       "default": "[[-18,-2],[-40,-12],[-62,-24],[-86,-36]]"
+      },
+      {
+       "name": "g_wing",
+       "default": "[[30,4],[12,14],[-8,10],[-22,0],[-6,-8],[14,-4],[30,4]]"
+      },
+      {
+       "name": "g_span",
+       "default": "87",
+       "comment": "design-unit height the above spans"
+      },
+      {
+       "name": "g_cx",
+       "default": "-6",
+       "comment": "design-unit bbox centre"
+      },
+      {
+       "name": "g_cy",
+       "default": "-2.5"
+      },
       {
        "name": "pocket_cx",
        "default": "-1",
