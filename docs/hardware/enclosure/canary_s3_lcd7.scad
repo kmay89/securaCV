@@ -2038,10 +2038,63 @@ module coupon_qr_clip() {
             rrect2d(2*s, 2*s, 3);       // frame bounds the intersection anyway
 }
 
+// VENT ACCENT — the yellow you catch when you look into the back grille.
+//
+// This is a COLOUR PARTITION, not a geometry change, and that distinction is
+// the whole reason it is safe. frame() is bit-for-bit what it was: no new
+// void, no counterbore, no overhang, no change to open area or to any airflow
+// assert. All that moves is which filament prints a ring of plate that was
+// already solid — so there is nothing here that can fail as a PRINT that was
+// not already failing.
+//
+// It is free in tool changes too, which is the other half of the argument.
+// The back skin (print z 0 … label_back_depth) is ALREADY a three-filament
+// band — every deboss floor lives there — so accent is being laid on these
+// layers regardless. Adding area to it costs no swap and no purge.
+//
+// WHY NOT THE SIDE GILLS. They sit in the shell band, print z 1.2 … 22.9:
+// 21.7 mm of continuous body-only printing with zero swaps, and that unbroken
+// run is exactly what keeps the purge tower short. Accenting a gill would buy
+// two tool changes at a mid-shell layer and pay purge for both. Same for the
+// top exhaust — it is wall, not plate. The back grille is the only vent set
+// that is already inside a colour band.
+//
+// The ring is flush at the surface AND lines the first vent_accent_d of the
+// bore, which is what sells it: straight on it reads as a thin gold outline,
+// at an angle you see into the hole and the inside is yellow.
+//
+// COST, honestly: 66 slots means 66 small isolated accent islands on each of
+// these layers. Not filament and not swaps — travel moves and stringing risk,
+// on two layers. That is the thing to watch on the first print; vent_accent
+// is one switch if it misbehaves, and a WIDER ring is the fix to try before
+// abandoning it (two fat extrusions beat many thin ones).
+vent_accent   = true;   // line the back-grille mouths in the accent colour
+vent_accent_w = 0.8;    // ring width outward from the hole edge — 2 lines at 0.4
+vent_accent_d = 0.4;    // how far down the bore it runs — 2 layers at 0.2
+
+module vent_accent_rings() {
+    if (vent_accent && vent_back)
+        translate([0, 0, fr_depth - vent_accent_d])
+            linear_extrude(vent_accent_d + 0.1)   // overshoots; frame() bounds it
+                for (p = grille_cells(-m3_ox, m3_oy, fr_keepouts))
+                    translate([p[0], p[1] - vent_slot_l/2 + vent_slot_w/2])
+                        difference() {
+                            offset(r = vent_accent_w)
+                                feather2d(vent_slot_l, vent_slot_w, vent_tip);
+                            feather2d(vent_slot_l, vent_slot_w, vent_tip);
+                        }
+}
+
 module frame_ink()    { union() { back_inlay(ink_groups);
                                   intersection() { frame(); bezel_slab(); } } }
-module frame_accent() { back_inlay(accent_groups); }
-module frame_bodycol(){ difference() { frame(); bezel_slab(); } }
+// The vent rings enter ACCENT and leave BODY in the same breath — written as
+// one add and one subtract of the SAME module so the partition cannot drift.
+// Intersecting with frame() on the accent side is what keeps it exact where a
+// ring runs into a deboss void or off the plate edge: accent claims only
+// material that is actually there, and body subtracts the same tool.
+module frame_accent() { union() { back_inlay(accent_groups);
+                                  intersection() { frame(); vent_accent_rings(); } } }
+module frame_bodycol(){ difference() { frame(); bezel_slab(); vent_accent_rings(); } }
 
 // A rough colour key. PREVIEW ONLY — never export from this module.
 //

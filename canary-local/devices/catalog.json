@@ -1129,9 +1129,17 @@
       "10000"
      ],
      "default": "none"
+    },
+    {
+     "id": "vent_accent",
+     "type": "bool",
+     "label": "line the back-grille mouths in the accent colour",
+     "consequence": "",
+     "audience": "user",
+     "default": true
     }
    ],
-   "engineering_param_count": 235,
+   "engineering_param_count": 237,
    "alternatives": [
     "dash_display"
    ],
@@ -1139,8 +1147,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 25,
-    "user_options": 25,
+    "options": 26,
+    "user_options": 26,
     "variant_axes": 1
    }
   },

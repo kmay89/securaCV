@@ -7810,6 +7810,21 @@
        "default": "0"
       },
       {
+       "name": "vent_accent",
+       "default": "true",
+       "comment": "line the back-grille mouths in the accent colour"
+      },
+      {
+       "name": "vent_accent_w",
+       "default": "0.8",
+       "comment": "ring width outward from the hole edge — 2 lines at 0.4"
+      },
+      {
+       "name": "vent_accent_d",
+       "default": "0.4",
+       "comment": "how far down the bore it runs — 2 layers at 0.2"
+      },
+      {
        "name": "pal_preview_lift",
        "default": "0.02"
       },
