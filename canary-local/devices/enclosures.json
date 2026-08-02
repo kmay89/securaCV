@@ -6504,43 +6504,59 @@
      "note": "bonded touch panel, from the Waveshare drawing (mm)",
      "params": [
       {
+       "name": "panel_variant",
+       "default": "lcd7",
+       "enum": [
+        "lcd7",
+        "lcd7b"
+       ]
+      },
+      {
+       "name": "PANEL",
+       "default": "panel(panel_variant)"
+      },
+      {
+       "name": "panel_ok",
+       "default": "panel_check(PANEL) && panel_assert_printable(PANEL)"
+      },
+      {
        "name": "glass_w",
-       "default": "192.96",
+       "default": "pnl_glass_w(PANEL)",
        "comment": "touch-glass width  (X)"
       },
       {
        "name": "glass_h",
-       "default": "110.76",
+       "default": "pnl_glass_h(PANEL)",
        "comment": "touch-glass height (Y)"
       },
       {
        "name": "glass_t",
-       "default": "4.0",
+       "default": "pnl_glass_t(PANEL)",
        "comment": "glass + LCD module thickness where the module reaches —"
       },
       {
        "name": "glass_edge_t",
-       "default": "1.2",
+       "default": "pnl_edge_t(PANEL)",
        "comment": "MEASURED on the real panel (was 0.8, which sank the"
       },
       {
        "name": "panel_core_w",
-       "default": "165.72",
+       "default": "pnl_core_w(PANEL)",
        "comment": "module can width  (X)"
       },
       {
        "name": "panel_core_h",
-       "default": "97.60",
+       "default": "pnl_core_h(PANEL)",
        "comment": "module can height (Y) — 2.40 SMALLER than the"
       },
       {
        "name": "panel_core_dy",
-       "default": "-1.435",
+       "default": "pnl_core_dy(PANEL)",
        "comment": "can centre offset from glass centre, NATIVE pose."
       },
       {
        "name": "glass_r",
-       "default": "8.2",
+       "default": "pnl_glass_r(PANEL)",
        "comment": "corner radius of the glass slab — MEASURED against the"
       },
       {
@@ -6560,31 +6576,18 @@
      "note": "",
      "params": [
       {
-       "name": "panel_variant",
-       "default": "lcd7",
-       "enum": [
-        "lcd7",
-        "lcd7b"
-       ]
-      },
-      {
-       "name": "pv",
-       "default": "panel_variant == \"lcd7b\" ? -1 : 1",
-       "comment": "half-turn multiplier"
-      },
-      {
        "name": "aa_w",
-       "default": "154.88",
+       "default": "pnl_aa_w(PANEL)",
        "comment": "active area width"
       },
       {
        "name": "aa_h",
-       "default": "86.72",
+       "default": "pnl_aa_h(PANEL)",
        "comment": "active area height"
       },
       {
        "name": "aa_dy",
-       "default": "1.02",
+       "default": "pnl_aa_dy(PANEL)",
        "comment": "AA centre offset from glass centre — NATIVE mounting,"
       }
      ]
@@ -6595,26 +6598,26 @@
      "params": [
       {
        "name": "pcb_standoff",
-       "default": "5.0",
+       "default": "pnl_standoff(PANEL)",
        "comment": "glass back → PCB front (the white M3 standoffs) — MEASURE."
       },
       {
        "name": "pcb_t",
-       "default": "1.6"
+       "default": "pnl_pcb_t(PANEL)"
       },
       {
        "name": "comp_h",
-       "default": "11.0",
+       "default": "pnl_comp_h(PANEL)",
        "comment": "tallest thing behind the PCB (USB-C / terminals / batt JST) — MEASURE."
       },
       {
        "name": "pcb_w",
-       "default": "165.72",
+       "default": "pnl_pcb_w(PANEL)",
        "comment": "PCB outline width  (X) — from the drawing"
       },
       {
        "name": "pcb_h",
-       "default": "97.60",
+       "default": "pnl_pcb_h(PANEL)",
        "comment": "PCB outline height (Y) — MEASURE (see the header warning)"
       }
      ]
@@ -6625,22 +6628,22 @@
      "params": [
       {
        "name": "m3_dx",
-       "default": "126.20",
+       "default": "pnl_m3_dx(PANEL)",
        "comment": "M3 hole pattern width — MEASURED from a reference case"
       },
       {
        "name": "m3_dy",
-       "default": "65.65",
+       "default": "pnl_m3_dy(PANEL)",
        "comment": "M3 hole pattern height — measured with m3_dx; verify"
       },
       {
        "name": "m3_ox",
-       "default": "pv * 1.5",
+       "default": "pnl_m3_ox(PANEL)",
        "comment": "pattern centre offset from the GLASS centre, stated in"
       },
       {
        "name": "m3_oy",
-       "default": "pv * 0.9",
+       "default": "pnl_m3_oy(PANEL)",
        "comment": "FRONT view, panel mounted NATIVE (buttons at the top):"
       },
       {
@@ -6809,7 +6812,7 @@
       },
       {
        "name": "standoff_len",
-       "default": "6.9",
+       "default": "pnl_stud_len(PANEL)",
        "comment": "the panel's own white M3 standoffs, PCB back → tip — MEASURE"
       },
       {
@@ -6977,12 +6980,12 @@
       },
       {
        "name": "sd_dx",
-       "default": "pv * 35.65",
+       "default": "pnl_port_u(PANEL, \"microSD\")",
        "comment": "opening centre, + = back-view right (42.0 − 6.35, measured)"
       },
       {
        "name": "sd_dy",
-       "default": "pv * -26.0"
+       "default": "pnl_port_v(PANEL, \"microSD\")"
       },
       {
        "name": "sd_w",
@@ -7843,6 +7846,11 @@
        "name": "ring_gauge_t",
        "default": "1.2",
        "comment": "thickness; a 2 mm-wide ring at 200 mm long curls"
+      },
+      {
+       "name": "asm_blow",
+       "default": "26",
+       "comment": "exploded separation, mm"
       }
      ]
     }

@@ -190,6 +190,8 @@
 //  in firmware) negates their signs and mirrors the frame's features.
 // ============================================================================
 
+use <canary_panel_lib.scad> // THE PANEL REGISTRY — every panel/board number
+                            // this file uses comes from there, not from here
 use <canary_vent_lib.scad>  // the brand vent shape: feather2d / feather_area
 use <canary_s3_lcd7_stamp.scad>   // GENERATED build stamp — see gen_stamp.py
 // Downloaded this file on its own? It CUTS ITS VENTS with that library — a
@@ -202,11 +204,23 @@ assert(is_num(feather_area(7, 4)),
 part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_port","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","dock_probe_fit","dock_probe_seat","dock_probe_p","dock_probe_p2","ring_gauge","port_teth_hole","port_teth_barb","port_barb_proud","back_flush","fil_body","fil_ink","fil_accent","coupon_body","coupon_ink","coupon_accent","coupon_qr_body","coupon_qr_ink","frame_colour","fil_overlap","fil_gap","all"]
 
 /* [Glass slab] — bonded touch panel, from the Waveshare drawing (mm) */
-glass_w = 192.96;    // touch-glass width  (X)
-glass_h = 110.76;    // touch-glass height (Y)
-glass_t = 4.0;       // glass + LCD module thickness where the module reaches —
+// ── WHICH BOARD ─────────────────────────────────────────────────────────────
+// The ONE knob that selects a panel. Every dimension below is read from that
+// record in canary_panel_lib.scad — none of them are typed here any more.
+// Adding a board is a record there plus an id in this enum; nothing in this
+// file changes. The old scheme kept the numbers here and flipped signs with a
+// `pv` multiplier at each point of use, which meant every new consumer had to
+// remember to apply it, and a board that differed by anything OTHER than a
+// half turn could not be expressed at all.
+panel_variant = "lcd7";   // ["lcd7","lcd7b"]
+PANEL   = panel(panel_variant);
+panel_ok = panel_check(PANEL) && panel_assert_printable(PANEL);
+
+glass_w = pnl_glass_w(PANEL);    // touch-glass width  (X)
+glass_h = pnl_glass_h(PANEL);    // touch-glass height (Y)
+glass_t = pnl_glass_t(PANEL);       // glass + LCD module thickness where the module reaches —
                      // sets the cavity depth and the rear stack datum. MEASURE
-glass_edge_t = 1.2;  // MEASURED on the real panel (was 0.8, which sank the
+glass_edge_t = pnl_edge_t(PANEL);  // MEASURED on the real panel (was 0.8, which sank the
                      // slab 0.4 deeper than it sits).
                      // the BARE-GLASS border the adhesive strips land on —
                      // much thinner than the module stack, and what the
@@ -226,10 +240,10 @@ glass_edge_t = 1.2;  // MEASURED on the real panel (was 0.8, which sank the
 // insets sum to the outline exactly — 19.76 + 126.20 + 19.76 = 165.72 and
 // 18.31 + 65.65 + 13.64 = 97.60 — so both dimensions bracket the CAN, not the
 // PCB. (The board is visibly smaller and sits on standoffs above it.)
-panel_core_w  = 165.72; // module can width  (X)
-panel_core_h  = 97.60;  // module can height (Y) — 2.40 SMALLER than the
+panel_core_w  = pnl_core_w(PANEL); // module can width  (X)
+panel_core_h  = pnl_core_h(PANEL);  // module can height (Y) — 2.40 SMALLER than the
                         // old nominal, which was eating the ledge's clearance
-panel_core_dy = -1.435; // can centre offset from glass centre, NATIVE pose.
+panel_core_dy = pnl_core_dy(PANEL); // can centre offset from glass centre, NATIVE pose.
                         // DERIVED, and it needed no calipers: the drawing puts
                         // the M3 pattern 18.31 from the module's FPC end and
                         // 13.64 from its button end, so the pattern centre sits
@@ -245,7 +259,7 @@ panel_core_dy = -1.435; // can centre offset from glass centre, NATIVE pose.
                         // (I briefly flagged this sign as suspect on the theory
                         // that it must track aa_dy. It does not, and the ledge
                         // assert was right to reject the flip.)
-glass_r = 8.2;       // corner radius of the glass slab — MEASURED against the
+glass_r = pnl_glass_r(PANEL);       // corner radius of the glass slab — MEASURED against the
                      // real panel on a screen comparator, calibrated against
                      // the PANEL OUTLINE itself (192.96 mm) rather than a
                      // bank card: the longest reference to hand more than
@@ -333,12 +347,10 @@ rg_step   = 0.2;      // ...and its step. Four sockets at centre ± 0.5·step
 //  reference case recorded. That reference was a 7B. The flip WAS the variant
 //  difference, found the expensive way before anyone knew there were two.
 // ════════════════════════════════════════════════════════════════════════════
-panel_variant = "lcd7";   // ["lcd7","lcd7b"]
-pv = panel_variant == "lcd7b" ? -1 : 1;   // half-turn multiplier
 
-aa_w = 154.88;       // active area width
-aa_h = 86.72;        // active area height
-aa_dy = 1.02;        // AA centre offset from glass centre — NATIVE mounting,
+aa_w = pnl_aa_w(PANEL);       // active area width
+aa_h = pnl_aa_h(PANEL);        // active area height
+aa_dy = pnl_aa_dy(PANEL);        // AA centre offset from glass centre — NATIVE mounting,
                      // i.e. buttons at the TOP: borders 11.00 top / 13.04
                      // bottom, so the lit area sits 1.02 TOWARD the button
                      // edge. (A buttons-down build — panel rotated 180°,
@@ -355,25 +367,25 @@ aa_dy = 1.02;        // AA centre offset from glass centre — NATIVE mounting,
                      // drawing without turning it into the mounting pose.
 
 /* [PCB stack behind the glass] */
-pcb_standoff = 5.0;  // glass back → PCB front (the white M3 standoffs) — MEASURE.
+pcb_standoff = pnl_standoff(PANEL);  // glass back → PCB front (the white M3 standoffs) — MEASURE.
                      // This one decides whether the bezel lip actually reaches
                      // the glass: too small and the case won't close, too big
                      // and the lip never touches it.
-pcb_t   = 1.6;
-comp_h  = 11.0;      // tallest thing behind the PCB (USB-C / terminals / batt JST) — MEASURE.
+pcb_t   = pnl_pcb_t(PANEL);
+comp_h  = pnl_comp_h(PANEL);      // tallest thing behind the PCB (USB-C / terminals / batt JST) — MEASURE.
                      // Also sets the port band: cutouts open floor → PCB underside.
-pcb_w   = 165.72;    // PCB outline width  (X) — from the drawing
-pcb_h   = 97.60;     // PCB outline height (Y) — MEASURE (see the header warning)
+pcb_w   = pnl_pcb_w(PANEL);    // PCB outline width  (X) — from the drawing
+pcb_h   = pnl_pcb_h(PANEL);     // PCB outline height (Y) — MEASURE (see the header warning)
 
 /* [Board mounts] — 4x M3 corner standoffs carry the PCB (measured pattern) */
-m3_dx = 126.20;      // M3 hole pattern width — MEASURED from a reference case
+m3_dx = pnl_m3_dx(PANEL);      // M3 hole pattern width — MEASURED from a reference case
                      // print that fits the real panel (v0.2 shipped 165.72
                      // here — the outline width, which put every boss under
                      // the board's edge; see the header for how 126.20 also
                      // resolves the old pcb_h dispute). Verify on your board.
-m3_dy = 65.65;       // M3 hole pattern height — measured with m3_dx; verify
-m3_ox = pv * 1.5;         // pattern centre offset from the GLASS centre, stated in
-m3_oy = pv * 0.9;         // FRONT view, panel mounted NATIVE (buttons at the top):
+m3_dy = pnl_m3_dy(PANEL);       // M3 hole pattern height — measured with m3_dx; verify
+m3_ox = pnl_m3_ox(PANEL);         // pattern centre offset from the GLASS centre, stated in
+m3_oy = pnl_m3_oy(PANEL);         // FRONT view, panel mounted NATIVE (buttons at the top):
                      // +x = right, +y = up. SIGNS SETTLED BY THE FIRST REAL
                      // PRINT: with the v0.4 signs (−1.5/−0.9) the panel only
                      // matched the printed pattern upside down — the offsets
@@ -477,7 +489,7 @@ glass_guard  = 0;    // FLUSH FRONT, by request: the glass face sits level
                      // RELATIVE to the panel). usb_zc and edge_vent_z are
                      // measured from the GLASS face, so their values survive
                      // this knob. 0 restores a flush face.
-standoff_len = 6.9;  // the panel's own white M3 standoffs, PCB back → tip — MEASURE
+standoff_len = pnl_stud_len(PANEL);  // the panel's own white M3 standoffs, PCB back → tip — MEASURE
 frame_boss_h = 3.0;  // boss standing proud of the back plate's inner face
 frame_boss_d = 8.0;
 btn_w  = 25.0;       // BOOT/RESET access window through the TOP wall (measured)
@@ -596,8 +608,8 @@ adh_mark_w  = 0.8;   // outline moat width
 // it never drops inside the case. Position corrected by the FIRST REAL PRINT:
 // the photo-derived 42.0 sat 1/4" too far outboard — the print lined up with
 // the socket 6.35 mm nearer the plate's centre.
-sd_dx = pv * 35.65;  // opening centre, + = back-view right (42.0 − 6.35, measured)
-sd_dy = pv * -26.0;
+sd_dx = pnl_port_u(PANEL, "microSD");  // opening centre, + = back-view right (42.0 − 6.35, measured)
+sd_dy = pnl_port_v(PANEL, "microSD");
 sd_w  = 18.0;   // width — fingertip-sized, not card-sized
 sd_l  = 40.0;   // length along the slide direction
 // 7 per side, not 8. The r9.05 corner round eats 5.85 mm off each end of the
@@ -1550,6 +1562,12 @@ echo(str("Canary 7in touch v0.9-dev — outer ", xo, " x ", yo, " x ", bez_h + c
          round(vent_back ? len(grille_cells())*feather_area(vent_slot_l, vent_slot_w, vent_tip)/100 : 0),
          " cm2 open (computed, boss dodges included)",
          "  (IN DEVELOPMENT — MEASURE CONNECTORS)"));
+// The panel this case is for, read straight off the registry record — so a
+// build log says which BOARD it was cut for, and how strong that claim is.
+echo(str("  panel: ", panel_summary(PANEL),
+         pnl_status(PANEL) == "measured" ? ""
+                : str("  <-- status \"", pnl_status(PANEL),
+                      "\": not confirmed on hardware")));
 echo(str("  stack: floor ", z_floor, " | PCB under ", z_pcb_under, " | PCB top ",
          z_pcb_top, " | glass back ", z_glass, " | closed height ",
          back_t + cav_d + bez_h, " mm"));
@@ -3109,6 +3127,32 @@ module stand_gauge() {
 }
 
 // ----------------------------------------------------------------------------
+// ── ASSEMBLY VIEWS — NOT PRINTABLE, and never exported as a part ────────────
+// The case has always been drawable on its own and meaningless on its own: a
+// hollow shell tells you nothing about which edge the cable leaves from or
+// which way up the image is. These put the REGISTRY'S panel in it, so the
+// thing you look at is the assembly rather than half of it.
+//
+// The mock is built from the same record the case reads, so it cannot drift:
+// there is no second description of the panel to keep in step. That is the
+// whole reason the registry exists — before it, the fit-check file and the
+// section view each built their own panel out of the case's variables, and
+// "they agree" was a habit rather than a property.
+//
+//   openscad -o assembly.png --imgsize 1600,1100 --autocenter --viewall \
+//       --camera=0,0,0,62,0,25,320 -D 'part="assembly"' canary_s3_lcd7.scad
+//   ...and part="exploded" for the same view pulled apart along the insertion
+//   axis. asm_blow sets how far; the panel leaves through the FRONT, because
+//   that is how it goes in.
+asm_blow = 26;   // exploded separation, mm
+module lcd7_assembly(blow = 0) {
+    // the case, held back so the panel reads through it
+    color([0.88, 0.88, 0.86, blow > 0 ? 1.0 : 0.35]) frame();
+    // the panel, seated: its front face lands glass_guard behind the rim,
+    // which is the same number the frame's own stack is built on
+    translate([0, 0, glass_guard - blow]) panel_mock(PANEL, blow * 0.18);
+}
+
 if      (part == "bezel") bezel_print();
 else if (part == "back")  back();
 // the frame and its gauge EXPORT back-plate-down: the print orientation the
@@ -3273,6 +3317,9 @@ else if (part == "bat_probe_grip") {
     // fails the gate; the hooks live well below the rail plane anyway
     intersection() { frame(); bat_brick(0, bat_t + 0.5, 0.1); }
 }
+else if (part == "assembly") lcd7_assembly(0);
+else if (part == "exploded") lcd7_assembly(asm_blow);
+else if (part == "panel")    panel_mock(PANEL);
 else if (part == "radius_gauge") radius_gauge();
 else if (part == "ring_gauge")   ring_gauge();
 // TPU fitments export in their print orientation (A-face down), as modelled
