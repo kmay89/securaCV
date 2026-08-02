@@ -1087,7 +1087,7 @@ assert(!port_tether || abs(port_teth_dx) + sd_teth_hole/2 + 2 < fr_xi/2 - fr_ri,
 // the bottom-wall port label sits beyond the brand words; it must still land
 // on the wall's flat span, not run onto the corner round
 assert(!port_labels || !usb_port
-       || vword_x + vword_half + 3.5 + 2.2*len(port_lbl_a) < fr_xi/2 - fr_ri,
+       || vword_x + vword_half + 6.0 + 2.2*len(port_lbl_a) < fr_xi/2 - fr_ri,
        "frame: the bottom port label runs off the wall's flat span — shorten port_lbl_a");
 assert(!rating_stamp || rating_dy - rating_h/2 > -(fr_yi/2 - 6) + 5,
        "frame: rating stamp overlaps the brand line's row — raise rating_dy");
@@ -1733,7 +1733,7 @@ module frame() {
         // outboard of each opening's flange so a fitted grommet never
         // covers them
         if (port_labels && usb_port)
-            translate([vword_x + vword_half + 3.5,
+            translate([vword_x + vword_half + 6.0,
                        -fr_yo/2 + label_depth, usb_z])
                 rotate([90, 0, 0]) linear_extrude(label_depth + 0.2)
                     text(port_lbl_a, size = 3.6, font = label_font,
