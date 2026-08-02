@@ -2,6 +2,42 @@
 
 ## [Unreleased]
 
+### The Lab's build line is finally complete — and it can't silently rot again
+
+The bench migration begun with the Lab shell is finished: every committed
+page now lives on the six-stage build line, and a new CI gate keeps it that
+way.
+
+- **Three finished benches come out of the shadows.** The Case Catalog
+  (browse every enclosure, with the three-question finder as its guided
+  depth) docks at Build; "Listen for a smoke alarm" — the WAP's ears, real
+  firmware wasm — docks at Sense as the new **Sound** track, alongside
+  camera and radar. All three were built, tested and cross-linked, but
+  absent from `build-line.json`, so the shell, the room, the site map and
+  the desktop app never showed them.
+- **The map now contains itself.** `site-map.html` is listed in the
+  manifest's HTML inventory it renders.
+- **The completeness gate the design always promised.**
+  `canary-local/tests/build_line.test.js` fails CI when a committed page is
+  missing from the manifest, a manifest reference points at nothing, a
+  redirect target doesn't resolve, slugs collide, or the room's offline
+  slug map drops a bench — the "if it's not in here, it doesn't appear on
+  the line" rule, enforced instead of hoped. Three existing test files that
+  were never enumerated in CI (`vision_checklist`, `vision_session`,
+  `wifi_memory`) are now wired in too.
+- **Every bench exits to the Lab, not through the old front door.** The
+  fineprint back-links that pointed at the deprecated `index.html` redirect
+  now land on `lab.html` directly; the House's "meet them live" door goes
+  straight to the fleet cards.
+- **The room's degraded mode matches the manifest.** The isometric room's
+  hardcoded fallback tools had drifted (old nouns, missing stations); they
+  now mirror the manifest, and its offline slug map covers every bench and
+  depth page.
+- **The manifest stops promising a surface that doesn't exist.** `app.nav`
+  no longer declares a native "stage-tabs" toolbar the desktop app never
+  grew; it documents the real architecture — the same adaptive shell,
+  rendered from the same manifest, in a native window.
+
 ## [2.4.3] - 2026-08-02
 
 ### The Canary Nightstand 7 — the 7" glass, turned toward the bed

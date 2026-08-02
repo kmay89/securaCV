@@ -532,7 +532,7 @@ function renderPanel() {
   const a2 = html("a", "door", "spec builds in the Workshop →");
   a2.href = "workshop.html";
   const a3 = html("a", "door", "meet them live →");
-  a3.href = "index.html";
+  a3.href = "fleet.html";
   doors.append(a1, a2, a3);
   panel.append(doors);
 }

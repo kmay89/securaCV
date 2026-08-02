@@ -151,6 +151,7 @@ jobs:
       - name: Node tests (shipped source, repo convention)
         run: |
           node --test canary-local/tests/canary_local.test.js
+          node --test canary-local/tests/build_line.test.js
           node --test canary-local/tests/chooser.test.js
           node --test canary-local/tests/house.test.js
           node --test canary-local/tests/workshop.test.js
@@ -163,6 +164,8 @@ jobs:
           node --test canary-local/tests/hub_wizard.test.js
           node --test canary-local/tests/wap.test.js
           node --test canary-local/tests/vision.test.js
+          node --test canary-local/tests/vision_checklist.test.js
+          node --test canary-local/tests/vision_session.test.js
           node --test canary-local/tests/eyes.test.js
           node --test canary-local/tests/audio.test.js
           node --test canary-local/tests/board_identity.test.js
@@ -179,6 +182,7 @@ jobs:
           node --test canary-local/tests/flash_select.test.js
           node --test canary-local/tests/desktop_parity.test.js
           node --test canary-local/tests/hatchery.test.js
+          node --test canary-local/tests/wifi_memory.test.js
           node --test canary-local/tests/lab_bundle.test.js
           node --test canary-local/tests/playground.test.js
           node --test canary-local/tests/mode.test.js
