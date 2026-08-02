@@ -530,6 +530,10 @@ ledge_t    = 2.5;   // ledge thickness behind the panel
 ledge_side = 10.0;  // ledge width along each short (±x) edge
 ledge_top  = 6.0;   // along the button (top) edge
 ledge_bot  = 2.0;   // along the FPC (bottom) edge — keep small, the FPC lives there
+ledge_slope_max = max(ledge_side, ledge_top, ledge_bot);  // deepest back-slope
+ledge_slope_n   = 20;  // steps in the 45° back-slope. Each step overhangs by
+                       // its own height, so ANY count self-supports; this only
+                       // sets how smooth the sloped face reads.
 // Every ledge carries a 45° back-slope wedge down to its wall, so the frame
 // prints BACK-PLATE-DOWN with the ledges fully self-supporting — solid
 // material under the adhesive landing, no overhang, no sacrificial geometry.
@@ -2200,23 +2204,36 @@ module frame() {
                 translate([0, (ledge_bot - ledge_top)/2])
                     rrect2d(fr_xi - 2*ledge_side, fr_yi - ledge_top - ledge_bot, 2);
             }
-            // ...and each ledge's 45° back-slope wedge to its wall: solid
-            // support under the adhesive landing, self-supporting when the
-            // frame prints back-plate-down. Profile: flat landing at ledge_z,
-            // inner face ledge_t tall, then 45° back up to the wall.
-            for (sx = [1, -1])
-                translate([sx*fr_xi/2, (fr_yi - 2*fr_ri)/2, ledge_z])
-                    rotate([90, 0, 0]) linear_extrude(fr_yi - 2*fr_ri)
-                        polygon([[0, 0], [-sx*ledge_side, 0],
-                                 [-sx*ledge_side, ledge_t], [0, ledge_t + ledge_side]]);
-            translate([-(fr_xi - 2*fr_ri)/2, fr_yi/2, ledge_z])
-                rotate([90, 0, 90]) linear_extrude(fr_xi - 2*fr_ri)
-                    polygon([[0, 0], [-ledge_top, 0],
-                             [-ledge_top, ledge_t], [0, ledge_t + ledge_top]]);
-            translate([(fr_xi - 2*fr_ri)/2, -fr_yi/2, ledge_z])
-                rotate([90, 0, -90]) linear_extrude(fr_xi - 2*fr_ri)
-                    polygon([[0, 0], [-ledge_bot, 0],
-                             [-ledge_bot, ledge_t], [0, ledge_t + ledge_bot]]);
+            // ...and the ledge's 45° back-slope to its wall: solid support
+            // under the adhesive landing, self-supporting when the frame
+            // prints back-plate-down.
+            //
+            // Built by GROWING the ledge's inner opening outward as we step
+            // back, rather than as three straight prisms. The prisms ran
+            // linear_extrude(fr_yi - 2*fr_ri) and friends — i.e. the straight
+            // spans only — so all four CORNERS had a bare flat ledge back face
+            // hanging over the cavity with nothing under it. A slicer flags it
+            // as a floating cantilever, correctly; it bridges, but it did not
+            // need to exist. offset() grows the opening uniformly, corners
+            // included, so the 45° face is now continuous all the way round.
+            //
+            // Stepped rather than swept because the three edges are different
+            // widths (10 / 6 / 2), so there is no single profile to revolve.
+            // Each step is ledge_slope_step tall and overhangs by the same,
+            // which is a 45° staircase — self-supporting at any step size; the
+            // step only sets how smooth the face looks.
+            for (i = [0 : ledge_slope_n - 1]) {
+                h = ledge_slope_max * i / ledge_slope_n;
+                translate([0, 0, ledge_z + ledge_t + h])
+                    linear_extrude(ledge_slope_max/ledge_slope_n + 0.01)
+                        difference() {
+                            rrect2d(fr_xi, fr_yi, fr_ri);
+                            offset(r = h)
+                                translate([0, (ledge_bot - ledge_top)/2])
+                                    rrect2d(fr_xi - 2*ledge_side,
+                                            fr_yi - ledge_top - ledge_bot, 2);
+                        }
+            }
         }
         // glass entry chamfer around the front rim
         hull() {

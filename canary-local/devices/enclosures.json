@@ -6925,6 +6925,16 @@
        "comment": "along the FPC (bottom) edge — keep small, the FPC lives there"
       },
       {
+       "name": "ledge_slope_max",
+       "default": "max(ledge_side, ledge_top, ledge_bot)",
+       "comment": "deepest back-slope"
+      },
+      {
+       "name": "ledge_slope_n",
+       "default": "20",
+       "comment": "steps in the 45° back-slope. Each step overhangs by"
+      },
+      {
        "name": "brand_back",
        "default": "CANARY DISPLAY",
        "comment": "the back lockup's HERO line — centred,"
