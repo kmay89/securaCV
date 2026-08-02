@@ -7249,13 +7249,13 @@
       },
       {
        "name": "qr_back_cell",
-       "default": "1.2",
-       "comment": "module size — 3 line-widths; the plate is busier"
+       "default": "1.4",
+       "comment": "module size — 3.3 line-widths at 0.42. Was 1.2"
       },
       {
        "name": "qr_back_dx",
-       "default": "-40.0",
-       "comment": "field centre, back-view coords (+x = back-view right)"
+       "default": "-43.0",
+       "comment": "field centre, back-view coords (+x = back-view right)."
       },
       {
        "name": "qr_back_dy",
@@ -7266,6 +7266,30 @@
        "name": "qr_back_reach",
        "default": "qr_n*qr_back_cell/2 + 4*qr_back_cell",
        "comment": "field/2 + quiet zone,"
+      }
+     ]
+    },
+    {
+     "name": "Build stamp — inside the case, on the plate's inner face",
+     "note": "",
+     "params": [
+      {
+       "name": "stamp_show",
+       "default": "true"
+      },
+      {
+       "name": "stamp_depth",
+       "default": "0.5",
+       "comment": "of back_t; the plate keeps 2.5 under it"
+      },
+      {
+       "name": "stamp_dy",
+       "default": "49.0",
+       "comment": "the clear band above the grille. Its floor is not a"
+      },
+      {
+       "name": "stamp_size",
+       "default": "2.4"
       }
      ]
     },
@@ -7516,6 +7540,11 @@
        "default": "(edge_vent_n - 1)/2*edge_vent_pitch + edge_vent_w/2"
       },
       {
+       "name": "stamp_half",
+       "default": "stamp_size*0.9 + stamp_size*0.39 + 0.6",
+       "comment": "text block half-height"
+      },
+      {
        "name": "qr_dy_eff",
        "default": "qr_dy + bat_dg",
        "comment": "the deck's rear half-growth, when a battery deepens the dock"
@@ -7526,8 +7555,9 @@
        "comment": "how far inward from the cavity corner the sample reaches"
       },
       {
-       "name": "qr_weld",
-       "default": "0.02"
+       "name": "qr_round",
+       "default": "0.22",
+       "comment": "module corner radius, as a fraction of the module"
       }
      ]
     }
@@ -8160,6 +8190,41 @@
        "name": "brand_sunk",
        "default": "SecuraCV",
        "comment": "the DEBOSS station's wordmark"
+      }
+     ]
+    },
+    {
+     "name": "GLYPH station — the bird, debossed into the BED-SIDE face",
+     "note": "",
+     "params": [
+      {
+       "name": "glyph_show",
+       "default": "true"
+      },
+      {
+       "name": "glyph_size",
+       "default": "34.0",
+       "comment": "mark width. At 34 the thinnest stroke lands at"
+      },
+      {
+       "name": "glyph_grow",
+       "default": "0.14",
+       "comment": "per-side thickening that buys that 0.44"
+      },
+      {
+       "name": "glyph_depth",
+       "default": "0.5",
+       "comment": "= label_depth's sibling; one bridged layer closes it"
+      },
+      {
+       "name": "glyph_dx",
+       "default": "-26.5",
+       "comment": "the clear rectangle on the bed face: left of the"
+      },
+      {
+       "name": "glyph_dy",
+       "default": "12.0",
+       "comment": "PORT through-hole, above the keyhole pockets"
       }
      ]
     },

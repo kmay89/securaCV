@@ -3319,7 +3319,7 @@
         "tol_press": "mm",
         "tol_hole": "mm"
       },
-      "sha256": "4aa41a3e7653caa6c28deab32b65ed5a615a66043ca7a50141e621dfec95ae8e",
+      "sha256": "455358d10ffe1d40215a11666815b1e094d99472a61c870494b5eead88a5ba3b",
       "groups": [
         {
           "name": "What to render",
@@ -3541,6 +3541,46 @@
               "type": "string",
               "default": "SecuraCV",
               "desc": "the DEBOSS station's wordmark"
+            }
+          ]
+        },
+        {
+          "name": "GLYPH station — the bird, debossed into the BED-SIDE face",
+          "params": [
+            {
+              "name": "glyph_show",
+              "type": "bool",
+              "default": true
+            },
+            {
+              "name": "glyph_size",
+              "type": "number",
+              "default": 34.0,
+              "desc": "mark width. At 34 the thinnest stroke lands at"
+            },
+            {
+              "name": "glyph_grow",
+              "type": "number",
+              "default": 0.14,
+              "desc": "per-side thickening that buys that 0.44"
+            },
+            {
+              "name": "glyph_depth",
+              "type": "number",
+              "default": 0.5,
+              "desc": "= label_depth's sibling; one bridged layer closes it"
+            },
+            {
+              "name": "glyph_dx",
+              "type": "number",
+              "default": -26.5,
+              "desc": "the clear rectangle on the bed face: left of the"
+            },
+            {
+              "name": "glyph_dy",
+              "type": "number",
+              "default": 12.0,
+              "desc": "PORT through-hole, above the keyhole pockets"
             }
           ]
         },

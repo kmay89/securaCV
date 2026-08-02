@@ -18,11 +18,19 @@
 //      CLIP    — snap clip + rail: press a 1.2 mm PCB edge (or scrap) in
 //      POCKET  — two blind keyhole pockets (gap 30): hang the MATE's studs
 //      INSERT  — heat-set boss (only if you'll use screw_insert)   -> insert_d
+//      GLYPH   — the SecuraCV bird debossed into the BED-SIDE face at full
+//                size: the first-layer / plate-texture test, and the one
+//                that matters most, because every case A-surface in this
+//                catalog prints face-down (see the knobs for why it lives
+//                on the underside and not between the stations)
 //    MATE (part="mate"): two T-studs + the slide rib
 //    STRIP (part="strip"): TPU gasket bar for the groove
 //
 //  If a station is tight/loose, adjust the matching tol_* / clip_* / screw
 //  parameter in the case you print next. Labels are debossed beside each.
+//
+//  The bird glyph (securacv_bird_glyph.svg) is © ERRERLabs / SecuraCV /
+//  Karl Meves — shipped with the coupon as production art, not clip art.
 //
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
 // ============================================================================
@@ -56,6 +64,25 @@ emboss_h = 0.6;      // raised-wordmark height (EMBOSS station)
 label_font = "Liberation Sans:style=Bold";
 brand_raised = "CANARY";     // the EMBOSS station's wordmark
 brand_sunk   = "SecuraCV";   // the DEBOSS station's wordmark
+
+/* [GLYPH station — the bird, debossed into the BED-SIDE face] */
+// Why the underside: the mark is LINE ART, and its strokes are ~0.2 mm at
+// 40 mm wide. Shrink it to fit between the stations on the top face and the
+// strokes fall under half a line width — it prints as mush and libels the
+// brand. The bed face is empty, so the mark gets its full size there, and
+// lands on the one test this catalog most needs: EVERY case A-surface
+// prints face-down, so the first layers against the textured plate ARE the
+// visible finish. If the beak, the eye ring and the notepad spiral come off
+// the plate crisp, your first layer is dialled for every case in the set.
+// A deboss (not an emboss) so the coupon still sits flat on its own face.
+glyph_show  = true;
+glyph_size  = 34.0;   // mark width. At 34 the thinnest stroke lands at
+                      // ~0.44 mm — one 0.42 line. Smaller is not a style
+                      // choice, it is an unprintable mark
+glyph_grow  = 0.14;   // per-side thickening that buys that 0.44
+glyph_depth = 0.5;    // = label_depth's sibling; one bridged layer closes it
+glyph_dx    = -26.5;  // the clear rectangle on the bed face: left of the
+glyph_dy    = 12.0;   // PORT through-hole, above the keyhole pockets
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;
@@ -137,6 +164,15 @@ module base() {
             lbl(-31, -23, "CLIP");      lbl(pocket_cx, -25.5, "POCKET");  lbl(34, -21, "INSERT");
             // foot line: the small-text legibility test doubles as the colophon
             lbl(-2, -31, "securacv.com · fit coupon v0.2-dev", 3);
+            // GLYPH station: the bird, into the bed-side face. Mirrored in x
+            // because this face is read from BELOW — unmirrored art would
+            // come off the plate back-to-front, notepad in the wrong wing.
+            if (glyph_show)
+                translate([glyph_dx, glyph_dy, -0.1]) mirror([1, 0, 0])
+                    linear_extrude(glyph_depth + 0.1)
+                        offset(delta = glyph_grow)
+                            resize([glyph_size, 0], auto = true)
+                                import("securacv_bird_glyph.svg", center = true);
         }
         // EMBOSS station: raised wordmark at the height case branding uses
         emb(-24, 27, brand_raised, 7);

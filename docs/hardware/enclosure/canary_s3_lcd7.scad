@@ -189,6 +189,7 @@
 // ============================================================================
 
 use <canary_vent_lib.scad>  // the brand vent shape: feather2d / feather_area
+use <canary_s3_lcd7_stamp.scad>   // GENERATED build stamp — see gen_stamp.py
 // Downloaded this file on its own? It CUTS ITS VENTS with that library — a
 // missing lib would render a sealed, overheating case with only a console
 // warning. This guard turns that into a hard stop instead:
@@ -644,14 +645,37 @@ qr_dy   = 39.0;   // field centre, +y = toward the back edge (a battery
 // opening's visual counterweight, outboard of the left rail's moat; the
 // smooth keepout it claims from the grille IS its quiet zone.
 qr_back      = true;   // deboss the help QR into the back plate too
-qr_back_cell = 1.2;    // module size — 3 line-widths; the plate is busier
-qr_back_dx   = -40.0;  // field centre, back-view coords (+x = back-view right)
+qr_back_cell = 1.4;    // module size — 3.3 line-widths at 0.42. Was 1.2
+                       // (2.9 lines): printable in theory, marginal in fact,
+                       // and this symbol is the one read off a wall
+qr_back_dx   = -43.0;  // field centre, back-view coords (+x = back-view right).
+                       // Moved out with the bigger module so the quiet zone
+                       // still clears the left rail moat (asserted below)
 qr_back_dy   = 0.0;    // mid-LEFT wing, mirroring the SD cover's mass on the
                        // right. Deliberately NOT dropped to the SD's row:
                        // that squeezes the bottom band, and the band is the
                        // brand lockup's — one centred thing, nothing beside it
 qr_back_reach = qr_n*qr_back_cell/2 + 4*qr_back_cell;   // field/2 + quiet zone,
                   // sized from the GENERATED matrix — a bigger symbol grows it
+
+/* [Build stamp — inside the case, on the plate's inner face] */
+// The case carries its own revision where it cannot spoil the outside:
+// debossed into the INNER face of the back plate, found only when someone
+// opens it. REV is human CalVer; SRC is a digest of the geometry sources,
+// both from canary_s3_lcd7_stamp.scad (generated — see gen_stamp.py for
+// why neither can rot, and for what SRC does and does not prove: it names
+// a DESIGN, it authenticates nothing).
+// Prints as the last layers of the plate, opening upward into the cavity —
+// no bridge, no support. Mirrored in x because this face is read from the
+// cavity side.
+stamp_show  = true;
+stamp_depth = 0.5;   // of back_t; the plate keeps 2.5 under it
+stamp_dy    = 49.0;  // the clear band above the grille. Its floor is not a
+                     // constant: the top feather row's centre is at
+                     // (vent_rows-1)/2*vent_pitch_y and the feather reaches
+                     // half its length past that, so the assert below derives
+                     // the bound instead of quoting a number that would rot
+stamp_size  = 2.4;
 
 /* [Battery bay — click-in, no hardware] */
 // A moulded bay on the back plate's inner face for the MakerFocus 1S packs
@@ -928,6 +952,12 @@ assert(vent_pitch_x - vent_slot_w >= 2.39 && vent_pitch_y - vent_slot_l >= 0.79,
        "grille: feather webs too thin — grow the pitches or shrink the feather");
 assert(vent_tip > 0.15 && vent_tip < 0.6,
        "grille: vent_tip is the brand constant — a tip outside 0.15..0.6 is not the mark");
+stamp_half = stamp_size*0.9 + stamp_size*0.39 + 0.6;   // text block half-height
+assert(!stamp_show || (stamp_depth < back_t - 1.5
+       && stamp_dy - stamp_half
+            > (vent_rows - 1)/2*vent_pitch_y + vent_slot_l/2 + 1
+       && stamp_dy + stamp_half < fr_yi/2 - plate_fillet - 0.5),
+       "frame: build stamp collides with the top feather row, the plate rim/fillet, or thins the plate");
 assert(glass_guard >= 0 && glass_guard <= 1.2,
        "frame: glass_guard is a trim reveal, not a bumper — keep it under 1.2 (or 0 for a flush face)");
 // the fillet ring lives in the same clear band as the keyhole pads; it must
@@ -1348,21 +1378,27 @@ module gauge() {
 module pill2d(l, w) { hull() for (d = [-1, 1]) translate([0, d*(l - w)/2]) circle(d = w); }
 // Back-plate deboss: label_back_depth, not label_depth — the floors must sit
 // above the two-colour swap band (see the knob's comment).
-// QR modules as ONE welded solid. Cutting a cube per dark cell looks
-// right and is NOT: diagonal neighbours then touch along a single edge,
-// and two solids sharing only an edge are non-manifold BY DEFINITION —
-// every QR has diagonal neighbours, so every such field is malformed
-// (CGAL says so; slicers guess). Growing each cell by qr_weld makes
-// those neighbours OVERLAP instead of kiss, and one 2D union + one
-// extrude replaces n cubes. The weld is 1.7% of a 1.2 mm module — far
-// under any scanner's tolerance, and the quiet zone is untouched.
-qr_weld = 0.02;
-module qr_field2d(cell, weld = qr_weld) {
-    for (r = [0:qr_n-1], c = [0:qr_n-1])
-        if (qr_bits()[r][c] == 1)
-            translate([c*cell - weld/2, -(r+1)*cell - weld/2])
-                square([cell + weld, cell + weld]);
-}
+// QR modules, shaped for a NOZZLE. Cutting one square per dark module
+// creates two things a 0.42 line cannot trace: diagonally adjacent
+// modules meet at a SINGLE POINT (non-manifold in 3D, a knife edge in
+// 2D — and every QR has diagonal neighbours), and every corner is a
+// hard 90°, which the outer wall whips around at speed and PETG blobs.
+// One morphological OPENING fixes both: erode by rr, then dilate by rr.
+// The erosion breaks every zero-width neck; the dilation restores each
+// module to full size with rr-radius corners, so nothing narrower than
+// a line survives anywhere in the field. Scannability is unharmed: the
+// three FINDER patterns a reader locks onto are 7x7 blocks, and a
+// radius this small leaves them square; the data modules keep their
+// centres and their area, which is what the sampling grid reads.
+qr_round = 0.22;   // module corner radius, as a fraction of the module
+module qr_field2d(cell, round = qr_round) {
+    rr = round*cell;
+    offset(r = rr) offset(r = -rr)
+        for (r = [0:qr_n-1], c = [0:qr_n-1])
+            if (qr_bits()[r][c] == 1)
+                translate([c*cell, -(r+1)*cell])
+                    square(cell + 0.002);   // orthogonal neighbours overlap
+}                                           // so they union without a seam
 
 module frame_lbl(x, y, s, size = 4.0, spacing = 1.0) {
     translate([x, y, fr_depth - label_back_depth])
@@ -1747,6 +1783,18 @@ module frame() {
                        fr_depth - label_back_depth])
                 linear_extrude(label_back_depth + 0.1)
                     qr_field2d(qr_back_cell);
+        // build stamp, into the plate's INNER face (see the knobs)
+        if (stamp_show) translate([0, stamp_dy, fz_plate - 0.01])
+            mirror([1, 0, 0]) linear_extrude(stamp_depth + 0.01) {
+                translate([0, stamp_size*0.9])
+                    text("CANARY DISPLAY", size = stamp_size,
+                         font = label_font, spacing = 1.1,
+                         halign = "center", valign = "center");
+                translate([0, -stamp_size*0.9])
+                    text(str("REV ", lcd7_stamp_rev(), "  SRC ", lcd7_stamp_src()),
+                         size = stamp_size*0.78, font = label_font,
+                         halign = "center", valign = "center");
+            }
     }
 }
 
