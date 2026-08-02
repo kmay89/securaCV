@@ -204,7 +204,9 @@ glass_w = 192.96;    // touch-glass width  (X)
 glass_h = 110.76;    // touch-glass height (Y)
 glass_t = 4.0;       // glass + LCD module thickness where the module reaches —
                      // sets the cavity depth and the rear stack datum. MEASURE
-glass_edge_t = 0.8;  // the BARE-GLASS border the adhesive strips land on —
+glass_edge_t = 1.2;  // MEASURED on the real panel (was 0.8, which sank the
+                     // slab 0.4 deeper than it sits).
+                     // the BARE-GLASS border the adhesive strips land on —
                      // much thinner than the module stack, and what the
                      // adhesive ledge must rise to meet. Set from the
                      // reference case print that fits the real panel: its
@@ -453,7 +455,16 @@ frame_wall   = 2.0;  // sleeve wall (also the visible front rim around the glass
 frame_reveal = 0.15; // per-side glass↔opening clearance. The opening AND its
                      // corner radius both track the slab by this much, so the
                      // reference case's corner gap cannot come back.
-glass_guard  = 0.6;  // GUARD RIM: the front rim stands this proud of the
+glass_guard  = 0;    // FLUSH FRONT, by request: the glass face sits level
+                     // with the rim rather than recessed behind it.
+                     // ⚠️ TRADE-OFF, stated once so it is a choice and not an
+                     // accident: this knob existed as drop protection. At 0.6
+                     // a face-down drop landed on the case's rim; at 0 it
+                     // lands on the panel. Nothing else changes — the rear
+                     // stack chains from the glass, so the whole assembly
+                     // just moves 0.6 forward and fr_depth shrinks to match.
+                     // Set it back to 0.6 to restore the raised lip.
+                     // GUARD RIM: the front rim stands this proud of the
                      // glass, so a face-down drop lands on the case's rim,
                      // not the panel — the raised-lip trick every phone case
                      // uses, executed as trim: the rim keeps its 45° entry

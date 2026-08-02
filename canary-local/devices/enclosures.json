@@ -6518,8 +6518,8 @@
       },
       {
        "name": "glass_edge_t",
-       "default": "0.8",
-       "comment": "the BARE-GLASS border the adhesive strips land on —"
+       "default": "1.2",
+       "comment": "MEASURED on the real panel (was 0.8, which sank the"
       },
       {
        "name": "panel_core_w",
@@ -6802,8 +6802,8 @@
       },
       {
        "name": "glass_guard",
-       "default": "0.6",
-       "comment": "GUARD RIM: the front rim stands this proud of the"
+       "default": "0",
+       "comment": "FLUSH FRONT, by request: the glass face sits level"
       },
       {
        "name": "standoff_len",
