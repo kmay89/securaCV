@@ -127,6 +127,10 @@ static canary::mode::Mode s_active_mode = canary::mode::Mode::Fleet;
 #ifdef CD_NIGHTSTAND7
 #include "canary/ui/nightstand7_ui.h"
 #endif
+#ifdef CD_FLAVOR_DASH
+#include "canary/ui/portrait7_ui.h"   // the 7"/dash portrait column (rotated)
+#include "canary/ui/lvgl_port.h"      // set_rotation / set_dim
+#endif
 #ifdef CD_FLAVOR_NIGHTSTAND
 #include "canary/ui/portrait_ui.h"
 #endif
@@ -415,16 +419,28 @@ static void apply_brightness(uint32_t now, bool night) {
 // Touch: tap = wake/page, long-press = acknowledge
 // ----------------------------------------------------------------------------
 
+#ifdef CD_FLAVOR_DASH
+static bool dash_is_portrait();   // defined with the render helpers below
+#endif
+
 static void ui_ack_hold(bool active) {
   if (!g_display_ok) return;
 #ifdef CD_FLAVOR_WATCH
   canary::ui::glance_ui_ack_hold(active);
 #endif
-#if defined(CD_FLAVOR_DASH) && !defined(CD_NIGHTSTAND7)
-  canary::ui::dash_ui_ack_hold(active);
-#endif
+#ifdef CD_FLAVOR_DASH
+  // The portrait column has no ack ring; routing the sweep to a landscape
+  // face whose objects were cleaned on the orientation swap would touch
+  // freed pointers, so pick the live face.
+  if (dash_is_portrait()) {
+    canary::ui::portrait7_ui_ack_hold(active);
+  } else {
 #ifdef CD_NIGHTSTAND7
-  canary::ui::nightstand7_ui_ack_hold(active);
+    canary::ui::nightstand7_ui_ack_hold(active);
+#else
+    canary::ui::dash_ui_ack_hold(active);
+#endif
+  }
 #endif
 #ifdef CD_FLAVOR_NIGHTSTAND
   canary::ui::portrait_ui_ack_hold(active);
@@ -519,8 +535,9 @@ static void handle_touch(uint32_t now) {
     defined(FEATURE_CARE) && FEATURE_CARE
   // Cleaning mode (transparency sheet -> "wipe the glass"): a wall panel
   // must survive a wet cloth without acking an alarm. Swallow everything
-  // until the lockout ends.
-  if (canary::ui::dash_ui_touch_locked(now)) {
+  // until the lockout ends. Only the landscape poster arms it (the portrait
+  // column has no transparency sheet), so it's inert in portrait.
+  if (!dash_is_portrait() && canary::ui::dash_ui_touch_locked(now)) {
     if (g_touch_down) {
       g_touch_down = false;
       g_longpress_fired = false;
@@ -576,7 +593,9 @@ static void handle_touch(uint32_t now) {
     }
 #endif
 #if defined(CD_FLAVOR_DASH) && !defined(CD_NIGHTSTAND7)
-    {
+    // Card hit-testing belongs to the landscape poster; the portrait column
+    // has no cards (its objects were cleaned on the swap), so skip it there.
+    if (!dash_is_portrait()) {
       const int card = canary::ui::dash_ui_card_at(g_touch_x, g_touch_y);
       if (card >= 0) {
         const auto* w = fleet.at(card);
@@ -675,7 +694,7 @@ static void handle_touch(uint32_t now) {
     // Bedside tap grammar: the face gets first refusal (summon the lantern
     // from its corner after dark; walk the scene ring while it's lit). A
     // tap it doesn't claim is just the wake it already was.
-    if (g_display_ok &&
+    if (g_display_ok && !dash_is_portrait() &&
         canary::ui::nightstand7_ui_handle_tap(g_touch_x, g_touch_y, now)) {
       fleet.mark_dirty();
       return;
@@ -683,8 +702,9 @@ static void handle_touch(uint32_t now) {
 #endif
 #if defined(CD_FLAVOR_DASH) && !defined(CD_NIGHTSTAND7)
     // Proof-on-Glass (spec §1): a lit tap on a witness card opens its
-    // proof sheet; a tap on an open sheet closes it.
-    if (was_awake && g_display_ok) {
+    // proof sheet; a tap on an open sheet closes it. The portrait column has
+    // no card sheets, so its taps are just the wake they already were.
+    if (was_awake && g_display_ok && !dash_is_portrait()) {
       canary::ui::dash_ui_handle_tap(g_touch_x, g_touch_y);
 #if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK
       // A lit tap on a witness card queues an off-grid GATT status pull for
@@ -700,6 +720,27 @@ static void handle_touch(uint32_t now) {
     fleet.mark_dirty();
   }
 }
+
+// ----------------------------------------------------------------------------
+// Face orientation (7"/dash glass)
+// ----------------------------------------------------------------------------
+// The 7"/dash face has two layouts: the landscape poster (dash_ui /
+// nightstand7_ui) and the portrait column (portrait7_ui), chosen by the saved
+// rotation. Turning the glass in Settings swaps which one is live on the next
+// rebuild. On the round watch / SPI nightstands this is inert.
+#ifdef CD_FLAVOR_DASH
+static bool dash_is_portrait() {
+  return canary::glass::rotation_is_portrait(canary::glass::settings().rotation);
+}
+static void dash_face_create() {
+  if (dash_is_portrait()) { canary::ui::portrait7_ui_create(); return; }
+#ifdef CD_NIGHTSTAND7
+  canary::ui::nightstand7_ui_create();
+#else
+  canary::ui::dash_ui_create();
+#endif
+}
+#endif  // CD_FLAVOR_DASH
 
 // ----------------------------------------------------------------------------
 // Render
@@ -727,25 +768,33 @@ static void render(uint32_t now) {
   {
     static bool s_ground_night = canary::ui::character_night();
     static canary::ui::Character s_ground_char = canary::ui::active_character();
+#ifdef CD_FLAVOR_DASH
+    // Orientation is the third thing that changes which face is on the glass:
+    // a Settings rotation to/from portrait swaps the poster for the column.
+    static bool s_ground_portrait = dash_is_portrait();
+    const bool orient_changed = (dash_is_portrait() != s_ground_portrait);
+#else
+    const bool orient_changed = false;
+#endif
     if ((canary::ui::character_night() != s_ground_night ||
-         canary::ui::active_character() != s_ground_char) &&
+         canary::ui::active_character() != s_ground_char || orient_changed) &&
         !canary::ui::settings_ui_active() &&
         !canary::ui::commission_ui_active()) {
       s_ground_night = canary::ui::character_night();
       s_ground_char = canary::ui::active_character();
+#ifdef CD_FLAVOR_DASH
+      s_ground_portrait = dash_is_portrait();
+#endif
       lv_obj_clean(lv_scr_act());
 #ifdef CD_FLAVOR_WATCH
       canary::ui::glance_ui_create();
 #endif
-#if defined(CD_FLAVOR_DASH) && !defined(CD_NIGHTSTAND7)
-      canary::ui::dash_ui_create();
-#endif
-#ifdef CD_NIGHTSTAND7
-      // The bedside face is TWO layouts, not one skinned one — day
-      // complications vs. the night clock-focus — and the ground flip is
-      // exactly when it swaps between them (nightstand7_ui_create reads
-      // character_night()).
-      canary::ui::nightstand7_ui_create();
+#ifdef CD_FLAVOR_DASH
+      // Landscape poster or portrait column, per the saved rotation; the
+      // bedside face is itself two layouts (day complications vs. the night
+      // clock-focus) and the ground flip is when nightstand7 swaps between
+      // them (its create reads character_night()).
+      dash_face_create();
 #endif
 #ifdef CD_FLAVOR_NIGHTSTAND
       canary::ui::portrait_ui_create();
@@ -792,32 +841,53 @@ static void render(uint32_t now) {
   st.bird = bird;
   canary::ui::glance_ui_update(fleet, now, st);
 #endif
+#ifdef CD_FLAVOR_DASH
+  // Portrait swaps the landscape poster for the shared column (portrait7);
+  // otherwise the flavor's own landscape face renders. The `st` structs are
+  // scoped per-branch so the poster and the column never collide.
+  if (dash_is_portrait()) {
+    canary::ui::Portrait7State st;
+    st.night = night_look;
 #ifdef CD_NIGHTSTAND7
-  canary::ui::Nightstand7State st;
-  st.night = night_look;
-  st.wifi_ok = canary::net::wifi_connected();
-  st.wifi_reason =
-      st.wifi_ok ? nullptr
-                 : canary::net::join_failure_label(canary::net::wifi_last_failure());
-  st.mqtt_ok = canary::net::mqtt_connected();
-  st.acked = fleet.ack_active(now);
-  st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
-  st.bird = bird;
-  canary::ui::nightstand7_ui_update(fleet, now, st);
+    st.bedside = true;   // emphasis only — same honest column either way
 #endif
-#if defined(CD_FLAVOR_DASH) && !defined(CD_NIGHTSTAND7)
-  canary::ui::DashState st;
-  st.night = night_look;
-  st.wifi_ok = canary::net::wifi_connected();
-  // Name the cause on the glass, not just the symptom.
-  st.wifi_reason =
-      st.wifi_ok ? nullptr
-                 : canary::net::join_failure_label(canary::net::wifi_last_failure());
-  st.mqtt_ok = canary::net::mqtt_connected();
-  st.acked = fleet.ack_active(now);
-  st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
-  st.bird = bird;
-  canary::ui::dash_ui_update(fleet, now, st);
+    st.wifi_ok = canary::net::wifi_connected();
+    st.wifi_reason =
+        st.wifi_ok ? nullptr
+                   : canary::net::join_failure_label(canary::net::wifi_last_failure());
+    st.mqtt_ok = canary::net::mqtt_connected();
+    st.acked = fleet.ack_active(now);
+    st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
+    st.bird = bird;
+    canary::ui::portrait7_ui_update(fleet, now, st);
+  } else {
+#ifdef CD_NIGHTSTAND7
+    canary::ui::Nightstand7State st;
+    st.night = night_look;
+    st.wifi_ok = canary::net::wifi_connected();
+    st.wifi_reason =
+        st.wifi_ok ? nullptr
+                   : canary::net::join_failure_label(canary::net::wifi_last_failure());
+    st.mqtt_ok = canary::net::mqtt_connected();
+    st.acked = fleet.ack_active(now);
+    st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
+    st.bird = bird;
+    canary::ui::nightstand7_ui_update(fleet, now, st);
+#else
+    canary::ui::DashState st;
+    st.night = night_look;
+    // Name the cause on the glass, not just the symptom.
+    st.wifi_ok = canary::net::wifi_connected();
+    st.wifi_reason =
+        st.wifi_ok ? nullptr
+                   : canary::net::join_failure_label(canary::net::wifi_last_failure());
+    st.mqtt_ok = canary::net::mqtt_connected();
+    st.acked = fleet.ack_active(now);
+    st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
+    st.bird = bird;
+    canary::ui::dash_ui_update(fleet, now, st);
+#endif
+  }
 #endif
 #ifdef CD_FLAVOR_NIGHTSTAND
   canary::ui::PortraitState st;
@@ -835,6 +905,24 @@ static void render(uint32_t now) {
 #endif
 
   apply_brightness(now, night);
+
+#ifdef CD_FLAVOR_DASH
+  // Rendered daytime brightness: the CH422G backlight is binary, so the
+  // sustained brightness setting is a black scrim over the glass. Honesty
+  // outranks a dim — an unacked Alert/Tamper takes it fully off, and the
+  // night face is already dark (and may cut the backlight), so no day scrim
+  // rides on top of it. While a brightness edit is open the editor previews
+  // the same value live; here it just holds.
+  {
+    const bool urgent = fleet.worst(now) >= canary::fleet::Sev::Alert &&
+                        !fleet.ack_active(now);
+    const uint8_t opa =
+        (urgent || night)
+            ? 0
+            : canary::glass::bright_scrim_opa(canary::glass::settings().bright_pct);
+    canary::ui::lvgl_port_set_dim(opa);
+  }
+#endif
 }
 
 // ----------------------------------------------------------------------------
@@ -981,6 +1069,14 @@ void setup() {
   g_display_ok = canary::hal::display_init();
   if (g_display_ok) g_display_ok = canary::ui::lvgl_port_init();
 
+#ifdef CD_FLAVOR_DASH
+  // Wear the saved orientation from the very first frame — before the splash
+  // and the face build — so both land in the right logical canvas and a
+  // portrait-mounted glass never flashes a sideways poster on boot.
+  if (g_display_ok)
+    canary::ui::lvgl_port_set_rotation(canary::glass::settings().rotation);
+#endif
+
 #if defined(FEATURE_CHIME) && FEATURE_CHIME
   // Canary Voice (spec §5): sound the boot signature — "the canary wakes" —
   // right here, as the glass comes up. Init needs only the pin; the engine TU
@@ -1029,11 +1125,8 @@ void setup() {
 #ifdef CD_FLAVOR_WATCH
     canary::ui::glance_ui_create();
 #endif
-#if defined(CD_FLAVOR_DASH) && !defined(CD_NIGHTSTAND7)
-    canary::ui::dash_ui_create();
-#endif
-#ifdef CD_NIGHTSTAND7
-    canary::ui::nightstand7_ui_create();
+#ifdef CD_FLAVOR_DASH
+    dash_face_create();   // landscape poster or portrait column, per rotation
 #endif
 #ifdef CD_FLAVOR_NIGHTSTAND
     canary::ui::portrait_ui_create();
@@ -1532,8 +1625,15 @@ void loop() {
         canary::ui::canary_mark_react(canary::ui::CanaryReact::Tilt);
         break;
       case canary::care::LifeMoment::Glance:
+#ifdef CD_FLAVOR_DASH
+        if (dash_is_portrait()) {
+          canary::ui::portrait7_ui_life_glance(now);
+        }
 #ifdef CD_NIGHTSTAND7
-        canary::ui::nightstand7_ui_life_glance(now);
+        else {
+          canary::ui::nightstand7_ui_life_glance(now);
+        }
+#endif
 #endif
 #ifdef CD_FLAVOR_NIGHTSTAND
         canary::ui::portrait_ui_life_glance(now);
