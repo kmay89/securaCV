@@ -21,6 +21,12 @@
 3. **Never ship customer Wi-Fi credentials.** Provisioning happens in the customer's
    home via the shipped QR/captive-portal flow. The factory flashes *generic* firmware
    only. (This single fact makes the whole flashing problem tractable — §3.)
+4. **Never place a radio into commerce without its own FCC authorization.** The
+   module's certification covers the module, not our product, and shipping it
+   unassembled changes nothing. Parts packs (plastic) are unrestricted; anything
+   with a board in the box waits for a Part 15B SDoC. Enforced in the website
+   repo by `tests/compliance-gate.test.mjs`; reasoning in
+   [29-fcc-and-product-compliance-diligence.md](29-fcc-and-product-compliance-diligence.md).
 
 ## 1. The SKU ladder
 
@@ -29,27 +35,62 @@ maker pricing; 25–50-unit sourcing improves them ~10–20% (noted inline). Pac
 QR-card allowance: ~$2/kit. Prices target ~2.2–2.6× COGS — sustainable for direct sales
 (Tindie/own store); a future distributor/Crowd Supply path needs the 2.6× end.
 
+| Rung | Radio in the box? | Compliance load |
+|---|---|---|
+| **R0 — Plans** (free) | no | **none** — publishing designs and firmware is unregulated |
+| **R1 — Printed Parts Pack** | **no** | **none** — a plastic shell is not a digital device |
+| **R2 — Full Kit** | yes | **Part 15B SDoC + labeling** (~$1.5–4k/SKU) |
+| **R3 — Assembled Witness** | yes | same as R2 |
+
+**R0/R1 and R2/R3 sit on opposite sides of a bright line, and there is no middle
+rung.** Selling it unassembled does *not* avoid equipment authorization —
+[15.23](https://www.ecfr.gov/current/title-47/chapter-I/subchapter-A/part-15/subpart-A/section-15.23)
+excludes kits by name, and marketing an RF device is regulated by state of
+*marketing*, not assembly. **R2 and R3 are gated behind
+[doc 29](29-fcc-and-product-compliance-diligence.md) §9 and should not go live
+until that budget is committed.** R0 + R1 is the recommended posture today and
+carries essentially none of it.
+
+Per-rung detail:
+
 | Rung | What ships | Who it's for |
 |---|---|---|
 | **R0 — Plans** (free) | STLs, `.scad`, BOMs, flash-from-browser page | Pure DIY; the funnel |
-| **R1 — Printed Parts Pack** | The enclosure set + hardware kit (screws, inserts, window, gasket filament piece) | Maker who owns the boards or wants to source them |
-| **R2 — Full Kit** (the volume SKU) | Boards + printed parts + hardware + cable + QR quick-start card, **pre-flashed** | Maker who wants the fun of assembly without the sourcing |
-| **R3 — Assembled Witness** | Built, tested, serialized, provisioned-to-first-boot | Non-builders; gift market; the at-risk persona (doc 04) |
+| **R1 — Printed Parts Pack** | The enclosure set + fasteners (screws, inserts, window, gasket filament piece) — **plastic and hardware only, no electronics** | Maker who owns the boards or wants to source them |
+| **R2 — Full Kit** (gated) | Boards + printed parts + hardware + cable + QR quick-start card, **pre-flashed** | Maker who wants the fun of assembly without the sourcing |
+| **R3 — Assembled Witness** (gated) | Built, tested, serialized, provisioned-to-first-boot | Non-builders; gift market; the at-risk persona (doc 04) |
+
+**Naming rule for customer-facing copy:** R1 is an **"enclosure set"** or
+**"printed parts pack"** — never *"kit"*, and never a name implying a working
+device. The word is load-bearing: it is the difference between selling plastic
+and appearing to market a radio (doc 29 §8).
 
 ### Per-device pricing (launch table)
 
 | SKU | COGS (est.) | R1 Parts Pack | R2 Full Kit | R3 Assembled | Status gate |
 |---|---|---|---|---|---|
-| **Canary WAP** (XIAO S3 Sense $14.90 + high-endurance SD $8.50 + cable + printed case + pkg ≈ **$28**) | $28 | $15 | **$69** | $99 | released — sell now |
-| **Canary Vision** (XIAO C3 $5.50 + Grove Vision AI V2 $29 + OV5647 $8 + cables + printed set + hinge hardware + pkg ≈ **$53**) | $53 | $19 | **$119** | $159 | released — sell now |
+| **Canary WAP** (XIAO S3 Sense $14.90 + high-endurance SD $8.50 + cable + printed case + pkg ≈ **$28**) | $28 | $15 | **$69** | $99 | firmware released; **R1 sell now, R2/R3 gated on SDoC** |
+| **Canary Vision** (XIAO C3 $5.50 + Grove Vision AI V2 $29 + OV5647 $8 + cables + printed set + hinge hardware + pkg ≈ **$53**) | $53 | $19 | **$119** | $159 | firmware released; **R1 sell now, R2/R3 gated on SDoC** |
 | **Canary Watch Station** (XIAO S3 $7.49 + Round Display $18 + printed puck + pkg ≈ **$31**) | $31 | $12 | **$79** | $109 | in dev — waitlist |
-| **Canary Dash** (Waveshare 4.3 ≈ $33–37 + PSU $8 + printed case + pkg ≈ **$48**) | $48 | $15 | **$109** | $139 | in dev — waitlist |
+| **Canary Dash** (Waveshare 4.3 ≈ $33–37 + USB-C cable ~$2 + printed case + pkg ≈ **$42**) | $42 | $15 | **$109** | $139 | in dev — waitlist |
 
-Options (mirror the Lab configurator's option cards): weather kit (+$15 — GORE vent,
-sealed plug, TPU gasket, PMMA window, neutral-cure silicone), battery kit (+$12 —
-protected cell only, chemistry per climate, ships per BOM safety notes), doorbell
-faceplate (+$9). Battery SKUs follow the BOM's safety-critical notes verbatim; no
-unprotected cells, ever.
+**No shipped PSU, deliberately.** The Dash line previously carried a bundled
+*PSU $8*. Bundling an AC adapter pulls in **DOE Level VI** efficiency (mandatory
+for any external power supply shipped into the US, including when packaged with a
+product), UL 62368-1 safety expectations, and a *separate* FCC 15B obligation for
+the adapter. Ship a USB-C cable and the line *"Use any UL-listed USB power
+source, 5 V ⎓ 2 A"* — cheaper COGS and one fewer regulatory domain (doc 29 §6).
+
+Options (mirror the Lab configurator's option cards): weather option (+$15 — GORE vent,
+sealed plug, TPU gasket, PMMA window, neutral-cure silicone), battery option (+$12 —
+protected cell only, chemistry per climate, per BOM safety notes), doorbell
+faceplate (+$9). No unprotected cells, ever.
+
+**The battery option should stay a documented self-build choice, not a shipped
+one.** Shipping lithium cells brings UN 38.3 transport testing, IEC 62133 cell
+certification and carrier dangerous-goods rules — and a Li-po inside a PETG shell
+(UL 94 **HB**, not V-0) is the single worst liability shape available to us. Sell
+the enclosure with the battery cavity; let the buyer source the cell (doc 29 §5–§6).
 
 Bundles: **Starter Fleet** (Watch + 2× WAP) $199 (vs $217 à la carte) · **Whole-House**
 (Dash + Vision + 2× WAP) $329 (vs $366). Bundles are where the display devices pull
@@ -76,8 +117,15 @@ discount below 1.8× COGS or the channel fees eat the line.
    pain.
 3. **Later — Crowd Supply campaign** for the R3 "Canary, boxed" productization; their
    audience is the target tribe and Mouser handles logistics. This is also the moment
-   for CE/FCC conversations (kits of listed dev-boards ≈ fine; a boxed product with our
-   name on it wants intentional-radiator diligence — budget it into the campaign).
+   for the FCC work — and note the correction: **kits of listed dev-boards are *not*
+   "≈ fine"** (an earlier version of this line said so). Any SKU with a radio in the
+   box needs a **Part 15B SDoC on the finished product (~$1.5–4k)** plus enclosure
+   labeling, whether it ships assembled or as parts; the pre-certified module covers
+   the radio, not the product. Some dev boards are additionally marketed under
+   [2.803](https://www.ecfr.gov/current/title-47/chapter-I/subchapter-A/part-2/subpart-I/section-2.803)
+   terms that **forbid sale to residential end users** — check each board on
+   `fccid.io` first. Budget all of it into the campaign; see
+   [doc 29](29-fcc-and-product-compliance-diligence.md).
 
 ## 2. Printed parts: the fulfillment pipeline
 
@@ -207,4 +255,22 @@ the eventual margin).
       splitter, and fix-not-return policy in one (`docs/shipping-and-fulfillment.md`).
 - [ ] Optional Tindie listing for WAP + Vision R1/R2 (marketplace discovery + overflow).
 - [ ] Improv Wi-Fi Serial in canary firmware (nice-to-have, post-launch).
-- [ ] FCC/CE diligence memo before any R3/Crowd Supply boxed product.
+- [x] **US/FCC** diligence memo before any R3/Crowd Supply boxed product —
+      **done:** [29-fcc-and-product-compliance-diligence.md](29-fcc-and-product-compliance-diligence.md).
+      It corrected this doc's kit assumption; see §1 and §5 above.
+- [ ] **EU/CE diligence is a separate, unstarted piece of work.** Doc 29 is
+      US-only: it says US sales need no CE/UKCA mark and warns against applying
+      an unearned one, but it does **not** do the EU conformity analysis (RED
+      for the radio, EMC, LVD where it applies, RoHS, WEEE registration, an EU
+      Declaration of Conformity, and an EU-based responsible person). A Crowd
+      Supply campaign ships internationally by default, so this must be
+      answered — or EU shipping switched off — before any boxed product goes
+      out. Do not treat the FCC memo as clearing it.
+- [ ] Rename R1 across store/site copy from *"kit"* to **"enclosure set" /
+      "printed parts pack"** (doc 29 §8) — the word is load-bearing.
+- [ ] Look up every board in `canary-local/devices/registry.json` on `fccid.io`;
+      record grant status and flag any evaluation-only board (doc 29 §3).
+- [ ] Do **not** list Tin Can / kids-watch enclosures — a plastic part sold for a
+      children's product is itself a children's product under CPSIA (doc 29 §8).
+- [ ] Book the **Part 15B SDoC** before any R2/R3 goes live; until then the store
+      sells R0 + R1 only (doc 29 §9).

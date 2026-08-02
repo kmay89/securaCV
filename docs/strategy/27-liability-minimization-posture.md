@@ -127,6 +127,12 @@ non-optional the day the first services invoice goes out.
 - [ ] Keep the **marketing word-list** (§5) — extend the site fact-tests to flag
       the banned services claims if this becomes a recurring page.
 - [ ] Formalize **no-footage-retention** in writing (in `/TERMS.md` §7).
+- [ ] Pair this with the **regulatory** half:
+      [doc 29](29-fcc-and-product-compliance-diligence.md). The single largest
+      liability-surface reduction available to a hardware shop is *not* a
+      contract clause — it is **not placing a radio into commerce at all**
+      (sell plans + printed enclosures; doc 29 §8). Everything in this doc
+      applies on top of whichever side of that line we're on.
 
 ## 9. What this deliberately does *not* claim
 
