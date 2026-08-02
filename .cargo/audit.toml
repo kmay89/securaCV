@@ -1,0 +1,29 @@
+# cargo-audit configuration (read by `cargo audit` from the repo root).
+#
+# The ignore list is NOT a way to quiet a noisy gate. Every entry must be an
+# advisory with (a) no fixed release we can reach, and (b) a written
+# reachability analysis in SECURITY.md under "Known dependency advisories"
+# explaining why securaCV never executes the vulnerable path. If a fix
+# becomes reachable, drop the entry here and take the bump instead.
+
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071 — Marvin Attack: potential key recovery through
+    # timing sidechannels in `rsa` 0.9.10 (5.9 medium).
+    #
+    # No fix exists on the 0.9 line; the constant-time rewrite lands in
+    # `rsa` 0.10, which is still a release candidate (0.10.0-rc.18). `rsa`
+    # is pulled by exactly one crate — `c2pa` 0.90.3, the newest release,
+    # which requires `rsa ^0.9.10` as a non-optional dependency — so there
+    # is no bump, no feature flag, and no maintained alternative that drops
+    # it. Waiting for `c2pa` to adopt `rsa` 0.10 is the only real fix.
+    #
+    # securaCV is not exposed: the attack recovers an RSA *private* key by
+    # timing repeated private-key operations, and securaCV holds no RSA
+    # private key. The C2PA credential chain is Ed25519 end to end
+    # (`PKCS_ED25519` certificates, `SigningAlg::Ed25519` signing — see
+    # src/c2pa_export.rs), and `c2pa` itself is optional, behind the
+    # non-default `c2pa-export` feature. Full analysis: SECURITY.md,
+    # "Group 3".
+    "RUSTSEC-2023-0071",
+]

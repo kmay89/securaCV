@@ -18,6 +18,11 @@ on:
       - 'canary-vision/device-api/package.json'
       - 'canary-vision/package-lock.json'
       - '.github/workflows/audit.yml'
+      # The ignore list must re-run the gate it suppresses. Without this,
+      # a PR that only edits .cargo/audit.toml skips this workflow, and a
+      # broadened ignore merges unvalidated — hiding a real advisory until
+      # the next Monday run.
+      - '.cargo/audit.toml'
 
 permissions:
   contents: read
@@ -49,6 +54,11 @@ jobs:
       - name: Install cargo-audit
         if: steps.tool.outputs.cache-hit != 'true'
         run: cargo install cargo-audit --locked
+      # Ignores live in .cargo/audit.toml, one entry per advisory, each
+      # requiring a written reachability analysis in SECURITY.md ("Known
+      # dependency advisories"). Never add an ignore to silence a red gate —
+      # add it only when there is no reachable fix and the vulnerable path
+      # provably isn't ours, and delete it the moment a fix lands.
       - name: Audit Cargo.lock against the RustSec advisory DB
         run: cargo audit
 

@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### `cargo audit` goes green again — with the one unfixable advisory named, not hidden
+
+The weekly dependency audit has been failing since 2026-07-27 on a single
+advisory, which meant every lockfile-touching PR inherited a red security
+gate that had nothing to do with it — the exact way a real finding gets
+missed.
+
+- **The advisory:** RUSTSEC-2023-0071, the Marvin Attack — `rsa 0.9.10`'s
+  private-key operations aren't constant-time, so timing can leak the RSA
+  private key (5.9 medium).
+- **There is no bump that fixes it.** `rsa` enters the tree through exactly
+  one crate, `c2pa 0.90.3` (newest published), which requires `rsa ^0.9.10`
+  non-optionally. The constant-time rewrite is in `rsa 0.10`, still a
+  release candidate. Upstream `c2pa` is the only real fix.
+- **securaCV was never on the vulnerable path.** The attack recovers an RSA
+  *private* key, and we hold none: the C2PA credential chain is Ed25519 end
+  to end (`PKCS_ED25519` certs, `SigningAlg::Ed25519`), and `c2pa` compiles
+  in only behind the optional, non-default `c2pa-export` feature. `rsa` can
+  only ever run a public-key verification here — no secret to leak.
+- **So it is ignored in the open**, in the new `.cargo/audit.toml`, with the
+  full reachability analysis recorded in SECURITY.md as "Group 3" and a
+  standing instruction to delete the entry once `c2pa` moves off `rsa 0.9`.
+  Every other advisory stays fatal; the 9 informational warnings are
+  unchanged. Verified locally: `cargo audit` exits 1 without the config and
+  0 with it, on the same `Cargo.lock`.
+
 ### The Lab's build line is finally complete — and it can't silently rot again
 
 The bench migration begun with the Lab shell is finished: every committed
