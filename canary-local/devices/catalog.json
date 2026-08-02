@@ -895,7 +895,13 @@
     "port_teth_hole",
     "port_teth_barb",
     "port_barb_proud",
-    "back_flush"
+    "back_flush",
+    "fil_body",
+    "fil_ink",
+    "fil_accent",
+    "frame_colour",
+    "fil_overlap",
+    "fil_gap"
    ],
    "options": [
     {
@@ -974,6 +980,14 @@
      "id": "dock_keys",
      "type": "bool",
      "label": "dock_keys",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "print_colours",
+     "type": "bool",
+     "label": "build the per-filament parts and colour the preview",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1101,7 +1115,7 @@
      "default": "none"
     }
    ],
-   "engineering_param_count": 214,
+   "engineering_param_count": 224,
    "alternatives": [
     "dash_display"
    ],
@@ -1109,8 +1123,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 24,
-    "user_options": 24,
+    "options": 25,
+    "user_options": 25,
     "variant_axes": 0
    }
   },
