@@ -62,6 +62,7 @@ final class FleetStore: ObservableObject {
     func onAppear() {
         discovery.start()
         ble.startScan()
+        WatchLink.shared.activate(store: self)
         Task { await alerts.requestAuthorization() }
         Task { await hydrateFromCloud() }
         recordDemoBeatIfHarmless()
@@ -218,6 +219,7 @@ final class FleetStore: ObservableObject {
         witnesses = next.sorted { $0.effectiveSeverity > $1.effectiveSeverity }
         timeline = events.sorted { $0.timeBucket > $1.timeBucket }
         pushLiveActivity()
+        WatchLink.shared.pushCurrent()   // content-deduped; free when nothing moved
         evaluateAlerts()
     }
 
@@ -285,7 +287,9 @@ final class FleetStore: ObservableObject {
     }
 
     /// Coarse 10-minute bucket — never a precise second (Invariant III).
-    private static func bucket(_ date: Date) -> Date {
+    /// Internal (not private) because the wrist snapshot builder applies the
+    /// SAME coarsening to every timestamp it puts on the wire.
+    static func bucket(_ date: Date) -> Date {
         let t = date.timeIntervalSince1970
         return Date(timeIntervalSince1970: (t / 600).rounded(.down) * 600)
     }
@@ -324,5 +328,6 @@ final class FleetStore: ObservableObject {
             }
         }
         pushLiveActivity()
+        WatchLink.shared.pushCurrent()   // the wrist sees the test result too
     }
 }

@@ -86,20 +86,7 @@ struct LockScreenFleetView: View {
     }
 }
 
-// A Severity mirror local to the widget so this target needs no app code beyond
-// the shared attributes. Kept identical to the app's ladder on purpose.
-extension FleetActivityAttributes.State {
-    var severity: Severity { Severity(rawValue: severityRaw) ?? .tamper }
-}
-
-enum Severity: UInt8 { case ok = 0, notice, warn, alert, tamper
-    var sfSymbol: String {
-        switch self {
-        case .ok: return "checkmark.seal.fill"
-        case .notice: return "dot.radiowaves.left.and.right"
-        case .warn: return "exclamationmark.triangle"
-        case .alert: return "bell.badge.fill"
-        case .tamper: return "hand.raised.slash.fill"
-        }
-    }
-}
+// Severity and the State.severity accessor come from Shared/ (FleetEnums.swift
+// + FleetActivityAttributes.swift) — this target used to keep a hand-mirrored
+// copy of the ladder "identical on purpose", which is exactly the kind of
+// duplicate that drifts. One ladder now compiles into every target.

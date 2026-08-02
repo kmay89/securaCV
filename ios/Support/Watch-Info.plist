@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>SecuraCV</string>
+  <key>CFBundleDisplayName</key>
+  <string>SecuraCV</string>
+  <key>CFBundleShortVersionString</key>
+  <string>$(MARKETING_VERSION)</string>
+  <key>CFBundleVersion</key>
+  <string>$(CURRENT_PROJECT_VERSION)</string>
+
+  <!-- Build stamp baked by scripts/stamp_build.sh — the wrist's About screen
+       tells the same story as every other surface. -->
+  <key>SECURACV_BUILD_REV</key>
+  <string>$(SECURACV_BUILD_REV)</string>
+  <key>SECURACV_FW_TRAIN</key>
+  <string>$(SECURACV_FW_TRAIN)</string>
+
+  <!-- A modern single-target watchOS app… -->
+  <key>WKApplication</key>
+  <true/>
+  <!-- …that is the iPhone app's companion. This pairing is what makes the
+       watch app ship INSIDE the iOS .ipa, on the same version, forever. -->
+  <key>WKCompanionAppBundleIdentifier</key>
+  <string>com.securacv.witness</string>
+
+  <!-- Same export-compliance posture as the phone app: OS crypto only. -->
+  <key>ITSAppUsesNonExemptEncryption</key>
+  <false/>
+</dict>
+</plist>

@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
-"""Generate the iPhone app's icon asset catalog — the standard Canary at dawn.
+"""Generate the iPhone AND watch app icon catalogs — the standard Canary at dawn.
 
-App Store Connect refuses an .ipa without an app icon, so this is a ship
-blocker, not decoration. Same contract as the tvOS icon
+App Store Connect refuses an .ipa without an app icon — and since the watch
+app ships inside the iPhone .ipa, a missing WATCH icon fails the same upload.
+Ship blockers, not decoration. Same contract as the tvOS icon
 (tvos/scripts/make_app_icon.py) and the website's glTF models: the generator
 is the source of truth, the output is committed so no runner needs Python,
 and it is deterministic — no randomness, no timestamps.
+`scripts/check_app_icon.py` structurally verifies the committed output in CI.
 
-iOS has been single-size since Xcode 14: one 1024x1024 opaque PNG, and the OS
-masks its own corners (never pre-round, never add alpha — App Store validation
-rejects transparency). The picture is the Witness Wall icon's calm sibling:
-the "calm room" navy, a warm dawn glow rising behind the perch, and the one
-standard Canary (brands/logo_512x512.png — composited, never redrawn).
+Both platforms are single-size (iOS since Xcode 14; watchOS likewise): one
+1024x1024 opaque PNG each, and the OS masks its own shape — rounded rect on
+the phone, circle on the watch (never pre-round, never add alpha — App Store
+validation rejects transparency). The picture is the Witness Wall icon's calm
+sibling: the "calm room" navy, a warm dawn glow rising behind the perch, and
+the one standard Canary (brands/logo_512x512.png — composited, never redrawn).
+The composition is centered, so the watch's circular mask crops only sky and
+perch ends.
 
     python3 ios/scripts/make_app_icon.py
 
-Needs Pillow (build-time only; the committed PNG is what ships).
+Needs Pillow (build-time only; the committed PNGs are what ship).
 """
 
 from __future__ import annotations
@@ -27,7 +32,13 @@ from PIL import Image, ImageDraw
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.normpath(os.path.join(HERE, "..", ".."))
-CATALOG = os.path.normpath(os.path.join(HERE, "..", "Assets.xcassets"))
+# (catalog path, asset-catalog `platform` value) — one entry per Apple surface
+# this project ships an icon for. The watch catalog is separate because the
+# watch app is its own target with its own ASSETCATALOG_COMPILER_APPICON_NAME.
+CATALOGS = [
+    (os.path.normpath(os.path.join(HERE, "..", "Assets.xcassets")), "ios"),
+    (os.path.normpath(os.path.join(HERE, "..", "WatchAssets.xcassets")), "watchos"),
+]
 BIRD = os.path.join(REPO, "brands", "logo_512x512.png")
 
 # The Wall's palette (tvos WallView.swift) and the shared wood tones.
@@ -120,21 +131,22 @@ def main() -> int:
     icon = Image.new("RGB", (SIZE, SIZE), NAVY)     # opaque: ASC rejects alpha
     icon.paste(big, mask=big.split()[3])
 
-    write_json(os.path.join(CATALOG, "Contents.json"), {"info": INFO})
-    iconset = os.path.join(CATALOG, "AppIcon.appiconset")
-    write_json(
-        os.path.join(iconset, "Contents.json"),
-        {
-            "images": [
-                {"filename": "AppIcon.png", "idiom": "universal",
-                 "platform": "ios", "size": "1024x1024"}
-            ],
-            "info": INFO,
-        },
-    )
-    os.makedirs(iconset, exist_ok=True)
-    icon.save(os.path.join(iconset, "AppIcon.png"), "PNG", optimize=True)
-    print(f"wrote {CATALOG}")
+    for catalog, platform in CATALOGS:
+        write_json(os.path.join(catalog, "Contents.json"), {"info": INFO})
+        iconset = os.path.join(catalog, "AppIcon.appiconset")
+        write_json(
+            os.path.join(iconset, "Contents.json"),
+            {
+                "images": [
+                    {"filename": "AppIcon.png", "idiom": "universal",
+                     "platform": platform, "size": "1024x1024"}
+                ],
+                "info": INFO,
+            },
+        )
+        os.makedirs(iconset, exist_ok=True)
+        icon.save(os.path.join(iconset, "AppIcon.png"), "PNG", optimize=True)
+        print(f"wrote {catalog}")
     return 0
 
 

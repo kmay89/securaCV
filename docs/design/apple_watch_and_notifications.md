@@ -1,6 +1,16 @@
 # Apple Watch app & the notification experience — scoping RFC
 
-Status: **design / RFC — no code yet.**
+Status: **partially built.** The wrist half of this doc is now real code:
+`ios/project.yml` carries the `SecuraCVWatch` app + `SecuraCVWatchWidgets`
+complications (§3.2's targets), `Shared/WristSnapshot.swift` +
+`ios/Sources/SecuraCV/Native/WatchLink.swift` are the `WCSession` pipeline
+into the watch-local app-group cache, and §3.3's screens 1–2 (fleet glance,
+heartbeat with wrist-started path test) plus witness detail ship in the
+target. Still design-only: everything relay-dependent (N0/R1/W0 — actionable
+notification categories, the custom notification scene, APNs/Web Push), the
+ack/mute *actions* on the wrist (mute state is shown; the phone app itself
+doesn't expose a mute action yet), and §5's PWA polish. The phasing table
+(§8) is annotated below.
 
 This document scopes two things that are really one thing:
 
@@ -322,14 +332,19 @@ not a snowflake:
 
 ## 8. Phasing summary
 
-| Phase | Depends on | Deliverable |
-|---|---|---|
-| **N0** | — | SSE adoption in `FleetStore`; NSE signature-verify + hydrate; tier/controls UI in Alerts tab |
-| **R1** | `alert_relay.md` substrate decision | Relay MVP: APNs + Web Push, content-free payload, dedup + LAN-receipt suppression, heartbeat terminus |
-| **W0** | N0, R1 | Watch: actionable mirrored notifications (Ack/Mute/View from the wrist); no new targets |
-| **W1** | W0 | watchOS target + `WCSession` state pipeline; Smart Stack widget, complications, custom notification scene, Live Activity mirroring |
-| **W2** | W1 | 3-screen Watch app (fleet glance / heartbeat / ack) |
-| **P1** | R1 | Web monitor as installable PWA + Web Push (declarative payload, SW fallback) |
+| Phase | Depends on | Deliverable | State |
+|---|---|---|---|
+| **N0** | — | SSE adoption in `FleetStore`; NSE signature-verify + hydrate; tier/controls UI in Alerts tab | open |
+| **R1** | `alert_relay.md` substrate decision | Relay MVP: APNs + Web Push, content-free payload, dedup + LAN-receipt suppression, heartbeat terminus | open |
+| **W0** | N0, R1 | Watch: actionable mirrored notifications (Ack/Mute/View from the wrist); no new targets | open |
+| **W1** | W0 | watchOS target + `WCSession` state pipeline; Smart Stack widget, complications, custom notification scene, Live Activity mirroring | **built**, except the custom notification scene (waits on W0's categories) |
+| **W2** | W1 | 3-screen Watch app (fleet glance / heartbeat / ack) | **built** for glance + heartbeat (+ witness detail); ack/mute actions wait on the phone exposing them |
+| **P1** | R1 | Web monitor as installable PWA + Web Push (declarative payload, SW fallback) | open |
+
+(The W1/W2 build deliberately did not wait for W0/R1: the state pipeline and
+screens need no relay, and mirrored notifications already work with zero
+watch code. The dependency order above remains true for the notification
+experience itself.)
 
 Apple-side blockers, unchanged from the iPhone RFC: an Apple Developer
 account actually enabled (`ENABLE_IOS_BUILD`), and the Critical Alerts
