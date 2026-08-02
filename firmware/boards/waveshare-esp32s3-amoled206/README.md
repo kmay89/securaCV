@@ -1,9 +1,20 @@
-# Waveshare ESP32-S3-Touch-AMOLED-2.06 ("the Tin Can")
+# Waveshare ESP32-S3-Touch-AMOLED-2.06 (the wrist board)
 
-The wrist board for [`canary-tincan`](../../projects/canary-tincan/README.md) —
-a kids' watch that ties a **string** to a sibling's watch and carries knocks,
-tugs and stamps across the house, with no voice, no location and no cloud.
-Design: [`docs/design/canary_tincan_kids_watch.md`](../../../docs/design/canary_tincan_kids_watch.md).
+One board, two Phase-0 projects. Both are host-tested cores with no build env
+yet, which is why `used_by` is still `[]`.
+
+- [`canary-tincan`](../../projects/canary-tincan/README.md) — **the Tin Can**: a
+  kids' watch that ties a **string** to a sibling's watch and carries knocks,
+  tugs and stamps across the house, with no voice, no location and no cloud.
+  Design: [`docs/design/canary_tincan_kids_watch.md`](../../../docs/design/canary_tincan_kids_watch.md).
+- [`canary-companion`](../../projects/canary-companion/README.md) — **the Night
+  Watch** (a bedside clock that goes genuinely dark, because AMOLED lets it) and
+  **the Pocket Canary** (a virtual pet with Tamagotchi's charm and without its
+  guilt loop).
+  Design: [`docs/design/canary_companion.md`](../../../docs/design/canary_companion.md).
+
+Both share this pin map, both need the same haptic add-on (§2 below), and both
+inherit the same pre-launch gate at the bottom of this file.
 
 It is a watch *body*, not a watch *product*. See "Before anyone calls this a
 kids' device" below — that section is the one that stops a launch.
@@ -32,6 +43,38 @@ Transcribed from the **vendor sample tree**
 and SD lines, and `examples/arduino/08_ES8311/08_ES8311.ino` for the I2S pin
 order (`setPins(41, 45, 40, 42, 16)`) and the PA-enable line. Not bench
 validated. Verify against your board revision before trusting a pin.
+
+### Re-verified against the live vendor tree — 2026-08-02
+
+Every line of the transcription above was checked again, from source, against
+`waveshareteam/ESP32-S3-Touch-AMOLED-2.06@main`. **Nothing had drifted:**
+
+| Committed here | Vendor source | Match |
+|---|---|---|
+| QSPI 4/5/6/7, SCLK 11, CS 12, RST 8, 410 × 502 | `Mylibrary/pin_config.h` | ✅ |
+| I²C SDA 15 / SCL 14, `TOUCH_PIN_INT` 38, `TOUCH_PIN_RST` 9 | same | ✅ |
+| SDMMC CLK 2 / CMD 1 / D0 3 / CS 17 | same | ✅ |
+| I2S 41 / 45 / 40 / 42 / 16, PA-enable **46** | `08_ES8311/08_ES8311.ino` | ✅ |
+| AXP2101 PMU | `XPOWERS_CHIP_AXP2101` in `pin_config.h` | ✅ |
+
+**Touch is settled as far as source can settle it.** Three separate sketches
+(`01_HelloWorld`, `03_LVGL_PCF85063_simpleTime`, `06_LVGL_Arduino_v9`) construct
+`Arduino_FT3x68(IIC_Bus, FT3168_DEVICE_ADDRESS, …)`. There is no CST9220 driver
+anywhere in the tree. It is still the first thing to confirm on the bench — a
+store page and a code tree disagreeing is exactly the situation where the *board
+in your hand* is the only authority — but the evidence is now three sketches
+deep, not one.
+
+**The no-haptic finding is stronger than it was.** The vendor README's full
+example index is AXP2101, LVGL v9, ESP-Brookesia, a motion block demo, a mic
+spectrum analyser, a video player, GFX text, the PCF85063 RTC, the QMI8658 IMU,
+AXP2101 ADC telemetry, SD, and ES8311 — **thirteen examples and not one of them
+drives a motor.** No `pin_config.h` haptic pin, and no mention of vibration,
+haptic, DRV2605, LRA or ERM anywhere in the README. This is now a negative
+result from the primary source rather than an inference.
+
+This is *source* verification, not bench validation. The tier stays
+`compile-tested`.
 
 ## Three things that will bite you
 
