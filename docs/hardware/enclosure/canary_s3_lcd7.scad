@@ -588,6 +588,13 @@ stand_feet    = true;  // 4x shallow recesses for adhesive rubber feet
 
 include <canary_s3_lcd7_qr.scad>   // qr_url() / qr_bits() — generated, committed
 qr_n = len(qr_bits());             // symbol size — defined HERE, above every use
+// Diagonally adjacent QR modules meet at a POINT, and cut cells that touch
+// only along an edge leave the solid pinched to a line — CGAL then calls the
+// result "not a valid 2-manifold" and the render gate fails. Grow every cell
+// a hair in x/y so diagonal neighbours overlap in real volume instead. A
+// function, not a variable, so it stays out of the Customizer; 2 µm is three
+// orders under the nozzle, so the printed module size is unchanged.
+function qr_eps() = 0.002;
 
 /* [Help QR — dock deck] */
 // A scannable help code debossed into the flat deck BEHIND the fin, on the
@@ -1669,10 +1676,11 @@ module frame() {
         // viewed from the back, +x is right (see the axis note above).
         if (qr_back) for (r = [0:qr_n-1], c = [0:qr_n-1])
             if (qr_bits()[r][c] == 1)
-                translate([qr_back_dx - qr_n*qr_back_cell/2 + c*qr_back_cell,
-                           qr_back_dy + qr_n*qr_back_cell/2 - (r+1)*qr_back_cell,
+                translate([qr_back_dx - qr_n*qr_back_cell/2 + c*qr_back_cell - qr_eps(),
+                           qr_back_dy + qr_n*qr_back_cell/2 - (r+1)*qr_back_cell - qr_eps(),
                            fr_depth - label_back_depth])
-                    cube([qr_back_cell, qr_back_cell, label_back_depth + 0.1]);
+                    cube([qr_back_cell + 2*qr_eps(), qr_back_cell + 2*qr_eps(),
+                          label_back_depth + 0.1]);
     }
 }
 
@@ -2046,10 +2054,10 @@ module stand() {
         // accent — and the bare deck around the field is the quiet zone.
         if (qr_help) for (r = [0:qr_n-1], c = [0:qr_n-1])
             if (qr_bits()[r][c] == 1)
-                translate([qr_dx - qr_field/2 + c*qr_cell,
-                           qr_dy_eff + qr_field/2 - (r+1)*qr_cell,
+                translate([qr_dx - qr_field/2 + c*qr_cell - qr_eps(),
+                           qr_dy_eff + qr_field/2 - (r+1)*qr_cell - qr_eps(),
                            stand_plate_t - 0.4])
-                    cube([qr_cell, qr_cell, 0.5]);
+                    cube([qr_cell + 2*qr_eps(), qr_cell + 2*qr_eps(), 0.5]);
     }
     // key furniture, added AFTER the cuts (the seat-pocket cut would
     // otherwise carve it away):
