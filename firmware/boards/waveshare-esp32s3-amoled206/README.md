@@ -1,9 +1,20 @@
-# Waveshare ESP32-S3-Touch-AMOLED-2.06 ("the Tin Can")
+# Waveshare ESP32-S3-Touch-AMOLED-2.06 (the wrist board)
 
-The wrist board for [`canary-tincan`](../../projects/canary-tincan/README.md) —
-a kids' watch that ties a **string** to a sibling's watch and carries knocks,
-tugs and stamps across the house, with no voice, no location and no cloud.
-Design: [`docs/design/canary_tincan_kids_watch.md`](../../../docs/design/canary_tincan_kids_watch.md).
+One board, two Phase-0 projects. Both are host-tested cores with no build env
+yet, which is why `used_by` is still `[]`.
+
+- [`canary-tincan`](../../projects/canary-tincan/README.md) — **the Tin Can**: a
+  kids' watch that ties a **string** to a sibling's watch and carries knocks,
+  tugs and stamps across the house, with no voice, no location and no cloud.
+  Design: [`docs/design/canary_tincan_kids_watch.md`](../../../docs/design/canary_tincan_kids_watch.md).
+- [`canary-companion`](../../projects/canary-companion/README.md) — **the Night
+  Watch** (a bedside clock that goes genuinely dark, because AMOLED lets it) and
+  **the Pocket Canary** (a virtual pet with Tamagotchi's charm and without its
+  guilt loop).
+  Design: [`docs/design/canary_companion.md`](../../../docs/design/canary_companion.md).
+
+Both share this pin map, both need the same haptic add-on (§2 below), and both
+inherit the same pre-launch gate at the bottom of this file.
 
 It is a watch *body*, not a watch *product*. See "Before anyone calls this a
 kids' device" below — that section is the one that stops a launch.
