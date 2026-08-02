@@ -317,20 +317,20 @@
     {id:1,gx:2.2,gy:6.3,color:'#f5b301',hex:'#f5b301',name:'Choose',label:'Find yours',
      verb:'Find',title:'the one that’s yours',kick:'Stage 1 · Choose',
      give:'Your exact witness, and the enclosure that fits your home.',draw:'podium',
-     tools:[['🧭','Find your Canary','Four questions, one honest match.','https://securacv.com/lab'],['🐦','Meet the fleet','Boot the real bird in your browser.','https://kmay89.github.io/securaCV/canary-local/']],next:'Enclosure'},
+     tools:[['🧭','Find your Canary','Four questions, one honest match.','https://kmay89.github.io/securaCV/canary-local/choose.html'],['🐦','Meet the fleet','Boot the real bird in your browser.','https://kmay89.github.io/securaCV/canary-local/']],next:'Enclosure'},
     {id:2,gx:5.2,gy:6.3,color:'#f97316',hex:'#f97316',name:'Enclosure',label:'Print the shell',
      verb:'Shape',title:'its shell',kick:'Stage 2 · Enclosure',
      give:'A shell you printed yourself, in your colour, ready to snap together.',draw:'printer',
-     tools:[['🧱','Enclosure lab','Your filament colour, true layer slices.','https://kmay89.github.io/securaCV/canary-local/'],['💎','The Showroom','GPU-assembled, exploding on a slider.','https://securacv.com/showroom']],next:'Board & wiring'},
+     tools:[['🧱','The Workshop','Spec options; watch the print-validated shell respond in 3D.','https://kmay89.github.io/securaCV/canary-local/workshop.html'],['🗂️','The Case Catalog','Browse every enclosure; three questions find yours.','https://kmay89.github.io/securaCV/canary-local/catalog.html'],['💎','See it in 3D','GPU-assembled, exploding on a slider.','https://securacv.com/showroom']],next:'Board & wiring'},
     {id:3,gx:8.2,gy:6.3,color:'#8b5cf6',hex:'#8b5cf6',name:'Board',label:'Wire & flash',
      verb:'Wire',title:'its brain',kick:'Stage 3 · Board & wiring',
      give:'A board wired to the right pads and flashed — no mystery pins, no guesswork.',draw:'bench',
-     tools:[['📌','The Board Room','Every pin — then wire it, LEGO-style.','https://kmay89.github.io/securaCV/canary-local/boards.html'],['🎛️','The Playground','Wire a peripheral, poke it, read its serial.','https://securacv.com/playground'],['🧾','The Workshop','Spec the exact build before you buy.','https://kmay89.github.io/securaCV/canary-local/workshop.html']],next:'Sense — pick camera or radar'},
-    {id:4,gx:11.2,gy:6.3,color:'#2563eb',hex:'#2563eb',name:'Sense',label:'Camera or radar',
+     tools:[['📌','Boards','Every pin — then wire it, LEGO-style.','https://kmay89.github.io/securaCV/canary-local/boards.html'],['🎛️','Test bench','Wire a peripheral, poke it, read its serial.','https://securacv.com/playground']],next:'Sense — pick its sense'},
+    {id:4,gx:11.2,gy:6.3,color:'#2563eb',hex:'#2563eb',name:'Sense',label:'Pick its sense',
      verb:'Pick',title:'its sense',kick:'Stage 4 · Sense — one bench, your options',
      give:'One station, your choice of sense — a camera that keeps its pixels, or a 60 GHz radar that never takes any.',draw:'senseduo',
-     tools:[['🚀','Get started','Flash it — four ways in, copy-paste ready.','https://kmay89.github.io/securaCV/canary-local/start.html'],['📷','The Vision — first watch','Load its brain, aim, tune with boxes.','https://kmay89.github.io/securaCV/canary-local/vision.html'],['📡','The Sense — radar school','60 GHz placement & tuning.','https://kmay89.github.io/securaCV/canary-local/sense.html'],['🔬','The Sense Lab','The radar pipeline, on the bench.','https://kmay89.github.io/securaCV/canary-local/senselab.html']],
-     optionsNote:'Camera and radar are options at this one station — not separate paths. Pick the sense your Canary carries; more senses will dock here as they land. The line runs straight on to Home.',next:'Home Assistant'},
+     tools:[['🚀','Get started','Flash it — four ways in, copy-paste ready.','https://kmay89.github.io/securaCV/canary-local/start.html'],['📷','The Vision','Load its brain, aim, tune with boxes.','https://kmay89.github.io/securaCV/canary-local/vision.html'],['📡','The Sense','60 GHz placement & tuning.','https://kmay89.github.io/securaCV/canary-local/sense.html'],['👂','Listen for a smoke alarm','The WAP’s ears — real firmware, your microphone.','https://kmay89.github.io/securaCV/canary-local/smoke.html']],
+     optionsNote:'Camera, radar and sound are options at this one station — not separate paths. Pick the sense your Canary carries; more senses will dock here as they land. The line runs straight on to Home.',next:'Home Assistant'},
     {id:5,gx:14.2,gy:6.3,color:'#0d9488',hex:'#0d9488',name:'Home',label:'Bring it home',
      verb:'Welcome',title:'it home',kick:'Stage 5 · Home Assistant',
      give:'One dashboard and one timeline nobody — not even you — can quietly edit.',draw:'hub',
@@ -1092,7 +1092,7 @@
 (function(){
   if (window.parent === window) return;
   document.documentElement.setAttribute('data-embedded','1');
-  var FILE2SLUG = {'boards':'boards','vision':'vision','sense':'sense','senselab':'sense','homeassistant':'hub','house':'house','scenes':'house','vault':'vault','workshop':'workshop','start':'start','flash':'flash','wap':'first-boot'};
+  var FILE2SLUG = {'boards':'boards','vision':'vision','sense':'sense','senselab':'sense','radar-dev':'sense','eyes':'vision','smoke':'smoke','homeassistant':'hub','house':'house','scenes':'house','vault':'vault','operator':'vault','workshop':'workshop','catalog':'catalog','find':'catalog','start':'start','flash':'flash','wap':'first-boot','fleet':'fleet','choose':'choose','dash-mic':'fleet'};
   document.addEventListener('click', function(e){
     var a = e.target.closest && e.target.closest('a[href]'); if(!a) return;
     var slug = a.getAttribute('data-slug') || null;   // manifest-driven tools carry their slug
