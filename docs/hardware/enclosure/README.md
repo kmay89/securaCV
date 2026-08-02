@@ -476,10 +476,17 @@ xvfb-run -a openscad -o preview.png --imgsize 1400,1000 --autocenter --viewall \
 # ROTX ≈ 62 → top three-quarter view; ROTX ≈ 245 → underside
 ```
 
-For the 7" frame's three-colour build, render `part="frame_colour"` instead —
-it draws the three filament parts in their actual palette, so a colour scheme
-can be judged from the same geometry the slicer gets rather than from an
-impression of it.
+For the 7" frame's three-colour build, render each filament part on its own —
+`part="fil_body"`, `"fil_ink"`, `"fil_accent"`. Those are the reliable views:
+each contains exactly the graphics assigned to that filament, so what you see
+is what that spool prints.
+
+**Do not judge the palette from `part="frame_colour"`.** It composites the
+three parts, but OpenCSG will not reliably colour inlays sitting inside the
+recesses they were cut from — it has rendered every back-plate group in the
+accent colour when only the company line is accent, and standing the inlays
+proud does not fix it. It is useful for silhouette and for the bezel band,
+and misleading for anything else. The caveat is written at the module too.
 
 ### Three-colour printing (7" frame, P2S + AMS)
 

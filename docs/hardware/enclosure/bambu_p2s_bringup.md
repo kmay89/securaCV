@@ -577,8 +577,11 @@ yellow-on-white has nowhere near enough contrast.
 fitments still come off the external spool (§0), and they print on their own
 plate regardless.
 
-If you have no AMS, print `fil_body` alone and follow §7b′. You get the black
-bezel and the body-colour back skin; you do not get the scannable code.
+**If you have no AMS, print `part="frame"` and follow §7b′ — not `fil_body`.**
+`fil_body` is the body's *share* of the three-way split: the final 0.6 mm bezel
+band has been subtracted out of it, because that material belongs to `fil_ink`.
+Printed on its own it is a case with the front bezel missing, not a
+single-colour case. Only the full `frame` mesh is the whole part.
 
 ### 7d · Assembly order
 

@@ -572,9 +572,12 @@ label_font  = "Liberation Sans:style=Bold";
 //       SAME coordinate frame, so do NOT re-centre or drop-to-bed any of them.
 //    3. Assign a filament to each part.
 //    4. Slice. Expect the purge tower to be short — see the table above.
-//  Single-extruder fallback (no AMS): print fil_body alone and use the z-swap
-//  recipe echoed at render time. You get the black bezel and a body-colour
-//  back skin, but NOT the scannable QR — see the polarity note.
+//  Single-extruder fallback (no AMS): print part="frame" — the WHOLE part —
+//  and use the z-swap recipe echoed at render time. Not fil_body: that is the
+//  body's SHARE of the split, with the bezel band subtracted out of it because
+//  that material belongs to fil_ink, so on its own it is a case with no front
+//  bezel. The fallback gets you the black bezel and a body-colour back skin,
+//  but NOT the scannable QR — see the polarity note above.
 //
 //  ⚠️  TPU fitments are NEVER part of this. 90-95A must come off an EXTERNAL
 //  spool: it buckles in the AMS's long PTFE path and jams the hub
