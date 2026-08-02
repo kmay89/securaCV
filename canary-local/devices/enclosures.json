@@ -6868,8 +6868,13 @@
       },
       {
        "name": "brand_back",
-       "default": "SecuraCV Canary 7\\\" Display",
-       "comment": "debossed across the back plate"
+       "default": "CANARY DISPLAY",
+       "comment": "the back lockup's HERO line — centred,"
+      },
+      {
+       "name": "brand_sub",
+       "default": "SECURACV",
+       "comment": "the small tracked company line beneath"
       },
       {
        "name": "brand_edge",
@@ -7254,7 +7259,8 @@
       },
       {
        "name": "qr_back_dy",
-       "default": "0.0"
+       "default": "0.0",
+       "comment": "mid-LEFT wing, mirroring the SD cover's mass on the"
       },
       {
        "name": "qr_back_reach",
@@ -7518,6 +7524,10 @@
        "name": "gauge_in",
        "default": "34",
        "comment": "how far inward from the cavity corner the sample reaches"
+      },
+      {
+       "name": "qr_weld",
+       "default": "0.02"
       }
      ]
     }

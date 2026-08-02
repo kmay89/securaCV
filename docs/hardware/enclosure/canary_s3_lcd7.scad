@@ -403,7 +403,11 @@ ledge_bot  = 2.0;   // along the FPC (bottom) edge — keep small, the FPC lives
 // prints BACK-PLATE-DOWN with the ledges fully self-supporting — solid
 // material under the adhesive landing, no overhang, no sacrificial geometry.
 // (Face-down would hang the ledges over the glass pocket; don't.)
-brand_back = "SecuraCV Canary 7\" Display";   // debossed across the back plate
+brand_back = "CANARY DISPLAY";   // the back lockup's HERO line — centred,
+                                 // tracked caps (the 7" is gone: the case
+                                 // family is one Display line, the panel
+                                 // size is a spec, not a name)
+brand_sub  = "SECURACV";         // the small tracked company line beneath
 brand_edge = "SecuraCV Canary";               // debossed on the visible bottom edge
 // Adhesive WALL mounting — the no-screws alternative to the keyholes. Two
 // outlined rails on the back plate are kept smooth and uninterrupted: no
@@ -642,7 +646,10 @@ qr_dy   = 39.0;   // field centre, +y = toward the back edge (a battery
 qr_back      = true;   // deboss the help QR into the back plate too
 qr_back_cell = 1.2;    // module size — 3 line-widths; the plate is busier
 qr_back_dx   = -40.0;  // field centre, back-view coords (+x = back-view right)
-qr_back_dy   = 0.0;
+qr_back_dy   = 0.0;    // mid-LEFT wing, mirroring the SD cover's mass on the
+                       // right. Deliberately NOT dropped to the SD's row:
+                       // that squeezes the bottom band, and the band is the
+                       // brand lockup's — one centred thing, nothing beside it
 qr_back_reach = qr_n*qr_back_cell/2 + 4*qr_back_cell;   // field/2 + quiet zone,
                   // sized from the GENERATED matrix — a bigger symbol grows it
 
@@ -777,7 +784,13 @@ fr_keep_base = concat(
     sd_tether ? [[sd_dx, (sd_dy + sd_l/2 - 1 + sd_teth_y + 2)/2, 4.3,
                   (sd_teth_y + 2 - (sd_dy + sd_l/2 - 1))/2 + 5.1]] : [],
     // the back QR's field + quiet zone: smooth skin, no slot may enter
-    qr_back ? [[qr_back_dx, qr_back_dy, qr_back_reach, qr_back_reach]] : []);
+    // the QR keepout is grown by the feather's own half-extents: the cell
+    // list stores CENTRES, and a feather whose centre is just outside the
+    // quiet zone would otherwise lay its body across it — at worst sharing
+    // a face with a module cell, which CGAL rightly calls non-manifold
+    qr_back ? [[qr_back_dx, qr_back_dy,
+                qr_back_reach + vent_slot_w/2 + 0.4,
+                qr_back_reach + vent_slot_l/2 + 0.4]] : []);
 fr_keep_rails = adh_rails ? [for (sx = [1,-1])
     [sx*adh_rail_dx, 0,
      adh_rail_w/2 + adh_mark_w + vent_slot_w/2 + 0.6,
@@ -1335,10 +1348,27 @@ module gauge() {
 module pill2d(l, w) { hull() for (d = [-1, 1]) translate([0, d*(l - w)/2]) circle(d = w); }
 // Back-plate deboss: label_back_depth, not label_depth — the floors must sit
 // above the two-colour swap band (see the knob's comment).
-module frame_lbl(x, y, s) {
+// QR modules as ONE welded solid. Cutting a cube per dark cell looks
+// right and is NOT: diagonal neighbours then touch along a single edge,
+// and two solids sharing only an edge are non-manifold BY DEFINITION —
+// every QR has diagonal neighbours, so every such field is malformed
+// (CGAL says so; slicers guess). Growing each cell by qr_weld makes
+// those neighbours OVERLAP instead of kiss, and one 2D union + one
+// extrude replaces n cubes. The weld is 1.7% of a 1.2 mm module — far
+// under any scanner's tolerance, and the quiet zone is untouched.
+qr_weld = 0.02;
+module qr_field2d(cell, weld = qr_weld) {
+    for (r = [0:qr_n-1], c = [0:qr_n-1])
+        if (qr_bits()[r][c] == 1)
+            translate([c*cell - weld/2, -(r+1)*cell - weld/2])
+                square([cell + weld, cell + weld]);
+}
+
+module frame_lbl(x, y, s, size = 4.0, spacing = 1.0) {
     translate([x, y, fr_depth - label_back_depth])
         linear_extrude(label_back_depth + 0.1)
-        text(s, size = 4.0, font = label_font, halign = "center", valign = "center");
+        text(s, size = size, font = label_font, spacing = spacing,
+             halign = "center", valign = "center");
 }
 
 // The shell, finished at both ends: a modelled foot chamfer at the plate (the
@@ -1692,21 +1722,31 @@ module frame() {
         // "SD" sits beside the tether channel (its old spot above the mouth
         // is exactly where the strap now runs)
         frame_lbl(sd_dx - 8, sd_teth_y, "SD");
-        // full product mark across the clear band under the grille — shifted
-        // left of the SD cover's recess/tab zone, which owns the lower-right
-        // of the plate (the default string renders ±36.8 wide at size 4, so
-        // its centre sits where the right edge clears the recess by ≥1)
-        frame_lbl(min(0, sd_dx - sd_w/2 - sd_lip - 1.5 - 37), -(fr_yi/2 - 6), brand_back);
+        // the back lockup, DEAD CENTRE on the plate (x = 0): small tracked
+        // company line over the hero product name. Two different bounds set
+        // the two rows, which is why they are sized apart:
+        //   SECURACV      sits beside the SD recess (mouth bottom -47.2), so
+        //                 it must stay inside x ±23.2 — it renders ±17.
+        //   CANARY DISPLAY sits BELOW the recess, where only the nail scoop
+        //                 is left — at this row the scoop spans x 32.3..39.0
+        //                 and the line renders ±28, so ~4 of daylight.
+        // Nothing else can intrude: grille_cells stops at |y| 42.8, so the
+        // whole band is feather-free by construction.
+        // The name has no panel size in it: the case family is one Display
+        // line, and 7" is a spec, not a name. Grow either row and it walks
+        // into the SD — this layout is preview-verified, so re-render.
+        frame_lbl(0, -(fr_yi/2 - 10.2), brand_sub,  size = 2.4, spacing = 2.0);
+        frame_lbl(0, -(fr_yi/2 - 5.4),  brand_back, size = 4.0, spacing = 1.15);
         // help QR — module cells debossed into the outer skin like every
         // other back label; the two-colour back swap turns them dark in
         // the light accent skin for free. In back-view coords, no mirror:
         // viewed from the back, +x is right (see the axis note above).
-        if (qr_back) for (r = [0:qr_n-1], c = [0:qr_n-1])
-            if (qr_bits()[r][c] == 1)
-                translate([qr_back_dx - qr_n*qr_back_cell/2 + c*qr_back_cell,
-                           qr_back_dy + qr_n*qr_back_cell/2 - (r+1)*qr_back_cell,
-                           fr_depth - label_back_depth])
-                    cube([qr_back_cell, qr_back_cell, label_back_depth + 0.1]);
+        if (qr_back)
+            translate([qr_back_dx - qr_n*qr_back_cell/2,
+                       qr_back_dy + qr_n*qr_back_cell/2,
+                       fr_depth - label_back_depth])
+                linear_extrude(label_back_depth + 0.1)
+                    qr_field2d(qr_back_cell);
     }
 }
 
@@ -2078,12 +2118,11 @@ module stand() {
         // light polarity comes from the colour swap (see the echo): the
         // floors are the last body-colour layer, the surrounding skin the
         // accent — and the bare deck around the field is the quiet zone.
-        if (qr_help) for (r = [0:qr_n-1], c = [0:qr_n-1])
-            if (qr_bits()[r][c] == 1)
-                translate([qr_dx - qr_field/2 + c*qr_cell,
-                           qr_dy_eff + qr_field/2 - (r+1)*qr_cell,
-                           stand_plate_t - 0.4])
-                    cube([qr_cell, qr_cell, 0.5]);
+        if (qr_help)
+            translate([qr_dx - qr_field/2, qr_dy_eff + qr_field/2,
+                       stand_plate_t - 0.4])
+                linear_extrude(0.5)
+                    qr_field2d(qr_cell);
     }
     // key furniture, added AFTER the cuts (the seat-pocket cut would
     // otherwise carve it away):
