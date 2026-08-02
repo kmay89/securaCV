@@ -54,6 +54,11 @@ headless equivalent (`scripts/heal.sh build`) regenerates, builds, and runs
 the tests on the newest iPhone simulator installed (override with
 `SECURACV_SIM="iPhone 16 Pro"` if you want a specific one).
 
+Pick an **iPad simulator** instead to see the iPad shape: the same four
+surfaces behind a persistent sidebar rather than a tab bar, with the fleet's
+worst-severity pip on the Fleet row. Rotate or drag into Split View and the
+root adapts with the size class.
+
 A useful extra: the Simulator shares your Mac's network, so a **real Canary
 on your Wi-Fi is discoverable and pairable from inside the Simulator** —
 mDNS discovery, HTTP pairing, and chain verification all work. Only BLE is

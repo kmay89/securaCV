@@ -26,17 +26,100 @@ struct SecuraCVApp: App {
 
 struct RootView: View {
     @EnvironmentObject var store: FleetStore
+    // The one iPhone-vs-iPad decision, made at the root: compact width gets
+    // the tab bar, regular width (iPad, and the big iPhones in landscape)
+    // gets the platform's sidebar idiom. Every section is the SAME view
+    // either way — designed FOR iPad never means a second implementation
+    // (the two-flashers lesson, kept on purpose).
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var body: some View {
-        TabView {
-            TodayView()
-                .tabItem { Label("Today", systemImage: "sparkles") }
-            FleetView()
-                .tabItem { Label("Fleet", systemImage: "bird") }
-            AlertsView()
-                .tabItem { Label("Alerts", systemImage: "bell.badge") }
-            KeysView()
-                .tabItem { Label("Keys", systemImage: "key.horizontal") }
+        if horizontalSizeClass == .regular {
+            SidebarRootView()
+        } else {
+            TabRootView()
         }
     }
+}
+
+/// The four surfaces, named once — the tab bar and the sidebar both render
+/// this list, so the two idioms can never diverge on what the app contains.
+enum AppSection: String, CaseIterable, Identifiable {
+    case today, fleet, alerts, keys
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .today: return "Today"
+        case .fleet: return "Fleet"
+        case .alerts: return "Alerts"
+        case .keys: return "Keys"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .today: return "sparkles"
+        case .fleet: return "bird"
+        case .alerts: return "bell.badge"
+        case .keys: return "key.horizontal"
+        }
+    }
+}
+
+/// A section's content — shared by both root idioms.
+struct AppSectionView: View {
+    let section: AppSection
+    var body: some View {
+        switch section {
+        case .today: TodayView()
+        case .fleet: FleetView()
+        case .alerts: AlertsView()
+        case .keys: KeysView()
+        }
+    }
+}
+
+struct TabRootView: View {
+    var body: some View {
+        TabView {
+            ForEach(AppSection.allCases) { section in
+                AppSectionView(section: section)
+                    .tabItem { Label(section.title, systemImage: section.systemImage) }
+            }
+        }
+    }
+}
+
+/// The iPad shape: a persistent sidebar with the worst-severity pip beside
+/// Fleet when something needs a look — the big canvas earns a glanceable
+/// answer before a single tap. Each section keeps its own NavigationStack in
+/// the detail column, so deep links and back-stacks behave exactly as they
+/// do inside the tabs.
+struct SidebarRootView: View {
+    @EnvironmentObject var store: FleetStore
+    @State private var selection: AppSection? = .today
+
+    var body: some View {
+        NavigationSplitView {
+            List(AppSection.allCases, selection: $selection) { section in
+                HStack {
+                    Label(section.title, systemImage: section.systemImage)
+                    Spacer()
+                    if section == .fleet && !store.allQuiet {
+                        SeverityPip(severity: store.worstSeverity)
+                    }
+                }
+                .tag(section)
+            }
+            .navigationTitle("SecuraCV")
+        } detail: {
+            AppSectionView(section: selection ?? .today)
+        }
+    }
+}
+
+#Preview("Sidebar (iPad) — demo fleet") {
+    SidebarRootView().environmentObject(DemoFleet.previewStore())
 }
