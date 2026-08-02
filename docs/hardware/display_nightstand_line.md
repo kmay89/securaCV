@@ -5,8 +5,11 @@
 WS2812 beacon) and the `dash7` flavor (the 7" reusing the Dash), both compiled in CI via the
 `canary-display-nightstand-s3`, `canary-display-dash7` **and** `canary-display-nightstand-c6` build envs
 (the C6 rides the core-3.x display base, §7) — **compile-tested, not bench-validated**, and all three are
-release/flasher products. Still staged (§7): the **emulator / Lab** wasm wiring, portrait-native
-**modal polish**, and true **5-point touch gestures**.
+release/flasher products. The **bedside wave** since added a fourth product on the 7" glass — the
+`nightstand7` flavor (§5b: a drawn segment clock, complications, a night clock focus) — plus the
+**lantern** night light §4 specified (§5c), the **ambient-life** layer and the **BOOT-button** grammar
+(§5d), and weather **advisories + tomorrow** on the existing retained blob. Still staged (§7): the
+**emulator / Lab** wasm wiring, portrait-native **modal polish**, and true **5-point touch gestures**.
 This doc extends the existing display design — [`display_living_canary.md`](./display_living_canary.md),
 [`display_nightstand.md`](./display_nightstand.md), [`display_care_wave.md`](./display_care_wave.md),
 [`display_character.md`](./display_character.md) — it does **not** replace them.
@@ -116,6 +119,89 @@ it's the largest firmware task here (not a config change). The design:
 
 ---
 
+## 5b · The Nightstand 7 — the same 7" glass, turned toward the bed
+
+The 7" board ships as **two products on one piece of hardware**, because a panel on a
+wall and a panel on a nightstand want opposite things from the same pixels:
+
+| | `canary-display-dash7` | `canary-display-nightstand7` |
+|---|---|---|
+| Standing face | `dash_ui` — card grid + timeline | `nightstand7_ui` — clock hero + complications |
+| Night | data panel, backlight scheduled off | **clock focus**: red-shifted digits, tomorrow's weather, everything else black |
+| Bedside wave | off (`NIGHT_BLACKOUT 0`, `WAKE_ALARM 0`) | **on**, plus `FEATURE_LANTERN` |
+| OTA product | `securacv-canary-display-dash7` | `securacv-canary-display-nightstand7` |
+
+Both keep `CD_FLAVOR_DASH` — the RGB HAL, the GT911, the CH422G and every 800×480 modal
+surface are shared. The bedside build adds `CD_NIGHTSTAND7`, which swaps the standing
+face and compiles `dash_ui.cpp` out entirely. **Distinct OTA products** so a bedroom glass
+can never cross-grade into a wall dashboard.
+
+**The clock is drawn, not typed.** The built-in Montserrat tops out at 48 px — nowhere near
+a 7" bedside clock — so the hero is **seven-segment digits built from LVGL primitives**,
+parametric on (w, h, thickness). It stays crisp at any size, recolors through the theme
+choke point for free, and red-shifts at night with the rest of the palette. Unlit segments
+keep a faint ghost by day (the resting shape of the instrument) and vanish at night, when a
+dark room wants digits and not scaffolding.
+
+**Every kind of "dim" on this board is rendered.** `HAS_BACKLIGHT_PWM` is 0 — the CH422G
+backlight line is on/off, and I²C bit-banging it would flicker. So the whole
+`night_duty`/`NIGHT_STEPS` calibration machinery is inert here, and the night lever is
+**on-glass luminance**: a black ground, dimmed content, and the backlight scheduled off for
+the true blackout. The gentle wake's sunrise is drawn the same way — a warm field rising
+from the bottom, opacity tracking `wake_alarm_backlight()` — because there is no backlight
+ramp to drive. The boot banner says this out loud so nobody debugs a missing dimmer.
+
+## 5c · The lantern — the night light, finally built
+
+§4 specified the honest night light and left it unbuilt. It exists now, as
+[`care/lantern.h`](../../firmware/projects/canary-display/include/canary/care/lantern.h)
+(pure model) + `src/care/lantern.cpp` (NVS glue), and it holds §4's contract in code:
+
+- **User-summoned.** A tap on the affordance corner (7"), a tap anywhere (the small
+  portrait glass — the whole panel is the lamp, because there is no corner to find at
+  3 a.m.), or a **BOOT double-press** on the touch-less boards.
+- **Timed out.** 15 minutes by default; re-summoning restarts the window. A lit lantern is
+  deliberately **not persisted** — a device that reboots at 3 a.m. wakes dark, because
+  dark-when-safe is the honest default and nobody asked for a light.
+- **Extinguished by attention, and it does not resume.** The instant the fleet reaches
+  Warn — or a link dies — the lamp yields the glass back to the truth and stays out until
+  someone summons it again. A lamp that silently resumed over an alarm the user just dealt
+  with would be exactly the dishonesty §4 was written to prevent.
+- **Never a state signal.** Its light is a look-engine *scene*, never a semantic colour, so
+  it cannot say "safe" by glowing. The WS2812 beacon is **not part of the lamp** on any
+  board: that channel stays a pure attention signal, dark when all is well.
+- **"Lantern hours"** (an auto schedule through quiet hours — the hallway-light use case)
+  exists but ships **off**. Turning it on knowingly trades away the dark-means-safe signal;
+  that is a decision, not a default. The attention veto applies to it identically.
+
+A tap while lit walks the scene ring, which now includes a **Rainbow** scene (the full
+wheel on Sweep). The honesty rule covers it like every other scene: host-tested to cycle
+all three primaries when calm, and to go red under Alert regardless.
+
+## 5d · Ambient life — the glass that checks in
+
+[`care/ambient_life.h`](../../firmware/projects/canary-display/include/canary/care/ambient_life.h)
+is the Flipper-ish organic layer: on an idle, lit glass, one small living thing happens
+every few minutes — the bird throws a flourish, or the status quietly surfaces and fades.
+It reads as a companion checking in rather than a screen holding still.
+
+It is deliberately **rationed and gated**, because the motion budget
+([`theme.h`](../../firmware/projects/canary-display/include/canary/ui/theme.h)) is law:
+3–7 minutes apart by day, 8–15 at night (a hallway lamp stirs; it does not perform). A
+moment fires **only** when the fleet is calm, the links are healthy, no modal is open,
+no wake window is running, and the glass is genuinely lit — daylight ambient or a lit
+lantern. While the gate is shut the clock simply holds, and re-opening it never releases a
+stored-up burst. The cadence is a seeded xorshift keyed to the device id, so two Canaries
+on one dresser don't stir in lockstep while each stays reproducible across its own reboots
+— which is what makes the whole layer host-testable.
+
+The BOOT button finally has a grammar too
+([`io/boot_button.h`](../../firmware/projects/canary-display/include/canary/io/boot_button.h),
+the §7 follow-up): **tap** = peek, **double** = the lantern, **hold** = acknowledge. Double
+fires on the second *press*, not its release — a light has to come on when you push the
+button — and a press that is spoken for can never also mature into a tap or an
+acknowledge.
+
 ## 6 · The 7" big glass + real 5-point touch
 
 Same 800×480 canvas as the Dash → **the Dash layout ports straight over**, just breathier (larger type,
@@ -162,6 +248,22 @@ is **true 5-point multitouch** (the GT911 already reports up to 5; the pins carr
   build targets now: `firmware-release.yml` (and the out-of-band `flasher-release.yml`) run their PlatformIO
   envs non-blocking and stage the binaries through the same version-string/product-string guards as the
   profile-built displays, and the flasher catalog (`gen_flash.py` → `flash.json`) carries their products.
+
+**Landed in the bedside wave** (§5b–§5d above — compile-tested, bench validation pending like
+everything else on these boards):
+
+- **`canary-display-nightstand7`** — the 7" bedside product: its own flavor config
+  (`configs/canary-display/nightstand7/`), env, OTA product, flasher-catalog entry and
+  release-workflow staging (it rides dash7's core-3 core dir).
+- **`src/ui/nightstand7_ui.cpp`** — the drawn segment clock, the complication column, the
+  weather-advisory banner, the fleet strip, the night clock-focus layout, the rendered
+  sunrise, and the lantern overlay.
+- **The lantern** on all three bedside flavors (`nightstand7`, `nightstand`, `touch169`) —
+  the §4 night light, built.
+- **Ambient life + the BOOT-button grammar** — two of the §7 follow-ups, closed.
+- **Weather got tomorrow + advisories** — optional `t_now` / `hi2` / `alert` fields on the
+  same retained blob (`display_nightstand.md` § Optional fields), visual-only by rule.
+- **A Rainbow scene** in the look engine (10 now, not 9).
 
 **Still staged (honestly deferred, needs a toolchain the CI container lacks or a follow-up):**
 - **Emulator + Lab** — `build.sh` `createCanaryEmuNightstand`/`…Dash7`, the `dist/*.js` + `.meta.json`

@@ -1306,6 +1306,46 @@
       "pick_label": "Dash 7 — the 7″ big glass"
     },
     {
+      "id": "securacv-canary-display-nightstand7",
+      "name": "Canary Nightstand 7",
+      "tagline": "The 7″ glass turned toward the bed — a big quiet clock, the day's weather, and a night light that never lies about your fleet.",
+      "family": "display",
+      "board_label": "Waveshare 7″ panel module",
+      "chip": "ESP32-S3",
+      "flash_mb": 16,
+      "board": "esp32-s3-devkitc-1",
+      "asset_stem": "canary-display-nightstand7",
+      "provisioning": "on-glass",
+      "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
+      "wifi_nvs": "string",
+      "broker_nvs": true,
+      "hatch": {
+        "kicker": "Display hatched",
+        "title": "Your glass is waking up.",
+        "body": "First light is the whole setup: the display guides you from its own screen — no app, no account, and it never reboot-loops on a fresh network.",
+        "steps": [
+          "Watch the splash land, then the hello: a fresh display shows a join QR on its own glass (a device-unique setup network).",
+          "Scan the QR with your phone — the setup page opens by itself; pick your home Wi-Fi and you're done typing.",
+          "The fleet face fades in and every Canary on your broker appears on its own — retained topics, no pairing, ever."
+        ]
+      },
+      "serial_receipt": false,
+      "role": "display",
+      "prove": {
+        "real": {
+          "kind": "glass",
+          "label": "Watch the glass — it comes alive",
+          "how": "The proof is the screen itself: splash, then the face, then the on-glass wizard. Touch works."
+        },
+        "emulated": {
+          "href": "fleet.html#canary-display-nightstand7",
+          "label": "🧪 the 1:1 twin — the same firmware, in the browser",
+          "how": "The fleet page boots the REAL display firmware compiled to WASM — the pixels here are the pixels the glass shows. The listening 4.3C variant gets its own does/doesn't mic bench at dash-mic.html — same decision core, drift-locked."
+        }
+      },
+      "pick_label": "Nightstand 7 — the 7″ bedside glass"
+    },
+    {
       "id": "securacv-canary-display-nightstand-s3",
       "name": "Canary Nightstand",
       "tagline": "The 1.47″ portrait glance with an ambient light — plugs straight into a USB port.",

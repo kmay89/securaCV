@@ -5,8 +5,13 @@
 // (never color alone), soft glow instead of hard strips. Motion budget:
 // an unacked-alert card breathes its glow; the hold-to-ack ring sweeps;
 // nothing else moves.
+//
+// Not compiled on the Nightstand 7 (CD_NIGHTSTAND7): that build shares this
+// flavor's panel/HAL but its standing face is the bedside one
+// (nightstand7_ui.cpp), so the wall dashboard would be dead weight in a
+// 16 MB image and dead code in the review.
 #include "flavor_config.h"
-#ifdef CD_FLAVOR_DASH
+#if defined(CD_FLAVOR_DASH) && !defined(CD_NIGHTSTAND7)
 
 #include <Arduino.h>
 #include <lvgl.h>

@@ -276,6 +276,23 @@ PRODUCTS = [
         "provisioning": "on-glass",
     },
     {
+        # The SAME 7" board as the Dash 7, wearing the bedside personality:
+        # clock hero + weather, a red clock-focus night face, and the
+        # lantern. A distinct product because the OTA engine must never
+        # cross-grade a bedroom glass into a wall dashboard.
+        "id": "securacv-canary-display-nightstand7",
+        "family": "display",
+        "board_label": "Waveshare 7″ panel module",
+        "pick_label": "Nightstand 7 — the 7″ bedside glass",
+        "name": "Canary Nightstand 7",
+        "tagline": "The 7″ glass turned toward the bed — a big quiet clock, the day's weather, and a night light that never lies about your fleet.",
+        "asset_stem": "canary-display-nightstand7",
+        "project": "firmware/projects/canary-display",
+        "env": "canary-display-nightstand7",
+        "board": "esp32-s3-devkitc-1",
+        "provisioning": "on-glass",
+    },
+    {
         "id": "securacv-canary-display-nightstand-s3",
         "family": "display",
         "board_label": "Waveshare ESP32-S3-LCD-1.47 (USB-A stick)",
