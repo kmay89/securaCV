@@ -261,7 +261,14 @@ fn saved_wifi_password(ssid: String) -> Result<String, String> {
     #[cfg(target_os = "linux")]
     {
         let out = std::process::Command::new("nmcli")
-            .args(["-s", "-g", "802-11-wireless-security.psk", "connection", "show", &ssid])
+            .args([
+                "-s",
+                "-g",
+                "802-11-wireless-security.psk",
+                "connection",
+                "show",
+                &ssid,
+            ])
             .output()
             .map_err(|e| format!("couldn't ask NetworkManager: {e}"))?;
         // Strip only the command's trailing newline — a PSK may legitimately
@@ -522,15 +529,14 @@ async fn flash(
     // Exactly two manifests are ever resolved: the catalog's pinned stable
     // release, and the fixed fw-dev-latest constant. Anything else is an
     // unbundled URL and is refused before a byte moves.
-    let channel = if catalog.get("manifest_url").and_then(Value::as_str)
-        == Some(manifest_url.as_str())
-    {
-        "stable"
-    } else if manifest_url == DEV_FLASH_MANIFEST_URL {
-        "dev"
-    } else {
-        return Err("refusing an unbundled firmware manifest URL".into());
-    };
+    let channel =
+        if catalog.get("manifest_url").and_then(Value::as_str) == Some(manifest_url.as_str()) {
+            "stable"
+        } else if manifest_url == DEV_FLASH_MANIFEST_URL {
+            "dev"
+        } else {
+            return Err("refusing an unbundled firmware manifest URL".into());
+        };
     if channel == "dev" {
         emit(
             &app,
@@ -711,7 +717,10 @@ async fn flash(
                 "the full erase failed (espflash exit {code}). Nothing was written. The board can't be bricked — put it back in download mode and try again."
             ));
         }
-        emit(&app, "✓ chip erased — nothing of the old firmware is left".into());
+        emit(
+            &app,
+            "✓ chip erased — nothing of the old firmware is left".into(),
+        );
     }
 
     // 3) Flash the merged factory image at 0x0. A factory image already carries
@@ -939,7 +948,10 @@ async fn flash_local_file(
     // (`staged` removes the private image on scope exit.)
 
     if code == 0 {
-        emit(&app, "✓ chip write verified — your file is on the board.".into());
+        emit(
+            &app,
+            "✓ chip write verified — your file is on the board.".into(),
+        );
         Ok(FlashReceipt {
             target: "esp32-host",
             product_id: file_name,
@@ -1202,13 +1214,22 @@ async fn backup_flash(
     }
     let _ = app.emit(
         "rescue:log",
-        format!("→ reading {} of flash → {out_path}…", rescue::human_bytes(flash_size)),
+        format!(
+            "→ reading {} of flash → {out_path}…",
+            rescue::human_bytes(flash_size)
+        ),
     );
-    let code =
-        run_sidecar_streaming(&app, rescue::read_flash_args(&port, flash_size, &out_path, baud), "rescue:log")
-            .await?;
+    let code = run_sidecar_streaming(
+        &app,
+        rescue::read_flash_args(&port, flash_size, &out_path, baud),
+        "rescue:log",
+    )
+    .await?;
     if code == 0 {
-        let _ = app.emit("rescue:log", "✓ backup saved — keep it safe; restore it any time.".to_string());
+        let _ = app.emit(
+            "rescue:log",
+            "✓ backup saved — keep it safe; restore it any time.".to_string(),
+        );
         Ok(())
     } else {
         Err(format!(
@@ -1264,10 +1285,17 @@ async fn write_local_image(
     let staged = stage_firmware(&bytes, "rescue-restore")?;
     let staged_path = staged.path().to_string_lossy().to_string();
     let _ = app.emit("rescue:log", format!("→ writing {path} to the board…"));
-    let code =
-        run_sidecar_streaming(&app, rescue::write_bin_args(&port, &staged_path, baud), "rescue:log").await?;
+    let code = run_sidecar_streaming(
+        &app,
+        rescue::write_bin_args(&port, &staged_path, baud),
+        "rescue:log",
+    )
+    .await?;
     if code == 0 {
-        let _ = app.emit("rescue:log", "✓ written — the board is rebooting into it.".to_string());
+        let _ = app.emit(
+            "rescue:log",
+            "✓ written — the board is rebooting into it.".to_string(),
+        );
         Ok(())
     } else {
         Err(format!(
@@ -1282,10 +1310,15 @@ async fn erase_chip(app: AppHandle, port: String) -> Result<(), String> {
     let _ = app.emit("rescue:log", "→ erasing the whole chip…".to_string());
     let code = run_sidecar_streaming(&app, rescue::erase_flash_args(&port), "rescue:log").await?;
     if code == 0 {
-        let _ = app.emit("rescue:log", "✓ chip erased — factory-fresh. Flash any image next.".to_string());
+        let _ = app.emit(
+            "rescue:log",
+            "✓ chip erased — factory-fresh. Flash any image next.".to_string(),
+        );
         Ok(())
     } else {
-        Err(format!("espflash exited with code {code} while erasing. Nothing is bricked — try again."))
+        Err(format!(
+            "espflash exited with code {code} while erasing. Nothing is bricked — try again."
+        ))
     }
 }
 
@@ -1311,8 +1344,11 @@ async fn read_region(
         .tempfile()
         .map_err(|e| format!("couldn't create a temp file for the read: {e}"))?;
     let out = tmp.path().to_string_lossy().to_string();
-    let (code, log) =
-        run_sidecar_capture(app, rescue::read_region_args(port, offset, size, &out, baud)).await?;
+    let (code, log) = run_sidecar_capture(
+        app,
+        rescue::read_region_args(port, offset, size, &out, baud),
+    )
+    .await?;
     if code != 0 {
         return Err(format!(
             "espflash exited with code {code} reading 0x{offset:x}: {}",
@@ -1368,7 +1404,10 @@ async fn health_check(
     let pt = read_region(&app, &port, 0x8000, 0xc00, baud).await?;
     let entries = health::parse_partition_table(&pt);
     if entries.is_empty() {
-        let verdict = health::report_verdict(&health::VerdictInput { blank: true, ..Default::default() });
+        let verdict = health::report_verdict(&health::VerdictInput {
+            blank: true,
+            ..Default::default()
+        });
         emit("✓ read complete — the chip looks blank.");
         return Ok(json!({
             "chip": chip, "mac": mac, "flashBytes": flash_bytes,
@@ -1378,25 +1417,35 @@ async fn health_check(
 
     let partitions: Vec<Value> = entries
         .iter()
-        .map(|e| json!({
-            "label": e.label,
-            "kind": health::partition_kind(e.ptype, e.subtype),
-            "offset": e.offset,
-            "size": e.size,
-        }))
+        .map(|e| {
+            json!({
+                "label": e.label,
+                "kind": health::partition_kind(e.ptype, e.subtype),
+                "offset": e.offset,
+                "size": e.size,
+            })
+        })
         .collect();
 
     // App slots + their descriptors.
     let apps = health::app_partitions(&entries);
-    let ota_slots: Vec<&health::Partition> =
-        apps.iter().filter(|a| (0x10..0x20).contains(&a.subtype)).collect();
+    let ota_slots: Vec<&health::Partition> = apps
+        .iter()
+        .filter(|a| (0x10..0x20).contains(&a.subtype))
+        .collect();
     emit("→ reading the firmware in each slot…");
     let mut slots: Vec<Map<String, Value>> = Vec::new();
     for app_p in &apps {
-        let desc = read_region(&app, &port, app_p.offset + health::APP_DESC_OFFSET, 256, baud)
-            .await
-            .ok()
-            .and_then(|b| health::parse_app_descriptor(&b));
+        let desc = read_region(
+            &app,
+            &port,
+            app_p.offset + health::APP_DESC_OFFSET,
+            256,
+            baud,
+        )
+        .await
+        .ok()
+        .and_then(|b| health::parse_app_descriptor(&b));
         let mut m = Map::new();
         let label = if app_p.label.is_empty() {
             health::partition_kind(app_p.ptype, app_p.subtype)
@@ -1410,7 +1459,14 @@ async fn health_check(
             let built = format!("{} {}", d.date, d.time).trim().to_string();
             m.insert("project".into(), json!(d.project_name));
             m.insert("version".into(), json!(d.version));
-            m.insert("built".into(), if built.is_empty() { Value::Null } else { json!(built) });
+            m.insert(
+                "built".into(),
+                if built.is_empty() {
+                    Value::Null
+                } else {
+                    json!(built)
+                },
+            );
             m.insert("idf".into(), json!(d.idf_ver));
         }
         slots.push(m);
@@ -1424,9 +1480,14 @@ async fn health_check(
         let ob = read_region(&app, &port, otap.offset, otap.size.min(0x2000), baud).await?;
         let ota = health::parse_ota_data(&ob, ota_slots.len() as u32);
         if !ota.fresh {
-            active_label = ota_slots.get(ota.active_ota as usize).map(|s| s.label.clone());
+            active_label = ota_slots
+                .get(ota.active_ota as usize)
+                .map(|s| s.label.clone());
         } else {
-            let first = apps.iter().find(|a| a.subtype == 0x00).or_else(|| ota_slots.first().copied());
+            let first = apps
+                .iter()
+                .find(|a| a.subtype == 0x00)
+                .or_else(|| ota_slots.first().copied());
             active_label = first.map(|a| a.label.clone());
         }
         ota_json = json!({
@@ -1438,7 +1499,10 @@ async fn health_check(
     // factory app, so mark it running (otherwise the verdict falsely warns that
     // nothing is bootable).
     if active_label.is_none() {
-        active_label = apps.iter().find(|a| a.subtype == 0x00).map(|a| a.label.clone());
+        active_label = apps
+            .iter()
+            .find(|a| a.subtype == 0x00)
+            .map(|a| a.label.clone());
     }
 
     // Mark the booted slot.
@@ -1495,7 +1559,10 @@ async fn health_check(
     let verdict = health::report_verdict(&health::VerdictInput {
         blank: false,
         coredump_present,
-        ota_pending_verify: ota_json.get("pendingVerify").and_then(|v| v.as_bool()).unwrap_or(false),
+        ota_pending_verify: ota_json
+            .get("pendingVerify")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
         ota_rolled_back: rolled_back,
         tamper,
         has_running_slot: has_running,
@@ -1546,6 +1613,7 @@ pub fn run() {
         .manage(we2_bench::We2BenchState::default())
         .manage(hub::PiUsbState::default())
         .manage(hub::HubFlashState::default())
+        .manage(hub::HeadlessState::default())
         // On launch, reclaim anything a crash or pulled plug orphaned (a
         // ~2.5 GB raw staging image, a half-finished .partial download). Off
         // the main thread so it never delays the window. Orphaned *processes*
@@ -1644,6 +1712,8 @@ pub fn run() {
             hub::hub_flash_cancel,
             hub::hub_preflight,
             hub::hub_probe_hub,
+            hub::hub_headless_setup,
+            hub::hub_headless_available,
             hub::hub_pi_boot_start,
             hub::hub_pi_boot_stop,
             serial_monitor::start_serial_monitor,

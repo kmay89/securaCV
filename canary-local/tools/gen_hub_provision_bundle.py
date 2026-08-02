@@ -27,11 +27,15 @@ The one honest gap — first-boot AUTO-run:
   HAOS has no supported hook to auto-run an arbitrary script from the boot
   partition, so true zero-touch first boot is NOT something this tool can prove
   offline; that hook is what on-hardware validation pins (see `first_boot` in the
-  emitted manifest). What DOES work today, and is what CI exercises: drop the
-  bundle somewhere with Python + the Supervisor token (the Advanced SSH & Web
-  Terminal add-on) and run `sh provision.sh`. HAOS ignores boot-partition files
-  it doesn't recognise, so a bundle that isn't auto-run is harmless — worst case
-  is a normal onboarding, never a broken boot.
+  emitted manifest). What DOES work with no monitor: the bundle now carries
+  `host_provision.sh`, a wrapper runnable from the ONE shell a fresh headless hub
+  exposes — the HAOS developer console on port 22222, unlocked by the
+  `authorized_keys` maintenance key the flasher seeds next to this bundle. The
+  flasher's first-boot companion drives it over SSH from the operator's computer;
+  the same command works typed by hand. `sh provision.sh` still works from the
+  Advanced SSH & Web Terminal add-on (python3 + SUPERVISOR_TOKEN present). HAOS
+  ignores boot-partition files it doesn't recognise, so a bundle that isn't run
+  is harmless — worst case is a normal onboarding, never a broken boot.
 
 Emits (drift-gated, like its sibling generators):
   canary-local/devices/hub_provision_bundle.json — the manifest: every file the
@@ -68,6 +72,13 @@ SOURCES = [
     {"role": "frigate-config", "source": "homeassistant/frigate/config.yaml",
      "bundle_path": "homeassistant/frigate/config.yaml"},
     {"role": "executor", "source": "canary-local/tools/hub_seed_apply.py", "bundle_path": "hub_seed_apply.py"},
+    # The host-side runner: provision.sh needs python3 + SUPERVISOR_TOKEN, which
+    # the HAOS developer console (port 22222) doesn't have — this wrapper borrows
+    # both from the running stack (the Core container) so the bundle can be run
+    # from the ONE shell a headless hub exposes with no add-ons installed yet.
+    # It is what the flasher's first-boot companion invokes over SSH.
+    {"role": "host-runner", "source": "canary-local/tools/hub_host_provision.sh",
+     "bundle_path": "host_provision.sh"},
 ]
 
 RUNNER_NAME = "provision.sh"
@@ -144,12 +155,27 @@ def build_manifest() -> dict:
             "runs": "python3 hub_seed_apply.py --plan hub_seed.json --assets-root .",
             "dry_run": f"sh {RUNNER_NAME} --dry-run",
         },
+        "host_runner": {
+            "file": "host_provision.sh",
+            "context": (
+                "The HAOS developer console (SSH, port 22222) — the one shell a fresh headless "
+                "hub exposes. Borrows python3 + SUPERVISOR_TOKEN from the running Core container, "
+                "so it needs no add-on installed first."
+            ),
+            "runs": "sh /mnt/boot/CONFIG/securacv/host_provision.sh",
+            "dry_run": "sh /mnt/boot/CONFIG/securacv/host_provision.sh --dry-run",
+        },
         "files": files,
         "first_boot": {
             "status": "planned",
             "what_works_today": (
-                "From the Advanced SSH & Web Terminal add-on (python3 + SUPERVISOR_TOKEN present): "
-                f"copy this bundle and run `sh {RUNNER_NAME}` — `--dry-run` first to preview."
+                "Headless, from another screen: the flasher's first-boot companion connects to the "
+                "HAOS developer console (port 22222, unlocked by the maintenance key the flasher "
+                "seeds next to this bundle) and runs `sh /mnt/boot/CONFIG/securacv/host_provision.sh` "
+                "once the hub answers — the hub itself never needs a monitor. The same command works "
+                "by hand from that console, and `sh provision.sh` still works from the Advanced SSH "
+                "& Web Terminal add-on (python3 + SUPERVISOR_TOKEN present). `--dry-run` previews "
+                "either path."
             ),
             "candidate_hooks": [
                 "A curated HA package/automation seeded into CONFIG/ that shells out to the runner "
@@ -159,8 +185,10 @@ def build_manifest() -> dict:
             "note": (
                 "HAOS ignores boot-partition files it doesn't recognise, so a bundle that isn't "
                 "auto-run is harmless — worst case is a normal onboarding, never a broken boot. The "
-                "write side is hub_io::seed (the CONFIG/ tree, already used for Wi-Fi); which hook "
-                "actually auto-runs the bundle is what on-hardware validation pins."
+                "write side is hub_io::seed (the CONFIG/ tree, already used for Wi-Fi). True "
+                "zero-touch (the hub running the bundle with no companion at all) stays `planned` "
+                "until a supported HAOS boot hook is pinned on hardware; the companion-over-SSH path "
+                "is the honest interim, and it too needs its first real-hardware run."
             ),
         },
         "meta": {
