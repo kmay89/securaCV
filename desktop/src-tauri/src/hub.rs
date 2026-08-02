@@ -1164,21 +1164,51 @@ fn hub_headless_blocking(
         "→ connecting to the hub's service console (port {})…",
         hub_core::hub_headless::CONSOLE_PORT
     ));
-    let (mut code, mut transcript) = run_ssh(&log, &args)?;
+    let (code, transcript) = run_ssh(&log, &args)?;
     if code != 0 && hub_core::hub_headless::host_key_changed(&transcript) {
-        // The one verification failure we self-heal: a REFLASHED hub minted
-        // new host keys. Our known_hosts file is dedicated to hubs, so
-        // clearing it never touches the user's own SSH trust.
-        log(
-            "→ the hub's identity changed — expected after a reflash. Starting fresh trust \
-             and trying once more…"
-                .to_string(),
-        );
-        let _ = std::fs::remove_file(&known_hosts);
-        (code, transcript) = run_ssh(&log, &args)?;
+        // A changed host key is AMBIGUOUS. A reflash produces it — but so does
+        // mDNS/DHCP handing this name to another machine, or a LAN peer
+        // answering for the hub. Auto-clearing the pin (and, worse, the whole
+        // file, discarding every other hub's pin) would silently trust
+        // whatever replied. So: stop, say exactly what happened, and let the
+        // operator re-pair deliberately. Re-running self-setup after a genuine
+        // reflash is a decision, not a default.
+        return Ok(HeadlessReport {
+            ok: false,
+            exit_code: Some(code),
+            note: Some(format!(
+                "This hub's identity is not the one we saw last time. After re-flashing the \
+                 same hub that is expected — but the same thing happens if another device on \
+                 your network answered to that address, so we won't trust it automatically. \
+                 If you just re-flashed it, forget the old identity and try again: delete \
+                 {}. If you did not, stop and check what is answering at that address first.",
+                known_hosts.display()
+            )),
+        });
     }
 
-    let note = if code == 0 {
+    let note = if code == 0 && transcript.contains("INCOMPLETE_OPTIONAL:") {
+        // The executor finished, but deliberately carried on past a step it
+        // could not complete (today: Home Assistant's MQTT config flow, which
+        // may ask for credentials a headless run can't answer). Exit 0 means
+        // "nothing is half-built", NOT "everything is connected" — so report
+        // the remainder instead of claiming success. Without this the user is
+        // told MQTT is installed while HA is subscribed to nothing.
+        Some(
+            transcript
+                .lines()
+                .find(|l| l.contains("INCOMPLETE_OPTIONAL:"))
+                .map(|l| {
+                    let rest = l.split("INCOMPLETE_OPTIONAL:").nth(1).unwrap_or("").trim();
+                    format!("Setup finished, with one thing left for you: {rest}")
+                })
+                .unwrap_or_else(|| {
+                    "Setup finished, but one optional step needs finishing by hand in Home \
+                     Assistant."
+                        .to_string()
+                }),
+        )
+    } else if code == 0 {
         None
     } else if transcript.contains("isn't running yet") {
         // host_provision.sh's own "too early" answer: the console is up but
@@ -1207,7 +1237,10 @@ fn hub_headless_blocking(
         )
     };
     Ok(HeadlessReport {
-        ok: code == 0,
+        // Fully-finished only: a run that skipped an optional step is reported
+        // as not-ok WITH a note, so the UI offers the retry/guidance path
+        // rather than a clean "all done".
+        ok: code == 0 && !transcript.contains("INCOMPLETE_OPTIONAL:"),
         exit_code: Some(code),
         note,
     })

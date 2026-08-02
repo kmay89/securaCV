@@ -339,9 +339,13 @@ def main() -> None:
             ),
             "why": (
                 "Pi-hole is a small DNS server: your devices ask it 'where is this domain?', it "
-                "answers, and it keeps a local log of who asked for what — refusing known "
-                "ad/tracker domains along the way. It sees domain names only, never page "
-                "contents, and nothing it logs leaves your network. It's open source and has "
+                "answers, and it refuses known ad/tracker domains along the way. To tell you WHICH "
+                "device asked, it logs the asking client's IP (and hostname, where the network "
+                "supplies one) with the domain and the time — that is the feature, and it is also "
+                "a record of your household's lookups, so: it stays on your hub, nothing is "
+                "uploaded, and retention is yours to shorten or switch off in Pi-hole's settings "
+                "(blocking still works with query logging off). It never sees page contents, only "
+                "the names looked up. It's open source and has "
                 "been run by millions of people for years — you're not trusting us, you're "
                 "using the same tool everyone else uses. The reason it's the recommended pairing "
                 "here: securaCV's whole promise is devices that DON'T talk out, and Pi-hole is "
@@ -395,9 +399,11 @@ def main() -> None:
         "optional_features": {
             "pihole": {
                 "what": (
-                    "Pi-hole DNS on the hub: a local log of every domain your devices ask for — "
-                    "the way to verify nothing (including a Canary) is quietly talking out — with "
-                    "ad/tracker blocking as the side effect."
+                    "Pi-hole DNS on the hub: a local log of which device asked for which domain "
+                    "(client IP + domain + time, never page contents) — the way to verify "
+                    "nothing, including a Canary, is quietly talking out. Ad/tracker blocking is "
+                    "the side effect. The log stays on the hub; retention is configurable and "
+                    "query logging can be switched off without losing blocking."
                 ),
                 "enable": "sh provision.sh --with pihole   (or host_provision.sh --with pihole)",
                 "recommended": True,

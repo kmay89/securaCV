@@ -2943,7 +2943,7 @@ function hubInit() {
 // A flash writes a tiny "last flash" record; on the next launch, if it's
 // recent and the hub isn't up yet, we quietly re-offer to watch for it — so a
 // crash, quit, or reboot mid-first-boot never loses the thread.
-function hubRecordFlash(provisionPending) {
+function hubRecordFlash(provisionPending, piholeChoice) {
   try {
     localStorage.setItem(
       HUB_LASTFLASH_KEY,
@@ -2953,6 +2953,12 @@ function hubRecordFlash(provisionPending) {
         // True when the card carries the self-setup bundle and this app still
         // owes the hub a setup run — survives a quit/relaunch mid-first-boot.
         provision: !!provisionPending,
+        // The Pi-hole decision travels WITH the pending run, not with the
+        // remembered-settings blob. "Remember these" may be off, and the
+        // checkbox's HTML default is checked — so relying on the live checkbox
+        // after a relaunch would silently install Pi-hole for someone who
+        // explicitly unticked it. An opt-out has to survive the restart.
+        pihole: !!piholeChoice,
       })
     );
   } catch (_) {}
@@ -2983,9 +2989,11 @@ async function hubMaybeResume() {
     });
     $("hub-resume-setup").addEventListener("click", () => {
       $("hub-resume-setup").classList.add("hidden");
-      hubRunHeadlessSetup($("hub-resume-text"), $("hub-resume-setup"));
+      hubRunHeadlessSetup($("hub-resume-text"), $("hub-resume-setup"), undefined, rec.pihole);
     });
-    const report = await hubRunHeadlessSetup($("hub-resume-text"), $("hub-resume-setup"));
+    const report = await hubRunHeadlessSetup(
+      $("hub-resume-text"), $("hub-resume-setup"), undefined, rec.pihole
+    );
     if (report && report.ok) hubClearFlashRecord();
     return;
   }
@@ -3023,9 +3031,11 @@ async function hubMaybeResume() {
           "Your hub from earlier is up — finishing its setup from this computer…";
         $("hub-resume-setup").addEventListener("click", () => {
           $("hub-resume-setup").classList.add("hidden");
-          hubRunHeadlessSetup($("hub-resume-text"), $("hub-resume-setup"));
+          hubRunHeadlessSetup($("hub-resume-text"), $("hub-resume-setup"), undefined, rec.pihole);
         });
-        const report = await hubRunHeadlessSetup($("hub-resume-text"), $("hub-resume-setup"));
+        const report = await hubRunHeadlessSetup(
+          $("hub-resume-text"), $("hub-resume-setup"), undefined, rec.pihole
+        );
         if (report && report.ok) hubClearFlashRecord();
       } else {
         $("hub-resume-text").textContent = "Your hub from earlier is up. 🐤";
@@ -3279,7 +3289,10 @@ async function hubPreflight() {
 function hubStartFirstBoot() {
   // Leave a breadcrumb so a restart/quit mid-first-boot can resume the watch —
   // including whether this app still owes the hub its self-setup run.
-  hubRecordFlash(hub.lastReceipt && hub.lastReceipt.provision_seeded);
+  hubRecordFlash(
+    hub.lastReceipt && hub.lastReceipt.provision_seeded,
+    $("hub-provision-pihole").checked
+  );
   const panel = $("hub-firstboot");
   panel.classList.remove("hidden");
   $("hub-fb-dot").className = "dot reading";
@@ -3352,7 +3365,7 @@ function hubCleanHost(raw) {
   return (raw || "").trim().replace(/^https?:\/\//i, "").replace(/[/:].*$/, "");
 }
 
-async function hubRunHeadlessSetup(statusEl, retryBtn, hostOverride) {
+async function hubRunHeadlessSetup(statusEl, retryBtn, hostOverride, piholeOverride) {
   if (hub.headlessBusy) return null;
   hub.headlessBusy = true;
   const el = $("hub-console");
@@ -3363,7 +3376,10 @@ async function hubRunHeadlessSetup(statusEl, retryBtn, hostOverride) {
     // Console port is fixed; strip :8123 from the probe host. An override (an
     // IP found in the router when mDNS is blocked) wins when given.
     const host = hubCleanHost(hostOverride) || HUB_HOST.replace(/:\d+$/, "");
-    const withPihole = !!$("hub-provision-pihole").checked;
+    // A resumed run passes the choice recorded at flash time; only a live,
+    // in-session run reads the checkbox.
+    const withPihole =
+      piholeOverride === undefined ? !!$("hub-provision-pihole").checked : !!piholeOverride;
     const report = await invoke("hub_headless_setup", { host, dryRun: false, withPihole });
     if (report.ok) {
       statusEl.textContent =

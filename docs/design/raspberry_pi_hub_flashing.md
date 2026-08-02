@@ -373,8 +373,10 @@ Raspberry Pi Imager.
     resolves the "who runs the bundle" question from the operator's computer:
     when the hub answers, it connects over SSH (key minted locally by
     `ssh-keygen`, private half never leaves the operator's machine; TOFU into a
-    dedicated `known_hosts`, self-healing exactly the reflashed-hub identity
-    change) and runs `sh /mnt/boot/CONFIG/securacv/host_provision.sh`, streaming
+    dedicated `known_hosts` — and a host key that CHANGES stops the run with an
+    explanation rather than re-pinning itself, because a reflash and an
+    impostor on the same address produce the identical signal) and runs
+    `sh /mnt/boot/CONFIG/securacv/host_provision.sh`, streaming
     the executor's narration into the app's console. The decisions (key
     validation, host validation, the exact ssh argv, reflash detection) are pure
     and host-tested in `hub_core::hub_headless`; both seeds are non-fatal notes

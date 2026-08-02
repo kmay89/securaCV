@@ -559,9 +559,16 @@ def steps_to_json(steps: list[StepPlan]) -> str:
     return json.dumps([dataclasses.asdict(s) for s in steps], indent=2)
 
 
-def execute(steps: list[StepPlan], client: SupervisorClient, assets_root: Path) -> None:
+def execute(steps: list[StepPlan], client: SupervisorClient, assets_root: Path) -> list[str]:
     """Perform the plan, narrating as it goes. Fail-closed: on the first error,
-    stop and say so — re-running is safe because every action is idempotent."""
+    stop and say so — re-running is safe because every action is idempotent.
+
+    Returns the labels of OPTIONAL actions that did not complete. They do not
+    stop the run (a hub with no Frigate would be a far worse outcome than one
+    where MQTT needs a click), but they must not be invisible either: the
+    caller reports them, so "setup finished" never claims more than happened.
+    """
+    incomplete: list[str] = []
     for i, s in enumerate(steps, 1):
         print(f"\n[{i}/{len(steps)}] {s.title}")
         if s.why:
@@ -580,6 +587,7 @@ def execute(steps: list[StepPlan], client: SupervisorClient, assets_root: Path) 
                     # a far worse outcome than one where MQTT needs a click.
                     print(f"    ! could not finish: {e}")
                     print("      (continuing — the rest of the plan does not depend on it)")
+                    incomplete.append(a.label)
                     continue
                 print(f"    x FAILED: {e}", file=sys.stderr)
                 print(
@@ -591,6 +599,7 @@ def execute(steps: list[StepPlan], client: SupervisorClient, assets_root: Path) 
             print("      done")
         if s.user_must_finish:
             print(f"    ! you finish: {s.user_must_finish}")
+    return incomplete
 
 
 def _perform(a: Action, client: SupervisorClient, assets_root: Path) -> None:
@@ -711,9 +720,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"hub_seed_apply.py: cannot reach the hub: {e}", file=sys.stderr)
         return 1
     steps = plan_actions(seed, observed, features)
-    execute(steps, client, Path(args.assets_root))
+    incomplete = execute(steps, client, Path(args.assets_root))
     todo, done = counts(steps)
     print(f"\nHub provisioned: {done} step-action(s) were already in place, {todo} applied.")
+    if incomplete:
+        # STABLE MARKER — the flasher's companion greps for this exact prefix to
+        # downgrade "setup finished" to "finished, with something left for you".
+        # Keep the token if you reword the sentence.
+        print(
+            "INCOMPLETE_OPTIONAL: " + ", ".join(incomplete) + " — these need finishing by hand "
+            "in Home Assistant (Settings -> Devices & Services). Everything else is installed, "
+            "and re-running this is safe."
+        )
     return 0
 
 

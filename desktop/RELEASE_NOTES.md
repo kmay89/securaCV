@@ -39,8 +39,11 @@ and what to expect after updating. Heading grammar is
   not "ad blocking": securaCV's promise is devices that don't talk out, and
   Pi-hole's local query log is how you *check* that promise instead of taking
   our word — every domain every device (Canaries included) asks for, on one
-  page that never leaves your house. It installs idle and does nothing until
-  you point your router's DNS at the hub; the app says exactly that.
+  page that never leaves your house. The panel is equally plain about the
+  trade: to say *which* device asked, Pi-hole logs client IP + domain + time
+  (never page contents), that log stays on the hub, and retention is yours to
+  shorten or switch off. It installs idle and does nothing until you point
+  your router's DNS at the hub; the app says exactly that.
 - **Quit mid-first-boot and nothing is lost.** The resume banner now remembers
   when a hub still needs its self-setup run, and picks it up the moment the hub
   answers — with a "Run self-setup again" button if a run stops partway (safe:
@@ -48,8 +51,11 @@ and what to expect after updating. Heading grammar is
 - **Honest about the key.** The maintenance key's private half stays in the
   app's data folder and never leaves your computer; only the public half goes
   on the card, and deleting `authorized_keys` from the card's boot partition
-  revokes it. The app heals exactly one SSH surprise on its own — a re-flashed
-  hub having a new identity — and says so when it does.
+  revokes it. And if the hub's identity ever differs from the one seen last
+  time, the app **stops and tells you** rather than trusting the new one: after
+  re-flashing that's expected, but the same signal appears if something else on
+  your network answered to that address, so re-pairing is your call, not a
+  silent default.
 
 ## 0.3.8 — 2026-07-31
 

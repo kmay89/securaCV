@@ -376,7 +376,10 @@ mod tests {
         // Seeded Wi-Fi IS the setup: the first-boot latch must be marked done,
         // or the board boots into SETUP MODE with its portal despite joining.
         assert!(has_item(0x01, "setup_ok"));
-        assert!(!has_item(0x21, "wifi_ssid"), "no string twin beside the blob");
+        assert!(
+            !has_item(0x21, "wifi_ssid"),
+            "no string twin beside the blob"
+        );
         assert!(!has_item(0x21, "dev_id") && !has_item(0x21, "mqtt_host"));
     }
 
@@ -474,7 +477,10 @@ mod tests {
                     && matches!(page[o + 8 + key.len()], 0 | 0xff)
             })
         };
-        assert!(has_key("wifi_pass"), "empty wifi_pass must still write its key");
+        assert!(
+            has_key("wifi_pass"),
+            "empty wifi_pass must still write its key"
+        );
     }
 
     // Wi-Fi-only with the default string scheme: network keys only.

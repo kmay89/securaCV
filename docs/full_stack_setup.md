@@ -106,9 +106,14 @@ signed claims.
 > promise is devices that don't talk out, and Pi-hole's local DNS log is how
 > you *check* that promise rather than take our word — one page shows every
 > domain every device (Canaries included) asks for, and known ad/tracker
-> domains get refused for the whole house as the side effect. It sees domain
-> names only, never page contents; nothing it logs leaves your network; and it
-> does nothing at all until you point your router's DNS at the hub's IP.
+> domains get refused for the whole house as the side effect. Be clear-eyed
+> about what that costs: to tell you *which* device asked, Pi-hole logs the
+> client's IP (and hostname where the network supplies one) with the domain and
+> the time — never page contents. That log is the feature and it is also a
+> record of your household's lookups, so it stays on the hub, nothing is
+> uploaded, and retention is yours to shorten or switch off in Pi-hole's
+> settings (blocking still works with query logging off). It does nothing at
+> all until you point your router's DNS at the hub's IP.
 
 By hand, it's two installs:
 

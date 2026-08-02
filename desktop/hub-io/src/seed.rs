@@ -309,33 +309,56 @@ pub fn inject_into_image(
         report.provision_written = false;
     }
 
-    // The maintenance key. HAOS's debugging docs read `authorized_keys` from
-    // the ROOT of the boot partition (not CONFIG/) to unlock the developer
-    // console on port 22222 — that console is what lets the first-boot
-    // companion run the bundle above with no monitor attached. Written and
-    // read back like the keyfile; a failure is a note (the bundle can still be
-    // run by hand from the Advanced SSH & Web Terminal add-on).
+    // The maintenance key, which unlocks HAOS's developer console on port
+    // 22222 — the console that lets the first-boot companion run the bundle
+    // above with no monitor attached.
+    //
+    // Written to BOTH the boot-partition root and `CONFIG/`, deliberately.
+    // HAOS's debugging docs describe the root of the boot partition, but the
+    // `CONFIG/` convention is cited too, and this has never been confirmed
+    // against a real first boot (see the design doc's honest-status list).
+    // Getting it wrong is not a small miss: the key would read back fine,
+    // `ssh_key_written` would be true, and the console would simply never
+    // open — the companion would fail on every card with no clue why. Writing
+    // both costs two directory entries, HAOS ignores files it does not
+    // recognise, and it removes the guess. When a hardware pass identifies the
+    // real one, drop the other.
+    //
+    // BOTH must land to count as written: a half-placed key is exactly the
+    // ambiguous state this is meant to avoid.
     if let Some(keys) = ssh_authorized_keys {
         if report.provision_note.is_none() {
-            let path = ["authorized_keys"];
-            match hub_fat::insert_file(&mut io, &vol, &path, keys.as_bytes()) {
-                Ok(()) => match hub_fat::read_file(&mut io, &vol, &path) {
-                    Ok(back) if back == keys.as_bytes() => report.ssh_key_written = true,
-                    Ok(back) => {
-                        report.provision_note = Some(format!(
-                            "the maintenance key read back as {} bytes instead of {}",
-                            back.len(),
-                            keys.len()
-                        ));
-                    }
+            let mut placed = 0usize;
+            for path in [
+                ["authorized_keys"].as_slice(),
+                ["CONFIG", "authorized_keys"].as_slice(),
+            ] {
+                match hub_fat::insert_file(&mut io, &vol, path, keys.as_bytes()) {
+                    Ok(()) => match hub_fat::read_file(&mut io, &vol, path) {
+                        Ok(back) if back == keys.as_bytes() => placed += 1,
+                        Ok(back) => {
+                            report.provision_note = Some(format!(
+                                "the maintenance key ({}) read back as {} bytes instead of {}",
+                                path.join("/"),
+                                back.len(),
+                                keys.len()
+                            ));
+                            break;
+                        }
+                        Err(e) => {
+                            report.provision_note =
+                                Some(format!("{}: {}", path.join("/"), e.message()));
+                            break;
+                        }
+                    },
                     Err(e) => {
-                        report.provision_note = Some(format!("authorized_keys: {}", e.message()));
+                        report.provision_note =
+                            Some(format!("{}: {}", path.join("/"), e.message()));
+                        break;
                     }
-                },
-                Err(e) => {
-                    report.provision_note = Some(format!("authorized_keys: {}", e.message()));
                 }
             }
+            report.ssh_key_written = placed == 2;
         }
     }
 
@@ -677,10 +700,12 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_maintenance_key_lands_at_the_boot_partition_root() {
-        // HAOS reads `authorized_keys` from the ROOT of the boot partition —
-        // not CONFIG/ — to unlock the developer console. Putting it anywhere
-        // else silently produces a hub the companion can never reach.
+    fn the_maintenance_key_lands_in_both_candidate_places() {
+        // Which path HAOS reads for the developer console is NOT confirmed on
+        // hardware (root of the boot partition per its debugging docs; CONFIG/
+        // is also cited). A key in the wrong place fails silently — it reads
+        // back fine and the console simply never opens — so we write both and
+        // require both, rather than guess.
         let dir = tempfile::tempdir().unwrap();
         let img = dir.path().join("haos.img");
         fake_image(&img);
@@ -695,7 +720,13 @@ pub(crate) mod tests {
         let (_p, vol) = hub_fat::find_fat_partition(&mut bytes, len).unwrap();
         assert_eq!(
             hub_fat::read_file(&mut bytes, &vol, &["authorized_keys"]).unwrap(),
-            key.as_bytes()
+            key.as_bytes(),
+            "boot-partition root placement"
+        );
+        assert_eq!(
+            hub_fat::read_file(&mut bytes, &vol, &["CONFIG", "authorized_keys"]).unwrap(),
+            key.as_bytes(),
+            "CONFIG/ placement"
         );
     }
 
