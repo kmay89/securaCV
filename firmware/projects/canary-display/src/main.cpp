@@ -301,6 +301,36 @@ static uint32_t wake_window_ms(bool night) {
 }
 
 // ----------------------------------------------------------------------------
+// Ambient life + the lantern
+// ----------------------------------------------------------------------------
+// Declared ahead of the brightness policy on purpose: apply_brightness()
+// below is one of lantern_lit()'s two callers (the ambient-life gate in
+// loop() is the other), and only the bedside flavors compile it — so a
+// definition placed after the ladder built fine on every dash and broke
+// exactly the boards that use it.// ----------------------------------------------------------------------------
+
+// The organic layer (care/ambient_life.h): rationed "life moments" on an idle,
+// lit glass — the bird stirs, or the status quietly surfaces. Deterministic,
+// minutes apart, and it never fires into an honest darkness or over an alarm
+// (the caller's `allowed` gate in loop() is the whole policy).
+static canary::care::AmbientLife g_life;
+
+#if defined(FEATURE_LANTERN) && FEATURE_LANTERN
+// One place decides whether the lamp is lit this instant, so the render path,
+// the brightness ladder and the ambient-life gate can never disagree.
+// `attention` is the honest veto: any Warn+ condition or a dead link takes the
+// glass back (and extinguishes a summon — see lantern.h).
+static bool lantern_lit(uint32_t now, bool night) {
+  using canary::fleet::Sev;
+  auto& fleet = canary::fleet::the_fleet();
+  const bool link_down =
+      !canary::net::wifi_connected() || !canary::net::mqtt_connected();
+  const bool attention = fleet.worst(now) >= Sev::Warn || link_down;
+  return canary::care::lantern().active(now, night, attention);
+}
+#endif
+
+// ----------------------------------------------------------------------------
 // Brightness policy
 // ----------------------------------------------------------------------------
 //
@@ -400,31 +430,6 @@ static void ui_ack_hold(bool active) {
   canary::ui::portrait_ui_ack_hold(active);
 #endif
 }
-
-// ----------------------------------------------------------------------------
-// Ambient life + the lantern
-// ----------------------------------------------------------------------------
-
-// The organic layer (care/ambient_life.h): rationed "life moments" on an idle,
-// lit glass — the bird stirs, or the status quietly surfaces. Deterministic,
-// minutes apart, and it never fires into an honest darkness or over an alarm
-// (the caller's `allowed` gate below is the whole policy).
-static canary::care::AmbientLife g_life;
-
-#if defined(FEATURE_LANTERN) && FEATURE_LANTERN
-// One place decides whether the lamp is lit this instant, so the render path,
-// the brightness ladder and the ambient-life gate can never disagree.
-// `attention` is the honest veto: any Warn+ condition or a dead link takes the
-// glass back (and extinguishes a summon — see lantern.h).
-static bool lantern_lit(uint32_t now, bool night) {
-  using canary::fleet::Sev;
-  auto& fleet = canary::fleet::the_fleet();
-  const bool link_down =
-      !canary::net::wifi_connected() || !canary::net::mqtt_connected();
-  const bool attention = fleet.worst(now) >= Sev::Warn || link_down;
-  return canary::care::lantern().active(now, night, attention);
-}
-#endif
 
 #if defined(FEATURE_CARE) && FEATURE_CARE
 // Mute toggle for one witness ("act on what you're looking at"): quiet
