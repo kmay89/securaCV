@@ -41,7 +41,7 @@ README stays the narrative source for those stories.
 | `waveshare-esp32c6-lcd169` | ESP32-C6 | 24 | 7 (29%) | 0 | 7 | 10 |
 | `waveshare-esp32s3-amoled206` | ESP32-S3 | 33 | 21 (64%) | 0 | 5 | 7 |
 | `waveshare-esp32s3-lcd147` | ESP32-S3 | 38 | 11 (29%) | 1 | 6 | 20 |
-| `waveshare-esp32s3-lcd43` | ESP32-S3 | 33 | 24 (73%) | 0 | 4 | 5 |
+| `waveshare-esp32s3-lcd43` | ESP32-S3 | 33 | 27 (82%) | 0 | 4 | 2 |
 | `waveshare-esp32s3-lcd43b` | ESP32-S3 | 33 | 30 (91%) | 0 | 2 | 1 |
 | `waveshare-esp32s3-lcd43c` | ESP32-S3 | 33 | 28 (85%) | 0 | 2 | 3 |
 | `waveshare-esp32s3-lcd7` | ESP32-S3 | 33 | 23 (70%) | 0 | 4 | 6 |
@@ -284,7 +284,7 @@ Capabilities off (room to grow): `HAS_BATTERY`, `HAS_CAMERA`, `HAS_MICROPHONE`, 
 
 ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32s3-lcd43/pins/pins.h)
 
-**24/33 committed** · 0 assigned · 4 conditional · **5 free** (5 ADC-capable)
+**27/33 committed** · 0 assigned · 4 conditional · **2 free** (2 ADC-capable)
 
 | GPIO | bucket | held by / trade | notes |
 |---|---|---|---|
@@ -299,9 +299,9 @@ ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32
 | 8 | committed | I2C_PIN_SDA | ADC, sleep-wake |
 | 9 | committed | I2C_PIN_SCL | ADC, sleep-wake |
 | 10 | committed | LCD_PIN_B7 | ADC, sleep-wake |
-| 11 | **free** | — | ADC, sleep-wake |
-| 12 | **free** | — | ADC, sleep-wake |
-| 13 | **free** | — | ADC, sleep-wake |
+| 11 | committed | SD_PIN_MOSI | ADC, sleep-wake |
+| 12 | committed | SD_PIN_SCK | ADC, sleep-wake |
+| 13 | committed | SD_PIN_MISO | ADC, sleep-wake |
 | 14 | committed | LCD_PIN_B3 | ADC, sleep-wake |
 | 15 | **free** | — | ADC, sleep-wake |
 | 16 | **free** | — | ADC, sleep-wake |
@@ -322,9 +322,9 @@ ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32
 | 47 | committed | LCD_PIN_G6 |  |
 | 48 | committed | LCD_PIN_G5 |  |
 
-⚠ 2 pin define(s) are `-1` — not wired OR not yet verified (see the comments in pins.h): `BOOT_BUTTON_PIN`, `TOUCH_PIN_RST`. Free counts above may shrink as these resolve.
+⚠ 3 pin define(s) are `-1` — not wired OR not yet verified (see the comments in pins.h): `BOOT_BUTTON_PIN`, `SD_PIN_CS`, `TOUCH_PIN_RST`. Free counts above may shrink as these resolve.
 
-Peripheral demand (declared pin map vs MCU): SPI 0/2 · I2C 1/2 · UART 0/3 · RMT TX 0/4 · LEDC 1/8.
+Peripheral demand (declared pin map vs MCU): SPI 1/2 · I2C 1/2 · UART 0/3 · RMT TX 0/4 · LEDC 1/8.
 
 Capabilities on: `HAS_BLE`, `HAS_CAN_RS485`, `HAS_DISPLAY`, `HAS_PSRAM`, `HAS_SD_CARD`, `HAS_TOUCH`, `HAS_USB_CDC`, `HAS_WIFI`.
 Capabilities off (room to grow): `HAS_BACKLIGHT_PWM`, `HAS_BATTERY`, `HAS_CAMERA`, `HAS_MICROPHONE`, `HAS_RTC`.

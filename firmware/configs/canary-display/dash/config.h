@@ -40,11 +40,25 @@
 #ifndef FEATURE_CHIME  // -D overridable so the emulator (not real hardware) can force the chime on
 #define FEATURE_CHIME               0   // piezo unpopulated; engine compiled (spec 5)
 #endif
+// The four below are #ifndef-guarded because compile-verification envs set
+// them with -D. That guard is LOAD-BEARING, not style: a plain #define here
+// silently REDEFINES the command-line value back (GCC warns, file wins), so an
+// env like canary-display-dash-vault was compiling the no-op stubs while
+// claiming to verify the persistence body. Any flag an env -Ds must be
+// #ifndef-guarded here, like FEATURE_CHIME above.
+#ifndef FEATURE_CHIRP_SCAN
 #define FEATURE_CHIRP_SCAN          1   // off-grid BLE chirp fallback (spec 6)
+#endif
+#ifndef FEATURE_BLE5_SCAN
 #define FEATURE_BLE5_SCAN           0   // BLE 5 ext/Coded-PHY long-range scan; bench-gated (spec 6, like CHIME)
+#endif
+#ifndef FEATURE_FLEET_LINK
 #define FEATURE_FLEET_LINK          1   // off-grid BLE GATT pull of WAP status (spec 6)
+#endif
 #define FEATURE_TIME_MACHINE        1   // proof-carrying event journal + history UI (spec 7)
+#ifndef FEATURE_TIME_MACHINE_PERSIST
 #define FEATURE_TIME_MACHINE_PERSIST 0  // LittleFS durability; bench-gated (like CHIME)
+#endif
 #define FEATURE_ONBOARDING          1   // first-boot SoftAP wizard + on-glass guide
 #define FEATURE_CARE                1   // attention policy: night-silent maintenance,
                                         // morning summary, per-witness mute, Roll Call,
@@ -65,7 +79,10 @@
 #define FEATURE_VISION_AI           0
 #define FEATURE_CAMERA_PEEK         0
 #define FEATURE_MMWAVE_RADAR        0
-#define FEATURE_SD_STORAGE          0
+#ifndef FEATURE_SD_STORAGE  // -D overridable (canary-display-dash-sd env)
+#define FEATURE_SD_STORAGE          0   // TF-slot deep archive (fleet/sd_archive.cpp,
+                                        // SDMMC 1-bit); bench-gated (like CHIME)
+#endif
 #define FEATURE_WIFI_AP             0
 #define FEATURE_HTTP_SERVER         0
 #define FEATURE_MESH_NETWORK        0
