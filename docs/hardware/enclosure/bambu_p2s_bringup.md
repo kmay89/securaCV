@@ -527,6 +527,33 @@ directional: **intake along the bottom wall, exhaust along the top wall**, back
 grille radiating in between. Mounting it flat against a wall with the top slots
 blocked converts a ventilated case into an oven.
 
+### 7b″ · The ring gauge — five grams, and it gates the 110 g print
+
+The cheapest part in the catalog, and the one to print first:
+
+```sh
+openscad --export-format binstl -o lcd7_ring_gauge.stl \
+         -D 'part="ring_gauge"' canary_s3_lcd7.scad
+```
+
+**4.42 cm³, ~5.6 g, flat, four layers at 0.3** — no supports, no brim.
+
+Its inner edge *is* the frame's glass opening: 193.26 × 111.06 at r8.35, which
+is the slab plus `frame_reveal` (0.15) per side. Lay the panel into it, or hold
+it over the panel, and every outline error shows at once:
+
+| what you see | what it means |
+|---|---|
+| will not drop in, or rattles | `glass_w` / `glass_h` wrong |
+| daylight at the arcs, straights touching | `glass_r` wrong |
+| uniform slop or uniform bind all round | `frame_reveal` wrong |
+
+The radius gauge answers *what is the corner*; the frame gauge answers *does
+one corner assemble*. Neither can show a wrong overall size, because neither
+has an opposite edge to measure against. This does — and it costs five grams.
+
+It debosses its own dimensions, so a loose ring on a bench is never a mystery.
+
 ### 7c″ · The colour + fit coupon — print this before the frame
 
 One part answers two questions at **20.9 cm³ — a fifth of a frame** (body 20.56, ink 0.31, accent 0.02):

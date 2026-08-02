@@ -197,7 +197,7 @@ assert(is_num(feather_area(7, 4)),
        "canary_vent_lib.scad is MISSING — this case cuts its grille and gills with it. Download canary_vent_lib.scad from the same folder and keep the two files side by side.");
 
 /* [What to render] */
-part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_port","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","dock_probe_fit","dock_probe_seat","dock_probe_p","dock_probe_p2","port_teth_hole","port_teth_barb","port_barb_proud","back_flush","fil_body","fil_ink","fil_accent","coupon_body","coupon_ink","coupon_accent","frame_colour","fil_overlap","fil_gap","all"]
+part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_port","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","dock_probe_fit","dock_probe_seat","dock_probe_p","dock_probe_p2","ring_gauge","port_teth_hole","port_teth_barb","port_barb_proud","back_flush","fil_body","fil_ink","fil_accent","coupon_body","coupon_ink","coupon_accent","frame_colour","fil_overlap","fil_gap","all"]
 
 /* [Glass slab] — bonded touch panel, from the Waveshare drawing (mm) */
 glass_w = 192.96;    // touch-glass width  (X)
@@ -2654,6 +2654,43 @@ module sd_cover_installed() {
 module rg_corner2d(rr) {   // the glass corner at this radius, opened by the reveal
     offset(r = frame_reveal) translate([20, 20]) rrect2d(40, 40, rr);
 }
+// ----------------------------------------------------------------------------
+//  RING GAUGE — the whole outline, in a few minutes and ~5 g.
+//
+//  The radius gauge answers "what is the corner?" and the frame gauge answers
+//  "does one corner assemble?". Neither answers the question you actually want
+//  settled before a 110 g print: is the OPENING right, all the way round.
+//
+//  This is that check as a flat closed loop — inner edge exactly the frame's
+//  glass opening (fr_xi x fr_yi at fr_ri, i.e. the slab plus frame_reveal per
+//  side). Lay the panel into it, or hold it over the panel, and every error
+//  shows at once and in one place:
+//    · slab too wide/tall  -> it will not drop in, or rattles
+//    · corner radius wrong -> daylight at the arcs with the straights touching
+//    · reveal wrong        -> uniform slop or uniform bind all round
+//  A corner coupon cannot show the first of those at all, because it has no
+//  opposite edge to measure against.
+//
+//  Flat, four layers at 0.3, no supports, no brim. Print it FIRST — it is the
+//  cheapest part in the catalog and it gates the most expensive one.
+// ----------------------------------------------------------------------------
+ring_gauge_w = 6.0;   // radial width — wide enough to stay flat and be handled
+ring_gauge_t = 1.2;   // thickness; a 2 mm-wide ring at 200 mm long curls
+module ring_gauge() {
+    linear_extrude(ring_gauge_t) difference() {
+        rrect2d(fr_xi + 2*ring_gauge_w, fr_yi + 2*ring_gauge_w,
+                fr_ri + ring_gauge_w);
+        rrect2d(fr_xi, fr_yi, fr_ri);
+    }
+    // the part says what it is, so a loose ring on a bench is never a mystery
+    translate([0, -fr_yi/2 - ring_gauge_w/2, ring_gauge_t - 0.35])
+        linear_extrude(0.36)
+            text(str("GLASS ", glass_w, " x ", glass_h, "  r", glass_r,
+                     "  rev", frame_reveal),
+                 size = 3.0, font = label_font, halign = "center",
+                 valign = "center");
+}
+
 module radius_gauge() {
     assert(rg_step > 0, "radius_gauge: rg_step must be positive");
     assert(rg_centre - 1.5*rg_step > 0.4,
@@ -3069,6 +3106,7 @@ else if (part == "bat_probe_grip") {
     intersection() { frame(); bat_brick(0, bat_t + 0.5, 0.1); }
 }
 else if (part == "radius_gauge") radius_gauge();
+else if (part == "ring_gauge")   ring_gauge();
 // TPU fitments export in their print orientation (A-face down), as modelled
 else if (part == "plug_port")    usb_grommet(false);
 else if (part == "grommet_usb")  usb_grommet();

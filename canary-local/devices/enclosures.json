@@ -6478,6 +6478,7 @@
         "dock_probe_seat",
         "dock_probe_p",
         "dock_probe_p2",
+        "ring_gauge",
         "port_teth_hole",
         "port_teth_barb",
         "port_barb_proud",
@@ -7795,6 +7796,16 @@
       {
        "name": "pal_preview_lift",
        "default": "0.02"
+      },
+      {
+       "name": "ring_gauge_w",
+       "default": "6.0",
+       "comment": "radial width — wide enough to stay flat and be handled"
+      },
+      {
+       "name": "ring_gauge_t",
+       "default": "1.2",
+       "comment": "thickness; a 2 mm-wide ring at 200 mm long curls"
       }
      ]
     }

@@ -488,6 +488,18 @@ accent colour when only the company line is accent, and standing the inlays
 proud does not fix it. It is useful for silhouette and for the bezel band,
 and misleading for anything else. The caveat is written at the module too.
 
+### Ring gauge — check the whole outline for five grams
+
+```bash
+openscad --export-format binstl -o lcd7_ring_gauge.stl -D 'part="ring_gauge"' canary_s3_lcd7.scad
+```
+
+A flat closed loop whose inner edge is the frame's glass opening. Lay the panel
+in it: wrong size will not drop in, wrong corner shows daylight at the arcs
+with the straights touching, wrong reveal is uniform slop or bind. The radius
+and frame gauges cannot show a wrong overall size — they have no opposite edge
+to measure against. Print this before anything larger.
+
 ### Three-colour printing (7" frame, P2S + AMS)
 
 The one-piece frame can print white-bodied with a black bezel, black lettering
@@ -499,10 +511,22 @@ for f in body ink accent; do
 done
 ```
 
-Load `fil_body`, then **Add part → Load** the other two, assign a filament to
-each, slice. They share `part="frame"`'s coordinate frame, so **do not
-re-centre or drop-to-bed** the added parts — moving one moves the lettering out
-of its own recess.
+**Do not hand-assemble these from STLs.** Run the packager instead:
+
+```bash
+python3 gen_3mf.py coupon     # the colour + fit coupon
+python3 gen_3mf.py frame      # the whole case
+```
+
+It writes one 3MF whose parts are already registered and already assigned to
+filaments 1/2/3 — open it and slice. Loading the STLs as separate objects makes
+Bambu Studio auto-arrange them across the plate, which is correct behaviour for
+objects and fatal for parts of one; an instruction that must be obeyed for the
+output to be right is a defect, not a doc problem. `gen_3mf.py`'s header records
+the two format traps it took to get there.
+
+Add the filament slots in Bambu Studio **first** — with one slot loaded there is
+nothing for parts 2 and 3 to point at, and it looks like the parts are missing.
 
 The palette, the layer-band table showing why this costs so little purge, and
 the QR polarity constraint that makes the AMS necessary are documented at the
