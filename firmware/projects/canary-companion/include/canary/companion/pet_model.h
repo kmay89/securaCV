@@ -272,12 +272,30 @@ inline bool pet_would_decline(const PetState& p, Care c) {
   return false;
 }
 
+// The ceiling `bond` saturates at. At the permitted 30 points a day, a uint16_t
+// fills in about six years — which is well inside the life of a device whose
+// entire premise is a bird you keep. Wrapping there would take a six-year-old
+// Elder's bond from 65535 to single digits, and "monotonic, never decreases" is
+// a promise this file makes in three places and a test asserts.
+//
+// So the add saturates. Growth gates top out in the hundreds (STAGE_BOND_GATE),
+// so nothing above this ceiling is ever read for a decision — the counter is a
+// keepsake number, and a keepsake number that wraps is worse than one that
+// stops.
+static constexpr uint16_t BOND_MAX = 65535;
+
 // Award bond, respecting the daily cap. Returns what was actually awarded.
 inline uint8_t bond_add(PetState& p, uint8_t points) {
   if (p.bond_today >= BOND_DAILY_CAP) return 0;
   const uint16_t room = static_cast<uint16_t>(BOND_DAILY_CAP - p.bond_today);
   const uint8_t give = points < room ? points : static_cast<uint8_t>(room);
-  p.bond = static_cast<uint16_t>(p.bond + give);
+  const uint16_t headroom = static_cast<uint16_t>(BOND_MAX - p.bond);
+  const uint8_t banked = give < headroom ? give : static_cast<uint8_t>(headroom);
+  p.bond = static_cast<uint16_t>(p.bond + banked);
+  // The daily counter still advances by the full award even when the lifetime
+  // total is saturated: the daily cap is the anti-grind rule, and it must keep
+  // flattening the reward curve on a six-year-old device exactly as it does on
+  // a six-day-old one.
   p.bond_today = static_cast<uint16_t>(p.bond_today + give);
   return give;
 }

@@ -131,6 +131,43 @@ static void test_bond_daily_cap_flattens_the_reward() {
   CHECK(p.needs.fed > 0, "grind: the bird is still actually fed");
 }
 
+// `bond` is promised monotonic. At the permitted 30/day a uint16_t fills in
+// about six years — inside the life of a device whose premise is a bird you
+// keep — so the add must saturate rather than wrap a six-year-old Elder's
+// keepsake number back to single digits.
+static void test_bond_saturates_and_never_wraps() {
+  PetState p;
+  p.bond = static_cast<uint16_t>(BOND_MAX - 3);
+  p.needs.fed = 0;
+  pet_care(p, Care::Feed);  // worth BOND_FOR_CARE = 2
+  CHECK(p.bond == BOND_MAX - 1, "bond: an ordinary award still lands near the ceiling");
+
+  p.needs.fed = 0;
+  pet_care(p, Care::Feed);  // would overshoot by 1
+  CHECK(p.bond == BOND_MAX, "bond: the award saturates at the ceiling");
+
+  const uint16_t at_ceiling = p.bond;
+  for (int i = 0; i < 40; i++) {
+    p.needs.fed = 0;
+    pet_care(p, Care::Feed);
+  }
+  CHECK(p.bond == at_ceiling, "bond: further awards never wrap past the ceiling");
+  CHECK(p.bond >= at_ceiling, "bond: monotonic holds at saturation");
+}
+
+// The daily cap is the anti-grind rule and must keep working on a saturated
+// device exactly as it does on a new one.
+static void test_daily_cap_still_applies_at_saturation() {
+  PetState p;
+  p.bond = BOND_MAX;
+  for (int i = 0; i < 100; i++) {
+    p.needs.fed = 0;
+    pet_care(p, Care::Feed);
+  }
+  CHECK(p.bond_today == BOND_DAILY_CAP,
+        "bond: the daily cap still flattens the curve at saturation");
+}
+
 // Growth needs BOTH gates. Bond alone cannot buy an afternoon Companion.
 static void test_growth_cannot_be_rushed() {
   PetState p;
@@ -592,6 +629,30 @@ static void test_deliberate_exit_keeps_the_edit() {
   CHECK(!s.reverted, "nav: and does not revert it");
 }
 
+// `dirty` is consumed by the commit it causes. A flag left standing would be
+// read again by the NEXT editor backed out of, so opening a second setting and
+// leaving it untouched would raise a commit for a change that never happened —
+// and the caller would persist it.
+static void test_stale_dirty_does_not_fake_a_second_commit() {
+  NavState s;
+  nav_open(s, 0);
+  nav_input(s, Gesture::Tap, 100);  // into a page
+  nav_input(s, Gesture::Tap, 200);  // into the first editor
+  nav_input(s, Gesture::SwipeDown, 300);
+  CHECK(s.dirty, "nav: the first edit is pending");
+  nav_input(s, Gesture::LongPress, 400);
+  CHECK(s.committed, "nav: the first edit commits");
+  CHECK(!s.dirty, "nav: and the flag is consumed by that commit");
+
+  // A different setting, entered and left without touching anything.
+  nav_input(s, Gesture::SwipeDown, 500);
+  nav_input(s, Gesture::Tap, 600);
+  CHECK(s.level == NavLevel::Editing, "nav: in a second editor");
+  CHECK(!s.dirty, "nav: a fresh editor opens clean");
+  nav_input(s, Gesture::LongPress, 700);
+  CHECK(!s.committed, "nav: leaving an untouched editor commits nothing");
+}
+
 // A tap on a read-only leaf must do nothing at all, not fall through.
 static void test_readonly_leaf_does_nothing() {
   NavState s;
@@ -637,6 +698,8 @@ int main() {
   test_ask_never_rings();
   test_overfeeding_is_declined_not_punished();
   test_bond_daily_cap_flattens_the_reward();
+  test_bond_saturates_and_never_wraps();
+  test_daily_cap_still_applies_at_saturation();
   test_growth_cannot_be_rushed();
   test_preen_costs_nothing_and_counts();
   test_household_is_bonus_only();
@@ -678,6 +741,7 @@ int main() {
   test_unconfirmed_wipe_lapses_safely();
   test_timed_out_edit_reverts_loudly();
   test_deliberate_exit_keeps_the_edit();
+  test_stale_dirty_does_not_fake_a_second_commit();
   test_readonly_leaf_does_nothing();
   test_no_page_is_empty();
   test_navigation_wraps_both_ways();

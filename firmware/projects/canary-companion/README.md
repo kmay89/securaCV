@@ -46,7 +46,7 @@ firmware/projects/canary-companion/include/canary/companion/
   settings_nav.h     the touch settings tree
 
 firmware/projects/canary-companion/tests_host/
-  test_companion_cores.cpp    40 checks across 6 groups
+  test_companion_cores.cpp    43 tests across 6 groups
 ```
 
 ```sh

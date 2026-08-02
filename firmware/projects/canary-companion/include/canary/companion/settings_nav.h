@@ -253,8 +253,16 @@ inline void nav_input(NavState& s, Gesture g, uint32_t now_ms) {
         // Backing out of an edit KEEPS it — you got here by choosing values and
         // watching them change. Only a timeout reverts, because only a timeout
         // means nobody was looking.
+        //
+        // `dirty` MUST be cleared here. It is consumed by this commit, and a
+        // flag left standing would be read again the next time any editor is
+        // backed out of — so opening a second setting and immediately leaving
+        // it without touching anything would raise a commit for a change that
+        // never happened, and the caller would persist it
+        // (test_stale_dirty_does_not_fake_a_second_commit).
         s.level = NavLevel::Items;
         s.committed = s.dirty;
+        s.dirty = false;
         return;
       case NavLevel::Confirming:
         s.level = NavLevel::Items;
@@ -288,6 +296,9 @@ inline void nav_input(NavState& s, Gesture g, uint32_t now_ms) {
       } else if (g == Gesture::Tap) {
         const NavItem it = nav_current_item(s);
         if (nav_item_is_readonly(it)) return;  // a tap on info does nothing
+        // Belt and braces with the clear on commit: an editor always opens
+        // clean, so `dirty` can only ever describe THIS editor's session.
+        s.dirty = false;
         s.level = nav_item_is_destructive(it) ? NavLevel::Confirming
                                               : NavLevel::Editing;
       }

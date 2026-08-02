@@ -59,6 +59,11 @@ unchanged, and the two traps it names are still the two traps:
   with light and noise wakes the wrong person, and a pet you cannot feel is a
   pet you have to be looking at.
 
+**The board is confirmed and on the requester's desk** (2026-08-02), which moves
+this design past the Tin Can's "no board on anyone's desk yet" caveat: bring-up
+is now a thing someone can actually do, and the two traps above are the first
+two things to do it to.
+
 > **If your board is a different model** — Waveshare's watch-shaped line also
 > includes the AMOLED-1.8 (368 × 448) and a 1.85" round LCD, and some revisions
 > carry a motor the 2.06 does not — then the pin map changes and nothing else
@@ -444,7 +449,7 @@ firmware/projects/canary-companion/include/canary/companion/
   settings_nav.h     the touch settings tree
 
 firmware/projects/canary-companion/tests_host/
-  test_companion_cores.cpp    40 checks across 6 groups
+  test_companion_cores.cpp    43 tests across 6 groups
 ```
 
 ```sh
