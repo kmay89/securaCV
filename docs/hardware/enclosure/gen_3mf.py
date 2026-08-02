@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Package the 7" case's per-filament parts into ONE Bambu-readable 3MF.
 
-    python3 gen_3mf.py coupon     # the colour + fit coupon
+    python3 gen_3mf.py tests      # ALL the test parts, laid out on one plate
+    python3 gen_3mf.py coupon     # just the colour + fit coupon
     python3 gen_3mf.py frame      # the whole case
 
 Renders the parts it needs with OpenSCAD, then writes a single object whose
@@ -54,14 +55,31 @@ SRC = HERE / "canary_s3_lcd7.scad"
 
 # name -> (scad part, filament slot). Slot order IS the palette order, so a
 # spool in the wrong slot swaps the lettering's colours — see PRINT COLOURS.
+COUPON = [("body", "coupon_body", 1),
+          ("ink", "coupon_ink", 2),
+          ("accent", "coupon_accent", 3)]
+FRAME = [("body", "fil_body", 1),
+         ("ink", "fil_ink", 2),
+         ("accent", "fil_accent", 3)]
+
+# A "set" is a list of OBJECTS. Each object is (name, volumes, plate centre).
+# Volumes within one object are parts of it and stay registered to each other;
+# separate objects are independent and get their own place on the plate.
+#
+# The "tests" plate is the whole pre-flight in one job, cheapest check first:
+# the ring proves the outline, the coupon proves colour and corner fit, the
+# corner gauge proves the screw pattern against the real panel.
 SETS = {
-    "coupon": [("body", "coupon_body", 1),
-               ("ink", "coupon_ink", 2),
-               ("accent", "coupon_accent", 3)],
-    "frame":  [("body", "fil_body", 1),
-               ("ink", "fil_ink", 2),
-               ("accent", "fil_accent", 3)],
+    "tests": [
+        ("ring gauge",    [("ring", "ring_gauge", 1)],   (128, 190)),
+        ("colour coupon", COUPON,                        (128, 100)),
+        ("corner gauge",  [("corner", "frame_gauge", 1)], (128, 50)),
+    ],
+    "coupon": [("colour coupon", COUPON, (128, 128))],
+    "frame":  [("frame", FRAME, (128, 128))],
 }
+BED = 256.0          # P2S build plate, mm square
+PLATE_MARGIN = 4.0   # keep parts off the very edge
 
 
 def render(part: str, out: Path) -> Path:
@@ -110,16 +128,51 @@ def mesh(path: Path):
     return verts, tris
 
 
-def build(setname: str) -> Path:
-    parts = SETS[setname]
-    objs = []
-    for oid, (name, part, slot) in enumerate(parts, start=1):
-        stl = render(part, HERE / f"_3mf_{part}.stl")
-        v, t = mesh(stl)
-        print(f"  {name:7} object {oid}  {len(t):>6} triangles  filament {slot}")
-        objs.append((oid, name, slot, v, t))
+def bbox(verts):
+    xs = [v[0] for v in verts]; ys = [v[1] for v in verts]
+    return min(xs), max(xs), min(ys), max(ys)
 
-    res = []
+
+def build(setname: str) -> Path:
+    groups, oid = [], 0
+    for gname, vols, centre in SETS[setname]:
+        meshes = []
+        for _n, part, slot in vols:
+            oid += 1
+            v, t = mesh(render(part, HERE / f"_3mf_{part}.stl"))
+            meshes.append((oid, _n, slot, v, t))
+        # the group's own extent, so the plate offset centres the WHOLE object
+        allv = [p for m in meshes for p in m[3]]
+        x0, x1, y0, y1 = bbox(allv)
+        off = (centre[0] - (x0 + x1) / 2, centre[1] - (y0 + y1) / 2)
+        foot = (x0 + off[0], x1 + off[0], y0 + off[1], y1 + off[1])
+        print(f"  {gname:14} {len(meshes)} part(s), "
+              f"{x1-x0:6.1f} x {y1-y0:5.1f} mm  at ({centre[0]}, {centre[1]})")
+        for m in meshes:
+            print(f"      {m[1]:7} {len(m[4]):>6} triangles  filament {m[2]}")
+        groups.append((gname, meshes, off, foot))
+
+    # A plate whose parts overlap is a wasted print, and the slicer will happily
+    # take it. Check here instead.
+    for i in range(len(groups)):
+        for j in range(i + 1, len(groups)):
+            a, b = groups[i][3], groups[j][3]
+            if a[0] < b[1] and b[0] < a[1] and a[2] < b[3] and b[2] < a[3]:
+                raise SystemExit(f"plate layout: '{groups[i][0]}' overlaps "
+                                 f"'{groups[j][0]}' — move a centre in SETS")
+    for g in groups:
+        f = g[3]
+        if (f[0] < PLATE_MARGIN or f[1] > BED - PLATE_MARGIN
+                or f[2] < PLATE_MARGIN or f[3] > BED - PLATE_MARGIN):
+            raise SystemExit(f"plate layout: '{g[0]}' runs off the {BED:.0f} mm "
+                             f"bed at x {f[0]:.1f}..{f[1]:.1f} "
+                             f"y {f[2]:.1f}..{f[3]:.1f}")
+
+    objs = [m for g in groups for m in g[1]]
+
+    ident = "1 0 0 0 1 0 0 0 1 0 0 0"
+    res, items, bcfg, pcfg = [], [], [], []
+
     for oid, _n, _s, verts, tris in objs:
         vs = "\n".join(f'    <vertex x="{x:.5f}" y="{y:.5f}" z="{z:.5f}"/>'
                        for x, y, z in verts)
@@ -129,37 +182,49 @@ def build(setname: str) -> Path:
                    f'    <vertices>\n{vs}\n    </vertices>\n'
                    f'    <triangles>\n{ts}\n    </triangles>\n'
                    f'   </mesh>\n  </object>')
-    ident = "1 0 0 0 1 0 0 0 1 0 0 0"
-    comps = "\n".join(f'    <component objectid="{o[0]}" transform="{ident}"/>'
-                      for o in objs)
-    res.append(f'  <object id="99" type="model">\n   <components>\n{comps}\n'
-               f'   </components>\n  </object>')
+
+    # One ASSEMBLY per group, and one build item carrying that group's plate
+    # offset — so an object's volumes travel together and stay registered,
+    # while separate objects are independently placed.
+    for gi, (gname, meshes, off, _foot) in enumerate(groups):
+        aid = 100 + gi
+        comps = "\n".join(
+            f'    <component objectid="{m[0]}" transform="{ident}"/>'
+            for m in meshes)
+        res.append(f'  <object id="{aid}" type="model">\n   <components>\n'
+                   f'{comps}\n   </components>\n  </object>')
+        xf = f"1 0 0 0 1 0 0 0 1 {off[0]:.4f} {off[1]:.4f} 0"
+        items.append(f'  <item objectid="{aid}" transform="{xf}"/>')
+        bcfg.append(
+            f' <object id="{aid}">\n'
+            f'  <metadata key="name" value="{gname}"/>\n'
+            '  <metadata key="extruder" value="1"/>\n'
+            + "".join(f'  <part id="{m[0]}" subtype="normal_part">\n'
+                      f'   <metadata key="name" value="{m[1]}"/>\n'
+                      f'   <metadata key="extruder" value="{m[2]}"/>\n'
+                      '  </part>\n' for m in meshes)
+            + ' </object>')
+        pcfg.append(
+            f' <object id="{aid}">\n'
+            f'  <metadata type="object" key="name" value="{gname}"/>\n'
+            + "".join(f'  <volume firstid="0" lastid="{len(m[4]) - 1}">\n'
+                      f'   <metadata type="volume" key="name" value="{m[1]}"/>\n'
+                      f'   <metadata type="volume" key="extruder" '
+                      f'value="{m[2]}"/>\n  </volume>\n' for m in meshes)
+            + ' </object>')
 
     model = ('<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" '
              'xml:lang="en-US" xmlns="http://schemas.microsoft.com/'
              '3dmanufacturing/core/2015/02">\n <resources>\n'
-             + "\n".join(res) +
-             f'\n </resources>\n <build>\n  <item objectid="99" '
-             f'transform="{ident}"/>\n </build>\n</model>')
+             + "\n".join(res)
+             + '\n </resources>\n <build>\n' + "\n".join(items)
+             + '\n </build>\n</model>')
 
     name = f"lcd7_{setname}"
     bambu = ('<?xml version="1.0" encoding="UTF-8"?>\n<config>\n'
-             f' <object id="99">\n  <metadata key="name" value="{name}"/>\n'
-             '  <metadata key="extruder" value="1"/>\n'
-             + "".join(f'  <part id="{o}" subtype="normal_part">\n'
-                       f'   <metadata key="name" value="{n}"/>\n'
-                       f'   <metadata key="extruder" value="{s}"/>\n  </part>\n'
-                       for o, n, s, _v, _t in objs)
-             + ' </object>\n</config>')
+             + "\n".join(bcfg) + '\n</config>')
     prusa = ('<?xml version="1.0" encoding="UTF-8"?>\n<config>\n'
-             f' <object id="99">\n  <metadata type="object" key="name" '
-             f'value="{name}"/>\n'
-             + "".join(f'  <volume firstid="0" lastid="{len(t) - 1}">\n'
-                       f'   <metadata type="volume" key="name" value="{n}"/>\n'
-                       f'   <metadata type="volume" key="extruder" '
-                       f'value="{s}"/>\n  </volume>\n'
-                       for _o, n, s, _v, t in objs)
-             + ' </object>\n</config>')
+             + "\n".join(pcfg) + '\n</config>')
 
     ct = ('<?xml version="1.0" encoding="UTF-8"?>\n<Types xmlns="http://'
           'schemas.openxmlformats.org/package/2006/content-types">\n'
@@ -180,8 +245,6 @@ def build(setname: str) -> Path:
         z.writestr("3D/3dmodel.model", model)
         z.writestr("Metadata/model_settings.config", bambu)
         z.writestr("Metadata/Slic3r_PE_model.config", prusa)
-    for _name, part, _slot in parts:
-        (HERE / f"_3mf_{part}.stl").unlink(missing_ok=True)
     return out
 
 
