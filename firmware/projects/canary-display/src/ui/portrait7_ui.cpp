@@ -19,6 +19,12 @@
 #include "canary/ui/theme.h"
 #include "canary/ui/canary_mark.h"
 #include "canary/ui/character.h"
+#ifdef CD_NIGHTSTAND7
+// The bedside column borrows the same hub weather + comfort source the
+// landscape bedside face uses (nightstand7_ui.cpp). Only the Nightstand 7
+// build links it; the wall Dash 7 column stays fleet-first with no weather.
+#include "canary/care/bedside.h"
+#endif
 #include "pins.h"
 
 namespace canary::ui {
@@ -86,7 +92,21 @@ void set_digit(SegDigit* d, int value, lv_color_t color, bool night) {
 }
 
 // ── Objects ──────────────────────────────────────────────────────────────
-constexpr int ROWS = 6;   // witness rows the column shows before "+N"
+// Emphasis is a compile-time personality (display_nightstand_line.md): the
+// wall Dash 7 leans on the fleet, so its column gives more rows to the
+// witness list; the bedside Nightstand 7 leans on the clock, keeps the list
+// shorter, and spends the freed room on a day weather + comfort line. The
+// runtime st.bedside flag matches this and only ever rides the same build.
+#ifdef CD_NIGHTSTAND7
+constexpr int LIST_Y0    = 508;
+constexpr int LIST_PITCH = 40;
+constexpr int LIST_CAP   = 5;    // fewer rows; weather + comfort take the foot
+#else
+constexpr int LIST_Y0    = 500;
+constexpr int LIST_PITCH = 38;
+constexpr int LIST_CAP   = 7;    // the wall column is fleet-first
+#endif
+constexpr int ROWS = 7;   // object capacity (>= LIST_CAP on either personality)
 
 lv_obj_t* s_wash = nullptr;      // full-glass severity/scene tint
 SegDigit  s_digit[4];
@@ -101,6 +121,10 @@ lv_obj_t* s_name[ROWS] = {nullptr};
 lv_obj_t* s_word[ROWS] = {nullptr};
 lv_obj_t* s_more = nullptr;
 lv_obj_t* s_glance = nullptr;
+#ifdef CD_NIGHTSTAND7
+lv_obj_t* s_wx = nullptr;        // "21.4° · some clouds · 24°/13°" (day)
+lv_obj_t* s_comfort = nullptr;   // "bedroom 18.5° · just right" (day)
+#endif
 
 uint32_t s_glance_bright_until = 0;
 
@@ -205,7 +229,7 @@ void portrait7_ui_create() {
   lv_obj_align(s_bird, LV_ALIGN_TOP_MID, 0, 360);
 
   // Witness list: dot + name (left), state word (right), worst at top.
-  const int y0 = 510, pitch = 42;
+  const int y0 = LIST_Y0, pitch = LIST_PITCH;
   for (int i = 0; i < ROWS; i++) {
     const int y = y0 + i * pitch;
     s_dot[i] = lv_obj_create(scr);
@@ -223,11 +247,20 @@ void portrait7_ui_create() {
     lv_obj_add_flag(s_word[i], LV_OBJ_FLAG_HIDDEN);
   }
   s_more = mk_label(scr, font_label(), col_muted());
-  lv_obj_align(s_more, LV_ALIGN_TOP_LEFT, 66, y0 + ROWS * pitch);
+  lv_obj_align(s_more, LV_ALIGN_TOP_LEFT, 66, y0 + LIST_CAP * pitch);
   lv_obj_add_flag(s_more, LV_OBJ_FLAG_HIDDEN);
 
+#ifdef CD_NIGHTSTAND7
+  // Bedside foot: the day's weather + how the bedroom actually feels, stacked
+  // above the glance line. Day-only; night strips the column to clock + state.
+  s_wx = mk_label(scr, font_label(), col_muted());
+  lv_obj_align(s_wx, LV_ALIGN_BOTTOM_MID, 0, -78);
+  s_comfort = mk_label(scr, font_caption(), col_faint());
+  lv_obj_align(s_comfort, LV_ALIGN_BOTTOM_MID, 0, -52);
+#endif
+
   s_glance = mk_label(scr, font_body(), col_muted());
-  lv_obj_align(s_glance, LV_ALIGN_BOTTOM_MID, 0, -26);
+  lv_obj_align(s_glance, LV_ALIGN_BOTTOM_MID, 0, -24);
 
   canary_mark_mood(CanaryMood::Idle);
 }
@@ -314,7 +347,7 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
     int order[CD_FLEET_MAX_DEVICES];
     total = order_by_severity(fleet, now, order,
                               (int)(sizeof(order) / sizeof(order[0])));
-    shown = total < ROWS ? total : ROWS;
+    shown = total < LIST_CAP ? total : LIST_CAP;
     for (int i = 0; i < ROWS; i++) {
       if (i < shown) {
         const Witness* w = fleet.at(order[i]);
@@ -334,8 +367,8 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
         lv_obj_add_flag(s_word[i], LV_OBJ_FLAG_HIDDEN);
       }
     }
-    if (total > ROWS) {
-      lv_label_set_text_fmt(s_more, "+%d more", total - ROWS);
+    if (total > LIST_CAP) {
+      lv_label_set_text_fmt(s_more, "+%d more", total - LIST_CAP);
       lv_obj_clear_flag(s_more, LV_OBJ_FLAG_HIDDEN);
     } else {
       lv_obj_add_flag(s_more, LV_OBJ_FLAG_HIDDEN);
@@ -367,7 +400,45 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
       lv_obj_set_style_text_color(s_glance, bright ? col_text() : col_muted(), 0);
     }
   }
-  (void)st.bedside;  // emphasis hook — both personalities share this column
+#ifdef CD_NIGHTSTAND7
+  // Bedside foot: the day's weather + how the room feels, from the same hub
+  // source the landscape bedside face reads. Day-only and only when this
+  // really is the bedside personality; night blacks them out with the rest.
+  if (s_wx && s_comfort) {
+    if (night || !st.bedside) {
+      lv_label_set_text(s_wx, "");
+      lv_label_set_text(s_comfort, "");
+    } else {
+      canary::care::BedsideWeather wx;
+      char line[80];
+      if (canary::care::bedside_weather(&wx)) {
+        size_t o = 0;
+        if (wx.t_now_c10 > -9990) {
+          const int a = wx.t_now_c10 < 0 ? -wx.t_now_c10 : wx.t_now_c10;
+          o += (size_t)snprintf(line + o, sizeof(line) - o, "%s%d.%d\xC2\xB0",
+                                wx.t_now_c10 < 0 ? "-" : "", a / 10, a % 10);
+        }
+        if (wx.cond && wx.cond[0] && o < sizeof(line))
+          o += (size_t)snprintf(line + o, sizeof(line) - o, "%s%s",
+                                o ? " \xC2\xB7 " : "", wx.cond);
+        if (o < sizeof(line))
+          snprintf(line + o, sizeof(line) - o, "%s%d\xC2\xB0/%d\xC2\xB0",
+                   o ? " \xC2\xB7 " : "",
+                   (wx.hi_c10 + (wx.hi_c10 >= 0 ? 5 : -5)) / 10,
+                   (wx.lo_c10 + (wx.lo_c10 >= 0 ? 5 : -5)) / 10);
+        lv_label_set_text(s_wx, line);
+      } else {
+        lv_label_set_text(s_wx, "");
+      }
+      lv_label_set_text(
+          s_comfort,
+          canary::care::bedside_comfort_line(fleet, line, sizeof(line)) ? line
+                                                                        : "");
+    }
+  }
+#else
+  (void)st.bedside;  // the wall column is fleet-first; no weather foot
+#endif
 }
 
 void portrait7_ui_ack_hold(bool) {
