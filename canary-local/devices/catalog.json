@@ -464,15 +464,24 @@
     "mate",
     "strip"
    ],
-   "options": [],
-   "engineering_param_count": 25,
+   "options": [
+    {
+     "id": "glyph_show",
+     "type": "bool",
+     "label": "glyph_show",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    }
+   ],
+   "engineering_param_count": 30,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 0,
-    "user_options": 0,
+    "options": 1,
+    "user_options": 1,
     "variant_axes": 0
    }
   },
@@ -837,7 +846,7 @@
   {
    "id": "s3_lcd7",
    "scad": "canary_s3_lcd7.scad",
-   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.8-dev)",
+   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.9-dev)",
    "family": "canary-display-dash",
    "device_compat": [
     "canary-display-dash"
@@ -1051,6 +1060,14 @@
      "default": true
     },
     {
+     "id": "stamp_show",
+     "type": "bool",
+     "label": "stamp_show",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "battery",
      "type": "enum",
      "label": "battery",
@@ -1064,7 +1081,7 @@
      "default": "none"
     }
    ],
-   "engineering_param_count": 200,
+   "engineering_param_count": 208,
    "alternatives": [
     "dash_display"
    ],
@@ -1072,8 +1089,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 21,
-    "user_options": 21,
+    "options": 22,
+    "user_options": 22,
     "variant_axes": 0
    }
   },

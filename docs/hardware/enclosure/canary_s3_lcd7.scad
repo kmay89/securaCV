@@ -1,5 +1,5 @@
 // ============================================================================
-//  Canary — 7" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.8-dev)
+//  Canary — 7" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.9-dev)
 // @env env="indoor; runs hot → print in PETG/ASA"
 //  Housing for the Waveshare ESP32-S3-Touch-LCD-7 (7" 800x480 IPS capacitive
 //  touch, ESP32-S3, CAN/RS485/battery). The big-panel "wall dashboard" — the
@@ -169,7 +169,14 @@
 //  the walls meet the back plate (plate_fillet — corner-drop crack starter,
 //  boss-root doctrine applied to the perimeter), and root reinforcement on
 //  the SD leash (cap flare + shaft cone, both inside envelopes that were
-//  already asserted). Still NOT fully print-validated; expect iteration.
+//  already asserted). v0.9 is the PLUMAGE pass: the brand vent pattern
+//  (canary_vent_lib.scad — teardrop feathers, point-up, offset rows)
+//  replaces the slat grid on BOTH back grilles and the frame's side
+//  gills. Open area holds or rises (echoes exact, via feather_area);
+//  the dock-key slots, top exhaust, bottom intake and the whole
+//  bottom-in → top-out convection doctrine are untouched, so the case
+//  breathes the same wall-mounted (back blocked) and better on the
+//  dock. Still NOT fully print-validated; expect iteration.
 //  Orientation: landscape, +X = width, +Y = up, +Z = toward the glass.
 //  MOUNTING DOCTRINE: the panel mounts in its NATIVE orientation — no image
 //  rotation in firmware — which puts BOOT/RESET at the TOP edge in use. The
@@ -180,6 +187,14 @@
 //  this orientation; a buttons-down build (panel rotated 180°, image flipped
 //  in firmware) negates their signs and mirrors the frame's features.
 // ============================================================================
+
+use <canary_vent_lib.scad>  // the brand vent shape: feather2d / feather_area
+use <canary_s3_lcd7_stamp.scad>   // GENERATED build stamp — see gen_stamp.py
+// Downloaded this file on its own? It CUTS ITS VENTS with that library — a
+// missing lib would render a sealed, overheating case with only a console
+// warning. This guard turns that into a hard stop instead:
+assert(is_num(feather_area(7, 4)),
+       "canary_vent_lib.scad is MISSING — this case cuts its grille and gills with it. Download canary_vent_lib.scad from the same folder and keep the two files side by side.");
 
 /* [What to render] */
 part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_port","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","dock_probe_fit","dock_probe_seat","dock_probe_p","dock_probe_p2","all"]
@@ -274,10 +289,18 @@ side_open_h = 40.0;     side_open_dy = 0.0;     // tall slot on each short wall
    outlet, so the bottom wall takes air in and the top wall lets it out. */
 vent_back = true;        // large grille in the back plate
 vent_rows = 11;          // grille rows
-vent_cols = 22;          // grille columns
-vent_slot_w = 2.4;       // slot width
-vent_slot_l = 9.0;       // slot length
-vent_pitch_x = 7.0;      // column pitch
+vent_cols = 20;          // grille columns
+vent_slot_w = 5.2;       // feather base width — the grille is the PLUMAGE
+                         // pattern (canary_vent_lib.scad): teardrop
+                         // feathers, point-up, in offset rows. One feather
+                         // passes 27% more air than the slat it replaces
+                         // (25.9 vs 20.4 mm2 per cell) with no slot
+                         // corners to shed vortices or collect dust lines
+vent_slot_l = 7.2;       // feather length (point-up: sheds drips on a
+                         // vertical face; see the lib header for limits)
+vent_tip    = 0.28;      // tip/base ratio — the ONE brand constant; keep
+                         // it default so every Canary wears the same mark
+vent_pitch_x = 7.6;      // column pitch
 vent_pitch_y = 8.0;      // row pitch
 vent_top = true;         // EXHAUST — slots through the top (+Y) wall
 vent_top_n = 14;
@@ -399,7 +422,11 @@ ledge_bot  = 2.0;   // along the FPC (bottom) edge — keep small, the FPC lives
 // prints BACK-PLATE-DOWN with the ledges fully self-supporting — solid
 // material under the adhesive landing, no overhang, no sacrificial geometry.
 // (Face-down would hang the ledges over the glass pocket; don't.)
-brand_back = "SecuraCV Canary 7\" Display";   // debossed across the back plate
+brand_back = "CANARY DISPLAY";   // the back lockup's HERO line — centred,
+                                 // tracked caps (the 7" is gone: the case
+                                 // family is one Display line, the panel
+                                 // size is a spec, not a name)
+brand_sub  = "SECURACV";         // the small tracked company line beneath
 brand_edge = "SecuraCV Canary";               // debossed on the visible bottom edge
 // Adhesive WALL mounting — the no-screws alternative to the keyholes. Two
 // outlined rails on the back plate are kept smooth and uninterrupted: no
@@ -448,7 +475,13 @@ gill_n  = 8;         // straight "gill" vents per side (±x) wall — the sides
 gill_y0 = -35.0;     // carry vents only; SD access is through the back plate
 gill_w = 2.4;  gill_l = 9.0;  gill_rake = 0;    // rake 0: vertical slots print
                      // cleanest; the raked look read as slashes and bought
-                     // nothing thermally
+                     // nothing thermally. gill_w still sizes the DOCK KEY
+                     // slots (the stand's studs mate them — do not move);
+                     // the visible side gills themselves are feathers:
+gill_vw = 3.6;       // side-gill feather base width — area matches the old
+                     // 2.4-wide pill (21.2 vs 20.4 mm2), point-up when
+                     // wall-mounted so a drip running down the wall splits
+                     // around the opening
 frame_vent_flank_n = 4;  // exhaust slots per side, flanking the button window
 // Dock keying — chamfered centring keys on the desk dock rise into gill-style
 // slots the case walls carry, so the docked case self-centres and cannot
@@ -643,11 +676,12 @@ qr_n = len(qr_bits());             // symbol size — defined HERE, above every 
 // gen_qr.py (change the content there, rerun it, commit both). The bare
 // deck around the field IS the spec quiet zone, so nothing else may be
 // debossed or cut inside it (asserted below).
-// Module cells are grown by qr_bleed and shifted back half of it, so
-// neighbouring dark modules OVERLAP instead of meeting face-to-face. Two
-// cutter cubes sharing an exact face make the CSG union non-manifold (the
-// export warns and the mesh gate fails); an overlap also matches how a real
-// QR reads — adjacent dark modules are one contiguous region, not tiles.
+// Module cells overlap by qr_bleed instead of meeting face-to-face: two
+// cutter squares sharing an exact edge union badly. That is only half the
+// problem, and the smaller half — DIAGONAL neighbours meet at a single
+// POINT, which no bleed can fix and no nozzle can trace. Both are handled
+// in qr_field2d by a morphological opening; this knob is the union overlap
+// that feeds it. See that module for the decode tests.
 qr_bleed = 0.02;
 qr_help = true;   // deboss the help QR into the deck
 qr_cell = 1.6;    // module size — 4 line-widths at a 0.4 mm nozzle
@@ -663,12 +697,57 @@ qr_dy   = 39.0;   // field centre, +y = toward the back edge (a battery
 // the modules come out crisp. Placed on the plate's left band as the SD
 // opening's visual counterweight, outboard of the left rail's moat; the
 // smooth keepout it claims from the grille IS its quiet zone.
+// ⚠️ POLARITY IS A SCANNING REQUIREMENT, not a taste. A reader needs DARK
+// modules on a LIGHT field and refuses the inverse (verified: invert this
+// symbol and cv2 will not read it at any size). The modules here are the
+// deboss FLOORS, so the floor colour must be the DARK one:
+//   two-colour  — floors print in the BODY filament, skin in the ACCENT, so
+//                 the BODY must be darker than the ACCENT. The house pairing
+//                 (white body + canary-yellow accent) is BACKWARDS for this
+//                 and gives white-on-yellow: unscannable, and every other
+//                 back label is nearly invisible too. Use a dark body
+//                 (graphite/black) with a light skin.
+//   one colour  — the 1.2 deep floors read dark by SHADOW alone, which does
+//                 scan in decent light; it is the two-colour build that can
+//                 silently come out inverted.
+// The module SHAPE is safe either way: the opening in qr_field2d was decode-
+// tested at 0.22/0.30/0.40 rounding and reads at all three.
 qr_back      = true;   // deboss the help QR into the back plate too
-qr_back_cell = 1.2;    // module size — 3 line-widths; the plate is busier
-qr_back_dx   = -40.0;  // field centre, back-view coords (+x = back-view right)
-qr_back_dy   = 0.0;
+qr_back_cell = 1.3;    // module size — 3.1 line-widths at 0.42, up from 1.2
+                       // (2.9): printable in theory at 1.2, marginal in fact,
+                       // and this symbol is the one read off a wall. 1.34 is
+                       // the ceiling — past it the quiet zone cannot clear
+                       // BOTH the rail moat and the portrait keyhole keepout,
+                       // and the asserts below say so
+qr_back_dx   = -41.3;  // field centre, back-view coords (+x = back-view right).
+                       // The two asserts below leave only [-41.9, -40.8] at
+                       // this module size (rail moat inboard, portrait
+                       // keyhole outboard); this sits in the middle of it
+qr_back_dy   = 0.0;    // mid-LEFT wing, mirroring the SD cover's mass on the
+                       // right. Deliberately NOT dropped to the SD's row:
+                       // that squeezes the bottom band, and the band is the
+                       // brand lockup's — one centred thing, nothing beside it
 qr_back_reach = qr_n*qr_back_cell/2 + 4*qr_back_cell;   // field/2 + quiet zone,
                   // sized from the GENERATED matrix — a bigger symbol grows it
+
+/* [Build stamp — inside the case, on the plate's inner face] */
+// The case carries its own revision where it cannot spoil the outside:
+// debossed into the INNER face of the back plate, found only when someone
+// opens it. REV is human CalVer; SRC is a digest of the geometry sources,
+// both from canary_s3_lcd7_stamp.scad (generated — see gen_stamp.py for
+// why neither can rot, and for what SRC does and does not prove: it names
+// a DESIGN, it authenticates nothing).
+// Prints as the last layers of the plate, opening upward into the cavity —
+// no bridge, no support. Mirrored in x because this face is read from the
+// cavity side.
+stamp_show  = true;
+stamp_depth = 0.5;   // of back_t; the plate keeps 2.5 under it
+stamp_dy    = 49.0;  // the clear band above the grille. Its floor is not a
+                     // constant: the top feather row's centre is at
+                     // (vent_rows-1)/2*vent_pitch_y and the feather reaches
+                     // half its length past that, so the assert below derives
+                     // the bound instead of quoting a number that would rot
+stamp_size  = 2.4;
 
 /* [Battery bay — click-in, no hardware] */
 // A moulded bay on the back plate's inner face for the MakerFocus 1S packs
@@ -821,7 +900,13 @@ fr_keep_base = concat(
     sd_tether ? [[sd_dx, (sd_dy + sd_l/2 - 1 + sd_teth_y + 2)/2, 4.3,
                   (sd_teth_y + 2 - (sd_dy + sd_l/2 - 1))/2 + 5.1]] : [],
     // the back QR's field + quiet zone: smooth skin, no slot may enter
-    qr_back ? [[qr_back_dx, qr_back_dy, qr_back_reach, qr_back_reach]] : [],
+    // the QR keepout is grown by the feather's own half-extents: the cell
+    // list stores CENTRES, and a feather whose centre is just outside the
+    // quiet zone would otherwise lay its body across it — at worst sharing
+    // a face with a module cell, which CGAL rightly calls non-manifold
+    qr_back ? [[qr_back_dx, qr_back_dy,
+                qr_back_reach + vent_slot_w/2 + 0.4,
+                qr_back_reach + vent_slot_l/2 + 0.4]] : [],
     // the rating stamp wants unbroken plate under it, same as any deboss
     rating_stamp ? [[rating_dx, rating_dy, rating_w/2 + 2, rating_h/2 + 2]] : []);
 fr_keep_rails = adh_rails ? [for (sx = [1,-1])
@@ -957,6 +1042,16 @@ assert(ledge_z + ledge_t < glass_guard + glass_t + pcb_standoff,
        "frame: ledge intrudes into the board plane");
 assert(glass_edge_t > 0 && glass_edge_t < glass_t,
        "frame: glass_edge_t is the panel's bare-glass border — it must be thinner than the full module stack (glass_t) and non-zero");
+assert(vent_pitch_x - vent_slot_w >= 2.39 && vent_pitch_y - vent_slot_l >= 0.79,
+       "grille: feather webs too thin — grow the pitches or shrink the feather");
+assert(vent_tip > 0.15 && vent_tip < 0.6,
+       "grille: vent_tip is the brand constant — a tip outside 0.15..0.6 is not the mark");
+stamp_half = stamp_size*0.9 + stamp_size*0.39 + 0.6;   // text block half-height
+assert(!stamp_show || (stamp_depth < back_t - 1.5
+       && stamp_dy - stamp_half
+            > (vent_rows - 1)/2*vent_pitch_y + vent_slot_l/2 + 1
+       && stamp_dy + stamp_half < fr_yi/2 - plate_fillet - 0.5),
+       "frame: build stamp collides with the top feather row, the plate rim/fillet, or thins the plate");
 assert(glass_guard >= 0 && glass_guard <= 1.2,
        "frame: glass_guard is a trim reveal, not a bumper — keep it under 1.2 (or 0 for a flush face)");
 // the fillet ring lives in the same clear band as the keyhole pads; it must
@@ -1126,10 +1221,10 @@ assert(!dock_keys || (dock_key_bx - 2 > std_open/2 && dock_key_bx + 2 < stand_w/
        "stand: landscape key misses the cheek pad — move dock_key_bx over it");
 assert(fr_yo/2 + 2 < std_open/2,
        "stand: the portrait case no longer misses the cheeks — the well ribs cannot carry it");
-echo(str("Canary 7in touch v0.8-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
+echo(str("Canary 7in touch v0.9-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
          " mm, window ", view_w, " x ", view_h, ", lip ", lip_min,
          " mm, tray grille ~",
-         round(vent_back ? len(grille_cells())*vent_slot_w*vent_slot_l/100 : 0),
+         round(vent_back ? len(grille_cells())*feather_area(vent_slot_l, vent_slot_w, vent_tip)/100 : 0),
          " cm2 open (computed, boss dodges included)",
          "  (IN DEVELOPMENT — MEASURE CONNECTORS)"));
 echo(str("  stack: floor ", z_floor, " | PCB under ", z_pcb_under, " | PCB top ",
@@ -1154,13 +1249,13 @@ echo(str("  frame mounting: 4x keyhole, ", back_t + khm_pad_t,
                    : "off"));
 echo(str("  frame back grille: ", len(grille_cells(-m3_ox, m3_oy, fr_keepouts)),
          " slots ≈ ", round(len(grille_cells(-m3_ox, m3_oy, fr_keepouts))
-                            *vent_slot_w*vent_slot_l/100), " cm2 open",
+                            *feather_area(vent_slot_l, vent_slot_w, vent_tip)/100), " cm2 open",
          adh_rails ? str(" — the adhesive rails cost ",
              len(grille_cells(-m3_ox, m3_oy, fr_keep_base))
              - len(grille_cells(-m3_ox, m3_oy, fr_keepouts)), " slots ≈ ",
              round((len(grille_cells(-m3_ox, m3_oy, fr_keep_base))
                     - len(grille_cells(-m3_ox, m3_oy, fr_keepouts)))
-                   *vent_slot_w*vent_slot_l/100),
+                   *feather_area(vent_slot_l, vent_slot_w, vent_tip)/100),
              " cm2 (adh_rails=false reclaims them); the bottom-intake → ",
              "top-exhaust wall vents are untouched either way") : ""));
 echo(str("  frame two-colour (optional, single extruder): prints back-plate-",
@@ -1298,7 +1393,8 @@ module bezel_print() { bezel(); }
 // out of every caller-supplied [x, y, half_w, half_h] keepout rectangle.
 function grille_cells(ox = m3_ox, oy = m3_oy, keepouts = []) =
     [for (r = [0:vent_rows-1], c = [0:vent_cols-1])
-        let (x = (c - (vent_cols-1)/2) * vent_pitch_x,
+        let (x = (c - (vent_cols-1)/2) * vent_pitch_x
+                 + (r % 2 == 1 ? vent_pitch_x/2 : 0) - vent_pitch_x/4,
              y = (r - (vent_rows-1)/2) * vent_pitch_y)
         if (abs(x) < pcb_w/2 - 6 && abs(y) < pcb_h/2 - 6
             && min([for (sx = [1,-1], sy = [1,-1])
@@ -1310,9 +1406,9 @@ function grille_cells(ox = m3_ox, oy = m3_oy, keepouts = []) =
         [x, y]];
 module vent_grille(ox = m3_ox, oy = m3_oy, keepouts = []) {
     for (p = grille_cells(ox, oy, keepouts))
-        translate([p[0], p[1], -0.1]) linear_extrude(back_t + 0.2) hull()
-            for (dy = [-(vent_slot_l - vent_slot_w)/2, (vent_slot_l - vent_slot_w)/2])
-                translate([0, dy]) circle(d = vent_slot_w);
+        translate([p[0], p[1] - vent_slot_l/2 + vent_slot_w/2, -0.1])
+            linear_extrude(back_t + 0.2)
+                feather2d(vent_slot_l, vent_slot_w, vent_tip);
 }
 module back() {
     total_d = cav_d + back_t;   // full tray depth (floor + cavity to glass ledge)
@@ -1415,18 +1511,45 @@ module pill2d(l, w) { hull() for (d = [-1, 1]) translate([0, d*(l - w)/2]) circl
 // child (a group), so intersection() over it quietly returns the UNION, and
 // the two circles then swallow the entire fin. This builtin exists for
 // exactly this case.
-module feather2d(l, w) {
+// (named barb2d, not feather2d: the brand grille's feather — round base,
+// one point — lives in canary_vent_lib.scad, and two different shapes
+// cannot share a name. A local definition silently shadows a use<>d one,
+// which is how the grille's 3-argument calls started warning.)
+module barb2d(l, w) {
     r = (l*l + w*w)/(4*w);
     intersection_for (s = [1, -1]) translate([s*(r - w/2), 0]) circle(r);
 }
 // The vent shape the dock actually cuts — one switch for the whole pattern.
-module vent2d(l, w) { if (feather_vents) feather2d(l, w); else pill2d(l, w); }
+module vent2d(l, w) { if (feather_vents) barb2d(l, w); else pill2d(l, w); }
 // Back-plate deboss: label_back_depth, not label_depth — the floors must sit
 // above the two-colour swap band (see the knob's comment).
-module frame_lbl(x, y, s, sz = 4.0) {
+// QR modules, shaped for a NOZZLE. Cutting one square per dark module
+// creates two things a 0.42 line cannot trace: diagonally adjacent
+// modules meet at a SINGLE POINT (non-manifold in 3D, a knife edge in
+// 2D — and every QR has diagonal neighbours), and every corner is a
+// hard 90°, which the outer wall whips around at speed and PETG blobs.
+// One morphological OPENING fixes both: erode by rr, then dilate by rr.
+// The erosion breaks every zero-width neck; the dilation restores each
+// module to full size with rr-radius corners, so nothing narrower than
+// a line survives anywhere in the field. Scannability is unharmed: the
+// three FINDER patterns a reader locks onto are 7x7 blocks, and a
+// radius this small leaves them square; the data modules keep their
+// centres and their area, which is what the sampling grid reads.
+qr_round = 0.22;   // module corner radius, as a fraction of the module
+module qr_field2d(cell, round = qr_round) {
+    rr = round*cell;
+    offset(r = rr) offset(r = -rr)
+        for (r = [0:qr_n-1], c = [0:qr_n-1])
+            if (qr_bits()[r][c] == 1)
+                translate([c*cell, -(r+1)*cell])
+                    square(cell + qr_bleed);   // orthogonal neighbours
+}                                              // union without a seam
+
+module frame_lbl(x, y, s, size = 4.0, spacing = 1.0) {
     translate([x, y, fr_depth - label_back_depth])
         linear_extrude(label_back_depth + 0.1)
-        text(s, size = sz, font = label_font, halign = "center", valign = "center");
+        text(s, size = size, font = label_font, spacing = spacing,
+             halign = "center", valign = "center");
 }
 
 // The shell, finished at both ends: a modelled foot chamfer at the plate (the
@@ -1655,7 +1778,8 @@ module frame() {
                 rotate([sx*gill_rake, 0, 0]) rotate([0, 90, 0])
                     translate([0, 0, -(ledge_side + frame_wall)])
                         linear_extrude(2*(ledge_side + frame_wall))
-                            pill2d(gill_l, gill_w);
+                            translate([0, -gill_l/2 + gill_vw/2])
+                                feather2d(gill_l, gill_vw, vent_tip);
         // exhaust through the top wall, flanking the button window
         for (sx = [1, -1], i = [0 : frame_vent_flank_n - 1])
             translate([btn_dx + sx*(btn_w/2 + 9 + i*6.5), fr_yi/2 - 0.1, gz])
@@ -1821,12 +1945,24 @@ module frame() {
         // "SD" sits beside the tether channel (its old spot above the mouth
         // is exactly where the strap now runs)
         frame_lbl(sd_dx - 8, sd_teth_y, "SD");
-        // full product mark across the clear band under the grille — shifted
-        // left of the SD cover's recess/tab zone, which owns the lower-right
-        // of the plate (the default string renders ±36.8 wide at size 4, so
-        // its centre sits where the right edge clears the recess by ≥1)
-        frame_lbl(min(0, sd_dx - sd_w/2 - sd_lip - 1.5 - 37), -(fr_yi/2 - 6), brand_back);
-        // rating stamp — stacked lines in the back plate's lower band
+        // the back lockup, DEAD CENTRE on the plate (x = 0): small tracked
+        // company line over the hero product name. Two different bounds set
+        // the two rows, which is why they are sized apart:
+        //   SECURACV      sits beside the SD recess (mouth bottom -47.2), so
+        //                 it must stay inside x ±23.2 — it renders ±17.
+        //   CANARY DISPLAY sits BELOW the recess, where only the nail scoop
+        //                 is left — at this row the scoop spans x 32.3..39.0
+        //                 and the line renders ±28, so ~4 of daylight.
+        // Nothing else can intrude: grille_cells stops at |y| 42.8, so the
+        // whole band is feather-free by construction.
+        // The name has no panel size in it: the case family is one Display
+        // line, and 7" is a spec, not a name. Grow either row and it walks
+        // into the SD — this layout is preview-verified, so re-render.
+        frame_lbl(0, -(fr_yi/2 - 10.2), brand_sub,  size = 2.4, spacing = 2.0);
+        frame_lbl(0, -(fr_yi/2 - 5.4),  brand_back, size = 4.0, spacing = 1.15);
+        // rating stamp — stacked lines in the back plate's upper-right
+        // clear gap (rating_dy says why it is not in the lower band: that
+        // row is the brand lockup's)
         if (rating_stamp) for (i = [0:len(rating_lines)-1])
             frame_lbl(rating_dx, rating_dy + rating_h/2 - 1
                                  - (i + 0.5)*rating_lh,
@@ -1835,15 +1971,24 @@ module frame() {
         // other back label; the two-colour back swap turns them dark in
         // the light accent skin for free. In back-view coords, no mirror:
         // viewed from the back, +x is right (see the axis note above).
-        if (qr_back) for (r = [0:qr_n-1], c = [0:qr_n-1])
-            if (qr_bits()[r][c] == 1)
-                translate([qr_back_dx - qr_n*qr_back_cell/2 + c*qr_back_cell
-                               - qr_bleed/2,
-                           qr_back_dy + qr_n*qr_back_cell/2 - (r+1)*qr_back_cell
-                               - qr_bleed/2,
-                           fr_depth - label_back_depth])
-                    cube([qr_back_cell + qr_bleed, qr_back_cell + qr_bleed,
-                          label_back_depth + 0.1]);
+        if (qr_back)
+            translate([qr_back_dx - qr_n*qr_back_cell/2,
+                       qr_back_dy + qr_n*qr_back_cell/2,
+                       fr_depth - label_back_depth])
+                linear_extrude(label_back_depth + 0.1)
+                    qr_field2d(qr_back_cell);
+        // build stamp, into the plate's INNER face (see the knobs)
+        if (stamp_show) translate([0, stamp_dy, fz_plate - 0.01])
+            mirror([1, 0, 0]) linear_extrude(stamp_depth + 0.01) {
+                translate([0, stamp_size*0.9])
+                    text("CANARY DISPLAY", size = stamp_size,
+                         font = label_font, spacing = 1.1,
+                         halign = "center", valign = "center");
+                translate([0, -stamp_size*0.9])
+                    text(str("REV ", lcd7_stamp_rev(), "  SRC ", lcd7_stamp_src()),
+                         size = stamp_size*0.78, font = label_font,
+                         halign = "center", valign = "center");
+            }
     }
 }
 
@@ -2225,12 +2370,11 @@ module stand() {
         // light polarity comes from the colour swap (see the echo): the
         // floors are the last body-colour layer, the surrounding skin the
         // accent — and the bare deck around the field is the quiet zone.
-        if (qr_help) for (r = [0:qr_n-1], c = [0:qr_n-1])
-            if (qr_bits()[r][c] == 1)
-                translate([qr_dx - qr_field/2 + c*qr_cell - qr_bleed/2,
-                           qr_dy_eff + qr_field/2 - (r+1)*qr_cell - qr_bleed/2,
-                           stand_plate_t - 0.4])
-                    cube([qr_cell + qr_bleed, qr_cell + qr_bleed, 0.5]);
+        if (qr_help)
+            translate([qr_dx - qr_field/2, qr_dy_eff + qr_field/2,
+                       stand_plate_t - 0.4])
+                linear_extrude(0.5)
+                    qr_field2d(qr_cell);
     }
     // key furniture, added AFTER the cuts (the seat-pocket cut would
     // otherwise carve it away):

@@ -437,9 +437,19 @@ external spool), the whole two-tone story runs itself, no pauses:
   filament. Expect a prime tower and purge waste on every colour-change
   layer — that is the AMS working, not a mis-slice.
 - **Filament picks**: the case must stay **PETG** (it runs hot — never the
-  PLA slot). White PETG body + canary-yellow PETG accents is the house
-  look; black reads more muted. Load body and accent in any two AMS slots
-  and map them in the slicer's filament list.
+  PLA slot). Load body and accent in any two AMS slots and map them in the
+  slicer's filament list.
+- **⚠️ If the part carries the help QR, the BODY filament must be the DARK
+  one.** Every deboss floor on the back — labels, brand lockup and the QR's
+  modules — prints in the **body** colour, inside a skin that prints in the
+  **accent**. A QR reader needs dark modules on a light field and refuses
+  the inverse, so the old house pairing (white body + canary-yellow accent)
+  produces **white modules on yellow: unscannable**, and leaves every other
+  back label barely legible into the bargain. Pair a **dark body**
+  (graphite or black) with a **light accent skin** and the whole back reads
+  dark-on-light — labels included. A single-colour print is fine as-is: the
+  1.2 mm floors read dark by shadow. Scan the part before you print nine
+  more.
 
 ```sh
 # ~6 g, print FIRST after any radius doubt: four corner sockets bracketing

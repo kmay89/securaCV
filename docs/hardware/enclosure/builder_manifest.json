@@ -3330,7 +3330,7 @@
         "glyph_h": "mm",
         "glyph_rib": "mm"
       },
-      "sha256": "2566abe95554218e367c5b92335ad95fd03c9c3dd6a669c19cd638f6b0a91202",
+      "sha256": "735bfde177fda301c9ef9648c17437028e85e958f0c13a206d8a9fcd7ec34ec7",
       "groups": [
         {
           "name": "What to render",
@@ -3581,6 +3581,46 @@
               "type": "number",
               "default": 0.7,
               "desc": "stroke width, in mm. THE number this station tests:"
+            }
+          ]
+        },
+        {
+          "name": "GLYPH station — the bird, debossed into the BED-SIDE face",
+          "params": [
+            {
+              "name": "glyph_show",
+              "type": "bool",
+              "default": true
+            },
+            {
+              "name": "glyph_size",
+              "type": "number",
+              "default": 34.0,
+              "desc": "mark width. At 34 the thinnest stroke lands at"
+            },
+            {
+              "name": "glyph_grow",
+              "type": "number",
+              "default": 0.14,
+              "desc": "per-side thickening that buys that 0.44"
+            },
+            {
+              "name": "glyph_depth",
+              "type": "number",
+              "default": 0.5,
+              "desc": "= label_depth's sibling; one bridged layer closes it"
+            },
+            {
+              "name": "glyph_dx",
+              "type": "number",
+              "default": -26.5,
+              "desc": "the clear rectangle on the bed face: left of the"
+            },
+            {
+              "name": "glyph_dy",
+              "type": "number",
+              "default": 12.0,
+              "desc": "PORT through-hole, above the keyhole pockets"
             }
           ]
         },
