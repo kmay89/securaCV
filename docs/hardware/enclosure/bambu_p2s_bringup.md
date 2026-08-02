@@ -286,8 +286,9 @@ v0.3 added a **`part="frame"`** alternative to the bezel + tray pair, based on
 a case layout print-proven against the real panel: the slab drops in face-first
 through the front opening, the board hangs on the panel's **own white M3
 standoffs**, and **4 × M3×8–10 driven from the back** thread into those
-standoffs — the screws, not a ledge, set the glass depth: it lands 0.6 mm
-(`glass_guard`) below the front rim, the intentional drop-protection recess.
+standoffs — the screws, not a ledge, set the glass depth: it lands
+`glass_guard` below the front rim, which is **0 today — a flush face**
+(raise `glass_guard` to trade flush for a drop-protection recess).
 It carries a bevelled BOOT/RESET window in the top wall — the button edge in
 native mounting — with debossed labels (back view: **BOOT left, RESET
 right**), gill vents on the side walls, exhaust slots flanking the button
@@ -470,9 +471,12 @@ corner containing a boss and a wall keyhole, ~10 %) then proves the whole
 corner — assembled on the panel's corner with one screw it checks `glass_r`
 in context, the mount-offset **signs** (`m3_ox`/`m3_oy` — the screw only
 threads home if they're right), and `standoff_len` (the glass sits exactly
-`glass_guard` — 0.6 mm — **below** the rim only if that's right; that recess
-is the v0.8 drop-protection guard, so flush or proud glass means the stack
-is off, not that the print is good). The frame and gauge print
+`glass_guard` **below** the rim only if that's right). **Read that pass
+criterion off `glass_guard` in the `.scad`, not off this page.** It is `0`
+today, so **flush is the pass**: drag a fingernail across the rim onto the
+glass and you should not catch a step in either direction. If you raise
+`glass_guard`, the criterion inverts and a recess becomes the pass. The
+frame and gauge print
 **back-plate-down, as exported** — no supports, no brim unless a corner
 lifts.
 

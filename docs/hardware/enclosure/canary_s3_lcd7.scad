@@ -48,7 +48,8 @@
 //            the board hangs on the panel's OWN white M3 standoffs, and
 //            4x M3x8-10 from the back thread into those standoffs — the
 //            screws, not a ledge, set the glass glass_guard below the
-//            front rim (the drop-protection recess).
+//            front rim — currently 0, i.e. a FLUSH face (raise
+//            glass_guard to trade flush for a drop-protection recess).
 //            BOOT/RESET window in the top wall with debossed labels; gill
 //            vents down each side wall; top-wall exhaust; back grille;
 //            a microSD access opening through the BACK PLATE covering the
@@ -158,14 +159,15 @@
 //  adhesive ledge sat at 4.5 mm because glass_t lumped the LCD module into
 //  the border thickness, so the ledge floated 3.2 mm clear of the panel and
 //  the adhesive touched nothing. The border is bare glass, far thinner —
-//  glass_edge_t below — and the ledge face now sits 1.3 mm behind the front,
-//  matching the reference case print that fits the real panel. The rear
+//  glass_edge_t below — and the ledge face now sits glass_edge_t + adh_t
+//  behind the glass face, matching the reference case print. The rear
 //  stack (boss face 17.5, head seat 20.5, depth 23.5 — all confirmed against
 //  that same reference) does NOT move: it chains from the module stack, not
 //  the border. v0.8 is a DROP-PROTECTION pass, three additive moves: a
-//  guard rim (glass_guard — the front rim stands 0.6 proud of the glass, so
+//  guard rim (glass_guard — the front rim stands proud of the glass, so
 //  a face-down drop lands on plastic; the whole panel stack sits that much
-//  deeper, nothing moves relative to the panel), a 45° fillet ring where
+//  deeper, nothing moves relative to the panel — but see v1.0: it is now
+//  set to 0), a 45° fillet ring where
 //  the walls meet the back plate (plate_fillet — corner-drop crack starter,
 //  boss-root doctrine applied to the perimeter), and root reinforcement on
 //  the SD leash (cap flare + shaft cone, both inside envelopes that were
@@ -1541,7 +1543,11 @@ echo(str("  stack: floor ", z_floor, " | PCB under ", z_pcb_under, " | PCB top "
          back_t + cav_d + bez_h, " mm"));
 echo(str("  frame: ", fr_xo, " x ", fr_yo, " x ", fr_depth,
          " mm one-piece; glass opening ", fr_xi, " x ", fr_yi, " r", fr_ri,
-         "; guard rim ", glass_guard, " mm proud of the glass, plate fillet ",
+         "; front face ",
+         glass_guard == 0 ? "FLUSH with the glass (fingernail test: no step either way)"
+                          : str("proud of the glass by ", glass_guard,
+                                " mm — a recess IS the pass criterion"),
+         ", plate fillet ",
          plate_fillet, "; adhesive ledge face ", ledge_z,
          " mm behind the front (bare-glass ",
          "border ", glass_edge_t, " + adhesive ", adh_t,
@@ -1821,8 +1827,8 @@ module gauge() {
 //  +z toward the back; +x = BACK-view right). No ledge holds the glass: the
 //  4 screws pull the panel's standoffs onto the boss faces, and that stack —
 //  glass_t + pcb_standoff + pcb_t + standoff_len — is exactly what sets the
-//  glass glass_guard below the front rim (the guard recess is by design —
-//  v0.8). Get standoff_len right or the recess is off by the same error.
+//  glass glass_guard below the front rim. Get standoff_len right or the
+//  glass face is off by the same error. glass_guard is 0 today (flush).
 // ----------------------------------------------------------------------------
 module pill2d(l, w) { hull() for (d = [-1, 1]) translate([0, d*(l - w)/2]) circle(d = w); }
 // FEATHER BARB — the house pattern motif, and the reason it is a motif at all
@@ -2460,8 +2466,12 @@ module frame() {
 // (+x,+y) corner, chosen because it contains a boss AND a wall keyhole. Assemble
 // it on the panel's corner with one M3x8-10: the glass corner proves glass_r,
 // the screw only threads home if the m3 offsets have the right SIGNS, and the
-// glass sits exactly glass_guard below the rim only if standoff_len is right
-// (the recess IS the pass criterion — flush glass means the stack is off).
+// glass sits exactly glass_guard below the rim only if standoff_len is right.
+// READ THE PASS CRITERION OFF glass_guard, not off memory: it is 0 today, so
+// a FLUSH glass face is the PASS — you should not be able to feel a step with
+// a fingernail dragged across the rim onto the glass, in either direction.
+// (Raise glass_guard and the criterion inverts: then a recess is the pass and
+// flush means the stack is off. This comment has been wrong that way before.)
 module frame_gauge() {
     bx = -m3_ox + m3_dx/2;  by = m3_oy + m3_dy/2;
     intersection() {
