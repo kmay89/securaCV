@@ -6538,6 +6538,16 @@
        "comment": "corner radius of the glass slab. The FIRST REAL PRINT"
       },
       {
+       "name": "rg_centre",
+       "default": "glass_r",
+       "comment": "radius-gauge sweep centre — override it to hunt wide"
+      },
+      {
+       "name": "rg_step",
+       "default": "0.2",
+       "comment": "...and its step. Four sockets at centre ± 0.5·step"
+      },
+      {
        "name": "aa_w",
        "default": "154.88",
        "comment": "active area width"

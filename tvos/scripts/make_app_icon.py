@@ -205,7 +205,16 @@ def layer_bird(w: int, h: int) -> Image.Image:
 
 # ── catalog plumbing ────────────────────────────────────────────────────────
 
+# Painting order (used for compositing the flat top-shelf image): back first.
 LAYERS = [("Back", layer_back), ("Middle", layer_feeder), ("Front", layer_bird)]
+
+# The imagestack's Contents.json order is the OPPOSITE: Apple lists layers
+# FRONT-TO-BACK, and actool requires the LAST entry (the back plate) to be
+# fully opaque. Writing the painting order here shipped an inverted parallax
+# and an actool error ("the last image stack layer with content, 'Front',
+# must be a fully opaque bitmap") — see check_app_icon.py, which now gates
+# the order structurally.
+STACK_ORDER = ["Front", "Middle", "Back"]
 
 STACKS = [("App Icon", 400, 240), ("App Icon - App Store", 1280, 768)]
 SHELVES = [("Top Shelf Image", 1920, 720), ("Top Shelf Image Wide", 2320, 720)]
@@ -262,7 +271,7 @@ def main() -> int:
         stack = os.path.join(brand, f"{name}.imagestack")
         write_json(
             os.path.join(stack, "Contents.json"),
-            {"info": INFO, "layers": [{"filename": f"{layer}.imagestacklayer"} for layer, _ in LAYERS]},
+            {"info": INFO, "layers": [{"filename": f"{layer}.imagestacklayer"} for layer in STACK_ORDER]},
         )
         for layer, make in LAYERS:
             layer_dir = os.path.join(stack, f"{layer}.imagestacklayer")

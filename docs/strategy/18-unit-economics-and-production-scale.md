@@ -83,16 +83,33 @@ past ~500.**
 
 | Tier | Sourcing | Enclosure | Assembly | Cert | ~Per-unit | Capital at risk |
 |---|---|---|---|---|---|---|
-| **1 — maker** | modules retail | print | you | none (personal) | **$45** | ~$0 |
-| **10–50 — kit seller** | multipacks | print / MJF | **sell as kits** | minimal (unassembled) | ~$38 | ~$1–2k |
-| **100–500 — micro-brand** | modules or 1st PCB | MJF / bridge tool | jig / light CM | FCC/CE *if assembled radio* | ~$30–40 | ~$5–20k |
+| **0 — plans + plastic** | *we sell no electronics* | print / MJF | buyer's | **none — not an RF device** | ~$1–3 plastic | ~$0 |
+| **1 — maker** | modules retail | print | you | none (personal, ≤5 units — [15.23](https://www.ecfr.gov/current/title-47/chapter-I/subchapter-A/part-15/subpart-A/section-15.23)) | **$45** | ~$0 |
+| **10–50 — kit seller** | multipacks | print / MJF | sell as kits | **Part 15B SDoC ~$1.5–4k — kits do *not* exempt** | ~$38 | ~$1–2k + cert |
+| **100–500 — micro-brand** | modules or 1st PCB | MJF / bridge tool | jig / light CM | Part 15B SDoC; full FCC/CE only if the module grant is broken | ~$30–40 | ~$5–20k |
 | **1k–10k — product** | custom PCB, pre-cert ESP32 module | injection mold | turnkey box-build + test | **full FCC/CE $5–20k** | **~$18–28** | ~$50–150k |
 | **10k+ — mass** | reels, offshore CM | multi-cavity tool | offshore CM | full + safety / packaging | ~$12–20 | $200k+ |
 
-Two shortcuts worth banking: a **pre-certified ESP32 module** (WROOM) keeps you
-on **modular approval** and saves ~$5–15k of intentional-radiator testing; and
-**kits (unassembled)** sidestep most assembled-product regulatory + liability
-burden — which is why kits are the right small-scale play.
+One shortcut is real and one was a myth. The real one: a **pre-certified ESP32
+module** (WROOM) keeps you on **modular approval** and saves ~$5–15k of
+intentional-radiator testing.
+
+**The myth — corrected:** this doc previously said kits "sidestep most
+assembled-product regulatory + liability burden." **They do not, on FCC.**
+[15.23](https://www.ecfr.gov/current/title-47/chapter-I/subchapter-A/part-15/subpart-A/section-15.23)
+excludes kits *by name* and covers only ≤5 units built for personal use and not
+marketed; marketing an RF device is regulated by state of *marketing*, not state
+of *assembly*. A pre-flashed board plus a printed case is a radio we sold. Kits
+help with **tort exposure**, not equipment authorization — and even there, our
+firmware and our name on the box make us a manufacturer regardless of who turned
+the last screw.
+
+So the real fork is **not** kit-vs-assembled — it is **plastic-only vs.
+anything-with-a-radio**, which is why tier 0 above exists. Selling only printed
+enclosures (and giving away plans and firmware) carries *no* equipment
+authorization at all. The full reasoning, the labeling requirements, and the
+~$3–6k cost of crossing that line deliberately are in
+[29-fcc-and-product-compliance-diligence.md](29-fcc-and-product-compliance-diligence.md).
 
 ## 5. Pricing, margin, and the mission math
 
@@ -109,9 +126,15 @@ house. That TCO line is the pitch — and the bench now shows it.
 
 ## 6. Recommendation for SecuraCV's stage
 
-**Stay module-based; sell kits + printed enclosures + the firmware, up to
-~100–500 units. Do not spin a custom PCB or cut a mold until >500 committed
-units.** The NRE ($6–8k PCB + $6k mold) and the certification cliff ($5–20k)
+**Stay module-based; give away the plans and firmware and sell printed
+enclosures. Do not spin a custom PCB or cut a mold until >500 committed
+units.** Note the revision from §4: shipping anything with a radio in the box —
+kit or assembled — needs a **Part 15B SDoC (~$1.5–4k per SKU)**, so R2/R3 are a
+deliberate, budgeted decision rather than the default small-scale play. Plans +
+plastic (tier 0) carry none of it and remain the recommended posture until that
+budget is committed; see
+[doc 29](29-fcc-and-product-compliance-diligence.md) §8–§9.
+The NRE ($6–8k PCB + $6k mold) and the full certification cliff ($5–20k)
 would sink a maker project chasing a ~$15/unit saving. The moat isn't hardware
 margin — it's the **privacy firmware and the honest, self-printable design**,
 where the enclosure COGS is ~$1, infinitely customizable, with zero tooling

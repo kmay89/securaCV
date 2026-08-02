@@ -81,6 +81,17 @@ def main() -> int:
         for layer in LAYERS:
             if f"{layer}.imagestacklayer" not in declared:
                 problems.append(f"{name}: the {layer} layer is not declared in Contents.json")
+        # Apple lists imagestack layers FRONT-TO-BACK, and actool requires the
+        # LAST entry — the back plate — to be fully opaque. The painting order
+        # (Back first) shipped here once and produced both an inverted parallax
+        # and "the last image stack layer with content, 'Front', must be a
+        # fully opaque bitmap" at build time.
+        want_order = ["Front.imagestacklayer", "Middle.imagestacklayer", "Back.imagestacklayer"]
+        if declared and declared != want_order:
+            problems.append(
+                f"{name}: layers are declared {declared} — Apple's imagestack "
+                f"order is front-to-back, so it must be {want_order}"
+            )
             png = os.path.join(
                 stack, f"{layer}.imagestacklayer", "Content.imageset",
                 f"{name.replace(' ', '_')}_{layer}.png",

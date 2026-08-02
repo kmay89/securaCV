@@ -4,10 +4,12 @@ The goal here is simple: get the Witness Wall onto an actual Apple TV with the
 **least headache**, in the right order, skipping the steps people burn an
 afternoon on. There are two tracks — pick by what you're trying to do.
 
-> **Step 0 (be honest):** the native SwiftUI tvOS target is design-stage
-> ([`README.md`](README.md)). The **Apple-side mechanics below are evergreen** —
-> they're the part that actually costs time — so this runbook is ready the day
-> the app target lands. Track A works *today* with zero code.
+> **Step 0:** the native SwiftUI tvOS target is **built and continuously
+> tested** (`WitnessWall/` — see [`README.md`](README.md)): the wall with
+> home / business / apartment profiles and skins, zero-typing LAN discovery
+> (it probes `canary.local` by itself), and real chain verification through
+> the Rust core. What's left is Apple's side — the account and keys — which
+> is exactly what Tracks B and C below walk through.
 
 | I want to… | Track | Time | Apple Developer account? |
 |---|---|---|---|
@@ -47,8 +49,10 @@ low-headache path.
 - A **Mac** with **Xcode** (includes the tvOS SDK and the tvOS Simulator).
 - An **Apple ID** (free). The **$99/yr Apple Developer Program** is only needed
   for Track C (TestFlight / the App Store).
-- The tvOS app target from [`README.md`](README.md) (Step 0). The witness core
-  and the release pipeline are already in place.
+- The tvOS app target is in the repo (`tvos/WitnessWall/`, XcodeGen — run
+  `xcodegen generate` there, or just open the folder in Xcode after
+  `brew install xcodegen`). The witness core and the release pipeline are
+  already in place.
 
 ### The fast sequence
 1. **Simulator first — zero hardware headaches.** Open the Xcode project, pick
@@ -69,10 +73,14 @@ low-headache path.
    The first launch fails with *"Untrusted Developer"* until you trust it:
    **Apple TV → Settings → General → VPN & Device Management → your Apple ID →
    Trust**. Run again.
-5. **Point it at your kernel.** The app finds the local witness kernel over
-   **Bonjour**, so keep the Apple TV and the SecuraCV host on the **same LAN**.
-   tvOS will prompt for **Local Network** access on first launch — allow it, or
-   discovery stays empty. (The built-in demo data renders offline without it.)
+5. **Point it at your kernel — usually a no-op.** On launch the Wall probes
+   the well-known LAN addresses by itself (`canary.local:8099`, then
+   `canary.local` — the same list the desktop Flasher and Lab probe), so on a
+   standard install the fleet just appears. Keep the Apple TV and the
+   SecuraCV host on the **same LAN**; if your hub lives at a custom address,
+   the on-screen prompt takes it once and remembers it. (Unlike iOS, tvOS
+   generally doesn't interpose the Local Network permission prompt — if the
+   fleet stays empty, it's almost always the router, not a permission.)
 
 ### The gotchas that actually bite (and the fix)
 - **"Untrusted Developer."** Trust the app under *Settings → General → VPN &
@@ -82,9 +90,11 @@ low-headache path.
 - **Xcode can't see the Apple TV.** Both devices on the same subnet; re-open
   *Remotes and Devices*; disable **client isolation / AP isolation** on the
   router (it silently blocks device pairing *and* Bonjour).
-- **Empty fleet / no events.** That's the **Local Network** prompt being
-  declined, or the kernel being on a different VLAN. Re-enable Local Network in
-  the TV's app settings and put both on one subnet.
+- **Empty fleet / no events.** Almost always the network, not the app: the
+  kernel is on a different VLAN/subnet, or the router's AP/client isolation is
+  blocking the TV from reaching `canary.local`. Put both on one subnet and
+  turn isolation off; the Wall keeps re-searching by itself and will pick the
+  fleet up the moment the route exists.
 - **Kernel is `http://` on the LAN.** Add an **App Transport Security**
   exception for the local domain (or use the kernel's TLS). Details land in
   [`README.md`](README.md) with the target.
@@ -99,16 +109,49 @@ low-headache path.
 This is where the [autopipeline](../docs/tvos/AUTOPIPELINE.md) does the work —
 no manual Xcode *Archive → Organizer → Upload* dance.
 
-1. Join the **Apple Developer Program** ($99/yr) and create the app record in
-   **App Store Connect**. Add the signing secrets and flip `ENABLE_TVOS_BUILD`
-   ([`README.md`](README.md)).
-2. Bump the version, then:
+The pipeline is built and waiting; what it needs from a human is the Apple
+account and five credentials. Do these **once, in this order** — each step
+exists because skipping it has already cost a burned release
+(`.github/RELEASE_LESSONS.md` 2026-07-28 d–h). Which certificate goes in
+which secret is mapped in [`docs/APPLE_SIGNING.md`](../docs/APPLE_SIGNING.md) —
+read it before touching an `APPLE_*` secret.
+
+1. **Join the Apple Developer Program** ($99/yr) and create the app record in
+   **App Store Connect**: platform tvOS, bundle id `com.securacv.witnesswall`.
+2. **Mint the App Store Connect API key** (Users and Access → Integrations →
+   App Store Connect API) with the **Admin** role — a lesser role fails only
+   at export time, and a key's role can never be upgraded afterward. Download
+   the `.p8` once and set:
+   - `APPLE_API_KEY` — the Key ID
+   - `APPLE_API_ISSUER` — the Issuer ID
+   - `APPLE_API_KEY_BASE64` — `base64 -i AuthKey_<KEYID>.p8`
+3. **Create the Apple Distribution certificate** (if the iPhone app hasn't
+   already — one certificate covers every App Store target), export it as a
+   `.p12`, and set `APPLE_CERTIFICATE` (base64 of the `.p12`) +
+   `APPLE_CERTIFICATE_PASSWORD`. Do **not** reuse the desktop secret — the
+   Mac apps' Developer ID identity lives separately in
+   `APPLE_DESKTOP_CERTIFICATE` for hard-won reasons.
+4. **Set the team**: `APPLE_DEVELOPMENT_TEAM` (or `APPLE_TEAM_ID` — either
+   works, set one) to the 10-character Team ID.
+5. **Register one device** (any iPhone or the Apple TV itself, Certificates →
+   Devices). A brand-new team with zero devices cannot archive — Apple won't
+   mint the development profile automatic signing needs, and the failure
+   arrives mid-archive with a misleading message.
+6. **Flip the repo variable** `ENABLE_TVOS_BUILD` to `true` (Settings →
+   Secrets and variables → Actions → Variables). The gate is on the upload,
+   not the build — PR CI has been compiling and testing the app all along.
+7. **Dry-run first**: Actions → *tvOS app — build & TestFlight* →
+   `publish: false`, `export_method: app-store-connect`. This proves signing
+   end-to-end without spending a version number (a post-upload rejection
+   burns one).
+8. **Ship**: bump `MARKETING_VERSION` in `WitnessWall/project.yml` if needed,
+   then either press **Update everything (only what needs it)** or:
    ```sh
    git tag tvos-v0.1.0 && git push origin tvos-v0.1.0
    ```
-   `tvos-release.yml` builds, signs with the App Store Connect API key, and
-   uploads the build to TestFlight automatically.
-3. Add testers in App Store Connect. They install the **TestFlight** app on
+   `tvos-release.yml` builds the Rust core, archives, signs, uploads to
+   TestFlight, and cuts the tag only after a verified upload.
+9. Add testers in App Store Connect. They install the **TestFlight** app on
    their Apple TV once; every future `tvos-v*` tag reaches them on its own.
 
 ---
