@@ -49,7 +49,7 @@ from pathlib import Path
 
 # ── The one human string. Bump it when you change the geometry. ──────────
 # CalVer: YYYY.MM + a letter that revs within the month.
-STAMP_REV = "2026.08j"
+STAMP_REV = "2026.09c"
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "canary_s3_lcd7_stamp.scad"
@@ -57,6 +57,12 @@ OUT = HERE / "canary_s3_lcd7_stamp.scad"
 # deliberately absent: hashing it would chase its own tail.
 SOURCES = [
     "canary_s3_lcd7.scad",
+    "canary_panel_lib.scad",   # the panel registry OWNS the panel/board numbers
+                               # now, so a record edit is a geometry change and
+                               # has to move SRC. Leaving it out would have been
+                               # a hole straight through the anti-rot argument:
+                               # you could change what board the case is cut for
+                               # and the stamp would still claim the old design.
     "canary_vent_lib.scad",
     "canary_s3_lcd7_qr.scad",
 ]

@@ -59,6 +59,8 @@ NON_PRODUCT_SCADS = {
     "canary_s3_lcd7_fitcheck.scad",   # 7" bezel/tray assembly-interference check
     "canary_s3_lcd7_qr.scad",         # generated help-QR bit matrix (gen_qr.py)
     "canary_vent_lib.scad",           # brand vent pattern library — shapes, not a part
+    "canary_panel_lib.scad",          # the PANEL REGISTRY — describes the boards a
+                                      # case is built AROUND, not a thing you print
     "canary_s3_lcd7_stamp.scad",      # generated build stamp (gen_stamp.py)
 }
 
@@ -713,6 +715,7 @@ def parse_features(project: str, flavor: str):
 VARIANT_SELECTOR_PARAMS = {
     "preset", "host", "radar", "stack", "model", "variant", "mode", "mount",
     "headers",  # C6 display: stripped board vs as-shipped (headers + pillars)
+    "panel_variant",  # 7" dashboard: the -7 and the -7B, half a turn apart
 }
 OPTION_ENUM_PARAMS = {"mount_style", "battery", "side_exit"}
 ENGINEERING_OPTIONS = {

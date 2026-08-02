@@ -71,6 +71,9 @@ firmware/projects/canary-companion/tests_host/test_companion_cores
 # Fetched detection models (scripts/fetch_detection_model.sh) — not committed
 vendor/models/*.onnx
 docs/hardware/enclosure/dev_*.stl
+# gen_3mf.py outputs: build artifacts, regenerate with `python3 gen_3mf.py <set>`
+docs/hardware/enclosure/lcd7_*.3mf
+docs/hardware/enclosure/_3mf_*.stl
 
 # Local scratch
 /.tmp/

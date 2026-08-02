@@ -88,6 +88,95 @@ last week fails today and nothing changed, suspect moisture first.
 **Run the printer's flow-dynamics / pressure-advance calibration for the exact
 spool you are using**, once. It is the difference between corners that are
 square and corners that bulge, and it is per-filament, not per-material.
+**§2b below is the procedure** — and note the ordering trap it opens with:
+dry the spool *before* you calibrate it, or the numbers encode the moisture.
+
+---
+
+## 2b · Calibrate — machine once, then every spool
+
+Two different things are called "calibration" and they are not
+interchangeable. The machine one makes the printer move correctly. The
+filament one makes *this spool* extrude correctly. A new P2S needs both, in
+this order, and the order is the part people get wrong.
+
+### Sequence — dry, then calibrate, then print
+
+**Dry the filament BEFORE you calibrate it, not after.** This is the one
+that silently wastes a day. Calibration measures how the filament behaves
+*right now*, so calibrating a damp spool bakes the moisture into your K-factor
+and flow ratio. Dry it later and the numbers you carefully measured are now
+wrong, in a way that looks like the printer drifting. 60–65 °C for 4–6 h
+first (§2), then calibrate.
+
+### Step 1 — the machine, from the printer's own screen
+
+Do this on the printer, not in the slicer. **Calibration → Full/Auto
+calibration**, and let all of it finish:
+
+| Routine | What it fixes | Re-run when |
+|---|---|---|
+| Motor noise cancellation | stepper resonance | after firmware updates |
+| **Vibration compensation** (input shaping) | ringing/ghosting on corners | printer moved or re-sited |
+| **Auto bed levelling** | first-layer squash across the plate | plate swapped, printer moved |
+
+Ten to fifteen minutes, once. Re-run it after you move the machine — including
+across a room. Anything that shook in transit is why step 1 exists.
+
+### Step 2 — Flow Dynamics (pressure advance / K-factor), per spool
+
+In **Bambu Studio → Calibration → Flow Dynamics Calibration**. This is the one
+that decides whether corners come out square or bulge, and it is the single
+highest-value calibration for this catalog, because every fit in it is a
+corner or an edge.
+
+Bambu ships two paths and which you get depends on the machine's sensing
+hardware. **Open the dialog and look:**
+
+- If it offers **Auto** — the printer prints a pattern, reads it itself, and
+  writes the K-factor back. Take it. Minutes, no judgement required.
+- If it only offers **Manual / Complete** — it prints a numbered pattern and
+  you pick the cleanest line by eye. Pick the number where the corners stop
+  bulging and *before* they start looking gappy; if two look equal, take the
+  lower.
+
+I'm not going to tell you which one a P2S has — I don't have that confirmed,
+and sending you to a menu that isn't there wastes more time than looking.
+Whichever appears is the right one.
+
+### Step 3 — Flow Rate, per spool
+
+**Calibration → Flow Rate.** Two passes: coarse, then fine on the winner.
+You are looking for a top surface that is smooth and continuous — not
+pin-holed (under), not ridged and rough (over). Under-extrusion is the one
+that hurts here: it thins walls and every clearance in the catalog opens up.
+
+### Step 4 — record it, per slot
+
+Write the numbers down against **the spool**, not the material. Brand, colour
+and even batch change them — a black PETG and a white PETG from the same
+maker will not share a flow ratio, which matters directly for the 7″ frame's
+three-filament print. If you are running the AMS, each slot's filament needs
+its own numbers. §5's record card is there for exactly this.
+
+**Max Volumetric Speed** is the one you can skip. It only binds when you are
+pushing speed, and [`printing_petg_orca.md`](./printing_petg_orca.md) already
+argues these parts do not need the P2S to be fast.
+
+### Step 5 — prove it on a part, not a test pattern
+
+A passing calibration pattern is not a passing fit. Print, in this order:
+
+1. **§4's fit coupon** — the tolerance system's acceptance test. For the 7″
+   dashboard the stations that matter are **SLIDE** and **SCREW**.
+2. **The ring gauge** (§7b″) — five grams, and it checks the whole display
+   outline against the real panel. If flow is off, this is where you see it
+   as a contour that will not sit down.
+
+**Do not fix a fit by changing calibration, and do not fix calibration by
+changing the slicer's XY compensation.** They are three separate errors and
+correcting one with another leaves you with two. Calibration belongs to the
+spool, tolerance belongs to the `.scad`, and XY compensation stays at 0.
 
 ---
 
@@ -228,10 +317,10 @@ the values echoed when you render:
 |---|---|---|
 | Touch-glass width × height | `glass_w` / `glass_h` | 192.96 × 110.76 |
 | Full panel thickness where the LCD module reaches — glass front → module can back | `glass_t` | 4.0 |
-| Bare-glass BORDER thickness at the adhesive band — glass front → glass back, calipers on the edge, NOT over the module | `glass_edge_t` | 0.8 — these are **two different measurements**: the border is just glass, the middle is glass + module. `glass_edge_t` sets the adhesive-ledge depth (`glass_edge_t + adh_t` behind the front face); `glass_t` sets the cavity and the whole rear stack. Assigning the thin edge reading to `glass_t` shortens the rear stack ~3.2 mm and the frame cannot seat the module |
-| Glass corner radius | `glass_r` | 3.2 — settled by the FIRST REAL PRINT: r2.0 was the wrong direction. Confirm on `part="radius_gauge"` (four sockets, −0.4…+0.2 around the default, ~6 g) before any slab print |
+| Bare-glass BORDER thickness at the adhesive band — glass front → glass back, calipers on the edge, NOT over the module | `glass_edge_t` | 1.2 ✅ MEASURED — these are **two different measurements**: the border is just glass, the middle is glass + module. `glass_edge_t` sets the adhesive-ledge depth (`glass_edge_t + adh_t` behind the front face); `glass_t` sets the cavity and the whole rear stack. Assigning the thin edge reading to `glass_t` shortens the rear stack ~3.2 mm and the frame cannot seat the module |
+| Glass corner radius | `glass_r` | **8.2 — measured**, not printed for. Three earlier revisions (2.0 → 3.0 → 3.2) each stepped rounder by 0.2 because that was the only increment the gauge could resolve, while the truth sat 5 mm away. **Measure it directly**: sit a square into the corner to find where the sharp bounding-box corner would be, measure the shortest distance `d` to the glass, `r = 2.414 × d` (8.2 → d 3.40). Then confirm on `part="radius_gauge"`, which now sweeps `rg_centre` ± 1.5·`rg_step` — hunt coarse (`-D rg_centre=8 -D rg_step=1`) before fine. Print to confirm, never to search. |
 | Active (lit) area | `aa_w` / `aa_h` | 154.88 × 86.72 |
-| LCD module can outline + centre offset | `panel_core_w` / `panel_core_h` / `panel_core_dy` | 165.0 × 100.0, dy −1.0 ⚠️ nominal — the `frame_glass` CI gate and the insertion asserts check the ledge ring against THIS outline, so measure the can, not the ledge |
+| LCD module can outline + centre offset | `panel_core_w` / `panel_core_h` / `panel_core_dy` | 165.72 × 97.60, dy −1.435 ✅ MEASURED (19.76 + 126.20 + 19.76 = 165.72 exactly) — the `frame_glass` CI gate and the insertion asserts check the ledge ring against THIS outline, so measure the can, not the ledge |
 | PCB outline | `pcb_w` / `pcb_h` | 165.72 × 97.60 |
 | Tallest rear-side component | `comp_h` | 11.0 |
 | Glass back → PCB front | `pcb_standoff` | 5.0 |
@@ -286,8 +375,9 @@ v0.3 added a **`part="frame"`** alternative to the bezel + tray pair, based on
 a case layout print-proven against the real panel: the slab drops in face-first
 through the front opening, the board hangs on the panel's **own white M3
 standoffs**, and **4 × M3×8–10 driven from the back** thread into those
-standoffs — the screws, not a ledge, set the glass depth: it lands 0.6 mm
-(`glass_guard`) below the front rim, the intentional drop-protection recess.
+standoffs — the screws, not a ledge, set the glass depth: it lands
+`glass_guard` below the front rim, which is **0 today — a flush face**
+(raise `glass_guard` to trade flush for a drop-protection recess).
 It carries a bevelled BOOT/RESET window in the top wall — the button edge in
 native mounting — with debossed labels (back view: **BOOT left, RESET
 right**), gill vents on the side walls, exhaust slots flanking the button
@@ -470,9 +560,12 @@ corner containing a boss and a wall keyhole, ~10 %) then proves the whole
 corner — assembled on the panel's corner with one screw it checks `glass_r`
 in context, the mount-offset **signs** (`m3_ox`/`m3_oy` — the screw only
 threads home if they're right), and `standoff_len` (the glass sits exactly
-`glass_guard` — 0.6 mm — **below** the rim only if that's right; that recess
-is the v0.8 drop-protection guard, so flush or proud glass means the stack
-is off, not that the print is good). The frame and gauge print
+`glass_guard` **below** the rim only if that's right). **Read that pass
+criterion off `glass_guard` in the `.scad`, not off this page.** It is `0`
+today, so **flush is the pass**: drag a fingernail across the rim onto the
+glass and you should not catch a step in either direction. If you raise
+`glass_guard`, the criterion inverts and a recess becomes the pass. The
+frame and gauge print
 **back-plate-down, as exported** — no supports, no brim unless a corner
 lifts.
 
@@ -517,15 +610,129 @@ the released set's largest part at 120.5 mm. Two consequences:
   loops** (the 2 mm walls then print as solid perimeters — stronger and cleaner
   than loops + gap fill) and don't lower the layer height below 0.2 to "add
   strength": more, hotter-bonded layers beat many cold thin ones for impact.
-  The geometry does its part (v0.8: the front rim stands 0.6 mm proud so a
-  face-down drop lands on plastic, not glass; a 45° fillet ring ties the walls
-  into the back plate; the SD leash carries root fillets) — the slicer settings
+  The geometry does its part (a 45° fillet ring ties the walls
+  into the back plate; the SD leash carries root fillets) — but note
+  `glass_guard` is **0**, a flush front, so the rim no longer stands proud of
+  the glass and a face-down drop lands on the panel. That was a deliberate
+  trade for the flush face; raise `glass_guard` to buy the protection back — the slicer settings
   are the other half of the deal.
 
 **Keep the vents clear** when you mount it. The convection path is real and
 directional: **intake along the bottom wall, exhaust along the top wall**, back
 grille radiating in between. Mounting it flat against a wall with the top slots
 blocked converts a ventilated case into an oven.
+
+### 7b″ · The ring gauge — five grams, and it gates the 110 g print
+
+The cheapest part in the catalog, and the one to print first:
+
+```sh
+openscad --export-format binstl -o lcd7_ring_gauge.stl \
+         -D 'part="ring_gauge"' canary_s3_lcd7.scad
+```
+
+**4.42 cm³, ~5.6 g, flat, four layers at 0.3** — no supports, no brim.
+
+Its inner edge *is* the frame's glass opening: 193.26 × 111.06 at r8.35, which
+is the slab plus `frame_reveal` (0.15) per side. Lay the panel into it, or hold
+it over the panel, and every outline error shows at once:
+
+| what you see | what it means |
+|---|---|
+| will not drop in, or rattles | `glass_w` / `glass_h` wrong |
+| daylight at the arcs, straights touching | `glass_r` wrong |
+| uniform slop or uniform bind all round | `frame_reveal` wrong |
+
+The radius gauge answers *what is the corner*; the frame gauge answers *does
+one corner assemble*. Neither can show a wrong overall size, because neither
+has an opposite edge to measure against. This does — and it costs five grams.
+
+It debosses its own dimensions, so a loose ring on a bench is never a mystery.
+
+### 7c″ · The colour + fit coupon — print this before the frame
+
+One part answers two questions at **20.9 cm³ — a fifth of a frame** (body 20.56, ink 0.31, accent 0.02):
+
+```sh
+for f in body ink accent; do
+  openscad --export-format binstl -o lcd7_coupon_$f.stl \
+           -D "part=\"coupon_$f\"" canary_s3_lcd7.scad
+done
+```
+
+It is cut from the bottom edge, running from the centre lockup **out through a
+corner**, at full depth — so it carries the glass pocket, the front bezel band
+and the back plate all on one piece.
+
+| end | what it proves |
+|---|---|
+| centre | the lockup: INK product name over the ACCENT company line, and the USB port for a grommet trial-fit |
+| corner | the glass pocket's radius and the front bezel — offer the panel's own corner into it |
+
+**Do not hand-assemble these from the STLs** — use the packager, which writes
+one 3MF whose parts are already registered and already on filaments 1/2/3:
+
+```sh
+python3 gen_3mf.py tests      # writes BOTH pre-flight plates, in order
+```
+
+The manual path (load `coupon_body`, **Add part → Load** the other two) still
+works, but it is one misclick from a silently wrong print: any centring or
+drop-to-bed on an added part separates the inlays from their recesses, and the
+result slices cleanly and looks fine in preview. An instruction that must be
+obeyed for the output to be right is a defect, not a doc problem — so the
+packager exists and this is the path to take. Add the filament **slots** in
+Bambu Studio first, or parts 2 and 3 have nothing to point at and read as
+missing.
+
+Read it for: black bleeding into white on the deboss floors (raise the flush
+volume), the lockup sitting flush rather than proud or sunk, where the bezel
+swap landed, and whether the panel corner drops into the pocket with the glass
+face landing where `glass_guard` says it should — **flush** at its current
+value of 0, so a fingernail dragged from rim to glass should catch no step in
+either direction.
+
+Do **not** judge bed adhesion from it — it is a slice out of a larger part, so
+its sawn edges behave nothing like the frame's continuous perimeter.
+
+### 7c‴ · The QR plaque — the one test only a phone can run
+
+Every other gate in this project is geometry, and geometry cannot tell you
+whether a printed QR **decodes**. `qr_back_cell` is 1.3 mm — about three line
+widths at a 0.42 mm extrusion — and whether that survives a real first layer,
+a real purge and a real phone camera is a question with no CAD answer. So
+print it and scan it.
+
+```sh
+python3 gen_3mf.py colour   # the QR plaque rides plate 2 with the coupon
+```
+
+It is the **back plate only** — 3 mm, not the frame's 23.5 — cut from the real
+frame at the real QR, so the deboss depth, module shape and first layer are the
+ones the case will actually print. Two filaments:
+
+| slot | gets | why |
+|---|---|---|
+| 1 | body (White) — the field | |
+| 2 | ink (Black) — the modules | dark-on-light is the **only** polarity a reader accepts |
+
+There is deliberately **no accent slot**. Yellow on a finder pattern is how you
+make a symbol that looks finished and never scans.
+
+The plaque stops exactly at the quiet zone (`qr_back_reach`) and not a
+millimetre further — that radius is what the model's asserts guarantee is clear
+of rail moats, grille slots and keyholes. A 1.5 mm "nicer border" was tried
+first and clipped an adhesive-rail moat, leaving a detached 0.8 mm hairline of
+black at the plaque edge.
+
+Read it for: **does it scan**, first, from about the distance someone would
+actually hold a phone. Then look at the module edges for black bleeding into
+the white field — the QR is where purge contamination costs you contrast rather
+than just looking untidy, and it is the first place you will see it.
+
+If it does not scan, raise `qr_back_cell` before anything else; the symbol is
+21×21, so every 0.1 mm of cell is 2.1 mm of field, and the asserts will tell
+you when it stops fitting its keepout.
 
 ### 7c′ · The three-colour case (AMS)
 
@@ -554,10 +761,10 @@ registered to each other. Moving one moves the lettering out of its own recess.
 | Band (print z) | What is there | Filaments in play |
 |---|---|---|
 | 0 – 1.2 | back skin, every deboss floor | body + ink + accent |
-| 1.2 – 23.5 | the shell — nothing but wall | body only |
-| 23.5 – 24.1 | front bezel ring + edge chamfer | ink only |
+| 1.2 – 22.9 | the shell — nothing but wall | body only |
+| 22.9 – 23.5 | front bezel ring + edge chamfer | ink only |
 
-That middle band is the whole point: it is 22.3 mm of a 24 mm part with **zero**
+That middle band is the whole point: it is 21.7 mm of a 23.5 mm part with **zero**
 tool changes, so the purge tower stays short. The bezel is the full ring rather
 than "top and bottom bands" for the same reason — the front rim is a uniform
 2 mm all the way round, so bands would not be a visible distinction, they would
