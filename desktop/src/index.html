@@ -422,8 +422,22 @@
             <span class="dot reading" id="hub-resume-dot"></span>
             <span class="resume-grow" id="hub-resume-text">Picking up where you left off — still watching for the hub you just made…</span>
             <button id="hub-resume-open" class="btn btn-small hidden">Open your hub →</button>
+            <button id="hub-resume-setup" class="btn btn-small hidden">Run self-setup again</button>
             <button id="hub-resume-dismiss" class="link-btn">Dismiss</button>
             <span id="hub-resume-count" class="fb-count hidden" role="timer"></span>
+          </div>
+
+          <!-- Standing self-setup: a hub flashed with the self-setup option can be
+               finished from here at ANY later time — a card flashed today and first
+               booted next weekend falls outside the resume window, and its bundle
+               still deserves a one-click run. Hidden unless this computer holds a
+               maintenance key. -->
+          <div id="hub-standing" class="resume-banner hidden">
+            <span class="resume-grow" id="hub-standing-text">Flashed a self-setup card before?
+              Power that hub on, then finish its setup from here — no monitor needed.</span>
+            <input id="hub-standing-host" class="confirm-input" autocomplete="off" spellcheck="false"
+                   placeholder="homeassistant.local" aria-label="Hub address — an IP works too">
+            <button id="hub-standing-run" class="btn btn-small">Finish hub setup</button>
           </div>
 
           <section class="card" id="hub-step-what">
@@ -506,6 +520,21 @@
               </div>
               <p id="hub-acct-hint" class="muted"></p>
             </details>
+
+            <details id="hub-provision-panel" class="hint">
+              <summary>Let this app finish hub setup by itself — broker, MQTT, securaCV
+                <span class="chip-badge">experimental</span></summary>
+              <p class="muted">The card also carries the securaCV <strong>self-setup bundle</strong> and a
+                <strong>maintenance key</strong> made on this computer. Once the hub is online, this app
+                connects to it over your network and installs everything — the Mosquitto broker, the MQTT
+                connection, Frigate, and the securaCV witness kernel — narrating why at every step. The Pi
+                never needs a monitor or keyboard; this screen is the screen.</p>
+              <p class="muted">The key's private half stays in this app's data folder and never leaves this
+                computer. To revoke it later, delete <span class="mono">authorized_keys</span> from the
+                card's boot partition (or re-flash without this option).</p>
+              <label class="check"><input type="checkbox" id="hub-provision"> Put the self-setup bundle and maintenance key on the card</label>
+              <p id="hub-provision-hint" class="muted"></p>
+            </details>
           </section>
 
           <section class="card disabled" id="hub-step-write">
@@ -555,6 +584,9 @@
                 <div id="hub-fb-qr" class="fb-qr hidden" role="img" aria-label="QR code linking to your hub"></div>
                 <div class="row">
                   <button id="hub-fb-open" class="btn btn-primary hidden">Open your hub →</button>
+                  <input id="hub-fb-host" class="confirm-input hidden" autocomplete="off" spellcheck="false"
+                         placeholder="hub address — an IP works" aria-label="Hub address">
+                  <button id="hub-fb-setup" class="btn btn-small hidden">Run self-setup again</button>
                   <button id="hub-fb-stop" class="link-btn">Stop watching</button>
                 </div>
               </div>

@@ -90,6 +90,19 @@ Put the card in the Pi, connect power (and ethernet if you're not using Wi-Fi).
 The hub needs an MQTT broker, then the securaCV kernel that turns detections into
 signed claims.
 
+> **The no-hands path (experimental):** if you ticked **"Let this app finish hub
+> setup by itself"** when flashing, skip this whole step — keep the Flasher open
+> and it does it for you. The card carries the self-setup bundle and a
+> maintenance key; the moment the hub answers, the Flasher connects to the hub's
+> service console over your network and installs the broker, the MQTT
+> connection, Frigate, and securaCV, narrating every step in its console. The
+> Pi never needs a monitor — the Flasher's screen is the screen. If a run stops
+> partway it's safe to press "Run self-setup again": it never repeats a
+> finished step. (Manual fallback from that same console:
+> `sh /mnt/boot/CONFIG/securacv/host_provision.sh`.)
+
+By hand, it's two installs:
+
 1. **Mosquitto** — Settings → Add-ons → Add-on Store → **Mosquitto broker** →
    Install → Start.
 2. **securaCV** — add this repo as an add-on repository
@@ -216,14 +229,19 @@ This page is **living** — kept honest as the stack is exercised on real hardwa
 |---|---|
 | 1. Flash the hub | ✅ write + read-back verify proven on macOS (Pi 5, 64 GB card); the rdisk cache-sync fix is required |
 | 2. First boot | ⏳ Wi-Fi seed acceptance on real HAOS not yet confirmed end to end |
-| 3. Broker + securaCV | ⏳ documented from the shipped add-ons; not yet re-walked on a fresh flash |
-| 4a. Frigate on the hub | ⏳ curated config committed **and** an executor that installs it via the Supervisor API (`hub_seed_apply.py`, host-tested, idempotent); unattended *first boot* still needs the seed assembler to invoke it |
+| 3. Broker + securaCV | ⏳ documented from the shipped add-ons; not yet re-walked on a fresh flash. The Flasher's **self-setup** option now automates this step (see below) — same validation caveat |
+| 4a. Frigate on the hub | ⏳ curated config committed **and** an executor that installs it via the Supervisor API (`hub_seed_apply.py`, host-tested, idempotent); the Flasher's first-boot companion now invokes it unattended |
 | 4b. Jetson detector | ⏳ scaffold follows Frigate's official Jetson guidance; unvalidated on an Orin |
 | 5. Canaries | ✅ shipping path, covered by its own guide |
 
 The **one-flash dream** — Frigate + Mosquitto + securaCV all pre-installed so
-first boot is already wired — needs the *seed assembler* (carrying a curated
-backup onto the card). Two of its three pieces now exist: the configs it will
-carry are committed, and [`hub_seed_apply.py`](../canary-local/tools/hub_seed_apply.py)
-can install the whole stack unattended via the Supervisor API. What's left is the
-assembler that runs it at first boot, and hardware validation on a real Pi.
+first boot is already wired — now has all three pieces built: the curated
+configs are committed, [`hub_seed_apply.py`](../canary-local/tools/hub_seed_apply.py)
+installs the whole stack unattended via the Supervisor API, and the Flasher
+seeds the bundle onto the card and **runs it itself** once the hub answers —
+over the HAOS developer console (port 22222), unlocked by a maintenance key
+seeded at flash time, so the hub never needs a monitor. What's left is honest:
+hardware validation on a real Pi — the Wi-Fi seed, the key import, and a full
+companion-driven install have not yet been watched end-to-end on a fresh flash,
+which is why the option is labeled experimental and this guide keeps the
+by-hand path.

@@ -16,14 +16,22 @@ pub fn backup_filename(chip: &str, mac: &str, stamp: &str) -> String {
     let safe = |s: &str| -> String {
         let out: String = s
             .chars()
-            .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' { c } else { '-' })
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+                    c
+                } else {
+                    '-'
+                }
+            })
             .collect();
         // collapse runs of '-' and trim them, so "AA::BB" -> "AA-BB", not "AA--BB"
         let mut collapsed = String::with_capacity(out.len());
         let mut prev_dash = false;
         for c in out.chars() {
             if c == '-' {
-                if !prev_dash { collapsed.push(c); }
+                if !prev_dash {
+                    collapsed.push(c);
+                }
                 prev_dash = true;
             } else {
                 collapsed.push(c);
@@ -47,7 +55,10 @@ pub fn backup_filename(chip: &str, mac: &str, stamp: &str) -> String {
 ///   * smaller than the chip     -> `Ok(Some(warning))` (written from 0x0, tail left)
 ///   * exactly the flash size,
 ///     or size unknown           -> `Ok(None)`
-pub fn validate_restore_image(byte_len: u64, flash_bytes: Option<u64>) -> Result<Option<String>, String> {
+pub fn validate_restore_image(
+    byte_len: u64,
+    flash_bytes: Option<u64>,
+) -> Result<Option<String>, String> {
     if byte_len == 0 {
         return Err("that file is empty — there's nothing to write".into());
     }
@@ -74,7 +85,9 @@ pub fn validate_restore_image(byte_len: u64, flash_bytes: Option<u64>) -> Result
 /// itself uses — so a restore/local flash can say what it's about to write.
 pub fn image_first_bytes_hint(bytes: &[u8]) -> Option<&'static str> {
     if bytes.first() == Some(&0xE9) {
-        return Some("an ESP32 firmware image — 0xE9 is the chip's own \"program starts here\" marker");
+        return Some(
+            "an ESP32 firmware image — 0xE9 is the chip's own \"program starts here\" marker",
+        );
     }
     if bytes.len() >= 2 && u16le(bytes, 0) == 0xAA50 {
         return Some("partition-table entries (magic 0xAA50) — the board's map of itself");
@@ -92,8 +105,14 @@ pub fn image_first_bytes_hint(bytes: &[u8]) -> Option<&'static str> {
 /// `read-flash 0x0 <size> <out> --port <port> --baud <baud>` — a full-chip backup.
 pub fn read_flash_args(port: &str, size: u64, out: &str, baud: u32) -> Vec<String> {
     vec![
-        "read-flash".into(), "0x0".into(), size.to_string(), out.into(),
-        "--port".into(), port.into(), "--baud".into(), baud.to_string(),
+        "read-flash".into(),
+        "0x0".into(),
+        size.to_string(),
+        out.into(),
+        "--port".into(),
+        port.into(),
+        "--baud".into(),
+        baud.to_string(),
     ]
 }
 
@@ -102,8 +121,14 @@ pub fn read_flash_args(port: &str, size: u64, out: &str, baud: u32) -> Vec<Strin
 /// coredump, and NVS this way, each to a temp file it reads back).
 pub fn read_region_args(port: &str, offset: u32, size: u32, out: &str, baud: u32) -> Vec<String> {
     vec![
-        "read-flash".into(), format!("0x{offset:x}"), size.to_string(), out.into(),
-        "--port".into(), port.into(), "--baud".into(), baud.to_string(),
+        "read-flash".into(),
+        format!("0x{offset:x}"),
+        size.to_string(),
+        out.into(),
+        "--port".into(),
+        port.into(),
+        "--baud".into(),
+        baud.to_string(),
     ]
 }
 
@@ -112,8 +137,13 @@ pub fn read_region_args(port: &str, offset: u32, size: u32, out: &str, baud: u32
 /// exactly where a factory image would.
 pub fn write_bin_args(port: &str, path: &str, baud: u32) -> Vec<String> {
     vec![
-        "write-bin".into(), "0x0".into(), path.into(),
-        "--port".into(), port.into(), "--baud".into(), baud.to_string(),
+        "write-bin".into(),
+        "0x0".into(),
+        path.into(),
+        "--port".into(),
+        port.into(),
+        "--baud".into(),
+        baud.to_string(),
     ]
 }
 
@@ -131,7 +161,9 @@ pub fn erase_flash_args(port: &str) -> Vec<String> {
 pub fn parse_flash_size(board_info: &str) -> Option<u64> {
     for line in board_info.lines() {
         let lower = line.trim().to_ascii_lowercase();
-        let Some(rest) = lower.strip_prefix("flash size:") else { continue };
+        let Some(rest) = lower.strip_prefix("flash size:") else {
+            continue;
+        };
         let rest = rest.trim();
         let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
         if digits.is_empty() {
@@ -217,16 +249,27 @@ mod tests {
     fn validate_restore_matches_the_browser_contract() {
         assert!(validate_restore_image(0, Some(0x400000)).is_err()); // empty
         assert!(validate_restore_image(0x500000, Some(0x400000)).is_err()); // too big
-        assert_eq!(validate_restore_image(0x400000, Some(0x400000)).unwrap(), None); // exact
-        assert!(validate_restore_image(0x100000, Some(0x400000)).unwrap().is_some()); // smaller -> warn
+        assert_eq!(
+            validate_restore_image(0x400000, Some(0x400000)).unwrap(),
+            None
+        ); // exact
+        assert!(validate_restore_image(0x100000, Some(0x400000))
+            .unwrap()
+            .is_some()); // smaller -> warn
         assert_eq!(validate_restore_image(0x1234, None).unwrap(), None); // size unknown -> allowed
     }
 
     #[test]
     fn image_hint_reads_the_chip_magic() {
-        assert!(image_first_bytes_hint(&[0xE9, 0, 0]).unwrap().contains("firmware"));
-        assert!(image_first_bytes_hint(&[0x50, 0xAA]).unwrap().contains("partition"));
-        assert!(image_first_bytes_hint(&[0x32, 0x54, 0xCD, 0xAB]).unwrap().contains("description"));
+        assert!(image_first_bytes_hint(&[0xE9, 0, 0])
+            .unwrap()
+            .contains("firmware"));
+        assert!(image_first_bytes_hint(&[0x50, 0xAA])
+            .unwrap()
+            .contains("partition"));
+        assert!(image_first_bytes_hint(&[0x32, 0x54, 0xCD, 0xAB])
+            .unwrap()
+            .contains("description"));
         assert_eq!(image_first_bytes_hint(&[0x00, 0x01]), None);
         assert_eq!(image_first_bytes_hint(&[]), None);
     }
@@ -245,16 +288,45 @@ mod tests {
     fn espflash_args_mirror_the_flash_command() {
         assert_eq!(
             read_flash_args("/dev/tty.usb", 0x400000, "/tmp/b.bin", 921600),
-            vec!["read-flash", "0x0", "4194304", "/tmp/b.bin", "--port", "/dev/tty.usb", "--baud", "921600"]
+            vec![
+                "read-flash",
+                "0x0",
+                "4194304",
+                "/tmp/b.bin",
+                "--port",
+                "/dev/tty.usb",
+                "--baud",
+                "921600"
+            ]
         );
         assert_eq!(
             write_bin_args("/dev/tty.usb", "/tmp/b.bin", 921600),
-            vec!["write-bin", "0x0", "/tmp/b.bin", "--port", "/dev/tty.usb", "--baud", "921600"]
+            vec![
+                "write-bin",
+                "0x0",
+                "/tmp/b.bin",
+                "--port",
+                "/dev/tty.usb",
+                "--baud",
+                "921600"
+            ]
         );
-        assert_eq!(erase_flash_args("/dev/tty.usb"), vec!["erase-flash", "--port", "/dev/tty.usb"]);
+        assert_eq!(
+            erase_flash_args("/dev/tty.usb"),
+            vec!["erase-flash", "--port", "/dev/tty.usb"]
+        );
         assert_eq!(
             read_region_args("/dev/tty.usb", 0x8000, 0xc00, "/tmp/pt.bin", 115200),
-            vec!["read-flash", "0x8000", "3072", "/tmp/pt.bin", "--port", "/dev/tty.usb", "--baud", "115200"]
+            vec![
+                "read-flash",
+                "0x8000",
+                "3072",
+                "/tmp/pt.bin",
+                "--port",
+                "/dev/tty.usb",
+                "--baud",
+                "115200"
+            ]
         );
     }
 

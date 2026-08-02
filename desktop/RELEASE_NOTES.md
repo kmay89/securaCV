@@ -17,6 +17,32 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.3.9 — 2026-08-01
+
+- **The hub can now set itself up — no monitor, ever.** A new opt-in on Build a
+  Hub, "Let this app finish hub setup by itself," puts two more things on the
+  card next to your Wi-Fi: the securaCV **self-setup bundle** (the same narrated,
+  never-does-a-step-twice installer the guide documents) and a **maintenance
+  key** minted on your computer. After first boot, the app's own "watching for
+  your hub" step doesn't stop at "It's alive!" — it connects to the hub's
+  service console over your network and installs the whole stack itself: the
+  Mosquitto broker, the MQTT connection Home Assistant needs to actually *use*
+  the broker, Frigate, and the securaCV witness kernel, each step narrated in
+  the console so you can watch your house being configured and know why.
+  Experimental until it's been proven on a real first boot — everything is
+  verified up to the card (the bundle rides the same read-back verification as
+  the Wi-Fi), and the fallback is exactly the by-hand setup the guide already
+  walks; a stumble is a note, never a failed flash.
+- **Quit mid-first-boot and nothing is lost.** The resume banner now remembers
+  when a hub still needs its self-setup run, and picks it up the moment the hub
+  answers — with a "Run self-setup again" button if a run stops partway (safe:
+  it never repeats a finished step).
+- **Honest about the key.** The maintenance key's private half stays in the
+  app's data folder and never leaves your computer; only the public half goes
+  on the card, and deleting `authorized_keys` from the card's boot partition
+  revokes it. The app heals exactly one SSH surprise on its own — a re-flashed
+  hub having a new identity — and says so when it does.
+
 ## 0.3.8 — 2026-07-31
 
 - **Force quitting the Flasher can no longer stop it from opening again.** If

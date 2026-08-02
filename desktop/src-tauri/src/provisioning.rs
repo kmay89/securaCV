@@ -225,10 +225,8 @@ impl NvsWriter {
         let offset = Self::item_offset(index);
         // chunk index byte (header() writes 0xff): VER_0 chunk 0
         self.page[offset + 3] = 0;
-        self.page[offset + 24..offset + 26]
-            .copy_from_slice(&(bytes.len() as u16).to_le_bytes());
-        self.page[offset + 28..offset + 32]
-            .copy_from_slice(&crc32_esp_rom(bytes).to_le_bytes());
+        self.page[offset + 24..offset + 26].copy_from_slice(&(bytes.len() as u16).to_le_bytes());
+        self.page[offset + 28..offset + 32].copy_from_slice(&crc32_esp_rom(bytes).to_le_bytes());
         self.page[offset + 32..offset + 32 + bytes.len()].copy_from_slice(bytes);
         self.finish_item(index);
         for payload_index in 1..=payload_entries {
@@ -239,8 +237,7 @@ impl NvsWriter {
         let index = self.next;
         self.header(index, 1, 0x48, 1, key);
         let offset = Self::item_offset(index);
-        self.page[offset + 24..offset + 28]
-            .copy_from_slice(&(bytes.len() as u32).to_le_bytes());
+        self.page[offset + 24..offset + 28].copy_from_slice(&(bytes.len() as u32).to_le_bytes());
         self.page[offset + 28] = 1; // chunkCount
         self.page[offset + 29] = 0; // chunkStart (VER_0)
         self.finish_item(index);
@@ -349,7 +346,10 @@ mod tests {
         assert!(has_item(0x42, "wifi_ssid") && has_item(0x48, "wifi_ssid"));
         assert!(has_item(0x42, "wifi_pass") && has_item(0x48, "wifi_pass"));
         assert!(has_item(0x01, "wifi_en"));
-        assert!(!has_item(0x21, "wifi_ssid"), "no string twin beside the blob");
+        assert!(
+            !has_item(0x21, "wifi_ssid"),
+            "no string twin beside the blob"
+        );
         assert!(!has_item(0x21, "dev_id") && !has_item(0x21, "mqtt_host"));
     }
 

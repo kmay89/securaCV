@@ -16,10 +16,12 @@
 //! which is what makes reproducing it safe.
 //!
 //! Honest scope (docs/design/raspberry_pi_hub_flashing.md): this is the WRITE
-//! side — getting the bundle onto `CONFIG/`. Whether HAOS auto-RUNS it at first
-//! boot is the on-hardware-pinned hook; until then the bundle is a one-command
-//! step, and a bundle HAOS doesn't recognise is simply ignored — never a broken
-//! boot.
+//! side — getting the bundle onto `CONFIG/`. HAOS has no supported hook to
+//! auto-RUN it at boot; what runs it headless is the flasher's first-boot
+//! companion, over the developer console (port 22222) that the maintenance key
+//! seeded next to this bundle unlocks — `sh host_provision.sh`, which borrows
+//! python3 and the Supervisor token from the running stack. A bundle nothing
+//! runs is simply ignored by HAOS — never a broken boot.
 
 use crate::account::SeedFile;
 
@@ -35,6 +37,7 @@ pub const PROVISION_ROOT: &str = "securacv";
 const PLAN: &str = include_str!("../../../canary-local/devices/hub_seed.json");
 const FRIGATE_CONFIG: &str = include_str!("../../../homeassistant/frigate/config.yaml");
 const EXECUTOR: &str = include_str!("../../../canary-local/tools/hub_seed_apply.py");
+const HOST_RUNNER: &str = include_str!("../../../canary-local/tools/hub_host_provision.sh");
 const MANIFEST: &str = include_str!("../../../canary-local/devices/hub_provision_bundle.json");
 
 /// The one-line runner, reproduced byte-for-byte from the generator's
@@ -78,6 +81,7 @@ pub fn provision_seed_files() -> Vec<SeedFile> {
         ),
         f("hub_seed_apply.py", EXECUTOR.to_string()),
         f("provision.sh", provision_runner()),
+        f("host_provision.sh", HOST_RUNNER.to_string()),
         f("MANIFEST.json", MANIFEST.to_string()),
     ]
 }
@@ -113,6 +117,7 @@ mod tests {
         let mut want = vec![
             "securacv/MANIFEST.json",
             "securacv/homeassistant/frigate/config.yaml",
+            "securacv/host_provision.sh",
             "securacv/hub_seed.json",
             "securacv/hub_seed_apply.py",
             "securacv/provision.sh",
@@ -145,6 +150,7 @@ mod tests {
                 "homeassistant/frigate/config.yaml" => Some(FRIGATE_CONFIG.to_string()),
                 "hub_seed_apply.py" => Some(EXECUTOR.to_string()),
                 "provision.sh" => Some(provision_runner()),
+                "host_provision.sh" => Some(HOST_RUNNER.to_string()),
                 other => panic!("unexpected pinned file {other} — teach this test about it"),
             }
         };
@@ -165,8 +171,8 @@ mod tests {
             }
         }
         assert_eq!(
-            checked, 4,
-            "expected to cross-check plan, config, executor, runner"
+            checked, 5,
+            "expected to cross-check plan, config, executor, runner, host runner"
         );
     }
 
@@ -179,9 +185,9 @@ mod tests {
         let img = dir.path().join("haos.img");
         crate::seed::tests::fake_image(&img);
 
-        let report = inject_into_image(&img, None, &provision_seed_files(), |_| {})
+        let report = inject_into_image(&img, None, &[], &provision_seed_files(), None, |_| {})
             .expect("the bundle goes into the image");
-        assert!(report.account_written);
+        assert!(report.provision_written);
 
         let mut bytes = std::fs::read(&img).unwrap();
         let len = bytes.len() as u64;

@@ -8,6 +8,12 @@
     "runs": "python3 hub_seed_apply.py --plan hub_seed.json --assets-root .",
     "dry_run": "sh provision.sh --dry-run"
   },
+  "host_runner": {
+    "file": "host_provision.sh",
+    "context": "The HAOS developer console (SSH, port 22222) \u2014 the one shell a fresh headless hub exposes. Borrows python3 + SUPERVISOR_TOKEN from the running Core container, so it needs no add-on installed first.",
+    "runs": "sh /mnt/boot/CONFIG/securacv/host_provision.sh",
+    "dry_run": "sh /mnt/boot/CONFIG/securacv/host_provision.sh --dry-run"
+  },
   "files": [
     {
       "role": "plan",
@@ -31,6 +37,13 @@
       "sha256": "959f6fd4dcf227c1ce2eb6e43ca5c6cd45a925d3b604266aee7c39cf7f7c4cb7"
     },
     {
+      "role": "host-runner",
+      "source": "canary-local/tools/hub_host_provision.sh",
+      "bundle_path": "host_provision.sh",
+      "card_path": "CONFIG/securacv/host_provision.sh",
+      "sha256": "d529b5b6bbd58a10e65c5fa823b22b3fc274dd6483ff5a98733ea5c100567b7a"
+    },
+    {
       "role": "runner",
       "generated": true,
       "bundle_path": "provision.sh",
@@ -40,12 +53,12 @@
   ],
   "first_boot": {
     "status": "planned",
-    "what_works_today": "From the Advanced SSH & Web Terminal add-on (python3 + SUPERVISOR_TOKEN present): copy this bundle and run `sh provision.sh` \u2014 `--dry-run` first to preview.",
+    "what_works_today": "Headless, from another screen: the flasher's first-boot companion connects to the HAOS developer console (port 22222, unlocked by the maintenance key the flasher seeds next to this bundle) and runs `sh /mnt/boot/CONFIG/securacv/host_provision.sh` once the hub answers \u2014 the hub itself never needs a monitor. The same command works by hand from that console, and `sh provision.sh` still works from the Advanced SSH & Web Terminal add-on (python3 + SUPERVISOR_TOKEN present). `--dry-run` previews either path.",
     "candidate_hooks": [
       "A curated HA package/automation seeded into CONFIG/ that shells out to the runner on first HA start (HA Core can reach http://supervisor with its own token).",
       "A first-boot provisioner add-on the flasher pre-registers, which runs the bundle."
     ],
-    "note": "HAOS ignores boot-partition files it doesn't recognise, so a bundle that isn't auto-run is harmless \u2014 worst case is a normal onboarding, never a broken boot. The write side is hub_io::seed (the CONFIG/ tree, already used for Wi-Fi); which hook actually auto-runs the bundle is what on-hardware validation pins."
+    "note": "HAOS ignores boot-partition files it doesn't recognise, so a bundle that isn't auto-run is harmless \u2014 worst case is a normal onboarding, never a broken boot. The write side is hub_io::seed (the CONFIG/ tree, already used for Wi-Fi). True zero-touch (the hub running the bundle with no companion at all) stays `planned` until a supported HAOS boot hook is pinned on hardware; the companion-over-SSH path is the honest interim, and it too needs its first real-hardware run."
   },
   "meta": {
     "design": "docs/design/raspberry_pi_hub_flashing.md",
@@ -54,7 +67,8 @@
     "sources": [
       "canary-local/devices/hub_seed.json",
       "homeassistant/frigate/config.yaml",
-      "canary-local/tools/hub_seed_apply.py"
+      "canary-local/tools/hub_seed_apply.py",
+      "canary-local/tools/hub_host_provision.sh"
     ]
   }
 }
