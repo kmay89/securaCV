@@ -140,6 +140,16 @@ def render(part: str, out: Path) -> Path:
     which is the one feature whose whole job is to make that detectable.
     Same doctrine as the website's committed .glb files: a generator you can
     run without regenerating is a generator that lies.
+
+    DO NOT "improve" this into a byte comparison of the STL. OpenSCAD's CGAL
+    export does not emit triangles in a stable ORDER between runs: re-rendering
+    an unchanged part produces a file that differs from the first byte of the
+    second triangle onward while describing the identical solid — same triangle
+    count, same volume to four decimals, same bounding box, same set of
+    triangles. Measured, not assumed: a `cmp` against a known-good part
+    reported "differs" and the shapes were equal. A byte check here would
+    declare every cached part stale forever and re-render the whole plate on
+    every run. Compare mtimes, or compare geometry — never bytes.
     """
     if out.exists() and out.stat().st_mtime >= _sources_mtime():
         return out
