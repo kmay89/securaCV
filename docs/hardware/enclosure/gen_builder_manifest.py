@@ -321,7 +321,8 @@ CURATED = [
                    "the fleet's cases, as labelled test stations — print "
                    "this first, tune the three tolerances, reuse everywhere.",
         "about": "Every fit the fleet's cases use, gathered on one branded "
-                 "test plate: the WAP's two-sided snap-clip channel, "
+                 "test plate: the bird mark embossed solid, "
+                 "the WAP's two-sided snap-clip channel, "
                  "click-retained keyholes, magnet and light-pipe "
                  "pockets, insert bores, the lid lip, the USB-C port "
                  "opening, a −/0/+ screw-pilot ladder, and the embossed/"
@@ -360,6 +361,7 @@ CURATED = [
             "part": "Part to print", "tol_slide": "Sliding fits",
             "tol_press": "Press fits", "tol_hole": "Screw holes",
             "kh_click": "Keyhole click",
+            "glyph_h": "Bird glyph height",
         },
         "hints": {
             "tol_slide": "Parts that slide or snap: lid lips, board clips, "
@@ -371,10 +373,13 @@ CURATED = [
             "kh_click": "The keyhole retention bump. Mate won't slide past "
                         "it → smaller number; slides back off too easily → "
                         "bigger. 0 removes the click.",
+            "glyph_h": "How tall the embossed bird prints. Its thinnest "
+                       "tapers are ~0.32 mm at the default 9 mm — raise it "
+                       "if the wing and tail round off too far. 0 removes it.",
         },
         "choices": {},
         "units": {"tol_slide": "mm", "tol_press": "mm", "tol_hole": "mm",
-                  "kh_click": "mm"},
+                  "kh_click": "mm", "glyph_h": "mm"},
     },
 ]
 
