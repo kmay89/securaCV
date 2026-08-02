@@ -117,6 +117,13 @@ static constexpr const char* EMERGENCY_CONTACT = CD_EMERGENCY_CONTACT;
 #ifndef CD_BRIGHT_PEEK
 #define CD_BRIGHT_PEEK 28
 #endif
+// Backlight level while the LANTERN is lit (care/lantern.h). The lamp's
+// colour and depth are DRAWN — this only has to keep the panel awake, so the
+// dim warm floor is the right default on a PWM board and any nonzero value
+// is simply "on" where the backlight is binary (the 7" CH422G line).
+#ifndef CD_BRIGHT_LANTERN
+#define CD_BRIGHT_LANTERN CD_BRIGHT_PEEK
+#endif
 
 // -------------------- WiFi robustness / power --------------------
 // STA supervision (S3-tree parity): non-blocking reconnect with exponential

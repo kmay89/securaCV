@@ -42,6 +42,22 @@ uint32_t millis(void);
 void delay(uint32_t ms);
 uint32_t micros(void);
 
+// ── GPIO: the BOOT/user button, and nothing else ────────────────────────
+// The display firmware reads exactly one digital input (io/boot_button.h:
+// tap = peek, double = lantern, hold = acknowledge). A browser has no
+// button, so JS pushes the level in through emu_button(), the same way
+// pointer events push touch — and digitalRead idles HIGH (released),
+// since BOOT_BUTTON_ACTIVE is LOW on every board that carries one.
+#define LOW           0x0
+#define HIGH          0x1
+#define INPUT         0x01
+#define OUTPUT        0x03
+#define INPUT_PULLUP  0x05
+void pinMode(uint8_t pin, uint8_t mode);
+int  digitalRead(uint8_t pin);
+void digitalWrite(uint8_t pin, uint8_t value);
+void emu_button(int down);
+
 // ── LEDC (backlight PWM + chime tone), core-2.x channel spelling ────────
 void ledcSetup(uint8_t channel, uint32_t freq_hz, uint8_t resolution_bits);
 void ledcAttachPin(uint8_t pin, uint8_t channel);

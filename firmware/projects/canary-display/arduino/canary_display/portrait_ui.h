@@ -10,8 +10,17 @@
 // same signal — the glass is the detail-on-approach half.
 //
 // No touch panel on the 1.47" boards, so there is no page model — one
-// standing face that breathes. Input (BOOT button peek / summon-nightlight)
-// is a follow-up; today the face renders, animates, and nothing else.
+// standing face that breathes. The BOOT button (io/boot_button.h) is the
+// whole input surface there: tap = peek, double = the lantern, hold =
+// acknowledge. The Touch-1.69 sibling adds a real touch panel and uses the
+// same grammar through main.cpp's tap routing.
+//
+// The LANTERN (care/lantern.h) is drawn here as a full-glass overlay: these
+// small displays live in hallways and on nightstands, so the screen itself
+// is the night light. It stays honest — user-summoned, timed out, and the
+// instant anything reaches Warn the overlay yields the glass back to the
+// state it must show. The WS2812 beacon is never part of the lamp: that
+// channel stays a pure attention signal (display_nightstand_line.md §4).
 
 namespace canary::ui {
 
@@ -42,5 +51,9 @@ void portrait_ui_update(const canary::fleet::Fleet& fleet, uint32_t now,
 // interface so the BOOT-button acknowledge can light the same affordance
 // when it lands.
 void portrait_ui_ack_hold(bool active);
+
+// Ambient-life moment (care/ambient_life.h): brighten the glance line for a
+// few seconds so the check-in is visible, then let it settle back.
+void portrait_ui_life_glance(uint32_t now);
 
 }  // namespace canary::ui

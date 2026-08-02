@@ -82,6 +82,15 @@ RTC_SRC = test_rtc_pcf.cpp
 RTC85063_BIN = test_rtc_pcf85063
 RTC85063_SRC = test_rtc_pcf85063.cpp
 
+# Bedside models (canary/care/lantern.h, canary/care/ambient_life.h,
+# canary/io/boot_button.h): the Nightstand 7 wave's pure logic — the honest
+# night light (window timeout, the attention veto that takes the glass back
+# and does NOT resume, the opt-in auto schedule), the rationed organic
+# check-ins (cadence bounds, the idle/lit gate, per-device determinism), and
+# the BOOT-button short/double/long grammar.
+BEDSIDE_BIN = test_bedside_models
+BEDSIDE_SRC = test_bedside_models.cpp
+
 .PHONY: all run clean
 all: run
 
@@ -118,7 +127,10 @@ $(RTC_BIN): $(RTC_SRC)
 $(RTC85063_BIN): $(RTC85063_SRC)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(RTC85063_SRC)
 
-run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN)
+$(BEDSIDE_BIN): $(BEDSIDE_SRC)
+	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(BEDSIDE_SRC)
+
+run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN)
 	./$(BEACON_PARSE_BIN)
 	./$(MODEL_BIN)
 	./$(CARDS_BIN)
@@ -130,6 +142,7 @@ run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARC
 	./$(CLEAR_BIN)
 	./$(RTC_BIN)
 	./$(RTC85063_BIN)
+	./$(BEDSIDE_BIN)
 
 clean:
-	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN)
+	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN)

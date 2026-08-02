@@ -177,6 +177,17 @@ jobs:
             bfit $b bat_probe_seat solid "the rails never touch the pack — nothing carries it" || exit 1
             bfit $b bat_probe_grip solid "the fingers never reach the pack — nothing retains it" || exit 1
           done
+          # ...and the DOCK, for every build. These run here rather than through
+          # the fitcheck because -D does not cross a use<> boundary: a dock check
+          # driven from the fitcheck can only ever test the no-battery case, which
+          # is exactly how a deeper case drifted off the dock's centring keys
+          # unnoticed. none is included so the stock build is covered too.
+          for b in none 3000 10000; do
+            bfit $b dock_probe_fit  empty || exit 1   # seated case must not collide
+            bfit $b dock_probe_seat solid "the dock's pads never touch the seated case — nothing carries it" || exit 1
+            bfit $b dock_probe_p    empty || exit 1   # portrait, turned one way
+            bfit $b dock_probe_p2   empty || exit 1   # ...and the other
+          done
 
       - name: Invalid configs must fail their assertions
         run: |

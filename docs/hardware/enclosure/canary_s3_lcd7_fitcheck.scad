@@ -138,15 +138,10 @@ module glass_slab(t, dz = 0) {
 ST = lcd7_stand_stack();
 st_ang = ST[0]; st_ys = ST[1]; st_zf = ST[2]; st_fd = ST[3]; st_fy = ST[4]; st_fx = ST[5];
 st_drop = ST[6];   // portrait seats this far below the pad plane, on the ribs
-module docked_frame(seat = 0, portrait = 0) {   // portrait: ±1 = which way it turned
-    fy = portrait == 0 ? st_fy : st_fx;
-    dn = seat + (portrait == 0 ? 0 : st_drop);   // rib drop is part of the pose
-    yq = -(fy/2)*sin(st_ang) + (st_fd/2)*cos(st_ang);
-    zq = -(fy/2)*cos(st_ang) - (st_fd/2)*sin(st_ang);
-    translate([0, st_ys - yq - dn*sin(st_ang), st_zf - zq - dn*cos(st_ang)])
-        rotate([270 - st_ang, 0, 0]) rotate([0, 0, 180])
-            rotate([0, 0, 90*portrait]) frame();
-}
+// Delegates to the source's lcd7_docked() — the pose lives THERE so that
+// battery variants can be gated with -D (see the dock_probe_* parts). Kept as
+// a thin wrapper because every stand check below reads this name.
+module docked_frame(seat = 0, portrait = 0) lcd7_docked(seat, portrait);
 
 if (check == "tray")
     intersection() { assembled_bezel(); back(); }

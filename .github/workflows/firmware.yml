@@ -116,11 +116,13 @@ jobs:
     # stopwatch. Every other flavor finishes in 2-5 minutes.
     #
     # The asymmetry is not a slow toolchain, it is arithmetic: canary-display
-    # builds 17 environments in this one job (dash and its nine feature
-    # variants, dash7, watch, watch-modes, two nightstands, touch169,
-    # playground); canary-wap and canary-sense build 2, canary-vision 3.
+    # builds 18 environments in this one job (dash and its nine feature
+    # variants, dash7, nightstand7, watch, watch-modes, two nightstands,
+    # touch169, playground); canary-wap and canary-sense build 2,
+    # canary-vision 3. The 18th (nightstand7) shares dash7's core-3 platform,
+    # so it costs a compile, not another toolchain download.
     #
-    # The RIGHT fix is to shard those 17 across parallel jobs — it would cut
+    # The RIGHT fix is to shard those 18 across parallel jobs — it would cut
     # wall-clock enormously AND tell you WHICH environment broke instead of
     # "display failed". That changes job names, which can break required-status
     # checks configured on main, so it is deliberately left as a separate,
