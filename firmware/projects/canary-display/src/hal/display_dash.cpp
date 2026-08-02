@@ -16,11 +16,19 @@
 
 #include "pins.h"
 #include "canary/hal/display.h"
+#include "canary/glass_settings.h"   // rotation_map_touch
 #include "canary/log.h"
 
 namespace canary::hal {
 
 namespace {
+
+// Active display rotation (canary::glass::Rotation) + native panel size, set
+// by lvgl_port_set_rotation. Landscape identity by default, so touch reads
+// exactly as it always did until a user turns the glass.
+uint8_t s_touch_rot = 0;
+int16_t s_native_w = LCD_WIDTH;
+int16_t s_native_h = LCD_HEIGHT;
 
 Arduino_ESP32RGBPanel* s_rgbpanel = nullptr;
 Arduino_RGB_Display* s_display = nullptr;
@@ -220,6 +228,12 @@ bool expander_od_set(uint8_t mask, bool sink) {
 uint8_t expander_od_state() { return s_oc_state; }
 #endif  // HAS_ISOLATED_IO
 
+void touch_set_rotation(uint8_t rot, int16_t native_w, int16_t native_h) {
+  s_touch_rot = rot & 3;
+  s_native_w = native_w;
+  s_native_h = native_h;
+}
+
 TouchSample touch_read() {
   TouchSample s;
   if (!s_gt911_addr) return s;
@@ -231,8 +245,15 @@ TouchSample touch_read() {
     uint8_t p[4];
     if (gt911_read(GT911_REG_POINT1, p, 4)) {
       s.touched = true;
-      s.x = (int16_t)(p[0] | (p[1] << 8));
-      s.y = (int16_t)(p[2] | (p[3] << 8));
+      const int16_t raw_x = (int16_t)(p[0] | (p[1] << 8));
+      const int16_t raw_y = (int16_t)(p[2] | (p[3] << 8));
+      // Un-rotate into the logical frame the UI drew in. Identity in
+      // landscape, so this is free until the glass is turned.
+      int lx = raw_x, ly = raw_y;
+      canary::glass::rotation_map_touch(s_touch_rot, s_native_w, s_native_h,
+                                        raw_x, raw_y, &lx, &ly);
+      s.x = (int16_t)lx;
+      s.y = (int16_t)ly;
     }
   }
   gt911_write_u8(GT911_REG_STATUS, 0);     // ack the frame

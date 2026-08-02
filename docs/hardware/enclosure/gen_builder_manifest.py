@@ -321,7 +321,8 @@ CURATED = [
                    "the fleet's cases, as labelled test stations — print "
                    "this first, tune the three tolerances, reuse everywhere.",
         "about": "Every fit the fleet's cases use, gathered on one branded "
-                 "test plate: the WAP's two-sided snap-clip channel, "
+                 "test plate: the Canary mark embossed in uniform domed strokes, "
+                 "the WAP's two-sided snap-clip channel, "
                  "click-retained keyholes, magnet and light-pipe "
                  "pockets, insert bores, the lid lip, the USB-C port "
                  "opening, a −/0/+ screw-pilot ladder, and the embossed/"
@@ -334,7 +335,8 @@ CURATED = [
                       "edge tongue tests the lid-lip channel; the "
                       "Strip is the TPU gasket-squeeze test. Adjust the "
                       "three tolerances and reprint until stations fit.",
-        "simple": ["part", "tol_slide", "tol_press", "tol_hole", "kh_click"],
+        "simple": ["part", "tol_slide", "tol_press", "tol_hole", "kh_click",
+                   "emblem_rib"],
         "preset_param": None,
         "preset_controls": [],
         "part_labels": {
@@ -360,6 +362,9 @@ CURATED = [
             "part": "Part to print", "tol_slide": "Sliding fits",
             "tol_press": "Press fits", "tol_hole": "Screw holes",
             "kh_click": "Keyhole click",
+            "emblem_h": "Emblem height",
+            "emblem_rib": "Emblem stroke",
+            "emblem_crown": "Emblem crown",
         },
         "hints": {
             "tol_slide": "Parts that slide or snap: lid lips, board clips, "
@@ -371,10 +376,22 @@ CURATED = [
             "kh_click": "The keyhole retention bump. Mate won't slide past "
                         "it → smaller number; slides back off too easily → "
                         "bigger. 0 removes the click.",
+            "emblem_h": "How tall the embossed Canary prints. At the default "
+                        "9 mm it spans 11.1 mm — the clear air between the two "
+                        "wordmarks. 0 removes the station.",
+            "emblem_rib": "No part of the mark is drawn narrower than this, "
+                          "so one number decides the whole emblem. Blobbed "
+                          "and closed up → smaller; broken or missing → "
+                          "bigger. Below 0.4 mm is thinner than one extrusion.",
+            "emblem_crown": "Domes the tops of the strokes instead of leaving "
+                            "them flat slabs, so the mark catches light like "
+                            "metal. 0 is a flat top; keep it under half the "
+                            "stroke or the crown pinches the strokes off.",
         },
         "choices": {},
         "units": {"tol_slide": "mm", "tol_press": "mm", "tol_hole": "mm",
-                  "kh_click": "mm"},
+                  "kh_click": "mm", "emblem_h": "mm", "emblem_rib": "mm",
+                  "emblem_crown": "mm"},
     },
 ]
 

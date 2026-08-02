@@ -91,6 +91,13 @@ RTC85063_SRC = test_rtc_pcf85063.cpp
 BEDSIDE_BIN = test_bedside_models
 BEDSIDE_SRC = test_bedside_models.cpp
 
+# Display settings geometry (canary/glass_settings.h): the 7"/dash orientation
+# helpers (logical dims, the touch un-rotation round-tripped against the
+# forward render rotation) and the rendered brightness scrim (clamp + the
+# monotone opacity curve). Pure inline logic — no LVGL, no board.
+DISPSET_BIN = test_display_settings
+DISPSET_SRC = test_display_settings.cpp
+
 .PHONY: all run clean
 all: run
 
@@ -130,7 +137,10 @@ $(RTC85063_BIN): $(RTC85063_SRC)
 $(BEDSIDE_BIN): $(BEDSIDE_SRC)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(BEDSIDE_SRC)
 
-run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN)
+$(DISPSET_BIN): $(DISPSET_SRC)
+	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(DISPSET_SRC)
+
+run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(DISPSET_BIN)
 	./$(BEACON_PARSE_BIN)
 	./$(MODEL_BIN)
 	./$(CARDS_BIN)
@@ -143,6 +153,7 @@ run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARC
 	./$(RTC_BIN)
 	./$(RTC85063_BIN)
 	./$(BEDSIDE_BIN)
+	./$(DISPSET_BIN)
 
 clean:
 	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN)
