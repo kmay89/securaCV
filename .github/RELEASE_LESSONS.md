@@ -108,6 +108,39 @@ any platform.
 
 ## Entries
 
+### 2026-08-02 — Cutting the firmware train invalidated every committed emulator artifact, and one of them failed as a UI timeout
+
+- **Symptom:** bumping the release train from 2.4.2 to 2.4.3 — a version-only
+  change, no behaviour touched — turned two green CI jobs red. One said what it
+  meant (`artifact fw (2.4.2) matches registry train (2.4.3)`). The other did
+  not: `VISION_PROBE_FAIL: waiting for locator('#play')`, a Playwright timeout
+  that reads like a flaky browser test or a broken page.
+- **Cause:** `canary-local/emulator/dist/*` are generated **and committed**, and
+  each carries a `.meta.json` stamped with the firmware version it was built
+  from. Two separate gates pin that stamp to `registry.json`'s `fw_train`, so
+  moving the train without rebuilding `dist/` is drift by construction. The
+  vision page asserts the same freshness *at runtime* (`vision-core.js`
+  `assertGeneratedData`), so it threw during page init and `#play` was never
+  rendered — the assertion was doing its job, but the only thing the CI log
+  showed was the selector that never appeared.
+- **Fix:** rebuild `dist/` at the new train before expecting green. That needs
+  the pinned emsdk 6.0.3, which network-restricted environments cannot install,
+  so the button is **Actions → "Rebuild emulator dist (pinned emsdk)"**,
+  dispatched on the branch; it rebuilds all six flavors and pushes the result.
+  **Two things to carry forward:** (1) a version bump is not a "safe" change
+  here — the committed-artifact set is part of the version, so plan the rebuild
+  into the same piece of work rather than discovering it from CI; and (2) that
+  workflow pushes with the default `GITHUB_TOKEN`, which by GitHub's recursion
+  guard **does not retrigger checks** — the refreshed head lands with zero
+  checks and needs one ordinary push (or a re-run) before it can go green, which
+  looks like a stuck PR if you do not expect it.
+  **Generalize:** when a generated-and-committed artifact embeds a version, the
+  gate that catches drift should fail with the two versions in the message. The
+  node test did; the browser probe inherited its assertion but surfaced only a
+  timeout. A freshness check that can fire inside a page should be reported by
+  that page's harness as the assertion it is, not as an absent element.
+
+
 ### 2026-07-31 — A self-updater that replaces its own bundle in place, with nothing on disk to say it was interrupted
 
 - **Symptom:** the desktop Flasher was force quit, and from then on it never

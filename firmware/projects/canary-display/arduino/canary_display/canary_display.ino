@@ -121,11 +121,22 @@ static canary::mode::Mode s_active_mode = canary::mode::Mode::Fleet;
 #ifdef CD_FLAVOR_WATCH
 #include "glance_ui.h"
 #endif
-#ifdef CD_FLAVOR_DASH
+#if defined(CD_FLAVOR_DASH) && !defined(CD_NIGHTSTAND7)
 #include "dash_ui.h"
+#endif
+#ifdef CD_NIGHTSTAND7
+#include "nightstand7_ui.h"
 #endif
 #ifdef CD_FLAVOR_NIGHTSTAND
 #include "portrait_ui.h"
+#endif
+#if defined(FEATURE_LANTERN) && FEATURE_LANTERN
+#include "lantern.h"   // the honest, user-summoned night light
+#include "color/look_engine.h"     // kSceneCount — the lamp's scene ring
+#endif
+#include "ambient_life.h"  // rationed organic check-ins
+#if defined(BOOT_BUTTON_PIN) && (BOOT_BUTTON_PIN >= 0)
+#include "boot_button.h"     // short / double / long classifier
 #endif
 #if defined(FEATURE_AMBIENT_LED) && FEATURE_AMBIENT_LED
 #include "ambient_led.h"  // WS2812 across-room state beacon
@@ -290,6 +301,36 @@ static uint32_t wake_window_ms(bool night) {
 }
 
 // ----------------------------------------------------------------------------
+// Ambient life + the lantern
+// ----------------------------------------------------------------------------
+// Declared ahead of the brightness policy on purpose: apply_brightness()
+// below is one of lantern_lit()'s two callers (the ambient-life gate in
+// loop() is the other), and only the bedside flavors compile it — so a
+// definition placed after the ladder built fine on every dash and broke
+// exactly the boards that use it.// ----------------------------------------------------------------------------
+
+// The organic layer (care/ambient_life.h): rationed "life moments" on an idle,
+// lit glass — the bird stirs, or the status quietly surfaces. Deterministic,
+// minutes apart, and it never fires into an honest darkness or over an alarm
+// (the caller's `allowed` gate in loop() is the whole policy).
+static canary::care::AmbientLife g_life;
+
+#if defined(FEATURE_LANTERN) && FEATURE_LANTERN
+// One place decides whether the lamp is lit this instant, so the render path,
+// the brightness ladder and the ambient-life gate can never disagree.
+// `attention` is the honest veto: any Warn+ condition or a dead link takes the
+// glass back (and extinguishes a summon — see lantern.h).
+static bool lantern_lit(uint32_t now, bool night) {
+  using canary::fleet::Sev;
+  auto& fleet = canary::fleet::the_fleet();
+  const bool link_down =
+      !canary::net::wifi_connected() || !canary::net::mqtt_connected();
+  const bool attention = fleet.worst(now) >= Sev::Warn || link_down;
+  return canary::care::lantern().active(now, night, attention);
+}
+#endif
+
+// ----------------------------------------------------------------------------
 // Brightness policy
 // ----------------------------------------------------------------------------
 //
@@ -331,6 +372,16 @@ static void apply_brightness(uint32_t now, bool night) {
     // Nightstand finding: a 3 a.m. time-check must not blast day
     // brightness into dark-adapted eyes — night wakes peek dim.
     level = night ? CD_BRIGHT_PEEK : glass::day_level();
+#if defined(FEATURE_LANTERN) && FEATURE_LANTERN
+  } else if (lantern_lit(now, night)) {
+    // The lantern rung, deliberately BELOW the wake window and below the
+    // urgent override: a summoned lamp keeps the panel awake at the dim warm
+    // floor, and G5 still stands — the lamp cannot outrank an unacked
+    // Alert/Tamper, and lantern_lit() has already yielded the glass back the
+    // moment anything reached Warn. The lamp's own light is DRAWN by the
+    // face, so this level only has to keep the backlight on.
+    level = CD_BRIGHT_LANTERN;
+#endif
   } else if (!night) {
     level = glass::ambient_level();
   } else {
@@ -369,8 +420,11 @@ static void ui_ack_hold(bool active) {
 #ifdef CD_FLAVOR_WATCH
   canary::ui::glance_ui_ack_hold(active);
 #endif
-#ifdef CD_FLAVOR_DASH
+#if defined(CD_FLAVOR_DASH) && !defined(CD_NIGHTSTAND7)
   canary::ui::dash_ui_ack_hold(active);
+#endif
+#ifdef CD_NIGHTSTAND7
+  canary::ui::nightstand7_ui_ack_hold(active);
 #endif
 #ifdef CD_FLAVOR_NIGHTSTAND
   canary::ui::portrait_ui_ack_hold(active);
@@ -461,7 +515,8 @@ static void handle_touch(uint32_t now) {
     return;
   }
 
-#if defined(CD_FLAVOR_DASH) && defined(FEATURE_CARE) && FEATURE_CARE
+#if defined(CD_FLAVOR_DASH) && !defined(CD_NIGHTSTAND7) && \
+    defined(FEATURE_CARE) && FEATURE_CARE
   // Cleaning mode (transparency sheet -> "wipe the glass"): a wall panel
   // must survive a wet cloth without acking an alarm. Swallow everything
   // until the lockout ends.
@@ -520,7 +575,7 @@ static void handle_touch(uint32_t now) {
       if (w) { toggle_mute(*w, now); return; }
     }
 #endif
-#ifdef CD_FLAVOR_DASH
+#if defined(CD_FLAVOR_DASH) && !defined(CD_NIGHTSTAND7)
     {
       const int card = canary::ui::dash_ui_card_at(g_touch_x, g_touch_y);
       if (card >= 0) {
@@ -530,6 +585,18 @@ static void handle_touch(uint32_t now) {
     }
 #endif
 #endif  // FEATURE_CARE
+
+#if defined(CD_NIGHTSTAND7) && defined(FEATURE_LANTERN) && FEATURE_LANTERN
+    // A hold with the lamp lit puts it out — the gesture people reach for
+    // when a light is on and they want it off. (Below the mute routing so a
+    // long-press still acknowledges when there is nothing lit.)
+    if (canary::care::lantern().summoned(now)) {
+      canary::care::lantern().extinguish();
+      fleet.mark_dirty();
+      boot_line("[input] long-press -> lantern out");
+      return;
+    }
+#endif
 
     // Long-press: acknowledge. Quiet, deliberate, works half-asleep.
     fleet.acknowledge_by(now, canary::cfg::get().device_id);
@@ -585,7 +652,36 @@ static void handle_touch(uint32_t now) {
       g_page = 0;
     }
 #endif
-#ifdef CD_FLAVOR_DASH
+#if defined(CD_FLAVOR_NIGHTSTAND) && defined(FEATURE_LANTERN) && FEATURE_LANTERN
+    // The small portrait glass IS the lamp, so the whole panel is the
+    // affordance — no corner to find at 3 a.m. A tap while lit walks the
+    // scene ring (Rainbow included); a tap in the dark summons.
+    {
+      auto& lamp = canary::care::lantern();
+      if (lamp.summoned(now)) {
+        lamp.cycle_scene(canary::color::kSceneCount);
+        canary::care::lantern_prefs_changed();
+        fleet.mark_dirty();
+        return;
+      }
+      if (in_quiet_hours()) {
+        lamp.summon(now);
+        fleet.mark_dirty();
+        return;
+      }
+    }
+#endif
+#ifdef CD_NIGHTSTAND7
+    // Bedside tap grammar: the face gets first refusal (summon the lantern
+    // from its corner after dark; walk the scene ring while it's lit). A
+    // tap it doesn't claim is just the wake it already was.
+    if (g_display_ok &&
+        canary::ui::nightstand7_ui_handle_tap(g_touch_x, g_touch_y, now)) {
+      fleet.mark_dirty();
+      return;
+    }
+#endif
+#if defined(CD_FLAVOR_DASH) && !defined(CD_NIGHTSTAND7)
     // Proof-on-Glass (spec §1): a lit tap on a witness card opens its
     // proof sheet; a tap on an open sheet closes it.
     if (was_awake && g_display_ok) {
@@ -641,8 +737,15 @@ static void render(uint32_t now) {
 #ifdef CD_FLAVOR_WATCH
       canary::ui::glance_ui_create();
 #endif
-#ifdef CD_FLAVOR_DASH
+#if defined(CD_FLAVOR_DASH) && !defined(CD_NIGHTSTAND7)
       canary::ui::dash_ui_create();
+#endif
+#ifdef CD_NIGHTSTAND7
+      // The bedside face is TWO layouts, not one skinned one — day
+      // complications vs. the night clock-focus — and the ground flip is
+      // exactly when it swaps between them (nightstand7_ui_create reads
+      // character_night()).
+      canary::ui::nightstand7_ui_create();
 #endif
 #ifdef CD_FLAVOR_NIGHTSTAND
       canary::ui::portrait_ui_create();
@@ -689,7 +792,20 @@ static void render(uint32_t now) {
   st.bird = bird;
   canary::ui::glance_ui_update(fleet, now, st);
 #endif
-#ifdef CD_FLAVOR_DASH
+#ifdef CD_NIGHTSTAND7
+  canary::ui::Nightstand7State st;
+  st.night = night_look;
+  st.wifi_ok = canary::net::wifi_connected();
+  st.wifi_reason =
+      st.wifi_ok ? nullptr
+                 : canary::net::join_failure_label(canary::net::wifi_last_failure());
+  st.mqtt_ok = canary::net::mqtt_connected();
+  st.acked = fleet.ack_active(now);
+  st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
+  st.bird = bird;
+  canary::ui::nightstand7_ui_update(fleet, now, st);
+#endif
+#if defined(CD_FLAVOR_DASH) && !defined(CD_NIGHTSTAND7)
   canary::ui::DashState st;
   st.night = night_look;
   st.wifi_ok = canary::net::wifi_connected();
@@ -794,6 +910,12 @@ void setup() {
   boot_kv("Glass",   "800x480 RGB565 parallel + GT911 touch (CH422G expander)");
   boot_kvf("RGB",    "DE=%d VS=%d HS=%d PCLK=%d @ %d Hz",
            LCD_PIN_DE, LCD_PIN_VSYNC, LCD_PIN_HSYNC, LCD_PIN_PCLK, LCD_PCLK_HZ);
+#ifdef CD_NIGHTSTAND7
+  boot_kv("Face",    "bedside (clock hero + weather + fleet strip)");
+  // Say the awkward truth out loud at boot: on this board every kind of
+  // "dim" is drawn, because the expander's backlight line has no PWM.
+  boot_kv("Night",   "rendered dark + backlight off (CH422G has no PWM)");
+#endif
 #endif
 #ifdef CD_FLAVOR_NIGHTSTAND
   boot_kv("Glass",   "ST7789 1.47\" 172x320 portrait SPI (no touch)");
@@ -833,6 +955,14 @@ void setup() {
            canary::glass::settings().night_start_hh,
            canary::glass::settings().night_end_hh, CD_TZ);
   boot_blank();
+
+#if defined(BOOT_BUTTON_PIN) && (BOOT_BUTTON_PIN >= 0)
+  // The user button doubles as the whole input surface on the touch-less
+  // boards. INPUT_PULLUP matches BOOT_BUTTON_ACTIVE == LOW on every board
+  // that carries one today; the classifier debounces in software.
+  pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
+  boot_kv("Button", "BOOT: tap = peek, double = lantern, hold = acknowledge");
+#endif
 
   // Trust store before the network: retained chain payloads replay the
   // moment the broker accepts our subscriptions.
@@ -899,8 +1029,11 @@ void setup() {
 #ifdef CD_FLAVOR_WATCH
     canary::ui::glance_ui_create();
 #endif
-#ifdef CD_FLAVOR_DASH
+#if defined(CD_FLAVOR_DASH) && !defined(CD_NIGHTSTAND7)
     canary::ui::dash_ui_create();
+#endif
+#ifdef CD_NIGHTSTAND7
+    canary::ui::nightstand7_ui_create();
 #endif
 #ifdef CD_FLAVOR_NIGHTSTAND
     canary::ui::portrait_ui_create();
@@ -974,6 +1107,25 @@ void setup() {
   // later, from care_loop, once SNTP gives both clocks).
   canary::care::care_begin();
 #endif
+
+#if defined(FEATURE_LANTERN) && FEATURE_LANTERN
+  // The lamp's PREFERENCES come back from NVS; a lit lantern deliberately
+  // does not. A device that reboots at 3 a.m. wakes dark, because
+  // dark-when-safe is the honest default and nobody asked for a light.
+  canary::care::lantern_begin();
+#endif
+
+  // Seed the ambient-life cadence per device: two Canaries on one dresser
+  // should not stir in lockstep, but each must be reproducible across its
+  // own reboots (that is what makes the layer testable). FNV-1a over the
+  // NVS device id gives both.
+  {
+    uint32_t h = 2166136261u;
+    for (const char* p = canary::cfg::get().device_id; p && *p; p++) {
+      h = (h ^ (uint8_t)*p) * 16777619u;
+    }
+    g_life.seed(h);
+  }
 
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
   // 4.3B field I/O: isolated contacts -> unsigned local events, siren on
@@ -1312,6 +1464,86 @@ void loop() {
     canary::hal::ambient_led_tick(now, led_worst, led_night, safe_dark);
   }
 #endif
+
+#if defined(BOOT_BUTTON_PIN) && (BOOT_BUTTON_PIN >= 0)
+  // BOOT-button grammar (display_nightstand_line.md §7 — the input surface
+  // the touch-less 1.47" boards never had). Short = wake/peek, Double =
+  // summon or dismiss the lantern, Long = acknowledge. The classifier is
+  // pure and host-tested; this is only the wiring.
+  {
+    static canary::io::ButtonClassifier s_btn;
+    const bool pressed = digitalRead(BOOT_BUTTON_PIN) == BOOT_BUTTON_ACTIVE;
+    switch (s_btn.step(pressed, now)) {
+      case canary::io::ButtonEvent::Short: {
+        const bool night_now = in_quiet_hours();
+        g_wake_until_ms = now + wake_window_ms(night_now);
+        canary::ui::canary_mark_react(canary::ui::CanaryReact::Startle);
+        fleet.mark_dirty();
+        break;
+      }
+      case canary::io::ButtonEvent::Double: {
+#if defined(FEATURE_LANTERN) && FEATURE_LANTERN
+        auto& lamp = canary::care::lantern();
+        if (lamp.summoned(now)) lamp.extinguish();
+        else lamp.summon(now);
+        fleet.mark_dirty();
+        boot_line("[input] double-press -> lantern");
+#endif
+        break;
+      }
+      case canary::io::ButtonEvent::Long: {
+        fleet.acknowledge_by(now, canary::cfg::get().device_id);
+#if defined(FEATURE_ACK_SYNC) && FEATURE_ACK_SYNC
+        const time_t bepoch = time(nullptr);
+        if (bepoch > 1700000000)
+          canary::net::publish_fleet_ack((uint32_t)bepoch);
+#endif
+        boot_line("[input] long-press (BOOT) -> acknowledge");
+        break;
+      }
+      case canary::io::ButtonEvent::None:
+        break;
+    }
+  }
+#endif  // BOOT_BUTTON_PIN
+
+  // ── Ambient life: the organic check-in ──
+  // Allowed only on a glass that is genuinely idle AND genuinely lit: calm
+  // fleet, healthy links, no modal, no wake window — and either daylight
+  // ambient or a lit lantern. That gate is what keeps the layer from ever
+  // animating into an honest darkness or over an alarm.
+  if (g_display_ok) {
+    using canary::fleet::Sev;
+    const bool life_night = in_quiet_hours();
+    const bool links_ok =
+        canary::net::wifi_connected() && canary::net::mqtt_connected();
+    const bool calm = fleet.worst(now) < Sev::Warn && links_ok;
+    const bool idle = (int32_t)(now - g_wake_until_ms) >= 0 &&
+                      !canary::ui::settings_ui_active() &&
+                      !canary::ui::commission_ui_active();
+    bool lit = !life_night;
+#if defined(FEATURE_LANTERN) && FEATURE_LANTERN
+    if (life_night) lit = lantern_lit(now, life_night);
+#endif
+    switch (g_life.step(now, calm && idle && lit, life_night)) {
+      case canary::care::LifeMoment::Flourish:
+        // A curious head-tilt: the mark rations these further and refuses
+        // them outright while asleep or hidden, so this stays a whisper.
+        canary::ui::canary_mark_react(canary::ui::CanaryReact::Tilt);
+        break;
+      case canary::care::LifeMoment::Glance:
+#ifdef CD_NIGHTSTAND7
+        canary::ui::nightstand7_ui_life_glance(now);
+#endif
+#ifdef CD_FLAVOR_NIGHTSTAND
+        canary::ui::portrait_ui_life_glance(now);
+#endif
+        fleet.mark_dirty();
+        break;
+      case canary::care::LifeMoment::None:
+        break;
+    }
+  }
 
   if (g_display_ok) lv_timer_handler();
 
