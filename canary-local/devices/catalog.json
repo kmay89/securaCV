@@ -857,7 +857,17 @@
     "verified": false
    },
    "fit": "standard",
-   "variant_axes": [],
+   "variant_axes": [
+    {
+     "param": "panel_variant",
+     "values": [
+      "lcd7",
+      "lcd7b"
+     ],
+     "default": "lcd7",
+     "audience": "user"
+    }
+   ],
    "variants": [
     {
      "id": "7-touch-dashboard-case",
@@ -892,6 +902,7 @@
     "dock_probe_seat",
     "dock_probe_p",
     "dock_probe_p2",
+    "ring_gauge",
     "port_teth_hole",
     "port_teth_barb",
     "port_barb_proud",
@@ -899,6 +910,11 @@
     "fil_body",
     "fil_ink",
     "fil_accent",
+    "coupon_body",
+    "coupon_ink",
+    "coupon_accent",
+    "coupon_qr_body",
+    "coupon_qr_ink",
     "frame_colour",
     "fil_overlap",
     "fil_gap"
@@ -1113,9 +1129,17 @@
       "10000"
      ],
      "default": "none"
+    },
+    {
+     "id": "vent_accent",
+     "type": "bool",
+     "label": "line the back-grille mouths in the accent colour",
+     "consequence": "",
+     "audience": "user",
+     "default": true
     }
    ],
-   "engineering_param_count": 226,
+   "engineering_param_count": 240,
    "alternatives": [
     "dash_display"
    ],
@@ -1123,9 +1147,9 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 25,
-    "user_options": 25,
-    "variant_axes": 0
+    "options": 26,
+    "user_options": 26,
+    "variant_axes": 1
    }
   },
   {
