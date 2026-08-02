@@ -476,6 +476,42 @@ xvfb-run -a openscad -o preview.png --imgsize 1400,1000 --autocenter --viewall \
 # ROTX ≈ 62 → top three-quarter view; ROTX ≈ 245 → underside
 ```
 
+For the 7" frame's three-colour build, render each filament part on its own —
+`part="fil_body"`, `"fil_ink"`, `"fil_accent"`. Those are the reliable views:
+each contains exactly the graphics assigned to that filament, so what you see
+is what that spool prints.
+
+**Do not judge the palette from `part="frame_colour"`.** It composites the
+three parts, but OpenCSG will not reliably colour inlays sitting inside the
+recesses they were cut from — it has rendered every back-plate group in the
+accent colour when only the company line is accent, and standing the inlays
+proud does not fix it. It is useful for silhouette and for the bezel band,
+and misleading for anything else. The caveat is written at the module too.
+
+### Three-colour printing (7" frame, P2S + AMS)
+
+The one-piece frame can print white-bodied with a black bezel, black lettering
+and one yellow word. Three parts, loaded into Bambu Studio as one object:
+
+```bash
+for f in body ink accent; do
+  openscad --export-format binstl -o lcd7_fil_$f.stl -D "part=\"fil_$f\"" canary_s3_lcd7.scad
+done
+```
+
+Load `fil_body`, then **Add part → Load** the other two, assign a filament to
+each, slice. They share `part="frame"`'s coordinate frame, so **do not
+re-centre or drop-to-bed** the added parts — moving one moves the lettering out
+of its own recess.
+
+The palette, the layer-band table showing why this costs so little purge, and
+the QR polarity constraint that makes the AMS necessary are documented at the
+`PRINT COLOURS` block in `canary_s3_lcd7.scad`, and the operator walkthrough is
+[`bambu_p2s_bringup.md`](./bambu_p2s_bringup.md) §7c′. To re-group the palette,
+edit `ink_groups` / `accent_groups` — each inlay is cut from the same solid as
+the recess it fills, so nothing has to be kept in sync by hand. `fil_overlap`
+and `fil_gap` gate that the three parts tile the frame exactly.
+
 ## Key parameters to check first
 
 | Param | Default | Why you'd change it |
