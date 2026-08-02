@@ -784,6 +784,12 @@ edge_vz  = glass_guard + edge_vent_z;
 // plate. (Chaining fz_boss off fr_depth would leave the screws clamping
 // bat_extra of air.)
 fz_boss  = fr_depth0 - back_t - frame_boss_h;  // boss face the standoffs land on
+// Depth (from the FRONT face) of the wall gills and the dock's keying slots.
+// The dock aims its key studs at this same number — see stand_keystud. It is
+// pinned to the PANEL datum, so it does NOT move when a battery deepens the
+// case; the studs must therefore track the case's depth in the SLOT, which is
+// the whole reason this is a shared derived value and not two constants.
+key_gz   = (glass_guard + glass_t + fz_boss)/2;
 fz_plate = fr_depth - back_t;                  // inner face of the back plate
 fr_bosses = [for (sx = [1,-1], sy = [1,-1]) [-m3_ox + sx*m3_dx/2, m3_oy + sy*m3_dy/2]];
 // The frame's grille keepouts, hoisted so the open-area echo below is
@@ -1501,7 +1507,7 @@ module port_cut(edge = 0, pos = 0) {
 }
 
 module frame() {
-    gz = (glass_guard + glass_t + fz_boss)/2;   // centre of the clear air band
+    gz = key_gz;                                // centre of the clear air band
     gh = fz_boss - glass_guard - glass_t - 4;   // wall-vent height inside it
     difference() {
         union() {
@@ -2071,10 +2077,16 @@ module stand_wellblade(x0, w, drop = 0) {
 // frame, at local y = -1 — the docked case's wall-band centre (gz), which is
 // where every keying slot is cut, whichever wall faces down. The taper is
 // what makes the case FIND centre: drop it anywhere close and it slides home.
+// A centring key stud. Its position ACROSS the slot is derived, not fixed:
+// the case's keying slot sits key_gz behind the case's FRONT face, and the
+// case's front face sits at -std_cd/2, so the slot's centre lands here. With
+// a fixed y this silently walked off the slot as soon as a battery deepened
+// the case — the 3000 build put the stud 4.4 mm out and it hit solid wall.
 module stand_keystud(x0, z0) {
+    ky = -std_cd/2 + key_gz;
     stand_seatframe() hull() {
-        translate([x0 - 0.9, -1.95, z0 - 0.5]) cube([1.8, 1.9, 0.5]);
-        translate([x0 - 0.3, -1.35, z0 + 1.5]) cube([0.6, 0.7, 0.02]);
+        translate([x0 - 0.9, ky - 0.95, z0 - 0.5]) cube([1.8, 1.9, 0.5]);
+        translate([x0 - 0.3, ky - 0.35, z0 + 1.5]) cube([0.6, 0.7, 0.02]);
     }
 }
 module stand() {

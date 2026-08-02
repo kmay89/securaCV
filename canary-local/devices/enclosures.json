@@ -7499,6 +7499,10 @@
        "comment": "boss face the standoffs land on"
       },
       {
+       "name": "key_gz",
+       "default": "(glass_guard + glass_t + fz_boss)/2"
+      },
+      {
        "name": "fz_plate",
        "default": "fr_depth - back_t",
        "comment": "inner face of the back plate"

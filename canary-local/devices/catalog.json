@@ -974,6 +974,19 @@
      "default": true
     },
     {
+     "id": "side_exit",
+     "type": "enum",
+     "label": "— extra cable exit wall",
+     "consequence": "",
+     "audience": "user",
+     "enum": [
+      "none",
+      "left",
+      "right"
+     ],
+     "default": "right"
+    },
+    {
      "id": "port_labels",
      "type": "bool",
      "label": "port_labels",
@@ -1059,8 +1072,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 20,
-    "user_options": 20,
+    "options": 21,
+    "user_options": 21,
     "variant_axes": 0
    }
   },
