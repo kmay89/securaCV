@@ -6480,6 +6480,8 @@
         "dock_probe_p2",
         "port_teth_hole",
         "port_teth_barb",
+        "port_barb_proud",
+        "back_flush",
         "all"
        ]
       }
@@ -7135,6 +7137,30 @@
        "comment": "anchor hole centre along the wall, from the port"
       },
       {
+       "name": "port_teth_cb",
+       "default": "1.4",
+       "comment": "counterbore depth at the anchor's OUTER mouth. The"
+      },
+      {
+       "name": "port_scoop",
+       "default": "true"
+      },
+      {
+       "name": "port_scoop_dx",
+       "default": "11.0",
+       "comment": "scoop centre from the port centre — just past the"
+      },
+      {
+       "name": "port_scoop_r",
+       "default": "7.8",
+       "comment": "sphere radius / stand-off: r - port_scoop_d sets the"
+      },
+      {
+       "name": "port_scoop_d",
+       "default": "7.0",
+       "comment": "dish depth (0.8 mm), sqrt(r^2 - d^2) its footprint"
+      },
+      {
        "name": "edge_text_l",
        "default": "SECURACV",
        "comment": "front-view left of the port"
@@ -7651,6 +7677,10 @@
        "name": "qr_dy_eff",
        "default": "qr_dy + bat_dg",
        "comment": "the deck's rear half-growth, when a battery deepens the dock"
+      },
+      {
+       "name": "port_scoop_ftp",
+       "default": "sqrt(port_scoop_r*port_scoop_r - port_scoop_d*port_scoop_d)"
       },
       {
        "name": "gauge_in",

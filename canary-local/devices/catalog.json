@@ -893,7 +893,9 @@
     "dock_probe_p",
     "dock_probe_p2",
     "port_teth_hole",
-    "port_teth_barb"
+    "port_teth_barb",
+    "port_barb_proud",
+    "back_flush"
    ],
    "options": [
     {
@@ -1030,6 +1032,14 @@
      "default": true
     },
     {
+     "id": "port_scoop",
+     "type": "bool",
+     "label": "port_scoop",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "opt_stand",
      "type": "bool",
      "label": "opt_stand",
@@ -1091,7 +1101,7 @@
      "default": "none"
     }
    ],
-   "engineering_param_count": 209,
+   "engineering_param_count": 214,
    "alternatives": [
     "dash_display"
    ],
@@ -1099,8 +1109,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 23,
-    "user_options": 23,
+    "options": 24,
+    "user_options": 24,
     "variant_axes": 0
    }
   },
