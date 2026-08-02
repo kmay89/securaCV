@@ -514,9 +514,27 @@ done
 **Do not hand-assemble these from STLs.** Run the packager instead:
 
 ```bash
-python3 gen_3mf.py coupon     # the colour + fit coupon
+python3 gen_3mf.py tests      # the whole pre-flight: ring, coupon, QR, corner
+python3 gen_3mf.py coupon     # just the colour + fit coupon
+python3 gen_3mf.py qr         # just the QR scan plaque
 python3 gen_3mf.py frame      # the whole case
 ```
+
+**`tests` is the one to print.** It is four questions in one job, cheapest
+first: the **ring gauge** proves the outline against the real panel, the
+**colour coupon** proves three-filament registration and the corner fit, the
+**QR plaque** proves the help symbol actually scans, and the **corner gauge**
+proves the screw pattern. Every one of them is cheaper to answer here than on
+a committed frame.
+
+The QR plaque is two filaments, not three, and it is only the back plate —
+3 mm, not the frame's 23.5. The symbol is INK modules in a BODY-colour field
+(dark-on-light, the only polarity a reader accepts), and the accent must never
+touch a finder pattern, so there is deliberately no third slot to put it in.
+**Scan it with a phone before you commit a frame.** Cell size is the one thing
+no slicer preview and no CI gate can settle — `qr_back_cell` is 1.3 mm, about
+three line widths at a 0.42 mm extrusion, and whether that decodes is a
+question for a camera.
 
 It writes one 3MF whose parts are already registered and already assigned to
 filaments 1/2/3 — open it and slice. Loading the STLs as separate objects makes

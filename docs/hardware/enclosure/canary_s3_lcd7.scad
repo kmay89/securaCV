@@ -199,7 +199,7 @@ assert(is_num(feather_area(7, 4)),
        "canary_vent_lib.scad is MISSING — this case cuts its grille and gills with it. Download canary_vent_lib.scad from the same folder and keep the two files side by side.");
 
 /* [What to render] */
-part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_port","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","dock_probe_fit","dock_probe_seat","dock_probe_p","dock_probe_p2","ring_gauge","port_teth_hole","port_teth_barb","port_barb_proud","back_flush","fil_body","fil_ink","fil_accent","coupon_body","coupon_ink","coupon_accent","frame_colour","fil_overlap","fil_gap","all"]
+part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_port","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","dock_probe_fit","dock_probe_seat","dock_probe_p","dock_probe_p2","ring_gauge","port_teth_hole","port_teth_barb","port_barb_proud","back_flush","fil_body","fil_ink","fil_accent","coupon_body","coupon_ink","coupon_accent","coupon_qr_body","coupon_qr_ink","frame_colour","fil_overlap","fil_gap","all"]
 
 /* [Glass slab] — bonded touch panel, from the Waveshare drawing (mm) */
 glass_w = 192.96;    // touch-glass width  (X)
@@ -1640,9 +1640,13 @@ if (qr_back)
          qr_back_cell, " mm (", qr_n*qr_back_cell, " mm field) on the back",
          " plate at (", qr_back_dx, ", ", qr_back_dy, "), its grille keepout",
          " doubling as the quiet zone. Prints in the FIRST layers on the",
-         " textured plate; the standard back swap (accent skin, body-colour",
-         " deboss floors) gives dark modules in the light skin — no extra",
-         " swap, no extra filament"));
+         " textured plate. Polarity: the modules are ", pal_ink, " (they are",
+         " in ink_groups, so they arrive as the back inlay) in the ", pal_body,
+         " plate — dark-on-light, the only polarity a reader accepts. It costs",
+         " no extra swap: the back skin is already a tool change. Rehearse it",
+         " with part=\"coupon_qr_body\"/\"coupon_qr_ink\" and SCAN THE COUPON",
+         " before committing a frame — cell size is the one thing only a phone",
+         " can settle"));
 if (usb_port)
     echo(str("  USB port: ", usb_open_w, " x ", usb_open_h,
              " stadium at (", usb_dx, ", z ", usb_z, ") — passes a ",
@@ -1993,6 +1997,45 @@ coupon_h  = 34;               // tall enough to contain the whole corner arc
 module coupon_clip() {
     translate([coupon_x0, -fr_yo/2 - 1, -1])
         cube([coupon_x1 - coupon_x0, coupon_h, fr_depth + 2]);
+}
+
+// The QR SCAN coupon's clip — a separate plaque, not part of the band above.
+//
+// Why separate. The help QR sits at (qr_back_dx, qr_back_dy) on the mid-left
+// wing; the colour band runs along the bottom edge. They do not overlap in y
+// at all, so growing the band to swallow the QR would add ~40 mm of frame
+// height — nearly all of it blank plate — to capture a 37.7 mm square that
+// lives nowhere near the lockup. A separate plaque asks the same question for
+// roughly a third of the filament, and keeps the band coupon's two jobs
+// (three-colour registration, corner fit) uncluttered.
+//
+// Why it is only the BACK PLATE and not the full depth. The frame prints
+// back-plate-down, so the QR is in the first layers; a full-depth clip would
+// print 23.5 mm of shell to test a graphic that is finished 3 mm in. The
+// plaque is the plate itself, which is exactly the substrate the real QR
+// prints on — same thickness, same first layer, same deboss floors.
+//
+// What it tests, none of which a slicer preview answers:
+//   · whether the symbol SCANS at qr_back_cell — the real question, and one
+//     only a phone can settle. 1.3 mm modules are ~3 line widths at 0.42.
+//   · the polarity: ink modules in a body-colour field, dark-on-light, which
+//     is the only polarity a reader accepts
+//   · purge bleed on the deboss floors, where black-into-white shows first
+//     and where it would cost the symbol its contrast
+// Print it, scan it with a phone, and only then commit a frame.
+// The plaque stops EXACTLY at qr_back_reach — do not add a margin "for a nicer
+// border". qr_back_reach is the same radius the asserts above guarantee is
+// clear of rail moats, grille slots and keyholes; anything past it is plate
+// the model never promised was empty. A 1.5 mm border was the first thing
+// tried here and it clipped an adhesive-rail moat, putting a detached 0.8 mm
+// hairline of INK at the plaque's edge — a loose sliver in the wrong filament,
+// and a fragment of a feature that has nothing to do with the QR.
+coupon_qr_margin = 0;
+module coupon_qr_clip() {
+    s = qr_back_reach + coupon_qr_margin;
+    translate([qr_back_dx, qr_back_dy, fr_depth - back_t])
+        linear_extrude(back_t + 1)      // +1 overshoots into free space; the
+            rrect2d(2*s, 2*s, 3);       // frame bounds the intersection anyway
 }
 
 module frame_ink()    { union() { back_inlay(ink_groups);
@@ -3023,6 +3066,15 @@ else if (part == "coupon_ink")
 else if (part == "coupon_accent")
     rotate([180, 0, 0]) translate([0, 0, -fr_depth])
         intersection() { frame_accent(); coupon_clip(); }
+// QR SCAN COUPON — two filaments, back plate only. See coupon_qr_clip() for
+// why this is its own plaque instead of a longer band. No accent part: the
+// QR is INK on BODY and the accent must never touch a finder pattern.
+else if (part == "coupon_qr_body")
+    rotate([180, 0, 0]) translate([0, 0, -fr_depth])
+        intersection() { frame_bodycol(); coupon_qr_clip(); }
+else if (part == "coupon_qr_ink")
+    rotate([180, 0, 0]) translate([0, 0, -fr_depth])
+        intersection() { frame_ink(); coupon_qr_clip(); }
 else if (part == "fil_body")   rotate([180, 0, 0]) translate([0, 0, -fr_depth]) frame_bodycol();
 else if (part == "fil_ink")    rotate([180, 0, 0]) translate([0, 0, -fr_depth]) frame_ink();
 else if (part == "fil_accent") rotate([180, 0, 0]) translate([0, 0, -fr_depth]) frame_accent();

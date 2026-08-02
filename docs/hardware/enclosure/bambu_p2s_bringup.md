@@ -585,10 +585,51 @@ drop-to-bed** the added parts.
 Read it for: black bleeding into white on the deboss floors (raise the flush
 volume), the lockup sitting flush rather than proud or sunk, where the bezel
 swap landed, and whether the panel corner drops into the pocket with the glass
-sitting 0.6 mm below the front rim.
+face landing where `glass_guard` says it should — **flush** at its current
+value of 0, so a fingernail dragged from rim to glass should catch no step in
+either direction.
 
 Do **not** judge bed adhesion from it — it is a slice out of a larger part, so
 its sawn edges behave nothing like the frame's continuous perimeter.
+
+### 7c‴ · The QR plaque — the one test only a phone can run
+
+Every other gate in this project is geometry, and geometry cannot tell you
+whether a printed QR **decodes**. `qr_back_cell` is 1.3 mm — about three line
+widths at a 0.42 mm extrusion — and whether that survives a real first layer,
+a real purge and a real phone camera is a question with no CAD answer. So
+print it and scan it.
+
+```sh
+python3 gen_3mf.py qr      # or take it off the `tests` plate
+```
+
+It is the **back plate only** — 3 mm, not the frame's 23.5 — cut from the real
+frame at the real QR, so the deboss depth, module shape and first layer are the
+ones the case will actually print. Two filaments:
+
+| slot | gets | why |
+|---|---|---|
+| 1 | body (White) — the field | |
+| 2 | ink (Black) — the modules | dark-on-light is the **only** polarity a reader accepts |
+
+There is deliberately **no accent slot**. Yellow on a finder pattern is how you
+make a symbol that looks finished and never scans.
+
+The plaque stops exactly at the quiet zone (`qr_back_reach`) and not a
+millimetre further — that radius is what the model's asserts guarantee is clear
+of rail moats, grille slots and keyholes. A 1.5 mm "nicer border" was tried
+first and clipped an adhesive-rail moat, leaving a detached 0.8 mm hairline of
+black at the plaque edge.
+
+Read it for: **does it scan**, first, from about the distance someone would
+actually hold a phone. Then look at the module edges for black bleeding into
+the white field — the QR is where purge contamination costs you contrast rather
+than just looking untidy, and it is the first place you will see it.
+
+If it does not scan, raise `qr_back_cell` before anything else; the symbol is
+21×21, so every 0.1 mm of cell is 2.1 mm of field, and the asserts will tell
+you when it stops fitting its keepout.
 
 ### 7c′ · The three-colour case (AMS)
 
