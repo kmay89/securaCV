@@ -197,7 +197,7 @@ assert(is_num(feather_area(7, 4)),
        "canary_vent_lib.scad is MISSING — this case cuts its grille and gills with it. Download canary_vent_lib.scad from the same folder and keep the two files side by side.");
 
 /* [What to render] */
-part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","all"]
+part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_port","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","dock_probe_fit","dock_probe_seat","dock_probe_p","dock_probe_p2","all"]
 
 /* [Glass slab] — bonded touch panel, from the Waveshare drawing (mm) */
 glass_w = 192.96;    // touch-glass width  (X)
@@ -525,6 +525,30 @@ usb_pass_c = 0.3;    // per-side clearance around the head through the opening
 usb_wire_d = 3.8;    // cable jacket Ø the grommet grips — MEASURE
 grom_lip   = 2.0;    // grommet flange width per side (both flanges)
 grom_bell  = 3.2;    // strain-relief bell beyond the outer flange
+// SIDE EXIT — the same pass-through cut into a short wall, so the cable can
+// leave sideways instead of down. It is deliberately the SAME stadium as the
+// bottom port: one grommet part serves either exit, and whichever exit you
+// do not use takes plug_port (the same body, no bore) so the case never sits
+// with an open hole. Which side is right depends on where your outlet is;
+// in the desk dock the bottom exit routes through the dock's own channel,
+// while the side exit clears the dock entirely — that is the case for having
+// both. The dock's PORTRAIT pose already exits sideways, so a side-exit case
+// docks portrait with no cable bend at all.
+side_exit = "right";  // ["none","left","right"] — extra cable exit wall
+side_dy   = 0.0;      // its centre along that wall, + = toward the top edge
+// Port labels: which opening is which, embossed on the outer skin beside it
+// (deboss floors read in the body colour through the accent skin, so on a
+// two-colour print the words come out coloured for free — no extra swap).
+port_labels = true;
+port_lbl_a  = "USB";    // beside the bottom exit
+port_lbl_b  = "UART1";  // beside the side exit
+// RATING STAMP — the little spec block every mains-adjacent thing should
+// carry. It goes on the BACK plate's lower band: hidden behind the case on a
+// wall mount, hidden behind the dock's fin when docked, and right there when
+// you pick the case up — which is exactly when you want it. Deboss, so it
+// never wears off and never needs a sticker.
+rating_stamp = true;
+rating_lines = ["5V = 2A", "USB-C INPUT", "INDOOR USE ONLY"];
 // TPU fit system — these two do for the TPU parts what tol_slide/tol_hole do
 // for the rigid ones. TPU seats by squeeze, so its knobs are interferences,
 // not clearances.
@@ -636,6 +660,10 @@ stand_slot_y  = 32.0;  // seat centreline, measured from the plate's front edge
 stand_clear   = 0.5;   // per-face case<->slot clearance (drop-in, not press)
 stand_cable_w = 16.0;  // desk-level cable channel width (through plate + fin foot)
 stand_feet    = true;  // 4x shallow recesses for adhesive rubber feet
+feather_vents = true;  // shape the fin vents as FEATHER BARBS (a pointed
+                       // vesica) instead of plain stadium pills — the house
+                       // pattern, and self-supporting at the apex on this
+                       // near-vertical fin. false restores the pills.
 
 include <canary_s3_lcd7_qr.scad>   // qr_url() / qr_bits() — generated, committed
 qr_n = len(qr_bits());             // symbol size — defined HERE, above every use
@@ -835,6 +863,12 @@ edge_vz  = glass_guard + edge_vent_z;
 // plate. (Chaining fz_boss off fr_depth would leave the screws clamping
 // bat_extra of air.)
 fz_boss  = fr_depth0 - back_t - frame_boss_h;  // boss face the standoffs land on
+// Depth (from the FRONT face) of the wall gills and the dock's keying slots.
+// The dock aims its key studs at this same number — see stand_keystud. It is
+// pinned to the PANEL datum, so it does NOT move when a battery deepens the
+// case; the studs must therefore track the case's depth in the SLOT, which is
+// the whole reason this is a shared derived value and not two constants.
+key_gz   = (glass_guard + glass_t + fz_boss)/2;
 fz_plate = fr_depth - back_t;                  // inner face of the back plate
 fr_bosses = [for (sx = [1,-1], sy = [1,-1]) [-m3_ox + sx*m3_dx/2, m3_oy + sy*m3_dy/2]];
 // The frame's grille keepouts, hoisted so the open-area echo below is
@@ -842,6 +876,19 @@ fr_bosses = [for (sx = [1,-1], sy = [1,-1]) [-m3_ox + sx*m3_dx/2, m3_oy + sy*m3_
 // drift from the geometry. Split so the echo can also say what the rails
 // cost (their keepouts are the one deliberate vent trade in this case).
 sd_teth_y = sd_dy + sd_l/2 + sd_lip + sd_teth_gap;   // tether anchor hole centre
+// the rating stamp's block, and the smooth keepout it claims from the grille
+rating_sz = 2.6;    // finer than the port labels — a spec block, not a sign
+rating_lh = rating_sz*1.45;
+// width from the LONGEST line, the same way the edge words size themselves,
+// so editing rating_lines can never silently overrun the gap it sits in
+rating_w  = 2*0.392*rating_sz*max([for (l = rating_lines) len(l)]);
+rating_h  = rating_lh*len(rating_lines) + 2;
+rating_dx = 42.0;   // centred in the clear gap: rail moat ends ~23, the
+                    // keyhole's reach starts ~61
+rating_dy = 22.0;   // NOT the lower band: that row belongs to the brand line,
+                    // and the first render had the two sets of glyphs sitting
+                    // on top of each other. This is the clear field right of
+                    // the adhesive rails, inboard of the top-right keyhole.
 fr_keep_base = concat(
     // grown with the doubler pads + mouth chamfers
     mount_keyholes ? [for (sx = [1,-1], sy = [1,-1])
@@ -859,7 +906,9 @@ fr_keep_base = concat(
     // a face with a module cell, which CGAL rightly calls non-manifold
     qr_back ? [[qr_back_dx, qr_back_dy,
                 qr_back_reach + vent_slot_w/2 + 0.4,
-                qr_back_reach + vent_slot_l/2 + 0.4]] : []);
+                qr_back_reach + vent_slot_l/2 + 0.4]] : [],
+    // the rating stamp wants unbroken plate under it, same as any deboss
+    rating_stamp ? [[rating_dx, rating_dy, rating_w/2 + 2, rating_h/2 + 2]] : []);
 fr_keep_rails = adh_rails ? [for (sx = [1,-1])
     [sx*adh_rail_dx, 0,
      adh_rail_w/2 + adh_mark_w + vent_slot_w/2 + 0.6,
@@ -1104,6 +1153,22 @@ assert(!qr_back || (qr_back_dx + qr_back_reach
 assert(!qr_back || (abs(qr_back_dx) + qr_back_reach < fr_xi/2 - fr_ri
                     && abs(qr_back_dy) + qr_back_reach < fr_yi/2 - 9),
        "frame: back QR (field + quiet zone) runs into the plate rim band or the brand line's row");
+// the bottom-wall port label sits beyond the brand words; it must still land
+// on the wall's flat span, not run onto the corner round
+assert(!port_labels || !usb_port
+       || vword_x + vword_half + 3.5 + 2.2*len(port_lbl_a) < fr_xi/2 - fr_ri,
+       "frame: the bottom port label runs off the wall's flat span — shorten port_lbl_a");
+assert(!rating_stamp || rating_dy - rating_h/2 > -(fr_yi/2 - 6) + 5,
+       "frame: rating stamp overlaps the brand line's row — raise rating_dy");
+assert(!rating_stamp || rating_dx - rating_w/2
+       > adh_rail_dx + adh_rail_w/2 + adh_mark_w + 2,
+       "frame: rating stamp overlaps an adhesive rail moat");
+assert(!rating_stamp || !mount_keyholes
+       || rating_dx + rating_w/2 < khm_dx - khm_plen - khm_slide_w/2 - khm_pad_w - 2,
+       "frame: rating stamp reaches a keyhole");
+assert(!rating_stamp || norm([rating_dx - sd_dx, rating_dy - sd_dy])
+       > rating_h/2 + sd_l/2 + 4,
+       "frame: rating stamp crowds the SD window");
 assert(!qr_back || !mount_keyholes
        || abs(qr_back_dx) + qr_back_reach
           < khm_dx - (mount_portrait ? khm_plen + khm_slide_w/2 + khm_pad_w : 10) - 2,
@@ -1435,6 +1500,27 @@ module gauge() {
 //  v0.8). Get standoff_len right or the recess is off by the same error.
 // ----------------------------------------------------------------------------
 module pill2d(l, w) { hull() for (d = [-1, 1]) translate([0, d*(l - w)/2]) circle(d = w); }
+// FEATHER BARB — the house pattern motif, and the reason it is a motif at all
+// is that it prints better than the stadium it replaces. Two big circles
+// intersected give a vesica: a leaf pointed at BOTH ends. On the dock's
+// near-vertical fin that top apex is self-supporting, where a stadium's flat
+// crown is a bridge the width of the vent. Same envelope (l x w) as pill2d,
+// so it drops in wherever a pill was. r is the circle radius whose lens is
+// exactly l tall and w wide: r = (l^2 + w^2) / 4w.
+// NB intersection_for, not intersection(){ for ... } — a for loop is ONE
+// child (a group), so intersection() over it quietly returns the UNION, and
+// the two circles then swallow the entire fin. This builtin exists for
+// exactly this case.
+// (named barb2d, not feather2d: the brand grille's feather — round base,
+// one point — lives in canary_vent_lib.scad, and two different shapes
+// cannot share a name. A local definition silently shadows a use<>d one,
+// which is how the grille's 3-argument calls started warning.)
+module barb2d(l, w) {
+    r = (l*l + w*w)/(4*w);
+    intersection_for (s = [1, -1]) translate([s*(r - w/2), 0]) circle(r);
+}
+// The vent shape the dock actually cuts — one switch for the whole pattern.
+module vent2d(l, w) { if (feather_vents) barb2d(l, w); else pill2d(l, w); }
 // Back-plate deboss: label_back_depth, not label_depth — the floors must sit
 // above the two-colour swap band (see the knob's comment).
 // QR modules, shaped for a NOZZLE. Cutting one square per dark module
@@ -1536,8 +1622,39 @@ module bat_brick(inset = 0, t = bat_t, drop = 0)
                fz_plate - bat_rib - t - drop])
         cube([bat_l - 2*inset, bat_w - 2*inset, t]);
 
+// ONE cable pass-through, cut into a chosen wall — the reason it is a module
+// is that the bottom exit and the side exit must be the SAME opening, or the
+// one grommet part stops fitting both. edge: 0 = bottom (-y), +1 = right
+// (+x), -1 = left (-x); pos runs along that wall. Every wall gets the same
+// stadium, the same 45° mouth bevel, and the same ledge relief behind it.
+module port_cut(edge = 0, pos = 0) {
+    ri  = edge == 0 ? fr_yi/2 : fr_xi/2;      // inner wall face
+    ro  = edge == 0 ? fr_yo/2 : fr_xo/2;      // outer skin
+    lg  = edge == 0 ? ledge_bot : ledge_side; // the ledge this wall carries
+    rot = edge == 0 ? 0 : edge*90;            // -y swings to ±x
+    rotate([0, 0, rot]) {
+        translate([pos, -ri + lg + 0.6, usb_z])
+            rotate([90, 0, 0]) linear_extrude(frame_wall + lg + 1.2)
+                rotate(90) pill2d(usb_open_w, usb_open_h);
+        // 45° mouth bevel at the skin — the grommet's cone lands on it, and
+        // an unused port still reads finished
+        hull() {
+            translate([pos, -ro + 0.01, usb_z]) rotate([90, 0, 0])
+                linear_extrude(0.02) rotate(90)
+                    pill2d(usb_open_w + 1.6, usb_open_h + 1.6);
+            translate([pos, -ro + 0.81, usb_z]) rotate([90, 0, 0])
+                linear_extrude(0.02) rotate(90) pill2d(usb_open_w, usb_open_h);
+        }
+        // relieve the ledge ring + wedge behind the port so the grommet's
+        // inner flange lands on a flat wall face
+        translate([pos, -ri + (lg + 1)/2 - 0.01, ledge_z + (ledge_t + lg)/2])
+            cube([usb_open_w + 2*grom_lip + 2, lg + 1,
+                  ledge_t + lg + 0.6], center = true);
+    }
+}
+
 module frame() {
-    gz = (glass_guard + glass_t + fz_boss)/2;   // centre of the clear air band
+    gz = key_gz;                                // centre of the clear air band
     gh = fz_boss - glass_guard - glass_t - 4;   // wall-vent height inside it
     difference() {
         union() {
@@ -1687,28 +1804,24 @@ module frame() {
         // USB pass-through, centred on the bottom wall: a true stadium sized
         // to pass the power cable's overmold head, cut through the wall AND
         // the FPC-edge ledge/wedge behind it. The grommet fills it afterwards.
-        if (usb_port) {
-            translate([usb_dx, -fr_yi/2 + ledge_bot + 0.6, usb_z])
-                rotate([90, 0, 0]) linear_extrude(frame_wall + ledge_bot + 1.2)
-                    rotate(90) pill2d(usb_open_w, usb_open_h);
-            // 45° mouth bevel at the skin — the grommet's cone lands on it,
-            // and the empty port reads finished when no cable is fitted
-            hull() {
-                translate([usb_dx, -fr_yo/2 + 0.01, usb_z]) rotate([90, 0, 0])
-                    linear_extrude(0.02) rotate(90)
-                        pill2d(usb_open_w + 1.6, usb_open_h + 1.6);
-                translate([usb_dx, -fr_yo/2 + 0.81, usb_z]) rotate([90, 0, 0])
-                    linear_extrude(0.02) rotate(90) pill2d(usb_open_w, usb_open_h);
-            }
-            // relieve the ledge ring + wedge behind the port so the grommet's
-            // inner flange lands on a flat wall face. The panel carries no
-            // adhesive on this stretch of the border — the FPC owns it — so
-            // nothing structural is lost.
-            translate([usb_dx, -fr_yi/2 + (ledge_bot + 1)/2 - 0.01,
-                       ledge_z + (ledge_t + ledge_bot)/2])
-                cube([usb_open_w + 2*grom_lip + 2, ledge_bot + 1,
-                      ledge_t + ledge_bot + 0.6], center = true);
-        }
+        if (usb_port) port_cut(0, usb_dx);
+        if (side_exit != "none") port_cut(side_exit == "right" ? 1 : -1, side_dy);
+        // port labels — same deboss depth as the brand words, set just
+        // outboard of each opening's flange so a fitted grommet never
+        // covers them
+        if (port_labels && usb_port)
+            translate([vword_x + vword_half + 3.5,
+                       -fr_yo/2 + label_depth, usb_z])
+                rotate([90, 0, 0]) linear_extrude(label_depth + 0.2)
+                    text(port_lbl_a, size = 3.6, font = label_font,
+                         halign = "left", valign = "center");
+        if (port_labels && side_exit != "none")
+            rotate([0, 0, side_exit == "right" ? 90 : -90])
+                translate([side_dy + usb_open_w/2 + grom_lip + 3.5,
+                           -fr_yo/2 + label_depth, usb_z])
+                    rotate([90, 0, 0]) linear_extrude(label_depth + 0.2)
+                        text(port_lbl_b, size = 3.6, font = label_font,
+                             halign = "left", valign = "center");
         // the brand words flank the port as CRISP DEBOSS — the slat-stencil
         // vents this replaces needed tie bands across every glyph, which
         // read as horizontal scan lines on the first print. A deboss stays
@@ -1847,6 +1960,13 @@ module frame() {
         // into the SD — this layout is preview-verified, so re-render.
         frame_lbl(0, -(fr_yi/2 - 10.2), brand_sub,  size = 2.4, spacing = 2.0);
         frame_lbl(0, -(fr_yi/2 - 5.4),  brand_back, size = 4.0, spacing = 1.15);
+        // rating stamp — stacked lines in the back plate's upper-right
+        // clear gap (rating_dy says why it is not in the lower band: that
+        // row is the brand lockup's)
+        if (rating_stamp) for (i = [0:len(rating_lines)-1])
+            frame_lbl(rating_dx, rating_dy + rating_h/2 - 1
+                                 - (i + 0.5)*rating_lh,
+                      rating_lines[i], rating_sz);
         // help QR — module cells debossed into the outer skin like every
         // other back label; the two-colour back swap turns them dark in
         // the light accent skin for free. In back-view coords, no mirror:
@@ -1903,7 +2023,7 @@ module stadium2d(w, h) { rotate(90) pill2d(w, h); }   // width w along x
 // press the inner flange through the opening. A tug on the cable pulls the
 // inner flange flat against the wall's inner face — the frame takes the load,
 // not the board's connector. The slit faces the back plate when installed.
-module usb_grommet() {
+module usb_grommet(bore = true) {
     fw = usb_open_w + 2*grom_lip;  fh = usb_open_h + 2*grom_lip;
     ww = usb_open_w + 2*tpu_squeeze;  wh = usb_open_h + 2*tpu_squeeze;
     difference() {
@@ -1934,9 +2054,13 @@ module usb_grommet() {
             }
         }
         // bore grips the jacket; the slit lets the grommet open like a C and
-        // wrap the wire after the head is already plugged in
-        cylinder(d = usb_wire_d - tpu_grip, h = 40, center = true);
-        translate([-0.2, 0, -0.1]) cube([0.4, fh/2 + 1, 20]);
+        // wrap the wire after the head is already plugged in. bore = false
+        // makes the BLANK for whichever exit the cable does not use — same
+        // body, same squeeze, same install, no hole.
+        if (bore) {
+            cylinder(d = usb_wire_d - tpu_grip, h = 40, center = true);
+            translate([-0.2, 0, -0.1]) cube([0.4, fh/2 + 1, 20]);
+        }
     }
 }
 
@@ -2124,10 +2248,16 @@ module stand_wellblade(x0, w, drop = 0) {
 // frame, at local y = -1 — the docked case's wall-band centre (gz), which is
 // where every keying slot is cut, whichever wall faces down. The taper is
 // what makes the case FIND centre: drop it anywhere close and it slides home.
+// A centring key stud. Its position ACROSS the slot is derived, not fixed:
+// the case's keying slot sits key_gz behind the case's FRONT face, and the
+// case's front face sits at -std_cd/2, so the slot's centre lands here. With
+// a fixed y this silently walked off the slot as soon as a battery deepened
+// the case — the 3000 build put the stud 4.4 mm out and it hit solid wall.
 module stand_keystud(x0, z0) {
+    ky = -std_cd/2 + key_gz;
     stand_seatframe() hull() {
-        translate([x0 - 0.9, -1.95, z0 - 0.5]) cube([1.8, 1.9, 0.5]);
-        translate([x0 - 0.3, -1.35, z0 + 1.5]) cube([0.6, 0.7, 0.02]);
+        translate([x0 - 0.9, ky - 0.95, z0 - 0.5]) cube([1.8, 1.9, 0.5]);
+        translate([x0 - 0.3, ky - 0.35, z0 + 1.5]) cube([0.6, 0.7, 0.02]);
     }
 }
 module stand() {
@@ -2216,7 +2346,7 @@ module stand() {
                 translate([sx*px[0], std_cd/2 + stand_fin_t + 1,
                            16 + (stand_fin_h - 26)/2])
                     rotate([90, 0, 0]) linear_extrude(stand_fin_t + 2)
-                        pill2d(stand_fin_h - 26, px[1]);
+                        vent2d(stand_fin_h - 26, px[1]);
             // branding: on the lip's front face, read standing in front...
             translate([0, -(std_cd/2 + stand_lip_t) + label_depth, -8])
                 rotate([90, 0, 0]) linear_extrude(label_depth + 0.2)
@@ -2277,6 +2407,23 @@ module stand() {
 // of the dock's filament. Drop your printed FRAME's bottom corner in: it
 // should seat on the pad with visible clearance front and back, and the lip
 // should stop 2+ mm short of the screen window.
+// The frame in its DOCKED pose. It lives HERE, not in the fitcheck, for one
+// concrete reason: -D only reaches the file it is given, so a pose defined in
+// the fitcheck can never be evaluated for `battery=...` — the dock gates would
+// silently test the no-battery case forever. The fitcheck delegates to this.
+//   seat > 0 presses the case INTO the pads; seat < 0 hovers it off them.
+//   portrait = ±1 turns the case that way and drops it onto the well ribs.
+module lcd7_docked(seat = 0, portrait = 0) {
+    fy = portrait == 0 ? fr_yo : fr_xo;
+    dn = seat + (portrait == 0 ? 0 : stand_rib_drop);
+    yq = -(fy/2)*sin(stand_ang) + (fr_depth/2)*cos(stand_ang);
+    zq = -(fy/2)*cos(stand_ang) - (fr_depth/2)*sin(stand_ang);
+    translate([0, std_ys - yq - dn*sin(stand_ang),
+               stand_floor_h - zq - dn*cos(stand_ang)])
+        rotate([270 - stand_ang, 0, 0]) rotate([0, 0, 180])
+            rotate([0, 0, 90*portrait]) frame();
+}
+
 module stand_gauge() {
     intersection() {
         stand();
@@ -2308,6 +2455,20 @@ else if (part == "stand_gauge") stand_gauge();
 //                    SOLID (the rails actually carry the pack)
 //   bat_probe_grip — the full pack grown past the hook plane vs the
 //                    frame: must be SOLID (the fingers actually retain it)
+// Dock gates — parts, not fitcheck checks, for the same -D reason as the
+// battery probes: these must be evaluable for EVERY battery build, since a
+// deeper case means a deeper slot and a deeper base.
+//   dock_probe_fit  — seated frame vs stand, hovered: must be EMPTY
+//   dock_probe_seat — pressed in: must be SOLID (the pads carry the case)
+//   dock_probe_p / _p2 — the same collision check, portrait either way
+else if (part == "dock_probe_fit")
+    intersection() { lcd7_docked(-0.2); stand(); }
+else if (part == "dock_probe_seat")
+    intersection() { lcd7_docked(0.4); stand(); }
+else if (part == "dock_probe_p")
+    intersection() { lcd7_docked(-0.2, 1); stand(); }
+else if (part == "dock_probe_p2")
+    intersection() { lcd7_docked(-0.2, -1); stand(); }
 else if (part == "bat_probe_fit") {
     assert(bat_on, "battery gates need -D battery=\"3000\" or \"10000\"");
     intersection() { frame(); bat_brick(2.4, bat_t - 0.1, 0.05); }
@@ -2329,6 +2490,7 @@ else if (part == "bat_probe_grip") {
 }
 else if (part == "radius_gauge") radius_gauge();
 // TPU fitments export in their print orientation (A-face down), as modelled
+else if (part == "plug_port")    usb_grommet(false);
 else if (part == "grommet_usb")  usb_grommet();
 else if (part == "plug_buttons") button_plug();
 else if (part == "plug_sd")      sd_cover();

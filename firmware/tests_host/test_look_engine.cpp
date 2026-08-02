@@ -83,11 +83,41 @@ static void test_breath() {
 
 static void test_scenes() {
   printf("scenes...\n");
-  CHECK(kSceneCount == 9, "nine scenes");
+  CHECK(kSceneCount == 10, "ten scenes");
   for (uint8_t i = 0; i < kSceneCount; i++) {
     CHECK(kScenes[i].n_stops >= 1 && kScenes[i].n_stops <= 4, "stop count sane");
     CHECK(kScenes[i].id != nullptr && kScenes[i].name != nullptr, "scene named");
   }
+}
+
+static void test_rainbow() {
+  printf("rainbow...\n");
+  // Find the rainbow scene by id (position is not part of the contract).
+  int idx = -1;
+  for (uint8_t i = 0; i < kSceneCount; i++) {
+    if (kScenes[i].id && kScenes[i].id[0] == 'r' && kScenes[i].id[1] == 'a')
+      idx = i;
+  }
+  CHECK(idx >= 0, "rainbow scene present");
+  if (idx < 0) return;
+  LookParams p;
+  p.scene_idx = (uint8_t)idx;
+  // Over one sweep loop the wheel must actually cycle: collect the dominant
+  // channel across phases and expect all three primaries to lead at least
+  // once (a warm-only or fixed-hue palette can't do that).
+  bool r_led = false, g_led = false, b_led = false;
+  for (uint32_t t = 0; t < 16000; t += 250) {
+    Rgb c = led_color(t, p, Sev::Ok, false);
+    if (c.r > c.g && c.r > c.b) r_led = true;
+    if (c.g > c.r && c.g > c.b) g_led = true;
+    if (c.b > c.r && c.b > c.g) b_led = true;
+  }
+  CHECK(r_led && g_led && b_led, "rainbow cycles through all three primaries");
+  // Honesty holds for the fun scene too: Alert is red, not the wheel.
+  Rgb alert = led_color(4000, p, Sev::Alert, false);
+  CHECK(alert.r > alert.g && alert.r > alert.b, "rainbow never dresses an alert");
+  Rgb dark = led_color(4000, p, Sev::Ok, /*safe_dark=*/true);
+  CHECK(dark.r == 0 && dark.g == 0 && dark.b == 0, "rainbow respects safe_dark");
 }
 
 static void test_led_honesty() {
@@ -150,6 +180,7 @@ int main() {
   test_palette();
   test_breath();
   test_scenes();
+  test_rainbow();
   test_led_honesty();
   test_wash();
   if (g_fail) { printf("\n%d CHECK(s) FAILED\n", g_fail); return 1; }

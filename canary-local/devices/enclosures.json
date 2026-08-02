@@ -570,7 +570,7 @@
   {
    "id": "universal-fit-coupon",
    "name": "Universal fit coupon",
-   "for": "ONE small print that calibrates every fit in the catalog: clip, keyhole+stud, slide, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labelled with the parameter it tunes",
+   "for": "ONE small print that calibrates every fit in the catalog: the WAP's two-sided clip channel, keyhole+stud with a click detent (slide the mate on, it clicks and stays — the doorbell-plate retention test), slide tongue, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labelled with the parameter it tunes",
    "status": "in-development",
    "note": "**print this before any case**",
    "device": null,
@@ -6468,11 +6468,16 @@
         "stand_gauge",
         "radius_gauge",
         "grommet_usb",
+        "plug_port",
         "plug_buttons",
         "plug_sd",
         "bat_probe_fit",
         "bat_probe_seat",
         "bat_probe_grip",
+        "dock_probe_fit",
+        "dock_probe_seat",
+        "dock_probe_p",
+        "dock_probe_p2",
         "all"
        ]
       }
@@ -7033,6 +7038,43 @@
        "comment": "strain-relief bell beyond the outer flange"
       },
       {
+       "name": "side_exit",
+       "default": "right",
+       "enum": [
+        "none",
+        "left",
+        "right"
+       ],
+       "comment": "— extra cable exit wall"
+      },
+      {
+       "name": "side_dy",
+       "default": "0.0",
+       "comment": "its centre along that wall, + = toward the top edge"
+      },
+      {
+       "name": "port_labels",
+       "default": "true"
+      },
+      {
+       "name": "port_lbl_a",
+       "default": "USB",
+       "comment": "beside the bottom exit"
+      },
+      {
+       "name": "port_lbl_b",
+       "default": "UART1",
+       "comment": "beside the side exit"
+      },
+      {
+       "name": "rating_stamp",
+       "default": "true"
+      },
+      {
+       "name": "rating_lines",
+       "default": "[\"5V = 2A\", \"USB-C INPUT\", \"INDOOR USE ONLY\"]"
+      },
+      {
        "name": "tpu_squeeze",
        "default": "0.2",
        "comment": "per-side interference each TPU waist carries in its opening"
@@ -7220,6 +7262,11 @@
        "name": "stand_feet",
        "default": "true",
        "comment": "4x shallow recesses for adhesive rubber feet"
+      },
+      {
+       "name": "feather_vents",
+       "default": "true",
+       "comment": "shape the fin vents as FEATHER BARBS (a pointed"
       },
       {
        "name": "qr_n",
@@ -7492,6 +7539,10 @@
        "comment": "boss face the standoffs land on"
       },
       {
+       "name": "key_gz",
+       "default": "(glass_guard + glass_t + fz_boss)/2"
+      },
+      {
        "name": "fz_plate",
        "default": "fr_depth - back_t",
        "comment": "inner face of the back plate"
@@ -7504,6 +7555,33 @@
        "name": "sd_teth_y",
        "default": "sd_dy + sd_l/2 + sd_lip + sd_teth_gap",
        "comment": "tether anchor hole centre"
+      },
+      {
+       "name": "rating_sz",
+       "default": "2.6",
+       "comment": "finer than the port labels — a spec block, not a sign"
+      },
+      {
+       "name": "rating_lh",
+       "default": "rating_sz*1.45"
+      },
+      {
+       "name": "rating_w",
+       "default": "2*0.392*rating_sz*max([for (l = rating_lines) len(l)])"
+      },
+      {
+       "name": "rating_h",
+       "default": "rating_lh*len(rating_lines) + 2"
+      },
+      {
+       "name": "rating_dx",
+       "default": "42.0",
+       "comment": "centred in the clear gap: rail moat ends ~23, the"
+      },
+      {
+       "name": "rating_dy",
+       "default": "22.0",
+       "comment": "NOT the lower band: that row belongs to the brand line,"
       },
       {
        "name": "fr_keepouts",
@@ -8117,7 +8195,7 @@
    ]
   },
   "canary_fit_coupon.scad": {
-   "title": "Canary — UNIVERSAL FIT-CHECK COUPON  ⚠️ IN DEVELOPMENT (v0.2-dev)",
+   "title": "Canary — UNIVERSAL FIT-CHECK COUPON  ⚠️ IN DEVELOPMENT (v0.3-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -8160,6 +8238,16 @@
       {
        "name": "stud_gap",
        "default": "30.0"
+      },
+      {
+       "name": "kh_click",
+       "default": "0.25",
+       "comment": "detent bump proud of the head-channel ceiling (0 = no click)"
+      },
+      {
+       "name": "clip_bw",
+       "default": "17.5",
+       "comment": "the WAP's board width — the CLIP station is its coupon verbatim"
       },
       {
        "name": "screw_step",

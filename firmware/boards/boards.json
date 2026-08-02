@@ -255,7 +255,7 @@
     "used_by": [
       "canary-display"
     ],
-    "notes": "Nightstand Line big glass: 7\" 800x480 RGB565 parallel + GT911 5-point touch + CH422G IO expander (backlight + touch-reset) — electrically the 4.3\" Canary Dash at 7\", so it reuses the dash RGB HAL/GT911/CH422G. Requires the 8 MB octal PSRAM for the 768 KB framebuffer. Wired as the canary-display 'dash7' flavor (env canary-display-dash7): dash config + pins only, same HAL/UI. Full 5-point touch gestures + bench validation pending (docs/hardware/display_nightstand_line.md).",
+    "notes": "Nightstand Line big glass: 7\" 800x480 RGB565 parallel + GT911 5-point touch + CH422G IO expander (backlight + touch-reset) — electrically the 4.3\" Canary Dash at 7\", so it reuses the dash RGB HAL/GT911/CH422G. Requires the 8 MB octal PSRAM for the 768 KB framebuffer. Wired as TWO canary-display products on the same glass: the wall 'dash7' flavor (env canary-display-dash7 — dash config + pins only, same HAL/UI) and the bedside 'nightstand7' flavor (env canary-display-nightstand7 — same RGB HAL/GT911/CH422G, its own clock-hero face, red night clock focus, and the lantern night light). Full 5-point touch gestures + bench validation pending (docs/hardware/display_nightstand_line.md).",
     "thermal_notes": "The hottest board in the fleet: a 7\" backlight plus continuous 800x480 RGB refresh out of octal PSRAM. Backlight duty (via the CH422G) is the main relief valve and the die-temp watchdog (FEATURE_DIAGNOSTICS) the gauge; keep the GT911 glass out of direct sun — capacitive touch drifts when hot.",
     "psram_type": "octal"
   },
