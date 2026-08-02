@@ -19,11 +19,22 @@ namespace canary::care {
 namespace {
 
 // ── Hub weather cache ─────────────────────────────────────────────────────
+constexpr int WX_ABSENT_C10 = -10000;   // "field not in the blob" sentinel
 struct WeatherCache {
   bool have = false;
+  int t_now_c10 = WX_ABSENT_C10;
   int hi_c10 = 0, lo_c10 = 0;
   int rain_pct = -1;
   char cond[20] = {0};
+  // Tomorrow (optional fields; absent on older hub automations).
+  int hi2_c10 = WX_ABSENT_C10, lo2_c10 = WX_ABSENT_C10;
+  int rain2_pct = -1;
+  char cond2[20] = {0};
+  // Active advisory/warning (optional; visual-only, never a chime).
+  bool alert_have = false;
+  char alert_text[48] = {0};
+  uint8_t alert_sev = 0;
+  int64_t alert_until = 0;     // wall-clock end (epoch seconds)
   int64_t ts = 0;              // hub's wall-clock stamp (staleness gate)
 };
 WeatherCache s_wx;
@@ -107,7 +118,75 @@ void bedside_on_weather(const char* payload, unsigned len) {
   s_wx.rain_pct = doc["rain"] | -1;
   snprintf(s_wx.cond, sizeof(s_wx.cond), "%s", (const char*)(doc["cond"] | ""));
   s_wx.ts = doc["ts"] | (int64_t)0;
+  // Optional current + tomorrow fields (older automations simply omit them;
+  // every absent field re-arms its sentinel so a hub DROPPING a field never
+  // leaves yesterday's value rendering as today's truth).
+  s_wx.t_now_c10 =
+      doc["t_now"].is<float>() ? (int)(doc["t_now"].as<float>() * 10.0f)
+                               : WX_ABSENT_C10;
+  const bool have2 = doc["hi2"].is<float>() && doc["lo2"].is<float>();
+  s_wx.hi2_c10 = have2 ? (int)(doc["hi2"].as<float>() * 10.0f) : WX_ABSENT_C10;
+  s_wx.lo2_c10 = have2 ? (int)(doc["lo2"].as<float>() * 10.0f) : WX_ABSENT_C10;
+  s_wx.rain2_pct = have2 ? (doc["rain2"] | -1) : -1;
+  snprintf(s_wx.cond2, sizeof(s_wx.cond2), "%s",
+           have2 ? (const char*)(doc["cond2"] | "") : "");
+  // Optional weather advisory/warning. Read through the same `| default`
+  // idiom the rest of this parser uses: a missing "alert", a null one, and
+  // one with no "event" all land on the empty string and simply don't
+  // render — no nested type test needed.
+  s_wx.alert_have = false;
+  {
+    const char* ev = doc["alert"]["event"] | "";
+    if (ev[0]) {
+      snprintf(s_wx.alert_text, sizeof(s_wx.alert_text), "%s", ev);
+      s_wx.alert_sev = (uint8_t)((doc["alert"]["sev"] | 0) != 0 ? 1 : 0);
+      s_wx.alert_until = doc["alert"]["until"] | (int64_t)0;
+      s_wx.alert_have = true;
+    }
+  }
   s_wx.have = true;
+}
+
+bool bedside_weather(BedsideWeather* out) {
+  if (!out || !weather_fresh()) return false;
+  out->t_now_c10 = s_wx.t_now_c10;
+  out->hi_c10 = s_wx.hi_c10;
+  out->lo_c10 = s_wx.lo_c10;
+  out->rain_pct = s_wx.rain_pct;
+  out->cond = cond_word(s_wx.cond);
+  out->hi2_c10 = s_wx.hi2_c10;
+  out->lo2_c10 = s_wx.lo2_c10;
+  out->rain2_pct = s_wx.rain2_pct;
+  out->cond2 = cond_word(s_wx.cond2);
+  return true;
+}
+
+bool bedside_tomorrow_line(char* out, size_t cap) {
+  if (!weather_fresh() || s_wx.hi2_c10 == WX_ABSENT_C10) return false;
+  const char* w = cond_word(s_wx.cond2);
+  size_t o = (size_t)snprintf(
+      out, cap, "tomorrow %d\xC2\xB0/%d\xC2\xB0",
+      (s_wx.hi2_c10 + (s_wx.hi2_c10 >= 0 ? 5 : -5)) / 10,
+      (s_wx.lo2_c10 + (s_wx.lo2_c10 >= 0 ? 5 : -5)) / 10);
+  if (s_wx.rain2_pct > 0 && o < cap) {
+    o += (size_t)snprintf(out + o, cap - o, " • rain %d%%", s_wx.rain2_pct);
+  }
+  if (w[0] && o < cap) {
+    snprintf(out + o, cap - o, " • %s", w);
+  }
+  return true;
+}
+
+bool bedside_weather_alert(BedsideWxAlert* out) {
+  if (!out || !weather_fresh() || !s_wx.alert_have) return false;
+  // An alert is live only while `until` is ahead of a valid wall clock —
+  // the same honesty rule as the forecast itself: no clock, no claim.
+  const time_t now = time(nullptr);
+  if (now < 1700000000) return false;
+  if (s_wx.alert_until != 0 && (int64_t)now >= s_wx.alert_until) return false;
+  snprintf(out->text, sizeof(out->text), "%s", s_wx.alert_text);
+  out->sev = s_wx.alert_sev;
+  return true;
 }
 
 bool bedside_morning_line(char* out, size_t cap) {

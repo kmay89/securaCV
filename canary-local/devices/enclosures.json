@@ -570,7 +570,7 @@
   {
    "id": "universal-fit-coupon",
    "name": "Universal fit coupon",
-   "for": "ONE small print that calibrates every fit in the catalog: clip, keyhole+stud, slide, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labelled with the parameter it tunes",
+   "for": "ONE small print that calibrates every fit in the catalog: the Canary mark embossed in uniform strokes (no feature narrower than one rib, so that single width decides the whole glyph), the WAP's two-sided clip channel, keyhole+stud with a click detent (slide the mate on, it clicks and stays — the doorbell-plate retention test), slide tongue, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labelled with the parameter it tunes",
    "status": "in-development",
    "note": "**print this before any case**",
    "device": null,
@@ -6447,7 +6447,7 @@
    ]
   },
   "canary_s3_lcd7.scad": {
-   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.8-dev)",
+   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.9-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -6641,22 +6641,27 @@
       },
       {
        "name": "vent_cols",
-       "default": "22",
+       "default": "20",
        "comment": "grille columns"
       },
       {
        "name": "vent_slot_w",
-       "default": "2.4",
-       "comment": "slot width"
+       "default": "5.2",
+       "comment": "feather base width — the grille is the PLUMAGE"
       },
       {
        "name": "vent_slot_l",
-       "default": "9.0",
-       "comment": "slot length"
+       "default": "7.2",
+       "comment": "feather length (point-up: sheds drips on a"
+      },
+      {
+       "name": "vent_tip",
+       "default": "0.28",
+       "comment": "tip/base ratio — the ONE brand constant; keep"
       },
       {
        "name": "vent_pitch_x",
-       "default": "7.0",
+       "default": "7.6",
        "comment": "column pitch"
       },
       {
@@ -6880,8 +6885,13 @@
       },
       {
        "name": "brand_back",
-       "default": "SecuraCV Canary 7\\\" Display",
-       "comment": "debossed across the back plate"
+       "default": "CANARY DISPLAY",
+       "comment": "the back lockup's HERO line — centred,"
+      },
+      {
+       "name": "brand_sub",
+       "default": "SECURACV",
+       "comment": "the small tracked company line beneath"
       },
       {
        "name": "brand_edge",
@@ -6940,6 +6950,11 @@
        "name": "gill_y0",
        "default": "-35.0",
        "comment": "carry vents only; SD access is through the back plate"
+      },
+      {
+       "name": "gill_vw",
+       "default": "3.6",
+       "comment": "side-gill feather base width — area matches the old"
       },
       {
        "name": "frame_vent_flank_n",
@@ -7306,22 +7321,47 @@
       },
       {
        "name": "qr_back_cell",
-       "default": "1.2",
-       "comment": "module size — 3 line-widths; the plate is busier"
+       "default": "1.3",
+       "comment": "module size — 3.1 line-widths at 0.42, up from 1.2"
       },
       {
        "name": "qr_back_dx",
-       "default": "-40.0",
-       "comment": "field centre, back-view coords (+x = back-view right)"
+       "default": "-41.3",
+       "comment": "field centre, back-view coords (+x = back-view right)."
       },
       {
        "name": "qr_back_dy",
-       "default": "0.0"
+       "default": "0.0",
+       "comment": "mid-LEFT wing, mirroring the SD cover's mass on the"
       },
       {
        "name": "qr_back_reach",
        "default": "qr_n*qr_back_cell/2 + 4*qr_back_cell",
        "comment": "field/2 + quiet zone,"
+      }
+     ]
+    },
+    {
+     "name": "Build stamp — inside the case, on the plate's inner face",
+     "note": "",
+     "params": [
+      {
+       "name": "stamp_show",
+       "default": "true"
+      },
+      {
+       "name": "stamp_depth",
+       "default": "0.5",
+       "comment": "of back_t; the plate keeps 2.5 under it"
+      },
+      {
+       "name": "stamp_dy",
+       "default": "49.0",
+       "comment": "the clear band above the grille. Its floor is not a"
+      },
+      {
+       "name": "stamp_size",
+       "default": "2.4"
       }
      ]
     },
@@ -7603,6 +7643,11 @@
        "default": "(edge_vent_n - 1)/2*edge_vent_pitch + edge_vent_w/2"
       },
       {
+       "name": "stamp_half",
+       "default": "stamp_size*0.9 + stamp_size*0.39 + 0.6",
+       "comment": "text block half-height"
+      },
+      {
        "name": "qr_dy_eff",
        "default": "qr_dy + bat_dg",
        "comment": "the deck's rear half-growth, when a battery deepens the dock"
@@ -7611,6 +7656,11 @@
        "name": "gauge_in",
        "default": "34",
        "comment": "how far inward from the cavity corner the sample reaches"
+      },
+      {
+       "name": "qr_round",
+       "default": "0.22",
+       "comment": "module corner radius, as a fraction of the module"
       }
      ]
     }
@@ -8156,7 +8206,7 @@
    ]
   },
   "canary_fit_coupon.scad": {
-   "title": "Canary — UNIVERSAL FIT-CHECK COUPON  ⚠️ IN DEVELOPMENT (v0.2-dev)",
+   "title": "Canary — UNIVERSAL FIT-CHECK COUPON  ⚠️ IN DEVELOPMENT (v0.3-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -8201,6 +8251,16 @@
        "default": "30.0"
       },
       {
+       "name": "kh_click",
+       "default": "0.25",
+       "comment": "detent bump proud of the head-channel ceiling (0 = no click)"
+      },
+      {
+       "name": "clip_bw",
+       "default": "17.5",
+       "comment": "the WAP's board width — the CLIP station is its coupon verbatim"
+      },
+      {
        "name": "screw_step",
        "default": "0.15",
        "comment": "pilot ladder: three holes at screw_d − step / screw_d / + step"
@@ -8243,6 +8303,51 @@
        "name": "brand_sunk",
        "default": "SecuraCV",
        "comment": "the DEBOSS station's wordmark"
+      },
+      {
+       "name": "glyph_h",
+       "default": "7.0",
+       "comment": "GLYPH station: mark height (0 removes the station)."
+      },
+      {
+       "name": "glyph_rib",
+       "default": "0.7",
+       "comment": "stroke width, in mm. THE number this station tests:"
+      }
+     ]
+    },
+    {
+     "name": "GLYPH station — the bird, debossed into the BED-SIDE face",
+     "note": "",
+     "params": [
+      {
+       "name": "glyph_show",
+       "default": "true"
+      },
+      {
+       "name": "glyph_size",
+       "default": "34.0",
+       "comment": "mark width. At 34 the thinnest stroke lands at"
+      },
+      {
+       "name": "glyph_grow",
+       "default": "0.14",
+       "comment": "per-side thickening that buys that 0.44"
+      },
+      {
+       "name": "glyph_depth",
+       "default": "0.5",
+       "comment": "= label_depth's sibling; one bridged layer closes it"
+      },
+      {
+       "name": "glyph_dx",
+       "default": "-26.5",
+       "comment": "the clear rectangle on the bed face: left of the"
+      },
+      {
+       "name": "glyph_dy",
+       "default": "12.0",
+       "comment": "PORT through-hole, above the keyhole pockets"
       }
      ]
     },
@@ -8250,6 +8355,28 @@
      "name": "Quality",
      "note": "",
      "params": [
+      {
+       "name": "g_tail",
+       "default": "[[-18,-2],[-40,-12],[-62,-24],[-86,-36]]"
+      },
+      {
+       "name": "g_wing",
+       "default": "[[30,4],[12,14],[-8,10],[-22,0],[-6,-8],[14,-4],[30,4]]"
+      },
+      {
+       "name": "g_span",
+       "default": "87",
+       "comment": "design-unit height the above spans"
+      },
+      {
+       "name": "g_cx",
+       "default": "-6",
+       "comment": "design-unit bbox centre"
+      },
+      {
+       "name": "g_cy",
+       "default": "-2.5"
+      },
       {
        "name": "pocket_cx",
        "default": "-1",

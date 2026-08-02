@@ -121,7 +121,16 @@ catalogued in
   wall-clock log; tap a row → its chain as a QR; a two-tap "erase all" for
   sovereignty); the watch gains a read-only HISTORY page. Cross-reboot
   durability is `FEATURE_TIME_MACHINE_PERSIST` (LittleFS, failure-tolerant,
-  bench-gated like the chime). And on the *sensor* side `canary-wap` now
+  bench-gated like the chime), and the dash's TF slot adds the **SD deep
+  archive** (`FEATURE_SD_STORAGE`, `fleet/sd_archive.cpp`): every record also
+  appended to the card as plain JSONL — same schema as the flash slice, so
+  the card reads on any laptop with a text editor, and popping it out IS the
+  export. SDMMC 1-bit (the CS-less path this hardware's expander-routed DAT3
+  demands), failure-tolerant like every other tier (no card = nothing
+  changes; hot insert archives from the next event), dash-only for now (the
+  watch slot shares the panel's SPI bus — `fleet/sd_archive.h` has the full
+  story), and bench-gated before the default flips. And on the *sensor* side
+  `canary-wap` now
   **gossips the broker** (`FEATURE_MDNS_BROKER_GOSSIP`): configure one canary
   and every display self-discovers a provably-reachable broker with zero
   setup ([discovery doc](../../../docs/hardware/display_discovery_and_resilience.md) §5.1).

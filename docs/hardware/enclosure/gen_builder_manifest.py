@@ -321,7 +321,9 @@ CURATED = [
                    "the fleet's cases, as labelled test stations — print "
                    "this first, tune the three tolerances, reuse everywhere.",
         "about": "Every fit the fleet's cases use, gathered on one branded "
-                 "test plate: snap clips, keyholes, magnet and light-pipe "
+                 "test plate: the Canary mark embossed in uniform strokes, "
+                 "the WAP's two-sided snap-clip channel, "
+                 "click-retained keyholes, magnet and light-pipe "
                  "pockets, insert bores, the lid lip, the USB-C port "
                  "opening, a −/0/+ screw-pilot ladder, and the embossed/"
                  "debossed wordmarks every case's branding uses. A tight or "
@@ -329,16 +331,18 @@ CURATED = [
                  "for every case after.",
         "print_plan": "Print the Base in PETG first — it's small next to "
                       "any case. The Mate "
-                      "tests the keyholes and slide rib against it; the "
+                      "tests the keyholes (slide to the click) and its "
+                      "edge tongue tests the lid-lip channel; the "
                       "Strip is the TPU gasket-squeeze test. Adjust the "
                       "three tolerances and reprint until stations fit.",
-        "simple": ["part", "tol_slide", "tol_press", "tol_hole"],
+        "simple": ["part", "tol_slide", "tol_press", "tol_hole", "kh_click",
+                   "glyph_rib"],
         "preset_param": None,
         "preset_controls": [],
         "part_labels": {
             "all": "Base + mate + strip",
             "base": "Base plate (rigid)",
-            "mate": "Mate — studs + slide rib",
+            "mate": "Mate — studs + slide tongue",
             "strip": "Gasket bar — print in TPU",
         },
         "part_info": {
@@ -347,14 +351,19 @@ CURATED = [
             "base": "The station plate: clip, pocket, bore, port and "
                     "wordmark tests, each labelled with the parameter it "
                     "exercises.",
-            "mate": "T-studs and a slide rib that mate into the base's "
-                    "keyhole and groove stations.",
+            "mate": "T-studs that hang in the base's keyholes and click "
+                    "past the retention detent, plus a bottom-edge tongue "
+                    "for the slide channel — the stud face stays flat so "
+                    "the hang test seats fully.",
             "strip": "A soft TPU bar for the gasket groove — tests the "
                      "squeeze that seals the weather builds.",
         },
         "labels": {
             "part": "Part to print", "tol_slide": "Sliding fits",
             "tol_press": "Press fits", "tol_hole": "Screw holes",
+            "kh_click": "Keyhole click",
+            "glyph_h": "Glyph height",
+            "glyph_rib": "Glyph stroke",
         },
         "hints": {
             "tol_slide": "Parts that slide or snap: lid lips, board clips, "
@@ -363,9 +372,20 @@ CURATED = [
                          "They should seat firmly by thumb.",
             "tol_hole": "Self-tapping M2 pilots: threads should bite "
                         "without splitting the post.",
+            "kh_click": "The keyhole retention bump. Mate won't slide past "
+                        "it → smaller number; slides back off too easily → "
+                        "bigger. 0 removes the click.",
+            "glyph_h": "How tall the embossed Canary prints. At the default "
+                       "7 mm it spans 12.9 mm — the clear air between the two "
+                       "wordmarks. 0 removes the station.",
+            "glyph_rib": "No part of the mark is drawn narrower than this, "
+                         "so one number decides the whole glyph. Blobbed and "
+                         "closed up → smaller; broken or missing → bigger. "
+                         "Below 0.4 mm is thinner than one extrusion.",
         },
         "choices": {},
-        "units": {"tol_slide": "mm", "tol_press": "mm", "tol_hole": "mm"},
+        "units": {"tol_slide": "mm", "tol_press": "mm", "tol_hole": "mm",
+                  "kh_click": "mm", "glyph_h": "mm", "glyph_rib": "mm"},
     },
 ]
 

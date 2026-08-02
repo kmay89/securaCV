@@ -224,7 +224,10 @@ fn bench_thread(
                     }
                 }
             }
-        } else if pending.as_ref().is_some_and(|p| Instant::now() > p.deadline) {
+        } else if pending
+            .as_ref()
+            .is_some_and(|p| Instant::now() > p.deadline)
+        {
             if let Some(p) = pending.take() {
                 let _ = p
                     .reply
@@ -421,7 +424,10 @@ mod tests {
 
     #[test]
     fn model_card_tolerates_garbage() {
-        assert_eq!(model_card(&json!({ "data": "not base64 !!!" })), (None, false));
+        assert_eq!(
+            model_card(&json!({ "data": "not base64 !!!" })),
+            (None, false)
+        );
         assert_eq!(model_card(&json!({ "code": 0 })), (None, false));
     }
 }

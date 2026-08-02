@@ -1,8 +1,9 @@
 // src/ui/look_state.cpp — the shared Nightstand look controls. See look_state.h.
-// Nightstand flavor only; empty elsewhere so the watch/dash builds never pull
-// in the color engine (and their size guard is untouched).
+// Nightstand flavors only (the 1.47"/1.69" portrait boards and the 7" bedside
+// glass); empty elsewhere so the watch/dash builds never pull in the color
+// engine (and their size guard is untouched).
 #include <config.h>
-#ifdef CD_FLAVOR_NIGHTSTAND
+#if defined(CD_FLAVOR_NIGHTSTAND) || defined(CD_NIGHTSTAND7)
 
 #include "canary/ui/look_state.h"
 

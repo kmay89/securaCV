@@ -86,7 +86,11 @@ pub fn parse_partition_table(bytes: &[u8]) -> Vec<Partition> {
 
 /// The app slots (type 0x00) in table order.
 pub fn app_partitions(entries: &[Partition]) -> Vec<Partition> {
-    entries.iter().filter(|e| e.ptype == 0x00).cloned().collect()
+    entries
+        .iter()
+        .filter(|e| e.ptype == 0x00)
+        .cloned()
+        .collect()
 }
 
 pub fn is_ota_data(e: &Partition) -> bool {
@@ -273,14 +277,27 @@ pub struct Coredump {
 /// reads 0xFFFFFFFF. Present iff `len != 0xFFFFFFFF && 0 < len <= partition size`.
 pub fn parse_coredump_header(bytes: &[u8], partition_size: u32) -> Coredump {
     if bytes.len() < 4 {
-        return Coredump { present: false, size: None };
+        return Coredump {
+            present: false,
+            size: None,
+        };
     }
     let len = u32le(bytes, 0);
-    let cap = if partition_size != 0 { partition_size } else { 0x10000 };
-    if len != 0xffff_ffff && len > 0 && len <= cap {
-        Coredump { present: true, size: Some(len) }
+    let cap = if partition_size != 0 {
+        partition_size
     } else {
-        Coredump { present: false, size: None }
+        0x10000
+    };
+    if len != 0xffff_ffff && len > 0 && len <= cap {
+        Coredump {
+            present: true,
+            size: Some(len),
+        }
+    } else {
+        Coredump {
+            present: false,
+            size: None,
+        }
     }
 }
 
@@ -357,8 +374,13 @@ pub fn parse_nvs(bytes: &[u8], allow_blob_keys: &[&str]) -> Vec<NvsItem> {
                     v = v * 256 + bytes[o + 24 + i] as u64;
                 }
                 items.push(NvsItem {
-                    ns_index: ns, namespace: String::new(), key, itype: ttype,
-                    value: Some(v), size: None, bytes: None,
+                    ns_index: ns,
+                    namespace: String::new(),
+                    key,
+                    itype: ttype,
+                    value: Some(v),
+                    size: None,
+                    bytes: None,
                 });
             } else if ttype == 0x21 || ttype == 0x41 || ttype == 0x42 {
                 let size = u16le(bytes, o + 24) as u32;
@@ -369,25 +391,42 @@ pub fn parse_nvs(bytes: &[u8], allow_blob_keys: &[&str]) -> Vec<NvsItem> {
                         .push((chunk_idx, blob_slice(size as usize)));
                 }
                 if ttype == 0x41 {
-                    let bytes_field = allow.contains(key.as_str()).then(|| blob_slice(size as usize));
+                    let bytes_field = allow
+                        .contains(key.as_str())
+                        .then(|| blob_slice(size as usize));
                     items.push(NvsItem {
-                        ns_index: ns, namespace: String::new(), key, itype: 0x42,
-                        value: None, size: Some(size), bytes: bytes_field,
+                        ns_index: ns,
+                        namespace: String::new(),
+                        key,
+                        itype: 0x42,
+                        value: None,
+                        size: Some(size),
+                        bytes: bytes_field,
                     });
                 } else if ttype == 0x21 {
                     let bytes_field = allow
                         .contains(key.as_str())
                         .then(|| blob_slice(size.saturating_sub(1) as usize));
                     items.push(NvsItem {
-                        ns_index: ns, namespace: String::new(), key, itype: 0x21,
-                        value: None, size: Some(size), bytes: bytes_field,
+                        ns_index: ns,
+                        namespace: String::new(),
+                        key,
+                        itype: 0x21,
+                        value: None,
+                        size: Some(size),
+                        bytes: bytes_field,
                     });
                 }
             } else if ttype == 0x48 {
                 // v2 blob index: authoritative total size (u32).
                 items.push(NvsItem {
-                    ns_index: ns, namespace: String::new(), key, itype: 0x42,
-                    value: None, size: Some(u32le(bytes, o + 24)), bytes: None,
+                    ns_index: ns,
+                    namespace: String::new(),
+                    key,
+                    itype: 0x42,
+                    value: None,
+                    size: Some(u32le(bytes, o + 24)),
+                    bytes: None,
                 });
             }
             idx += span as usize;
@@ -516,9 +555,10 @@ pub fn report_verdict(inp: &VerdictInput) -> Verdict {
         findings.push(Finding {
             severity: "warn",
             title: "A crash dump is stored — the board hard-crashed at some point.".into(),
-            fix: "Not an emergency: flashing fresh firmware or a full erase clears it. If it keeps \
+            fix:
+                "Not an emergency: flashing fresh firmware or a full erase clears it. If it keeps \
                   crashing, mention this dump in a bug report."
-                .into(),
+                    .into(),
         });
     }
     if inp.ota_pending_verify {
@@ -532,18 +572,17 @@ pub fn report_verdict(inp: &VerdictInput) -> Verdict {
     if inp.ota_rolled_back {
         findings.push(Finding {
             severity: "warn",
-            title: "The last update was rolled back — it failed its self-check and reverted.".into(),
-            fix: "The board is running the previous image. Reflash the newest firmware to try again."
+            title: "The last update was rolled back — it failed its self-check and reverted."
                 .into(),
+            fix:
+                "The board is running the previous image. Reflash the newest firmware to try again."
+                    .into(),
         });
     }
     if matches!(inp.tamper, Some(t) if t != 0) {
         findings.push(Finding {
             severity: "attn",
-            title: format!(
-                "The tamper flag is set ({}).",
-                inp.tamper.unwrap_or(0)
-            ),
+            title: format!("The tamper flag is set ({}).", inp.tamper.unwrap_or(0)),
             fix: "The board is flagging physical interference. Investigate before trusting it; \
                   back it up first if you want the evidence."
                 .into(),
@@ -575,13 +614,18 @@ pub fn report_verdict(inp: &VerdictInput) -> Verdict {
             } else {
                 "No crashes, no tamper flags — all good.".into()
             },
-            fix: "After any install or restore, a health check like this is the quickest confidence \
+            fix:
+                "After any install or restore, a health check like this is the quickest confidence \
                   test."
-                .into(),
+                    .into(),
         });
     }
 
-    Verdict { level, headline, findings }
+    Verdict {
+        level,
+        headline,
+        findings,
+    }
 }
 
 #[cfg(test)]
@@ -697,7 +741,7 @@ mod tests {
         // (ns, type, key, data[8]) — caller writes the namespace def as ns=0,type=0x01.
         let mut page = vec![0xffu8; 4096];
         page[0..4].copy_from_slice(&0u32.to_le_bytes()); // page active (not 0xFFFFFFFF)
-        // bitmap starts all-0xFF (erased); we set each used entry to "written" (0b10).
+                                                         // bitmap starts all-0xFF (erased); we set each used entry to "written" (0b10).
         for (i, (ns, ttype, key, data)) in entries.iter().enumerate() {
             let bm = 32 + (i >> 2);
             // clear the 2 bits then set 0b10
@@ -717,7 +761,7 @@ mod tests {
     #[test]
     fn nvs_and_witness_summary_presence_only_for_secrets() {
         let page = nvs_page(&[
-            (0, 0x01, "securacv", &[7]),   // namespace def → index 7
+            (0, 0x01, "securacv", &[7]),      // namespace def → index 7
             (7, 0x04, "seq", &[42, 0, 0, 0]), // u32 = 42
             (7, 0x04, "boots", &[9, 0, 0, 0]),
             (7, 0x01, "tamper", &[0]),       // u8 = 0
@@ -732,30 +776,39 @@ mod tests {
         assert!(w.provisioned); // privkey present
         assert!(w.wifi_configured); // wifi_ssid present
         assert!(w.chain_head_fp.is_none()); // no chain blob written
-        // wifi_ssid/privkey values were NOT extracted — only presence.
+                                            // wifi_ssid/privkey values were NOT extracted — only presence.
         let ssid = items.iter().find(|i| i.key == "wifi_ssid").unwrap();
         assert!(ssid.bytes.is_none());
     }
 
     #[test]
     fn verdict_flags_blank_crash_and_tamper_with_fixes() {
-        let blank = report_verdict(&VerdictInput { blank: true, ..Default::default() });
+        let blank = report_verdict(&VerdictInput {
+            blank: true,
+            ..Default::default()
+        });
         assert_eq!(blank.level, "attn");
         assert!(blank.findings[0].fix.contains("factory image"));
 
         let crash = report_verdict(&VerdictInput {
-            coredump_present: true, has_running_slot: true, ..Default::default()
+            coredump_present: true,
+            has_running_slot: true,
+            ..Default::default()
         });
         assert_eq!(crash.level, "warn");
 
         let tamper = report_verdict(&VerdictInput {
-            tamper: Some(3), has_running_slot: true, ..Default::default()
+            tamper: Some(3),
+            has_running_slot: true,
+            ..Default::default()
         });
         assert_eq!(tamper.level, "attn");
         assert!(tamper.findings.iter().any(|f| f.title.contains("tamper")));
 
         let healthy = report_verdict(&VerdictInput {
-            has_running_slot: true, provisioned: true, ..Default::default()
+            has_running_slot: true,
+            provisioned: true,
+            ..Default::default()
         });
         assert_eq!(healthy.level, "ok");
         assert_eq!(healthy.findings.len(), 1);

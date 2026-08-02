@@ -150,6 +150,17 @@ pub struct SeedReport {
     /// Why the (experimental, opt-in) account seed didn't go in, if it didn't.
     /// Non-fatal by design — see [`inject_into_image`].
     pub account_note: Option<String>,
+    /// Whether the (experimental, opt-in) provisioning bundle went in — the
+    /// `CONFIG/securacv/` payload that lets the hub's stack be installed with
+    /// one command, or by the flasher's first-boot companion over SSH.
+    pub provision_written: bool,
+    /// Whether the maintenance key (`authorized_keys` at the boot partition
+    /// root — the HAOS developer-console mechanism) went in.
+    pub ssh_key_written: bool,
+    /// Why the provision seed (bundle and/or key) didn't fully land, if it
+    /// didn't. Non-fatal like the account seed: the fallback is the normal
+    /// by-hand setup, never a failed flash.
+    pub provision_note: Option<String>,
     /// Where the settings went, e.g. `GPT partition 1 "hassos-boot" (FAT16)` —
     /// worth logging, because "which partition" is the first question when a
     /// future HAOS layout change breaks this.
@@ -169,10 +180,21 @@ pub struct SeedReport {
 /// as [`SeedReport::account_note`] rather than sinking a flash that would
 /// otherwise work. On the first failure the rest of the batch is skipped: half a
 /// provisioning bundle is worse than none.
+///
+/// **The provision seed is the same shape.** `provision_files` is the
+/// self-setup bundle (`CONFIG/securacv/` — see [`crate::provision`]) and
+/// `ssh_authorized_keys` is the maintenance key that unlocks the HAOS
+/// developer console (`authorized_keys` at the boot partition ROOT, per HAOS's
+/// debugging docs — the one place the OS reads it from). Both are opt-in;
+/// either failing becomes [`SeedReport::provision_note`], because the fallback
+/// — setting the hub up by hand from another screen — is a working product,
+/// while a sunk flash is not.
 pub fn inject_into_image(
     image: &Path,
     wifi: Option<&WifiSeed<'_>>,
     account_files: &[SeedFile],
+    provision_files: &[SeedFile],
+    ssh_authorized_keys: Option<&str>,
     mut progress: impl FnMut(Progress),
 ) -> Result<SeedReport, String> {
     progress(Progress {
@@ -264,6 +286,80 @@ pub fn inject_into_image(
         // its plan and not its executor, which is a worse failure to diagnose
         // than simply not being there.
         report.account_written = false;
+    }
+
+    // The self-setup bundle, under CONFIG/securacv/ — same rules as the
+    // account batch: paths validated, first failure stops the batch and
+    // becomes a note, a partial bundle is reported as no bundle.
+    for f in provision_files {
+        if f.relative_path.contains("..") || f.relative_path.starts_with('/') {
+            report.provision_note =
+                Some(format!("refusing an unsafe seed path: {}", f.relative_path));
+            break;
+        }
+        let mut path = vec!["CONFIG"];
+        path.extend(f.relative_path.split('/').filter(|s| !s.is_empty()));
+        if let Err(e) = hub_fat::insert_file(&mut io, &vol, &path, f.contents.as_bytes()) {
+            report.provision_note = Some(format!("{}: {}", f.relative_path, e.message()));
+            break;
+        }
+        report.provision_written = true;
+    }
+    if report.provision_note.is_some() {
+        report.provision_written = false;
+    }
+
+    // The maintenance key, which unlocks HAOS's developer console on port
+    // 22222 — the console that lets the first-boot companion run the bundle
+    // above with no monitor attached.
+    //
+    // Written to BOTH the boot-partition root and `CONFIG/`, deliberately.
+    // HAOS's debugging docs describe the root of the boot partition, but the
+    // `CONFIG/` convention is cited too, and this has never been confirmed
+    // against a real first boot (see the design doc's honest-status list).
+    // Getting it wrong is not a small miss: the key would read back fine,
+    // `ssh_key_written` would be true, and the console would simply never
+    // open — the companion would fail on every card with no clue why. Writing
+    // both costs two directory entries, HAOS ignores files it does not
+    // recognise, and it removes the guess. When a hardware pass identifies the
+    // real one, drop the other.
+    //
+    // BOTH must land to count as written: a half-placed key is exactly the
+    // ambiguous state this is meant to avoid.
+    if let Some(keys) = ssh_authorized_keys {
+        if report.provision_note.is_none() {
+            let mut placed = 0usize;
+            for path in [
+                ["authorized_keys"].as_slice(),
+                ["CONFIG", "authorized_keys"].as_slice(),
+            ] {
+                match hub_fat::insert_file(&mut io, &vol, path, keys.as_bytes()) {
+                    Ok(()) => match hub_fat::read_file(&mut io, &vol, path) {
+                        Ok(back) if back == keys.as_bytes() => placed += 1,
+                        Ok(back) => {
+                            report.provision_note = Some(format!(
+                                "the maintenance key ({}) read back as {} bytes instead of {}",
+                                path.join("/"),
+                                back.len(),
+                                keys.len()
+                            ));
+                            break;
+                        }
+                        Err(e) => {
+                            report.provision_note =
+                                Some(format!("{}: {}", path.join("/"), e.message()));
+                            break;
+                        }
+                    },
+                    Err(e) => {
+                        report.provision_note =
+                            Some(format!("{}: {}", path.join("/"), e.message()));
+                        break;
+                    }
+                }
+            }
+            report.ssh_key_written = placed == 2;
+        }
     }
 
     io.0.sync_all().map_err(|e| {
@@ -483,6 +579,8 @@ pub(crate) mod tests {
             &img,
             Some(&seed("Home Wi-Fi", "correct horse")),
             &[],
+            &[],
+            None,
             |_| {},
         )
         .expect("injection");
@@ -512,7 +610,7 @@ pub(crate) mod tests {
         fake_image(&img);
         let before = std::fs::read(&img).unwrap();
 
-        let err = inject_into_image(&img, Some(&seed("Home", "short")), &[], |_| {})
+        let err = inject_into_image(&img, Some(&seed("Home", "short")), &[], &[], None, |_| {})
             .expect_err("a WPA-invalid passphrase must be refused");
         assert!(err.contains("at least 8"), "{err}");
         assert_eq!(
@@ -537,7 +635,7 @@ pub(crate) mod tests {
                 contents: "{\"done\":[]}".to_string(),
             },
         ];
-        let report = inject_into_image(&img, None, &files, |_| {}).expect("injection");
+        let report = inject_into_image(&img, None, &files, &[], None, |_| {}).expect("injection");
         assert!(report.account_written);
 
         let mut bytes = std::fs::read(&img).unwrap();
@@ -562,7 +660,7 @@ pub(crate) mod tests {
             relative_path: "../escape".to_string(),
             contents: "x".to_string(),
         }];
-        let report = inject_into_image(&img, None, &files, |_| {}).expect("not fatal");
+        let report = inject_into_image(&img, None, &files, &[], None, |_| {}).expect("not fatal");
         assert!(!report.account_written);
         assert!(report.account_note.unwrap().contains("unsafe seed path"));
     }
@@ -581,14 +679,120 @@ pub(crate) mod tests {
             relative_path: "/absolute".to_string(),
             contents: "x".to_string(),
         }];
-        let report = inject_into_image(&img, Some(&seed("Home", "supersecret")), &files, |_| {})
-            .expect("a bad account seed must not fail the flash");
+        let report = inject_into_image(
+            &img,
+            Some(&seed("Home", "supersecret")),
+            &files,
+            &[],
+            None,
+            |_| {},
+        )
+        .expect("a bad account seed must not fail the flash");
         assert!(report.wifi_written, "the Wi-Fi still went in");
         assert!(!report.account_written);
         assert!(report.account_note.is_some());
 
         // Whereas a Wi-Fi seed that can't be built stops everything.
-        assert!(inject_into_image(&img, Some(&seed("", "supersecret")), &[], |_| {}).is_err());
+        assert!(
+            inject_into_image(&img, Some(&seed("", "supersecret")), &[], &[], None, |_| {})
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn the_maintenance_key_lands_in_both_candidate_places() {
+        // Which path HAOS reads for the developer console is NOT confirmed on
+        // hardware (root of the boot partition per its debugging docs; CONFIG/
+        // is also cited). A key in the wrong place fails silently — it reads
+        // back fine and the console simply never opens — so we write both and
+        // require both, rather than guess.
+        let dir = tempfile::tempdir().unwrap();
+        let img = dir.path().join("haos.img");
+        fake_image(&img);
+        let key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF1x securacv-flasher\n";
+        let report =
+            inject_into_image(&img, None, &[], &[], Some(key), |_| {}).expect("key injection");
+        assert!(report.ssh_key_written);
+        assert!(report.provision_note.is_none());
+
+        let mut bytes = std::fs::read(&img).unwrap();
+        let len = bytes.len() as u64;
+        let (_p, vol) = hub_fat::find_fat_partition(&mut bytes, len).unwrap();
+        assert_eq!(
+            hub_fat::read_file(&mut bytes, &vol, &["authorized_keys"]).unwrap(),
+            key.as_bytes(),
+            "boot-partition root placement"
+        );
+        assert_eq!(
+            hub_fat::read_file(&mut bytes, &vol, &["CONFIG", "authorized_keys"]).unwrap(),
+            key.as_bytes(),
+            "CONFIG/ placement"
+        );
+    }
+
+    #[test]
+    fn a_failed_provision_seed_is_a_note_and_skips_the_key() {
+        // Same non-fatal contract as the account seed — and a bundle that
+        // didn't land must not leave a maintenance key behind with nothing for
+        // the companion to run: the key is skipped when the bundle fails.
+        let dir = tempfile::tempdir().unwrap();
+        let img = dir.path().join("haos.img");
+        fake_image(&img);
+        let files = vec![SeedFile {
+            relative_path: "../escape".to_string(),
+            contents: "x".to_string(),
+        }];
+        let key = "ssh-ed25519 AAAA test\n";
+        let report = inject_into_image(
+            &img,
+            Some(&seed("Home", "supersecret")),
+            &[],
+            &files,
+            Some(key),
+            |_| {},
+        )
+        .expect("a bad provision seed must not fail the flash");
+        assert!(report.wifi_written, "the Wi-Fi still went in");
+        assert!(!report.provision_written);
+        assert!(!report.ssh_key_written, "no key without a bundle to run");
+        assert!(report.provision_note.unwrap().contains("unsafe seed path"));
+
+        let mut bytes = std::fs::read(&img).unwrap();
+        let len = bytes.len() as u64;
+        let (_p, vol) = hub_fat::find_fat_partition(&mut bytes, len).unwrap();
+        assert!(
+            hub_fat::read_file(&mut bytes, &vol, &["authorized_keys"]).is_err(),
+            "the key must not be on the card"
+        );
+    }
+
+    #[test]
+    fn provision_bundle_and_account_seed_coexist() {
+        // The real full-option flash: Wi-Fi + account + bundle + key, one image.
+        let dir = tempfile::tempdir().unwrap();
+        let img = dir.path().join("haos.img");
+        fake_image(&img);
+        let account = vec![SeedFile {
+            relative_path: ".storage/auth".to_string(),
+            contents: "{}".to_string(),
+        }];
+        let bundle = vec![SeedFile {
+            relative_path: "securacv/provision.sh".to_string(),
+            contents: "#!/bin/sh\n".to_string(),
+        }];
+        let report = inject_into_image(
+            &img,
+            Some(&seed("Home", "supersecret")),
+            &account,
+            &bundle,
+            Some("ssh-ed25519 AAAA test\n"),
+            |_| {},
+        )
+        .expect("injection");
+        assert!(report.wifi_written);
+        assert!(report.account_written);
+        assert!(report.provision_written);
+        assert!(report.ssh_key_written);
     }
 
     #[test]
@@ -596,8 +800,15 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let img = dir.path().join("not-an-image.img");
         std::fs::write(&img, vec![0u8; 4 << 20]).unwrap();
-        let err = inject_into_image(&img, Some(&seed("Home", "supersecret")), &[], |_| {})
-            .expect_err("a bogus image must be refused");
+        let err = inject_into_image(
+            &img,
+            Some(&seed("Home", "supersecret")),
+            &[],
+            &[],
+            None,
+            |_| {},
+        )
+        .expect_err("a bogus image must be refused");
         assert!(err.contains("partition table"), "{err}");
     }
 
@@ -611,7 +822,15 @@ pub(crate) mod tests {
         fake_image(&img);
         let cancel = CancelToken::default();
         let before = rehash_image(&img, &cancel, |_| {}).unwrap();
-        inject_into_image(&img, Some(&seed("Home", "supersecret")), &[], |_| {}).unwrap();
+        inject_into_image(
+            &img,
+            Some(&seed("Home", "supersecret")),
+            &[],
+            &[],
+            None,
+            |_| {},
+        )
+        .unwrap();
         let after = rehash_image(&img, &cancel, |_| {}).unwrap();
         assert_ne!(before, after, "the hash must track the injected bytes");
         assert_eq!(after.len(), 64);

@@ -129,7 +129,12 @@
 
 #define HAS_CAMERA              0     // No camera — this Canary shows, it doesn't watch
 #define HAS_MICROPHONE          0     // No microphone — quiet-room-safe by construction
-#define HAS_SD_CARD             1     // TF slot (unused in v0.1)
+#define HAS_SD_CARD             1     // TF slot. No SD data pins declared yet: this
+                                      // board's CH422G map is still VERIFY, so the deep
+                                      // archive (fleet/sd_archive.cpp) #errors here if
+                                      // forced on. Pin the slot's routing against the
+                                      // vendor schematic, add SD_PIN_SCK/MOSI/MISO (and
+                                      // the DAT3 EXIO bit), then it lights up like 4.3
 #define HAS_PSRAM               1     // 8 MB octal — REQUIRED for the 800x480 framebuffer
 #define HAS_USB_CDC             1
 #define HAS_NATIVE_USB          1

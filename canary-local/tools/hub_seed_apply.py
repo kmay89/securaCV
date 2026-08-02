@@ -161,8 +161,16 @@ FRESH_HUB: dict = {
 }
 
 
-def plan_actions(seed: dict, observed: dict) -> list[StepPlan]:
+def plan_actions(
+    seed: dict, observed: dict, features: frozenset[str] = frozenset()
+) -> list[StepPlan]:
     """Expand the plan's steps into idempotent, ordered actions given hub state.
+
+    ``features`` selects the plan's OPT-IN extras (steps carrying a
+    ``feature`` key, described in the plan's ``optional_features``): a step
+    whose feature isn't enabled contributes nothing — no repository, no
+    install, zero footprint on the hub. The core plan never depends on any
+    feature step, so any combination (including none) is a complete run.
 
     ``observed`` is a snapshot::
 
@@ -183,6 +191,8 @@ def plan_actions(seed: dict, observed: dict) -> list[StepPlan]:
 
     out: list[StepPlan] = []
     for step in seed.get("steps", []):
+        if step.get("feature") and step["feature"] not in features:
+            continue
         sp = StepPlan(
             id=step.get("id", ""),
             title=step.get("title", ""),
@@ -549,9 +559,16 @@ def steps_to_json(steps: list[StepPlan]) -> str:
     return json.dumps([dataclasses.asdict(s) for s in steps], indent=2)
 
 
-def execute(steps: list[StepPlan], client: SupervisorClient, assets_root: Path) -> None:
+def execute(steps: list[StepPlan], client: SupervisorClient, assets_root: Path) -> list[str]:
     """Perform the plan, narrating as it goes. Fail-closed: on the first error,
-    stop and say so — re-running is safe because every action is idempotent."""
+    stop and say so — re-running is safe because every action is idempotent.
+
+    Returns the labels of OPTIONAL actions that did not complete. They do not
+    stop the run (a hub with no Frigate would be a far worse outcome than one
+    where MQTT needs a click), but they must not be invisible either: the
+    caller reports them, so "setup finished" never claims more than happened.
+    """
+    incomplete: list[str] = []
     for i, s in enumerate(steps, 1):
         print(f"\n[{i}/{len(steps)}] {s.title}")
         if s.why:
@@ -570,6 +587,7 @@ def execute(steps: list[StepPlan], client: SupervisorClient, assets_root: Path) 
                     # a far worse outcome than one where MQTT needs a click.
                     print(f"    ! could not finish: {e}")
                     print("      (continuing — the rest of the plan does not depend on it)")
+                    incomplete.append(a.label)
                     continue
                 print(f"    x FAILED: {e}", file=sys.stderr)
                 print(
@@ -581,6 +599,7 @@ def execute(steps: list[StepPlan], client: SupervisorClient, assets_root: Path) 
             print("      done")
         if s.user_must_finish:
             print(f"    ! you finish: {s.user_must_finish}")
+    return incomplete
 
 
 def _perform(a: Action, client: SupervisorClient, assets_root: Path) -> None:
@@ -633,6 +652,17 @@ def main(argv: list[str] | None = None) -> int:
         help="in --dry-run, query the real hub so already-done steps show as skips (needs a token)",
     )
     ap.add_argument("--format", choices=["text", "json"], default="text", help="dry-run output format")
+    ap.add_argument(
+        "--with",
+        dest="features",
+        action="append",
+        default=[],
+        metavar="FEATURE",
+        help=(
+            "enable an opt-in extra from the plan's optional_features (repeatable), "
+            "e.g. --with pihole"
+        ),
+    )
     args = ap.parse_args(argv)
 
     try:
@@ -641,6 +671,25 @@ def main(argv: list[str] | None = None) -> int:
         print(f"hub_seed_apply.py: cannot read plan {args.plan}: {e}", file=sys.stderr)
         return 2
 
+    # Validate requested features against the PLAN, not a hardcoded list —
+    # the plan is the single source of what exists. A typo'd feature fails
+    # loudly before anything touches the hub.
+    available = set(seed.get("optional_features", {}).keys())
+    features = frozenset(args.features)
+    unknown = sorted(features - available)
+    if unknown:
+        known = ", ".join(sorted(available)) or "(none in this plan)"
+        print(
+            f"hub_seed_apply.py: unknown feature(s) {', '.join(unknown)} — this plan offers: {known}",
+            file=sys.stderr,
+        )
+        return 2
+    skipped = sorted(available - features)
+    if skipped:
+        for name in skipped:
+            enable = seed["optional_features"][name].get("enable", f"--with {name}")
+            print(f"note: optional feature '{name}' not enabled ({enable})")
+
     if args.dry_run:
         observed = FRESH_HUB
         if args.observe:
@@ -648,7 +697,7 @@ def main(argv: list[str] | None = None) -> int:
                 print("--observe needs a token (SUPERVISOR_TOKEN) to query the hub", file=sys.stderr)
                 return 2
             observed = observe(SupervisorClient(args.base_url, args.token), seed)
-        steps = plan_actions(seed, observed)
+        steps = plan_actions(seed, observed, features)
         if args.format == "json":
             print(steps_to_json(steps))
         else:
@@ -670,10 +719,19 @@ def main(argv: list[str] | None = None) -> int:
     except SupervisorError as e:
         print(f"hub_seed_apply.py: cannot reach the hub: {e}", file=sys.stderr)
         return 1
-    steps = plan_actions(seed, observed)
-    execute(steps, client, Path(args.assets_root))
+    steps = plan_actions(seed, observed, features)
+    incomplete = execute(steps, client, Path(args.assets_root))
     todo, done = counts(steps)
     print(f"\nHub provisioned: {done} step-action(s) were already in place, {todo} applied.")
+    if incomplete:
+        # STABLE MARKER — the flasher's companion greps for this exact prefix to
+        # downgrade "setup finished" to "finished, with something left for you".
+        # Keep the token if you reword the sentence.
+        print(
+            "INCOMPLETE_OPTIONAL: " + ", ".join(incomplete) + " — these need finishing by hand "
+            "in Home Assistant (Settings -> Devices & Services). Everything else is installed, "
+            "and re-running this is safe."
+        )
     return 0
 
 
