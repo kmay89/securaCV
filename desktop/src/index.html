@@ -662,8 +662,9 @@
           <div id="atlas-body"></div>
         </section>
 
-        <!-- ══════════ ABOUT & HEALTH VIEW (rendered by app.js) ══════════ -->
+        <!-- ══════════ YOUR FLEET VIEW (the Witness Wall + native LAN discovery) ══════════ -->
         <section id="fleet-view" class="view hidden" data-pane="fleet">
+          <div id="fleet-scan-status" class="fleet-scan-status" role="status" aria-live="polite">Scanning your network for Canaries…</div>
           <iframe id="witness-frame" class="witness-frame" src="witness/witness.html" title="Your Fleet — the Witness Wall"></iframe>
         </section>
 

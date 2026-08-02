@@ -206,6 +206,13 @@ jobs:
           for b in none 3000 10000; do
             bfit $b back_flush empty || exit 1
           done
+          # THREE-COLOUR PARTITION. fil_body/fil_ink/fil_accent are loaded into
+          # the slicer as parts of ONE object, so they have to tile the frame
+          # exactly: overlap prints twice (and the slicer picks a filament
+          # arbitrarily), a gap prints as a void sealed inside a wall. Neither
+          # shows up in a slicer preview until it is a part in your hand.
+          bfit none fil_overlap empty || exit 1
+          bfit none fil_gap     empty || exit 1
           for b in none 3000 10000; do
             bfit $b dock_probe_fit  empty || exit 1   # seated case must not collide
             bfit $b dock_probe_seat solid "the dock's pads never touch the seated case — nothing carries it" || exit 1

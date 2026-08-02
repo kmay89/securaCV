@@ -900,3 +900,35 @@ test("pre-configured Wi-Fi is honored: present-but-empty keys, and identity neve
   assert.match(appJs, /deviceId: usbSecrets \|\| broker \?/,
     "app.js readProvisioning no longer sends the display's device id");
 });
+
+test("witness wall: both apps discover the LAN fleet the same way, one emulator, one contract", () => {
+  // The Fleet surface must be the SAME product in the Flasher and the Lab —
+  // one vendored emulator, one witness_discover command, one postMessage
+  // contract (tvos/EMBED_IN_APPS.md). If any of these drift, half the users
+  // get a wall that behaves differently, with no compile error to say so.
+  const labRs = read(join(ROOT, "desktop-lab/src-tauri/src/lib.rs"));
+  for (const [name, src] of [["desktop", libRs], ["desktop-lab", labRs]]) {
+    assert.match(src, /async fn witness_discover\(bases: Vec<String>\)/,
+      `${name} lost the witness_discover command`);
+    assert.match(src, /\/api\/fleet/,
+      `${name}'s witness_discover no longer probes the /api/fleet contract`);
+    assert.ok(src.split("witness_discover").length >= 3,
+      `${name} defines witness_discover but never registers it in the invoke handler`);
+  }
+  // Both frontends drive the wall over the same wire: native discovery in,
+  // witness:fleet out.
+  const flasherHost = read(join(ROOT, "desktop/src/app.js"));
+  const labHost = read(join(CANARY, "assets/witness-host.js"));
+  for (const [name, src] of [["Flasher app.js", flasherHost], ["Lab witness-host.js", labHost]]) {
+    assert.match(src, /invoke\("witness_discover"/, `${name} no longer invokes witness_discover`);
+    assert.match(src, /witness:fleet/, `${name} no longer posts witness:fleet to the wall`);
+    assert.match(src, /witness:ready/, `${name} no longer syncs on the wall's witness:ready handshake`);
+  }
+  // And the vendored emulator is the same bytes on both surfaces — the
+  // byte-level guard is scripts/check_witness_emulator_sync.sh; this is the
+  // fast in-gate echo of it for the file that carries the behavior.
+  const a = read(join(ROOT, "desktop/src/witness/tv-emulator.js"));
+  const b = read(join(CANARY, "witness/tv-emulator.js"));
+  assert.strictEqual(a, b,
+    "vendored tv-emulator.js drifted between the Flasher and the Lab — run scripts/vendor_witness_emulator.sh");
+});

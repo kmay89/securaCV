@@ -84,6 +84,23 @@ it follows the same discipline one layer out:
   enforces them — a device *claiming* `"chain":"ok"` must never render as
   verified.
 
+The **desktop apps** (Flasher + Lab) are two more readers, held together the
+same way:
+
+- **One canonical emulator** (the website repo's Witness Wall) is stamped into
+  both apps by `scripts/vendor_witness_emulator.sh` — byte-identical copies at
+  `desktop/src/witness/` and `canary-local/witness/`, guarded by
+  `scripts/check_witness_emulator_sync.sh` in CI.
+- **One discovery command**: `witness_discover` exists verbatim in both Rust
+  shells (`desktop/src-tauri`, `desktop-lab/src-tauri`) and probes the same
+  `GET /api/fleet` contract; the witness-wall test in
+  `canary-local/tests/desktop_parity.test.js` fails the build if either app
+  loses the command, stops posting `witness:fleet`, or lets the emulator
+  copies drift.
+- **Per-surface flavor stays host-side**: `?profile=` / `witness:profile`
+  pins a surface to its use case (home / business / apartment) without
+  forking the emulator.
+
 **When you add a fleet-wide capability, add the app-side reader in the same
 change** — a contract with a firmware writer and no reader on the surface users
 actually look at has only half shipped.
