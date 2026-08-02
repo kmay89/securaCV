@@ -1,11 +1,13 @@
-// FleetEnums.swift
+// FleetEnums.swift  (SHARED — compiled into the app, both widget targets,
+// and the watch app)
 //
 // A faithful Swift mirror of the firmware's fleet_model.h ladders
 // (firmware/projects/canary-display/include/canary/fleet/fleet_model.h).
-// The phone renders the SAME vocabulary the glass and the kernel speak — one
-// source of truth for meaning. Unknown future values decode to `.unknown`
-// rather than throwing, so a newer firmware never breaks an older app
-// (forward-compatibility is the whole anti-rot bet).
+// Every Apple surface renders the SAME vocabulary the glass and the kernel
+// speak — one source of truth for meaning, one copy of it in Swift (the
+// widget target used to carry its own mirror of Severity; it must never
+// again). Unknown future values decode to `.unknown` rather than throwing,
+// so a newer firmware never breaks an older app (the anti-rot bet).
 
 import SwiftUI
 

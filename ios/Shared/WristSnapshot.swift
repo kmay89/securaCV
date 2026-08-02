@@ -1,0 +1,282 @@
+// WristSnapshot.swift  (SHARED — the phone→watch state contract)
+//
+// The ONE payload the iPhone sends the watch, and the one shape the watch app
+// and its widgets render. It compiles into all of: the iOS app (builder), the
+// watch app (receiver), and the watch widget extension (cache reader) — from
+// this single file — so the two ends of the wrist link can never disagree
+// about the schema. That, plus latest-state-wins delivery (WCSession
+// applicationContext) and the revision rule below, is the whole
+// "nothing ever gets out of sync" design (RFC
+// docs/design/apple_watch_and_notifications.md §3.2).
+//
+// Rules that keep this rot-proof:
+//   * Pure Foundation. No WatchConnectivity, no SwiftUI, no ActivityKit —
+//     host-testable in SecuraCVTests like every other Wire-grade type.
+//   * Enums travel as raw bytes with tolerant accessors (the
+//     FleetActivityAttributes precedent): a newer phone never breaks an
+//     older watch.
+//   * New fields must be added as OPTIONALS (JSONDecoder then accepts old
+//     payloads that lack them), and `schema` only bumps on a change an old
+//     reader could misread — not on additive growth.
+//   * Times cross the wire as ABSOLUTE dates, never as "N seconds ago"
+//     counters — a counter goes stale in transit and would make every
+//     snapshot look different from the last (defeating push dedup); a date
+//     stays true and each side renders its own "ago".
+//   * Two kinds of time, two precisions. WITNESS EVENT times are the coarse
+//     10-minute buckets every surface renders (Invariant III — metadata
+//     minimization of the witnessed world). LINK-HEALTH times (`sentAt`,
+//     `lastVerifiedAt`) are the operational state of the user's own
+//     phone↔watch path and delivery heartbeat — the same precision the
+//     phone's provably-alive card and the Live Activity already show; they
+//     describe the app, not the world, and coarsening them would only make
+//     the staleness and dead-man's-switch displays dishonest.
+//   * Encoding is pinned (JSON, sorted keys, dates as secondsSince1970) so
+//     both ends agree byte-for-byte across OS versions.
+
+import Foundation
+
+/// One Canary's row on the wrist — the glanceable subset of `Witness`.
+/// Timestamps are already the coarse 10-minute buckets the app renders
+/// (Invariant III: never a precise second, on any surface).
+struct WristWitness: Codable, Hashable, Identifiable, Sendable {
+    var id: String
+    var name: String
+    var severityRaw: UInt8
+    var linkRaw: UInt8
+    var badgeRaw: UInt8
+    var tamper: Bool
+    var lastEventHeadline: String?
+    var lastEventBucket: Date?
+    var batteryPct: Int?
+    var isMuted: Bool
+
+    var severity: Severity { Severity(tolerant: Int(severityRaw)) }
+    var link: Liveness { Liveness(tolerant: Int(linkRaw)) }
+    var badge: TrustBadge { TrustBadge(tolerant: Int(badgeRaw)) }
+}
+
+/// The heartbeat dead-man's-switch state, flattened for the wire. The phone's
+/// `Heartbeat.PathState` carries associated values; the wrist needs the shape
+/// plus the facts to re-render the same words, nothing more.
+enum WristHeartbeatState: UInt8, Codable, Sendable {
+    case unknown = 0
+    case alive
+    case testing
+    case dark
+    case failed
+
+    init(tolerant raw: Int) { self = WristHeartbeatState(rawValue: UInt8(clamping: raw)) ?? .unknown }
+
+    /// Semantic color role, resolved by Theme on whatever surface renders it.
+    var role: Theme.Role {
+        switch self {
+        case .alive: return .calm
+        case .testing: return .info
+        case .unknown: return .neutral
+        case .dark, .failed: return .alert
+        }
+    }
+
+    var sfSymbol: String {
+        switch self {
+        case .alive: return "checkmark.seal.fill"
+        case .testing: return "arrow.triangle.2.circlepath"
+        case .unknown: return "questionmark.circle"
+        case .dark: return "moon.zzz.fill"
+        case .failed: return "exclamationmark.triangle.fill"
+        }
+    }
+}
+
+/// The heartbeat's human wording, in ONE place. The phone's provably-alive
+/// card and the watch's Heartbeat screen both call this — two surfaces, one
+/// sentence, no drift.
+enum HeartbeatCopy {
+    static func summary(state: WristHeartbeatState,
+                        secondsSinceVerified: Int?,
+                        failureReason: String? = nil) -> String {
+        switch state {
+        case .unknown: return "Not yet verified"
+        case .alive:
+            guard let s = secondsSinceVerified else { return "Delivery verified" }
+            return s < 90 ? "Delivery verified just now" : "Delivery verified \(s / 60) min ago"
+        case .testing: return "Testing the whole path…"
+        case .dark:
+            let s = secondsSinceVerified ?? 0
+            return "No heartbeat for \(s / 60) min — check your fleet"
+        case .failed:
+            if let why = failureReason, !why.isEmpty { return "Test failed: \(why)" }
+            return "Test failed"
+        }
+    }
+}
+
+/// The full phone→watch state: the fleet roll-up every ambient surface shows,
+/// plus the worst-first witness rows and the heartbeat.
+struct WristSnapshot: Codable, Hashable, Sendable {
+    /// Bump ONLY for changes an old reader could misread; additive optional
+    /// fields never bump it.
+    static let schemaVersion = 1
+
+    var schema: Int = WristSnapshot.schemaVersion
+
+    /// Monotonic per-sender counter. See `isNewer(than:)`.
+    var revision: UInt64
+    /// When the phone composed this snapshot — the staleness anchor the watch
+    /// UI shows, so the wrist never presents old state as current.
+    var sentAt: Date
+
+    var fleetName: String
+
+    // The FleetRollup trio (same math as the Dynamic Island state).
+    var severityRaw: UInt8
+    var headline: String
+    var healthy: Int
+    var total: Int
+
+    /// When the delivery path last verified end-to-end. nil = never.
+    var lastVerifiedAt: Date?
+    var heartbeatRaw: UInt8
+    /// Only set when the heartbeat state is `.failed`.
+    var heartbeatFailureReason: String?
+
+    /// True when any of this state came from the seeded demo fleet — the
+    /// wrist shows the same "sample data" banner the phone does. Honesty
+    /// travels with the data.
+    var isDemoData: Bool
+
+    /// Worst-first, capped by `WristSync.maxWitnessRows`.
+    var witnesses: [WristWitness]
+    /// How many rows the cap dropped — a cap is never silent.
+    var omittedWitnesses: Int
+
+    var severity: Severity { Severity(tolerant: Int(severityRaw)) }
+    var heartbeat: WristHeartbeatState { WristHeartbeatState(tolerant: Int(heartbeatRaw)) }
+
+    /// The same sentence the phone's provably-alive card shows, rendered from
+    /// this snapshot's facts at the wrist's own clock.
+    func heartbeatSummary(now: Date = Date()) -> String {
+        let ago = lastVerifiedAt.map { max(0, Int(now.timeIntervalSince($0))) }
+        return HeartbeatCopy.summary(state: heartbeat,
+                                     secondsSinceVerified: ago,
+                                     failureReason: heartbeatFailureReason)
+    }
+
+    /// Adoption rule for the receiving side. Either monotonic signal wins:
+    /// a higher revision (normal flow, immune to clock adjustments) or a
+    /// later sentAt (covers a reinstalled phone whose counter restarted).
+    /// Equal on both counts = a duplicate, not news.
+    func isNewer(than other: WristSnapshot?) -> Bool {
+        guard let other else { return true }
+        return revision > other.revision || sentAt > other.sentAt
+    }
+}
+
+/// The wire helpers both ends share: pinned encoding, the applicationContext
+/// envelope, and the message vocabulary for the live (reachable) channel.
+enum WristSync {
+    /// applicationContext / reply-dict keys. The payload is one JSON blob
+    /// under `snap` (WCSession dictionaries carry plist types only), plus the
+    /// schema version beside it so a reader can tell "newer schema" apart
+    /// from "garbage" without decoding.
+    static let contextVersionKey = "v"
+    static let contextPayloadKey = "snap"
+
+    /// Live-channel message vocabulary (sendMessage). One key, one verb.
+    static let messageCommandKey = "cmd"
+    static let commandRefresh = "refresh"
+    static let commandTestAlertPath = "testAlertPath"
+
+    /// Row cap for the snapshot — applicationContext has a small transfer
+    /// budget and a wrist list past this is unreadable anyway. The cap is
+    /// reported via `omittedWitnesses`, never silent.
+    static let maxWitnessRows = 24
+
+    static func makeEncoder() -> JSONEncoder {
+        let enc = JSONEncoder()
+        enc.dateEncodingStrategy = .secondsSince1970
+        // Deterministic bytes so "did the state actually change?" can be
+        // answered by comparing encodings (the phone's push dedup).
+        enc.outputFormatting = [.sortedKeys]
+        return enc
+    }
+
+    static func makeDecoder() -> JSONDecoder {
+        let dec = JSONDecoder()
+        dec.dateDecodingStrategy = .secondsSince1970
+        return dec
+    }
+
+    /// The applicationContext / reply envelope for a snapshot.
+    static func context(for snapshot: WristSnapshot) throws -> [String: Any] {
+        [contextVersionKey: snapshot.schema,
+         contextPayloadKey: try makeEncoder().encode(snapshot)]
+    }
+
+    /// Schema version stamped on an envelope, if it is one of ours.
+    static func contextVersion(of context: [String: Any]) -> Int? {
+        context[contextVersionKey] as? Int
+    }
+
+    /// Decode an envelope. Returns nil for anything unreadable — and for any
+    /// FUTURE schema, even one this build could structurally decode: a schema
+    /// bump is RESERVED for changes an old reader would misread, so decoding
+    /// it with old semantics is exactly the failure the version exists to
+    /// prevent. Callers use `contextVersion(of:)` to tell the user "update
+    /// the other side" instead of showing nothing.
+    static func snapshot(fromContext context: [String: Any]) -> WristSnapshot? {
+        if let version = contextVersion(of: context), version > WristSnapshot.schemaVersion {
+            return nil
+        }
+        guard let data = context[contextPayloadKey] as? Data else { return nil }
+        return try? makeDecoder().decode(WristSnapshot.self, from: data)
+    }
+}
+
+// MARK: - Deterministic sample
+
+extension WristSnapshot {
+    /// A fixed, obviously-demo snapshot for widget placeholders, previews,
+    /// and tests. Deterministic for a fixed clock (the DemoFleet discipline),
+    /// always flagged `isDemoData` so no surface can pass it off as real, and
+    /// never faking an alarm.
+    static func sample(now: Date = Date(timeIntervalSince1970: 1_784_000_000)) -> WristSnapshot {
+        let rows = [
+            WristWitness(id: "demo-porch", name: "Front Porch",
+                         severityRaw: Severity.notice.rawValue,
+                         linkRaw: Liveness.online.rawValue,
+                         badgeRaw: TrustBadge.verified.rawValue,
+                         tamper: false,
+                         lastEventHeadline: "Motion at Front Porch",
+                         lastEventBucket: now.addingTimeInterval(-1_800),
+                         batteryPct: nil, isMuted: false),
+            WristWitness(id: "demo-garage", name: "Garage",
+                         severityRaw: Severity.ok.rawValue,
+                         linkRaw: Liveness.online.rawValue,
+                         badgeRaw: TrustBadge.verified.rawValue,
+                         tamper: false,
+                         lastEventHeadline: nil, lastEventBucket: nil,
+                         batteryPct: 82, isMuted: false),
+            WristWitness(id: "demo-yard", name: "Back Yard",
+                         severityRaw: Severity.ok.rawValue,
+                         linkRaw: Liveness.online.rawValue,
+                         badgeRaw: TrustBadge.verified.rawValue,
+                         tamper: false,
+                         lastEventHeadline: nil, lastEventBucket: nil,
+                         batteryPct: nil, isMuted: false),
+        ]
+        return WristSnapshot(revision: 1,
+                             sentAt: now.addingTimeInterval(-120),
+                             fleetName: "Your Canaries",
+                             severityRaw: Severity.notice.rawValue,
+                             headline: "Front Porch • Activity",
+                             healthy: 3,
+                             total: 3,
+                             lastVerifiedAt: now.addingTimeInterval(-300),
+                             heartbeatRaw: WristHeartbeatState.alive.rawValue,
+                             heartbeatFailureReason: nil,
+                             isDemoData: true,
+                             witnesses: rows,
+                             omittedWitnesses: 0)
+    }
+}

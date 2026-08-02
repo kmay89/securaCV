@@ -69,16 +69,37 @@ final class Heartbeat: ObservableObject {
         }
     }
 
-    /// Human summary for the "provably alive" card.
+    /// Human summary for the "provably alive" card. The wording lives in
+    /// Shared/WristSnapshot.swift (HeartbeatCopy) because the watch renders
+    /// the same sentence from the same facts — one copy of the truth.
     var summary: String {
+        HeartbeatCopy.summary(state: wristState,
+                              secondsSinceVerified: wristSecondsSinceVerified,
+                              failureReason: wristFailureReason)
+    }
+
+    /// The wire-flattened view of `state` for the wrist snapshot.
+    var wristState: WristHeartbeatState {
         switch state {
-        case .unknown: return "Not yet verified"
-        case .alive(let s):
-            if s < 90 { return "Delivery verified just now" }
-            return "Delivery verified \(s / 60) min ago"
-        case .testing: return "Testing the whole path…"
-        case .dark(let s): return "No heartbeat for \(s / 60) min — check your fleet"
-        case .failed(let why): return "Test failed: \(why)"
+        case .unknown: return .unknown
+        case .alive: return .alive
+        case .testing: return .testing
+        case .dark: return .dark
+        case .failed: return .failed
         }
+    }
+
+    private var wristSecondsSinceVerified: Int? {
+        switch state {
+        case .alive(let s): return s
+        case .dark(let s): return s
+        case .unknown, .testing, .failed: return nil
+        }
+    }
+
+    /// Only meaningful when `state` is `.failed`.
+    var wristFailureReason: String? {
+        if case .failed(let why) = state { return why }
+        return nil
     }
 }

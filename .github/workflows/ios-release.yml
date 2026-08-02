@@ -244,6 +244,27 @@ jobs:
           echo "path=$ipa" >> "$GITHUB_OUTPUT"
           echo "exported: $ipa ($(wc -c < "$ipa" | tr -d ' ') bytes)"
 
+      # The watch app ships INSIDE this .ipa (Embed Watch Content). A broken
+      # embed would publish an iPhone-only app under the same version with
+      # nothing red anywhere — so prove the payload where it's bundled
+      # (RELEASE_LESSONS Principle 4), before validate/upload spend minutes.
+      - name: Prove the watch app is inside the .ipa
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        env:
+          IPA: ${{ steps.ipa.outputs.path }}
+        run: |
+          set -euo pipefail
+          listing="$(unzip -l "$IPA")"
+          for needle in \
+            "Payload/SecuraCV.app/Watch/SecuraCVWatch.app/" \
+            "Payload/SecuraCV.app/Watch/SecuraCVWatch.app/PlugIns/SecuraCVWatchWidgets.appex/"; do
+            if ! grep -qF "$needle" <<<"$listing"; then
+              echo "::error::$needle is missing from the exported .ipa — the watch app did not embed."
+              exit 1
+            fi
+          done
+          echo "watch app + complications present in the .ipa"
+
       # The actual publish. Shared with the Apple TV target so the validate +
       # retry policy can't drift between them.
       - name: Upload to App Store Connect

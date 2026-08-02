@@ -121,7 +121,10 @@ targets:
     gate_var: ENABLE_TVOS_BUILD
 
   - name: ios
-    label: SecuraCV companion (iPhone + iPad)
+    # The Apple Watch app is embedded in this .ipa (ios/project.yml
+    # SecuraCVWatch) — same version, same tag, same button. It never gets its
+    # own row unless it someday ships separately.
+    label: SecuraCV companion (iPhone + iPad + Apple Watch)
     kind: versioned
     version:
       file: ios/project.yml

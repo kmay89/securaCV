@@ -7,6 +7,11 @@
 # build), so it runs whenever iOS is enabled — but stays a green no-op until then
 # so it never nags.
 #
+# The SecuraCV scheme also builds the embedded watchOS app + its complications
+# (heal.sh proves they land inside SecuraCV.app), so the wrist targets get the
+# same ungated PR compile as the phone — the gate stays on the upload, never
+# on the build (RELEASE_LESSONS Principle 9).
+#
 # House style honored (.github/CI.md): explicit permissions, timeout-minutes,
 # a concurrency group, a staggered non-:00 nightly cron, and the same
 # `ENABLE_IOS_BUILD` gate as the other iOS jobs.
@@ -52,6 +57,14 @@ jobs:
 
       - uses: actions/checkout@v7
         if: env.RUN_BUILD == 'true'
+
+      # Store assets fail at `altool --validate-app`, minutes into a gated
+      # publish nobody can run yet — so PR CI asserts them structurally here
+      # (the tvOS lesson, RELEASE_LESSONS 2026-07-24). Covers the iPhone AND
+      # the embedded watch app's catalogs; stdlib-only, no Pillow.
+      - name: App icon catalogs are complete and correctly sized
+        if: env.RUN_BUILD == 'true'
+        run: python3 ios/scripts/check_app_icon.py
 
       - name: Select Xcode
         if: env.RUN_BUILD == 'true'
