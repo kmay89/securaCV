@@ -19,6 +19,12 @@
 #include "theme.h"
 #include "canary_mark.h"
 #include "character.h"
+#ifdef CD_NIGHTSTAND7
+// The bedside column borrows the same hub weather + comfort source the
+// landscape bedside face uses (nightstand7_ui.cpp). Only the Nightstand 7
+// build links it; the wall Dash 7 column stays fleet-first with no weather.
+#include "bedside.h"
+#endif
 #include "pins.h"
 
 namespace canary::ui {
@@ -86,7 +92,21 @@ void set_digit(SegDigit* d, int value, lv_color_t color, bool night) {
 }
 
 // ── Objects ──────────────────────────────────────────────────────────────
-constexpr int ROWS = 6;   // witness rows the column shows before "+N"
+// Emphasis is a compile-time personality (display_nightstand_line.md): the
+// wall Dash 7 leans on the fleet, so its column gives more rows to the
+// witness list; the bedside Nightstand 7 leans on the clock, keeps the list
+// shorter, and spends the freed room on a day weather + comfort line. The
+// runtime st.bedside flag matches this and only ever rides the same build.
+#ifdef CD_NIGHTSTAND7
+constexpr int LIST_Y0    = 508;
+constexpr int LIST_PITCH = 40;
+constexpr int LIST_CAP   = 5;    // fewer rows; weather + comfort take the foot
+#else
+constexpr int LIST_Y0    = 500;
+constexpr int LIST_PITCH = 38;
+constexpr int LIST_CAP   = 7;    // the wall column is fleet-first
+#endif
+constexpr int ROWS = 7;   // object capacity (>= LIST_CAP on either personality)
 
 lv_obj_t* s_wash = nullptr;      // full-glass severity/scene tint
 SegDigit  s_digit[4];
@@ -99,8 +119,11 @@ lv_obj_t* s_bird = nullptr;
 lv_obj_t* s_dot[ROWS] = {nullptr};
 lv_obj_t* s_name[ROWS] = {nullptr};
 lv_obj_t* s_word[ROWS] = {nullptr};
-lv_obj_t* s_more = nullptr;
 lv_obj_t* s_glance = nullptr;
+#ifdef CD_NIGHTSTAND7
+lv_obj_t* s_wx = nullptr;        // "21.4° · some clouds · 24°/13°" (day)
+lv_obj_t* s_comfort = nullptr;   // "bedroom 18.5° · just right" (day)
+#endif
 
 uint32_t s_glance_bright_until = 0;
 
@@ -205,7 +228,7 @@ void portrait7_ui_create() {
   lv_obj_align(s_bird, LV_ALIGN_TOP_MID, 0, 360);
 
   // Witness list: dot + name (left), state word (right), worst at top.
-  const int y0 = 510, pitch = 42;
+  const int y0 = LIST_Y0, pitch = LIST_PITCH;
   for (int i = 0; i < ROWS; i++) {
     const int y = y0 + i * pitch;
     s_dot[i] = lv_obj_create(scr);
@@ -222,12 +245,18 @@ void portrait7_ui_create() {
     lv_obj_align(s_word[i], LV_ALIGN_TOP_RIGHT, -40, y);
     lv_obj_add_flag(s_word[i], LV_OBJ_FLAG_HIDDEN);
   }
-  s_more = mk_label(scr, font_label(), col_muted());
-  lv_obj_align(s_more, LV_ALIGN_TOP_LEFT, 66, y0 + ROWS * pitch);
-  lv_obj_add_flag(s_more, LV_OBJ_FLAG_HIDDEN);
+
+#ifdef CD_NIGHTSTAND7
+  // Bedside foot: the day's weather + how the bedroom actually feels, stacked
+  // above the glance line. Day-only; night strips the column to clock + state.
+  s_wx = mk_label(scr, font_label(), col_muted());
+  lv_obj_align(s_wx, LV_ALIGN_BOTTOM_MID, 0, -78);
+  s_comfort = mk_label(scr, font_caption(), col_faint());
+  lv_obj_align(s_comfort, LV_ALIGN_BOTTOM_MID, 0, -52);
+#endif
 
   s_glance = mk_label(scr, font_body(), col_muted());
-  lv_obj_align(s_glance, LV_ALIGN_BOTTOM_MID, 0, -26);
+  lv_obj_align(s_glance, LV_ALIGN_BOTTOM_MID, 0, -24);
 
   canary_mark_mood(CanaryMood::Idle);
 }
@@ -235,7 +264,14 @@ void portrait7_ui_create() {
 void portrait7_ui_update(const Fleet& fleet, uint32_t now,
                          const Portrait7State& st) {
   if (!s_state) return;
+  // Two distinct signals: `night` is the red-shift LOOK preference (which
+  // palette), `quiet` is the real quiet-hours state (whether to go dark).
+  // Dark-when-safe must key off quiet hours, never the color preference —
+  // st.night is night && red_shift, so a plain-look user would otherwise
+  // keep the bird, list and weather lit all night. character_night() is the
+  // schedule-driven flag main.cpp sets, the same one the landscape face uses.
   const bool night = st.night;
+  const bool quiet = character_night();
   const Sev worst = fleet.worst(now);
   const bool link_down = !st.wifi_ok || !st.mqtt_ok;
 
@@ -243,10 +279,10 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
   const lv_color_t clk = night ? ncol_text() : col_text();
   const int hh = st.time_valid ? st.clock_hh : -1;
   const int mm = st.time_valid ? st.clock_mm : -1;
-  set_digit(&s_digit[0], hh < 0 ? -1 : hh / 10, clk, night);
-  set_digit(&s_digit[1], hh < 0 ? -1 : hh % 10, clk, night);
-  set_digit(&s_digit[2], mm < 0 ? -1 : mm / 10, clk, night);
-  set_digit(&s_digit[3], mm < 0 ? -1 : mm % 10, clk, night);
+  set_digit(&s_digit[0], hh < 0 ? -1 : hh / 10, clk, quiet);
+  set_digit(&s_digit[1], hh < 0 ? -1 : hh % 10, clk, quiet);
+  set_digit(&s_digit[2], mm < 0 ? -1 : mm / 10, clk, quiet);
+  set_digit(&s_digit[3], mm < 0 ? -1 : mm % 10, clk, quiet);
   if (s_colon) {
     lv_obj_t* c0 = lv_obj_get_child(s_colon, 0);
     lv_obj_t* c1 = lv_obj_get_child(s_colon, 1);
@@ -299,24 +335,28 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
     }
   }
 
-  // Night strips the column to the clock + the honest state channel; the bird
-  // sleeps and the witness list stands down (dark-when-safe).
-  const bool show_list = !night;
+  // Quiet hours strip the column to the clock + the honest state channel;
+  // the bird sleeps and the witness list stands down (dark-when-safe, keyed
+  // on the schedule, not the red-shift look).
+  const bool show_list = !quiet;
   if (s_bird) {
-    if (night) lv_obj_add_flag(s_bird, LV_OBJ_FLAG_HIDDEN);
+    if (quiet) lv_obj_add_flag(s_bird, LV_OBJ_FLAG_HIDDEN);
     else       lv_obj_clear_flag(s_bird, LV_OBJ_FLAG_HIDDEN);
   }
-  canary_mark_mood(night ? CanaryMood::Asleep : st.bird);
+  canary_mark_mood(quiet ? CanaryMood::Asleep : st.bird);
 
-  // Witness list.
-  int shown = 0, total = 0;
+  // Witness list. When the fleet overflows the cap, the LAST shown slot
+  // becomes a "+N more" summary (name only) rather than a separate label
+  // below the list — that kept the overflow row inside the list band, off
+  // the bedside weather foot and the glance line.
   if (show_list) {
     int order[CD_FLEET_MAX_DEVICES];
-    total = order_by_severity(fleet, now, order,
-                              (int)(sizeof(order) / sizeof(order[0])));
-    shown = total < ROWS ? total : ROWS;
+    const int total = order_by_severity(fleet, now, order,
+                                        (int)(sizeof(order) / sizeof(order[0])));
+    const bool overflow = total > LIST_CAP;
+    const int witnesses = overflow ? LIST_CAP - 1 : total;  // reserve a slot
     for (int i = 0; i < ROWS; i++) {
-      if (i < shown) {
+      if (i < witnesses) {
         const Witness* w = fleet.at(order[i]);
         const Sev s = w ? fleet.witness_sev(*w, now) : Sev::Ok;
         lv_obj_set_style_bg_color(s_dot[i], sev_color(s, false), 0);
@@ -328,17 +368,17 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
         lv_obj_clear_flag(s_dot[i], LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(s_name[i], LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(s_word[i], LV_OBJ_FLAG_HIDDEN);
+      } else if (overflow && i == witnesses) {
+        lv_label_set_text_fmt(s_name[i], "+%d more", total - witnesses);
+        lv_obj_set_style_text_color(s_name[i], col_muted(), 0);
+        lv_obj_add_flag(s_dot[i], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(s_name[i], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_word[i], LV_OBJ_FLAG_HIDDEN);
       } else {
         lv_obj_add_flag(s_dot[i], LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_name[i], LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_word[i], LV_OBJ_FLAG_HIDDEN);
       }
-    }
-    if (total > ROWS) {
-      lv_label_set_text_fmt(s_more, "+%d more", total - ROWS);
-      lv_obj_clear_flag(s_more, LV_OBJ_FLAG_HIDDEN);
-    } else {
-      lv_obj_add_flag(s_more, LV_OBJ_FLAG_HIDDEN);
     }
   } else {
     for (int i = 0; i < ROWS; i++) {
@@ -346,14 +386,13 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
       lv_obj_add_flag(s_name[i], LV_OBJ_FLAG_HIDDEN);
       lv_obj_add_flag(s_word[i], LV_OBJ_FLAG_HIDDEN);
     }
-    lv_obj_add_flag(s_more, LV_OBJ_FLAG_HIDDEN);
   }
 
   // Glance line — honesty first, then the count. The ambient-life status
   // glance brightens it briefly, then it settles back to muted.
   if (s_glance) {
     const bool bright = (int32_t)(now - s_glance_bright_until) < 0;
-    if (night) {
+    if (quiet) {
       lv_label_set_text(s_glance, "");
     } else if (link_down) {
       lv_label_set_text(s_glance, "not everything is reporting in");
@@ -367,7 +406,45 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
       lv_obj_set_style_text_color(s_glance, bright ? col_text() : col_muted(), 0);
     }
   }
-  (void)st.bedside;  // emphasis hook — both personalities share this column
+#ifdef CD_NIGHTSTAND7
+  // Bedside foot: the day's weather + how the room feels, from the same hub
+  // source the landscape bedside face reads. Day-only and only when this
+  // really is the bedside personality; night blacks them out with the rest.
+  if (s_wx && s_comfort) {
+    if (quiet || !st.bedside) {
+      lv_label_set_text(s_wx, "");
+      lv_label_set_text(s_comfort, "");
+    } else {
+      canary::care::BedsideWeather wx;
+      char line[80];
+      if (canary::care::bedside_weather(&wx)) {
+        size_t o = 0;
+        if (wx.t_now_c10 > -9990) {
+          const int a = wx.t_now_c10 < 0 ? -wx.t_now_c10 : wx.t_now_c10;
+          o += (size_t)snprintf(line + o, sizeof(line) - o, "%s%d.%d\xC2\xB0",
+                                wx.t_now_c10 < 0 ? "-" : "", a / 10, a % 10);
+        }
+        if (wx.cond && wx.cond[0] && o < sizeof(line))
+          o += (size_t)snprintf(line + o, sizeof(line) - o, "%s%s",
+                                o ? " \xC2\xB7 " : "", wx.cond);
+        if (o < sizeof(line))
+          snprintf(line + o, sizeof(line) - o, "%s%d\xC2\xB0/%d\xC2\xB0",
+                   o ? " \xC2\xB7 " : "",
+                   (wx.hi_c10 + (wx.hi_c10 >= 0 ? 5 : -5)) / 10,
+                   (wx.lo_c10 + (wx.lo_c10 >= 0 ? 5 : -5)) / 10);
+        lv_label_set_text(s_wx, line);
+      } else {
+        lv_label_set_text(s_wx, "");
+      }
+      lv_label_set_text(
+          s_comfort,
+          canary::care::bedside_comfort_line(fleet, line, sizeof(line)) ? line
+                                                                        : "");
+    }
+  }
+#else
+  (void)st.bedside;  // the wall column is fleet-first; no weather foot
+#endif
 }
 
 void portrait7_ui_ack_hold(bool) {
