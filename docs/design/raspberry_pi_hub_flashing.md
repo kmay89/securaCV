@@ -361,17 +361,37 @@ Raspberry Pi Imager.
     host-tested, the physical boot is not. It carries the runnable payload plus the
     integrity manifest — the same set the generator's `--build` produces; the
     self-documenting `provision.sh` means there's no separate README to drift.
-  - *Remaining:* upgrade the typed-once Wi-Fi persist store to the OS keychain;
-    add the app opt-in that hands `provision_seed_files()` to `seed_card` during a
-    flash (an experimental toggle like the account pre-seed — the assembler and its
-    cross-check exist; what's left is the UI + the `seed_card` call); and — the
-    genuinely unresolved, on-hardware-pinned piece — the **first-boot hook** that
-    auto-runs `provision.sh`. HAOS has no supported hook to run an arbitrary
-    boot-partition script, so today the bundle is a one-command step (drop it via
-    the SSH add-on, `sh provision.sh`), not zero-touch; HAOS ignores files it
-    doesn't recognise, so an un-run bundle is harmless. Until the hook is pinned
-    the hub boots as stock HAOS + Wi-Fi and the guide carries the user from
-    `homeassistant.local:8123`.
+  - *App opt-in + companion-run provisioning (landed 2026-08-01; real-HAOS boot
+    validation OUTSTANDING):* the Hub tab's "Let this app finish hub setup by
+    itself" toggle seeds two things through the same guarded injection as the
+    Wi-Fi keyfile: the provisioning bundle under `CONFIG/securacv/` (now carrying
+    `host_provision.sh`, a wrapper that borrows python3 + the Supervisor token
+    from the running Core container, so the bundle is runnable from the ONE
+    shell a fresh headless hub exposes) and a **maintenance key** as
+    `authorized_keys` at the boot-partition ROOT — HAOS's documented
+    developer-console mechanism (port 22222). The first-boot companion then
+    resolves the "who runs the bundle" question from the operator's computer:
+    when the hub answers, it connects over SSH (key minted locally by
+    `ssh-keygen`, private half never leaves the operator's machine; TOFU into a
+    dedicated `known_hosts` — and a host key that CHANGES stops the run with an
+    explanation rather than re-pinning itself, because a reflash and an
+    impostor on the same address produce the identical signal) and runs
+    `sh /mnt/boot/CONFIG/securacv/host_provision.sh`, streaming
+    the executor's narration into the app's console. The decisions (key
+    validation, host validation, the exact ssh argv, reflash detection) are pure
+    and host-tested in `hub_core::hub_headless`; both seeds are non-fatal notes
+    on a stumble, like the account seed. A quit mid-first-boot resumes: the
+    "last flash" record remembers an owed setup run.
+  - *Remaining:* upgrade the typed-once Wi-Fi persist store to the OS keychain,
+    and — the genuinely unresolved, on-hardware-pinned piece — a **true
+    zero-touch first-boot hook** (the hub running the bundle with no companion
+    at all). HAOS has no supported hook to run an arbitrary boot-partition
+    script, so the companion-over-SSH path above is the honest interim; it and
+    the seeds still need their first validated run on a real Pi (does this HAOS
+    build import the root-partition `authorized_keys`, does the console open,
+    does `host_provision.sh` complete?). HAOS ignores files it doesn't
+    recognise, so an un-run bundle is harmless and the guide still carries the
+    user from `homeassistant.local:8123`.
   - *Account pre-seed (minting + opt-in seed IMPLEMENTED 2026-07-23; HAOS
     acceptance OUTSTANDING):* the flasher collects the operator's
     name/username/password alongside the Wi-Fi (an opt-in, clearly

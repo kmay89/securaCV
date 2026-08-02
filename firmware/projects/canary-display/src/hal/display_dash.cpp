@@ -174,6 +174,20 @@ void backlight_night_set(uint16_t duty13) {
   ch422g_set_bits(CH422G_BIT_BACKLIGHT, duty13 > 0);
 }
 
+bool sd_dat3_release() {
+#if defined(CH422G_BIT_SD_CS)
+  // Latch the slot's DAT3/CS line HIGH. A card whose DAT3 rides high
+  // negotiates SD (not SPI) mode — what the SDMMC 1-bit deep archive needs
+  // (fleet/sd_archive.cpp). This is the latch's default state; re-asserting
+  // is belt-and-braces against any earlier owner of the bit.
+  return ch422g_write(s_exio_state | (uint8_t)CH422G_BIT_SD_CS);
+#else
+  // No expander-routed DAT3 on this board revision (e.g. the 7" panel's
+  // CH422G map is still VERIFY) — nothing to release here.
+  return true;
+#endif
+}
+
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
 // ── Isolated IO (4.3B terminal block) ───────────────────────────────────
 // The CH422G's open-drain latch lives at its own command address; bit

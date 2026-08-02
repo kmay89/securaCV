@@ -58,6 +58,8 @@ DEVICE_OF = [
 NON_PRODUCT_SCADS = {
     "canary_s3_lcd7_fitcheck.scad",   # 7" bezel/tray assembly-interference check
     "canary_s3_lcd7_qr.scad",         # generated help-QR bit matrix (gen_qr.py)
+    "canary_vent_lib.scad",           # brand vent pattern library — shapes, not a part
+    "canary_s3_lcd7_stamp.scad",      # generated build stamp (gen_stamp.py)
 }
 
 # Preview meshes rendered for in-development designs the device sheets

@@ -38,6 +38,16 @@ void backlight_set(uint8_t level);
 // Duty range 0..8191 (canary::glass::NIGHT_DUTY_MAX).
 void backlight_night_set(uint16_t duty13);
 
+// ── SD slot (dash TF card) ──────────────────────────────────────────────
+// Release the slot's DAT3/CS line — on the dash it rides the CH422G latch —
+// so an inserted card negotiates SD mode for the SDMMC 1-bit deep archive
+// (fleet/sd_archive.cpp). Returns true when the line is released (including
+// boards where it isn't expander-routed and there is nothing to do), false
+// on an expander write failure. Only the dash flavor compiles a caller: the
+// watch slot shares the panel's SPI bus and stays unsupported for now (the
+// full reasoning lives in fleet/sd_archive.h).
+bool sd_dat3_release();
+
 struct TouchSample {
   bool touched = false;
   int16_t x = 0;

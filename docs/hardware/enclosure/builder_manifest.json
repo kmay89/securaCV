@@ -3280,14 +3280,15 @@
       "file": "canary_fit_coupon.scad",
       "name": "Fit coupon",
       "tagline": "The first-print calibration plate. Every fit used across the fleet's cases, as labelled test stations — print this first, tune the three tolerances, reuse everywhere.",
-      "about": "Every fit the fleet's cases use, gathered on one branded test plate: the WAP's two-sided snap-clip channel, click-retained keyholes, magnet and light-pipe pockets, insert bores, the lid lip, the USB-C port opening, a −/0/+ screw-pilot ladder, and the embossed/debossed wordmarks every case's branding uses. A tight or loose station tells you which number to change — once, for every case after.",
+      "about": "Every fit the fleet's cases use, gathered on one branded test plate: the Canary mark embossed in uniform strokes, the WAP's two-sided snap-clip channel, click-retained keyholes, magnet and light-pipe pockets, insert bores, the lid lip, the USB-C port opening, a −/0/+ screw-pilot ladder, and the embossed/debossed wordmarks every case's branding uses. A tight or loose station tells you which number to change — once, for every case after.",
       "print_plan": "Print the Base in PETG first — it's small next to any case. The Mate tests the keyholes (slide to the click) and its edge tongue tests the lid-lip channel; the Strip is the TPU gasket-squeeze test. Adjust the three tolerances and reprint until stations fit.",
       "simple": [
         "part",
         "tol_slide",
         "tol_press",
         "tol_hole",
-        "kh_click"
+        "kh_click",
+        "glyph_rib"
       ],
       "preset_param": null,
       "preset_controls": [],
@@ -3308,22 +3309,28 @@
         "tol_slide": "Sliding fits",
         "tol_press": "Press fits",
         "tol_hole": "Screw holes",
-        "kh_click": "Keyhole click"
+        "kh_click": "Keyhole click",
+        "glyph_h": "Glyph height",
+        "glyph_rib": "Glyph stroke"
       },
       "hints": {
         "tol_slide": "Parts that slide or snap: lid lips, board clips, keyholes. Loose station → smaller number.",
         "tol_press": "Parts pushed in to stay: magnets, light pipes. They should seat firmly by thumb.",
         "tol_hole": "Self-tapping M2 pilots: threads should bite without splitting the post.",
-        "kh_click": "The keyhole retention bump. Mate won't slide past it → smaller number; slides back off too easily → bigger. 0 removes the click."
+        "kh_click": "The keyhole retention bump. Mate won't slide past it → smaller number; slides back off too easily → bigger. 0 removes the click.",
+        "glyph_h": "How tall the embossed Canary prints. At the default 7 mm it spans 12.9 mm — the clear air between the two wordmarks. 0 removes the station.",
+        "glyph_rib": "No part of the mark is drawn narrower than this, so one number decides the whole glyph. Blobbed and closed up → smaller; broken or missing → bigger. Below 0.4 mm is thinner than one extrusion."
       },
       "choices": {},
       "units": {
         "tol_slide": "mm",
         "tol_press": "mm",
         "tol_hole": "mm",
-        "kh_click": "mm"
+        "kh_click": "mm",
+        "glyph_h": "mm",
+        "glyph_rib": "mm"
       },
-      "sha256": "a96885dee53d1b145af0def9a9aa94345f50cea738e5c07a2fd0b1cad96453d1",
+      "sha256": "735bfde177fda301c9ef9648c17437028e85e958f0c13a206d8a9fcd7ec34ec7",
       "groups": [
         {
           "name": "What to render",
@@ -3562,6 +3569,58 @@
               "type": "string",
               "default": "SecuraCV",
               "desc": "the DEBOSS station's wordmark"
+            },
+            {
+              "name": "glyph_h",
+              "type": "number",
+              "default": 7.0,
+              "desc": "GLYPH station: mark height (0 removes the station)."
+            },
+            {
+              "name": "glyph_rib",
+              "type": "number",
+              "default": 0.7,
+              "desc": "stroke width, in mm. THE number this station tests:"
+            }
+          ]
+        },
+        {
+          "name": "GLYPH station — the bird, debossed into the BED-SIDE face",
+          "params": [
+            {
+              "name": "glyph_show",
+              "type": "bool",
+              "default": true
+            },
+            {
+              "name": "glyph_size",
+              "type": "number",
+              "default": 34.0,
+              "desc": "mark width. At 34 the thinnest stroke lands at"
+            },
+            {
+              "name": "glyph_grow",
+              "type": "number",
+              "default": 0.14,
+              "desc": "per-side thickening that buys that 0.44"
+            },
+            {
+              "name": "glyph_depth",
+              "type": "number",
+              "default": 0.5,
+              "desc": "= label_depth's sibling; one bridged layer closes it"
+            },
+            {
+              "name": "glyph_dx",
+              "type": "number",
+              "default": -26.5,
+              "desc": "the clear rectangle on the bed face: left of the"
+            },
+            {
+              "name": "glyph_dy",
+              "type": "number",
+              "default": 12.0,
+              "desc": "PORT through-hole, above the keyhole pockets"
             }
           ]
         },
@@ -3577,6 +3636,23 @@
               "name": "bh",
               "type": "number",
               "default": 68
+            },
+            {
+              "name": "g_span",
+              "type": "number",
+              "default": 87,
+              "desc": "design-unit height the above spans"
+            },
+            {
+              "name": "g_cx",
+              "type": "number",
+              "default": -6,
+              "desc": "design-unit bbox centre"
+            },
+            {
+              "name": "g_cy",
+              "type": "number",
+              "default": -2.5
             }
           ]
         }

@@ -22,6 +22,7 @@ pub mod hub_enumerate_macos;
 pub mod hub_enumerate_windows;
 pub mod hub_fat;
 pub mod hub_flash;
+pub mod hub_headless;
 pub mod hub_image;
 pub mod hub_seed;
 pub mod hub_usbboot;
