@@ -173,7 +173,7 @@ module bird_glyph_2d(t) {
         _gstroke(_smooth(g_wing, true), t, true);
         _gstroke(_smooth(g_tailu, false, 1), t);
         _gstroke(_smooth(g_taill, false, 1), t);
-        polygon([[-38,34],[-64,27],[-38,19]]);       // beak
+        _gtaper([[-37,26.5],[-63,27]], 15, t);       // beak: cone -> t tip
         translate([-27,34]) circle(d = t*1.35);      // eye
         _gstroke([[-12,-36],[-20,-50]], t);          // legs, splayed
         _gstroke([[4,-35],[12,-50]], t);
@@ -201,9 +201,11 @@ module emblem_emb(px, py, h) {
     n  = emblem_crown > 0 ? 4 : 1;
     translate([px, py, base_t - 0.05])
         for (i = [0:n-1]) {
-            f   = i/n;
+            // the inset runs 0 at the base to the FULL crown on the top slice;
+            // the slice's z is a separate ramp, or the last one would sit proud
+            f   = n > 1 ? i/(n - 1) : 0;
             ins = (emblem_crown / s) * (1 - sqrt(1 - f*f));
-            translate([0, 0, f*ez]) linear_extrude(ez/n + 0.01)
+            translate([0, 0, i*ez/n]) linear_extrude(ez/n + 0.01)
                 scale([s, s]) translate([-g_cx, -g_cy])
                     offset(r = -ins) bird_glyph_2d(t);
         }
