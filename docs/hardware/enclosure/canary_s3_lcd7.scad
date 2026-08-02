@@ -278,6 +278,40 @@ rg_step   = 0.2;      // ...and its step. Four sockets at centre ± 0.5·step
                       // more room on one side of the centre than the other,
                       // so "the winner is within half a step" stops being
                       // true and a two-pass search can skip the answer.
+/* [Panel variant] */
+// ════════════════════════════════════════════════════════════════════════════
+//  ESP32-S3-Touch-LCD-7  vs  -7B  — one case, half a turn apart
+//
+//  The two boards share their entire MECHANICAL interface, to the hundredth:
+//    glass 192.96 x 110.76      active area 154.88 x 86.72
+//    PCB   165.72 x 97.60       M3 pattern  126.20 x 65.65
+//    (M3 inset 19.76 from the PCB's side edges, 18.31 / 13.64 top and bottom)
+//
+//  What differs is where the COMPONENTS sit, and every case-relevant one is a
+//  180 deg rotation of its opposite number:
+//
+//    feature        LCD-7 (800x480)     LCD-7B (1024x600)
+//    ESP32 module   bottom-left         top-right
+//    microSD        top-left            bottom-right
+//    USB-C pair     left edge           right edge
+//    BOOT / RESET   bottom-centre       top-centre
+//
+//  So the same printed case serves both: seat the 7B a half-turn round and
+//  every boss, screw and wall lands where it already is. Two consequences,
+//  both handled:
+//    1. The asymmetric offsets flip sign — the M3 pattern is NOT centred on
+//       the glass, and neither is the SD socket. That is what pv does below.
+//    2. The image comes up upside down. Rotate the display in firmware; the
+//       hardware does not care which way up it is bolted.
+//
+//  This is not a new discovery so much as a named one: m3_ox/m3_oy already
+//  carry a note that the FIRST REAL PRINT flipped them 180 deg from what a
+//  reference case recorded. That reference was a 7B. The flip WAS the variant
+//  difference, found the expensive way before anyone knew there were two.
+// ════════════════════════════════════════════════════════════════════════════
+panel_variant = "lcd7";   // ["lcd7","lcd7b"]
+pv = panel_variant == "lcd7b" ? -1 : 1;   // half-turn multiplier
+
 aa_w = 154.88;       // active area width
 aa_h = 86.72;        // active area height
 aa_dy = -1.02;       // AA centre offset from glass centre — native mounting:
@@ -303,8 +337,8 @@ m3_dx = 126.20;      // M3 hole pattern width — MEASURED from a reference case
                      // the board's edge; see the header for how 126.20 also
                      // resolves the old pcb_h dispute). Verify on your board.
 m3_dy = 65.65;       // M3 hole pattern height — measured with m3_dx; verify
-m3_ox = 1.5;         // pattern centre offset from the GLASS centre, stated in
-m3_oy = 0.9;         // FRONT view, panel mounted NATIVE (buttons at the top):
+m3_ox = pv * 1.5;         // pattern centre offset from the GLASS centre, stated in
+m3_oy = pv * 0.9;         // FRONT view, panel mounted NATIVE (buttons at the top):
                      // +x = right, +y = up. SIGNS SETTLED BY THE FIRST REAL
                      // PRINT: with the v0.4 signs (−1.5/−0.9) the panel only
                      // matched the printed pattern upside down — the offsets
@@ -514,8 +548,8 @@ adh_mark_w  = 0.8;   // outline moat width
 // it never drops inside the case. Position corrected by the FIRST REAL PRINT:
 // the photo-derived 42.0 sat 1/4" too far outboard — the print lined up with
 // the socket 6.35 mm nearer the plate's centre.
-sd_dx = 35.65;  // opening centre, + = back-view right (42.0 − 6.35, measured)
-sd_dy = -26.0;
+sd_dx = pv * 35.65;  // opening centre, + = back-view right (42.0 − 6.35, measured)
+sd_dy = pv * -26.0;
 sd_w  = 18.0;   // width — fingertip-sized, not card-sized
 sd_l  = 40.0;   // length along the slide direction
 // 7 per side, not 8. The r9.05 corner round eats 5.85 mm off each end of the

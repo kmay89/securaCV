@@ -6549,6 +6549,25 @@
        "name": "rg_step",
        "default": "0.2",
        "comment": "...and its step. Four sockets at centre ± 0.5·step"
+      }
+     ]
+    },
+    {
+     "name": "Panel variant",
+     "note": "",
+     "params": [
+      {
+       "name": "panel_variant",
+       "default": "lcd7",
+       "enum": [
+        "lcd7",
+        "lcd7b"
+       ]
+      },
+      {
+       "name": "pv",
+       "default": "panel_variant == \"lcd7b\" ? -1 : 1",
+       "comment": "half-turn multiplier"
       },
       {
        "name": "aa_w",
@@ -6613,12 +6632,12 @@
       },
       {
        "name": "m3_ox",
-       "default": "1.5",
+       "default": "pv * 1.5",
        "comment": "pattern centre offset from the GLASS centre, stated in"
       },
       {
        "name": "m3_oy",
-       "default": "0.9",
+       "default": "pv * 0.9",
        "comment": "FRONT view, panel mounted NATIVE (buttons at the top):"
       },
       {
@@ -6945,12 +6964,12 @@
       },
       {
        "name": "sd_dx",
-       "default": "35.65",
+       "default": "pv * 35.65",
        "comment": "opening centre, + = back-view right (42.0 − 6.35, measured)"
       },
       {
        "name": "sd_dy",
-       "default": "-26.0"
+       "default": "pv * -26.0"
       },
       {
        "name": "sd_w",
