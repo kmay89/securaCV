@@ -28,6 +28,9 @@
 #include "canary/ui/canary_mark.h"
 #include "canary/ui/character.h"
 #include "canary/ui/look_state.h"
+#if defined(FEATURE_LANTERN) && FEATURE_LANTERN
+#include "canary/care/lantern.h"
+#endif
 #include "color/look_engine.h"
 
 namespace canary::ui {
@@ -68,8 +71,10 @@ lv_obj_t* s_chip[ROWS] = {nullptr};
 lv_obj_t* s_name[ROWS] = {nullptr};
 lv_obj_t* s_more = nullptr;        // "+N more"
 lv_obj_t* s_glance = nullptr;      // count + link honesty
+lv_obj_t* s_lantern = nullptr;     // the night-light overlay (topmost)
 
 lv_anim_t s_wash_anim;
+uint32_t s_glance_bright_until = 0;   // ambient-life check-in window
 
 lv_obj_t* mk_label(lv_obj_t* parent, const lv_font_t* f, lv_color_t c) {
   lv_obj_t* l = lv_label_create(parent);
@@ -205,6 +210,23 @@ void portrait_ui_create() {
   lv_obj_set_style_text_align(s_glance, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_align(s_glance, LV_ALIGN_BOTTOM_MID, 0, -14);
   lv_label_set_text(s_glance, "");
+
+#if defined(FEATURE_LANTERN) && FEATURE_LANTERN
+  // ── The lantern overlay ──
+  // Created last so it covers the face: on these small boards the screen IS
+  // the night light. Hidden until summoned; the honest veto in the model
+  // takes the glass back the instant anything wants attention.
+  s_lantern = lv_obj_create(scr);
+  lv_obj_set_size(s_lantern, SCR_W, SCR_H);
+  lv_obj_set_pos(s_lantern, 0, 0);
+  lv_obj_set_style_radius(s_lantern, 0, 0);
+  lv_obj_set_style_border_width(s_lantern, 0, 0);
+  lv_obj_set_style_pad_all(s_lantern, 0, 0);
+  lv_obj_set_style_bg_opa(s_lantern, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_grad_dir(s_lantern, LV_GRAD_DIR_VER, 0);
+  lv_obj_clear_flag(s_lantern, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(s_lantern, LV_OBJ_FLAG_HIDDEN);
+#endif
 }
 
 void portrait_ui_update(const Fleet& fleet, uint32_t now,
@@ -276,15 +298,50 @@ void portrait_ui_update(const Fleet& fleet, uint32_t now,
     lv_label_set_text(s_glance, "no canaries yet");
     lv_obj_set_style_text_color(s_glance, col_muted(), 0);
   } else {
+    // An ambient-life check-in brightens this line for a few seconds, then
+    // it settles back to muted — the whole visible half of a "moment".
+    const bool bright = (int32_t)(now - s_glance_bright_until) < 0;
     lv_label_set_text_fmt(s_glance, "%d %s \xC2\xB7 online", count,
                           count == 1 ? "canary" : "canaries");
-    lv_obj_set_style_text_color(s_glance, col_muted(), 0);
+    lv_obj_set_style_text_color(s_glance, bright ? col_text() : col_muted(), 0);
   }
+
+#if defined(FEATURE_LANTERN) && FEATURE_LANTERN
+  // ── The lantern ──
+  // A lamp, not a state signal: its light is the chosen look-engine scene at
+  // day brightness (night dimming belongs to the state channel, not to a
+  // light somebody just asked for). The model has already yielded on any
+  // Warn+ or dead link, so reaching here means the room is genuinely calm.
+  if (s_lantern) {
+    auto& lamp = canary::care::lantern();
+    const bool attention = (uint8_t)worst >= (uint8_t)Sev::Warn || link_down;
+    if (lamp.active(now, night, attention)) {
+      canary::color::LookParams lampp = look_params();
+      lampp.scene_idx = lamp.scene();
+      lampp.night = false;
+      canary::color::Rgb ws[2];
+      canary::color::wash_stops(now, lampp, canary::color::Sev::Ok,
+                                /*safe_dark=*/false, ws, 2);
+      lv_obj_set_style_bg_color(s_lantern,
+                                lv_color_make(ws[0].r, ws[0].g, ws[0].b), 0);
+      lv_obj_set_style_bg_grad_color(
+          s_lantern, lv_color_make(ws[1].r, ws[1].g, ws[1].b), 0);
+      lv_obj_clear_flag(s_lantern, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(s_lantern, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+#endif
 }
 
 void portrait_ui_ack_hold(bool /*active*/) {
-  // No touch panel on the 1.47" boards — the BOOT-button acknowledge (and its
-  // sweep affordance) is a follow-up. Kept for main.cpp call symmetry.
+  // The BOOT-button acknowledge (main.cpp) is deliberate rather than swept:
+  // there is no finger on the glass to track, so a sweep ring would animate
+  // against nothing. Kept for main.cpp call symmetry.
+}
+
+void portrait_ui_life_glance(uint32_t now) {
+  s_glance_bright_until = now + 6000;
 }
 
 }  // namespace canary::ui
