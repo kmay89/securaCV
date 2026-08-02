@@ -6522,18 +6522,18 @@
       },
       {
        "name": "panel_core_w",
-       "default": "165.0",
+       "default": "165.72",
        "comment": "module can width  (X)"
       },
       {
        "name": "panel_core_h",
-       "default": "100.0",
-       "comment": "module can height (Y)"
+       "default": "97.60",
+       "comment": "module can height (Y) — 2.40 SMALLER than the"
       },
       {
        "name": "panel_core_dy",
-       "default": "-1.0",
-       "comment": "can centre offset from glass centre. ⚠️ THIS SIGN IS"
+       "default": "-1.435",
+       "comment": "can centre offset from glass centre, NATIVE pose."
       },
       {
        "name": "glass_r",

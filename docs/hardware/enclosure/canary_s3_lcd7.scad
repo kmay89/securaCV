@@ -218,21 +218,29 @@ glass_edge_t = 0.8;  // the BARE-GLASS border the adhesive strips land on —
 // the can's path through the ledge ring open). Nominal from the 7" module
 // family + the Rev1.2 adhesive photos (~10 mm bare sides / ~6 mm button
 // edge); put calipers on the can — MEASURE.
-panel_core_w  = 165.0;  // module can width  (X)
-panel_core_h  = 100.0;  // module can height (Y)
-panel_core_dy = -1.0;   // can centre offset from glass centre. ⚠️ THIS SIGN IS
-                        // NOW SUSPECT. It is meant to track aa_dy, and aa_dy
-                        // was just corrected to +1.02 (measured: the lit area
-                        // sits toward the BOOT/RESET edge). Flipping this to
-                        // match trips the ledge assert below — with the module
-                        // leaning that way, the top ledge closes on the can.
-                        // That is not necessarily a design fault: panel_core_h
-                        // is still the nominal 100.0 GUESS, and the real can is
-                        // very likely smaller, which would give the ledge back
-                        // its clearance. Left at -1.0 so the tree builds, and
-                        // flagged rather than silently "fixed" — measuring the
-                        // can settles both the sign and the size at once, and
-                        // the assert is waiting to check the answer.
+// MEASURED off the Waveshare drawing, and the drawing proves itself: the M3
+// insets sum to the outline exactly — 19.76 + 126.20 + 19.76 = 165.72 and
+// 18.31 + 65.65 + 13.64 = 97.60 — so both dimensions bracket the CAN, not the
+// PCB. (The board is visibly smaller and sits on standoffs above it.)
+panel_core_w  = 165.72; // module can width  (X)
+panel_core_h  = 97.60;  // module can height (Y) — 2.40 SMALLER than the
+                        // old nominal, which was eating the ledge's clearance
+panel_core_dy = -1.435; // can centre offset from glass centre, NATIVE pose.
+                        // DERIVED, and it needed no calipers: the drawing puts
+                        // the M3 pattern 18.31 from the module's FPC end and
+                        // 13.64 from its button end, so the pattern centre sits
+                        // 2.335 off the module centre. m3_oy (+0.9) is already
+                        // print-validated in the native pose, and native is the
+                        // drawing turned half a turn, so
+                        //     panel_core_dy = m3_oy - 2.335 = -1.435
+                        // Cross-check that it is not nonsense: aa_dy is +1.02,
+                        // which puts the LIT AREA 2.46 toward the button edge
+                        // WITHIN the module — exactly where the FPC and driver
+                        // eat module height. The two offsets disagreeing in
+                        // sign is the physically expected result, not an error.
+                        // (I briefly flagged this sign as suspect on the theory
+                        // that it must track aa_dy. It does not, and the ledge
+                        // assert was right to reject the flip.)
 glass_r = 8.2;       // corner radius of the glass slab — MEASURED against the
                      // real panel on a screen comparator, calibrated against
                      // the PANEL OUTLINE itself (192.96 mm) rather than a
