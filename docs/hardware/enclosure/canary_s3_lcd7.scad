@@ -346,8 +346,12 @@ khm_len = 13.0;         // case hangs over the screws and slides DOWN to seat.
                         // bottom pair mirrors the feature about y=0. The head
                         // hole passes a #8 / M4 pan head; the slide, its
                         // shank; khm_len is head-hole centre → catch centre.
-mount_portrait = true;  // PORTRAIT hanging: each keyhole gains a second
-                        // slide running OUTBOARD (±x). Rotate the case 90°
+mount_portrait = true;  // PORTRAIT hanging: each keyhole gains slides in
+                        // BOTH ±x — a rigid case translates one way only, so
+                        // a single-direction slide would let just one column
+                        // engage and 4-screw portrait could not seat at all.
+                        // With both, every hole has a catch path for whichever
+                        // way the case drops. Rotate the case 90°
                         // and a SIDE pair of keyholes becomes the level top
                         // pair — mouths 81 mm apart (khm_y + khm_y + khm_len)
                         // — with the outboard slides then pointing world-up,
@@ -611,6 +615,12 @@ qr_n = len(qr_bits());             // symbol size — defined HERE, above every 
 // gen_qr.py (change the content there, rerun it, commit both). The bare
 // deck around the field IS the spec quiet zone, so nothing else may be
 // debossed or cut inside it (asserted below).
+// Module cells are grown by qr_bleed and shifted back half of it, so
+// neighbouring dark modules OVERLAP instead of meeting face-to-face. Two
+// cutter cubes sharing an exact face make the CSG union non-manifold (the
+// export warns and the mesh gate fails); an overlap also matches how a real
+// QR reads — adjacent dark modules are one contiguous region, not tiles.
+qr_bleed = 0.02;
 qr_help = true;   // deboss the help QR into the deck
 qr_cell = 1.6;    // module size — 4 line-widths at a 0.4 mm nozzle
 qr_dx   = 43.5;   // field centre, plate coords (+x = front-view right wing)
@@ -756,8 +766,8 @@ sd_teth_y = sd_dy + sd_l/2 + sd_lip + sd_teth_gap;   // tether anchor hole centr
 fr_keep_base = concat(
     // grown with the doubler pads + mouth chamfers
     mount_keyholes ? [for (sx = [1,-1], sy = [1,-1])
-        [sx*(khm_dx + (mount_portrait ? khm_plen/2 : 0)),
-         sy*(khm_y + khm_len/2), 10 + (mount_portrait ? khm_plen/2 : 0), 20]] : [],
+        [sx*khm_dx, sy*(khm_y + khm_len/2),
+         10 + (mount_portrait ? khm_plen : 0), 20]] : [],
     // the SD keepout covers the countersunk mouth and the nail scoop
     [[sd_dx, sd_dy, sd_w/2 + 3.4, sd_l/2 + 6.7]],
     // ...and the tether zone: strap channel + anchor hole past the rim
@@ -1000,7 +1010,8 @@ assert(!qr_back || (abs(qr_back_dx) + qr_back_reach < fr_xi/2 - fr_ri
                     && abs(qr_back_dy) + qr_back_reach < fr_yi/2 - 9),
        "frame: back QR (field + quiet zone) runs into the plate rim band or the brand line's row");
 assert(!qr_back || !mount_keyholes
-       || abs(qr_back_dx) + qr_back_reach < khm_dx - 10,
+       || abs(qr_back_dx) + qr_back_reach
+          < khm_dx - (mount_portrait ? khm_plen + khm_slide_w/2 + khm_pad_w : 10) - 2,
        "frame: back QR quiet zone reaches a keyhole keepout");
 // Portrait slides: cut + doubler pad must stay inside the plate's flat
 // field, clear of the wall fillet ring.
@@ -1438,8 +1449,9 @@ module frame() {
                         circle(d = khm_head_d + 2*khm_pad_w);
                         translate([0, khm_len])
                             circle(d = khm_slide_w + 2*khm_pad_w);
-                        if (mount_portrait) translate([sx*khm_plen, 0])
-                            circle(d = khm_slide_w + 2*khm_pad_w);
+                        if (mount_portrait) for (px = [1, -1])
+                            translate([px*khm_plen, 0])
+                                circle(d = khm_slide_w + 2*khm_pad_w);
                     }
             // 45° fillet ring where the walls meet the back plate — the
             // drop-load path: a corner drop flexes the walls against the
@@ -1655,9 +1667,9 @@ module frame() {
                          translate([0, khm_len]) circle(d = khm_slide_w); }
                 // portrait slide: outboard, so the side pair that becomes
                 // the TOP pair in a rotated hang gets its world-up slides
-                if (mount_portrait)
+                if (mount_portrait) for (px = [1, -1])
                     hull() { circle(d = khm_slide_w);
-                             translate([sx*khm_plen, 0]) circle(d = khm_slide_w); }
+                             translate([px*khm_plen, 0]) circle(d = khm_slide_w); }
             }
         // ...each with a lead-in chamfer around its mouth on the outer skin,
         // so the case slips over the screw heads without catching
@@ -1673,12 +1685,12 @@ module frame() {
                         linear_extrude(0.01) hull()
                             for (dy = [0, khm_len]) translate([0, dy])
                                 circle(d = khm_slide_w + e*2*(khm_mouth_c + 0.05));
-                if (mount_portrait)
+                if (mount_portrait) for (px = [1, -1])
                     hull() for (e = [0, 1])
                         translate([0, 0, fr_depth - khm_mouth_c
                                          + e*(khm_mouth_c + 0.05)])
                             linear_extrude(0.01) hull()
-                                for (dx = [0, sx*khm_plen]) translate([dx, 0])
+                                for (dx = [0, px*khm_plen]) translate([dx, 0])
                                     circle(d = khm_slide_w + e*2*(khm_mouth_c + 0.05));
             }
         // adhesive-rail outline moats: a hairline frame OUTSIDE each smooth
@@ -1711,10 +1723,13 @@ module frame() {
         // viewed from the back, +x is right (see the axis note above).
         if (qr_back) for (r = [0:qr_n-1], c = [0:qr_n-1])
             if (qr_bits()[r][c] == 1)
-                translate([qr_back_dx - qr_n*qr_back_cell/2 + c*qr_back_cell,
-                           qr_back_dy + qr_n*qr_back_cell/2 - (r+1)*qr_back_cell,
+                translate([qr_back_dx - qr_n*qr_back_cell/2 + c*qr_back_cell
+                               - qr_bleed/2,
+                           qr_back_dy + qr_n*qr_back_cell/2 - (r+1)*qr_back_cell
+                               - qr_bleed/2,
                            fr_depth - label_back_depth])
-                    cube([qr_back_cell, qr_back_cell, label_back_depth + 0.1]);
+                    cube([qr_back_cell + qr_bleed, qr_back_cell + qr_bleed,
+                          label_back_depth + 0.1]);
     }
 }
 
@@ -2088,10 +2103,10 @@ module stand() {
         // accent — and the bare deck around the field is the quiet zone.
         if (qr_help) for (r = [0:qr_n-1], c = [0:qr_n-1])
             if (qr_bits()[r][c] == 1)
-                translate([qr_dx - qr_field/2 + c*qr_cell,
-                           qr_dy_eff + qr_field/2 - (r+1)*qr_cell,
+                translate([qr_dx - qr_field/2 + c*qr_cell - qr_bleed/2,
+                           qr_dy_eff + qr_field/2 - (r+1)*qr_cell - qr_bleed/2,
                            stand_plate_t - 0.4])
-                    cube([qr_cell, qr_cell, 0.5]);
+                    cube([qr_cell + qr_bleed, qr_cell + qr_bleed, 0.5]);
     }
     // key furniture, added AFTER the cuts (the seat-pocket cut would
     // otherwise carve it away):

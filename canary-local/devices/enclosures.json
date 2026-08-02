@@ -6819,7 +6819,7 @@
       {
        "name": "mount_portrait",
        "default": "true",
-       "comment": "PORTRAIT hanging: each keyhole gains a second"
+       "comment": "PORTRAIT hanging: each keyhole gains slides in"
       },
       {
        "name": "khm_plen",
@@ -7217,6 +7217,10 @@
      "name": "Help QR — dock deck",
      "note": "",
      "params": [
+      {
+       "name": "qr_bleed",
+       "default": "0.02"
+      },
       {
        "name": "qr_help",
        "default": "true",
