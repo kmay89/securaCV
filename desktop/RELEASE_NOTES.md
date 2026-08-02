@@ -17,6 +17,23 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.3.10 — 2026-08-02
+
+- **"Wait for my Pi" now works on Intel Macs.** Flashing a Raspberry Pi over
+  USB-C — the no-card-reader path — failed on every Intel Mac the moment you
+  opened the panel, with `could not start rpiboot: Bad CPU type in executable`.
+  The download was advertised as universal and the app itself was, but one
+  bundled helper (`rpiboot`, Raspberry Pi's official USB-boot tool) had been
+  built only for Apple Silicon, so Intel Macs couldn't start it. It is now
+  built for both architectures and the release build refuses to publish if
+  either one is missing. Apple Silicon Macs are unaffected — nothing about
+  that path changes. If you hit this, update and the panel will simply work;
+  no need to re-flash or redo anything.
+- **A helper that can't run now says so in English.** If any bundled helper
+  ever can't start on your machine, the app explains what happened and what to
+  do — update, or use a USB card reader in the meantime — instead of showing
+  the operating system's raw error number.
+
 ## 0.3.9 — 2026-08-01
 
 - **The hub can now set itself up — no monitor, ever.** A new opt-in on Build a
