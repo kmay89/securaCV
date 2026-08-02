@@ -46,6 +46,13 @@
 #include "glass_settings.h"
 #include "display.h"
 #include "pins.h"                    // HAS_ISOLATED_IO (board -I path)
+// The 7"/dash RGB glass carries orientation + rendered brightness + a
+// firmware page. These are compiled out on the round watch and the fixed-
+// portrait SPI nightstands (which map to CD_FLAVOR_WATCH above).
+#ifdef CD_FLAVOR_DASH
+#include "lvgl_port.h"     // set_rotation / set_dim (live preview)
+#include "ota_mgr.h"      // version + signed OTA facade
+#endif
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
 #include "field_io.h"      // siren arm/disarm — 4.3B isolated output
 #endif
@@ -80,6 +87,11 @@ enum class Page {
   EditHours,
   EditLook,
   EditScreen,
+#ifdef CD_FLAVOR_DASH
+  EditDisplay,  // orientation: landscape / portrait / their flips (live)
+  EditBright,   // rendered daytime brightness (binary-backlight glass)
+  EditFirmware, // installed version + signed OTA (check / install / auto)
+#endif
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
   EditSiren,   // 4.3B: arm/disarm the isolated siren output (DO0)
 #endif
@@ -107,6 +119,11 @@ enum : int {
   IT_BACK = 1,
   IT_ROW_DAY, IT_ROW_NIGHT, IT_ROW_HOURS, IT_ROW_LOOK, IT_ROW_SCREEN,
   IT_ROW_STYLE, IT_ROW_CAL, IT_ROW_RESET, IT_ROW_ADD,
+#ifdef CD_FLAVOR_DASH
+  IT_ROW_DISPLAY, IT_ROW_BRIGHT, IT_ROW_FW,
+  IT_ROT_0, IT_ROT_90, IT_ROT_180, IT_ROT_270,   // orientation options
+  IT_ROW_FW_AUTO,                                 // auto-update toggle
+#endif
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
   IT_ROW_SIREN,
 #endif
@@ -130,16 +147,16 @@ lv_obj_t* s_prev = nullptr;   // the face to return to
 lv_obj_t* s_scr = nullptr;    // our own screen while open
 lv_obj_t* s_host = nullptr;   // content parent (screen on watch, sheet on dash)
 Page s_page = Page::Root;
+// Worst case is the dash root: back + six shared rows + the display /
+// brightness / firmware trio + reset + the modes doorway, each row up to two
+// objects (name+value), plus the board's siren or mic row. The sizes below
+// clear that with margin so add_item never silently drops a hit zone.
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
-// The 4.3B dash root can carry both the dev-mode row and the siren row on top
-// of the shared rows, each two objects (name+value) — 16 clears the worst case.
-Item s_items[16];
+Item s_items[24];
 #elif defined(CD_SET_MIC)
-// The 4.3C dash root carries the microphone row (+ the modes doorway):
-// two more hit zones than the plain dash worst case.
-Item s_items[14];
+Item s_items[22];
 #else
-Item s_items[12];
+Item s_items[20];
 #endif
 int s_item_n = 0;
 bool s_owns_backlight = false;
@@ -361,6 +378,21 @@ void build_root() {
   y += step;
   mk_row(y, "style", character_name(active_character()), IT_ROW_STYLE);
   y += step;
+#ifdef CD_FLAVOR_DASH
+  // The 7"/dash RGB glass: how it's turned, how bright it sits, and what it's
+  // running. Weekly-or-rarer, so they land on the root one tap from an editor
+  // (Zero Layer) — never behind an "Advanced" door.
+  mk_row(y, "orientation", rotation_name(gs.rotation), IT_ROW_DISPLAY);
+  y += step;
+  {
+    char b[8];
+    snprintf(b, sizeof(b), "%d%%", gs.bright_pct);
+    mk_row(y, "brightness", b, IT_ROW_BRIGHT);
+    y += step;
+  }
+  mk_row(y, "firmware", canary::net::ota_status().installed, IT_ROW_FW);
+  y += step;
+#endif
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
   // 4.3B only: arm the wired siren (DO0). Disarmed by default — opt-in.
   mk_row(y, "siren", canary::io::field_io_armed() ? "armed" : "off",
@@ -486,6 +518,89 @@ void build_edit_screen() {
   lv_label_set_text(cap, "an alert always lights the glass");
   lv_obj_align(cap, LV_ALIGN_TOP_MID, 0, y + 6);
 }
+
+#ifdef CD_FLAVOR_DASH
+// Orientation (7"/dash glass): four quarter turns, landing IS choosing —
+// the glass rotates under your thumb the instant you tap (The Screen Is the
+// Preview, taken literally). The bench turns the panel; the software follows.
+void build_edit_display() {
+  mk_back("orientation");
+  const uint8_t rot = settings().rotation;
+  int y = ROOT_Y0 + ROW_H / 2;
+  mk_row(y, "landscape", rot == ROT_LANDSCAPE ? "on" : nullptr,
+         IT_ROT_0, rot == ROT_LANDSCAPE);
+  y += ROW_H;
+  mk_row(y, "portrait", rot == ROT_PORTRAIT ? "on" : nullptr,
+         IT_ROT_90, rot == ROT_PORTRAIT);
+  y += ROW_H;
+  mk_row(y, "landscape flipped", rot == ROT_LANDSCAPE_INV ? "on" : nullptr,
+         IT_ROT_180, rot == ROT_LANDSCAPE_INV);
+  y += ROW_H;
+  mk_row(y, "portrait flipped", rot == ROT_PORTRAIT_INV ? "on" : nullptr,
+         IT_ROT_270, rot == ROT_PORTRAIT_INV);
+  y += ROW_H;
+  lv_obj_t* cap = mk_label(s_host, font_caption(), col_faint());
+  lv_label_set_text(cap,
+      "portrait suits a wall column or a tall\n"
+      "bedside face; the layout follows the turn.");
+  lv_obj_align(cap, LV_ALIGN_TOP_MID, 0, y + 6);
+}
+
+// Brightness (7"/dash glass): the backlight is on/off in hardware, so this
+// is a RENDERED dim — a black scrim over the glass, live as you step it. It
+// bottoms out at 50% on purpose (BRIGHT_PCT_MIN): darker is Night's job, and
+// a scrim can't lower real backlight power, so an all-day floor stays honest.
+void build_edit_bright() {
+  mk_back("brightness");
+  lv_obj_t* hero = mk_label(s_host, font_hero(), col_text());
+  lv_label_set_text_fmt(hero, "%d%%", settings().bright_pct);
+  lv_obj_align(hero, LV_ALIGN_CENTER, 0, -14);
+  lv_obj_t* cap = mk_label(s_host, font_caption(), col_muted());
+  lv_label_set_text(cap, "the screen is the preview");
+  lv_obj_align(cap, LV_ALIGN_CENTER, 0, 26);
+  mk_stepper();
+  // Dim to the current setting right now, so the hero and the glass agree.
+  lvgl_port_set_dim(bright_scrim_opa(settings().bright_pct));
+}
+
+// Firmware: the version this glass is running, and the one signed-and-
+// rollback-safe path to a newer one (same engine HA drives). No raw version
+// strings typed anywhere — the manifest and the release key are the truth.
+void build_edit_firmware() {
+  mk_back("firmware");
+  const canary::net::OtaStatus ota = canary::net::ota_status();
+  int y = ROOT_Y0 + ROW_H / 2;
+  mk_row(y, "installed", ota.installed, /*inert*/ 0);
+  y += ROW_H;
+  if (ota.update_available)
+    mk_row(y, "available", ota.latest, /*inert*/ 0);
+  else
+    mk_row(y, "status", ota.state_text, /*inert*/ 0);
+  y += ROW_H;
+  mk_row(y, "auto-update", ota.auto_update ? "on" : "off",
+         IT_ROW_FW_AUTO, ota.auto_update);
+  y += ROW_H;
+  // The single action, chosen by state: install what's waiting, or go look.
+  lv_obj_t* act = mk_label(s_host, font_body(),
+                           ota.busy ? col_muted() : col_signed());
+  if (ota.busy) {
+    lv_label_set_text_fmt(act, "installing" LV_SYMBOL_DOWNLOAD " %u%%",
+                          (unsigned)ota.progress);
+  } else if (ota.update_available) {
+    lv_label_set_text(act, "install now");
+    add_item(act, IT_YES);
+  } else {
+    lv_label_set_text(act, "check for updates");
+    add_item(act, IT_GO);
+  }
+  lv_obj_align(act, LV_ALIGN_BOTTOM_MID, 0, -34);
+  lv_obj_t* cap = mk_label(s_host, font_caption(), col_faint());
+  lv_label_set_text(cap, ota.dev_channel
+      ? "dev channel • signed + rollback-safe"
+      : "release channel • signed + rollback-safe");
+  lv_obj_align(cap, LV_ALIGN_BOTTOM_MID, 0, -8);
+}
+#endif  // CD_FLAVOR_DASH
 
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
 // Siren arming (4.3B): one decision, two options — same shape as "night look".
@@ -810,6 +925,11 @@ void build(Page pg) {
     case Page::EditHours:    build_edit_hours(); break;
     case Page::EditLook:     build_edit_look(); break;
     case Page::EditScreen:   build_edit_screen(); break;
+#ifdef CD_FLAVOR_DASH
+    case Page::EditDisplay:  build_edit_display(); break;
+    case Page::EditBright:   build_edit_bright(); break;
+    case Page::EditFirmware: build_edit_firmware(); break;
+#endif
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
     case Page::EditSiren:    build_edit_siren(); break;
 #endif
@@ -874,6 +994,15 @@ void step_value(int dir) {
       build(Page::EditHours);
       break;
     }
+#ifdef CD_FLAVOR_DASH
+    case Page::EditBright: {
+      gs.bright_pct = bright_pct_clamp((int)gs.bright_pct + dir * BRIGHT_PCT_STEP);
+      settings_mark_dirty();
+      lvgl_port_set_dim(bright_scrim_opa(gs.bright_pct));  // live preview
+      build(Page::EditBright);
+      break;
+    }
+#endif
     default:
       break;
   }
@@ -910,6 +1039,11 @@ void dispatch(int id) {
         case IT_ROW_HOURS:  s_hours_sel = 0; build(Page::EditHours); return;
         case IT_ROW_LOOK:   build(Page::EditLook); return;
         case IT_ROW_SCREEN: build(Page::EditScreen); return;
+#ifdef CD_FLAVOR_DASH
+        case IT_ROW_DISPLAY: build(Page::EditDisplay); return;
+        case IT_ROW_BRIGHT:  build(Page::EditBright); return;
+        case IT_ROW_FW:      build(Page::EditFirmware); return;
+#endif
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
         case IT_ROW_SIREN:  build(Page::EditSiren); return;
 #endif
@@ -970,6 +1104,55 @@ void dispatch(int id) {
         build(Page::EditScreen);
       }
       return;
+
+#ifdef CD_FLAVOR_DASH
+    case Page::EditDisplay: {
+      if (id == IT_BACK) { build(Page::Root); return; }
+      int nr = -1;
+      switch (id) {
+        case IT_ROT_0:   nr = ROT_LANDSCAPE;     break;
+        case IT_ROT_90:  nr = ROT_PORTRAIT;      break;
+        case IT_ROT_180: nr = ROT_LANDSCAPE_INV; break;
+        case IT_ROT_270: nr = ROT_PORTRAIT_INV;  break;
+      }
+      if (nr >= 0) {
+        // Landing IS choosing: persist + rotate the live glass (settings
+        // sheet and all), then rebuild so the check moves to the new turn.
+        settings_mut().rotation = (uint8_t)nr;
+        settings_mark_dirty();
+        lvgl_port_set_rotation((uint8_t)nr);
+        build(Page::EditDisplay);
+      }
+      return;
+    }
+
+    case Page::EditBright:
+      if (id == IT_BACK) { build(Page::Root); return; }
+      if (id == IT_MINUS) step_value(-1);
+      if (id == IT_PLUS) step_value(+1);
+      return;
+
+    case Page::EditFirmware:
+      if (id == IT_BACK) { build(Page::Root); return; }
+      if (id == IT_ROW_FW_AUTO) {
+        // Toggle-on-tap: flip the nightly auto-install preference (NVS'd),
+        // then redraw the row's on/off value.
+        canary::net::ota_set_auto_update(!canary::net::ota_status().auto_update);
+        build(Page::EditFirmware);
+        return;
+      }
+      if (id == IT_GO) {  // "check for updates"
+        canary::net::ota_request_check();
+        build(Page::EditFirmware);
+        return;
+      }
+      if (id == IT_YES) {  // "install now" — may reboot on success
+        canary::net::ota_request_install();
+        build(Page::EditFirmware);
+        return;
+      }
+      return;
+#endif  // CD_FLAVOR_DASH
 
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
     case Page::EditSiren:
@@ -1228,6 +1411,18 @@ void settings_ui_tick(uint32_t now_ms, bool urgent) {
     fmt_clock(c, sizeof(c));
     lv_label_set_text(s_cal_clock, c);
   }
+#ifdef CD_FLAVOR_DASH
+  // The firmware page mirrors a live state machine (checking → downloading →
+  // %). Rebuild it ~1 Hz so the status line and the install progress advance
+  // without a tap; other pages are static and never self-rebuild.
+  if (s_page == Page::EditFirmware) {
+    static uint32_t s_fw_next_ms = 0;
+    if ((int32_t)(now_ms - s_fw_next_ms) >= 0) {
+      s_fw_next_ms = now_ms + 1000;
+      build(Page::EditFirmware);
+    }
+  }
+#endif
 }
 
 }  // namespace canary::ui
