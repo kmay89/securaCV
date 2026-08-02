@@ -6533,7 +6533,7 @@
       {
        "name": "panel_core_dy",
        "default": "-1.0",
-       "comment": "can centre offset from glass centre (tracks aa_dy)"
+       "comment": "can centre offset from glass centre. ⚠️ THIS SIGN IS"
       },
       {
        "name": "glass_r",
@@ -6581,8 +6581,8 @@
       },
       {
        "name": "aa_dy",
-       "default": "-1.02",
-       "comment": "AA centre offset from glass centre — native mounting:"
+       "default": "1.02",
+       "comment": "AA centre offset from glass centre — NATIVE mounting,"
       }
      ]
     },

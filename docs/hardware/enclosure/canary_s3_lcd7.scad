@@ -220,7 +220,19 @@ glass_edge_t = 0.8;  // the BARE-GLASS border the adhesive strips land on —
 // edge); put calipers on the can — MEASURE.
 panel_core_w  = 165.0;  // module can width  (X)
 panel_core_h  = 100.0;  // module can height (Y)
-panel_core_dy = -1.0;   // can centre offset from glass centre (tracks aa_dy)
+panel_core_dy = -1.0;   // can centre offset from glass centre. ⚠️ THIS SIGN IS
+                        // NOW SUSPECT. It is meant to track aa_dy, and aa_dy
+                        // was just corrected to +1.02 (measured: the lit area
+                        // sits toward the BOOT/RESET edge). Flipping this to
+                        // match trips the ledge assert below — with the module
+                        // leaning that way, the top ledge closes on the can.
+                        // That is not necessarily a design fault: panel_core_h
+                        // is still the nominal 100.0 GUESS, and the real can is
+                        // very likely smaller, which would give the ledge back
+                        // its clearance. Left at -1.0 so the tree builds, and
+                        // flagged rather than silently "fixed" — measuring the
+                        // can settles both the sign and the size at once, and
+                        // the assert is waiting to check the answer.
 glass_r = 8.2;       // corner radius of the glass slab — MEASURED against the
                      // real panel on a screen comparator, calibrated against
                      // the PANEL OUTLINE itself (192.96 mm) rather than a
@@ -314,10 +326,21 @@ pv = panel_variant == "lcd7b" ? -1 : 1;   // half-turn multiplier
 
 aa_w = 154.88;       // active area width
 aa_h = 86.72;        // active area height
-aa_dy = -1.02;       // AA centre offset from glass centre — native mounting:
-                     // borders 13.04 top / 11.00 bottom. (A buttons-down
-                     // build — panel rotated 180°, image flipped in firmware —
-                     // negates this.)
+aa_dy = 1.02;        // AA centre offset from glass centre — NATIVE mounting,
+                     // i.e. buttons at the TOP: borders 11.00 top / 13.04
+                     // bottom, so the lit area sits 1.02 TOWARD the button
+                     // edge. (A buttons-down build — panel rotated 180°,
+                     // image flipped in firmware — negates this.)
+                     // SIGN CORRECTED: this read -1.02 with a comment
+                     // claiming "13.04 top / 11.00 bottom", which is the
+                     // DRAWING's orientation — and the drawing shows the
+                     // buttons at the BOTTOM. Native mounting turns the panel
+                     // half a turn, so the 11.00 border is the one that ends
+                     // up on top. Caught by calipers on a real panel: the
+                     // BOOT/RESET edge measured 10.90 against 13.10 opposite,
+                     // the reverse of what the model asserted. Same family as
+                     // the m3_ox/m3_oy flip — an offset copied straight off a
+                     // drawing without turning it into the mounting pose.
 
 /* [PCB stack behind the glass] */
 pcb_standoff = 5.0;  // glass back → PCB front (the white M3 standoffs) — MEASURE.
