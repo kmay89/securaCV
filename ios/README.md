@@ -68,6 +68,20 @@ ios/
                            make_app_icon.py / check_app_icon.py (icons + their CI gate)
 ```
 
+## On your iPad
+
+Same binary, same release, same truth — `TARGETED_DEVICE_FAMILY "1,2"` means
+the iPad ships in every `ios-v*` release automatically, with iPad
+orientations, multi-scene support, and no full-screen requirement (Split
+View / Stage Manager just work). What changes is the idiom, at exactly one
+decision point: `RootView` reads the horizontal size class and gives regular
+widths a persistent **sidebar** (`SidebarRootView`, with the fleet's
+worst-severity pip visible before a single tap) while compact widths keep
+the tab bar. Both idioms render the same `AppSection` list and the same four
+views — designed *for* iPad never means a second implementation (the
+two-flashers lesson applies to layouts too). Content that would sprawl on a
+13″ canvas self-constrains instead (`TodayView`'s readable-width column).
+
 ## On your wrist
 
 The watch app is a **target in this same project** (`SecuraCVWatch` +
