@@ -673,7 +673,7 @@ and the back plate all on one piece.
 one 3MF whose parts are already registered and already on filaments 1/2/3:
 
 ```sh
-python3 gen_3mf.py coupon     # or `tests` for the whole pre-flight plate
+python3 gen_3mf.py tests      # writes BOTH pre-flight plates, in order
 ```
 
 The manual path (load `coupon_body`, **Add part → Load** the other two) still
@@ -704,7 +704,7 @@ a real purge and a real phone camera is a question with no CAD answer. So
 print it and scan it.
 
 ```sh
-python3 gen_3mf.py qr      # or take it off the `tests` plate
+python3 gen_3mf.py colour   # the QR plaque rides plate 2 with the coupon
 ```
 
 It is the **back plate only** — 3 mm, not the frame's 23.5 — cut from the real

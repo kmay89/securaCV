@@ -77,11 +77,28 @@ QR_COUPON = [("body", "coupon_qr_body", 1),
 # screw pattern against the real panel. Four questions, one job, and every one
 # of them is cheaper to answer here than on a committed frame.
 SETS = {
-    "tests": [
-        ("ring gauge",    [("ring", "ring_gauge", 1)],   (128, 190)),
-        ("colour coupon", COUPON,                        (78, 100)),
-        ("corner gauge",  [("corner", "frame_gauge", 1)], (35, 50)),
-        ("QR coupon",     QR_COUPON,                     (95, 50)),
+    # SPLIT BY FILAMENT COUNT, not by theme — and this is the single biggest
+    # time saving in the file, worth more than any arrangement of parts.
+    #
+    # A tool change anywhere on a plate builds a purge tower, and the tower is
+    # built up to the height of the LAST change. The colour coupon's bezel band
+    # is at print z 22.9 … 23.5 — the very top — so one plate holding it makes
+    # the slicer raise ~23 mm of tower to service a 0.6 mm band, and every
+    # single-filament part sharing that plate waits through it. On the first
+    # combined plate the two dimension gauges, which need no tool change at
+    # all, were hostage to exactly that.
+    #
+    # So the gauges print alone, with no tower and no purge, and they print
+    # FIRST — the ring gauge is the cheapest thing that can tell you the whole
+    # outline is wrong, and nobody should spend a three-filament print to find
+    # that out. `tests` writes both files in that order.
+    "gauges": [
+        ("ring gauge",    [("ring", "ring_gauge", 1)],   (128, 180)),
+        ("corner gauge",  [("corner", "frame_gauge", 1)], (128, 60)),
+    ],
+    "colour": [
+        ("colour coupon", COUPON,                        (100, 150)),
+        ("QR coupon",     QR_COUPON,                     (60, 80)),
     ],
     "coupon": [("colour coupon", COUPON, (128, 128))],
     "qr":     [("QR coupon", QR_COUPON, (128, 128))],
@@ -308,8 +325,20 @@ def build(setname: str) -> Path:
 
 def main() -> int:
     which = sys.argv[1] if len(sys.argv) > 1 else "coupon"
+    # "tests" is the whole pre-flight, and it is deliberately TWO files in a
+    # deliberate order rather than one plate — see the note on SETS.
+    if which == "tests":
+        for i, part in enumerate(("gauges", "colour"), 1):
+            print(f"packaging {part}  (plate {i} of 2):")
+            print(f"OK {build(part).name}")
+        print("\n  Print lcd7_gauges.3mf FIRST: one filament, no tool change,")
+        print("  no purge tower. The ring gauge on it is the cheapest thing")
+        print("  that can tell you the whole outline is wrong, and nobody")
+        print("  should spend a three-filament print to find that out.")
+        print("  Then lcd7_colour.3mf, which needs all three slots loaded.")
+        return 0
     if which not in SETS:
-        print(f"usage: gen_3mf.py [{' | '.join(SETS)}]", file=sys.stderr)
+        print(f"usage: gen_3mf.py [tests | {' | '.join(SETS)}]", file=sys.stderr)
         return 2
     print(f"packaging {which}:")
     out = build(which)

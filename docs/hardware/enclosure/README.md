@@ -514,18 +514,32 @@ done
 **Do not hand-assemble these from STLs.** Run the packager instead:
 
 ```bash
-python3 gen_3mf.py tests      # the whole pre-flight: ring, coupon, QR, corner
-python3 gen_3mf.py coupon     # just the colour + fit coupon
-python3 gen_3mf.py qr         # just the QR scan plaque
+python3 gen_3mf.py tests      # the whole pre-flight — writes BOTH plates below
+python3 gen_3mf.py gauges     # plate 1: ring + corner gauge (one filament)
+python3 gen_3mf.py colour     # plate 2: colour coupon + QR plaque
 python3 gen_3mf.py frame      # the whole case
 ```
 
-**`tests` is the one to print.** It is four questions in one job, cheapest
-first: the **ring gauge** proves the outline against the real panel, the
-**colour coupon** proves three-filament registration and the corner fit, the
-**QR plaque** proves the help symbol actually scans, and the **corner gauge**
-proves the screw pattern. Every one of them is cheaper to answer here than on
-a committed frame.
+**`tests` is the one to run, and it deliberately writes TWO plates in an
+order.** Print `lcd7_gauges.3mf` first, then `lcd7_colour.3mf`.
+
+That split is the single biggest time saving here, and it is not about how the
+parts are arranged. A tool change anywhere on a plate builds a purge tower, and
+the tower is raised to the height of the **last** change. The colour coupon's
+bezel band is at print z 22.9–23.5 — the very top — so a plate holding it makes
+the slicer build ~23 mm of tower to service a 0.6 mm band. Put the two
+single-filament gauges on that plate and they wait through every layer of it
+for a tool change they never needed. Alone they print with **no tower and no
+purge at all**.
+
+The order matters for the same reason: the **ring gauge** is the cheapest thing
+that can tell you the whole outline is wrong, and nobody should spend a
+three-filament print to find that out.
+
+| plate | proves | filaments |
+|---|---|---|
+| `lcd7_gauges.3mf` | ring gauge — the whole display outline against the real panel; corner gauge — the screw pattern, `glass_r` in context, and `standoff_len` | 1 |
+| `lcd7_colour.3mf` | colour coupon — three-filament registration and the corner fit; QR plaque — that the help symbol actually scans | 3 |
 
 The QR plaque is two filaments, not three, and it is only the back plate —
 3 mm, not the frame's 23.5. The symbol is INK modules in a BODY-colour field
