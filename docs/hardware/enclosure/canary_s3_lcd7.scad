@@ -1386,6 +1386,12 @@ function lcd7_frame_stack() = [ledge_z, ledge_t, fr_xi, fr_yi, fr_ri, fr_depth,
 // frame_glass gate's core probe, so an enclosure edit can never shrink the
 // panel it is checked against.
 function lcd7_panel_core() = [panel_core_w, panel_core_h, panel_core_dy];
+// WHICH record this build resolved. Exported so a consumer that cannot see
+// panel_variant (a -D does not cross a use<> boundary) can look up the SAME
+// record rather than rebuild the panel's shape from loose numbers — which is
+// what the fit gates used to do, and it meant a change to how the panel is
+// MODELLED never reached the gates that check the case against it.
+function lcd7_panel_id() = panel_variant;
 // ...and the port/fitment geometry the TPU fit gates need, same doctrine.
 // [usb_dx, usb_zc, usb_head_w, usb_head_h, fr_yi, fr_yo, ledge_bot,
 //  btn_dx, btn_zc, sd_dx, sd_dy, fz_plate, usb_port, btn_w, btn_h, sd_w,

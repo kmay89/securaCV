@@ -109,6 +109,8 @@
 // ============================================================================
 
 use <canary_s3_lcd7.scad>
+use <canary_panel_lib.scad>   // the panel's SHAPE, from the same record
+                             // the case resolved — see lcd7_panel_id()
 
 check = "tray";   // ["tray","glass","lip","locate","frame_glass","frame_ledge","section","stand","seat","stand_p","stand_p2","seat_p","frame_usb_head","frame_btn_window","frame_sd_window","frame_usb_seal","frame_btn_plug","btn_plug_glass","frame_sd_seal","frame_adh_rail","sd_tether_hole","sd_tether_barb"]
 sect_layer = "all";   // check="section" only: "all" | "frame" | "panel" | "adh"
@@ -186,16 +188,16 @@ else if (check == "locate")
 // stated independently of the ledge geometry — so widening a ledge cannot
 // shrink the probe in lockstep and sneak past this gate.
 else if (check == "frame_glass") {
-    ge = lcd7_frame_stack()[6];   // bare-glass border thickness
+    // The probe is the REGISTRY'S slab, resolved from the id the case itself
+    // reports — not a stepped shape rebuilt here out of exported numbers. That
+    // rebuild was the last place the panel was described twice: the numbers
+    // already came from one home, but the SHAPE did not, so a change to how a
+    // panel is modelled (a chamfered can, a different border) would have left
+    // this gate probing the old form and still passing.
     gg = lcd7_frame_stack()[10];  // guard rim: the panel sits this far back
-    PC = lcd7_panel_core();       // [core_w, core_h, core_dy]
     intersection() {
         frame();
-        translate([0, 0, gg]) union() {
-            linear_extrude(ge) rrect2d(glass_w, glass_h, glass_r);
-            translate([0, PC[2], 0]) linear_extrude(glass_t)
-                rrect2d(PC[0], PC[1], 2);
-        }
+        translate([0, 0, gg]) pnl_slab(panel(lcd7_panel_id()));
     }
 }
 else if (check == "frame_ledge") {
@@ -244,11 +246,8 @@ else if (check == "section") {
         color("Gainsboro")        cut() frame();
     // the panel, stepped: thin bare-glass border, thick module core
     if (sect_layer == "all" || sect_layer == "panel")
-        color([0.30, 0.70, 0.85]) cut() translate([0, 0, gg]) {
-            linear_extrude(ge) rrect2d(glass_w, glass_h, glass_r);
-            translate([0, PC[2], 0]) linear_extrude(glass_t)
-                rrect2d(PC[0], PC[1], 2);
-        }
+        color([0.30, 0.70, 0.85]) cut() translate([0, 0, gg])
+            pnl_slab(panel(lcd7_panel_id()));
     // the adhesive band bridging glass border to ledge face
     if (sect_layer == "all" || sect_layer == "adh")
         color([0.95, 0.35, 0.15]) cut()

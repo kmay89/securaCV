@@ -288,18 +288,30 @@ function panel_check(p) =
 // is the panel's own frame; a consumer places it wherever its own datum is.
 // `blow` explodes the stack along +z for an assembly figure: 0 is assembled.
 
+// THE PHYSICAL SLAB — solid only, no colour, no decoration, nothing that
+// pokes outside the real envelope. This is the module the FIT GATES probe
+// with, which is why it is separated from the pretty version below: a gate
+// intersects this against the case and asks whether anything collides, so a
+// decorative sliver sitting 0.05 mm proud of the glass would register as the
+// case crushing the panel. The two used to be one module and the fit-check
+// file built its own copy of this shape rather than risk that.
+//
+// STEPPED, and that is the whole point: a thin bare-glass border around a
+// thicker module can. Modelling it as a uniform slab is what once floated an
+// adhesive ledge 3.2 mm clear of anything it was supposed to bond to.
+module pnl_slab(p, blow = 0) {
+    linear_extrude(pnl_edge_t(p))
+        rrect2d_p(pnl_glass_w(p), pnl_glass_h(p), pnl_glass_r(p));
+    translate([0, pnl_core_dy(p), pnl_edge_t(p) + blow*0.5])
+        linear_extrude(pnl_glass_t(p) - pnl_edge_t(p))
+            rrect2d_p(pnl_core_w(p), pnl_core_h(p), 2);
+}
+
 module pnl_glass(p, blow = 0) {
-    // The slab is STEPPED and that is the whole point: a thin bare-glass
-    // border around a thicker module can. A uniform slab is what made an
-    // earlier case float its adhesive ledge 3.2 mm clear of anything.
-    color([0.10, 0.12, 0.16])
-        linear_extrude(pnl_edge_t(p))
-            rrect2d_p(pnl_glass_w(p), pnl_glass_h(p), pnl_glass_r(p));
-    color([0.20, 0.22, 0.26])
-        translate([0, pnl_core_dy(p), pnl_edge_t(p) + blow*0.5])
-            linear_extrude(pnl_glass_t(p) - pnl_edge_t(p))
-                rrect2d_p(pnl_core_w(p), pnl_core_h(p), 2);
-    // the lit area, so an assembly figure shows which way up the image is
+    color([0.10, 0.12, 0.16]) pnl_slab(p, blow);
+    // the lit area, so an assembly figure shows which way up the image is.
+    // VIEW ONLY — it stands proud of the glass on purpose so it reads, which
+    // is exactly why no gate may probe with this module.
     color([0.15, 0.45, 0.75])
         translate([0, pnl_aa_dy(p), -0.05])
             linear_extrude(0.06)
