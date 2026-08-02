@@ -6485,6 +6485,9 @@
         "fil_body",
         "fil_ink",
         "fil_accent",
+        "coupon_body",
+        "coupon_ink",
+        "coupon_accent",
         "frame_colour",
         "fil_overlap",
         "fil_gap",
@@ -7754,6 +7757,16 @@
        "name": "qr_round",
        "default": "0.22",
        "comment": "module corner radius, as a fraction of the module"
+      },
+      {
+       "name": "coupon_w",
+       "default": "76",
+       "comment": "spans the lockup (renders ±28) with room either side"
+      },
+      {
+       "name": "coupon_h",
+       "default": "30",
+       "comment": "up from the bottom edge: catches both brand rows"
       },
       {
        "name": "pal_preview_lift",

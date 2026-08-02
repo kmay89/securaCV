@@ -197,7 +197,7 @@ assert(is_num(feather_area(7, 4)),
        "canary_vent_lib.scad is MISSING — this case cuts its grille and gills with it. Download canary_vent_lib.scad from the same folder and keep the two files side by side.");
 
 /* [What to render] */
-part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_port","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","dock_probe_fit","dock_probe_seat","dock_probe_p","dock_probe_p2","port_teth_hole","port_teth_barb","port_barb_proud","back_flush","fil_body","fil_ink","fil_accent","frame_colour","fil_overlap","fil_gap","all"]
+part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_port","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","dock_probe_fit","dock_probe_seat","dock_probe_p","dock_probe_p2","port_teth_hole","port_teth_barb","port_barb_proud","back_flush","fil_body","fil_ink","fil_accent","coupon_body","coupon_ink","coupon_accent","frame_colour","fil_overlap","fil_gap","all"]
 
 /* [Glass slab] — bonded touch panel, from the Waveshare drawing (mm) */
 glass_w = 192.96;    // touch-glass width  (X)
@@ -1891,6 +1891,15 @@ module back_inlay(groups) {
     }
 }
 
+// The colour coupon's clip — the bottom-centre band. See the part dispatch
+// for what it is for and why a corner coupon cannot do the same job.
+coupon_w = 76;   // spans the lockup (renders ±28) with room either side
+coupon_h = 30;   // up from the bottom edge: catches both brand rows
+module coupon_clip() {
+    translate([-coupon_w/2, -fr_yo/2 - 1, -1])
+        cube([coupon_w, coupon_h, fr_depth + 2]);
+}
+
 module frame_ink()    { union() { back_inlay(ink_groups);
                                   intersection() { frame(); bezel_slab(); } } }
 module frame_accent() { back_inlay(accent_groups); }
@@ -2840,6 +2849,31 @@ else if (part == "frame_gauge") rotate([180, 0, 0]) translate([0, 0, -fr_depth])
 // Per-filament parts, in the SAME frame as part="frame" — that shared
 // orientation is what lets the slicer take all three without re-aligning
 // anything. Do not drop-to-bed them individually.
+// COLOUR COUPON — the three-filament rehearsal, ~6% of the frame's filament.
+//
+// Print this before committing the real frame. It is cut from the bottom-
+// centre band, which is the ONLY place on the part where all three colours
+// meet: white plate, INK lockup and bezel ring, ACCENT company line. The
+// corner gauge cannot do this job — the accent word lives at x = 0 and the
+// gauge is a corner, so a corner coupon would come out two-colour and prove
+// nothing about the third filament.
+//
+// What it actually tests, none of which a slicer preview will tell you:
+//   · the AMS purge is tuned — black bleeding into white shows here first,
+//     on the deboss floors, at 1/16th the filament cost
+//   · the three parts really do register when loaded as one object (they
+//     share part="frame"'s frame; move one and the lettering misses)
+//   · the bezel swap lands where the echo says, on a real first layer
+//   · the USB port and its grommet, since the port is in this band
+else if (part == "coupon_body")
+    rotate([180, 0, 0]) translate([0, 0, -fr_depth])
+        intersection() { frame_bodycol(); coupon_clip(); }
+else if (part == "coupon_ink")
+    rotate([180, 0, 0]) translate([0, 0, -fr_depth])
+        intersection() { frame_ink(); coupon_clip(); }
+else if (part == "coupon_accent")
+    rotate([180, 0, 0]) translate([0, 0, -fr_depth])
+        intersection() { frame_accent(); coupon_clip(); }
 else if (part == "fil_body")   rotate([180, 0, 0]) translate([0, 0, -fr_depth]) frame_bodycol();
 else if (part == "fil_ink")    rotate([180, 0, 0]) translate([0, 0, -fr_depth]) frame_ink();
 else if (part == "fil_accent") rotate([180, 0, 0]) translate([0, 0, -fr_depth]) frame_accent();
