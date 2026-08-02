@@ -61,6 +61,11 @@ COUPON = [("body", "coupon_body", 1),
 FRAME = [("body", "fil_body", 1),
          ("ink", "fil_ink", 2),
          ("accent", "fil_accent", 3)]
+# The QR plaque is deliberately TWO filaments, not three. The symbol is ink
+# modules on a body-colour field, and the accent must never land on a finder
+# pattern — a three-slot version of this would only offer a way to break it.
+QR_COUPON = [("body", "coupon_qr_body", 1),
+             ("ink", "coupon_qr_ink", 2)]
 
 # A "set" is a list of OBJECTS. Each object is (name, volumes, plate centre).
 # Volumes within one object are parts of it and stay registered to each other;
@@ -68,24 +73,47 @@ FRAME = [("body", "fil_body", 1),
 #
 # The "tests" plate is the whole pre-flight in one job, cheapest check first:
 # the ring proves the outline, the coupon proves colour and corner fit, the
-# corner gauge proves the screw pattern against the real panel.
+# QR plaque proves the symbol actually scans, and the corner gauge proves the
+# screw pattern against the real panel. Four questions, one job, and every one
+# of them is cheaper to answer here than on a committed frame.
 SETS = {
     "tests": [
         ("ring gauge",    [("ring", "ring_gauge", 1)],   (128, 190)),
         ("colour coupon", COUPON,                        (128, 100)),
         ("corner gauge",  [("corner", "frame_gauge", 1)], (128, 50)),
+        ("QR coupon",     QR_COUPON,                     (60, 50)),
     ],
     "coupon": [("colour coupon", COUPON, (128, 128))],
+    "qr":     [("QR coupon", QR_COUPON, (128, 128))],
     "frame":  [("frame", FRAME, (128, 128))],
 }
 BED = 256.0          # P2S build plate, mm square
 PLATE_MARGIN = 4.0   # keep parts off the very edge
 
 
+def _sources_mtime() -> float:
+    """Newest mtime across everything that can change a part's geometry."""
+    return max(p.stat().st_mtime for p in SRC.parent.glob("*.scad")
+               if not p.name.startswith("_"))
+
+
 def render(part: str, out: Path) -> Path:
-    """Export one part to binary STL, failing loudly on any diagnostic."""
-    if out.exists():
+    """Export one part to binary STL, failing loudly on any diagnostic.
+
+    The cache is mtime-checked against the sources, and that check is not
+    optional book-keeping — without it this script silently ships the wrong
+    plate. A bare `if out.exists()` reuses whatever an earlier run left in the
+    working directory, so editing the .scad and re-running produces a 3MF built
+    from the PREVIOUS geometry with no warning anywhere. It bit for real: a
+    coupon margin changed, the plate rebuilt "successfully", and every part
+    came from before the edit — including the build stamp debossed into it,
+    which is the one feature whose whole job is to make that detectable.
+    Same doctrine as the website's committed .glb files: a generator you can
+    run without regenerating is a generator that lies.
+    """
+    if out.exists() and out.stat().st_mtime >= _sources_mtime():
         return out
+    out.unlink(missing_ok=True)
     r = subprocess.run(
         ["openscad", "--export-format", "binstl", "-o", str(out),
          "-D", f'part="{part}"', str(SRC)],
