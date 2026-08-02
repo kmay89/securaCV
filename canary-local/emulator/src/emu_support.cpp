@@ -71,6 +71,32 @@ uint32_t millis(void) {
 
 uint32_t micros(void) { return millis() * 1000u; }
 
+// ── GPIO: the BOOT/user button ───────────────────────────────────────────
+// The only digital input the display firmware reads (io/boot_button.h —
+// tap = peek, double = lantern, hold = acknowledge). A browser has no
+// button, so the level is pushed in by JS through emu_button() below, the
+// same way pointer events push touch. Released is the honest resting
+// state: BOOT_BUTTON_ACTIVE is LOW on every board that carries one, so
+// the pin idles HIGH.
+namespace {
+int g_button_level = HIGH;
+}
+
+void pinMode(uint8_t /*pin*/, uint8_t /*mode*/) {
+  // Nothing to configure: there is one input and it is virtual.
+}
+
+int digitalRead(uint8_t /*pin*/) { return g_button_level; }
+
+void digitalWrite(uint8_t /*pin*/, uint8_t /*value*/) {
+  // No output pins are driven on the emulated boards (the backlight and
+  // the chime ride LEDC, below).
+}
+
+EMSCRIPTEN_KEEPALIVE void emu_button(int down) {
+  g_button_level = down ? LOW : HIGH;   // active-LOW, like the real strap
+}
+
 void delay(uint32_t ms) {
   // Asyncify: yield to the browser event loop for the firmware's own
   // pacing. Under time-lapse the wall wait shrinks so the emulated device

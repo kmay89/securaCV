@@ -701,12 +701,62 @@ PROVE = {
 }
 
 
+def emulator_twin_ids() -> set:
+    """Registry ids that really do boot a committed WASM twin.
+
+    A display only has a twin if registry.json gives it an `emulator`
+    module — that is the same gate displays_block() uses, so the two can
+    never disagree about what exists."""
+    reg = json.loads(read(REGISTRY))
+    return {d["id"] for d in reg["devices"]
+            if d.get("kind") == "display" and d.get("emulator")}
+
+
+# Displays with no WASM twin of their own that DO have an honest stand-in:
+# the same glass running a sibling build. Aliasing is only legitimate when
+# the twin shows the same face — so it is spelled out here, per product,
+# rather than guessed from a substring.
+#
+# Deliberately NOT aliased: canary-display-nightstand7. It shares the 7"
+# glass with dash7 but its whole point is a DIFFERENT face (the bedside
+# clock, not the wall dashboard), so the dash7 twin would misrepresent it.
+# It gets a link when its own emulator target lands.
+TWIN_ALIASES = {
+    # the modes build is the dash plus its bench/demo/debug gears
+    "canary-display-dash-modes": "canary-display-dash",
+    # the C6 stick's glass IS the S3 stick's, same 172x320 portrait face
+    "canary-display-nightstand-c6": "canary-display-nightstand-s3",
+}
+
+
 def prove_block(role: str, product_id: str) -> dict:
     p = {k: dict(v) for k, v in PROVE[role].items()}  # deep-ish copy per product
     if role == "display":
         # Deep-link straight to THIS display's sheet (registry ids drop the
-        # securacv- prefix: canary-display-watch / canary-display-dash).
-        p["emulated"]["href"] = "fleet.html#" + product_id.replace("securacv-", "")
+        # securacv- prefix: canary-display-watch / canary-display-dash) —
+        # but ONLY to a twin that actually exists. `fleet.html#<id>` with no
+        # registry entry silently lands on the generic gallery while the copy
+        # promises "the same firmware, in the browser": an overclaim (brief
+        # §4: don't oversell). Three honest outcomes instead of one lie:
+        #   own twin  -> the 1:1 link, unchanged
+        #   alias     -> the sibling's twin, and the copy SAYS it's a sibling
+        #   neither   -> no emulated link at all; the glass is still the proof
+        rid = product_id.replace("securacv-", "")
+        twins = emulator_twin_ids()
+        if rid in twins:
+            p["emulated"]["href"] = "fleet.html#" + rid
+        elif TWIN_ALIASES.get(rid) in twins:
+            alias = TWIN_ALIASES[rid]
+            p["emulated"]["href"] = "fleet.html#" + alias
+            p["emulated"]["label"] = ("🧪 the closest twin — the same glass, "
+                                      "its sibling build")
+            p["emulated"]["how"] = (
+                "This board has no WASM build of its own yet, so the twin runs the "
+                "sibling that shares its glass and its face. The pixels and the "
+                "behaviour are right; the build id on screen is the sibling's.")
+        else:
+            p.pop("emulated")
+            return p
     page = p["emulated"]["href"].split("#")[0]
     if not (CANARY_LOCAL / page).exists():
         die(f"prove twin page missing: {page} (role {role})")

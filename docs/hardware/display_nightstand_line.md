@@ -266,6 +266,15 @@ everything else on these boards):
 - **A Rainbow scene** in the look engine (10 now, not 9).
 
 **Still staged (honestly deferred, needs a toolchain the CI container lacks or a follow-up):**
+- **A WASM twin for the Nightstand 7.** It shares the 7" glass with dash7 but not its face, so
+  the dash7 twin would misrepresent it — the flasher catalog therefore ships the product with
+  **no emulated link at all** rather than one that lands on the generic gallery. (Fixing this
+  properly also fixed two older overclaims: `dash-modes` and `nightstand-c6` had been deep-linking
+  `fleet.html#<their own id>` for ids the emulator registry never knew. They now point at the
+  sibling twin that genuinely shares their glass, labelled as a sibling and not as "1:1".) The
+  emulator's Arduino shim did gain the GPIO surface the new BOOT-button code needs, with
+  `emu_button()` for JS to push the level in — so the twin can drive the new gestures the moment
+  a build exists.
 - **Emulator + Lab** — `build.sh` `createCanaryEmuNightstand`/`…Dash7`, the `dist/*.js` + `.meta.json`
   (`fw_version == fw_train`), `registry.json` display entries (`glass{172,320,round:false,…}` / `{800,480,…}`),
   the `fleet.html` `<script>` tags, and the `app.js` `buildDisplaySheet()` **172×320 portrait sizing case**
