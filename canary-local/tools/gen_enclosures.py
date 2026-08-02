@@ -713,6 +713,7 @@ def parse_features(project: str, flavor: str):
 VARIANT_SELECTOR_PARAMS = {
     "preset", "host", "radar", "stack", "model", "variant", "mode", "mount",
     "headers",  # C6 display: stripped board vs as-shipped (headers + pillars)
+    "panel_variant",  # 7" dashboard: the -7 and the -7B, half a turn apart
 }
 OPTION_ENUM_PARAMS = {"mount_style", "battery", "side_exit"}
 ENGINEERING_OPTIONS = {

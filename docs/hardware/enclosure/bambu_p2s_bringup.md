@@ -228,10 +228,10 @@ the values echoed when you render:
 |---|---|---|
 | Touch-glass width × height | `glass_w` / `glass_h` | 192.96 × 110.76 |
 | Full panel thickness where the LCD module reaches — glass front → module can back | `glass_t` | 4.0 |
-| Bare-glass BORDER thickness at the adhesive band — glass front → glass back, calipers on the edge, NOT over the module | `glass_edge_t` | 0.8 — these are **two different measurements**: the border is just glass, the middle is glass + module. `glass_edge_t` sets the adhesive-ledge depth (`glass_edge_t + adh_t` behind the front face); `glass_t` sets the cavity and the whole rear stack. Assigning the thin edge reading to `glass_t` shortens the rear stack ~3.2 mm and the frame cannot seat the module |
+| Bare-glass BORDER thickness at the adhesive band — glass front → glass back, calipers on the edge, NOT over the module | `glass_edge_t` | 1.2 ✅ MEASURED — these are **two different measurements**: the border is just glass, the middle is glass + module. `glass_edge_t` sets the adhesive-ledge depth (`glass_edge_t + adh_t` behind the front face); `glass_t` sets the cavity and the whole rear stack. Assigning the thin edge reading to `glass_t` shortens the rear stack ~3.2 mm and the frame cannot seat the module |
 | Glass corner radius | `glass_r` | **8.2 — measured**, not printed for. Three earlier revisions (2.0 → 3.0 → 3.2) each stepped rounder by 0.2 because that was the only increment the gauge could resolve, while the truth sat 5 mm away. **Measure it directly**: sit a square into the corner to find where the sharp bounding-box corner would be, measure the shortest distance `d` to the glass, `r = 2.414 × d` (8.2 → d 3.40). Then confirm on `part="radius_gauge"`, which now sweeps `rg_centre` ± 1.5·`rg_step` — hunt coarse (`-D rg_centre=8 -D rg_step=1`) before fine. Print to confirm, never to search. |
 | Active (lit) area | `aa_w` / `aa_h` | 154.88 × 86.72 |
-| LCD module can outline + centre offset | `panel_core_w` / `panel_core_h` / `panel_core_dy` | 165.0 × 100.0, dy −1.0 ⚠️ nominal — the `frame_glass` CI gate and the insertion asserts check the ledge ring against THIS outline, so measure the can, not the ledge |
+| LCD module can outline + centre offset | `panel_core_w` / `panel_core_h` / `panel_core_dy` | 165.72 × 97.60, dy −1.435 ✅ MEASURED (19.76 + 126.20 + 19.76 = 165.72 exactly) — the `frame_glass` CI gate and the insertion asserts check the ledge ring against THIS outline, so measure the can, not the ledge |
 | PCB outline | `pcb_w` / `pcb_h` | 165.72 × 97.60 |
 | Tallest rear-side component | `comp_h` | 11.0 |
 | Glass back → PCB front | `pcb_standoff` | 5.0 |
@@ -521,9 +521,11 @@ the released set's largest part at 120.5 mm. Two consequences:
   loops** (the 2 mm walls then print as solid perimeters — stronger and cleaner
   than loops + gap fill) and don't lower the layer height below 0.2 to "add
   strength": more, hotter-bonded layers beat many cold thin ones for impact.
-  The geometry does its part (v0.8: the front rim stands 0.6 mm proud so a
-  face-down drop lands on plastic, not glass; a 45° fillet ring ties the walls
-  into the back plate; the SD leash carries root fillets) — the slicer settings
+  The geometry does its part (a 45° fillet ring ties the walls
+  into the back plate; the SD leash carries root fillets) — but note
+  `glass_guard` is **0**, a flush front, so the rim no longer stands proud of
+  the glass and a face-down drop lands on the panel. That was a deliberate
+  trade for the flush face; raise `glass_guard` to buy the protection back — the slicer settings
   are the other half of the deal.
 
 **Keep the vents clear** when you mount it. The convection path is real and
@@ -578,9 +580,21 @@ and the back plate all on one piece.
 | centre | the lockup: INK product name over the ACCENT company line, and the USB port for a grommet trial-fit |
 | corner | the glass pocket's radius and the front bezel — offer the panel's own corner into it |
 
-Load `coupon_body`, then **Add part → Load** the ink and accent, assign
-filaments, slice. Same rule as the real print: **do not re-centre or
-drop-to-bed** the added parts.
+**Do not hand-assemble these from the STLs** — use the packager, which writes
+one 3MF whose parts are already registered and already on filaments 1/2/3:
+
+```sh
+python3 gen_3mf.py coupon     # or `tests` for the whole pre-flight plate
+```
+
+The manual path (load `coupon_body`, **Add part → Load** the other two) still
+works, but it is one misclick from a silently wrong print: any centring or
+drop-to-bed on an added part separates the inlays from their recesses, and the
+result slices cleanly and looks fine in preview. An instruction that must be
+obeyed for the output to be right is a defect, not a doc problem — so the
+packager exists and this is the path to take. Add the filament **slots** in
+Bambu Studio first, or parts 2 and 3 have nothing to point at and read as
+missing.
 
 Read it for: black bleeding into white on the deboss floors (raise the flush
 volume), the lockup sitting flush rather than proud or sunk, where the bezel
@@ -658,10 +672,10 @@ registered to each other. Moving one moves the lettering out of its own recess.
 | Band (print z) | What is there | Filaments in play |
 |---|---|---|
 | 0 – 1.2 | back skin, every deboss floor | body + ink + accent |
-| 1.2 – 23.5 | the shell — nothing but wall | body only |
-| 23.5 – 24.1 | front bezel ring + edge chamfer | ink only |
+| 1.2 – 22.9 | the shell — nothing but wall | body only |
+| 22.9 – 23.5 | front bezel ring + edge chamfer | ink only |
 
-That middle band is the whole point: it is 22.3 mm of a 24 mm part with **zero**
+That middle band is the whole point: it is 21.7 mm of a 23.5 mm part with **zero**
 tool changes, so the purge tower stays short. The bezel is the full ring rather
 than "top and bottom bands" for the same reason — the front rim is a uniform
 2 mm all the way round, so bands would not be a visible distinction, they would
