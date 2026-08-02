@@ -507,8 +507,14 @@ side_dy   = 0.0;      // its centre along that wall, + = toward the top edge
 // (deboss floors read in the body colour through the accent skin, so on a
 // two-colour print the words come out coloured for free — no extra swap).
 port_labels = true;
+// Both exits carry the SAME power cable — the side one is an alternate
+// route, not a different interface — so both say USB. Naming the side exit
+// after a board connector (UART1, CAN, ...) would be a lie moulded into the
+// plastic: it is a cable pass-through, aligned to nothing. These stay
+// strings so that IF you ever cut an opening onto a specific connector, you
+// can name it truthfully then.
 port_lbl_a  = "USB";    // beside the bottom exit
-port_lbl_b  = "UART1";  // beside the side exit
+port_lbl_b  = "USB";    // beside the side exit
 // RATING STAMP — the little spec block every mains-adjacent thing should
 // carry. It goes on the BACK plate's lower band: hidden behind the case on a
 // wall mount, hidden behind the dock's fin when docked, and right there when
@@ -1525,6 +1531,11 @@ module bat_brick(inset = 0, t = bat_t, drop = 0)
 // (+x), -1 = left (-x); pos runs along that wall. Every wall gets the same
 // stadium, the same 45° mouth bevel, and the same ledge relief behind it.
 module port_cut(edge = 0, pos = 0) {
+    // rotate(+90) maps +local x to +world y, rotate(-90) maps it to -world y
+    // — so without this the documented "+ = toward the top edge" silently
+    // reversed on the left wall. One sign, applied to the port and to its
+    // leash anchor together, keeps both walls reading the same way.
+    sgn = edge == 0 ? 1 : edge;
     // leash anchor: a plain hole through the wall beside the port. The barb
     // is pushed in from OUTSIDE with a thumb and mushrooms behind the wall,
     // so the hole needs no counterbore — the wall's own inner face is the
@@ -1536,31 +1547,32 @@ module port_cut(edge = 0, pos = 0) {
     lg  = edge == 0 ? ledge_bot : ledge_side; // the ledge this wall carries
     rot = edge == 0 ? 0 : edge*90;            // -y swings to ±x
     rotate([0, 0, rot]) {
-        translate([pos, -ri + lg + 0.6, usb_z])
+        translate([pos*sgn, -ri + lg + 0.6, usb_z])
             rotate([90, 0, 0]) linear_extrude(frame_wall + lg + 1.2)
                 rotate(90) pill2d(usb_open_w, usb_open_h);
         // 45° mouth bevel at the skin — the grommet's cone lands on it, and
         // an unused port still reads finished
         hull() {
-            translate([pos, -ro + 0.01, usb_z]) rotate([90, 0, 0])
+            translate([pos*sgn, -ro + 0.01, usb_z]) rotate([90, 0, 0])
                 linear_extrude(0.02) rotate(90)
                     pill2d(usb_open_w + 1.6, usb_open_h + 1.6);
-            translate([pos, -ro + 0.81, usb_z]) rotate([90, 0, 0])
+            translate([pos*sgn, -ro + 0.81, usb_z]) rotate([90, 0, 0])
                 linear_extrude(0.02) rotate(90) pill2d(usb_open_w, usb_open_h);
         }
         // relieve the ledge ring + wedge behind the port so the grommet's
         // inner flange lands on a flat wall face
-        translate([pos, -ri + (lg + 1)/2 - 0.01, ledge_z + (ledge_t + lg)/2])
+        translate([pos*sgn, -ri + (lg + 1)/2 - 0.01, ledge_z + (ledge_t + lg)/2])
             cube([usb_open_w + 2*grom_lip + 2, lg + 1,
                   ledge_t + lg + 0.6], center = true);
         if (port_tether) {
-            translate([pos + port_teth_dx, -ri - 1, usb_z]) rotate([-90, 0, 0])
-                cylinder(d = sd_teth_hole, h = frame_wall + lg + 3);
+            translate([(pos + port_teth_dx)*sgn, -ri - 1, usb_z])
+                rotate([-90, 0, 0])
+                    cylinder(d = sd_teth_hole, h = frame_wall + lg + 3);
             // and a shallow counterbore at the OUTER mouth, so the pushed-in
             // barb's mushroom parks flush with the skin rather than standing
             // proud on the edge in plain view
-            translate([pos + port_teth_dx, -ro - 0.01, usb_z]) rotate([-90, 0, 0])
-                cylinder(d = sd_teth_head + 0.8, h = 1.4);
+            translate([(pos + port_teth_dx)*sgn, -ro - 0.01, usb_z])
+                rotate([-90, 0, 0]) cylinder(d = sd_teth_head + 0.8, h = 1.4);
         }
     }
 }
@@ -1728,7 +1740,8 @@ module frame() {
                          halign = "left", valign = "center");
         if (port_labels && side_exit != "none")
             rotate([0, 0, side_exit == "right" ? 90 : -90])
-                translate([side_dy + usb_open_w/2 + grom_lip + 3.5,
+                translate([(side_exit == "right" ? 1 : -1)
+                               *(side_dy + usb_open_w/2 + grom_lip + 3.5),
                            -fr_yo/2 + label_depth, usb_z])
                     rotate([90, 0, 0]) linear_extrude(label_depth + 0.2)
                         text(port_lbl_b, size = 3.6, font = label_font,
