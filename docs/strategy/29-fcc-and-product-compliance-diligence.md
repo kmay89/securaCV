@@ -208,8 +208,12 @@ activities:
 2. **Selling printed enclosures is not selling an RF device.** No SDoC, no
    labeling, no test report. It is plastic.
 3. **The builder is covered by 15.23** — five or fewer, personal use, not
-   marketed, not from a kit, good engineering practice expected. The certified
-   module does the heavy lifting.
+   marketed, not from a kit, good engineering practice expected. Note this is
+   the *builder's* position, and it does not depend on their board holding a
+   grant. **We should make no claims either way about a board's authorization**
+   — that is between the buyer and the board vendor, and per §3 we have not
+   done those lookups. Saying "the module in it is certified" would be exactly
+   the unverified assertion this doc tells everyone else to check.
 
 The whole thing works because **we never place a radio into commerce.**
 
@@ -296,6 +300,21 @@ does not certify anything. Every rule citation is checkable at the linked source
 and should be checked before money moves. The FCC positions here are the
 mainstream reading of the cited sections; the *application* to a specific SKU is
 exactly the judgement a lab and a lawyer are paid for.
+
+**Two scope limits worth stating plainly, because both are easy to over-read:**
+
+- **This is a US document.** It covers FCC equipment authorization, DOE power
+  supplies, and CPSIA. It says US-only sales need no CE/UKCA mark and warns
+  against applying an unearned one — but it does **not** perform the EU
+  conformity analysis (RED for the radio, EMC, LVD where applicable, RoHS, WEEE
+  registration, an EU Declaration of Conformity, an EU responsible person).
+  Selling into the EU or UK is a separate, unstarted piece of work, and a Crowd
+  Supply campaign ships internationally by default. Do not read a satisfied FCC
+  gate as clearing it.
+- **It asserts nothing about any specific board's grant.** §3 is a *procedure*
+  for checking, not a record of having checked; the checklist item in §10 is
+  open. No copy anywhere — docs, FAQ, store — should state that a board or its
+  module is certified until that lookup exists and is written down.
 
 ## 12. Sources
 

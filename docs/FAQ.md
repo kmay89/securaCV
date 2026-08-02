@@ -141,10 +141,17 @@ product. Until those land, the copy stays present-tense about what's real.
 **Which is why we sell plastic, not radios.** The plans and the firmware are
 free, and the only physical thing on offer is a **printed enclosure set** — a
 plastic shell is not a radio, so it carries no equipment authorization at all.
-You buy your own board (the Espressif module in it is already FCC-certified),
-flash our firmware from the browser, and build it. Building a handful for your
-own use is expressly fine under
-[47 CFR 15.23](https://www.ecfr.gov/current/title-47/chapter-I/subchapter-A/part-15/subpart-A/section-15.23).
+You buy your own board, flash our firmware from the browser, and build it.
+Building a handful for your own use is expressly fine under
+[47 CFR 15.23](https://www.ecfr.gov/current/title-47/chapter-I/subchapter-A/part-15/subpart-A/section-15.23),
+which asks builders to use good engineering practice rather than to file
+anything.
+
+**We don't make claims about your board's authorization** — that's between you
+and whoever made it. Some ESP32 boards are built on a pre-certified module and
+some are built on bare silicon; the boards we document (`firmware/boards/`)
+list the MCU, not a module grant, and we haven't looked the grants up yet. If
+that matters to you, check the specific board on `fccid.io` before you buy.
 The day we ship a boxed, pre-flashed device is the day we owe a Part 15B test on
 it — and we'll have done it before that box exists, not after.
 → [`SECURITY.md`](../SECURITY.md) · [claims and risk audit](legal-audit-2026-07.md)

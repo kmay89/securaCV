@@ -255,9 +255,17 @@ the eventual margin).
       splitter, and fix-not-return policy in one (`docs/shipping-and-fulfillment.md`).
 - [ ] Optional Tindie listing for WAP + Vision R1/R2 (marketplace discovery + overflow).
 - [ ] Improv Wi-Fi Serial in canary firmware (nice-to-have, post-launch).
-- [x] FCC/CE diligence memo before any R3/Crowd Supply boxed product — **done:**
-      [29-fcc-and-product-compliance-diligence.md](29-fcc-and-product-compliance-diligence.md).
+- [x] **US/FCC** diligence memo before any R3/Crowd Supply boxed product —
+      **done:** [29-fcc-and-product-compliance-diligence.md](29-fcc-and-product-compliance-diligence.md).
       It corrected this doc's kit assumption; see §1 and §5 above.
+- [ ] **EU/CE diligence is a separate, unstarted piece of work.** Doc 29 is
+      US-only: it says US sales need no CE/UKCA mark and warns against applying
+      an unearned one, but it does **not** do the EU conformity analysis (RED
+      for the radio, EMC, LVD where it applies, RoHS, WEEE registration, an EU
+      Declaration of Conformity, and an EU-based responsible person). A Crowd
+      Supply campaign ships internationally by default, so this must be
+      answered — or EU shipping switched off — before any boxed product goes
+      out. Do not treat the FCC memo as clearing it.
 - [ ] Rename R1 across store/site copy from *"kit"* to **"enclosure set" /
       "printed parts pack"** (doc 29 §8) — the word is load-bearing.
 - [ ] Look up every board in `canary-local/devices/registry.json` on `fccid.io`;
