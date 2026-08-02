@@ -112,7 +112,14 @@ test("every room station slug resolves; stations are exactly 1..6", () => {
 // Pages that are legitimately not navigable surfaces: generator inputs and
 // test fixtures. Everything else committed under canary-local must be a
 // bench, a depth, the onramp, or an htmlDocumentation entry.
-const NOT_A_SURFACE = new Set(["voice/template.html"]);
+const NOT_A_SURFACE = new Set([
+  "voice/template.html",
+  // The vendored Witness Wall emulator (see witness/PROVENANCE.txt): an
+  // embedded asset iframed by the witness-wall.html bench, not a nav surface.
+  // scripts/check_witness_emulator_sync.sh keeps it byte-identical to the
+  // Flasher's copy.
+  "witness/witness.html",
+]);
 const SKIP_DIRS = new Set(["tests", "node_modules", "third_party", ".build"]);
 
 function htmlPages(dir, out = []) {
