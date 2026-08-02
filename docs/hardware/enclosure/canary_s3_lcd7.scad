@@ -221,15 +221,28 @@ glass_edge_t = 0.8;  // the BARE-GLASS border the adhesive strips land on —
 panel_core_w  = 165.0;  // module can width  (X)
 panel_core_h  = 100.0;  // module can height (Y)
 panel_core_dy = -1.0;   // can centre offset from glass centre (tracks aa_dy)
-glass_r = 3.2;       // corner radius of the glass slab. The FIRST REAL PRINT
-                     // settled the direction of travel: the r2.0 the
-                     // reference-case daylight story argued for was WRONG —
-                     // the slab is rounder, not sharper. Back past the r3.0
-                     // v0.2 assumed, to 3.2. Confirm on part="radius_gauge"
-                     // before committing a slab print; the corner that hugs
-                     // with no daylight and no bind is the answer. The cavity
-                     // is never rounded more than this: a pocket rounder than
-                     // the glass binds (or gaps) on all four corners.
+glass_r = 8.2;       // corner radius of the glass slab — MEASURED against the
+                     // real panel on a screen comparator, calibrated against
+                     // the PANEL OUTLINE itself (192.96 mm) rather than a
+                     // bank card: the longest reference to hand more than
+                     // doubles the precision of the px/mm step, and that step
+                     // — not the corner match — is where the error lives.
+                     // d = 3.40 mm at the corner diagonal (r = 2.414*d).
+                     // A first pass calibrated on a card read 9.05; the two
+                     // agreed to 1% on the ON-SCREEN arc (40.7 vs 41.2 px)
+                     // and disagreed only through the calibration. The cavity is never rounded
+                     // more than this: a pocket rounder than the glass binds
+                     // (or gaps) on all four corners.
+                     //
+                     // The road here is the cautionary tale. 2.0 -> 3.0 ->
+                     // 3.2, three revisions each stepping ROUNDER by the only
+                     // increment the gauge could resolve, while the truth sat
+                     // 5.85 mm away the whole time. Every one of those prints
+                     // showed the same gap in all four sockets, which reads as
+                     // "close, nudge it" and actually means "you are nowhere
+                     // near". A gauge whose range is derived from the value it
+                     // is checking can only ever confirm small errors.
+                     // Measure first, print to confirm — never to search.
 // ⚠️  IF EVERY SOCKET ON THE GAUGE SHOWS THE SAME OBVIOUS GAP, do not nudge
 // glass_r by 0.2 and reprint. The gauge is telling you the answer is nowhere
 // near its window — and by default that window is only 1.2 mm wide. Sweep
@@ -505,8 +518,15 @@ sd_dx = 35.65;  // opening centre, + = back-view right (42.0 − 6.35, measured)
 sd_dy = -26.0;
 sd_w  = 18.0;   // width — fingertip-sized, not card-sized
 sd_l  = 40.0;   // length along the slide direction
-gill_n  = 8;         // straight "gill" vents per side (±x) wall — the sides
-gill_y0 = -35.0;     // carry vents only; SD access is through the back plate
+// 7 per side, not 8. The r9.05 corner round eats 5.85 mm off each end of the
+// side wall's flat, and the portrait dock needs a rib landing outboard of the
+// last gill: at 8 gills that wanted 95.8 mm of flat against 92.7 mm available.
+// Dropping one slot per side buys back 11 mm and leaves 7.9 mm of margin, at
+// a cost of 12% of the side vent area (3.46 -> 3.02 cm2 across both walls).
+// The back grille and the bottom-intake/top-exhaust path are untouched, and
+// the row is re-centred (gill_y0) so both ends clear their rib equally.
+gill_n  = 7;         // straight "gill" vents per side (±x) wall — the sides
+gill_y0 = -33.0;     // carry vents only; SD access is through the back plate
 gill_w = 2.4;  gill_l = 9.0;  gill_rake = 0;    // rake 0: vertical slots print
                      // cleanest; the raked look read as slashes and bought
                      // nothing thermally. gill_w still sizes the DOCK KEY
@@ -530,7 +550,10 @@ frame_vent_flank_n = 4;  // exhaust slots per side, flanking the button window
 //              the dock's well ribs — which sit stand_rib_drop below the pad
 //              plane so those studs clear the solid bottom wall in landscape.
 dock_keys   = true;
-dock_key_dx = 46.5;   // portrait slots' ±dy on the side walls (past the gills;
+dock_key_dx = 40.4;   // tracks stand_rib_x (asserted within half a rib) — both
+                      // came in from 46.5/47.7 when the r9.05 corner shrank
+                      // the side wall's flat span.
+                      // portrait slots' ±dy on the side walls (past the gills;
                       // pulled inboard when glass_r 3.2 grew the corner —
                       // the slot must stay on the wall's flat span)
 dock_key_bx = 84.0;   // landscape slots' ±dx on the bottom wall (on the pads)
@@ -800,7 +823,13 @@ stand_fin_h   = 78.0;  // back-fin support height along the case back (68 % of
                        // the landscape keyholes at 91.5)
 stand_fin_t   = 8.0;   // back fin blade thickness
 stand_gusset_h = 52.0; // cheek back edges buttress the fin up to this height
-stand_rib_x   = 47.7;  // ± KEYED RIBS: blades across the well that carry the
+stand_rib_x   = 40.4;  // moved in from 47.7 with the r9.05 corner: the wall's
+                       // flat half-span fell 52.18 -> 46.33, so the old
+                       // station sat ON the round. 40.4 is the middle of what
+                       // is left between the gill row and the corner — the
+                       // asserts below bound both ends, and they are the
+                       // thing that caught this rather than a print.
+                       // ± KEYED RIBS: blades across the well that carry the
 stand_rib_w   = 8.0;   // case in PORTRAIT (its 115 mm width misses the cheeks
                        // entirely) and carry the PORTRAIT centring keys on
                        // top. LOAD PATH, precisely — a blade CROSSES the
