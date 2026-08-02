@@ -27,7 +27,9 @@ mod provisioning;
 mod release;
 mod rescue;
 mod serial_monitor;
+mod sscma;
 mod we2;
+mod we2_bench;
 
 use provisioning::Provisioning;
 use serde::Serialize;
@@ -1608,6 +1610,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(Arc::clone(&guard))
         .manage(serial_monitor::SerialMonitorState::default())
+        .manage(we2_bench::We2BenchState::default())
         .manage(hub::PiUsbState::default())
         .manage(hub::HubFlashState::default())
         .manage(hub::HeadlessState::default())
@@ -1716,6 +1719,9 @@ pub fn run() {
             serial_monitor::start_serial_monitor,
             serial_monitor::serial_monitor_send,
             serial_monitor::stop_serial_monitor,
+            we2_bench::we2_bench_start,
+            we2_bench::we2_bench_cmd,
+            we2_bench::we2_bench_stop,
             backup_flash,
             write_local_image,
             erase_chip,

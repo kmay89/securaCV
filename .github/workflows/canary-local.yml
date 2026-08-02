@@ -39,6 +39,8 @@ on:
       - "desktop/src-tauri/src/lib.rs"
       - "desktop/src-tauri/src/health.rs"
       - "desktop/src-tauri/src/we2.rs"
+      - "desktop/src-tauri/src/we2_bench.rs"
+      - "desktop/src-tauri/src/sscma.rs"
       - "desktop/src-tauri/src/provisioning.rs"
       - "desktop/src-tauri/build.rs"
       # the desktop frontend: desktop_parity.test.js reads its HTML/JS to keep
@@ -96,6 +98,8 @@ on:
       - "desktop/src-tauri/src/lib.rs"
       - "desktop/src-tauri/src/health.rs"
       - "desktop/src-tauri/src/we2.rs"
+      - "desktop/src-tauri/src/we2_bench.rs"
+      - "desktop/src-tauri/src/sscma.rs"
       - "desktop/src-tauri/src/provisioning.rs"
       - "desktop/src-tauri/build.rs"
       # the desktop frontend: desktop_parity.test.js reads its HTML/JS to keep

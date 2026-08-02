@@ -60,6 +60,7 @@
       "canary-display-dash-modes",
       "canary-display-dash-mic",
       "canary-display-dash7",
+      "canary-display-nightstand7",
       "canary-display-watch",
       "canary-display-watch-modes",
       "canary-display-nightstand-s3",
@@ -89,7 +90,8 @@
       "canary-display-dash-modes": "display-pio3",
       "canary-display-dash-mic": "display-pio3",
       "canary-display-dash7": "display-pio3",
-      "canary-display-dash-sd": "display-pio3"
+      "canary-display-dash-sd": "display-pio3",
+      "canary-display-nightstand7": "display-pio3"
     }
   },
   {

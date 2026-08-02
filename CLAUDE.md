@@ -29,6 +29,15 @@
     syscall (e.g. "no flock/PID lock" in the storage flight-rules) — that
     is a real API name, not the bird word. Do not rename it.
 
+## Enclosure CAD
+
+- **Always send rendering previews.** Any change to an enclosure `.scad`
+  ships with PNG previews of every affected part, shared with the requester
+  in the conversation. This is a repo-wide rule — it lives in the AGENTS.md
+  brief ("Before you commit"), and the render recipe is in
+  [`docs/hardware/enclosure/README.md`](docs/hardware/enclosure/README.md)
+  under "Preview renders".
+
 ## Release & packaging
 
 - **To ship anything, or to answer "why didn't this ship?", read

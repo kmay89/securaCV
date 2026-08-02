@@ -57,6 +57,7 @@ DEVICE_OF = [
 # and catalog.test.js fails it for not being in the enclosures.json inventory.
 NON_PRODUCT_SCADS = {
     "canary_s3_lcd7_fitcheck.scad",   # 7" bezel/tray assembly-interference check
+    "canary_s3_lcd7_qr.scad",         # generated help-QR bit matrix (gen_qr.py)
 }
 
 # Preview meshes rendered for in-development designs the device sheets
@@ -709,8 +710,9 @@ def parse_features(project: str, flavor: str):
 # silently diverge from the manifest.
 VARIANT_SELECTOR_PARAMS = {
     "preset", "host", "radar", "stack", "model", "variant", "mode", "mount",
+    "headers",  # C6 display: stripped board vs as-shipped (headers + pillars)
 }
-OPTION_ENUM_PARAMS = {"mount_style"}
+OPTION_ENUM_PARAMS = {"mount_style", "battery"}
 ENGINEERING_OPTIONS = {
     "lid_ribs", "kh_lock", "hinge_teeth", "bracket_tripod", "screw_insert",
     "board_clips", "usb_cover",

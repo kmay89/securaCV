@@ -19,7 +19,41 @@ namespace canary::care {
 // Feed from the MQTT dispatcher (retained JSON from the hub):
 //   {"cond":"partlycloudy","t_now":21.4,"hi":24.0,"lo":13.0,"rain":20,
 //    "ts":1752854400}
+// Optional fields the nightstand faces render when present (all degrade to
+// absent silently — an older hub automation keeps working unchanged):
+//   "hi2","lo2","rain2","cond2"  tomorrow's forecast (the night face's
+//                                "what am I waking into" line)
+//   "alert":{"event":"Wind Advisory","sev":1,"until":1752900000}
+//                                an active weather advisory/warning; sev
+//                                0 = advisory/watch, 1 = warning; `until`
+//                                is the wall-clock end (epoch seconds)
 void bedside_on_weather(const char* payload, unsigned len);
+
+// Structured read of the fresh forecast (same 3-hour honesty window as the
+// composed lines). Fields are absent as -10000 (temps ×10), -1 (rain), ""
+// (cond word). Returns false when the cache is stale/empty.
+struct BedsideWeather {
+  int t_now_c10;                 // current outdoor temp ×10, -10000 if absent
+  int hi_c10, lo_c10;            // today
+  int rain_pct;                  // today, -1 if absent
+  const char* cond;              // today's plain word ("some clouds"), "" unknown
+  int hi2_c10, lo2_c10;          // tomorrow, -10000 if absent
+  int rain2_pct;                 // tomorrow, -1 if absent
+  const char* cond2;             // tomorrow's plain word, "" unknown
+};
+bool bedside_weather(BedsideWeather* out);
+
+// "tomorrow 26°/14° · rain 10% · sunny" — false without tomorrow fields.
+bool bedside_tomorrow_line(char* out, size_t cap);
+
+// An active weather advisory/warning: true while `until` is ahead of the
+// wall clock (and the blob is fresh). Visual-only by design — weather never
+// chimes; the glass shows it, quiet hours stay quiet.
+struct BedsideWxAlert {
+  char text[48];                 // the hub's short event name, humanized case
+  uint8_t sev;                   // 0 advisory/watch · 1 warning
+};
+bool bedside_weather_alert(BedsideWxAlert* out);
 
 // "24°/13° · rain 20% · some clouds · sun up 5:37" (fresh forecast only;
 // sun fragment only when CD_LAT/CD_LON are configured).

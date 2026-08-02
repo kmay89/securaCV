@@ -95,6 +95,10 @@
 #define FEATURE_HUB_WEATHER         1   // hub-republished forecast
 #define FEATURE_WAKE_ALARM          1   // on-device two-phase gentle wake (visual
                                         // ramp works without a piezo)
+#define FEATURE_LANTERN             1   // the honest night light: this glass is
+                                        // the lamp, summoned by a tap on the
+                                        // affordance (this board HAS touch) or
+                                        // a BOOT double-press, and timed out
 
 // Features NOT used by this device — a display witnesses nothing itself.
 #define FEATURE_VISION_AI           0
@@ -138,6 +142,13 @@
 #define CD_BRIGHT_NIGHT         3       // near-dark glance floor (same as watch)
 #define CD_TOUCH_WAKE_MS        15000   // full brightness after a wake, then re-dim
 #define CD_LONGPRESS_MS         900     // acknowledge gesture (touch long-press)
+
+// Lantern seeds (runtime prefs live in NVS; see care/lantern.h). Warm
+// Lantern scene, 15 minutes, no auto schedule — "lantern hours" trades away
+// the dark-means-safe signal, so it stays opt-in.
+#define CD_LANTERN_SCENE        6       // look_engine kScenes[6] = "Lantern"
+#define CD_LANTERN_MINUTES      15
+#define CD_LANTERN_AUTO         0
 
 // Quiet hours (local time; requires SNTP). First-boot seeds — the settings
 // surface owns the runtime schedule (glass_settings.h).

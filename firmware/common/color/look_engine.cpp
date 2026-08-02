@@ -26,6 +26,11 @@ const Scene kScenes[] = {
      {{260,179,89},{280,153,128},{240,166,64},{300,140,102}}},
   {"signal",   "Signal",      Motion::Breathe, 4,
      {{122,153,158},{122,140,128},{122,153,153},{122,128,140}}},
+  // The full wheel, cycling. Stops 90° apart so shortest-path interpolation
+  // walks the whole circle; Sweep scrolls it. The honest override applies to
+  // this scene exactly like every other: it dresses the calm only.
+  {"rainbow",  "Rainbow",     Motion::Sweep,   4,
+     {{0,230,217},{90,230,217},{180,230,217},{270,230,217}}},
 };
 const uint8_t kSceneCount = (uint8_t)(sizeof(kScenes) / sizeof(kScenes[0]));
 

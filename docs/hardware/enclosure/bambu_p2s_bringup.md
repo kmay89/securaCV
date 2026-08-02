@@ -202,30 +202,42 @@ the 7" model, not the printer.
 
 ## 7 · Print #3 — the 7" dashboard
 
-> ⚠️ **Status: in development.** `canary_s3_lcd7.scad` is render-, mesh- and
-> assembly-checked in CI, but **not print-validated** — nobody has yet held one.
-> There is no committed STL for it, by the same convention that covers every
-> in-development design. You are printing the first one; expect to iterate, and
-> please record what you find.
+> ⚠️ **Status: in development — FIRST REAL PRINT DONE (2026-08).** That print
+> corrected three things the drawings could not: the M3 offset **signs** (the
+> pattern matched only with the panel upside down), the glass **corner
+> radius** (r2.0 was the wrong direction — now 3.2, bracketed by the
+> `radius_gauge`), and the SD cover's recess (an unprintable cantilever — now
+> a 45° countersink). The model is still **not fully print-validated**; there
+> is no committed STL, by the same convention that covers every
+> in-development design. Expect to iterate, and keep recording what you find —
+> it is exactly what turned v0.4 into v0.5.
 
 ### 7a · Measure your panel first
 
-The model's dimensions come from a vendor drawing, not from a board on our
-bench, and **one of them is actively disputed**: published summaries of this
-board disagree about the PCB outline height (97.60 mm vs 126.20 mm). Before
-anything else, put calipers on your actual board and check these against the
-values echoed when you render:
+Most of the model's dimensions come from a vendor drawing, not from a board on
+our bench. The one that was **actively disputed** — published summaries
+disagreed about a "PCB height" of 97.60 mm vs 126.20 mm — is now resolved:
+**126.20 mm is the M3 mount-hole X span**, measured off a reference case print
+that fits the real panel; a summary had recorded the hole span as an outline
+height. v0.3 ships the measured mount pattern (126.20 × 65.65 mm, centred
+1.5 mm right / 0.9 mm up of the glass centre with the panel mounted
+buttons-down). Still put calipers on your actual board and check these against
+the values echoed when you render:
 
 | Measure | Parameter | Model default |
 |---|---|---|
 | Touch-glass width × height | `glass_w` / `glass_h` | 192.96 × 110.76 |
-| Glass thickness at the edge | `glass_t` | 4.0 |
-| Glass corner radius | `glass_r` | 3.0 |
+| Full panel thickness where the LCD module reaches — glass front → module can back | `glass_t` | 4.0 |
+| Bare-glass BORDER thickness at the adhesive band — glass front → glass back, calipers on the edge, NOT over the module | `glass_edge_t` | 0.8 — these are **two different measurements**: the border is just glass, the middle is glass + module. `glass_edge_t` sets the adhesive-ledge depth (`glass_edge_t + adh_t` behind the front face); `glass_t` sets the cavity and the whole rear stack. Assigning the thin edge reading to `glass_t` shortens the rear stack ~3.2 mm and the frame cannot seat the module |
+| Glass corner radius | `glass_r` | 3.2 — settled by the FIRST REAL PRINT: r2.0 was the wrong direction. Confirm on `part="radius_gauge"` (four sockets, −0.4…+0.2 around the default, ~6 g) before any slab print |
 | Active (lit) area | `aa_w` / `aa_h` | 154.88 × 86.72 |
-| PCB outline | `pcb_w` / `pcb_h` | 165.72 × **97.60 ⚠️** |
+| LCD module can outline + centre offset | `panel_core_w` / `panel_core_h` / `panel_core_dy` | 165.0 × 100.0, dy −1.0 ⚠️ nominal — the `frame_glass` CI gate and the insertion asserts check the ledge ring against THIS outline, so measure the can, not the ledge |
+| PCB outline | `pcb_w` / `pcb_h` | 165.72 × 97.60 |
 | Tallest rear-side component | `comp_h` | 11.0 |
 | Glass back → PCB front | `pcb_standoff` | 5.0 |
-| M3 mount-hole spacing | `m3_dx` / `m3_dy` | 165.72 ⚠️ × 88.0 |
+| M3 mount-hole spacing | `m3_dx` / `m3_dy` | 126.20 × 65.65 (measured) |
+| M3 pattern offset from glass centre | `m3_ox` / `m3_oy` | +1.5 / +0.9 — signs SETTLED by the first real print (the earlier −/− pattern matched only with the panel upside down) |
+| Panel's own standoffs, PCB back → tip | `standoff_len` | 6.9 (frame only) |
 | USB-C / UART / CAN / RS485 / battery centres | `bottom_open_*`, `side_open_*` | nominal ⚠️ |
 
 The model asserts on the fatal combinations — a mount pattern that falls outside
@@ -235,12 +247,15 @@ filament. Two parameters deserve individual attention:
 
 - **`pcb_standoff`** alone decides whether the bezel lip reaches the glass or
   leaves it rattling. Get this one right.
-- **`m3_dx` ⚠️** is currently **165.72, which is exactly `pcb_w`** — and a mount
-  hole cannot sit on the board's outline, so that value was almost certainly
-  copied from the outline dimension rather than a hole table. Expect the true
-  span to be several mm smaller. **Measure it**, or the tray's standoff bosses
-  will land under the board's edge instead of under its holes. This is the
-  single most likely reason a first tray won't accept the board.
+- **`m3_ox` / `m3_oy`** — the mount pattern is **not centred on the glass**,
+  and that offset is why a panel cannot simply be rotated 180° inside a case
+  drawn for the other orientation: the holes stop lining up. The signs are
+  now **settled by the first real print** — v0.4's −1.5/−0.9 matched the
+  panel only upside down, exactly the failure a sign error produces (every
+  boss moves by twice the offset) — v0.5 ships +1.5/+0.9. Every part still
+  assumes the panel's **native** mounting — no image rotation in firmware —
+  which puts BOOT/RESET at the **top** edge in use; the frame's window,
+  labels and keyhole wall mounts are all drawn for that.
 
 ### 7b · Print the corner gauge — not the case
 
@@ -265,19 +280,207 @@ order:
 Anything wrong here is a 16 g mistake. The same thing wrong on the slab is 158 g
 and most of a day.
 
+### 7b′ · Or: the one-piece frame
+
+v0.3 added a **`part="frame"`** alternative to the bezel + tray pair, based on
+a case layout print-proven against the real panel: the slab drops in face-first
+through the front opening, the board hangs on the panel's **own white M3
+standoffs**, and **4 × M3×8–10 driven from the back** thread into those
+standoffs — the screws, not a ledge, set the glass depth: it lands 0.6 mm
+(`glass_guard`) below the front rim, the intentional drop-protection recess.
+It carries a bevelled BOOT/RESET window in the top wall — the button edge in
+native mounting — with debossed labels (back view: **BOOT left, RESET
+right**), gill vents on the side walls, exhaust slots flanking the button
+window, a back grille, **keyhole wall mounts in all four corners** (hang the
+case over the top pair — or all four — and slide it down; every catch points
+up at the button edge, and the bottom pair pins the case flat against the
+wall: first-print feedback), and a **microSD opening through the back plate**
+covering the socket, the card's downward slide travel and room for a
+fingertip — so the card goes in and out without ever being dropped inside the
+case. An "SD" deboss marks it; the first print corrected its position 6.35 mm
+toward the plate's centre — still confirm against **your** board. The shell
+carries chamfers at both the plate edge and the opposite rim.
+
+v0.4 gives the frame its power story and closes v0.3's "USB-C has no external
+access" gap. Centred on the bottom wall is a **USB pass-through**: a bevelled
+stadium opening sized to pass the power cable's **overmold head**
+(`usb_head_w`/`usb_head_h` — **measure your cable**, overmolds vary), and the
+brand lettering is now **cut through the wall as slat-stencil intake vents**
+flanking it — the bottom edge breathes through its own name, and the old
+debossed edge brand and pill intakes are gone. Horizontal tie bands interrupt
+every glyph, so letter counters stay attached and nothing needs bridging.
+
+Three **TPU fitments** finish the openings (TPU 90–95 A, **external spool —
+never the AMS**, §0):
+
+- **`grommet_usb`** — a slit wire grommet for the port. Assembly order
+  matters: with the case still empty, feed the head in through the port,
+  plug it into the panel, **leave a service loop**, seat the panel, then open
+  the grommet at its slit, wrap it around the wire and press it in. Its inner
+  flange bears flat on the wall's inner face, so a yank on the cable loads
+  the frame — not the board's connector. Tune `usb_wire_d` to your cable
+  jacket. Note the trade: once the panel is adhered, replacing the *cable*
+  means pulling the panel — treat the cable as semi-permanent and the
+  grommet as the serviceable part.
+- **`plug_buttons`** — a captive plug for the BOOT/RESET window: its cap
+  nests the window's bevel, a 45° lip snaps in behind the wall (it cannot
+  fall out or be pushed inside), and the buttons are pressed **through** the
+  plug via two pips under the face dimples — it never needs to come out.
+  Set `btn_reach` to your measured wall-to-button gap minus ~0.5.
+- **`plug_sd`** — a peel-open cover for the SD opening, **countersunk
+  flush**: the plate carries a 45° rim and the cap a matching tapered edge,
+  so both print clean back-plate-down and the taper self-centres the cap.
+  (The v0.4 flat-floored recess left a cantilevered ring hanging over the
+  opening — it drooped on the first real print; this replaces it.)
+  Since v0.6 the cover is **leashed**: push its arrowhead barb through the
+  plate's anchor hole with a thumb (it mushrooms inside — captive from that
+  moment), lay the strap in its skin channel, press the cap home. To open,
+  a fingernail scoop bites the rim at the card end — the nail lands
+  directly under the cap's tapered edge; peel, and the cover dangles on its
+  leash, attached. A deliberate yank cams the barb free for service.
+
+TPU fits are tuned by `tpu_squeeze` (waist interference) and `tpu_grip`
+(grommet bore vs jacket) — TPU seats by squeeze, so its knobs are
+interferences, not clearances; your PETG coupon numbers do not transfer.
+
+The glass lands on an **adhesive ledge** matched to the panel's own adhesive
+strips (10 mm down each side, 6 mm along the button edge, 2 mm over the FPC
+at the bottom): peel the liners, drop the panel in, press — the screws
+become backup rather than the only thing setting the glass depth. Every
+ledge carries a solid 45° wedge down to its wall, which is why **the frame
+prints back-plate-down** (the exported STL is already in that orientation):
+that way up, the ledges are fully self-supporting — no slicer supports, no
+sacrificial geometry. The frame is branded debossed on the back plate and on
+the visible bottom edge (crisp deboss since v0.6 — see below; v0.4–v0.5
+cut the words through the wall as slat-stencil vents).
+
+v0.6 is the production-hardening pass — **no fit knob moved**, three
+durability/finish features landed:
+
+- **Keyhole doublers.** Every wall keyhole now bears on a pad on the plate's
+  inner face: the screw head clamps **5 mm of material** (3 mm plate + 2 mm
+  doubler, `khm_pad_t`) instead of 3, the slide's catch shears a wider
+  section, and each mouth carries a lead-in chamfer so the case slips over
+  the screw heads without catching an elephant-footed rim. The frame's M3
+  bosses and the tray's PCB bosses also gained 45° root fillets — a boss
+  fails by shearing at its root, so that section now spreads into the plate.
+- **Adhesive rails.** Two outlined zones on the back plate (17 × 74 mm at
+  x ±12) are guaranteed **smooth and uninterrupted** — no grille slot,
+  keyhole, boss pocket or deboss ever lands inside one, and a CI fit gate
+  (`frame_adh_rail`) fails any change that cuts a zone. They fit 15.9 × 70 mm
+  **interlocking picture-hanging strip pairs** (e.g. Command Medium) — pairs,
+  not single stretch-release foam strips, deliberately: the mounted case
+  fully covers its strips, so a single strip's pull tab would be sealed
+  behind it, unreachable. With pairs, removal follows the product's own
+  doctrine: pull the case straight off its wall halves (grip it by the side
+  gills / bottom port), and every wall tab is then exposed for its stretch
+  release. Stick inside the moat outlines, strips vertical, tabs down, and
+  wipe the zone with IPA first. The zone's finish is the build plate's
+  finish — a smooth sheet gives the best bond, but the foam bonds through
+  light texture too. No screws, no drill: the renter's wall mount.
+  **The trade, stated plainly:** the rails' keepouts cost the back grille
+  6 of its columns — 66 slots, ≈ 14 cm² of its ≈ 40 cm² at stock dims (the
+  render echo computes the exact numbers for your config from the same
+  predicate that cuts the slots). The convection path proper — bottom-wall
+  intake → top-wall exhaust — is untouched, and there is no better spot:
+  the SD zone, boss pockets and keyhole pads own every other clear column.
+  Screw-mount builds should set `adh_rails=false` and reclaim every slot.
+- **Two-colour, one extruder.** The frame prints back-plate-down, and two
+  z-bands are deliberately isolated so plain filament-change pauses (or AMS
+  layer swaps — §0) give a finished two-tone part with no painting:
+  - **Accent back skin** — start in the accent colour and swap to the body
+    colour at **z = 0.8 mm** (the rim-chamfer band). The back face and its
+    edge chamfer print in the accent; every back deboss floor sits at
+    1.2 mm (`label_back_depth`), so BOOT/RESET, SD, the brand line and the
+    rail moats all show through in the body colour.
+  - **Accent front ring** — swap back to the accent at **z = 22.9 mm**
+    (`fr_depth − 0.6` — the render echo prints your exact number if you
+    changed the stack). The last 0.6 mm of the print is only the front rim
+    and its glass entry chamfer, so the swap paints a clean accent ring
+    around the glass and nothing else.
+
+  Use either band alone or both; skipping both swaps prints the ordinary
+  single-colour part.
+- **Crisp edge lettering.** The bottom-edge brand is now a clean 1.0 mm
+  **deboss** — the slat-stencil vents are gone. Print feedback drove this:
+  the tie bands every through-cut glyph needed (or its counters fall out)
+  read as horizontal scan lines across the letters in the flesh. A deboss
+  stays attached everywhere by the wall web behind it — no ties, no lines,
+  no islands. The intake the stencil carried moved to a **shadow gill row**
+  (16 small pills, ≈1 cm² — the stencil's open area) tucked into the wall
+  band's last few millimetres before the back plate: invisible against a
+  wall and over the dock's well, still feeding the same bottom-in → top-out
+  convection path, and asserted clear of the grommet flange and the plate.
+- **The SD cover is leashed.** The v0.5 hinge tongue only *hooked* under the
+  plate edge — a full peel could slide it out and the cover is gone. It is
+  replaced by a strap ending in an **arrowhead barb** that pushes through a
+  small anchor hole in the plate and mushrooms inside: the peeled cover
+  dangles, captive, and only a deliberate yank (45° cam faces) frees it.
+  **The frame carries the hole and the strap channel — re-export the frame
+  before printing**, or the barb has nowhere to go; two CI gates
+  (`sd_tether_hole`, `sd_tether_barb`) keep hole and barb aligned forever.
+  The other fitments already pass the stays-attached test: the button plug
+  is snap-captive behind its wall and never needs to come out, and the
+  grommet lives wrapped around the cable itself — pulled from the port, it
+  stays on the cord.
+
+**With an AMS** (§0 — rigid filaments only; TPU still prints from the
+external spool), the whole two-tone story runs itself, no pauses:
+
+- **The two z-bands** — in Bambu Studio right-click the layer slider at the
+  two echoed heights (0.8 mm and 22.9 mm at stock dims) and *Add color
+  change*; the AMS swaps automatically. Accent back skin, body-colour words
+  in the debosses, accent front ring.
+- **The lettering** — *Color Painting → Smart Fill* on the frame body: one
+  click per debossed letter (the bottom-edge words, and BOOT/RESET/SD/brand
+  on the back plate if you like) floods that recess with the accent
+  filament. Expect a prime tower and purge waste on every colour-change
+  layer — that is the AMS working, not a mis-slice.
+- **Filament picks**: the case must stay **PETG** (it runs hot — never the
+  PLA slot). White PETG body + canary-yellow PETG accents is the house
+  look; black reads more muted. Load body and accent in any two AMS slots
+  and map them in the slicer's filament list.
+
+```sh
+# ~6 g, print FIRST after any radius doubt: four corner sockets bracketing
+# glass_r — the one that hugs the panel's corner with no daylight and no
+# bind is your radius
+openscad --export-format binstl -o lcd7_radius_gauge.stl -D 'part="radius_gauge"' canary_s3_lcd7.scad
+openscad --export-format binstl -o lcd7_frame_gauge.stl -D 'part="frame_gauge"' canary_s3_lcd7.scad
+openscad --export-format binstl -o lcd7_frame.stl       -D 'part="frame"'       canary_s3_lcd7.scad
+# TPU fitments — print these on their OWN plate, TPU from the external spool
+openscad --export-format binstl -o lcd7_grommet_usb.stl  -D 'part="grommet_usb"'  canary_s3_lcd7.scad
+openscad --export-format binstl -o lcd7_plug_buttons.stl -D 'part="plug_buttons"' canary_s3_lcd7.scad
+openscad --export-format binstl -o lcd7_plug_sd.stl      -D 'part="plug_sd"'      canary_s3_lcd7.scad
+```
+
+Same doctrine as 7b: **gauges before the slab, smallest first.** The
+`radius_gauge` (~6 g) settles the corner **shape**; the `frame_gauge` (one
+corner containing a boss and a wall keyhole, ~10 %) then proves the whole
+corner — assembled on the panel's corner with one screw it checks `glass_r`
+in context, the mount-offset **signs** (`m3_ox`/`m3_oy` — the screw only
+threads home if they're right), and `standoff_len` (the glass sits exactly
+`glass_guard` — 0.6 mm — **below** the rim only if that's right; that recess
+is the v0.8 drop-protection guard, so flush or proud glass means the stack
+is off, not that the print is good). The frame and gauge print
+**back-plate-down, as exported** — no supports, no brim unless a corner
+lifts.
+
 ### 7c · Print the case
 
 ```sh
 openscad --export-format binstl -o lcd7_bezel.stl -D 'part="bezel"' canary_s3_lcd7.scad
 openscad --export-format binstl -o lcd7_back.stl  -D 'part="back"'  canary_s3_lcd7.scad
 openscad --export-format binstl -o lcd7_stand.stl -D 'part="stand"' canary_s3_lcd7.scad   # optional
+openscad --export-format binstl -o lcd7_stand_gauge.stl -D 'part="stand_gauge"' canary_s3_lcd7.scad  # print BEFORE the stand
 ```
 
 | Part | Footprint | Solid volume | Mass (upper bound) | Orient | Brim |
 |---|---|---|---|---|---|
 | **bezel** | 208.5 × 126.3 × 7.0 | 37.8 cm³ | ~48 g | **face-down** | no ² |
 | **back** | 208.5 × 126.3 × 20.6 | 86.5 cm³ | ~110 g | outer face **down** | no ² |
-| stand (optional) | 210 × 131.2 × 63.1 | 238.2 cm³ | ~303 g ¹ | flat | no |
+| stand (optional) | 174 × 126 × 94.2 | 265.4 cm³ | ~338 g ¹ | flat (base down) | no |
+| stand_gauge | 22 × 126 × 94.2 | 44.0 cm³ | ~56 g ¹ | flat (base down) | no |
 
 ¹ Quoted at 100 % of solid volume, the same upper-bound convention as
 [printer_selection.md](./printer_selection.md#running-cost--per-device-computed-from-the-meshes).
@@ -298,6 +501,16 @@ the released set's largest part at 120.5 mm. Two consequences:
 - **Print in PETG or ASA — never PLA.** This panel's backlight, the ESP32-S3 and
   its regulators all run hot in a closed box. PLA creeps at temperatures this
   case will reach.
+- **The material call is also the drop call.** A handling drop loads exactly
+  the places PLA fails brittle: the wall corners and the plate rim. PETG bends
+  where PLA snaps; ASA adds UV life for a sunny room. Give the case **4 wall
+  loops** (the 2 mm walls then print as solid perimeters — stronger and cleaner
+  than loops + gap fill) and don't lower the layer height below 0.2 to "add
+  strength": more, hotter-bonded layers beat many cold thin ones for impact.
+  The geometry does its part (v0.8: the front rim stands 0.6 mm proud so a
+  face-down drop lands on plastic, not glass; a 45° fillet ring ties the walls
+  into the back plate; the SD leash carries root fillets) — the slicer settings
+  are the other half of the deal.
 
 **Keep the vents clear** when you mount it. The convection path is real and
 directional: **intake along the bottom wall, exhaust along the top wall**, back

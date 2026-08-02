@@ -504,9 +504,9 @@
   {
    "id": "c6-display-pocket-case",
    "name": "C6 display pocket case",
-   "for": "Waveshare ESP32-C6-LCD-1.47 (portrait), flat-bottom board (no down-facing male headers): face-down bezel over the active-area window, edge-captured board (no screws into the board), snap-in vented back, USB-C + BOOT/RST access, blind keyhole. `model=\"1.47\"` is drawn from the Waveshare mechanical drawing; a `\"1.69\"` preset is parameterised. Heat-escape slots on the sides + a back grille",
+   "for": "Waveshare ESP32-C6-LCD-1.47 (portrait), both board builds: `headers=\"none\"` (stripped: no headers, corner pillars removed) or `headers=\"male\"` (as shipped: down-facing pin headers + brass M2 corner pillars — deeper cavity, press bosses land on the pillar tops). Face-down bezel over the active-area window, edge-captured board (no screws into the board), snap-in vented back, blind keyhole. The overhanging BOOT/RST buttons and the USB-C shell (both BACK-mounted — photo-verified) get full-depth insertion channels behind \"ear\"/\"chin\" wall bulges, and the USB-C port is a true stadium (full-round ends) sized shell + tolerance. `model=\"1.47\"` is drawn from the Waveshare mechanical drawing; a `\"1.69\"` preset is parameterised. Heat-escape slots on the sides + a back grille",
    "status": "in-development",
-   "note": "snap-fit, vented",
+   "note": "snap-fit, vented, 2 board builds",
    "device": "canary-display-watch",
    "preview": "preview_dev_c6_147.png",
    "parts": [],
@@ -515,9 +515,9 @@
   {
    "id": "7-touch-dashboard-case",
    "name": "7″ touch dashboard case",
-   "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on moulded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (~52 cm² back grille + bottom-wall intake and top-wall exhaust — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots, optional 20° desk cradle. Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centres and `pcb_h` are NOMINAL — measure yours",
+   "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on moulded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (~52 cm² back grille + bottom-wall intake and top-wall exhaust — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centred USB pass-through (the brand lettering is the intake vents flanking it) and three TPU fitments: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive press-through BOOT/RESET plug, and a peel-open SD cover that stays attached. Optional 20° desk dock for the frame (drop-in slot on tilted seat pads, self-centring keys into the frame's keying slots, landscape and portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centres and `pcb_h` are NOMINAL — measure yours",
    "status": "in-development",
-   "note": "glass drops in, lip 10.4, M3 corners",
+   "note": "glass drops in, lip 10.4, TPU-fitted ports",
    "device": "canary-display-dash",
    "preview": "preview_dev_lcd7.png",
    "parts": [],
@@ -570,7 +570,7 @@
   {
    "id": "universal-fit-coupon",
    "name": "Universal fit coupon",
-   "for": "ONE ~25 min print that calibrates every fit in the catalog: clip, keyhole+stud, slide, gasket, press, screw, insert — each station labelled with the parameter it tunes",
+   "for": "ONE small print that calibrates every fit in the catalog: the WAP's two-sided clip channel, keyhole+stud with a click detent (slide the mate on, it clicks and stays — the doorbell-plate retention test), slide tongue, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labelled with the parameter it tunes",
    "status": "in-development",
    "note": "**print this before any case**",
    "device": null,
@@ -6068,7 +6068,7 @@
    ]
   },
   "canary_c6_display.scad": {
-   "title": "Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.4-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -6091,12 +6091,20 @@
         "1.69"
        ],
        "comment": "board preset"
+      },
+      {
+       "name": "headers",
+       "default": "none",
+       "enum": [
+        "none",
+        "male"
+       ]
       }
      ]
     },
     {
      "name": "Board",
-     "note": "ESP32-C6-LCD-1.47, flat-bottom. From the Waveshare drawing (mm).",
+     "note": "ESP32-C6-LCD-1.47. From the Waveshare drawing (mm).",
      "params": [
       {
        "name": "board_l",
@@ -6118,8 +6126,23 @@
       },
       {
        "name": "back_stack",
-       "default": "2.2",
-       "comment": "back-side component clearance below the PCB — MEASURE"
+       "default": "4.8",
+       "comment": "back-side clearance below the PCB, stripped board: the"
+      },
+      {
+       "name": "hdr_drop",
+       "default": "8.8",
+       "comment": "cavity depth below the PCB back that swallows base + pins"
+      },
+      {
+       "name": "hdr_inset",
+       "default": "1.6",
+       "comment": "PCB edge → header row centreline — MEASURE"
+      },
+      {
+       "name": "brass_h",
+       "default": "5.0",
+       "comment": "factory corner pillar height above the PCB back (0 = pillars removed) — MEASURE"
       }
      ]
     },
@@ -6146,26 +6169,70 @@
        "name": "lcm_w",
        "default": "(model == \"1.69\") ? 28.0   : 19.39",
        "comment": "LCD module outline short"
-      }
-     ]
-    },
-    {
-     "name": "Buttons",
-     "note": "BOOT/RST flank the USB end on the two side (±X) walls",
-     "params": [
+      },
+      {
+       "name": "usb_w",
+       "default": "9.15",
+       "comment": "stadium opening width — shell + 0.2 (fit-tested: 9.4 showed a gap)"
+      },
+      {
+       "name": "usb_h",
+       "default": "3.45",
+       "comment": "stadium opening height — shell + 0.2"
+      },
+      {
+       "name": "usb_dx",
+       "default": "0.0",
+       "comment": "sideways offset of the connector centre — MEASURE"
+      },
+      {
+       "name": "usb_dz",
+       "default": "0.0",
+       "comment": "depth offset from shell-on-back-face nominal (+ = toward the back) — MEASURE"
+      },
+      {
+       "name": "usb_proud",
+       "default": "1.9",
+       "comment": "shell overhang past the PCB edge (photo ≈1.8) — MEASURE"
+      },
       {
        "name": "opt_btn",
        "default": "true"
       },
       {
        "name": "btn_d",
-       "default": "3.6",
-       "comment": "side access hole Ø"
+       "default": "3.0",
+       "comment": "access hole Ø — big enough for a tool tip, small enough to shield"
       },
       {
        "name": "btn_up",
-       "default": "6.5",
-       "comment": "button centre up from the USB (−Y) end — MEASURE"
+       "default": "7.0",
+       "comment": "button centre up from the USB (−Y) end (fit-tested: 6.0 sat 1 low) — MEASURE"
+      },
+      {
+       "name": "btn_dz",
+       "default": "1.0",
+       "comment": "actuator centre behind the PCB BACK face — MEASURE"
+      },
+      {
+       "name": "btn_proud",
+       "default": "1.8",
+       "comment": "BLACK ACTUATOR overhang past the PCB edge (photo ≈1.8) — MEASURE"
+      },
+      {
+       "name": "btn_ch_w",
+       "default": "3.4",
+       "comment": "actuator channel width (Y) — hugs the black nub, nothing more"
+      },
+      {
+       "name": "btn_body_w",
+       "default": "5.2",
+       "comment": "shallow relief width for the switch's metal body — MEASURE"
+      },
+      {
+       "name": "btn_body_p",
+       "default": "0.4",
+       "comment": "metal body overhang past the PCB edge — MEASURE"
       }
      ]
     },
@@ -6227,6 +6294,11 @@
        "name": "lid_edge",
        "default": "0.8",
        "comment": "bezel face edge chamfer"
+      },
+      {
+       "name": "ear_skin",
+       "default": "1.2",
+       "comment": "wall skin left outside a button/USB clearance channel"
       }
      ]
     },
@@ -6235,8 +6307,12 @@
      "note": "",
      "params": [
       {
+       "name": "stack_eff",
+       "default": "(headers == \"male\") ? max(back_stack, hdr_drop) : back_stack"
+      },
+      {
        "name": "cav_d",
-       "default": "lcd_rise + pcb_t + back_stack",
+       "default": "lcd_rise + pcb_t + stack_eff",
        "comment": "glass ledge → back-plate inner"
       },
       {
@@ -6255,9 +6331,62 @@
        "comment": "PCB front plane"
       },
       {
+       "name": "z_pcb_back",
+       "default": "z_pcb_front + pcb_t",
+       "comment": "PCB back plane"
+      },
+      {
        "name": "z_usb",
-       "default": "face_t + lcd_rise + pcb_t/2",
-       "comment": "USB-C centre (mid-PCB)"
+       "default": "z_pcb_back + 3.26/2 + usb_dz"
+      },
+      {
+       "name": "z_btn",
+       "default": "z_pcb_back + btn_dz",
+       "comment": "button actuator centre (back-mounted)"
+      },
+      {
+       "name": "btn_y",
+       "default": "-board_l/2 + btn_up",
+       "comment": "button centre (Y)"
+      },
+      {
+       "name": "btn_reach",
+       "default": "btn_proud + tol_slide",
+       "comment": "actuator channel depth past the cavity face"
+      },
+      {
+       "name": "btn_body_reach",
+       "default": "btn_body_p + tol_slide",
+       "comment": "shallow body-relief depth"
+      },
+      {
+       "name": "usb_reach",
+       "default": "usb_proud + tol_slide"
+      },
+      {
+       "name": "usb_slide",
+       "default": "usb_w + 0.35",
+       "comment": "insertion-notch width — a hair looser than the"
+      },
+      {
+       "name": "ear_bump",
+       "default": "max(0, btn_reach + ear_skin - wall)",
+       "comment": "side-wall bulge"
+      },
+      {
+       "name": "chin_bump",
+       "default": "max(0, usb_reach + ear_skin - wall)",
+       "comment": "bottom-wall bulge"
+      },
+      {
+       "name": "ear_w",
+       "default": "btn_ch_w + 4",
+       "comment": "ear bulge width along the wall"
+      },
+      {
+       "name": "chin_w",
+       "default": "usb_w + 4",
+       "comment": "chin bulge width along the wall"
       },
       {
        "name": "lip_l",
@@ -6268,13 +6397,57 @@
        "name": "lip_w",
        "default": "(lcm_w - aa_w)/2",
        "comment": "short-side lip (X)"
+      },
+      {
+       "name": "skirt_wall",
+       "default": "(headers == \"male\") ? 1.0 : 1.6"
+      },
+      {
+       "name": "skirt_dep",
+       "default": "snap_depth + snap_h/2 + 0.4"
+      },
+      {
+       "name": "stand_ix",
+       "default": "2.6",
+       "comment": "inset from ±X edge (M2 pattern) — MEASURE"
+      },
+      {
+       "name": "stand_iy",
+       "default": "2.6",
+       "comment": "inset from ±Y edge (M2 pattern) — MEASURE"
+      },
+      {
+       "name": "stand_d",
+       "default": "(headers == \"male\") ? 4.6 : 4.2",
+       "comment": "boss Ø — covers the pillar top but stays"
+      },
+      {
+       "name": "stand_len",
+       "default": "stack_eff - ((headers == \"male\") ? brass_h : 0)"
+      },
+      {
+       "name": "nub_y0",
+       "default": "5.0",
+       "comment": "clear of the button channel below and the vents above"
+      },
+      {
+       "name": "vent_z0",
+       "default": "face_t + 1.0"
+      },
+      {
+       "name": "vent_z1",
+       "default": "bez_h - (snap_depth + snap_h/2) - 0.8"
+      },
+      {
+       "name": "vent_dy",
+       "default": "opt_btn ? (btn_y + ear_w/2) + (vent_n-1)*vent_pitch/2 + vent_w/2 + 1.2 : 0"
       }
      ]
     }
    ]
   },
   "canary_s3_lcd7.scad": {
-   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.2-dev)",
+   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.8-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -6286,10 +6459,20 @@
        "enum": [
         "bezel",
         "back",
+        "frame",
+        "frame_gauge",
         "gauge",
         "gauge_bezel",
         "gauge_tray",
         "stand",
+        "stand_gauge",
+        "radius_gauge",
+        "grommet_usb",
+        "plug_buttons",
+        "plug_sd",
+        "bat_probe_fit",
+        "bat_probe_seat",
+        "bat_probe_grip",
         "all"
        ]
       }
@@ -6312,12 +6495,32 @@
       {
        "name": "glass_t",
        "default": "4.0",
-       "comment": "glass + LCD module thickness at the edge — MEASURE"
+       "comment": "glass + LCD module thickness where the module reaches —"
+      },
+      {
+       "name": "glass_edge_t",
+       "default": "0.8",
+       "comment": "the BARE-GLASS border the adhesive strips land on —"
+      },
+      {
+       "name": "panel_core_w",
+       "default": "165.0",
+       "comment": "module can width  (X)"
+      },
+      {
+       "name": "panel_core_h",
+       "default": "100.0",
+       "comment": "module can height (Y)"
+      },
+      {
+       "name": "panel_core_dy",
+       "default": "-1.0",
+       "comment": "can centre offset from glass centre (tracks aa_dy)"
       },
       {
        "name": "glass_r",
-       "default": "3.0",
-       "comment": "corner radius of the glass slab — MEASURE. The cavity is"
+       "default": "3.2",
+       "comment": "corner radius of the glass slab. The FIRST REAL PRINT"
       },
       {
        "name": "aa_w",
@@ -6332,7 +6535,7 @@
       {
        "name": "aa_dy",
        "default": "-1.02",
-       "comment": "AA centre offset from glass centre (top border 13.04, bottom 11.00)"
+       "comment": "AA centre offset from glass centre — native mounting:"
       }
      ]
     },
@@ -6368,17 +6571,27 @@
     },
     {
      "name": "Board mounts",
-     "note": "4x M3 corner standoffs carry the PCB (nominal pattern)",
+     "note": "4x M3 corner standoffs carry the PCB (measured pattern)",
      "params": [
       {
        "name": "m3_dx",
-       "default": "165.72",
-       "comment": "M3 hole pattern width  — MEASURE. ⚠️ This is EXACTLY"
+       "default": "126.20",
+       "comment": "M3 hole pattern width — MEASURED from a reference case"
       },
       {
        "name": "m3_dy",
-       "default": "88.0",
-       "comment": "M3 hole pattern height — MEASURE"
+       "default": "65.65",
+       "comment": "M3 hole pattern height — measured with m3_dx; verify"
+      },
+      {
+       "name": "m3_ox",
+       "default": "1.5",
+       "comment": "pattern centre offset from the GLASS centre, stated in"
+      },
+      {
+       "name": "m3_oy",
+       "default": "0.9",
+       "comment": "FRONT view, panel mounted NATIVE (buttons at the top):"
       },
       {
        "name": "m3_pilot",
@@ -6521,12 +6734,580 @@
      ]
     },
     {
-     "name": "Stand",
+     "name": "Frame — one-piece drop-in case (part=\"frame\")",
      "note": "",
      "params": [
       {
+       "name": "frame_wall",
+       "default": "2.0",
+       "comment": "sleeve wall (also the visible front rim around the glass)"
+      },
+      {
+       "name": "frame_reveal",
+       "default": "0.15",
+       "comment": "per-side glass↔opening clearance. The opening AND its"
+      },
+      {
+       "name": "glass_guard",
+       "default": "0.6",
+       "comment": "GUARD RIM: the front rim stands this proud of the"
+      },
+      {
+       "name": "standoff_len",
+       "default": "6.9",
+       "comment": "the panel's own white M3 standoffs, PCB back → tip — MEASURE"
+      },
+      {
+       "name": "frame_boss_h",
+       "default": "3.0",
+       "comment": "boss standing proud of the back plate's inner face"
+      },
+      {
+       "name": "frame_boss_d",
+       "default": "8.0"
+      },
+      {
+       "name": "btn_w",
+       "default": "25.0",
+       "comment": "BOOT/RESET access window through the TOP wall (measured)"
+      },
+      {
+       "name": "btn_h",
+       "default": "13.5",
+       "comment": "window height across the wall's depth"
+      },
+      {
+       "name": "btn_dx",
+       "default": "0.0",
+       "comment": "window centre offset along the top wall"
+      },
+      {
+       "name": "btn_lbl_dx",
+       "default": "9.0",
+       "comment": "BOOT/RESET label centres, ± of the window centre"
+      },
+      {
+       "name": "mount_keyholes",
+       "default": "true",
+       "comment": "wall-mount keyholes through the back plate, one in"
+      },
+      {
+       "name": "khm_dx",
+       "default": "78.5",
+       "comment": "EACH of the four corners (first-print feedback: two"
+      },
+      {
+       "name": "khm_y",
+       "default": "34.0",
+       "comment": "held the case but let the bottom float off the wall)."
+      },
+      {
+       "name": "khm_head_d",
+       "default": "9.5",
+       "comment": "All four share one orientation — head hole LOW,"
+      },
+      {
+       "name": "khm_slide_w",
+       "default": "4.5",
+       "comment": "slide running UP, catch at the button edge — so the"
+      },
+      {
+       "name": "khm_len",
+       "default": "13.0",
+       "comment": "case hangs over the screws and slides DOWN to seat."
+      },
+      {
+       "name": "mount_portrait",
+       "default": "true",
+       "comment": "PORTRAIT hanging: each keyhole gains slides in"
+      },
+      {
+       "name": "khm_plen",
+       "default": "10.0",
+       "comment": "the portrait slides run SHORTER than the vertical"
+      },
+      {
+       "name": "khm_pad_t",
+       "default": "2.0",
+       "comment": "keyhole DOUBLER pads on the plate's inner face —"
+      },
+      {
+       "name": "khm_pad_w",
+       "default": "3.5",
+       "comment": "the screw head bears on back_t + khm_pad_t of"
+      },
+      {
+       "name": "plate_fillet",
+       "default": "1.6",
+       "comment": "45° fillet ring where the walls meet the back"
+      },
+      {
+       "name": "khm_mouth_c",
+       "default": "0.8",
+       "comment": "lead-in chamfer around each keyhole's mouth on the"
+      },
+      {
+       "name": "adh_t",
+       "default": "0.5",
+       "comment": "adhesive pad thickness — MEASURE; sets the glass-back datum"
+      },
+      {
+       "name": "ledge_t",
+       "default": "2.5",
+       "comment": "ledge thickness behind the panel"
+      },
+      {
+       "name": "ledge_side",
+       "default": "10.0",
+       "comment": "ledge width along each short (±x) edge"
+      },
+      {
+       "name": "ledge_top",
+       "default": "6.0",
+       "comment": "along the button (top) edge"
+      },
+      {
+       "name": "ledge_bot",
+       "default": "2.0",
+       "comment": "along the FPC (bottom) edge — keep small, the FPC lives there"
+      },
+      {
+       "name": "brand_back",
+       "default": "SecuraCV Canary 7\\\" Display",
+       "comment": "debossed across the back plate"
+      },
+      {
+       "name": "brand_edge",
+       "default": "SecuraCV Canary",
+       "comment": "debossed on the visible bottom edge"
+      },
+      {
+       "name": "adh_rails",
+       "default": "true"
+      },
+      {
+       "name": "adh_rail_dx",
+       "default": "12.0",
+       "comment": "rail centres at ±this — the only clear full-height"
+      },
+      {
+       "name": "adh_rail_w",
+       "default": "17.0",
+       "comment": "zone width  — 15.9 strip + placement slack"
+      },
+      {
+       "name": "adh_rail_l",
+       "default": "74.0",
+       "comment": "zone length — 70 strip + placement slack"
+      },
+      {
+       "name": "adh_mark_w",
+       "default": "0.8",
+       "comment": "outline moat width"
+      },
+      {
+       "name": "sd_dx",
+       "default": "35.65",
+       "comment": "opening centre, + = back-view right (42.0 − 6.35, measured)"
+      },
+      {
+       "name": "sd_dy",
+       "default": "-26.0"
+      },
+      {
+       "name": "sd_w",
+       "default": "18.0",
+       "comment": "width — fingertip-sized, not card-sized"
+      },
+      {
+       "name": "sd_l",
+       "default": "40.0",
+       "comment": "length along the slide direction"
+      },
+      {
+       "name": "gill_n",
+       "default": "8",
+       "comment": "straight \"gill\" vents per side (±x) wall — the sides"
+      },
+      {
+       "name": "gill_y0",
+       "default": "-35.0",
+       "comment": "carry vents only; SD access is through the back plate"
+      },
+      {
+       "name": "frame_vent_flank_n",
+       "default": "4",
+       "comment": "exhaust slots per side, flanking the button window"
+      },
+      {
+       "name": "dock_keys",
+       "default": "true"
+      },
+      {
+       "name": "dock_key_dx",
+       "default": "46.5",
+       "comment": "portrait slots' ±dy on the side walls (past the gills;"
+      },
+      {
+       "name": "dock_key_bx",
+       "default": "84.0",
+       "comment": "landscape slots' ±dx on the bottom wall (on the pads)"
+      },
+      {
+       "name": "label_depth",
+       "default": "0.5"
+      },
+      {
+       "name": "label_back_depth",
+       "default": "1.2",
+       "comment": "BACK-plate deboss depth (BOOT/RESET/SD/brand and"
+      },
+      {
+       "name": "label_font",
+       "default": "Liberation Sans:style=Bold"
+      }
+     ]
+    },
+    {
+     "name": "Frame — bottom USB port, edge brand, TPU fitments",
+     "note": "",
+     "params": [
+      {
+       "name": "usb_port",
+       "default": "true",
+       "comment": "pass-through for the power cable, centred on the bottom wall."
+      },
+      {
+       "name": "usb_dx",
+       "default": "0.0",
+       "comment": "port centre along the bottom wall — 0 = centred"
+      },
+      {
+       "name": "usb_zc",
+       "default": "11.0",
+       "comment": "port axis across the wall band (front face → back). The"
+      },
+      {
+       "name": "usb_head_w",
+       "default": "13.0",
+       "comment": "widest overmold head that must PASS — MEASURE your cable"
+      },
+      {
+       "name": "usb_head_h",
+       "default": "7.0",
+       "comment": "overmold head thickness — MEASURE"
+      },
+      {
+       "name": "usb_pass_c",
+       "default": "0.3",
+       "comment": "per-side clearance around the head through the opening"
+      },
+      {
+       "name": "usb_wire_d",
+       "default": "3.8",
+       "comment": "cable jacket Ø the grommet grips — MEASURE"
+      },
+      {
+       "name": "grom_lip",
+       "default": "2.0",
+       "comment": "grommet flange width per side (both flanges)"
+      },
+      {
+       "name": "grom_bell",
+       "default": "3.2",
+       "comment": "strain-relief bell beyond the outer flange"
+      },
+      {
+       "name": "tpu_squeeze",
+       "default": "0.2",
+       "comment": "per-side interference each TPU waist carries in its opening"
+      },
+      {
+       "name": "tpu_grip",
+       "default": "0.4",
+       "comment": "how much smaller the grommet bore is than the cable jacket"
+      },
+      {
+       "name": "btn_reach",
+       "default": "2.0",
+       "comment": "press-pip stand-off, wall inner face → just shy of the"
+      },
+      {
+       "name": "btn_pip_d",
+       "default": "5.0",
+       "comment": "press-pip Ø (face dimples mark them outside)"
+      },
+      {
+       "name": "btn_pip_dz",
+       "default": "0.0",
+       "comment": "pip centre offset across the wall band, from the window centre"
+      },
+      {
+       "name": "sd_lip",
+       "default": "1.2",
+       "comment": "countersunk rim: 45° reach AND depth around the opening."
+      },
+      {
+       "name": "sd_tether",
+       "default": "true"
+      },
+      {
+       "name": "sd_teth_gap",
+       "default": "3.5",
+       "comment": "countersink rim outer edge → anchor hole centre"
+      },
+      {
+       "name": "sd_teth_hole",
+       "default": "3.2",
+       "comment": "anchor hole Ø through the plate (the Ø2.8 shaft rides"
+      },
+      {
+       "name": "sd_teth_head",
+       "default": "4.6",
+       "comment": "arrowhead Ø — 1.4x the hole: firm thumb-push in, stays"
+      },
+      {
+       "name": "edge_text_l",
+       "default": "SECURACV",
+       "comment": "front-view left of the port"
+      },
+      {
+       "name": "edge_text_r",
+       "default": "CANARY",
+       "comment": "front-view right"
+      },
+      {
+       "name": "edge_text_size",
+       "default": "7.0"
+      },
+      {
+       "name": "edge_lbl_depth",
+       "default": "1.0",
+       "comment": "deboss depth into the frame_wall skin (web asserted)"
+      },
+      {
+       "name": "edge_vent_n",
+       "default": "16",
+       "comment": "shadow gills: count / pitch / pill w x h / band"
+      },
+      {
+       "name": "edge_vent_pitch",
+       "default": "8.0"
+      },
+      {
+       "name": "edge_vent_w",
+       "default": "2.6"
+      },
+      {
+       "name": "edge_vent_h",
+       "default": "3.0"
+      },
+      {
+       "name": "edge_vent_z",
+       "default": "18.7",
+       "comment": "band centre across the wall — behind the grommet's"
+      },
+      {
+       "name": "vent_gap",
+       "default": "8.0",
+       "comment": "clear space between the port flange and each word"
+      },
+      {
        "name": "opt_stand",
        "default": "true"
+      },
+      {
+       "name": "stand_ang",
+       "default": "20",
+       "comment": "recline from vertical"
+      },
+      {
+       "name": "stand_w",
+       "default": "174.0",
+       "comment": "dock width — DELIBERATELY narrower than the case, so"
+      },
+      {
+       "name": "stand_d",
+       "default": "126.0",
+       "comment": "base plate depth — sized so the base reaches well"
+      },
+      {
+       "name": "stand_plate_t",
+       "default": "6.0",
+       "comment": "base plate thickness"
+      },
+      {
+       "name": "stand_cheek_t",
+       "default": "16.0",
+       "comment": "side cheek thickness; the cheeks' tilted tops ARE the"
+      },
+      {
+       "name": "stand_lip_h",
+       "default": "9.0",
+       "comment": "front lip capture up the case face — must stay under"
+      },
+      {
+       "name": "stand_lip_t",
+       "default": "6.0",
+       "comment": "front lip blade thickness"
+      },
+      {
+       "name": "stand_fin_h",
+       "default": "78.0",
+       "comment": "back-fin support height along the case back (68 % of"
+      },
+      {
+       "name": "stand_fin_t",
+       "default": "8.0",
+       "comment": "back fin blade thickness"
+      },
+      {
+       "name": "stand_gusset_h",
+       "default": "52.0",
+       "comment": "cheek back edges buttress the fin up to this height"
+      },
+      {
+       "name": "stand_rib_x",
+       "default": "47.7",
+       "comment": "± KEYED RIBS: blades across the well that carry the"
+      },
+      {
+       "name": "stand_rib_w",
+       "default": "8.0",
+       "comment": "case in PORTRAIT (its 115 mm width misses the cheeks"
+      },
+      {
+       "name": "stand_rib_drop",
+       "default": "2.0",
+       "comment": "rib tops sit this far below the pad plane, so the"
+      },
+      {
+       "name": "stand_floor_h",
+       "default": "26.0",
+       "comment": "seat height: case bottom edge -> desk. This is the"
+      },
+      {
+       "name": "stand_slot_y",
+       "default": "32.0",
+       "comment": "seat centreline, measured from the plate's front edge"
+      },
+      {
+       "name": "stand_clear",
+       "default": "0.5",
+       "comment": "per-face case<->slot clearance (drop-in, not press)"
+      },
+      {
+       "name": "stand_cable_w",
+       "default": "16.0",
+       "comment": "desk-level cable channel width (through plate + fin foot)"
+      },
+      {
+       "name": "stand_feet",
+       "default": "true",
+       "comment": "4x shallow recesses for adhesive rubber feet"
+      },
+      {
+       "name": "qr_n",
+       "default": "len(qr_bits())",
+       "comment": "symbol size — defined HERE, above every use"
+      }
+     ]
+    },
+    {
+     "name": "Help QR — dock deck",
+     "note": "",
+     "params": [
+      {
+       "name": "qr_bleed",
+       "default": "0.02"
+      },
+      {
+       "name": "qr_help",
+       "default": "true",
+       "comment": "deboss the help QR into the deck"
+      },
+      {
+       "name": "qr_cell",
+       "default": "1.6",
+       "comment": "module size — 4 line-widths at a 0.4 mm nozzle"
+      },
+      {
+       "name": "qr_dx",
+       "default": "43.5",
+       "comment": "field centre, plate coords (+x = front-view right wing)"
+      },
+      {
+       "name": "qr_dy",
+       "default": "39.0",
+       "comment": "field centre, +y = toward the back edge (a battery"
+      },
+      {
+       "name": "qr_back",
+       "default": "true",
+       "comment": "deboss the help QR into the back plate too"
+      },
+      {
+       "name": "qr_back_cell",
+       "default": "1.2",
+       "comment": "module size — 3 line-widths; the plate is busier"
+      },
+      {
+       "name": "qr_back_dx",
+       "default": "-40.0",
+       "comment": "field centre, back-view coords (+x = back-view right)"
+      },
+      {
+       "name": "qr_back_dy",
+       "default": "0.0"
+      },
+      {
+       "name": "qr_back_reach",
+       "default": "qr_n*qr_back_cell/2 + 4*qr_back_cell",
+       "comment": "field/2 + quiet zone,"
+      }
+     ]
+    },
+    {
+     "name": "Battery bay — click-in, no hardware",
+     "note": "",
+     "params": [
+      {
+       "name": "battery",
+       "default": "none",
+       "enum": [
+        "none",
+        "3000",
+        "10000"
+       ]
+      },
+      {
+       "name": "bat_dims",
+       "default": "battery == \"10000\" ? [115, 65, 9.0] : [65, 35, 10.0]"
+      },
+      {
+       "name": "bat_tol",
+       "default": "2.0",
+       "comment": "the vendor's stated thickness tolerance, held as margin"
+      },
+      {
+       "name": "bat_over",
+       "default": "3.0",
+       "comment": "tallest PCB component under the bay footprint — MEASURE"
+      },
+      {
+       "name": "bat_air",
+       "default": "2.0",
+       "comment": "battery ↔ component air gap (the board-side channel)"
+      },
+      {
+       "name": "bat_rib",
+       "default": "1.2",
+       "comment": "battery ↔ plate air channel (the grille-side channel)"
+      },
+      {
+       "name": "bat_clr",
+       "default": "1.0",
+       "comment": "per-side XY pocket clearance"
       }
      ]
     },
@@ -6629,6 +7410,113 @@
       {
        "name": "lip_min",
        "default": "min(lip_x, lip_top, lip_bot)"
+      },
+      {
+       "name": "fr_ri",
+       "default": "glass_r + frame_reveal",
+       "comment": "opening corners track the slab"
+      },
+      {
+       "name": "fr_ro",
+       "default": "fr_ri + frame_wall"
+      },
+      {
+       "name": "ledge_z",
+       "default": "glass_guard + glass_edge_t + adh_t",
+       "comment": "ledge front face"
+      },
+      {
+       "name": "bat_on",
+       "default": "battery != \"none"
+      },
+      {
+       "name": "bat_t",
+       "default": "bat_dims[2] + bat_tol",
+       "comment": "worst-case thick pack"
+      },
+      {
+       "name": "fr_depth",
+       "default": "fr_depth0 + bat_extra"
+      },
+      {
+       "name": "usb_z",
+       "default": "glass_guard + usb_zc"
+      },
+      {
+       "name": "edge_vz",
+       "default": "glass_guard + edge_vent_z"
+      },
+      {
+       "name": "fz_boss",
+       "default": "fr_depth0 - back_t - frame_boss_h",
+       "comment": "boss face the standoffs land on"
+      },
+      {
+       "name": "fz_plate",
+       "default": "fr_depth - back_t",
+       "comment": "inner face of the back plate"
+      },
+      {
+       "name": "fr_bosses",
+       "default": "[for (sx = [1,-1], sy = [1,-1]) [-m3_ox + sx*m3_dx/2, m3_oy + sy*m3_dy/2]]"
+      },
+      {
+       "name": "sd_teth_y",
+       "default": "sd_dy + sd_l/2 + sd_lip + sd_teth_gap",
+       "comment": "tether anchor hole centre"
+      },
+      {
+       "name": "fr_keepouts",
+       "default": "concat(fr_keep_base, fr_keep_rails)"
+      },
+      {
+       "name": "btn_zc",
+       "default": "(btn_z0 + btn_z1)/2",
+       "comment": "window centre across the wall"
+      },
+      {
+       "name": "usb_open_w",
+       "default": "usb_head_w + 2*usb_pass_c"
+      },
+      {
+       "name": "usb_open_h",
+       "default": "usb_head_h + 2*usb_pass_c"
+      },
+      {
+       "name": "vword_half",
+       "default": "0.392 * edge_text_size * max(len(edge_text_l), len(edge_text_r))"
+      },
+      {
+       "name": "std_cd",
+       "default": "fr_depth + 2*stand_clear",
+       "comment": "slot gap: the frame's outer depth + slack"
+      },
+      {
+       "name": "bat_dg",
+       "default": "bat_on ? ceil(bat_extra/2) : 0"
+      },
+      {
+       "name": "std_d",
+       "default": "stand_d + 2*bat_dg"
+      },
+      {
+       "name": "std_ys",
+       "default": "-std_d/2 + stand_slot_y + bat_dg",
+       "comment": "seat centreline in plate coords"
+      },
+      {
+       "name": "std_open",
+       "default": "stand_w - 2*stand_cheek_t",
+       "comment": "clear span between the seat pads"
+      },
+      {
+       "name": "std_intake_x",
+       "default": "(edge_vent_n - 1)/2*edge_vent_pitch + edge_vent_w/2"
+      },
+      {
+       "name": "qr_dy_eff",
+       "default": "qr_dy + bat_dg",
+       "comment": "the deck's rear half-growth, when a battery deepens the dock"
       },
       {
        "name": "gauge_in",
@@ -7179,7 +8067,7 @@
    ]
   },
   "canary_fit_coupon.scad": {
-   "title": "Canary — UNIVERSAL FIT-CHECK COUPON  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — UNIVERSAL FIT-CHECK COUPON  ⚠️ IN DEVELOPMENT (v0.3-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -7222,6 +8110,26 @@
       {
        "name": "stud_gap",
        "default": "30.0"
+      },
+      {
+       "name": "kh_click",
+       "default": "0.25",
+       "comment": "detent bump proud of the head-channel ceiling (0 = no click)"
+      },
+      {
+       "name": "clip_bw",
+       "default": "17.5",
+       "comment": "the WAP's board width — the CLIP station is its coupon verbatim"
+      },
+      {
+       "name": "screw_step",
+       "default": "0.15",
+       "comment": "pilot ladder: three holes at screw_d − step / screw_d / + step"
+      },
+      {
+       "name": "port_wall",
+       "default": "2.0",
+       "comment": "case-typical wall the PORT opening is cut through"
       }
      ]
     },
@@ -7239,8 +8147,47 @@
        "default": "0.5"
       },
       {
+       "name": "emboss_h",
+       "default": "0.6",
+       "comment": "raised-wordmark height (EMBOSS station)"
+      },
+      {
        "name": "label_font",
        "default": "Liberation Sans:style=Bold"
+      },
+      {
+       "name": "brand_raised",
+       "default": "CANARY",
+       "comment": "the EMBOSS station's wordmark"
+      },
+      {
+       "name": "brand_sunk",
+       "default": "SecuraCV",
+       "comment": "the DEBOSS station's wordmark"
+      }
+     ]
+    },
+    {
+     "name": "Quality",
+     "note": "",
+     "params": [
+      {
+       "name": "pocket_cx",
+       "default": "-1",
+       "comment": "keyholes at pocket_cx ± stud_gap/2"
+      },
+      {
+       "name": "ladder_x",
+       "default": "[31, 36, 41]",
+       "comment": "SCREW pilot ladder columns"
+      },
+      {
+       "name": "ladder_d",
+       "default": "[screw_d - screw_step, screw_d, screw_d + screw_step]"
+      },
+      {
+       "name": "ladder_tag",
+       "default": "[\"-\", \"0\", \"+\"]"
       }
      ]
     }

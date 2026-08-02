@@ -836,6 +836,36 @@ test("buildNvsSeedImage bakes dev_id + MQTT the firmware reads back — same key
   assert.ok(img.subarray(4096).every((b) => b === 0xff));
 });
 
+test("seeded Wi-Fi is taken at face value: open networks and the first-boot latch", async () => {
+  const { buildNvsSeedImage, parseNvs } = await core();
+
+  // String scheme (sense/vision/display), OPEN network: the empty password
+  // must still be WRITTEN as a present key. The firmware loader treats a
+  // present key as the answer — an absent one falls back to the compiled
+  // ci-placeholder, which is exactly the wrong password to try on an open AP.
+  const open = buildNvsSeedImage(
+    { wifi: { ssid: "Open House", pass: "" }, wifiScheme: "string" }, 0x5000);
+  const openItems = parseNvs(open, ["wifi_ssid", "wifi_pass"]);
+  const openPass = openItems.find((i) => i.namespace === "securacv" && i.key === "wifi_pass");
+  assert.ok(openPass, "empty wifi_pass must still write its key (string scheme)");
+  assert.strictEqual(openPass.type, 0x21);
+  assert.strictEqual(Buffer.from(openPass.bytes).length, 0, "the seeded password IS empty");
+
+  // Blob scheme (canary/wap): seeded Wi-Fi IS the setup, so the first-boot
+  // latch is marked done — without setup_ok the board boots into SETUP MODE
+  // with its captive portal even though the STA join succeeds.
+  const blob = buildNvsSeedImage(
+    { wifi: { ssid: "Bird House", pass: "correct horse" }, wifiScheme: "blob" }, 0x5000);
+  const blobItems = parseNvs(blob);
+  const latch = blobItems.find((i) => i.namespace === "securacv" && i.key === "setup_ok");
+  assert.ok(latch, "blob-scheme seed must mark setup_ok");
+  assert.strictEqual(latch.value, 1);
+  // …and the string scheme must NOT write it: those firmwares have no latch,
+  // and a stray key would shadow a future meaning.
+  assert.ok(!openItems.find((i) => i.key === "setup_ok"),
+    "string scheme has no first-boot latch to mark");
+});
+
 test("wifiQrString escapes the special characters and handles open networks", async () => {
   const { wifiQrString } = await core();
   assert.strictEqual(wifiQrString("MyWifi", "pass1234"), "WIFI:T:WPA;S:MyWifi;P:pass1234;;");

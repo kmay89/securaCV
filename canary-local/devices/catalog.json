@@ -92,7 +92,7 @@
   {
    "id": "c6_display",
    "scad": "canary_c6_display.scad",
-   "title": "Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.4-dev)",
    "family": "canary-display-watch",
    "device_compat": [
     "canary-display-watch"
@@ -109,13 +109,22 @@
      "default": "1.47",
      "audience": "user",
      "note": "board preset"
+    },
+    {
+     "param": "headers",
+     "values": [
+      "none",
+      "male"
+     ],
+     "default": "none",
+     "audience": "user"
     }
    ],
    "variants": [
     {
      "id": "c6-display-pocket-case",
      "name": "C6 display pocket case",
-     "for": "Waveshare ESP32-C6-LCD-1.47 (portrait), flat-bottom board (no down-facing male headers): face-down bezel over the active-area window, edge-captured board (no screws into the board), snap-in vented back, USB-C + BOOT/RST access, blind keyhole. `model=\"1.47\"` is drawn from the Waveshare mechanical drawing; a `\"1.69\"` preset is parameterised. Heat-escape slots on the sides + a back grille",
+     "for": "Waveshare ESP32-C6-LCD-1.47 (portrait), both board builds: `headers=\"none\"` (stripped: no headers, corner pillars removed) or `headers=\"male\"` (as shipped: down-facing pin headers + brass M2 corner pillars — deeper cavity, press bosses land on the pillar tops). Face-down bezel over the active-area window, edge-captured board (no screws into the board), snap-in vented back, blind keyhole. The overhanging BOOT/RST buttons and the USB-C shell (both BACK-mounted — photo-verified) get full-depth insertion channels behind \"ear\"/\"chin\" wall bulges, and the USB-C port is a true stadium (full-round ends) sized shell + tolerance. `model=\"1.47\"` is drawn from the Waveshare mechanical drawing; a `\"1.69\"` preset is parameterised. Heat-escape slots on the sides + a back grille",
      "status": "in-development",
      "device": "canary-display-watch",
      "selects": {},
@@ -153,7 +162,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 26,
+   "engineering_param_count": 62,
    "alternatives": [
     "s3_touch169",
     "watch_station"
@@ -164,7 +173,7 @@
     "released": 0,
     "options": 3,
     "user_options": 3,
-    "variant_axes": 1
+    "variant_axes": 2
    }
   },
   {
@@ -430,7 +439,7 @@
   {
    "id": "fit_coupon",
    "scad": "canary_fit_coupon.scad",
-   "title": "Canary — UNIVERSAL FIT-CHECK COUPON  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — UNIVERSAL FIT-CHECK COUPON  ⚠️ IN DEVELOPMENT (v0.3-dev)",
    "family": "universal",
    "device_compat": [
     "_universal"
@@ -442,7 +451,7 @@
     {
      "id": "universal-fit-coupon",
      "name": "Universal fit coupon",
-     "for": "ONE ~25 min print that calibrates every fit in the catalog: clip, keyhole+stud, slide, gasket, press, screw, insert — each station labelled with the parameter it tunes",
+     "for": "ONE small print that calibrates every fit in the catalog: the WAP's two-sided clip channel, keyhole+stud with a click detent (slide the mate on, it clicks and stays — the doorbell-plate retention test), slide tongue, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labelled with the parameter it tunes",
      "status": "in-development",
      "device": "_universal",
      "selects": {},
@@ -456,7 +465,7 @@
     "strip"
    ],
    "options": [],
-   "engineering_param_count": 7,
+   "engineering_param_count": 18,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -828,7 +837,7 @@
   {
    "id": "s3_lcd7",
    "scad": "canary_s3_lcd7.scad",
-   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.2-dev)",
+   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.8-dev)",
    "family": "canary-display-dash",
    "device_compat": [
     "canary-display-dash"
@@ -844,7 +853,7 @@
     {
      "id": "7-touch-dashboard-case",
      "name": "7″ touch dashboard case",
-     "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on moulded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (~52 cm² back grille + bottom-wall intake and top-wall exhaust — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots, optional 20° desk cradle. Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centres and `pcb_h` are NOMINAL — measure yours",
+     "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on moulded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (~52 cm² back grille + bottom-wall intake and top-wall exhaust — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centred USB pass-through (the brand lettering is the intake vents flanking it) and three TPU fitments: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive press-through BOOT/RESET plug, and a peel-open SD cover that stays attached. Optional 20° desk dock for the frame (drop-in slot on tilted seat pads, self-centring keys into the frame's keying slots, landscape and portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centres and `pcb_h` are NOMINAL — measure yours",
      "status": "in-development",
      "device": "canary-display-dash",
      "selects": {},
@@ -855,10 +864,20 @@
    "render_parts": [
     "bezel",
     "back",
+    "frame",
+    "frame_gauge",
     "gauge",
     "gauge_bezel",
     "gauge_tray",
-    "stand"
+    "stand",
+    "stand_gauge",
+    "radius_gauge",
+    "grommet_usb",
+    "plug_buttons",
+    "plug_sd",
+    "bat_probe_fit",
+    "bat_probe_seat",
+    "bat_probe_grip"
    ],
    "options": [
     {
@@ -910,15 +929,100 @@
      "default": true
     },
     {
+     "id": "mount_keyholes",
+     "type": "bool",
+     "label": "wall-mount keyholes through the back plate, one in",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "mount_portrait",
+     "type": "bool",
+     "label": "PORTRAIT hanging: each keyhole gains slides in",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "adh_rails",
+     "type": "bool",
+     "label": "adh_rails",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "dock_keys",
+     "type": "bool",
+     "label": "dock_keys",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "usb_port",
+     "type": "bool",
+     "label": "pass-through for the power cable, centred on the bottom wall.",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "sd_tether",
+     "type": "bool",
+     "label": "sd_tether",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "opt_stand",
      "type": "bool",
      "label": "opt_stand",
      "consequence": "",
      "audience": "user",
      "default": true
+    },
+    {
+     "id": "stand_feet",
+     "type": "bool",
+     "label": "4x shallow recesses for adhesive rubber feet",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "qr_help",
+     "type": "bool",
+     "label": "deboss the help QR into the deck",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "qr_back",
+     "type": "bool",
+     "label": "deboss the help QR into the back plate too",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "battery",
+     "type": "enum",
+     "label": "battery",
+     "consequence": "",
+     "audience": "user",
+     "enum": [
+      "none",
+      "3000",
+      "10000"
+     ],
+     "default": "none"
     }
    ],
-   "engineering_param_count": 57,
+   "engineering_param_count": 189,
    "alternatives": [
     "dash_display"
    ],
@@ -926,8 +1030,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 7,
-    "user_options": 7,
+    "options": 17,
+    "user_options": 17,
     "variant_axes": 0
    }
   },

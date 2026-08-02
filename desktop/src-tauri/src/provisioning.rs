@@ -30,13 +30,14 @@ pub struct Provisioning {
     pub wifi_nvs: String,
 }
 
-// Wi-Fi-only provisioning (every non-usb-secrets board): the identity and
-// broker fields stay empty and are simply not written — those firmwares
-// configure that part elsewhere (AP portal / on-glass), but the network
-// itself is baked in so joining is instant.
-fn wifi_only(config: &Provisioning) -> bool {
-    config.device_id.is_empty() && config.mqtt_host.is_empty()
-}
+// Identity, broker, and network are INDEPENDENT capabilities (PR #1351's
+// lesson, finished): a display is on-glass so it never gets a device id here,
+// yet it reads a broker out of NVS — Wi-Fi + broker with no identity is its
+// normal provisioning. A usb-secrets board provides all three. Each field is
+// therefore validated and written only when present; which fields are
+// REQUIRED is the frontend's decision per product. (Tying the broker to the
+// device id here made the native flasher abort a display's whole flash —
+// Wi-Fi included — with an error naming a field its UI deliberately hides.)
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Partition {
@@ -92,26 +93,35 @@ fn crc32_esp_rom(bytes: &[u8]) -> u32 {
 
 fn validate(config: &Provisioning) -> Result<(), String> {
     let byte_len = |value: &str| value.len();
-    if config.wifi_ssid.is_empty() || byte_len(&config.wifi_ssid) > 32 {
-        return Err("Wi-Fi name must be 1–32 UTF-8 bytes".into());
+    if config.wifi_ssid.is_empty() {
+        // Broker-only provisioning is legitimate (a display kept on its
+        // on-glass Wi-Fi setup, but told its hub here) — an empty network is
+        // "skip Wi-Fi", not an error. A password WITHOUT a network is the one
+        // nonsensical shape.
+        if !config.wifi_pass.is_empty() {
+            return Err("Wi-Fi password given without a network name".into());
+        }
+    } else {
+        if byte_len(&config.wifi_ssid) > 32 {
+            return Err("Wi-Fi name must be 1–32 UTF-8 bytes".into());
+        }
+        if !config.wifi_pass.is_empty() && !(8..=63).contains(&byte_len(&config.wifi_pass)) {
+            return Err("Wi-Fi password must be 8–63 bytes (or empty for an open network)".into());
+        }
     }
-    if !config.wifi_pass.is_empty() && !(8..=63).contains(&byte_len(&config.wifi_pass)) {
-        return Err("Wi-Fi password must be 8–63 bytes (or empty for an open network)".into());
-    }
-    if wifi_only(config) {
-        return Ok(());
-    }
-    if config.device_id.is_empty() || byte_len(&config.device_id) > 47 {
+    if !config.device_id.is_empty() && byte_len(&config.device_id) > 47 {
         return Err("device name must be 1–47 UTF-8 bytes".into());
     }
-    if config.mqtt_host.is_empty() || byte_len(&config.mqtt_host) > 63 {
-        return Err("MQTT host must be 1–63 UTF-8 bytes".into());
-    }
-    if byte_len(&config.mqtt_user) > 32 || byte_len(&config.mqtt_pass) > 64 {
-        return Err("MQTT username or password is too long for the firmware".into());
-    }
-    if config.mqtt_port == 0 {
-        return Err("MQTT port must be between 1 and 65535".into());
+    if !config.mqtt_host.is_empty() {
+        if byte_len(&config.mqtt_host) > 63 {
+            return Err("MQTT host must be 1–63 UTF-8 bytes".into());
+        }
+        if byte_len(&config.mqtt_user) > 32 || byte_len(&config.mqtt_pass) > 64 {
+            return Err("MQTT username or password is too long for the firmware".into());
+        }
+        if config.mqtt_port == 0 {
+            return Err("MQTT port must be between 1 and 65535".into());
+        }
     }
     Ok(())
 }
@@ -272,22 +282,39 @@ fn build_nvs(config: &Provisioning, partition_size: usize) -> Result<Vec<u8>, St
     validate(config)?;
     let mut writer = NvsWriter::new();
     writer.namespace("securacv")?;
-    if config.wifi_nvs == "blob" {
-        // canary/wap read Wi-Fi with getBytes and gate on a wifi_en bool —
-        // a string under the same key would read back empty, and vice versa.
-        writer.blob("wifi_ssid", config.wifi_ssid.as_bytes())?;
-        writer.blob("wifi_pass", config.wifi_pass.as_bytes())?;
-        writer.u8("wifi_en", 1)?;
-    } else {
-        writer.string("wifi_ssid", &config.wifi_ssid)?;
-        writer.string("wifi_pass", &config.wifi_pass)?;
+    if !config.wifi_ssid.is_empty() {
+        if config.wifi_nvs == "blob" {
+            // canary/wap read Wi-Fi with getBytes and gate on a wifi_en bool —
+            // a string under the same key would read back empty, and vice versa.
+            writer.blob("wifi_ssid", config.wifi_ssid.as_bytes())?;
+            writer.blob("wifi_pass", config.wifi_pass.as_bytes())?;
+            writer.u8("wifi_en", 1)?;
+            // These firmwares also latch a first-boot flag: without it a fully
+            // seeded board still boots shouting "SETUP MODE" and raising its
+            // captive portal even though the STA join succeeds. Seeded Wi-Fi IS
+            // the setup, so mark it done (Preferences putBool stores a u8).
+            writer.u8("setup_ok", 1)?;
+        } else {
+            writer.string("wifi_ssid", &config.wifi_ssid)?;
+            writer.string("wifi_pass", &config.wifi_pass)?;
+        }
     }
-    if !wifi_only(config) {
+    // Per-capability writes, and empty is SKIPPED (absent key), never written:
+    // the firmware loader treats a PRESENT key as the answer — even an empty
+    // one — so writing "" here would erase a value the user set on-device.
+    // This mirrors the browser's mqttProvisioningToNvs byte-for-byte.
+    if !config.device_id.is_empty() {
         writer.string("dev_id", &config.device_id)?;
+    }
+    if !config.mqtt_host.is_empty() {
         writer.string("mqtt_host", &config.mqtt_host)?;
         writer.u16("mqtt_port", config.mqtt_port)?;
-        writer.string("mqtt_user", &config.mqtt_user)?;
-        writer.string("mqtt_pass", &config.mqtt_pass)?;
+        if !config.mqtt_user.is_empty() {
+            writer.string("mqtt_user", &config.mqtt_user)?;
+        }
+        if !config.mqtt_pass.is_empty() {
+            writer.string("mqtt_pass", &config.mqtt_pass)?;
+        }
     }
     Ok(writer.finish(partition_size))
 }
@@ -346,11 +373,108 @@ mod tests {
         assert!(has_item(0x42, "wifi_ssid") && has_item(0x48, "wifi_ssid"));
         assert!(has_item(0x42, "wifi_pass") && has_item(0x48, "wifi_pass"));
         assert!(has_item(0x01, "wifi_en"));
-        assert!(
-            !has_item(0x21, "wifi_ssid"),
-            "no string twin beside the blob"
-        );
+        // Seeded Wi-Fi IS the setup: the first-boot latch must be marked done,
+        // or the board boots into SETUP MODE with its portal despite joining.
+        assert!(has_item(0x01, "setup_ok"));
+        assert!(!has_item(0x21, "wifi_ssid"), "no string twin beside the blob");
         assert!(!has_item(0x21, "dev_id") && !has_item(0x21, "mqtt_host"));
+    }
+
+    // The display case (PR #1351 finished): on-glass boards have NO device id
+    // — the UI hides the field — yet they read a broker from NVS. Wi-Fi +
+    // broker with an empty identity must seed, not abort the flash.
+    #[test]
+    fn string_scheme_broker_without_identity_seeds() {
+        let cfg = Provisioning {
+            device_id: String::new(),
+            mqtt_host: "homeassistant.local".into(),
+            mqtt_user: String::new(),
+            mqtt_pass: String::new(),
+            ..config()
+        };
+        let image = build_nvs(&cfg, 0x4000).expect("display Wi-Fi + broker seed builds");
+        let page = &image[..4096];
+        let has_key = |key: &str| {
+            (0..126).any(|i| {
+                let o = 64 + i * 32;
+                &page[o + 8..o + 8 + key.len()] == key.as_bytes()
+                    && matches!(page[o + 8 + key.len()], 0 | 0xff)
+            })
+        };
+        assert!(has_key("wifi_ssid") && has_key("wifi_pass"));
+        assert!(has_key("mqtt_host") && has_key("mqtt_port"));
+        // Empty means ABSENT — never write "" over a value set on-device.
+        assert!(!has_key("dev_id"));
+        assert!(!has_key("mqtt_user") && !has_key("mqtt_pass"));
+    }
+
+    // Broker-only: a display kept on its on-glass Wi-Fi setup can still be
+    // told its hub (and name) here — an empty network is "skip Wi-Fi", never
+    // an abort. No wifi keys, no wifi_en, no setup_ok latch.
+    #[test]
+    fn broker_only_without_wifi_seeds() {
+        let cfg = Provisioning {
+            wifi_ssid: String::new(),
+            wifi_pass: String::new(),
+            device_id: "canary_display_ab12".into(),
+            mqtt_host: "homeassistant.local".into(),
+            mqtt_user: String::new(),
+            mqtt_pass: String::new(),
+            ..config()
+        };
+        let image = build_nvs(&cfg, 0x4000).expect("broker-only seed builds");
+        let page = &image[..4096];
+        let has_key = |key: &str| {
+            (0..126).any(|i| {
+                let o = 64 + i * 32;
+                &page[o + 8..o + 8 + key.len()] == key.as_bytes()
+                    && matches!(page[o + 8 + key.len()], 0 | 0xff)
+            })
+        };
+        assert!(has_key("dev_id") && has_key("mqtt_host") && has_key("mqtt_port"));
+        assert!(!has_key("wifi_ssid") && !has_key("wifi_pass"));
+        assert!(!has_key("wifi_en") && !has_key("setup_ok"));
+    }
+
+    // The one nonsensical shape: a password with no network to use it on.
+    #[test]
+    fn password_without_network_is_refused() {
+        let cfg = Provisioning {
+            wifi_ssid: String::new(),
+            wifi_pass: "correct horse".into(),
+            device_id: String::new(),
+            mqtt_host: String::new(),
+            mqtt_user: String::new(),
+            mqtt_pass: String::new(),
+            ..config()
+        };
+        assert!(build_nvs(&cfg, 0x4000).is_err());
+    }
+
+    // An open network's empty password must still be SEEDED (present-but-empty
+    // key): the firmware loader treats a present key as the answer, and an
+    // absent one falls back to the compiled ci-placeholder — which is exactly
+    // the wrong password to try on an open AP.
+    #[test]
+    fn open_network_empty_password_key_is_present() {
+        let cfg = Provisioning {
+            wifi_pass: String::new(),
+            device_id: String::new(),
+            mqtt_host: String::new(),
+            mqtt_user: String::new(),
+            mqtt_pass: String::new(),
+            ..config()
+        };
+        let image = build_nvs(&cfg, 0x4000).expect("open-network seed builds");
+        let page = &image[..4096];
+        let has_key = |key: &str| {
+            (0..126).any(|i| {
+                let o = 64 + i * 32;
+                &page[o + 8..o + 8 + key.len()] == key.as_bytes()
+                    && matches!(page[o + 8 + key.len()], 0 | 0xff)
+            })
+        };
+        assert!(has_key("wifi_pass"), "empty wifi_pass must still write its key");
     }
 
     // Wi-Fi-only with the default string scheme: network keys only.
