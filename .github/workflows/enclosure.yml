@@ -45,6 +45,13 @@ jobs:
       - name: Web-builder manifest is in sync with the sources
         run: python3 gen_builder_manifest.py --check
 
+      # The 7" case debosses its own revision. gen_stamp.py refuses to
+      # regenerate when the geometry moved and STAMP_REV did not, so a stale
+      # stamp cannot reach a print: either the committed file is out of date
+      # (caught here) or the revision was never bumped (caught by the
+      # generator, locally and here).
+      - name: Build stamp matches the geometry it claims
+        run: python3 gen_stamp.py --check
 
       - name: Install OpenSCAD + admesh
         run: |
