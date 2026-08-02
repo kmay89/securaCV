@@ -46,6 +46,52 @@ final class WallModelTests: XCTestCase {
         XCTAssertEqual(m.state, .needsHub)
     }
 
+    // MARK: The zero-typing path — the Wall finds the fleet by itself.
+
+    func testSearchFindsTheFleetAtTheFirstWellKnownAddressAndPersistsIt() async {
+        let defaults = scratchDefaults()
+        let m = model([.success(goodFleet)], defaults: defaults)
+
+        let found = await m.searchOnce()
+
+        XCTAssertTrue(found)
+        guard case .live(let fleet, _) = m.state else {
+            return XCTFail("expected .live after a successful search, got \(m.state)")
+        }
+        XCTAssertEqual(fleet.kernel, "kitchen-hub")
+        // The found address is saved, so the NEXT boot skips the search.
+        XCTAssertEqual(defaults.string(forKey: "SecuraCVHubAddress"),
+                       WallModel.wellKnownCandidates.first)
+    }
+
+    func testSearchSkipsAnAddressThatAnswersWithSomethingThatIsNotAFleet() async {
+        // canary.local can be squatted by a captive portal or someone else's
+        // box. An answer that doesn't parse as a fleet must be SKIPPED — the
+        // next candidate can still win — and never persisted.
+        let defaults = scratchDefaults()
+        let m = model([
+            .success("<html>totally a login page</html>"),
+            .success(goodFleet),
+        ], defaults: defaults)
+
+        let found = await m.searchOnce()
+
+        XCTAssertTrue(found, "the second candidate should still be tried and win")
+        XCTAssertEqual(defaults.string(forKey: "SecuraCVHubAddress"),
+                       WallModel.wellKnownCandidates[1],
+                       "the address persisted must be the one that actually answered with a fleet")
+    }
+
+    func testAFailedSearchFallsBackToAskingForAnAddress() async {
+        let m = model([.failure(FleetError.unreachable("nothing there"))])
+
+        let found = await m.searchOnce()
+
+        XCTAssertFalse(found)
+        XCTAssertEqual(m.state, .needsHub,
+                       "when nothing answers, the Wall asks — it never pretends to be connected")
+    }
+
     func testAGoodFetchGoesLive() async {
         let m = model([.success(goodFleet)])
         m.connect(to: "http://canary.local:8099")
