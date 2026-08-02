@@ -2083,6 +2083,7 @@ module coupon_qr_clip() {
 vent_accent   = true;   // line the back-grille mouths in the accent colour
 vent_accent_w = 0.8;    // ring width outward from the hole edge — 2 lines at 0.4
 vent_accent_d = 0.4;    // how far down the bore it runs — 2 layers at 0.2
+vent_accent_eps = 0.05; // seam offset INTO the hole — see the note at the cut
 
 module vent_accent_rings() {
     if (vent_accent && vent_back)
@@ -2093,7 +2094,19 @@ module vent_accent_rings() {
                         difference() {
                             offset(r = vent_accent_w)
                                 feather2d(vent_slot_l, vent_slot_w, vent_tip);
-                            feather2d(vent_slot_l, vent_slot_w, vent_tip);
+                            // NOT the bare feather. The vent hole is cut with
+                            // exactly this profile, so a bare inner boundary
+                            // lands on the hole's own wall — the same plane,
+                            // twice — and CGAL answers with zero-area sheets:
+                            // "2 edges not shared by exactly two faces", which
+                            // is a mesh a slicer refuses. Shrinking the
+                            // subtrahend pushes the seam a hair INTO the hole,
+                            // where there is no material either way, so the
+                            // partition is unchanged and the surfaces are not
+                            // coplanar. Same fix as the dock's phantom
+                            // over-lip walls (#1373).
+                            offset(r = -vent_accent_eps)
+                                feather2d(vent_slot_l, vent_slot_w, vent_tip);
                         }
 }
 

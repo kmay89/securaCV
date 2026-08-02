@@ -7826,6 +7826,11 @@
        "comment": "how far down the bore it runs — 2 layers at 0.2"
       },
       {
+       "name": "vent_accent_eps",
+       "default": "0.05",
+       "comment": "seam offset INTO the hole — see the note at the cut"
+      },
+      {
        "name": "pal_preview_lift",
        "default": "0.02"
       },
