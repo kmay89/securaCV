@@ -2975,6 +2975,9 @@ function hubSaveSettings() {
         acctName: $("hub-acct-name").value.trim(),
         acctUser: $("hub-acct-user").value.trim(),
         provision: $("hub-provision").checked,
+        // Stored even when unchecked: an explicit "no Pi-hole" must survive
+        // a restart just like a yes.
+        pihole: $("hub-provision-pihole").checked,
       })
     );
   } catch (_) {}
@@ -2990,6 +2993,7 @@ function hubRestoreSettings() {
     if (s.acctName) $("hub-acct-name").value = s.acctName;
     if (s.acctUser) $("hub-acct-user").value = s.acctUser;
     if (s.provision) $("hub-provision").checked = true;
+    if ("pihole" in s) $("hub-provision-pihole").checked = !!s.pihole;
     if (s.boardId) hub.boardId = s.boardId; // applied when the board list renders
     // Restored account fields must re-validate, or the panel reads as
     // "untouched" and the account is silently skipped despite showing values.
@@ -3114,11 +3118,15 @@ async function hubRunHeadlessSetup(statusEl, retryBtn, hostOverride) {
     // Console port is fixed; strip :8123 from the probe host. An override (an
     // IP found in the router when mDNS is blocked) wins when given.
     const host = hubCleanHost(hostOverride) || HUB_HOST.replace(/:\d+$/, "");
-    const report = await invoke("hub_headless_setup", { host, dryRun: false });
+    const withPihole = !!$("hub-provision-pihole").checked;
+    const report = await invoke("hub_headless_setup", { host, dryRun: false, withPihole });
     if (report.ok) {
       statusEl.textContent =
-        "Setup finished — Mosquitto, MQTT, Frigate, and securaCV are installed. " +
-        "Open your hub and the SecuraCV panel is waiting. 🐤";
+        "Setup finished — Mosquitto, MQTT, Frigate, and securaCV are installed" +
+        (withPihole
+          ? ", plus Pi-hole. To switch Pi-hole on, point your router's DNS at the hub's IP — until then it sits idle."
+          : ".") +
+        " Open your hub and the SecuraCV panel is waiting. 🐤";
       hubNotify(
         "Hub setup finished",
         "Broker, MQTT, Frigate, and securaCV are installed — open " + HUB_HOST + "."
@@ -3518,7 +3526,18 @@ function hubShowHatch(receipt) {
       ? [
           "Keep this app open. The moment the hub answers, this app connects to its service " +
             "console and installs everything itself — Mosquitto broker, the MQTT connection, " +
-            "Frigate, and securaCV — narrated in the console below. Nothing to click on the hub.",
+            "Frigate, and securaCV" +
+            ($("hub-provision-pihole").checked ? ", plus Pi-hole" : "") +
+            " — narrated in the console below. Nothing to click on the hub.",
+        ]
+      : []),
+    ...(selfSetup && $("hub-provision-pihole").checked
+      ? [
+          "When setup finishes, switch Pi-hole on by pointing your router's DNS at the hub's " +
+            "IP (in the router's DHCP settings). From then on, Pi-hole's page shows every " +
+            "domain every device on your network asks for — the way to see that nothing, " +
+            "Canaries included, is quietly talking out — and known ad/tracker domains are " +
+            "refused for the whole house. Until the router change it sits idle.",
         ]
       : []),
     accountMade

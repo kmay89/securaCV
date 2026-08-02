@@ -50,6 +50,16 @@ FRIGATE_CONFIG_DEST = "/addon_configs/{slug}/config.yml"
 # Stating it here is what lets the installer do it unattended.
 SUPERVISOR_REPO_API = "POST http://supervisor/store/repositories"
 
+# Optional feature: Pi-hole, network-wide ad/tracker DNS blocking. Not part of
+# the securaCV mission (witnessing), which is exactly why it is OPT-IN — the
+# default plan installs nothing a witness hub doesn't need. Poeschl's add-on
+# repository is the maintained community packaging of the real Pi-hole for
+# Home Assistant OS. Honest status: the slug follows the repository's own
+# layout and the first real `--with pihole` run is what validates it end to
+# end (same bar as everything else here).
+PIHOLE_REPO = "https://github.com/Poeschl/Hassio-Addons"
+PIHOLE_SLUG = "pihole"
+
 
 def die(msg: str) -> None:
     sys.exit(f"gen_hub_seed.py: {msg}")
@@ -146,6 +156,17 @@ def main() -> None:
             "api": SUPERVISOR_REPO_API,
             "cli_can_do_it": False,
         },
+        {
+            "url": PIHOLE_REPO,
+            "provides": [PIHOLE_SLUG],
+            "why": (
+                "Community packaging of Pi-hole for Home Assistant OS. Only registered when the "
+                "optional `pihole` feature is enabled — see that step."
+            ),
+            "api": SUPERVISOR_REPO_API,
+            "cli_can_do_it": False,
+            "feature": "pihole",
+        },
     ]
 
     # The API-addressable slug for each add-on (see supervisor_slug's docstring).
@@ -157,6 +178,7 @@ def main() -> None:
     mosquitto_sup = supervisor_slug(mosquitto["slug"], repositories)
     frigate_sup = supervisor_slug(frigate["slug"], repositories)
     kernel_sup = supervisor_slug(kernel["slug"], repositories)
+    pihole_sup = supervisor_slug(PIHOLE_SLUG, repositories)
     for r in repositories:
         r["supervisor_slug"] = [supervisor_slug(s, repositories) for s in r["provides"]]
 
@@ -173,7 +195,9 @@ def main() -> None:
                 "cannot, which is why the by-hand path makes you click through the store UI."
             ),
             "for_what": "Makes the next two installs possible.",
-            "repositories": [r["url"] for r in repositories],
+            # Feature-tagged repositories register inside their own optional
+            # step, so an un-enabled feature leaves zero footprint on the hub.
+            "repositories": [r["url"] for r in repositories if not r.get("feature")],
             "reversible": True,
         },
         {
@@ -307,6 +331,43 @@ def main() -> None:
             "start": True,
             "reversible": True,
         },
+        {
+            "id": "install-pihole",
+            "title": "Install Pi-hole (optional: whole-network ad blocking)",
+            "what": (
+                f"Register `{PIHOLE_REPO}`, then install and start the `{PIHOLE_SLUG}` add-on."
+            ),
+            "why": (
+                "Pi-hole is a small DNS server: your devices ask it 'where is this domain?', it "
+                "answers, and it keeps a local log of who asked for what — refusing known "
+                "ad/tracker domains along the way. It sees domain names only, never page "
+                "contents, and nothing it logs leaves your network. It's open source and has "
+                "been run by millions of people for years — you're not trusting us, you're "
+                "using the same tool everyone else uses. The reason it's the recommended pairing "
+                "here: securaCV's whole promise is devices that DON'T talk out, and Pi-hole is "
+                "how you check that promise instead of taking our word — one page shows every "
+                "domain every device on your network tries to reach, so a counterfeit or "
+                "compromised Canary (or any gadget) that starts phoning home shows up in plain "
+                "sight. Skipping it changes nothing else; it binds DNS (port 53) on the hub and "
+                "does nothing at all until your router points at it."
+            ),
+            "for_what": (
+                "A local, readable answer to 'what is my network talking to?' — the check on "
+                "securaCV's own quiet promise — plus ads and trackers blocked as a side effect."
+            ),
+            "feature": "pihole",
+            "repositories": [PIHOLE_REPO],
+            "addon": PIHOLE_SLUG,
+            "supervisor_slug": pihole_sup,
+            "start": True,
+            "user_must_finish": (
+                "Two things only you can do: set a Pi-hole admin password from the add-on's page, "
+                "and point your router's DNS server at the hub's IP address (in the router's DHCP "
+                "settings) so your devices actually ask Pi-hole. Until the router change, Pi-hole "
+                "sits idle and nothing on your network behaves differently."
+            ),
+            "reversible": True,
+        },
     ]
 
     out = {
@@ -331,6 +392,21 @@ def main() -> None:
             "`privacy_witness_kernel` becomes `d0491a67_privacy_witness_kernel`. Install by the "
             "supervisor_slug or the API returns 'add-on not found'."
         ),
+        "optional_features": {
+            "pihole": {
+                "what": (
+                    "Pi-hole DNS on the hub: a local log of every domain your devices ask for — "
+                    "the way to verify nothing (including a Canary) is quietly talking out — with "
+                    "ad/tracker blocking as the side effect."
+                ),
+                "enable": "sh provision.sh --with pihole   (or host_provision.sh --with pihole)",
+                "recommended": True,
+                "off_by_default_because": (
+                    "A DNS server is a whole-network change someone should choose on purpose — "
+                    "recommended, never imposed. The plan without it is complete."
+                ),
+            }
+        },
         "repositories": repositories,
         "steps": steps,
         "user_supplied": [

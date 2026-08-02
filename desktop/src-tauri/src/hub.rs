@@ -1108,6 +1108,7 @@ pub async fn hub_headless_setup(
     state: tauri::State<'_, HeadlessState>,
     host: String,
     dry_run: Option<bool>,
+    with_pihole: Option<bool>,
 ) -> Result<HeadlessReport, String> {
     {
         let mut busy = state.0.lock().map_err(|_| "headless state poisoned")?;
@@ -1117,7 +1118,12 @@ pub async fn hub_headless_setup(
         *busy = true;
     }
     let result = tauri::async_runtime::spawn_blocking(move || {
-        hub_headless_blocking(&app, &host, dry_run.unwrap_or(false))
+        hub_headless_blocking(
+            &app,
+            &host,
+            dry_run.unwrap_or(false),
+            with_pihole.unwrap_or(false),
+        )
     })
     .await
     .map_err(|e| format!("self-setup worker failed: {e}"));
@@ -1131,6 +1137,7 @@ fn hub_headless_blocking(
     app: &AppHandle,
     host: &str,
     dry_run: bool,
+    with_pihole: bool,
 ) -> Result<HeadlessReport, String> {
     let log = |line: String| {
         let _ = app.emit("hub:headless-log", line);
@@ -1150,6 +1157,7 @@ fn hub_headless_blocking(
         &key.to_string_lossy(),
         &known_hosts.to_string_lossy(),
         dry_run,
+        with_pihole,
     )?;
 
     log(format!(

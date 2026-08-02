@@ -533,6 +533,17 @@
                 computer. To revoke it later, delete <span class="mono">authorized_keys</span> from the
                 card's boot partition (or re-flash without this option).</p>
               <label class="check"><input type="checkbox" id="hub-provision"> Put the self-setup bundle and maintenance key on the card</label>
+              <p class="muted" style="margin-top:12px"><strong>Recommended companion — Pi-hole.</strong>
+                A small open-source DNS service millions of people run. Your devices ask it
+                “where is this website?”, it answers, and it keeps a <em>local</em> log of who asked
+                for what — refusing known ad and tracker domains along the way. It sees domain names
+                only, never what's on a page, and the log never leaves your house. It's here because
+                securaCV's promise is devices that <strong>don't talk out</strong> — and Pi-hole is how you
+                check that promise instead of taking our word: one page shows every domain every
+                device (Canaries included) tries to reach, so anything quietly phoning home shows up
+                in plain sight. It changes nothing until you point your router's DNS at the hub, and
+                skipping it changes nothing at all.</p>
+              <label class="check"><input type="checkbox" id="hub-provision-pihole" checked> Also install Pi-hole</label>
               <p id="hub-provision-hint" class="muted"></p>
             </details>
           </section>

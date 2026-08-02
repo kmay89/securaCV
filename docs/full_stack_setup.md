@@ -100,6 +100,15 @@ signed claims.
 > partway it's safe to press "Run self-setup again": it never repeats a
 > finished step. (Manual fallback from that same console:
 > `sh /mnt/boot/CONFIG/securacv/host_provision.sh`.)
+>
+> The self-setup can also install **Pi-hole** (recommended, one untick to
+> skip; manual: append `--with pihole`). Why it's paired with securaCV: our
+> promise is devices that don't talk out, and Pi-hole's local DNS log is how
+> you *check* that promise rather than take our word — one page shows every
+> domain every device (Canaries included) asks for, and known ad/tracker
+> domains get refused for the whole house as the side effect. It sees domain
+> names only, never page contents; nothing it logs leaves your network; and it
+> does nothing at all until you point your router's DNS at the hub's IP.
 
 By hand, it's two installs:
 
