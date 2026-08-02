@@ -30,12 +30,10 @@ jobs:
   render:
     name: Render + mesh check
     runs-on: ubuntu-latest
-    # The 7in seated-fit suite is the long pole: the two portrait dock poses
-    # and the TPU gates are full-assembly CGAL intersections that take tens of
-    # minutes on a 2-core runner. 30 min was enough for either branch's gates
-    # alone; the merged suite (5 dock + 7 fitment gates) blew straight through
-    # it — the job died as "cancelled" at 30:15 with the geometry all green.
-    timeout-minutes: 75
+    # Renders + mesh checks only. The seated-fit suite used to live here and
+    # was the long pole by far; it now has its own job (see `fit` below), so
+    # this one reports in minutes instead of waiting on it.
+    timeout-minutes: 40
     defaults:
       run:
         working-directory: docs/hardware/enclosure
@@ -79,6 +77,51 @@ jobs:
             fi
           done
           exit $status
+
+      - name: Invalid configs must fail their assertions
+        run: |
+          set -e
+          must_fail() {
+            if openscad --export-format binstl -o /tmp/x.stl "$@" canary_wap_enclosure.scad 2>/dev/null; then
+              echo "::error::expected assertion failure for: $*"; exit 1
+            fi
+          }
+          must_fail -D 'part="gasket"'                          # gasket without opt_seal
+          must_fail -D 'lid_edge=5' -D 'part="lid"'             # chamfer thicker than the lid
+          must_fail -D 'wall_t=0' -D 'part="base"'              # zero wall
+          echo "all guarded configs failed as expected"
+
+  fit:
+    name: 7in assembly fit gates
+    runs-on: ubuntu-latest
+    # SPLIT OUT DELIBERATELY, and not to make a number smaller. These are
+    # full-assembly CGAL intersections — 20 of them — and on a 2-core runner
+    # they take longer than everything else in this workflow combined: on the
+    # run that prompted this, renders + mesh checks finished green in 14m43s
+    # and then the suite ran another hour on its own, carrying the whole job
+    # past its 75-minute ceiling with the mesh half already passed.
+    #
+    # The timeout had already been raised once (30 -> 75) for the same reason.
+    # Raising it again would buy the same few months. Splitting fixes the part
+    # that actually hurt: mesh and render regressions now report in minutes
+    # instead of being hostage to the fit suite, the two report independently,
+    # and the suite gets a budget sized to itself. NOTHING was dropped to fit
+    # the clock — all 20 gates still run, and adding gates is still free here.
+    #
+    # If this one starts brushing 90, the next move is a matrix over `check`
+    # rather than another bigger number: each gate is independent, so they can
+    # run in parallel and the wall clock becomes the slowest single gate.
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: docs/hardware/enclosure
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install OpenSCAD
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq openscad
 
       - name: 7in dashboard parts must actually assemble
         run: |
@@ -219,16 +262,3 @@ jobs:
             bfit $b dock_probe_p    empty || exit 1   # portrait, turned one way
             bfit $b dock_probe_p2   empty || exit 1   # ...and the other
           done
-
-      - name: Invalid configs must fail their assertions
-        run: |
-          set -e
-          must_fail() {
-            if openscad --export-format binstl -o /tmp/x.stl "$@" canary_wap_enclosure.scad 2>/dev/null; then
-              echo "::error::expected assertion failure for: $*"; exit 1
-            fi
-          }
-          must_fail -D 'part="gasket"'                          # gasket without opt_seal
-          must_fail -D 'lid_edge=5' -D 'part="lid"'             # chamfer thicker than the lid
-          must_fail -D 'wall_t=0' -D 'part="base"'              # zero wall
-          echo "all guarded configs failed as expected"
