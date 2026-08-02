@@ -108,24 +108,61 @@ def resolve(sections, name):
     return None
 
 
-def inherited(sections, name, probe, _seen=None):
-    """Walk the `extends` chain until `probe(section)` returns something.
+def option_value(sec, option):
+    """The VALUE of `option` in this section, or None if it doesn't set it.
 
-    PlatformIO resolves an env's settings this way, so a check that reads only
-    the section's own lines sees a different build than the one that runs —
-    which is exactly how the duplicate below got in (the env inherited BOTH
-    halves of the problem and stated neither).
+    Returns the assignment's own text plus any indented continuation lines,
+    which is how PlatformIO spells multi-value options:
+
+        lib_extra_dirs =
+            ../../common
+
+    Reading the value rather than the whole section matters twice over. These
+    files carry long comments that name the settings they discuss, and — the
+    bug that shipped in the first version of this check — a `build_src_filter`
+    entry like `+<../../../common/color/color_engine.cpp>` literally contains
+    the substring `../../common`, so "is `../../common` anywhere in this
+    section?" answered yes for a section whose lib_extra_dirs pointed
+    somewhere else entirely. That rejects a correct config and tells the
+    author to delete sources they need.
+    """
+    lines = sec["lines"]
+    for i, line in enumerate(lines):
+        m = re.match(rf"\s*{re.escape(option)}\s*=(.*)$", line)
+        if not m:
+            continue
+        value = [m.group(1)]
+        for cont in lines[i + 1:]:
+            if not cont.strip():
+                break
+            if re.match(r"\s*[A-Za-z_][A-Za-z0-9_.]*\s*=", cont):
+                break          # the next option starts
+            if not cont[:1].isspace():
+                break          # unindented: no longer this value
+            value.append(cont)
+        return "\n".join(value)
+    return None
+
+
+def inherited_option(sections, name, option, _seen=None):
+    """`option`'s effective value, resolved the way PlatformIO resolves it.
+
+    The FIRST section in the `extends` chain that sets the option wins — a
+    child setting it overrides the parent rather than merging, so the walk
+    must stop at "is it set here?", never at "does it say what I expected?".
+    Reading only the section's own lines sees a different build than the one
+    that runs, which is how the duplicate got in: that env inherited both
+    halves of the problem and stated neither.
     """
     _seen = _seen or set()
     key = resolve(sections, name) if name else None
     if not key or key in _seen:
         return None
     _seen.add(key)
-    got = probe(sections[key])
-    if got:
+    got = option_value(sections[key], option)
+    if got is not None:
         return got
-    parent = sections[key]["extends"]
-    return inherited(sections, parent, probe, _seen) if parent else None
+    return inherited_option(sections, sections[key]["extends"], option, _seen)
 
 
 def duplicate_compile_problems(envs_dir):
@@ -152,21 +189,24 @@ def duplicate_compile_problems(envs_dir):
     sections = ini_sections(envs_dir)
     problems = []
     for name in sorted(sections):
+        # build_src_filter inherits too: an env can pick up the explicit
+        # sources from a parent while adding only `lib_ldf_mode` itself, and
+        # reading just this section's lines would see none and skip it — a
+        # false negative on the very combination being guarded.
+        src_filter = inherited_option(sections, name, "build_src_filter") or ""
         srcs = sorted(set(re.findall(r"\+<[^>]*common/([A-Za-z0-9_/]+\.cpp)>",
-                                     sections[name]["text"])))
+                                     src_filter)))
         if not srcs:
             continue
 
-        def read_ldf(sec):
-            m = re.search(r"^\s*lib_ldf_mode\s*=\s*(\S+)", sec["text"], re.M)
-            return m.group(1) if m else None
-
-        def read_extra(sec):
-            has = re.search(r"^\s*lib_extra_dirs\s*=", sec["text"], re.M)
-            return True if has and "../../common" in sec["text"] else None
-
-        ldf = inherited(sections, name, read_ldf)
-        extra = inherited(sections, name, read_extra)
+        ldf = (inherited_option(sections, name, "lib_ldf_mode") or "").strip()
+        extra_raw = inherited_option(sections, name, "lib_extra_dirs")
+        # Only the option's OWN value, and only an entry that really is
+        # firmware/common — `../../common`, not any path containing it.
+        extra = bool(extra_raw) and any(
+            re.search(r"(^|/)common/?$", entry.strip())
+            for entry in (extra_raw or "").splitlines() if entry.strip()
+        )
         if ldf == "chain" and extra:
             problems.append(
                 f"{sections[name]['file']}:[{name}]: compiles "

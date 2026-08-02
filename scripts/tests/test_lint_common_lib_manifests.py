@@ -96,6 +96,27 @@ lib_extra_dirs =
 {SRCS}
 """))
 
+    def test_build_src_filter_is_inherited_too(self):
+        """The child adds only `chain`; the sources come from the parent.
+
+        Reading just the child's lines sees no sources and skips it — a false
+        negative on exactly this guard's subject. build_src_filter inherits
+        through `extends` like every other option, so it has to be resolved
+        the same way.
+        """
+        problems = flags(f"""
+[base]
+lib_extra_dirs =
+    ../../common
+{SRCS}
+
+[env:child]
+extends = base
+lib_ldf_mode = chain
+""")
+        self.assertTrue(problems, "inherited build_src_filter must still flag")
+        self.assertIn("child", problems[0])
+
     def test_extends_cycle_terminates(self):
         """A malformed cycle must not hang the lint — and still decide."""
         self.assertTrue(flags(f"""
@@ -152,6 +173,37 @@ lib_ldf_mode = chain
 [env:nightstand7]
 extends = env:dash
 build_flags = -DCONFIG_DASH
+"""), [])
+
+    def test_lib_extra_dirs_pointing_elsewhere_does_not_count(self):
+        """`+<../../../common/x.cpp>` CONTAINS the substring `../../common`.
+
+        So a section with an unrelated lib_extra_dirs plus explicit sources
+        looked like the broken combination to a whole-section text search.
+        That is the false positive that matters: it rejects a correct config
+        and tells the author to delete sources the link needs.
+        """
+        self.assertEqual(flags(f"""
+[env:elsewhere]
+lib_ldf_mode = chain
+lib_extra_dirs =
+    ../../vendor/thirdparty
+{SRCS}
+"""), [])
+
+    def test_child_overrides_parent_lib_extra_dirs(self):
+        """A child that re-points lib_extra_dirs overrides — it does not merge."""
+        self.assertEqual(flags(f"""
+[base]
+lib_extra_dirs =
+    ../../common
+
+[env:override]
+extends = base
+lib_ldf_mode = chain
+lib_extra_dirs =
+    ../../vendor/thirdparty
+{SRCS}
 """), [])
 
     def test_commented_out_setting_does_not_count(self):
