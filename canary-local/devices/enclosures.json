@@ -7517,21 +7517,31 @@
        "comment": "tether anchor hole centre"
       },
       {
+       "name": "rating_sz",
+       "default": "2.6",
+       "comment": "finer than the port labels — a spec block, not a sign"
+      },
+      {
+       "name": "rating_lh",
+       "default": "rating_sz*1.45"
+      },
+      {
        "name": "rating_w",
-       "default": "34"
+       "default": "2*0.392*rating_sz*max([for (l = rating_lines) len(l)])"
       },
       {
        "name": "rating_h",
-       "default": "4.2*len(rating_lines) + 2"
+       "default": "rating_lh*len(rating_lines) + 2"
       },
       {
        "name": "rating_dx",
-       "default": "40.0",
-       "comment": "back-view coords — the QR's mirror on the other side"
+       "default": "42.0",
+       "comment": "centred in the clear gap: rail moat ends ~23, the"
       },
       {
        "name": "rating_dy",
-       "default": "-fr_yi/2 + 9 + rating_h/2"
+       "default": "22.0",
+       "comment": "NOT the lower band: that row belongs to the brand line,"
       },
       {
        "name": "fr_keepouts",

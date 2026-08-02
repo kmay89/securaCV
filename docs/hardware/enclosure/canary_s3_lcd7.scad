@@ -798,10 +798,18 @@ fr_bosses = [for (sx = [1,-1], sy = [1,-1]) [-m3_ox + sx*m3_dx/2, m3_oy + sy*m3_
 // cost (their keepouts are the one deliberate vent trade in this case).
 sd_teth_y = sd_dy + sd_l/2 + sd_lip + sd_teth_gap;   // tether anchor hole centre
 // the rating stamp's block, and the smooth keepout it claims from the grille
-rating_w  = 34;
-rating_h  = 4.2*len(rating_lines) + 2;
-rating_dx = 40.0;   // back-view coords — the QR's mirror on the other side
-rating_dy = -fr_yi/2 + 9 + rating_h/2;
+rating_sz = 2.6;    // finer than the port labels — a spec block, not a sign
+rating_lh = rating_sz*1.45;
+// width from the LONGEST line, the same way the edge words size themselves,
+// so editing rating_lines can never silently overrun the gap it sits in
+rating_w  = 2*0.392*rating_sz*max([for (l = rating_lines) len(l)]);
+rating_h  = rating_lh*len(rating_lines) + 2;
+rating_dx = 42.0;   // centred in the clear gap: rail moat ends ~23, the
+                    // keyhole's reach starts ~61
+rating_dy = 22.0;   // NOT the lower band: that row belongs to the brand line,
+                    // and the first render had the two sets of glyphs sitting
+                    // on top of each other. This is the clear field right of
+                    // the adhesive rails, inboard of the top-right keyhole.
 fr_keep_base = concat(
     // grown with the doubler pads + mouth chamfers
     mount_keyholes ? [for (sx = [1,-1], sy = [1,-1])
@@ -1050,6 +1058,22 @@ assert(!qr_back || (qr_back_dx + qr_back_reach
 assert(!qr_back || (abs(qr_back_dx) + qr_back_reach < fr_xi/2 - fr_ri
                     && abs(qr_back_dy) + qr_back_reach < fr_yi/2 - 9),
        "frame: back QR (field + quiet zone) runs into the plate rim band or the brand line's row");
+// the bottom-wall port label sits beyond the brand words; it must still land
+// on the wall's flat span, not run onto the corner round
+assert(!port_labels || !usb_port
+       || vword_x + vword_half + 3.5 + 2.2*len(port_lbl_a) < fr_xi/2 - fr_ri,
+       "frame: the bottom port label runs off the wall's flat span — shorten port_lbl_a");
+assert(!rating_stamp || rating_dy - rating_h/2 > -(fr_yi/2 - 6) + 5,
+       "frame: rating stamp overlaps the brand line's row — raise rating_dy");
+assert(!rating_stamp || rating_dx - rating_w/2
+       > adh_rail_dx + adh_rail_w/2 + adh_mark_w + 2,
+       "frame: rating stamp overlaps an adhesive rail moat");
+assert(!rating_stamp || !mount_keyholes
+       || rating_dx + rating_w/2 < khm_dx - khm_plen - khm_slide_w/2 - khm_pad_w - 2,
+       "frame: rating stamp reaches a keyhole");
+assert(!rating_stamp || norm([rating_dx - sd_dx, rating_dy - sd_dy])
+       > rating_h/2 + sd_l/2 + 4,
+       "frame: rating stamp crowds the SD window");
 assert(!qr_back || !mount_keyholes
        || abs(qr_back_dx) + qr_back_reach
           < khm_dx - (mount_portrait ? khm_plen + khm_slide_w/2 + khm_pad_w : 10) - 2,
@@ -1662,14 +1686,14 @@ module frame() {
         // outboard of each opening's flange so a fitted grommet never
         // covers them
         if (port_labels && usb_port)
-            translate([usb_dx + usb_open_w/2 + grom_lip + 3.2,
+            translate([vword_x + vword_half + 3.5,
                        -fr_yo/2 + label_depth, usb_z])
                 rotate([90, 0, 0]) linear_extrude(label_depth + 0.2)
                     text(port_lbl_a, size = 3.6, font = label_font,
                          halign = "left", valign = "center");
         if (port_labels && side_exit != "none")
             rotate([0, 0, side_exit == "right" ? 90 : -90])
-                translate([side_dy + usb_open_w/2 + grom_lip + 3.2,
+                translate([side_dy + usb_open_w/2 + grom_lip + 3.5,
                            -fr_yo/2 + label_depth, usb_z])
                     rotate([90, 0, 0]) linear_extrude(label_depth + 0.2)
                         text(port_lbl_b, size = 3.6, font = label_font,
@@ -1804,7 +1828,9 @@ module frame() {
         frame_lbl(min(0, sd_dx - sd_w/2 - sd_lip - 1.5 - 37), -(fr_yi/2 - 6), brand_back);
         // rating stamp — stacked lines in the back plate's lower band
         if (rating_stamp) for (i = [0:len(rating_lines)-1])
-            frame_lbl(rating_dx, rating_dy - i*4.2, rating_lines[i], 3.0);
+            frame_lbl(rating_dx, rating_dy + rating_h/2 - 1
+                                 - (i + 0.5)*rating_lh,
+                      rating_lines[i], rating_sz);
         // help QR — module cells debossed into the outer skin like every
         // other back label; the two-colour back swap turns them dark in
         // the light accent skin for free. In back-view coords, no mirror:
