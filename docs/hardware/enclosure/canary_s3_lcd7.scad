@@ -48,7 +48,8 @@
 //            the board hangs on the panel's OWN white M3 standoffs, and
 //            4x M3x8-10 from the back thread into those standoffs — the
 //            screws, not a ledge, set the glass glass_guard below the
-//            front rim (the drop-protection recess).
+//            front rim — currently 0, i.e. a FLUSH face (raise
+//            glass_guard to trade flush for a drop-protection recess).
 //            BOOT/RESET window in the top wall with debossed labels; gill
 //            vents down each side wall; top-wall exhaust; back grille;
 //            a microSD access opening through the BACK PLATE covering the
@@ -158,14 +159,15 @@
 //  adhesive ledge sat at 4.5 mm because glass_t lumped the LCD module into
 //  the border thickness, so the ledge floated 3.2 mm clear of the panel and
 //  the adhesive touched nothing. The border is bare glass, far thinner —
-//  glass_edge_t below — and the ledge face now sits 1.3 mm behind the front,
-//  matching the reference case print that fits the real panel. The rear
+//  glass_edge_t below — and the ledge face now sits glass_edge_t + adh_t
+//  behind the glass face, matching the reference case print. The rear
 //  stack (boss face 17.5, head seat 20.5, depth 23.5 — all confirmed against
 //  that same reference) does NOT move: it chains from the module stack, not
 //  the border. v0.8 is a DROP-PROTECTION pass, three additive moves: a
-//  guard rim (glass_guard — the front rim stands 0.6 proud of the glass, so
+//  guard rim (glass_guard — the front rim stands proud of the glass, so
 //  a face-down drop lands on plastic; the whole panel stack sits that much
-//  deeper, nothing moves relative to the panel), a 45° fillet ring where
+//  deeper, nothing moves relative to the panel — but see v1.0: it is now
+//  set to 0), a 45° fillet ring where
 //  the walls meet the back plate (plate_fillet — corner-drop crack starter,
 //  boss-root doctrine applied to the perimeter), and root reinforcement on
 //  the SD leash (cap flare + shaft cone, both inside envelopes that were
@@ -188,6 +190,8 @@
 //  in firmware) negates their signs and mirrors the frame's features.
 // ============================================================================
 
+use <canary_panel_lib.scad> // THE PANEL REGISTRY — every panel/board number
+                            // this file uses comes from there, not from here
 use <canary_vent_lib.scad>  // the brand vent shape: feather2d / feather_area
 use <canary_s3_lcd7_stamp.scad>   // GENERATED build stamp — see gen_stamp.py
 // Downloaded this file on its own? It CUTS ITS VENTS with that library — a
@@ -197,14 +201,28 @@ assert(is_num(feather_area(7, 4)),
        "canary_vent_lib.scad is MISSING — this case cuts its grille and gills with it. Download canary_vent_lib.scad from the same folder and keep the two files side by side.");
 
 /* [What to render] */
-part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_port","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","dock_probe_fit","dock_probe_seat","dock_probe_p","dock_probe_p2","port_teth_hole","port_teth_barb","port_barb_proud","back_flush","fil_body","fil_ink","fil_accent","frame_colour","fil_overlap","fil_gap","all"]
+part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_port","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","dock_probe_fit","dock_probe_seat","dock_probe_p","dock_probe_p2","ring_gauge","port_teth_hole","port_teth_barb","port_barb_proud","back_flush","fil_body","fil_ink","fil_accent","coupon_body","coupon_ink","coupon_accent","coupon_qr_body","coupon_qr_ink","frame_colour","fil_overlap","fil_gap","all"]
 
 /* [Glass slab] — bonded touch panel, from the Waveshare drawing (mm) */
-glass_w = 192.96;    // touch-glass width  (X)
-glass_h = 110.76;    // touch-glass height (Y)
-glass_t = 4.0;       // glass + LCD module thickness where the module reaches —
+// ── WHICH BOARD ─────────────────────────────────────────────────────────────
+// The ONE knob that selects a panel. Every dimension below is read from that
+// record in canary_panel_lib.scad — none of them are typed here any more.
+// Adding a board is a record there plus an id in this enum; nothing in this
+// file changes. The old scheme kept the numbers here and flipped signs with a
+// `pv` multiplier at each point of use, which meant every new consumer had to
+// remember to apply it, and a board that differed by anything OTHER than a
+// half turn could not be expressed at all.
+panel_variant = "lcd7";   // ["lcd7","lcd7b"]
+PANEL   = panel(panel_variant);
+panel_ok = panel_check(PANEL) && panel_assert_printable(PANEL);
+
+glass_w = pnl_glass_w(PANEL);    // touch-glass width  (X)
+glass_h = pnl_glass_h(PANEL);    // touch-glass height (Y)
+glass_t = pnl_glass_t(PANEL);       // glass + LCD module thickness where the module reaches —
                      // sets the cavity depth and the rear stack datum. MEASURE
-glass_edge_t = 0.8;  // the BARE-GLASS border the adhesive strips land on —
+glass_edge_t = pnl_edge_t(PANEL);  // MEASURED on the real panel (was 0.8, which sank the
+                     // slab 0.4 deeper than it sits).
+                     // the BARE-GLASS border the adhesive strips land on —
                      // much thinner than the module stack, and what the
                      // adhesive ledge must rise to meet. Set from the
                      // reference case print that fits the real panel: its
@@ -218,10 +236,30 @@ glass_edge_t = 0.8;  // the BARE-GLASS border the adhesive strips land on —
 // the can's path through the ledge ring open). Nominal from the 7" module
 // family + the Rev1.2 adhesive photos (~10 mm bare sides / ~6 mm button
 // edge); put calipers on the can — MEASURE.
-panel_core_w  = 165.0;  // module can width  (X)
-panel_core_h  = 100.0;  // module can height (Y)
-panel_core_dy = -1.0;   // can centre offset from glass centre (tracks aa_dy)
-glass_r = 8.2;       // corner radius of the glass slab — MEASURED against the
+// MEASURED off the Waveshare drawing, and the drawing proves itself: the M3
+// insets sum to the outline exactly — 19.76 + 126.20 + 19.76 = 165.72 and
+// 18.31 + 65.65 + 13.64 = 97.60 — so both dimensions bracket the CAN, not the
+// PCB. (The board is visibly smaller and sits on standoffs above it.)
+panel_core_w  = pnl_core_w(PANEL); // module can width  (X)
+panel_core_h  = pnl_core_h(PANEL);  // module can height (Y) — 2.40 SMALLER than the
+                        // old nominal, which was eating the ledge's clearance
+panel_core_dy = pnl_core_dy(PANEL); // can centre offset from glass centre, NATIVE pose.
+                        // DERIVED, and it needed no calipers: the drawing puts
+                        // the M3 pattern 18.31 from the module's FPC end and
+                        // 13.64 from its button end, so the pattern centre sits
+                        // 2.335 off the module centre. m3_oy (+0.9) is already
+                        // print-validated in the native pose, and native is the
+                        // drawing turned half a turn, so
+                        //     panel_core_dy = m3_oy - 2.335 = -1.435
+                        // Cross-check that it is not nonsense: aa_dy is +1.02,
+                        // which puts the LIT AREA 2.46 toward the button edge
+                        // WITHIN the module — exactly where the FPC and driver
+                        // eat module height. The two offsets disagreeing in
+                        // sign is the physically expected result, not an error.
+                        // (I briefly flagged this sign as suspect on the theory
+                        // that it must track aa_dy. It does not, and the ledge
+                        // assert was right to reject the flip.)
+glass_r = pnl_glass_r(PANEL);       // corner radius of the glass slab — MEASURED against the
                      // real panel on a screen comparator, calibrated against
                      // the PANEL OUTLINE itself (192.96 mm) rather than a
                      // bank card: the longest reference to hand more than
@@ -278,33 +316,76 @@ rg_step   = 0.2;      // ...and its step. Four sockets at centre ± 0.5·step
                       // more room on one side of the centre than the other,
                       // so "the winner is within half a step" stops being
                       // true and a two-pass search can skip the answer.
-aa_w = 154.88;       // active area width
-aa_h = 86.72;        // active area height
-aa_dy = -1.02;       // AA centre offset from glass centre — native mounting:
-                     // borders 13.04 top / 11.00 bottom. (A buttons-down
-                     // build — panel rotated 180°, image flipped in firmware —
-                     // negates this.)
+/* [Panel variant] */
+// ════════════════════════════════════════════════════════════════════════════
+//  ESP32-S3-Touch-LCD-7  vs  -7B  — one case, half a turn apart
+//
+//  The two boards share their entire MECHANICAL interface, to the hundredth:
+//    glass 192.96 x 110.76      active area 154.88 x 86.72
+//    PCB   165.72 x 97.60       M3 pattern  126.20 x 65.65
+//    (M3 inset 19.76 from the PCB's side edges, 18.31 / 13.64 top and bottom)
+//
+//  What differs is where the COMPONENTS sit, and every case-relevant one is a
+//  180 deg rotation of its opposite number:
+//
+//    feature        LCD-7 (800x480)     LCD-7B (1024x600)
+//    ESP32 module   bottom-left         top-right
+//    microSD        top-left            bottom-right
+//    USB-C pair     left edge           right edge
+//    BOOT / RESET   bottom-centre       top-centre
+//
+//  So the same printed case serves both: seat the 7B a half-turn round and
+//  every boss, screw and wall lands where it already is. Two consequences,
+//  both handled:
+//    1. The asymmetric offsets flip sign — the M3 pattern is NOT centred on
+//       the glass, and neither is the SD socket. That is what pv does below.
+//    2. The image comes up upside down. Rotate the display in firmware; the
+//       hardware does not care which way up it is bolted.
+//
+//  This is not a new discovery so much as a named one: m3_ox/m3_oy already
+//  carry a note that the FIRST REAL PRINT flipped them 180 deg from what a
+//  reference case recorded. That reference was a 7B. The flip WAS the variant
+//  difference, found the expensive way before anyone knew there were two.
+// ════════════════════════════════════════════════════════════════════════════
+
+aa_w = pnl_aa_w(PANEL);       // active area width
+aa_h = pnl_aa_h(PANEL);        // active area height
+aa_dy = pnl_aa_dy(PANEL);        // AA centre offset from glass centre — NATIVE mounting,
+                     // i.e. buttons at the TOP: borders 11.00 top / 13.04
+                     // bottom, so the lit area sits 1.02 TOWARD the button
+                     // edge. (A buttons-down build — panel rotated 180°,
+                     // image flipped in firmware — negates this.)
+                     // SIGN CORRECTED: this read -1.02 with a comment
+                     // claiming "13.04 top / 11.00 bottom", which is the
+                     // DRAWING's orientation — and the drawing shows the
+                     // buttons at the BOTTOM. Native mounting turns the panel
+                     // half a turn, so the 11.00 border is the one that ends
+                     // up on top. Caught by calipers on a real panel: the
+                     // BOOT/RESET edge measured 10.90 against 13.10 opposite,
+                     // the reverse of what the model asserted. Same family as
+                     // the m3_ox/m3_oy flip — an offset copied straight off a
+                     // drawing without turning it into the mounting pose.
 
 /* [PCB stack behind the glass] */
-pcb_standoff = 5.0;  // glass back → PCB front (the white M3 standoffs) — MEASURE.
+pcb_standoff = pnl_standoff(PANEL);  // glass back → PCB front (the white M3 standoffs) — MEASURE.
                      // This one decides whether the bezel lip actually reaches
                      // the glass: too small and the case won't close, too big
                      // and the lip never touches it.
-pcb_t   = 1.6;
-comp_h  = 11.0;      // tallest thing behind the PCB (USB-C / terminals / batt JST) — MEASURE.
+pcb_t   = pnl_pcb_t(PANEL);
+comp_h  = pnl_comp_h(PANEL);      // tallest thing behind the PCB (USB-C / terminals / batt JST) — MEASURE.
                      // Also sets the port band: cutouts open floor → PCB underside.
-pcb_w   = 165.72;    // PCB outline width  (X) — from the drawing
-pcb_h   = 97.60;     // PCB outline height (Y) — MEASURE (see the header warning)
+pcb_w   = pnl_pcb_w(PANEL);    // PCB outline width  (X) — from the drawing
+pcb_h   = pnl_pcb_h(PANEL);     // PCB outline height (Y) — MEASURE (see the header warning)
 
 /* [Board mounts] — 4x M3 corner standoffs carry the PCB (measured pattern) */
-m3_dx = 126.20;      // M3 hole pattern width — MEASURED from a reference case
+m3_dx = pnl_m3_dx(PANEL);      // M3 hole pattern width — MEASURED from a reference case
                      // print that fits the real panel (v0.2 shipped 165.72
                      // here — the outline width, which put every boss under
                      // the board's edge; see the header for how 126.20 also
                      // resolves the old pcb_h dispute). Verify on your board.
-m3_dy = 65.65;       // M3 hole pattern height — measured with m3_dx; verify
-m3_ox = 1.5;         // pattern centre offset from the GLASS centre, stated in
-m3_oy = 0.9;         // FRONT view, panel mounted NATIVE (buttons at the top):
+m3_dy = pnl_m3_dy(PANEL);       // M3 hole pattern height — measured with m3_dx; verify
+m3_ox = pnl_m3_ox(PANEL);         // pattern centre offset from the GLASS centre, stated in
+m3_oy = pnl_m3_oy(PANEL);         // FRONT view, panel mounted NATIVE (buttons at the top):
                      // +x = right, +y = up. SIGNS SETTLED BY THE FIRST REAL
                      // PRINT: with the v0.4 signs (−1.5/−0.9) the panel only
                      // matched the printed pattern upside down — the offsets
@@ -388,7 +469,16 @@ frame_wall   = 2.0;  // sleeve wall (also the visible front rim around the glass
 frame_reveal = 0.15; // per-side glass↔opening clearance. The opening AND its
                      // corner radius both track the slab by this much, so the
                      // reference case's corner gap cannot come back.
-glass_guard  = 0.6;  // GUARD RIM: the front rim stands this proud of the
+glass_guard  = 0;    // FLUSH FRONT, by request: the glass face sits level
+                     // with the rim rather than recessed behind it.
+                     // ⚠️ TRADE-OFF, stated once so it is a choice and not an
+                     // accident: this knob existed as drop protection. At 0.6
+                     // a face-down drop landed on the case's rim; at 0 it
+                     // lands on the panel. Nothing else changes — the rear
+                     // stack chains from the glass, so the whole assembly
+                     // just moves 0.6 forward and fr_depth shrinks to match.
+                     // Set it back to 0.6 to restore the raised lip.
+                     // GUARD RIM: the front rim stands this proud of the
                      // glass, so a face-down drop lands on the case's rim,
                      // not the panel — the raised-lip trick every phone case
                      // uses, executed as trim: the rim keeps its 45° entry
@@ -399,7 +489,7 @@ glass_guard  = 0.6;  // GUARD RIM: the front rim stands this proud of the
                      // RELATIVE to the panel). usb_zc and edge_vent_z are
                      // measured from the GLASS face, so their values survive
                      // this knob. 0 restores a flush face.
-standoff_len = 6.9;  // the panel's own white M3 standoffs, PCB back → tip — MEASURE
+standoff_len = pnl_stud_len(PANEL);  // the panel's own white M3 standoffs, PCB back → tip — MEASURE
 frame_boss_h = 3.0;  // boss standing proud of the back plate's inner face
 frame_boss_d = 8.0;
 btn_w  = 25.0;       // BOOT/RESET access window through the TOP wall (measured)
@@ -465,6 +555,10 @@ ledge_t    = 2.5;   // ledge thickness behind the panel
 ledge_side = 10.0;  // ledge width along each short (±x) edge
 ledge_top  = 6.0;   // along the button (top) edge
 ledge_bot  = 2.0;   // along the FPC (bottom) edge — keep small, the FPC lives there
+ledge_slope_max = max(ledge_side, ledge_top, ledge_bot);  // deepest back-slope
+ledge_slope_n   = 20;  // steps in the 45° back-slope. Each step overhangs by
+                       // its own height, so ANY count self-supports; this only
+                       // sets how smooth the sloped face reads.
 // Every ledge carries a 45° back-slope wedge down to its wall, so the frame
 // prints BACK-PLATE-DOWN with the ledges fully self-supporting — solid
 // material under the adhesive landing, no overhang, no sacrificial geometry.
@@ -514,8 +608,8 @@ adh_mark_w  = 0.8;   // outline moat width
 // it never drops inside the case. Position corrected by the FIRST REAL PRINT:
 // the photo-derived 42.0 sat 1/4" too far outboard — the print lined up with
 // the socket 6.35 mm nearer the plate's centre.
-sd_dx = 35.65;  // opening centre, + = back-view right (42.0 − 6.35, measured)
-sd_dy = -26.0;
+sd_dx = pnl_port_u(PANEL, "microSD");  // opening centre, + = back-view right (42.0 − 6.35, measured)
+sd_dy = pnl_port_v(PANEL, "microSD");
 sd_w  = 18.0;   // width — fingertip-sized, not card-sized
 sd_l  = 40.0;   // length along the slide direction
 // 7 per side, not 8. The r9.05 corner round eats 5.85 mm off each end of the
@@ -649,9 +743,21 @@ pal_ink    = "Black";
 pal_accent = "Signal Yellow";
 // Preview RGB only — these never reach the mesh, they just make `frame_colour`
 // look like the real thing so a palette can be judged before it is printed.
+//
+// The accent tracks its NAME: RAL 1003 Signal Yellow is #F9A800, a warm amber
+// gold. It used to be #FFC70A here, which is lighter and lemon-ier — so the
+// preview had been quietly showing a different yellow from the one the recipe
+// asks you to load, and a palette you cannot trust the preview of is the one
+// thing this block exists to prevent.
+//
+// These are EYEBALLED, and it matters that you know that: a filament photo is
+// white-balanced and saturation-boosted, and PETG extrudes slightly lighter
+// and more translucent than it looks on the spool. The colour coupon is the
+// real instrument — print it, hold it next to the render, and set the numbers
+// from the part rather than from a picture of a part.
 pal_body_rgb   = [0.95, 0.95, 0.93];
 pal_ink_rgb    = [0.11, 0.11, 0.12];
-pal_accent_rgb = [1.00, 0.78, 0.04];
+pal_accent_rgb = [0.976, 0.659, 0.000];   // RAL 1003 — #F9A800
 // How deep the INK reaches in from the FRONT face. This is a visible-surface
 // depth, not a structural one: 0.6 is three layers at 0.2 and matches the
 // existing front-ring swap band exactly, so the AMS build and the
@@ -1280,6 +1386,12 @@ function lcd7_frame_stack() = [ledge_z, ledge_t, fr_xi, fr_yi, fr_ri, fr_depth,
 // frame_glass gate's core probe, so an enclosure edit can never shrink the
 // panel it is checked against.
 function lcd7_panel_core() = [panel_core_w, panel_core_h, panel_core_dy];
+// WHICH record this build resolved. Exported so a consumer that cannot see
+// panel_variant (a -D does not cross a use<> boundary) can look up the SAME
+// record rather than rebuild the panel's shape from loose numbers — which is
+// what the fit gates used to do, and it meant a change to how the panel is
+// MODELLED never reached the gates that check the case against it.
+function lcd7_panel_id() = panel_variant;
 // ...and the port/fitment geometry the TPU fit gates need, same doctrine.
 // [usb_dx, usb_zc, usb_head_w, usb_head_h, fr_yi, fr_yo, ledge_bot,
 //  btn_dx, btn_zc, sd_dx, sd_dy, fz_plate, usb_port, btn_w, btn_h, sd_w,
@@ -1456,12 +1568,22 @@ echo(str("Canary 7in touch v0.9-dev — outer ", xo, " x ", yo, " x ", bez_h + c
          round(vent_back ? len(grille_cells())*feather_area(vent_slot_l, vent_slot_w, vent_tip)/100 : 0),
          " cm2 open (computed, boss dodges included)",
          "  (IN DEVELOPMENT — MEASURE CONNECTORS)"));
+// The panel this case is for, read straight off the registry record — so a
+// build log says which BOARD it was cut for, and how strong that claim is.
+echo(str("  panel: ", panel_summary(PANEL),
+         pnl_status(PANEL) == "measured" ? ""
+                : str("  <-- status \"", pnl_status(PANEL),
+                      "\": not confirmed on hardware")));
 echo(str("  stack: floor ", z_floor, " | PCB under ", z_pcb_under, " | PCB top ",
          z_pcb_top, " | glass back ", z_glass, " | closed height ",
          back_t + cav_d + bez_h, " mm"));
 echo(str("  frame: ", fr_xo, " x ", fr_yo, " x ", fr_depth,
          " mm one-piece; glass opening ", fr_xi, " x ", fr_yi, " r", fr_ri,
-         "; guard rim ", glass_guard, " mm proud of the glass, plate fillet ",
+         "; front face ",
+         glass_guard == 0 ? "FLUSH with the glass (fingernail test: no step either way)"
+                          : str("proud of the glass by ", glass_guard,
+                                " mm — a recess IS the pass criterion"),
+         ", plate fillet ",
          plate_fillet, "; adhesive ledge face ", ledge_z,
          " mm behind the front (bare-glass ",
          "border ", glass_edge_t, " + adhesive ", adh_t,
@@ -1554,9 +1676,13 @@ if (qr_back)
          qr_back_cell, " mm (", qr_n*qr_back_cell, " mm field) on the back",
          " plate at (", qr_back_dx, ", ", qr_back_dy, "), its grille keepout",
          " doubling as the quiet zone. Prints in the FIRST layers on the",
-         " textured plate; the standard back swap (accent skin, body-colour",
-         " deboss floors) gives dark modules in the light skin — no extra",
-         " swap, no extra filament"));
+         " textured plate. Polarity: the modules are ", pal_ink, " (they are",
+         " in ink_groups, so they arrive as the back inlay) in the ", pal_body,
+         " plate — dark-on-light, the only polarity a reader accepts. It costs",
+         " no extra swap: the back skin is already a tool change. Rehearse it",
+         " with part=\"coupon_qr_body\"/\"coupon_qr_ink\" and SCAN THE COUPON",
+         " before committing a frame — cell size is the one thing only a phone",
+         " can settle"));
 if (usb_port)
     echo(str("  USB port: ", usb_open_w, " x ", usb_open_h,
              " stadium at (", usb_dx, ", z ", usb_z, ") — passes a ",
@@ -1741,8 +1867,8 @@ module gauge() {
 //  +z toward the back; +x = BACK-view right). No ledge holds the glass: the
 //  4 screws pull the panel's standoffs onto the boss faces, and that stack —
 //  glass_t + pcb_standoff + pcb_t + standoff_len — is exactly what sets the
-//  glass glass_guard below the front rim (the guard recess is by design —
-//  v0.8). Get standoff_len right or the recess is off by the same error.
+//  glass glass_guard below the front rim. Get standoff_len right or the
+//  glass face is off by the same error. glass_guard is 0 today (flush).
 // ----------------------------------------------------------------------------
 module pill2d(l, w) { hull() for (d = [-1, 1]) translate([0, d*(l - w)/2]) circle(d = w); }
 // FEATHER BARB — the house pattern motif, and the reason it is a motif at all
@@ -1891,10 +2017,133 @@ module back_inlay(groups) {
     }
 }
 
+// The colour coupon's clip — the bottom-centre band. See the part dispatch
+// for what it is for and why a corner coupon cannot do the same job.
+// The clip reaches from the centre lockup OUT TO A CORNER, deliberately
+// asymmetric. A centred band proves the colours but nothing about fit; a
+// corner proves the fit but has no accent word on it (SECURACV lives at
+// x = 0). Spanning both makes one print answer both questions:
+//   · centre end — the lockup: INK product name over ACCENT company line
+//   · corner end — the glass pocket's radius and the front bezel band, so
+//     the panel's own corner can be offered up to it
+// It runs the full depth, so the front rim and the back plate are both on it.
+coupon_x0 = -40;              // just past the lockup's centre
+coupon_x1 = fr_xo/2 + 1;      // ...out through the corner
+coupon_h  = 34;               // tall enough to contain the whole corner arc
+module coupon_clip() {
+    translate([coupon_x0, -fr_yo/2 - 1, -1])
+        cube([coupon_x1 - coupon_x0, coupon_h, fr_depth + 2]);
+}
+
+// The QR SCAN coupon's clip — a separate plaque, not part of the band above.
+//
+// Why separate. The help QR sits at (qr_back_dx, qr_back_dy) on the mid-left
+// wing; the colour band runs along the bottom edge. They do not overlap in y
+// at all, so growing the band to swallow the QR would add ~40 mm of frame
+// height — nearly all of it blank plate — to capture a 37.7 mm square that
+// lives nowhere near the lockup. A separate plaque asks the same question for
+// roughly a third of the filament, and keeps the band coupon's two jobs
+// (three-colour registration, corner fit) uncluttered.
+//
+// Why it is only the BACK PLATE and not the full depth. The frame prints
+// back-plate-down, so the QR is in the first layers; a full-depth clip would
+// print 23.5 mm of shell to test a graphic that is finished 3 mm in. The
+// plaque is the plate itself, which is exactly the substrate the real QR
+// prints on — same thickness, same first layer, same deboss floors.
+//
+// What it tests, none of which a slicer preview answers:
+//   · whether the symbol SCANS at qr_back_cell — the real question, and one
+//     only a phone can settle. 1.3 mm modules are ~3 line widths at 0.42.
+//   · the polarity: ink modules in a body-colour field, dark-on-light, which
+//     is the only polarity a reader accepts
+//   · purge bleed on the deboss floors, where black-into-white shows first
+//     and where it would cost the symbol its contrast
+// Print it, scan it with a phone, and only then commit a frame.
+// The plaque stops EXACTLY at qr_back_reach — do not add a margin "for a nicer
+// border". qr_back_reach is the same radius the asserts above guarantee is
+// clear of rail moats, grille slots and keyholes; anything past it is plate
+// the model never promised was empty. A 1.5 mm border was the first thing
+// tried here and it clipped an adhesive-rail moat, putting a detached 0.8 mm
+// hairline of INK at the plaque's edge — a loose sliver in the wrong filament,
+// and a fragment of a feature that has nothing to do with the QR.
+coupon_qr_margin = 0;
+module coupon_qr_clip() {
+    s = qr_back_reach + coupon_qr_margin;
+    translate([qr_back_dx, qr_back_dy, fr_depth - back_t])
+        linear_extrude(back_t + 1)      // +1 overshoots into free space; the
+            rrect2d(2*s, 2*s, 3);       // frame bounds the intersection anyway
+}
+
+// VENT ACCENT — the yellow you catch when you look into the back grille.
+//
+// This is a COLOUR PARTITION, not a geometry change, and that distinction is
+// the whole reason it is safe. frame() is bit-for-bit what it was: no new
+// void, no counterbore, no overhang, no change to open area or to any airflow
+// assert. All that moves is which filament prints a ring of plate that was
+// already solid — so there is nothing here that can fail as a PRINT that was
+// not already failing.
+//
+// It is free in tool changes too, which is the other half of the argument.
+// The back skin (print z 0 … label_back_depth) is ALREADY a three-filament
+// band — every deboss floor lives there — so accent is being laid on these
+// layers regardless. Adding area to it costs no swap and no purge.
+//
+// WHY NOT THE SIDE GILLS. They sit in the shell band, print z 1.2 … 22.9:
+// 21.7 mm of continuous body-only printing with zero swaps, and that unbroken
+// run is exactly what keeps the purge tower short. Accenting a gill would buy
+// two tool changes at a mid-shell layer and pay purge for both. Same for the
+// top exhaust — it is wall, not plate. The back grille is the only vent set
+// that is already inside a colour band.
+//
+// The ring is flush at the surface AND lines the first vent_accent_d of the
+// bore, which is what sells it: straight on it reads as a thin gold outline,
+// at an angle you see into the hole and the inside is yellow.
+//
+// COST, honestly: 66 slots means 66 small isolated accent islands on each of
+// these layers. Not filament and not swaps — travel moves and stringing risk,
+// on two layers. That is the thing to watch on the first print; vent_accent
+// is one switch if it misbehaves, and a WIDER ring is the fix to try before
+// abandoning it (two fat extrusions beat many thin ones).
+vent_accent   = true;   // line the back-grille mouths in the accent colour
+vent_accent_w = 0.8;    // ring width outward from the hole edge — 2 lines at 0.4
+vent_accent_d = 0.4;    // how far down the bore it runs — 2 layers at 0.2
+vent_accent_eps = 0.05; // seam offset INTO the hole — see the note at the cut
+
+module vent_accent_rings() {
+    if (vent_accent && vent_back)
+        translate([0, 0, fr_depth - vent_accent_d])
+            linear_extrude(vent_accent_d + 0.1)   // overshoots; frame() bounds it
+                for (p = grille_cells(-m3_ox, m3_oy, fr_keepouts))
+                    translate([p[0], p[1] - vent_slot_l/2 + vent_slot_w/2])
+                        difference() {
+                            offset(r = vent_accent_w)
+                                feather2d(vent_slot_l, vent_slot_w, vent_tip);
+                            // NOT the bare feather. The vent hole is cut with
+                            // exactly this profile, so a bare inner boundary
+                            // lands on the hole's own wall — the same plane,
+                            // twice — and CGAL answers with zero-area sheets:
+                            // "2 edges not shared by exactly two faces", which
+                            // is a mesh a slicer refuses. Shrinking the
+                            // subtrahend pushes the seam a hair INTO the hole,
+                            // where there is no material either way, so the
+                            // partition is unchanged and the surfaces are not
+                            // coplanar. Same fix as the dock's phantom
+                            // over-lip walls (#1373).
+                            offset(r = -vent_accent_eps)
+                                feather2d(vent_slot_l, vent_slot_w, vent_tip);
+                        }
+}
+
 module frame_ink()    { union() { back_inlay(ink_groups);
                                   intersection() { frame(); bezel_slab(); } } }
-module frame_accent() { back_inlay(accent_groups); }
-module frame_bodycol(){ difference() { frame(); bezel_slab(); } }
+// The vent rings enter ACCENT and leave BODY in the same breath — written as
+// one add and one subtract of the SAME module so the partition cannot drift.
+// Intersecting with frame() on the accent side is what keeps it exact where a
+// ring runs into a deboss void or off the plate edge: accent claims only
+// material that is actually there, and body subtracts the same tool.
+module frame_accent() { union() { back_inlay(accent_groups);
+                                  intersection() { frame(); vent_accent_rings(); } } }
+module frame_bodycol(){ difference() { frame(); bezel_slab(); vent_accent_rings(); } }
 
 // A rough colour key. PREVIEW ONLY — never export from this module.
 //
@@ -2117,23 +2366,36 @@ module frame() {
                 translate([0, (ledge_bot - ledge_top)/2])
                     rrect2d(fr_xi - 2*ledge_side, fr_yi - ledge_top - ledge_bot, 2);
             }
-            // ...and each ledge's 45° back-slope wedge to its wall: solid
-            // support under the adhesive landing, self-supporting when the
-            // frame prints back-plate-down. Profile: flat landing at ledge_z,
-            // inner face ledge_t tall, then 45° back up to the wall.
-            for (sx = [1, -1])
-                translate([sx*fr_xi/2, (fr_yi - 2*fr_ri)/2, ledge_z])
-                    rotate([90, 0, 0]) linear_extrude(fr_yi - 2*fr_ri)
-                        polygon([[0, 0], [-sx*ledge_side, 0],
-                                 [-sx*ledge_side, ledge_t], [0, ledge_t + ledge_side]]);
-            translate([-(fr_xi - 2*fr_ri)/2, fr_yi/2, ledge_z])
-                rotate([90, 0, 90]) linear_extrude(fr_xi - 2*fr_ri)
-                    polygon([[0, 0], [-ledge_top, 0],
-                             [-ledge_top, ledge_t], [0, ledge_t + ledge_top]]);
-            translate([(fr_xi - 2*fr_ri)/2, -fr_yi/2, ledge_z])
-                rotate([90, 0, -90]) linear_extrude(fr_xi - 2*fr_ri)
-                    polygon([[0, 0], [-ledge_bot, 0],
-                             [-ledge_bot, ledge_t], [0, ledge_t + ledge_bot]]);
+            // ...and the ledge's 45° back-slope to its wall: solid support
+            // under the adhesive landing, self-supporting when the frame
+            // prints back-plate-down.
+            //
+            // Built by GROWING the ledge's inner opening outward as we step
+            // back, rather than as three straight prisms. The prisms ran
+            // linear_extrude(fr_yi - 2*fr_ri) and friends — i.e. the straight
+            // spans only — so all four CORNERS had a bare flat ledge back face
+            // hanging over the cavity with nothing under it. A slicer flags it
+            // as a floating cantilever, correctly; it bridges, but it did not
+            // need to exist. offset() grows the opening uniformly, corners
+            // included, so the 45° face is now continuous all the way round.
+            //
+            // Stepped rather than swept because the three edges are different
+            // widths (10 / 6 / 2), so there is no single profile to revolve.
+            // Each step is ledge_slope_step tall and overhangs by the same,
+            // which is a 45° staircase — self-supporting at any step size; the
+            // step only sets how smooth the face looks.
+            for (i = [0 : ledge_slope_n - 1]) {
+                h = ledge_slope_max * i / ledge_slope_n;
+                translate([0, 0, ledge_z + ledge_t + h])
+                    linear_extrude(ledge_slope_max/ledge_slope_n + 0.01)
+                        difference() {
+                            rrect2d(fr_xi, fr_yi, fr_ri);
+                            offset(r = h)
+                                translate([0, (ledge_bot - ledge_top)/2])
+                                    rrect2d(fr_xi - 2*ledge_side,
+                                            fr_yi - ledge_top - ledge_bot, 2);
+                        }
+            }
         }
         // glass entry chamfer around the front rim
         hull() {
@@ -2349,8 +2611,12 @@ module frame() {
 // (+x,+y) corner, chosen because it contains a boss AND a wall keyhole. Assemble
 // it on the panel's corner with one M3x8-10: the glass corner proves glass_r,
 // the screw only threads home if the m3 offsets have the right SIGNS, and the
-// glass sits exactly glass_guard below the rim only if standoff_len is right
-// (the recess IS the pass criterion — flush glass means the stack is off).
+// glass sits exactly glass_guard below the rim only if standoff_len is right.
+// READ THE PASS CRITERION OFF glass_guard, not off memory: it is 0 today, so
+// a FLUSH glass face is the PASS — you should not be able to feel a step with
+// a fingernail dragged across the rim onto the glass, in either direction.
+// (Raise glass_guard and the criterion inverts: then a recess is the pass and
+// flush means the stack is off. This comment has been wrong that way before.)
 module frame_gauge() {
     bx = -m3_ox + m3_dx/2;  by = m3_oy + m3_dy/2;
     intersection() {
@@ -2571,6 +2837,43 @@ module sd_cover_installed() {
 module rg_corner2d(rr) {   // the glass corner at this radius, opened by the reveal
     offset(r = frame_reveal) translate([20, 20]) rrect2d(40, 40, rr);
 }
+// ----------------------------------------------------------------------------
+//  RING GAUGE — the whole outline, in a few minutes and ~5 g.
+//
+//  The radius gauge answers "what is the corner?" and the frame gauge answers
+//  "does one corner assemble?". Neither answers the question you actually want
+//  settled before a 110 g print: is the OPENING right, all the way round.
+//
+//  This is that check as a flat closed loop — inner edge exactly the frame's
+//  glass opening (fr_xi x fr_yi at fr_ri, i.e. the slab plus frame_reveal per
+//  side). Lay the panel into it, or hold it over the panel, and every error
+//  shows at once and in one place:
+//    · slab too wide/tall  -> it will not drop in, or rattles
+//    · corner radius wrong -> daylight at the arcs with the straights touching
+//    · reveal wrong        -> uniform slop or uniform bind all round
+//  A corner coupon cannot show the first of those at all, because it has no
+//  opposite edge to measure against.
+//
+//  Flat, four layers at 0.3, no supports, no brim. Print it FIRST — it is the
+//  cheapest part in the catalog and it gates the most expensive one.
+// ----------------------------------------------------------------------------
+ring_gauge_w = 6.0;   // radial width — wide enough to stay flat and be handled
+ring_gauge_t = 1.2;   // thickness; a 2 mm-wide ring at 200 mm long curls
+module ring_gauge() {
+    linear_extrude(ring_gauge_t) difference() {
+        rrect2d(fr_xi + 2*ring_gauge_w, fr_yi + 2*ring_gauge_w,
+                fr_ri + ring_gauge_w);
+        rrect2d(fr_xi, fr_yi, fr_ri);
+    }
+    // the part says what it is, so a loose ring on a bench is never a mystery
+    translate([0, -fr_yi/2 - ring_gauge_w/2, ring_gauge_t - 0.35])
+        linear_extrude(0.36)
+            text(str("GLASS ", glass_w, " x ", glass_h, "  r", glass_r,
+                     "  rev", frame_reveal),
+                 size = 3.0, font = label_font, halign = "center",
+                 valign = "center");
+}
+
 module radius_gauge() {
     assert(rg_step > 0, "radius_gauge: rg_step must be positive");
     assert(rg_centre - 1.5*rg_step > 0.4,
@@ -2830,6 +3133,32 @@ module stand_gauge() {
 }
 
 // ----------------------------------------------------------------------------
+// ── ASSEMBLY VIEWS — NOT PRINTABLE, and never exported as a part ────────────
+// The case has always been drawable on its own and meaningless on its own: a
+// hollow shell tells you nothing about which edge the cable leaves from or
+// which way up the image is. These put the REGISTRY'S panel in it, so the
+// thing you look at is the assembly rather than half of it.
+//
+// The mock is built from the same record the case reads, so it cannot drift:
+// there is no second description of the panel to keep in step. That is the
+// whole reason the registry exists — before it, the fit-check file and the
+// section view each built their own panel out of the case's variables, and
+// "they agree" was a habit rather than a property.
+//
+//   openscad -o assembly.png --imgsize 1600,1100 --autocenter --viewall \
+//       --camera=0,0,0,62,0,25,320 -D 'part="assembly"' canary_s3_lcd7.scad
+//   ...and part="exploded" for the same view pulled apart along the insertion
+//   axis. asm_blow sets how far; the panel leaves through the FRONT, because
+//   that is how it goes in.
+asm_blow = 26;   // exploded separation, mm
+module lcd7_assembly(blow = 0) {
+    // the case, held back so the panel reads through it
+    color([0.88, 0.88, 0.86, blow > 0 ? 1.0 : 0.35]) frame();
+    // the panel, seated: its front face lands glass_guard behind the rim,
+    // which is the same number the frame's own stack is built on
+    translate([0, 0, glass_guard - blow]) panel_mock(PANEL, blow * 0.18);
+}
+
 if      (part == "bezel") bezel_print();
 else if (part == "back")  back();
 // the frame and its gauge EXPORT back-plate-down: the print orientation the
@@ -2840,6 +3169,40 @@ else if (part == "frame_gauge") rotate([180, 0, 0]) translate([0, 0, -fr_depth])
 // Per-filament parts, in the SAME frame as part="frame" — that shared
 // orientation is what lets the slicer take all three without re-aligning
 // anything. Do not drop-to-bed them individually.
+// COLOUR COUPON — the three-filament rehearsal, ~6% of the frame's filament.
+//
+// Print this before committing the real frame. It is cut from the bottom-
+// centre band, which is the ONLY place on the part where all three colours
+// meet: white plate, INK lockup and bezel ring, ACCENT company line. The
+// corner gauge cannot do this job — the accent word lives at x = 0 and the
+// gauge is a corner, so a corner coupon would come out two-colour and prove
+// nothing about the third filament.
+//
+// What it actually tests, none of which a slicer preview will tell you:
+//   · the AMS purge is tuned — black bleeding into white shows here first,
+//     on the deboss floors, at 1/16th the filament cost
+//   · the three parts really do register when loaded as one object (they
+//     share part="frame"'s frame; move one and the lettering misses)
+//   · the bezel swap lands where the echo says, on a real first layer
+//   · the USB port and its grommet, since the port is in this band
+else if (part == "coupon_body")
+    rotate([180, 0, 0]) translate([0, 0, -fr_depth])
+        intersection() { frame_bodycol(); coupon_clip(); }
+else if (part == "coupon_ink")
+    rotate([180, 0, 0]) translate([0, 0, -fr_depth])
+        intersection() { frame_ink(); coupon_clip(); }
+else if (part == "coupon_accent")
+    rotate([180, 0, 0]) translate([0, 0, -fr_depth])
+        intersection() { frame_accent(); coupon_clip(); }
+// QR SCAN COUPON — two filaments, back plate only. See coupon_qr_clip() for
+// why this is its own plaque instead of a longer band. No accent part: the
+// QR is INK on BODY and the accent must never touch a finder pattern.
+else if (part == "coupon_qr_body")
+    rotate([180, 0, 0]) translate([0, 0, -fr_depth])
+        intersection() { frame_bodycol(); coupon_qr_clip(); }
+else if (part == "coupon_qr_ink")
+    rotate([180, 0, 0]) translate([0, 0, -fr_depth])
+        intersection() { frame_ink(); coupon_qr_clip(); }
 else if (part == "fil_body")   rotate([180, 0, 0]) translate([0, 0, -fr_depth]) frame_bodycol();
 else if (part == "fil_ink")    rotate([180, 0, 0]) translate([0, 0, -fr_depth]) frame_ink();
 else if (part == "fil_accent") rotate([180, 0, 0]) translate([0, 0, -fr_depth]) frame_accent();
@@ -2960,7 +3323,11 @@ else if (part == "bat_probe_grip") {
     // fails the gate; the hooks live well below the rail plane anyway
     intersection() { frame(); bat_brick(0, bat_t + 0.5, 0.1); }
 }
+else if (part == "assembly") lcd7_assembly(0);
+else if (part == "exploded") lcd7_assembly(asm_blow);
+else if (part == "panel")    panel_mock(PANEL);
 else if (part == "radius_gauge") radius_gauge();
+else if (part == "ring_gauge")   ring_gauge();
 // TPU fitments export in their print orientation (A-face down), as modelled
 else if (part == "plug_port")    usb_grommet(false);
 else if (part == "grommet_usb")  usb_grommet();

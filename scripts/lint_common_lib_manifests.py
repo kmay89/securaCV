@@ -21,7 +21,23 @@ So: **anything included path-prefixed must be compiled explicitly**, by naming
 its .cpp in a `build_src_filter`. That is what canary-sense.ini does for
 boot_banner.cpp, canary-vision.ini for the identity signer, canary-sentinel.ini
 for sentinel_fusion.cpp — and now canary-display.ini for the color engine.
-The rule holds for every prefixed library in the tree with no exceptions.
+
+...with ONE exception, which is the second half of this file. An env whose
+effective config is `lib_ldf_mode = chain` **plus** `lib_extra_dirs` reaching
+firmware/common already resolves those directories as ordinary LDF libraries.
+Naming the sources there too compiles each translation unit twice, and the
+link dies on `multiple definition of ...`. Both failures are link-time and
+neither shows up while the files are compiling:
+
+    too few sources  ->  undefined reference to canary::color::wash_stops
+    too many sources ->  multiple definition of canary::color::gamma8
+
+canary-display-nightstand7 shipped the second one to main by copying the
+block from nightstand-s3, where it is genuinely required, into an env that
+inherits both halves through `extends` and states neither. Hence
+`duplicate_compile_problems()` below, and the fixtures in
+scripts/tests/test_lint_common_lib_manifests.py — the tree only ever holds
+one shape at a time, so the shapes that are NOT in it have to be written down.
 
 Why it is written this way
 --------------------------
@@ -49,6 +65,163 @@ COMMON = ROOT / "firmware" / "common"
 ENVS = ROOT / "firmware" / "envs" / "platformio"
 PROJECTS = ROOT / "firmware" / "projects"
 SRC_EXT = {".cpp", ".c", ".h", ".hpp", ".ino"}
+
+
+def ini_sections(envs_dir):
+    """{section name: {'file','text','extends'}} across every env .ini.
+
+    Section names keep their `[env:...]` spelling; `extends` is normalised to
+    the bare section name so a chain can be walked without caring whether a
+    parent was written `env:canary-display-dash` or `canary_display_base`.
+    """
+    out = {}
+    for path in sorted(pathlib.Path(envs_dir).glob("*.ini")):
+        section = None
+        for line in path.read_text(errors="ignore").splitlines():
+            code = line.split(";", 1)[0]
+            header = re.match(r"\s*\[([^\]]+)\]", code)
+            if header:
+                section = header.group(1)
+                out.setdefault(section, {"file": path.name, "lines": []})
+                continue
+            if section:
+                out[section]["lines"].append(code)
+    for name, sec in out.items():
+        sec["text"] = "\n".join(sec["lines"])
+        m = re.search(r"^\s*extends\s*=\s*(\S+)", sec["text"], re.M)
+        # Kept VERBATIM. `extends = env:canary-display-dash` names the section
+        # `[env:canary-display-dash]`, so stripping the prefix here produced a
+        # key that matches nothing and silently ended the walk — which made
+        # this check blind to the very configuration it exists to catch (both
+        # halves inherited). resolve() below handles either spelling instead.
+        sec["extends"] = m.group(1) if m else None
+    return out
+
+
+def resolve(sections, name):
+    """The section key for `name`, tolerating the env: prefix either way."""
+    if name in sections:
+        return name
+    for alt in (f"env:{name}", name.split("env:")[-1]):
+        if alt in sections:
+            return alt
+    return None
+
+
+def option_value(sec, option):
+    """The VALUE of `option` in this section, or None if it doesn't set it.
+
+    Returns the assignment's own text plus any indented continuation lines,
+    which is how PlatformIO spells multi-value options:
+
+        lib_extra_dirs =
+            ../../common
+
+    Reading the value rather than the whole section matters twice over. These
+    files carry long comments that name the settings they discuss, and — the
+    bug that shipped in the first version of this check — a `build_src_filter`
+    entry like `+<../../../common/color/color_engine.cpp>` literally contains
+    the substring `../../common`, so "is `../../common` anywhere in this
+    section?" answered yes for a section whose lib_extra_dirs pointed
+    somewhere else entirely. That rejects a correct config and tells the
+    author to delete sources they need.
+    """
+    lines = sec["lines"]
+    for i, line in enumerate(lines):
+        m = re.match(rf"\s*{re.escape(option)}\s*=(.*)$", line)
+        if not m:
+            continue
+        value = [m.group(1)]
+        for cont in lines[i + 1:]:
+            if not cont.strip():
+                break
+            if re.match(r"\s*[A-Za-z_][A-Za-z0-9_.]*\s*=", cont):
+                break          # the next option starts
+            if not cont[:1].isspace():
+                break          # unindented: no longer this value
+            value.append(cont)
+        return "\n".join(value)
+    return None
+
+
+def inherited_option(sections, name, option, _seen=None):
+    """`option`'s effective value, resolved the way PlatformIO resolves it.
+
+    The FIRST section in the `extends` chain that sets the option wins — a
+    child setting it overrides the parent rather than merging, so the walk
+    must stop at "is it set here?", never at "does it say what I expected?".
+    Reading only the section's own lines sees a different build than the one
+    that runs, which is how the duplicate got in: that env inherited both
+    halves of the problem and stated neither.
+    """
+    _seen = _seen or set()
+    key = resolve(sections, name) if name else None
+    if not key or key in _seen:
+        return None
+    _seen.add(key)
+    got = option_value(sections[key], option)
+    if got is not None:
+        return got
+    return inherited_option(sections, sections[key]["extends"], option, _seen)
+
+
+def duplicate_compile_problems(envs_dir):
+    """Envs that compile a common/ library TWICE — a link-time duplicate.
+
+    The sibling check above guards the UNDEFINED direction: a path-prefixed
+    include whose .cpp nobody compiles. This guards the opposite, which is
+    just as fatal and looks nothing alike:
+
+        `lib_ldf_mode = chain` + `lib_extra_dirs` reaching firmware/common
+        already resolves those directories as ordinary LDF libraries. An env
+        in that state that ALSO names the .cpp in a build_src_filter compiles
+        each translation unit twice, and the link dies on
+        `multiple definition of ...`.
+
+    Measured on the tree, the three shapes that link cleanly are:
+        deep+ + lib_extra_dirs + explicit sources   (nightstand-s3, touch169, vision)
+        chain + no lib_extra_dirs + explicit sources (nightstand-c6, sense, sentinel)
+        chain + lib_extra_dirs + NO explicit sources (dash family, incl. nightstand7)
+    Only chain + lib_extra_dirs + explicit is broken, so that exact triple is
+    what this flags — narrow on purpose, because a false positive here blocks
+    correct work and teaches people to route around the check.
+    """
+    sections = ini_sections(envs_dir)
+    problems = []
+    for name in sorted(sections):
+        # build_src_filter inherits too: an env can pick up the explicit
+        # sources from a parent while adding only `lib_ldf_mode` itself, and
+        # reading just this section's lines would see none and skip it — a
+        # false negative on the very combination being guarded.
+        src_filter = inherited_option(sections, name, "build_src_filter") or ""
+        srcs = sorted(set(re.findall(r"\+<[^>]*common/([A-Za-z0-9_/]+\.cpp)>",
+                                     src_filter)))
+        if not srcs:
+            continue
+
+        ldf = (inherited_option(sections, name, "lib_ldf_mode") or "").strip()
+        extra_raw = inherited_option(sections, name, "lib_extra_dirs")
+        # Only the option's OWN value, and only an entry that really is
+        # firmware/common — `../../common`, not any path containing it.
+        extra = bool(extra_raw) and any(
+            re.search(r"(^|/)common/?$", entry.strip())
+            for entry in (extra_raw or "").splitlines() if entry.strip()
+        )
+        if ldf == "chain" and extra:
+            problems.append(
+                f"{sections[name]['file']}:[{name}]: compiles "
+                f"{srcs} explicitly, but its effective config is "
+                f"`lib_ldf_mode = chain` + `lib_extra_dirs = ../../common`,\n"
+                f"    which ALREADY builds firmware/common/* as LDF libraries. "
+                f"Each of those translation units would be compiled twice and "
+                f"the link fails with\n"
+                f"    'multiple definition of ...'. Drop the build_src_filter "
+                f"entries — this env inherits the sources from the LDF. (Both "
+                f"halves are usually INHERITED via\n"
+                f"    `extends`, so read the parent chain, not just this "
+                f"section.)"
+            )
+    return problems
 
 
 def project_includes():
@@ -204,6 +377,9 @@ def main() -> int:
                             f"undefined reference at link time. Add it "
                             f"alongside {rel}."
                         )
+
+    # The other direction: compiled twice rather than not at all.
+    problems.extend(duplicate_compile_problems(ENVS))
 
     if problems:
         print("firmware/common/ sources that will not link:\n", file=sys.stderr)

@@ -488,6 +488,18 @@ accent colour when only the company line is accent, and standing the inlays
 proud does not fix it. It is useful for silhouette and for the bezel band,
 and misleading for anything else. The caveat is written at the module too.
 
+### Ring gauge — check the whole outline for five grams
+
+```bash
+openscad --export-format binstl -o lcd7_ring_gauge.stl -D 'part="ring_gauge"' canary_s3_lcd7.scad
+```
+
+A flat closed loop whose inner edge is the frame's glass opening. Lay the panel
+in it: wrong size will not drop in, wrong corner shows daylight at the arcs
+with the straights touching, wrong reveal is uniform slop or bind. The radius
+and frame gauges cannot show a wrong overall size — they have no opposite edge
+to measure against. Print this before anything larger.
+
 ### Three-colour printing (7" frame, P2S + AMS)
 
 The one-piece frame can print white-bodied with a black bezel, black lettering
@@ -499,10 +511,54 @@ for f in body ink accent; do
 done
 ```
 
-Load `fil_body`, then **Add part → Load** the other two, assign a filament to
-each, slice. They share `part="frame"`'s coordinate frame, so **do not
-re-centre or drop-to-bed** the added parts — moving one moves the lettering out
-of its own recess.
+**Do not hand-assemble these from STLs.** Run the packager instead:
+
+```bash
+python3 gen_3mf.py tests      # the whole pre-flight — writes BOTH plates below
+python3 gen_3mf.py gauges     # plate 1: ring + corner gauge (one filament)
+python3 gen_3mf.py colour     # plate 2: colour coupon + QR plaque
+python3 gen_3mf.py frame      # the whole case
+```
+
+**`tests` is the one to run, and it deliberately writes TWO plates in an
+order.** Print `lcd7_gauges.3mf` first, then `lcd7_colour.3mf`.
+
+That split is the single biggest time saving here, and it is not about how the
+parts are arranged. A tool change anywhere on a plate builds a purge tower, and
+the tower is raised to the height of the **last** change. The colour coupon's
+bezel band is at print z 22.9–23.5 — the very top — so a plate holding it makes
+the slicer build ~23 mm of tower to service a 0.6 mm band. Put the two
+single-filament gauges on that plate and they wait through every layer of it
+for a tool change they never needed. Alone they print with **no tower and no
+purge at all**.
+
+The order matters for the same reason: the **ring gauge** is the cheapest thing
+that can tell you the whole outline is wrong, and nobody should spend a
+three-filament print to find that out.
+
+| plate | proves | filaments |
+|---|---|---|
+| `lcd7_gauges.3mf` | ring gauge — the whole display outline against the real panel; corner gauge — the screw pattern, `glass_r` in context, and `standoff_len` | 1 |
+| `lcd7_colour.3mf` | colour coupon — three-filament registration and the corner fit; QR plaque — that the help symbol actually scans | 3 |
+
+The QR plaque is two filaments, not three, and it is only the back plate —
+3 mm, not the frame's 23.5. The symbol is INK modules in a BODY-colour field
+(dark-on-light, the only polarity a reader accepts), and the accent must never
+touch a finder pattern, so there is deliberately no third slot to put it in.
+**Scan it with a phone before you commit a frame.** Cell size is the one thing
+no slicer preview and no CI gate can settle — `qr_back_cell` is 1.3 mm, about
+three line widths at a 0.42 mm extrusion, and whether that decodes is a
+question for a camera.
+
+It writes one 3MF whose parts are already registered and already assigned to
+filaments 1/2/3 — open it and slice. Loading the STLs as separate objects makes
+Bambu Studio auto-arrange them across the plate, which is correct behaviour for
+objects and fatal for parts of one; an instruction that must be obeyed for the
+output to be right is a defect, not a doc problem. `gen_3mf.py`'s header records
+the two format traps it took to get there.
+
+Add the filament slots in Bambu Studio **first** — with one slot loaded there is
+nothing for parts 2 and 3 to point at, and it looks like the parts are missing.
 
 The palette, the layer-band table showing why this costs so little purge, and
 the QR polarity constraint that makes the AMS necessary are documented at the
