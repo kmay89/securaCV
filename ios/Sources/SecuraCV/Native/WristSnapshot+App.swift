@@ -2,11 +2,13 @@
 //
 // App-target builder for the shared WristSnapshot: folds the FleetStore's
 // current truth into the wire shape. The roll-up trio comes from
-// Model/FleetRollup.swift — the same math as the Dynamic Island — and every
-// timestamp is coarsened with the same bucket the timeline uses
-// (Invariant III applies on the wire too). `revision`/`sentAt` are stamped by
-// WatchLink at send time, not here, so building a snapshot for comparison is
-// free of side effects.
+// Model/FleetRollup.swift — the same math as the Dynamic Island. Witness
+// EVENT times are coarsened with the same bucket the timeline uses
+// (Invariant III applies on the wire too); link-health times keep their
+// operational precision — see the two-kinds-of-time rule in
+// Shared/WristSnapshot.swift. `revision`/`sentAt` are stamped by WatchLink
+// at send time, not here, so building a snapshot for comparison is free of
+// side effects.
 
 import Foundation
 
