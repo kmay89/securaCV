@@ -197,7 +197,7 @@ assert(is_num(feather_area(7, 4)),
        "canary_vent_lib.scad is MISSING — this case cuts its grille and gills with it. Download canary_vent_lib.scad from the same folder and keep the two files side by side.");
 
 /* [What to render] */
-part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_port","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","dock_probe_fit","dock_probe_seat","dock_probe_p","dock_probe_p2","all"]
+part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_port","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","dock_probe_fit","dock_probe_seat","dock_probe_p","dock_probe_p2","port_teth_hole","port_teth_barb","all"]
 
 /* [Glass slab] — bonded touch panel, from the Waveshare drawing (mm) */
 glass_w = 192.96;    // touch-glass width  (X)
@@ -540,8 +540,14 @@ side_dy   = 0.0;      // its centre along that wall, + = toward the top edge
 // (deboss floors read in the body colour through the accent skin, so on a
 // two-colour print the words come out coloured for free — no extra swap).
 port_labels = true;
+// Both exits carry the SAME power cable — the side one is an alternate
+// route, not a different interface — so both say USB. Naming the side exit
+// after a board connector (UART1, CAN, ...) would be a lie moulded into the
+// plastic: it is a cable pass-through, aligned to nothing. These stay
+// strings so that IF you ever cut an opening onto a specific connector, you
+// can name it truthfully then.
 port_lbl_a  = "USB";    // beside the bottom exit
-port_lbl_b  = "UART1";  // beside the side exit
+port_lbl_b  = "USB";    // beside the side exit
 // RATING STAMP — the little spec block every mains-adjacent thing should
 // carry. It goes on the BACK plate's lower band: hidden behind the case on a
 // wall mount, hidden behind the dock's fin when docked, and right there when
@@ -582,6 +588,19 @@ sd_teth_hole = 3.2;  // anchor hole Ø through the plate (the Ø2.8 shaft rides
                      // loose in it; the Ø4.6 arrowhead squeezes through once)
 sd_teth_head = 4.6;  // arrowhead Ø — 1.4x the hole: firm thumb-push in, stays
                      // put dangling, yanks free for service
+// PORT LEASH — the same leash, on the port fitments. A grommet or a blank
+// that is only friction-held is a part you drop behind the desk the first
+// time you service the cable, so both carry a strap and the same arrowhead
+// barb, anchored beside their own port. Deliberately the SAME hole and head
+// as the SD cover's: one barb spec means one thumb-push feel, one hole size
+// to print, and a fitment that fits either port's anchor.
+//   Material: TPU 90-95A, EXTERNAL SPOOL — never the AMS. The strap is the
+//   reason: 1.2 mm of 90-95A through the AMS's long PTFE path buckles and
+//   jams the hub (see bambu_p2s_bringup.md §0). Only "TPU for AMS" 68D
+//   feeds through, and that is too stiff to be a leash.
+port_tether  = true;
+port_teth_dx = -12.6;  // anchor hole centre along the wall, from the port
+                       // centre — asserted clear of the brand words below
 // Bottom-edge brand — CRISP DEBOSS into the wall's outer skin. v0.6: the
 // slat-stencil vents this replaces cut the letters THROUGH the wall, which
 // forced tie bands across every glyph (or the counters fall out) — and on
@@ -1153,10 +1172,17 @@ assert(!qr_back || (qr_back_dx + qr_back_reach
 assert(!qr_back || (abs(qr_back_dx) + qr_back_reach < fr_xi/2 - fr_ri
                     && abs(qr_back_dy) + qr_back_reach < fr_yi/2 - 9),
        "frame: back QR (field + quiet zone) runs into the plate rim band or the brand line's row");
+// the leash anchor must not land on a brand word, and must stay on the
+// wall's flat span (the corner round is not a hole you can push a barb into)
+assert(!port_tether || !usb_port
+       || abs(usb_dx + port_teth_dx) + sd_teth_hole/2 + 1 < vword_x - vword_half,
+       "frame: the port leash anchor lands on a brand word — move port_teth_dx inboard");
+assert(!port_tether || abs(port_teth_dx) + sd_teth_hole/2 + 2 < fr_xi/2 - fr_ri,
+       "frame: the port leash anchor runs off the wall's flat span");
 // the bottom-wall port label sits beyond the brand words; it must still land
 // on the wall's flat span, not run onto the corner round
 assert(!port_labels || !usb_port
-       || vword_x + vword_half + 3.5 + 2.2*len(port_lbl_a) < fr_xi/2 - fr_ri,
+       || vword_x + vword_half + 6.0 + 2.2*len(port_lbl_a) < fr_xi/2 - fr_ri,
        "frame: the bottom port label runs off the wall's flat span — shorten port_lbl_a");
 assert(!rating_stamp || rating_dy - rating_h/2 > -(fr_yi/2 - 6) + 5,
        "frame: rating stamp overlaps the brand line's row — raise rating_dy");
@@ -1628,28 +1654,49 @@ module bat_brick(inset = 0, t = bat_t, drop = 0)
 // (+x), -1 = left (-x); pos runs along that wall. Every wall gets the same
 // stadium, the same 45° mouth bevel, and the same ledge relief behind it.
 module port_cut(edge = 0, pos = 0) {
+    // rotate(+90) maps +local x to +world y, rotate(-90) maps it to -world y
+    // — so without this the documented "+ = toward the top edge" silently
+    // reversed on the left wall. One sign, applied to the port and to its
+    // leash anchor together, keeps both walls reading the same way.
+    sgn = edge == 0 ? 1 : edge;
+    // leash anchor: a plain hole through the wall beside the port. The barb
+    // is pushed in from OUTSIDE with a thumb and mushrooms behind the wall,
+    // so the hole needs no counterbore — the wall's own inner face is the
+    // shoulder. This is what must exist in the printed case for the fitment
+    // to be captive at all: print the case AFTER this change, or the barb
+    // has nowhere to go (gated by port_teth_hole / port_teth_barb).
     ri  = edge == 0 ? fr_yi/2 : fr_xi/2;      // inner wall face
     ro  = edge == 0 ? fr_yo/2 : fr_xo/2;      // outer skin
     lg  = edge == 0 ? ledge_bot : ledge_side; // the ledge this wall carries
     rot = edge == 0 ? 0 : edge*90;            // -y swings to ±x
     rotate([0, 0, rot]) {
-        translate([pos, -ri + lg + 0.6, usb_z])
+        translate([pos*sgn, -ri + lg + 0.6, usb_z])
             rotate([90, 0, 0]) linear_extrude(frame_wall + lg + 1.2)
                 rotate(90) pill2d(usb_open_w, usb_open_h);
         // 45° mouth bevel at the skin — the grommet's cone lands on it, and
         // an unused port still reads finished
         hull() {
-            translate([pos, -ro + 0.01, usb_z]) rotate([90, 0, 0])
+            translate([pos*sgn, -ro + 0.01, usb_z]) rotate([90, 0, 0])
                 linear_extrude(0.02) rotate(90)
                     pill2d(usb_open_w + 1.6, usb_open_h + 1.6);
-            translate([pos, -ro + 0.81, usb_z]) rotate([90, 0, 0])
+            translate([pos*sgn, -ro + 0.81, usb_z]) rotate([90, 0, 0])
                 linear_extrude(0.02) rotate(90) pill2d(usb_open_w, usb_open_h);
         }
         // relieve the ledge ring + wedge behind the port so the grommet's
         // inner flange lands on a flat wall face
-        translate([pos, -ri + (lg + 1)/2 - 0.01, ledge_z + (ledge_t + lg)/2])
+        translate([pos*sgn, -ri + (lg + 1)/2 - 0.01, ledge_z + (ledge_t + lg)/2])
             cube([usb_open_w + 2*grom_lip + 2, lg + 1,
                   ledge_t + lg + 0.6], center = true);
+        if (port_tether) {
+            translate([(pos + port_teth_dx)*sgn, -ri - 1, usb_z])
+                rotate([-90, 0, 0])
+                    cylinder(d = sd_teth_hole, h = frame_wall + lg + 3);
+            // and a shallow counterbore at the OUTER mouth, so the pushed-in
+            // barb's mushroom parks flush with the skin rather than standing
+            // proud on the edge in plain view
+            translate([(pos + port_teth_dx)*sgn, -ro - 0.01, usb_z])
+                rotate([-90, 0, 0]) cylinder(d = sd_teth_head + 0.8, h = 1.4);
+        }
     }
 }
 
@@ -1810,14 +1857,15 @@ module frame() {
         // outboard of each opening's flange so a fitted grommet never
         // covers them
         if (port_labels && usb_port)
-            translate([vword_x + vword_half + 3.5,
+            translate([vword_x + vword_half + 6.0,
                        -fr_yo/2 + label_depth, usb_z])
                 rotate([90, 0, 0]) linear_extrude(label_depth + 0.2)
                     text(port_lbl_a, size = 3.6, font = label_font,
                          halign = "left", valign = "center");
         if (port_labels && side_exit != "none")
             rotate([0, 0, side_exit == "right" ? 90 : -90])
-                translate([side_dy + usb_open_w/2 + grom_lip + 3.5,
+                translate([(side_exit == "right" ? 1 : -1)
+                               *(side_dy + usb_open_w/2 + grom_lip + 3.5),
                            -fr_yo/2 + label_depth, usb_z])
                     rotate([90, 0, 0]) linear_extrude(label_depth + 0.2)
                         text(port_lbl_b, size = 3.6, font = label_font,
@@ -2028,6 +2076,28 @@ module usb_grommet(bore = true) {
     ww = usb_open_w + 2*tpu_squeeze;  wh = usb_open_h + 2*tpu_squeeze;
     difference() {
         union() {
+            // LEASH — the same strap-and-arrowhead the SD cover carries, so
+            // neither the grommet nor the blank can be dropped and lost the
+            // first time you service the cable.
+            // The strap runs along the WALL — which is the grommet's local x,
+            // not y: installed, the part is rotated 90 deg about x, so local
+            // x stays world x while local y becomes the wall's depth. (It ran
+            // up the wall the first time.) Everything lies on the bed at
+            // z 0..1.2, so the leash prints flat with no support, and the
+            // barb rises +z to pass outward through the anchor hole; the
+            // frame counterbores that mouth so the mushroom sits flush
+            // instead of proud on the edge you actually look at.
+            if (port_tether) {
+                hull() {
+                    translate([-fw/4, -2, 0]) cube([fw/2, 4, 1.2]);   // root
+                    translate([port_teth_dx - 2, -2, 0]) cube([4, 4, 1.2]);
+                }
+                translate([port_teth_dx, 0, 0]) {
+                    cylinder(d = sd_teth_hole - 0.4, h = 1.2 + frame_wall + 1.0);
+                    translate([0, 0, 1.2 + frame_wall + 1.0 - 0.01])
+                        cylinder(d1 = sd_teth_head, d2 = 0.8, h = 2.2);
+                }
+            }
             // inner flange — flat bearing face on the bed: this is the face
             // that carries cable tugs, so it is square, not chamfered
             linear_extrude(1.6) stadium2d(fw, fh);
@@ -2253,8 +2323,15 @@ module stand_wellblade(x0, w, drop = 0) {
 // case's front face sits at -std_cd/2, so the slot's centre lands here. With
 // a fixed y this silently walked off the slot as soon as a battery deepened
 // the case — the 3000 build put the stud 4.4 mm out and it hit solid wall.
+// key_trim: the studs historically sat 0.2 forward of the pure derivation,
+// and the PORTRAIT pose is tuned to that — moving them onto the derived
+// centre by itself made stand_p collide (32 slivers at ±47.3, the portrait
+// studs). So keep the trim: this change is meant to make the position TRACK
+// the case's depth, not to re-tune a pose that already worked. Landscape had
+// 4.35 mm of error before it failed, so 0.2 is well inside its margin.
 module stand_keystud(x0, z0) {
-    ky = -std_cd/2 + key_gz;
+    key_trim = 0.2;
+    ky = -std_cd/2 + key_gz + key_trim;
     stand_seatframe() hull() {
         translate([x0 - 0.9, ky - 0.95, z0 - 0.5]) cube([1.8, 1.9, 0.5]);
         translate([x0 - 0.3, ky - 0.35, z0 + 1.5]) cube([0.6, 0.7, 0.02]);
@@ -2461,6 +2538,25 @@ else if (part == "stand_gauge") stand_gauge();
 //   dock_probe_fit  — seated frame vs stand, hovered: must be EMPTY
 //   dock_probe_seat — pressed in: must be SOLID (the pads carry the case)
 //   dock_probe_p / _p2 — the same collision check, portrait either way
+// Leash gates, same doctrine as the SD tether's pair: one proves the FRAME
+// really carries the anchor hole (print the case without it and the fitment
+// can never be made captive), the other proves the barb actually reaches it.
+else if (part == "port_teth_hole") {
+    assert(port_tether && usb_port, "needs port_tether and usb_port");
+    intersection() {
+        frame();
+        translate([usb_dx + port_teth_dx, -fr_yo/2 - 1, usb_z])
+            rotate([-90, 0, 0]) cylinder(d = sd_teth_hole - 0.6, h = frame_wall + 8);
+    }
+}
+else if (part == "port_teth_barb") {
+    assert(port_tether && usb_port, "needs port_tether and usb_port");
+    intersection() {
+        usb_grommet_installed();
+        translate([usb_dx + port_teth_dx, -fr_yi/2 - 0.4, usb_z])
+            rotate([-90, 0, 0]) cylinder(d = sd_teth_head + 2, h = 0.8);
+    }
+}
 else if (part == "dock_probe_fit")
     intersection() { lcd7_docked(-0.2); stand(); }
 else if (part == "dock_probe_seat")

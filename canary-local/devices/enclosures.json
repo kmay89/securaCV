@@ -6478,6 +6478,8 @@
         "dock_probe_seat",
         "dock_probe_p",
         "dock_probe_p2",
+        "port_teth_hole",
+        "port_teth_barb",
         "all"
        ]
       }
@@ -7063,7 +7065,7 @@
       },
       {
        "name": "port_lbl_b",
-       "default": "UART1",
+       "default": "USB",
        "comment": "beside the side exit"
       },
       {
@@ -7122,6 +7124,15 @@
        "name": "sd_teth_head",
        "default": "4.6",
        "comment": "arrowhead Ø — 1.4x the hole: firm thumb-push in, stays"
+      },
+      {
+       "name": "port_tether",
+       "default": "true"
+      },
+      {
+       "name": "port_teth_dx",
+       "default": "-12.6",
+       "comment": "anchor hole centre along the wall, from the port"
       },
       {
        "name": "edge_text_l",
