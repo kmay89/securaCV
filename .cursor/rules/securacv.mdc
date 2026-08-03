@@ -52,9 +52,10 @@ guarantee isn't structural yet, say so out loud.
 
 **5. Vocabulary changes start in the dictionary.** Event types, failure types,
 attestation tiers, claim kinds and modalities are duplicated as constants across
-Rust, Python, JS and firmware C++. `spec/witness_dictionary.json` is the single
-source of truth and `scripts/lint_dictionary_sync.py` fails CI on any drift. Edit
-the dictionary first, then every copy the linter names.
+Rust, Python, JS, firmware C++ and Swift (the Apple apps' `EventVocabulary`).
+`spec/witness_dictionary.json` is the single source of truth and
+`scripts/lint_dictionary_sync.py` fails CI on any drift. Edit the dictionary
+first, then every copy the linter names.
 
 **6. A new doc gets a home on the map in the same commit.**
 `scripts/lint_docs_index.py` fails the build if a doc under `docs/` isn't

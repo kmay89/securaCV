@@ -51,17 +51,19 @@ final class WristStore: NSObject, ObservableObject {
     }
 
     /// Fire the end-to-end alert-path self-test from the wrist (RFC §3.3
-    /// screen 2). The phone runs it; the verdict comes back as heartbeat
-    /// state in the next snapshot.
+    /// screen 2). The phone runs it and REPLIES with the verdict-carrying
+    /// snapshot — correlation by construction: only that reply resolves this
+    /// request, so a queued context or an unrelated heartbeat can never be
+    /// mistaken for the answer.
     func runPathTest() {
         let session = WCSession.default
         guard WCSession.isSupported(),
               session.activationState == .activated, session.isReachable else { return }
         testRequestInFlight = true
-        // Belt for the wedge case: if the phone dies mid-test (or its result
-        // push never arrives), the flag must not pin the UI on "Testing…"
-        // forever — after the timeout the screen honestly re-renders whatever
-        // state the last snapshot carries.
+        // Belt for the wedge case: if the phone dies mid-test (or the reply
+        // never arrives), the flag must not pin the UI on "Testing…" forever
+        // — after the timeout the screen honestly re-renders whatever state
+        // the last snapshot carries.
         testTimeoutTask?.cancel()
         testTimeoutTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(45))
@@ -69,10 +71,28 @@ final class WristStore: NSObject, ObservableObject {
             self?.testRequestInFlight = false
         }
         session.sendMessage([WristSync.messageCommandKey: WristSync.commandTestAlertPath],
-                            replyHandler: { _ in },
+                            replyHandler: { [weak self] reply in
+                                Task { @MainActor in self?.resolvePathTest(with: reply) }
+                            },
                             errorHandler: { [weak self] _ in
-                                Task { @MainActor in self?.testRequestInFlight = false }
+                                Task { @MainActor in
+                                    self?.testRequestInFlight = false
+                                    self?.testTimeoutTask?.cancel()
+                                }
                             })
+    }
+
+    /// The reply to OUR test request: adopt the snapshot it carries and play
+    /// the verdict it states — the one correlated answer.
+    private func resolvePathTest(with reply: [String: Any]) {
+        testRequestInFlight = false
+        testTimeoutTask?.cancel()
+        adopt(context: reply)
+        switch WristSync.snapshot(fromContext: reply)?.heartbeat {
+        case .alive: WristFeedback.play(FeedbackPolicy.pathTest(verified: true))
+        case .failed: WristFeedback.play(FeedbackPolicy.pathTest(verified: false))
+        default: break
+        }
     }
 
     private func adopt(context: [String: Any]) {
@@ -84,12 +104,26 @@ final class WristStore: NSObject, ObservableObject {
         }
         phoneSpeaksNewerSchema = false
         lastHeardFromPhone = Date()
-        testRequestInFlight = false
-        testTimeoutTask?.cancel()
+
+        // Unstick only: a non-testing snapshot means no test is running on
+        // the phone anymore. The felt VERDICT never comes from here — only
+        // from resolvePathTest's correlated reply — so an unrelated queued
+        // context can't buzz as an answer.
+        if incoming.heartbeat != .testing {
+            testRequestInFlight = false
+            testTimeoutTask?.cancel()
+        }
+
         guard incoming.isNewer(than: snapshot) else { return }
+        let previousWorst = snapshot?.severity ?? .ok
         snapshot = incoming
         WristCache.save(incoming)
         WidgetCenter.shared.reloadAllTimelines()
+
+        // Same one policy as the phone: escalations and the all-clear, felt
+        // once at the transition.
+        WristFeedback.play(FeedbackPolicy.fleetTransition(from: previousWorst,
+                                                          to: incoming.severity))
     }
 }
 

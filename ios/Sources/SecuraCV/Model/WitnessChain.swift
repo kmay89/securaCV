@@ -35,16 +35,11 @@ struct WitnessRecord: Identifiable, Codable, Hashable, Sendable {
         return "\(seq):\(prevHash):\(iso):\(eventType):\(zone)"
     }
 
-    /// Human severity for a raw event_type (mirrors const.py's coarse mapping).
-    var severity: Severity {
-        switch eventType {
-        case "tamper", "panic": return .tamper
-        case "chain_break", "verify_failed", "witness_lost": return .alert
-        case "person_detected", "vehicle_detected": return .notice
-        case "motion_detected", "animal_detected": return .notice
-        default: return .notice
-        }
-    }
+    /// Human severity for a raw event_type — resolved by the one shared
+    /// vocabulary (Shared/EventVocabulary.swift), which understands the
+    /// dictionary ids, the device dialect, and calmly defaults everything
+    /// else to `.notice`. Same coarse meanings as const.py, one copy.
+    var severity: Severity { EventVocabulary.severity(forWire: eventType) }
 }
 
 struct WitnessChainPage: Codable, Sendable {
@@ -63,6 +58,9 @@ struct TimelineEvent: Identifiable, Hashable, Sendable {
     var badge: TrustBadge
     /// Coarse 10-minute bucket, honoring Invariant III — never a precise second.
     var timeBucket: Date
+    /// SF Symbol for the event's meaning (EventVocabulary) — defaulted so
+    /// hand-built events (demo, tests) stay valid without naming one.
+    var symbol: String = "sparkle"
 }
 
 extension ISO8601DateFormatter {

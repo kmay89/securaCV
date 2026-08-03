@@ -17,7 +17,8 @@ struct TodayView: View {
                 VStack(spacing: Theme.l) {
                     if store.demoMode { DemoDataBanner() }
                     StatusHero(severity: store.worstSeverity,
-                               headline: store.allQuiet ? "All quiet" : hotHeadline)
+                               headline: store.allQuiet ? "All quiet" : hotHeadline,
+                               watchers: store.witnesses.count)
                     HeartbeatCard()
                     if store.timeline.isEmpty {
                         EmptyTimeline()
@@ -49,10 +50,14 @@ struct TodayView: View {
     }
 }
 
-/// The big glanceable status — the one honest answer.
+/// The big glanceable status — the one honest answer. The quiet line names
+/// the fleet's size on purpose: growth reads as more Canaries "watching
+/// together", never as more things to worry about.
 struct StatusHero: View {
     let severity: Severity
     let headline: String
+    var watchers: Int = 0
+
     var body: some View {
         VStack(spacing: Theme.s) {
             Image(systemName: severity.sfSymbol)
@@ -63,13 +68,22 @@ struct StatusHero: View {
             Text(headline)
                 .font(.title2).bold()
                 .multilineTextAlignment(.center)
-            Text(severity == .ok ? "Your fleet is watching." : "One thing needs your attention.")
+            Text(subtitle)
                 .font(.subheadline).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, Theme.l)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(severity.label). \(headline)")
+    }
+
+    private var subtitle: String {
+        guard severity == .ok else { return "One thing needs your attention." }
+        switch watchers {
+        case 0: return "Add a Canary to start the watch."
+        case 1: return "Your Canary is watching."
+        default: return "\(watchers) Canaries watching together."
+        }
     }
 }
 
@@ -78,7 +92,13 @@ struct TimelineRow: View {
     var body: some View {
         Card {
             HStack(spacing: Theme.m) {
-                SeverityPip(severity: event.severity)
+                // The event's MEANING as the glyph, tinted by its severity —
+                // richer than a bare status dot, still calm.
+                Image(systemName: event.symbol)
+                    .foregroundStyle(Theme.color(event.severity.role))
+                    .imageScale(.medium)
+                    .frame(width: 24)
+                    .accessibilityLabel(event.severity.label)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(event.headline).font(.body)
                     HStack(spacing: 6) {
@@ -100,10 +120,13 @@ struct TimelineRow: View {
 struct EmptyTimeline: View {
     var body: some View {
         Card {
-            VStack(alignment: .leading, spacing: Theme.xs) {
-                Text("Nothing to report").font(.headline)
-                Text("Events show up here as your Canaries witness them — a claim of what happened, never a recording.")
-                    .font(.subheadline).foregroundStyle(.secondary)
+            HStack(spacing: Theme.m) {
+                CanaryPerchView(height: 56)
+                VStack(alignment: .leading, spacing: Theme.xs) {
+                    Text("Nothing to report").font(.headline)
+                    Text("Events show up here as your Canaries witness them — a claim of what happened, never a recording.")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
             }
         }
     }
