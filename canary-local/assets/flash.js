@@ -5141,9 +5141,20 @@ function phaseMonitor(port, opts = {}) {
     // If nothing arrives soon, explain why (many builds stay silent until
     // asked) — but keep the connection; don't tear it down.
     if (quietTimer) clearTimeout(quietTimer);
+    // Same diagnosis the native app gives (desktop/src-tauri/serial_monitor.rs,
+    // SILENCE_SECS) — a console that connects and then shows nothing looks like
+    // a dead board when the board is usually fine and the LINK is the problem,
+    // and browser users deserve the same list of things worth trying rather
+    // than the vague version. The one cause that is NOT shared: this side
+    // hard-resets before opening, so "it booted before you attached" can't
+    // happen here and isn't offered.
     if (!mon.everByted) quietTimer = setTimeout(() => {
       if (!mon.everByted && mon.alive)
-        setStatus("Connected, but quiet so far — many builds only speak when asked: press h for the menu. (If the board just reset, I'll reconnect on my own.)");
+        setStatus("Connected, but the board hasn’t said anything yet. That usually isn’t a " +
+          "dead board: many builds only speak when asked — press h for its menu. It may also " +
+          "be running firmware built without a serial console, or another program (the " +
+          "desktop Flasher app, screen, PlatformIO) may be holding the port. " +
+          "(If the board just reset, I’ll reconnect on my own.)");
     }, 4000);
     const dec = new TextDecoder();
     let buf = con.textContent || "", sample = "", judged = false;

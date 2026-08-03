@@ -113,6 +113,12 @@ targets:
     platform: iOS
     sources:
       - path: Sources/SecuraCVNotificationService
+      # ONE shared file, deliberately not the whole Shared/ directory: this
+      # extension links neither SwiftUI nor WidgetKit nor the fleet model, and
+      # pulling all of Shared in would drag them along. WakePayload.swift is
+      # pure Foundation for exactly this reason — it lets the app and the NSE
+      # agree on what a wake means without the NSE growing a dependency.
+      - path: Shared/WakePayload.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.securacv.witness.nse

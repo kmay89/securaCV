@@ -9,9 +9,19 @@
 
 namespace canary::ui {
 
-namespace { canary::color::LookParams s_look; }
+namespace {
+canary::color::LookParams s_look;
+canary::color::Plumage s_song;
+LampFrame s_lamp;
+}  // namespace
 
 canary::color::LookParams& look_params() { return s_look; }
+
+canary::color::Plumage& song() { return s_song; }
+
+void song_seed(uint32_t seed, uint32_t now_ms) { s_song.begin(seed, now_ms); }
+
+LampFrame& lamp_frame() { return s_lamp; }
 
 void look_set_scene(uint8_t idx) {
   if (canary::color::kSceneCount)

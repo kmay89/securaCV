@@ -136,10 +136,12 @@ if (emblem_h > 0) {
 //  art is line work ~0.08 mm wide at badge size, which no nozzle can lay down.
 //  Chaikin corner-cutting rounds the polylines; three passes is plenty.
 // ---------------------------------------------------------------------------
-// The glyph itself now lives in canary_mark_lib.scad — ONE bird for the
-// whole catalog, so the 7" back plate and this coupon cannot drift into two
-// slightly different birds. Everything crosses as a function because
-// OpenSCAD's use<> does not carry variables.
+// (The bird itself now lives in canary_mark_lib.scad — one definition of the
+// house mark for the whole line, the same way canary_vent_lib.scad owns the
+// egg, so the 7" back plate and this coupon cannot drift into two slightly
+// different birds. This coupon is where its printability gets PROVEN, not
+// where it is defined; see the rib/crown knobs above. Everything crosses as a
+// function because OpenSCAD's use<> does not carry variables.)
 // ---------------------------------------------------------------------------
 
 module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
@@ -155,7 +157,7 @@ module emb(x, y, s, size = 7) { translate([x, y, base_t - 0.05]) linear_extrude(
 // footprint is still a full rib wide; only the crown draws in.
 module emblem_emb(px, py, h) {
     translate([px, py, base_t - 0.05])
-        canary_mark_emboss(h, emboss_h + 0.05, emblem_rib, emblem_crown);
+        mark_emboss(h, emboss_h + 0.05, emblem_rib, emblem_crown);
 }
 module keyhole_pocket(px, py) {         // blind, from the back (z=0 face)
     translate([px, py, 0]) union() {

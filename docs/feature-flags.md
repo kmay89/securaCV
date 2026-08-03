@@ -84,6 +84,7 @@ Source of truth: `Cargo.toml:55-71`. Default build enables **none** of these
 | `adapter-meshtastic` | off | stable | Meshtastic LoRa-mesh detection-sensor adapter | keep |
 | `adapter-can-bus` | off | exp | Passive-only vehicle CAN bus adapter (arrival/departure claims via Linux SocketCAN) | promote to stable once bench-validated against a real vehicle (docs/hardware/canary_vehicle_can.md) |
 | `adapter-sandbox` | off | stable | Sandbox/test adapter | keep |
+| `bridge-homekit` | off | exp | Apple Home egress projection core: the closed coarse-boolean vocabulary plus the pacer that publishes on a fixed cadence rather than on events (`src/bridge/homekit.rs`, docs/design/apple_home_integration.md). Pure Rust — no HAP server or socket yet | promote to stable when a HAP lane actually ships and open decision #6 (one accessory per Canary vs per signal) is settled |
 | `pqc-signatures` | off | exp | ML-DSA post-quantum signatures | promote once PQC signing is a supported deployment mode |
 | `pqc-vault` | off | exp | ML-KEM post-quantum vault sealing | promote once PQC vault is supported |
 | `pqc-tls` | off | exp | PQC-capable TLS stack | promote once PQC transport is supported |

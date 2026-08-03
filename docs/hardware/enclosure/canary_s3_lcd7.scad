@@ -211,7 +211,7 @@
 use <canary_panel_lib.scad> // THE PANEL REGISTRY — every panel/board number
                             // this file uses comes from there, not from here
 use <canary_vent_lib.scad>  // the brand vent shape: egg2d / egg_area
-use <canary_mark_lib.scad>  // THE BIRD — canary_mark_2d, shared with the coupon
+use <canary_mark_lib.scad>  // THE BIRD — mark_bird, shared with the coupon
 use <canary_s3_lcd7_stamp.scad>   // GENERATED build stamp — see gen_stamp.py
 // Downloaded this file on its own? It CUTS ITS VENTS with that library — a
 // missing lib would render a sealed, overheating case with only a console
@@ -2444,16 +2444,14 @@ module back_graphics(ink = "all") {
                       rating_lines[i], rating_sz);
     }
     if (all || ink == "bird")
-        // The mark, in the clear middle the adhesive rails used to own. Scaled
-        // from design units by the library's own span, and shifted by its bbox
-        // center so bird_dx/dy place the MARK's middle rather than the paths'
-        // arbitrary origin.
+        // The mark, in the clear middle the adhesive rails used to own.
+        // mark_bird() does the design-unit bookkeeping — the scale off the
+        // library's own span, and the shift by its bbox center — so bird_dx/dy
+        // place the MARK's middle rather than the paths' arbitrary origin.
         if (back_bird)
             translate([bird_dx, bird_dy, fr_depth - label_back_depth])
                 linear_extrude(label_back_depth + 0.1)
-                    scale(bird_h / canary_mark_span())
-                        translate([-canary_mark_cx(), -canary_mark_cy()])
-                            canary_mark_2d(bird_rib * canary_mark_span() / bird_h);
+                    mark_bird(bird_h, bird_rib);
     if (all || ink == "mark") {
         // THE LOCKUP — both lines, and the only thing on the plate that takes
         // the accent. The hero product name used to live in "text" alongside

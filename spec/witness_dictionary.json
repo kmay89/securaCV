@@ -67,6 +67,32 @@
     ]
   },
 
+  "homekit_projection": {
+    "$comment": "The Apple Home / HAP projection — an EGRESS vocabulary (Track C). Mirrored Rust src/bridge/homekit.rs `HomeSignal` (variants, as_str, hap_characteristic) <-> Swift ios/Sources/SecuraCV/Native/HomeKitBridge.swift `HomeSignal`. Every entry is a coarse present-tense boolean and the list is closed on purpose: there is no zone, timestamp, count, confidence or identity field for a bridge to project, because none exists here to project. `default_enabled: false` marks the class-scoped signals — the one sanctioned step past the dumb-PIR bar (the ObjectClass word, never identity) — which stay off until a human turns them on. `shape` tells the pacer whether a signal is momentary (pulse, auto-clears after the hold window), continuous (level), or sticky (latched, operator-cleared). Design of record: docs/design/apple_home_integration.md.",
+    "version": 1,
+    "pacing": {
+      "$comment": "The metronome that keeps this projection inside Invariant III. Publication happens on a fixed cadence, never on an event, so the finest external time resolution anything downstream can learn is one tick — and the publication rate itself carries no information (the 'explicitly configured for cover traffic' path the invariant names). `tick_ms` is a privacy/latency dial, not a performance constant. Bounds are enforced in Rust (PacingConfig::new) and a config outside them is refused, never clamped.",
+      "default_tick_ms": 1000,
+      "min_tick_ms": 200,
+      "max_tick_ms": 600000,
+      "default_motion_hold_ticks": 10,
+      "max_motion_hold_ticks": 3600,
+      "cover_traffic": true
+    },
+    "signals": [
+      { "id": "motion", "rust_variant": "Motion", "hap_characteristic": "motion-detected", "shape": "pulse", "default_enabled": true, "label": "Motion" },
+      { "id": "occupancy", "rust_variant": "Occupancy", "hap_characteristic": "occupancy-detected", "shape": "level", "default_enabled": true, "label": "Occupancy" },
+      { "id": "contact", "rust_variant": "Contact", "hap_characteristic": "contact-sensor-state", "shape": "level", "default_enabled": true, "label": "Contact" },
+      { "id": "tamper", "rust_variant": "Tamper", "hap_characteristic": "status-tampered", "shape": "latched", "default_enabled": true, "label": "Tamper" },
+      { "id": "active", "rust_variant": "Active", "hap_characteristic": "status-active", "shape": "level", "default_enabled": true, "label": "Responding" },
+      { "id": "low_battery", "rust_variant": "LowBattery", "hap_characteristic": "status-lo-batt", "shape": "level", "default_enabled": true, "label": "Low battery" },
+      { "id": "motion_person", "rust_variant": "MotionPerson", "hap_characteristic": "motion-detected", "shape": "pulse", "default_enabled": false, "label": "Motion (person)" },
+      { "id": "motion_vehicle", "rust_variant": "MotionVehicle", "hap_characteristic": "motion-detected", "shape": "pulse", "default_enabled": false, "label": "Motion (vehicle)" },
+      { "id": "motion_animal", "rust_variant": "MotionAnimal", "hap_characteristic": "motion-detected", "shape": "pulse", "default_enabled": false, "label": "Motion (animal)" },
+      { "id": "motion_package", "rust_variant": "MotionPackage", "hap_characteristic": "motion-detected", "shape": "pulse", "default_enabled": false, "label": "Motion (package)" }
+    ]
+  },
+
   "signature_format": {
     "$comment": "The device-signature canonical format (Track A). SCHEMA_V, SIG_PREFIX, ALG_NAME are byte-identical across Python (signature.py) and the firmware copies (firmware/common/identity/device_signature.h and the per-project mirrors). This is the contract doc 12 A3 flags as lacking cross-language golden vectors; PR2 will add those. `canonical_kinds` records which signed message kinds each tree carries — `sense` is absent from the canary-wap tree (CSI, not radar) by design.",
     "schema_v": 1,

@@ -90,6 +90,11 @@ adapter-mqtt-sensor = []
 adapter-webhook = ["adapter-mqtt-sensor"]
 adapter-webhook-tls = ["adapter-webhook", "rustls", "rustls-pemfile", "rustls-pki-types"]
 adapter-ble-presence = []
+# Egress bridge: the paced Apple Home projection core
+# (docs/design/apple_home_integration.md). Pure Rust, no HAP dependency yet —
+# it produces the publications a HAP server would send, on a fixed cadence,
+# so the Invariant III properties are testable without a socket.
+bridge-homekit = []
 adapter-meshtastic = []
 adapter-can-bus = []
 adapter-sandbox = []

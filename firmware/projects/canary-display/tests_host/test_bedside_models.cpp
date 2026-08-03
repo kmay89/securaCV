@@ -3,6 +3,8 @@
 // Host tests for the three pure bedside models the Nightstand 7 wave adds:
 //   care/lantern.h       — the honest night light (timeout, attention veto,
 //                          the opt-in auto schedule, the scene ring)
+//   care/hallway.h       — Hallway mode: the one switch over lantern hours,
+//                          and its rise/hold/ebb dwell envelope
 //   care/ambient_life.h  — rationed organic check-ins (cadence bounds,
 //                          the idle/lit gate, determinism)
 //   io/boot_button.h     — short / double / long press classification
@@ -15,12 +17,15 @@
 //
 // Build/run via the tests_host Makefile.
 #include "canary/care/lantern.h"
+#include "canary/care/hallway.h"
+#include "canary/glass_settings.h"
 #include "canary/care/ambient_life.h"
 #include "canary/io/boot_button.h"
 
 #include <cstdio>
 
 using canary::care::AmbientLife;
+using canary::care::HallwayModel;
 using canary::care::LanternModel;
 using canary::care::LifeMoment;
 using canary::io::ButtonClassifier;
@@ -283,12 +288,167 @@ static void test_button_debounce() {
   CHECK(hold(b, false, t, 600) == ButtonEvent::None, "chatter is swallowed");
 }
 
+// ── Hallway mode ──────────────────────────────────────────────────────────
+
+static void test_hallway_off_by_default() {
+  printf("hallway off by default...\n");
+  HallwayModel h;
+  CHECK(!h.enabled(), "a fresh model is off");
+  // Off must mean OFF at every point in the night, not merely dim: the
+  // dark-means-safe signal is only traded away by an explicit switch.
+  bool any = false;
+  for (uint16_t m = 0; m < 600; m++)
+    if (h.level(m, (uint16_t)(600 - m), false) != 0) any = true;
+  CHECK(!any, "no light anywhere in the night while off");
+}
+
+static void test_hallway_attention_veto() {
+  printf("hallway attention veto...\n");
+  HallwayModel h;
+  h.configure(true, canary::care::HALLWAY_SOFT,
+              HallwayModel::kRiseMinDefault, HallwayModel::kEbbMinDefault,
+              /*beacon=*/true);
+  // Mid-night, fully risen — the best case for the lamp.
+  CHECK(h.level(200, 200, false) == 255, "lit and full mid-night");
+  CHECK(h.level(200, 200, true) == 0, "attention extinguishes it outright");
+  CHECK(h.brightness_now(200, 200, true) == 0, "and the brightness with it");
+}
+
+static void test_hallway_dwell_envelope() {
+  printf("hallway dwell envelope...\n");
+  HallwayModel h;
+  h.configure(true, canary::care::HALLWAY_SOFT, 6, 12, true);
+  const uint16_t night = 480;   // an 8-hour window
+
+  // It starts dark and RISES — a lamp that snapped on would read as a timer.
+  CHECK(h.level(0, night, false) == 0, "dark at the first minute");
+  uint8_t prev = 0;
+  bool monotonic = true;
+  for (uint16_t m = 0; m <= 6; m++) {
+    const uint8_t v = h.level(m, (uint16_t)(night - m), false);
+    if (v < prev) monotonic = false;
+    prev = v;
+  }
+  CHECK(monotonic, "the rise never goes backwards");
+  CHECK(h.level(6, night - 6, false) == 255, "full by the end of the rise");
+
+  // It holds through the middle.
+  CHECK(h.level(120, 360, false) == 255, "holds mid-night");
+
+  // And it EBBS toward morning rather than cutting out.
+  CHECK(h.level(night - 12, 12, false) == 255, "still full as the ebb begins");
+  CHECK(h.level(night - 6, 6, false) < 255, "dimming halfway through the ebb");
+  CHECK(h.level(night, 0, false) == 0, "dark by the end of the window");
+}
+
+static void test_hallway_short_night_still_fades() {
+  printf("hallway short night...\n");
+  // Ramps longer than the whole window: the lamp must still fade in and out
+  // (never jump), it just never reaches full.
+  HallwayModel h;
+  h.configure(true, canary::care::HALLWAY_SOFT, 60, 60, true);
+  const uint16_t night = 40;
+  CHECK(h.level(0, night, false) == 0, "starts dark");
+  CHECK(h.level(night, 0, false) == 0, "ends dark");
+  uint8_t peak = 0;
+  for (uint16_t m = 0; m <= night; m++) {
+    const uint8_t v = h.level(m, (uint16_t)(night - m), false);
+    if (v > peak) peak = v;
+  }
+  CHECK(peak > 0, "it does light up");
+  CHECK(peak < 255, "but never reaches full on a night this short");
+}
+
+static void test_hallway_levels_are_ordered_and_warm() {
+  printf("hallway levels...\n");
+  HallwayModel dim, soft, glow;
+  dim.configure(true, canary::care::HALLWAY_DIM, 6, 12, true);
+  soft.configure(true, canary::care::HALLWAY_SOFT, 6, 12, true);
+  glow.configure(true, canary::care::HALLWAY_GLOW, 6, 12, true);
+  CHECK(dim.preset().brightness < soft.preset().brightness &&
+            soft.preset().brightness < glow.preset().brightness,
+        "the three levels are actually ordered");
+  // Every level is warm: a corridor at night wants candle light, and warm is
+  // the end that disturbs dark-adapted eyes least.
+  CHECK(dim.preset().warmth > 0 && soft.preset().warmth > 0 &&
+            glow.preset().warmth > 0,
+        "every level is warm-shifted");
+  // A corridor lamp is noticed, not performed at.
+  CHECK(glow.preset().depth < 128, "the song stays a murmur at every level");
+
+  // An out-of-range level must not produce a strange device.
+  HallwayModel bogus;
+  bogus.configure(true, 99, 6, 12, true);
+  CHECK(bogus.level_choice() == canary::care::HALLWAY_SOFT,
+        "a bad level falls back to Soft");
+  // Zero-length ramps are clamped rather than dividing by zero.
+  HallwayModel zero;
+  zero.configure(true, canary::care::HALLWAY_SOFT, 0, 0, true);
+  CHECK(zero.rise_min() >= 1 && zero.ebb_min() >= 1, "ramps clamp to >= 1 min");
+}
+
+static void test_hallway_beacon_needs_the_mode_on() {
+  printf("hallway beacon rule...\n");
+  // The beacon opt-in is the one thing in this feature that touches the
+  // "WS2812 is a pure attention channel" invariant, so the gate is asserted
+  // rather than trusted: it can NEVER be effective while the mode is off,
+  // whatever the stored preference says.
+  HallwayModel h;
+  h.configure(false, canary::care::HALLWAY_SOFT, 6, 12, /*beacon=*/true);
+  CHECK(!h.beacon(), "beacon is off whenever the mode is off");
+  CHECK(h.beacon_pref(), "but the user's choice is remembered");
+
+  h.configure(true, canary::care::HALLWAY_SOFT, 6, 12, /*beacon=*/true);
+  CHECK(h.beacon(), "on with the mode on and the opt-in set");
+
+  h.configure(true, canary::care::HALLWAY_SOFT, 6, 12, /*beacon=*/false);
+  CHECK(!h.beacon(), "and off when the user declines it");
+}
+
+// ── Quiet-hours window position (glass_settings.h) ────────────────────────
+// Hallway mode's dwell needs to know WHERE in the window it is, so the helper
+// that answers it is pinned here — including the midnight wrap, which is the
+// normal case for a night window and the easy one to get wrong.
+static void test_hours_window_position() {
+  printf("quiet-hours window position...\n");
+  uint16_t e = 0, r = 0;
+
+  // 22:00 -> 07:00, the shipped seed: a 9-hour window that wraps midnight.
+  canary::glass::hours_window_position(22, 0, 22, 7, &e, &r);
+  CHECK(e == 0 && r == 540, "at the very start: 0 in, 540 left");
+  canary::glass::hours_window_position(22, 30, 22, 7, &e, &r);
+  CHECK(e == 30 && r == 510, "half an hour in");
+  canary::glass::hours_window_position(2, 0, 22, 7, &e, &r);
+  CHECK(e == 240 && r == 300, "past midnight, still counting from 22:00");
+  canary::glass::hours_window_position(6, 30, 22, 7, &e, &r);
+  CHECK(e == 510 && r == 30, "half an hour before the end");
+
+  // Outside the window both are zero — the caller's "no dwell" signal.
+  canary::glass::hours_window_position(12, 0, 22, 7, &e, &r);
+  CHECK(e == 0 && r == 0, "daytime reads as no window");
+
+  // A non-wrapping window works the same way.
+  canary::glass::hours_window_position(2, 0, 1, 5, &e, &r);
+  CHECK(e == 60 && r == 180, "non-wrapping window");
+
+  // start == end is "never night" and must not divide by anything.
+  canary::glass::hours_window_position(3, 0, 4, 4, &e, &r);
+  CHECK(e == 0 && r == 0, "start==end is never night");
+}
+
 int main() {
   printf("== bedside model host tests ==\n");
   test_lantern_timeout();
   test_lantern_attention_veto();
   test_lantern_auto_schedule();
   test_lantern_scene_ring();
+  test_hallway_off_by_default();
+  test_hallway_attention_veto();
+  test_hallway_dwell_envelope();
+  test_hallway_short_night_still_fades();
+  test_hallway_levels_are_ordered_and_warm();
+  test_hallway_beacon_needs_the_mode_on();
+  test_hours_window_position();
   test_ambient_life_cadence();
   test_ambient_life_gate();
   test_button_short();
