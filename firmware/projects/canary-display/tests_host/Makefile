@@ -140,7 +140,17 @@ $(BEDSIDE_BIN): $(BEDSIDE_SRC)
 $(DISPSET_BIN): $(DISPSET_SRC)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(DISPSET_SRC)
 
-run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(DISPSET_BIN)
+# The first-meet story (canary/care/greeting.h): the beat arc and its dwell,
+# the first-meet-only rule, the abort when trouble arrives mid-story, and the
+# copy itself -- including the mechanical check that no beat ever words an
+# alarm (the Voice rule) or leaves plain ASCII.
+GREET_BIN = test_greeting
+GREET_SRC = test_greeting.cpp
+
+$(GREET_BIN): $(GREET_SRC)
+	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(GREET_SRC)
+
+run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(DISPSET_BIN) $(GREET_BIN)
 	./$(BEACON_PARSE_BIN)
 	./$(MODEL_BIN)
 	./$(CARDS_BIN)
@@ -154,6 +164,7 @@ run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARC
 	./$(RTC85063_BIN)
 	./$(BEDSIDE_BIN)
 	./$(DISPSET_BIN)
+	./$(GREET_BIN)
 
 clean:
-	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN)
+	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(DISPSET_BIN) $(GREET_BIN)
