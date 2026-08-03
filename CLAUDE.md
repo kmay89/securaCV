@@ -29,6 +29,18 @@
     syscall (e.g. "no flock/PID lock" in the storage flight-rules) — that
     is a real API name, not the bird word. Do not rename it.
 
+- **US spellings, now and always.** `color`, `center`, `meter`, `behavior`,
+  `analyze`, `gray`, `license`, `labeled`, `canceled`, `optimize`,
+  `recognize`, `catalog` — never the British forms. This binds user-facing
+  copy, device UI strings, docs, comments **and code identifiers**.
+  - ✅ `color`, `center`, `bezel_color`, `frame_color`, `pal_color`
+  - ❌ `colour`, `centre`, `bezel_colour`, `frame_colour`
+  - Exceptions, because they are not ours to respell: SPDX tags and
+    `LICENSE` filenames, third-party API/CSS identifiers, and quoted text
+    from an external source. `analysis`, `parameter` and `diameter` are the
+    same in both — they are not British and need no change.
+  - See [`AGENTS.md`](AGENTS.md) rule 3b, the canonical statement.
+
 ## Enclosure CAD
 
 - **Always send rendering previews.** Any change to an enclosure `.scad`

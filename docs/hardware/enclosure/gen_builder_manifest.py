@@ -42,9 +42,9 @@ MANIFEST = HERE / "builder_manifest.json"
 
 # ---------------------------------------------------------------------------
 # Curation: which cases the web builder offers, and which parameters are
-# front-and-centre ("simple") vs. tucked into the Advanced accordion.
+# front-and-center ("simple") vs. tucked into the Advanced accordion.
 # Parameters not listed in `simple` still appear, grouped, under Advanced.
-# `preset_controls` are greyed out while the preset dropdown != "custom"
+# `preset_controls` are grayed out while the preset dropdown != "custom"
 # (the .scad's preset table overrides those checkboxes — same as desktop).
 #
 # The microcopy fields keep the page self-explanatory; all are validated
@@ -55,7 +55,7 @@ MANIFEST = HERE / "builder_manifest.json"
 #   labels     — friendly display names for the simple controls
 #   hints      — help text overriding a source comment that's too terse
 #   choices    — plain-language text for raw enum values (value stays as-is)
-#   units      — display unit for sliders when it isn't millimetres
+#   units      — display unit for sliders when it isn't millimeters
 # ---------------------------------------------------------------------------
 
 CURATED = [
@@ -318,7 +318,7 @@ CURATED = [
         "file": "canary_fit_coupon.scad",
         "name": "Fit coupon",
         "tagline": "The first-print calibration plate. Every fit used across "
-                   "the fleet's cases, as labelled test stations — print "
+                   "the fleet's cases, as labeled test stations — print "
                    "this first, tune the three tolerances, reuse everywhere.",
         "about": "Every fit the fleet's cases use, gathered on one branded "
                  "test plate: the Canary mark embossed in uniform domed strokes, "
@@ -349,7 +349,7 @@ CURATED = [
             "all": "Base, mate and strip laid out together — in practice "
                    "print them separately (the strip is TPU).",
             "base": "The station plate: clip, pocket, bore, port and "
-                    "wordmark tests, each labelled with the parameter it "
+                    "wordmark tests, each labeled with the parameter it "
                     "exercises.",
             "mate": "T-studs that hang in the base's keyholes and click "
                     "past the retention detent, plus a bottom-edge tongue "

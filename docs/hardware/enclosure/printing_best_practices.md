@@ -64,7 +64,7 @@ or fit the plate — which quietly turns an in-plane load into a peel load. Don'
 ### Walls beat infill (this surprises people)
 
 For a case loaded in bending and impact, **perimeters carry the load; infill
-just stops the walls caving in.** By sandwich-panel behaviour, adding shells
+just stops the walls caving in.** By sandwich-panel behavior, adding shells
 raises flexural strength more than adding infill does, gram for gram — one test
 set found going 1→3 perimeters gained ~51 % tensile strength, comparable to
 pushing infill all the way from 40→100 % ([Markforged](https://markforged.com/resources/learn/design-for-additive-manufacturing-plastics-composites/understanding-3d-printing-strength/3d-printing-settings-impacting-part-strength),
@@ -97,7 +97,7 @@ For PETG that means:
   the spool — deliberately, for adhesion. Weather/structural parts want the top
   of that.
 - **Don't exceed ~250 °C** — above that PETG's glycol chains break down: yellowing,
-  brittleness, more stringing, odour ([Raise3D](https://www.raise3d.com/blog/petg-3d-printing/)).
+  brittleness, more stringing, odor ([Raise3D](https://www.raise3d.com/blog/petg-3d-printing/)).
 - **Run a temperature tower once per filament.** Spools vary; the tower shows you
   the highest temperature that still bridges and doesn't string, which is also
   your strongest. ASA/PC run hotter still and want an enclosure.
@@ -200,7 +200,7 @@ Three different enemies, three different answers — and none of them is a slice
 setting alone:
 
 - **UV** embrittles plastic in sunlight. ASA holds up; **PETG slowly embrittles**;
-  PLA fails fast. Sun-exposed part → ASA (light colour), or the solar shield.
+  PLA fails fast. Sun-exposed part → ASA (light color), or the solar shield.
 - **Heat & creep.** PETG softens and *creeps* (slowly deforms) under sustained
   load — gasket preload, screw clamp, a hot dash. Fixes: heat-set inserts instead
   of self-tappers on serviced builds, re-torque sealed builds after 24 h, mild
@@ -217,7 +217,7 @@ setting alone:
 You can print these parts in PC, and on paper it's the strongest choice: it tops
 the shell ranking (`PC > PA-CF ≈ ASA > PETG > PLA` in [field_ratings.md](./field_ratings.md)),
 has the highest heat-deflection temperature, and — unfilled — is RF-transparent
-so it's fine for the Sense radome. **But it's a specialist pick, not a default,
+so it's fine for the Sense radome. **But it's a specializt pick, not a default,
 and the reasons are about the print, not the polymer:**
 
 - **It needs an enclosed, hot printer** (bed ~110–120 °C, warm chamber, nozzle
@@ -365,7 +365,7 @@ Exact Cura numbers and the importable profile:
 
 ## Sources
 
-- [Markforged — 3D printing settings impacting part strength](https://markforged.com/resources/learn/design-for-additive-manufacturing-plastics-composites/understanding-3d-printing-strength/3d-printing-settings-impacting-part-strength) (perimeters/sandwich-panel behaviour)
+- [Markforged — 3D printing settings impacting part strength](https://markforged.com/resources/learn/design-for-additive-manufacturing-plastics-composites/understanding-3d-printing-strength/3d-printing-settings-impacting-part-strength) (perimeters/sandwich-panel behavior)
 - [XDA — you don't need 100 % infill](https://www.xda-developers.com/dont-need-100-infill-makes-prints-stronger/) (walls vs infill, quantified)
 - [CNC Kitchen — the influence of extrusion temperature on layer adhesion](https://www.cnckitchen.com/blog/the-influence-of-extrusion-temperature-on-layer-adhesion) (temperature → Z strength)
 - [Raise3D — PETG 3D printing guide](https://www.raise3d.com/blog/petg-3d-printing/) and [SigmaFilament — PETG print temp](https://sigmafilament.com/petg-print-temp-guide-2026/) (PETG temperature window + degradation)

@@ -65,7 +65,7 @@
     {
      "id": "bench-bring-up-fixture",
      "name": "Bench bring-up fixture",
-     "for": "labelled stations for XIAO + BZ1/DLED1/SW1/SW2 with a sliding magnet carriage for repeatable tamper tests (companion to [bench_bringup.md](../bench_bringup.md))",
+     "for": "labeled stations for XIAO + BZ1/DLED1/SW1/SW2 with a sliding magnet carriage for repeatable tamper tests (companion to [bench_bringup.md](../bench_bringup.md))",
      "status": "in-development",
      "device": "_universal",
      "selects": {},
@@ -451,7 +451,7 @@
     {
      "id": "universal-fit-coupon",
      "name": "Universal fit coupon",
-     "for": "ONE small print that calibrates every fit in the catalog: the Canary mark embossed in uniform domed strokes (no feature narrower than one rib, so that single width decides the whole emblem), the WAP's two-sided clip channel, keyhole+stud with a click detent (slide the mate on, it clicks and stays — the doorbell-plate retention test), slide tongue, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labelled with the parameter it tunes",
+     "for": "ONE small print that calibrates every fit in the catalog: the Canary mark embossed in uniform domed strokes (no feature narrower than one rib, so that single width decides the whole emblem), the WAP's two-sided clip channel, keyhole+stud with a click detent (slide the mate on, it clicks and stays — the doorbell-plate retention test), slide tongue, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labeled with the parameter it tunes",
      "status": "in-development",
      "device": "_universal",
      "selects": {},
@@ -871,7 +871,7 @@
     {
      "id": "7-touch-dashboard-case",
      "name": "7″ touch dashboard case",
-     "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on moulded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (~52 cm² back grille + bottom-wall intake and top-wall exhaust — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centred USB pass-through (the brand lettering is the intake vents flanking it) and three TPU fitments: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive press-through BOOT/RESET plug, and a peel-open SD cover that stays attached. Optional 20° desk dock for the frame (drop-in slot on tilted seat pads, self-centring keys into the frame's keying slots, landscape and portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centres and `pcb_h` are NOMINAL — measure yours",
+     "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on molded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (~52 cm² back grille + bottom-wall intake and top-wall exhaust — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centered USB pass-through (the brand lettering is the intake vents flanking it) and three TPU fitments: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive press-through BOOT/RESET plug, and a peel-open SD cover that stays attached. Optional 20° desk dock for the frame (drop-in slot on tilted seat pads, self-centring keys into the frame's keying slots, landscape and portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centers and `pcb_h` are NOMINAL — measure yours",
      "status": "in-development",
      "device": "canary-display-dash",
      "selects": {},
@@ -914,7 +914,7 @@
     "coupon_accent",
     "coupon_qr_body",
     "coupon_qr_ink",
-    "frame_colour",
+    "frame_color",
     "fil_overlap",
     "fil_gap"
    ],
@@ -1000,9 +1000,9 @@
      "default": true
     },
     {
-     "id": "print_colours",
+     "id": "print_colors",
      "type": "bool",
-     "label": "build the per-filament parts and colour the preview",
+     "label": "build the per-filament parts and color the preview",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1021,7 +1021,7 @@
      "default": "bare"
     },
     {
-     "id": "bezel_colour",
+     "id": "bezel_color",
      "type": "enum",
      "label": "front bezel ring",
      "consequence": "",
@@ -1034,7 +1034,7 @@
      "default": "body"
     },
     {
-     "id": "vent_ring_colour",
+     "id": "vent_ring_color",
      "type": "enum",
      "label": "egg-vent mouth rings",
      "consequence": "",
@@ -1049,7 +1049,7 @@
     {
      "id": "usb_port",
      "type": "bool",
-     "label": "pass-through for the power cable, centred on the bottom wall.",
+     "label": "pass-through for the power cable, centered on the bottom wall.",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1197,7 +1197,7 @@
     {
      "id": "1-69-touch-watch-display-puck",
      "name": "1.69″ touch watch-display puck",
-     "for": "Waveshare ESP32-S3-Touch-LCD-1.69 (rounded-square 240×280 capacitive-touch smartwatch board — S3, IMU, RTC, battery/charger). The bonded glass slab (41.13 × 33.13) overhangs the smaller PCB (37.12 × 29.83) by ~2 mm, so the face lip captures it — no screws (this board has no mount holes). Face-down bezel + snap-in vented back (skirt rides the overhang, 4 nubs, standoffs press the board forward, blind keyhole). USB-C (bottom) + PWR/BOOT/RST (top) + battery/RTC/pin slot (side); side heat slots + back grille; optional 22° cradle. Connector centres NOMINAL — measure yours",
+     "for": "Waveshare ESP32-S3-Touch-LCD-1.69 (rounded-square 240×280 capacitive-touch smartwatch board — S3, IMU, RTC, battery/charger). The bonded glass slab (41.13 × 33.13) overhangs the smaller PCB (37.12 × 29.83) by ~2 mm, so the face lip captures it — no screws (this board has no mount holes). Face-down bezel + snap-in vented back (skirt rides the overhang, 4 nubs, standoffs press the board forward, blind keyhole). USB-C (bottom) + PWR/BOOT/RST (top) + battery/RTC/pin slot (side); side heat slots + back grille; optional 22° cradle. Connector centers NOMINAL — measure yours",
      "status": "in-development",
      "device": "canary-display-watch",
      "selects": {},
@@ -2093,7 +2093,7 @@
     {
      "id": "bracket_tripod",
      "type": "bool",
-     "label": "captive 1/4-20 nut pocket behind the centre fin (tripod mount)",
+     "label": "captive 1/4-20 nut pocket behind the center fin (tripod mount)",
      "consequence": "",
      "audience": "engineering",
      "default": true

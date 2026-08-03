@@ -2,7 +2,7 @@
 """Package the 7" case's per-filament parts into ONE Bambu-readable 3MF.
 
     python3 gen_3mf.py tests      # ALL the test parts, laid out on one plate
-    python3 gen_3mf.py coupon     # just the colour + fit coupon
+    python3 gen_3mf.py coupon     # just the color + fit coupon
     python3 gen_3mf.py frame      # the whole case
 
 Renders the parts it needs with OpenSCAD, then writes a single object whose
@@ -11,13 +11,13 @@ filaments 1 / 2 / 3.
 
 WHY THIS EXISTS
 ---------------
-The three colour parts (body / ink / accent) only mean anything in the SAME
+The three color parts (body / ink / accent) only mean anything in the SAME
 coordinate frame: the ink lettering sits in recesses cut into the body, and
-moving one relative to the other by a millimetre puts the words beside their
+moving one relative to the other by a millimeter puts the words beside their
 own holes rather than in them.
 
 Handing an operator three STLs and the instruction "load one, Add part → Load
-the others, and do NOT re-centre them" does not survive contact with a slicer.
+the others, and do NOT re-center them" does not survive contact with a slicer.
 Loaded as separate OBJECTS — which is what File → Open does — Bambu Studio
 auto-arranges them across the plate, correctly and fatally. That happened on
 the first real attempt. An instruction that must be obeyed for the output to
@@ -54,7 +54,7 @@ HERE = Path(__file__).resolve().parent
 SRC = HERE / "canary_s3_lcd7.scad"
 
 # name -> (scad part, filament slot). Slot order IS the palette order, so a
-# spool in the wrong slot swaps the lettering's colours — see PRINT COLOURS.
+# spool in the wrong slot swaps the lettering's colors — see PRINT COLORS.
 COUPON = [("body", "coupon_body", 1),
           ("ink", "coupon_ink", 2),
           ("accent", "coupon_accent", 3)]
@@ -62,17 +62,17 @@ FRAME = [("body", "fil_body", 1),
          ("ink", "fil_ink", 2),
          ("accent", "fil_accent", 3)]
 # The QR plaque is deliberately TWO filaments, not three. The symbol is ink
-# modules on a body-colour field, and the accent must never land on a finder
+# modules on a body-color field, and the accent must never land on a finder
 # pattern — a three-slot version of this would only offer a way to break it.
 QR_COUPON = [("body", "coupon_qr_body", 1),
              ("ink", "coupon_qr_ink", 2)]
 
-# A "set" is a list of OBJECTS. Each object is (name, volumes, plate centre).
+# A "set" is a list of OBJECTS. Each object is (name, volumes, plate center).
 # Volumes within one object are parts of it and stay registered to each other;
 # separate objects are independent and get their own place on the plate.
 #
 # The "tests" plate is the whole pre-flight in one job, cheapest check first:
-# the ring proves the outline, the coupon proves colour and corner fit, the
+# the ring proves the outline, the coupon proves color and corner fit, the
 # QR plaque proves the symbol actually scans, and the corner gauge proves the
 # screw pattern against the real panel. Four questions, one job, and every one
 # of them is cheaper to answer here than on a committed frame.
@@ -81,7 +81,7 @@ SETS = {
     # time saving in the file, worth more than any arrangement of parts.
     #
     # A tool change anywhere on a plate builds a purge tower, and the tower is
-    # built up to the height of the LAST change. The colour coupon's bezel band
+    # built up to the height of the LAST change. The color coupon's bezel band
     # is at print z 22.9 … 23.5 — the very top — so one plate holding it makes
     # the slicer raise ~23 mm of tower to service a 0.6 mm band, and every
     # single-filament part sharing that plate waits through it. On the first
@@ -96,11 +96,11 @@ SETS = {
         ("ring gauge",    [("ring", "ring_gauge", 1)],   (128, 180)),
         ("corner gauge",  [("corner", "frame_gauge", 1)], (128, 60)),
     ],
-    "colour": [
-        ("colour coupon", COUPON,                        (100, 150)),
+    "color": [
+        ("color coupon", COUPON,                        (100, 150)),
         ("QR coupon",     QR_COUPON,                     (60, 80)),
     ],
-    "coupon": [("colour coupon", COUPON, (128, 128))],
+    "coupon": [("color coupon", COUPON, (128, 128))],
     "qr":     [("QR coupon", QR_COUPON, (128, 128))],
     "frame":  [("frame", FRAME, (128, 128))],
 }
@@ -115,7 +115,7 @@ PLATE_MARGIN = 4.0   # keep parts off the very edge
 # arranged only against each OTHER, leaving no deliberate gap.
 #
 # PER SET, not one constant. The first version of this was a single global
-# zone, generalised from the small tests plate — and it immediately rejected
+# zone, generalized from the small tests plate — and it immediately rejected
 # the frame, which is 197 x 115 on a 256 bed and cannot leave a 102 x 110
 # pocket anywhere. There is no one rectangle that suits both a plate of small
 # coupons and a plate holding a part that nearly fills the bed; the zone is a
@@ -124,7 +124,7 @@ PLATE_MARGIN = 4.0   # keep parts off the very edge
 # Sized generously where there is room: a tall three-filament tower wants more
 # footprint than people expect, and unused bed is free.
 TOWER_ZONES = {
-    "colour": (150.0, 8.0, 252.0, 118.0),   # right of the coupons
+    "color": (150.0, 8.0, 252.0, 118.0),   # right of the coupons
     "coupon": (150.0, 8.0, 252.0, 118.0),
     "qr":     (150.0, 8.0, 252.0, 118.0),
     # The frame spans y 70.5 … 185.5, so the tower goes in the clear strip
@@ -175,7 +175,7 @@ def render(part: str, out: Path) -> Path:
             if "ERROR" in ln or "WARNING" in ln]
     # An EMPTY part is not a failed part, and telling them apart matters.
     # A filament's share of an object is empty whenever the palette simply
-    # does not put that colour on that object — the colour coupon has no INK
+    # does not put that color on that object — the color coupon has no INK
     # on it once ink_groups is just ["qr"], because the coupon clip
     # deliberately does not reach the QR. That is a correct palette, not a
     # broken render, and the fix is NOT to invent a token ink feature so the
@@ -233,11 +233,11 @@ def bbox(verts):
 
 def build(setname: str) -> Path:
     groups, oid = [], 0
-    for gname, vols, centre in SETS[setname]:
+    for gname, vols, center in SETS[setname]:
         meshes, dropped = [], []
         for _n, part, slot in vols:
             stl = render(part, HERE / f"_3mf_{part}.stl")
-            if stl is None:            # this colour is not on this object
+            if stl is None:            # this color is not on this object
                 dropped.append((_n, slot))
                 continue
             oid += 1
@@ -247,18 +247,18 @@ def build(setname: str) -> Path:
             raise SystemExit(
                 f"'{gname}': every filament volume is empty — there is "
                 "nothing to print. Check the palette groups.")
-        # the group's own extent, so the plate offset centres the WHOLE object
+        # the group's own extent, so the plate offset centers the WHOLE object
         allv = [p for m in meshes for p in m[3]]
         x0, x1, y0, y1 = bbox(allv)
-        off = (centre[0] - (x0 + x1) / 2, centre[1] - (y0 + y1) / 2)
+        off = (center[0] - (x0 + x1) / 2, center[1] - (y0 + y1) / 2)
         foot = (x0 + off[0], x1 + off[0], y0 + off[1], y1 + off[1])
         print(f"  {gname:14} {len(meshes)} part(s), "
-              f"{x1-x0:6.1f} x {y1-y0:5.1f} mm  at ({centre[0]}, {centre[1]})")
+              f"{x1-x0:6.1f} x {y1-y0:5.1f} mm  at ({center[0]}, {center[1]})")
         for m in meshes:
             print(f"      {m[1]:7} {len(m[4]):>6} triangles  filament {m[2]}")
         # Loud, never silent: a filament missing from a plate changes what the
-        # operator has to load, and a colour coupon that quietly stopped
-        # rehearsing a colour is worse than one that never claimed to.
+        # operator has to load, and a color coupon that quietly stopped
+        # rehearsing a color is worse than one that never claimed to.
         for _n, slot in dropped:
             print(f"      {_n:7} {'—':>6} EMPTY: the palette puts no {_n} on "
                   f"this object, so filament slot {slot} is not used here")
@@ -271,7 +271,7 @@ def build(setname: str) -> Path:
             a, b = groups[i][3], groups[j][3]
             if a[0] < b[1] and b[0] < a[1] and a[2] < b[3] and b[2] < a[3]:
                 raise SystemExit(f"plate layout: '{groups[i][0]}' overlaps "
-                                 f"'{groups[j][0]}' — move a centre in SETS")
+                                 f"'{groups[j][0]}' — move a center in SETS")
     for g in groups:
         f = g[3]
         if (f[0] < PLATE_MARGIN or f[1] > BED - PLATE_MARGIN
@@ -297,7 +297,7 @@ def build(setname: str) -> Path:
                 raise SystemExit(
                     f"plate layout: '{g[0]}' sits in the purge tower's zone "
                     f"(x {tx0:.0f}..{tx1:.0f}, y {ty0:.0f}..{ty1:.0f}) — move a "
-                    f"centre in SETS. The tower is not optional on a "
+                    f"center in SETS. The tower is not optional on a "
                     f"multi-filament plate; leaving it nowhere to stand is how "
                     f"you get 'Prime Tower is too close to others'.")
         print(f"  purge tower zone kept clear: x {tx0:.0f}..{tx1:.0f}, "
@@ -389,14 +389,14 @@ def main() -> int:
     # "tests" is the whole pre-flight, and it is deliberately TWO files in a
     # deliberate order rather than one plate — see the note on SETS.
     if which == "tests":
-        for i, part in enumerate(("gauges", "colour"), 1):
+        for i, part in enumerate(("gauges", "color"), 1):
             print(f"packaging {part}  (plate {i} of 2):")
             print(f"OK {build(part).name}")
         print("\n  Print lcd7_gauges.3mf FIRST: one filament, no tool change,")
         print("  no purge tower. The ring gauge on it is the cheapest thing")
         print("  that can tell you the whole outline is wrong, and nobody")
         print("  should spend a three-filament print to find that out.")
-        print("  Then lcd7_colour.3mf, which needs all three slots loaded.")
+        print("  Then lcd7_color.3mf, which needs all three slots loaded.")
         return 0
     if which not in SETS:
         print(f"usage: gen_3mf.py [tests | {' | '.join(SETS)}]", file=sys.stderr)

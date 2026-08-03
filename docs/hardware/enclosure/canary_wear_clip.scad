@@ -36,7 +36,7 @@ nub_h     = 1.2;     // grip nub at the leaf tip
 
 /* [MOLLE plate] */
 mp_w = 55.0;  mp_l = 90.0;  mp_t = 3.0;
-slot_w = 27.0;  slot_h = 3.5;  slot_pitch = 25.4;   // PALS grid: rows on 1" (25.4 mm) centres
+slot_w = 27.0;  slot_h = 3.5;  slot_pitch = 25.4;   // PALS grid: rows on 1" (25.4 mm) centers
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;
@@ -94,7 +94,7 @@ module molle() {
             translate([0, yc, -0.1]) linear_extrude(mp_t + 0.2)
                 rrect2d(slot_w, slot_h, 1.5);
     }
-    // studs up, on the vertical centreline (clear of the slot rows)
+    // studs up, on the vertical centerline (clear of the slot rows)
     for (s = [1, -1])
         translate([0, s*stud_gap/2, mp_t - 0.01]) tstud();
 }

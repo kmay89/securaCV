@@ -17,7 +17,7 @@
 //  cable well and exits through an oval in the BACK, through the matching
 //  plate hole, into the wall/under trim (use a right-angle USB-C plug).
 //
-//  Units: millimetres.  CAD: OpenSCAD.  Weather sealing is ON by default
+//  Units: millimeters.  CAD: OpenSCAD.  Weather sealing is ON by default
 //  (a doorbell lives outside): TPU gasket + drip-edge face, ~IP54.
 //
 //  ⚠️ VERIFY BEFORE PRINTING. Measure your seated stack (stack_sock_h,
@@ -42,7 +42,7 @@ opt_tamper = false;  // reed/Hall magnet pocket on the face underside
    v0.1 bay assumed), mounted VERTICALLY: 40 mm along Y, USB edge down. */
 vm_l     = 40.0;     // Grove Vision AI V2 long side (Y; USB edge down) — measured
 vm_w     = 20.0;     // module short side (X) — measured
-xiao_l   = 21.0;     // XIAO stacked on the module's socket, lower half, centred
+xiao_l   = 21.0;     // XIAO stacked on the module's socket, lower half, centered
 xiao_w   = 17.8;
 stack_sock_h = 6.5;  // module underside -> XIAO underside when seated (measured 6.2)
 vm_front_h   = 5.0;  // module front-side component height (measured)
@@ -57,7 +57,7 @@ cam_hole_y = 12.5;
 cam_post_d = 3.6;
 cam_post_h = 4.0;
 cam_screw_d = 1.6;
-lens_dx  = 0.0;      // lens centre offset from the camera-board centre — MEASURE
+lens_dx  = 0.0;      // lens center offset from the camera-board center — MEASURE
 lens_dy  = 2.5;
 cam_ap_d   = 10.0;
 cam_disc_d = 14.0;   // clear-disc seat (0 = bare aperture)
@@ -83,8 +83,8 @@ zone_well = 12.0;    // cable well between module and button (USB plugs live her
 zone_btn = 21.0;     // button zone height
 usb_exit_w = 12.0;   // oval cable exit through the back (into the plate hole)
 usb_exit_h = 7.0;
-usb_exit_dx = 5.0;   // exit offset from the centreline
-usb_exit_dy = 6.0;   // exit offset above the well centre — clears the lower T-stud pocket
+usb_exit_dx = 5.0;   // exit offset from the centerline
+usb_exit_dy = 6.0;   // exit offset above the well center — clears the lower T-stud pocket
                      // (the oval's top reaches behind the module: harmless, it's a floor opening)
 
 /* [Print tolerances] */
@@ -118,7 +118,7 @@ skirt_t       = 1.6;
 plate_t     = 4.0;    // plate thickness at the THIN end
 plate_wedge = 0;      // vertical wedge: camera tilts down the approach  // [0:5:15]
 plate_wedge_x = 0;    // horizontal wedge: aims left/right (corner installs)  // [-15:5:15]
-stud_y      = 34.0;   // T-stud/pocket centres at y = ±stud_y (clear of the cable exit)
+stud_y      = 34.0;   // T-stud/pocket centers at y = ±stud_y (clear of the cable exit)
 kh_head_d   = 7.0;    // pocket head pass (stud head 6.6)
 kh_shank_d  = 4.2;    // pocket slot (stud stem 4.0)
 kh_slot_l   = 8.0;
@@ -139,7 +139,7 @@ label_dy    = -26.0;
 label_rot   = 0;
 label_font  = "Liberation Sans:style=Bold";
 
-/* [Front-face features] — offsets from the MODULE centre */
+/* [Front-face features] — offsets from the MODULE center */
 lp_d   = 3.0;
 lp_dx  = 8.0;
 lp_dy  = -8.0;
@@ -476,7 +476,7 @@ module gasket() { linear_extrude(gasket_groove + gasket_proud) rim_ring2d(gasket
 // ----------------------------------------------------------------------------
 //  WALL PLATE — flat or wedge; T-studs the body drops onto; countersunk wall
 //  screws; cable pass; bottom L-foot with the security-screw hole.
-//  Modelled in print orientation (back on the bed).
+//  Modeled in print orientation (back on the bed).
 // ----------------------------------------------------------------------------
 module tstud(yc, zbase) {
     translate([0, yc, zbase]) {

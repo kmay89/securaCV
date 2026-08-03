@@ -49,7 +49,7 @@ from pathlib import Path
 
 # ── The one human string. Bump it when you change the geometry. ──────────
 # CalVer: YYYY.MM + a letter that revs within the month.
-STAMP_REV = "2026.09p"
+STAMP_REV = "2026.09q"
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "canary_s3_lcd7_stamp.scad"
@@ -98,7 +98,7 @@ def strip_comments(src: str) -> str:
 
 def geom_digest() -> str:
     """Eight Crockford-base32 chars over the comment-free, whitespace-
-    normalised sources — so a reworded comment is not a new revision but a
+    normalized sources — so a reworded comment is not a new revision but a
     moved wall is."""
     h = hashlib.sha256()
     for name in SOURCES:

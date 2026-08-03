@@ -66,7 +66,7 @@ tol_press = 0.10;
 snap_n       = 4;     // nubs / wall slots
 snap_w       = 6.5;   // slot width (arc chord)
 snap_h       = 1.8;   // slot height
-snap_depth   = 2.6;   // slot centre below the drum rim
+snap_depth   = 2.6;   // slot center below the drum rim
 snap_proud   = 0.4;   // nub stand-proud of the skirt (with the relief slits this is
                       // the working snap interference — 0.6 needed crush to insert)
 skirt_dep    = 4.0;   // bezel skirt reach into the bore
@@ -106,7 +106,7 @@ z_xiao0 = floor_z + gap_eff;                 // XIAO USB-shell face (toward floo
 z_sock  = z_xiao0 + xiao_t;                  // display socket underside
 z_pcb   = z_sock + disp_back;                // display PCB back face
 drum_h  = z_pcb + disc_t + flush;            // rim — disc front ring 0.4 below it
-usb_cz  = z_xiao0 + (xiao_t - 1.2 - 1.6);    // USB shell centre (PCB 1.2, shell/2 1.6)
+usb_cz  = z_xiao0 + (xiao_t - 1.2 - 1.6);    // USB shell center (PCB 1.2, shell/2 1.6)
 
 skirt_od = bore_d - 2*tol_press - 0.1;       // bezel skirt slides into the bore
 puck_len = drum_h + bez_t;                   // full seated length, back cap → face
@@ -149,7 +149,7 @@ module drum() {
         for (a = snap_angs()) rotate([0, 0, a])
             translate([drum_d/2 - wall_t/2, 0, drum_h - snap_depth])
                 cube([wall_t*3, snap_w, snap_h], center = true);
-        // blind keyhole pocket (single, centred) for stand-less wall mount
+        // blind keyhole pocket (single, centered) for stand-less wall mount
         keyhole_pocket_r(0);
         // bottom-edge chamfer
         difference() {
@@ -188,10 +188,10 @@ module bezel() {
             }
             // snap nubs, chamfered both ways (assembly AND service removal).
             // The face underside (bezel z=0) rests on the drum rim (drum z=drum_h),
-            // so drum_z = drum_h + bezel_z; the drum's slot centre is at
+            // so drum_z = drum_h + bezel_z; the drum's slot center is at
             // drum_h − snap_depth, hence the nub sits at bezel z = −snap_depth.
             for (a = snap_angs()) rotate([0, 0, a]) {
-                nz = -snap_depth;             // slot centre, bezel frame
+                nz = -snap_depth;             // slot center, bezel frame
                 translate([skirt_od/2 - 0.5, 0, nz]) hull() {
                     translate([0, -snap_w/2 + 1.2, 0]) cube([0.5, 0.1, snap_h - 0.4], center = true);
                     translate([snap_proud + 0.5, 0, 0]) cube([0.5, 0.1, 0.6], center = true);
@@ -224,8 +224,8 @@ function vec_a() = [0, -sin(slope), cos(slope)];        // (0, −0.906, 0.423) 
 function vec_u() = [0,  cos(slope), sin(slope)];        // (0,  0.423, 0.906) @ 25°
 
 chin   = [0, -20, 4];                                   // lowest face point
-s_ctr  = rim_margin + 1 + pkt_d/2;                      // chin → pocket centre, along the face
-// pocket centre on the face plane, and the drum's back-cap seat point
+s_ctr  = rim_margin + 1 + pkt_d/2;                      // chin → pocket center, along the face
+// pocket center on the face plane, and the drum's back-cap seat point
 C_rim  = [for (i = [0:2]) chin[i] + vec_u()[i] * s_ctr];
 P0     = [for (i = [0:2]) C_rim[i] - vec_a()[i] * pocket_dep];
 s_top  = s_ctr + pkt_d/2 + rim_margin;                  // chin → face top edge

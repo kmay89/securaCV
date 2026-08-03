@@ -21,7 +21,7 @@
 //  angle sag-proof. Weather mode reuses the Canary WAP sealing system
 //  (printed TPU gasket + drip-edge front + USB plug recess).
 //
-//  Units: millimetres.  CAD: OpenSCAD (https://openscad.org).
+//  Units: millimeters.  CAD: OpenSCAD (https://openscad.org).
 //
 //  ⚠️ VERIFY BEFORE PRINTING. Board dimensions are nominal (DevKitM-1
 //     ~39.0 x 25.4, Vision AI V2 25 x 25, OV5647 carrier 25 x 24 with the
@@ -83,8 +83,8 @@ cam_hole_y = 12.5;  // hole grid (Y)
 cam_post_d = 3.6;   // camera post diameter
 cam_post_h = 4.0;   // post height = lens-board standoff from the front face
 cam_screw_d = 1.6;  // M2 self-tap pilot in the posts
-lens_dx   = 0.0;    // lens centre offset from the camera-board centre — MEASURE
-lens_dy   = 2.5;    // (v1.3 lens sits ~2.5 mm above board centre)
+lens_dx   = 0.0;    // lens center offset from the camera-board center — MEASURE
+lens_dy   = 2.5;    // (v1.3 lens sits ~2.5 mm above board center)
 cam_ap_d  = 10.0;   // lens aperture in the front face
 cam_disc_d = 14.0;  // clear-disc seat diameter (12-16 mm disc; 0 = bare aperture)
 cam_disc_t = 1.0;   // clear-disc thickness (disc sits 0.2 recessed)
@@ -128,11 +128,11 @@ usb_h  = 6.5;
 usb_z  = 0.0;          // extra lift relative to PCB-top centring
 usb_dx = 0.0;          // upper/main port offset along the wall — MEASURE your boards
 xiao_usb_dx   = 0.0;   // XIAO port offset along the wall
-xiao_usb_drop = 10.0;  // XIAO port centre BELOW the module port centre — MEASURE the seated stack
+xiao_usb_drop = 10.0;  // XIAO port center BELOW the module port center — MEASURE the seated stack
 
 /* [Hinge — GoPro-compatible two prongs on the TOP wall] */
 prong_t     = 3.0;   // fin thickness (GoPro standard)
-prong_pitch = 6.35;  // fin centre spacing (GoPro standard)
+prong_pitch = 6.35;  // fin center spacing (GoPro standard)
 fin_r       = 7.5;   // fin end radius
 hinge_off   = 13.0;  // hinge axis stand-off from the top wall face
 hinge_bolt_d = 5.0;  // M5 thumbscrew (GoPro standard)
@@ -146,7 +146,7 @@ br_x        = 46.0;  // plate width (along the hinge axis)
 br_y        = 34.0;  // plate height
 br_t        = 4.0;   // plate thickness
 br_screw_d  = 4.2;   // countersunk wall screws (#8 / M4)
-bracket_tripod = true; // captive 1/4-20 nut pocket behind the centre fin (tripod mount)
+bracket_tripod = true; // captive 1/4-20 nut pocket behind the center fin (tripod mount)
 
 /* [Keyholes] — blind pockets in a thickened back (seal-safe) */
 kh_extra   = 3.0;
@@ -155,7 +155,7 @@ kh_shank_d = 4.2;
 kh_slot_l  = 8.0;
 kh_head_h  = 3.5;    // total pocket depth (face web + head cavity)
 kh_face    = 1.0;
-kh_inset   = 12.0;   // pocket centres at y = ±(inner_y/2 − kh_inset), on the X centreline
+kh_inset   = 12.0;   // pocket centers at y = ±(inner_y/2 − kh_inset), on the X centerline
 
 /* [Weather sealing] */
 gasket_w      = 1.6;
@@ -169,7 +169,7 @@ usb_cov_dep   = 1.0;
 hood_len      = 9.0;  // rain-hood protrusion from the front face
 hood_t        = 1.8;  // hood wall thickness
 
-/* [Front-face features] — offsets are measured FROM THE MODULE CENTRE so they
+/* [Front-face features] — offsets are measured FROM THE MODULE CENTER so they
    stay valid for both hosts. Measure your build! */
 lp_d   = 3.0;      // light-pipe diameter (hole = lp_d + 2*tol_press)
 lp_dx  = 8.0;
@@ -252,8 +252,8 @@ vm_cy  = has_dk ? cam_cy - cam_h/2 - 2 - vm_l/2 : vm_cy_x;
 dk_cy  = -inner_y/2 + board_clear + dk_l/2;                   // DevKit parked at the USB (bottom) wall
 lens_x = cam_cx + lens_dx;
 lens_y = cam_cy + lens_dy;
-usb_cx = (has_dk ? dk_cx : vm_cx) + usb_dx;                   // main/upper USB opening centre (X)
-usb_zc = floor_t + usb_soff + pcb_t + usb_h/2 + usb_z;        // and its centre height
+usb_cx = (has_dk ? dk_cx : vm_cx) + usb_dx;                   // main/upper USB opening center (X)
+usb_zc = floor_t + usb_soff + pcb_t + usb_h/2 + usb_z;        // and its center height
 
 mount_extra = (e_mount && (m_style == "keyhole" || m_style == "both")) ? kh_extra : 0;
 kh_y  = inner_y/2 - kh_inset;
@@ -386,7 +386,7 @@ module tearbore_x(x0, y, z, l, d) {
         }
 }
 
-// one hinge fin on the case top wall, centred at x = xc (tombstone, flat on the bed)
+// one hinge fin on the case top wall, centered at x = xc (tombstone, flat on the bed)
 module case_fin(xc) {
     hull() {
         translate([xc - prong_t/2, out_y/2 - 1, 0]) cube([prong_t, 1, 2*fin_r]);
@@ -685,7 +685,7 @@ module gasket() { linear_extrude(gasket_groove + gasket_proud) rim_ring2d(gasket
 
 // ----------------------------------------------------------------------------
 //  BRACKET — wall plate with three prongs; countersunk screws, keyhole slots,
-//  optional captive 1/4-20 nut for tripods. Modelled in print orientation.
+//  optional captive 1/4-20 nut for tripods. Modeled in print orientation.
 // ----------------------------------------------------------------------------
 module bracket_fin(xc) {
     hull() {
@@ -703,7 +703,7 @@ module bracket() {
             bracket_fin(0);
             bracket_fin(-prong_pitch);
             bracket_fin( prong_pitch);
-            if (bracket_tripod)             // boss merges into the centre-fin root
+            if (bracket_tripod)             // boss merges into the center-fin root
                 translate([0, 0, br_t - 0.1]) rrect(18, 18, 2, 2.6);
         }
         // M5 bolt bore through all three fins (teardrop roof — no crown sag)

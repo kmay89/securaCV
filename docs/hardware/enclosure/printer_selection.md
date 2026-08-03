@@ -126,7 +126,7 @@ Only the stiffer TPU-for-AMS 68 D feeds through, and that is not our gasket spec
 
 > **This is advice about buying a production fleet, not about a bench machine.**
 > If you already have an AMS on a single development printer, keeping it is
-> reasonable — it holds PETG, ASA and a contrast colour for debossed labels
+> reasonable — it holds PETG, ASA and a contrast color for debossed labels
 > without a spool swap per print. The TPU rule is the part that still binds:
 > gaskets run from an external spool holder regardless. See
 > [`bambu_p2s_bringup.md` §0](./bambu_p2s_bringup.md#0--about-the-ams-you-bought).
@@ -200,8 +200,8 @@ needs a print time, and we have not benchmarked one — see the note below. What
 the table does establish is the shape of the cost: **material is $0.23–$1.47 per
 device and everything else is cents per hour on top.**
 
-**Labour is in neither table, and it dominates both.** Plate changes, part
-removal, gasket fitting, QC against the fit coupon — at any realistic wage,
+**Labor is in neither table, and it dominates both.** Plate changes, part
+removal, gasket fitting, QC against the fit coupon — at any realiztic wage,
 human handling costs several times the ~$1.50 of material, power and machine
 wear. That single fact drives the decision at the bottom of this page.
 
@@ -224,7 +224,7 @@ Bambu's published schedule and community farm practice
 | Interval | Task | Cost |
 |---|---|---|
 | Every print | Clean plate with IPA — **skin oil is the #1 adhesion failure** on these machines | ~$0 |
-| Monthly | Inspect belts, fans, nozzle, cutter, camera | Labour only |
+| Monthly | Inspect belts, fans, nozzle, cutter, camera | Labor only |
 | Every 3 months | Clean + lubricate XY axis | ~$0 (grease lasts) |
 | Every 5 months | Clean + lubricate Z axis | ~$0 |
 | As needed | Hotend assembly (nozzle + heater + thermistor + fan) | **$21–25** |
@@ -248,7 +248,7 @@ this is why buying more of them wins.
 
 **Known reliability caveats, stated honestly:**
 
-- Firmware updates can change behaviour mid-production. Pin firmware across the
+- Firmware updates can change behavior mid-production. Pin firmware across the
   fleet and update deliberately, not automatically.
 - Bambu's tooling is built for individual users, not production. Fleet
   orchestration is third-party (e.g. Printago).
@@ -266,7 +266,7 @@ this is why buying more of them wins.
 | Cheapest path to enclosed + direct drive + textured PEI | **Cloud-tethered by default** (LAN-only mode exists and works) |
 | Largest install base → our docs match what readers own | Relatively closed ecosystem; parts are first-party |
 | Passive 40–50 °C chamber is *sufficient* for our ≤44 mm parts | Not enough chamber for tall ASA or serious PC — irrelevant here |
-| $21 user-serviceable hotend; guided swap on-screen | Firmware updates can shift behaviour under a production run |
+| $21 user-serviceable hotend; guided swap on-screen | Firmware updates can shift behavior under a production run |
 | $549 means three machines beat one premium machine | Vendor concentration risk in the fleet |
 
 **Prusa CORE One — the values-aligned alternative**
@@ -306,8 +306,8 @@ The reasoning, in order of weight:
 3. **Redundancy is the real reliability feature.** With three units, a failed
    hotend costs a third of capacity for the price of a $21 part. With one
    premium unit, it costs all of it.
-4. **Labour dominates consumables ~4:1.** Since human handling is the expensive
-   input, the right optimisation is more machines finishing plates in parallel —
+4. **Labor dominates consumables ~4:1.** Since human handling is the expensive
+   input, the right optimization is more machines finishing plates in parallel —
    not a better machine finishing them slightly sooner.
 5. **It matches what our readers own.** The machine we produce on is the machine
    we can write first-hand documentation for, and it is already the one most
@@ -316,7 +316,7 @@ The reasoning, in order of weight:
 **Throughput: benchmark it, don't estimate it.** Slice and time a representative
 plate on the machine you buy before quoting anyone a parts-per-day figure, and
 record the result here. Note that all five reasons above are *structural* — part
-size, parallelism, redundancy, labour share, reader overlap — so none of them
+size, parallelism, redundancy, labor share, reader overlap — so none of them
 moves when that benchmark lands.
 
 **Buy alongside:** one hardened hotend (dedicate a machine to the CF bracket),
