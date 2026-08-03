@@ -19,12 +19,31 @@ import CloudKit
 final class CloudSync {
     static let shared = CloudSync()
 
-    /// Set by the app once the CloudKit container is available. When nil (e.g.
-    /// user not signed into iCloud), the app stays fully functional locally —
+    /// True once the user's iCloud account is actually usable. When false
+    /// (not signed in, restricted), the app stays fully functional locally —
     /// iCloud is convenience, never a gate.
-    var isAvailable: Bool = false
+    ///
+    /// This used to be a `var` that the app was supposed to set and never
+    /// did, so it was `false` for every user forever and silently disabled
+    /// BOTH the device sync below and anything else that gated on it. A flag
+    /// nobody assigns is indistinguishable from a feature nobody built, which
+    /// is why it now derives from the container instead of from a promise.
+    private(set) var isAvailable: Bool = false
 
     private init() {}
+
+    /// Ask CloudKit whether this user has an account we may use. Cheap, safe
+    /// to call repeatedly, and the only thing that may set `isAvailable`.
+    @discardableResult
+    func refreshAvailability() async -> Bool {
+        #if canImport(CloudKit)
+        let status = try? await CKContainer.default().accountStatus()
+        isAvailable = (status == .available)
+        #else
+        isAvailable = false
+        #endif
+        return isAvailable
+    }
 
     func push(_ devices: [PairedDeviceRef]) {
         #if canImport(CloudKit)

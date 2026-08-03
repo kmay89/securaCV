@@ -111,6 +111,31 @@ Four rules keep "beautiful" from decaying into "busy":
   The honesty rules travel with the engine: every face maps 1:1 to state a
   log line can name, and during a real unacknowledged alarm the bird is
   `Hidden` — never cute during a real alarm; the instruments own the stage.
+- **The Alerts tab is a list of alerts.** It used to be a rules editor
+  wearing that name, so the app kept no history at all and the one question
+  people open it with — *did something need me, and did it reach me?* — had
+  no answer anywhere. Now `AlertLedger` records every condition that crossed
+  a rule (coarse 10-minute buckets only, Invariant III), collapses repeats
+  into one row with a count so a flapping Canary can't bury the list, and
+  stores **how far each one actually got**: on Wi-Fi, away, or not delivered
+  *with the reason*. "We told you" and "we couldn't tell you" must never
+  look the same. Rules moved behind one plainly-worded button; the calm
+  canary holds the empty state, because a quiet fleet is the product
+  working. The wrist gets the same list (`AlertsListView`, the watch's
+  fourth screen) over capped, additive-optional snapshot rows.
+- **Away alerts are real, and honest about their limit.** `AwayPush` carries
+  the contentless wake over the user's **own iCloud** — a
+  `CKQuerySubscription` on their private database, so Apple's push service
+  does the delivery and SecuraCV runs no server, holds no APNs key, and
+  keeps no device-token registry. The wake carries a coarse class and
+  nothing else (`Shared/WakePayload.swift` — pure Foundation, the one file
+  the NSE compiles, so a reviewer can check that claim by reading it); the
+  phone writes the words itself. The limit is stated in the UI rather than
+  hidden: something has to be **home** to post the wake, exactly as HomeKit
+  needs a hub, and `AwayReach` says so instead of leaving "Anywhere" looking
+  like a promise. See the design doc §5 for why this replaced the hosted
+  relay — which stays easy to add, since the receiver already decodes both
+  payload shapes.
 - **First-class ecosystem citizenship.** Alerts are actionable (Ack /
   Mute 1 hour, mirrored to the wrist by the system) with relevance-ranked
   summaries; a real **Focus filter** (`FleetFocusFilter`) lets each Focus
