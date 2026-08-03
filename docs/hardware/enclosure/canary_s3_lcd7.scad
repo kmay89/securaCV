@@ -28,7 +28,7 @@
 //            vents keep their convection path AND the USB power lead that
 //            leaves through the frame's bottom cable port has plug headroom,
 //            then routes out the back through a desk-level cable channel.
-//            Two chamfered CENTRING KEYS on the keyed ribs rise into the
+//            Two chamfered CENTERING KEYS on the keyed ribs rise into the
 //            case's ±dock_key_dx openings — intake slots in landscape, the
 //            side-wall keying slots in portrait — so either way up, the
 //            case finds its own center and cannot slide out sideways.
@@ -483,7 +483,7 @@ r_out  = 6.0;    // outer corner radius
 lob_d = 9.0;  lob_o = 3.0;   // lobe Ø / diagonal offset outboard of the cavity corner
 m3_nom = 3.0;                // M3 shank
 lob_pilot = 2.7;  cb_d = 6.0;  cb_h = 2.0;
-// Clearance is DERIVED from the coupon's SCREW tolerance, so dialling tol_hole
+// Clearance is DERIVED from the coupon's SCREW tolerance, so dialing tol_hole
 // after a coupon print actually moves this hole. (Self-tap pilots are not:
 // lob_pilot/m3_pilot are undersize on purpose, so the thread forms.)
 screw_c = m3_nom + tol_hole;
@@ -679,7 +679,7 @@ gill_vw = 3.6;       // side-gill egg base width — area matches the old
                      // off — they printed ugly and the back grille carries
                      // the ventilation. Kept sized so they can come back.)
 frame_vent_flank_n = 4;  // exhaust slots per side, flanking the button window
-// Dock keying — chamfered centring keys on the desk dock rise into gill-style
+// Dock keying — chamfered centering keys on the desk dock rise into gill-style
 // slots the case walls carry, so the docked case self-centers and cannot
 // slide sideways — the same doctrine as hanging the board on the panel's own
 // standoffs: let the part's own features locate it.
@@ -1057,7 +1057,7 @@ stand_rib_x   = 40.4;  // moved in from 47.7 with the r9.05 corner: the wall's
                        // thing that caught this rather than a print.
                        // ± KEYED RIBS: blades across the well that carry the
 stand_rib_w   = 8.0;   // case in PORTRAIT (its 115 mm width misses the cheeks
-                       // entirely) and carry the PORTRAIT centring keys on
+                       // entirely) and carry the PORTRAIT centering keys on
                        // top. LOAD PATH, precisely — a blade CROSSES the
                        // case's full depth, while the keying slot it rises
                        // into is only a gill_w-wide band at the wall's
@@ -1709,7 +1709,7 @@ assert(!bat_on || bat_l/2 + bat_clr + 2.8 < fr_xi/2 - plate_fillet - 1
 // LANDSCAPE case's solid bottom wall (the rib drop covers the key's 1.5
 // proud plus 0.5 of air)
 assert(!dock_keys || abs(dock_key_dx - stand_rib_x) < stand_rib_w/2 - 2.5,
-       "stand: the centring key overhangs its rib — re-center stand_rib_x on dock_key_dx");
+       "stand: the centering key overhangs its rib — re-center stand_rib_x on dock_key_dx");
 assert(stand_rib_drop >= 1.5 + 0.5,
        "stand: rib drop too small — the portrait keys would foul the landscape case's bottom wall");
 assert(stand_rib_x - stand_rib_w/2 > gill_y0 + (gill_n - 1)*11 + gill_w/2 + 0.2
@@ -3196,11 +3196,11 @@ module stand_wellblade(x0, w, drop = 0) {
         translate([0, 0, -50]) cube([stand_w + 40, std_d + 300, 100], center = true);
     }
 }
-// A centring-key stud: a chamfered wedge rising key_h proud of z0 in the seat
+// A centering-key stud: a chamfered wedge rising key_h proud of z0 in the seat
 // frame, at local y = -1 — the docked case's wall-band center (gz), which is
 // where every keying slot is cut, whichever wall faces down. The taper is
 // what makes the case FIND center: drop it anywhere close and it slides home.
-// A centring key stud. Its position ACROSS the slot is derived, not fixed:
+// A centering key stud. Its position ACROSS the slot is derived, not fixed:
 // the case's keying slot sits key_gz behind the case's FRONT face, and the
 // case's front face sits at -std_cd/2, so the slot's center lands here. With
 // a fixed y this silently walked off the slot as soon as a battery deepened
@@ -3338,7 +3338,7 @@ module stand() {
     // key furniture, added AFTER the cuts (the seat-pocket cut would
     // otherwise carve it away):
     // — the two KEYED RIBS, their tops stand_rib_drop below the pad plane:
-    //   each blade seats the PORTRAIT case and carries its centring key,
+    //   each blade seats the PORTRAIT case and carries its centering key,
     //   a stud rising into the side-wall keying slot at ±dock_key_dx, 1.5
     //   proud of the dropped rib so it enters the 2 mm wall without
     //   bottoming out — and stays 0.5 BELOW the pad plane, clear of the

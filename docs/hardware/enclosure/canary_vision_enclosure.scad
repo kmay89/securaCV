@@ -125,7 +125,7 @@ screw_head_h = 2.0;
    "firmware port" (lower); both face the same edge (device guide §2). */
 usb_w  = 10.5;
 usb_h  = 6.5;
-usb_z  = 0.0;          // extra lift relative to PCB-top centring
+usb_z  = 0.0;          // extra lift relative to PCB-top centering
 usb_dx = 0.0;          // upper/main port offset along the wall — MEASURE your boards
 xiao_usb_dx   = 0.0;   // XIAO port offset along the wall
 xiao_usb_drop = 10.0;  // XIAO port center BELOW the module port center — MEASURE the seated stack

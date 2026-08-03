@@ -231,7 +231,7 @@ post_corner  = pd + 1.5;                 // positioning margin so a screw post s
 
 // cavity: board + bays along X, +X dead zone keeps true corners for the screw posts.
 // The board is ALWAYS biased to the -X (USB) wall so the connector reaches the opening
-// (v0.7 fix — centring it left the USB ~6.5 mm behind the wall on the compact case).
+// (v0.7 fix — centering it left the USB ~6.5 mm behind the wall on the compact case).
 clip_stack = board_clips ? (clip_clear + clip_t) : 0;
 inner_l = board_zone_l + extra_l + post_corner + 1.0;
 inner_w = max(board_w + 2*board_clear,

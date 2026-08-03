@@ -91,7 +91,7 @@
 //            lifted seat_lift off the pads, because exact face-on-face
 //            contact through a floating-point rotation can manufacture a
 //            zero-ish sliver that fails an honest fit. This check is also
-//            what proves the dock's centring keys line up with the frame's
+//            what proves the dock's centering keys line up with the frame's
 //            keying slots — a misplaced key IS a collision.
 //    seat  — the frame pressed seat_press INTO the pads. INVERTED: it must
 //            be NON-empty — it is the bearing patch the case actually sits

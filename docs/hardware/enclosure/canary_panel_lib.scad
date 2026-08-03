@@ -303,7 +303,7 @@ function panel_check(p) =
 // file built its own copy of this shape rather than risk that.
 //
 // STEPPED, and that is the whole point: a thin bare-glass border around a
-// thicker module can. Modelling it as a uniform slab is what once floated an
+// thicker module can. Modeling it as a uniform slab is what once floated an
 // adhesive ledge 3.2 mm clear of anything it was supposed to bond to.
 module pnl_slab(p, blow = 0) {
     linear_extrude(pnl_edge_t(p))

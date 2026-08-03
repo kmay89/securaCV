@@ -688,7 +688,7 @@ python3 gen_3mf.py tests      # writes BOTH pre-flight plates, in order
 ```
 
 The manual path (load `coupon_body`, **Add part → Load** the other two) still
-works, but it is one misclick from a silently wrong print: any centring or
+works, but it is one misclick from a silently wrong print: any centering or
 drop-to-bed on an added part separates the inlays from their recesses, and the
 result slices cleanly and looks fine in preview. An instruction that must be
 obeyed for the output to be right is a defect, not a doc problem — so the
