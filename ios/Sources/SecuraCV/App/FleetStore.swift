@@ -36,6 +36,12 @@ final class FleetStore: ObservableObject {
     let ble = BLEConsole()
     let alerts = AlertCenter()
     let heartbeat = Heartbeat()
+    /// What actually needed you, and what we managed to do about it — the
+    /// list the Alerts tab is a list OF.
+    let alertLog = AlertLedger()
+    /// Set when a wake carried the news here instead of the LAN, so the next
+    /// evaluation can record the honest delivery. Cleared once spent.
+    private var lastAwayWake: WakeClass?
 
     private var refreshTask: Task<Void, Never>?
     private var bag = Set<AnyCancellable>()
@@ -85,7 +91,7 @@ final class FleetStore: ObservableObject {
         // device list change — no view has to know the internal object graph.
         for child in [devices.objectWillChange, discovery.objectWillChange,
                       ble.objectWillChange, alerts.objectWillChange,
-                      heartbeat.objectWillChange] {
+                      heartbeat.objectWillChange, alertLog.objectWillChange] {
             child.sink { [weak self] in self?.objectWillChange.send() }.store(in: &bag)
         }
     }
@@ -103,10 +109,29 @@ final class FleetStore: ObservableObject {
             Task { await alerts.requestAuthorization() }
         }
         Task { await hydrateFromCloud() }
+        // The away path, if the user armed it. Enabling is idempotent and
+        // never prompts — it only asks iOS for a push token and makes sure
+        // the iCloud subscription exists, so a reinstall or a new iPhone
+        // re-arms itself without the user hunting for a switch.
+        if AlertRule.anyReachesAnywhere(rules: alerts.rules) {
+            Task {
+                await AwayPush.shared.enable()
+                await AwayPush.shared.sweepOldWakes()
+            }
+        }
         recordDemoBeatIfHarmless()
         startRefreshLoop()
         startSentinel()
         pushLiveActivity()
+    }
+
+    /// A wake reached this device from off-network. The notification the user
+    /// sees was already composed by the NSE; this makes the APP true — pull
+    /// the fleet so opening it shows current reality, and record in the
+    /// history that the away path is what carried it.
+    func noteAwayWake(_ wake: WakeClass?) {
+        lastAwayWake = wake
+        Task { await refreshOnce() }
     }
 
     /// The consent gate's one entry point. Granting starts the radios NOW —
@@ -461,6 +486,7 @@ final class FleetStore: ObservableObject {
     /// still punch through (Witness.effectiveSeverity owns that guarantee).
     func mute(_ id: String, for duration: TimeInterval = 3600) {
         muteLedger.set(until: Date().addingTimeInterval(duration), for: id)
+        alertLog.mark(.muted, forWitness: id)
         applyMutesAndRepublish()
     }
 
@@ -588,14 +614,19 @@ final class FleetStore: ObservableObject {
         } else if let posted = postedAlerts[id] {
             ackedAlerts[id] = posted
         }
+        alertLog.mark(.acknowledged, forWitness: id)
         // An ack changes the story (the bird may return to the stage) —
         // every surface hears about it now, not at the next poll.
         republishGlanceSurfaces()
     }
 
     private func evaluateAlerts() {
-        // On-LAN, notifications fire locally; away, the relay path would drive
-        // these via APNs+NSE. Here we surface anything that crosses a rule.
+        // Two deliveries, one decision. On the LAN we post locally; if this
+        // device can see the fleet it is HOME, so it is also the one that
+        // publishes the content-free wake that reaches the user's other
+        // devices across town. Both outcomes are written into the history —
+        // the tab's whole job is answering "did this actually reach me?", and
+        // it can only answer honestly if we record what really happened.
         var live = Set<String>()
         for w in witnesses where w.effectiveSeverity >= .alert {
             live.insert(w.id)
@@ -603,11 +634,39 @@ final class FleetStore: ObservableObject {
             guard postedAlerts[w.id] != fingerprint else { continue }   // already told
             guard ackedAlerts[w.id] != fingerprint else { continue }    // user said "seen it"
             postedAlerts[w.id] = fingerprint
+
+            // The ledger key must carry the witness: `alertFingerprint` is
+            // only ever used keyed BY id in the ledgers above, so two Canaries
+            // both reading "Gone dark" produce the same fingerprint — as a
+            // global record id that would collapse them into one row wearing
+            // whichever name arrived first.
+            let record = alertLog.note(id: "\(w.id)|\(fingerprint)", witnessID: w.id,
+                                       name: w.displayName, severity: w.effectiveSeverity,
+                                       headline: w.statusLine)
             if let level = alerts.level(for: w.effectiveSeverity, awayFromHome: false) {
                 alerts.post(title: fleetName, body: "\(w.displayName): \(w.statusLine)",
                             level: level, threadID: w.id)
+                // A wake that already reached the pocket outranks this; the
+                // ledger only ever moves delivery up, never down.
+                alertLog.markDelivery(lastAwayWake == nil ? .onLAN : .away, for: record.id)
+            } else if !alerts.authorized {
+                alertLog.markDelivery(.notDelivered, for: record.id,
+                                      reason: "Notifications are off for SecuraCV.")
+            } else if FocusGate.criticalOnly() {
+                alertLog.markDelivery(.notDelivered, for: record.id,
+                                      reason: "Your Focus is set to life-safety only.")
+            } else {
+                alertLog.markDelivery(.notDelivered, for: record.id,
+                                      reason: "No armed rule covers this.")
+            }
+            // Reaching the user's OTHER devices is a separate question from
+            // reaching this one: publish whenever a rule wants away reach,
+            // even if this phone is the one holding the fleet.
+            if AlertRule.anyReachesAnywhere(rules: alerts.rules), lastAwayWake == nil {
+                AwayPush.shared.publishWake(WakeClass(witness: w))
             }
         }
+        lastAwayWake = nil
         // Calmed witnesses leave both ledgers — their NEXT alert is news.
         postedAlerts = postedAlerts.filter { live.contains($0.key) }
         ackedAlerts = ackedAlerts.filter { live.contains($0.key) }

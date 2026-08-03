@@ -42,6 +42,13 @@ struct AlertRule: Codable, Hashable, Identifiable {
     // The alert *level* is derived from severity in AlertCenter.level(for:),
     // not stored, so a rule stays a small, Codable, user-facing thing.
 
+    /// Does anything the user armed want to reach them off-network? Drives
+    /// whether the away path is set up at all — nobody should be registered
+    /// for pushes they never asked to receive.
+    static func anyReachesAnywhere(rules: [AlertRule]) -> Bool {
+        rules.contains { $0.enabled && $0.reach == .anywhere }
+    }
+
     static let defaults: [AlertRule] = [
         .init(id: "tamper", title: "Tamper or panic", minSeverity: .tamper, reach: .anywhere),
         .init(id: "integrity", title: "Signature / chain broke", minSeverity: .alert, reach: .anywhere),
