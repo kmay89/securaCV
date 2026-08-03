@@ -212,6 +212,10 @@ final class FleetStore: ObservableObject {
     }
 
     private func hydrateFromCloud() async {
+        // Availability first: every CloudSync call gates on it, so skipping
+        // this makes the whole private-DB sync a no-op (it silently was one
+        // until the flag learned to set itself).
+        await CloudSync.shared.refreshAvailability()
         let cloud = await CloudSync.shared.pull()
         if !cloud.isEmpty { devices.mergeFromCloud(cloud) }
     }
@@ -598,6 +602,17 @@ final class FleetStore: ObservableObject {
     private var postedAlerts: [String: String] = [:]
     private var ackedAlerts: [String: String] = [:]
 
+    /// Turn a refused delivery into a sentence the Alerts tab can show. The
+    /// thrown reason is a fragment ("notifications are off for SecuraCV"), so
+    /// it gets a capital and a period and nothing else — the user reads the
+    /// system's real objection, not our paraphrase of it.
+    private static func deliveryFailure(_ error: Error) -> String {
+        let reason = error.localizedDescription
+        guard let first = reason.first else { return "iOS refused to show it." }
+        let sentence = first.uppercased() + reason.dropFirst()
+        return sentence.hasSuffix(".") ? sentence : sentence + "."
+    }
+
     private func alertFingerprint(_ w: Witness) -> String {
         // Pre-mute severity on purpose: for every witness that can enter the
         // alert loop the two severities coincide (mute caps below alert, and
@@ -644,25 +659,48 @@ final class FleetStore: ObservableObject {
                                        name: w.displayName, severity: w.effectiveSeverity,
                                        headline: w.statusLine)
             if let level = alerts.level(for: w.effectiveSeverity, awayFromHome: false) {
-                alerts.post(title: fleetName, body: "\(w.displayName): \(w.statusLine)",
-                            level: level, threadID: w.id)
-                // A wake that already reached the pocket outranks this; the
-                // ledger only ever moves delivery up, never down.
-                alertLog.markDelivery(lastAwayWake == nil ? .onLAN : .away, for: record.id)
-            } else if !alerts.authorized {
+                // CONFIRM, never assume. `level` says a rule wants to tell
+                // them; it says nothing about whether iOS will actually show
+                // it. postConfirmed checks authorization and awaits the
+                // system's acceptance, so a denied-permission phone records
+                // "Not delivered — Notifications are off" instead of a
+                // comforting lie. This tab exists to be trusted about exactly
+                // this; recording an unverified success would make it the
+                // same kind of overstatement the PR set out to remove.
+                let recordID = record.id
+                let body = "\(w.displayName): \(w.statusLine)"
+                let arrivedAway = lastAwayWake != nil
+                Task { [weak self] in
+                    guard let self else { return }
+                    do {
+                        try await self.alerts.postConfirmed(title: self.fleetName, body: body,
+                                                            level: level, threadID: w.id)
+                        // A wake that already reached the pocket outranks a
+                        // local post; the ledger only moves delivery up.
+                        self.alertLog.markDelivery(arrivedAway ? .away : .onLAN, for: recordID)
+                    } catch {
+                        self.alertLog.markDelivery(.notDelivered, for: recordID,
+                                                   reason: Self.deliveryFailure(error))
+                    }
+                }
+            } else if !alerts.hasArmedRule(for: w.effectiveSeverity) {
                 alertLog.markDelivery(.notDelivered, for: record.id,
-                                      reason: "Notifications are off for SecuraCV.")
+                                      reason: "No armed rule covers this.")
             } else if FocusGate.criticalOnly() {
+                // Order matters: blaming Focus for something no rule was
+                // watching would send the user to fix the wrong setting.
                 alertLog.markDelivery(.notDelivered, for: record.id,
                                       reason: "Your Focus is set to life-safety only.")
             } else {
                 alertLog.markDelivery(.notDelivered, for: record.id,
-                                      reason: "No armed rule covers this.")
+                                      reason: "This level never pushes.")
             }
             // Reaching the user's OTHER devices is a separate question from
-            // reaching this one: publish whenever a rule wants away reach,
-            // even if this phone is the one holding the fleet.
-            if AlertRule.anyReachesAnywhere(rules: alerts.rules), lastAwayWake == nil {
+            // reaching this one — but it is still the SAME rule's question.
+            // Gate on the rule that actually matches this witness, so a
+            // condition whose rule says "On Wi-Fi only" never leaves the
+            // house just because some unrelated rule wants away reach.
+            if alerts.reachesAnywhere(severity: w.effectiveSeverity), lastAwayWake == nil {
                 AwayPush.shared.publishWake(WakeClass(witness: w))
             }
         }

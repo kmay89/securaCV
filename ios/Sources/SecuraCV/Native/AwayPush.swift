@@ -103,10 +103,8 @@ final class AwayPush: ObservableObject {
         UIApplication.shared.registerForRemoteNotifications()
         #endif
         #if canImport(CloudKit)
-        guard CloudSync.shared.isAvailable else {
-            reach = .unavailable("Sign in to iCloud to get alerts when you're away.")
-            return
-        }
+        // The account IS the availability check — don't gate on a flag owned
+        // elsewhere, or this path inherits that flag's bugs on top of its own.
         let container = CKContainer.default()
         let status = try? await container.accountStatus()
         guard status == .available else {
@@ -179,7 +177,9 @@ final class AwayPush: ObservableObject {
     /// front of us.
     func publishWake(_ wake: WakeClass) {
         #if canImport(CloudKit)
-        guard CloudSync.shared.isAvailable else { return }
+        // Our OWN readiness: a wake with no subscription behind it is a row
+        // written into iCloud that can wake nobody.
+        guard subscribed else { return }
         let record = CKRecord(recordType: Self.wakeRecordType)
         record[WakePayload.classKey] = wake.rawValue as CKRecordValue
         // No name. No id. No timestamp of ours — CloudKit's own creation date
@@ -192,7 +192,7 @@ final class AwayPush: ObservableObject {
     /// the user's iCloud. Sweep anything older than a day on launch.
     func sweepOldWakes(now: Date = Date()) async {
         #if canImport(CloudKit)
-        guard CloudSync.shared.isAvailable else { return }
+        guard subscribed else { return }
         let db = CKContainer.default().privateCloudDatabase
         let cutoff = now.addingTimeInterval(-86_400) as NSDate
         let query = CKQuery(recordType: Self.wakeRecordType,

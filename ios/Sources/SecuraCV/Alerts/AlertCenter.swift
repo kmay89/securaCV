@@ -43,8 +43,10 @@ struct AlertRule: Codable, Hashable, Identifiable {
     // not stored, so a rule stays a small, Codable, user-facing thing.
 
     /// Does anything the user armed want to reach them off-network? Drives
-    /// whether the away path is set up at all — nobody should be registered
-    /// for pushes they never asked to receive.
+    /// whether the away path is SET UP at all — nobody should be registered
+    /// for pushes they never asked to receive. This is deliberately a global
+    /// question; whether a PARTICULAR alert may travel is a different one
+    /// (AlertCenter.reachesAnywhere(severity:)).
     static func anyReachesAnywhere(rules: [AlertRule]) -> Bool {
         rules.contains { $0.enabled && $0.reach == .anywhere }
     }
@@ -134,6 +136,30 @@ final class AlertCenter: NSObject, ObservableObject {
         default: return nil          // digest events are pulled, never pushed —
                                      // nil IS the abuse guard this method promises
         }
+    }
+
+    /// Is anything the user armed watching for this severity at all? Lets the
+    /// history separate "your Focus silenced it" from "you never asked about
+    /// this" — two very different sentences to read at 3am.
+    func hasArmedRule(for severity: Severity) -> Bool {
+        rules.contains { $0.enabled && severity >= $0.minSeverity }
+    }
+
+    /// May an alert of this severity travel off-network? Answered by the SAME
+    /// strongest-matching-rule logic `level(for:)` uses, so the per-rule reach
+    /// choice is honored for wakes exactly as it is for local posts — a rule
+    /// left on "On Wi-Fi only" must not have its alarms published just because
+    /// some other, unrelated rule wants away reach.
+    ///
+    /// Focus is deliberately NOT consulted here: Focus is a property of the
+    /// device doing the quieting, and the device publishing a wake is not the
+    /// one that will receive it. The receiving device applies its own.
+    func reachesAnywhere(severity: Severity) -> Bool {
+        let matching = rules.filter { $0.enabled && severity >= $0.minSeverity }
+        guard let strongest = matching.max(by: { $0.minSeverity < $1.minSeverity }) else {
+            return false
+        }
+        return strongest.reach == .anywhere
     }
 
     /// Fire a LOCAL notification (used on-LAN alerts). Remote pushes arrive

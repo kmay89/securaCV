@@ -141,6 +141,48 @@ final class AlertHistoryTests: XCTestCase {
         XCTAssertEqual(WakeClass(severity: .alert, badgeFailed: false, wentDark: false), .pattern)
     }
 
+    // MARK: - per-rule reach governs what may leave the house
+
+    func testOnlyTheMatchingRulesReachDecidesWhetherAWakeIsPublished() {
+        let center = AlertCenter()
+        // Everyday activity may travel; the serious rules are Wi-Fi only.
+        center.rules = [
+            .init(id: "dark", title: "A Canary went dark", minSeverity: .alert,
+                  reach: .onWiFiOnly),
+            .init(id: "activity", title: "Everyday activity", minSeverity: .notice,
+                  reach: .anywhere),
+        ]
+        XCTAssertTrue(AlertRule.anyReachesAnywhere(rules: center.rules),
+                      "something wants away reach, so the path is worth setting up")
+        XCTAssertFalse(center.reachesAnywhere(severity: .alert),
+                       "but the rule that MATCHES an alert says Wi-Fi only — an unrelated "
+                       + "rule's Anywhere must not push this alarm out of the house")
+        XCTAssertTrue(center.reachesAnywhere(severity: .notice),
+                      "the rule that does match may travel")
+    }
+
+    func testReachUsesTheStrongestMatchingRuleJustLikeLevelDoes() {
+        let center = AlertCenter()
+        center.rules = [
+            .init(id: "activity", title: "Everyday activity", minSeverity: .notice,
+                  reach: .onWiFiOnly),
+            .init(id: "tamper", title: "Tamper or panic", minSeverity: .tamper,
+                  reach: .anywhere),
+        ]
+        XCTAssertTrue(center.reachesAnywhere(severity: .tamper),
+                      "tamper matches both rules; the strongest one wins, exactly as in level(for:)")
+        XCTAssertFalse(center.reachesAnywhere(severity: .notice))
+    }
+
+    func testADisabledRuleGrantsNoReach() {
+        let center = AlertCenter()
+        center.rules = [
+            .init(id: "dark", title: "A Canary went dark", minSeverity: .alert,
+                  reach: .anywhere, enabled: false),
+        ]
+        XCTAssertFalse(center.reachesAnywhere(severity: .alert))
+    }
+
     // MARK: - the away path is only armed when a rule asks for it
 
     func testAwayPathIsOnlySetUpWhenARuleWantsIt() {
