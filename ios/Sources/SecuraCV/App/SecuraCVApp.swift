@@ -5,24 +5,78 @@
 // moment it returns (a security app must never be caught stale).
 
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 @main
 struct SecuraCVApp: App {
     @StateObject private var store = FleetStore()
     @Environment(\.scenePhase) private var scenePhase
+    // SwiftUI has no hook for the remote-notification callbacks, and the away
+    // path is not optional polish — without a delegate the wake arrives and
+    // nothing in the app ever learns it did.
+    #if canImport(UIKit)
+    @UIApplicationDelegateAdaptor(PushDelegate.self) private var pushDelegate
+    #endif
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(store)
                 .tint(Theme.color(.info))
-                .task { store.onAppear() }
+                .task {
+                    #if canImport(UIKit)
+                    PushDelegate.store = store
+                    #endif
+                    store.onAppear()
+                }
         }
         .onChange(of: scenePhase) { _, phase in
             store.onScenePhase(active: phase == .active)
         }
     }
 }
+
+#if canImport(UIKit)
+/// The landing pad for APNs. Deliberately thin: it knows how to hand a wake
+/// to the store and nothing else, so the away path's real logic stays in
+/// AwayPush and FleetStore where it can be read and tested.
+final class PushDelegate: NSObject, UIApplicationDelegate {
+    /// Set once the scene exists. Static because iOS builds the delegate
+    /// before SwiftUI builds the store, and a wake that arrives in that gap
+    /// must not crash — it simply refreshes on the next foreground.
+    @MainActor static weak var store: FleetStore?
+
+    func application(_ application: UIApplication,
+                     didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        // Nothing to send anywhere: CloudKit owns the token, and we run no
+        // server that could want it. Registration exists only so the
+        // subscription's pushes can be delivered at all.
+    }
+
+    func application(_ application: UIApplication,
+                     didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        Task { @MainActor in
+            await AwayPush.shared.noteRegistrationFailure()
+        }
+    }
+
+    /// A wake landed. The NSE already composed what the user sees; our job is
+    /// to make the app's own state true — pull the fleet so that opening the
+    /// notification shows the real thing, not the state from before the wake.
+    func application(_ application: UIApplication,
+                     didReceiveRemoteNotification userInfo: [AnyHashable: Any]) async
+        -> UIBackgroundFetchResult {
+        let wake = WakePayload.wakeClass(from: userInfo)
+        return await MainActor.run {
+            guard let store = Self.store else { return UIBackgroundFetchResult.noData }
+            store.noteAwayWake(wake)
+            return .newData
+        }
+    }
+}
+#endif
 
 struct RootView: View {
     @EnvironmentObject var store: FleetStore
