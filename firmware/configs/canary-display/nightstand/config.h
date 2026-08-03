@@ -141,6 +141,26 @@
 #define CD_LANTERN_MINUTES      15
 #define CD_LANTERN_AUTO         0
 
+// Hallway mode seeds (runtime prefs in NVS; see care/hallway.h). ONE switch
+// over lantern hours: it writes the lantern's auto mode and the shared look,
+// and adds the rise/hold/ebb dwell so a corridor light arrives like evening
+// rather than like a timer.
+//
+// It ships OFF for the same reason CD_LANTERN_AUTO does — a lamp burning
+// through quiet hours is a knowing trade of the dark-means-safe signal, and a
+// trade is not a default. What Hallway mode changes is only how HARD the
+// trade is to make deliberately, not whether it is made for you.
+#define CD_HALLWAY_ON           0       // the switch itself — off, always
+#define CD_HALLWAY_LEVEL        1       // 0=Dim, 1=Soft, 2=Glow
+#define CD_HALLWAY_RISE_MIN     6       // minutes to come up at the start of the window
+#define CD_HALLWAY_EBB_MIN      12      // minutes to fade out at the end
+#define CD_HALLWAY_SCENE        6       // the warm "Lantern" scene
+// May the WS2812 join a LIT hallway lamp? Only reachable while Hallway mode
+// is on and the lamp is lit — which already means the fleet is calm, because
+// attention extinguishes the lamp first. Set 0 to keep the beacon a pure
+// attention channel even in Hallway mode; the reasoning is in care/hallway.h.
+#define CD_HALLWAY_BEACON       1
+
 // Quiet hours (local time; requires SNTP). First-boot seeds — the settings
 // surface owns the runtime schedule (glass_settings.h).
 #define CD_QUIET_START_HOUR     22

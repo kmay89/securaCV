@@ -55,6 +55,18 @@ slice.
 | `canary-display` | `canary-display-nightstand-s3` | Nightstand portrait face + WS2812 beacon |
 
 Firmware: `display_1in47.cpp` (HAL), `portrait_ui.cpp` (face), `ambient_led.cpp`
-(beacon). Design: [`docs/hardware/display_nightstand_line.md`](../../../docs/hardware/display_nightstand_line.md).
+(beacon), `care/hallway.cpp` + `common/color/plumage.cpp` (Hallway mode and the
+lamp's light-language). Design:
+[`docs/hardware/display_nightstand_line.md`](../../../docs/hardware/display_nightstand_line.md)
+(§5e for Hallway mode).
+
+## Enclosure
+
+[`canary_s3_lcd147.scad`](../../../docs/hardware/enclosure/canary_s3_lcd147.scad) —
+the hallway stick case: screwless snap fit, thumb-release back for the microSD, a
+window that turns the WS2812 into a wall wash, and black PETG with the house mark
+inlaid in yellow. **Do not use the C6 case** ([`canary_c6_display.scad`](../../../docs/hardware/enclosure/canary_c6_display.scad));
+that board has a USB-C port on its short edge where this one has a USB-A male plug,
+which changes the entire plug end.
 
 Pin definitions: [`pins/pins.h`](pins/pins.h) (authoritative).

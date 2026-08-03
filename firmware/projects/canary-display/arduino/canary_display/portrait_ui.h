@@ -35,6 +35,14 @@ struct PortraitState {
   const char* wifi_reason = nullptr;
   bool mqtt_ok = false;
   bool acked = false;       // ack residual marker
+  // Where we are inside quiet hours, in minutes. Hallway mode's dwell
+  // envelope (care/hallway.h) rises over the first minutes and ebbs over the
+  // last, so the corridor light arrives and leaves like evening rather than
+  // like a timer. Both zero means "no quiet-hours window known" (no RTC, no
+  // schedule) and the dwell is skipped — the lamp simply burns at its own
+  // brightness rather than guessing.
+  uint16_t night_elapsed_min = 0;
+  uint16_t night_remaining_min = 0;
   bool time_valid = false;
   int  clock_hh = 0;
   int  clock_mm = 0;

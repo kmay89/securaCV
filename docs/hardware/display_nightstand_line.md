@@ -167,7 +167,7 @@ ramp to drive. The boot banner says this out loud so nobody debugs a missing dim
   Warn — or a link dies — the lamp yields the glass back to the truth and stays out until
   someone summons it again. A lamp that silently resumed over an alarm the user just dealt
   with would be exactly the dishonesty §4 was written to prevent.
-- **Never a state signal.** Its light is a look-engine *scene*, never a semantic colour, so
+- **Never a state signal.** Its light is a look-engine *scene*, never a semantic color, so
   it cannot say "safe" by glowing. The WS2812 beacon is **not part of the lamp** on any
   board: that channel stays a pure attention signal, dark when all is well.
 - **"Lantern hours"** (an auto schedule through quiet hours — the hallway-light use case)
@@ -201,6 +201,108 @@ the §7 follow-up): **tap** = peek, **double** = the lantern, **hold** = acknowl
 fires on the second *press*, not its release — a light has to come on when you push the
 button — and a press that is spoken for can never also mature into a tap or an
 acknowledge.
+
+## 5e · Hallway mode — the nightlight, made easy, and given a voice
+
+§5c built the lantern and left two things unfinished. This wave closes both.
+
+**The switch.** Everything a hallway nightlight needed was already in the tree and
+none of it was reachable: you had to know the lantern has an auto schedule, that it
+is called "lantern hours", that it ships off, and then separately pick a scene, a
+brightness and a warmth that suit a corridor at 3 a.m. That is an expert path, and a
+nightlight is not an expert feature.
+[`care/hallway.h`](../../firmware/projects/canary-display/include/canary/care/hallway.h)
+is one switch over that machinery — it writes the lantern's own settings rather than
+adding a second way to be a lamp, so there is still exactly one lamp in the firmware
+and exactly one place the honesty rules live. Three levels (Dim / Soft / Glow),
+because a nightlight with a slider is a nightlight nobody finishes setting up.
+
+It ships **off**, for the same reason `CD_LANTERN_AUTO` does. Hallway mode changes
+how hard the trade is to make *deliberately*, not whether it is made for you.
+
+**The dwell.** The piece that genuinely did not exist. A lamp that snaps to full the
+instant quiet hours begin reads as a timer firing; one that rises over a few minutes
+reads as evening settling. `level()` is a rise / hold / ebb envelope across the
+quiet-hours window, fed by the new `hours_window_position()` in `glass_settings.h`
+(midnight-wrap aware, host-tested). When the two ramps would overlap on a short
+night, the lower wins — so the lamp still fades in and out, it just never reaches
+full.
+
+**The voice.** [`color/plumage.h`](../../firmware/common/color/plumage.h) is the
+layer that makes the lamp read as a living thing rather than a color fade. The look
+engine gives it a *palette*; plumage gives it a *language*. Birdsong is phrases of
+syllables, and the syllable types are what make a species recognizable, so we render
+five — **Chirp** (snap on, fall away), **Trill** (one note repeated fast, a shimmer
+inside a syllable), **Warble** (pitch wandering, the lyrical one), **Whistle** (slow
+in, long hold, the carrying note) and **Churr** (low and muttered, the bird talking
+to itself) — mapping the two things a note has onto the two things light has:
+
+- **pitch → a position along the active scene's palette**, so a "high" note is
+  further around the same palette the lamp is already wearing. The song can never
+  introduce a color the scene does not own, which is exactly what stops it from ever
+  reading as a semantic color.
+- **amplitude → an envelope ADDED to the resting lamp**, so the light only swells. It
+  never dips: a hallway light that blinks out is a fault, not a phrase. (Host-tested
+  as an invariant, not a habit.)
+
+On the tall 172×320 glass a syllable is **a band that rises** — the note's glow
+travels bottom-to-top over its duration, so a phrase reads as light climbing the
+pane. That is the pattern: motion with a grammar behind it, not a scrolling gradient.
+The glass itself changed to carry it: the lantern overlay was one object with a
+two-stop vertical gradient (a fade), and is now a **stack of 14 bands**, each
+carrying its own gradient to the next band's color — piecewise-linear, so it still
+reads as one smooth field, but with enough independent stops for a glow to move
+through it.
+
+**The personality.** `Voice` is four traits — chatter, boldness, pitch, restlessness
+— derived from the device id, so every Canary speaks a little differently and two on
+one hallway never fall into lockstep while each stays exactly reproducible across its
+own reboots. Same trick, same reason, and the same FNV-1a hash of the NVS device id
+as `ambient_life`'s cadence: reproducible is what makes it host-testable. Every trait
+lands in a musical middle band, so there is no id that yields a mute bird or a
+strobing one.
+
+Phrases are **rationed**, like every other motion in this family: a settle period
+before the first word, a minimum gap the scheduler will never go below, and gaps that
+more than double at night. A shut gate **holds** the clock rather than banking it —
+re-opening it never releases a stored-up burst of speech.
+
+**The honesty invariant, and the one place this wave touches it.** Plumage may only
+dress the calm. Rather than restate that rule and risk it drifting, its two render
+entry points hand `worst >= Warn` and `safe_dark` **straight back to the look
+engine** — the song simply does not exist on those paths, so there is no way to call
+plumage and get a decorated alarm. The host tests assert this as **bit-identical**
+output, not "close".
+
+The one thing that does change is the **beacon**. §4 and
+[`hal/ambient_led.h`](../../firmware/projects/canary-display/include/canary/hal/ambient_led.h)
+say the WS2812 is a pure attention channel and the lamp never routes through it.
+Under Hallway mode it may (`CD_HALLWAY_BEACON`, and only while the lamp is lit). The
+reasoning, written out in full at `care/hallway.h`: the invariant protects the
+inference *darkness means safe*, and that inference is **already spent** the moment
+lantern hours are on, because the glass is then lit all night regardless of state.
+Letting the LED join a lamp that is already burning costs nothing further — the room
+is provably calm, since attention extinguishes the lamp before it can be lit at all.
+What would be dishonest is the reverse, a beacon glowing a scene color while the lamp
+is *off*, and that never happens. With Hallway mode off — the default — the beacon
+behaves exactly as it always has.
+
+The glass publishes its lamp frame (`ui/look_state.h` `LampFrame`) for the beacon to
+read, because only the glass knows whether the lantern is actually lit: the timeout,
+the schedule and the veto all resolve there. The song is ticked in exactly one place
+for the same reason — the beacon reads it without advancing it, so the point of light
+and the pane are always mid-way through the same syllable.
+
+**Host tests:** `firmware/tests_host/test_plumage.cpp` (honesty, add-only, per-device
+reproducibility, the gate, the rising head) and the Hallway/dwell/window cases added
+to `projects/canary-display/tests_host/test_bedside_models.cpp`.
+
+**The body.** The USB-A stick finally has a case:
+[`canary_s3_lcd147.scad`](./enclosure/canary_s3_lcd147.scad) — screwless, thumb-release
+for the card, and a window in the back that turns the WS2812 into a wash on the wall
+behind it. See the enclosure README.
+
+---
 
 ## 6 · The 7" big glass + real 5-point touch
 
@@ -271,7 +373,7 @@ everything else on these boards):
   **no emulated link at all** rather than one that lands on the generic gallery. (Fixing this
   properly also fixed two older overclaims: `dash-modes` and `nightstand-c6` had been deep-linking
   `fleet.html#<their own id>` for ids the emulator registry never knew. They now point at the
-  sibling twin that genuinely shares their glass, labelled as a sibling and not as "1:1".) The
+  sibling twin that genuinely shares their glass, labeled as a sibling and not as "1:1".) The
   emulator's Arduino shim did gain the GPIO surface the new BOOT-button code needs, with
   `emu_button()` for JS to push the level in — so the twin can drive the new gestures the moment
   a build exists.
