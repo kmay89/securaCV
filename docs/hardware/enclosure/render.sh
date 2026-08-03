@@ -148,7 +148,8 @@ devstl dev_lcd7_gauge_tray.stl  canary_s3_lcd7.scad -D 'part="gauge_tray"'
 # corner shape here (~6 g) before any 150 g case print
 devstl dev_lcd7_radius_gauge.stl canary_s3_lcd7.scad -D 'part="radius_gauge"'
 # frame TPU fitments — TPU 90-95A from an EXTERNAL spool (never the AMS):
-# USB wire grommet, captive BOOT/RESET press-through plug, SD peel cover
+# USB wire grommet, captive leashed BOOT/RESET press-through plug (towers
+# reach the caps at the board edge), SD peel cover
 devstl dev_lcd7_grommet_usb.stl  canary_s3_lcd7.scad -D 'part="grommet_usb"'
 devstl dev_lcd7_plug_buttons.stl canary_s3_lcd7.scad -D 'part="plug_buttons"'
 devstl dev_lcd7_plug_sd.stl      canary_s3_lcd7.scad -D 'part="plug_sd"'

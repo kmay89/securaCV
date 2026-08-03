@@ -58,12 +58,18 @@ struct StatusHero: View {
     let headline: String
     var watchers: Int = 0
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         VStack(spacing: Theme.s) {
             Image(systemName: severity.sfSymbol)
                 .font(.system(size: 56, weight: .semibold))
                 .foregroundStyle(Theme.color(severity.role))
                 .symbolRenderingMode(.hierarchical)
+                // A quiet pulse ONLY while something needs you — the calm
+                // state never moves, and Reduce Motion stills everything.
+                .symbolEffect(.pulse, options: .repeating,
+                              isActive: severity >= .alert && !reduceMotion)
                 .accessibilityHidden(true)
             Text(headline)
                 .font(.title2).bold()

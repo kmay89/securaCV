@@ -3875,11 +3875,26 @@ function hubShowHatch(receipt) {
             "with the defaults — they're exactly right for Canaries (the broker lives on the hub " +
             "itself, port 1883).",
         ]),
-    "Now make the login your Canaries will use: the broker refuses anonymous connections, " +
-      "and Home Assistant's own reserved accounts don't apply to them. Turn on Advanced Mode " +
-      "in your profile, then Settings → People → Users → Add user — “securacv” and a " +
-      "password you'll reuse on each device. It needs no administrator rights. Type that " +
-      "same pair into the MQTT fields when you flash each Canary.",
+    // Which login the Canaries use depends on who made it. When this app
+    // provisioned the hub, the plan already minted a broker-local “canary”
+    // account — telling someone to ALSO create a Home Assistant user would hand
+    // them a second, different credential and no way to know which one the
+    // devices want. When they set the hub up by hand, a Home Assistant user is
+    // the practical answer: editing the broker's own `logins` means hand-editing
+    // the add-on's configuration, which the rest of this guide tells them to
+    // leave alone.
+    selfSetup
+      ? "Your Canaries' login was made for you during setup: the broker refuses anonymous " +
+        "connections, so the hub minted a “canary” account with a password of its own. Read " +
+        "that password in Home Assistant under Settings → Apps → Mosquitto broker → " +
+        "Configuration → Logins, and type the pair into the MQTT fields when you flash each " +
+        "Canary. It can only speak MQTT — it is not a Home Assistant account and cannot act " +
+        "as one."
+      : "Now make the login your Canaries will use: the broker refuses anonymous connections, " +
+        "and Home Assistant's own reserved accounts don't apply to them. Turn on Advanced Mode " +
+        "in your profile, then Settings → People → Users → Add user — “securacv” and a " +
+        "password you'll reuse on each device. It needs no administrator rights. Type that " +
+        "same pair into the MQTT fields when you flash each Canary.",
     "Then follow “The Hub” guide to bring in your Canaries — securacv.com/lab → Home Assistant.",
   ];
   $("hub-hatch-steps").innerHTML = steps.map((s) => `<li>${esc(s)}</li>`).join("");

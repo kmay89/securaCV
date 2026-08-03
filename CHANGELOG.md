@@ -2,6 +2,78 @@
 
 ## [Unreleased]
 
+## [2.4.5] - 2026-08-03
+
+### The setup wizard stops crashing — for the reasons 2.4.4 didn't reach
+
+2.4.4's four first-boot fixes were real but not the whole story: a Nightstand 7
+still looped clock → "Let's get you connected" → reset, so wizard-entered
+Wi-Fi could never persist (credentials write only on a successful join). Five
+further hardenings close the wizard-start window the crash brackets (PR
+pending):
+
+- **The SoftAP never rises mid-scan.** The wizard's pre-AP sweep (~3.9 s for a
+  full 13-channel active scan) outlives the 2.6 s Hello beat, so `WIFI_AP_STA`
+  + `softAP()` fired with a live scan handle — the one radio sequence the
+  battle-tested WAP wizard explicitly refuses ("a pending scan handle keeps
+  the radio busy"). The wizard now waits the sweep out under the Hello scene
+  (bounded), harvests it, and drops any lingering handle before the mode flip.
+- **LVGL 9 leaves the fixed 64 KiB pool for the heap.** `LV_USE_STDLIB_MALLOC`
+  (a v9-only key; v8 ignores it) routes `lv_malloc` to the C library. Under v9
+  the pool also fed draw tasks, layers, and the QR canvas; its worst moment was
+  the wizard's two-live-screens window, and its failure mode was
+  `LV_ASSERT_MALLOC`'s `while(1)` — a halt the armed task watchdog converts
+  into a panic loop. The ELF confirms the builtin pool is gone.
+- **The join QR proves it rendered before the card shows.** The v9 widget can
+  leave a buffer-less canvas on allocation failure, and update reports its own
+  verdict; both are checked now. On failure the Join scene degrades to plain
+  text join instructions — no blank card, no dead end, same destination.
+- **First-boot NVS writes moved off the live panel.** The runtime config's
+  `dev_id` persist and the pseudonym's `id_salt` mint used to fire after the
+  face was up — a flash commit under RGB scanout, the exact garble mechanism
+  2.4.4 removed from esp_wifi, still alive in our own writes. Both stores warm
+  before `display_init` now.
+- **The AP raise rides a backlight dip.** SoftAP bring-up's TX calibration
+  burst is the boot's steepest current spike, and on the 7" glass it landed on
+  a full-day backlight from one USB feed. The light dips to ambient across the
+  raise (the Hello→Join scene change masks it) so a marginal supply cannot
+  brown out mid-wizard.
+
+Field debugging also gains its missing breadcrumbs: boot now logs whether
+Wi-Fi credentials were seeded and via which scheme (never the values), and
+the wizard logs its sweep results, AP raise, and join requests.
+
+## [2.4.4] - 2026-08-03
+
+### The 7" glass survives its own first light — and every Wi-Fi seed is honored
+
+The Canary 7 (Nightstand 7) crash-looped through first boot: splash, clock,
+"Let's get you connected" — then a garbled panel and a reboot, forever, the
+join QR never shown. Four distinct defects, all fixed (PR #1416), all
+affecting the dash family and two reaching vision/sense too:
+
+- **LVGL 9 scene fades were memory events.** The onboarding wizard faded a
+  full-screen container's `opa`, which on the LVGL 9.5 dash builds composites
+  the whole 800x480 subtree through ~22 KB-per-frame layer chunks from the
+  same 64 KB pool that already holds two live screens plus the QR buffer;
+  exhaustion halts, NULL-derefs, or livelocks — a panic exactly at the scene
+  change. The wizard now fades label text per-part (no compositing) and cuts
+  its finish handoff on v9.
+- **Wi-Fi bring-up no longer writes flash mid-scanout.** Arduino Wi-Fi
+  persistence (on by default) committed esp_wifi config to NVS on every
+  mode/softAP/begin call; a flash write stalls the RGB panel's non-IRAM
+  bounce-refill and garbles the glass. `WiFi.persistent(false)` now precedes
+  the first radio call — credentials live in our own NVS namespace.
+- **The wizard feeds the task watchdog.** Raised from loop() (the
+  wrong-password path), it ran under the armed 30 s TWDT without ever
+  feeding it — a guaranteed panic mid-setup. Every wizard wait loop and the
+  bounded boot connect now feed it.
+- **Both Wi-Fi seed schemes are honored.** A stale flasher frontend writes
+  blob-scheme `wifi_ssid`/`wifi_pass`, which the string readers saw as
+  present-but-empty and re-raised onboarding over good credentials. The
+  credential loaders (display, vision, sense) now fall back to the blob when
+  a key exists but reads empty; `desktop_parity.test.js` pins it.
+
 ### `cargo audit` goes green again — with the one unfixable advisory named, not hidden
 
 The weekly dependency audit has been failing since 2026-07-27 on a single

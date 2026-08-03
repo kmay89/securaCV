@@ -871,7 +871,7 @@
     {
      "id": "7-touch-dashboard-case",
      "name": "7″ touch dashboard case",
-     "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on molded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (~52 cm² back grille + bottom-wall intake and top-wall exhaust — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centered USB pass-through (the brand lettering is the intake vents flanking it) and three TPU fitments: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive press-through BOOT/RESET plug, and a peel-open SD cover that stays attached. Optional 20° desk dock for the frame (drop-in slot on tilted seat pads, self-centering keys into the frame's keying slots, landscape and portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centers and `pcb_h` are NOMINAL — measure yours",
+     "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on molded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (~52 cm² back grille + bottom-wall intake and top-wall exhaust — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centered USB pass-through plus a matching side exit on the microSD's wall (hang the case portrait with that wall down and the cable leaves out the bottom; the leashed blank fills whichever exit is idle) and three TPU fitments: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive leashed press-through BOOT/RESET plug whose press towers reach the button caps at the board edge, and a peel-open SD cover that stays attached. Optional 20° desk dock for the frame (drop-in slot on tilted seat pads, self-centering keys into the frame's keying slots, landscape and portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centers and `pcb_h` are NOMINAL — measure yours",
      "status": "in-development",
      "device": "canary-display-dash",
      "selects": {},
@@ -905,6 +905,8 @@
     "port_teth_hole",
     "port_teth_barb",
     "port_barb_proud",
+    "plug_teth_hole",
+    "plug_teth_barb",
     "back_flush",
     "fil_body",
     "fil_ink",
@@ -1073,7 +1075,7 @@
       "left",
       "right"
      ],
-     "default": "none"
+     "default": "right"
     },
     {
      "id": "port_labels",
@@ -1087,6 +1089,14 @@
      "id": "rating_stamp",
      "type": "bool",
      "label": "rating_stamp",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "plug_tether",
+     "type": "bool",
+     "label": "plug_tether",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1177,7 +1187,7 @@
      "default": "none"
     }
    ],
-   "engineering_param_count": 247,
+   "engineering_param_count": 250,
    "alternatives": [
     "dash_display"
    ],
@@ -1185,8 +1195,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 29,
-    "user_options": 29,
+    "options": 30,
+    "user_options": 30,
     "variant_axes": 1
    }
   },

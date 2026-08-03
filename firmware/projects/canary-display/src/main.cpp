@@ -1056,6 +1056,20 @@ void setup() {
   // moment the broker accepts our subscriptions.
   canary::trust::init();
 
+  // Warm the two identity stores that lazily WRITE NVS on first use — the
+  // runtime config (persists dev_id on a fresh unit) and the pseudonym
+  // (mints its id_salt) — while the panel is still dark. Their first
+  // callers used to be provision_needed()/provision_run(), i.e. after the
+  // face was up: on a factory-fresh board that put a flash commit under
+  // live RGB scanout, which stalls the non-IRAM bounce refill exactly like
+  // the esp_wifi writes the dash family already banished (the
+  // display_dash.cpp lesson applies to our own writes too).
+  canary::cfg::get();
+  {
+    char devid_hex[device_pseudonym::HEX_LEN + 1];
+    (void)device_pseudonym::device_id_hex(devid_hex, sizeof(devid_hex));
+  }
+
 #if defined(FEATURE_WAKE_ALARM) && FEATURE_WAKE_ALARM
   // OUTSIDE the chime gate on purpose (review catch): the sunrise ramp is
   // the alarm's visual half and must restore even on a silent-piezo build

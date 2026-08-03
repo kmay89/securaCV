@@ -191,6 +191,27 @@ is **Canary WAP**. → [the full stack](full_stack_setup.md) ·
 integration](frigate_integration.md) → [the Verified Timeline
 card](lovelace_timeline.md).
 
+### Does it work with Apple Home? What about HomeKit Secure Video?
+
+**Apple Home: designed, not built** — the RFC is
+[the Apple Home design doc](design/apple_home_integration.md). The shape:
+each Canary appears in the Home app as a *sensor* accessory
+(motion/occupancy/contact/tamper/liveness — by default no more than a dumb
+PIR would report; one opt-in setting can add the coarse object class —
+person, vehicle, animal, package — never identity), so your automations can
+answer the witness — lights on when
+a person crosses the driveway, the whole house responding to tamper. If you
+run the Home Assistant hub, HA's own HomeKit Bridge can project the
+existing securacv sensors into Apple Home today; the worked recipe is the
+RFC's first deliverable.
+
+**HomeKit Secure Video: no — and on purpose.** HKSV's core loop uploads the
+raw clip on every motion trigger, which is exactly what Invariant I ("No
+Raw Export by Design") forbids, and no Canary has a media plane to offer it
+anyway. The verdict is argued once, with revisit triggers, in the RFC §2.
+The event half of Apple Home — the half automations actually run on — is
+fully open to us, and it's the half we do better than a camera.
+
 ### Do I need to buy anything from you?
 
 No. Print the case, buy the parts anywhere, flash it yourself — the whole path

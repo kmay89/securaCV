@@ -336,9 +336,9 @@ not a snowflake:
 |---|---|---|---|
 | **N0** | — | SSE adoption in `FleetStore`; NSE signature-verify + hydrate; tier/controls UI in Alerts tab | open |
 | **R1** | `alert_relay.md` substrate decision | Relay MVP: APNs + Web Push, content-free payload, dedup + LAN-receipt suppression, heartbeat terminus | open |
-| **W0** | N0, R1 | Watch: actionable mirrored notifications (Ack/Mute/View from the wrist); no new targets | open |
+| **W0** | N0, R1 | Watch: actionable mirrored notifications (Ack/Mute/View from the wrist); no new targets | **built** for the local-alert path (categories + Ack/Mute actions + durable mute ledger); the relay-delivered flavor still waits on R1 |
 | **W1** | W0 | watchOS target + `WCSession` state pipeline; Smart Stack widget, complications, custom notification scene, Live Activity mirroring | **built**, except the custom notification scene (waits on W0's categories) |
-| **W2** | W1 | 3-screen Watch app (fleet glance / heartbeat / ack) | **built** for glance + heartbeat (+ witness detail); ack/mute actions wait on the phone exposing them |
+| **W2** | W1 | 3-screen Watch app (fleet glance / heartbeat / ack) | **built**: glance, heartbeat (wrist-started path test), witness detail with Mute-1h (phone-owned ledger, tamper punch-through preserved) |
 | **P1** | R1 | Web monitor as installable PWA + Web Push (declarative payload, SW fallback) | open |
 
 (The W1/W2 build deliberately did not wait for W0/R1: the state pipeline and

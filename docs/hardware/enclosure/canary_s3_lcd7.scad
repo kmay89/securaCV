@@ -88,9 +88,16 @@
 //            yanks fatigue the frame, not the board's connector.
 //      plug_buttons — captive plug for the BOOT/RESET window: cap nests the
 //            window's bevel, a 45° lip snaps in behind the wall (can't fall
-//            out, can't be pushed inside), and two press pips under the
-//            face dimples actuate BOOT/RESET THROUGH the plug — it never
-//            needs to come out.
+//            out, can't be pushed inside), and two press TOWERS under the
+//            face dimples run all the way down to the button caps and
+//            actuate BOOT/RESET THROUGH the plug. The towers' reach is
+//            derived from the panel record (the caps sit at the board
+//            edge); the 2 mm pips they replace were measured ~5 mm short
+//            on the first fitted case. Leashed like the SD cover — strap
+//            into a channel in the top wall's skin, arrowhead barb through
+//            an anchor beside the window (the innermost -x exhaust slot
+//            gave up its station for the anchor) — because a plug you pop
+//            out to check the towers is a plug you can drop.
 //      plug_sd      — peel-open cover for the SD opening: countersunk cap
 //            flush in a 45° rim (the flat-floored recess it replaces left a
 //            cantilevered ring over the opening that drooped on the first
@@ -99,10 +106,9 @@
 //            mushroomed inside, so the peeled cover dangles captive (v0.6;
 //            the v0.5 hinge tongue only hooked the plate edge and could
 //            slide free) — and a fingernail scoop biting the rim at the
-//            card end to peel it by the cap edge. The other two fitments
-//            need no leash: the button plug is snap-captive behind its
-//            wall and never comes out; the grommet lives wrapped on the
-//            cable itself.
+//            card end to peel it by the cap edge. The button plug carries
+//            the same leash (see above); only the grommet goes without —
+//            it lives wrapped on the cable itself.
 //    frame_gauge — one corner of the frame including one boss and a wall
 //            keyhole. Print FIRST (~10 % of the frame's filament): it proves
 //            the glass corner radius, the boss offset signs and screw reach.
@@ -178,7 +184,19 @@
 //  the dock-key slots, top exhaust, bottom intake and the whole
 //  bottom-in → top-out convection doctrine are untouched, so the case
 //  breathes the same wall-mounted (back blocked) and better on the
-//  dock. Still NOT fully print-validated; expect iteration.
+//  dock. v0.10 is the FIRST-FIT pass, everything measured off the
+//  assembled case: (1) the -x top keyhole's inboard portrait slide opened
+//  into an M3 screw-head pocket — that ONE leg is no longer cut
+//  (khm_slide_ok derives which; that mount keeps two slides and the one
+//  orientation that wanted the third hangs on three screws); (2) the
+//  BOOT/RESET press pips became TOWERS whose reach derives from the panel
+//  record — the caps sit at the BOARD EDGE, ~5 mm past the old pips — and
+//  the plug grew the standard leash, its anchor taking the innermost -x
+//  exhaust slot's station; (3) the side exit came back ON at the microSD
+//  side, so a portrait wall hang runs the cable out the bottom; (4) the
+//  hatchery egg grew true tangent-arc flanks (canary_vent_lib.scad — the
+//  straight-flank capsule read as a slot, not an egg).
+//  Still NOT fully print-validated; expect iteration.
 //  Orientation: landscape, +X = width, +Y = up, +Z = toward the glass.
 //  MOUNTING DOCTRINE: the panel mounts in its NATIVE orientation — no image
 //  rotation in firmware — which puts BOOT/RESET at the TOP edge in use. The
@@ -202,7 +220,7 @@ assert(is_num(egg_area(7, 4)),
        "canary_vent_lib.scad is MISSING — this case cuts its grille and gills with it. Download canary_vent_lib.scad from the same folder and keep the two files side by side.");
 
 /* [What to render] */
-part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_port","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","dock_probe_fit","dock_probe_seat","dock_probe_p","dock_probe_p2","ring_gauge","port_teth_hole","port_teth_barb","port_barb_proud","back_flush","fil_body","fil_ink","fil_accent","coupon_body","coupon_ink","coupon_accent","coupon_qr_body","coupon_qr_ink","frame_color","fil_overlap","fil_gap","all"]
+part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_port","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","dock_probe_fit","dock_probe_seat","dock_probe_p","dock_probe_p2","ring_gauge","port_teth_hole","port_teth_barb","port_barb_proud","plug_teth_hole","plug_teth_barb","back_flush","fil_body","fil_ink","fil_accent","coupon_body","coupon_ink","coupon_accent","coupon_qr_body","coupon_qr_ink","frame_color","fil_overlap","fil_gap","all"]
 
 /* [Board] */
 // The board selector gets its own group because it is the FIRST decision and
@@ -438,9 +456,10 @@ vent_cols = 20;          // grille columns
 vent_slot_w = 5.2;       // egg base width — the grille is the HATCHERY
                          // pattern (canary_vent_lib.scad): upright eggs in
                          // offset rows, a clutch in a nest. One egg passes
-                         // 41% more air than the slat it replaced (28.8 vs
-                         // 20.4 mm2 per cell) with no slot corners to shed
-                         // vortices or collect dust lines
+                         // 44% more air than the slat it replaced (29.4 vs
+                         // 20.4 mm2 per cell — the tangent-arc flanks added
+                         // ~2% over the old straight-flank capsule) with no
+                         // slot corners to shed vortices or collect dust lines
 vent_slot_l = 7.2;       // egg length (upright: sheds drips on a vertical
                          // face; see the lib header for limits)
 vent_tip    = egg_tip(); // DERIVED from canary_vent_lib.scad — never a typed
@@ -453,13 +472,14 @@ vent_tip    = egg_tip(); // DERIVED from canary_vent_lib.scad — never a typed
                          // draft of this line did.
                          //
                          // 0.28 was the FEATHER the library shipped with;
-                         // 0.72 is the EGG. Same primitive either way (a hull
-                         // of two circles, wide end down) — the ratio alone
-                         // decides whether it reads as a teardrop with a
-                         // point or an egg with a rounded crown. 0.58 still
-                         // reads as a pear. Judged off a render of all three
-                         // side by side at $fn 96, because at the preview's
-                         // default facet count every one looks like a polygon.
+                         // 0.72 is the EGG. Same construction either way (a
+                         // tangent-arc ovoid, wide end down — the lib header
+                         // has the geometry) — the ratio alone decides whether
+                         // it reads as a teardrop with a point or an egg with
+                         // a rounded crown. 0.58 still reads as a pear. Judged
+                         // off a render of all three side by side at $fn 96,
+                         // because at the preview's default facet count every
+                         // one looks like a polygon.
                          //
                          // Still self-supporting: the crown is a circle, so
                          // the top of the hole is an arch, not a bridge — the
@@ -576,6 +596,14 @@ mount_portrait = true;  // PORTRAIT hanging: each keyhole gains slides in
                         // so the same hang-and-drop works in BOTH portrait
                         // directions (and 4-screw portrait pins flat, same
                         // as landscape: the second row lands 157 mm below).
+                        // ONE exception, cut by geometry not by hand: a slide
+                        // that would open into an M3 screw-head pocket is not
+                        // cut at all (at stock dims that is the -x top
+                        // keyhole's inboard leg — the mirrored M3 offset puts
+                        // that boss 3 mm closer). That mount carries two
+                        // slides instead of three; the one orientation that
+                        // misses it (+x wall up) pins on the other THREE
+                        // screws. See khm_slide_ok at fr_bosses.
                         // Geometry only — the UI stays landscape until the
                         // firmware grows a mount_rotation setting.
 khm_plen = 10.0;        // the portrait slides run SHORTER than the vertical
@@ -937,12 +965,24 @@ grom_bell  = 3.2;    // strain-relief bell beyond the outer flange
 // while the side exit clears the dock entirely — that is the case for having
 // both. The dock's PORTRAIT pose already exits sideways, so a side-exit case
 // docks portrait with no cable bend at all.
-side_exit = "none";   // ["none","left","right"] — extra cable exit wall.
-                      // OFF by default, from the first print: there is no
-                      // connector behind that wall, so the opening reads as
-                      // a port that does not exist. Turn it on only if you
-                      // actually want the cable to leave sideways.
-side_dy   = 0.0;      // its center along that wall, + = toward the top edge
+side_exit = "right";  // ["none","left","right"] — extra cable exit wall.
+                      // ON by default at "right" (+x, back-view right): that
+                      // is the wall the microSD is closer to (sd_dx is
+                      // positive), and hung PORTRAIT with that wall down it
+                      // IS the bottom — the cable leaves straight down with
+                      // no bend, leash anchor and peel scoop included (the
+                      // port_cut module carries all three to whichever wall).
+                      // The first print turned this off because an open hole
+                      // on a connector-less wall read as a port that does not
+                      // exist — the answer to that is the leashed BLANK
+                      // (plug_port fills whichever exit the cable does not
+                      // use; the case never sits with an open hole), not
+                      // giving up the portrait hang. "none" if you truly
+                      // never hang portrait.
+side_dy   = 0.0;      // its center along that wall, + = toward the top edge.
+                      // 0 = centered: clear of the ±dock_key_dx keying slots
+                      // (asserted) and over the dock well's open span when
+                      // docked portrait, so the exit works there too.
 
 /* [Port — labels & rating block] */
 // Port labels: which opening is which, embossed on the outer skin beside it
@@ -997,11 +1037,46 @@ rating_lines = ["5V = 2A", "USB-C INPUT", "INDOOR USE ONLY",
 // not clearances.
 tpu_squeeze = 0.2;   // per-side interference each TPU waist carries in its opening
 tpu_grip    = 0.4;   // how much smaller the grommet bore is than the cable jacket
-// BOOT/RESET plug — the buttons are pressed THROUGH the installed plug.
-btn_reach  = 2.0;    // press-pip stand-off, wall inner face → just shy of the
-                     // button cap — MEASURE the gap and subtract ~0.5
-btn_pip_d  = 5.0;    // press-pip Ø (face dimples mark them outside)
-btn_pip_dz = 0.0;    // pip center offset across the wall band, from the window center
+// BOOT/RESET plug — the buttons are pressed THROUGH the installed plug: a
+// TPU TOWER under each face dimple runs from the plug body down to the
+// button cap and carries a fingertip press across the gap. The 2 mm pips
+// these towers replace assumed the caps sat just behind the wall; measuring
+// the fitted case put them ~5 mm further — at the BOARD EDGE, exactly where
+// the panel record says (BOOT/RESET carry d = 0: flush with the PCB
+// outline). So the reach is now DERIVED from that record and the towers
+// land ON the caps: resting contact, one soft press through the dimple,
+// still one part.
+btn_reach  = 0;      // 0 = AUTO: tower reach derived from the panel record
+                     // (outer skin → pcb edge — see btn_tower_len). Only set
+                     // a measured value (lip plane → button cap, mm) if YOUR
+                     // board's caps sit off the record.
+btn_pip_d  = 5.0;    // tower shaft Ø (face dimples mark them outside). The
+                     // tip steps -1.2 to land inside the 4 mm caps; the root
+                     // flares +2.4 into the plug body so the long column
+                     // presses instead of folding at its root.
+btn_pip_dz = 0.0;    // tower center offset across the wall band, from the window center
+// PLUG LEASH — the same strap + arrowhead barb as the SD cover and the port
+// fitments (one barb spec: one thumb-push feel, one hole size — see the SD
+// tether block below for the spec's reasoning). The plug pops out for tower
+// checks and services, and a popped plug with no leash is the part you drop
+// behind the desk. The strap lies FLUSH in a shallow channel cut into the
+// top wall's outer skin; the barb pushes IN through an anchor hole beside
+// the window and mushrooms in the open cavity behind the wall. The anchor
+// takes the station of the innermost -x exhaust slot — the flank-vent loop
+// drops any slot the anchor needs (one, at stock dims), so the leash costs
+// exactly one exhaust slot and the echo says so.
+plug_tether  = true;
+plug_teth_dx = -21.5;  // anchor center from the window center — the innermost
+                       // -x flank slot's station (btn_w/2 + 9). Negative =
+                       // the -x side, matching the SD leash's "anchor at the
+                       // quiet end" doctrine (BOOT sits that side; the scoop-
+                       // free end of the plug is the peel end).
+plug_chan_d  = 1.2;    // strap channel depth into the frame_wall skin. 1.2,
+                       // not the SD channel's 1.4: the wall is 2.0 where the
+                       // plate was 3.0, and the bottom-edge deboss doctrine
+                       // (assert below) wants >= 0.8 of web left standing.
+                       // The 1.2 strap rides flush instead of 0.2 recessed —
+                       // nothing ever presses on the TOP wall's skin.
 // SD cover — peel scoop at the card (fingertip) end, TETHER at the other.
 sd_lip    = 1.2;     // countersunk rim: 45° reach AND depth around the opening.
                      // The flush flat-floored recess this replaces left a
@@ -1382,6 +1457,43 @@ fz_boss  = fr_depth0 - back_t - frame_boss_h;  // boss face the standoffs land o
 key_gz   = (glass_guard + glass_t + fz_boss)/2;
 fz_plate = fr_depth - back_t;                  // inner face of the back plate
 fr_bosses = [for (sx = [1,-1], sy = [1,-1]) [-m3_ox + sx*m3_dx/2, m3_oy + sy*m3_dy/2]];
+// WHICH portrait slides actually get cut. The TOP pair's portrait slides run
+// at khm_y — the same line as the top boss row (m3_oy + m3_dy/2, 0.275 mm
+// apart at stock dims) — and the M3 pattern's x offset is MIRRORED on this
+// print-side part, so the -x bosses sit 2*m3_ox = 3 mm closer to their
+// keyhole than the +x bosses do. That 3 mm is the whole story: the top-left
+// (-x) keyhole's INBOARD slide tip lands 3.9 mm from the M3 screw-head
+// pocket's center against 5.45 mm of combined cut radius, so the slide, its
+// mouth chamfer and the pocket merge into one opening (first render: the
+// hatched z-fight where the two cuts share a face). The fix is subtraction,
+// not surgery: that ONE leg is not cut. The keyhole keeps its vertical slide
+// and its outboard portrait slide, and the one portrait orientation that
+// wanted the missing leg (+x wall up) hangs on the other three keyholes —
+// three screws still pin the case flat. The predicate is geometry, not a
+// corner list, so a future move of khm_* or the M3 pattern drops (or
+// restores) exactly the legs the numbers say — and the echo reports it.
+function _khm_seg_d(p, a, b) =       // point→segment distance, for the slide's stadium
+    let (ab = b - a, t = ab*ab == 0 ? 0 : max(0, min(1, ((p - a)*ab)/(ab*ab))))
+    norm(p - (a + t*ab));
+function khm_slide_ok(sx, sy, px) =  // true = this portrait slide clears every
+    let (hy = sy > 0 ? khm_y : -(khm_y + khm_len))   // M3 head pocket + chamfer + web
+    min([for (p = fr_bosses)
+        _khm_seg_d(p, [sx*khm_dx, hy], [sx*khm_dx + px*khm_plen, hy])])
+    > khm_slide_w/2 + (cb_d + 0.4)/2 + khm_mouth_c + 0.3;
+khm_dropped = mount_keyholes && mount_portrait
+    ? [for (sx = [1,-1], sy = [1,-1], px = [1,-1])
+        if (!khm_slide_ok(sx, sy, px)) [sx, sy, px]] : [];
+// A portrait slide may be dropped; the head hole and the VERTICAL slide may
+// not — without them the corner is not a mount at all. If either reaches a
+// pocket the answer is moving khm_*, and this fails the build until someone
+// does.
+assert(!mount_keyholes || min([for (sx = [1,-1], sy = [1,-1], p = fr_bosses)
+        let (hy = sy > 0 ? khm_y : -(khm_y + khm_len))
+        min(_khm_seg_d(p, [sx*khm_dx, hy], [sx*khm_dx, hy + khm_len])
+                - khm_slide_w/2,
+            norm([sx*khm_dx, hy] - p) - khm_head_d/2)])
+        > (cb_d + 0.4)/2 + khm_mouth_c + 0.3,
+       "frame: a keyhole's head hole or vertical slide reaches an M3 head pocket — move khm_dx/khm_y");
 // The frame's grille keepouts, hoisted so the open-area echo below is
 // computed from the SAME lists the cutter uses — the reported number cannot
 // drift from the geometry. Split so the echo can also say what the rails
@@ -1433,6 +1545,18 @@ fr_keep_rails = adh_rails ? [for (sx = [1,-1])
 fr_keepouts = concat(fr_keep_base, fr_keep_rails);
 btn_z0 = glass_guard + glass_t + 1;  btn_z1 = fz_boss + 1;   // the band the buttons live in
 btn_zc = (btn_z0 + btn_z1)/2;                  // window center across the wall
+// Tower reach, from the plug's LIP PLANE (local z 3.6 — where the pips used
+// to start) to the button caps. AUTO derives it from the panel record: the
+// caps sit flush with the PCB outline (BOOT/RESET carry d = 0), the board
+// edge sits at pcb_h/2, and the plug's local z 0 is the outer skin at
+// fr_yo/2 — so outer skin → caps is fr_yo/2 - pcb_h/2 and the towers carry
+// what the lip plane doesn't. RESTING contact by construction: the tower
+// tips park ON the caps and the dimple's flex is the press travel.
+btn_tower_len = btn_reach > 0 ? btn_reach : fr_yo/2 - pcb_h/2 - 3.6;
+assert(btn_tower_len > 0.4 && btn_tower_len <= fr_yo/2 - pcb_h/2 - 3.6 + 0.6,
+       str("frame: btn_reach drives the towers past the button caps (max ",
+           fr_yo/2 - pcb_h/2 - 3.6 + 0.6, " incl 0.6 squeeze) — they would ",
+           "hold BOOT/RESET pressed. Measure again."));
 // USB pass-through: the opening passes the HEAD; the grommet then fills it
 // around just the wire, so the port needs no relation to where the connector
 // actually is — the cable routes inside, and the case never has to know.
@@ -1486,6 +1610,14 @@ assert(abs(btn_dx) + btn_w/2 + 3 < fr_xi/2 - fr_ri,
        "frame: button window overruns the bottom wall's flat span");
 assert((btn_z0 + btn_z1)/2 + btn_h/2 < fz_plate - 0.5,
        "frame: button window cuts into the back plate");
+// the plug leash: anchor past the window's bevel but on the wall's flat
+// span, and the strap channel must respect the same >= 0.8 web floor the
+// bottom-edge deboss lives by
+assert(!plug_tether || (abs(plug_teth_dx) - sd_teth_hole/2 - 0.45 > btn_w/2 + 1.3
+       && abs(btn_dx + plug_teth_dx) + sd_teth_hole/2 + 1.5 < fr_xi/2 - fr_ri),
+       "frame: plug leash anchor lands on the window bevel or off the top wall's flat span");
+assert(!plug_tether || plug_chan_d <= frame_wall - 0.8,
+       "frame: plug leash channel leaves under 0.8 of top-wall web — shallow plug_chan_d");
 assert(!mount_keyholes || (khm_dx + khm_head_d/2 + khm_pad_w + 1.5 < fr_xi/2
        && khm_y + khm_len + khm_slide_w/2 + khm_pad_w + 1.5 < fr_yi/2
        && khm_y - khm_head_d/2 - khm_pad_w > 2),
@@ -1533,6 +1665,18 @@ assert(min([for (p = fr_bosses) max(abs(sd_dx - p[0]) - sd_w/2 - sd_lip - frame_
 assert(!usb_port || (usb_zc - usb_open_h/2 - grom_lip > glass_t + 0.4
        && usb_z + usb_open_h/2 + grom_lip < fz_boss - 0.2),
        "frame: USB port (plus its grommet flange) runs out of the bottom wall band");
+// the side exit shares the z band above; along the wall it must keep its
+// whole service zone — flange, leash anchor, peel scoop — on the flat span
+// and clear of the portrait dock keying slots
+assert(side_exit == "none"
+       || abs(side_dy) + usb_open_w/2 + grom_lip + 0.5 < fr_yi/2 - fr_ri,
+       "frame: side exit (plus grommet flange) runs off the side wall's flat span");
+assert(side_exit == "none" || !dock_keys
+       || abs(side_dy) + max(usb_open_w/2 + grom_lip,
+                             abs(port_teth_dx) + sd_teth_head/2 + 1,
+                             port_scoop_dx + 3.5)
+          < dock_key_dx - gill_l/2 - 1,
+       "frame: side exit's port/leash/scoop zone reaches the portrait dock keying slot");
 assert(!usb_port || usb_wire_d - tpu_grip >= 1.0,
        "frame: grommet bore closes up — usb_wire_d vs tpu_grip");
 assert(!usb_port || usb_wire_d + 2 < usb_open_h,
@@ -1549,8 +1693,8 @@ assert(edge_vz + edge_vent_h/2 < fz_plate - 0.2,
        "frame: shadow gill row cuts into the back plate");
 assert((edge_vent_n - 1)/2*edge_vent_pitch + edge_vent_w/2 < fr_xi/2 - fr_ri - 2,
        "frame: shadow gill row runs off the bottom wall's flat span");
-assert(btn_reach >= 0.5 && btn_reach < 12,
-       "frame: btn_reach out of sane range — measure wall inner face to button cap");
+assert(btn_reach == 0 || (btn_reach >= 0.5 && btn_reach < 12),
+       "frame: btn_reach out of sane range — 0 = AUTO (derive from the panel record), else measure lip plane to button cap");
 // the whole panel assembly (glass + standoffs + board) enters through the
 // ledge opening, so the opening must clear the BOARD, not just the glass
 assert(fr_xi - 2*ledge_side > pcb_w + 2 && fr_yi - ledge_top - ledge_bot > pcb_h + 2,
@@ -1948,12 +2092,18 @@ if (qr_help)
          " or ride the accent to the top for a two-tone dock (one swap);",
          " either way the only filament spent is the filament in the part"));
 if (mount_portrait && mount_keyholes)
-    echo(str("  portrait hanging: each keyhole carries a second ", khm_plen,
-         " mm OUTBOARD slide — rotate the case 90° either way and a side",
+    echo(str("  portrait hanging: keyholes carry ", khm_plen,
+         " mm side slides — rotate the case 90° either way and a side",
          " pair becomes the level top pair, mouths ", 2*khm_y + khm_len,
          " mm apart (second row ", khm_dx*2, " mm below for 4-screw).",
          " Same screws, same hang-and-drop. Screen rotation is a firmware",
-         " setting the UI does not have yet — the hardware is ready first"));
+         " setting the UI does not have yet — the hardware is ready first",
+         len(khm_dropped) == 0 ? "" : str(". ", len(khm_dropped),
+         " slide(s) NOT cut (would open into an M3 head pocket — see",
+         " khm_slide_ok): ", [for (d = khm_dropped)
+             str(d[0] > 0 ? "+x" : "-x", d[1] > 0 ? " top" : " bottom",
+                 " keyhole, ", d[2] > 0 ? "+x" : "-x", " leg")],
+         " — that portrait orientation pins on the other three keyholes")));
 if (bat_on)
     echo(str("  battery bay: MakerFocus ", battery, " mAh (", bat_dims[0],
          " x ", bat_dims[1], " x ", bat_dims[2], " nominal, thickness held at +",
@@ -2000,6 +2150,19 @@ if (usb_port)
              usb_head_w, " x ", usb_head_h, " head; grommet grips a Ø",
              usb_wire_d, " jacket. TPU fitments (grommet_usb / plug_buttons / ",
              "plug_sd): TPU 90-95A, EXTERNAL spool, never the AMS"));
+if (side_exit != "none")
+    echo(str("  side exit: same ", usb_open_w, " x ", usb_open_h,
+             " stadium through the ", side_exit,
+             side_exit == "right" ? " (+x, microSD's side)" : " (-x)",
+             " wall at dy ", side_dy, " — hung portrait with that wall down",
+             " it is the bottom exit; one grommet serves either port, the",
+             " leashed BLANK (plug_port) fills the other"));
+echo(str("  BOOT/RESET towers: ", btn_tower_len, " mm from the lip plane (",
+         btn_reach > 0 ? "MEASURED override" : "AUTO from the panel record",
+         ") — tips REST on the caps at the board edge",
+         plug_tether ? str("; plug leashed to the top wall at dx ",
+             plug_teth_dx, " (cost: one exhaust slot — its station is the anchor)")
+                     : " (plug_tether OFF: no leash, no slot dropped)"));
 // When the board is the bigger part, the tray cavity opens up to clear it and
 // stops being what locates the slab — the bezel's glass pocket takes that job.
 // Worth saying out loud, because it changes which part you check first if the
@@ -2709,8 +2872,9 @@ module frame() {
                         translate([0, khm_len])
                             circle(d = khm_slide_w + 2*khm_pad_w);
                         if (mount_portrait) for (px = [1, -1])
-                            translate([px*khm_plen, 0])
-                                circle(d = khm_slide_w + 2*khm_pad_w);
+                            if (khm_slide_ok(sx, sy, px))
+                                translate([px*khm_plen, 0])
+                                    circle(d = khm_slide_w + 2*khm_pad_w);
                     }
             // 45° fillet ring where the walls meet the back plate — the
             // drop-load path: a corner drop flexes the walls against the
@@ -2816,10 +2980,35 @@ module frame() {
                         linear_extrude(2*(ledge_side + frame_wall))
                             translate([0, -gill_l/2 + gill_vw/2])
                                 egg2d(gill_l, gill_vw, vent_tip);
-        // exhaust through the top wall, flanking the button window
+        // exhaust through the top wall, flanking the button window. A slot
+        // whose station the plug leash anchor needs is NOT cut — one, at
+        // stock dims: the innermost -x slot sits exactly at plug_teth_dx —
+        // and the echo reports the trade. Distance predicate, not an index,
+        // so moving the anchor drops whichever slot it actually lands on.
         for (sx = [1, -1], i = [0 : frame_vent_flank_n - 1])
-            translate([btn_dx + sx*(btn_w/2 + 9 + i*6.5), fr_yi/2 - 0.1, gz])
-                rotate([-90, 0, 0]) linear_extrude(frame_wall + 0.3) pill2d(gh, gill_w);
+            if (!plug_tether || abs(sx*(btn_w/2 + 9 + i*6.5) - plug_teth_dx)
+                                > gill_w/2 + sd_teth_hole/2 + 1.5)
+                translate([btn_dx + sx*(btn_w/2 + 9 + i*6.5), fr_yi/2 - 0.1, gz])
+                    rotate([-90, 0, 0]) linear_extrude(frame_wall + 0.3) pill2d(gh, gill_w);
+        // plug leash anchor beside the window: flush strap channel into the
+        // outer skin (from the window's bevel surround to just past the
+        // anchor), the anchor hole through the remaining wall, and a 45°
+        // entry chamfer at the channel floor that the barb's root cone
+        // nests into — the SD tether's cut set, transplanted to the wall.
+        // The barb mushrooms in the open cavity behind (the exhaust band is
+        // clear air inside; nothing to relieve).
+        if (plug_tether) {
+            sT = plug_teth_dx < 0 ? -1 : 1;
+            x0 = btn_dx + sT*(btn_w/2 + 1.0);
+            x1 = btn_dx + plug_teth_dx + sT*2.5;
+            translate([min(x0, x1), fr_yo/2 - plug_chan_d, btn_zc - 2.5])
+                cube([abs(x1 - x0), plug_chan_d + 0.1, 5.0]);
+            translate([btn_dx + plug_teth_dx, fr_yi/2 - 1, btn_zc])
+                rotate([-90, 0, 0]) cylinder(d = sd_teth_hole, h = frame_wall + 2);
+            translate([btn_dx + plug_teth_dx, fr_yo/2 - plug_chan_d - 0.451, btn_zc])
+                rotate([-90, 0, 0])
+                    cylinder(d1 = sd_teth_hole, d2 = sd_teth_hole + 0.9, h = 0.46);
+        }
         // dock keying, PORTRAIT: one gill-style slot in each ±x wall at
         // dy = ±dock_key_dx, past the end of the gill row — the studs on the
         // desk dock's well ribs rise into them, so whichever side wall faces
@@ -2936,10 +3125,15 @@ module frame() {
                 hull() { circle(d = khm_slide_w);
                          translate([0, khm_len]) circle(d = khm_slide_w); }
                 // portrait slide: outboard, so the side pair that becomes
-                // the TOP pair in a rotated hang gets its world-up slides
+                // the TOP pair in a rotated hang gets its world-up slides.
+                // khm_slide_ok drops the one leg that would open into an M3
+                // head pocket (see the predicate at fr_bosses) — that mount
+                // carries TWO slides instead of three, and the orientation
+                // that misses it hangs on three screws.
                 if (mount_portrait) for (px = [1, -1])
-                    hull() { circle(d = khm_slide_w);
-                             translate([px*khm_plen, 0]) circle(d = khm_slide_w); }
+                    if (khm_slide_ok(sx, sy, px))
+                        hull() { circle(d = khm_slide_w);
+                                 translate([px*khm_plen, 0]) circle(d = khm_slide_w); }
             }
         // ...each with a lead-in chamfer around its mouth on the outer skin,
         // so the case slips over the screw heads without catching
@@ -2956,12 +3150,13 @@ module frame() {
                             for (dy = [0, khm_len]) translate([0, dy])
                                 circle(d = khm_slide_w + e*2*(khm_mouth_c + 0.05));
                 if (mount_portrait) for (px = [1, -1])
-                    hull() for (e = [0, 1])
-                        translate([0, 0, fr_depth - khm_mouth_c
-                                         + e*(khm_mouth_c + 0.05)])
-                            linear_extrude(0.01) hull()
-                                for (dx = [0, px*khm_plen]) translate([dx, 0])
-                                    circle(d = khm_slide_w + e*2*(khm_mouth_c + 0.05));
+                    if (khm_slide_ok(sx, sy, px))
+                        hull() for (e = [0, 1])
+                            translate([0, 0, fr_depth - khm_mouth_c
+                                             + e*(khm_mouth_c + 0.05)])
+                                linear_extrude(0.01) hull()
+                                    for (dx = [0, px*khm_plen]) translate([dx, 0])
+                                        circle(d = khm_slide_w + e*2*(khm_mouth_c + 0.05));
             }
         // Every deboss on the back skin — rail moats, labels, the lockup, the
         // rating block and the help QR — in one tool, so the color inlays
@@ -3098,9 +3293,11 @@ module usb_grommet(bore = true) {
 // BOOT/RESET plug. Local z: 0 = cap face (on the bed). The cap nests the
 // window's 45° bevel with a hairline reveal; the waist squeezes the straight
 // land; the 45° lip snaps out behind the wall — push it in from outside and
-// it is captive: the cap can't pass inward, the lip won't fall out, and it
-// never needs to come out, because the buttons are pressed THROUGH it: two
-// pips under the face dimples carry the press to BOOT and RESET.
+// it is captive: the cap can't pass inward, the lip won't fall out, and the
+// buttons are pressed THROUGH it: two TOWERS under the face dimples run to
+// the button caps (btn_tower_len — derived to REST on them) and carry the
+// press. Pop it out to check a tower and the leash keeps it dangling from
+// its wall anchor instead of on the floor.
 module button_plug() {
     ww = btn_w + 2*tpu_squeeze;  wh = btn_h + 2*tpu_squeeze;
     difference() {
@@ -3121,14 +3318,43 @@ module button_plug() {
                 translate([0, 0, 3.2]) linear_extrude(0.4)
                     rrect2d(ww + 2.4, wh + 1.2, 3.7);
             }
-            // press pips — stepped nose so the tip is narrow where it meets
-            // the button cap. Reach is a MEASURE knob (btn_reach).
+            // press towers — root flare so the column presses instead of
+            // folding at its root, straight shaft, stepped tip narrow where
+            // it lands inside the button cap. Prints cap-down: the towers
+            // stand straight up, no support. Reach is derived (or measured
+            // via btn_reach) to REST on the caps — see btn_tower_len.
             for (sx = [1, -1]) translate([sx*btn_lbl_dx, btn_pip_dz, 3.6 - 0.01]) {
-                cylinder(d = btn_pip_d, h = max(0.4, btn_reach - 0.5));
-                cylinder(d = btn_pip_d - 1.2, h = btn_reach);
+                cylinder(d1 = btn_pip_d + 2.4, d2 = btn_pip_d, h = 1.21);
+                cylinder(d = btn_pip_d, h = max(0.4, btn_tower_len - 1.0));
+                cylinder(d = btn_pip_d - 1.2, h = btn_tower_len);
+            }
+            // leash: flat strap off the cap's anchor-side end lying flush in
+            // the wall's skin channel, arrowhead barb at the anchor — the SD
+            // cover's leash, transplanted (same barb spec, same 45° cam
+            // faces: yanks free for service, never under a dangle).
+            if (plug_tether) {
+                sT = plug_teth_dx < 0 ? -1 : 1;
+                cw = (btn_w + 2.2)/2 - 1.0;   // strap root overlaps the cap edge
+                translate([min(plug_teth_dx, sT*cw), -2, 0])
+                    cube([abs(plug_teth_dx) - cw, 4, 1.2]);      // strap
+                hull() {   // trumpet the cap junction (fatigue doctrine,
+                           // same as the SD strap's root flare)
+                    translate([sT*cw - 0.005, -2.4, 0]) cube([0.01, 4.8, 1.2]);
+                    translate([sT*(cw + 1.6) - 0.005, -2, 0]) cube([0.01, 4, 1.2]);
+                }
+                translate([plug_teth_dx, 0, 0]) {
+                    // root cone nests the anchor's entry chamfer, so the
+                    // strap lies flush and the barb's reach is unchanged
+                    translate([0, 0, 1.2 - 0.01]) cylinder(d1 = 4.0, d2 = 2.8, h = 0.6);
+                    cylinder(d = 2.8, h = frame_wall + 0.2);       // shaft
+                    translate([0, 0, frame_wall + 0.2 - 0.01])     // 45° under-flare
+                        cylinder(d1 = 2.8, d2 = sd_teth_head, h = 0.9);
+                    translate([0, 0, frame_wall + 1.1 - 0.02])     // insertion tip
+                        cylinder(d1 = sd_teth_head, d2 = 1.6, h = 1.0);
+                }
             }
         }
-        // finger-findable dimples on the cap face, one over each pip
+        // finger-findable dimples on the cap face, one over each tower
         for (sx = [1, -1])
             translate([sx*btn_lbl_dx, btn_pip_dz, -7.31]) sphere(r = 7.81);
     }
@@ -3658,6 +3884,26 @@ else if (part == "port_barb_proud") {
         usb_grommet_installed();
         translate([usb_dx + port_teth_dx - col, -fr_yo/2 - 20, usb_z - 6])
             cube([2*col, 20, 12]);
+    }
+}
+// ...and the same pair for the BUTTON PLUG's leash: the frame must carry
+// the anchor hole through the top wall (probe just under hole size, must
+// be EMPTY), and the installed plug's barb must actually cross the wall's
+// inner face at the anchor (wafer probe, must be SOLID).
+else if (part == "plug_teth_hole") {
+    assert(plug_tether, "needs plug_tether");
+    intersection() {
+        frame();
+        translate([btn_dx + plug_teth_dx, fr_yo/2 + 1, btn_zc])
+            rotate([90, 0, 0]) cylinder(d = sd_teth_hole - 0.6, h = frame_wall + 8);
+    }
+}
+else if (part == "plug_teth_barb") {
+    assert(plug_tether, "needs plug_tether");
+    intersection() {
+        button_plug_installed();
+        translate([btn_dx + plug_teth_dx, fr_yi/2 - 0.4, btn_zc])
+            rotate([90, 0, 0]) cylinder(d = sd_teth_head + 2, h = 0.8);
     }
 }
 // WALL-MOUNT FLUSHNESS: hung on its keyholes the case bears on the back

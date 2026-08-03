@@ -9,6 +9,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import WidgetKit
 
 @MainActor
 final class FleetStore: ObservableObject {
@@ -24,6 +25,11 @@ final class FleetStore: ObservableObject {
     // previews only.
     @Published var demoMode: Bool
 
+    // Consent-first discovery: nil = never asked, false = "Not now", true =
+    // radios may run. No mDNS browse, no BLE scan — and therefore no iOS
+    // Local Network / Bluetooth permission dialog — before the user says so.
+    @Published private(set) var discoveryConsent: Bool?
+
     // Collaborators
     let devices: DeviceStore
     let discovery = Discovery()
@@ -33,6 +39,25 @@ final class FleetStore: ObservableObject {
 
     private var refreshTask: Task<Void, Never>?
     private var bag = Set<AnyCancellable>()
+
+    /// Durable per-witness mutes, re-applied at every fold (rows are rebuilt
+    /// from device truth, so mute must outlive them).
+    private let muteLedger = MuteLedger()
+
+    // The living canary — the display firmware's mood engine, mirrored
+    // (Shared/CanaryMood.swift), fed the fleet's truth every refresh. The
+    // published face/posture drive the character on every surface; the mood
+    // LINE is ambient copy only (the Voice rule: it may rephrase
+    // contentment or name who's being looked for, never word an alarm).
+    private let moodKeeper = CanaryMoodKeeper()
+    @Published private(set) var canaryFace: CanaryFace = .calm
+    @Published private(set) var canaryPosture: CanaryPosture = .asFace
+    @Published private(set) var canaryAnxiety: Int = 0
+    @Published private(set) var canaryTrustDays: Int = 0
+    @Published private(set) var moodLine: String?
+    /// Content fingerprint of the last glance snapshot handed to the iPhone
+    /// widgets — reload their timelines only when the truth changed.
+    private var lastGlanceFingerprint: Data?
 
     // True while the heartbeat's lastVerified came from demo seeding rather
     // than a real end-to-end confirmation — so it can be revoked the moment
@@ -46,6 +71,14 @@ final class FleetStore: ObservableObject {
         let devices = DeviceStore()
         self.devices = devices
         self.demoMode = DemoFleet.defaultEnabled(hasPairedDevices: !devices.devices.isEmpty)
+        self.discoveryConsent = Consents.discovery()
+
+        // Notification actions must have a landing pad from the very first
+        // moment: on a cold launch from a background Ack/Mute tap, iOS
+        // invokes the delegate before any SwiftUI .task runs — wiring these
+        // in onAppear would silently drop that tap.
+        alerts.onMute = { [weak self] id in self?.mute(id) }
+        alerts.onAck = { [weak self] id in self?.acknowledgeAlert(for: id) }
 
         // Forward every collaborator's change into ours, so any view observing
         // the store updates when discovery, BLE, alerts, heartbeat, or the
@@ -60,14 +93,43 @@ final class FleetStore: ObservableObject {
     // MARK: - lifecycle
 
     func onAppear() {
-        discovery.start()
-        ble.startScan()
+        startRadiosIfConsented()
         WatchLink.shared.activate(store: self)
-        Task { await alerts.requestAuthorization() }
+        // Permission timing: a returning user with a paired fleet expects
+        // alerts, so ask at launch. A brand-new user gets asked at the
+        // moment alerts first matter (their first Test Alert) — never as an
+        // ambush on first open.
+        if !devices.devices.isEmpty {
+            Task { await alerts.requestAuthorization() }
+        }
         Task { await hydrateFromCloud() }
         recordDemoBeatIfHarmless()
         startRefreshLoop()
+        startSentinel()
         pushLiveActivity()
+    }
+
+    /// The consent gate's one entry point. Granting starts the radios NOW —
+    /// so iOS's Local Network prompt appears right after the user's own yes,
+    /// in context. Declining stops them and clears anything they'd found.
+    func setDiscoveryConsent(_ granted: Bool) {
+        Consents.setDiscovery(granted)
+        discoveryConsent = granted
+        if granted {
+            discovery.start()
+            ble.startScan()
+            startSentinel()
+            Task { await refreshOnce() }
+        } else {
+            discovery.stop()
+            ble.stopScan()
+        }
+    }
+
+    private func startRadiosIfConsented() {
+        guard discoveryConsent == true else { return }
+        discovery.start()
+        ble.startScan()
     }
 
     /// The UI's one entry point for demo mode — persists the choice and
@@ -106,8 +168,8 @@ final class FleetStore: ObservableObject {
 
     func onScenePhase(active: Bool) {
         if active {
-            discovery.start()
-            ble.startScan()
+            startRadiosIfConsented()
+            startSentinel()
             heartbeat.tick()
             Task { await refreshOnce() }
         } else {
@@ -117,6 +179,10 @@ final class FleetStore: ObservableObject {
             // background scans anyway). Stopping it in the background saves the
             // radio; away-from-home delivery is APNs' job, not BLE's.
             ble.stopScan()
+            // The sentinel is a foreground loop too — probing from the
+            // background would just burn radio for a screen nobody sees.
+            sentinelTask?.cancel()
+            sentinelTask = nil
         }
     }
 
@@ -216,6 +282,23 @@ final class FleetStore: ObservableObject {
             recordDemoBeatIfHarmless()
         }
 
+        // Durable mutes survive the rebuild (tamper still punches through —
+        // that guarantee lives in Witness.effectiveSeverity).
+        muteLedger.apply(to: &next)
+
+        // The sentinel may have marked a device dark between polls; a fresh
+        // fold must not flip it back green until a probe or poll actually
+        // ANSWERS — rows the miss ladder darkened stay darkened here.
+        for i in next.indices {
+            let misses = missCounts[next[i].id] ?? 0
+            if misses >= LivenessLadder.staleAfterMisses {
+                let laddered = LivenessLadder.link(afterMisses: misses)
+                if laddered.rawValue > next[i].link.rawValue {
+                    next[i].link = laddered
+                }
+            }
+        }
+
         witnesses = next.sorted { $0.effectiveSeverity > $1.effectiveSeverity }
         timeline = events.sorted { $0.timeBucket > $1.timeBucket }
         // Re-evaluate the dead-man's-switch EVERY cycle, not just on scene
@@ -224,21 +307,190 @@ final class FleetStore: ObservableObject {
         // exporting `.alive` (the wrist would show a green glyph beside its
         // own "last beat 47 min ago" text).
         heartbeat.tick()
-        pushLiveActivity()
-        WatchLink.shared.pushCurrent()   // content-deduped; free when nothing moved
+        republishGlanceSurfaces()
         evaluateAlerts()
-        // Felt once, at the crossing — never on the cycles that stay there.
-        // Compared against the last severity we BUZZED for, read and written
-        // in one hop at commit time: overlapping refreshes (actor reentrancy
-        // across the awaits above) can't both claim the same crossing.
-        let felt = FeedbackPolicy.fleetTransition(from: lastFeltWorst, to: worstSeverity)
-        lastFeltWorst = worstSeverity
-        Feedback.play(felt)
+        commitFeltTransition()
+    }
+
+    /// Feed the mood engine the fleet's truth and publish the character's
+    /// state. Runs at the top of EVERY republish path (refresh, sentinel,
+    /// mute, ack), so no surface can ever receive a stale face beside fresh
+    /// severity — a lost Canary changes the bird in the same push that
+    /// changes the numbers.
+    private func updateCanaryMood() {
+        // Alarm-unacked reads the PRE-MUTE truth: mute caps nagging, it does
+        // not acknowledge a live alarm — the bird must not come back for a
+        // condition the user has only silenced.
+        let alarming = witnesses.filter { $0.displaySeverity >= .alert }
+        let allAcked = !alarming.isEmpty && alarming.allSatisfy {
+            ackedAlerts[$0.id] == alertFingerprint($0)
+        }
+        let inputs = CanaryMoodInputs(fleet: witnesses,
+                                      alarmUnacked: !alarming.isEmpty && !allAcked)
+        let reading = moodKeeper.observe(inputs)
+        canaryFace = reading.face
+        canaryPosture = reading.posture
+        canaryAnxiety = reading.state.anxiety
+        canaryTrustDays = reading.state.trustDays
+        moodLine = composeMoodLine(reading: reading)
+    }
+
+    /// Ambient copy only, and every line names log-able state (the honesty
+    /// rule): who is being looked for, how many things need care, how many
+    /// clean days the streak holds.
+    private func composeMoodLine(
+        reading: (face: CanaryFace, posture: CanaryPosture, state: CanaryMoodState, milestone: Bool)
+    ) -> String? {
+        switch reading.face {
+        case .hidden, .asleep:
+            return nil   // the instruments own the stage
+        case .calm:
+            if reading.milestone {
+                return reading.state.trustDays >= 30 ? "A clean month together"
+                                                     : "A clean week together"
+            }
+            if reading.state.trustDays >= 7 {
+                return "\(reading.state.trustDays) clean days together"
+            }
+            return "Watching with you"
+        case .worried:
+            switch reading.posture {
+            case .searching:
+                if let late = witnesses.first(where: { $0.link == .stale }) {
+                    return "Looking for \(late.displayName)…"
+                }
+                return "Looking for a quiet Canary…"
+            case .calling:
+                if let lost = witnesses.first(where: { $0.link.isDark }) {
+                    return "Calling for \(lost.displayName)"
+                }
+                return "Calling for a lost Canary"
+            case .asFace:
+                return "Something feels off"
+            }
+        case .distressed:
+            return "Feeling rough — the fleet needs care"
+        }
     }
 
     /// The last worst-severity this store produced feedback against — the
     /// serialization point for the one-buzz-per-crossing promise.
     private var lastFeltWorst: Severity = .ok
+
+    /// Island + wrist + iPhone widgets, in one place — every mutation path
+    /// (poll, sentinel, mute, ack) fans out identically, and the mood folds
+    /// FIRST so the character and the numbers always ship together.
+    private func republishGlanceSurfaces() {
+        updateCanaryMood()
+        pushLiveActivity()
+        WatchLink.shared.pushCurrent()   // content-deduped; free when nothing moved
+        publishGlanceCache()             // ditto, for the iPhone widgets
+    }
+
+    /// Felt once, at the crossing — never on the cycles that stay there.
+    /// Compared against the last severity we BUZZED for, read and written in
+    /// one hop at commit time: overlapping refreshes (actor reentrancy
+    /// across awaits) can't both claim the same crossing.
+    private func commitFeltTransition() {
+        let felt = FeedbackPolicy.fleetTransition(from: lastFeltWorst, to: worstSeverity)
+        lastFeltWorst = worstSeverity
+        Feedback.play(felt)
+    }
+
+    // MARK: - the liveness sentinel (seconds-fast, all on-LAN)
+
+    /// Consecutive probe misses per paired device — the ladder's input.
+    private var missCounts: [String: Int] = [:]
+    private var sentinelTask: Task<Void, Never>?
+
+    /// Probe every paired, HTTP-capable Canary on a tight timeout every few
+    /// seconds while the app is open. No cloud anywhere in the loop: an
+    /// unplugged Canary reads "Quiet" in ~10s and "Lost" in ~15s straight
+    /// from this phone's own Wi-Fi — while cloud cameras are still waiting
+    /// for a server to miss a keepalive.
+    private func startSentinel() {
+        guard sentinelTask == nil else { return }
+        sentinelTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.probeOnce()
+                try? await Task.sleep(for: .seconds(5))
+            }
+        }
+    }
+
+    private func probeOnce() async {
+        let targets = devices.devices.compactMap { ref -> (String, URL)? in
+            guard ref.deviceType.isHTTPPairable, let url = ref.baseURL else { return nil }
+            return (ref.id, url)
+        }
+        guard !targets.isEmpty else { return }
+
+        let answers = await withTaskGroup(of: (String, Bool).self) { group -> [String: Bool] in
+            for (id, url) in targets {
+                group.addTask { (id, await LivenessProbe.isAnswering(url)) }
+            }
+            var out: [String: Bool] = [:]
+            for await (id, alive) in group { out[id] = alive }
+            return out
+        }
+
+        var rows = witnesses
+        var changed = false
+        for (id, alive) in answers {
+            let misses = alive ? 0 : (missCounts[id] ?? 0) + 1
+            missCounts[id] = misses
+            guard let i = rows.firstIndex(where: { $0.id == id }) else { continue }
+            let link = LivenessLadder.link(afterMisses: misses)
+            if rows[i].link != link {
+                rows[i].link = link
+                if alive { rows[i].lastSeen = Date() }
+                changed = true
+            }
+        }
+        guard changed else { return }
+        witnesses = rows.sorted { $0.effectiveSeverity > $1.effectiveSeverity }
+        republishGlanceSurfaces()
+        evaluateAlerts()
+        commitFeltTransition()
+    }
+
+    // MARK: - mute (the ledger is the truth; rows are its projection)
+
+    /// Mute one witness — from the detail screen, a notification action, or
+    /// the wrist. Caps nagging at Notice; tamper and a failed signature
+    /// still punch through (Witness.effectiveSeverity owns that guarantee).
+    func mute(_ id: String, for duration: TimeInterval = 3600) {
+        muteLedger.set(until: Date().addingTimeInterval(duration), for: id)
+        applyMutesAndRepublish()
+    }
+
+    func unmute(_ id: String) {
+        muteLedger.clear(id)
+        applyMutesAndRepublish()
+    }
+
+    private func applyMutesAndRepublish() {
+        var rows = witnesses
+        for i in rows.indices {
+            rows[i].mutedUntil = muteLedger.muteUntil(for: rows[i].id)
+        }
+        witnesses = rows.sorted { $0.effectiveSeverity > $1.effectiveSeverity }
+        republishGlanceSurfaces()
+    }
+
+    // MARK: - the iPhone widgets' cache
+
+    /// Park the same glance snapshot the wrist gets into the phone-side app
+    /// group, and wake the widgets — only when the truth actually changed.
+    private func publishGlanceCache() {
+        var snapshot = WristSnapshot(store: self)
+        guard let fingerprint = try? WristSync.makeEncoder().encode(snapshot),
+              fingerprint != lastGlanceFingerprint else { return }
+        lastGlanceFingerprint = fingerprint
+        snapshot.sentAt = Date()
+        PhoneGlanceCache.save(snapshot)
+        WidgetCenter.shared.reloadTimelines(ofKind: PhoneGlanceCache.widgetKind)
+    }
 
     /// Poll one device: /info for liveness + /witness for the chain head, verify
     /// on-device, pin its key TOFU. Static so the task group stays Sendable-safe.
@@ -311,15 +563,54 @@ final class FleetStore: ObservableObject {
 
     // MARK: - alerts + island
 
+    // One alert per CONDITION, not per refresh cycle: a witness that stays
+    // alarmed posts once, an acknowledged alert stays quiet until the
+    // condition changes or clears, and a witness that calms down becomes
+    // news-worthy again. (Without this ledger every 20-second refresh — and
+    // every 5-second sentinel pass — would re-post the same alarm with a
+    // fresh identifier: the exact spam that gets alerts turned off.)
+    private var postedAlerts: [String: String] = [:]
+    private var ackedAlerts: [String: String] = [:]
+
+    private func alertFingerprint(_ w: Witness) -> String {
+        // Pre-mute severity on purpose: for every witness that can enter the
+        // alert loop the two severities coincide (mute caps below alert, and
+        // the punch-through cases are uncapped), and the mood engine's
+        // alarm-unacked rule must match acks against the LIVE condition.
+        "\(w.displaySeverity.rawValue)|\(w.statusLine)"
+    }
+
+    /// The Ack action's landing pad: remember WHAT was acknowledged, so the
+    /// same ongoing condition stays quiet but any change breaks through.
+    func acknowledgeAlert(for id: String) {
+        if let w = witnesses.first(where: { $0.id == id }) {
+            ackedAlerts[id] = alertFingerprint(w)
+        } else if let posted = postedAlerts[id] {
+            ackedAlerts[id] = posted
+        }
+        // An ack changes the story (the bird may return to the stage) —
+        // every surface hears about it now, not at the next poll.
+        republishGlanceSurfaces()
+    }
+
     private func evaluateAlerts() {
         // On-LAN, notifications fire locally; away, the relay path would drive
         // these via APNs+NSE. Here we surface anything that crosses a rule.
+        var live = Set<String>()
         for w in witnesses where w.effectiveSeverity >= .alert {
+            live.insert(w.id)
+            let fingerprint = alertFingerprint(w)
+            guard postedAlerts[w.id] != fingerprint else { continue }   // already told
+            guard ackedAlerts[w.id] != fingerprint else { continue }    // user said "seen it"
+            postedAlerts[w.id] = fingerprint
             if let level = alerts.level(for: w.effectiveSeverity, awayFromHome: false) {
                 alerts.post(title: fleetName, body: "\(w.displayName): \(w.statusLine)",
                             level: level, threadID: w.id)
             }
         }
+        // Calmed witnesses leave both ledgers — their NEXT alert is news.
+        postedAlerts = postedAlerts.filter { live.contains($0.key) }
+        ackedAlerts = ackedAlerts.filter { live.contains($0.key) }
     }
 
     private func pushLiveActivity() {
@@ -335,6 +626,12 @@ final class FleetStore: ObservableObject {
     /// the hand that asked (WatchLink replies with the verdict snapshot and
     /// the watch plays its own), so the phone stays silent in the pocket.
     func runTestAlert(playFeedback: Bool = true) async {
+        // Moment-of-need permission ask: the user just said "alert me" —
+        // THIS is when the notification prompt makes sense (a denied prompt
+        // stays denied; requestAuthorization never re-prompts a no).
+        if !alerts.authorized {
+            await alerts.requestAuthorization()
+        }
         let fleet = fleetName
         let alerts = alerts
         await heartbeat.runTestAlert {
