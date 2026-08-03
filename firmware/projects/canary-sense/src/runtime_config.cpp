@@ -61,6 +61,17 @@ void load_credential(Preferences& prefs, const char* key,
   if (prefs.isKey(key)) {
     String stored = prefs.getString(key, "");
     copy_str(dst, cap, stored.c_str());
+    if (dst[0] == '\0' && cap > 0) {
+      // Blob-typed key (getBytesLength is 0 for string entries): a stale
+      // flasher frontend seeded the wap/canary BLOB scheme under this key,
+      // and getString on a blob reads "". Same human intent — honor it.
+      // Blobs carry no NUL: copy and terminate.
+      const size_t n = prefs.getBytesLength(key);
+      if (n > 0 && n < cap) {
+        prefs.getBytes(key, dst, n);
+        dst[n] = '\0';
+      }
+    }
   } else {
     copy_str(dst, cap, compiled);
   }
