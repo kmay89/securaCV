@@ -212,7 +212,12 @@ part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bez
 // `pv` multiplier at each point of use, which meant every new consumer had to
 // remember to apply it, and a board that differed by anything OTHER than a
 // half turn could not be expressed at all.
-panel_variant = "lcd7";   // ["lcd7","lcd7b"]
+// One id, because one board has been measured. The "lcd7b" option that used to
+// sit beside it was removed: it could not build — it hard-asserted on its own
+// port map and then blocked every later render in the session, so the dropdown
+// was offering a choice that only ever failed. See the registry's tail comment
+// for the two defects it carried and what to measure to add it back properly.
+panel_variant = "lcd7";   // ["lcd7"]
 PANEL   = panel(panel_variant);
 panel_ok = panel_check(PANEL) && panel_assert_printable(PANEL);
 
@@ -741,16 +746,24 @@ label_font  = "Liberation Sans:style=Bold";
 //  193.26 x 111.06 opening), so bands would not be a visible distinction —
 //  they would just add tool changes to every one of those last layers.
 //
-//  ⚠️  QR POLARITY IS STILL A HARD REQUIREMENT, and it is the reason this
-//  needs the AMS at all. A reader wants DARK modules on a LIGHT field and
-//  refuses the inverse. The modules are the deboss FLOORS, so on the old
-//  single-extruder z-swap recipe the floors print in the BODY filament — and
-//  a WHITE body puts white modules on a dark skin, which does not scan. There
-//  is no swap height that fixes it, because the field and the modules are at
-//  different heights but the wrong way round. Assigning the modules their own
-//  filament is what makes a white case with a scannable code possible.
-//  Corollary, and please do not "improve" this: the finder patterns must stay
-//  INK. Yellow-on-white is far too low a contrast to decode.
+//  ⚠️  QR POLARITY IS NOW A DELIBERATE TRADE, not a rule this file enforces.
+//  The spec wants DARK modules on a LIGHT field. This build ships qr_style =
+//  "bare": the modules print in INK straight onto the black plate, so the
+//  symbol is WHITE ON BLACK — inverted — because a light plaque on a black
+//  case is a bright rectangle that dominates the back and the symbol is
+//  wanted to sit IN the case, not on it. That is an appearance decision made
+//  with open eyes:
+//    · many current phone cameras decode inverted symbols; many older and
+//      embedded readers do not, and the standard does not require it.
+//    · nothing here can test it. print part="coupon_qr_body"/"coupon_qr_ink"
+//      and scan it with the phones you actually care about.
+//    · the way back is one word: qr_style = "plaque".
+//  Whichever style is chosen, assigning the modules their OWN filament is
+//  what makes the symbol possible at all — on the single-extruder z-swap
+//  recipe the module floors print in the BODY filament, so the modules and
+//  the field cannot differ no matter what swap height is used.
+//  Corollary, and please do not "improve" this: the modules must stay INK.
+//  Yellow against either body colour is far too low a contrast to decode.
 //
 //  HOW TO RE-COLOUR
 //  Regrouping the palette is a one-word edit in back_graphics()'s `ink`
@@ -805,7 +818,22 @@ pal_accent_rgb = [0.976, 0.659, 0.000];   // RAL 1003 — #F9A800
 // black, and the QR's polarity has to follow that or the symbol stops
 // scanning. Rec. 709 luma; the comparison is all that matters, not the units.
 function pal_lum(c) = 0.2126*c[0] + 0.7152*c[1] + 0.0722*c[2];
-qr_dark_plate = pal_lum(pal_body_rgb) < pal_lum(pal_ink_rgb);
+body_is_dark = pal_lum(pal_body_rgb) < pal_lum(pal_ink_rgb);
+
+// HOW THE QR IS BUILT — and it is now a LOOK decision, not only a scan one.
+//   "plaque" lays an INK field over the plate and punches the modules THROUGH
+//           it, so the modules read in the BODY colour. On a dark body that
+//           is dark-on-light: the classic, spec-conformant polarity.
+//   "bare"  prints the modules themselves in INK straight onto the plate, so
+//           the field IS the case. On a dark body that is light-on-dark —
+//           INVERTED — and the symbol disappears into the case instead of
+//           sitting in a bright rectangle on it.
+//   "auto"  picks whichever of the two yields dark-on-light.
+qr_style = "bare";   // ["auto","plaque","bare"] help-QR look
+qr_plaque = qr_style == "auto" ? body_is_dark : qr_style == "plaque";
+// Dark modules on a light field? Plaque puts BODY in the modules; bare puts
+// INK in them. Computed, so the warning below cannot drift from the geometry.
+qr_dark_on_light = qr_plaque ? body_is_dark : !body_is_dark;
 
 // How deep the INK reaches in from the FRONT face. This is a visible-surface
 // depth, not a structural one: 0.6 is three layers at 0.2 and matches the
@@ -813,8 +841,21 @@ qr_dark_plate = pal_lum(pal_body_rgb) < pal_lum(pal_ink_rgb);
 // single-extruder build put their colour boundary in the same place.
 bezel_ink_t = 0.6;
 // Which back-plate groups take which filament. Edit these, not the geometry.
-ink_groups    = ["qr", "moat"];
-accent_groups = ["mark", "text"];
+// A group in NEITHER list is still cut — it just gets no inlay, so it reads as
+// a plain deboss in the body colour. That is the "emboss, no colour" setting,
+// and it is the default for "text" (BOOT/RESET/SD and the rating block) and
+// "moat" (the adhesive-rail outlines): on a black case those were two white
+// rectangles and four lines of white type competing with the one word that is
+// supposed to carry the accent.
+ink_groups    = ["qr"];
+accent_groups = ["mark"];
+
+// The two surfaces that are NOT back-plate groups and so cannot be moved by
+// the lists above — each picks a filament by name instead. "body" means the
+// surface is simply not partitioned: no inlay is added and nothing is
+// subtracted, so it prints in the case colour with no tool change at all.
+bezel_colour     = "body";   // ["body","ink","accent"] front bezel ring
+vent_ring_colour = "body";   // ["body","ink","accent"] egg-vent mouth rings
 
 /* [Frame — bottom USB port, edge brand, TPU fitments] */
 usb_port   = true;   // pass-through for the power cable, centred on the bottom wall.
@@ -859,7 +900,19 @@ port_labels = true;
 // The earlier reasoning here was that both carry the same cable so both may
 // say USB. That is true about the CABLE and wrong about the WALL, which is
 // what a person standing in front of the case is actually reading.
-port_lbl_a  = "USB";    // beside the bottom exit — a real connector is there
+// OFF. It said "USB" and it was never beside the port: the code places it at
+// vword_x + vword_half + 6.0, which is outboard of the BRAND WORDS, so on the
+// real wall it landed ~30 mm from the opening and past SECURACV — reading as a
+// third brand word near the corner rather than as a caption for anything. The
+// comment above it claimed "just outboard of each opening's flange", which is
+// what it should have done and never did.
+//
+// Not relocated, removed. A USB-C hole in the bottom of a device does not need
+// the word USB beside it, the rating block two rows up already says USB-C
+// INPUT, and a word moulded into plastic is not a caption you can revise
+// later. Set it back to "USB" if a future wall genuinely needs disambiguating
+// — and fix the placement formula at the same time.
+port_lbl_a  = "";       // beside the bottom exit — see above
 port_lbl_b  = "";       // beside the side exit — a hole, so it says nothing
 // RATING STAMP — the little spec block every mains-adjacent thing should
 // carry. It goes on the BACK plate's lower band: hidden behind the case on a
@@ -1756,14 +1809,17 @@ if (print_colours)
              fr_depth - label_back_depth - bezel_ink_t,
              " mm of shell between them never changes filament, so the purge ",
              "tower stays short. The QR reads ",
-             qr_dark_plate
+             qr_plaque
                ? str(pal_body, " modules on a ", pal_ink, " plaque (the ink ",
                      "prints as the FIELD and the modules are punched ",
                      "through it)")
-               : str(pal_ink, " modules on the ", pal_body, " field (the ink ",
-                     "prints as the MODULES)"),
-             ": dark-on-light, which is the only polarity a reader ",
-             "accepts — do not put the accent on the finder patterns"));
+               : str(pal_ink, " modules straight onto the ", pal_body,
+                     " plate (the ink prints as the MODULES; the field is the",
+                     " case)"),
+             qr_dark_on_light
+               ? " — dark-on-light, the polarity the spec asks for"
+               : " — LIGHT-ON-DARK, inverted from the spec and chosen for looks",
+             ". Do not put the accent on the finder patterns"));
 echo(str("  stand: ", stand_w, " x ", std_d, " base, ", stand_ang,
          "° recline, slot ", std_cd, " mm for the ", fr_depth,
          " mm frame, seat ", stand_floor_h, " mm over the desk (plug room), ",
@@ -1807,21 +1863,27 @@ if (qr_back)
          qr_back_cell, " mm (", qr_n*qr_back_cell, " mm field) on the back",
          " plate at (", qr_back_dx, ", ", qr_back_dy, "), its grille keepout",
          " doubling as the quiet zone. Prints in the FIRST layers on the",
-         " textured plate. Polarity: ",
-         qr_dark_plate
-           ? str("the body (", pal_body, ") is the DARKER filament, so the ",
-                 pal_ink, " inlay prints as the PLAQUE — a light field with",
+         " textured plate. Style \"", qr_style, "\": ",
+         qr_plaque
+           ? str("the ", pal_ink, " inlay prints as the PLAQUE — a field with",
                  " the modules punched through it, showing ", pal_body)
-           : str("the body (", pal_body, ") is the LIGHTER filament, so the ",
-                 pal_ink, " inlay prints as the MODULES themselves, directly",
-                 " on the body"),
-         " — dark modules on a light field either way, which is the only",
-         " polarity a reader accepts. Derived from the palette (pal_lum), not",
-         " remembered. It costs",
+           : str("the ", pal_ink, " inlay prints as the MODULES themselves,",
+                 " straight onto the ", pal_body, " plate, so the field is the",
+                 " case and there is no rectangle around the symbol"),
+         qr_dark_on_light
+           ? ". Polarity: dark modules on a light field — what the spec asks"
+           : str(". Polarity: LIGHT MODULES ON A DARK FIELD — inverted from",
+                 " the spec, chosen for looks. Plenty of current phone",
+                 " cameras decode an inverted symbol and plenty of older",
+                 " readers refuse outright; nothing in this repo can settle",
+                 " it for your phones. If it will not scan, set qr_style =",
+                 " \"plaque\""),
+         ". It costs",
          " no extra swap: the back skin is already a tool change. Rehearse it",
          " with part=\"coupon_qr_body\"/\"coupon_qr_ink\" and SCAN THE COUPON",
-         " before committing a frame — cell size is the one thing only a phone",
-         " can settle"));
+         " before committing a frame — at this polarity that is not a",
+         " formality, and cell size is the other thing only a phone can",
+         " settle"));
 if (usb_port)
     echo(str("  USB port: ", usb_open_w, " x ", usb_open_h,
              " stadium at (", usb_dx, ", z ", usb_z, ") — passes a ",
@@ -2102,22 +2164,29 @@ module back_graphics(ink = "all") {
         // "SD" sits beside the tether channel (its old spot above the mouth
         // is exactly where the strap now runs)
         frame_lbl(sd_dx - 8, sd_teth_y, "SD");
-        // the hero product name, DEAD CENTRE on the plate. It sits BELOW the
-        // SD recess where only the nail scoop is left — at this row the scoop
-        // spans x 32.3..39.0 and the line renders ±28, so ~4 of daylight.
-        // Grow it and it walks into the SD: this layout is preview-verified.
-        frame_lbl(0, -(fr_yi/2 - 5.4), brand_back, size = 4.0, spacing = 1.15);
         // rating stamp — stacked lines in the upper-right clear gap
         if (rating_stamp) for (i = [0:len(rating_lines)-1])
             frame_lbl(rating_dx, rating_dy + rating_h/2 - 1
                                  - (i + 0.5)*rating_lh,
                       rating_lines[i], rating_sz);
     }
-    if (all || ink == "mark")
-        // the company line, over the product name. It sits beside the SD
-        // recess (mouth bottom -47.2), so it must stay inside x ±23.2 — it
-        // renders ±17. This is the word that carries the accent colour.
+    if (all || ink == "mark") {
+        // THE LOCKUP — both lines, and the only thing on the plate that takes
+        // the accent. The hero product name used to live in "text" alongside
+        // BOOT/RESET/SD; that was fine when "text" was ink and the accent was
+        // one word, but it meant CANARY and SECURACV could not be coloured
+        // together without dragging the functional labels along with them.
+        // They are one mark, so they are one group.
+        //
+        // The company line sits beside the SD recess (mouth bottom -47.2), so
+        // it must stay inside x ±23.2 — it renders ±17.
         frame_lbl(0, -(fr_yi/2 - 10.6), brand_sub, size = 4.0, spacing = 1.6);
+        // The product name is DEAD CENTRE on the plate, BELOW the SD recess
+        // where only the nail scoop is left — at this row the scoop spans
+        // x 32.3..39.0 and the line renders ±28, so ~4 of daylight. Grow it
+        // and it walks into the SD: this layout is preview-verified.
+        frame_lbl(0, -(fr_yi/2 - 5.4), brand_back, size = 4.0, spacing = 1.15);
+    }
     if (all || ink == "qr")
         // In back-view coords, no mirror: viewed from the back, +x is right.
         //
@@ -2136,7 +2205,7 @@ module back_graphics(ink = "all") {
                        qr_back_dy + qr_n*qr_back_cell/2,
                        fr_depth - label_back_depth])
                 linear_extrude(label_back_depth + 0.1)
-                    if (qr_dark_plate)
+                    if (qr_plaque)
                         difference() {
                             // the light plaque: the symbol PLUS its quiet zone,
                             // which is qr_back_reach by definition, recentred
@@ -2215,12 +2284,16 @@ module coupon_clip() {
 // What it tests, none of which a slicer preview answers:
 //   · whether the symbol SCANS at qr_back_cell — the real question, and one
 //     only a phone can settle. 1.3 mm modules are ~3 line widths at 0.42.
-//   · the polarity: dark modules on a light field, which is the only
-//     polarity a reader accepts. WHICH filament plays which part is derived
-//     from the palette (qr_dark_plate, off pal_lum) and flips with it — on
-//     today's black body the INK is the plaque and the modules are punched
-//     through it in body colour; on the old white body the ink WAS the
-//     modules. Do not restate it as a fixed assignment; it rotted once
+//   · the polarity — AND ON THIS BUILD THAT IS THE WHOLE POINT OF THE
+//     COUPON, not a formality. qr_style is "bare": the modules print in INK
+//     straight onto the black plate, so the symbol is WHITE ON BLACK. That
+//     is INVERTED from the polarity the spec asks for, chosen deliberately
+//     for looks. Many current phone cameras decode an inverted symbol; it is
+//     not guaranteed, and no gate in this repo can settle it. Scan this
+//     coupon with the phones that actually matter to you. If it fails, set
+//     qr_style = "plaque" and the symbol goes back to dark-on-light inside
+//     a light rectangle.
+//     Do not restate the assignment as a fixed one; it rotted once
 //   · purge bleed on the deboss floors, where black-into-white shows first
 //     and where it would cost the symbol its contrast
 // Print it, scan it with a phone, and only then commit a frame.
@@ -2266,16 +2339,18 @@ module coupon_qr_clip() {
 //
 // COST, honestly: 66 slots means 66 small isolated accent islands on each of
 // these layers. Not filament and not swaps — travel moves and stringing risk,
-// on two layers. That is the thing to watch on the first print; vent_accent
-// is one switch if it misbehaves, and a WIDER ring is the fix to try before
-// abandoning it (two fat extrusions beat many thin ones).
-vent_accent   = true;   // line the back-grille mouths in the accent colour
+// on two layers. That is the thing to watch on the first print;
+// vent_ring_colour = "body" is one switch if it misbehaves, and a WIDER ring
+// is the fix to try before abandoning it (two fat extrusions beat many thin).
+// Ring colour is vent_ring_colour, up in the palette block with the other
+// filament routing. "body" (the default) makes this module empty, so the
+// mouths are simply part of the case and no ring geometry exists at all.
 vent_accent_w = 0.8;    // ring width outward from the hole edge — 2 lines at 0.4
 vent_accent_d = 0.4;    // how far down the bore it runs — 2 layers at 0.2
 vent_accent_eps = 0.05; // seam offset INTO the hole — see the note at the cut
 
 module vent_accent_rings() {
-    if (vent_accent && vent_back)
+    if (vent_ring_colour != "body" && vent_back)
         translate([0, 0, fr_depth - vent_accent_d])
             linear_extrude(vent_accent_d + 0.1)   // overshoots; frame() bounds it
                 for (p = grille_cells(-m3_ox, m3_oy, fr_keepouts))
@@ -2299,16 +2374,30 @@ module vent_accent_rings() {
                         }
 }
 
-module frame_ink()    { union() { back_inlay(ink_groups);
-                                  intersection() { frame(); bezel_slab(); } } }
-// The vent rings enter ACCENT and leave BODY in the same breath — written as
-// one add and one subtract of the SAME module so the partition cannot drift.
-// Intersecting with frame() on the accent side is what keeps it exact where a
-// ring runs into a deboss void or off the plate edge: accent claims only
-// material that is actually there, and body subtracts the same tool.
-module frame_accent() { union() { back_inlay(accent_groups);
-                                  intersection() { frame(); vent_accent_rings(); } } }
-module frame_bodycol(){ difference() { frame(); bezel_slab(); vent_accent_rings(); } }
+// Everything a non-body filament claims BEYOND its deboss groups: the bezel
+// band and the vent-mouth rings, each routed by name. Written once and used by
+// all three parts so the split cannot drift — a surface claimed here is the
+// same surface subtracted in frame_bodycol(), because it is the same module.
+//
+// Intersecting with frame() is what keeps it exact where a ring runs into a
+// deboss void or off the plate edge: the claiming filament takes only material
+// that is actually there, and body subtracts the identical tool.
+module claimed_by(which) {
+    if (bezel_colour == which)     intersection() { frame(); bezel_slab(); }
+    if (vent_ring_colour == which) intersection() { frame(); vent_accent_rings(); }
+}
+module frame_ink()    { union() { back_inlay(ink_groups);    claimed_by("ink"); } }
+module frame_accent() { union() { back_inlay(accent_groups); claimed_by("accent"); } }
+// Subtract only what another filament actually claimed. With both knobs on
+// "body" nothing is subtracted at all and the case is one solid colour — which
+// is the point: "black bezel" must cost zero tool changes, not a black inlay.
+module frame_bodycol(){
+    difference() {
+        frame();
+        if (bezel_colour != "body")     bezel_slab();
+        if (vent_ring_colour != "body") vent_accent_rings();
+    }
+}
 
 // A rough colour key. PREVIEW ONLY — never export from this module.
 //

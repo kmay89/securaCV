@@ -170,10 +170,28 @@ def render(part: str, out: Path) -> Path:
         ["openscad", "--export-format", "binstl", "-o", str(out),
          "-D", f'part="{part}"', str(SRC)],
         capture_output=True, text=True)
-    diag = [ln for ln in (r.stderr or "").splitlines()
+    raw = r.stderr or ""
+    diag = [ln for ln in raw.splitlines()
             if "ERROR" in ln or "WARNING" in ln]
+    # An EMPTY part is not a failed part, and telling them apart matters.
+    # A filament's share of an object is empty whenever the palette simply
+    # does not put that colour on that object — the colour coupon has no INK
+    # on it once ink_groups is just ["qr"], because the coupon clip
+    # deliberately does not reach the QR. That is a correct palette, not a
+    # broken render, and the fix is NOT to invent a token ink feature so the
+    # packager stays happy: it is to drop the volume and say so. Caller
+    # decides whether an object with no volumes left is fatal.
+    # Match against RAW stderr, not the diagnostic list: OpenSCAD prints
+    # "Current top level object is empty." with NO "WARNING"/"ERROR" prefix,
+    # so it never survives the filter above. Keying on the filtered list is
+    # exactly the bug this comment exists to stop being re-introduced — it
+    # looked right and turned every empty part back into a hard abort.
+    # Empty is: no file, no diagnostics at all, and the marker present.
+    if not out.exists() and not diag and "top level object is empty" in raw:
+        return None
     if diag or not out.exists():
-        raise SystemExit(f"render of {part} failed:\n" + "\n".join(diag[:5]))
+        raise SystemExit(f"render of {part} failed:\n"
+                         + "\n".join(diag[:5] or raw.splitlines()[-3:]))
     return out
 
 
@@ -216,11 +234,19 @@ def bbox(verts):
 def build(setname: str) -> Path:
     groups, oid = [], 0
     for gname, vols, centre in SETS[setname]:
-        meshes = []
+        meshes, dropped = [], []
         for _n, part, slot in vols:
+            stl = render(part, HERE / f"_3mf_{part}.stl")
+            if stl is None:            # this colour is not on this object
+                dropped.append((_n, slot))
+                continue
             oid += 1
-            v, t = mesh(render(part, HERE / f"_3mf_{part}.stl"))
+            v, t = mesh(stl)
             meshes.append((oid, _n, slot, v, t))
+        if not meshes:
+            raise SystemExit(
+                f"'{gname}': every filament volume is empty — there is "
+                "nothing to print. Check the palette groups.")
         # the group's own extent, so the plate offset centres the WHOLE object
         allv = [p for m in meshes for p in m[3]]
         x0, x1, y0, y1 = bbox(allv)
@@ -230,6 +256,12 @@ def build(setname: str) -> Path:
               f"{x1-x0:6.1f} x {y1-y0:5.1f} mm  at ({centre[0]}, {centre[1]})")
         for m in meshes:
             print(f"      {m[1]:7} {len(m[4]):>6} triangles  filament {m[2]}")
+        # Loud, never silent: a filament missing from a plate changes what the
+        # operator has to load, and a colour coupon that quietly stopped
+        # rehearsing a colour is worse than one that never claimed to.
+        for _n, slot in dropped:
+            print(f"      {_n:7} {'—':>6} EMPTY: the palette puts no {_n} on "
+                  f"this object, so filament slot {slot} is not used here")
         groups.append((gname, meshes, off, foot))
 
     # A plate whose parts overlap is a wasted print, and the slicer will happily

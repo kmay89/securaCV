@@ -861,8 +861,7 @@
     {
      "param": "panel_variant",
      "values": [
-      "lcd7",
-      "lcd7b"
+      "lcd7"
      ],
      "default": "lcd7",
      "audience": "user"
@@ -1009,6 +1008,45 @@
      "default": true
     },
     {
+     "id": "qr_style",
+     "type": "enum",
+     "label": "help-QR look",
+     "consequence": "",
+     "audience": "user",
+     "enum": [
+      "auto",
+      "plaque",
+      "bare"
+     ],
+     "default": "bare"
+    },
+    {
+     "id": "bezel_colour",
+     "type": "enum",
+     "label": "front bezel ring",
+     "consequence": "",
+     "audience": "user",
+     "enum": [
+      "body",
+      "ink",
+      "accent"
+     ],
+     "default": "body"
+    },
+    {
+     "id": "vent_ring_colour",
+     "type": "enum",
+     "label": "egg-vent mouth rings",
+     "consequence": "",
+     "audience": "user",
+     "enum": [
+      "body",
+      "ink",
+      "accent"
+     ],
+     "default": "body"
+    },
+    {
      "id": "usb_port",
      "type": "bool",
      "label": "pass-through for the power cable, centred on the bottom wall.",
@@ -1129,17 +1167,9 @@
       "10000"
      ],
      "default": "none"
-    },
-    {
-     "id": "vent_accent",
-     "type": "bool",
-     "label": "line the back-grille mouths in the accent colour",
-     "consequence": "",
-     "audience": "user",
-     "default": true
     }
    ],
-   "engineering_param_count": 240,
+   "engineering_param_count": 242,
    "alternatives": [
     "dash_display"
    ],
@@ -1147,8 +1177,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 26,
-    "user_options": 26,
+    "options": 28,
+    "user_options": 28,
     "variant_axes": 1
    }
   },
