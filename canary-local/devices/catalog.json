@@ -1086,9 +1086,9 @@
      "default": true
     },
     {
-     "id": "feather_vents",
+     "id": "barb_vents",
      "type": "bool",
-     "label": "shape the fin vents as FEATHER BARBS (a pointed",
+     "label": "shape the fin vents as BARBS (a pointed vesica)",
      "consequence": "",
      "audience": "user",
      "default": true
