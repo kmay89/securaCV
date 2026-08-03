@@ -201,7 +201,7 @@ the table does establish is the shape of the cost: **material is $0.23–$1.47 p
 device and everything else is cents per hour on top.**
 
 **Labor is in neither table, and it dominates both.** Plate changes, part
-removal, gasket fitting, QC against the fit coupon — at any realiztic wage,
+removal, gasket fitting, QC against the fit coupon — at any realistic wage,
 human handling costs several times the ~$1.50 of material, power and machine
 wear. That single fact drives the decision at the bottom of this page.
 

@@ -217,7 +217,7 @@ setting alone:
 You can print these parts in PC, and on paper it's the strongest choice: it tops
 the shell ranking (`PC > PA-CF ≈ ASA > PETG > PLA` in [field_ratings.md](./field_ratings.md)),
 has the highest heat-deflection temperature, and — unfilled — is RF-transparent
-so it's fine for the Sense radome. **But it's a specializt pick, not a default,
+so it's fine for the Sense radome. **But it's a specialist pick, not a default,
 and the reasons are about the print, not the polymer:**
 
 - **It needs an enclosed, hot printer** (bed ~110–120 °C, warm chamber, nozzle
