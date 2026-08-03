@@ -6500,8 +6500,8 @@
      ]
     },
     {
-     "name": "Glass slab",
-     "note": "bonded touch panel, from the Waveshare drawing (mm)",
+     "name": "Board",
+     "note": "",
      "params": [
       {
        "name": "panel_variant",
@@ -6517,7 +6517,13 @@
       {
        "name": "panel_ok",
        "default": "panel_check(PANEL) && panel_assert_printable(PANEL)"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Glass slab",
+     "note": "",
+     "params": [
       {
        "name": "glass_w",
        "default": "pnl_glass_w(PANEL)",
@@ -6665,7 +6671,13 @@
        "name": "win_margin",
        "default": "0.6",
        "comment": "window opened this much beyond the active area on each"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Connectors",
+     "note": "",
+     "params": [
       {
        "name": "opt_bottom_ports",
        "default": "true"
@@ -6673,7 +6685,13 @@
       {
        "name": "opt_side_ports",
        "default": "true"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Ventilation",
+     "note": "",
+     "params": [
       {
        "name": "vent_back",
        "default": "true",
@@ -6742,7 +6760,13 @@
        "name": "vent_side_n",
        "default": "3",
        "comment": "per side, stacked toward the top corners"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Print tolerances",
+     "note": "",
+     "params": [
       {
        "name": "tol_slide",
        "default": "0.25",
@@ -6778,7 +6802,13 @@
        "name": "r_out",
        "default": "6.0",
        "comment": "outer corner radius"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Fasteners",
+     "note": "",
+     "params": [
       {
        "name": "m3_nom",
        "default": "3.0",
@@ -7344,7 +7374,13 @@
        "name": "vent_gap",
        "default": "8.0",
        "comment": "clear space between the port flange and each word"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Stand",
+     "note": "",
+     "params": [
       {
        "name": "opt_stand",
        "default": "true"
@@ -7575,7 +7611,7 @@
      ]
     },
     {
-     "name": "Quality",
+     "name": "Hidden",
      "note": "",
      "params": [
       {

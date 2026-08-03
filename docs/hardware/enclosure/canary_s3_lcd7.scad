@@ -203,7 +203,12 @@ assert(is_num(egg_area(7, 4)),
 /* [What to render] */
 part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_port","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","dock_probe_fit","dock_probe_seat","dock_probe_p","dock_probe_p2","ring_gauge","port_teth_hole","port_teth_barb","port_barb_proud","back_flush","fil_body","fil_ink","fil_accent","coupon_body","coupon_ink","coupon_accent","coupon_qr_body","coupon_qr_ink","frame_color","fil_overlap","fil_gap","all"]
 
-/* [Glass slab] — bonded touch panel, from the Waveshare drawing (mm) */
+/* [Board] */
+// The board selector gets its own group because it is the FIRST decision and
+// it used to be filed under [Glass slab], where nobody looked — there was even
+// an empty [Panel variant] group further down, so the one heading that sounded
+// right had nothing under it. Everything the case needs then follows from this
+// one id; the groups below are what it derived, shown for reading.
 // ── WHICH BOARD ─────────────────────────────────────────────────────────────
 // The ONE knob that selects a panel. Every dimension below is read from that
 // record in canary_panel_lib.scad — none of them are typed here any more.
@@ -221,6 +226,10 @@ panel_variant = "lcd7";   // ["lcd7"]
 PANEL   = panel(panel_variant);
 panel_ok = panel_check(PANEL) && panel_assert_printable(PANEL);
 
+/* [Glass slab] */
+// Bonded touch panel, in mm. READ-ONLY: every value here is derived from the
+// board record above, so none of it appears as an editable knob. Shown because
+// these are the numbers a person checks against calipers.
 glass_w = pnl_glass_w(PANEL);    // touch-glass width  (X)
 glass_h = pnl_glass_h(PANEL);    // touch-glass height (Y)
 glass_t = pnl_glass_t(PANEL);       // glass + LCD module thickness where the module reaches —
@@ -409,17 +418,19 @@ win_margin = 0.6;    // window opened this much beyond the active area on each
                      // side, so print tolerance + panel placement can't eat
                      // visible pixels (the lip pays for it out of the border)
 
-/* [Connectors] — openings, offsets from the board center along their wall.
-   NOMINAL — MEASURE. The bottom (−Y) wall carries the USB/UART cluster; the
-   two short (±X) walls carry CAN/RS485/battery. Set opt_* to open them. */
+/* [Connectors] */
+// openings, offsets from the board center along their wall.
+// NOMINAL — MEASURE. The bottom (−Y) wall carries the USB/UART cluster; the
+// two short (±X) walls carry CAN/RS485/battery. Set opt_* to open them.
 opt_bottom_ports = true;
 bottom_open_w = 96.0;   bottom_open_dx = 0.0;   // wide channel over the bottom cluster
 opt_side_ports = true;
 side_open_h = 40.0;     side_open_dy = 0.0;     // tall slot on each short wall
 
-/* [Ventilation] — MUST let the backlight/SoC heat convect out.
-   A grille alone only radiates; convection needs a low inlet and a high
-   outlet, so the bottom wall takes air in and the top wall lets it out. */
+/* [Ventilation] */
+// MUST let the backlight/SoC heat convect out.
+// A grille alone only radiates; convection needs a low inlet and a high
+// outlet, so the bottom wall takes air in and the top wall lets it out.
 vent_back = true;        // large grille in the back plate
 vent_rows = 11;          // grille rows
 vent_cols = 20;          // grille columns
@@ -462,10 +473,11 @@ vent_bottom_n = 5;       // per side
 vent_sides = true;       // side (±X) chimneys, kept clear of the port slots
 vent_side_n = 3;         // per side, stacked toward the top corners
 
-/* [Print tolerances] — only the two this case actually has fits for. There is
-   no press fit anywhere in this design (no magnet pocket, no light pipe), so
-   tol_press is deliberately absent rather than declared and ignored: a knob
-   that tunes nothing sends you through reprints that cannot change the part. */
+/* [Print tolerances] */
+// only the two this case actually has fits for. There is
+// no press fit anywhere in this design (no magnet pocket, no light pipe), so
+// tol_press is deliberately absent rather than declared and ignored: a knob
+// that tunes nothing sends you through reprints that cannot change the part.
 tol_slide = 0.25;    // the glass/board pockets — the SLIDE station on the coupon
 tol_hole  = 0.35;    // M3 clearance through the bezel ears — the SCREW station
 
@@ -475,11 +487,12 @@ face_t = 3.0;    // bezel face
 back_t = 3.0;    // rear tray floor
 r_out  = 6.0;    // outer corner radius
 
-/* [Fasteners] — M3 x 16–20 from the FRONT, through the bezel lobes, self-tapping
-   into FULL-HEIGHT corner posts in the back tray (the posts bridge the whole
-   cavity, so the screw threads into solid material the entire way — not across
-   an empty gap). Heads sit in a counterbore on the bezel's outboard ears,
-   clear of the glass. */
+/* [Fasteners] */
+// M3 x 16–20 from the FRONT, through the bezel lobes, self-tapping
+// into FULL-HEIGHT corner posts in the back tray (the posts bridge the whole
+// cavity, so the screw threads into solid material the entire way — not across
+// an empty gap). Heads sit in a counterbore on the bezel's outboard ears,
+// clear of the glass.
 lob_d = 9.0;  lob_o = 3.0;   // lobe Ø / diagonal offset outboard of the cavity corner
 m3_nom = 3.0;                // M3 shank
 lob_pilot = 2.7;  cb_d = 6.0;  cb_h = 2.0;
@@ -1024,10 +1037,11 @@ edge_vent_z = 18.7;     // band center across the wall — behind the grommet's
                         // outer flange, shy of the back plate (both asserted)
 vent_gap  = 8.0;     // clear space between the port flange and each word
 
-/* [Stand] — desk dock for the FRAME case (see the header). The slot is sized
-   to the frame's DERIVED outer depth, so editing the frame's stack re-sizes
-   the dock with it. A reference frame STL measures 23.5 mm against the
-   derived 24.0 — stand_clear covers both without rattle. */
+/* [Stand] */
+// desk dock for the FRAME case (see the header). The slot is sized
+// to the frame's DERIVED outer depth, so editing the frame's stack re-sizes
+// the dock with it. A reference frame STL measures 23.5 mm against the
+// derived 24.0 — stand_clear covers both without rattle.
 opt_stand = true;
 stand_ang     = 20;    // recline from vertical
 stand_w       = 174.0; // dock width — DELIBERATELY narrower than the case, so
@@ -1210,6 +1224,15 @@ bat_clr  = 1.0;   // per-side XY pocket clearance
 
 /* [Quality] */
 $fa = 3; $fs = 0.5;
+
+/* [Hidden] */
+// ↑ EVERYTHING BELOW THIS LINE IS HIDDEN FROM THE CUSTOMIZER, deliberately.
+// "[Hidden]" is OpenSCAD's own mechanism, not a naming convention: variables
+// under it are not offered as knobs. Without it, every derived value in the
+// rest of this file — and there are ~68 of them — piles into whichever group
+// happened to be declared last, which was [Quality]. A panel of 68 computed
+// intermediates labelled "Quality" is not a settings page, it is a place
+// people give up. If you add a REAL knob, put it in a group ABOVE this line.
 
 // ----------------------------------------------------------------------------
 //  Derived. Axis: X = width, Y = height, Z = toward glass.
