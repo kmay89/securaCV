@@ -103,6 +103,13 @@ final class AwayPush: ObservableObject {
         UIApplication.shared.registerForRemoteNotifications()
         #endif
         #if canImport(CloudKit)
+        // Safety before availability: constructing a CKContainer raises an
+        // uncatchable ObjC CKException when this build has no usable iCloud
+        // container, which aborts the process rather than failing softly.
+        guard CloudSync.canTouchCloudKit else {
+            reach = .unavailable("Sign in to iCloud to get alerts when you're away.")
+            return
+        }
         // The account IS the availability check — don't gate on a flag owned
         // elsewhere, or this path inherits that flag's bugs on top of its own.
         let container = CKContainer.default()
