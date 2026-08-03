@@ -310,53 +310,63 @@ export const FIGURES = [
   },
 
   /* ═════════════════════════════════════════ bought-in modules ═══════
-   * Boards are sketched, not STL-backed: we do not own their CAD. They are
-   * still figured because half of what a user is told to do ("plug the XIAO
-   * into the back socket") is about a board, and a name alone is exactly the
-   * ambiguity these figures exist to remove. Dimensions are the vendors'
-   * published outlines, carried in registry/board_facts. */
+   * Boards are figured because half of what a user is told to do ("plug the
+   * XIAO into the back socket") is about a board, and a name alone is exactly
+   * the ambiguity these figures exist to remove.
+   *
+   * We do not own their CAD — but for most of them we have committed the
+   * vendor's STEP and tessellated it (canary-local/devices/boards.json), so
+   * `board:` names that entry and the generator takes the envelope from the
+   * vendor geometry, exactly as a printed part takes it from its STL. A board
+   * with no committed vendor CAD falls back to a `sketch` and the ledger says
+   * so, the same as anywhere else. */
   {
     id: 'board.xiao',
     title: 'Seeed XIAO (ESP32 family)',
     role: 'board', of: '_universal', supplier: 'seeed',
-    sketch: { w: 21.0, d: 17.5, h: 3.4 },
+    board: 'seeed_xiao_esp32s3',
     build: (E) => [
-      { kind: 'box', m: 'board', at: [0, 0, 0], size: [E.w, E.d, 1.2], r: 1 },
-      { kind: 'box', m: 'metal', at: [E.w * 0.28, E.d * 0.2, 1.2], size: [E.w * 0.44, E.d * 0.6, 1.0], r: 0.4 },
-      { kind: 'box', m: 'metal', at: [E.w / 2 - 4.4, -1.2, 1.2], size: [8.8, 3.2, 1.4], r: 0.6, detail: 'full' },
+      // the PCB, the shielded module can, and the USB-C tongue at one end
+      slab(E, 'board', 0, E.d * 0.34, 0, 1),
+      { kind: 'box', m: 'metal', face: 'y', at: [E.w * 0.28, E.d * 0.34 - EPS, E.h * 0.2], size: [E.w * 0.44, E.d * 0.4, E.h * 0.6], r: 0.4 },
+      { kind: 'box', m: 'metal', face: 'y', at: [E.w / 2 - 4.4, E.d * 0.34 - EPS, -1.6], size: [8.8, E.d * 0.5, 3.2], r: 0.6, detail: 'full' },
     ],
   },
   {
     id: 'board.grove-vision-ai-v2',
     title: 'Grove Vision AI V2',
     role: 'board', of: 'canary-vision', supplier: 'seeed',
-    sketch: { w: 40.0, d: 20.0, h: 4.0 },
+    board: 'seeed_grove_vision_ai_v2',
     build: (E) => [
-      { kind: 'box', m: 'board', at: [0, 0, 0], size: [E.w, E.d, 1.2], r: 1 },
-      { kind: 'box', m: 'dark', at: [E.w * 0.3, E.d * 0.25, 1.2], size: [E.w * 0.4, E.d * 0.5, 1.2], r: 0.4 },
-      { kind: 'box', m: 'metal', at: [2, E.d - 3.2, 1.2], size: [E.w - 4, 3.2, 1.6], r: 0.4, detail: 'full' },
+      slab(E, 'board', 0, E.d * 0.34, 0, 1),
+      { kind: 'box', m: 'dark', face: 'y', at: [E.w * 0.3, E.d * 0.34 - EPS, E.h * 0.25], size: [E.w * 0.4, E.d * 0.4, E.h * 0.5], r: 0.4 },
+      // the CSI flex connector along the top edge — how the camera attaches
+      { kind: 'box', m: 'metal', face: 'y', at: [2, E.d * 0.34 - EPS, E.h - 3.2], size: [E.w - 4, E.d * 0.5, 3.2], r: 0.4, detail: 'full' },
     ],
   },
   {
     id: 'board.mr60bha2',
     title: 'Seeed MR60BHA2 60 GHz radar',
     role: 'board', of: 'canary-sense', supplier: 'seeed',
-    sketch: { w: 24.0, d: 24.0, h: 3.2 },
+    // No committed vendor STEP for this one yet — sketched from the module's
+    // published 24 x 24 mm outline, and the ledger records it as a sketch.
+    sketch: { w: 24.0, d: 3.2, h: 24.0 },
+    sketchNote: 'the published 24 x 24 mm module outline; no vendor CAD committed',
     build: (E) => [
-      { kind: 'box', m: 'board', at: [0, 0, 0], size: [E.w, E.d, 1.2], r: 1 },
+      slab(E, 'board', 0, E.d * 0.4, 0, 1),
       // the antenna array is the whole point of this board — figure it
-      { kind: 'box', m: 'metal', at: [E.w * 0.18, E.d * 0.18, 1.2], size: [E.w * 0.64, E.d * 0.64, 0.6], r: 0.3 },
+      { kind: 'box', m: 'metal', face: 'y', at: [E.w * 0.18, E.d * 0.4 - EPS, E.h * 0.18], size: [E.w * 0.64, E.d * 0.5, E.h * 0.64], r: 0.3 },
     ],
   },
   {
     id: 'board.round-display',
     title: 'Seeed Round Display for XIAO',
     role: 'board', of: 'canary-display', supplier: 'seeed',
-    sketch: { w: 39.0, d: 39.0, h: 5.0 },
+    board: 'seeed_round_display_xiao',
     build: (E) => [
-      { kind: 'cyl', m: 'board', axis: 'y', at: [E.w / 2, 0, E.h / 2], r: E.w / 2, h: 2.0 },
-      { kind: 'cyl', m: 'glass', axis: 'y', at: [E.w / 2, 2.0 - EPS, E.h / 2], r: E.w / 2 - 0.6, h: 3.0 },
-      { kind: 'cyl', m: 'lit', axis: 'y', at: [E.w / 2, 5.0, E.h / 2], r: E.w / 2 - 2.4, h: 0.4 },
+      { kind: 'cyl', m: 'board', axis: 'y', at: [E.w / 2, 0, E.h / 2], r: E.w / 2, h: E.d * 0.7 },
+      { kind: 'cyl', m: 'glass', axis: 'y', at: [E.w / 2, E.d * 0.7 - EPS, E.h / 2], r: E.w / 2 - 0.6, h: E.d * 0.3 },
+      { kind: 'cyl', m: 'lit', axis: 'y', at: [E.w / 2, E.d, E.h / 2], r: E.w / 2 - 2.4, h: 0.4 },
     ],
   },
 
@@ -381,7 +391,7 @@ export const FIGURES = [
     id: 'device.canary-display-dash',
     title: 'Canary Dash',
     role: 'device', of: 'canary-display-dash',
-    sketch: { w: 113.7, d: 16.0, h: 73.6 },
+    board: 'waveshare_4_3b',
     build: (E) => [
       { kind: 'box', m: 'shell', face: 'y', at: [0, 0, 0], size: [E.w, E.d * 0.7, E.h], r: 4 },
       { kind: 'box', m: 'glass', face: 'y', at: [3, E.d * 0.7 - EPS, 3], size: [E.w - 6, E.d * 0.3 + EPS, E.h - 6], r: 2.5 },

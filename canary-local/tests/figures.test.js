@@ -65,7 +65,24 @@ test("the confidence ladder is derived, and its evidence supports the verdict", 
   for (const f of led.figures) {
     const e = f.evidence;
     assert.ok(led.ladder.order.includes(f.confidence), `${f.id} has a ladder rung`);
-    if (f.role === "board") continue; // bought modules sit outside our ladder
+    if (f.role === "board") {
+      // A board is somebody else's product, so our three proofs cannot apply.
+      // What must hold is that its rung is still EARNED: only a board whose
+      // exact orderable part is pinned (an MPN) and whose vendor CAD is
+      // committed may claim the top rung. An earlier cut forced every board
+      // to `shipping` from its role alone, asserting availability the ledger
+      // could not substantiate.
+      const vb = e.vendor_board;
+      assert.ok(vb, `${f.id} is a board and must record what we know about the part`);
+      if (f.confidence === "shipping") {
+        assert.ok(vb.mpn, `${f.id} claims shipping — needs a manufacturer part number`);
+        assert.ok(vb.mesh_committed, `${f.id} claims shipping — needs a committed board mesh`);
+      } else {
+        assert.strictEqual(f.confidence, "confirmed",
+          `${f.id} is a board without full evidence, so it sits at confirmed`);
+      }
+      continue;
+    }
     if (f.confidence === "shipping") {
       assert.ok(e.committed_stls.length > 0, `${f.id} claims shipping — needs a committed STL`);
       assert.ok(e.firmware_configs.length > 0, `${f.id} claims shipping — needs a firmware config`);
@@ -100,7 +117,16 @@ test("an idea can never render as a product", () => {
 
 test("a figure never claims dimensions its CAD doesn't have", () => {
   for (const f of led.figures) {
-    assert.ok(["stl", "sketch"].includes(f.dims_source), `${f.id} declares where its mm came from`);
+    assert.ok(["stl", "board-cad", "sketch"].includes(f.dims_source),
+      `${f.id} declares where its mm came from`);
+    if (f.dims_source === "board-cad") {
+      // Read from the committed board mesh, never retyped — same contract as
+      // an STL, so a re-tessellation moves the figure with it.
+      const vb = f.evidence.vendor_board;
+      assert.ok(vb && vb.key, `${f.id} came from a board mesh, so it must name the board`);
+      assert.ok(vb.mesh_committed, `${f.id} came from a board mesh, so that mesh must be committed`);
+      continue;
+    }
     if (f.dims_source === "stl") {
       assert.ok(f.traced_to.length > 0, `${f.id} traces to at least one STL`);
       for (const t of f.traced_to) {
@@ -147,12 +173,80 @@ test("every figure's two SVGs exist, and no orphans are left behind", () => {
   assert.strictEqual(readdirSync(FIGDIR).length, want.size, "one pair per figure, no more");
 });
 
+test("a device type is never guessed onto the wrong hardware", () => {
+  // The bug this pins: `canary-nightstand` (rectangular 1.47"/1.69" boards)
+  // and `canary-nightstand7` (a 7" panel) were both matched by a regex onto
+  // the round 52 mm Watch Station figure. Showing someone the wrong physical
+  // device is the exact failure the figures exist to prevent, so a type that
+  // cannot be pinned to ONE board is omitted and recorded, never resolved by
+  // a coin flip.
+  const dt = led.device_types;
+  assert.ok(dt, "the ledger records how running devices resolve to figures");
+
+  const mappedTypes = new Set(dt.mapped.map((m) => m.device_type));
+  for (const u of dt.unmapped) {
+    assert.ok(!mappedTypes.has(u.device_type),
+      `${u.device_type} cannot be both mapped and unmapped`);
+    assert.ok(u.why && u.why.length > 10, `${u.device_type} says WHY it is unresolved`);
+  }
+  for (const t of ["canary-nightstand", "canary-nightstand7"]) {
+    assert.ok(!mappedTypes.has(t),
+      `${t} must not resolve to a figure while no figure matches that hardware`);
+  }
+  // Every mapped type points at a real, whole-device figure.
+  for (const m of dt.mapped) {
+    const f = byId.get(m.figure);
+    assert.ok(f, `${m.device_type} -> unknown figure ${m.figure}`);
+    assert.strictEqual(f.role, "device", `${m.device_type} points at a whole device`);
+  }
+  // A flavor IS one piece of hardware, so those are exact and unambiguous.
+  const seen = new Set();
+  for (const fl of dt.flavors) {
+    const key = `${fl.family}/${fl.flavor}`;
+    assert.ok(!seen.has(key), `${key} appears once`);
+    seen.add(key);
+    assert.ok(byId.get(fl.figure), `${key} -> unknown figure ${fl.figure}`);
+    assert.ok(existsSync(join(REPO, "firmware/configs", fl.family, fl.flavor, "config.h")),
+      `${key} is a real firmware config`);
+  }
+  // A type is mappable only when every flavor publishing it agrees.
+  const byType = new Map();
+  for (const fl of dt.flavors) {
+    if (!byType.has(fl.device_type)) byType.set(fl.device_type, new Set());
+    byType.get(fl.device_type).add(fl.figure);
+  }
+  for (const m of dt.mapped) {
+    assert.strictEqual(byType.get(m.device_type).size, 1,
+      `${m.device_type} is only mapped because its flavors agree`);
+  }
+});
+
+test("CI re-runs the drift gate when a generated copy is touched", () => {
+  // The gate only helps if the job starts. A PR that hand-edits just the
+  // Swift or the header must still trip it, so both generated outputs are in
+  // both path filters — push and pull_request.
+  const wf = readFileSync(join(REPO, ".github/workflows/canary-local.yml"), "utf8");
+  const filters = wf.split("paths:").slice(1, 3);
+  assert.strictEqual(filters.length, 2, "push and pull_request both filter on paths");
+  for (const f of filters) {
+    for (const path of ["ios/Shared/FleetFigures.swift",
+      "firmware/common/core/fleet_figures.h",
+      "docs/hardware/enclosure/**",
+      "canary-local/**"]) {
+      assert.ok(f.includes(`"${path}"`), `a filter is missing ${path}`);
+    }
+  }
+  assert.match(wf, /gen_figures\.mjs --check/, "the drift gate actually runs");
+});
+
 test("the firmware header lets a device name its own figure", () => {
   const h = readFileSync(join(REPO, "firmware/common/core/fleet_figures.h"), "utf8");
   assert.match(h, /GENERATED by/, "says it is generated");
   assert.match(h, /namespace canary::figures/, "lands in the fleet's namespace");
-  const rows = [...h.matchAll(/\{ "([^"]+)", "([^"]+)", "([0-9a-f]{8})", "([a-z]+)" \}/g)];
+  const rows = [...h.matchAll(/\{ "([^"]+)", "(device\.[^"]+)", "([0-9a-f]{8})", "([a-z]+)" \}/g)];
   assert.ok(rows.length > 0, "has at least one device type");
+  assert.strictEqual(rows.length, led.device_types.mapped.length,
+    "the header carries exactly the ledger's resolvable device types");
   for (const [, deviceType, figureId, rev, confidence] of rows) {
     const f = byId.get(figureId);
     assert.ok(f, `${deviceType} points at unknown figure ${figureId}`);

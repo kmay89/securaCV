@@ -12,9 +12,21 @@ without showing you the nozzle. The mental load of mapping a name onto a
 shape is real, it is paid by every user on every screen, and it is
 avoidable — once — by making the picture part of the data.
 
-> **Status: built.** The generator, the ledger, the 44 committed figures and
-> all four surface bindings are in the tree and CI-gated. §8 lists what is
-> deliberately *not* in it.
+> **Status — read this before quoting the rest.** The system is real and
+> CI-gated: the generator, the ledger, the 44 committed figures, and the
+> generated binding for each surface are all in the tree. But *generated* is
+> not the same as *consumed*, and only one surface consumes them today:
+>
+> | Surface | Binding | Consumed by a UI? |
+> |---|---|---|
+> | Web | `canary-local/figures/*.svg` + the ledger | **Yes** — the website's `/figures` catalog |
+> | Firmware | `firmware/common/core/fleet_figures.h` | Not yet — no translation unit includes it |
+> | iPhone / Watch / widgets | `ios/Shared/FleetFigures.swift` | Not yet — no view calls `FleetFigureView` |
+> | Emulator | the same SVGs | Not yet |
+>
+> So the glass, the wrist and the phone still draw their existing generic
+> visuals. Wiring each one is a UI change in that surface's own render path,
+> deliberately not bundled here — see §10. §8 lists what is *never* coming.
 
 ---
 
@@ -201,23 +213,38 @@ contact shadow dropped, because they turn to mud at 20 px. Self-contained, no
 external references, CSP-safe.
 
 **Firmware — `firmware/common/core/fleet_figures.h`.** A device's own answer
-to *what am I?*. Every witness already publishes its `DEVICE_TYPE`; this
-table pairs that type with the id of the figure of the thing it runs on, that
-figure's **content revision**, and its confidence rung. So a display, a phone
-or a watch can draw the correct picture of a witness it has never met — and
-can tell when the copy it cached was drawn from older CAD. Pure C++, no
-Arduino/JSON dependency, no allocation: the same rules `fleet_model.h`
-follows, so it stays host-testable.
+to *what am I?*. Pure C++, no Arduino/JSON dependency, no allocation: the same
+rules `fleet_model.h` follows, so it stays host-testable.
+
+Two tables, because there are two questions and they do **not** have the same
+precision:
 
 ```cpp
+// EXACT — a firmware config directory is one piece of hardware, known at
+// compile time. A device asking about ITSELF uses this.
+if (const auto* f = canary::figures::figure_for_flavor("canary-sense", "wellbeing")) { … }
+
+// COARSE — for a peer witness, from the DEVICE_TYPE it publishes.
 if (const auto* f = canary::figures::figure_for(w.device_type)) {
-  draw_figure(f->figure_id);          // the right picture
+  draw_figure(f->figure_id);           // the right picture
   if (f->rev != cached_rev) refetch(); // …and a fresh one
 }
 ```
 
-An unknown device type returns `nullptr` and the caller draws the generic
-marker. Never a guessed picture of the wrong product.
+**The device-type table is deliberately incomplete, and that is the feature.**
+Several published types are shared by more than one board — `canary-dash` by
+both the 4.3″ and the 7″ panel, `canary-nightstand` by both the 1.47″ stick
+and the 1.69″ touch — so the type alone cannot identify the hardware. Those
+types are simply **absent**, `figure_for` returns `nullptr`, and the caller
+draws its generic marker.
+
+This is the one place the system nearly defeated itself. The first cut
+resolved unknown types with a regex on the type string, and handed both
+rectangular nightstand boards the round 52 mm Watch Station drum — showing a
+user the wrong physical device, which is precisely the confusion the figures
+exist to remove. **A wrong picture is worse than no picture.** Unresolved
+types are listed with reasons in the ledger's `device_types.unmapped`, so the
+gap stays visible instead of being silently papered over.
 
 **Phone and wrist — `ios/Shared/FleetFigures.swift`.** The same polygons as
 flat data a `Canvas` paints at any size. Not an asset catalog and not an SVG
@@ -250,6 +277,9 @@ the signal a surface needs to drop a cached drawing.
   `registry.json`, `catalog.json` and the tree — it reads those, it doesn't
   compete with them. `CATALOG_ARCHITECTURE.md` remains canonical for
   variants, options and the six axes.
+- **Not a claim that every surface draws them yet.** See the status table at
+  the top: the bindings are generated and gated, the UIs that consume them
+  are a separate change per surface (§10).
 - **Not covering all 34 `.scad` files yet.** 44 figures cover the four
   shipping devices and every part you print for them, the bought modules, the
   fit coupon, the two display flavors, and all 16 concepts. The remaining
@@ -261,7 +291,51 @@ the signal a surface needs to drop a cached drawing.
 
 ---
 
-## 9. Adding a figure
+## 9. Where the numbers come from, for a bought-in board
+
+A board is somebody else's product, so "committed STLs + our firmware + our
+catalog" cannot apply to it. What *can* be checked on disk is whether we have
+pinned the exact orderable part and committed its geometry, and
+`canary-local/devices/boards.json` holds both:
+
+- **Dimensions** come from the committed board mesh, read at build time —
+  never retyped, exactly like an STL. `dims_source: "board-cad"`.
+- **The rung** is earned the same way everything else's is: `shipping` needs a
+  manufacturer part number *and* a committed mesh; anything less is
+  `confirmed` ("the design names it, one proof is missing"). The first cut of
+  this forced every board to `shipping` from its role alone, which asserted an
+  availability the ledger could not substantiate.
+- The evidence records `mesh_committed` and `vendor_step` **separately**. Most
+  boards have both; at least one committed mesh was built without a vendor
+  STEP to tessellate. The mesh is what the dimensions are read from; the STEP
+  is where the mesh came from. They are two facts.
+
+A board with no committed mesh (the MR60BHA2 today) falls back to a `sketch`
+with a note saying what the sketch is based on, and sits at `confirmed`.
+
+---
+
+## 10. Wiring a surface up
+
+The bindings exist; making a surface *use* one is a change in that surface's
+own render path, and belongs in that surface's own review:
+
+- **The glass.** `#include "canary/figures/fleet_figures.h"` in the display
+  firmware, then draw the figure beside a witness in the roll call. Costs
+  flash for the table (~5 rows of `constexpr` pointers) plus whatever the
+  renderer needs; a device that can't draw SVG can still use the *ids* to pick
+  a bitmap.
+- **The phone and the wrist.** `FleetFigureView(fig)` in the fleet glance
+  views. The data is already shared by both widget bundles.
+- **The emulator.** It already loads from `canary-local/`; the SVGs sit next
+  to what it reads.
+
+Each wants its own before/after and its own visual check, which is why none of
+them rides along with the generator.
+
+---
+
+## 11. Adding a figure
 
 1. Add an entry to `FIGURES` in `canary-local/tools/figures/massing.mjs`. Give
    it the committed STL it is (`stl:` + `frame: 'scad-wall'`), or a `sketch`
