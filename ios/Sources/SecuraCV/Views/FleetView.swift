@@ -56,7 +56,13 @@ struct FleetView: View {
         NavigationStack {
             Group {
                 if showHive && !(store.witnesses.isEmpty && unpaired.isEmpty) {
-                    FleetHiveView(witnesses: filtered, pairing: $pairing)
+                    VStack(spacing: 0) {
+                        if store.discoveryConsent == nil {
+                            DiscoveryConsentCard()
+                                .padding([.horizontal, .top])
+                        }
+                        FleetHiveView(witnesses: filtered, pairing: $pairing)
+                    }
                 } else {
                     fleetList
                 }
@@ -90,6 +96,17 @@ struct FleetView: View {
 
     private var fleetList: some View {
         List {
+            if store.discoveryConsent == nil {
+                Section { DiscoveryConsentCard() }
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
+            } else if store.discoveryConsent == false {
+                Section {
+                    DiscoveryOffRow()
+                } footer: {
+                    Text("Discovery is off — SecuraCV isn't looking for Canaries on this network.")
+                }
+            }
             if !filtered.isEmpty {
                 if store.witnesses.count >= Self.roomGroupThreshold {
                     ForEach(roomGroups, id: \.room) { group in
@@ -122,10 +139,19 @@ struct FleetView: View {
                         CanaryPerchView(height: 64)
                     }
                 } description: {
-                    Text("Plug in a Canary on this network — it'll appear here to pair. Or look around with sample data first.")
+                    Text(store.discoveryConsent == true
+                         ? "Plug in a Canary on this network — it'll appear here to pair. Or look around with sample data first."
+                         : "Enable discovery to find Canaries on this network — or look around with sample data first.")
                 } actions: {
-                    Button("Try the demo fleet") { store.setDemoMode(true) }
-                        .buttonStyle(.borderedProminent)
+                    if store.discoveryConsent != true {
+                        Button("Enable discovery") { store.setDiscoveryConsent(true) }
+                            .buttonStyle(.borderedProminent)
+                        Button("Try the demo fleet") { store.setDemoMode(true) }
+                            .buttonStyle(.bordered)
+                    } else {
+                        Button("Try the demo fleet") { store.setDemoMode(true) }
+                            .buttonStyle(.borderedProminent)
+                    }
                 }
             }
         }

@@ -186,6 +186,11 @@ enum WristSync {
     static let messageCommandKey = "cmd"
     static let commandRefresh = "refresh"
     static let commandTestAlertPath = "testAlertPath"
+    /// Mute one witness for an hour (payload: `muteIDKey` = witness id).
+    /// The PHONE owns mute semantics (its ledger, its punch-through rules);
+    /// the wrist only asks, and the reply snapshot shows the result.
+    static let commandMute = "mute"
+    static let muteIDKey = "id"
 
     /// Row cap for the snapshot — applicationContext has a small transfer
     /// budget and a wrist list past this is unreadable anyway. The cap is

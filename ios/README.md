@@ -96,6 +96,18 @@ Four rules keep "beautiful" from decaying into "busy":
   redrawn) appears in the calm places, breathing gently (still, under Reduce
   Motion), and chirps only when the alert path proves itself end-to-end.
   Bundle tests fail CI if the chirp or the mascot ever fall out of the app.
+- **First-class ecosystem citizenship.** Alerts are actionable (Ack /
+  Mute 1 hour, mirrored to the wrist by the system) with relevance-ranked
+  summaries; a real **Focus filter** (`FleetFocusFilter`) lets each Focus
+  choose "only life-safety" right inside iOS's Focus settings — and critical
+  still passes, because Focus quiets the everyday, never the smoke alarm
+  (tested). Mute is durable (`MuteLedger`, host-tested) and works from the
+  notification, the phone detail screen, or the watch — tamper punch-through
+  preserved everywhere by construction. The fleet glance also ships as
+  iPhone **Lock Screen / Home Screen widgets** (Shared/FleetGlanceViews —
+  the same views the watch complications render, over the same snapshot),
+  and the Live Activity stale-dates so the island never presents old truth
+  as current.
 
 ## On your iPad
 

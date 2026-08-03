@@ -11,64 +11,84 @@ import SwiftUI
 
 struct WitnessDetailView: View {
     let witness: WristWitness
+    @EnvironmentObject var store: WristStore
+
+    /// The freshest row for this witness — the pushed value can go stale the
+    /// moment a mute reply lands, so render the snapshot's copy when it has
+    /// one.
+    private var live: WristWitness {
+        store.snapshot?.witnesses.first { $0.id == witness.id } ?? witness
+    }
 
     var body: some View {
         List {
             Section {
                 HStack(spacing: Theme.s) {
-                    SeverityPip(severity: witness.severity)
+                    SeverityPip(severity: live.severity)
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(witness.name).font(.headline)
-                        Text(witness.severity.label)
+                        Text(live.name).font(.headline)
+                        Text(live.severity.label)
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                 }
             }
 
             Section {
-                LabeledContent("Link", value: witness.link.label)
+                LabeledContent("Link", value: live.link.label)
                 LabeledContent {
-                    Text(witness.badge.label)
+                    Text(live.badge.label)
                 } label: {
                     Label {
                         Text("Chain")
                     } icon: {
-                        Image(systemName: witness.badge.sfSymbol)
-                            .foregroundStyle(witness.badge.isTrusted
+                        Image(systemName: live.badge.sfSymbol)
+                            .foregroundStyle(live.badge.isTrusted
                                              ? Theme.color(.calm) : .secondary)
                     }
                 }
-                if witness.tamper {
+                if live.tamper {
                     Label("Tamper detected", systemImage: "hand.raised.slash.fill")
                         .foregroundStyle(Theme.color(.tamper))
                 }
-                if let battery = witness.batteryPct {
+                if let battery = live.batteryPct {
                     LabeledContent("Battery", value: "\(battery)%")
-                }
-                if witness.isMuted {
-                    Label("Muted from your iPhone", systemImage: "bell.slash.fill")
-                        .foregroundStyle(.secondary)
                 }
             }
 
-            if let event = witness.lastEventHeadline {
+            if let event = live.lastEventHeadline {
                 Section("Last event") {
                     VStack(alignment: .leading, spacing: Theme.xs) {
                         Text(event).font(.body)
-                        if let bucket = witness.lastEventBucket {
+                        if let bucket = live.lastEventBucket {
                             Text("≈ ") + Text(bucket, style: .relative) + Text(" ago")
                         }
                     }
                     .font(.caption2)
                 }
             }
+
+            Section {
+                if live.isMuted {
+                    Label("Muted", systemImage: "bell.slash.fill")
+                        .foregroundStyle(.secondary)
+                } else if store.isPhoneReachable {
+                    Button {
+                        store.mute(id: live.id)
+                    } label: {
+                        Label("Mute for 1 hour", systemImage: "bell.slash")
+                    }
+                }
+            } footer: {
+                Text("Muting quiets the nagging, never the truth — tamper and a failed signature still punch through. Unmute from your iPhone.")
+            }
         }
-        .navigationTitle(witness.name)
+        .navigationTitle(live.name)
     }
 }
 
 #Preview("Witness detail — sample") {
     NavigationStack {
         WitnessDetailView(witness: WristSnapshot.sample().witnesses[0])
+            .environmentObject(WristStore.preview())
     }
 }
