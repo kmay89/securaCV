@@ -136,6 +136,7 @@ static canary::mode::Mode s_active_mode = canary::mode::Mode::Fleet;
 #endif
 #if defined(FEATURE_LANTERN) && FEATURE_LANTERN
 #include "lantern.h"   // the honest, user-summoned night light
+#include "hallway.h"   // Hallway mode: the nightlight, made easy
 #include "color/look_engine.h"     // kSceneCount — the lamp's scene ring
 #endif
 #include "ambient_life.h"  // rationed organic check-ins
@@ -900,6 +901,16 @@ static void render(uint32_t now) {
   st.mqtt_ok = canary::net::mqtt_connected();
   st.acked = fleet.ack_active(now);
   st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
+  // Where we are inside quiet hours, for Hallway mode's rise/hold/ebb dwell.
+  // Left at 0/0 when the clock is unknown — with no schedule to place it in,
+  // the lamp burns at its own brightness rather than guessing at a ramp.
+  if (st.time_valid) {
+    const auto& gs = canary::glass::settings();
+    canary::glass::hours_window_position(st.clock_hh, st.clock_mm,
+                                         gs.night_start_hh, gs.night_end_hh,
+                                         &st.night_elapsed_min,
+                                         &st.night_remaining_min);
+  }
   st.bird = bird;
   canary::ui::portrait_ui_update(fleet, now, st);
 #endif
@@ -1220,6 +1231,9 @@ void setup() {
   // does not. A device that reboots at 3 a.m. wakes dark, because
   // dark-when-safe is the honest default and nobody asked for a light.
   canary::care::lantern_begin();
+  // Hallway mode restores its switch from NVS and applies the preset — which
+  // is what writes the lantern's auto mode, so this must follow lantern_begin.
+  canary::care::hallway_begin();
 #endif
 
   // Seed the ambient-life cadence per device: two Canaries on one dresser
@@ -1232,6 +1246,11 @@ void setup() {
       h = (h ^ (uint8_t)*p) * 16777619u;
     }
     g_life.seed(h);
+#if defined(CD_FLAVOR_NIGHTSTAND) || defined(CD_NIGHTSTAND7)
+    // The lamp's voice comes from the same identity, for the same reason:
+    // distinct across devices, reproducible within one.
+    canary::ui::song_seed(h, millis());
+#endif
   }
 
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO

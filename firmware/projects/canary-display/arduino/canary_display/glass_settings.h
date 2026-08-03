@@ -131,6 +131,32 @@ inline bool hours_in_window(int hh, int start_hh, int end_hh) {
   return hh >= start_hh || hh < end_hh;
 }
 
+// WHERE in the quiet-hours window we are, in minutes: how long it has been
+// running and how long is left. Midnight-wrap aware, like the test above.
+//
+// Hallway mode (care/hallway.h) needs this and the bool is not enough: a
+// corridor light that rises over the first minutes of the window and ebbs over
+// the last reads as evening settling, where one that snaps on the instant the
+// hour ticks reads as a timer firing. Both outputs are 0 outside the window,
+// which is also the "no schedule known" answer the caller treats as "skip the
+// dwell" rather than guessing.
+inline void hours_window_position(int hh, int mm, int start_hh, int end_hh,
+                                  uint16_t* elapsed_min,
+                                  uint16_t* remaining_min) {
+  if (elapsed_min) *elapsed_min = 0;
+  if (remaining_min) *remaining_min = 0;
+  if (!hours_in_window(hh, start_hh, end_hh)) return;
+
+  const int span_h = start_hh < end_hh ? (end_hh - start_hh)
+                                       : (24 - start_hh + end_hh);
+  const int into = ((hh - start_hh) + 24) % 24;
+  const int elapsed = into * 60 + mm;
+  const int span = span_h * 60;
+  if (elapsed_min) *elapsed_min = (uint16_t)(elapsed < 0 ? 0 : elapsed);
+  if (remaining_min)
+    *remaining_min = (uint16_t)(span > elapsed ? span - elapsed : 0);
+}
+
 // ── Orientation geometry (host-testable; no LVGL, no Arduino) ────────────
 
 inline bool rotation_is_portrait(uint8_t rot) { return (rot & 1) != 0; }

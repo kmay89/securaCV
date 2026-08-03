@@ -113,6 +113,26 @@ enum HeartbeatCopy {
 
 /// The full phone→watch state: the fleet roll-up every ambient surface shows,
 /// plus the worst-first witness rows and the heartbeat.
+/// One alert as the wrist needs it: who, what, how often, how it reached
+/// them, and whether it still wants a human. A trimmed AlertRecord — same
+/// fields, same coarse bucket, nothing added.
+struct WristAlert: Codable, Hashable, Identifiable, Sendable {
+    var id: String
+    var witnessID: String
+    var name: String
+    var headline: String
+    var severityRaw: UInt8
+    /// Coarse 10-minute bucket (Invariant III) of the most recent occurrence.
+    var bucket: Date
+    var count: Int
+    var deliveryRaw: UInt8
+    var handlingRaw: UInt8
+
+    var severity: Severity { Severity(tolerant: Int(severityRaw)) }
+    var delivery: AlertDelivery { AlertDelivery(tolerant: Int(deliveryRaw)) }
+    var handling: AlertHandling { AlertHandling(tolerant: Int(handlingRaw)) }
+}
+
 struct WristSnapshot: Codable, Hashable, Sendable {
     /// Bump ONLY for changes an old reader could misread; additive optional
     /// fields never bump it.
@@ -160,6 +180,13 @@ struct WristSnapshot: Codable, Hashable, Sendable {
     /// Ambient copy only — the Voice rule: a mood line may rephrase
     /// contentment or name who's being looked for; it never words alarms.
     var moodLine: String?
+
+    /// What actually needed the user, newest first — the wrist's copy of the
+    /// phone's alert history. ADDITIVE OPTIONAL, same rules as the mood: an
+    /// older phone sends none and the watch shows its honest empty state
+    /// rather than inventing rows. Capped hard (`maxAlertRows`); the wrist is
+    /// a glance, not an archive.
+    var alerts: [WristAlert]?
 
     var severity: Severity { Severity(tolerant: Int(severityRaw)) }
     var heartbeat: WristHeartbeatState { WristHeartbeatState(tolerant: Int(heartbeatRaw)) }
@@ -220,6 +247,9 @@ enum WristSync {
     /// budget and a wrist list past this is unreadable anyway. The cap is
     /// reported via `omittedWitnesses`, never silent.
     static let maxWitnessRows = 24
+    /// The wrist is a glance, not an archive: enough history to answer "what
+    /// did I miss?" on a walk, small enough that the payload stays cheap.
+    static let maxAlertRows = 12
 
     static func makeEncoder() -> JSONEncoder {
         let enc = JSONEncoder()
