@@ -60,10 +60,16 @@ enum class GreetBeat : uint8_t {
 // pointers owned by the caller (NVS/WiFi statics), all optional: a missing
 // fact degrades the line instead of printing a hole.
 struct SelfIntro {
-  const char* mac = nullptr;        // "30:AE:A4:1B:2C:3D"
-  const char* ip = nullptr;         // "192.168.1.44"
-  const char* nickname = nullptr;   // device_pseudonym.h — "Pip"
-  uint8_t fleet_size = 0;           // Canaries it can see, including itself
+  // The SALTED, MAC-free handle from device_pseudonym.h — the same
+  // "Hardware ID" the boot banner shows. Never the raw hardware MAC:
+  // firmware MUST NOT surface it (Invariant III / F-03), and the pseudonym
+  // header goes so far as to not include esp_mac.h at all. That rule wins
+  // over the joke, and costs it nothing — a salted hex handle is exactly as
+  // gloriously unmemorable as a MAC, which is the entire gag.
+  const char* hardware_id = nullptr;   // "3f7a9e21b4c5d6e8"
+  const char* ip = nullptr;            // "192.168.1.44" — LAN-local, not a global ID
+  const char* nickname = nullptr;      // the friendly name — "Pip"
+  uint8_t fleet_size = 0;              // Canaries it can see, including itself
 };
 
 class Greeting {
@@ -82,6 +88,13 @@ class Greeting {
   // persisted hello bit; `calm` is the caller's honesty gate (a quiet fleet
   // and healthy links — the same gate ambient life uses).
   bool begin(uint32_t now_ms, bool met_before, bool calm) {
+    // Once only, per boot. Done means done — whether it finished, was
+    // skipped, or was aborted by trouble. Without this guard a caller that
+    // re-offers the story (a re-entered splash, a reconnect) could restart
+    // an introduction the fleet had already interrupted, which is exactly
+    // the "never cute during a real alarm" rule sneaking back in through
+    // the front door.
+    if (beat_ != GreetBeat::None) return false;
     if (met_before || !calm) {
       beat_ = GreetBeat::Done;   // a device you know doesn't re-introduce itself
       return false;
@@ -137,10 +150,10 @@ class Greeting {
       case GreetBeat::Introduce:
         // The show-off beat. Over-precise on purpose — this is the device
         // proving it knows exactly what it is before it asks to be trusted.
-        if (me.mac && me.ip) {
-          snprintf(out, cap, "I am %s, at %s.", me.mac, me.ip);
-        } else if (me.mac) {
-          snprintf(out, cap, "I am %s.", me.mac);
+        if (me.hardware_id && me.ip) {
+          snprintf(out, cap, "I am %s, at %s.", me.hardware_id, me.ip);
+        } else if (me.hardware_id) {
+          snprintf(out, cap, "I am %s.", me.hardware_id);
         } else {
           snprintf(out, cap, "I am one of the quiet ones.");
         }

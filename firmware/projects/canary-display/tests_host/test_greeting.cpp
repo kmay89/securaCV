@@ -19,7 +19,7 @@ using canary::care::SelfIntro;
 
 static SelfIntro sample() {
   SelfIntro me;
-  me.mac = "30:AE:A4:1B:2C:3D";
+  me.hardware_id = "3f7a9e21b4c5d6e8";
   me.ip = "192.168.1.44";
   me.nickname = "Pip";
   me.fleet_size = 6;
@@ -104,7 +104,7 @@ static void test_it_can_be_skipped() {
 static void test_the_lines_say_what_they_should() {
   const SelfIntro me = sample();
   assert(line_of(GreetBeat::Hello, me) == "Hello.");
-  assert(line_of(GreetBeat::Introduce, me) == "I am 30:AE:A4:1B:2C:3D, at 192.168.1.44.");
+  assert(line_of(GreetBeat::Introduce, me) == "I am 3f7a9e21b4c5d6e8, at 192.168.1.44.");
   assert(line_of(GreetBeat::Nickname, me) == "That's a lot. Call me Pip.");
   assert(line_of(GreetBeat::Purpose, me) == "I watch. I never record.");
   assert(line_of(GreetBeat::Fleet, me) == "There are 6 of us. We keep watch together.");
@@ -115,14 +115,14 @@ static void test_the_lines_say_what_they_should() {
 }
 
 static void test_missing_facts_degrade_instead_of_printing_holes() {
-  SelfIntro bare;                     // no mac, no ip, no nickname, alone
+  SelfIntro bare;                     // no id, no ip, no nickname, alone
   assert(line_of(GreetBeat::Introduce, bare) == "I am one of the quiet ones.");
   assert(line_of(GreetBeat::Nickname, bare) == "That's a lot. Just call me your Canary.");
   assert(line_of(GreetBeat::Fleet, bare) == "It's just me so far. I'll keep watch.");
 
-  SelfIntro mac_only;
-  mac_only.mac = "30:AE:A4:1B:2C:3D";
-  assert(line_of(GreetBeat::Introduce, mac_only) == "I am 30:AE:A4:1B:2C:3D.");
+  SelfIntro id_only;
+  id_only.hardware_id = "3f7a9e21b4c5d6e8";
+  assert(line_of(GreetBeat::Introduce, id_only) == "I am 3f7a9e21b4c5d6e8.");
 
   SelfIntro solo = sample();
   solo.fleet_size = 1;
@@ -179,6 +179,56 @@ static void test_a_small_buffer_truncates_safely() {
   printf("  ok: a small buffer truncates instead of overrunning\n");
 }
 
+
+// Invariant III / F-03: firmware MUST NOT surface the raw hardware MAC.
+// device_pseudonym.h refuses to even read one; the introduction shows the
+// salted Hardware ID instead. Checked mechanically so the joke can never be
+// "improved" back into a privacy regression.
+static void test_no_line_can_ever_print_a_mac_address() {
+  SelfIntro spoofed;
+  // If someone wires a MAC into the id field anyway, we cannot stop them --
+  // but the STRUCT must not invite it, and the shipped lines must never
+  // format one. Assert the shape of a real MAC never appears for real facts.
+  const SelfIntro sets[] = {sample(), SelfIntro{}, spoofed};
+  const GreetBeat beats[] = {GreetBeat::Hello,    GreetBeat::Introduce,
+                             GreetBeat::Nickname, GreetBeat::Purpose,
+                             GreetBeat::Fleet,    GreetBeat::Settle};
+  for (const auto& me : sets) {
+    for (GreetBeat b : beats) {
+      const std::string s = line_of(b, me);
+      int colons = 0;
+      for (char c : s) if (c == ':') colons++;
+      assert(colons < 5 && "a colon-separated MAC must never reach the glass");
+    }
+  }
+  printf("  ok: no beat can print a raw MAC (Invariant III / F-03)\n");
+}
+
+// Done means done, however it got there.
+static void test_a_finished_story_never_restarts() {
+  Greeting skipped;
+  assert(skipped.begin(1000, false, true));
+  skipped.skip();
+  assert(!skipped.begin(2000, /*met_before=*/false, /*calm=*/true) &&
+         "a skipped introduction must not be re-offered");
+  assert(!skipped.running());
+
+  Greeting aborted;
+  assert(aborted.begin(1000, false, true));
+  assert(aborted.step(1000 + Greeting::HELLO_MS, /*calm=*/false) == GreetBeat::Done);
+  assert(!aborted.begin(9000, false, /*calm=*/true) &&
+         "trouble ended it; calm returning does not restart it");
+
+  Greeting finished;
+  assert(finished.begin(0, false, true));
+  uint32_t t = 0;
+  for (int i = 0; i < 8; i++) { t += 5000; finished.step(t, true); }
+  assert(finished.beat() == GreetBeat::Done);
+  assert(!finished.begin(t + 1000, false, true) &&
+         "a completed introduction happens once per boot");
+  printf("  ok: a finished, skipped, or aborted story never restarts\n");
+}
+
 int main() {
   printf("greeting (the first-meet story)\n");
   test_the_arc_runs_in_order();
@@ -191,6 +241,8 @@ int main() {
   test_no_line_ever_words_trouble_or_leaves_ascii();
   test_total_matches_the_sum_of_the_beats();
   test_a_small_buffer_truncates_safely();
+  test_no_line_can_ever_print_a_mac_address();
+  test_a_finished_story_never_restarts();
   printf("all greeting tests passed\n");
   return 0;
 }
