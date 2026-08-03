@@ -53,12 +53,15 @@ witness; the *house* does the responding. HomeKit is read-out, not a new data
 path — the sentence is already in the code
 (`HomeKitBridge.swift`), and this epic is the plan that makes it true.
 
-The bar we hold every design choice to, throughout this doc: **Apple Home
-must never learn more from a Canary than it would learn from a $20 dumb PIR
-sensor** — a present-tense boolean, and nothing else. The witness intelligence
-(object classes, sealed chains, attestation, the record itself) stays home.
-We call this the **dumb-PIR bar**, and it is what makes the integration
-invariant-clean by construction rather than by promise.
+The bar we hold the **default projection** to, throughout this doc: **out of
+the box, Apple Home learns no more from a Canary than it would learn from a
+$20 dumb PIR sensor** — a present-tense boolean, and nothing else. The
+witness intelligence (object classes, sealed chains, attestation, the record
+itself) stays home. We call this the **dumb-PIR bar**. Exactly one opt-in
+step past it exists — the coarse `ObjectClass` word (§3.1), never identity —
+and the one signal that survives even booleans (state-change *timing*, §5)
+is named out loud and owned as an open decision. Honesty by construction
+rather than by promise.
 
 Why this could genuinely be a showcase integration rather than a checkbox:
 every other security accessory in the Home app asks the user to trade privacy
@@ -352,8 +355,10 @@ construction — that is the point of the table.
 The app's HomeKit role, replacing the stub's ambitions with buildable ones:
 
 - **Pairing shepherd.** Finds the Canary (mDNS — already built), shows the
-  setup QR, hands off to Apple's pairing flow, then *verifies the result*:
-  "Porch Canary is in Apple Home ✓ — automations available." The
+  setup QR, hands off to Apple's pairing flow, then *confirms the result*:
+  "Porch Canary is in Apple Home — automations available." (Confirms, not
+  "verifies" — that word stays reserved for an Ed25519 signature checked
+  against a pinned key, and a pairing observation is nothing of the sort.) The
   [onboarding wizard doc](../onboarding_unified_wizard.md) already studied
   HomeKit's own setup ritual as precedent; now we join it.
 - **Automation concierge.** A "tell the house" screen: pick a witness signal
@@ -425,14 +430,42 @@ The invariant echo, one line per number, in the
 (**I** — booleans only, no media plane exists); no identity substrate
 (**II** — `ObjectClass` at most, opt-in, never identity); metadata
 minimization (**III** — present-tense state, no zones, no precise history
-externally; LAN-local live signaling is the established practice the MQTT
-status plane already set); local ownership (**IV** — HAP and Matter are
-LAN protocols; accessory state syncing to *the user's own* Apple account is
-the CloudKit-private-DB precedent, not a SecuraCV cloud); break-glass
+externally; the timing residual argued honestly below); local ownership
+(**IV** — HAP and Matter are LAN protocols; accessory state syncing to
+*the user's own* Apple account is the CloudKit-private-DB precedent, not a
+SecuraCV cloud); break-glass
 (**V** — untouched, no media path exists here at all); no retroactive
 expansion (**VI** — a stateless present-tense projection has no archive to
 reprocess); non-queryability (**VII** — no history characteristic exists;
 there is nothing to ask).
+
+**The Invariant III timing residual, argued honestly instead of waved at.**
+A characteristic that flips on motion is event-correlated behavior, and
+Invariant III suppresses event-correlated *external* signals and precise
+external timestamps. Two different scopes hide in that sentence, and this
+design refuses to blur them:
+
+- **On the LAN**, real-time state change is established, shipped practice —
+  the MQTT status plane, the SSE witness stream, and the BLE beacon all
+  deliver live truth to household surfaces today, and the HA integration is
+  `local_push` by design. A HAP characteristic notify to a home hub on the
+  same network is the same class of signal: content-free, boolean,
+  household-internal.
+- **Off the LAN is the new part.** An Apple home hub syncs accessory state
+  changes to the user's other devices through Apple's infrastructure. The
+  content is end-to-end encrypted to the user's own account (the CloudKit
+  precedent covers custody) — but a network observer of the household's
+  uplink could see *that* traffic left *when* it left: an event-correlated
+  timing signal carrying no content. This is the same residual the alert
+  relay accepts with eyes open ("a compromised relay leaks *'this household
+  got some alerts,'* never *what*"), and it must be accepted — or shaped —
+  with the same honesty here, not asserted away. Mitigations on the table:
+  per-signal opt-in (already the law in this doc), motion hold times
+  (which quantize timing), and publishing liveness on a fixed cadence so
+  the projection's traffic is not purely event-driven. Whether that is
+  enough, or Invariant III's "externally" needs a written clarification
+  first, is **open decision #8 — and no accessory lane ships before it is
+  settled.**
 
 ---
 
@@ -469,7 +502,8 @@ there is nothing to ask).
 - Feed familiar-faces or any identity feature, on any side of the bridge
   (**II** — absent, not disabled).
 - Publish zone names/geometry, precise timestamps, or event history to
-  Apple Home (**III**, **VII** — present-tense booleans, the dumb-PIR bar).
+  Apple Home (**III**, **VII** — present-tense booleans; the dumb-PIR bar
+  by default, the four sanctioned `ObjectClass` words at most, ever).
 - Require Apple anything: no feature of the fleet gates on HomeKit, and the
   non-Apple path (HA + the Verified Timeline card + the PWA) keeps full
   parity, per the standing rule.
@@ -485,10 +519,10 @@ there is nothing to ask).
 
 | Phase | Depends on | Deliverable | State |
 |---|---|---|---|
-| **A0** | hub households | HA HomeKit Bridge worked recipe (`docs/integrations/`), template sensors included | open — docs only, works with zero new code |
+| **A0** | hub households · decision #8 | HA HomeKit Bridge worked recipe (`docs/integrations/`), template sensors included | open — docs only, works with zero new code once #8 is settled |
 | **A1** | A0 | native motion/occupancy binary_sensors in `custom_components/securacv` | open |
 | **A2** | any accessory lane live | app as shepherd + concierge + Doctor card (rewrite `HomeKitBridge.swift` honestly); per-signal consent UI | open |
-| **B1** | site decision (#1) | first non-HA accessory lane: `bridge-homekit` in witnessd **or** `FEATURE_HOMEKIT` on one verified board, measured budget first | open |
+| **B1** | decisions #1 and #8 | first non-HA accessory lane: `bridge-homekit` in witnessd **or** `FEATURE_HOMEKIT` on one verified board, measured budget first | open |
 | **B2** | B1 | the other §3 site, if #1 says both | open |
 | **C1** | A2 | App Intents ("is the fleet OK?"), Wall home-context timeline | open |
 | **D1** | B-lane stable | Matter projection of the same table | open |
@@ -525,6 +559,14 @@ there is nothing to ask).
 7. **Doorbell service.** Cameraless HAP doorbell (HomePod chime, no video)
    for the Vision doorbell enclosure — exploration, needs a bench test
    before it's promised anywhere.
+8. **Invariant III and off-LAN state sync** (§5, the timing residual). An
+   Apple home hub relays state changes beyond the LAN as event-correlated,
+   content-free traffic. Settle whether the mitigations in §5 (per-signal
+   opt-in, hold-time quantization, fixed-cadence liveness) satisfy
+   Invariant III as written, or whether its "externally" needs a written
+   clarification in [`spec/invariants.md`](../../spec/invariants.md) first
+   — spec owners decide, and every accessory lane (A0 included, since HA's
+   HomeKit bridge has the same property) blocks on the answer.
 
 ---
 

@@ -196,8 +196,10 @@ card](lovelace_timeline.md).
 **Apple Home: designed, not built** — the RFC is
 [the Apple Home design doc](design/apple_home_integration.md). The shape:
 each Canary appears in the Home app as a *sensor* accessory
-(motion/occupancy/contact/tamper/liveness — never more than a dumb PIR
-would report), so your automations can answer the witness — lights on when
+(motion/occupancy/contact/tamper/liveness — by default no more than a dumb
+PIR would report; one opt-in setting can add the coarse object class —
+person, vehicle, animal, package — never identity), so your automations can
+answer the witness — lights on when
 a person crosses the driveway, the whole house responding to tamper. If you
 run the Home Assistant hub, HA's own HomeKit Bridge can project the
 existing securacv sensors into Apple Home today; the worked recipe is the
