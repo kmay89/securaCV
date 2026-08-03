@@ -1,18 +1,37 @@
 // include/canary/care/greeting.h — the first-meet story, pure model.
 //
-// The glass already has a character engine (bird_mood.h for feelings,
-// character.h for temperament and voice, ambient_life.h for the rationed
-// "it's alive" moments). What it did not have is an INTRODUCTION: the one
-// time a device gets to say who it is and what it's for. A security panel
-// that boots into a status grid has told you nothing about whether to trust
-// it; a companion that introduces itself has.
+// The glass already introduces itself: splash.cpp runs a first-meeting
+// storyboard off the same NVS "scv-hello" bit — presence before speech (a
+// beat, a hop, a settle, the head-tilt that says it sees you), then four
+// typed lines in a speech bubble, then the wordmark, so the name lands
+// after the friend does. That is shipped and this file does NOT replace it.
+//
+// What this adds is the part that script has no way to say, plus the
+// guardrails it has no way to enforce:
+//
+//   * Two beats it lacks — the self-identification flex and the fleet-as-
+//     company line (the "there are more of us" idea, introduced as company
+//     rather than as coverage).
+//   * The honesty rules, mechanical instead of remembered. splash.cpp's
+//     four lines are a hardcoded array; nothing stops a future edit from
+//     putting a severity word in the bird's mouth or a glyph Montserrat
+//     can't draw. Here the copy is one tested surface.
+//
+// NOTE ON WIRING: this model is deliberately not called from splash yet.
+// splash_play() runs before the face is built, so on a true first boot
+// there is no Wi-Fi association — no IP and no fleet count to recite. The
+// self-identification beat belongs at the onboarding success moment
+// (onboard_ui.h's ObStage::Success), the first instant those facts exist.
+// Converting the storyboard to render from this model is a follow-up
+// against real display flavors.
 //
 // The arc, deliberately shaped like a person being introduced rather than a
 // product demoing features:
 //
 //   Hello      a beat of welcome, nothing asked of you
-//   Introduce  the show-off: it recites its own MAC and IP, precisely,
-//              because it CAN and it's a little proud of that
+//   Introduce  the show-off: it recites its own salted Hardware ID and its
+//              address, precisely, because it CAN and is a little proud of
+//              it — never the raw MAC (Invariant III / F-03)
 //   Nickname   the walk-back — that was a lot, call me <pseudonym>. The
 //              joke is at its own expense, which is the only kind a device
 //              in your bedroom should ever make
