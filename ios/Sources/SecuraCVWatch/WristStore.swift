@@ -84,12 +84,32 @@ final class WristStore: NSObject, ObservableObject {
         }
         phoneSpeaksNewerSchema = false
         lastHeardFromPhone = Date()
-        testRequestInFlight = false
-        testTimeoutTask?.cancel()
+
+        // A wrist-started test stays "in flight" while the phone still
+        // reports .testing; it resolves — with a felt answer — on the
+        // snapshot that carries the verdict.
+        let wasAwaitingTestResult = testRequestInFlight
+        if incoming.heartbeat != .testing {
+            testRequestInFlight = false
+            testTimeoutTask?.cancel()
+        }
+
         guard incoming.isNewer(than: snapshot) else { return }
+        let previousWorst = snapshot?.severity ?? .ok
         snapshot = incoming
         WristCache.save(incoming)
         WidgetCenter.shared.reloadAllTimelines()
+
+        // Same one policy as the phone: transitions and asked-for answers.
+        if wasAwaitingTestResult {
+            switch incoming.heartbeat {
+            case .alive: WristFeedback.play(FeedbackPolicy.pathTest(verified: true))
+            case .failed: WristFeedback.play(FeedbackPolicy.pathTest(verified: false))
+            case .testing, .unknown, .dark: break
+            }
+        }
+        WristFeedback.play(FeedbackPolicy.fleetTransition(from: previousWorst,
+                                                          to: incoming.severity))
     }
 }
 

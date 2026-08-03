@@ -141,6 +141,10 @@ final class FleetStore: ObservableObject {
         isRefreshing = true
         defer { isRefreshing = false }
 
+        // For the one-buzz-per-transition discipline (FeedbackPolicy): what
+        // the fleet's worst looked like before this cycle.
+        let previousWorst = worstSeverity
+
         var next: [Witness] = []
         var events: [TimelineEvent] = []
 
@@ -227,6 +231,8 @@ final class FleetStore: ObservableObject {
         pushLiveActivity()
         WatchLink.shared.pushCurrent()   // content-deduped; free when nothing moved
         evaluateAlerts()
+        // Felt once, at the crossing — never on the cycles that stay there.
+        Feedback.play(FeedbackPolicy.fleetTransition(from: previousWorst, to: worstSeverity))
     }
 
     /// Poll one device: /info for liveness + /witness for the chain head, verify
@@ -271,7 +277,8 @@ final class FleetStore: ObservableObject {
                               deviceID: ref.id, deviceName: info.name, zone: rec.zone,
                               headline: Self.headline(rec, device: info.name),
                               severity: rec.severity, badge: verdict.badge,
-                              timeBucket: Self.bucket(rec.timestamp))
+                              timeBucket: Self.bucket(rec.timestamp),
+                              symbol: EventVocabulary.sfSymbol(forWire: rec.eventType))
             }
             if let head = page.records.max(by: { $0.seq < $1.seq }), !head.signature.isEmpty {
                 w.lastEvent = Self.headline(head, device: info.name)
@@ -283,13 +290,10 @@ final class FleetStore: ObservableObject {
     }
 
     private static func headline(_ rec: WitnessRecord, device: String) -> String {
-        switch rec.eventType {
-        case "person_detected": return "Someone at \(rec.zone.isEmpty ? device : rec.zone)"
-        case "vehicle_detected": return "Vehicle at \(rec.zone.isEmpty ? device : rec.zone)"
-        case "motion_detected": return "Motion at \(rec.zone.isEmpty ? device : rec.zone)"
-        case "tamper", "panic": return "Tamper at \(device)"
-        default: return rec.eventType.replacingOccurrences(of: "_", with: " ").capitalized
-        }
+        // One vocabulary of meaning for every surface — the dictionary ids,
+        // the device dialect, and a readable fallback for events from a
+        // newer fleet than this app (Shared/EventVocabulary.swift).
+        EventVocabulary.headline(forWire: rec.eventType, zone: rec.zone, deviceName: device)
     }
 
     /// Coarse 10-minute bucket — never a precise second (Invariant III).
@@ -338,5 +342,8 @@ final class FleetStore: ObservableObject {
         // "Testing…" state, and a repeat failure with the same reason would
         // be byte-identical to the last snapshot and vanish into the dedup.
         WatchLink.shared.pushCurrent(force: true)
+        // The user asked with a tap; the answer lands in the same hand —
+        // and a verified path earns the canary's chirp.
+        Feedback.play(FeedbackPolicy.pathTest(verified: heartbeat.state.isHealthy))
     }
 }

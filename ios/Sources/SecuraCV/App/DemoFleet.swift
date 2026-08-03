@@ -129,22 +129,28 @@ enum DemoFleet {
     static func timeline(now: Date = Date()) -> [TimelineEvent] {
         func ev(_ seq: Int, _ deviceID: String, _ name: String, _ zone: String,
                 _ headline: String, _ sev: Severity, _ badge: TrustBadge,
-                minutesAgo: Double) -> TimelineEvent {
+                minutesAgo: Double, symbol: String = "sparkle") -> TimelineEvent {
             TimelineEvent(id: "\(deviceID)#\(seq)", deviceID: deviceID, deviceName: name,
                           zone: zone, headline: headline, severity: sev, badge: badge,
-                          timeBucket: bucket(now.addingTimeInterval(-minutesAgo * 60)))
+                          timeBucket: bucket(now.addingTimeInterval(-minutesAgo * 60)),
+                          symbol: symbol)
         }
         return [
             ev(1284, "demo-wap-a3f7", "Front Door", "front door",
-               "Someone at the front door", .notice, .verified, minutesAgo: 35),
+               "Someone at the front door", .notice, .verified, minutesAgo: 35,
+               symbol: "figure.stand"),
             ev(447, "demo-vision-77b0", "Driveway", "driveway",
-               "Vehicle in the driveway", .notice, .signed, minutesAgo: 130),
+               "Vehicle in the driveway", .notice, .signed, minutesAgo: 130,
+               symbol: "car.fill"),
             ev(1283, "demo-wap-a3f7", "Front Door", "front door",
-               "Package left at the front door", .notice, .verified, minutesAgo: 260),
+               "Package left at the front door", .notice, .verified, minutesAgo: 260,
+               symbol: "shippingbox.fill"),
             ev(902, "demo-sense-1c9e", "Nursery", "nursery",
-               "Morning — room back in use", .ok, .verified, minutesAgo: 350),
+               "Morning — room back in use", .ok, .verified, minutesAgo: 350,
+               symbol: "sun.max.fill"),
             ev(1282, "demo-wap-a3f7", "Front Door", "front door",
-               "Fleet self-test passed", .ok, .verified, minutesAgo: 480),
+               "Fleet self-test passed", .ok, .verified, minutesAgo: 480,
+               symbol: "checkmark.seal.fill"),
         ]
     }
 

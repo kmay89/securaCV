@@ -3,8 +3,9 @@
 
 `spec/witness_dictionary.json` is the single source of truth for the semantic
 vocabularies that are otherwise duplicated as constants across Rust, Python,
-JavaScript, and firmware C++. This script parses the *real* source in each
-language and fails if any copy has drifted from the dictionary.
+JavaScript, firmware C++, and Swift (the iPhone/watch apps). This script
+parses the *real* source in each language and fails if any copy has drifted
+from the dictionary.
 
 Design: fail loud, fail safe. If a parser cannot locate the construct it is
 looking for (an enum was renamed, a metadata block moved), that is itself a
@@ -129,6 +130,30 @@ def brace_object_keys(text: str, opener_regex: str, rel: str, what: str) -> list
     return keys
 
 
+def swift_enum_raw_values(text: str, name: str, rel: str) -> list[str]:
+    """Raw string values of a Swift `enum {name}: String { case x = "y" }`.
+
+    Swift enums carry conformances between the name and the brace
+    (`enum Foo: String, CaseIterable {`), so this uses its own opener regex
+    rather than _enum_body's bare `enum Foo {` form.
+    """
+    m = re.search(r"\benum\s+" + re.escape(name) + r"\b[^{]*\{", text)
+    if not m:
+        err(f"[parse] could not find `enum {name}` in {rel} — update the linter if it moved")
+        return []
+    i = m.end()
+    depth = 1
+    while i < len(text) and depth:
+        c = text[i]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+        i += 1
+    body = text[m.end() : i - 1]
+    return re.findall(r'\bcase\s+\w+\s*=\s*"([a-z0-9_]+)"', body)
+
+
 def compare(what: str, expected: list[str], actual: list[str]) -> None:
     exp, act = set(expected), set(actual)
     if exp == act:
@@ -226,6 +251,19 @@ def main() -> int:
         if mid not in py_mod:
             err(f"[drift] const.py is missing MODALITY constant for {mid!r} (dictionary modalities)")
 
+    # --- Swift mirror (iPhone + iPad + watch apps) ---
+    # ios/Shared/EventVocabulary.swift compiles into every Apple target; its
+    # WitnessEvent enum must carry exactly the dictionary's event ids, and
+    # each dictionary label must appear verbatim (the apps deliberately show
+    # the same sentence of meaning as the Home Assistant card).
+    swift = read("ios/Shared/EventVocabulary.swift")
+    compare("EventVocabulary.swift WitnessEvent ids vs dictionary",
+            ev_ids, swift_enum_raw_values(swift, "WitnessEvent", "ios/Shared/EventVocabulary.swift"))
+    for e in ev:
+        if f'"{e["label"]}"' not in swift:
+            err(f"[drift] EventVocabulary.swift: label {e['label']!r} for {e['id']!r} "
+                "missing or reworded (labels mirror the dictionary verbatim)")
+
     # --- Device-signature format constants (Python + every firmware copy) ---
     sig_py = read("custom_components/securacv/signature.py")
     _check_sig("custom_components/securacv/signature.py", sig_py, sig)
@@ -244,7 +282,7 @@ def main() -> int:
             print("  " + e, file=sys.stderr)
         print(f"\n{len(ERRORS)} problem(s). See docs/FLIGHT_RULES.md FR-13.", file=sys.stderr)
         return 1
-    print("Witness Dictionary in sync across Rust / Python / JS / firmware.")
+    print("Witness Dictionary in sync across Rust / Python / JS / firmware / Swift.")
     return 0
 
 
