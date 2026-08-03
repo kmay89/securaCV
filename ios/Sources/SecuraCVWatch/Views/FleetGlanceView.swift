@@ -18,7 +18,17 @@ struct FleetGlanceView: View {
                     fleetList(snap)
                 } else {
                     ContentUnavailableView {
-                        Label("No fleet yet", systemImage: "bird")
+                        Label {
+                            Text("No fleet yet")
+                        } icon: {
+                            // The mascot itself (WatchAssets "Canary"), not a
+                            // generic glyph — the first thing a new user sees
+                            // should feel like ours.
+                            Image("Canary")
+                                .resizable()
+                                .scaledToFit()
+                                .frame(height: 36)
+                        }
                     } description: {
                         Text("Open SecuraCV on your iPhone — your fleet appears here on its own.")
                     }

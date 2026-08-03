@@ -227,7 +227,18 @@ final class FleetStore: ObservableObject {
         pushLiveActivity()
         WatchLink.shared.pushCurrent()   // content-deduped; free when nothing moved
         evaluateAlerts()
+        // Felt once, at the crossing — never on the cycles that stay there.
+        // Compared against the last severity we BUZZED for, read and written
+        // in one hop at commit time: overlapping refreshes (actor reentrancy
+        // across the awaits above) can't both claim the same crossing.
+        let felt = FeedbackPolicy.fleetTransition(from: lastFeltWorst, to: worstSeverity)
+        lastFeltWorst = worstSeverity
+        Feedback.play(felt)
     }
+
+    /// The last worst-severity this store produced feedback against — the
+    /// serialization point for the one-buzz-per-crossing promise.
+    private var lastFeltWorst: Severity = .ok
 
     /// Poll one device: /info for liveness + /witness for the chain head, verify
     /// on-device, pin its key TOFU. Static so the task group stays Sendable-safe.
@@ -271,7 +282,8 @@ final class FleetStore: ObservableObject {
                               deviceID: ref.id, deviceName: info.name, zone: rec.zone,
                               headline: Self.headline(rec, device: info.name),
                               severity: rec.severity, badge: verdict.badge,
-                              timeBucket: Self.bucket(rec.timestamp))
+                              timeBucket: Self.bucket(rec.timestamp),
+                              symbol: EventVocabulary.sfSymbol(forWire: rec.eventType))
             }
             if let head = page.records.max(by: { $0.seq < $1.seq }), !head.signature.isEmpty {
                 w.lastEvent = Self.headline(head, device: info.name)
@@ -283,13 +295,10 @@ final class FleetStore: ObservableObject {
     }
 
     private static func headline(_ rec: WitnessRecord, device: String) -> String {
-        switch rec.eventType {
-        case "person_detected": return "Someone at \(rec.zone.isEmpty ? device : rec.zone)"
-        case "vehicle_detected": return "Vehicle at \(rec.zone.isEmpty ? device : rec.zone)"
-        case "motion_detected": return "Motion at \(rec.zone.isEmpty ? device : rec.zone)"
-        case "tamper", "panic": return "Tamper at \(device)"
-        default: return rec.eventType.replacingOccurrences(of: "_", with: " ").capitalized
-        }
+        // One vocabulary of meaning for every surface — the dictionary ids,
+        // the device dialect, and a readable fallback for events from a
+        // newer fleet than this app (Shared/EventVocabulary.swift).
+        EventVocabulary.headline(forWire: rec.eventType, zone: rec.zone, deviceName: device)
     }
 
     /// Coarse 10-minute bucket — never a precise second (Invariant III).
@@ -322,21 +331,30 @@ final class FleetStore: ObservableObject {
 
     // MARK: - test alert (the "provably alive" button)
 
-    func runTestAlert() async {
-        await heartbeat.runTestAlert { [weak self] in
-            // On-LAN self-test: post a local time-sensitive notification so the
-            // user SEES the whole path light up. The away path swaps this closure
-            // for a device→relay→APNs round-trip.
-            await MainActor.run {
-                self?.alerts.post(title: self?.fleetName ?? "SecuraCV",
-                                  body: "Test alert — your fleet can reach you.",
-                                  level: .important, threadID: "selftest")
-            }
+    /// `playFeedback: false` for wrist-originated tests: the answer lands in
+    /// the hand that asked (WatchLink replies with the verdict snapshot and
+    /// the watch plays its own), so the phone stays silent in the pocket.
+    func runTestAlert(playFeedback: Bool = true) async {
+        let fleet = fleetName
+        let alerts = alerts
+        await heartbeat.runTestAlert {
+            // On-LAN self-test: post a local time-sensitive notification so
+            // the user SEES the whole path light up — and CONFIRM the system
+            // accepted it. Notifications off → this throws → the heartbeat
+            // honestly records a FAILED path instead of a hollow "verified"
+            // (the away path swaps this closure for device→relay→APNs).
+            try await alerts.postConfirmed(title: fleet,
+                                           body: "Test alert — your fleet can reach you.",
+                                           level: .important, threadID: "selftest")
         }
         pushLiveActivity()
         // Forced: the wrist is waiting on this exact push to leave its
         // "Testing…" state, and a repeat failure with the same reason would
         // be byte-identical to the last snapshot and vanish into the dedup.
         WatchLink.shared.pushCurrent(force: true)
+        if playFeedback {
+            // The user asked with a tap here; a verified path earns the chirp.
+            Feedback.play(FeedbackPolicy.pathTest(verified: heartbeat.state.isHealthy))
+        }
     }
 }

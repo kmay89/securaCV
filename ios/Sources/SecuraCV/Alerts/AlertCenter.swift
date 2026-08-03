@@ -95,10 +95,40 @@ final class AlertCenter: ObservableObject {
         }
     }
 
-    /// Fire a LOCAL notification (used on-LAN and for Test Alerts). Remote
-    /// pushes arrive via APNs and are shaped identically by the NSE.
+    /// Fire a LOCAL notification (used on-LAN alerts). Remote pushes arrive
+    /// via APNs and are shaped identically by the NSE.
     func post(title: String, body: String, level: AlertLevel, threadID: String) {
-        guard level != .digest else { return }   // digests never buzz
+        guard let req = request(title: title, body: body, level: level, threadID: threadID) else { return }
+        center.add(req)
+    }
+
+    /// The SELF-TEST's delivery: post and CONFIRM. Throws unless
+    /// notifications are actually authorized and the system accepted the
+    /// request — "verified" means checked, nothing looser (non-negotiable
+    /// #4), so a beat must never be recorded, nor the canary's chirp earned,
+    /// for a delivery that structurally couldn't reach the user.
+    func postConfirmed(title: String, body: String, level: AlertLevel, threadID: String) async throws {
+        struct DeliveryRefused: LocalizedError {
+            let reason: String
+            var errorDescription: String? { reason }
+        }
+        let settings = await center.notificationSettings()
+        switch settings.authorizationStatus {
+        case .authorized, .provisional, .ephemeral:
+            break
+        default:
+            throw DeliveryRefused(reason: "notifications are off for SecuraCV")
+        }
+        guard let req = request(title: title, body: body, level: level, threadID: threadID) else {
+            throw DeliveryRefused(reason: "digest-level alerts never push")
+        }
+        try await center.add(req)
+    }
+
+    /// One shape for every local notification; nil for digests (never buzz).
+    private func request(title: String, body: String, level: AlertLevel,
+                         threadID: String) -> UNNotificationRequest? {
+        guard level != .digest else { return nil }
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
@@ -106,7 +136,6 @@ final class AlertCenter: ObservableObject {
         let interruption = level.interruption(critical: Self.hasCriticalEntitlement)
         content.interruptionLevel = interruption
         content.sound = interruption == .critical ? .defaultCritical : .default
-        let req = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
-        center.add(req)
+        return UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
     }
 }
