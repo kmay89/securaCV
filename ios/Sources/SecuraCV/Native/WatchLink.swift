@@ -137,11 +137,14 @@ extension WatchLink: WCSessionDelegate {
             case WristSync.commandRefresh:
                 self.replyWithCurrentSnapshot(replyHandler)
             case WristSync.commandTestAlertPath:
-                // Ack immediately; the result travels back as state (the
-                // heartbeat turns .testing → .alive/.failed and the next
-                // snapshot carries it).
-                replyHandler(["ok": true])
-                await self.store?.runTestAlert()
+                // Run the test, THEN answer with the verdict-carrying
+                // snapshot: the reply IS this request's result, so the wrist
+                // can never mistake an unrelated heartbeat for its answer.
+                // playFeedback: false — the answer belongs to the hand that
+                // asked; the watch plays its own verdict, the phone stays
+                // silent in the pocket.
+                await self.store?.runTestAlert(playFeedback: false)
+                self.replyWithCurrentSnapshot(replyHandler)
             default:
                 replyHandler([:])
             }

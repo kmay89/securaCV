@@ -1,6 +1,6 @@
 // ============================================================================
 //  Canary — FUNCTIONAL INSERTS  ⚠️ IN DEVELOPMENT (v0.1-dev)
-//  Three small parts referenced by the enclosure docs but never modelled:
+//  Three small parts referenced by the enclosure docs but never modeled:
 //    part = "horn"       — exponential buzzer horn: glues INSIDE the WAP lid
 //                          over the vent cluster; channels the piezo into the
 //                          hole ring for a slightly more directional chirp.

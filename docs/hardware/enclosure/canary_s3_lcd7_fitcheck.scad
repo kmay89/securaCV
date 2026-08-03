@@ -91,7 +91,7 @@
 //            lifted seat_lift off the pads, because exact face-on-face
 //            contact through a floating-point rotation can manufacture a
 //            zero-ish sliver that fails an honest fit. This check is also
-//            what proves the dock's centring keys line up with the frame's
+//            what proves the dock's centering keys line up with the frame's
 //            keying slots — a misplaced key IS a collision.
 //    seat  — the frame pressed seat_press INTO the pads. INVERTED: it must
 //            be NON-empty — it is the bearing patch the case actually sits
@@ -146,7 +146,7 @@
 //            misses its hole — the strap length, hole position or install
 //            transform drifted, and the "captive" cover isn't.
 //
-//  The slab is modelled with the corner radius the source DECLARES (glass_r),
+//  The slab is modeled with the corner radius the source DECLARES (glass_r),
 //  because the question being asked is whether the model is consistent with
 //  the panel it claims to fit. To test a worst case instead, run the check
 //  with a smaller glass_r than the cavity is rounded to — a square-cornered
@@ -178,13 +178,13 @@ module assembled_bezel() {
 // the profile facing -y. Two preview traps are baked into this shape, both
 // already paid for once:
 //   1. It is applied to each layer SEPARATELY, because OpenCSG shows only the
-//      FIRST child's colour through a boolean — cutting a pre-coloured union
-//      renders the whole section frame-grey.
+//      FIRST child's color through a boolean — cutting a pre-colored union
+//      renders the whole section frame-gray.
 //   2. It SUBTRACTS a half-space rather than intersecting a keep-box. Under
-//      intersection() OpenCSG draws the uncoloured cutting box in the parent's
-//      colour, so the "section" came out as a solid orange field with the case
+//      intersection() OpenCSG draws the uncolored cutting box in the parent's
+//      color, so the "section" came out as a solid orange field with the case
 //      hidden behind it. difference() has no such stray child to draw, and the
-//      exposed cut face inherits the layer's own colour — which is the whole
+//      exposed cut face inherits the layer's own color — which is the whole
 //      point of the picture.
 module cut() difference() {
     children();
@@ -196,9 +196,9 @@ module glass_slab(t, dz = 0) {
         rrect2d(glass_w, glass_h, glass_r);
 }
 
-// The dock stack, read out of the source the same way. The frame is modelled
+// The dock stack, read out of the source the same way. The frame is modeled
 // print-side (z0 = front face, +y = up); docking it means standing it up,
-// reclining it by stand_ang, and setting its bottom face's centre onto the
+// reclining it by stand_ang, and setting its bottom face's center onto the
 // pad plane's origin. seat > 0 presses the case into the pads along the
 // slot's own axis; seat < 0 hovers it off them.
 ST = lcd7_stand_stack();
@@ -222,7 +222,7 @@ else if (check == "locate")
         assembled_bezel();
         translate([locate_slip, locate_slip, 0]) glass_slab(glass_t);
     }
-// The one-piece frame is modelled with the panel glass_guard behind the
+// The one-piece frame is modeled with the panel glass_guard behind the
 // front face (the guard rim stands proud of the glass), so the slab probes
 // sit at that offset — read from the stack, never assumed flush. The panel
 // is STEPPED, and the check
@@ -238,7 +238,7 @@ else if (check == "frame_glass") {
     // reports — not a stepped shape rebuilt here out of exported numbers. That
     // rebuild was the last place the panel was described twice: the numbers
     // already came from one home, but the SHAPE did not, so a change to how a
-    // panel is modelled (a chamfered can, a different border) would have left
+    // panel is modeled (a chamfered can, a different border) would have left
     // this gate probing the old form and still passing.
     gg = lcd7_frame_stack()[10];  // guard rim: the panel sits this far back
     intersection() {
@@ -274,14 +274,14 @@ else if (check == "frame_ledge") {
 // last-drawn layer smears across the whole viewport. The adhesive band renders
 // as a correct 0.5 mm stripe on its own and as a full-screen orange field
 // composited — same geometry, same camera. This is the same preview limit
-// already documented for frame_colour in README.md; the rule there applies
+// already documented for frame_color in README.md; the rule there applies
 // here too, that per-part output is the authoritative one. Use --render
-// (CGAL) if you want a single composited image, and accept one colour.
+// (CGAL) if you want a single composited image, and accept one color.
 //   xvfb-run -a openscad -o section.png --imgsize 1600,900 --projection=ortho \
 //       --colorscheme "Tomorrow Night" --camera=-90,0,3,90,0,0,30 \
 //       -D 'check="section"' -D 'sect_layer="frame"' canary_s3_lcd7_fitcheck.scad
 // Ortho + this camera puts ~12 mm of depth across the frame height, so the
-// bands are measurable off the image: at D=30 one millimetre is height/12 px.
+// bands are measurable off the image: at D=30 one millimeter is height/12 px.
 else if (check == "section") {
     FS = lcd7_frame_stack();
     ge = FS[6];                    // bare-glass border thickness

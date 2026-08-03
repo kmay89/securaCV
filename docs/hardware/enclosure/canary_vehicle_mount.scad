@@ -24,7 +24,7 @@
 part = "all";        // ["dash","vent","all"]
 
 /* [Stud interface] — match the target case's keyholes */
-stud_gap  = 36.0;    // centre-to-centre of the two T-studs
+stud_gap  = 36.0;    // center-to-center of the two T-studs
 // ecosystem-standard T-stud (same as canary_mount_adapters.scad): stem 1.4
 // (= kh_face 1.0 + 0.4 slide) + cone 1.2 + head 0.8 = 3.4 total, fitting the
 // catalog's 3.5 mm-deep blind keyhole pockets

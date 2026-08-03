@@ -24,7 +24,7 @@
 //  Parts: body / lid / boot (TPU) / gasket (printed-TPU fallback ring) /
 //         bezel (contrast lens trim ring — hides the disc bond line) / all
 //  Print: body + lid in ASA (outdoor) or PETG, 5-6 perimeters, 40 % gyroid,
-//  0.2 mm layers, flat as modelled — no supports. Boot: TPU 95A, open up.
+//  0.2 mm layers, flat as modeled — no supports. Boot: TPU 95A, open up.
 //  Hardware: 6x M3 heat-set insert (Ø4.6) + M3x8 pan head; Ø1.5 O-ring cord
 //  (~200 mm, nitrile/silicone); Ø12x2 polycarbonate lens disc, silicone-
 //  bonded; 1x adhesive ePTFE vent patch (Ø10+); closed-cell foam pad.
@@ -38,7 +38,7 @@ part = "all";        // ["body","lid","boot","gasket","bezel","all"]
 /* [Board] — XIAO ESP32-S3 Sense, camera stack up, USB toward +X wall */
 board_l = 21.0;  board_w = 17.5;  board_h = 1.2;
 stack_h = 6.5;       // Sense expansion + camera height above the base PCB
-cam_dx = 0.0;        // lens centre offset from board centre
+cam_dx = 0.0;        // lens center offset from board center
 cam_dy = 0.0;
 
 /* [Battery] — MEASURE yours; 503035 (500 mAh) default. LiPo: never charge below 0 C */
@@ -62,11 +62,11 @@ head_clear = 1.8;    // clearance above the camera stack
 oring_d = 1.5;
 grv_w   = 2.0;       // groove width
 grv_d   = 1.1;       // groove depth (squeeze = 1 - grv_d/oring_d)
-g_c     = 2.0;       // groove centreline offset outboard of the cavity edge
+g_c     = 2.0;       // groove centerline offset outboard of the cavity edge
 
 /* [Screw lobes] — 6x M3 heat-set inserts, outboard of the seal line */
 lob_d    = 9.0;
-lob_off  = 8.0;      // lobe centre offset outboard of the cavity edge (keeps the lanyard bore >=1.5 mm off the pressure wall)
+lob_off  = 8.0;      // lobe center offset outboard of the cavity edge (keeps the lanyard bore >=1.5 mm off the pressure wall)
 end_lob_y = 8.0;     // Y of the two lobes on each short end
 insert_d = 4.6;  insert_h = 6.0;   // M3 heat-set pocket
 screw_c_d = 3.4;                    // lid clearance hole
@@ -132,7 +132,7 @@ out_l   = inner_l + 2*wall_t;
 out_w   = inner_w + 2*wall_t;
 r_out   = r_in + wall_t;
 total_h = base_h + lid_t;
-bcx     = inner_l/2 - board_zone/2;                // board centre X
+bcx     = inner_l/2 - board_zone/2;                // board center X
 x_div   = -inner_l/2 + batt_l + batt_pad + rib_t/2;
 lens_x  = bcx + cam_dx;  lens_y = cam_dy;
 
@@ -259,7 +259,7 @@ module lid() {                          // z=0 is the OUTER face; print face-dow
     difference() {
         union() {
             // bullnose face edge (6-step quarter-round; prints face-down,
-            // kills elephant foot and reads "moulded" instead of "printed")
+            // kills elephant foot and reads "molded" instead of "printed")
             for (k = [0:5])
                 translate([0, 0, k*lid_edge/6]) linear_extrude(lid_edge/6 + 0.01)
                     offset(r = -(lid_edge - lid_edge*sin(90*(k + 1)/6))) outline2d();
@@ -302,7 +302,7 @@ module gasket() {                       // printed-TPU fallback if you skip the 
 }
 
 module bezel() {                        // contrast-color lens trim ring
-    // z0 = the face that lands on the recess floor; print as modelled.
+    // z0 = the face that lands on the recess floor; print as modeled.
     // The inner lip floats 0.2 mm above the bonded disc and hides the
     // silicone bond line — the detail every consumer camera trim ring exists for.
     difference() {

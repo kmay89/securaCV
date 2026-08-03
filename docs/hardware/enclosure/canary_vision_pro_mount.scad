@@ -55,8 +55,8 @@ kh_shank_d = 4.2;   // slot width (fits the catalog's Ø4 stud stem)
 kh_slot_l  = 8.0;   // slot travel
 kh_head_h  = 3.5;   // total pocket depth (face web + head cavity)
 kh_face    = 1.0;   // face web thickness the stud head grips behind
-kh_x       = 12.0;  // keyhole pair spacing (± from centre)
-kh_y       = 22.0;  // keyhole row offset from centre, toward the TOP edge
+kh_x       = 12.0;  // keyhole pair spacing (± from center)
+kh_y       = 22.0;  // keyhole row offset from center, toward the TOP edge
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;

@@ -721,10 +721,10 @@ OPTION_ENUM_PARAMS = {
     "mount_style", "battery", "side_exit",
     # 7" dashboard palette. These are string enums rather than bools, and the
     # classifier below only counts bools by default — so when vent_accent (a
-    # bool) became vent_ring_colour (body/ink/accent), the option silently
+    # bool) became vent_ring_color (body/ink/accent), the option silently
     # vanished from the workshop instead of gaining two settings. They are
     # exactly the kind of choice a buyer makes, so they are named here.
-    "bezel_colour", "vent_ring_colour", "qr_style",
+    "bezel_color", "vent_ring_color", "qr_style",
 }
 ENGINEERING_OPTIONS = {
     "lid_ribs", "kh_lock", "hinge_teeth", "bracket_tripod", "screw_insert",

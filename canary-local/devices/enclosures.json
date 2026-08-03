@@ -515,7 +515,7 @@
   {
    "id": "7-touch-dashboard-case",
    "name": "7″ touch dashboard case",
-   "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on moulded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (~52 cm² back grille + bottom-wall intake and top-wall exhaust — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centred USB pass-through (the brand lettering is the intake vents flanking it) and three TPU fitments: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive press-through BOOT/RESET plug, and a peel-open SD cover that stays attached. Optional 20° desk dock for the frame (drop-in slot on tilted seat pads, self-centring keys into the frame's keying slots, landscape and portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centres and `pcb_h` are NOMINAL — measure yours",
+   "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on molded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (~52 cm² back grille + bottom-wall intake and top-wall exhaust — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centered USB pass-through (the brand lettering is the intake vents flanking it) and three TPU fitments: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive press-through BOOT/RESET plug, and a peel-open SD cover that stays attached. Optional 20° desk dock for the frame (drop-in slot on tilted seat pads, self-centering keys into the frame's keying slots, landscape and portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centers and `pcb_h` are NOMINAL — measure yours",
    "status": "in-development",
    "note": "glass drops in, lip 10.4, TPU-fitted ports",
    "device": "canary-display-dash",
@@ -526,7 +526,7 @@
   {
    "id": "1-69-touch-watch-display-puck",
    "name": "1.69″ touch watch-display puck",
-   "for": "Waveshare ESP32-S3-Touch-LCD-1.69 (rounded-square 240×280 capacitive-touch smartwatch board — S3, IMU, RTC, battery/charger). The bonded glass slab (41.13 × 33.13) overhangs the smaller PCB (37.12 × 29.83) by ~2 mm, so the face lip captures it — no screws (this board has no mount holes). Face-down bezel + snap-in vented back (skirt rides the overhang, 4 nubs, standoffs press the board forward, blind keyhole). USB-C (bottom) + PWR/BOOT/RST (top) + battery/RTC/pin slot (side); side heat slots + back grille; optional 22° cradle. Connector centres NOMINAL — measure yours",
+   "for": "Waveshare ESP32-S3-Touch-LCD-1.69 (rounded-square 240×280 capacitive-touch smartwatch board — S3, IMU, RTC, battery/charger). The bonded glass slab (41.13 × 33.13) overhangs the smaller PCB (37.12 × 29.83) by ~2 mm, so the face lip captures it — no screws (this board has no mount holes). Face-down bezel + snap-in vented back (skirt rides the overhang, 4 nubs, standoffs press the board forward, blind keyhole). USB-C (bottom) + PWR/BOOT/RST (top) + battery/RTC/pin slot (side); side heat slots + back grille; optional 22° cradle. Connector centers NOMINAL — measure yours",
    "status": "in-development",
    "note": "snap-fit, vented, edge-captured",
    "device": "canary-display-watch",
@@ -570,7 +570,7 @@
   {
    "id": "universal-fit-coupon",
    "name": "Universal fit coupon",
-   "for": "ONE small print that calibrates every fit in the catalog: the Canary mark embossed in uniform domed strokes (no feature narrower than one rib, so that single width decides the whole emblem), the WAP's two-sided clip channel, keyhole+stud with a click detent (slide the mate on, it clicks and stays — the doorbell-plate retention test), slide tongue, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labelled with the parameter it tunes",
+   "for": "ONE small print that calibrates every fit in the catalog: the Canary mark embossed in uniform domed strokes (no feature narrower than one rib, so that single width decides the whole emblem), the WAP's two-sided clip channel, keyhole+stud with a click detent (slide the mate on, it clicks and stays — the doorbell-plate retention test), slide tongue, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labeled with the parameter it tunes",
    "status": "in-development",
    "note": "**print this before any case**",
    "device": null,
@@ -581,7 +581,7 @@
   {
    "id": "bench-bring-up-fixture",
    "name": "Bench bring-up fixture",
-   "for": "labelled stations for XIAO + BZ1/DLED1/SW1/SW2 with a sliding magnet carriage for repeatable tamper tests (companion to [bench_bringup.md](../bench_bringup.md))",
+   "for": "labeled stations for XIAO + BZ1/DLED1/SW1/SW2 with a sliding magnet carriage for repeatable tamper tests (companion to [bench_bringup.md](../bench_bringup.md))",
    "status": "in-development",
    "note": "wire channels per §5 pin map",
    "device": null,
@@ -811,7 +811,7 @@
       {
        "name": "kh_inset",
        "default": "10.0",
-       "comment": "keyhole centres at x = ±(inner_l/2 − kh_inset); auto-merges to one on small cases"
+       "comment": "keyhole centers at x = ±(inner_l/2 − kh_inset); auto-merges to one on small cases"
       },
       {
        "name": "tab_l",
@@ -877,7 +877,7 @@
       {
        "name": "label_dx",
        "default": "0.0",
-       "comment": "label centre offset from the LID centre (not the board centre)"
+       "comment": "label center offset from the LID center (not the board center)"
       },
       {
        "name": "label_dy",
@@ -1219,13 +1219,13 @@
       {
        "name": "usb_z",
        "default": "-1.65",
-       "comment": "centres the opening on the connector AXIS: the C shell is 3.2 mm tall on the"
+       "comment": "centers the opening on the connector AXIS: the C shell is 3.2 mm tall on the"
       }
      ]
     },
     {
      "name": "Lid features",
-     "note": "offsets are measured FROM THE BOARD CENTRE (mm). Measure your board!",
+     "note": "offsets are measured FROM THE BOARD CENTER (mm). Measure your board!",
      "params": [
       {
        "name": "cam_win_d",
@@ -1456,12 +1456,12 @@
       {
        "name": "batt_cx",
        "default": "zone0 + batt_gap + batt_l/2",
-       "comment": "battery bay centre"
+       "comment": "battery bay center"
       },
       {
        "name": "gps_cx",
        "default": "zone0 + batt_zone_l + gps_gap + gps_l/2",
-       "comment": "GPS bay centre (after battery, if any)"
+       "comment": "GPS bay center (after battery, if any)"
       },
       {
        "name": "mount_extra",
@@ -1726,12 +1726,12 @@
       {
        "name": "lens_dx",
        "default": "0.0",
-       "comment": "lens centre offset from the camera-board centre — MEASURE"
+       "comment": "lens center offset from the camera-board center — MEASURE"
       },
       {
        "name": "lens_dy",
        "default": "2.5",
-       "comment": "(v1.3 lens sits ~2.5 mm above board centre)"
+       "comment": "(v1.3 lens sits ~2.5 mm above board center)"
       },
       {
        "name": "cam_ap_d",
@@ -1895,7 +1895,7 @@
       {
        "name": "usb_z",
        "default": "0.0",
-       "comment": "extra lift relative to PCB-top centring"
+       "comment": "extra lift relative to PCB-top centering"
       },
       {
        "name": "usb_dx",
@@ -1910,7 +1910,7 @@
       {
        "name": "xiao_usb_drop",
        "default": "10.0",
-       "comment": "XIAO port centre BELOW the module port centre — MEASURE the seated stack"
+       "comment": "XIAO port center BELOW the module port center — MEASURE the seated stack"
       }
      ]
     },
@@ -1926,7 +1926,7 @@
       {
        "name": "prong_pitch",
        "default": "6.35",
-       "comment": "fin centre spacing (GoPro standard)"
+       "comment": "fin center spacing (GoPro standard)"
       },
       {
        "name": "fin_r",
@@ -1987,7 +1987,7 @@
       {
        "name": "bracket_tripod",
        "default": "true",
-       "comment": "captive 1/4-20 nut pocket behind the centre fin (tripod mount)"
+       "comment": "captive 1/4-20 nut pocket behind the center fin (tripod mount)"
       }
      ]
     },
@@ -2023,7 +2023,7 @@
       {
        "name": "kh_inset",
        "default": "12.0",
-       "comment": "pocket centres at y = ±(inner_y/2 − kh_inset), on the X centreline"
+       "comment": "pocket centers at y = ±(inner_y/2 − kh_inset), on the X centerline"
       }
      ]
     },
@@ -2305,12 +2305,12 @@
       {
        "name": "usb_cx",
        "default": "(has_dk ? dk_cx : vm_cx) + usb_dx",
-       "comment": "main/upper USB opening centre (X)"
+       "comment": "main/upper USB opening center (X)"
       },
       {
        "name": "usb_zc",
        "default": "floor_t + usb_soff + pcb_t + usb_h/2 + usb_z",
-       "comment": "and its centre height"
+       "comment": "and its center height"
       },
       {
        "name": "mount_extra",
@@ -2406,7 +2406,7 @@
       {
        "name": "xiao_l",
        "default": "21.0",
-       "comment": "XIAO stacked on the module's socket, lower half, centred"
+       "comment": "XIAO stacked on the module's socket, lower half, centered"
       },
       {
        "name": "xiao_w",
@@ -2468,7 +2468,7 @@
       {
        "name": "lens_dx",
        "default": "0.0",
-       "comment": "lens centre offset from the camera-board centre — MEASURE"
+       "comment": "lens center offset from the camera-board center — MEASURE"
       },
       {
        "name": "lens_dy",
@@ -2584,12 +2584,12 @@
       {
        "name": "usb_exit_dx",
        "default": "5.0",
-       "comment": "exit offset from the centreline"
+       "comment": "exit offset from the centerline"
       },
       {
        "name": "usb_exit_dy",
        "default": "6.0",
-       "comment": "exit offset above the well centre — clears the lower T-stud pocket"
+       "comment": "exit offset above the well center — clears the lower T-stud pocket"
       }
      ]
     },
@@ -2718,7 +2718,7 @@
       {
        "name": "stud_y",
        "default": "34.0",
-       "comment": "T-stud/pocket centres at y = ±stud_y (clear of the cable exit)"
+       "comment": "T-stud/pocket centers at y = ±stud_y (clear of the cable exit)"
       },
       {
        "name": "kh_head_d",
@@ -2807,7 +2807,7 @@
     },
     {
      "name": "Front-face features",
-     "note": "offsets from the MODULE centre",
+     "note": "offsets from the MODULE center",
      "params": [
       {
        "name": "lp_d",
@@ -3124,7 +3124,7 @@
       {
        "name": "xiao_usb_z",
        "default": "4.0",
-       "comment": "XIAO USB-C centre above the back floor — MEASURE the seated stack"
+       "comment": "XIAO USB-C center above the back floor — MEASURE the seated stack"
       }
      ]
     },
@@ -3150,7 +3150,7 @@
       {
        "name": "rad_dx",
        "default": "0.0",
-       "comment": "antenna-zone centre offset from the BOARD centre — MEASURE"
+       "comment": "antenna-zone center offset from the BOARD center — MEASURE"
       },
       {
        "name": "rad_dy",
@@ -3161,7 +3161,7 @@
     },
     {
      "name": "Front-face features",
-     "note": "offsets from the BOARD centre; keep them OUT of the window",
+     "note": "offsets from the BOARD center; keep them OUT of the window",
      "params": [
       {
        "name": "lp_d",
@@ -3648,7 +3648,7 @@
       {
        "name": "rad_cx",
        "default": "vm_cx + rad_dx",
-       "comment": "radome window centre"
+       "comment": "radome window center"
       },
       {
        "name": "rad_cy",
@@ -3839,7 +3839,7 @@
       {
        "name": "snap_depth",
        "default": "2.6",
-       "comment": "slot centre below the drum rim"
+       "comment": "slot center below the drum rim"
       },
       {
        "name": "snap_proud",
@@ -3982,7 +3982,7 @@
       {
        "name": "usb_cz",
        "default": "z_xiao0 + (xiao_t - 1.2 - 1.6)",
-       "comment": "USB shell centre (PCB 1.2, shell/2 1.6)"
+       "comment": "USB shell center (PCB 1.2, shell/2 1.6)"
       },
       {
        "name": "skirt_od",
@@ -4012,7 +4012,7 @@
       {
        "name": "s_ctr",
        "default": "rim_margin + 1 + pkt_d/2",
-       "comment": "chin → pocket centre, along the face"
+       "comment": "chin → pocket center, along the face"
       },
       {
        "name": "C_rim",
@@ -4734,7 +4734,7 @@
       {
        "name": "s_usb_z",
        "default": "4.0",
-       "comment": "C6 USB centre above the floor"
+       "comment": "C6 USB center above the floor"
       }
      ]
     },
@@ -5457,12 +5457,12 @@
       {
        "name": "cam_dx",
        "default": "0.0",
-       "comment": "aperture offset from the board centre — MEASURE: the XIAO"
+       "comment": "aperture offset from the board center — MEASURE: the XIAO"
       },
       {
        "name": "cam_dy",
        "default": "0.0",
-       "comment": "Sense camera sits toward the antenna end, not dead centre"
+       "comment": "Sense camera sits toward the antenna end, not dead center"
       },
       {
        "name": "ko_ring_d",
@@ -5623,7 +5623,7 @@
       {
        "name": "cam_dx",
        "default": "0.0",
-       "comment": "lens centre offset from board centre"
+       "comment": "lens center offset from board center"
       },
       {
        "name": "cam_dy",
@@ -5695,7 +5695,7 @@
       {
        "name": "g_c",
        "default": "2.0",
-       "comment": "groove centreline offset outboard of the cavity edge"
+       "comment": "groove centerline offset outboard of the cavity edge"
       }
      ]
     },
@@ -5710,7 +5710,7 @@
       {
        "name": "lob_off",
        "default": "8.0",
-       "comment": "lobe centre offset outboard of the cavity edge (keeps the lanyard bore >=1.5 mm off the pressure wall)"
+       "comment": "lobe center offset outboard of the cavity edge (keeps the lanyard bore >=1.5 mm off the pressure wall)"
       },
       {
        "name": "end_lob_y",
@@ -5883,7 +5883,7 @@
       {
        "name": "bcx",
        "default": "inner_l/2 - board_zone/2",
-       "comment": "board centre X"
+       "comment": "board center X"
       },
       {
        "name": "x_div",
@@ -5961,12 +5961,12 @@
     },
     {
      "name": "USB / terminals",
-     "note": "positions along the BOTTOM wall, from panel centre",
+     "note": "positions along the BOTTOM wall, from panel center",
      "params": [
       {
        "name": "usb_dx",
        "default": "0.0",
-       "comment": "USB-C slot centre offset — MEASURE"
+       "comment": "USB-C slot center offset — MEASURE"
       },
       {
        "name": "term_open",
@@ -6137,7 +6137,7 @@
       {
        "name": "hdr_inset",
        "default": "1.6",
-       "comment": "PCB edge → header row centreline — MEASURE"
+       "comment": "PCB edge → header row centerline — MEASURE"
       },
       {
        "name": "brass_h",
@@ -6183,7 +6183,7 @@
       {
        "name": "usb_dx",
        "default": "0.0",
-       "comment": "sideways offset of the connector centre — MEASURE"
+       "comment": "sideways offset of the connector center — MEASURE"
       },
       {
        "name": "usb_dz",
@@ -6207,12 +6207,12 @@
       {
        "name": "btn_up",
        "default": "7.0",
-       "comment": "button centre up from the USB (−Y) end (fit-tested: 6.0 sat 1 low) — MEASURE"
+       "comment": "button center up from the USB (−Y) end (fit-tested: 6.0 sat 1 low) — MEASURE"
       },
       {
        "name": "btn_dz",
        "default": "1.0",
-       "comment": "actuator centre behind the PCB BACK face — MEASURE"
+       "comment": "actuator center behind the PCB BACK face — MEASURE"
       },
       {
        "name": "btn_proud",
@@ -6342,12 +6342,12 @@
       {
        "name": "z_btn",
        "default": "z_pcb_back + btn_dz",
-       "comment": "button actuator centre (back-mounted)"
+       "comment": "button actuator center (back-mounted)"
       },
       {
        "name": "btn_y",
        "default": "-board_l/2 + btn_up",
-       "comment": "button centre (Y)"
+       "comment": "button center (Y)"
       },
       {
        "name": "btn_reach",
@@ -6491,7 +6491,7 @@
         "coupon_accent",
         "coupon_qr_body",
         "coupon_qr_ink",
-        "frame_colour",
+        "frame_color",
         "fil_overlap",
         "fil_gap",
         "all"
@@ -6500,8 +6500,8 @@
      ]
     },
     {
-     "name": "Glass slab",
-     "note": "bonded touch panel, from the Waveshare drawing (mm)",
+     "name": "Board",
+     "note": "",
      "params": [
       {
        "name": "panel_variant",
@@ -6517,7 +6517,13 @@
       {
        "name": "panel_ok",
        "default": "panel_check(PANEL) && panel_assert_printable(PANEL)"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Glass slab",
+     "note": "",
+     "params": [
       {
        "name": "glass_w",
        "default": "pnl_glass_w(PANEL)",
@@ -6551,7 +6557,7 @@
       {
        "name": "panel_core_dy",
        "default": "pnl_core_dy(PANEL)",
-       "comment": "can centre offset from glass centre, NATIVE pose."
+       "comment": "can center offset from glass center, NATIVE pose."
       },
       {
        "name": "glass_r",
@@ -6559,14 +6565,14 @@
        "comment": "corner radius of the glass slab — MEASURED against the"
       },
       {
-       "name": "rg_centre",
+       "name": "rg_center",
        "default": "glass_r",
-       "comment": "radius-gauge sweep centre — override it to hunt wide"
+       "comment": "radius-gauge sweep center — override it to hunt wide"
       },
       {
        "name": "rg_step",
        "default": "0.2",
-       "comment": "...and its step. Four sockets at centre ± 0.5·step"
+       "comment": "...and its step. Four sockets at center ± 0.5·step"
       }
      ]
     },
@@ -6587,7 +6593,7 @@
       {
        "name": "aa_dy",
        "default": "pnl_aa_dy(PANEL)",
-       "comment": "AA centre offset from glass centre — NATIVE mounting,"
+       "comment": "AA center offset from glass center — NATIVE mounting,"
       }
      ]
     },
@@ -6638,7 +6644,7 @@
       {
        "name": "m3_ox",
        "default": "pnl_m3_ox(PANEL)",
-       "comment": "pattern centre offset from the GLASS centre, stated in"
+       "comment": "pattern center offset from the GLASS center, stated in"
       },
       {
        "name": "m3_oy",
@@ -6665,7 +6671,13 @@
        "name": "win_margin",
        "default": "0.6",
        "comment": "window opened this much beyond the active area on each"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Connectors",
+     "note": "",
+     "params": [
       {
        "name": "opt_bottom_ports",
        "default": "true"
@@ -6673,7 +6685,13 @@
       {
        "name": "opt_side_ports",
        "default": "true"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Ventilation",
+     "note": "",
+     "params": [
       {
        "name": "vent_back",
        "default": "true",
@@ -6742,7 +6760,13 @@
        "name": "vent_side_n",
        "default": "3",
        "comment": "per side, stacked toward the top corners"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Print tolerances",
+     "note": "",
+     "params": [
       {
        "name": "tol_slide",
        "default": "0.25",
@@ -6778,7 +6802,13 @@
        "name": "r_out",
        "default": "6.0",
        "comment": "outer corner radius"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Fasteners",
+     "note": "",
+     "params": [
       {
        "name": "m3_nom",
        "default": "3.0",
@@ -6836,12 +6866,12 @@
       {
        "name": "btn_dx",
        "default": "0.0",
-       "comment": "window centre offset along the top wall"
+       "comment": "window center offset along the top wall"
       },
       {
        "name": "btn_lbl_dx",
        "default": "9.0",
-       "comment": "BOOT/RESET label centres, ± of the window centre"
+       "comment": "BOOT/RESET label centers, ± of the window center"
       },
       {
        "name": "mount_keyholes",
@@ -6941,7 +6971,7 @@
       {
        "name": "brand_back",
        "default": "CANARY",
-       "comment": "the back lockup's HERO line — centred,"
+       "comment": "the back lockup's HERO line — centered,"
       },
       {
        "name": "brand_sub",
@@ -6960,7 +6990,7 @@
       {
        "name": "adh_rail_dx",
        "default": "12.0",
-       "comment": "rail centres at ±this — the only clear full-height"
+       "comment": "rail centers at ±this — the only clear full-height"
       },
       {
        "name": "adh_rail_w",
@@ -6980,7 +7010,7 @@
       {
        "name": "sd_dx",
        "default": "pnl_port_u(PANEL, \"microSD\")",
-       "comment": "opening centre, + = back-view right (42.0 − 6.35, measured)"
+       "comment": "opening center, + = back-view right (42.0 − 6.35, measured)"
       },
       {
        "name": "sd_dy",
@@ -7046,13 +7076,13 @@
      ]
     },
     {
-     "name": "Print colours — the AMS palette",
+     "name": "Print colors — the AMS palette",
      "note": "",
      "params": [
       {
-       "name": "print_colours",
+       "name": "print_colors",
        "default": "true",
-       "comment": "build the per-filament parts and colour the preview"
+       "comment": "build the per-filament parts and color the preview"
       },
       {
        "name": "pal_body",
@@ -7114,7 +7144,7 @@
        "default": "[\"mark\"]"
       },
       {
-       "name": "bezel_colour",
+       "name": "bezel_color",
        "default": "body",
        "enum": [
         "body",
@@ -7124,7 +7154,7 @@
        "comment": "front bezel ring"
       },
       {
-       "name": "vent_ring_colour",
+       "name": "vent_ring_color",
        "default": "body",
        "enum": [
         "body",
@@ -7142,12 +7172,12 @@
       {
        "name": "usb_port",
        "default": "true",
-       "comment": "pass-through for the power cable, centred on the bottom wall."
+       "comment": "pass-through for the power cable, centered on the bottom wall."
       },
       {
        "name": "usb_dx",
        "default": "0.0",
-       "comment": "port centre along the bottom wall — 0 = centred"
+       "comment": "port center along the bottom wall — 0 = centered"
       },
       {
        "name": "usb_zc",
@@ -7197,7 +7227,7 @@
       {
        "name": "side_dy",
        "default": "0.0",
-       "comment": "its centre along that wall, + = toward the top edge"
+       "comment": "its center along that wall, + = toward the top edge"
       },
       {
        "name": "port_labels",
@@ -7240,7 +7270,7 @@
       {
        "name": "btn_pip_dz",
        "default": "0.0",
-       "comment": "pip centre offset across the wall band, from the window centre"
+       "comment": "pip center offset across the wall band, from the window center"
       },
       {
        "name": "sd_lip",
@@ -7254,7 +7284,7 @@
       {
        "name": "sd_teth_gap",
        "default": "3.5",
-       "comment": "countersink rim outer edge → anchor hole centre"
+       "comment": "countersink rim outer edge → anchor hole center"
       },
       {
        "name": "sd_teth_hole",
@@ -7273,7 +7303,7 @@
       {
        "name": "port_teth_dx",
        "default": "-12.6",
-       "comment": "anchor hole centre along the wall, from the port"
+       "comment": "anchor hole center along the wall, from the port"
       },
       {
        "name": "port_teth_cb",
@@ -7287,7 +7317,7 @@
       {
        "name": "port_scoop_dx",
        "default": "11.0",
-       "comment": "scoop centre from the port centre — just past the"
+       "comment": "scoop center from the port center — just past the"
       },
       {
        "name": "port_scoop_r",
@@ -7338,13 +7368,19 @@
       {
        "name": "edge_vent_z",
        "default": "18.7",
-       "comment": "band centre across the wall — behind the grommet's"
+       "comment": "band center across the wall — behind the grommet's"
       },
       {
        "name": "vent_gap",
        "default": "8.0",
        "comment": "clear space between the port flange and each word"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Stand",
+     "note": "",
+     "params": [
       {
        "name": "opt_stand",
        "default": "true"
@@ -7422,7 +7458,7 @@
       {
        "name": "stand_slot_y",
        "default": "32.0",
-       "comment": "seat centreline, measured from the plate's front edge"
+       "comment": "seat centerline, measured from the plate's front edge"
       },
       {
        "name": "stand_clear",
@@ -7472,12 +7508,12 @@
       {
        "name": "qr_dx",
        "default": "43.5",
-       "comment": "field centre, plate coords (+x = front-view right wing)"
+       "comment": "field center, plate coords (+x = front-view right wing)"
       },
       {
        "name": "qr_dy",
        "default": "39.0",
-       "comment": "field centre, +y = toward the back edge (a battery"
+       "comment": "field center, +y = toward the back edge (a battery"
       },
       {
        "name": "qr_back",
@@ -7492,7 +7528,7 @@
       {
        "name": "qr_back_dx",
        "default": "-41.3",
-       "comment": "field centre, back-view coords (+x = back-view right)."
+       "comment": "field center, back-view coords (+x = back-view right)."
       },
       {
        "name": "qr_back_dy",
@@ -7575,7 +7611,7 @@
      ]
     },
     {
-     "name": "Quality",
+     "name": "Hidden",
      "note": "",
      "params": [
       {
@@ -7730,7 +7766,7 @@
       {
        "name": "sd_teth_y",
        "default": "sd_dy + sd_l/2 + sd_lip + sd_teth_gap",
-       "comment": "tether anchor hole centre"
+       "comment": "tether anchor hole center"
       },
       {
        "name": "rating_sz",
@@ -7752,7 +7788,7 @@
       {
        "name": "rating_dx",
        "default": "42.0",
-       "comment": "centred in the clear gap: rail moat ends ~23, the"
+       "comment": "centered in the clear gap: rail moat ends ~23, the"
       },
       {
        "name": "rating_dy",
@@ -7766,7 +7802,7 @@
       {
        "name": "btn_zc",
        "default": "(btn_z0 + btn_z1)/2",
-       "comment": "window centre across the wall"
+       "comment": "window center across the wall"
       },
       {
        "name": "usb_open_w",
@@ -7796,7 +7832,7 @@
       {
        "name": "std_ys",
        "default": "-std_d/2 + stand_slot_y + bat_dg",
-       "comment": "seat centreline in plate coords"
+       "comment": "seat centerline in plate coords"
       },
       {
        "name": "std_open",
@@ -7834,7 +7870,7 @@
       {
        "name": "coupon_x0",
        "default": "-40",
-       "comment": "just past the lockup's centre"
+       "comment": "just past the lockup's center"
       },
       {
        "name": "coupon_x1",
@@ -7975,7 +8011,7 @@
     },
     {
      "name": "USB-C",
-     "note": "on the BOTTOM (−Y) edge, centred on the PCB thickness",
+     "note": "on the BOTTOM (−Y) edge, centered on the PCB thickness",
      "params": [
       {
        "name": "opt_usb",
@@ -7999,7 +8035,7 @@
       {
        "name": "btn_xs",
        "default": "[-9.0, 0.0, 9.0]",
-       "comment": "button X centres on the top edge — MEASURE"
+       "comment": "button X centers on the top edge — MEASURE"
       }
      ]
     },
@@ -8122,7 +8158,7 @@
       {
        "name": "z_usb",
        "default": "face_t + lcd_rise + pcb_t/2",
-       "comment": "USB-C centre (mid-PCB)"
+       "comment": "USB-C center (mid-PCB)"
       }
      ]
     }
@@ -8153,7 +8189,7 @@
       {
        "name": "stud_gap",
        "default": "36.0",
-       "comment": "centre-to-centre of the two T-studs"
+       "comment": "center-to-center of the two T-studs"
       },
       {
        "name": "stud_d",
@@ -8416,12 +8452,12 @@
       {
        "name": "kh_x",
        "default": "12.0",
-       "comment": "keyhole pair spacing (± from centre)"
+       "comment": "keyhole pair spacing (± from center)"
       },
       {
        "name": "kh_y",
        "default": "22.0",
-       "comment": "keyhole row offset from centre, toward the TOP edge"
+       "comment": "keyhole row offset from center, toward the TOP edge"
       }
      ]
     }
@@ -8603,7 +8639,7 @@
       {
        "name": "g_cx",
        "default": "3.7",
-       "comment": "design-unit bbox centre"
+       "comment": "design-unit bbox center"
       },
       {
        "name": "g_cy",

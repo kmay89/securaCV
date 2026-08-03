@@ -16,7 +16,7 @@ in the [catalog](./README.md) prints the same way afterwards.
 - [Start here: profile vs. settings sheet (read this first)](#start-here-profile-vs-settings-sheet)
 - [The one idea that makes these print well](#the-one-idea-the-model-already-did-the-hard-part)
 - [The settings sheet (universal — type these into Custom mode)](#the-settings-sheet)
-- [PETG-specific behaviour (stringing, cooling, sealing)](#petg-specific-behaviour)
+- [PETG-specific behavior (stringing, cooling, sealing)](#petg-specific-behavior)
 - [Per-model cheat-sheet](#per-model-cheat-sheet)
 - [The three things you actually calibrate](#the-three-things-you-actually-calibrate)
 - [The importable profile](#the-importable-profile)
@@ -163,7 +163,7 @@ marked **[YOURS]** are printer-specific — start here and tune.
 
 ---
 
-## PETG-specific behaviour
+## PETG-specific behavior
 
 The things that bite people specifically on **PETG**, and the fix:
 

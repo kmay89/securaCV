@@ -40,6 +40,18 @@ exception is the Unix `flock(2)` syscall, which is a real API name; do not renam
 it. Use "fleet" (already established across the firmware, e.g. `fleet_model.h`)
 or plain "your Canaries" / "the devices."
 
+**3b. US spellings, always.** `color`, `center`, `meter`, `behavior`, `analyze`,
+`gray`, `license`, `labeled`, `canceled`, `optimize`, `recognize`, `catalog`.
+Not `colour`, `centre`, `metre`, `behaviour`, `analyse`, `grey`, `licence`,
+`labelled`, `cancelled`, `optimise`, `recognise`, `catalogue`. This covers
+user-facing copy, device UI strings, docs, comments and code identifiers alike.
+
+Four things keep their spelling because they are not ours to respell: SPDX tags
+and `LICENSE`/`LICENCE` filenames, third-party API and CSS identifiers already
+spelled a particular way (CSS accepts `grey`, but write `gray`), quoted text
+from an external source, and words that are the same in both (`analysis`,
+`parameter`, `diameter` — none of those are British).
+
 **4. Don't oversell, and don't overclaim.** "Verified" means *an Ed25519
 signature checked against a pinned key* — nothing looser. No performance claim
 without a benchmark. Describe `DetectorBackend` as an audit boundary that must be
@@ -48,9 +60,10 @@ guarantee isn't structural yet, say so out loud.
 
 **5. Vocabulary changes start in the dictionary.** Event types, failure types,
 attestation tiers, claim kinds and modalities are duplicated as constants across
-Rust, Python, JS and firmware C++. `spec/witness_dictionary.json` is the single
-source of truth and `scripts/lint_dictionary_sync.py` fails CI on any drift. Edit
-the dictionary first, then every copy the linter names.
+Rust, Python, JS, firmware C++ and Swift (the Apple apps' `EventVocabulary`).
+`spec/witness_dictionary.json` is the single source of truth and
+`scripts/lint_dictionary_sync.py` fails CI on any drift. Edit the dictionary
+first, then every copy the linter names.
 
 **6. A new doc gets a home on the map in the same commit.**
 `scripts/lint_docs_index.py` fails the build if a doc under `docs/` isn't

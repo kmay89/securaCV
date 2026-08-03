@@ -26,7 +26,7 @@
 //  chimney slots convect it out. Keep them clear.
 //
 //  ⚠️ CONNECTOR POSITIONS ARE NOMINAL — the Waveshare drawing dimensions the
-//  glass, AA and PCB outline precisely but not each connector centre, and the
+//  glass, AA and PCB outline precisely but not each connector center, and the
 //  ~2 mm glass overhang means ports sit slightly recessed. MEASURE the USB-C /
 //  button / connector positions and the stack heights on YOUR Rev before
 //  printing.  DEV STATUS: render/mesh-verified only — NOT print-validated.
@@ -42,7 +42,7 @@ glass_t = 2.6;       // glass + LCD module thickness at the edge — MEASURE
 r_glass = 7.0;       // glass corner radius (watch-style) — MEASURE
 aa_w = 32.634;       // active area width  (280 px long axis, landscape)
 aa_h = 27.972;       // active area height (240 px)
-aa_dx = 0.0; aa_dy = 0.0;   // AA centre offset from glass centre — MEASURE
+aa_dx = 0.0; aa_dy = 0.0;   // AA center offset from glass center — MEASURE
 
 /* [PCB behind the glass] — smaller than the glass, no mounting holes */
 pcb_w = 37.12;       // PCB outline width  (X)
@@ -52,14 +52,14 @@ panel_gap  = 0.0;    // spacer between the display-module base and the PCB front
                      // (0 = module bonded straight on) — MEASURE
 back_stack = 4.5;    // tallest thing behind the PCB (USB-C / JST / buzzer) — MEASURE
 
-/* [USB-C] — on the BOTTOM (−Y) edge, centred on the PCB thickness */
+/* [USB-C] — on the BOTTOM (−Y) edge, centered on the PCB thickness */
 opt_usb = true;
 usb_w = 9.2;   usb_h = 3.4;   usb_dx = 0.0;   // MEASURE your connector
 
 /* [Buttons] — PWR / BOOT / RST on the TOP (+Y) edge (side access holes) */
 opt_btn = true;
 btn_d = 3.4;                       // access hole Ø
-btn_xs = [-9.0, 0.0, 9.0];         // button X centres on the top edge — MEASURE
+btn_xs = [-9.0, 0.0, 9.0];         // button X centers on the top edge — MEASURE
 
 /* [Side cluster] — battery / RTC / pin row exit on the RIGHT (+X) edge */
 opt_side = true;
@@ -110,7 +110,7 @@ bez_h = face_t + cav_d;                         // bezel wall height
 r_in  = max(1.0, r_out - wall);                 // cavity corner radius
 
 z_pcb_front = face_t + lcd_rise;                // PCB front plane
-z_usb       = face_t + lcd_rise + pcb_t/2;      // USB-C centre (mid-PCB)
+z_usb       = face_t + lcd_rise + pcb_t/2;      // USB-C center (mid-PCB)
 
 // the face overlaps the glass border by (glass − AA)/2 per side; that retains it
 lip_w = (glass_w - aa_w)/2;   lip_h = (glass_h - aa_h)/2;

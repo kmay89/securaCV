@@ -13,7 +13,7 @@
 //     your LoRa board, battery holder and panel.
 //
 //  ⚠️ THERMAL: a dark sealed pod charging at solar noon can exceed the 18650's
-//     0..45 °C charge window — print in a LIGHT colour, rely on the roof shade,
+//     0..45 °C charge window — print in a LIGHT color, rely on the roof shade,
 //     and set a charge-temperature cutoff in firmware (see field_ratings.md).
 //     bh_l = 78 suits unprotected 65 mm cells; protected cells run to 69 mm.
 //  ⚠️ SEAL HONESTY: four corner screws clamp ~85 mm gasket spans — that is

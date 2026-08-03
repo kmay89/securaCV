@@ -2,7 +2,7 @@
 //  Canary — UNIVERSAL FIT-CHECK COUPON  ⚠️ IN DEVELOPMENT (v0.3-dev)
 //  ONE small print that calibrates your printer for the ENTIRE Canary
 //  catalog before you commit to any case. Every fit the enclosures use is
-//  exercised on a labelled station, laid out on a branded 90 × 68 plate:
+//  exercised on a labeled station, laid out on a branded 90 × 68 plate:
 //
 //    BASE (part="base", rigid) — stations left→right, top→bottom:
 //      EMBOSS  — raised "CANARY" wordmark (emboss_h): crisp or blobby?
@@ -149,7 +149,7 @@ g_wing = [[-30,12],[-13,24],[6,18],[24,-6],[9,-17],[-11,-11],[-24,0]];
 g_tailu = [[23,3],[43,-17],[67,-43]];      // tail edges, converging to a point
 g_taill = [[12,-27],[39,-33],[67,-43]];
 g_span = 110;        // design-unit height the mark spans
-g_cx   = 3.7;        // design-unit bbox centre
+g_cx   = 3.7;        // design-unit bbox center
 g_cy   = -0.5;
 
 module _gstroke(pts, t, closed = false) {
@@ -281,7 +281,7 @@ module base() {
             // POCKET station: keyhole pocket pair for the mate's studs (gap = stud_gap)
             keyhole_pocket(pocket_cx - stud_gap/2, -14);
             keyhole_pocket(pocket_cx + stud_gap/2, -14);
-            // labels — grid-aligned, none touching a neighbour
+            // labels — grid-aligned, none touching a neighbor
             lbl(-24, 21, "EMBOSS", 3);  lbl(-3, 20.5, "EMBLEM", 3);  lbl(22, 21, "DEBOSS", 3);
             lbl(-24, 9.5, "SLIDE");     lbl(2, 9.5, "PORT");     lbl(30, 9.5, "PRESS");
             lbl(-24, -4.5, "GROOVE", 3);   lbl(19, -5.5, "SCREW");

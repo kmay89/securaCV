@@ -61,7 +61,7 @@ P_ID     = 0;   // string, matches panel_variant
 P_LABEL  = 1;   // human name, appears in echoes and on generated docs
 P_STATUS = 2;   // "measured" | "drawing" | "unmeasured"
 P_GLASS  = 3;   // [w, h, t, r, edge_t]  — slab, corner radius, bare-glass border
-P_AA     = 4;   // [w, h, dy]            — active area and its offset from glass centre
+P_AA     = 4;   // [w, h, dy]            — active area and its offset from glass center
 P_RES    = 5;   // [px_w, px_h]          — pixels. NOT a mechanical field.
 P_CORE   = 6;   // [w, h, dy]            — the LCD module can behind the glass
 P_PCB    = 7;   // [w, h, t]             — carrier board outline
@@ -129,7 +129,7 @@ function panel_db() = [
 //   1. AN INCOMPLETE FLIP. m3 and microSD flipped sign; the can offset
 //      (core_dy) and active-area offset (aa_dy) did not. That is internally
 //      inconsistent — a module seated a half turn round has its can and its
-//      active area on the other side of the glass centre too. Completing the
+//      active area on the other side of the glass center too. Completing the
 //      flip is one line, and it immediately trips the ledge assert, because
 //      ledge_top (6.0) exceeds the 5.145 mm of border a flipped can leaves at
 //      the top. So EITHER the offsets genuinely do not flip, OR they do and
@@ -251,7 +251,7 @@ function pnl_ppi_y(p)   = 25.4 / pnl_pitch_y(p);
 function pnl_pixel_skew(p) =
     abs(pnl_pitch_x(p) / pnl_pitch_y(p) - 1);
 
-// The four mount-hole centres, in the mounting pose.
+// The four mount-hole centers, in the mounting pose.
 function pnl_m3_holes(p) =
     [for (sx = [1,-1], sy = [1,-1])
         [pnl_m3_ox(p) + sx*pnl_m3_dx(p)/2, pnl_m3_oy(p) + sy*pnl_m3_dy(p)/2]];
@@ -290,11 +290,11 @@ function panel_check(p) =
 // NOT PRINTABLE, and never exported as a part. This is the object the case
 // encloses, drawn so it can be seen and so the gates can probe it.
 //
-// Origin is the GLASS CENTRE, front face at z = 0, +z toward the BACK. That
+// Origin is the GLASS CENTER, front face at z = 0, +z toward the BACK. That
 // is the panel's own frame; a consumer places it wherever its own datum is.
 // `blow` explodes the stack along +z for an assembly figure: 0 is assembled.
 
-// THE PHYSICAL SLAB — solid only, no colour, no decoration, nothing that
+// THE PHYSICAL SLAB — solid only, no color, no decoration, nothing that
 // pokes outside the real envelope. This is the module the FIT GATES probe
 // with, which is why it is separated from the pretty version below: a gate
 // intersects this against the case and asks whether anything collides, so a
@@ -303,7 +303,7 @@ function panel_check(p) =
 // file built its own copy of this shape rather than risk that.
 //
 // STEPPED, and that is the whole point: a thin bare-glass border around a
-// thicker module can. Modelling it as a uniform slab is what once floated an
+// thicker module can. Modeling it as a uniform slab is what once floated an
 // adhesive ledge 3.2 mm clear of anything it was supposed to bond to.
 module pnl_slab(p, blow = 0) {
     linear_extrude(pnl_edge_t(p))

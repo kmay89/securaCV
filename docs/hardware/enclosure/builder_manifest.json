@@ -95,7 +95,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "526faf81ea8a4482135d5a2120e8f5162351948ef3856620bbf196a800ec8ed7",
+      "sha256": "0c011fdbba0d5178953efba1f27819517c5b89093a7e245a55a7e10f5f318462",
       "groups": [
         {
           "name": "What to render",
@@ -306,7 +306,7 @@
               "name": "kh_inset",
               "type": "number",
               "default": 10.0,
-              "desc": "keyhole centres at x = ±(inner_l/2 − kh_inset); auto-merges to one on small cases"
+              "desc": "keyhole centers at x = ±(inner_l/2 − kh_inset); auto-merges to one on small cases"
             },
             {
               "name": "tab_l",
@@ -389,7 +389,7 @@
               "name": "label_dx",
               "type": "number",
               "default": 0.0,
-              "desc": "label centre offset from the LID centre (not the board centre)"
+              "desc": "label center offset from the LID center (not the board center)"
             },
             {
               "name": "label_dy",
@@ -734,7 +734,7 @@
               "name": "usb_z",
               "type": "number",
               "default": -1.65,
-              "desc": "centres the opening on the connector AXIS: the C shell is 3.2 mm tall on the"
+              "desc": "centers the opening on the connector AXIS: the C shell is 3.2 mm tall on the"
             }
           ]
         },
@@ -998,7 +998,7 @@
         }
       },
       "units": {},
-      "sha256": "c4c09dc29ec0f1bb1ef7766d313082f0540225c57de5836f81f732d59dba71bc",
+      "sha256": "e2374c6023442848b8411928c3c16bfdf6012af99c0b9ca5eecb365105c7c2a8",
       "groups": [
         {
           "name": "What to render",
@@ -1223,13 +1223,13 @@
               "name": "lens_dx",
               "type": "number",
               "default": 0.0,
-              "desc": "lens centre offset from the camera-board centre — MEASURE"
+              "desc": "lens center offset from the camera-board center — MEASURE"
             },
             {
               "name": "lens_dy",
               "type": "number",
               "default": 2.5,
-              "desc": "(v1.3 lens sits ~2.5 mm above board centre)"
+              "desc": "(v1.3 lens sits ~2.5 mm above board center)"
             },
             {
               "name": "cam_ap_d",
@@ -1423,7 +1423,7 @@
               "name": "usb_z",
               "type": "number",
               "default": 0.0,
-              "desc": "extra lift relative to PCB-top centring"
+              "desc": "extra lift relative to PCB-top centering"
             },
             {
               "name": "usb_dx",
@@ -1441,7 +1441,7 @@
               "name": "xiao_usb_drop",
               "type": "number",
               "default": 10.0,
-              "desc": "XIAO port centre BELOW the module port centre — MEASURE the seated stack"
+              "desc": "XIAO port center BELOW the module port center — MEASURE the seated stack"
             }
           ]
         },
@@ -1458,7 +1458,7 @@
               "name": "prong_pitch",
               "type": "number",
               "default": 6.35,
-              "desc": "fin centre spacing (GoPro standard)"
+              "desc": "fin center spacing (GoPro standard)"
             },
             {
               "name": "fin_r",
@@ -1529,7 +1529,7 @@
               "name": "bracket_tripod",
               "type": "bool",
               "default": true,
-              "desc": "captive 1/4-20 nut pocket behind the centre fin (tripod mount)"
+              "desc": "captive 1/4-20 nut pocket behind the center fin (tripod mount)"
             }
           ]
         },
@@ -1571,7 +1571,7 @@
               "name": "kh_inset",
               "type": "number",
               "default": 12.0,
-              "desc": "pocket centres at y = ±(inner_y/2 − kh_inset), on the X centreline"
+              "desc": "pocket centers at y = ±(inner_y/2 − kh_inset), on the X centerline"
             }
           ]
         },
@@ -1861,7 +1861,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "2c9d067df58be4943aeb5220cbbf0e75ffc8c8804191dd9eb5d61a2c4e9503f8",
+      "sha256": "e17baaa404113b28719e214aed2b083b63f3eee73df4f325d89db8737f022f96",
       "groups": [
         {
           "name": "What to render",
@@ -1929,7 +1929,7 @@
               "name": "xiao_l",
               "type": "number",
               "default": 21.0,
-              "desc": "XIAO stacked on the module's socket, lower half, centred"
+              "desc": "XIAO stacked on the module's socket, lower half, centered"
             },
             {
               "name": "xiao_w",
@@ -2003,7 +2003,7 @@
               "name": "lens_dx",
               "type": "number",
               "default": 0.0,
-              "desc": "lens centre offset from the camera-board centre — MEASURE"
+              "desc": "lens center offset from the camera-board center — MEASURE"
             },
             {
               "name": "lens_dy",
@@ -2139,13 +2139,13 @@
               "name": "usb_exit_dx",
               "type": "number",
               "default": 5.0,
-              "desc": "exit offset from the centreline"
+              "desc": "exit offset from the centerline"
             },
             {
               "name": "usb_exit_dy",
               "type": "number",
               "default": 6.0,
-              "desc": "exit offset above the well centre — clears the lower T-stud pocket"
+              "desc": "exit offset above the well center — clears the lower T-stud pocket"
             }
           ]
         },
@@ -2298,7 +2298,7 @@
               "name": "stud_y",
               "type": "number",
               "default": 34.0,
-              "desc": "T-stud/pocket centres at y = ±stud_y (clear of the cable exit)"
+              "desc": "T-stud/pocket centers at y = ±stud_y (clear of the cable exit)"
             },
             {
               "name": "kh_head_d",
@@ -2591,7 +2591,7 @@
       "units": {
         "radome_t": "mm"
       },
-      "sha256": "af2e04a3e217696d12fa994f6c0dced1f6a9b3cc0a01b2e7c8570bcc673be947",
+      "sha256": "3d390380bf598fc215362ffd0747710e26b91216214449c51c065ea8ddd6a878",
       "groups": [
         {
           "name": "What to render",
@@ -2735,7 +2735,7 @@
               "name": "xiao_usb_z",
               "type": "number",
               "default": 4.0,
-              "desc": "XIAO USB-C centre above the back floor — MEASURE the seated stack"
+              "desc": "XIAO USB-C center above the back floor — MEASURE the seated stack"
             }
           ]
         },
@@ -2764,7 +2764,7 @@
               "name": "rad_dx",
               "type": "number",
               "default": 0.0,
-              "desc": "antenna-zone centre offset from the BOARD centre — MEASURE"
+              "desc": "antenna-zone center offset from the BOARD center — MEASURE"
             },
             {
               "name": "rad_dy",
@@ -3279,7 +3279,7 @@
       "id": "coupon",
       "file": "canary_fit_coupon.scad",
       "name": "Fit coupon",
-      "tagline": "The first-print calibration plate. Every fit used across the fleet's cases, as labelled test stations — print this first, tune the three tolerances, reuse everywhere.",
+      "tagline": "The first-print calibration plate. Every fit used across the fleet's cases, as labeled test stations — print this first, tune the three tolerances, reuse everywhere.",
       "about": "Every fit the fleet's cases use, gathered on one branded test plate: the Canary mark embossed in uniform domed strokes, the WAP's two-sided snap-clip channel, click-retained keyholes, magnet and light-pipe pockets, insert bores, the lid lip, the USB-C port opening, a −/0/+ screw-pilot ladder, and the embossed/debossed wordmarks every case's branding uses. A tight or loose station tells you which number to change — once, for every case after.",
       "print_plan": "Print the Base in PETG first — it's small next to any case. The Mate tests the keyholes (slide to the click) and its edge tongue tests the lid-lip channel; the Strip is the TPU gasket-squeeze test. Adjust the three tolerances and reprint until stations fit.",
       "simple": [
@@ -3300,7 +3300,7 @@
       },
       "part_info": {
         "all": "Base, mate and strip laid out together — in practice print them separately (the strip is TPU).",
-        "base": "The station plate: clip, pocket, bore, port and wordmark tests, each labelled with the parameter it exercises.",
+        "base": "The station plate: clip, pocket, bore, port and wordmark tests, each labeled with the parameter it exercises.",
         "mate": "T-studs that hang in the base's keyholes and click past the retention detent, plus a bottom-edge tongue for the slide channel — the stud face stays flat so the hang test seats fully.",
         "strip": "A soft TPU bar for the gasket groove — tests the squeeze that seals the weather builds."
       },
@@ -3333,7 +3333,7 @@
         "emblem_rib": "mm",
         "emblem_crown": "mm"
       },
-      "sha256": "b778991fd5149b4bb7e9a5e1a218ff71e7d176a3ad3198b22fc67aa1af1ef69e",
+      "sha256": "5cf185c96a9c3e958c6d1ceeec6e2eeaf822bfc5c50bef534f4daed1a983e450",
       "groups": [
         {
           "name": "What to render",
@@ -3656,7 +3656,7 @@
               "name": "g_cx",
               "type": "number",
               "default": 3.7,
-              "desc": "design-unit bbox centre"
+              "desc": "design-unit bbox center"
             },
             {
               "name": "g_cy",
