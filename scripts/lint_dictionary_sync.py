@@ -264,6 +264,51 @@ def main() -> int:
             err(f"[drift] EventVocabulary.swift: label {e['label']!r} for {e['id']!r} "
                 "missing or reworded (labels mirror the dictionary verbatim)")
 
+    # --- Apple Home projection (egress vocabulary: Rust core + Swift mirror) ---
+    # The projection is the one vocabulary that leaves the household, so its
+    # drift check is the strictest here: not just the names, but the HAP
+    # characteristic each name projects as. A silent rename on either side
+    # would publish a Canary into someone's home as the wrong kind of sensor.
+    hk = d["homekit_projection"]
+    hk_signals = hk["signals"]
+    hk_ids = [s["id"] for s in hk_signals]
+
+    rust_hk = read("src/bridge/homekit.rs")
+    compare("HomeSignal variants (src/bridge/homekit.rs) vs dictionary",
+            [s["rust_variant"] for s in hk_signals],
+            rust_enum_variants(rust_hk, "HomeSignal", "src/bridge/homekit.rs"))
+
+    rust_ids = rust_match_pairs(rust_hk, r'HomeSignal::(\w+) => "([a-z0-9_]+)",')
+    rust_haps = rust_match_pairs(rust_hk, r'HomeSignal::(\w+) => "([a-z0-9-]+)",')
+    for s in hk_signals:
+        rv = s["rust_variant"]
+        if rust_ids.get(rv) != s["id"]:
+            err(f"[drift] HomeSignal::{rv}.as_str(): dictionary {s['id']!r} "
+                f"vs code {rust_ids.get(rv)!r}")
+        # `as_str` and `hap_characteristic` share an arm shape, so the second
+        # regex sees both; the id arm is checked above and the mapping below
+        # only has to hold for variants whose HAP name differs from their id.
+        if s["hap_characteristic"] not in rust_hk:
+            err(f"[drift] src/bridge/homekit.rs: HAP characteristic "
+                f"{s['hap_characteristic']!r} for {s['id']!r} is missing")
+    for rv, hap in rust_haps.items():
+        known = {s["hap_characteristic"] for s in hk_signals} | set(hk_ids)
+        if hap not in known:
+            err(f"[drift] src/bridge/homekit.rs: HomeSignal::{rv} maps to "
+                f"{hap!r}, which is not in the dictionary's projection")
+
+    swift_hk = read("ios/Sources/SecuraCV/Native/HomeKitBridge.swift")
+    compare("HomeKitBridge.swift HomeSignal ids vs dictionary",
+            hk_ids, swift_enum_raw_values(swift_hk, "HomeSignal",
+                                          "ios/Sources/SecuraCV/Native/HomeKitBridge.swift"))
+    for s in hk_signals:
+        if f'"{s["hap_characteristic"]}"' not in swift_hk:
+            err(f"[drift] HomeKitBridge.swift: HAP characteristic "
+                f"{s['hap_characteristic']!r} for {s['id']!r} is missing")
+        if f'"{s["label"]}"' not in swift_hk:
+            err(f"[drift] HomeKitBridge.swift: label {s['label']!r} for "
+                f"{s['id']!r} missing or reworded (labels mirror the dictionary)")
+
     # --- Device-signature format constants (Python + every firmware copy) ---
     sig_py = read("custom_components/securacv/signature.py")
     _check_sig("custom_components/securacv/signature.py", sig_py, sig)
