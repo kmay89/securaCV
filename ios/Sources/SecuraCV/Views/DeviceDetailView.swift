@@ -14,6 +14,12 @@ struct DeviceDetailView: View {
     @State private var verifying = false
     @State private var verdict: ChainVerdict?
 
+    /// The pushed `witness` value goes stale the moment the store updates
+    /// (e.g. right after Mute) — render mute state from the live row.
+    private var liveWitness: Witness {
+        store.witnesses.first { $0.id == witness.id } ?? witness
+    }
+
     var body: some View {
         List {
             Section("Trust") {
@@ -52,8 +58,14 @@ struct DeviceDetailView: View {
             }
 
             Section {
-                Button(witness.isMuted ? "Unmute" : "Mute for 1 hour") { }
-                    .tint(Theme.color(.warn))
+                Button(liveWitness.isMuted ? "Unmute" : "Mute for 1 hour") {
+                    if liveWitness.isMuted {
+                        store.unmute(witness.id)
+                    } else {
+                        store.mute(witness.id)
+                    }
+                }
+                .tint(Theme.color(.warn))
             } footer: {
                 Text("A muted Canary stops nagging but stays visible — tamper and a failed signature still punch through.")
             }

@@ -82,6 +82,21 @@ final class WristStore: NSObject, ObservableObject {
                             })
     }
 
+    /// Mute one witness for an hour, from the wrist. The phone owns the mute
+    /// semantics (ledger, tamper punch-through); the reply snapshot carries
+    /// the updated row, so the screen answers the tap immediately.
+    func mute(id: String) {
+        let session = WCSession.default
+        guard WCSession.isSupported(),
+              session.activationState == .activated, session.isReachable else { return }
+        session.sendMessage([WristSync.messageCommandKey: WristSync.commandMute,
+                             WristSync.muteIDKey: id],
+                            replyHandler: { [weak self] reply in
+                                Task { @MainActor in self?.adopt(context: reply) }
+                            },
+                            errorHandler: nil)
+    }
+
     /// The reply to OUR test request: adopt the snapshot it carries and play
     /// the verdict it states — the one correlated answer.
     private func resolvePathTest(with reply: [String: Any]) {

@@ -30,3 +30,29 @@ enum WristCache {
         return try? WristSync.makeDecoder().decode(WristSnapshot.self, from: data)
     }
 }
+
+/// The PHONE-side twin: written by FleetStore into the iPhone app group
+/// (`group.com.securacv.witness` — the one the app and widget entitlements
+/// have carried since day one, now actually earning its keep), read by the
+/// iPhone Lock Screen / Home Screen widgets, and — next — by the NSE when it
+/// hydrates a content-free push. Same WristSnapshot shape everywhere: one
+/// glance contract for every ambient surface.
+enum PhoneGlanceCache {
+    static let appGroupID = "group.com.securacv.witness"
+    static let snapshotKey = "fleet_glance_v1"
+    /// The iPhone glance widget's kind string — FleetStore reloads exactly
+    /// this timeline when the cached truth changes.
+    static let widgetKind = "SecuraCVFleetGlancePhone"
+
+    static func save(_ snapshot: WristSnapshot, to defaults: UserDefaults? = nil) {
+        guard let store = defaults ?? UserDefaults(suiteName: appGroupID),
+              let data = try? WristSync.makeEncoder().encode(snapshot) else { return }
+        store.set(data, forKey: snapshotKey)
+    }
+
+    static func load(from defaults: UserDefaults? = nil) -> WristSnapshot? {
+        guard let store = defaults ?? UserDefaults(suiteName: appGroupID),
+              let data = store.data(forKey: snapshotKey) else { return nil }
+        return try? WristSync.makeDecoder().decode(WristSnapshot.self, from: data)
+    }
+}

@@ -9,6 +9,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import WidgetKit
 
 @MainActor
 final class FleetStore: ObservableObject {
@@ -33,6 +34,13 @@ final class FleetStore: ObservableObject {
 
     private var refreshTask: Task<Void, Never>?
     private var bag = Set<AnyCancellable>()
+
+    /// Durable per-witness mutes, re-applied at every fold (rows are rebuilt
+    /// from device truth, so mute must outlive them).
+    private let muteLedger = MuteLedger()
+    /// Content fingerprint of the last glance snapshot handed to the iPhone
+    /// widgets — reload their timelines only when the truth changed.
+    private var lastGlanceFingerprint: Data?
 
     // True while the heartbeat's lastVerified came from demo seeding rather
     // than a real end-to-end confirmation — so it can be revoked the moment
@@ -63,6 +71,9 @@ final class FleetStore: ObservableObject {
         discovery.start()
         ble.startScan()
         WatchLink.shared.activate(store: self)
+        // Notification actions land on the witness id in the thread field.
+        alerts.onMute = { [weak self] id in self?.mute(id) }
+        alerts.onAck = { _ in }   // clearing the stack is the ack, for now
         Task { await alerts.requestAuthorization() }
         Task { await hydrateFromCloud() }
         recordDemoBeatIfHarmless()
@@ -216,6 +227,10 @@ final class FleetStore: ObservableObject {
             recordDemoBeatIfHarmless()
         }
 
+        // Durable mutes survive the rebuild (tamper still punches through —
+        // that guarantee lives in Witness.effectiveSeverity).
+        muteLedger.apply(to: &next)
+
         witnesses = next.sorted { $0.effectiveSeverity > $1.effectiveSeverity }
         timeline = events.sorted { $0.timeBucket > $1.timeBucket }
         // Re-evaluate the dead-man's-switch EVERY cycle, not just on scene
@@ -226,6 +241,7 @@ final class FleetStore: ObservableObject {
         heartbeat.tick()
         pushLiveActivity()
         WatchLink.shared.pushCurrent()   // content-deduped; free when nothing moved
+        publishGlanceCache()             // ditto, for the iPhone widgets
         evaluateAlerts()
         // Felt once, at the crossing — never on the cycles that stay there.
         // Compared against the last severity we BUZZED for, read and written
@@ -239,6 +255,46 @@ final class FleetStore: ObservableObject {
     /// The last worst-severity this store produced feedback against — the
     /// serialization point for the one-buzz-per-crossing promise.
     private var lastFeltWorst: Severity = .ok
+
+    // MARK: - mute (the ledger is the truth; rows are its projection)
+
+    /// Mute one witness — from the detail screen, a notification action, or
+    /// the wrist. Caps nagging at Notice; tamper and a failed signature
+    /// still punch through (Witness.effectiveSeverity owns that guarantee).
+    func mute(_ id: String, for duration: TimeInterval = 3600) {
+        muteLedger.set(until: Date().addingTimeInterval(duration), for: id)
+        applyMutesAndRepublish()
+    }
+
+    func unmute(_ id: String) {
+        muteLedger.clear(id)
+        applyMutesAndRepublish()
+    }
+
+    private func applyMutesAndRepublish() {
+        var rows = witnesses
+        for i in rows.indices {
+            rows[i].mutedUntil = muteLedger.muteUntil(for: rows[i].id)
+        }
+        witnesses = rows.sorted { $0.effectiveSeverity > $1.effectiveSeverity }
+        pushLiveActivity()
+        WatchLink.shared.pushCurrent()
+        publishGlanceCache()
+    }
+
+    // MARK: - the iPhone widgets' cache
+
+    /// Park the same glance snapshot the wrist gets into the phone-side app
+    /// group, and wake the widgets — only when the truth actually changed.
+    private func publishGlanceCache() {
+        var snapshot = WristSnapshot(store: self)
+        guard let fingerprint = try? WristSync.makeEncoder().encode(snapshot),
+              fingerprint != lastGlanceFingerprint else { return }
+        lastGlanceFingerprint = fingerprint
+        snapshot.sentAt = Date()
+        PhoneGlanceCache.save(snapshot)
+        WidgetCenter.shared.reloadTimelines(ofKind: PhoneGlanceCache.widgetKind)
+    }
 
     /// Poll one device: /info for liveness + /witness for the chain head, verify
     /// on-device, pin its key TOFU. Static so the task group stays Sendable-safe.

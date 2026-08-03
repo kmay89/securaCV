@@ -51,7 +51,7 @@ struct AlertRule: Codable, Hashable, Identifiable {
 }
 
 @MainActor
-final class AlertCenter: ObservableObject {
+final class AlertCenter: NSObject, ObservableObject {
     @Published var rules: [AlertRule] = AlertRule.defaults
     @Published private(set) var authorized = false
 
@@ -60,7 +60,36 @@ final class AlertCenter: ObservableObject {
     /// whether .critical is real.
     static var hasCriticalEntitlement = false
 
+    /// Notification category + action identifiers — one category for every
+    /// witness alert, so Ack / Mute ride along to the wrist for free (the
+    /// system mirrors categories and actions to a paired watch).
+    static let witnessCategoryID = "SECURACV_WITNESS"
+    static let ackActionID = "SECURACV_ACK"
+    static let muteActionID = "SECURACV_MUTE_1H"
+    /// The self-test's thread — the one alert Mute/Ack make no sense for.
+    static let selfTestThread = "selftest"
+
+    /// Wired by FleetStore: the notification actions land here, on the
+    /// witness id carried as the thread identifier.
+    var onAck: ((String) -> Void)?
+    var onMute: ((String) -> Void)?
+
     private let center = UNUserNotificationCenter.current()
+
+    override init() {
+        super.init()
+        // Delegate + categories must exist before the first delivery, not
+        // after the first tap — set them the moment the brain is built.
+        center.delegate = self
+        let ack = UNNotificationAction(identifier: Self.ackActionID,
+                                       title: "Acknowledge")
+        let mute = UNNotificationAction(identifier: Self.muteActionID,
+                                        title: "Mute 1 hour")
+        let category = UNNotificationCategory(identifier: Self.witnessCategoryID,
+                                              actions: [ack, mute],
+                                              intentIdentifiers: [])
+        center.setNotificationCategories([category])
+    }
 
     func requestAuthorization() async {
         // iOS does NOT ignore an unentitled .criticalAlert — it fails the
@@ -81,15 +110,20 @@ final class AlertCenter: ObservableObject {
         Self.hasCriticalEntitlement = settings.criticalAlertSetting == .enabled
     }
 
-    /// Decide the level for an incoming event, honoring the armed rules. Returns
-    /// nil when the event is pull-only (must NOT push) — the abuse guard.
+    /// Decide the level for an incoming event, honoring the armed rules AND
+    /// the user's Focus (FocusGate — set from iOS's own Focus settings via
+    /// FleetFocusFilter). Returns nil when the event is pull-only (must NOT
+    /// push) — the abuse guard.
     func level(for severity: Severity, awayFromHome: Bool) -> AlertLevel? {
         let matching = rules.filter { $0.enabled && severity >= $0.minSeverity }
         guard let strongest = matching.max(by: { $0.minSeverity < $1.minSeverity }) else { return nil }
         if awayFromHome && strongest.reach == .onWiFiOnly { return nil }   // reach honesty
         switch strongest.minSeverity {
         case .tamper: return .critical
-        case .alert: return .important
+        case .alert:
+            // The user's Focus said "only life-safety" — honor it. Critical
+            // still passes: Focus quiets the everyday, never the smoke alarm.
+            return FocusGate.criticalOnly() ? nil : .important
         default: return nil          // digest events are pulled, never pushed —
                                      // nil IS the abuse guard this method promises
         }
@@ -136,6 +170,60 @@ final class AlertCenter: ObservableObject {
         let interruption = level.interruption(critical: Self.hasCriticalEntitlement)
         content.interruptionLevel = interruption
         content.sound = interruption == .critical ? .defaultCritical : .default
+        // Summary honesty: the system stacks and ranks by relevance — a
+        // critical must never sort under an everyday important.
+        content.relevanceScore = level == .critical ? 0.9 : 0.6
+        // Witness alerts are actionable (Ack / Mute, mirrored to the wrist);
+        // the self-test is not — muting a test would mean nothing.
+        if threadID != Self.selfTestThread {
+            content.categoryIdentifier = Self.witnessCategoryID
+        }
         return UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+    }
+}
+
+// MARK: - delegate (foreground presentation + the actions' landing pad)
+
+extension AlertCenter: UNUserNotificationCenterDelegate {
+    /// Foreground presentation: an alert the brain decided to post is worth
+    /// seeing even with the app open — iOS suppresses them entirely unless
+    /// the delegate opts in.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                            willPresent notification: UNNotification)
+        async -> UNNotificationPresentationOptions {
+        [.banner, .list, .sound]
+    }
+
+    /// Ack / Mute / tap-through. The witness id travels as the thread
+    /// identifier, so the action needs no payload of its own.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                            didReceive response: UNNotificationResponse) async {
+        let threadID = response.notification.request.content.threadIdentifier
+        let action = response.actionIdentifier
+        guard threadID != Self.selfTestThread, !threadID.isEmpty else { return }
+        await MainActor.run {
+            switch action {
+            case Self.ackActionID:
+                self.onAck?(threadID)
+                self.clearDelivered(thread: threadID)
+            case Self.muteActionID:
+                self.onMute?(threadID)
+                self.clearDelivered(thread: threadID)
+            default:
+                break   // default tap just opens the app — the Today tab is the answer
+            }
+        }
+    }
+
+    /// "Ack travels": acknowledging clears the stack for that witness here,
+    /// and (because delivered notifications sync) from the mirrored wrist too.
+    private func clearDelivered(thread: String) {
+        let center = self.center
+        center.getDeliveredNotifications { delivered in
+            let ids = delivered
+                .filter { $0.request.content.threadIdentifier == thread }
+                .map { $0.request.identifier }
+            if !ids.isEmpty { center.removeDeliveredNotifications(withIdentifiers: ids) }
+        }
     }
 }
