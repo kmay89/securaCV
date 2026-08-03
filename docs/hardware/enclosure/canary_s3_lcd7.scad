@@ -171,10 +171,10 @@
 //  the walls meet the back plate (plate_fillet — corner-drop crack starter,
 //  boss-root doctrine applied to the perimeter), and root reinforcement on
 //  the SD leash (cap flare + shaft cone, both inside envelopes that were
-//  already asserted). v0.9 is the PLUMAGE pass: the brand vent pattern
-//  (canary_vent_lib.scad — teardrop feathers, point-up, offset rows)
-//  replaces the slat grid on BOTH back grilles and the frame's side
-//  gills. Open area holds or rises (echoes exact, via feather_area);
+//  already asserted). v0.9 is the HATCHERY pass: the brand vent pattern
+//  (canary_vent_lib.scad — upright eggs in offset rows, a clutch in a
+//  nest) replaces the slat grid on BOTH back grilles and the frame's side
+//  gills. Open area holds or rises (echoes exact, via egg_area);
 //  the dock-key slots, top exhaust, bottom intake and the whole
 //  bottom-in → top-out convection doctrine are untouched, so the case
 //  breathes the same wall-mounted (back blocked) and better on the
@@ -192,12 +192,12 @@
 
 use <canary_panel_lib.scad> // THE PANEL REGISTRY — every panel/board number
                             // this file uses comes from there, not from here
-use <canary_vent_lib.scad>  // the brand vent shape: feather2d / feather_area
+use <canary_vent_lib.scad>  // the brand vent shape: egg2d / egg_area
 use <canary_s3_lcd7_stamp.scad>   // GENERATED build stamp — see gen_stamp.py
 // Downloaded this file on its own? It CUTS ITS VENTS with that library — a
 // missing lib would render a sealed, overheating case with only a console
 // warning. This guard turns that into a hard stop instead:
-assert(is_num(feather_area(7, 4)),
+assert(is_num(egg_area(7, 4)),
        "canary_vent_lib.scad is MISSING — this case cuts its grille and gills with it. Download canary_vent_lib.scad from the same folder and keep the two files side by side.");
 
 /* [What to render] */
@@ -418,35 +418,35 @@ side_open_h = 40.0;     side_open_dy = 0.0;     // tall slot on each short wall
 vent_back = true;        // large grille in the back plate
 vent_rows = 11;          // grille rows
 vent_cols = 20;          // grille columns
-vent_slot_w = 5.2;       // feather base width — the grille is the PLUMAGE
-                         // pattern (canary_vent_lib.scad): teardrop
-                         // feathers, point-up, in offset rows. One feather
-                         // passes 27% more air than the slat it replaces
-                         // (25.9 vs 20.4 mm2 per cell) with no slot
-                         // corners to shed vortices or collect dust lines
-vent_slot_l = 7.2;       // feather length (point-up: sheds drips on a
-                         // vertical face; see the lib header for limits)
-vent_tip    = 0.72;      // EGG, not feather — the hatchery mark. The profile
-                         // is the same primitive either way (a hull of two
-                         // circles, wide end down); the ratio is what decides
-                         // whether it reads as a teardrop with a point or an
-                         // egg with a rounded crown. 0.28 was the feather;
-                         // 0.58 still reads as a pear, 0.72 as an egg — that
-                         // was judged off a render of all three side by side,
-                         // at $fn 96, because at the preview's default facet
-                         // count every one of them looks like a polygon.
+vent_slot_w = 5.2;       // egg base width — the grille is the HATCHERY
+                         // pattern (canary_vent_lib.scad): upright eggs in
+                         // offset rows, a clutch in a nest. One egg passes
+                         // 41% more air than the slat it replaced (28.8 vs
+                         // 20.4 mm2 per cell) with no slot corners to shed
+                         // vortices or collect dust lines
+vent_slot_l = 7.2;       // egg length (upright: sheds drips on a vertical
+                         // face; see the lib header for limits)
+vent_tip    = egg_tip(); // DERIVED from canary_vent_lib.scad — never a typed
+                         // number. The tip ratio is the line-wide brand
+                         // constant; its one home is egg_tip() in the library,
+                         // so changing it there moves this case with it. A
+                         // local copy would read identically today and silently
+                         // strand the 7" wearing the old mark the first time
+                         // the line changed — which is exactly what an earlier
+                         // draft of this line did.
                          //
-                         // ⚠️ THIS IS THE LINE-WIDE BRAND CONSTANT. The comment
-                         // it replaces said "keep it default so every Canary
-                         // wears the same mark", and that is still true — the
-                         // 7" now wears an egg while every other case in the
-                         // catalog still wears a feather. Either the rest of
-                         // the line follows, or the line is deliberately mixed.
-                         // Flagged rather than quietly diverged.
+                         // 0.28 was the FEATHER the library shipped with;
+                         // 0.72 is the EGG. Same primitive either way (a hull
+                         // of two circles, wide end down) — the ratio alone
+                         // decides whether it reads as a teardrop with a
+                         // point or an egg with a rounded crown. 0.58 still
+                         // reads as a pear. Judged off a render of all three
+                         // side by side at $fn 96, because at the preview's
+                         // default facet count every one looks like a polygon.
                          //
-                         // Still self-supporting: the crown is a circle, so the
-                         // top of the hole is an arch, not a bridge — the same
-                         // reason the feather's point was safe.
+                         // Still self-supporting: the crown is a circle, so
+                         // the top of the hole is an arch, not a bridge — the
+                         // same reason the feather's point was safe.
 vent_pitch_x = 7.6;      // column pitch
 vent_pitch_y = 8.0;      // row pitch
 vent_top = true;         // EXHAUST — slots through the top (+Y) wall
@@ -666,11 +666,13 @@ gill_w = 2.4;  gill_l = 9.0;  gill_rake = 0;    // rake 0: vertical slots print
                      // cleanest; the raked look read as slashes and bought
                      // nothing thermally. gill_w still sizes the DOCK KEY
                      // slots (the stand's studs mate them — do not move);
-                     // the visible side gills themselves are feathers:
-gill_vw = 3.6;       // side-gill feather base width — area matches the old
-                     // 2.4-wide pill (21.2 vs 20.4 mm2), point-up when
-                     // wall-mounted so a drip running down the wall splits
-                     // around the opening
+                     // the visible side gills themselves are eggs:
+gill_vw = 3.6;       // side-gill egg base width — area matches the old
+                     // 2.4-wide pill (21.2 vs 20.4 mm2), upright when
+                     // wall-mounted so a drip running down the wall parts
+                     // around the opening. (gill_n = 0 today: the gills are
+                     // off — they printed ugly and the back grille carries
+                     // the ventilation. Kept sized so they can come back.)
 frame_vent_flank_n = 4;  // exhaust slots per side, flanking the button window
 // Dock keying — chamfered centring keys on the desk dock rise into gill-style
 // slots the case walls carry, so the docked case self-centres and cannot
@@ -1030,10 +1032,20 @@ stand_slot_y  = 32.0;  // seat centreline, measured from the plate's front edge
 stand_clear   = 0.5;   // per-face case<->slot clearance (drop-in, not press)
 stand_cable_w = 16.0;  // desk-level cable channel width (through plate + fin foot)
 stand_feet    = true;  // 4x shallow recesses for adhesive rubber feet
-feather_vents = true;  // shape the fin vents as FEATHER BARBS (a pointed
-                       // vesica) instead of plain stadium pills — the house
-                       // pattern, and self-supporting at the apex on this
-                       // near-vertical fin. false restores the pills.
+barb_vents = true;     // shape the fin vents as BARBS (a pointed vesica)
+                       // instead of plain stadium pills — self-supporting at
+                       // the apex on this near-vertical fin. false restores
+                       // the pills.
+                       //
+                       // These are NOT the house mark and are not meant to
+                       // be. The hatchery egg is a PROPORTION (~1.4:1, the
+                       // grille's 7.2 x 5.2) as much as a tip ratio; a fin
+                       // vent is 52 x 16, over 3:1, and the same ratio there
+                       // reads as a tapered slot, not an egg. Nor can it be
+                       // broken into a column of small eggs: the +/-|sd_dx|
+                       // pair sits ON the microSD opening so the card stays
+                       // reachable while docked, and webs across it would
+                       // trap the card. Structural opening, structural shape.
 
 include <canary_s3_lcd7_qr.scad>   // qr_url() / qr_bits() — generated, committed
 qr_n = len(qr_bits());             // symbol size — defined HERE, above every use
@@ -1113,8 +1125,8 @@ qr_back_reach = qr_n*qr_back_cell/2 + 4*qr_back_cell;   // field/2 + quiet zone,
 stamp_show  = true;
 stamp_depth = 0.5;   // of back_t; the plate keeps 2.5 under it
 stamp_dy    = 49.0;  // the clear band above the grille. Its floor is not a
-                     // constant: the top feather row's centre is at
-                     // (vent_rows-1)/2*vent_pitch_y and the feather reaches
+                     // constant: the top egg row's centre is at
+                     // (vent_rows-1)/2*vent_pitch_y and the egg reaches
                      // half its length past that, so the assert below derives
                      // the bound instead of quoting a number that would rot
 stamp_size  = 2.4;
@@ -1270,8 +1282,8 @@ fr_keep_base = concat(
     sd_tether ? [[sd_dx, (sd_dy + sd_l/2 - 1 + sd_teth_y + 2)/2, 4.3,
                   (sd_teth_y + 2 - (sd_dy + sd_l/2 - 1))/2 + 5.1]] : [],
     // the back QR's field + quiet zone: smooth skin, no slot may enter
-    // the QR keepout is grown by the feather's own half-extents: the cell
-    // list stores CENTRES, and a feather whose centre is just outside the
+    // the QR keepout is grown by the egg's own half-extents: the cell
+    // list stores CENTRES, and an egg whose centre is just outside the
     // quiet zone would otherwise lay its body across it — at worst sharing
     // a face with a module cell, which CGAL rightly calls non-manifold
     qr_back ? [[qr_back_dx, qr_back_dy,
@@ -1413,23 +1425,25 @@ assert(ledge_z + ledge_t < glass_guard + glass_t + pcb_standoff,
 assert(glass_edge_t > 0 && glass_edge_t < glass_t,
        "frame: glass_edge_t is the panel's bare-glass border — it must be thinner than the full module stack (glass_t) and non-zero");
 assert(vent_pitch_x - vent_slot_w >= 2.39 && vent_pitch_y - vent_slot_l >= 0.79,
-       "grille: feather webs too thin — grow the pitches or shrink the feather");
+       "grille: egg webs too thin — grow the pitches or shrink the egg");
 // The band moved with the mark. 0.15..0.6 described a FEATHER — below 0.15 the
 // crown closes to a needle that will not print, above 0.6 the taper stops
-// reading as a point. The egg lives above that, so the band is now stated per
-// motif rather than as one number that quietly means "feather".
+// reading as a point. The egg lives above that, so the band spans both motifs
+// rather than being one number that quietly means "feather".
 assert(vent_tip > 0.15 && vent_tip < 0.85,
        str("grille: vent_tip ", vent_tip, " is outside 0.15..0.85. Below 0.15 ",
            "the crown closes to a needle; above 0.85 the shape is a stadium ",
            "with no taper at all and is no longer a mark. Feather territory is ",
-           "~0.28, egg ~0.72 — pick one deliberately, it is the brand constant ",
-           "and every other case in the catalog still wears the feather."));
+           "~0.28, egg ~0.72. This case does not pick either — vent_tip is ",
+           "egg_tip() from canary_vent_lib.scad, the line-wide constant. If ",
+           "this fired, the LIBRARY moved out of band: fix it there, so every ",
+           "adopter follows instead of just this one."));
 stamp_half = stamp_size*0.9 + stamp_size*0.39 + 0.6;   // text block half-height
 assert(!stamp_show || (stamp_depth < back_t - 1.5
        && stamp_dy - stamp_half
             > (vent_rows - 1)/2*vent_pitch_y + vent_slot_l/2 + 1
        && stamp_dy + stamp_half < fr_yi/2 - plate_fillet - 0.5),
-       "frame: build stamp collides with the top feather row, the plate rim/fillet, or thins the plate");
+       "frame: build stamp collides with the top egg row, the plate rim/fillet, or thins the plate");
 // Negative is legal and is what ships (wipe relief), but only just: past a
 // layer or two the glass is standing on its own edge with no case around it,
 // which is a chipped corner waiting to happen. Positive is still a trim
@@ -1671,7 +1685,7 @@ assert(fr_yo/2 + 2 < std_open/2,
 echo(str("Canary 7in touch v0.9-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
          " mm, window ", view_w, " x ", view_h, ", lip ", lip_min,
          " mm, tray grille ~",
-         round(vent_back ? len(grille_cells())*feather_area(vent_slot_l, vent_slot_w, vent_tip)/100 : 0),
+         round(vent_back ? len(grille_cells())*egg_area(vent_slot_l, vent_slot_w, vent_tip)/100 : 0),
          " cm2 open (computed, boss dodges included)",
          "  (IN DEVELOPMENT — MEASURE CONNECTORS)"));
 // The panel this case is for, read straight off the registry record — so a
@@ -1711,13 +1725,13 @@ echo(str("  frame mounting: 4x keyhole, ", back_t + khm_pad_t,
                    : "off"));
 echo(str("  frame back grille: ", len(grille_cells(-m3_ox, m3_oy, fr_keepouts)),
          " slots ≈ ", round(len(grille_cells(-m3_ox, m3_oy, fr_keepouts))
-                            *feather_area(vent_slot_l, vent_slot_w, vent_tip)/100), " cm2 open",
+                            *egg_area(vent_slot_l, vent_slot_w, vent_tip)/100), " cm2 open",
          adh_rails ? str(" — the adhesive rails cost ",
              len(grille_cells(-m3_ox, m3_oy, fr_keep_base))
              - len(grille_cells(-m3_ox, m3_oy, fr_keepouts)), " slots ≈ ",
              round((len(grille_cells(-m3_ox, m3_oy, fr_keep_base))
                     - len(grille_cells(-m3_ox, m3_oy, fr_keepouts)))
-                   *feather_area(vent_slot_l, vent_slot_w, vent_tip)/100),
+                   *egg_area(vent_slot_l, vent_slot_w, vent_tip)/100),
              " cm2 (adh_rails=false reclaims them); the bottom-intake → ",
              "top-exhaust wall vents are untouched either way") : ""));
 echo(str("  frame two-colour (optional, single extruder): prints back-plate-",
@@ -1741,8 +1755,14 @@ if (print_colours)
              " at z = ", fr_depth - bezel_ink_t, " — the ",
              fr_depth - label_back_depth - bezel_ink_t,
              " mm of shell between them never changes filament, so the purge ",
-             "tower stays short. The QR's modules are INK on a ", pal_body,
-             " field: dark-on-light, which is the only polarity a reader ",
+             "tower stays short. The QR reads ",
+             qr_dark_plate
+               ? str(pal_body, " modules on a ", pal_ink, " plaque (the ink ",
+                     "prints as the FIELD and the modules are punched ",
+                     "through it)")
+               : str(pal_ink, " modules on the ", pal_body, " field (the ink ",
+                     "prints as the MODULES)"),
+             ": dark-on-light, which is the only polarity a reader ",
              "accepts — do not put the accent on the finder patterns"));
 echo(str("  stand: ", stand_w, " x ", std_d, " base, ", stand_ang,
          "° recline, slot ", std_cd, " mm for the ", fr_depth,
@@ -1787,9 +1807,17 @@ if (qr_back)
          qr_back_cell, " mm (", qr_n*qr_back_cell, " mm field) on the back",
          " plate at (", qr_back_dx, ", ", qr_back_dy, "), its grille keepout",
          " doubling as the quiet zone. Prints in the FIRST layers on the",
-         " textured plate. Polarity: the modules are ", pal_ink, " (they are",
-         " in ink_groups, so they arrive as the back inlay) in the ", pal_body,
-         " plate — dark-on-light, the only polarity a reader accepts. It costs",
+         " textured plate. Polarity: ",
+         qr_dark_plate
+           ? str("the body (", pal_body, ") is the DARKER filament, so the ",
+                 pal_ink, " inlay prints as the PLAQUE — a light field with",
+                 " the modules punched through it, showing ", pal_body)
+           : str("the body (", pal_body, ") is the LIGHTER filament, so the ",
+                 pal_ink, " inlay prints as the MODULES themselves, directly",
+                 " on the body"),
+         " — dark modules on a light field either way, which is the only",
+         " polarity a reader accepts. Derived from the palette (pal_lum), not",
+         " remembered. It costs",
          " no extra swap: the back skin is already a tool change. Rehearse it",
          " with part=\"coupon_qr_body\"/\"coupon_qr_ink\" and SCAN THE COUPON",
          " before committing a frame — cell size is the one thing only a phone",
@@ -1890,7 +1918,7 @@ module vent_grille(ox = m3_ox, oy = m3_oy, keepouts = []) {
     for (p = grille_cells(ox, oy, keepouts))
         translate([p[0], p[1] - vent_slot_l/2 + vent_slot_w/2, -0.1])
             linear_extrude(back_t + 0.2)
-                feather2d(vent_slot_l, vent_slot_w, vent_tip);
+                egg2d(vent_slot_l, vent_slot_w, vent_tip);
 }
 module back() {
     total_d = cav_d + back_t;   // full tray depth (floor + cavity to glass ledge)
@@ -1993,16 +2021,16 @@ module pill2d(l, w) { hull() for (d = [-1, 1]) translate([0, d*(l - w)/2]) circl
 // child (a group), so intersection() over it quietly returns the UNION, and
 // the two circles then swallow the entire fin. This builtin exists for
 // exactly this case.
-// (named barb2d, not feather2d: the brand grille's feather — round base,
-// one point — lives in canary_vent_lib.scad, and two different shapes
-// cannot share a name. A local definition silently shadows a use<>d one,
-// which is how the grille's 3-argument calls started warning.)
+// (named barb2d, not egg2d: the brand grille's mark — round base, rounded
+// crown — lives in canary_vent_lib.scad, and two different shapes cannot
+// share a name. A local definition silently shadows a use<>d one, which is
+// how the grille's 3-argument calls started warning.)
 module barb2d(l, w) {
     r = (l*l + w*w)/(4*w);
     intersection_for (s = [1, -1]) translate([s*(r - w/2), 0]) circle(r);
 }
 // The vent shape the dock actually cuts — one switch for the whole pattern.
-module vent2d(l, w) { if (feather_vents) barb2d(l, w); else pill2d(l, w); }
+module vent2d(l, w) { if (barb_vents) barb2d(l, w); else pill2d(l, w); }
 // Back-plate deboss: label_back_depth, not label_depth — the floors must sit
 // above the two-colour swap band (see the knob's comment).
 // QR modules, shaped for a NOZZLE. Cutting one square per dark module
@@ -2187,8 +2215,12 @@ module coupon_clip() {
 // What it tests, none of which a slicer preview answers:
 //   · whether the symbol SCANS at qr_back_cell — the real question, and one
 //     only a phone can settle. 1.3 mm modules are ~3 line widths at 0.42.
-//   · the polarity: ink modules in a body-colour field, dark-on-light, which
-//     is the only polarity a reader accepts
+//   · the polarity: dark modules on a light field, which is the only
+//     polarity a reader accepts. WHICH filament plays which part is derived
+//     from the palette (qr_dark_plate, off pal_lum) and flips with it — on
+//     today's black body the INK is the plaque and the modules are punched
+//     through it in body colour; on the old white body the ink WAS the
+//     modules. Do not restate it as a fixed assignment; it rotted once
 //   · purge bleed on the deboss floors, where black-into-white shows first
 //     and where it would cost the symbol its contrast
 // Print it, scan it with a phone, and only then commit a frame.
@@ -2250,8 +2282,8 @@ module vent_accent_rings() {
                     translate([p[0], p[1] - vent_slot_l/2 + vent_slot_w/2])
                         difference() {
                             offset(r = vent_accent_w)
-                                feather2d(vent_slot_l, vent_slot_w, vent_tip);
-                            // NOT the bare feather. The vent hole is cut with
+                                egg2d(vent_slot_l, vent_slot_w, vent_tip);
+                            // NOT the bare egg. The vent hole is cut with
                             // exactly this profile, so a bare inner boundary
                             // lands on the hole's own wall — the same plane,
                             // twice — and CGAL answers with zero-area sheets:
@@ -2263,7 +2295,7 @@ module vent_accent_rings() {
                             // coplanar. Same fix as the dock's phantom
                             // over-lip walls (#1373).
                             offset(r = -vent_accent_eps)
-                                feather2d(vent_slot_l, vent_slot_w, vent_tip);
+                                egg2d(vent_slot_l, vent_slot_w, vent_tip);
                         }
 }
 
@@ -2573,7 +2605,7 @@ module frame() {
                     translate([0, 0, -(ledge_side + frame_wall)])
                         linear_extrude(2*(ledge_side + frame_wall))
                             translate([0, -gill_l/2 + gill_vw/2])
-                                feather2d(gill_l, gill_vw, vent_tip);
+                                egg2d(gill_l, gill_vw, vent_tip);
         // exhaust through the top wall, flanking the button window
         for (sx = [1, -1], i = [0 : frame_vent_flank_n - 1])
             translate([btn_dx + sx*(btn_w/2 + 9 + i*6.5), fr_yi/2 - 0.1, gz])
@@ -2729,7 +2761,7 @@ module frame() {
         if (stamp_show) translate([0, stamp_dy, fz_plate - 0.01])
             mirror([1, 0, 0]) linear_extrude(stamp_depth + 0.01) {
                 translate([0, stamp_size*0.9])
-                    text("CANARY DISPLAY", size = stamp_size,
+                    text("CANARY 7IN", size = stamp_size,
                          font = label_font, spacing = 1.1,
                          halign = "center", valign = "center");
                 translate([0, -stamp_size*0.9])

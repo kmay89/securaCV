@@ -6693,17 +6693,17 @@
       {
        "name": "vent_slot_w",
        "default": "5.2",
-       "comment": "feather base width — the grille is the PLUMAGE"
+       "comment": "egg base width — the grille is the HATCHERY"
       },
       {
        "name": "vent_slot_l",
        "default": "7.2",
-       "comment": "feather length (point-up: sheds drips on a"
+       "comment": "egg length (upright: sheds drips on a vertical"
       },
       {
        "name": "vent_tip",
-       "default": "0.72",
-       "comment": "EGG, not feather — the hatchery mark. The profile"
+       "default": "egg_tip()",
+       "comment": "DERIVED from canary_vent_lib.scad — never a typed"
       },
       {
        "name": "vent_pitch_x",
@@ -7010,7 +7010,7 @@
       {
        "name": "gill_vw",
        "default": "3.6",
-       "comment": "side-gill feather base width — area matches the old"
+       "comment": "side-gill egg base width — area matches the old"
       },
       {
        "name": "frame_vent_flank_n",
@@ -7403,9 +7403,9 @@
        "comment": "4x shallow recesses for adhesive rubber feet"
       },
       {
-       "name": "feather_vents",
+       "name": "barb_vents",
        "default": "true",
-       "comment": "shape the fin vents as FEATHER BARBS (a pointed"
+       "comment": "shape the fin vents as BARBS (a pointed vesica)"
       },
       {
        "name": "qr_n",
