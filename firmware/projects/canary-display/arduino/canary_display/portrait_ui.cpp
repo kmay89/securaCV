@@ -30,8 +30,10 @@
 #include "look_state.h"
 #if defined(FEATURE_LANTERN) && FEATURE_LANTERN
 #include "lantern.h"
+#include "hallway.h"
 #endif
 #include "color/look_engine.h"
+#include "color/plumage.h"
 
 namespace canary::ui {
 
@@ -71,7 +73,26 @@ lv_obj_t* s_chip[ROWS] = {nullptr};
 lv_obj_t* s_name[ROWS] = {nullptr};
 lv_obj_t* s_more = nullptr;        // "+N more"
 lv_obj_t* s_glance = nullptr;      // count + link honesty
-lv_obj_t* s_lantern = nullptr;     // the night-light overlay (topmost)
+
+#if defined(FEATURE_LANTERN) && FEATURE_LANTERN
+// ── The lamp's glass ──
+// The night light used to be one object with a two-stop vertical gradient,
+// which is a fade, not a pattern. It is now a STACK of bands, each carrying
+// its own two-stop gradient to the next band's color: piecewise-linear across
+// the stack, so it still reads as one smooth field, but with enough
+// independent stops that the plumage engine (color/plumage.h) can move a
+// glow through it. That travelling glow is the whole point — a phrase of
+// light climbing the pane.
+//
+// LANTERN_BANDS is a budget, not a resolution: 14 bands on a 320-tall glass
+// is ~23 px each, past the point where a band edge is visible through a
+// gradient, and it costs 14 style writes a frame. The C6 renders this
+// single-buffered and still keeps up because nothing here reflows — only
+// colors change.
+constexpr int LANTERN_BANDS = 14;
+lv_obj_t* s_lantern = nullptr;                  // the overlay container
+lv_obj_t* s_band[LANTERN_BANDS] = {nullptr};    // its bands, top to bottom
+#endif
 
 lv_anim_t s_wash_anim;
 uint32_t s_glance_bright_until = 0;   // ambient-life check-in window
@@ -223,9 +244,27 @@ void portrait_ui_create() {
   lv_obj_set_style_border_width(s_lantern, 0, 0);
   lv_obj_set_style_pad_all(s_lantern, 0, 0);
   lv_obj_set_style_bg_opa(s_lantern, LV_OPA_COVER, 0);
-  lv_obj_set_style_bg_grad_dir(s_lantern, LV_GRAD_DIR_VER, 0);
   lv_obj_clear_flag(s_lantern, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(s_lantern, LV_OBJ_FLAG_HIDDEN);
+
+  // The bands. Heights are apportioned so they tile the glass exactly with no
+  // seam and no overhang, whatever SCR_H and LANTERN_BANDS are: each band
+  // starts where the previous one ended, computed from the SAME rounding, so
+  // a remainder can never leave a dark line across the lamp.
+  for (int i = 0; i < LANTERN_BANDS; i++) {
+    const int y0 = (SCR_H * i) / LANTERN_BANDS;
+    const int y1 = (SCR_H * (i + 1)) / LANTERN_BANDS;
+    lv_obj_t* b = lv_obj_create(s_lantern);
+    lv_obj_set_size(b, SCR_W, y1 - y0);
+    lv_obj_set_pos(b, 0, y0);
+    lv_obj_set_style_radius(b, 0, 0);
+    lv_obj_set_style_border_width(b, 0, 0);
+    lv_obj_set_style_pad_all(b, 0, 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_grad_dir(b, LV_GRAD_DIR_VER, 0);
+    lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+    s_band[i] = b;
+  }
 #endif
 }
 
@@ -315,20 +354,71 @@ void portrait_ui_update(const Fleet& fleet, uint32_t now,
   if (s_lantern) {
     auto& lamp = canary::care::lantern();
     const bool attention = (uint8_t)worst >= (uint8_t)Sev::Warn || link_down;
-    if (lamp.active(now, night, attention)) {
+    const bool lit = lamp.active(now, night, attention);
+
+    // The song only runs while the lamp is genuinely lit. `gated` HOLDS the
+    // phrase clock rather than banking it, so a lamp that has been off all day
+    // does not come on and immediately start talking.
+    //
+    // This is the ONLY tick in the firmware: the beacon reads the same shared
+    // song without advancing it, so the point of light and the pane are always
+    // mid-way through the same syllable.
+    auto& sng = canary::ui::song();
+    sng.tick(now, night, /*gated=*/!lit);
+
+    if (lit) {
       canary::color::LookParams lampp = look_params();
       lampp.scene_idx = lamp.scene();
+      // Night dimming belongs to the STATE channel, not to a light somebody
+      // asked for — so the lamp is rendered at day brightness and its level is
+      // set by Hallway mode's own dwell instead.
       lampp.night = false;
-      canary::color::Rgb ws[2];
-      canary::color::wash_stops(now, lampp, canary::color::Sev::Ok,
-                                /*safe_dark=*/false, ws, 2);
-      lv_obj_set_style_bg_color(s_lantern,
-                                lv_color_make(ws[0].r, ws[0].g, ws[0].b), 0);
-      lv_obj_set_style_bg_grad_color(
-          s_lantern, lv_color_make(ws[1].r, ws[1].g, ws[1].b), 0);
+
+      // Hallway mode's rise/hold/ebb envelope. When it is off (the default,
+      // i.e. an ordinary summoned lantern) the preset does not apply and the
+      // lamp burns at the look's own brightness for its timed window.
+      uint8_t depth = 0;
+      auto& hall = canary::care::hallway();
+      if (hall.enabled() && st.night_elapsed_min + st.night_remaining_min > 0) {
+        const uint8_t dwell =
+            hall.level(st.night_elapsed_min, st.night_remaining_min, attention);
+        lampp.brightness =
+            (uint8_t)((uint32_t)hall.preset().brightness * dwell / 255u);
+        lampp.warmth = hall.preset().warmth;
+        // The song is scaled by the dwell too, so it fades in with the lamp
+        // rather than speaking at full volume into a room that is still dark.
+        depth = (uint8_t)((uint32_t)hall.preset().depth * dwell / 255u);
+      }
+
+      // The field: the resting scene wash, with the phrase's glow riding up
+      // through it. plumage_bands hands Warn+/safe_dark straight back to the
+      // look engine, so the honest paths are the same code they always were.
+      canary::color::Rgb ws[LANTERN_BANDS + 1];
+      canary::color::plumage_bands(now, lampp, canary::color::Sev::Ok,
+                                   /*safe_dark=*/false, sng, depth, ws,
+                                   LANTERN_BANDS + 1);
+      for (int i = 0; i < LANTERN_BANDS; i++) {
+        if (!s_band[i]) continue;
+        // Each band runs from its own stop to the next one's, so the seams
+        // between bands are continuous and the stack reads as one field.
+        lv_obj_set_style_bg_color(
+            s_band[i], lv_color_make(ws[i].r, ws[i].g, ws[i].b), 0);
+        lv_obj_set_style_bg_grad_color(
+            s_band[i], lv_color_make(ws[i + 1].r, ws[i + 1].g, ws[i + 1].b), 0);
+      }
       lv_obj_clear_flag(s_lantern, LV_OBJ_FLAG_HIDDEN);
+
+      // Publish this frame for the beacon. The LED joins the lamp only under
+      // Hallway mode's explicit opt-in (see care/hallway.h); a plain summoned
+      // lantern leaves the beacon a pure attention channel.
+      auto& lf = canary::ui::lamp_frame();
+      lf.lit = true;
+      lf.beacon = hall.beacon();
+      lf.depth = depth;
+      lf.look = lampp;
     } else {
       lv_obj_add_flag(s_lantern, LV_OBJ_FLAG_HIDDEN);
+      canary::ui::lamp_frame().lit = false;
     }
   }
 #endif
@@ -343,6 +433,7 @@ void portrait_ui_ack_hold(bool /*active*/) {
 void portrait_ui_life_glance(uint32_t now) {
   s_glance_bright_until = now + 6000;
 }
+
 
 }  // namespace canary::ui
 

@@ -22,6 +22,7 @@
 #include "ambient_led.h"
 #include "look_state.h"
 #include "color/look_engine.h"
+#include "color/plumage.h"
 
 namespace canary::hal {
 
@@ -62,6 +63,35 @@ void ambient_led_off() {
 
 void ambient_led_tick(uint32_t now_ms, Sev worst, bool night, bool safe_dark) {
   if (!s_ready) return;
+
+  // ── The lamp, when Hallway mode has invited the LED to join it ──
+  // The glass publishes the lamp's frame (ui/look_state.h LampFrame) because
+  // only the glass knows whether the lantern is actually lit — the timeout,
+  // the auto schedule and the attention veto all resolve there. Reading that
+  // answer rather than recomputing it is what keeps the point of light and
+  // the pane from disagreeing about whether the light is on.
+  //
+  // This is the ONE path on which the beacon is not a pure attention channel,
+  // and it is reachable only when: Hallway mode is on, its beacon opt-in is
+  // set, and the lamp is currently lit — which itself already means the fleet
+  // is calm and the links are healthy, because attention extinguishes the
+  // lamp before this can be true. The reasoning is written out in full in
+  // care/hallway.h; the short version is that the dark-means-safe inference
+  // was already spent by turning lantern hours on, and a glow here cannot add
+  // a claim the lit glass beside it is not already making.
+  const auto& lamp = canary::ui::lamp_frame();
+  if (lamp.lit && lamp.beacon && (uint8_t)worst < (uint8_t)Sev::Warn &&
+      !safe_dark) {
+    // Read the shared song WITHOUT ticking it — the glass owns the clock, so
+    // the beacon is always mid-way through the same syllable the pane shows.
+    const canary::color::Rgb c = canary::color::plumage_led(
+        now_ms, lamp.look, canary::color::Sev::Ok, /*safe_dark=*/false,
+        canary::ui::song(), lamp.depth);
+    write_rgb(c.r, c.g, c.b);
+    return;
+  }
+
+  // ── The honest state channel, unchanged ──
   // The engine owns the whole look: scene palette + motion when calm, the
   // honest semantic override at Warn+, and black when safe_dark. Feed it the
   // live night flag; everything else is the user's chosen look.
