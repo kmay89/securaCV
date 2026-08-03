@@ -7149,13 +7149,13 @@
       },
       {
        "name": "side_exit",
-       "default": "right",
+       "default": "none",
        "enum": [
         "none",
         "left",
         "right"
        ],
-       "comment": "— extra cable exit wall"
+       "comment": "— extra cable exit wall."
       },
       {
        "name": "side_dy",
@@ -7169,12 +7169,12 @@
       {
        "name": "port_lbl_a",
        "default": "USB",
-       "comment": "beside the bottom exit"
+       "comment": "beside the bottom exit — a real connector is there"
       },
       {
        "name": "port_lbl_b",
-       "default": "USB",
-       "comment": "beside the side exit"
+       "default": "",
+       "comment": "beside the side exit — a hole, so it says nothing"
       },
       {
        "name": "rating_stamp",

@@ -811,20 +811,29 @@ grom_bell  = 3.2;    // strain-relief bell beyond the outer flange
 // while the side exit clears the dock entirely — that is the case for having
 // both. The dock's PORTRAIT pose already exits sideways, so a side-exit case
 // docks portrait with no cable bend at all.
-side_exit = "right";  // ["none","left","right"] — extra cable exit wall
+side_exit = "none";   // ["none","left","right"] — extra cable exit wall.
+                      // OFF by default, from the first print: there is no
+                      // connector behind that wall, so the opening reads as
+                      // a port that does not exist. Turn it on only if you
+                      // actually want the cable to leave sideways.
 side_dy   = 0.0;      // its centre along that wall, + = toward the top edge
 // Port labels: which opening is which, embossed on the outer skin beside it
 // (deboss floors read in the body colour through the accent skin, so on a
 // two-colour print the words come out coloured for free — no extra swap).
 port_labels = true;
-// Both exits carry the SAME power cable — the side one is an alternate
-// route, not a different interface — so both say USB. Naming the side exit
-// after a board connector (UART1, CAN, ...) would be a lie moulded into the
-// plastic: it is a cable pass-through, aligned to nothing. These stay
-// strings so that IF you ever cut an opening onto a specific connector, you
-// can name it truthfully then.
-port_lbl_a  = "USB";    // beside the bottom exit
-port_lbl_b  = "USB";    // beside the side exit
+// A label names what is BEHIND the wall, not what the cable happens to be.
+// The bottom exit sits on the panel's real USB-C, so "USB" there is true and
+// the assert below holds it to the panel record. The side exit is a cable
+// pass-through aligned to no connector at all — it said "USB" on the first
+// print, beside a wall with nothing behind it, and it read as a socket
+// someone could plug into. A word moulded into plastic is not a caption you
+// can revise later; leave a pass-through unlabelled.
+//
+// The earlier reasoning here was that both carry the same cable so both may
+// say USB. That is true about the CABLE and wrong about the WALL, which is
+// what a person standing in front of the case is actually reading.
+port_lbl_a  = "USB";    // beside the bottom exit — a real connector is there
+port_lbl_b  = "";       // beside the side exit — a hole, so it says nothing
 // RATING STAMP — the little spec block every mains-adjacent thing should
 // carry. It goes on the BACK plate's lower band: hidden behind the case on a
 // wall mount, hidden behind the dock's fin when docked, and right there when
@@ -1383,6 +1392,32 @@ assert(!stamp_show || (stamp_depth < back_t - 1.5
 // layer or two the glass is standing on its own edge with no case around it,
 // which is a chipped corner waiting to happen. Positive is still a trim
 // reveal, not a bumper.
+// A PORT LABEL MUST NAME SOMETHING THAT IS ACTUALLY BEHIND THAT WALL.
+// The panel registry knows where every connector sits, so this is checkable
+// rather than a thing to remember: if the bottom exit claims "USB", the
+// record had better put a USB connector on the bottom face. It shipped wrong
+// once in the other direction — a labelled opening on a wall with no
+// connector behind it — and a moulded word is not a caption you can correct
+// after the fact.
+// It also catches something bigger than a label. This case cuts ONE cable
+// opening, in the bottom wall, so the panel's USB-C had better be on the
+// bottom face — and for the -7B the record says it is on the TOP, because
+// that board is mounted half a turn round. The case does not have an opening
+// where that board's connector is. That is a real gap, exposed the moment the
+// port map became data instead of an assumption, and it is the second thing
+// the registry has caught about the -7B (see the can/AA offset note in
+// canary_panel_lib.scad). Fixing it properly means cutting the opening on
+// whichever wall the record names, along with its grommet, scoop and label —
+// not suppressing this line.
+assert(!usb_port || !port_labels || port_lbl_a == ""
+       || (pnl_has_port(PANEL, "USB-C") && pnl_port_face(PANEL, "USB-C") == "bottom"),
+       str("frame: the case cuts its cable opening in the BOTTOM wall and ",
+           "labels it \"", port_lbl_a, "\", but panel \"", pnl_id(PANEL),
+           "\" puts USB-C on the \"", pnl_port_face(PANEL, "USB-C"),
+           "\" face. The opening is in the wrong wall for this board — the ",
+           "case needs its port moved to follow the panel record, which is ",
+           "not done yet. Build lcd7 until it is."));
+
 assert(glass_guard >= -0.6 && glass_guard <= 1.2,
        str("frame: glass_guard ", glass_guard, " out of range. Positive = ",
            "recessed glass (drop protection, keep under 1.2); 0 = nominally ",
