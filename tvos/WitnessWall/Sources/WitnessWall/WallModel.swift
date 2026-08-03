@@ -126,7 +126,7 @@ final class WallModel {
     @discardableResult
     func searchOnce() async -> Bool {
         for candidate in Self.wellKnownCandidates {
-            if Task.isCanceled { return false }
+            if Task.isCancelled { return false }
             guard let url = try? FleetAddress.normalize(candidate) else { continue }
             guard let body = try? await transport.fetchFleet(from: url),
                   let snapshot = try? WitnessCore.parseFleet(json: body) else { continue }
@@ -145,7 +145,7 @@ final class WallModel {
     /// keeps quietly re-searching on the backoff ladder — plug a Canary in a
     /// week later and the Wall finds it by itself.
     private func searchThenPoll() async {
-        while !Task.isCanceled {
+        while !Task.isCancelled {
             if await searchOnce() {
                 await pollLoop(address: hubAddress)
                 return
@@ -193,7 +193,7 @@ final class WallModel {
     }
 
     private func pollLoop(address: String) async {
-        while !Task.isCanceled {
+        while !Task.isCancelled {
             await refreshOnce()
 
             // Healthy: poll at the steady interval. Degraded: back off, so an

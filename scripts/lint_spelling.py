@@ -49,7 +49,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 EXTS = {".rs", ".py", ".js", ".mjs", ".ts", ".c", ".h", ".cpp", ".hpp", ".md",
         ".html", ".css", ".swift", ".json", ".yml", ".yaml", ".sh", ".toml",
-        ".scad"}
+        ".scad",
+        # Arduino sketches are firmware source and were invisible to the first
+        # version of this gate, which then reported "US English throughout"
+        # while three tracked .ino files still carried banned forms. A gate
+        # that advertises repo-wide has to mean it.
+        ".ino"}
+# Extensionless files that are still source. Same reason as .ino.
+EXTRA_NAMES = {"Makefile", "makefile", "GNUmakefile", "Dockerfile"}
 SKIP_DIRS = {".git", "node_modules", "target", "build", "dist", ".venv",
              "__pycache__"}
 # This file names the banned forms, so it cannot police itself.
@@ -96,6 +103,21 @@ BANNED = re.compile(
 )
 # Present in the tree, correct, and destroyed by a careless rule. Asserted so
 # a future edit to BANNED that starts eating them fails loudly here.
+# FIXED THIRD-PARTY API NAMES, masked out before the ban runs.
+#
+# These are not our words to respell, and the rule has always said so — but
+# "not ours to respell" has to be MECHANICAL here, because the first sweep
+# duly rewrote Swift's `Task.isCancelled` to `isCanceled` and Network's
+# `.cancelled` browser state to `.canceled`. Neither member exists; both
+# Apple targets stop compiling. Reverting them by hand is not enough either,
+# because the correct spelling would then fail this very lint.
+#
+# Keyed by suffix so an exemption cannot leak into a language that does not
+# have the API. Add sparingly, and only for identifiers a vendor defines.
+API_EXEMPT = {
+    ".swift": [r"\bisCancelled\b", r"\.cancelled\b", r"\bCancellationError\b"],
+}
+
 ALLOW = ["characteristic", "realistic", "optimistic", "optimism", "initialism",
          "programmer", "emphasis", "analysis", "analyses", "aria-labelledby",
          "MakerBot", "checkerboard", "parameter", "diameter",
@@ -115,7 +137,8 @@ def walk(paths):
             yield p
             continue
         for f in p.rglob("*"):
-            if (f.is_file() and f.suffix in EXTS
+            if (f.is_file()
+                    and (f.suffix in EXTS or f.name in EXTRA_NAMES)
                     and f.name not in SKIP_FILES
                     and not any(d in f.parts for d in SKIP_DIRS)):
                 yield f
@@ -129,8 +152,14 @@ def main() -> int:
             text = f.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
+        exempt = API_EXEMPT.get(f.suffix, [])
         for i, line in enumerate(text.splitlines(), 1):
-            m = BANNED.search(line)
+            # Blank the vendor API names FIRST, so the ban never sees them and
+            # never has to be weakened to accommodate them.
+            probe = line
+            for pat in exempt:
+                probe = re.sub(pat, lambda m: "\x00" * len(m.group(0)), probe)
+            m = BANNED.search(probe)
             if m:
                 offenders.append(f"{f.relative_to(ROOT)}:{i}: {m.group(0)}")
     # The guard on the guard: if BANNED ever starts matching a word that is

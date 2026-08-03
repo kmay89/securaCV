@@ -67,7 +67,7 @@ final class WristStore: NSObject, ObservableObject {
         testTimeoutTask?.cancel()
         testTimeoutTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(45))
-            guard !Task.isCanceled else { return }
+            guard !Task.isCancelled else { return }
             self?.testRequestInFlight = false
         }
         session.sendMessage([WristSync.messageCommandKey: WristSync.commandTestAlertPath],

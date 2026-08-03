@@ -382,7 +382,7 @@ export function buildEnclosureLab(encData, deviceId, buildData, catalogData) {
   const catBySet = catalogVariantIndex(catalogData);
   const { mine, universal } = enclosuresFor(encData, deviceId);
   if (!mine.length && !universal.length) {
-    wrap.append(el("p", "muted", "No enclosures catalogd for this device yet."));
+    wrap.append(el("p", "muted", "No enclosures cataloged for this device yet."));
     return wrap;
   }
 
@@ -878,7 +878,7 @@ export function buildEnclosureLab(encData, deviceId, buildData, catalogData) {
       build.append(line);
     } else {
       build.append(el("p", "muted",
-        "Electronics BOM isn't catalogd for this device yet — showing the printed-enclosure cost only."));
+        "Electronics BOM isn't cataloged for this device yet — showing the printed-enclosure cost only."));
     }
 
     // fleet scaling — one printer, back to back

@@ -863,7 +863,7 @@ jobs:
       - name: Build + run canary-display Modbus RTU host test
         # The RS485/Modbus master's framing + CRC-16/MODBUS live in the pure
         # core (canary/io/modbus_rtu.h) so every byte on the 4.3B A/B terminal
-        # is host-verified without a board. Anchored on the catalogd
+        # is host-verified without a board. Anchored on the cataloged
         # CRC-16/MODBUS check value 0x4B37 plus build/parse roundtrips,
         # exception decoding, and CRC/addr/func/capacity rejection cases.
         run: |

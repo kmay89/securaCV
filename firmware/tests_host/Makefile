@@ -106,7 +106,7 @@ SCENE_BIN = $(BUILD_DIR)/test_console_scene
 # Fleet view (common/ui/fleet_view.h): the console face of the self-* roadmap's
 # Fleet map — "which other Canaries can this one hear." Proves the ASCII tier
 # stays escape-free / 7-bit / width-aligned (same contract as the trust card),
-# that presence is rendered honestly as UNSIGNED with worded (not colour-only)
+# that presence is rendered honestly as UNSIGNED with worded (not color-only)
 # attention states, and pins a golden render. Pure header over the console
 # engine + the fleet-link wire constants; no Arduino deps.
 FLEETVIEW_HDRS = ../common/ui/fleet_view.h ../common/ui/console_theme.h \

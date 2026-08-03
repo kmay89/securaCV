@@ -1578,6 +1578,23 @@ assert(vent_tip > 0.15 && vent_tip < 0.85,
 // same numbers those features use, so moving any of them moves this bound too
 // rather than leaving a stale constant behind.
 bird_half_w = back_bird ? bird_h*0.62 : 0;
+// THE MARK AND THE RAILS WANT THE SAME PLATE. That is not a coincidence to
+// guard against — it is the whole reason the bird could move in: the rails
+// were the only clear full-height columns, so the middle they vacated is
+// exactly where the mark now sits. Rails at +/-12 with a 17 wide zone span
+// x 3.5..20.5 either side of center; a 32 mm bird spans +/-19.8. They
+// overlap almost completely, and a Customizer user who turns the rails back
+// on gets a mark debossed across both adhesive landing zones — which is both
+// ugly and a worse bond, since the strip needs smooth plate.
+//
+// Mutually exclusive, then, and said out loud rather than silently resolved:
+// auto-suppressing one would change the geometry without telling anyone.
+assert(!(back_bird && adh_rails),
+       str("frame: the Canary mark and the adhesive rails both need the ",
+           "middle of the back plate — the rails' landing zones (x 3.5..20.5 ",
+           "each side) sit under a ", 2*bird_half_w, " mm mark. Pick one: ",
+           "back_bird=false for a Command-strip build, or adh_rails=false ",
+           "(the default) to keep the mark and reclaim 64 grille slots."));
 assert(!back_bird
        || (bird_dx - bird_half_w > qr_back_dx + qr_back_reach + 2
            && bird_dx + bird_half_w < sd_dx - sd_w/2 - 2),

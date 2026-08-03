@@ -26,7 +26,7 @@ authenticated to the MQTT broker, so no events could have flowed; and the docume
 broker bootstrap crashed before a password could ever be set.
 
 All breakages found are **fixed in the change that accompanies this review** (§5). Parity
-gaps that are design decisions rather than defects are catalogd in §4 with
+gaps that are design decisions rather than defects are cataloged in §4 with
 recommendations, not patches.
 
 | Artifact | Verdict before this review | Verdict after fixes |

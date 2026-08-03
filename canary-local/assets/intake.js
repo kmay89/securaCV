@@ -314,7 +314,7 @@ export function duplicateMacCheck(roster, mac) {
 // ── what did it arrive running? ─────────────────────────────────────────────
 // Matched on the `esp_app_desc_t` project name and partition labels — real
 // strings read off the board, not hashes of images we'd have to claim to have
-// catalogd. Anything unmatched is reported as unrecognized, which is an
+// cataloged. Anything unmatched is reported as unrecognized, which is an
 // invitation to look at the backup, not a verdict.
 export const KNOWN_STOCK = [
   { match: /^micropython/i, name: "MicroPython" },
