@@ -59,29 +59,34 @@ bool is_placeholder(const char* v) {
  * so a display flashed with perfectly good credentials still raised
  * its setup wizard. A blob under the key is the same human intent;
  * read it rather than shrugging into onboarding. */
-void load_credential(Preferences& prefs, const char* key,
-                     char* dst, size_t cap, const char* compiled) {
+enum class CredSource { Compiled, NvsString, NvsBlob, Fallback };
+
+CredSource load_credential(Preferences& prefs, const char* key,
+                           char* dst, size_t cap, const char* compiled) {
   if (!is_placeholder(compiled)) {
     copy_str(dst, cap, compiled);
     String stored = prefs.getString(key, "");
     if (stored != dst) prefs.putString(key, dst);
-    return;
+    return CredSource::Compiled;
   }
   if (prefs.isKey(key)) {
     String stored = prefs.getString(key, "");
     copy_str(dst, cap, stored.c_str());
-    if (dst[0] == '\0' && cap > 0) {
+    if (dst[0] != '\0') return CredSource::NvsString;
+    if (cap > 0) {
       // Blob-typed key (getBytesLength is 0 for string entries): a
       // blob-scheme seed. Blobs carry no NUL — copy and terminate.
       const size_t n = prefs.getBytesLength(key);
       if (n > 0 && n < cap) {
         prefs.getBytes(key, dst, n);
         dst[n] = '\0';
+        return CredSource::NvsBlob;
       }
     }
-  } else {
-    copy_str(dst, cap, compiled);
+    return CredSource::NvsString;  // present-but-empty: a real (open) answer
   }
+  copy_str(dst, cap, compiled);
+  return CredSource::Fallback;
 }
 
 }  // namespace
@@ -115,7 +120,32 @@ const RuntimeConfig& get() {
     }
   }
 
-  load_credential(prefs, "wifi_ssid", g_cfg.wifi_ssid, sizeof(g_cfg.wifi_ssid), WIFI_SSID);
+  // One value-free breadcrumb for the question every bad setup session
+  // starts with: did this boot see seeded Wi-Fi, and via which scheme?
+  // (The 2.4.4 field debugging ran blind here — a device in its wizard
+  // could not say whether the flasher's seed was absent or unreadable.)
+  {
+    const CredSource src = load_credential(prefs, "wifi_ssid", g_cfg.wifi_ssid,
+                                           sizeof(g_cfg.wifi_ssid), WIFI_SSID);
+    switch (src) {
+      case CredSource::Compiled:
+        log_line("CFG", "WiFi: using compiled credentials.");
+        break;
+      case CredSource::NvsString:
+        if (g_cfg.wifi_ssid[0] != '\0') {
+          log_line("CFG", "WiFi: seeded credentials found (string scheme).");
+        } else {
+          log_line("CFG", "WiFi: no credentials - setup will open.");
+        }
+        break;
+      case CredSource::NvsBlob:
+        log_line("CFG", "WiFi: seeded credentials found (legacy blob scheme).");
+        break;
+      case CredSource::Fallback:
+        log_line("CFG", "WiFi: no credentials - setup will open.");
+        break;
+    }
+  }
   load_credential(prefs, "wifi_pass", g_cfg.wifi_pass, sizeof(g_cfg.wifi_pass), WIFI_PASS);
   load_credential(prefs, "mqtt_host", g_cfg.mqtt_host, sizeof(g_cfg.mqtt_host), MQTT_HOST);
   load_credential(prefs, "mqtt_user", g_cfg.mqtt_user, sizeof(g_cfg.mqtt_user), MQTT_USER);

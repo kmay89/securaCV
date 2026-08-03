@@ -25,6 +25,17 @@
 #define LV_MEM_CUSTOM 0
 #define LV_MEM_SIZE (64U * 1024U)
 
+/* v9-only (v8 reads LV_MEM_CUSTOM above and ignores this key): route
+ * lv_malloc through the C library so LVGL shares the ESP heap instead of a
+ * fixed 64 KiB pool. Under v9 that pool also feeds draw tasks, layers, the
+ * canvas/QR buffers and the image cache — and on the RGB glasses its worst
+ * moment is exactly the setup wizard, where two full 800x480 screens are
+ * alive at once (see onboard_ui.cpp's fade note). The builtin pool's
+ * failure mode is LV_ASSERT_MALLOC's while(1) — a silent halt (and, with
+ * the task watchdog armed, a panic loop). The heap turns that cliff into
+ * a couple hundred KiB of headroom. */
+#define LV_USE_STDLIB_MALLOC 1  /* LV_STDLIB_CLIB */
+
 /* Tick straight from millis() — no timer ISR to maintain. (v8-only; the
  * v9 port registers the same source at runtime via lv_tick_set_cb.) */
 #define LV_TICK_CUSTOM 1

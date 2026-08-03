@@ -2,6 +2,47 @@
 
 ## [Unreleased]
 
+## [2.4.5] - 2026-08-03
+
+### The setup wizard stops crashing — for the reasons 2.4.4 didn't reach
+
+2.4.4's four first-boot fixes were real but not the whole story: a Nightstand 7
+still looped clock → "Let's get you connected" → reset, so wizard-entered
+Wi-Fi could never persist (credentials write only on a successful join). Five
+further hardenings close the wizard-start window the crash brackets (PR
+pending):
+
+- **The SoftAP never rises mid-scan.** The wizard's pre-AP sweep (~3.9 s for a
+  full 13-channel active scan) outlives the 2.6 s Hello beat, so `WIFI_AP_STA`
+  + `softAP()` fired with a live scan handle — the one radio sequence the
+  battle-tested WAP wizard explicitly refuses ("a pending scan handle keeps
+  the radio busy"). The wizard now waits the sweep out under the Hello scene
+  (bounded), harvests it, and drops any lingering handle before the mode flip.
+- **LVGL 9 leaves the fixed 64 KiB pool for the heap.** `LV_USE_STDLIB_MALLOC`
+  (a v9-only key; v8 ignores it) routes `lv_malloc` to the C library. Under v9
+  the pool also fed draw tasks, layers, and the QR canvas; its worst moment was
+  the wizard's two-live-screens window, and its failure mode was
+  `LV_ASSERT_MALLOC`'s `while(1)` — a halt the armed task watchdog converts
+  into a panic loop. The ELF confirms the builtin pool is gone.
+- **The join QR proves it rendered before the card shows.** The v9 widget can
+  leave a buffer-less canvas on allocation failure, and update reports its own
+  verdict; both are checked now. On failure the Join scene degrades to plain
+  text join instructions — no blank card, no dead end, same destination.
+- **First-boot NVS writes moved off the live panel.** The runtime config's
+  `dev_id` persist and the pseudonym's `id_salt` mint used to fire after the
+  face was up — a flash commit under RGB scanout, the exact garble mechanism
+  2.4.4 removed from esp_wifi, still alive in our own writes. Both stores warm
+  before `display_init` now.
+- **The AP raise rides a backlight dip.** SoftAP bring-up's TX calibration
+  burst is the boot's steepest current spike, and on the 7" glass it landed on
+  a full-day backlight from one USB feed. The light dips to ambient across the
+  raise (the Hello→Join scene change masks it) so a marginal supply cannot
+  brown out mid-wizard.
+
+Field debugging also gains its missing breadcrumbs: boot now logs whether
+Wi-Fi credentials were seeded and via which scheme (never the values), and
+the wizard logs its sweep results, AP raise, and join requests.
+
 ## [2.4.4] - 2026-08-03
 
 ### The 7" glass survives its own first light — and every Wi-Fi seed is honored
