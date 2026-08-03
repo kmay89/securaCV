@@ -824,7 +824,7 @@ body_is_dark = pal_lum(pal_body_rgb) < pal_lum(pal_ink_rgb);
 //           INVERTED — and the symbol disappears into the case instead of
 //           sitting in a bright rectangle on it.
 //   "auto"  picks whichever of the two yields dark-on-light.
-qr_style = "bare";   // ["auto","plaque","bare"]
+qr_style = "bare";   // ["auto","plaque","bare"] help-QR look
 qr_plaque = qr_style == "auto" ? body_is_dark : qr_style == "plaque";
 // Dark modules on a light field? Plaque puts BODY in the modules; bare puts
 // INK in them. Computed, so the warning below cannot drift from the geometry.

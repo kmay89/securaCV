@@ -7091,7 +7091,8 @@
         "auto",
         "plaque",
         "bare"
-       ]
+       ],
+       "comment": "help-QR look"
       },
       {
        "name": "qr_plaque",
