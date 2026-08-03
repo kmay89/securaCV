@@ -545,13 +545,28 @@ assert(!opt_vent || vent_span_lo >= snap_y_free + snap_half,
 // Hook cross-section, in (inward, up) with z=0 at the hook's shoulder. The
 // BOTTOM face is the shallow lead-in — that is the one the plate's edge rides
 // on the way in — and the TOP face is the steep return that holds it there.
+//
+// THE PEDESTAL, and why it is not optional. The beam is what survives the
+// inside relief, which means the beam is the wall's OUTER skin — it sits
+// `wall - snap_beam_t` further out than the cavity face. A hook drawn from the
+// cavity face would therefore float in mid-air, attached to nothing: the mesh
+// gate in render.sh catches it as extra disconnected parts, which is exactly
+// how this was found. So the hook starts at the BEAM's inner face and carries
+// a pedestal across the gap to the plate's edge; only the last `snap_eng`
+// beyond that edge is engagement, which is what the plate's groove and the
+// strain figure are both sized against.
+hook_ped = (wall - snap_beam_t) + tol_press;   // beam face -> plate edge
+kJoin = 0.3;   // overlap into the parent so the union is ONE solid
+
 module hook_profile(ret) {
     lead_run = snap_eng / tan(snap_lead);
     ret_run  = snap_eng / tan(ret);
-    polygon([[0, -lead_run],
-             [snap_eng, 0],
-             [snap_eng, snap_flat],
-             [0, snap_flat + ret_run]]);
+    polygon([[-kJoin, -lead_run],
+             [hook_ped, -lead_run],
+             [hook_ped + snap_eng, 0],
+             [hook_ped + snap_eng, snap_flat],
+             [hook_ped, snap_flat + ret_run],
+             [-kJoin, snap_flat + ret_run]]);
 }
 
 function hook_h(ret) = snap_eng/tan(snap_lead) + snap_flat + snap_eng/tan(ret);
@@ -585,7 +600,8 @@ module bezel_hooks() {
         yy  = sy > 0 ? snap_y_lock : snap_y_free;
         ret = sy > 0 ? snap_ret_lock : snap_ret_free;
         for (sx = [-1, 1])
-            translate([sx * (xc/2), yy, groove_mid_z - snap_flat/2])
+            translate([sx * (xc/2 + wall - snap_beam_t), yy,
+                       groove_mid_z - snap_flat/2])
                 rotate([90, 0, 0])
                     linear_extrude(snap_w, center = true)
                         scale([-sx, 1]) hook_profile(ret);
@@ -633,16 +649,25 @@ module bezel() {
 // that looks into the case), z = back_t its outer face (the one that wears
 // the mark). The renderer places it.
 module back_plate() {
-    difference() {
-        linear_extrude(back_t) rrect(plate_x, plate_y, r_in);
-
-        // Lead-in chamfer on the bottom outer edge — this is the face that
-        // rides the hooks' shallow lead-in on the way down, so the plate
-        // guides itself in rather than needing to be aimed.
-        lead = snap_eng + 0.3;
-        translate([0, 0, -0.01]) linear_extrude(lead + 0.01, scale =
-                (plate_x) / (plate_x - 2*lead))
-            rrect(plate_x - 2*lead, plate_y - 2*lead, max(0.4, r_in - lead));
+    // Lead-in chamfer on the bottom OUTER edge — this is the face that rides
+    // the hooks' shallow lead-in on the way down, so the plate guides itself
+    // in rather than needing to be aimed.
+    //
+    // Built as a hull from a smaller bottom profile up to the full outline,
+    // NOT as a subtracted taper. Subtracting one removes the middle of the
+    // plate's underside rather than its edge, which both guts the plate and
+    // leaves the PCB ribs standing on air — the mesh gate counts those as
+    // extra parts, which is how the mistake surfaced.
+    lead = snap_eng + 0.3;
+    union() {
+        hull() {
+            linear_extrude(0.01)
+                rrect(plate_x - 2*lead, plate_y - 2*lead, max(0.4, r_in - lead));
+            translate([0, 0, lead]) linear_extrude(0.01)
+                rrect(plate_x, plate_y, r_in);
+        }
+        translate([0, 0, lead]) linear_extrude(back_t - lead)
+            rrect(plate_x, plate_y, r_in);
     }
 }
 
@@ -667,10 +692,13 @@ module back_groove() {
 // drop a bending moment across the board; a rib that gives 0.25 mm turns the
 // same impact into a squeeze the PCB does not care about.
 module back_ribs() {
+    // Extruded a hair PAST z=0 into the plate: a rib that merely touches the
+    // underside is a separate solid to CGAL, and the mesh gate counts it as
+    // another part. Same reason as the hook pedestal above.
     rib_h = back_stack - preload;
     for (sy = [-1, 1], sx = [-1, 1])
         translate([sx * (xc/2 - 3.2), sy * (yc/2 - 4.5), -rib_h])
-            linear_extrude(rib_h) square([1.2, 5.0], center = true);
+            linear_extrude(rib_h + kJoin) square([1.2, 5.0], center = true);
 }
 
 // The thumb-flick ramp. The plate's far end carries a wedge that stands proud

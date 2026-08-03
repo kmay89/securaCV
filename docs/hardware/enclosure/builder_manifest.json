@@ -3333,7 +3333,7 @@
         "emblem_rib": "mm",
         "emblem_crown": "mm"
       },
-      "sha256": "5cf185c96a9c3e958c6d1ceeec6e2eeaf822bfc5c50bef534f4daed1a983e450",
+      "sha256": "ad89358187849c661f5f5fc9deccdb5da292143e13be7332bd054d3d1bc30ef3",
       "groups": [
         {
           "name": "What to render",
@@ -3645,23 +3645,6 @@
               "name": "bh",
               "type": "number",
               "default": 68
-            },
-            {
-              "name": "g_span",
-              "type": "number",
-              "default": 110,
-              "desc": "design-unit height the mark spans"
-            },
-            {
-              "name": "g_cx",
-              "type": "number",
-              "default": 3.7,
-              "desc": "design-unit bbox center"
-            },
-            {
-              "name": "g_cy",
-              "type": "number",
-              "default": -0.5
             }
           ]
         }
