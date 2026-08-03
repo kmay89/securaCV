@@ -7081,8 +7081,25 @@
        "comment": "RAL 1003 — #F9A800"
       },
       {
-       "name": "qr_dark_plate",
+       "name": "body_is_dark",
        "default": "pal_lum(pal_body_rgb) < pal_lum(pal_ink_rgb)"
+      },
+      {
+       "name": "qr_style",
+       "default": "bare",
+       "enum": [
+        "auto",
+        "plaque",
+        "bare"
+       ]
+      },
+      {
+       "name": "qr_plaque",
+       "default": "qr_style == \"auto\" ? body_is_dark : qr_style == \"plaque"
+      },
+      {
+       "name": "qr_dark_on_light",
+       "default": "qr_plaque ? body_is_dark : !body_is_dark"
       },
       {
        "name": "bezel_ink_t",
@@ -7090,11 +7107,31 @@
       },
       {
        "name": "ink_groups",
-       "default": "[\"qr\", \"moat\"]"
+       "default": "[\"qr\"]"
       },
       {
        "name": "accent_groups",
-       "default": "[\"mark\", \"text\"]"
+       "default": "[\"mark\"]"
+      },
+      {
+       "name": "bezel_colour",
+       "default": "body",
+       "enum": [
+        "body",
+        "ink",
+        "accent"
+       ],
+       "comment": "front bezel ring"
+      },
+      {
+       "name": "vent_ring_colour",
+       "default": "body",
+       "enum": [
+        "body",
+        "ink",
+        "accent"
+       ],
+       "comment": "egg-vent mouth rings"
       }
      ]
     },
@@ -7812,11 +7849,6 @@
       {
        "name": "coupon_qr_margin",
        "default": "0"
-      },
-      {
-       "name": "vent_accent",
-       "default": "true",
-       "comment": "line the back-grille mouths in the accent colour"
       },
       {
        "name": "vent_accent_w",
