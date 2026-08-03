@@ -72,7 +72,8 @@ pub enum HomeSignal {
     Motion,
     /// A presence is being sensed (radar/occupancy-class witnesses).
     Occupancy,
-    /// A binary open/closed contact changed and is currently open.
+    /// A binary open/closed contact is currently open. State, not an event:
+    /// see [`signals_for_event`] for why a contact *change* cannot derive it.
     Contact,
     /// The witnessing device itself reports tampering. Latching.
     Tamper,
