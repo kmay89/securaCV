@@ -5,6 +5,12 @@
 #include <esp_wifi.h>
 
 #include "canary/config.h"
+// AFTER config.h — FEATURE_WATCHDOG lives in the flavor config it pulls in;
+// gating above it silently skipped the include and the feed below failed to
+// compile (caught by the nightstand7 build).
+#if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG
+#include <esp_task_wdt.h>
+#endif
 #include "canary/runtime_config.h"  // NVS-backed credentials (OTA-safe)
 #include "network/wifi_join_policy.h"  // fleet-wide join/retry rules (common/)
 
@@ -87,6 +93,13 @@ static canary::net::WifiRetryPolicy retry_policy() {
 }
 
 void wifi_init_or_reboot() {
+  // Never let esp_wifi persist config to NVS: credentials live in OUR
+  // namespace (runtime_config), and with Arduino persistence on (the
+  // default) every begin()/mode change commits to flash — a write that
+  // stalls the RGB glass's non-IRAM bounce-refill mid-scanout and garbles
+  // the panel (the dash-family WiFi-vs-scanout lesson, display_dash.cpp).
+  // Once, here: this runs before any STA join, and the flag is process-wide.
+  WiFi.persistent(false);
   // Already associated — the onboarding wizard just joined the network and
   // handed over a live link. Adopt it instead of bouncing the connection.
   if (WiFi.status() == WL_CONNECTED) {
@@ -111,6 +124,13 @@ void wifi_init_or_reboot() {
 
   const uint32_t start = canary::ms_now();
   while (WiFi.status() != WL_CONNECTED) {
+#if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG
+    // This bounded connect also runs AFTER the wizard re-raises from loop()
+    // (wifi_wants_setup), i.e. with the TWDT armed — and its 30 s bound
+    // equals the WDT timeout, so an unfed wait panics right at the deadline.
+    // A no-op before the WDT is armed (boot path).
+    esp_task_wdt_reset();
+#endif
     delay(300);
     canary::dbg_serial().print(".");
 

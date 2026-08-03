@@ -49,7 +49,16 @@ bool is_placeholder(const char* v) {
  * answer even when its value is empty: the flashers seed an empty
  * wifi_pass for an open network, and substituting the compiled
  * placeholder here made the join fail with a password no router has
- * ever seen. Only a key that is genuinely absent falls back. */
+ * ever seen. Only a key that is genuinely absent falls back.
+ *
+ * BOTH seed schemes are honored. The flashers write these keys as NVS
+ * strings for this firmware, but a stale flasher frontend (cached page
+ * from before the per-product scheme plumbing) writes the wap/canary
+ * BLOB scheme under the same key names. isKey() is type-blind and
+ * getString() on a blob returns "" — which read as "seeded empty",
+ * so a display flashed with perfectly good credentials still raised
+ * its setup wizard. A blob under the key is the same human intent;
+ * read it rather than shrugging into onboarding. */
 void load_credential(Preferences& prefs, const char* key,
                      char* dst, size_t cap, const char* compiled) {
   if (!is_placeholder(compiled)) {
@@ -61,6 +70,15 @@ void load_credential(Preferences& prefs, const char* key,
   if (prefs.isKey(key)) {
     String stored = prefs.getString(key, "");
     copy_str(dst, cap, stored.c_str());
+    if (dst[0] == '\0' && cap > 0) {
+      // Blob-typed key (getBytesLength is 0 for string entries): a
+      // blob-scheme seed. Blobs carry no NUL — copy and terminate.
+      const size_t n = prefs.getBytesLength(key);
+      if (n > 0 && n < cap) {
+        prefs.getBytes(key, dst, n);
+        dst[n] = '\0';
+      }
+    }
   } else {
     copy_str(dst, cap, compiled);
   }

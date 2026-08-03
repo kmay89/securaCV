@@ -55,8 +55,21 @@ ObStage s_stage = ObStage::Hello;
 char s_ap_ssid[33] = {0};
 char s_ap_pass[17] = {0};
 
-void fade_cb(void* var, int32_t v) {
-  lv_obj_set_style_opa((lv_obj_t*)var, (lv_opa_t)v, 0);
+// Scene fade, applied to the TEXT of the four labels rather than as one
+// style `opa` on the full-screen content container. Under LVGL 9 a group
+// `opa` composites the whole 800x480 subtree through intermediate layer
+// buffers — ~22 KB of contiguous LV_MEM pool per frame, on top of two live
+// screens and the QR buffer. That allocation cliff halted/panicked the 7"
+// glass right as the wizard's scenes changed (silent with LV_USE_LOG 0),
+// while per-part text_opa draws directly on both majors and costs nothing.
+// The bird, ring and QR card pop instead of fading; the ring keeps its own
+// arc_opa choreography and the card wants to be scannable immediately.
+void fade_cb(void* /*var*/, int32_t v) {
+  if (!s_title) return;  // scene torn down mid-fade (finish handoff)
+  lv_obj_set_style_text_opa(s_title, (lv_opa_t)v, 0);
+  lv_obj_set_style_text_opa(s_body, (lv_opa_t)v, 0);
+  lv_obj_set_style_text_opa(s_creds, (lv_opa_t)v, 0);
+  lv_obj_set_style_text_opa(s_hint, (lv_opa_t)v, 0);
 }
 void ring_opa_cb(void* var, int32_t v) {
   lv_obj_set_style_arc_opa((lv_obj_t*)var, (lv_opa_t)v, LV_PART_INDICATOR);
@@ -129,10 +142,11 @@ void ring_still(lv_color_t c, lv_opa_t opa) {
   lv_obj_set_style_arc_opa(s_ring, opa, LV_PART_INDICATOR);
 }
 
-// Fade the content container in as one unit (the scene transition).
+// Fade the scene's text in as one unit (the scene transition). The anim's
+// var is only a dedup handle — fade_cb touches the labels directly.
 void content_enter() {
   lv_anim_del(s_content, fade_cb);
-  lv_obj_set_style_opa(s_content, LV_OPA_TRANSP, 0);
+  fade_cb(nullptr, LV_OPA_TRANSP);
   lv_anim_t a;
   lv_anim_init(&a);
   lv_anim_set_var(&a, s_content);
@@ -344,9 +358,17 @@ void onboard_ui_tick(uint32_t /*now_ms*/) {
 
 void onboard_ui_finish() {
   if (!s_scr || !s_prev_scr) return;
-  // Cross-fade home and free every onboarding object (auto_del) — the
-  // normal UI was created before provisioning and is ready underneath.
+  // Go home and free every onboarding object (auto_del) — the normal UI
+  // was created before provisioning and is ready underneath.
+#if LVGL_VERSION_MAJOR >= 9
+  // No cross-fade on v9: a screen-load FADE composites both 800x480
+  // screens through the same per-frame layer chunks the scene fades gave
+  // up (see fade_cb) — the pool is at its fullest right here, with every
+  // onboarding object still alive. Cut to the finished face instead.
+  lv_scr_load_anim(s_prev_scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+#else
   lv_scr_load_anim(s_prev_scr, LV_SCR_LOAD_ANIM_FADE_ON, HANDOFF_MS, 0, true);
+#endif
   s_scr = nullptr;
   s_ring = s_content = s_title = s_body = nullptr;
   s_qr_card = s_qr = s_creds = s_hint = nullptr;

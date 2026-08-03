@@ -27,6 +27,9 @@
 
 #include <esp_random.h>
 #include <lvgl.h>
+#if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG
+#include <esp_task_wdt.h>
+#endif
 
 #include "canary/net/provision.h"
 #include "canary/net/provision_core.h"
@@ -66,6 +69,18 @@ void ui_hint(const char* line) {
 }
 void ui_pump() {
   if (s_glass) lv_timer_handler();
+}
+
+// The wizard waits on a HUMAN — minutes, not milliseconds. At boot it runs
+// before the task watchdog is armed, but the loop()-path re-raise
+// (wifi_wants_setup in main.cpp) enters with the TWDT already watching
+// loopTask, and a wizard that never feeds it panics mid-QR — the glass
+// reboot-loops through the welcome scene forever. Feeding is safe on both
+// paths: before the WDT is armed the reset is a harmless no-op.
+void wdt_feed() {
+#if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG
+  esp_task_wdt_reset();
+#endif
 }
 
 struct ScanRow { char ssid[33]; int32_t rssi; bool secure; };
@@ -485,6 +500,16 @@ void provision_run(bool glass_ok) {
   // Pre-AP scan (WAP lesson): sweep BEFORE any phone can attach, so the
   // first portal load gets an instant list. It runs behind the Hello scene —
   // the welcome beat and the radio sweep share the same ~2.5 s.
+  //
+  // persistent(false) BEFORE the first radio call, not first inside
+  // handle_join: with Arduino persistence on (the default), every mode
+  // change and softAP() below commits esp_wifi config to NVS — a flash
+  // write while the RGB glass is scanning out of PSRAM. The write window
+  // stalls the non-IRAM bounce-refill and the panel visibly garbles right
+  // as the AP comes up (the dash-family WiFi-vs-scanout lesson,
+  // display_dash.cpp). Credentials live in OUR namespace via
+  // set_wifi_credentials(); esp_wifi's own store is never read.
+  WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
   WiFi.scanNetworks(/*async=*/true, /*hidden=*/false, /*passive=*/false, 300);
@@ -493,6 +518,7 @@ void provision_run(bool glass_ok) {
 
   const uint32_t t0 = millis();
   while ((int32_t)(millis() - t0) < (int32_t)HELLO_MS) {
+    wdt_feed();
     ui_pump();
     delay(5);
   }
@@ -516,6 +542,7 @@ void provision_run(bool glass_ok) {
 
   for (;;) {
     const uint32_t now = millis();
+    wdt_feed();
     dns_pump();
     ctx.server.handleClient();
 
@@ -631,6 +658,7 @@ void provision_run(bool glass_ok) {
             // Let the handoff cross-fade play before setup() continues.
             const uint32_t t1 = millis();
             while ((int32_t)(millis() - t1) < 500) {
+              wdt_feed();
               lv_timer_handler();
               delay(5);
             }

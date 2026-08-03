@@ -344,6 +344,26 @@
   the firmware source trees.
 - **Date learned:** 2026-04 (v1), 2026-06 (v2)
 
+### The onboarding wizard must feed the TWDT — the loop()-path re-raise runs watched
+- **What happened:** A Canary 7 (nightstand7) whose saved Wi-Fi could not join
+  re-raised the on-glass setup wizard from loop() (`wifi_wants_setup`) — and
+  panicked mid-wizard, every time. First boot (placeholder credentials) crashed
+  the same way once anything else went wrong after the watchdog was armed.
+- **Root cause:** `provision_run()` blocks for as long as a HUMAN takes to scan
+  the QR and type a password — minutes. At boot it runs before
+  `cc_task_wdt_arm()`, but the loop()-path re-raise enters with the 30 s TWDT
+  already watching loopTask, and none of the wizard's wait loops ever called
+  `esp_task_wdt_reset()`. Same class as the SD.begin() entry above: one unfed
+  budget spanning an unbounded wait. `wifi_init_or_reboot()`'s bounded boot
+  connect had the twin defect — its 30 s bound exactly equals the WDT timeout.
+- **Fix:** `wdt_feed()` in every wizard wait loop (hello beat, portal loop,
+  success linger) and in the boot-connect wait — a no-op before the WDT is
+  armed, so the boot path is unchanged.
+- **Regression check:** none automatable on host (the TWDT is silicon); the
+  wizard loops all route through `wdt_feed()`, so a future loop added without
+  it is the thing to catch in review.
+- **Date learned:** 2026-08
+
 ---
 
 ## Web UI (web_ui.h)
@@ -824,6 +844,41 @@
   → held until the settle window).
 - **Date learned:** 2026-07
 
+### Wi-Fi bring-up must not write flash while an RGB glass is scanning out
+- **What happened:** The 7" dash-family glass garbled right as the onboarding
+  SoftAP came up (end of the wizard's hello beat), then reboot-looped.
+- **Root cause:** Arduino Wi-Fi persistence is ON by default, so every
+  `WiFi.mode()` / `softAP()` / `begin()` commits esp_wifi config to NVS. A
+  flash write suspends the cache; the RGB panel's bounce-refill ISR is not
+  IRAM-resident, so the panel underruns and visibly garbles for the write
+  window (the same PSRAM-contention mechanism the bounce buffers exist for —
+  display_dash.cpp). The display never reads esp_wifi's own store: credentials
+  live in the `securacv` namespace via runtime_config.
+- **Fix:** `WiFi.persistent(false)` before the FIRST radio call in both
+  `provision_run()` and `wifi_init_or_reboot()` (it was previously set only
+  inside the portal's join handler — after the AP was already up).
+- **Regression check:** review rule — any new radio bring-up path on a
+  dash-family build starts with `WiFi.persistent(false)`; unavoidable NVS
+  writes (set_wifi_credentials on join success) stay rare and deliberate.
+- **Date learned:** 2026-08
+
+### A seeded credential key is honored whichever NVS TYPE wrote it
+- **What happened:** A Nightstand 7 flashed WITH Wi-Fi baked in still booted
+  into its setup wizard — the seed was in flash, valid, and ignored.
+- **Root cause:** the flashers pick the seed scheme per product (`wifi_nvs`:
+  string for the getString readers, blob for wap/canary) — but a stale flasher
+  frontend (a cached tab from before the per-product plumbing, or a missing
+  catalog field falling back to blob) writes BLOBS under the same keys.
+  `Preferences::isKey()` is type-blind and `getString()` on a blob returns ""
+  — which the present-but-empty rule (see #1365) faithfully honored as "open
+  network with empty SSID" → placeholder → wizard.
+- **Fix:** `load_credential` (display + vision + sense, all copies) falls back
+  to `getBytesLength`/`getBytes` when the key exists but reads as an empty
+  string — a blob under the key is the same human intent.
+- **Regression check:** `desktop_parity.test.js` pins the blob fallback in all
+  four loaders alongside the existing isKey assertion.
+- **Date learned:** 2026-08
+
 ---
 
 ## Sensing & Signal Processing
@@ -1027,6 +1082,32 @@
   now the same strings the mount path mkdirs, so a future drift shows up
   as a failed write in bench `[HEALTH]` output immediately.
 - **Date learned:** 2026-07
+
+### LVGL 9 group-opa fades composite through the LV_MEM pool — a full-screen fade is a ~22 KB-per-frame allocation
+- **What happened:** The 7" glass (LVGL 9.5 dash family) panicked/halted right
+  as the onboarding wizard's scenes changed — garble, then a reboot loop; the
+  join QR never rendered. The LVGL 8.4 emulator twin could not reproduce it
+  (provisioning is stubbed there, and v8 doesn't have the mechanism anyway).
+- **Root cause:** in v9, animating style `opa` on a container composites the
+  whole subtree through intermediate layer buffers drawn from the SAME
+  `LV_MEM_SIZE` pool as every widget (`lv_refr.c` chunk layers,
+  `LV_DRAW_LAYER_SIMPLE_BUF_SIZE` = 24 KB, ARGB8888 for a transparent-bg
+  container). The wizard faded a full-screen container while TWO 800x480
+  screens (bedside face + onboarding) plus the QR draw buffer already sat in
+  the 64 KB pool. On exhaustion v9 either halts in `LV_ASSERT_MALLOC`'s
+  default `while(1)` (silent with `LV_USE_LOG 0`), NULL-derefs in
+  `lv_refr.c`'s unchecked `lv_draw_layer_create`, or livelocks in
+  `draw_buf_flush` — all three end as a watchdog/panic reboot. v8 applies
+  group opa per-draw with no compositing, so the same code was cheap there.
+- **Fix:** the wizard's scene fade animates the labels' `text_opa` (per-part
+  opa draws directly on both majors, no layers); the finish handoff cuts
+  instead of screen-load-fading on v9. Rule of thumb: on a v9 800x480 build,
+  style `opa` animations on containers are memory events, not style tweaks —
+  fade per-part properties (`text_opa`, `bg_opa`, `arc_opa`, `image_opa`)
+  or don't fade.
+- **Regression check:** none automatable on host; grep the dash-family UI for
+  `lv_anim` + plain-`opa` exec callbacks when touching scene transitions.
+- **Date learned:** 2026-08
 
 ---
 

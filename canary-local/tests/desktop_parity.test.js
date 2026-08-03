@@ -854,6 +854,13 @@ test("pre-configured Wi-Fi is honored: present-but-empty keys, and identity neve
     assert.match(src, /prefs\.isKey\(key\)/,
       `${path}: load_credential no longer distinguishes present-but-empty from absent — ` +
       "an open network's seeded empty password would be replaced by the compiled placeholder");
+    // 1b. A blob under the same key is honored too: isKey() is type-blind
+    //     and getString() on a blob reads "" — a blob-scheme seed (a stale
+    //     flasher frontend from before the per-product scheme plumbing)
+    //     otherwise re-raises onboarding over perfectly good credentials.
+    assert.match(src, /prefs\.getBytesLength\(key\)/,
+      `${path}: load_credential no longer falls back to a blob-scheme seed — ` +
+      "a blob-seeded board would read empty credentials and boot into setup");
   }
 
   // Both writers write the wifi_pass key unconditionally inside the wifi block.
