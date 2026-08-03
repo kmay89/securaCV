@@ -1,0 +1,2770 @@
+{
+ "generated_by": "canary-local/tools/figures/gen_figures.mjs",
+ "spec": "docs/design/FLEET_FIGURES.md",
+ "note": "One isometric figure per physical thing in the fleet, generated from the committed CAD. Every surface — glass, wrist, phone, web, emulator — draws from this ledger, so they cannot show a user two different pictures of one object. Hand edits are overwritten; run the generator.",
+ "projector": {
+  "rev": 1,
+  "kind": "true isometric, 30°",
+  "frame": "+X right, +Y front (toward the viewer), +Z up; millimeters",
+  "camera": "fixed at (+X,+Y,+Z) for every figure in the fleet"
+ },
+ "ladder": {
+  "order": [
+   "idea",
+   "prototype",
+   "confirmed",
+   "shipping"
+  ],
+  "shipping": "committed STLs + a firmware config + a released catalog variant",
+  "confirmed": "released in the catalog; one of the three proofs still missing",
+  "prototype": "in development — not committed to print",
+  "idea": "a research note and a sketch; renders as a ghost, never as a product",
+  "derived": "from evidence on disk, never hand-typed — see each figure's `evidence`"
+ },
+ "counts": {
+  "idea": 15,
+  "prototype": 4,
+  "confirmed": 0,
+  "shipping": 25
+ },
+ "figures": [
+  {
+   "id": "board.grove-vision-ai-v2",
+   "title": "Grove Vision AI V2",
+   "role": "board",
+   "device": "canary-vision",
+   "family": "canary-vision",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "Grove Vision AI V2"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [],
+    "catalog_variants": [
+     {
+      "product": "combo",
+      "variant": "combo-witness",
+      "status": "in-development"
+     },
+     {
+      "product": "vision_doorbell",
+      "variant": "vision-doorbell",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-weather",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-devkit-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-mount-kit",
+      "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
+     }
+    ],
+    "firmware_configs": []
+   },
+   "dims_source": "sketch",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 40,
+    "d": 20,
+    "h": 2.8
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 3,
+   "rev": "9ac4f8de",
+   "svg": "canary-local/figures/board.grove-vision-ai-v2.svg",
+   "glyph": "canary-local/figures/board.grove-vision-ai-v2.glyph.svg"
+  },
+  {
+   "id": "board.mr60bha2",
+   "title": "Seeed MR60BHA2 60 GHz radar",
+   "role": "board",
+   "device": "canary-sense",
+   "family": "canary-sense",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "Seeed MR60BHA2 60 GHz radar"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [],
+    "catalog_variants": [
+     {
+      "product": "sense_enclosure",
+      "variant": "sense-radome",
+      "status": "released"
+     },
+     {
+      "product": "sense_gang",
+      "variant": "sense-in-wall-plate",
+      "status": "in-development"
+     },
+     {
+      "product": "sense_stand",
+      "variant": "sense-bedside-stand",
+      "status": "in-development"
+     }
+    ],
+    "firmware_configs": []
+   },
+   "dims_source": "sketch",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 24,
+    "d": 24,
+    "h": 1.8
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 2,
+   "rev": "28c6014e",
+   "svg": "canary-local/figures/board.mr60bha2.svg",
+   "glyph": "canary-local/figures/board.mr60bha2.glyph.svg"
+  },
+  {
+   "id": "board.round-display",
+   "title": "Seeed Round Display for XIAO",
+   "role": "board",
+   "device": "canary-display",
+   "family": null,
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "Seeed Round Display for XIAO"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": null,
+    "committed_stls": [],
+    "catalog_variants": [],
+    "firmware_configs": []
+   },
+   "dims_source": "sketch",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 39,
+    "d": 5.4,
+    "h": 39
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 3,
+   "rev": "993003f6",
+   "svg": "canary-local/figures/board.round-display.svg",
+   "glyph": "canary-local/figures/board.round-display.glyph.svg"
+  },
+  {
+   "id": "board.xiao",
+   "title": "Seeed XIAO (ESP32 family)",
+   "role": "board",
+   "device": "_universal",
+   "family": null,
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "Seeed XIAO (ESP32 family)"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "universal",
+    "committed_stls": [],
+    "catalog_variants": [
+     {
+      "product": "bench_fixture",
+      "variant": "bench-bring-up-fixture",
+      "status": "in-development"
+     },
+     {
+      "product": "dock",
+      "variant": "fleet-provisioning-dock",
+      "status": "in-development"
+     },
+     {
+      "product": "field_case",
+      "variant": "field-case",
+      "status": "in-development"
+     },
+     {
+      "product": "fit_coupon",
+      "variant": "universal-fit-coupon",
+      "status": "in-development"
+     },
+     {
+      "product": "hammond_chassis",
+      "variant": "hammond-chassis-plates",
+      "status": "in-development"
+     },
+     {
+      "product": "hub_din",
+      "variant": "hub-pi-5-din-rail",
+      "status": "in-development"
+     },
+     {
+      "product": "inserts",
+      "variant": "functional-inserts",
+      "status": "in-development"
+     },
+     {
+      "product": "jbox",
+      "variant": "covert-junction-box",
+      "status": "in-development"
+     },
+     {
+      "product": "mount_adapters",
+      "variant": "mount-adapters",
+      "status": "in-development"
+     },
+     {
+      "product": "outlet_cradle",
+      "variant": "outlet-cradle",
+      "status": "in-development"
+     },
+     {
+      "product": "relay_solar",
+      "variant": "solar-lora-relay-pod",
+      "status": "in-development"
+     },
+     {
+      "product": "shop_tools",
+      "variant": "shop-tools",
+      "status": "in-development"
+     },
+     {
+      "product": "sign",
+      "variant": "witness-signage-plate",
+      "status": "in-development"
+     },
+     {
+      "product": "templates_2d",
+      "variant": "paper-install-templates",
+      "status": "in-development"
+     },
+     {
+      "product": "vehicle_mount",
+      "variant": "vehicle-mount-kit",
+      "status": "in-development"
+     },
+     {
+      "product": "wear_clip",
+      "variant": "body-worn-clips",
+      "status": "in-development"
+     }
+    ],
+    "firmware_configs": []
+   },
+   "dims_source": "sketch",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 21,
+    "d": 18.7,
+    "h": 2.6
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 3,
+   "rev": "cd09fbf1",
+   "svg": "canary-local/figures/board.xiao.svg",
+   "glyph": "canary-local/figures/board.xiao.glyph.svg"
+  },
+  {
+   "id": "device.canary-chore",
+   "title": "Canary Chore",
+   "role": "device",
+   "device": "canary-chore",
+   "family": "canary-chore",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "idea",
+   "evidence": {
+    "registry_kind": "concept",
+    "committed_stls": [],
+    "catalog_variants": [],
+    "firmware_configs": []
+   },
+   "dims_source": "sketch",
+   "sketch_note": "stick-on accelerometer tag",
+   "envelope_mm": {
+    "w": 34,
+    "d": 14,
+    "h": 34
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 1,
+   "rev": "9ac17b93",
+   "svg": "canary-local/figures/device.canary-chore.svg",
+   "glyph": "canary-local/figures/device.canary-chore.glyph.svg"
+  },
+  {
+   "id": "device.canary-clime",
+   "title": "Canary Clime",
+   "role": "device",
+   "device": "canary-clime",
+   "family": "canary-clime",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "idea",
+   "evidence": {
+    "registry_kind": "concept",
+    "committed_stls": [],
+    "catalog_variants": [],
+    "firmware_configs": []
+   },
+   "dims_source": "sketch",
+   "sketch_note": "air-quality puck",
+   "envelope_mm": {
+    "w": 56,
+    "d": 26,
+    "h": 56
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 1,
+   "rev": "a3438690",
+   "svg": "canary-local/figures/device.canary-clime.svg",
+   "glyph": "canary-local/figures/device.canary-clime.glyph.svg"
+  },
+  {
+   "id": "device.canary-curbwatch",
+   "title": "Canary Curbwatch",
+   "role": "device",
+   "device": "canary-curbwatch",
+   "family": "canary-curbwatch",
+   "supply": [],
+   "confidence": "idea",
+   "evidence": {
+    "registry_kind": "concept",
+    "committed_stls": [],
+    "catalog_variants": [],
+    "firmware_configs": []
+   },
+   "dims_source": "sketch",
+   "sketch_note": "radar + starlight camera on a solar mast",
+   "envelope_mm": {
+    "w": 96,
+    "d": 52,
+    "h": 120
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 1,
+   "rev": "58cf33d3",
+   "svg": "canary-local/figures/device.canary-curbwatch.svg",
+   "glyph": "canary-local/figures/device.canary-curbwatch.glyph.svg"
+  },
+  {
+   "id": "device.canary-display-dash",
+   "title": "Canary Dash",
+   "role": "device",
+   "device": "canary-display-dash",
+   "family": "canary-display",
+   "supply": [
+    {
+     "vendor": "waveshare",
+     "line": "ESP32 display board"
+    }
+   ],
+   "confidence": "prototype",
+   "evidence": {
+    "registry_kind": "display",
+    "committed_stls": [],
+    "catalog_variants": [
+     {
+      "product": "dash_display",
+      "variant": "dashboard-display-case",
+      "status": "in-development"
+     },
+     {
+      "product": "s3_lcd7",
+      "variant": "7-touch-dashboard-case",
+      "status": "in-development"
+     }
+    ],
+    "firmware_configs": [
+     "dash",
+     "dash7",
+     "nightstand",
+     "nightstand7",
+     "touch169",
+     "watch"
+    ]
+   },
+   "dims_source": "sketch",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 113.7,
+    "d": 16.35,
+    "h": 73.6
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 3,
+   "rev": "9b7ce5f7",
+   "svg": "canary-local/figures/device.canary-display-dash.svg",
+   "glyph": "canary-local/figures/device.canary-display-dash.glyph.svg"
+  },
+  {
+   "id": "device.canary-display-watch",
+   "title": "Canary Watch Station",
+   "role": "device",
+   "device": "canary-display-watch",
+   "family": "canary-display",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "prototype",
+   "evidence": {
+    "registry_kind": "display",
+    "committed_stls": [],
+    "catalog_variants": [
+     {
+      "product": "c6_display",
+      "variant": "c6-display-pocket-case",
+      "status": "in-development"
+     },
+     {
+      "product": "s3_touch169",
+      "variant": "1-69-touch-watch-display-puck",
+      "status": "in-development"
+     },
+     {
+      "product": "watch_station",
+      "variant": "watch-station",
+      "status": "in-development"
+     }
+    ],
+    "firmware_configs": [
+     "dash",
+     "dash7",
+     "nightstand",
+     "nightstand7",
+     "touch169",
+     "watch"
+    ]
+   },
+   "dims_source": "sketch",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 52,
+    "d": 21.8,
+    "h": 52
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 3,
+   "rev": "64d11931",
+   "svg": "canary-local/figures/device.canary-display-watch.svg",
+   "glyph": "canary-local/figures/device.canary-display-watch.glyph.svg"
+  },
+  {
+   "id": "device.canary-feeder",
+   "title": "Canary Feeder",
+   "role": "device",
+   "device": "canary-feeder",
+   "family": "canary-feeder",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "idea",
+   "evidence": {
+    "registry_kind": "concept",
+    "committed_stls": [],
+    "catalog_variants": [],
+    "firmware_configs": []
+   },
+   "dims_source": "sketch",
+   "sketch_note": "perch + hopper",
+   "envelope_mm": {
+    "w": 120,
+    "d": 90,
+    "h": 150
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 1,
+   "rev": "bc53a17d",
+   "svg": "canary-local/figures/device.canary-feeder.svg",
+   "glyph": "canary-local/figures/device.canary-feeder.glyph.svg"
+  },
+  {
+   "id": "device.canary-fence-guard",
+   "title": "Canary Fence Guard",
+   "role": "device",
+   "device": "canary-fence-guard",
+   "family": "canary-fence-guard",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "idea",
+   "evidence": {
+    "registry_kind": "concept",
+    "committed_stls": [],
+    "catalog_variants": [],
+    "firmware_configs": []
+   },
+   "dims_source": "sketch",
+   "sketch_note": "post-mounted node with a stub antenna",
+   "envelope_mm": {
+    "w": 44,
+    "d": 30,
+    "h": 96
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 1,
+   "rev": "d543b8dc",
+   "svg": "canary-local/figures/device.canary-fence-guard.svg",
+   "glyph": "canary-local/figures/device.canary-fence-guard.glyph.svg"
+  },
+  {
+   "id": "device.canary-gatekeeper",
+   "title": "Canary Gatekeeper",
+   "role": "device",
+   "device": "canary-gatekeeper",
+   "family": "canary-gatekeeper",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "idea",
+   "evidence": {
+    "registry_kind": "concept",
+    "committed_stls": [],
+    "catalog_variants": [],
+    "firmware_configs": []
+   },
+   "dims_source": "sketch",
+   "sketch_note": "gate tag",
+   "envelope_mm": {
+    "w": 38,
+    "d": 18,
+    "h": 62
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 1,
+   "rev": "119d2f3a",
+   "svg": "canary-local/figures/device.canary-gatekeeper.svg",
+   "glyph": "canary-local/figures/device.canary-gatekeeper.glyph.svg"
+  },
+  {
+   "id": "device.canary-guardian",
+   "title": "Canary Guardian",
+   "role": "device",
+   "device": "canary-guardian",
+   "family": "canary-guardian",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "idea",
+   "evidence": {
+    "registry_kind": "concept",
+    "committed_stls": [],
+    "catalog_variants": [],
+    "firmware_configs": []
+   },
+   "dims_source": "sketch",
+   "sketch_note": "low-power sibling of the fence node",
+   "envelope_mm": {
+    "w": 40,
+    "d": 28,
+    "h": 78
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 1,
+   "rev": "69cf6bf8",
+   "svg": "canary-local/figures/device.canary-guardian.svg",
+   "glyph": "canary-local/figures/device.canary-guardian.glyph.svg"
+  },
+  {
+   "id": "device.canary-hearth",
+   "title": "Canary Hearth",
+   "role": "device",
+   "device": "canary-hearth",
+   "family": "canary-hearth",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "idea",
+   "evidence": {
+    "registry_kind": "concept",
+    "committed_stls": [],
+    "catalog_variants": [],
+    "firmware_configs": []
+   },
+   "dims_source": "sketch",
+   "sketch_note": "thermal eye",
+   "envelope_mm": {
+    "w": 46,
+    "d": 34,
+    "h": 46
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 1,
+   "rev": "0741b92d",
+   "svg": "canary-local/figures/device.canary-hearth.svg",
+   "glyph": "canary-local/figures/device.canary-hearth.glyph.svg"
+  },
+  {
+   "id": "device.canary-litter",
+   "title": "Canary Litter",
+   "role": "device",
+   "device": "canary-litter",
+   "family": "canary-litter",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "idea",
+   "evidence": {
+    "registry_kind": "concept",
+    "committed_stls": [],
+    "catalog_variants": [],
+    "firmware_configs": []
+   },
+   "dims_source": "sketch",
+   "sketch_note": "load-cell mat under the tray",
+   "envelope_mm": {
+    "w": 300,
+    "d": 220,
+    "h": 40
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 1,
+   "rev": "4632de04",
+   "svg": "canary-local/figures/device.canary-litter.svg",
+   "glyph": "canary-local/figures/device.canary-litter.glyph.svg"
+  },
+  {
+   "id": "device.canary-paw",
+   "title": "Canary Paw",
+   "role": "device",
+   "device": "canary-paw",
+   "family": "canary-paw",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "idea",
+   "evidence": {
+    "registry_kind": "concept",
+    "committed_stls": [],
+    "catalog_variants": [],
+    "firmware_configs": []
+   },
+   "dims_source": "sketch",
+   "sketch_note": "trained paw button",
+   "envelope_mm": {
+    "w": 70,
+    "d": 26,
+    "h": 70
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 1,
+   "rev": "89526725",
+   "svg": "canary-local/figures/device.canary-paw.svg",
+   "glyph": "canary-local/figures/device.canary-paw.glyph.svg"
+  },
+  {
+   "id": "device.canary-poolwatch",
+   "title": "Canary Poolwatch",
+   "role": "device",
+   "device": "canary-poolwatch",
+   "family": "canary-poolwatch",
+   "supply": [],
+   "confidence": "idea",
+   "evidence": {
+    "registry_kind": "concept",
+    "committed_stls": [],
+    "catalog_variants": [],
+    "firmware_configs": []
+   },
+   "dims_source": "sketch",
+   "sketch_note": "poolside camera post",
+   "envelope_mm": {
+    "w": 62,
+    "d": 40,
+    "h": 96
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 1,
+   "rev": "17f634f1",
+   "svg": "canary-local/figures/device.canary-poolwatch.svg",
+   "glyph": "canary-local/figures/device.canary-poolwatch.glyph.svg"
+  },
+  {
+   "id": "device.canary-ranger",
+   "title": "Canary Ranger",
+   "role": "device",
+   "device": "canary-ranger",
+   "family": "canary-ranger",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "idea",
+   "evidence": {
+    "registry_kind": "concept",
+    "committed_stls": [],
+    "catalog_variants": [],
+    "firmware_configs": []
+   },
+   "dims_source": "sketch",
+   "sketch_note": "radar head over a battery body",
+   "envelope_mm": {
+    "w": 52,
+    "d": 34,
+    "h": 84
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 1,
+   "rev": "f03bd7ee",
+   "svg": "canary-local/figures/device.canary-ranger.svg",
+   "glyph": "canary-local/figures/device.canary-ranger.glyph.svg"
+  },
+  {
+   "id": "device.canary-sense",
+   "title": "Canary Sense",
+   "role": "device",
+   "device": "canary-sense",
+   "family": "canary-sense",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [
+     "canary_sense_back.stl",
+     "canary_sense_front.stl"
+    ],
+    "catalog_variants": [
+     {
+      "product": "sense_enclosure",
+      "variant": "sense-radome",
+      "status": "released"
+     },
+     {
+      "product": "sense_gang",
+      "variant": "sense-in-wall-plate",
+      "status": "in-development"
+     },
+     {
+      "product": "sense_stand",
+      "variant": "sense-bedside-stand",
+      "status": "in-development"
+     }
+    ],
+    "firmware_configs": [
+     "default",
+     "wellbeing"
+    ]
+   },
+   "dims_source": "stl",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 57.2,
+    "d": 27.95,
+    "h": 77.097
+   },
+   "traced_to": [
+    {
+     "file": "canary_sense_back.stl",
+     "triangles": 3232,
+     "mm": [
+      57.2,
+      77.097,
+      20.5
+     ]
+    },
+    {
+     "file": "canary_sense_front.stl",
+     "triangles": 2620,
+     "mm": [
+      57.2,
+      56.6,
+      6
+     ]
+    }
+   ],
+   "drift_guard": null,
+   "solids": 4,
+   "rev": "112abb6d",
+   "svg": "canary-local/figures/device.canary-sense.svg",
+   "glyph": "canary-local/figures/device.canary-sense.glyph.svg"
+  },
+  {
+   "id": "device.canary-vehicle",
+   "title": "Canary Vehicle",
+   "role": "device",
+   "device": "canary-vehicle",
+   "family": "canary-vehicle",
+   "supply": [
+    {
+     "vendor": "raspberry-pi",
+     "line": "SBC"
+    }
+   ],
+   "confidence": "prototype",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [],
+    "catalog_variants": [],
+    "firmware_configs": []
+   },
+   "dims_source": "sketch",
+   "sketch_note": "SBC + CAN hat",
+   "envelope_mm": {
+    "w": 92,
+    "d": 62,
+    "h": 30
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 1,
+   "rev": "389ea1ca",
+   "svg": "canary-local/figures/device.canary-vehicle.svg",
+   "glyph": "canary-local/figures/device.canary-vehicle.glyph.svg"
+  },
+  {
+   "id": "device.canary-vehicle-guard",
+   "title": "Canary Vehicle Guard",
+   "role": "device",
+   "device": "canary-vehicle-guard",
+   "family": "canary-vehicle-guard",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "idea",
+   "evidence": {
+    "registry_kind": "concept",
+    "committed_stls": [],
+    "catalog_variants": [],
+    "firmware_configs": []
+   },
+   "dims_source": "sketch",
+   "sketch_note": "in-cabin IMU node",
+   "envelope_mm": {
+    "w": 44,
+    "d": 22,
+    "h": 66
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 1,
+   "rev": "962a8770",
+   "svg": "canary-local/figures/device.canary-vehicle-guard.svg",
+   "glyph": "canary-local/figures/device.canary-vehicle-guard.glyph.svg"
+  },
+  {
+   "id": "device.canary-vision",
+   "title": "Canary Vision",
+   "role": "device",
+   "device": "canary-vision",
+   "family": "canary-vision",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [
+     "canary_vision_enclosure_xiao_indoor_back.stl",
+     "canary_vision_enclosure_xiao_indoor_front.stl"
+    ],
+    "catalog_variants": [
+     {
+      "product": "combo",
+      "variant": "combo-witness",
+      "status": "in-development"
+     },
+     {
+      "product": "vision_doorbell",
+      "variant": "vision-doorbell",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-weather",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-devkit-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-mount-kit",
+      "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
+     }
+    ],
+    "firmware_configs": [
+     "default"
+    ]
+   },
+   "dims_source": "stl",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 43.2,
+    "d": 29.35,
+    "h": 94.097
+   },
+   "traced_to": [
+    {
+     "file": "canary_vision_enclosure_xiao_indoor_back.stl",
+     "triangles": 3376,
+     "mm": [
+      43.2,
+      94.097,
+      22
+     ]
+    },
+    {
+     "file": "canary_vision_enclosure_xiao_indoor_front.stl",
+     "triangles": 3108,
+     "mm": [
+      43.2,
+      73.6,
+      6
+     ]
+    }
+   ],
+   "drift_guard": null,
+   "solids": 4,
+   "rev": "421d34f1",
+   "svg": "canary-local/figures/device.canary-vision.svg",
+   "glyph": "canary-local/figures/device.canary-vision.glyph.svg"
+  },
+  {
+   "id": "device.canary-vision-doorbell",
+   "title": "Canary Vision Doorbell",
+   "role": "device",
+   "device": "canary-vision",
+   "family": "canary-vision",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [
+     "canary_vision_doorbell_plate.stl",
+     "canary_vision_doorbell_body.stl",
+     "canary_vision_doorbell_face.stl"
+    ],
+    "catalog_variants": [
+     {
+      "product": "combo",
+      "variant": "combo-witness",
+      "status": "in-development"
+     },
+     {
+      "product": "vision_doorbell",
+      "variant": "vision-doorbell",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-weather",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-devkit-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-mount-kit",
+      "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
+     }
+    ],
+    "firmware_configs": [
+     "default"
+    ]
+   },
+   "dims_source": "stl",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 36.6,
+    "d": 43.55,
+    "h": 118
+   },
+   "traced_to": [
+    {
+     "file": "canary_vision_doorbell_plate.stl",
+     "triangles": 3660,
+     "mm": [
+      32.6,
+      118,
+      14
+     ]
+    },
+    {
+     "file": "canary_vision_doorbell_body.stl",
+     "triangles": 5084,
+     "mm": [
+      32.6,
+      114,
+      21.8
+     ]
+    },
+    {
+     "file": "canary_vision_doorbell_face.stl",
+     "triangles": 8408,
+     "mm": [
+      36.6,
+      118,
+      6.2
+     ]
+    }
+   ],
+   "drift_guard": null,
+   "solids": 5,
+   "rev": "bb33e209",
+   "svg": "canary-local/figures/device.canary-vision-doorbell.svg",
+   "glyph": "canary-local/figures/device.canary-vision-doorbell.glyph.svg"
+  },
+  {
+   "id": "device.canary-vision-lite",
+   "title": "Canary Vision Lite",
+   "role": "device",
+   "device": "canary-vision-lite",
+   "family": "canary-vision-lite",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "Seeed module"
+    }
+   ],
+   "confidence": "idea",
+   "evidence": {
+    "registry_kind": "concept",
+    "committed_stls": [],
+    "catalog_variants": [],
+    "firmware_configs": []
+   },
+   "dims_source": "sketch",
+   "sketch_note": "reCamera 2002w in a printed sleeve",
+   "envelope_mm": {
+    "w": 40,
+    "d": 40,
+    "h": 52
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 1,
+   "rev": "e1732477",
+   "svg": "canary-local/figures/device.canary-vision-lite.svg",
+   "glyph": "canary-local/figures/device.canary-vision-lite.glyph.svg"
+  },
+  {
+   "id": "device.canary-vision-pro",
+   "title": "Canary Vision Pro",
+   "role": "device",
+   "device": "canary-vision-pro",
+   "family": "canary-vision-pro",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "Seeed module"
+    }
+   ],
+   "confidence": "idea",
+   "evidence": {
+    "registry_kind": "concept",
+    "committed_stls": [],
+    "catalog_variants": [],
+    "firmware_configs": []
+   },
+   "dims_source": "sketch",
+   "sketch_note": "reCamera Pro in a printed sleeve",
+   "envelope_mm": {
+    "w": 46,
+    "d": 46,
+    "h": 62
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 1,
+   "rev": "c0e230a6",
+   "svg": "canary-local/figures/device.canary-vision-pro.svg",
+   "glyph": "canary-local/figures/device.canary-vision-pro.glyph.svg"
+  },
+  {
+   "id": "device.canary-wap",
+   "title": "Canary WAP",
+   "role": "device",
+   "device": "canary-wap",
+   "family": "canary-wap",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [
+     "canary_wap_enclosure_compact_base.stl",
+     "canary_wap_enclosure_compact_lid.stl"
+    ],
+    "catalog_variants": [
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-compact",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-battery",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-weather",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-clip-coupon",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "thermal-outdoor-kit",
+      "status": "released"
+     }
+    ],
+    "firmware_configs": [
+     "default",
+     "mobile"
+    ]
+   },
+   "dims_source": "stl",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 33.7,
+    "d": 18.25,
+    "h": 36.6
+   },
+   "traced_to": [
+    {
+     "file": "canary_wap_enclosure_compact_base.stl",
+     "triangles": 1808,
+     "mm": [
+      33.7,
+      36.6,
+      11.7
+     ]
+    },
+    {
+     "file": "canary_wap_enclosure_compact_lid.stl",
+     "triangles": 3240,
+     "mm": [
+      33.7,
+      36.6,
+      6
+     ]
+    }
+   ],
+   "drift_guard": null,
+   "solids": 3,
+   "rev": "5fab1e20",
+   "svg": "canary-local/figures/device.canary-wap.svg",
+   "glyph": "canary-local/figures/device.canary-wap.glyph.svg"
+  },
+  {
+   "id": "part.doorbell.body",
+   "title": "Canary Vision Doorbell — body",
+   "role": "part",
+   "device": "canary-vision",
+   "family": "canary-vision",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [
+     "canary_vision_doorbell_body.stl"
+    ],
+    "catalog_variants": [
+     {
+      "product": "combo",
+      "variant": "combo-witness",
+      "status": "in-development"
+     },
+     {
+      "product": "vision_doorbell",
+      "variant": "vision-doorbell",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-weather",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-devkit-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-mount-kit",
+      "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
+     }
+    ],
+    "firmware_configs": [
+     "default"
+    ]
+   },
+   "dims_source": "stl",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 32.6,
+    "d": 21.8,
+    "h": 114
+   },
+   "traced_to": [
+    {
+     "file": "canary_vision_doorbell_body.stl",
+     "triangles": 5084,
+     "mm": [
+      32.6,
+      114,
+      21.8
+     ]
+    }
+   ],
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
+   "solids": 1,
+   "rev": "af045762",
+   "svg": "canary-local/figures/part.doorbell.body.svg",
+   "glyph": "canary-local/figures/part.doorbell.body.glyph.svg"
+  },
+  {
+   "id": "part.doorbell.face",
+   "title": "Canary Vision Doorbell — face plate",
+   "role": "part",
+   "device": "canary-vision",
+   "family": "canary-vision",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [
+     "canary_vision_doorbell_face.stl"
+    ],
+    "catalog_variants": [
+     {
+      "product": "combo",
+      "variant": "combo-witness",
+      "status": "in-development"
+     },
+     {
+      "product": "vision_doorbell",
+      "variant": "vision-doorbell",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-weather",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-devkit-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-mount-kit",
+      "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
+     }
+    ],
+    "firmware_configs": [
+     "default"
+    ]
+   },
+   "dims_source": "stl",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 36.6,
+    "d": 7.65,
+    "h": 118
+   },
+   "traced_to": [
+    {
+     "file": "canary_vision_doorbell_face.stl",
+     "triangles": 8408,
+     "mm": [
+      36.6,
+      118,
+      6.2
+     ]
+    }
+   ],
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
+   "solids": 3,
+   "rev": "5a3db2a0",
+   "svg": "canary-local/figures/part.doorbell.face.svg",
+   "glyph": "canary-local/figures/part.doorbell.face.glyph.svg"
+  },
+  {
+   "id": "part.doorbell.gasket",
+   "title": "Canary Vision Doorbell — TPU gasket",
+   "role": "part",
+   "device": "canary-vision",
+   "family": "canary-vision",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [
+     "canary_vision_doorbell_gasket.stl"
+    ],
+    "catalog_variants": [
+     {
+      "product": "combo",
+      "variant": "combo-witness",
+      "status": "in-development"
+     },
+     {
+      "product": "vision_doorbell",
+      "variant": "vision-doorbell",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-weather",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-devkit-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-mount-kit",
+      "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
+     }
+    ],
+    "firmware_configs": [
+     "default"
+    ]
+   },
+   "dims_source": "stl",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 30.5,
+    "d": 1.5,
+    "h": 111.9
+   },
+   "traced_to": [
+    {
+     "file": "canary_vision_doorbell_gasket.stl",
+     "triangles": 1488,
+     "mm": [
+      30.5,
+      111.9,
+      1.5
+     ]
+    }
+   ],
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
+   "solids": 1,
+   "rev": "15c22622",
+   "svg": "canary-local/figures/part.doorbell.gasket.svg",
+   "glyph": "canary-local/figures/part.doorbell.gasket.glyph.svg"
+  },
+  {
+   "id": "part.doorbell.plate",
+   "title": "Canary Vision Doorbell — wall plate",
+   "role": "part",
+   "device": "canary-vision",
+   "family": "canary-vision",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [
+     "canary_vision_doorbell_plate.stl"
+    ],
+    "catalog_variants": [
+     {
+      "product": "combo",
+      "variant": "combo-witness",
+      "status": "in-development"
+     },
+     {
+      "product": "vision_doorbell",
+      "variant": "vision-doorbell",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-weather",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-devkit-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-mount-kit",
+      "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
+     }
+    ],
+    "firmware_configs": [
+     "default"
+    ]
+   },
+   "dims_source": "stl",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 32.6,
+    "d": 14,
+    "h": 118
+   },
+   "traced_to": [
+    {
+     "file": "canary_vision_doorbell_plate.stl",
+     "triangles": 3660,
+     "mm": [
+      32.6,
+      118,
+      14
+     ]
+    }
+   ],
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
+   "solids": 1,
+   "rev": "612f9087",
+   "svg": "canary-local/figures/part.doorbell.plate.svg",
+   "glyph": "canary-local/figures/part.doorbell.plate.glyph.svg"
+  },
+  {
+   "id": "part.sense.back",
+   "title": "Canary Sense — back shell",
+   "role": "part",
+   "device": "canary-sense",
+   "family": "canary-sense",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [
+     "canary_sense_back.stl"
+    ],
+    "catalog_variants": [
+     {
+      "product": "sense_enclosure",
+      "variant": "sense-radome",
+      "status": "released"
+     },
+     {
+      "product": "sense_gang",
+      "variant": "sense-in-wall-plate",
+      "status": "in-development"
+     },
+     {
+      "product": "sense_stand",
+      "variant": "sense-bedside-stand",
+      "status": "in-development"
+     }
+    ],
+    "firmware_configs": [
+     "default",
+     "wellbeing"
+    ]
+   },
+   "dims_source": "stl",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 57.2,
+    "d": 21.15,
+    "h": 77.097
+   },
+   "traced_to": [
+    {
+     "file": "canary_sense_back.stl",
+     "triangles": 3232,
+     "mm": [
+      57.2,
+      77.097,
+      20.5
+     ]
+    }
+   ],
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
+   "solids": 2,
+   "rev": "244879b1",
+   "svg": "canary-local/figures/part.sense.back.svg",
+   "glyph": "canary-local/figures/part.sense.back.glyph.svg"
+  },
+  {
+   "id": "part.sense.front",
+   "title": "Canary Sense — radome front",
+   "role": "part",
+   "device": "canary-sense",
+   "family": "canary-sense",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [
+     "canary_sense_front.stl"
+    ],
+    "catalog_variants": [
+     {
+      "product": "sense_enclosure",
+      "variant": "sense-radome",
+      "status": "released"
+     },
+     {
+      "product": "sense_gang",
+      "variant": "sense-in-wall-plate",
+      "status": "in-development"
+     },
+     {
+      "product": "sense_stand",
+      "variant": "sense-bedside-stand",
+      "status": "in-development"
+     }
+    ],
+    "firmware_configs": [
+     "default",
+     "wellbeing"
+    ]
+   },
+   "dims_source": "stl",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 57.2,
+    "d": 6.95,
+    "h": 56.6
+   },
+   "traced_to": [
+    {
+     "file": "canary_sense_front.stl",
+     "triangles": 2620,
+     "mm": [
+      57.2,
+      56.6,
+      6
+     ]
+    }
+   ],
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
+   "solids": 2,
+   "rev": "56bc7c4f",
+   "svg": "canary-local/figures/part.sense.front.svg",
+   "glyph": "canary-local/figures/part.sense.front.glyph.svg"
+  },
+  {
+   "id": "part.vision.back",
+   "title": "Canary Vision — back shell (XIAO, indoor)",
+   "role": "part",
+   "device": "canary-vision",
+   "family": "canary-vision",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [
+     "canary_vision_enclosure_xiao_indoor_back.stl"
+    ],
+    "catalog_variants": [
+     {
+      "product": "combo",
+      "variant": "combo-witness",
+      "status": "in-development"
+     },
+     {
+      "product": "vision_doorbell",
+      "variant": "vision-doorbell",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-weather",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-devkit-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-mount-kit",
+      "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
+     }
+    ],
+    "firmware_configs": [
+     "default"
+    ]
+   },
+   "dims_source": "stl",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 43.2,
+    "d": 22,
+    "h": 94.097
+   },
+   "traced_to": [
+    {
+     "file": "canary_vision_enclosure_xiao_indoor_back.stl",
+     "triangles": 3376,
+     "mm": [
+      43.2,
+      94.097,
+      22
+     ]
+    }
+   ],
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
+   "solids": 1,
+   "rev": "1d1de5d2",
+   "svg": "canary-local/figures/part.vision.back.svg",
+   "glyph": "canary-local/figures/part.vision.back.glyph.svg"
+  },
+  {
+   "id": "part.vision.bracket",
+   "title": "Canary Vision — GoPro-compatible bracket",
+   "role": "part",
+   "device": "canary-vision",
+   "family": "canary-vision",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [
+     "canary_vision_enclosure_bracket.stl"
+    ],
+    "catalog_variants": [
+     {
+      "product": "combo",
+      "variant": "combo-witness",
+      "status": "in-development"
+     },
+     {
+      "product": "vision_doorbell",
+      "variant": "vision-doorbell",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-weather",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-devkit-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-mount-kit",
+      "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
+     }
+    ],
+    "firmware_configs": [
+     "default"
+    ]
+   },
+   "dims_source": "stl",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 46,
+    "d": 24.5,
+    "h": 33.95
+   },
+   "traced_to": [
+    {
+     "file": "canary_vision_enclosure_bracket.stl",
+     "triangles": 6044,
+     "mm": [
+      46,
+      34,
+      24.5
+     ]
+    }
+   ],
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
+   "solids": 2,
+   "rev": "3b17d115",
+   "svg": "canary-local/figures/part.vision.bracket.svg",
+   "glyph": "canary-local/figures/part.vision.bracket.glyph.svg"
+  },
+  {
+   "id": "part.vision.front",
+   "title": "Canary Vision — front face (XIAO, indoor)",
+   "role": "part",
+   "device": "canary-vision",
+   "family": "canary-vision",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [
+     "canary_vision_enclosure_xiao_indoor_front.stl"
+    ],
+    "catalog_variants": [
+     {
+      "product": "combo",
+      "variant": "combo-witness",
+      "status": "in-development"
+     },
+     {
+      "product": "vision_doorbell",
+      "variant": "vision-doorbell",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-weather",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-devkit-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-mount-kit",
+      "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
+     }
+    ],
+    "firmware_configs": [
+     "default"
+    ]
+   },
+   "dims_source": "stl",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 43.2,
+    "d": 7.25,
+    "h": 73.6
+   },
+   "traced_to": [
+    {
+     "file": "canary_vision_enclosure_xiao_indoor_front.stl",
+     "triangles": 3108,
+     "mm": [
+      43.2,
+      73.6,
+      6
+     ]
+    }
+   ],
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
+   "solids": 3,
+   "rev": "8fe07ad7",
+   "svg": "canary-local/figures/part.vision.front.svg",
+   "glyph": "canary-local/figures/part.vision.front.glyph.svg"
+  },
+  {
+   "id": "part.vision.gasket",
+   "title": "Canary Vision — TPU weather gasket",
+   "role": "part",
+   "device": "canary-vision",
+   "family": "canary-vision",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [
+     "canary_vision_enclosure_xiao_weather_gasket.stl"
+    ],
+    "catalog_variants": [
+     {
+      "product": "combo",
+      "variant": "combo-witness",
+      "status": "in-development"
+     },
+     {
+      "product": "vision_doorbell",
+      "variant": "vision-doorbell",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-weather",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-devkit-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-mount-kit",
+      "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
+     }
+    ],
+    "firmware_configs": [
+     "default"
+    ]
+   },
+   "dims_source": "stl",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 43.5,
+    "d": 1.5,
+    "h": 73.9
+   },
+   "traced_to": [
+    {
+     "file": "canary_vision_enclosure_xiao_weather_gasket.stl",
+     "triangles": 288,
+     "mm": [
+      43.5,
+      73.9,
+      1.5
+     ]
+    }
+   ],
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
+   "solids": 1,
+   "rev": "d444bc47",
+   "svg": "canary-local/figures/part.vision.gasket.svg",
+   "glyph": "canary-local/figures/part.vision.gasket.glyph.svg"
+  },
+  {
+   "id": "part.vision.knob",
+   "title": "Canary Vision — bracket knob",
+   "role": "part",
+   "device": "canary-vision",
+   "family": "canary-vision",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [
+     "canary_vision_enclosure_knob.stl"
+    ],
+    "catalog_variants": [
+     {
+      "product": "combo",
+      "variant": "combo-witness",
+      "status": "in-development"
+     },
+     {
+      "product": "vision_doorbell",
+      "variant": "vision-doorbell",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-weather",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-devkit-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-mount-kit",
+      "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
+     }
+    ],
+    "firmware_configs": [
+     "default"
+    ]
+   },
+   "dims_source": "stl",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 21.705,
+    "d": 8,
+    "h": 21.705
+   },
+   "traced_to": [
+    {
+     "file": "canary_vision_enclosure_knob.stl",
+     "triangles": 964,
+     "mm": [
+      21.705,
+      21.705,
+      8
+     ]
+    }
+   ],
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
+   "solids": 1,
+   "rev": "10526bcd",
+   "svg": "canary-local/figures/part.vision.knob.svg",
+   "glyph": "canary-local/figures/part.vision.knob.glyph.svg"
+  },
+  {
+   "id": "part.wap.base",
+   "title": "Canary WAP — compact base",
+   "role": "part",
+   "device": "canary-wap",
+   "family": "canary-wap",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [
+     "canary_wap_enclosure_compact_base.stl"
+    ],
+    "catalog_variants": [
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-compact",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-battery",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-weather",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-clip-coupon",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "thermal-outdoor-kit",
+      "status": "released"
+     }
+    ],
+    "firmware_configs": [
+     "default",
+     "mobile"
+    ]
+   },
+   "dims_source": "stl",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 33.7,
+    "d": 11.7,
+    "h": 36.6
+   },
+   "traced_to": [
+    {
+     "file": "canary_wap_enclosure_compact_base.stl",
+     "triangles": 1808,
+     "mm": [
+      33.7,
+      36.6,
+      11.7
+     ]
+    }
+   ],
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
+   "solids": 1,
+   "rev": "d64c230c",
+   "svg": "canary-local/figures/part.wap.base.svg",
+   "glyph": "canary-local/figures/part.wap.base.glyph.svg"
+  },
+  {
+   "id": "part.wap.battery-base",
+   "title": "Canary WAP — battery base",
+   "role": "part",
+   "device": "canary-wap",
+   "family": "canary-wap",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [
+     "canary_wap_enclosure_battery_base.stl"
+    ],
+    "catalog_variants": [
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-compact",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-battery",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-weather",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-clip-coupon",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "thermal-outdoor-kit",
+      "status": "released"
+     }
+    ],
+    "firmware_configs": [
+     "default",
+     "mobile"
+    ]
+   },
+   "dims_source": "stl",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 104.7,
+    "d": 15.2,
+    "h": 39
+   },
+   "traced_to": [
+    {
+     "file": "canary_wap_enclosure_battery_base.stl",
+     "triangles": 2040,
+     "mm": [
+      104.7,
+      39,
+      15.2
+     ]
+    }
+   ],
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
+   "solids": 1,
+   "rev": "022b743d",
+   "svg": "canary-local/figures/part.wap.battery-base.svg",
+   "glyph": "canary-local/figures/part.wap.battery-base.glyph.svg"
+  },
+  {
+   "id": "part.wap.gasket",
+   "title": "Canary WAP — TPU weather gasket",
+   "role": "part",
+   "device": "canary-wap",
+   "family": "canary-wap",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [
+     "canary_wap_enclosure_weather_gasket.stl"
+    ],
+    "catalog_variants": [
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-compact",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-battery",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-weather",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-clip-coupon",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "thermal-outdoor-kit",
+      "status": "released"
+     }
+    ],
+    "firmware_configs": [
+     "default",
+     "mobile"
+    ]
+   },
+   "dims_source": "stl",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 105,
+    "d": 1.5,
+    "h": 39.3
+   },
+   "traced_to": [
+    {
+     "file": "canary_wap_enclosure_weather_gasket.stl",
+     "triangles": 288,
+     "mm": [
+      105,
+      39.3,
+      1.5
+     ]
+    }
+   ],
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
+   "solids": 1,
+   "rev": "782b3c29",
+   "svg": "canary-local/figures/part.wap.gasket.svg",
+   "glyph": "canary-local/figures/part.wap.gasket.glyph.svg"
+  },
+  {
+   "id": "part.wap.lid",
+   "title": "Canary WAP — compact lid",
+   "role": "part",
+   "device": "canary-wap",
+   "family": "canary-wap",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [
+     "canary_wap_enclosure_compact_lid.stl"
+    ],
+    "catalog_variants": [
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-compact",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-battery",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-weather",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-clip-coupon",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "thermal-outdoor-kit",
+      "status": "released"
+     }
+    ],
+    "firmware_configs": [
+     "default",
+     "mobile"
+    ]
+   },
+   "dims_source": "stl",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 33.7,
+    "d": 6.55,
+    "h": 36.6
+   },
+   "traced_to": [
+    {
+     "file": "canary_wap_enclosure_compact_lid.stl",
+     "triangles": 3240,
+     "mm": [
+      33.7,
+      36.6,
+      6
+     ]
+    }
+   ],
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
+   "solids": 2,
+   "rev": "01ef2e35",
+   "svg": "canary-local/figures/part.wap.lid.svg",
+   "glyph": "canary-local/figures/part.wap.lid.glyph.svg"
+  },
+  {
+   "id": "part.wap.tray",
+   "title": "Canary WAP — desiccant tray",
+   "role": "part",
+   "device": "canary-wap",
+   "family": "canary-wap",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [
+     "canary_wap_enclosure_tray.stl"
+    ],
+    "catalog_variants": [
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-compact",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-battery",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-weather",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-clip-coupon",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "thermal-outdoor-kit",
+      "status": "released"
+     }
+    ],
+    "firmware_configs": [
+     "default",
+     "mobile"
+    ]
+   },
+   "dims_source": "stl",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 24,
+    "d": 8,
+    "h": 18
+   },
+   "traced_to": [
+    {
+     "file": "canary_wap_enclosure_tray.stl",
+     "triangles": 296,
+     "mm": [
+      24,
+      18,
+      8
+     ]
+    }
+   ],
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
+   "solids": 1,
+   "rev": "4b6848fe",
+   "svg": "canary-local/figures/part.wap.tray.svg",
+   "glyph": "canary-local/figures/part.wap.tray.glyph.svg"
+  },
+  {
+   "id": "part.wap.weather-shield",
+   "title": "Canary WAP — solar shield",
+   "role": "part",
+   "device": "canary-wap",
+   "family": "canary-wap",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [
+     "canary_wap_enclosure_weather_shield.stl"
+    ],
+    "catalog_variants": [
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-compact",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-battery",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-weather",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "wap-clip-coupon",
+      "status": "released"
+     },
+     {
+      "product": "wap_enclosure",
+      "variant": "thermal-outdoor-kit",
+      "status": "released"
+     }
+    ],
+    "firmware_configs": [
+     "default",
+     "mobile"
+    ]
+   },
+   "dims_source": "stl",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 119.1,
+    "d": 7.6,
+    "h": 53.4
+   },
+   "traced_to": [
+    {
+     "file": "canary_wap_enclosure_weather_shield.stl",
+     "triangles": 3396,
+     "mm": [
+      119.1,
+      53.4,
+      7.6
+     ]
+    }
+   ],
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
+   "solids": 1,
+   "rev": "105d8bc6",
+   "svg": "canary-local/figures/part.wap.weather-shield.svg",
+   "glyph": "canary-local/figures/part.wap.weather-shield.glyph.svg"
+  },
+  {
+   "id": "tool.fit-coupon",
+   "title": "Fit coupon",
+   "role": "tool",
+   "device": "_universal",
+   "family": null,
+   "supply": [],
+   "confidence": "prototype",
+   "evidence": {
+    "registry_kind": "universal",
+    "committed_stls": [
+     "canary_wap_enclosure_clip_coupon.stl"
+    ],
+    "catalog_variants": [
+     {
+      "product": "bench_fixture",
+      "variant": "bench-bring-up-fixture",
+      "status": "in-development"
+     },
+     {
+      "product": "dock",
+      "variant": "fleet-provisioning-dock",
+      "status": "in-development"
+     },
+     {
+      "product": "field_case",
+      "variant": "field-case",
+      "status": "in-development"
+     },
+     {
+      "product": "fit_coupon",
+      "variant": "universal-fit-coupon",
+      "status": "in-development"
+     },
+     {
+      "product": "hammond_chassis",
+      "variant": "hammond-chassis-plates",
+      "status": "in-development"
+     },
+     {
+      "product": "hub_din",
+      "variant": "hub-pi-5-din-rail",
+      "status": "in-development"
+     },
+     {
+      "product": "inserts",
+      "variant": "functional-inserts",
+      "status": "in-development"
+     },
+     {
+      "product": "jbox",
+      "variant": "covert-junction-box",
+      "status": "in-development"
+     },
+     {
+      "product": "mount_adapters",
+      "variant": "mount-adapters",
+      "status": "in-development"
+     },
+     {
+      "product": "outlet_cradle",
+      "variant": "outlet-cradle",
+      "status": "in-development"
+     },
+     {
+      "product": "relay_solar",
+      "variant": "solar-lora-relay-pod",
+      "status": "in-development"
+     },
+     {
+      "product": "shop_tools",
+      "variant": "shop-tools",
+      "status": "in-development"
+     },
+     {
+      "product": "sign",
+      "variant": "witness-signage-plate",
+      "status": "in-development"
+     },
+     {
+      "product": "templates_2d",
+      "variant": "paper-install-templates",
+      "status": "in-development"
+     },
+     {
+      "product": "vehicle_mount",
+      "variant": "vehicle-mount-kit",
+      "status": "in-development"
+     },
+     {
+      "product": "wear_clip",
+      "variant": "body-worn-clips",
+      "status": "in-development"
+     }
+    ],
+    "firmware_configs": []
+   },
+   "dims_source": "stl",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 26,
+    "d": 7.4,
+    "h": 26
+   },
+   "traced_to": [
+    {
+     "file": "canary_wap_enclosure_clip_coupon.stl",
+     "triangles": 164,
+     "mm": [
+      26,
+      26,
+      7.4
+     ]
+    }
+   ],
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
+   "solids": 2,
+   "rev": "de8f6d15",
+   "svg": "canary-local/figures/tool.fit-coupon.svg",
+   "glyph": "canary-local/figures/tool.fit-coupon.glyph.svg"
+  }
+ ]
+}
