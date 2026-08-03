@@ -530,17 +530,24 @@ external spool), the whole two-tone story runs itself, no pauses:
 - **Filament picks**: the case must stay **PETG** (it runs hot — never the
   PLA slot). Load body and accent in any two AMS slots and map them in the
   slicer's filament list.
-- **⚠️ If the part carries the help QR, the BODY filament must be the DARK
-  one.** Every deboss floor on the back — labels, brand lockup and the QR's
-  modules — prints in the **body** colour, inside a skin that prints in the
-  **accent**. A QR reader needs dark modules on a light field and refuses
-  the inverse, so the old house pairing (white body + canary-yellow accent)
+- **⚠️ On THIS z-band recipe, if the part carries the help QR the BODY
+  filament must be the DARK one.** Every deboss floor on the back — labels,
+  brand lockup and the QR's modules — prints in the **body** colour, inside a
+  skin that prints in the **accent**. A QR reader wants dark modules on a
+  light field, so the old house pairing (white body + canary-yellow accent)
   produces **white modules on yellow: unscannable**, and leaves every other
-  back label barely legible into the bargain. Pair a **dark body**
-  (graphite or black) with a **light accent skin** and the whole back reads
-  dark-on-light — labels included. A single-colour print is fine as-is: the
-  1.2 mm floors read dark by shadow. Scan the part before you print nine
-  more.
+  back label barely legible into the bargain. Pair a **dark body** (graphite
+  or black) with a **light accent skin** and the whole back reads
+  dark-on-light — labels included. The shipped palette already has the dark
+  body (`pal_body` is Black), so this path is satisfied by default. A
+  single-colour print is fine as-is: the 1.2 mm floors read dark by shadow.
+
+  This rule is specific to the z-band fallback, where the modules have no
+  filament of their own and must inherit the body. **The three-part AMS path
+  below is different** — there the modules get their own filament, and the
+  shipped default (`qr_style = "bare"`) prints them WHITE ON BLACK, which is
+  inverted from the spec on purpose, for looks. See the README's three-colour
+  section. Either way: **scan the part before you print nine more.**
 
 ```sh
 # ~6 g, print FIRST after any radius doubt: four corner sockets bracketing
@@ -717,8 +724,17 @@ ones the case will actually print. Two filaments:
 
 | slot | gets | why |
 |---|---|---|
-| 1 | body (White) — the field | |
-| 2 | ink (Black) — the modules | dark-on-light is the **only** polarity a reader accepts |
+| 1 | body (**Black**) — the field | on the shipped palette the field *is* the case |
+| 2 | ink (**White**) — the modules | the modules always get their own filament |
+
+⚠️ **That is white-on-black — INVERTED from the spec**, and it is the shipped
+default (`qr_style = "bare"`), chosen so the symbol sits *in* the black case
+instead of inside a bright rectangle on it. Readers are specified to want dark
+modules on a light field. Many current phone cameras decode inverted symbols;
+plenty of older and embedded readers refuse, and nothing in this repo can tell
+you which yours is — **which is exactly why this coupon exists.** If it will
+not scan, set `qr_style = "plaque"`: the white prints as a light plaque with
+the modules punched through it in black, and the conforming polarity is back.
 
 There is deliberately **no accent slot**. Yellow on a finder pattern is how you
 make a symbol that looks finished and never scans.
@@ -730,9 +746,11 @@ first and clipped an adhesive-rail moat, leaving a detached 0.8 mm hairline of
 black at the plaque edge.
 
 Read it for: **does it scan**, first, from about the distance someone would
-actually hold a phone. Then look at the module edges for black bleeding into
-the white field — the QR is where purge contamination costs you contrast rather
-than just looking untidy, and it is the first place you will see it.
+actually hold a phone — and on this polarity try more than one phone, because
+inverted support is the thing that varies between them. Then look at the module
+edges for the two filaments bleeding into each other — the QR is where purge
+contamination costs you contrast rather than just looking untidy, and it is the
+first place you will see it.
 
 If it does not scan, raise `qr_back_cell` before anything else; the symbol is
 21×21, so every 0.1 mm of cell is 2.1 mm of field, and the asserts will tell

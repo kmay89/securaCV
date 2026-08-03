@@ -502,8 +502,27 @@ to measure against. Print this before anything larger.
 
 ### Three-colour printing (7" frame, P2S + AMS)
 
-The one-piece frame can print white-bodied with a black bezel, black lettering
-and one yellow word. Three parts, loaded into Bambu Studio as one object:
+The one-piece frame ships **black-bodied**: black case, black bezel, black egg
+vent mouths, the SECURACV / CANARY lockup in yellow, and the help QR's modules
+in white printed straight onto the plate. Everything else — BOOT/RESET/SD, the
+rating block, the adhesive-rail moats — is plain deboss in the body colour, no
+filament of its own.
+
+| slot | filament | what it prints |
+|---|---|---|
+| 1 | `pal_body` — **Black** | the case, the bezel ring, the vent mouths |
+| 2 | `pal_ink` — **White** | the help QR's modules, and nothing else |
+| 3 | `pal_accent` — **Signal Yellow** (RAL 1003) | SECURACV and CANARY |
+
+The 3MF assigns filament **slots**, not colours, so load them in that order or
+you will print a materially different case from the one described here.
+
+The bezel and the vent mouths are selectable: `bezel_colour` and
+`vent_ring_colour` each take `body` / `ink` / `accent`. `body` is not "paint it
+black" — it means the surface is not partitioned at all, so it costs **zero**
+tool changes.
+
+Three parts, loaded into Bambu Studio as one object:
 
 ```bash
 for f in body ink accent; do
@@ -542,13 +561,26 @@ three-filament print to find that out.
 | `lcd7_colour.3mf` | colour coupon — three-filament registration and the corner fit; QR plaque — that the help symbol actually scans | 3 |
 
 The QR plaque is two filaments, not three, and it is only the back plate —
-3 mm, not the frame's 23.5. The symbol is INK modules in a BODY-colour field
-(dark-on-light, the only polarity a reader accepts), and the accent must never
-touch a finder pattern, so there is deliberately no third slot to put it in.
-**Scan it with a phone before you commit a frame.** Cell size is the one thing
-no slicer preview and no CI gate can settle — `qr_back_cell` is 1.3 mm, about
-three line widths at a 0.42 mm extrusion, and whether that decodes is a
-question for a camera.
+3 mm, not the frame's 23.5. The symbol is INK modules in a BODY-colour field,
+and the accent must never touch a finder pattern, so there is deliberately no
+third slot to put it in.
+
+⚠️ **On this palette the symbol is WHITE ON BLACK — inverted from the spec**,
+because `qr_style` is `bare`: the modules print straight onto the plate so the
+field is the case, with no bright rectangle around it. Readers are supposed to
+get dark modules on a light field. Many current phone cameras decode an
+inverted symbol anyway; plenty of older and embedded readers refuse, and
+nothing in this repo can tell you which yours is. **So scanning the coupon is
+no longer a formality — it is the test.** If it fails, `qr_style = "plaque"`
+puts the light plaque back and restores the conforming polarity. Cell size is
+the other thing no slicer preview and no CI gate can settle: `qr_back_cell` is
+1.3 mm, about three line widths at a 0.42 mm extrusion.
+
+Note the colour coupon itself now carries **no ink at all** — with the QR being
+the only ink group, and the coupon clip deliberately not reaching the QR, there
+is no white on that part. The packager drops the empty volume and says so
+rather than aborting; white is rehearsed on the QR coupon, which is why the
+`colour` plate carries both.
 
 It writes one 3MF whose parts are already registered and already assigned to
 filaments 1/2/3 — open it and slice. Loading the STLs as separate objects makes

@@ -172,7 +172,19 @@ def render(part: str, out: Path) -> Path:
         capture_output=True, text=True)
     diag = [ln for ln in (r.stderr or "").splitlines()
             if "ERROR" in ln or "WARNING" in ln]
-    if diag or not out.exists():
+    # An EMPTY part is not a failed part, and telling them apart matters.
+    # A filament's share of an object is empty whenever the palette simply
+    # does not put that colour on that object — the colour coupon has no INK
+    # on it once ink_groups is just ["qr"], because the coupon clip
+    # deliberately does not reach the QR. That is a correct palette, not a
+    # broken render, and the fix is NOT to invent a token ink feature so the
+    # packager stays happy: it is to drop the volume and say so. Caller
+    # decides whether an object with no volumes left is fatal.
+    empty = [ln for ln in diag if "top level object is empty" in ln]
+    hard = [ln for ln in diag if ln not in empty]
+    if empty and not hard and not out.exists():
+        return None
+    if hard or not out.exists():
         raise SystemExit(f"render of {part} failed:\n" + "\n".join(diag[:5]))
     return out
 
@@ -216,11 +228,19 @@ def bbox(verts):
 def build(setname: str) -> Path:
     groups, oid = [], 0
     for gname, vols, centre in SETS[setname]:
-        meshes = []
+        meshes, dropped = [], []
         for _n, part, slot in vols:
+            stl = render(part, HERE / f"_3mf_{part}.stl")
+            if stl is None:            # this colour is not on this object
+                dropped.append((_n, slot))
+                continue
             oid += 1
-            v, t = mesh(render(part, HERE / f"_3mf_{part}.stl"))
+            v, t = mesh(stl)
             meshes.append((oid, _n, slot, v, t))
+        if not meshes:
+            raise SystemExit(
+                f"'{gname}': every filament volume is empty — there is "
+                "nothing to print. Check the palette groups.")
         # the group's own extent, so the plate offset centres the WHOLE object
         allv = [p for m in meshes for p in m[3]]
         x0, x1, y0, y1 = bbox(allv)
@@ -230,6 +250,12 @@ def build(setname: str) -> Path:
               f"{x1-x0:6.1f} x {y1-y0:5.1f} mm  at ({centre[0]}, {centre[1]})")
         for m in meshes:
             print(f"      {m[1]:7} {len(m[4]):>6} triangles  filament {m[2]}")
+        # Loud, never silent: a filament missing from a plate changes what the
+        # operator has to load, and a colour coupon that quietly stopped
+        # rehearsing a colour is worse than one that never claimed to.
+        for _n, slot in dropped:
+            print(f"      {_n:7} {'—':>6} EMPTY: the palette puts no {_n} on "
+                  f"this object, so filament slot {slot} is not used here")
         groups.append((gname, meshes, off, foot))
 
     # A plate whose parts overlap is a wasted print, and the slicer will happily
