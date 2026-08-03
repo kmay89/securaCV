@@ -7181,10 +7181,6 @@
        "default": "true"
       },
       {
-       "name": "rating_lines",
-       "default": "[\"5V = 2A\", \"USB-C INPUT\", \"INDOOR USE ONLY\"]"
-      },
-      {
        "name": "tpu_squeeze",
        "default": "0.2",
        "comment": "per-side interference each TPU waist carries in its opening"

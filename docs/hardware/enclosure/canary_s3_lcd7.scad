@@ -840,7 +840,16 @@ port_lbl_b  = "";       // beside the side exit — a hole, so it says nothing
 // you pick the case up — which is exactly when you want it. Deboss, so it
 // never wears off and never needs a sticker.
 rating_stamp = true;
-rating_lines = ["5V = 2A", "USB-C INPUT", "INDOOR USE ONLY"];
+// The maker line's YEAR is taken from the build stamp, not typed. Both end up
+// moulded into the same part, so a hand-typed year is a second thing that can
+// disagree with the first — and it would go stale on 1 January without anyone
+// touching the file. lcd7_stamp_rev() is CalVer ("2026.09f"), generated, and
+// already the thing this design is named by; the year is just its first four
+// characters. Bump the design, the moulded year follows.
+function lcd7_stamp_year() = let (r = lcd7_stamp_rev())
+    str(r[0], r[1], r[2], r[3]);
+rating_lines = ["5V = 2A", "USB-C INPUT", "INDOOR USE ONLY",
+                str("ERRERlabs ", lcd7_stamp_year())];
 // TPU fit system — these two do for the TPU parts what tol_slide/tol_hole do
 // for the rigid ones. TPU seats by squeeze, so its knobs are interferences,
 // not clearances.
