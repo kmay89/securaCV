@@ -112,7 +112,9 @@ the extra lines it bought.
 
 A `Scene` is a list of `Beat`s; a `Beat` is one moment — a **Pose** for the
 bird, a **Gesture** for the light, a **Tone**, and optionally a line of copy
-that types on. `StoryTeller` walks them and answers one question per frame:
+that types on. (`Pose` and the line are dispatched today; `Gesture` and `Tone`
+are authored in the scripts but not yet consumed by any renderer — see the
+status notes below.) `StoryTeller` walks them and answers one question per frame:
 what should be on stage right now. It knows nothing about LVGL, Arduino or any
 particular glass, because the point is that the same performance runs on the
 watch, the dash, the 1.47" stick, the 7" bedside glass and — as the engine is
@@ -152,15 +154,21 @@ reads no hardware MAC by construction — the `esp_mac.h` include is deliberatel
 absent — so the bird is describing its own implementation. If that ever stopped
 being true the joke would have to go, which is exactly the right incentive.
 
-### Idle vignettes (the Flipper property, finally)
+### Idle vignettes (the Flipper property — written, not yet wired)
 
 A device that is plugged in and idle should occasionally be *caught doing
 something*. `care/ambient_life.h` already rationed the moments; it had nothing
-to release. It does now — one- and two-beat scenes (a preen, a glance aside, a
+to release. The scenes now exist — one- and two-beat scenes (a preen, a glance aside, a
 stretch, "Checking on the others", "All quiet. Carry on.") weighted so **roughly
 two thirds are wordless**. A device that speaks every time you look at it stops
 being company and starts being a chatbot on your wall. The rare one is gated on
 trust ≥ 7 days, like every other special here.
+
+**Status:** these are data and tests, not yet behavior. `main.cpp` still
+handles an `AmbientLife` moment by calling `canary_mark_react()` / the glance
+helper directly; nothing calls `story_pick_idle()` or holds a steady-state
+teller. Wiring that dispatch — and `kAlertApproach` on the attention edge —
+is the next slice.
 
 ### Alerts: character in the approach, never on the alarm
 
@@ -176,6 +184,10 @@ red panel is a jump scare, and a jump scare is a device people unplug. So
 beat to pull in — and then the bird **exits** and the truth owns the stage. Two
 beats, no words, and a departure. The words on an alarm belong to the UI, which
 knows what is actually wrong.
+
+**Status:** `kAlertApproach` is written and host-tested (including that it can
+never be tapped past and that it still runs at night), but nothing plays it on
+the attention edge yet. Same slice as the idle dispatch above.
 
 ### What the engine enforces
 

@@ -322,6 +322,95 @@ static void test_the_joke_is_built_right() {
         "the meeting ends warm, not on the gag");
 }
 
+
+// ── Regressions found in review (PR #1435) ────────────────────────────────
+
+static void test_tapped_line_is_actually_seen() {
+  printf("a tapped line is held from the TAP, not the beat start...\n");
+  // The bug: `forced_done_` was set but the hold was still measured from the
+  // beat's start. A reader who taps LATE has already spent the hold, so the
+  // engine advanced on the very next frame and the completed sentence they
+  // asked to see never appeared at all.
+  StoryTeller t;
+  t.set_subject("x");
+  t.play(&kHello, 0, false);
+
+  // Walk to a speaking beat and let it type most of the way out.
+  uint32_t now = 0;
+  while (now < 40000) {
+    const Frame f = t.frame(now);
+    if (f.beat && f.beat->line) break;
+    now += 20;
+  }
+  const uint8_t idx = t.frame(now).index;
+  const uint16_t hold = t.scene()->beats[idx].hold_ms;
+
+  // Tap deep into the typing — well past `hold_ms` of elapsed beat time.
+  now += (uint32_t)hold + 400;
+  t.tap(now);
+
+  // The finished sentence must remain on stage for the whole hold AFTER the
+  // tap. Sample across it; the beat must not advance early.
+  bool held = true;
+  for (uint32_t d = 0; d < (uint32_t)hold - 40; d += 20) {
+    const Frame f = t.frame(now + d);
+    if (f.index != idx) held = false;
+    if (!f.line_done) held = false;
+  }
+  CHECK(held, "the completed sentence is shown for its full hold after a tap");
+}
+
+static void test_no_flash_at_beat_transitions() {
+  printf("no sentence flashes at a beat transition...\n");
+  // The bug: when a beat expired, `frame()` advanced to the next beat but
+  // returned the OUTGOING beat's character count. For two consecutive spoken
+  // beats that rendered most of the new sentence for exactly one frame and
+  // then snapped back to zero — a visible flash at every transition.
+  StoryTeller t;
+  t.set_subject("quiet-heron-41");
+  t.play(&kHello, 0, false);
+
+  uint8_t last_idx = 255;
+  bool clean = true;
+  for (uint32_t now = 0; now < 120000; now += 17) {
+    const Frame f = t.frame(now);
+    if (f.beat == nullptr) break;
+    if (f.index != last_idx) {
+      // First frame of a new beat: progress must start at the beginning,
+      // never inherited from the beat we just left.
+      if (f.chars > 2) {
+        printf("    beat %u opened with %u chars already typed\n",
+               (unsigned)f.index, (unsigned)f.chars);
+        clean = false;
+      }
+      last_idx = f.index;
+    }
+    if (f.scene_done) break;
+  }
+  CHECK(clean, "every beat opens at zero progress");
+}
+
+static void test_chars_never_exceed_its_own_line() {
+  printf("progress never exceeds the line it belongs to...\n");
+  // The structural version of the same defect: whatever `chars` says, it must
+  // be a valid index into THIS beat's expanded line. A renderer truncates at
+  // `chars`, so an over-count reads someone else's sentence.
+  StoryTeller t;
+  t.set_subject("quiet-heron-41");
+  t.play(&kHello, 0, false);
+  char buf[192];
+  bool ok = true;
+  for (uint32_t now = 0; now < 120000; now += 13) {
+    const Frame f = t.frame(now);
+    if (f.beat == nullptr) break;
+    const uint16_t full = t.expand(f.beat, buf, sizeof(buf));
+    if (f.chars > full) ok = false;
+    if (f.beat->line == nullptr && f.chars != 0) ok = false;
+    if (f.scene_done) break;
+  }
+  CHECK(ok, "chars is always within its own beat's line");
+}
+
 int main() {
   printf("== story engine ==\n");
   test_interrupt_is_absolute();
@@ -334,6 +423,9 @@ int main() {
   test_subject_substitution();
   test_expand_never_overflows();
   test_the_joke_is_built_right();
+  test_tapped_line_is_actually_seen();
+  test_no_flash_at_beat_transitions();
+  test_chars_never_exceed_its_own_line();
   if (g_fail) { printf("FAILED (%d)\n", g_fail); return 1; }
   printf("all story tests passed\n");
   return 0;

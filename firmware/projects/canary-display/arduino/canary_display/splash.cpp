@@ -200,10 +200,14 @@ void splash_play(uint32_t hold_ms) {
     // ── The script is the story engine's, not ours ────────────────────
     // `story::kHello` (firmware/common/story/story_scripts.h) is the whole
     // arc: presence, the introduction, the setup, the "Nothing." punchline,
-    // the walk-back, the color language, the fleet, and the promise. We only
-    // render it — poses go to the mark, lines type into the bubble, and the
-    // light gestures are picked up by whichever ambient channel this board
-    // has (the nightstand's look engine reads them from the same beats).
+    // the walk-back, the color language, the fleet, and the promise.
+    //
+    // This renderer consumes TWO of a beat's four channels today: `pose` goes
+    // to the mark, and `line` types into the bubble. `gesture` and `tone` are
+    // authored in the script but NOT dispatched here yet — the scripted
+    // Narrow held-breath and the Pulse punchline do not reach the glass wash,
+    // the WS2812 or the type weight. They are the next slice; until then the
+    // beats carry the direction and no surface acts on it.
     //
     // The pseudonym is the one runtime substitution the script may carry. It
     // is derived from a per-device random salt and reads NO hardware MAC — see

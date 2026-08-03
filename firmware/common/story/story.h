@@ -184,6 +184,7 @@ class StoryTeller {
   uint8_t idx_ = 0;
   uint32_t started_ = 0;      // when the CURRENT beat started
   bool forced_done_ = false;  // a tap completed this beat's typing
+  uint32_t forced_at_ = 0;    // ...at this moment; the hold runs from HERE
   const char* subject_ = "";
 };
 
@@ -286,6 +287,7 @@ inline void StoryTeller::tap(uint32_t now_ms) {
   if (b->line != nullptr && !forced_done_ &&
       typed_len(b, now_ms - started_) < expand(b, nullptr, 0)) {
     forced_done_ = true;
+    forced_at_ = now_ms;
     return;
   }
 
@@ -302,23 +304,43 @@ inline Frame StoryTeller::frame(uint32_t now_ms) {
   Frame f;
   if (scene_ == nullptr) return f;
 
-  const Beat* b = &scene_->beats[idx_];
-  const uint32_t elapsed = now_ms - started_;
-  const uint16_t full = expand(b, nullptr, 0);
-  const uint16_t typing = line_ms(b);
+  // The loop exists so that a beat which has genuinely expired is retired and
+  // the NEXT beat is then rendered from its own zero — not with the outgoing
+  // beat's progress. Returning the old `chars` against the new line is what
+  // flashes a whole sentence for one frame at every transition.
+  //
+  // Advancing sets `started_ = now_ms`, so at most one advance can happen per
+  // call unless a beat has no line and no hold; the bound covers that.
+  for (uint8_t guard = 0; guard <= scene_->n; guard++) {
+    const Beat* b = &scene_->beats[idx_];
+    const uint32_t elapsed = now_ms - started_;
+    const uint16_t typing = line_ms(b);
 
-  const bool typed_out = forced_done_ || elapsed >= typing;
-  const uint16_t chars = forced_done_ ? full : typed_len(b, elapsed);
+    // WHERE THE LINE FINISHED, measured from this beat's start.
+    //
+    // Normally that is when the typing ran out. When a tap completed it early
+    // it is the moment of the TAP — and getting this wrong is not cosmetic:
+    // if the hold is measured from the beat's start instead, a reader who
+    // taps late has already spent the hold, the engine advances on the very
+    // next frame, and the completed sentence they asked to see is never
+    // actually shown. The hold has to be time spent looking at a FINISHED
+    // sentence, which is the entire reason it exists.
+    const uint32_t done_at = forced_done_ ? (forced_at_ - started_) : typing;
+    const bool typed_out = forced_done_ || elapsed >= typing;
 
-  // The beat is over once the line has typed AND its hold has elapsed. A
-  // forced (tapped) line still gets its hold, so a reader who taps ahead does
-  // not get a scene that flickers past — they get it at reading speed.
-  const uint32_t beat_ms =
-      (uint32_t)(forced_done_ ? 0 : typing) + (uint32_t)b->hold_ms;
-  const uint32_t since = forced_done_ ? elapsed - 0 : elapsed;
+    if (!typed_out || elapsed < done_at + b->hold_ms) {
+      const uint16_t full = expand(b, nullptr, 0);
+      const uint16_t chars = forced_done_ ? full : typed_len(b, elapsed);
+      f.beat = b;
+      f.chars = (uint8_t)(chars > 255 ? 255 : chars);
+      f.line_done = typed_out;
+      f.index = idx_;
+      f.count = scene_->n;
+      return f;
+    }
 
-  if (typed_out && since >= beat_ms) {
     if (idx_ + 1 >= scene_->n) {
+      const uint16_t full = expand(b, nullptr, 0);
       f.beat = b;
       f.chars = (uint8_t)(full > 255 ? 255 : full);
       f.line_done = true;
@@ -328,17 +350,11 @@ inline Frame StoryTeller::frame(uint32_t now_ms) {
       interrupt();
       return f;
     }
+
     idx_++;
     started_ = now_ms;
     forced_done_ = false;
-    b = &scene_->beats[idx_];
   }
-
-  f.beat = b;
-  f.chars = (uint8_t)(chars > 255 ? 255 : chars);
-  f.line_done = typed_out;
-  f.index = idx_;
-  f.count = scene_->n;
   return f;
 }
 
