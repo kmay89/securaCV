@@ -58,6 +58,7 @@ import argparse
 import dataclasses
 import json
 import os
+import secrets
 import shutil
 import sys
 import urllib.error
@@ -121,7 +122,7 @@ class Action:
     """One concrete thing to do (or skip). The atom the executor performs."""
 
     kind: str  # register_repo | install_addon | set_options | start_addon |
-               # write_config | core_config_entry
+               # write_config | core_config_entry | mqtt_login
     label: str  # human-facing target (a URL, a slug, a path)
     already: bool = False  # true => this is already satisfied; skip it
     reason: str = ""  # why it is being skipped, or an extra note
@@ -134,6 +135,7 @@ class Action:
     optional: bool = False  # a failure here is a note, not a stopped run
     handler: str = ""  # core_config_entry: the integration domain (e.g. "mqtt")
     data: dict = field(default_factory=dict)  # core_config_entry: the flow answers
+    username: str = ""  # mqtt_login: the broker account the devices sign in as
 
 
 @dataclass
@@ -159,6 +161,43 @@ FRESH_HUB: dict = {
     "addon_options": {},
     "config_entries": set(),
 }
+
+
+def _login_present(options: dict, username: str) -> bool:
+    """Does Mosquitto's `logins` already carry an account with this name?
+
+    Read from the add-on's OWN options rather than tracked anywhere of ours,
+    so a re-run reuses whatever is really there. That matters more than the
+    usual idempotence argument: minting a fresh password on every run would
+    silently lock out every Canary already flashed with the previous one.
+    """
+    for entry in options.get("logins") or []:
+        if isinstance(entry, dict) and entry.get("username") == username:
+            return True
+    return False
+
+
+def _login_password(options: dict, username: str) -> str:
+    """The password already recorded for this account, or "" if there is none."""
+    for entry in options.get("logins") or []:
+        if isinstance(entry, dict) and entry.get("username") == username:
+            return str(entry.get("password") or "")
+    return ""
+
+
+def mint_password(nbytes: int = 18) -> str:
+    """A fresh broker password.
+
+    Generated on the hub at run time and never committed: a password in this
+    repo would be a published credential on every hub anyone ever flashed. The
+    operator gets it from the run's narration, and it is recoverable
+    afterwards from the add-on's own options — so nothing is lost by not
+    storing it here.
+
+    URL-safe, so it survives being pasted through a flasher field, a QR, or a
+    serial console without an escaping question.
+    """
+    return secrets.token_urlsafe(nbytes)
 
 
 def plan_actions(
@@ -242,6 +281,32 @@ def plan_actions(
                     reason="Home Assistant is already connected to it" if have else "",
                     handler=handler,
                     data=dict(entry.get("data", {})),
+                )
+            )
+
+        # A step may mint the broker account the DEVICES sign in as. This is
+        # separate from connect-mqtt above, and the distinction is the whole
+        # reason this exists: Home Assistant reaches Mosquitto as the reserved
+        # `homeassistant` user over the internal network, so connect-mqtt needs
+        # no credential — but the add-on refuses anonymous logins, and a Canary
+        # is an ordinary external client with no such exemption. Without this a
+        # hub finishes provisioning, reports success, and then rejects the first
+        # device that ever tries to publish, with a failure that reads on the
+        # glass as a wrong password.
+        login = step.get("mqtt_login")
+        if login:
+            sup = login.get("supervisor_slug") or login.get("addon", "core_mosquitto")
+            username = login.get("username", "canary")
+            have = _login_present(observed.get("addon_options", {}).get(sup, {}), username)
+            sp.actions.append(
+                Action(
+                    kind="mqtt_login",
+                    label=f"broker login {username!r}",
+                    slug=sup,
+                    friendly=login.get("addon", sup),
+                    username=username,
+                    already=have,
+                    reason=f"{username} can already sign in to the broker" if have else "",
                 )
             )
 
@@ -337,6 +402,16 @@ def describe(action: Action, base_url: str) -> str:
     if action.kind == "set_options":
         opts = json.dumps(action.options, separators=(",", ":"), sort_keys=True)
         return f"set options {opts} on {action.slug}  (POST {base_url}/addons/{action.slug}/options)"
+    if action.kind == "mqtt_login":
+        # The password is deliberately absent from the dry-run line: it does not
+        # exist yet (it is minted on the hub, at run time), and printing a
+        # placeholder would invite someone to flash devices with it.
+        return (
+            f"add broker login {action.username!r} with a freshly generated password "
+            f"on {action.slug}, then restart it  "
+            f"(POST {base_url}/addons/{action.slug}/options, "
+            f"POST {base_url}/addons/{action.slug}/restart)"
+        )
     if action.kind == "start_addon":
         return f"start add-on {action.slug}  (POST {base_url}/addons/{action.slug}/start)"
     if action.kind == "write_config":
@@ -496,6 +571,15 @@ class SupervisorClient:
     def start_addon(self, slug: str) -> None:
         self._req("POST", f"/addons/{slug}/start")
 
+    def restart_addon(self, slug: str) -> None:
+        """Cycle an add-on so it re-reads its options.
+
+        Mosquitto parses `logins` once at startup, so a running broker keeps
+        refusing an account that was added underneath it. `restart` is correct
+        whether or not it is currently running, which `stop`+`start` is not.
+        """
+        self._req("POST", f"/addons/{slug}/restart")
+
 
 def observe(client: SupervisorClient, seed: dict) -> dict:
     """Snapshot the hub so plan_actions can decide what still needs doing."""
@@ -508,6 +592,15 @@ def observe(client: SupervisorClient, seed: dict) -> dict:
         if s.get("options"):
             sup = s.get("supervisor_slug") or s.get("addon")
             if sup in addons:
+                addon_options[sup] = client.get_addon_options(sup)
+        # A broker-login step reads the SAME snapshot to decide whether the
+        # account already exists — without this it would look absent on every
+        # run and mint a new password each time, locking out every Canary
+        # already flashed with the old one.
+        login = s.get("mqtt_login")
+        if login:
+            sup = login.get("supervisor_slug") or login.get("addon", "core_mosquitto")
+            if sup in addons and sup not in addon_options:
                 addon_options[sup] = client.get_addon_options(sup)
     # Integrations Home Assistant is already connected to. Without this the
     # connect step would re-run on every pass and pile up duplicate entries —
@@ -612,6 +705,23 @@ def _perform(a: Action, client: SupervisorClient, assets_root: Path) -> None:
         # mean to (e.g. `mode`) and never wipe a user's other options.
         merged = {**client.get_addon_options(a.slug), **a.options}
         client.set_addon_options(a.slug, merged)
+    elif a.kind == "mqtt_login":
+        # Append, never replace: `logins` may already carry accounts the
+        # operator made by hand, and wiping those would lock out whatever is
+        # using them. Read → append → write the whole list back, because the
+        # Supervisor's options endpoint takes the key wholesale.
+        current = client.get_addon_options(a.slug)
+        logins = [e for e in (current.get("logins") or []) if isinstance(e, dict)]
+        password = _login_password(current, a.username) or mint_password()
+        logins = [e for e in logins if e.get("username") != a.username]
+        logins.append({"username": a.username, "password": password})
+        client.set_addon_options(a.slug, {**current, "logins": logins})
+        # The broker reads `logins` at startup, so a running Mosquitto keeps
+        # refusing this account until it cycles. Skipping this is how the step
+        # would report success and still reject every device.
+        client.restart_addon(a.slug)
+        print(f"      broker login ready — username {a.username!r}, password {password}")
+        print("      put these into each Canary's MQTT fields when you flash it")
     elif a.kind == "core_config_entry":
         client.create_config_entry(a.handler, a.data)
     elif a.kind == "start_addon":

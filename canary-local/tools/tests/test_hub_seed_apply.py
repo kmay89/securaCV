@@ -59,6 +59,12 @@ class PlanOnFreshHub(unittest.TestCase):
             [
                 "add-repositories",
                 "install-broker",
+                # The devices' broker account is minted before anything that
+                # publishes exists, so no Canary can ever meet a broker that
+                # would refuse it. It is separate from connect-mqtt below
+                # because Home Assistant needs no account of its own — it
+                # reaches Mosquitto as the reserved `homeassistant` user.
+                "mqtt-login",
                 # Connecting Home Assistant to the broker sits between installing
                 # it and installing anything that publishes to it: Frigate coming
                 # up first would publish into a broker nobody is listening to.
@@ -176,7 +182,13 @@ class Idempotency(unittest.TestCase):
             },
             "addons": {MOSQUITTO_SUP: "started", FRIGATE_SUP: "started", SECURACV_SUP: "started"},
             "existing_files": {"/addon_configs/ccab4aaf_frigate/config.yml"},
-            "addon_options": {SECURACV_SUP: {"mode": "frigate"}},
+            "addon_options": {
+                SECURACV_SUP: {"mode": "frigate"},
+                # The devices' broker account already exists. Read back from the
+                # add-on's own options, which is the only place it lives — see
+                # test_a_rerun_never_reissues_the_password for why that matters.
+                MOSQUITTO_SUP: {"logins": [{"username": "canary", "password": "already-set"}]},
+            },
             # Home Assistant is already connected to the broker. Without this the
             # connect step would re-run forever and stack duplicate entries.
             "config_entries": {"mqtt"},
@@ -293,6 +305,10 @@ class FakeClient:
     def start_addon(self, slug):
         self._maybe_fail("start_addon")
         self.calls.append(("start_addon", slug))
+
+    def restart_addon(self, slug):
+        self._maybe_fail("restart_addon")
+        self.calls.append(("restart_addon", slug))
 
 
 class ExecuteLoop(unittest.TestCase):
@@ -565,3 +581,111 @@ class MqttConnectExecution(unittest.TestCase):
         observed = hsa.observe(client, REAL_PLAN)
         self.assertIn("config_entries", observed)
         self.assertIn(("get_config_entry_domains",), client.calls)
+
+
+class MqttLogin(unittest.TestCase):
+    """The account a Canary signs in to the broker with.
+
+    Mosquitto's add-on refuses anonymous connections. Home Assistant is exempt
+    in practice — it reaches the broker over the internal container network as
+    the reserved `homeassistant` user — so the connect-mqtt step needs no
+    credential and correctly mints none. A Canary gets no such exemption: it is
+    an ordinary external client on the LAN. Without this step a hub finishes
+    provisioning, reports success, and then rejects the first device that ever
+    tries to publish, with a failure that reads on a matchbox-sized screen as a
+    wrong Wi-Fi password.
+    """
+
+    def step(self, observed=None):
+        steps = hsa.plan_actions(REAL_PLAN, observed or hsa.FRESH_HUB)
+        return next(s for s in steps if s.id == "mqtt-login")
+
+    def test_a_fresh_hub_mints_the_account(self):
+        action = next(a for a in self.step().actions if a.kind == "mqtt_login")
+        self.assertFalse(action.already)
+        self.assertEqual(action.username, "canary")
+        self.assertEqual(action.slug, MOSQUITTO_SUP)
+
+    def test_it_lands_before_anything_that_publishes(self):
+        # Frigate and the witness kernel both publish to the broker. If the
+        # account appeared after them, a device could meet a broker that would
+        # refuse it — the exact window this ordering exists to close.
+        ids = [s.id for s in hsa.plan_actions(REAL_PLAN, hsa.FRESH_HUB)]
+        self.assertLess(ids.index("mqtt-login"), ids.index("install-frigate"))
+        self.assertLess(ids.index("mqtt-login"), ids.index("install-securacv"))
+
+    def test_an_existing_account_is_left_alone(self):
+        obs = dict(hsa.FRESH_HUB)
+        obs["addon_options"] = {MOSQUITTO_SUP: {"logins": [{"username": "canary", "password": "x"}]}}
+        action = next(a for a in self.step(obs).actions if a.kind == "mqtt_login")
+        self.assertTrue(action.already)
+        self.assertIn("canary", action.reason)
+
+    def test_someone_elses_account_does_not_count_as_ours(self):
+        obs = dict(hsa.FRESH_HUB)
+        obs["addon_options"] = {MOSQUITTO_SUP: {"logins": [{"username": "zigbee2mqtt", "password": "x"}]}}
+        action = next(a for a in self.step(obs).actions if a.kind == "mqtt_login")
+        self.assertFalse(action.already)
+
+    def test_a_rerun_never_reissues_the_password(self):
+        # THE property. The executor is meant to be safe to re-run, and this is
+        # the one action where "do it again" would be destructive: a fresh
+        # password silently locks out every Canary already flashed with the old
+        # one, and the devices report it as an auth failure indistinguishable
+        # from a typo. So a re-run must reuse what the add-on already holds.
+        existing = {"logins": [{"username": "canary", "password": "the-one-devices-have"}]}
+        client = FakeClient(current_options={MOSQUITTO_SUP: existing})
+        action = hsa.Action(kind="mqtt_login", label="l", slug=MOSQUITTO_SUP, username="canary")
+        hsa._perform(action, client, hsa.REPO)
+        wrote = next(c for c in client.calls if c[0] == "set_options")
+        self.assertEqual(
+            wrote[2]["logins"], [{"username": "canary", "password": "the-one-devices-have"}]
+        )
+
+    def test_it_appends_rather_than_replacing_other_logins(self):
+        # `logins` may already carry accounts an operator made by hand. Wiping
+        # them would lock out whatever is using them.
+        existing = {"logins": [{"username": "zigbee2mqtt", "password": "keep-me"}]}
+        client = FakeClient(current_options={MOSQUITTO_SUP: existing})
+        action = hsa.Action(kind="mqtt_login", label="l", slug=MOSQUITTO_SUP, username="canary")
+        hsa._perform(action, client, hsa.REPO)
+        wrote = next(c for c in client.calls if c[0] == "set_options")
+        names = [e["username"] for e in wrote[2]["logins"]]
+        self.assertIn("zigbee2mqtt", names)
+        self.assertIn("canary", names)
+        kept = next(e for e in wrote[2]["logins"] if e["username"] == "zigbee2mqtt")
+        self.assertEqual(kept["password"], "keep-me")
+
+    def test_the_broker_is_restarted_so_the_account_takes_effect(self):
+        # Mosquitto parses `logins` once at startup. Without the cycle the step
+        # reports success while the broker goes on refusing the account — the
+        # failure mode this whole step exists to remove, reintroduced one layer
+        # down.
+        client = FakeClient()
+        action = hsa.Action(kind="mqtt_login", label="l", slug=MOSQUITTO_SUP, username="canary")
+        hsa._perform(action, client, hsa.REPO)
+        kinds = [c[0] for c in client.calls]
+        self.assertIn("restart_addon", kinds)
+        self.assertLess(kinds.index("set_options"), kinds.index("restart_addon"))
+
+    def test_a_minted_password_is_not_guessable_or_awkward(self):
+        # It travels through flasher fields, QR codes and serial consoles, so it
+        # must survive being pasted without an escaping question — and it must
+        # not be short enough to be worth guessing at.
+        seen = {hsa.mint_password() for _ in range(50)}
+        self.assertEqual(len(seen), 50, "every mint must be distinct")
+        for pw in seen:
+            self.assertGreaterEqual(len(pw), 20)
+            self.assertRegex(pw, r"^[A-Za-z0-9_-]+$")
+
+    def test_no_password_is_committed_to_the_repo(self):
+        # A password in the plan would be a published credential on every hub
+        # anyone ever flashed. The plan may describe the account; it may never
+        # carry its secret.
+        step = next(s for s in REAL_PLAN["steps"] if s["id"] == "mqtt-login")
+        self.assertNotIn("password", json.dumps(step["mqtt_login"]))
+        # And the dry-run line must not print one either — there isn't one yet.
+        action = next(a for a in self.step().actions if a.kind == "mqtt_login")
+        line = hsa.describe(action, "http://supervisor")
+        self.assertIn("generated", line)
+        self.assertNotIn("password=", line)
