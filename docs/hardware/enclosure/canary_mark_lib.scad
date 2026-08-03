@@ -125,13 +125,22 @@ module mark_emboss(h, ez, rib = 0.7, crown = 0.15) {
 // The word is real text, not paths: at badge size a nozzle draws letterforms
 // far better than it draws a traced outline of them, and a font substitution
 // degrades to "a slightly different sans" rather than to nothing.
+// The two proportions, as functions, because BOTH the module below and
+// mark_lockup_h() need them and a lockup whose stated height disagrees with
+// its drawn height is a caller laying out into the middle of it. They did
+// disagree: the module used a 0.22 gap while the height function said 0.16,
+// so mark_lockup_h() under-reported by 0.06*h — 1.92 mm at the 7" case's
+// h = 32. Typed twice is how that happens; derived once is how it stops.
+function mark_word_ratio() = 0.30;   // cap height, as a fraction of the bird
+function mark_gap_ratio()  = 0.22;   // bird-to-word gap, same basis
+
 module mark_lockup(h, rib, word = "securaCV", font = "DejaVu Sans:style=Bold") {
     // The bird's drawn extent is a little under `h` (the design span includes
     // headroom), so the gap is measured generously — at badge size the feet
     // and the ascenders are the two things that touch first, and a mark whose
     // word collides with its bird reads as a printing fault, not a lockup.
-    word_h = h * 0.30;              // cap height, as a fraction of the bird
-    gap    = h * 0.22;
+    word_h = h * mark_word_ratio();
+    gap    = h * mark_gap_ratio();
     // Centering: the pair spans (h + gap + word_h); shift so its middle is 0.
     translate([0, (gap + word_h) / 2]) mark_bird(h, rib);
     translate([0, -(h + gap) / 2 + word_h / 2])
@@ -139,5 +148,7 @@ module mark_lockup(h, rib, word = "securaCV", font = "DejaVu Sans:style=Bold") {
              halign = "center", valign = "center");
 }
 
-// Height of the whole lockup, for callers laying out around it.
-function mark_lockup_h(h) = h + h*0.16 + h*0.30;
+// Height of the whole lockup, for callers laying out around it. Same three
+// terms the module stacks, in the same order — change a ratio above and this
+// follows rather than drifting.
+function mark_lockup_h(h) = h*(1 + mark_gap_ratio() + mark_word_ratio());
