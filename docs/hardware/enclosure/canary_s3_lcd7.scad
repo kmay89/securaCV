@@ -579,7 +579,7 @@ ledge_slope_n   = 20;  // steps in the 45° back-slope. Each step overhangs by
 // prints BACK-PLATE-DOWN with the ledges fully self-supporting — solid
 // material under the adhesive landing, no overhang, no sacrificial geometry.
 // (Face-down would hang the ledges over the glass pocket; don't.)
-brand_back = "CANARY DISPLAY";   // the back lockup's HERO line — centred,
+brand_back = "CANARY";   // the back lockup's HERO line — centred,
                                  // tracked caps (the 7" is gone: the case
                                  // family is one Display line, the panel
                                  // size is a spec, not a name)
@@ -754,8 +754,8 @@ label_font  = "Liberation Sans:style=Bold";
 print_colours = true;   // build the per-filament parts and colour the preview
 // Names are what you load in the slicer; they appear in the render-time echo
 // so the printed part and the recipe cannot disagree about what goes where.
-pal_body   = "White";
-pal_ink    = "Black";
+pal_body   = "Black";
+pal_ink    = "White";
 pal_accent = "Signal Yellow";
 // Preview RGB only — these never reach the mesh, they just make `frame_colour`
 // look like the real thing so a palette can be judged before it is printed.
@@ -771,17 +771,23 @@ pal_accent = "Signal Yellow";
 // and more translucent than it looks on the spool. The colour coupon is the
 // real instrument — print it, hold it next to the render, and set the numbers
 // from the part rather than from a picture of a part.
-pal_body_rgb   = [0.95, 0.95, 0.93];
-pal_ink_rgb    = [0.11, 0.11, 0.12];
+pal_body_rgb   = [0.11, 0.11, 0.12];
+pal_ink_rgb    = [0.95, 0.95, 0.93];
 pal_accent_rgb = [0.976, 0.659, 0.000];   // RAL 1003 — #F9A800
+// WHICH FILAMENT IS LIGHT. Asked, not assumed — the body was white and is now
+// black, and the QR's polarity has to follow that or the symbol stops
+// scanning. Rec. 709 luma; the comparison is all that matters, not the units.
+function pal_lum(c) = 0.2126*c[0] + 0.7152*c[1] + 0.0722*c[2];
+qr_dark_plate = pal_lum(pal_body_rgb) < pal_lum(pal_ink_rgb);
+
 // How deep the INK reaches in from the FRONT face. This is a visible-surface
 // depth, not a structural one: 0.6 is three layers at 0.2 and matches the
 // existing front-ring swap band exactly, so the AMS build and the
 // single-extruder build put their colour boundary in the same place.
 bezel_ink_t = 0.6;
 // Which back-plate groups take which filament. Edit these, not the geometry.
-ink_groups    = ["text", "qr", "moat"];
-accent_groups = ["mark"];
+ink_groups    = ["qr", "moat"];
+accent_groups = ["mark", "text"];
 
 /* [Frame — bottom USB port, edge brand, TPU fitments] */
 usb_port   = true;   // pass-through for the power cable, centred on the bottom wall.
@@ -2006,15 +2012,37 @@ module back_graphics(ink = "all") {
         // the company line, over the product name. It sits beside the SD
         // recess (mouth bottom -47.2), so it must stay inside x ±23.2 — it
         // renders ±17. This is the word that carries the accent colour.
-        frame_lbl(0, -(fr_yi/2 - 10.2), brand_sub, size = 2.4, spacing = 2.0);
+        frame_lbl(0, -(fr_yi/2 - 10.6), brand_sub, size = 4.0, spacing = 1.6);
     if (all || ink == "qr")
         // In back-view coords, no mirror: viewed from the back, +x is right.
+        //
+        // POLARITY FOLLOWS THE PALETTE. A reader wants DARK modules on a LIGHT
+        // field, and which of our two filaments is light stopped being a
+        // constant the moment the body went from white to black. On a light
+        // plate the INK is the modules and the bare plate is the field. On a
+        // dark plate that is backwards — white modules on black is the one
+        // arrangement a scanner is entitled to refuse — so the ink becomes the
+        // FIELD instead, a light plaque with the modules punched out of it in
+        // body colour. Same two filaments, same inlay machinery, opposite
+        // assignment, and it is decided by measuring the palette rather than by
+        // remembering to think about it.
         if (qr_back)
             translate([qr_back_dx - qr_n*qr_back_cell/2,
                        qr_back_dy + qr_n*qr_back_cell/2,
                        fr_depth - label_back_depth])
                 linear_extrude(label_back_depth + 0.1)
-                    qr_field2d(qr_back_cell);
+                    if (qr_dark_plate)
+                        difference() {
+                            // the light plaque: the symbol PLUS its quiet zone,
+                            // which is qr_back_reach by definition, recentred
+                            // on the field this translate is anchored off
+                            translate([qr_n*qr_back_cell/2, -qr_n*qr_back_cell/2])
+                                square([2*qr_back_reach, 2*qr_back_reach],
+                                       center = true);
+                            qr_field2d(qr_back_cell);   // modules punched out
+                        }
+                    else
+                        qr_field2d(qr_back_cell);
 }
 
 // ----------------------------------------------------------------------------

@@ -6941,7 +6941,7 @@
       },
       {
        "name": "brand_back",
-       "default": "CANARY DISPLAY",
+       "default": "CANARY",
        "comment": "the back lockup's HERO line — centred,"
       },
       {
@@ -7057,11 +7057,11 @@
       },
       {
        "name": "pal_body",
-       "default": "White"
+       "default": "Black"
       },
       {
        "name": "pal_ink",
-       "default": "Black"
+       "default": "White"
       },
       {
        "name": "pal_accent",
@@ -7069,11 +7069,11 @@
       },
       {
        "name": "pal_body_rgb",
-       "default": "[0.95, 0.95, 0.93]"
+       "default": "[0.11, 0.11, 0.12]"
       },
       {
        "name": "pal_ink_rgb",
-       "default": "[0.11, 0.11, 0.12]"
+       "default": "[0.95, 0.95, 0.93]"
       },
       {
        "name": "pal_accent_rgb",
@@ -7081,16 +7081,20 @@
        "comment": "RAL 1003 — #F9A800"
       },
       {
+       "name": "qr_dark_plate",
+       "default": "pal_lum(pal_body_rgb) < pal_lum(pal_ink_rgb)"
+      },
+      {
        "name": "bezel_ink_t",
        "default": "0.6"
       },
       {
        "name": "ink_groups",
-       "default": "[\"text\", \"qr\", \"moat\"]"
+       "default": "[\"qr\", \"moat\"]"
       },
       {
        "name": "accent_groups",
-       "default": "[\"mark\"]"
+       "default": "[\"mark\", \"text\"]"
       }
      ]
     },
