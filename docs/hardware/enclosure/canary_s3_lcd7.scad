@@ -469,14 +469,30 @@ frame_wall   = 2.0;  // sleeve wall (also the visible front rim around the glass
 frame_reveal = 0.15; // per-side glass↔opening clearance. The opening AND its
                      // corner radius both track the slab by this much, so the
                      // reference case's corner gap cannot come back.
-glass_guard  = 0;    // FLUSH FRONT, by request: the glass face sits level
-                     // with the rim rather than recessed behind it.
+glass_guard  = -0.2; // WIPE RELIEF, from the first fitting print: the rim
+                     // sits ONE LAYER BELOW the glass face, not level with it.
+                     //
+                     // Why not 0. Flush is flush in CAD and proud in plastic —
+                     // the printed rim stood above the glass, and a cloth
+                     // dragged across the screen caught on it. A touch panel
+                     // gets wiped more often than it gets dropped, so the last
+                     // 0.2 mm belongs to the cleaning cloth: run a finger off
+                     // the glass and it steps DOWN onto the case, never up
+                     // into an edge.
+                     //
+                     // Sign convention, now that all three states are real:
+                     //   > 0  glass recessed behind the rim — drop protection
+                     //   = 0  nominally flush (and proud once printed)
+                     //   < 0  rim below the glass — wipe relief, what we ship
+                     //
                      // ⚠️ TRADE-OFF, stated once so it is a choice and not an
-                     // accident: this knob existed as drop protection. At 0.6
-                     // a face-down drop landed on the case's rim; at 0 it
-                     // lands on the panel. Nothing else changes — the rear
-                     // stack chains from the glass, so the whole assembly
-                     // just moves 0.6 forward and fr_depth shrinks to match.
+                     // accident: this knob began as drop protection. At 0.6 a
+                     // face-down drop landed on the case's rim; at -0.2 it
+                     // lands on the panel, and the panel now stands slightly
+                     // proud, so it lands a little harder. That is the price
+                     // of a screen you can wipe. Nothing else changes — the
+                     // rear stack chains from the glass, so the whole assembly
+                     // moves with it and fr_depth follows.
                      // Set it back to 0.6 to restore the raised lip.
                      // GUARD RIM: the front rim stands this proud of the
                      // glass, so a face-down drop lands on the case's rim,
@@ -1357,8 +1373,15 @@ assert(!stamp_show || (stamp_depth < back_t - 1.5
             > (vent_rows - 1)/2*vent_pitch_y + vent_slot_l/2 + 1
        && stamp_dy + stamp_half < fr_yi/2 - plate_fillet - 0.5),
        "frame: build stamp collides with the top feather row, the plate rim/fillet, or thins the plate");
-assert(glass_guard >= 0 && glass_guard <= 1.2,
-       "frame: glass_guard is a trim reveal, not a bumper — keep it under 1.2 (or 0 for a flush face)");
+// Negative is legal and is what ships (wipe relief), but only just: past a
+// layer or two the glass is standing on its own edge with no case around it,
+// which is a chipped corner waiting to happen. Positive is still a trim
+// reveal, not a bumper.
+assert(glass_guard >= -0.6 && glass_guard <= 1.2,
+       str("frame: glass_guard ", glass_guard, " out of range. Positive = ",
+           "recessed glass (drop protection, keep under 1.2); 0 = nominally ",
+           "flush; negative = rim below the glass for wiping, and -0.6 is as ",
+           "far as that can go before the glass edge is unprotected."));
 // the fillet ring lives in the same clear band as the keyhole pads; it must
 // stop short of the button window's back edge or the window loses its corner
 assert(plate_fillet == 0
@@ -1580,9 +1603,14 @@ echo(str("  stack: floor ", z_floor, " | PCB under ", z_pcb_under, " | PCB top "
 echo(str("  frame: ", fr_xo, " x ", fr_yo, " x ", fr_depth,
          " mm one-piece; glass opening ", fr_xi, " x ", fr_yi, " r", fr_ri,
          "; front face ",
-         glass_guard == 0 ? "FLUSH with the glass (fingernail test: no step either way)"
-                          : str("proud of the glass by ", glass_guard,
-                                " mm — a recess IS the pass criterion"),
+         glass_guard < 0
+           ? str(abs(glass_guard), " mm BELOW the glass — wipe relief. Pass: a ",
+                 "finger run off the glass steps DOWN onto the case, never up ",
+                 "into an edge, and a cloth does not catch")
+           : glass_guard == 0
+             ? "FLUSH with the glass (fingernail test: no step either way)"
+             : str("proud of the glass by ", glass_guard,
+                   " mm — a recess IS the pass criterion"),
          ", plate fillet ",
          plate_fillet, "; adhesive ledge face ", ledge_z,
          " mm behind the front (bare-glass ",
@@ -2612,11 +2640,16 @@ module frame() {
 // it on the panel's corner with one M3x8-10: the glass corner proves glass_r,
 // the screw only threads home if the m3 offsets have the right SIGNS, and the
 // glass sits exactly glass_guard below the rim only if standoff_len is right.
-// READ THE PASS CRITERION OFF glass_guard, not off memory: it is 0 today, so
-// a FLUSH glass face is the PASS — you should not be able to feel a step with
-// a fingernail dragged across the rim onto the glass, in either direction.
-// (Raise glass_guard and the criterion inverts: then a recess is the pass and
-// flush means the stack is off. This comment has been wrong that way before.)
+// READ THE PASS CRITERION OFF glass_guard, not off memory. It is NEGATIVE
+// today (wipe relief), so the pass is: run a finger from the glass out onto
+// the case and it steps DOWN, never up into an edge. A rim you can feel as a
+// ridge is a fail — that is the thing the first fitting print got wrong.
+// The criterion moves with the knob, and has been all three things:
+//   glass_guard > 0  -> a recess is the pass, flush means the stack is off
+//   glass_guard = 0  -> flush is the pass, any step is a fail
+//   glass_guard < 0  -> a step DOWN onto the case is the pass
+// This comment has been stale twice. Read the variable, or read the echo,
+// which computes the sentence rather than repeating it.
 module frame_gauge() {
     bx = -m3_ox + m3_dx/2;  by = m3_oy + m3_dy/2;
     intersection() {

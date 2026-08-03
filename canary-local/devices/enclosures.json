@@ -6807,8 +6807,8 @@
       },
       {
        "name": "glass_guard",
-       "default": "0",
-       "comment": "FLUSH FRONT, by request: the glass face sits level"
+       "default": "-0.2",
+       "comment": "WIPE RELIEF, from the first fitting print: the rim"
       },
       {
        "name": "standoff_len",
