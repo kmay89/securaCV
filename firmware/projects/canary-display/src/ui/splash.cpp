@@ -7,6 +7,14 @@
 // BEFORE the first word), a typewriter that breathes at punctuation, and
 // a tap that always advances (respect beats spectacle). Every later boot
 // plays the short familiar splash instead: you have already met.
+//
+// The SCRIPT itself is no longer here. Both meetings are scenes in
+// firmware/common/story/ and are played by the shared performance engine, so
+// the same bird — the same arrival, the same joke, the same promise — turns up
+// on the watch, the dash, the nightstand stick and (as the engine is adopted)
+// the phone and the wrist. This file is now a renderer for a character it does
+// not own, which is the point: a personality that is re-typed per surface is
+// four personalities.
 #include <config.h>
 // The nightstand (172x320 portrait, no touch) borrows the watch's
 // small-portrait rendering for the shared modal/support surfaces; only its
@@ -24,6 +32,9 @@
 
 #include "canary/ui/splash.h"
 #include "canary/ui/canary_mark.h"
+#include "story/story.h"
+#include "story/story_scripts.h"
+#include "identity/device_pseudonym.h"
 #include "canary/ui/theme.h"
 #include "canary/ui/character.h"
 #include "canary/hal/display.h"
@@ -54,26 +65,10 @@ bool pump(uint32_t ms, bool skippable) {
   return false;
 }
 
-// Typewriter with a breath at punctuation. A tap reveals the whole line
-// (the second tap, in the caller, moves on) — standard dialogue manners.
-void type_line(lv_obj_t* lbl, const char* text) {
-  char buf[96];
-  const size_t n = strlen(text) < sizeof(buf) - 1 ? strlen(text)
-                                                  : sizeof(buf) - 1;
-  for (size_t i = 1; i <= n; ++i) {
-    memcpy(buf, text, i);
-    buf[i] = '\0';
-    lv_label_set_text(lbl, buf);
-    const char c = text[i - 1];
-    const uint32_t d = (c == '.' || c == '!' || c == '?') ? 260
-                       : (c == ',')                       ? 140
-                                                          : 38;
-    if (pump(d, true)) {
-      lv_label_set_text(lbl, text);
-      return;
-    }
-  }
-}
+// (The typewriter moved into the story engine — `StoryTeller::frame()` reports
+// how many characters have landed, punctuation breaths included, so the timing
+// is shared with every other surface that plays a scene instead of being one
+// board's local loop.)
 
 bool met_before() {
   Preferences p;
@@ -192,35 +187,99 @@ void splash_play(uint32_t hold_ms) {
     lv_obj_add_flag(bub, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(tail, LV_OBJ_FLAG_HIDDEN);
 
-    // Presence before speech: an empty beat, the hop in, a settle, and
-    // the little head-tilt that says "it sees you."
-    pump(350, false);
-    canary_mark_mood(CanaryMood::Happy);  // the hop is the hello
-    pump(900, true);
-    canary_mark_mood(CanaryMood::Idle);
-    pump(500, true);
-    canary_mark_react(CanaryReact::Tilt);
-    pump(450, true);
+    // Presence before speech is the script's now, not ours: kHello opens on
+    // three wordless beats (arrive, settle, look at you) before a character
+    // is typed, so the timing lives with the writing instead of being
+    // re-tuned here every time somebody edits the arc.
 
     // The tail hangs off the bubble's top edge, under the bird.
     lv_obj_align_to(tail, bub, LV_ALIGN_OUT_TOP_MID, 0, 5);
     lv_obj_clear_flag(bub, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(tail, LV_OBJ_FLAG_HIDDEN);
 
-    // Four short lines. Warm, plain, and honest — the privacy promise is
-    // spoken by the bird itself, because that is who keeps it.
-    struct Beat { const char* text; uint32_t hold_ms; };
-    static const Beat BEATS[] = {
-        {"Oh! Hello.", 1100},
-        {"I'm your canary. I keep watch, so you don't have to.", 1600},
-        {"What I see stays here. That's a promise.", 1600},
-        {"Ready when you are.", 1000},
-    };
-    constexpr size_t N_BEATS = sizeof(BEATS) / sizeof(BEATS[0]);
-    for (size_t i = 0; i < N_BEATS; ++i) {
-      if (i == N_BEATS - 1) canary_mark_mood(CanaryMood::Happy);
-      type_line(line, BEATS[i].text);
-      pump(BEATS[i].hold_ms, true);
+    // ── The script is the story engine's, not ours ────────────────────
+    // `story::kHello` (firmware/common/story/story_scripts.h) is the whole
+    // arc: presence, the introduction, the setup, the "Nothing." punchline,
+    // the walk-back, the color language, the fleet, and the promise. We only
+    // render it — poses go to the mark, lines type into the bubble, and the
+    // light gestures are picked up by whichever ambient channel this board
+    // has (the nightstand's look engine reads them from the same beats).
+    //
+    // The pseudonym is the one runtime substitution the script may carry. It
+    // is derived from a per-device random salt and reads NO hardware MAC — see
+    // device_pseudonym.h — which is precisely why the bird is allowed to make
+    // a joke about not having yours.
+    {
+      canary::story::StoryTeller teller;
+      char pseudo[device_pseudonym::HEX_LEN + 1] = {0};
+      if (device_pseudonym::device_id_hex(pseudo, sizeof(pseudo)))
+        teller.set_subject(pseudo);
+
+      teller.play(&canary::story::kHello, millis(), /*night=*/false);
+
+      char buf[192];
+      canary::story::Pose last = canary::story::Pose::Hold;
+      bool bubble_up = true;
+
+      while (teller.active()) {
+        const canary::story::Frame f = teller.frame(millis());
+        if (f.beat == nullptr) break;
+
+        // Pose -> the mark's own vocabulary. Anything this board has no pose
+        // for simply does not move, which is a legitimate reading of a beat.
+        if (f.beat->pose != last) {
+          last = f.beat->pose;
+          switch (f.beat->pose) {
+            case canary::story::Pose::Enter:
+            case canary::story::Pose::Hop:
+            case canary::story::Pose::Ruffle:
+              canary_mark_mood(CanaryMood::Happy);
+              break;
+            case canary::story::Pose::Settle:
+            case canary::story::Pose::Lean:
+            case canary::story::Pose::Look:
+              canary_mark_mood(CanaryMood::Idle);
+              break;
+            case canary::story::Pose::Tilt:
+              canary_mark_react(CanaryReact::Tilt);
+              break;
+            case canary::story::Pose::Preen:
+              canary_mark_react(CanaryReact::Startle);
+              break;
+            case canary::story::Pose::Stretch:
+              canary_mark_react(CanaryReact::Greeting);
+              break;
+            default:
+              break;
+          }
+        }
+
+        // Wordless beats hide the bubble entirely — the silence before the
+        // punchline has to LOOK like silence, not like an empty box.
+        if (f.beat->line != nullptr) {
+          teller.expand(f.beat, buf, sizeof(buf));
+          const size_t full = strlen(buf);
+          const size_t shown = (size_t)f.chars < full ? (size_t)f.chars : full;
+          buf[shown] = '\0';
+          lv_label_set_text(line, buf);
+          if (!bubble_up) {
+            lv_obj_clear_flag(bub, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(tail, LV_OBJ_FLAG_HIDDEN);
+            bubble_up = true;
+          }
+        } else if (bubble_up) {
+          lv_obj_add_flag(bub, LV_OBJ_FLAG_HIDDEN);
+          lv_obj_add_flag(tail, LV_OBJ_FLAG_HIDDEN);
+          bubble_up = false;
+        }
+
+        // The user outranks the storyboard: a tap completes the line, the
+        // next tap moves on. The engine owns that rule; we just report taps.
+        if (tap_edge()) teller.tap(millis());
+        pump(16, false);
+      }
+      lv_obj_add_flag(bub, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_add_flag(tail, LV_OBJ_FLAG_HIDDEN);
     }
 
     // The bubble bows out; the wordmark takes the stage for one beat, so

@@ -200,6 +200,20 @@ PLUMAGE_SRC  = $(LOOK_SRC) $(LOOK_DIR)/plumage.cpp
 PLUMAGE_HDRS = $(LOOK_HDRS) $(LOOK_DIR)/plumage.h
 PLUMAGE_BIN  = $(BUILD_DIR)/test_plumage
 
+# The story engine (common/story/*): the beat-sheet performance engine and the
+# scripts it plays. Its most important assertions are the ones that keep a
+# character from becoming a liability — attention preempts the story and it
+# never resumes, night is sacred, no cutscene traps the user, and the WRITING
+# is checked against its own rules (plain ASCII, short enough to read at a
+# glance, and containing no diagnostic vocabulary — that last one is the guard
+# rail on "ambient only, never diagnosis").
+# Header-only (see the note in story.h): splash.cpp plays a scene and compiles
+# into ~20 PlatformIO envs, several of which must name every shared .cpp by
+# hand — a pure model with no TU to link cannot be forgotten by one of them.
+STORY_DIR  = ../common/story
+STORY_HDRS = $(STORY_DIR)/story.h $(STORY_DIR)/story_scripts.h
+STORY_BIN  = $(BUILD_DIR)/test_story
+
 .PHONY: all run clean
 all: run
 
@@ -266,13 +280,16 @@ $(PRESET_LITE_BIN): test_sentinel_presets.cpp $(FUSION_SRC) $(SENT_PRESET_HDR) $
 $(LOOK_BIN): test_look_engine.cpp $(LOOK_SRC) $(LOOK_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_look_engine.cpp $(LOOK_SRC) -o $@
 
+$(STORY_BIN): test_story.cpp $(STORY_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_story.cpp -o $@
+
 $(PLUMAGE_BIN): test_plumage.cpp $(PLUMAGE_SRC) $(PLUMAGE_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_plumage.cpp $(PLUMAGE_SRC) -o $@
 
 $(TUNECON_BIN): test_tuning_console.cpp $(TUNECON_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_tuning_console.cpp -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(WIFIJOIN_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(TUNECON_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(WIFIJOIN_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -294,6 +311,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(PRESET_LITE_BIN)
 	./$(LOOK_BIN)
 	./$(PLUMAGE_BIN)
+	./$(STORY_BIN)
 	./$(TUNECON_BIN)
 
 clean:
