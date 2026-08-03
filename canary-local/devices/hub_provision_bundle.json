@@ -34,7 +34,7 @@
       "source": "canary-local/tools/hub_seed_apply.py",
       "bundle_path": "hub_seed_apply.py",
       "card_path": "CONFIG/securacv/hub_seed_apply.py",
-      "sha256": "b19bce1bb15436b5759aa1f305702facccef67f9064b55edfaf5dbe3050ffede"
+      "sha256": "7958bd4b7df6c5d3d74710a29bc62fdf8c99bc85b4abd66ceee640880b35aa71"
     },
     {
       "role": "host-runner",

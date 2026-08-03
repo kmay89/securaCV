@@ -719,9 +719,37 @@ def _perform(a: Action, client: SupervisorClient, assets_root: Path) -> None:
         # The broker reads `logins` at startup, so a running Mosquitto keeps
         # refusing this account until it cycles. Skipping this is how the step
         # would report success and still reject every device.
-        client.restart_addon(a.slug)
-        print(f"      broker login ready — username {a.username!r}, password {password}")
-        print("      put these into each Canary's MQTT fields when you flash it")
+        #
+        # If the cycle fails we must UNDO the write, not leave it. The next run
+        # decides this step is done by asking whether the username is in the
+        # add-on's options — so a persisted login that the broker never reloaded
+        # would be recorded as success forever, and every re-run would skip the
+        # restart that is the actual missing piece. Rolling back keeps the two
+        # halves atomic as far as the observer can tell: either the account
+        # exists AND the broker has read it, or it does not exist and the next
+        # run does the whole thing again. That is what makes "re-running repairs
+        # a partial failure" true rather than aspirational.
+        try:
+            client.restart_addon(a.slug)
+        except Exception:
+            client.set_addon_options(a.slug, current)
+            raise
+        # The password is deliberately NOT printed. This narration is streamed
+        # over SSH into the flasher's console, which gets scrolled back,
+        # screenshotted and pasted into support threads — and whatever collects
+        # it keeps a working broker credential in clear text forever. CodeQL
+        # flags exactly this, and it is right to.
+        #
+        # Nothing is lost by withholding it: the add-on stores `logins` in its
+        # own configuration, so the operator reads the password from the one
+        # place that already has to hold it, on demand, instead of from a
+        # transcript that outlives the need. Say precisely where, because "look
+        # it up" without a path is how a person ends up resetting a credential
+        # that was fine.
+        print(f"      broker login ready — username {a.username!r}")
+        print(f"      read its password in Home Assistant: Settings → Apps → "
+              f"{a.friendly or a.slug} → Configuration → Logins")
+        print("      that username and password go into each Canary's MQTT fields")
     elif a.kind == "core_config_entry":
         client.create_config_entry(a.handler, a.data)
     elif a.kind == "start_addon":

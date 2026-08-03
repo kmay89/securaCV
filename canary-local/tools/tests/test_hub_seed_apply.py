@@ -678,6 +678,52 @@ class MqttLogin(unittest.TestCase):
             self.assertGreaterEqual(len(pw), 20)
             self.assertRegex(pw, r"^[A-Za-z0-9_-]+$")
 
+    def test_the_password_is_never_printed(self):
+        # This narration is streamed over SSH into the flasher's console, which
+        # gets scrolled back, screenshotted and pasted into support threads —
+        # anything that captures it keeps a working broker credential in clear
+        # text forever. CodeQL flags this class directly. Nothing is lost by
+        # withholding it: the add-on holds `logins` in its own configuration, so
+        # the operator reads it on demand from the one place that must have it.
+        import contextlib, io
+        client = FakeClient()
+        action = hsa.Action(kind="mqtt_login", label="l", slug=MOSQUITTO_SUP,
+                            friendly="mosquitto", username="canary")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            hsa._perform(action, client, hsa.REPO)
+        printed = buf.getvalue()
+        wrote = next(c for c in client.calls if c[0] == "set_options")
+        secret = wrote[2]["logins"][0]["password"]
+        self.assertNotIn(secret, printed, "the minted password reached stdout")
+        # It must still say WHERE to get it — "look it up" with no path is how
+        # someone ends up resetting a credential that was fine.
+        self.assertIn("canary", printed)
+        self.assertIn("Configuration", printed)
+
+    def test_a_failed_restart_rolls_the_login_back(self):
+        # The repair contract: re-running fixes a partial failure. This step
+        # decides it is done by asking whether the username is in the add-on's
+        # options — so if the write landed and the restart did NOT, a later run
+        # would see the account, call the step satisfied, and never perform the
+        # restart that is the actual missing piece. The broker would go on
+        # refusing every Canary while the executor reported success.
+        #
+        # Rolling the write back keeps the two halves atomic as far as observe()
+        # can tell: either the account exists and the broker has read it, or it
+        # does not exist and the next run does the whole thing again.
+        existing = {"logins": [{"username": "zigbee2mqtt", "password": "keep-me"}]}
+        client = FakeClient(fail_on="restart_addon", current_options={MOSQUITTO_SUP: existing})
+        action = hsa.Action(kind="mqtt_login", label="l", slug=MOSQUITTO_SUP, username="canary")
+        with self.assertRaises(hsa.SupervisorError):
+            hsa._perform(action, client, hsa.REPO)
+        writes = [c for c in client.calls if c[0] == "set_options"]
+        self.assertEqual(len(writes), 2, "expected the write and then its rollback")
+        # The hub is left exactly as it was found — our account gone, and the
+        # operator's own account untouched.
+        self.assertEqual(writes[-1][2], existing)
+        self.assertFalse(hsa._login_present(writes[-1][2], "canary"))
+
     def test_no_password_is_committed_to_the_repo(self):
         # A password in the plan would be a published credential on every hub
         # anyone ever flashed. The plan may describe the account; it may never
