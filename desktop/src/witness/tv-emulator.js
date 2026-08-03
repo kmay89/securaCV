@@ -11,7 +11,11 @@
  *
  * It can also connect to a REAL SecuraCV kernel on the LAN and show your actual
  * Canaries (see the connect panel) — browsers can't mDNS-scan, so you point it
- * at the kernel and it fetches the fleet; otherwise it runs on demo data.
+ * at the kernel and it fetches the fleet; otherwise it runs on demo data. When
+ * the page CAN reach the LAN (served from the hub, over http, or inside an
+ * app shell) it also keeps probing the well-known addresses by itself, and the
+ * first kernel that answers becomes a "Go live" offer — the demo stays up
+ * until the user flips the switch.
  *
  * No inline JS (the site CSP is script-src 'self'); loaded by witness-wall.html
  * alongside js/site.js. It only touches its own #tv subtree + the connect panel.
@@ -439,7 +443,7 @@ if (tv && stage) {
 
   // ---------- connect to a real kernel ----------
   const kernelUrl = $('kernelUrl'), connectBtn = $('connectBtn'), demoBtn = $('demoBtn'), liveDemoBtn = $('liveDemoBtn'),
-    flashBtn = $('flashBtn'), cpStatus = $('cpStatus'), cpDevices = $('cpDevices'), cpJson = $('cpJson'), liveDot = $('liveDot'), liveText = $('liveText');
+    goLiveBtn = $('goLiveBtn'), flashBtn = $('flashBtn'), cpStatus = $('cpStatus'), cpDevices = $('cpDevices'), cpJson = $('cpJson'), liveDot = $('liveDot'), liveText = $('liveText');
   function setStatus(msg, cls) { if (!cpStatus) return; cpStatus.textContent = msg; cpStatus.className = 'cp-status' + (cls ? ' ' + cls : ''); }
   function setLive(on, host) { if (!liveDot) return; liveDot.className = 'live-dot ' + (on ? 'live' : 'demo'); liveText.textContent = on ? ('Live — ' + (liveFleet ? liveFleet.length : 0) + ' Canaries from ' + host) : 'Demo fleet — not connected to a kernel'; }
   function renderDevices() { if (!cpDevices) return; cpDevices.innerHTML = liveFleet ? liveFleet.map((d) => `<span class="dv${d.online ? '' : ' off'}"><span class="d"></span>${esc(d.name)}${d.online ? '' : ' · offline'}</span>`).join('') : ''; }
@@ -483,18 +487,100 @@ if (tv && stage) {
       setStatus('Connected — ' + liveFleet.length + ' Canaries from ' + shown + '. They drive the fleet above now.', 'ok');
       lastNames = liveFleet.map((d) => d.name); startPoll(url);
       try { if (!/\.json/.test(url)) localStorage.setItem('scv-kernel', url); } catch (e) { /* private mode */ }
+      clearFound(); stopDetect();
     } catch (e) {
       liveFleet = null; liveHost = null; setLive(false); render(); renderDevices(); showJson(null); stopPoll();
       const mixed = location.protocol === 'https:' && /^http:\/\//i.test(url);
       if (auto) setStatus('No kernel found automatically — showing the demo fleet. Try the live demo kernel, or enter your kernel’s address.');
       else if (mixed) setStatus('Blocked: an https page can’t reach an http device on your LAN (mixed-content + the page’s security policy). Run the emulator on your LAN over http, serve it from the kernel/hub, or use the desktop app — see below.', 'err');
       else setStatus('Couldn’t reach a kernel there (' + (e && e.message || 'no response') + ') — showing the demo fleet.', 'err');
+      if (auto) startDetect(false);   // fall back to watching the well-known addresses
     }
   }
+
+  // ---------- auto-detection: live-watch the well-known addresses ----------
+  // The same list every SecuraCV surface probes, in the same order (the tvOS
+  // Wall, the desktop Flasher, the Lab's witness host): the hub/kernel
+  // convention first, then the bare device — a fresh Canary answers
+  // /api/fleet at http://canary.local (port 80, no hub needed), which is the
+  // address the getting-started docs put in front of people. The real Wall
+  // (tv/app.js) probes the identical list; tests/tv-wall.test.mjs pins the two.
+  const WELL_KNOWN = ['http://canary.local:8099', 'http://canary.local'];
+  // An https page can never fetch an http LAN device (mixed content), so
+  // probing from the public site would only fail forever; the loop runs where
+  // it can actually work — served from the hub, over http, or in an app shell.
+  const canProbe = location.protocol !== 'https:';
+  let detectT = null, detecting = false, foundKernel = null;
+
+  async function probeKernel(url) {
+    const ctrl = new AbortController(); const to = setTimeout(() => ctrl.abort(), 2500);
+    try {
+      const res = await fetch(url.replace(/\/$/, '') + '/api/fleet', { signal: ctrl.signal, mode: 'cors', headers: { accept: 'application/json' } });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const devices = Array.isArray(data) ? data : (data.devices || data.canaries || data.fleet || []);
+      return devices.length ? { url: url, count: devices.length } : null;
+    } catch (e) { return null; } finally { clearTimeout(to); }
+  }
+
+  // A kernel answered while the demo was up: don't yank the wall out from
+  // under the user — light up the Go live switch and let THEM flip it. (Once
+  // they have, the kernel is remembered and future visits reconnect quietly.)
+  function offerLive(found) {
+    if (foundKernel || liveFleet) return;
+    foundKernel = found;
+    const host = found.url.replace(/^https?:\/\//, '');
+    const noun = found.count === 1 ? 'Canary' : 'Canaries';
+    if (kernelUrl) kernelUrl.value = found.url;
+    if (goLiveBtn) { goLiveBtn.textContent = '✨ Go live — ' + found.count + ' ' + noun + ' found'; goLiveBtn.hidden = false; }
+    setStatus('✨ A kernel is answering at ' + found.url + ' — ' + found.count + ' ' + noun + ' ready to show. Press Go live to switch from the demo to your real fleet.', 'found');
+    if (liveText) liveText.textContent = 'Kernel found at ' + host + ' — ready to go live';
+    showToast('✨ Kernel found on your network · ' + host);
+  }
+
+  function clearFound() { foundKernel = null; if (goLiveBtn) goLiveBtn.hidden = true; }
+
+  async function detectTick() {
+    detectT = null;
+    if (!detecting || liveFleet || foundKernel) return;
+    if (document.hidden) { scheduleDetect(); return; }
+    for (let i = 0; i < WELL_KNOWN.length; i++) {
+      const found = await probeKernel(WELL_KNOWN[i]);
+      if (!detecting || liveFleet || foundKernel) return;   // something connected mid-probe
+      if (found) { offerLive(found); return; }
+    }
+    scheduleDetect();
+  }
+
+  function scheduleDetect() {
+    if (!detecting || liveFleet || foundKernel) return;
+    if (detectT) clearTimeout(detectT);
+    detectT = setTimeout(detectTick, 12000);
+  }
+
+  function startDetect(announce) {
+    if (!canProbe) return;
+    detecting = true;
+    if (announce) setStatus('Watching for a kernel on your network (canary.local) — showing the demo fleet until one answers.');
+    detectTick();
+  }
+  function stopDetect() { detecting = false; if (detectT) { clearTimeout(detectT); detectT = null; } }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && detecting && !detectT) detectTick(); });
+
+  if (goLiveBtn) goLiveBtn.addEventListener('click', async () => {
+    const target = foundKernel && foundKernel.url;
+    if (!target) return;
+    goLiveBtn.disabled = true;
+    await connectFleet(target, false);
+    goLiveBtn.disabled = false;
+    clearFound();
+    if (liveFleet) showToast('● LIVE · this is your real fleet now');
+    else scheduleDetect();   // it vanished between the probe and the press
+  });
   if (liveDemoBtn) liveDemoBtn.addEventListener('click', () => connectFleet('demo-fleet.json', false, 'demo kernel'));
   if (connectBtn) connectBtn.addEventListener('click', () => connectFleet(kernelUrl.value.trim(), false));
   if (flashBtn) flashBtn.addEventListener('click', simulateFlash);
-  if (demoBtn) demoBtn.addEventListener('click', () => { liveFleet = null; liveHost = null; setLive(false); render(); renderDevices(); showJson(null); stopPoll(); setStatus('Using the demo fleet.'); try { localStorage.removeItem('scv-kernel'); } catch (e) { /* private mode */ } });
+  if (demoBtn) demoBtn.addEventListener('click', () => { liveFleet = null; liveHost = null; setLive(false); render(); renderDevices(); showJson(null); stopPoll(); clearFound(); setStatus('Using the demo fleet.'); try { localStorage.removeItem('scv-kernel'); } catch (e) { /* private mode */ } startDetect(false); });
   if (kernelUrl) kernelUrl.addEventListener('keydown', (e) => { if (e.key === 'Enter') connectFleet(kernelUrl.value.trim(), false); });
 
   // ---------- boot ----------
@@ -505,13 +591,16 @@ if (tv && stage) {
   render();
   setLive(false);
   resetIdle();
-  // Reconnect a remembered/URL-specified kernel, else quietly probe the default
-  // (usually blocked on the public https site — that's expected; the live demo
-  // kernel button always works because it's same-origin).
+  // Reconnect a remembered/URL-specified kernel (the user already went live
+  // once — no ceremony, just reconnect). Otherwise start the live watch on
+  // the well-known addresses; the first kernel that answers becomes the
+  // "Go live" offer. (On the public https site the watch is off by design —
+  // mixed content makes it unwinnable — and the live demo kernel button
+  // always works because it's same-origin.)
   let boot = null;
   try { boot = new URLSearchParams(location.search).get('kernel') || localStorage.getItem('scv-kernel'); } catch (e) { /* ignore */ }
   if (boot) { if (kernelUrl && !/\.json/.test(boot)) kernelUrl.value = boot; connectFleet(boot, true); }
-  else connectFleet('http://canary.local:8099', true);
+  else startDetect(true);
 
   // ---------- embed API (host apps: Flasher / Lab) ----------
   // A host can drive the wall without knowing its internals — same-window via
