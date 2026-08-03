@@ -67,8 +67,12 @@ struct Witness: Identifiable, Codable, Hashable, Sendable {
         return sev
     }
 
-    /// Raw (pre-mute) severity from the worst live condition.
-    private var displaySeverity: Severity {
+    /// Raw (pre-mute) severity from the worst live condition. Internal on
+    /// purpose: mute caps NAGGING (effectiveSeverity), but anything that
+    /// reasons about whether an alarm is LIVE — the mood engine's
+    /// alarm-unacked rule, the alert ledger — must read the pre-mute truth,
+    /// or a muted alarm could dress the app in a calm it hasn't earned.
+    var displaySeverity: Severity {
         if tamper { return .tamper }
         if badge == .failed || link.isDark { return .alert }
         var sev = lastEventSeverity

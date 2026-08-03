@@ -47,6 +47,8 @@ namespace {
 
 // ── Choreography (see onboard_ui.h for the motion budget) ────────────────
 constexpr uint32_t HELLO_MS          = 2600;   // welcome beat before the QR
+constexpr uint32_t SCAN_SETTLE_MAX_MS = 6000;  // cap on waiting out the pre-AP
+                                               // sweep past the Hello beat
 constexpr uint32_t HINT_AFTER_MS     = 4000;   // phone joined, portal never hit
 constexpr uint32_t STA_TIMEOUT_MS    = 30000;  // WAP lesson: 15 s reads as
                                                // "wrong password" at range edge
@@ -363,6 +365,7 @@ void handle_join() {
   WiFi.persistent(false);
   WiFi.disconnect(/*wifioff=*/false, /*eraseap=*/false);
   WiFi.begin(g->join_ssid, g->join_pass);
+  canary::dbg_serial().printf("Join requested: \"%s\"\n", g->join_ssid);
 
   enter(St::Testing, millis());
   ui_stage(canary::ui::ObStage::Connecting, g->join_ssid);
@@ -522,12 +525,40 @@ void provision_run(bool glass_ok) {
     ui_pump();
     delay(5);
   }
-  const int pre = WiFi.scanComplete();
-  if (pre >= 0) harvest_scan(pre);
 
-  // Raise the AP. Channel 1, max 1 client (hardening), WPA2.
+  // The pre-AP sweep must FINISH before the radio changes personality.
+  // A full 13-channel active sweep at 300 ms/channel outlives the Hello
+  // beat by more than a second, and flipping to AP_STA with a scan handle
+  // live is the one radio sequence the proven WAP wizard never performs —
+  // it both races the mode change inside the driver and leaves the young
+  // AP flaky ("a pending scan handle keeps the radio busy", canary_wap).
+  // Wait it out under the Hello scene, bounded so a wedged sweep can't
+  // stall onboarding, and drop any handle that still lingers.
+  int pre = WiFi.scanComplete();
+  while (pre == WIFI_SCAN_RUNNING &&
+         (int32_t)(millis() - t0) < (int32_t)(HELLO_MS + SCAN_SETTLE_MAX_MS)) {
+    wdt_feed();
+    ui_pump();
+    delay(25);
+    pre = WiFi.scanComplete();
+  }
+  if (pre >= 0) harvest_scan(pre);
+  else WiFi.scanDelete();  // timed out or failed: no handle survives the flip
+  canary::dbg_serial().printf("Pre-AP sweep done: %d network(s) cached\n",
+                              g->scan_n);
+
+  // Raise the AP. Channel 1, max 1 client (hardening), WPA2. The radio's
+  // AP bring-up (TX calibration burst) is the steepest current spike of
+  // the whole boot, and on the 7" glass it lands on top of a full-day
+  // backlight from one USB feed — dip the light through the raise so a
+  // marginal supply never browns out mid-wizard. The Hello->Join scene
+  // change masks the dip entirely.
+  if (s_glass) canary::hal::backlight_set(CD_BRIGHT_AMBIENT);
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(ap_ssid, ap_pass, /*channel=*/1, /*hidden=*/0, /*max_conn=*/1);
+  if (s_glass) canary::hal::backlight_set(CD_BRIGHT_DAY);
+  canary::dbg_serial().printf("AP up: \"%s\" on channel 1 - portal live\n",
+                              ap_ssid);
   ctx.dns.begin(53);
 
   ctx.server.on("/", HTTP_GET, send_portal);

@@ -43,6 +43,18 @@ final class FleetStore: ObservableObject {
     /// Durable per-witness mutes, re-applied at every fold (rows are rebuilt
     /// from device truth, so mute must outlive them).
     private let muteLedger = MuteLedger()
+
+    // The living canary — the display firmware's mood engine, mirrored
+    // (Shared/CanaryMood.swift), fed the fleet's truth every refresh. The
+    // published face/posture drive the character on every surface; the mood
+    // LINE is ambient copy only (the Voice rule: it may rephrase
+    // contentment or name who's being looked for, never word an alarm).
+    private let moodKeeper = CanaryMoodKeeper()
+    @Published private(set) var canaryFace: CanaryFace = .calm
+    @Published private(set) var canaryPosture: CanaryPosture = .asFace
+    @Published private(set) var canaryAnxiety: Int = 0
+    @Published private(set) var canaryTrustDays: Int = 0
+    @Published private(set) var moodLine: String?
     /// Content fingerprint of the last glance snapshot handed to the iPhone
     /// widgets — reload their timelines only when the truth changed.
     private var lastGlanceFingerprint: Data?
@@ -300,13 +312,76 @@ final class FleetStore: ObservableObject {
         commitFeltTransition()
     }
 
+    /// Feed the mood engine the fleet's truth and publish the character's
+    /// state. Runs at the top of EVERY republish path (refresh, sentinel,
+    /// mute, ack), so no surface can ever receive a stale face beside fresh
+    /// severity — a lost Canary changes the bird in the same push that
+    /// changes the numbers.
+    private func updateCanaryMood() {
+        // Alarm-unacked reads the PRE-MUTE truth: mute caps nagging, it does
+        // not acknowledge a live alarm — the bird must not come back for a
+        // condition the user has only silenced.
+        let alarming = witnesses.filter { $0.displaySeverity >= .alert }
+        let allAcked = !alarming.isEmpty && alarming.allSatisfy {
+            ackedAlerts[$0.id] == alertFingerprint($0)
+        }
+        let inputs = CanaryMoodInputs(fleet: witnesses,
+                                      alarmUnacked: !alarming.isEmpty && !allAcked)
+        let reading = moodKeeper.observe(inputs)
+        canaryFace = reading.face
+        canaryPosture = reading.posture
+        canaryAnxiety = reading.state.anxiety
+        canaryTrustDays = reading.state.trustDays
+        moodLine = composeMoodLine(reading: reading)
+    }
+
+    /// Ambient copy only, and every line names log-able state (the honesty
+    /// rule): who is being looked for, how many things need care, how many
+    /// clean days the streak holds.
+    private func composeMoodLine(
+        reading: (face: CanaryFace, posture: CanaryPosture, state: CanaryMoodState, milestone: Bool)
+    ) -> String? {
+        switch reading.face {
+        case .hidden, .asleep:
+            return nil   // the instruments own the stage
+        case .calm:
+            if reading.milestone {
+                return reading.state.trustDays >= 30 ? "A clean month together"
+                                                     : "A clean week together"
+            }
+            if reading.state.trustDays >= 7 {
+                return "\(reading.state.trustDays) clean days together"
+            }
+            return "Watching with you"
+        case .worried:
+            switch reading.posture {
+            case .searching:
+                if let late = witnesses.first(where: { $0.link == .stale }) {
+                    return "Looking for \(late.displayName)…"
+                }
+                return "Looking for a quiet Canary…"
+            case .calling:
+                if let lost = witnesses.first(where: { $0.link.isDark }) {
+                    return "Calling for \(lost.displayName)"
+                }
+                return "Calling for a lost Canary"
+            case .asFace:
+                return "Something feels off"
+            }
+        case .distressed:
+            return "Feeling rough — the fleet needs care"
+        }
+    }
+
     /// The last worst-severity this store produced feedback against — the
     /// serialization point for the one-buzz-per-crossing promise.
     private var lastFeltWorst: Severity = .ok
 
     /// Island + wrist + iPhone widgets, in one place — every mutation path
-    /// (poll, sentinel, mute) fans out identically.
+    /// (poll, sentinel, mute, ack) fans out identically, and the mood folds
+    /// FIRST so the character and the numbers always ship together.
     private func republishGlanceSurfaces() {
+        updateCanaryMood()
         pushLiveActivity()
         WatchLink.shared.pushCurrent()   // content-deduped; free when nothing moved
         publishGlanceCache()             // ditto, for the iPhone widgets
@@ -498,7 +573,11 @@ final class FleetStore: ObservableObject {
     private var ackedAlerts: [String: String] = [:]
 
     private func alertFingerprint(_ w: Witness) -> String {
-        "\(w.effectiveSeverity.rawValue)|\(w.statusLine)"
+        // Pre-mute severity on purpose: for every witness that can enter the
+        // alert loop the two severities coincide (mute caps below alert, and
+        // the punch-through cases are uncapped), and the mood engine's
+        // alarm-unacked rule must match acks against the LIVE condition.
+        "\(w.displaySeverity.rawValue)|\(w.statusLine)"
     }
 
     /// The Ack action's landing pad: remember WHAT was acknowledged, so the
@@ -509,6 +588,9 @@ final class FleetStore: ObservableObject {
         } else if let posted = postedAlerts[id] {
             ackedAlerts[id] = posted
         }
+        // An ack changes the story (the bird may return to the stage) —
+        // every surface hears about it now, not at the next poll.
+        republishGlanceSurfaces()
     }
 
     private func evaluateAlerts() {

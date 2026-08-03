@@ -1,31 +1,18 @@
 // CanaryPerchView.swift
 //
-// The character, at rest: the one standard Canary (Assets "Canary", staged
-// from brands/logo_512x512.png by scripts/make_brand_assets.py — composited,
-// never redrawn), breathing gently on its perch. It appears in the calm
-// places — empty states, first runs — because the mascot's job is to make
-// "nothing is happening" feel like the good news it is. The bob is subtle,
-// slow, and honors Reduce Motion by standing still.
+// The character at rest — now a thin wrapper over the shared CanaryActor
+// (the same performer the watch stages, running the same mood engine the
+// bedside glass runs). This view is the CALM-ONLY convenience for empty
+// states and consent moments; screens that know the fleet's real mood
+// should stage CanaryActor with the store's published face directly.
 
 import SwiftUI
 
 struct CanaryPerchView: View {
     var height: CGFloat = 72
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var perchedHigh = false
-
     var body: some View {
-        Image("Canary")
-            .resizable()
-            .scaledToFit()
-            .frame(height: height)
-            .offset(y: perchedHigh ? -height * 0.03 : 0)
-            .animation(reduceMotion ? nil
-                       : .easeInOut(duration: 2.6).repeatForever(autoreverses: true),
-                       value: perchedHigh)
-            .onAppear { if !reduceMotion { perchedHigh = true } }
-            .accessibilityHidden(true)   // decorative; the words nearby carry the meaning
+        CanaryActor(face: .calm, height: height)
     }
 }
 

@@ -42,15 +42,20 @@ DESTS=(
 # ── the one transform: site page → embedded page ──────────────────────────────
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
+# Asset references may carry a ?v= cache-buster on the site (the site's
+# unfingerprinted-asset policy), so match up to the closing quote instead of
+# demanding the bare filename — anchoring on `.js"` silently stopped matching
+# the day the site added `?v=`, and the vendored pages shipped pointing at a
+# js/ directory that doesn't exist beside them.
 sed -E \
   -e '/rel="icon"/d' \
   -e '/rel="apple-touch-icon"/d' \
   -e '/fonts\.googleapis\.com/d' \
-  -e '/href="css\/site\.css"/d' \
+  -e '/href="css\/site\.css[^"]*"/d' \
   -e '/<header class="site">/,/<\/header>/d' \
   -e '/<footer class="site">/,/<\/footer>/d' \
-  -e '/src="js\/site\.js"/d' \
-  -e 's|src="js/tv-emulator\.js"|src="tv-emulator.js"|' \
+  -e '/src="js\/site\.js[^"]*"/d' \
+  -e 's|src="js/tv-emulator\.js[^"]*"|src="tv-emulator.js"|' \
   -e 's|href="/([^"]*)"|href="https://securacv.com/\1"|g' \
   "${SRC}/witness-wall.html" > "$TMP"
 

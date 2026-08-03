@@ -40,6 +40,11 @@ extension WristSnapshot {
                   heartbeatFailureReason: store.heartbeat.wristFailureReason,
                   isDemoData: store.demoMode,
                   witnesses: Array(rows),
-                  omittedWitnesses: max(0, fleet.count - rows.count))
+                  omittedWitnesses: max(0, fleet.count - rows.count),
+                  faceRaw: store.canaryFace.rawValue,
+                  postureRaw: store.canaryPosture.rawValue,
+                  anxiety: store.canaryAnxiety,
+                  trustDays: store.canaryTrustDays,
+                  moodLine: store.moodLine)
     }
 }
