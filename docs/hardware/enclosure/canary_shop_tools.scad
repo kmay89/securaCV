@@ -7,7 +7,7 @@
 //        briefly); remove as soon as the insert seats.
 //    part = "button_ring" — decorative accent ring for the doorbell button
 //        bezel seat: sits under the 12 mm button flange, prints in any
-//        contrast colour (the Ring-faceplate delight, in 0.4 g).
+//        contrast color (the Ring-faceplate delight, in 0.4 g).
 //
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
 // ============================================================================

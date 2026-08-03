@@ -1,7 +1,7 @@
 // ============================================================================
 //  Canary — BENCH BRING-UP FIXTURE  ⚠️ IN DEVELOPMENT (v0.1-dev)
 //  Companion to docs/hardware/bench_bringup.md ("start here"): instead of a
-//  desk of loose alligator clips, a labelled plate holds every bring-up part
+//  desk of loose alligator clips, a labeled plate holds every bring-up part
 //  in its station while you wire and test:
 //
 //    XIAO    — rail/clip cradle for the XIAO ESP32-S3 (Sense), USB free
@@ -66,7 +66,7 @@ module edgeclip(px, py, ang) {
             linear_extrude(clip_w) polygon(pts);
 }
 
-// station centres
+// station centers
 x_xiao = -38;  y_xiao =  16;
 x_bz   =  10;  y_bz   =  22;
 x_led  =  34;  y_led  =  22;

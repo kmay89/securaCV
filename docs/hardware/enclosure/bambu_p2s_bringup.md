@@ -27,7 +27,7 @@ order and you will not be debugging a six-hour print.
 combo** — that advice is about buying *three production machines*, where the
 AMS adds $250 each and buys nothing, because the catalog is single-material.
 For **one bench machine that has to print, test and iterate**, the AMS is a
-different proposition: it holds your PETG, your ASA and a contrast colour for
+different proposition: it holds your PETG, your ASA and a contrast color for
 debossed labels without a spool swap per print. Keeping it is reasonable. Two
 rules apply either way:
 
@@ -49,7 +49,7 @@ is load-bearing:
    foam blocks in the gantry, tape on the toolhead. A P2S that grinds or skips
    on its first move almost always still has a transit screw in it.
 2. **Run the built-in calibration wizard** and let it finish. It handles bed
-   levelling, vibration compensation and motor characterisation. Do not skip it
+   leveling, vibration compensation and motor characterization. Do not skip it
    to "just print something" — every dimension in this catalog is drawn to a
    tolerance system that assumes a calibrated machine.
 3. **Fit the textured PEI plate**, and treat it as a *finish surface*, not a
@@ -59,11 +59,11 @@ is load-bearing:
    most common adhesion failure on these machines. Handle the plate by its
    edges from here on.
 5. **Check which nozzle shipped** and note it. The stock 0.4 mm hardened-capable
-   assembly is fine for PETG/ASA/TPU. **Carbon-fibre filament will destroy a
+   assembly is fine for PETG/ASA/TPU. **Carbon-fiber filament will destroy a
    plain brass nozzle** — the Vision bracket is the only CF part in the catalog,
    and it is not on this bring-up path.
 6. **Pin the firmware version** and write it down. Bambu firmware updates can
-   change behaviour mid-production; you want to know what you calibrated on.
+   change behavior mid-production; you want to know what you calibrated on.
 
 ---
 
@@ -118,7 +118,7 @@ calibration**, and let all of it finish:
 |---|---|---|
 | Motor noise cancellation | stepper resonance | after firmware updates |
 | **Vibration compensation** (input shaping) | ringing/ghosting on corners | printer moved or re-sited |
-| **Auto bed levelling** | first-layer squash across the plate | plate swapped, printer moved |
+| **Auto bed leveling** | first-layer squash across the plate | plate swapped, printer moved |
 
 Ten to fifteen minutes, once. Re-run it after you move the machine — including
 across a room. Anything that shook in transit is why step 1 exists.
@@ -134,7 +134,7 @@ Bambu ships two paths and which you get depends on the machine's sensing
 hardware. **Open the dialog and look:**
 
 - If it offers **Auto** — the printer prints a pattern, reads it itself, and
-  writes the K-factor back. Take it. Minutes, no judgement required.
+  writes the K-factor back. Take it. Minutes, no judgment required.
 - If it only offers **Manual / Complete** — it prints a numbered pattern and
   you pick the cleanest line by eye. Pick the number where the corners stop
   bulging and *before* they start looking gappy; if two look equal, take the
@@ -153,7 +153,7 @@ that hurts here: it thins walls and every clearance in the catalog opens up.
 
 ### Step 4 — record it, per slot
 
-Write the numbers down against **the spool**, not the material. Brand, colour
+Write the numbers down against **the spool**, not the material. Brand, color
 and even batch change them — a black PETG and a white PETG from the same
 maker will not share a flow ratio, which matters directly for the 7″ frame's
 three-filament print. If you are running the AMS, each slot's filament needs
@@ -308,8 +308,8 @@ our bench. The one that was **actively disputed** — published summaries
 disagreed about a "PCB height" of 97.60 mm vs 126.20 mm — is now resolved:
 **126.20 mm is the M3 mount-hole X span**, measured off a reference case print
 that fits the real panel; a summary had recorded the hole span as an outline
-height. v0.3 ships the measured mount pattern (126.20 × 65.65 mm, centred
-1.5 mm right / 0.9 mm up of the glass centre with the panel mounted
+height. v0.3 ships the measured mount pattern (126.20 × 65.65 mm, centered
+1.5 mm right / 0.9 mm up of the glass center with the panel mounted
 buttons-down). Still put calipers on your actual board and check these against
 the values echoed when you render:
 
@@ -318,16 +318,16 @@ the values echoed when you render:
 | Touch-glass width × height | `glass_w` / `glass_h` | 192.96 × 110.76 |
 | Full panel thickness where the LCD module reaches — glass front → module can back | `glass_t` | 4.0 |
 | Bare-glass BORDER thickness at the adhesive band — glass front → glass back, calipers on the edge, NOT over the module | `glass_edge_t` | 1.2 ✅ MEASURED — these are **two different measurements**: the border is just glass, the middle is glass + module. `glass_edge_t` sets the adhesive-ledge depth (`glass_edge_t + adh_t` behind the front face); `glass_t` sets the cavity and the whole rear stack. Assigning the thin edge reading to `glass_t` shortens the rear stack ~3.2 mm and the frame cannot seat the module |
-| Glass corner radius | `glass_r` | **8.2 — measured**, not printed for. Three earlier revisions (2.0 → 3.0 → 3.2) each stepped rounder by 0.2 because that was the only increment the gauge could resolve, while the truth sat 5 mm away. **Measure it directly**: sit a square into the corner to find where the sharp bounding-box corner would be, measure the shortest distance `d` to the glass, `r = 2.414 × d` (8.2 → d 3.40). Then confirm on `part="radius_gauge"`, which now sweeps `rg_centre` ± 1.5·`rg_step` — hunt coarse (`-D rg_centre=8 -D rg_step=1`) before fine. Print to confirm, never to search. |
+| Glass corner radius | `glass_r` | **8.2 — measured**, not printed for. Three earlier revisions (2.0 → 3.0 → 3.2) each stepped rounder by 0.2 because that was the only increment the gauge could resolve, while the truth sat 5 mm away. **Measure it directly**: sit a square into the corner to find where the sharp bounding-box corner would be, measure the shortest distance `d` to the glass, `r = 2.414 × d` (8.2 → d 3.40). Then confirm on `part="radius_gauge"`, which now sweeps `rg_center` ± 1.5·`rg_step` — hunt coarse (`-D rg_center=8 -D rg_step=1`) before fine. Print to confirm, never to search. |
 | Active (lit) area | `aa_w` / `aa_h` | 154.88 × 86.72 |
-| LCD module can outline + centre offset | `panel_core_w` / `panel_core_h` / `panel_core_dy` | 165.72 × 97.60, dy −1.435 ✅ MEASURED (19.76 + 126.20 + 19.76 = 165.72 exactly) — the `frame_glass` CI gate and the insertion asserts check the ledge ring against THIS outline, so measure the can, not the ledge |
+| LCD module can outline + center offset | `panel_core_w` / `panel_core_h` / `panel_core_dy` | 165.72 × 97.60, dy −1.435 ✅ MEASURED (19.76 + 126.20 + 19.76 = 165.72 exactly) — the `frame_glass` CI gate and the insertion asserts check the ledge ring against THIS outline, so measure the can, not the ledge |
 | PCB outline | `pcb_w` / `pcb_h` | 165.72 × 97.60 |
 | Tallest rear-side component | `comp_h` | 11.0 |
 | Glass back → PCB front | `pcb_standoff` | 5.0 |
 | M3 mount-hole spacing | `m3_dx` / `m3_dy` | 126.20 × 65.65 (measured) |
-| M3 pattern offset from glass centre | `m3_ox` / `m3_oy` | +1.5 / +0.9 — signs SETTLED by the first real print (the earlier −/− pattern matched only with the panel upside down) |
+| M3 pattern offset from glass center | `m3_ox` / `m3_oy` | +1.5 / +0.9 — signs SETTLED by the first real print (the earlier −/− pattern matched only with the panel upside down) |
 | Panel's own standoffs, PCB back → tip | `standoff_len` | 6.9 (frame only) |
-| USB-C / UART / CAN / RS485 / battery centres | `bottom_open_*`, `side_open_*` | nominal ⚠️ |
+| USB-C / UART / CAN / RS485 / battery centers | `bottom_open_*`, `side_open_*` | nominal ⚠️ |
 
 The model asserts on the fatal combinations — a mount pattern that falls outside
 the board, a lip too narrow to retain the glass, no air gap left above the PCB —
@@ -336,7 +336,7 @@ filament. Two parameters deserve individual attention:
 
 - **`pcb_standoff`** alone decides whether the bezel lip reaches the glass or
   leaves it rattling. Get this one right.
-- **`m3_ox` / `m3_oy`** — the mount pattern is **not centred on the glass**,
+- **`m3_ox` / `m3_oy`** — the mount pattern is **not centered on the glass**,
   and that offset is why a panel cannot simply be rotated 180° inside a case
   drawn for the other orientation: the holes stop lining up. The signs are
   now **settled by the first real print** — v0.4's −1.5/−0.9 matched the
@@ -389,11 +389,11 @@ wall: first-print feedback), and a **microSD opening through the back plate**
 covering the socket, the card's downward slide travel and room for a
 fingertip — so the card goes in and out without ever being dropped inside the
 case. An "SD" deboss marks it; the first print corrected its position 6.35 mm
-toward the plate's centre — still confirm against **your** board. The shell
+toward the plate's center — still confirm against **your** board. The shell
 carries chamfers at both the plate edge and the opposite rim.
 
 v0.4 gives the frame its power story and closes v0.3's "USB-C has no external
-access" gap. Centred on the bottom wall is a **USB pass-through**: a bevelled
+access" gap. Centered on the bottom wall is a **USB pass-through**: a bevelled
 stadium opening sized to pass the power cable's **overmold head**
 (`usb_head_w`/`usb_head_h` — **measure your cable**, overmolds vary), and the
 brand lettering is now **cut through the wall as slat-stencil intake vents**
@@ -420,7 +420,7 @@ never the AMS**, §0):
   Set `btn_reach` to your measured wall-to-button gap minus ~0.5.
 - **`plug_sd`** — a peel-open cover for the SD opening, **countersunk
   flush**: the plate carries a 45° rim and the cap a matching tapered edge,
-  so both print clean back-plate-down and the taper self-centres the cap.
+  so both print clean back-plate-down and the taper self-centers the cap.
   (The v0.4 flat-floored recess left a cantilevered ring hanging over the
   opening — it drooped on the first real print; this replaces it.)
   Since v0.6 the cover is **leashed**: push its arrowhead barb through the
@@ -476,14 +476,14 @@ durability/finish features landed:
   intake → top-wall exhaust — is untouched, and there is no better spot:
   the SD zone, boss pockets and keyhole pads own every other clear column.
   Screw-mount builds should set `adh_rails=false` and reclaim every slot.
-- **Two-colour, one extruder.** The frame prints back-plate-down, and two
+- **Two-color, one extruder.** The frame prints back-plate-down, and two
   z-bands are deliberately isolated so plain filament-change pauses (or AMS
   layer swaps — §0) give a finished two-tone part with no painting:
-  - **Accent back skin** — start in the accent colour and swap to the body
-    colour at **z = 0.8 mm** (the rim-chamfer band). The back face and its
+  - **Accent back skin** — start in the accent color and swap to the body
+    color at **z = 0.8 mm** (the rim-chamfer band). The back face and its
     edge chamfer print in the accent; every back deboss floor sits at
     1.2 mm (`label_back_depth`), so BOOT/RESET, SD, the brand line and the
-    rail moats all show through in the body colour.
+    rail moats all show through in the body color.
   - **Accent front ring** — swap back to the accent at **z = 22.9 mm**
     (`fr_depth − 0.6` — the render echo prints your exact number if you
     changed the stack). The last 0.6 mm of the print is only the front rim
@@ -491,7 +491,7 @@ durability/finish features landed:
     around the glass and nothing else.
 
   Use either band alone or both; skipping both swaps prints the ordinary
-  single-colour part.
+  single-color part.
 - **Crisp edge lettering.** The bottom-edge brand is now a clean 1.0 mm
   **deboss** — the slat-stencil vents are gone. Print feedback drove this:
   the tie bands every through-cut glyph needed (or its counters fall out)
@@ -499,7 +499,7 @@ durability/finish features landed:
   stays attached everywhere by the wall web behind it — no ties, no lines,
   no islands. The intake the stencil carried moved to a **shadow gill row**
   (16 small pills, ≈1 cm² — the stencil's open area) tucked into the wall
-  band's last few millimetres before the back plate: invisible against a
+  band's last few millimeters before the back plate: invisible against a
   wall and over the dock's well, still feeding the same bottom-in → top-out
   convection path, and asserted clear of the grommet flange and the plate.
 - **The SD cover is leashed.** The v0.5 hinge tongue only *hooked* under the
@@ -520,19 +520,19 @@ external spool), the whole two-tone story runs itself, no pauses:
 
 - **The two z-bands** — in Bambu Studio right-click the layer slider at the
   two echoed heights (0.8 mm and 22.9 mm at stock dims) and *Add color
-  change*; the AMS swaps automatically. Accent back skin, body-colour words
+  change*; the AMS swaps automatically. Accent back skin, body-color words
   in the debosses, accent front ring.
 - **The lettering** — *Color Painting → Smart Fill* on the frame body: one
   click per debossed letter (the bottom-edge words, and BOOT/RESET/SD/brand
   on the back plate if you like) floods that recess with the accent
-  filament. Expect a prime tower and purge waste on every colour-change
+  filament. Expect a prime tower and purge waste on every color-change
   layer — that is the AMS working, not a mis-slice.
 - **Filament picks**: the case must stay **PETG** (it runs hot — never the
   PLA slot). Load body and accent in any two AMS slots and map them in the
   slicer's filament list.
 - **⚠️ On THIS z-band recipe, if the part carries the help QR the BODY
   filament must be the DARK one.** Every deboss floor on the back — labels,
-  brand lockup and the QR's modules — prints in the **body** colour, inside a
+  brand lockup and the QR's modules — prints in the **body** color, inside a
   skin that prints in the **accent**. A QR reader wants dark modules on a
   light field, so the old house pairing (white body + canary-yellow accent)
   produces **white modules on yellow: unscannable**, and leaves every other
@@ -540,13 +540,13 @@ external spool), the whole two-tone story runs itself, no pauses:
   or black) with a **light accent skin** and the whole back reads
   dark-on-light — labels included. The shipped palette already has the dark
   body (`pal_body` is Black), so this path is satisfied by default. A
-  single-colour print is fine as-is: the 1.2 mm floors read dark by shadow.
+  single-color print is fine as-is: the 1.2 mm floors read dark by shadow.
 
   This rule is specific to the z-band fallback, where the modules have no
   filament of their own and must inherit the body. **The three-part AMS path
   below is different** — there the modules get their own filament, and the
   shipped default (`qr_style = "bare"`) prints them WHITE ON BLACK, which is
-  inverted from the spec on purpose, for looks. See the README's three-colour
+  inverted from the spec on purpose, for looks. See the README's three-color
   section. Either way: **scan the part before you print nine more.**
 
 ```sh
@@ -660,7 +660,7 @@ has an opposite edge to measure against. This does — and it costs five grams.
 
 It debosses its own dimensions, so a loose ring on a bench is never a mystery.
 
-### 7c″ · The colour + fit coupon — print this before the frame
+### 7c″ · The color + fit coupon — print this before the frame
 
 One part answers two questions at **20.9 cm³ — a fifth of a frame** (body 20.56, ink 0.31, accent 0.02):
 
@@ -671,13 +671,13 @@ for f in body ink accent; do
 done
 ```
 
-It is cut from the bottom edge, running from the centre lockup **out through a
+It is cut from the bottom edge, running from the center lockup **out through a
 corner**, at full depth — so it carries the glass pocket, the front bezel band
 and the back plate all on one piece.
 
 | end | what it proves |
 |---|---|
-| centre | the lockup: INK product name over the ACCENT company line, and the USB port for a grommet trial-fit |
+| center | the lockup: INK product name over the ACCENT company line, and the USB port for a grommet trial-fit |
 | corner | the glass pocket's radius and the front bezel — offer the panel's own corner into it |
 
 **Do not hand-assemble these from the STLs** — use the packager, which writes
@@ -688,7 +688,7 @@ python3 gen_3mf.py tests      # writes BOTH pre-flight plates, in order
 ```
 
 The manual path (load `coupon_body`, **Add part → Load** the other two) still
-works, but it is one misclick from a silently wrong print: any centring or
+works, but it is one misclick from a silently wrong print: any centering or
 drop-to-bed on an added part separates the inlays from their recesses, and the
 result slices cleanly and looks fine in preview. An instruction that must be
 obeyed for the output to be right is a defect, not a doc problem — so the
@@ -715,7 +715,7 @@ a real purge and a real phone camera is a question with no CAD answer. So
 print it and scan it.
 
 ```sh
-python3 gen_3mf.py colour   # the QR plaque rides plate 2 with the coupon
+python3 gen_3mf.py color   # the QR plaque rides plate 2 with the coupon
 ```
 
 It is the **back plate only** — 3 mm, not the frame's 23.5 — cut from the real
@@ -740,7 +740,7 @@ There is deliberately **no accent slot**. Yellow on a finder pattern is how you
 make a symbol that looks finished and never scans.
 
 The plaque stops exactly at the quiet zone (`qr_back_reach`) and not a
-millimetre further — that radius is what the model's asserts guarantee is clear
+millimeter further — that radius is what the model's asserts guarantee is clear
 of rail moats, grille slots and keyholes. A 1.5 mm "nicer border" was tried
 first and clipped an adhesive-rail moat, leaving a detached 0.8 mm hairline of
 black at the plaque edge.
@@ -756,11 +756,11 @@ If it does not scan, raise `qr_back_cell` before anything else; the symbol is
 21×21, so every 0.1 mm of cell is 2.1 mm of field, and the asserts will tell
 you when it stops fitting its keepout.
 
-### 7c′ · The three-colour case (AMS)
+### 7c′ · The three-color case (AMS)
 
 The one-piece frame can print as a **white case with a black bezel, black
 lettering and one yellow word**. It is a genuine three-filament print, but it is
-laid out so the AMS barely works: colour changes are confined to two thin bands
+laid out so the AMS barely works: color changes are confined to two thin bands
 and the ~110 layers in between never change tools.
 
 ```sh
@@ -776,7 +776,7 @@ In Bambu Studio:
 3. Assign a filament to each part.
 4. Slice.
 
-**Do not re-centre, rotate, or drop-to-bed the added parts.** All three are
+**Do not re-center, rotate, or drop-to-bed the added parts.** All three are
 exported in the same coordinate frame as `part="frame"`, so they arrive already
 registered to each other. Moving one moves the lettering out of its own recess.
 
@@ -792,7 +792,7 @@ than "top and bottom bands" for the same reason — the front rim is a uniform
 2 mm all the way round, so bands would not be a visible distinction, they would
 just add a tool change to every one of those last layers.
 
-**Why this needs the AMS at all.** The single-extruder recipe (§7b′, colour
+**Why this needs the AMS at all.** The single-extruder recipe (§7b′, color
 swaps at fixed heights) cannot produce a white case with a scannable QR. The
 QR's modules are the deboss *floors*, and on a z-swap they print in whichever
 filament is running at floor height — so a white body puts **white modules on a
@@ -810,11 +810,11 @@ plate regardless.
 `fil_body` is the body's *share* of the three-way split: the final 0.6 mm bezel
 band has been subtracted out of it, because that material belongs to `fil_ink`.
 Printed on its own it is a case with the front bezel missing, not a
-single-colour case. Only the full `frame` mesh is the whole part.
+single-color case. Only the full `frame` mesh is the whole part.
 
 ### 7d · Assembly order
 
-1. Seat the PCB on the four moulded bosses; drive **M3 into the boss pilots**.
+1. Seat the PCB on the four molded bosses; drive **M3 into the boss pilots**.
 2. Drop the panel in — the glass back sits flush with the tray's wall top.
 3. Lay the bezel on; the lip closes onto the glass border.
 4. **M3 × 16–20 from the front**, through the bezel's counterbored ears, self-

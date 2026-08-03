@@ -7,7 +7,7 @@
 //            M2 screw lid, tamper-magnet pocket, opt-in weather sealing
 //            (TPU gasket + drip-edge lid), opt-in wall mounting (keyholes/tabs).
 //
-//  Units: millimetres.  CAD: OpenSCAD (https://openscad.org).
+//  Units: millimeters.  CAD: OpenSCAD (https://openscad.org).
 //
 //  ⚠️ VERIFY BEFORE PRINTING. Defaults are nominal for the XIAO ESP32-S3 Sense
 //     (PCB 21.0 x 17.5 mm) plus a 503450-class LiPo. Measure YOUR board, battery,
@@ -58,7 +58,7 @@ kh_shank_d  = 4.2;    // shank slot width
 kh_slot_l   = 8.0;    // slot travel (slot runs toward +X = UP when the USB faces down)
 kh_head_h   = 3.5;    // total pocket depth (face web + head cavity)
 kh_face     = 1.0;    // face web thickness the screw head grips behind
-kh_inset    = 10.0;   // keyhole centres at x = ±(inner_l/2 − kh_inset); auto-merges to one on small cases
+kh_inset    = 10.0;   // keyhole centers at x = ±(inner_l/2 − kh_inset); auto-merges to one on small cases
 // external screw tabs — four ears on the ±Y walls, fully outside the seal envelope
 tab_l       = 10.0;   // ear length along the wall
 tab_w       = 8.0;    // ear protrusion from the wall
@@ -73,7 +73,7 @@ lid_edge2   = 0.0;    // optional second, steeper stage (~66°) that softens the
 label_text  = "";     // debossed lid label, e.g. "CANARY" ("" = off; needs the font installed)
 label_size  = 5.0;    // text height
 label_depth = 0.5;    // deboss depth (prints as crisp first-layer voids, lid prints face-down)
-label_dx    = 0.0;    // label centre offset from the LID centre (not the board centre)
+label_dx    = 0.0;    // label center offset from the LID center (not the board center)
 label_dy    = -10.0;
 label_rot   = 0;      // label rotation (degrees)
 label_font  = "Liberation Sans:style=Bold";
@@ -168,10 +168,10 @@ screw_head_h   = 1.2;   // countersink depth — the cone below is a true 90° s
 /* [USB-C port] — on the board's USB end (-X short wall) */
 usb_w          = 12.0;  // opening width: clears rugged USB-C cable boots (connector body ~8.9 mm)
 usb_h          = 6.5;   // opening height: boot clearance (connector body ~3.2 mm) — slim if cable is bare
-usb_z          = -1.65; // centres the opening on the connector AXIS: the C shell is 3.2 mm tall on the
+usb_z          = -1.65; // centers the opening on the connector AXIS: the C shell is 3.2 mm tall on the
                         // PCB, so the axis sits at PCB-top + 1.6; a boot needs equal room below the axis
 
-/* [Lid features] — offsets are measured FROM THE BOARD CENTRE (mm). Measure your board! */
+/* [Lid features] — offsets are measured FROM THE BOARD CENTER (mm). Measure your board! */
 // Camera / sensor window + recessed seat for a glued clear disc (12 x 1 mm PMMA/PC)
 cam_win_d      = 9.0;
 cam_disc_d     = 12.0;  // clear-disc diameter (seat = disc + 2*tol_slide; 0 = no seat, bare hole)
@@ -231,7 +231,7 @@ post_corner  = pd + 1.5;                 // positioning margin so a screw post s
 
 // cavity: board + bays along X, +X dead zone keeps true corners for the screw posts.
 // The board is ALWAYS biased to the -X (USB) wall so the connector reaches the opening
-// (v0.7 fix — centring it left the USB ~6.5 mm behind the wall on the compact case).
+// (v0.7 fix — centering it left the USB ~6.5 mm behind the wall on the compact case).
 clip_stack = board_clips ? (clip_clear + clip_t) : 0;
 inner_l = board_zone_l + extra_l + post_corner + 1.0;
 inner_w = max(board_w + 2*board_clear,
@@ -252,12 +252,12 @@ pcb_z    = floor_t + standoff_h;                // absolute z of PCB underside
 board_cx = -inner_l/2 + board_clear + board_l/2 + 0.5;   // USB-biased (0.5 = positioning margin, not a fit)
 board_cy = 0;
 zone0    = -inner_l/2 + board_zone_l + 0.5;     // x where the appended bays begin
-batt_cx  = zone0 + batt_gap + batt_l/2;         // battery bay centre
-gps_cx   = zone0 + batt_zone_l + gps_gap + gps_l/2;   // GPS bay centre (after battery, if any)
+batt_cx  = zone0 + batt_gap + batt_l/2;         // battery bay center
+gps_cx   = zone0 + batt_zone_l + gps_gap + gps_l/2;   // GPS bay center (after battery, if any)
 
 // mounting back-thickening (keyhole pockets live below the floor, never in the cavity)
 mount_extra = (e_mount && (mount_style == "keyhole" || mount_style == "both")) ? kh_extra : 0;
-// keyhole positions: two near the ends, or one centred when the case is too short
+// keyhole positions: two near the ends, or one centered when the case is too short
 kh_x   = inner_l/2 - kh_inset;
 kh_xs  = (kh_x >= kh_slot_l/2 + kh_head_d/2 + 2) ? [-kh_x, kh_x] : [0];
 
@@ -318,7 +318,7 @@ module rim_ring2d(w) {
     }
 }
 
-// corner screw-post centres (just inside the cavity corners; 0.2 = positioning margin)
+// corner screw-post centers (just inside the cavity corners; 0.2 = positioning margin)
 function post_xy() = [
     [ inner_l/2 - pd/2 - 0.2,  inner_w/2 - pd/2 - 0.2],
     [-inner_l/2 + pd/2 + 0.2,  inner_w/2 - pd/2 - 0.2],
@@ -365,10 +365,10 @@ module boardclip(cx, sy) {
             linear_extrude(height = clip_w) polygon(pts);
 }
 
-// blind keyhole pocket cut into the thickened back (xc = feature centre along X);
+// blind keyhole pocket cut into the thickened back (xc = feature center along X);
 // head circle at the -X end, slot toward +X = UP when the case hangs USB-down
 module keyhole_pocket(xc) {
-    x0 = xc - kh_slot_l/2;                 // screw-head pass hole centre
+    x0 = xc - kh_slot_l/2;                 // screw-head pass hole center
     x1 = xc + kh_slot_l/2;                 // slot top end
     z0 = -mount_extra;                     // outer back face
     union() {
@@ -408,7 +408,7 @@ module mount_tabs() {
     wy = out_w/2;
     for (sx = [1, -1], sy = [1, -1]) {
         tx = sx * (inner_l/2 - tab_l/2 - 2);
-        hy = sy * (wy + tab_w/2);          // hole centre
+        hy = sy * (wy + tab_w/2);          // hole center
         translate([0, 0, -mount_extra]) difference() {
             linear_extrude(tab_t) hull() {
                 translate([tx, sy * (wy - 1)]) square([tab_l, 2], center = true);  // root buried in the wall

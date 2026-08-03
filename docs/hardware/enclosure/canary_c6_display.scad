@@ -34,7 +34,7 @@
 //      opening is now a true stadium (full-round ends, like the connector
 //      itself) instead of a rectangle, sized shell + tolerance.
 //    * USB-C and BOTH buttons are mounted on the BACK of the PCB (photo-
-//      verified), not the front: the port centre sits ~usb_h/2 behind the
+//      verified), not the front: the port center sits ~usb_h/2 behind the
 //      PCB back face and the button actuators ~btn_dz behind it. That also
 //      means even the stripped board needs back clearance for the shell
 //      (back_stack ≥ ~4.7 keeps a printable bridge above the port), and the
@@ -49,7 +49,7 @@
 //      the pins catching the fat Ø5.2 boss SIDES — slimming the bosses to
 //      Ø4.6 fixed it at the original hdr_drop 8.8; don't deepen the case.
 //    * The lid is 180°-rotation SYMMETRIC (nubs at ±nub_y0, mirrored skirt
-//      reliefs, centred grille, plain plate outline) so it clicks on either
+//      reliefs, centered grille, plain plate outline) so it clicks on either
 //      way and the keyhole can hang the case port-up or port-down. Keep any
 //      new lid feature symmetric under (x,y)→(−x,−y), or flipping breaks.
 //
@@ -88,7 +88,7 @@ back_stack = 4.8;    // back-side clearance below the PCB, stripped board: the
 hdr_drop = 8.8;      // cavity depth below the PCB back that swallows base + pins
                      // (fit-tested: 8.8 closes fine — the earlier "pins foul the
                      // lid" was the boss Ø, fixed by the slimmer Ø4.6 bosses) — MEASURE
-hdr_inset = 1.6;     // PCB edge → header row centreline — MEASURE
+hdr_inset = 1.6;     // PCB edge → header row centerline — MEASURE
 brass_h = 5.0;       // factory corner pillar height above the PCB back (0 = pillars removed) — MEASURE
 
 /* [Screen] — active area = the window; the LCD module border sits under the lip */
@@ -99,13 +99,13 @@ lcm_w = (model == "1.69") ? 28.0   : 19.39;    // LCD module outline short
 
 /* [USB-C] — on the BOTTOM (−Y) short wall, mounted on the BACK of the PCB
    (photo-verified): the shell rests on the PCB back face, so the opening
-   centres ~usb_h/2 behind it. The opening is a stadium (full-round ends,
+   centers ~usb_h/2 behind it. The opening is a stadium (full-round ends,
    radius = half its height) hugging the receptacle shell — nominal shell is
    8.94 × 3.26; usb_h carries extra because the bezel prints face-down and
    holes shrink a touch along the print Z. */
 usb_w  = 9.15;   // stadium opening width — shell + 0.2 (fit-tested: 9.4 showed a gap)
 usb_h  = 3.45;   // stadium opening height — shell + 0.2
-usb_dx = 0.0;    // sideways offset of the connector centre — MEASURE
+usb_dx = 0.0;    // sideways offset of the connector center — MEASURE
 usb_dz = 0.0;    // depth offset from shell-on-back-face nominal (+ = toward the back) — MEASURE
 usb_proud = 1.9; // shell overhang past the PCB edge (photo ≈1.8) — MEASURE
 
@@ -116,8 +116,8 @@ usb_proud = 1.9; // shell overhang past the PCB edge (photo ≈1.8) — MEASURE
    insertion. */
 opt_btn = true;
 btn_d   = 3.0;                 // access hole Ø — big enough for a tool tip, small enough to shield
-btn_up  = 7.0;                 // button centre up from the USB (−Y) end (fit-tested: 6.0 sat 1 low) — MEASURE
-btn_dz  = 1.0;                 // actuator centre behind the PCB BACK face — MEASURE
+btn_up  = 7.0;                 // button center up from the USB (−Y) end (fit-tested: 6.0 sat 1 low) — MEASURE
+btn_dz  = 1.0;                 // actuator center behind the PCB BACK face — MEASURE
 btn_proud = 1.8;               // BLACK ACTUATOR overhang past the PCB edge (photo ≈1.8) — MEASURE
 btn_ch_w  = 3.4;               // actuator channel width (Y) — hugs the black nub, nothing more
 btn_body_w = 5.2;              // shallow relief width for the switch's metal body — MEASURE
@@ -173,14 +173,14 @@ r_in  = max(0.6, r_out - wall);                  // cavity corner radius
 
 z_pcb_front = face_t + lcd_rise;                 // PCB front plane
 z_pcb_back  = z_pcb_front + pcb_t;               // PCB back plane
-// opening centres on the SHELL (nominal 3.26 tall, resting on the PCB back),
+// opening centers on the SHELL (nominal 3.26 tall, resting on the PCB back),
 // not on the opening height, so tightening usb_h never shifts it off the port
 z_usb       = z_pcb_back + 3.26/2 + usb_dz;
-z_btn       = z_pcb_back + btn_dz;               // button actuator centre (back-mounted)
+z_btn       = z_pcb_back + btn_dz;               // button actuator center (back-mounted)
 
 // button / USB overhang clearance: how far each channel reaches past the
 // cavity wall face, and how far the wall must bulge to keep ear_skin of skin
-btn_y     = -board_l/2 + btn_up;         // button centre (Y)
+btn_y     = -board_l/2 + btn_up;         // button center (Y)
 btn_reach = btn_proud + tol_slide;       // actuator channel depth past the cavity face
 btn_body_reach = btn_body_p + tol_slide; // shallow body-relief depth
 usb_reach = usb_proud + tol_slide;
@@ -212,7 +212,7 @@ stand_d  = (headers == "male") ? 4.6 : 4.2;      // boss Ø — covers the pilla
 stand_len = stack_eff - ((headers == "male") ? brass_h : 0);
 
 // snap windows / nubs live on the two long (±X) side walls, at ±nub_y0 —
-// SYMMETRIC about the centre, so the lid also clicks on rotated 180° and the
+// SYMMETRIC about the center, so the lid also clicks on rotated 180° and the
 // keyhole can hang the case port-up or port-down (flip the lid). Everything
 // on the lid↔bezel interface must stay symmetric under (x,y)→(−x,−y):
 // nubs/windows, skirt reliefs, bosses, grille. The keyhole itself may be
@@ -246,7 +246,7 @@ assert(!opt_vent || vent_dy + (vent_n-1)*vent_pitch/2 + vent_w/2 <= yc/2 - 0.8,
 assert(headers != "male" || hdr_drop > back_stack, "headers=male but hdr_drop is shallower than the stripped-board clearance");
 assert(headers != "male" || tol_slide + hdr_inset - 0.35 >= tol_press + skirt_wall + 0.25,
        "skirt would sit in the header pin row — thin skirt_wall or re-measure hdr_inset");
-assert(board_w/2 - stand_ix - stand_d/2 > 0, "press bosses collide at the board centre — check stand_ix/stand_d");
+assert(board_w/2 - stand_ix - stand_d/2 > 0, "press bosses collide at the board center — check stand_ix/stand_d");
 echo(str("Canary C6 display (", model, ", headers=", headers, ") v0.4-dev — outer ",
          xo, " x ", yo, " x ", bez_h + back_t, " mm, window ", aa_w, " x ", aa_l,
          " (lip X ", lip_w, " / Y ", lip_l, "), cavity depth ", cav_d,
@@ -365,9 +365,9 @@ module back() {
                 }
         }
         // heat-escape grille in the back plate, over the component zone —
-        // CENTRED in both axes (it reads as the lid's face), skipping any
+        // CENTERD in both axes (it reads as the lid's face), skipping any
         // slot pair that would undermine a press-boss foot (symmetric skip,
-        // so the grille stays centred)
+        // so the grille stays centered)
         if (opt_vent) for (i = [0:vent_n-1], sx = [1, -1])
             let (gy = -(vent_n-1)*vent_pitch/2 + i*vent_pitch)
             if (abs(gy) + vent_w/2 <= board_l/2 - stand_iy - stand_d/2 - 0.2)

@@ -112,7 +112,7 @@ module pole() {
         linear_extrude(ap_t) rrect2d(ap_w, ap_l, 5);
         for (sy = [1, -1]) translate([-ap_w/2 - 1, sy*ap_l/4 - strap_w/2, -0.1])
             cube([ap_w + 2, strap_w, strap_t + 0.1]);
-        cb_screw(0, 0, ap_t);        // optional centre wall screw as backup
+        cb_screw(0, 0, ap_t);        // optional center wall screw as backup
     }
     tstud( stud_gap/2, ap_t - 0.01);
     tstud(-stud_gap/2, ap_t - 0.01);
@@ -123,7 +123,7 @@ module template() {
     difference() {
         linear_extrude(1.0) rrect2d(ap_w, ap_l + 16, 4);
         for (s = [1, -1]) translate([0, s*stud_gap/2, -0.1]) cylinder(d = 4.4, h = 1.2);
-        translate([0, 0, -0.1]) cylinder(d = 2.5, h = 1.2);   // centre mark
+        translate([0, 0, -0.1]) cylinder(d = 2.5, h = 1.2);   // center mark
         if (cable_oval) translate([5, 6, -0.1]) hull()
             for (s = [1, -1]) translate([s*2.5, 0, 0]) cylinder(d = 7, h = 1.2);
         // level line slots

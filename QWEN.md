@@ -40,6 +40,18 @@ exception is the Unix `flock(2)` syscall, which is a real API name; do not renam
 it. Use "fleet" (already established across the firmware, e.g. `fleet_model.h`)
 or plain "your Canaries" / "the devices."
 
+**3b. US spellings, always.** `color`, `center`, `meter`, `behavior`, `analyze`,
+`gray`, `license`, `labeled`, `canceled`, `optimize`, `recognize`, `catalog`.
+Not `colour`, `centre`, `metre`, `behaviour`, `analyse`, `grey`, `licence`,
+`labelled`, `cancelled`, `optimise`, `recognise`, `catalogue`. This covers
+user-facing copy, device UI strings, docs, comments and code identifiers alike.
+
+Four things keep their spelling because they are not ours to respell: SPDX tags
+and `LICENSE`/`LICENCE` filenames, third-party API and CSS identifiers already
+spelled a particular way (CSS accepts `grey`, but write `gray`), quoted text
+from an external source, and words that are the same in both (`analysis`,
+`parameter`, `diameter` — none of those are British).
+
 **4. Don't oversell, and don't overclaim.** "Verified" means *an Ed25519
 signature checked against a pinned key* — nothing looser. No performance claim
 without a benchmark. Describe `DetectorBackend` as an audit boundary that must be

@@ -59,19 +59,19 @@ vm_front_h   = 3.5;  // carrier front-side TALLEST part (connectors etc.) — ME
 ant_h        = 1.2;  // antenna (AiP package) top above the PCB — MEASURE; sets the radome air gap
 pcb_t    = 1.0;
 board_clear = 0.6;
-xiao_usb_z  = 4.0;   // XIAO USB-C centre above the back floor — MEASURE the seated stack
+xiao_usb_z  = 4.0;   // XIAO USB-C center above the back floor — MEASURE the seated stack
 
 /* [Radome window] — thin flat membrane over the antenna zone */
 radome_t  = 1.5;     // membrane thickness — 1.5 ≈ half-wave in PETG/ASA at 60 GHz (low-reflection
                      // optimum); AVOID 0.7–1.1 (quarter-wave band, ~20 % reflection)  // [1.4:0.1:1.6]
 rad_win_x = 24.0;    // window size (X) — cover the antenna array generously
 rad_win_y = 24.0;    // window size (Y)
-rad_dx    = 0.0;     // antenna-zone centre offset from the BOARD centre — MEASURE
+rad_dx    = 0.0;     // antenna-zone center offset from the BOARD center — MEASURE
 rad_dy    = 6.0;     //   (the array usually sits toward the top half of the carrier)
 // antenna-to-radome air gap is COMPUTED below (rad_gap) and asserted >= 3.0
 // for clean radar performance; raise cav_extra for more gap.
 
-/* [Front-face features] — offsets from the BOARD centre; keep them OUT of the window */
+/* [Front-face features] — offsets from the BOARD center; keep them OUT of the window */
 lp_d   = 3.0;        // WS2812 light pipe (press fit)
 lp_dx  = 13.0;
 lp_dy  = -14.0;
@@ -206,7 +206,7 @@ base_d = floor_t + cav_d;
 
 vm_cx  = 0;
 vm_cy  = -inner_y/2 + board_clear + vm_l/2;
-rad_cx = vm_cx + rad_dx;                    // radome window centre
+rad_cx = vm_cx + rad_dx;                    // radome window center
 rad_cy = vm_cy + rad_dy;
 usb_cx = vm_cx + usb_dx;
 

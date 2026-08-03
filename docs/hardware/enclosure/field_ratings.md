@@ -51,8 +51,8 @@ equalise through ePTFE.
   radius everything. Material ranking for shells: PC > PA‑CF ≈ ASA > PETG >
   PLA (PLA also creeps and dies in a hot car — don't use it outdoors).
 - **UV**: ASA keeps its toughness outdoors; PETG embrittles slowly; PLA fast.
-- What FDM will **not** reach: GoPro's 10 m/IP68 (injection-moulded PC,
-  overmoulded TPE, glass window, factory leak-tested every unit) or any
+- What FDM will **not** reach: GoPro's 10 m/IP68 (injection-molded PC,
+  overmolded TPE, glass window, factory leak-tested every unit) or any
   *certified* MIL‑STD badge — those are lab programs, not features.
 
 ## 3. How the real ratings work (so ours map honestly)

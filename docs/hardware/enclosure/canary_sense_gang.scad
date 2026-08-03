@@ -3,7 +3,7 @@
 //  Radar works through plastic, so the Sense witness can live INSIDE the wall:
 //  a one-piece faceplate that mounts to a US single-gang old-work box on the
 //  standard 6-32 device screws (83.3 mm spacing). The MR60BHA2 carrier +
-//  stacked XIAO ride clip rails on the BACK of the plate; the plate's centre
+//  stacked XIAO ride clip rails on the BACK of the plate; the plate's center
 //  is the RADOME (thin flat membrane). Looks like a smart switch/keypad —
 //  zero visual footprint. Power: in-box USB (Class-2 low voltage rules apply;
 //  do NOT share a box with mains conductors — check local code).
@@ -39,7 +39,7 @@ rad_win_y = 24.0;
 rad_dx    = 0.0;
 rad_dy    = 6.0;
 
-/* [Face features] — offsets from the board centre */
+/* [Face features] — offsets from the board center */
 lp_d   = 3.0;  lp_dx  = 13.0;  lp_dy  = -14.0;   // WS2812 light pipe
 lux_d  = 3.5;  lux_dx = -13.0; lux_dy = -14.0;   // BH1750 aperture
 
@@ -94,7 +94,7 @@ module plate() {
                 hull() for (dy = [-1.5, 1.5])
                     translate([0, sy*screw_gap/2 + dy, plate_t - 1.6])
                         cylinder(d1 = dev_screw_d, d2 = dev_screw_d + 3.6, h = 1.7);
-            // light pipe + lux apertures (board centre = plate centre)
+            // light pipe + lux apertures (board center = plate center)
             translate([lp_dx, lp_dy, -0.1]) cylinder(d = lp_d + 2*tol_press, h = plate_t + 1);
             translate([lux_dx, lux_dy, -0.1]) cylinder(d = lux_d, h = plate_t + 1);
         }

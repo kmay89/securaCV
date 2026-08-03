@@ -4,7 +4,7 @@
 //  the compact WAP stack (plain XIAO ESP32-S3) inside a housing styled as a
 //  utility junction box: squared body, fake conduit bosses on the sides, and
 //  the camera aperture hidden inside a mock "unpunched knockout" ring on the
-//  lid. Utilitarian grey ASA/PETG completes the disguise.
+//  lid. Utilitarian gray ASA/PETG completes the disguise.
 //
 //  NOTE: this is a legitimate-use disguise for a device you own on property
 //  you monitor lawfully — pair with the witness signage plate where notice
@@ -37,8 +37,8 @@ usb_w = 10.5;  usb_h = 6.5;
 
 /* [Camera knockout] */
 cam_ap_d   = 9.0;
-cam_dx     = 0.0;    // aperture offset from the board centre — MEASURE: the XIAO
-cam_dy     = 0.0;    // Sense camera sits toward the antenna end, not dead centre
+cam_dx     = 0.0;    // aperture offset from the board center — MEASURE: the XIAO
+cam_dy     = 0.0;    // Sense camera sits toward the antenna end, not dead center
 ko_ring_d  = 22.0;   // mock knockout ring (aperture recessed inside it)
 ko_depth   = 0.8;
 
@@ -86,7 +86,7 @@ module body() {
             union() {
                 rrect(out_l, out_w, corner_r, base_h);
                 // fake conduit bosses: two per long wall, half-cylinders lying on
-                // the wall, CENTRED on the body height so they stay inside the
+                // the wall, CENTERD on the body height so they stay inside the
                 // print envelope (a Ø21 boss poked 1.7 mm below the bed plane).
                 // Horizontal cylinders on vertical walls: print with a dab of
                 // support or accept a rough underside on the lower quarter.

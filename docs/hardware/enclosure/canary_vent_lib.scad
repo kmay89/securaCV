@@ -59,7 +59,7 @@
 // ============================================================================
 
 // The egg: a rounded oval of overall length l (along +y, UPRIGHT), base
-// width w, crown diameter tip*w. Centred on the base circle's centre, so a
+// width w, crown diameter tip*w. Centered on the base circle's center, so a
 // drop-in swap for a circle of Ø w keeps the base row where it was.
 //
 // THE brand constant, and the ONE place the number lives. A function, not a
@@ -81,8 +81,8 @@ module egg2d(l, w, tip = egg_tip()) {
 }
 
 // Exact open area of egg2d(l, w, tip): the hull of two circles is two
-// circular sectors plus the two centre-to-centre tangent quads. With
-// R = w/2, r = tip*w/2, centre distance d = l - R - r and
+// circular sectors plus the two center-to-center tangent quads. With
+// R = w/2, r = tip*w/2, center distance d = l - R - r and
 // phi = asin((R - r)/d):
 //   A = (pi/2 + phi)·R² + (pi/2 - phi)·r² + (R + r)·d·cos(phi)
 // (checks: r = R gives phi = 0 → pi·R² + 2·R·d, the stadium; r = 0 gives
@@ -95,8 +95,8 @@ function egg_area(l, w, tip = egg_tip()) =
   + (PI/2 - phi*PI/180) * r * r
   + (R + r) * d * cos(phi);
 
-// Offset-row cell centres for a clutch field: nx columns, ny rows at
-// (px, py) pitch, odd rows shifted +px/2 (and the whole field re-centred).
+// Offset-row cell centers for a clutch field: nx columns, ny rows at
+// (px, py) pitch, odd rows shifted +px/2 (and the whole field re-centered).
 // Returns [x, y] pairs; the caller filters against its own keepouts — every
 // case knows its own bosses, ports and rails, and the honest-echo rule
 // ("compute the area from the SAME list the cutter uses") stays with the

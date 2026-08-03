@@ -37,7 +37,7 @@ s_front_h = 3.5;
 ant_h = 1.2;
 radome_t = 1.5;   // ≈ half-wave in PETG/ASA at 60 GHz (low-reflection optimum); AVOID 0.7–1.1 mm
 rad_win_x = 24.0;  rad_win_y = 24.0;  rad_dx = 0.0;  rad_dy = 6.0;
-s_usb_z = 4.0;       // C6 USB centre above the floor
+s_usb_z = 4.0;       // C6 USB center above the floor
 lux_d = 3.5;  lux_dx = -13.0;  lux_dy = -14.0;
 lp_d = 3.0;   lp_dx = 13.0;   lp_dy = -14.0;
 
