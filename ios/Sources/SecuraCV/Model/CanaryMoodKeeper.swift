@@ -52,17 +52,25 @@ struct CanaryMoodKeeper {
         var s = state
         var milestone = false
 
-        // Local-day rollover(s) first — one per elapsed local day.
+        // Local-day rollover first. Exactly ONE elapsed day is the normal
+        // midnight: roll the ladder (and maybe cross a milestone). Two or
+        // more means the keeper wasn't watching — and unobserved days are
+        // unknown, not clean. "Consecutive clean days" means consecutively
+        // PROVEN, so a gap resets the streak instead of awarding trust for
+        // days nobody witnessed.
         let today = calendar.startOfDay(for: now)
         if let lastDay = defaults.object(forKey: Self.lastDayKey) as? Date {
-            var day = calendar.startOfDay(for: lastDay)
-            while day < today {
+            let from = calendar.startOfDay(for: lastDay)
+            let elapsed = calendar.dateComponents([.day], from: from, to: today).day ?? 0
+            if elapsed == 1 {
                 let previous = s.trustDays
                 CanaryMoodEngine.rollover(&s)
                 if CanaryMoodEngine.trustMilestone(previousDays: previous, days: s.trustDays) {
                     milestone = true
                 }
-                day = calendar.date(byAdding: .day, value: 1, to: day) ?? today
+            } else if elapsed > 1 {
+                s.trustDays = 0
+                s.dayClean = true
             }
         }
         defaults.set(today, forKey: Self.lastDayKey)
@@ -92,8 +100,11 @@ struct CanaryMoodKeeper {
 extension CanaryMoodInputs {
     /// The fleet's current truth, in the engine's terms. Every field maps
     /// to state a log line can name — the honesty rule, upheld at the fold.
+    /// The caller decides `alarmUnacked` from PRE-mute severity
+    /// (`displaySeverity`): a muted alarm is still a live alarm, and the
+    /// bird stays hidden until someone actually acknowledges it.
     @MainActor
-    init(fleet: [Witness], acked: Bool) {
+    init(fleet: [Witness], alarmUnacked: Bool) {
         self.init()
         staleWitnesses = fleet.filter { $0.link == .stale }.count
         lostWitnesses = fleet.filter { $0.link.isDark }.count
@@ -102,6 +113,6 @@ extension CanaryMoodInputs {
         }
         // A live Alert/Tamper nobody acknowledged hands the stage to the
         // instruments (face == .hidden — never cute during a real alarm).
-        alarmUnacked = !acked && fleet.contains { $0.effectiveSeverity >= .alert }
+        self.alarmUnacked = alarmUnacked
     }
 }

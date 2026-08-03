@@ -141,6 +141,39 @@ final class CanaryMoodTests: XCTestCase {
         XCTAssertEqual(nextDay.state.trustDays, 1, "a clean day earned a trust day")
     }
 
+    func testUnobservedDaysNeverAwardTrust() throws {
+        let suite = "test-mood-gap-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let keeper = CanaryMoodKeeper(defaults: defaults)
+
+        var quiet = CanaryMoodInputs()
+        quiet.allVerified = true
+        let day1 = Date(timeIntervalSince1970: 1_784_000_000)
+        _ = keeper.observe(quiet, now: day1)
+        _ = keeper.observe(quiet, now: day1.addingTimeInterval(86_400 + 3_600))  // streak = 1
+
+        // The phone goes in a drawer for days. Nobody watched the fleet;
+        // those days are UNKNOWN, not clean — consecutive means
+        // consecutively proven.
+        let comeback = keeper.observe(quiet, now: day1.addingTimeInterval(6 * 86_400))
+        XCTAssertEqual(comeback.state.trustDays, 0, "a gap resets the streak")
+        XCTAssertFalse(comeback.milestone, "and no milestone can fire out of a gap")
+        XCTAssertTrue(comeback.state.dayClean, "the new day starts clean, ready to earn")
+    }
+
+    // MARK: - the fold reads pre-mute truth
+
+    func testAMutedAlarmIsStillALiveAlarmToTheMoodFold() {
+        var w = Witness(id: "canary-dark")
+        w.link = .lost
+        w.mutedUntil = Date().addingTimeInterval(3_600)
+        XCTAssertEqual(w.effectiveSeverity, .notice, "mute caps the nagging")
+        XCTAssertGreaterThanOrEqual(w.displaySeverity, .alert,
+                                    "but the pre-mute truth stays an alarm — the mood fold reads " +
+                                    "this one, so a muted alarm can't resurrect the calm bird")
+    }
+
     // MARK: - the wire (older phones, honest fallback)
 
     func testASnapshotWithoutMoodDerivesTheHonestFace() {
