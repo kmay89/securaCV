@@ -52,6 +52,7 @@ lv_obj_t* s_creds = nullptr;           // SSID / password fallback text
 lv_obj_t* s_hint = nullptr;
 
 ObStage s_stage = ObStage::Hello;
+bool s_qr_ok = false;                  // the join QR actually rendered
 char s_ap_ssid[33] = {0};
 char s_ap_pass[17] = {0};
 
@@ -158,7 +159,10 @@ void content_enter() {
 }
 
 void show_qr(bool show) {
-  if (show) lv_obj_clear_flag(s_qr_card, LV_OBJ_FLAG_HIDDEN);
+  // A card whose QR never rendered stays hidden — the Join scene's text
+  // path (AP name + password) carries setup on its own, so a generator
+  // failure degrades to instructions instead of a blank white square.
+  if (show && s_qr_ok) lv_obj_clear_flag(s_qr_card, LV_OBJ_FLAG_HIDDEN);
   else lv_obj_add_flag(s_qr_card, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -246,12 +250,25 @@ void onboard_ui_create(const char* ap_ssid, const char* ap_pass) {
   lv_obj_set_style_border_width(s_qr_card, 0, 0);
   lv_obj_set_style_pad_all(s_qr_card, (QR_CARD - QR_SIZE) / 2, 0);
   lv_obj_clear_flag(s_qr_card, LV_OBJ_FLAG_SCROLLABLE);
+  // Mint and render the join QR — and PROVE it rendered before ever showing
+  // the card. Every step can fail (the v9 widget leaves a buffer-less canvas
+  // behind when its draw-buffer allocation loses, and update reports its own
+  // verdict); a failure here must degrade to the text instructions, never
+  // crash the wizard or present an empty card.
   s_qr = mk_qrcode(s_qr_card, QR_SIZE);
-  lv_obj_center(s_qr);
-  char payload[224];
-  const size_t n = canary::net::wifi_qr_payload(s_ap_ssid, s_ap_pass,
-                                                payload, sizeof(payload));
-  if (n > 0) lv_qrcode_update(s_qr, payload, (uint32_t)n);
+  s_qr_ok = false;
+  if (s_qr != nullptr) {
+    lv_obj_center(s_qr);
+    char payload[224];
+    const size_t n = canary::net::wifi_qr_payload(s_ap_ssid, s_ap_pass,
+                                                  payload, sizeof(payload));
+#if LVGL_VERSION_MAJOR >= 9
+    s_qr_ok = n > 0 && lv_canvas_get_draw_buf(s_qr) != NULL &&
+              lv_qrcode_update(s_qr, payload, (uint32_t)n) == LV_RESULT_OK;
+#else
+    s_qr_ok = n > 0 && lv_qrcode_update(s_qr, payload, (uint32_t)n) == LV_RES_OK;
+#endif
+  }
   show_qr(false);
 
   lv_scr_load(s_scr);
@@ -277,18 +294,28 @@ void onboard_ui_stage(ObStage st, const char* detail) {
 
     case ObStage::Join:
       show_qr(true);
-      canary_mark_mood(CanaryMood::Hidden);  // the QR owns the room
+      // No QR (generator or buffer failed): the bird stays for warmth and
+      // the copy flips to plain join instructions — same destination, no
+      // dead end, nothing on the glass admits a fault.
+      canary_mark_mood(s_qr_ok ? CanaryMood::Hidden  // the QR owns the room
+                               : CanaryMood::Idle);
 #ifdef CD_FLAVOR_WATCH
       lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, 24);
-      lv_label_set_text(s_title, "Scan me");
+      lv_label_set_text(s_title, s_qr_ok ? "Scan me" : "On your phone");
       lv_label_set_text(s_body, "");
       lv_label_set_text_fmt(s_creds, "%s  •  %s", s_ap_ssid, s_ap_pass);
 #else
       lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, 64);
-      lv_label_set_text(s_title, "Scan with your phone camera");
+      lv_label_set_text(s_title, s_qr_ok ? "Scan with your phone camera"
+                                         : "On your phone, join this network");
       lv_label_set_text(s_body, "");
-      lv_label_set_text_fmt(s_creds, "or join \"%s\"  •  password  %s",
-                            s_ap_ssid, s_ap_pass);
+      if (s_qr_ok) {
+        lv_label_set_text_fmt(s_creds, "or join \"%s\"  •  password  %s",
+                              s_ap_ssid, s_ap_pass);
+      } else {
+        lv_label_set_text_fmt(s_creds, "\"%s\"  •  password  %s",
+                              s_ap_ssid, s_ap_pass);
+      }
 #endif
       ring_breathe();
       break;
@@ -372,6 +399,7 @@ void onboard_ui_finish() {
   s_scr = nullptr;
   s_ring = s_content = s_title = s_body = nullptr;
   s_qr_card = s_qr = s_creds = s_hint = nullptr;
+  s_qr_ok = false;
 }
 
 }  // namespace canary::ui
