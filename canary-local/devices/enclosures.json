@@ -6702,8 +6702,8 @@
       },
       {
        "name": "vent_tip",
-       "default": "0.28",
-       "comment": "tip/base ratio — the ONE brand constant; keep"
+       "default": "0.72",
+       "comment": "EGG, not feather — the hatchery mark. The profile"
       },
       {
        "name": "vent_pitch_x",
@@ -6807,8 +6807,8 @@
       },
       {
        "name": "glass_guard",
-       "default": "0",
-       "comment": "FLUSH FRONT, by request: the glass face sits level"
+       "default": "-0.2",
+       "comment": "WIPE RELIEF, from the first fitting print: the rim"
       },
       {
        "name": "standoff_len",
@@ -6941,7 +6941,7 @@
       },
       {
        "name": "brand_back",
-       "default": "CANARY DISPLAY",
+       "default": "CANARY",
        "comment": "the back lockup's HERO line — centred,"
       },
       {
@@ -6999,8 +6999,8 @@
       },
       {
        "name": "gill_n",
-       "default": "7",
-       "comment": "straight \"gill\" vents per side (±x) wall — the sides"
+       "default": "0",
+       "comment": "SIDE GILLS OFF — they printed ugly on the first case"
       },
       {
        "name": "gill_y0",
@@ -7057,11 +7057,11 @@
       },
       {
        "name": "pal_body",
-       "default": "White"
+       "default": "Black"
       },
       {
        "name": "pal_ink",
-       "default": "Black"
+       "default": "White"
       },
       {
        "name": "pal_accent",
@@ -7069,11 +7069,11 @@
       },
       {
        "name": "pal_body_rgb",
-       "default": "[0.95, 0.95, 0.93]"
+       "default": "[0.11, 0.11, 0.12]"
       },
       {
        "name": "pal_ink_rgb",
-       "default": "[0.11, 0.11, 0.12]"
+       "default": "[0.95, 0.95, 0.93]"
       },
       {
        "name": "pal_accent_rgb",
@@ -7081,16 +7081,20 @@
        "comment": "RAL 1003 — #F9A800"
       },
       {
+       "name": "qr_dark_plate",
+       "default": "pal_lum(pal_body_rgb) < pal_lum(pal_ink_rgb)"
+      },
+      {
        "name": "bezel_ink_t",
        "default": "0.6"
       },
       {
        "name": "ink_groups",
-       "default": "[\"text\", \"qr\", \"moat\"]"
+       "default": "[\"qr\", \"moat\"]"
       },
       {
        "name": "accent_groups",
-       "default": "[\"mark\"]"
+       "default": "[\"mark\", \"text\"]"
       }
      ]
     },
@@ -7145,13 +7149,13 @@
       },
       {
        "name": "side_exit",
-       "default": "right",
+       "default": "none",
        "enum": [
         "none",
         "left",
         "right"
        ],
-       "comment": "— extra cable exit wall"
+       "comment": "— extra cable exit wall."
       },
       {
        "name": "side_dy",
@@ -7165,20 +7169,16 @@
       {
        "name": "port_lbl_a",
        "default": "USB",
-       "comment": "beside the bottom exit"
+       "comment": "beside the bottom exit — a real connector is there"
       },
       {
        "name": "port_lbl_b",
-       "default": "USB",
-       "comment": "beside the side exit"
+       "default": "",
+       "comment": "beside the side exit — a hole, so it says nothing"
       },
       {
        "name": "rating_stamp",
        "default": "true"
-      },
-      {
-       "name": "rating_lines",
-       "default": "[\"5V = 2A\", \"USB-C INPUT\", \"INDOOR USE ONLY\"]"
       },
       {
        "name": "tpu_squeeze",

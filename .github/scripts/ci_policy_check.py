@@ -34,6 +34,7 @@ from __future__ import annotations
 import fnmatch
 import glob
 import os
+import re
 import sys
 
 import yaml
@@ -108,11 +109,21 @@ def check_workflow(path: str, policy: dict) -> list[str]:
                 f"{name}: R2 — job `{job}` has no `timeout-minutes`. A hung "
                 f"run burns the 360-minute default; pick ~2-3x the healthy time."
             )
-        elif not isinstance(t, int) or not (1 <= t <= timeout_max):
-            problems.append(
-                f"{name}: R2 — job `{job}` timeout-minutes {t!r} outside "
-                f"1..{timeout_max} (raise timeout_max in ci-policy.yml if truly needed)."
-            )
+        else:
+            # A matrix job may set its timeout per entry — `timeout-minutes:
+            # ${{ matrix.minutes }}` with the value in `strategy.matrix.include`.
+            # That is the right shape when one job runs workloads of very
+            # different weight: a budget generous enough for the slowest entry
+            # cannot catch the fastest one hanging. Resolve the expression and
+            # check EVERY value, rather than exempting the job — an exemption
+            # would switch R2 off exactly where it does the most good.
+            for label, value in _resolve_timeouts(t, spec):
+                if not isinstance(value, int) or not (1 <= value <= timeout_max):
+                    problems.append(
+                        f"{name}: R2 — job `{job}`{label} timeout-minutes "
+                        f"{value!r} outside 1..{timeout_max} (raise timeout_max "
+                        f"in ci-policy.yml if truly needed)."
+                    )
 
     # R3 — concurrency for push/pull_request workflows
     if ("push" in triggers or "pull_request" in triggers) and "concurrency" not in wf:
@@ -259,6 +270,31 @@ def check_composite_actions() -> list[str]:
         rel = os.path.relpath(path, REPO_ROOT)
         problems.extend(check_action_pins(rel, {"(composite)": {"steps": steps}}))
     return problems
+
+
+MATRIX_EXPR = re.compile(r"^\$\{\{\s*matrix\.([A-Za-z_][A-Za-z0-9_-]*)\s*\}\}$")
+
+
+def _resolve_timeouts(t, spec):
+    """[(label, value)] for a job's timeout-minutes, one per matrix entry.
+
+    A literal resolves to itself. `${{ matrix.<key> }}` resolves to that key in
+    every strategy.matrix.include entry, so all of them get range-checked. An
+    expression we cannot resolve — a key that no entry defines, or anything
+    other than a bare matrix reference — is returned unresolved so R2 rejects
+    it, because a timeout nobody can evaluate is not a timeout.
+    """
+    if not isinstance(t, str):
+        return [("", t)]
+    m = MATRIX_EXPR.match(t.strip())
+    if not m:
+        return [("", t)]
+    key = m.group(1)
+    include = ((spec.get("strategy") or {}).get("matrix") or {}).get("include") or []
+    entries = [e for e in include if isinstance(e, dict) and key in e]
+    if not entries:
+        return [(f" (matrix.{key} is defined by no include entry)", t)]
+    return [(f" ({e.get('group', e.get('name', '?'))})", e[key]) for e in entries]
 
 
 def main() -> int:

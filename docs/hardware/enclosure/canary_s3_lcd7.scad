@@ -426,8 +426,27 @@ vent_slot_w = 5.2;       // feather base width — the grille is the PLUMAGE
                          // corners to shed vortices or collect dust lines
 vent_slot_l = 7.2;       // feather length (point-up: sheds drips on a
                          // vertical face; see the lib header for limits)
-vent_tip    = 0.28;      // tip/base ratio — the ONE brand constant; keep
-                         // it default so every Canary wears the same mark
+vent_tip    = 0.72;      // EGG, not feather — the hatchery mark. The profile
+                         // is the same primitive either way (a hull of two
+                         // circles, wide end down); the ratio is what decides
+                         // whether it reads as a teardrop with a point or an
+                         // egg with a rounded crown. 0.28 was the feather;
+                         // 0.58 still reads as a pear, 0.72 as an egg — that
+                         // was judged off a render of all three side by side,
+                         // at $fn 96, because at the preview's default facet
+                         // count every one of them looks like a polygon.
+                         //
+                         // ⚠️ THIS IS THE LINE-WIDE BRAND CONSTANT. The comment
+                         // it replaces said "keep it default so every Canary
+                         // wears the same mark", and that is still true — the
+                         // 7" now wears an egg while every other case in the
+                         // catalog still wears a feather. Either the rest of
+                         // the line follows, or the line is deliberately mixed.
+                         // Flagged rather than quietly diverged.
+                         //
+                         // Still self-supporting: the crown is a circle, so the
+                         // top of the hole is an arch, not a bridge — the same
+                         // reason the feather's point was safe.
 vent_pitch_x = 7.6;      // column pitch
 vent_pitch_y = 8.0;      // row pitch
 vent_top = true;         // EXHAUST — slots through the top (+Y) wall
@@ -469,14 +488,30 @@ frame_wall   = 2.0;  // sleeve wall (also the visible front rim around the glass
 frame_reveal = 0.15; // per-side glass↔opening clearance. The opening AND its
                      // corner radius both track the slab by this much, so the
                      // reference case's corner gap cannot come back.
-glass_guard  = 0;    // FLUSH FRONT, by request: the glass face sits level
-                     // with the rim rather than recessed behind it.
+glass_guard  = -0.2; // WIPE RELIEF, from the first fitting print: the rim
+                     // sits ONE LAYER BELOW the glass face, not level with it.
+                     //
+                     // Why not 0. Flush is flush in CAD and proud in plastic —
+                     // the printed rim stood above the glass, and a cloth
+                     // dragged across the screen caught on it. A touch panel
+                     // gets wiped more often than it gets dropped, so the last
+                     // 0.2 mm belongs to the cleaning cloth: run a finger off
+                     // the glass and it steps DOWN onto the case, never up
+                     // into an edge.
+                     //
+                     // Sign convention, now that all three states are real:
+                     //   > 0  glass recessed behind the rim — drop protection
+                     //   = 0  nominally flush (and proud once printed)
+                     //   < 0  rim below the glass — wipe relief, what we ship
+                     //
                      // ⚠️ TRADE-OFF, stated once so it is a choice and not an
-                     // accident: this knob existed as drop protection. At 0.6
-                     // a face-down drop landed on the case's rim; at 0 it
-                     // lands on the panel. Nothing else changes — the rear
-                     // stack chains from the glass, so the whole assembly
-                     // just moves 0.6 forward and fr_depth shrinks to match.
+                     // accident: this knob began as drop protection. At 0.6 a
+                     // face-down drop landed on the case's rim; at -0.2 it
+                     // lands on the panel, and the panel now stands slightly
+                     // proud, so it lands a little harder. That is the price
+                     // of a screen you can wipe. Nothing else changes — the
+                     // rear stack chains from the glass, so the whole assembly
+                     // moves with it and fr_depth follows.
                      // Set it back to 0.6 to restore the raised lip.
                      // GUARD RIM: the front rim stands this proud of the
                      // glass, so a face-down drop lands on the case's rim,
@@ -563,7 +598,7 @@ ledge_slope_n   = 20;  // steps in the 45° back-slope. Each step overhangs by
 // prints BACK-PLATE-DOWN with the ledges fully self-supporting — solid
 // material under the adhesive landing, no overhang, no sacrificial geometry.
 // (Face-down would hang the ledges over the glass pocket; don't.)
-brand_back = "CANARY DISPLAY";   // the back lockup's HERO line — centred,
+brand_back = "CANARY";   // the back lockup's HERO line — centred,
                                  // tracked caps (the 7" is gone: the case
                                  // family is one Display line, the panel
                                  // size is a spec, not a name)
@@ -619,7 +654,13 @@ sd_l  = 40.0;   // length along the slide direction
 // a cost of 12% of the side vent area (3.46 -> 3.02 cm2 across both walls).
 // The back grille and the bottom-intake/top-exhaust path are untouched, and
 // the row is re-centred (gill_y0) so both ends clear their rib equally.
-gill_n  = 7;         // straight "gill" vents per side (±x) wall — the sides
+gill_n  = 0;         // SIDE GILLS OFF — they printed ugly on the first case
+                     // and the case is not short of air: the convection path
+                     // is bottom-wall intake -> top-wall exhaust, and the back
+                     // grille carries the rest. The PORTRAIT dock keys are
+                     // their own slots "past the end of the gill row", so they
+                     // survive this untouched — verified, not assumed.
+                     // Was 7. Set it back if a build needs the side area.
 gill_y0 = -33.0;     // carry vents only; SD access is through the back plate
 gill_w = 2.4;  gill_l = 9.0;  gill_rake = 0;    // rake 0: vertical slots print
                      // cleanest; the raked look read as slashes and bought
@@ -738,8 +779,8 @@ label_font  = "Liberation Sans:style=Bold";
 print_colours = true;   // build the per-filament parts and colour the preview
 // Names are what you load in the slicer; they appear in the render-time echo
 // so the printed part and the recipe cannot disagree about what goes where.
-pal_body   = "White";
-pal_ink    = "Black";
+pal_body   = "Black";
+pal_ink    = "White";
 pal_accent = "Signal Yellow";
 // Preview RGB only — these never reach the mesh, they just make `frame_colour`
 // look like the real thing so a palette can be judged before it is printed.
@@ -755,17 +796,23 @@ pal_accent = "Signal Yellow";
 // and more translucent than it looks on the spool. The colour coupon is the
 // real instrument — print it, hold it next to the render, and set the numbers
 // from the part rather than from a picture of a part.
-pal_body_rgb   = [0.95, 0.95, 0.93];
-pal_ink_rgb    = [0.11, 0.11, 0.12];
+pal_body_rgb   = [0.11, 0.11, 0.12];
+pal_ink_rgb    = [0.95, 0.95, 0.93];
 pal_accent_rgb = [0.976, 0.659, 0.000];   // RAL 1003 — #F9A800
+// WHICH FILAMENT IS LIGHT. Asked, not assumed — the body was white and is now
+// black, and the QR's polarity has to follow that or the symbol stops
+// scanning. Rec. 709 luma; the comparison is all that matters, not the units.
+function pal_lum(c) = 0.2126*c[0] + 0.7152*c[1] + 0.0722*c[2];
+qr_dark_plate = pal_lum(pal_body_rgb) < pal_lum(pal_ink_rgb);
+
 // How deep the INK reaches in from the FRONT face. This is a visible-surface
 // depth, not a structural one: 0.6 is three layers at 0.2 and matches the
 // existing front-ring swap band exactly, so the AMS build and the
 // single-extruder build put their colour boundary in the same place.
 bezel_ink_t = 0.6;
 // Which back-plate groups take which filament. Edit these, not the geometry.
-ink_groups    = ["text", "qr", "moat"];
-accent_groups = ["mark"];
+ink_groups    = ["qr", "moat"];
+accent_groups = ["mark", "text"];
 
 /* [Frame — bottom USB port, edge brand, TPU fitments] */
 usb_port   = true;   // pass-through for the power cable, centred on the bottom wall.
@@ -789,27 +836,45 @@ grom_bell  = 3.2;    // strain-relief bell beyond the outer flange
 // while the side exit clears the dock entirely — that is the case for having
 // both. The dock's PORTRAIT pose already exits sideways, so a side-exit case
 // docks portrait with no cable bend at all.
-side_exit = "right";  // ["none","left","right"] — extra cable exit wall
+side_exit = "none";   // ["none","left","right"] — extra cable exit wall.
+                      // OFF by default, from the first print: there is no
+                      // connector behind that wall, so the opening reads as
+                      // a port that does not exist. Turn it on only if you
+                      // actually want the cable to leave sideways.
 side_dy   = 0.0;      // its centre along that wall, + = toward the top edge
 // Port labels: which opening is which, embossed on the outer skin beside it
 // (deboss floors read in the body colour through the accent skin, so on a
 // two-colour print the words come out coloured for free — no extra swap).
 port_labels = true;
-// Both exits carry the SAME power cable — the side one is an alternate
-// route, not a different interface — so both say USB. Naming the side exit
-// after a board connector (UART1, CAN, ...) would be a lie moulded into the
-// plastic: it is a cable pass-through, aligned to nothing. These stay
-// strings so that IF you ever cut an opening onto a specific connector, you
-// can name it truthfully then.
-port_lbl_a  = "USB";    // beside the bottom exit
-port_lbl_b  = "USB";    // beside the side exit
+// A label names what is BEHIND the wall, not what the cable happens to be.
+// The bottom exit sits on the panel's real USB-C, so "USB" there is true and
+// the assert below holds it to the panel record. The side exit is a cable
+// pass-through aligned to no connector at all — it said "USB" on the first
+// print, beside a wall with nothing behind it, and it read as a socket
+// someone could plug into. A word moulded into plastic is not a caption you
+// can revise later; leave a pass-through unlabelled.
+//
+// The earlier reasoning here was that both carry the same cable so both may
+// say USB. That is true about the CABLE and wrong about the WALL, which is
+// what a person standing in front of the case is actually reading.
+port_lbl_a  = "USB";    // beside the bottom exit — a real connector is there
+port_lbl_b  = "";       // beside the side exit — a hole, so it says nothing
 // RATING STAMP — the little spec block every mains-adjacent thing should
 // carry. It goes on the BACK plate's lower band: hidden behind the case on a
 // wall mount, hidden behind the dock's fin when docked, and right there when
 // you pick the case up — which is exactly when you want it. Deboss, so it
 // never wears off and never needs a sticker.
 rating_stamp = true;
-rating_lines = ["5V = 2A", "USB-C INPUT", "INDOOR USE ONLY"];
+// The maker line's YEAR is taken from the build stamp, not typed. Both end up
+// moulded into the same part, so a hand-typed year is a second thing that can
+// disagree with the first — and it would go stale on 1 January without anyone
+// touching the file. lcd7_stamp_rev() is CalVer ("2026.09f"), generated, and
+// already the thing this design is named by; the year is just its first four
+// characters. Bump the design, the moulded year follows.
+function lcd7_stamp_year() = let (r = lcd7_stamp_rev())
+    str(r[0], r[1], r[2], r[3]);
+rating_lines = ["5V = 2A", "USB-C INPUT", "INDOOR USE ONLY",
+                str("ERRERlabs ", lcd7_stamp_year())];
 // TPU fit system — these two do for the TPU parts what tol_slide/tol_hole do
 // for the rigid ones. TPU seats by squeeze, so its knobs are interferences,
 // not clearances.
@@ -1349,16 +1414,57 @@ assert(glass_edge_t > 0 && glass_edge_t < glass_t,
        "frame: glass_edge_t is the panel's bare-glass border — it must be thinner than the full module stack (glass_t) and non-zero");
 assert(vent_pitch_x - vent_slot_w >= 2.39 && vent_pitch_y - vent_slot_l >= 0.79,
        "grille: feather webs too thin — grow the pitches or shrink the feather");
-assert(vent_tip > 0.15 && vent_tip < 0.6,
-       "grille: vent_tip is the brand constant — a tip outside 0.15..0.6 is not the mark");
+// The band moved with the mark. 0.15..0.6 described a FEATHER — below 0.15 the
+// crown closes to a needle that will not print, above 0.6 the taper stops
+// reading as a point. The egg lives above that, so the band is now stated per
+// motif rather than as one number that quietly means "feather".
+assert(vent_tip > 0.15 && vent_tip < 0.85,
+       str("grille: vent_tip ", vent_tip, " is outside 0.15..0.85. Below 0.15 ",
+           "the crown closes to a needle; above 0.85 the shape is a stadium ",
+           "with no taper at all and is no longer a mark. Feather territory is ",
+           "~0.28, egg ~0.72 — pick one deliberately, it is the brand constant ",
+           "and every other case in the catalog still wears the feather."));
 stamp_half = stamp_size*0.9 + stamp_size*0.39 + 0.6;   // text block half-height
 assert(!stamp_show || (stamp_depth < back_t - 1.5
        && stamp_dy - stamp_half
             > (vent_rows - 1)/2*vent_pitch_y + vent_slot_l/2 + 1
        && stamp_dy + stamp_half < fr_yi/2 - plate_fillet - 0.5),
        "frame: build stamp collides with the top feather row, the plate rim/fillet, or thins the plate");
-assert(glass_guard >= 0 && glass_guard <= 1.2,
-       "frame: glass_guard is a trim reveal, not a bumper — keep it under 1.2 (or 0 for a flush face)");
+// Negative is legal and is what ships (wipe relief), but only just: past a
+// layer or two the glass is standing on its own edge with no case around it,
+// which is a chipped corner waiting to happen. Positive is still a trim
+// reveal, not a bumper.
+// A PORT LABEL MUST NAME SOMETHING THAT IS ACTUALLY BEHIND THAT WALL.
+// The panel registry knows where every connector sits, so this is checkable
+// rather than a thing to remember: if the bottom exit claims "USB", the
+// record had better put a USB connector on the bottom face. It shipped wrong
+// once in the other direction — a labelled opening on a wall with no
+// connector behind it — and a moulded word is not a caption you can correct
+// after the fact.
+// It also catches something bigger than a label. This case cuts ONE cable
+// opening, in the bottom wall, so the panel's USB-C had better be on the
+// bottom face — and for the -7B the record says it is on the TOP, because
+// that board is mounted half a turn round. The case does not have an opening
+// where that board's connector is. That is a real gap, exposed the moment the
+// port map became data instead of an assumption, and it is the second thing
+// the registry has caught about the -7B (see the can/AA offset note in
+// canary_panel_lib.scad). Fixing it properly means cutting the opening on
+// whichever wall the record names, along with its grommet, scoop and label —
+// not suppressing this line.
+assert(!usb_port || !port_labels || port_lbl_a == ""
+       || (pnl_has_port(PANEL, "USB-C") && pnl_port_face(PANEL, "USB-C") == "bottom"),
+       str("frame: the case cuts its cable opening in the BOTTOM wall and ",
+           "labels it \"", port_lbl_a, "\", but panel \"", pnl_id(PANEL),
+           "\" puts USB-C on the \"", pnl_port_face(PANEL, "USB-C"),
+           "\" face. The opening is in the wrong wall for this board — the ",
+           "case needs its port moved to follow the panel record, which is ",
+           "not done yet. Build lcd7 until it is."));
+
+assert(glass_guard >= -0.6 && glass_guard <= 1.2,
+       str("frame: glass_guard ", glass_guard, " out of range. Positive = ",
+           "recessed glass (drop protection, keep under 1.2); 0 = nominally ",
+           "flush; negative = rim below the glass for wiping, and -0.6 is as ",
+           "far as that can go before the glass edge is unprotected."));
 // the fillet ring lives in the same clear band as the keyhole pads; it must
 // stop short of the button window's back edge or the window loses its corner
 assert(plate_fillet == 0
@@ -1580,9 +1686,14 @@ echo(str("  stack: floor ", z_floor, " | PCB under ", z_pcb_under, " | PCB top "
 echo(str("  frame: ", fr_xo, " x ", fr_yo, " x ", fr_depth,
          " mm one-piece; glass opening ", fr_xi, " x ", fr_yi, " r", fr_ri,
          "; front face ",
-         glass_guard == 0 ? "FLUSH with the glass (fingernail test: no step either way)"
-                          : str("proud of the glass by ", glass_guard,
-                                " mm — a recess IS the pass criterion"),
+         glass_guard < 0
+           ? str(abs(glass_guard), " mm BELOW the glass — wipe relief. Pass: a ",
+                 "finger run off the glass steps DOWN onto the case, never up ",
+                 "into an edge, and a cloth does not catch")
+           : glass_guard == 0
+             ? "FLUSH with the glass (fingernail test: no step either way)"
+             : str("proud of the glass by ", glass_guard,
+                   " mm — a recess IS the pass criterion"),
          ", plate fillet ",
          plate_fillet, "; adhesive ledge face ", ledge_z,
          " mm behind the front (bare-glass ",
@@ -1978,15 +2089,37 @@ module back_graphics(ink = "all") {
         // the company line, over the product name. It sits beside the SD
         // recess (mouth bottom -47.2), so it must stay inside x ±23.2 — it
         // renders ±17. This is the word that carries the accent colour.
-        frame_lbl(0, -(fr_yi/2 - 10.2), brand_sub, size = 2.4, spacing = 2.0);
+        frame_lbl(0, -(fr_yi/2 - 10.6), brand_sub, size = 4.0, spacing = 1.6);
     if (all || ink == "qr")
         // In back-view coords, no mirror: viewed from the back, +x is right.
+        //
+        // POLARITY FOLLOWS THE PALETTE. A reader wants DARK modules on a LIGHT
+        // field, and which of our two filaments is light stopped being a
+        // constant the moment the body went from white to black. On a light
+        // plate the INK is the modules and the bare plate is the field. On a
+        // dark plate that is backwards — white modules on black is the one
+        // arrangement a scanner is entitled to refuse — so the ink becomes the
+        // FIELD instead, a light plaque with the modules punched out of it in
+        // body colour. Same two filaments, same inlay machinery, opposite
+        // assignment, and it is decided by measuring the palette rather than by
+        // remembering to think about it.
         if (qr_back)
             translate([qr_back_dx - qr_n*qr_back_cell/2,
                        qr_back_dy + qr_n*qr_back_cell/2,
                        fr_depth - label_back_depth])
                 linear_extrude(label_back_depth + 0.1)
-                    qr_field2d(qr_back_cell);
+                    if (qr_dark_plate)
+                        difference() {
+                            // the light plaque: the symbol PLUS its quiet zone,
+                            // which is qr_back_reach by definition, recentred
+                            // on the field this translate is anchored off
+                            translate([qr_n*qr_back_cell/2, -qr_n*qr_back_cell/2])
+                                square([2*qr_back_reach, 2*qr_back_reach],
+                                       center = true);
+                            qr_field2d(qr_back_cell);   // modules punched out
+                        }
+                    else
+                        qr_field2d(qr_back_cell);
 }
 
 // ----------------------------------------------------------------------------
@@ -2612,11 +2745,16 @@ module frame() {
 // it on the panel's corner with one M3x8-10: the glass corner proves glass_r,
 // the screw only threads home if the m3 offsets have the right SIGNS, and the
 // glass sits exactly glass_guard below the rim only if standoff_len is right.
-// READ THE PASS CRITERION OFF glass_guard, not off memory: it is 0 today, so
-// a FLUSH glass face is the PASS — you should not be able to feel a step with
-// a fingernail dragged across the rim onto the glass, in either direction.
-// (Raise glass_guard and the criterion inverts: then a recess is the pass and
-// flush means the stack is off. This comment has been wrong that way before.)
+// READ THE PASS CRITERION OFF glass_guard, not off memory. It is NEGATIVE
+// today (wipe relief), so the pass is: run a finger from the glass out onto
+// the case and it steps DOWN, never up into an edge. A rim you can feel as a
+// ridge is a fail — that is the thing the first fitting print got wrong.
+// The criterion moves with the knob, and has been all three things:
+//   glass_guard > 0  -> a recess is the pass, flush means the stack is off
+//   glass_guard = 0  -> flush is the pass, any step is a fail
+//   glass_guard < 0  -> a step DOWN onto the case is the pass
+// This comment has been stale twice. Read the variable, or read the echo,
+// which computes the sentence rather than repeating it.
 module frame_gauge() {
     bx = -m3_ox + m3_dx/2;  by = m3_oy + m3_dy/2;
     intersection() {

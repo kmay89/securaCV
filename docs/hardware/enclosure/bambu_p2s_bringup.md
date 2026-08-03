@@ -376,8 +376,9 @@ a case layout print-proven against the real panel: the slab drops in face-first
 through the front opening, the board hangs on the panel's **own white M3
 standoffs**, and **4 × M3×8–10 driven from the back** thread into those
 standoffs — the screws, not a ledge, set the glass depth: it lands
-`glass_guard` below the front rim, which is **0 today — a flush face**
-(raise `glass_guard` to trade flush for a drop-protection recess).
+`glass_guard` below the front rim, which is **−0.2 today — the rim sits one
+layer BELOW the glass** so a cleaning cloth cannot catch on it (positive
+values trade that for a drop-protection recess).
 It carries a bevelled BOOT/RESET window in the top wall — the button edge in
 native mounting — with debossed labels (back view: **BOOT left, RESET
 right**), gill vents on the side walls, exhaust slots flanking the button
@@ -562,9 +563,11 @@ in context, the mount-offset **signs** (`m3_ox`/`m3_oy` — the screw only
 threads home if they're right), and `standoff_len` (the glass sits exactly
 `glass_guard` **below** the rim only if that's right). **Read that pass
 criterion off `glass_guard` in the `.scad`, not off this page.** It is `0`
-today, so **flush is the pass**: drag a fingernail across the rim onto the
-glass and you should not catch a step in either direction. If you raise
-`glass_guard`, the criterion inverts and a recess becomes the pass. The
+today, so **a step DOWN onto the case is the pass**: run a finger off the
+glass outward and it must drop onto the case, never climb into an edge. A rim
+you can feel as a ridge is a fail — that is exactly what the first fitting
+print showed. The criterion moves with the sign of `glass_guard`: positive
+means a recess is the pass, zero means flush, negative means the step down. The
 frame and gauge print
 **back-plate-down, as exported** — no supports, no brim unless a corner
 lifts.
@@ -612,9 +615,10 @@ the released set's largest part at 120.5 mm. Two consequences:
   strength": more, hotter-bonded layers beat many cold thin ones for impact.
   The geometry does its part (a 45° fillet ring ties the walls
   into the back plate; the SD leash carries root fillets) — but note
-  `glass_guard` is **0**, a flush front, so the rim no longer stands proud of
-  the glass and a face-down drop lands on the panel. That was a deliberate
-  trade for the flush face; raise `glass_guard` to buy the protection back — the slicer settings
+  `glass_guard` is **−0.2**, so the rim sits below the glass and a face-down
+  drop lands on the panel — which now stands slightly proud, so it lands a
+  little harder. That is the deliberate price of a screen you can wipe; raise
+  `glass_guard` to buy the protection back — the slicer settings
   are the other half of the deal.
 
 **Keep the vents clear** when you mount it. The convection path is real and
@@ -688,9 +692,9 @@ missing.
 Read it for: black bleeding into white on the deboss floors (raise the flush
 volume), the lockup sitting flush rather than proud or sunk, where the bezel
 swap landed, and whether the panel corner drops into the pocket with the glass
-face landing where `glass_guard` says it should — **flush** at its current
-value of 0, so a fingernail dragged from rim to glass should catch no step in
-either direction.
+face landing where `glass_guard` says it should — at its current value of
+**−0.2** the case sits one layer below the glass, so a finger run off the
+glass steps down onto the case rather than up into an edge.
 
 Do **not** judge bed adhesion from it — it is a slice out of a larger part, so
 its sawn edges behave nothing like the frame's continuous perimeter.

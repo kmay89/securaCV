@@ -30,12 +30,10 @@ jobs:
   render:
     name: Render + mesh check
     runs-on: ubuntu-latest
-    # The 7in seated-fit suite is the long pole: the two portrait dock poses
-    # and the TPU gates are full-assembly CGAL intersections that take tens of
-    # minutes on a 2-core runner. 30 min was enough for either branch's gates
-    # alone; the merged suite (5 dock + 7 fitment gates) blew straight through
-    # it — the job died as "cancelled" at 30:15 with the geometry all green.
-    timeout-minutes: 75
+    # Renders + mesh checks only. The seated-fit suite used to live here and
+    # was the long pole by far; it now has its own job (see `fit` below), so
+    # this one reports in minutes instead of waiting on it.
+    timeout-minutes: 40
     defaults:
       run:
         working-directory: docs/hardware/enclosure
@@ -80,6 +78,90 @@ jobs:
           done
           exit $status
 
+      - name: Invalid configs must fail their assertions
+        run: |
+          set -e
+          must_fail() {
+            if openscad --export-format binstl -o /tmp/x.stl "$@" canary_wap_enclosure.scad 2>/dev/null; then
+              echo "::error::expected assertion failure for: $*"; exit 1
+            fi
+          }
+          must_fail -D 'part="gasket"'                          # gasket without opt_seal
+          must_fail -D 'lid_edge=5' -D 'part="lid"'             # chamfer thicker than the lid
+          must_fail -D 'wall_t=0' -D 'part="base"'              # zero wall
+          echo "all guarded configs failed as expected"
+
+  fit:
+    name: fit ${{ matrix.group }}
+    runs-on: ubuntu-latest
+    # A MATRIX, not a bigger number — and the history is why.
+    #
+    # These are full-assembly CGAL intersections, 21 of them, on a 2-core
+    # runner. As one serial step the suite has now blown three budgets: 30 min
+    # (died at 30:15 "with the geometry all green"), then 75 as part of the
+    # combined job, then 90 with a job all to itself — cancelled at 89m45s.
+    # Each time the fix was a larger timeout and each time it bought a few
+    # months. The gates are INDEPENDENT, so the sum was never the number that
+    # had to fit; it only looked that way because they ran in a row.
+    #
+    # Grouped rather than one job per gate. One-per-gate would give the
+    # shortest wall clock, but each job pays ~30 s for checkout and apt, and
+    # 21 runners to save a few minutes over 7 is a poor trade. Groups are cut
+    # so no single one carries more than about three heavy assembly gates —
+    # the dock poses are the expensive ones, which is why landscape and
+    # portrait are separate.
+    #
+    # fail-fast: false on purpose. These check different things, and one
+    # broken gate must not hide the state of the other twenty — that is the
+    # same argument as splitting the mesh checks out of this job.
+    #
+    # NOTHING was dropped to fit the clock. All 21 gates run, the inverted
+    # ones keep their empty/solid semantics, and the self-test that proves a
+    # broken render is rejected still runs as its own group.
+    # PER-GROUP BUDGETS, sized from measurement rather than one number for
+    # everything. Actuals from the run that forced this (all green except the
+    # two that ran out of clock):
+    #
+    #   tpu-selftest  0.4    dock     9.9    ports          15.6
+    #   tpu           0.6    dock-p  11.0    battery-none   23.6
+    #   bezel         1.7    frame   11.3    battery-3000/10000  8 gates
+    #
+    # battery-none did 5 gates in 23.6 min = 4.71 min/gate, so the 8-gate
+    # variants expect ~37.7 — against a 45 budget. That is 84% consumed by the
+    # expected case, and runner speed varies: the SAME render step took 14m43s
+    # on one runner and 20m11s on another tonight, +37%. 37.7 x 1.37 = 51.6.
+    # 45 was never a safe number; it passed once by luck of the draw.
+    #
+    # Budgets are roughly 2x measured. Small groups keep SMALL budgets on
+    # purpose — a 10-minute ceiling on a 1.7-minute group catches a hang in
+    # minutes, where one generous number for all of them would hide it for an
+    # hour. That is the point of per-group timeouts, not just headroom.
+    timeout-minutes: ${{ matrix.minutes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { group: tpu-selftest,  minutes: 10 }
+          - { group: tpu,           minutes: 10 }
+          - { group: bezel,         minutes: 10 }
+          - { group: dock,          minutes: 25 }
+          - { group: dock-p,        minutes: 25 }
+          - { group: frame,         minutes: 25 }
+          - { group: ports,         minutes: 35 }
+          - { group: battery-none,  minutes: 50 }
+          - { group: battery-3000,  minutes: 75 }
+          - { group: battery-10000, minutes: 75 }
+    defaults:
+      run:
+        working-directory: docs/hardware/enclosure
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install OpenSCAD
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq openscad
+
       - name: 7in dashboard parts must actually assemble
         run: |
           # A valid mesh is not a valid case. v0.1 of the 7" case exported three
@@ -123,39 +205,12 @@ jobs:
             fi
             return 0
           }
-          fit tray  empty || exit 1   # bezel vs rear tray — must not collide
-          fit glass empty || exit 1   # bezel vs the panel — must not crush it
-          fit lip    solid "nothing bears on the glass — the bezel retains nothing" || exit 1
-          fit locate solid "the pocket does not stop the slab sliding — is it sized to the tray cavity instead of the glass?" || exit 1
-          fit frame_glass empty || exit 1   # one-piece frame vs the panel — cavity, ledge and windows must clear it
-          fit frame_ledge solid "the adhesive ledge is missing from under the panel border — did the ledge/boss datum drift?" || exit 1
-          fit stand empty || exit 1   # frame seated in the desk dock — must not collide (also proves key/slot alignment)
-          fit seat  solid "the dock's pads never touch the seated frame — nothing carries the case" || exit 1
-          fit stand_p  empty || exit 1   # PORTRAIT dock pose, turned one way — keys/ribs must miss solid wall
-          fit stand_p2 empty || exit 1   # ...and turned the other way (the side windows are asymmetric)
-          fit seat_p solid "portrait: the well ribs never touch the case — nothing carries it" || exit 1
-          # TPU fitments: every opening gets TWO gates — one probe vs the FRAME
-          # (the aperture really is open) and one vs the installed fitment (it
-          # really engages it). One without the other passes a deleted window.
-          fit frame_usb_head empty || exit 1   # head-sized prism through the port — must pass clean
-          fit frame_btn_window empty || exit 1 # BOOT/RESET window really open through the wall
-          fit frame_sd_window empty || exit 1  # SD opening really open through the plate
-          fit frame_adh_rail empty || exit 1   # adhesive rails: the smooth zones really are uncut plate
-          fit sd_tether_hole empty || exit 1   # tether anchor hole really open through the plate
-          fit sd_tether_barb solid "the SD cover's barb misses its anchor hole — strap length, hole position or install transform drifted" || exit 1
-          fit frame_usb_seal solid "the grommet no longer fills the USB port — waist or installed transform drifted" || exit 1
-          fit frame_btn_plug solid "the BOOT/RESET plug misses its window — waist or installed transform drifted" || exit 1
-          fit btn_plug_glass empty || exit 1   # the plug (pips, lip included) must never touch the panel
-          fit frame_sd_seal solid "the SD cover misses its opening/recess — waist or installed transform drifted" || exit 1
-          # And prove the gate can still fail: an unknown check must be
-          # rejected as a broken render, not silently pass as "empty".
-          if fit definitely-not-a-check empty >/dev/null 2>&1; then
-            echo "::error::fit gate is inert — a broken render passed as empty"; exit 1
-          fi
-          echo "fit gate self-test: a failed render is correctly rejected"
-          # Battery bay gates — parts on the SOURCE file, deliberately: -D
-          # only reaches the file it is given, and these check battery
-          # VARIANTS, so the probe and the override must live together.
+          # BOTH helpers live here, above the case. bfit() used to sit inside
+          # the battery branch, and restructuring that branch deleted it while
+          # leaving its call sites — the job died with 'bfit: command not
+          # found'. `bash -n` had passed, because it checks syntax and not
+          # whether a command exists, so the local check could not see the
+          # failure it was aimed at.
           bfit() { # bfit <battery> <part> <empty|solid> [msg]
             rm -f /tmp/fit.stl
             out=$(openscad --export-format binstl -o /tmp/fit.stl \
@@ -180,55 +235,75 @@ jobs:
             fi
             return 0
           }
-          for b in 3000 10000; do
-            bfit $b bat_probe_fit  empty || exit 1   # cavity, curb and rails must clear the pack
-            bfit $b bat_probe_seat solid "the rails never touch the pack — nothing carries it" || exit 1
-            bfit $b bat_probe_grip solid "the fingers never reach the pack — nothing retains it" || exit 1
+          # Cheap insurance against exactly that: a missing helper is a broken
+          # gate, and a broken gate must announce itself rather than be
+          # discovered by the first group that happens to call it.
+          for h in fit bfit; do
+            command -v "$h" >/dev/null 2>&1 || {
+              echo "::error::gate helper $h() is not defined — the harness is broken, not the geometry"
+              exit 1; }
           done
-          # ...and the DOCK, for every build. These run here rather than through
-          # the fitcheck because -D does not cross a use<> boundary: a dock check
-          # driven from the fitcheck can only ever test the no-battery case, which
-          # is exactly how a deeper case drifted off the dock's centring keys
-          # unnoticed. none is included so the stock build is covered too.
-          # leash gates: the frame must carry the anchor hole, and the
-          # fitment's barb must actually reach it — one without the other
-          # passes a case nobody can make captive
-          bfit none port_teth_hole empty || exit 1
-          bfit none port_teth_barb solid "the port fitment's barb misses its anchor hole — strap length or anchor position drifted" || exit 1
-          # ...and a third, because the pair above passed a barb that reached
-          # its hole and then kept going: the head stood up to 2.8 mm proud of
-          # the wall you look at, with the counterbore sitting behind it doing
-          # nothing. "Reaches" is not "stops there".
-          bfit none port_barb_proud empty || exit 1
-          # Hung on its keyholes the case bears on the back plate, so nothing
-          # may stand proud of it — a leash head or a cover lip that does makes
-          # the case rock on that point instead of lying flat on the wall.
-          for b in none 3000 10000; do
-            bfit $b back_flush empty || exit 1
-          done
-          # THREE-COLOUR PARTITION. fil_body/fil_ink/fil_accent are loaded into
-          # the slicer as parts of ONE object, so they have to tile the frame
-          # exactly: overlap prints twice (and the slicer picks a filament
-          # arbitrarily), a gap prints as a void sealed inside a wall. Neither
-          # shows up in a slicer preview until it is a part in your hand.
-          bfit none fil_overlap empty || exit 1
-          bfit none fil_gap     empty || exit 1
-          for b in none 3000 10000; do
-            bfit $b dock_probe_fit  empty || exit 1   # seated case must not collide
-            bfit $b dock_probe_seat solid "the dock's pads never touch the seated case — nothing carries it" || exit 1
-            bfit $b dock_probe_p    empty || exit 1   # portrait, turned one way
-            bfit $b dock_probe_p2   empty || exit 1   # ...and the other
-          done
-
-      - name: Invalid configs must fail their assertions
-        run: |
-          set -e
-          must_fail() {
-            if openscad --export-format binstl -o /tmp/x.stl "$@" canary_wap_enclosure.scad 2>/dev/null; then
-              echo "::error::expected assertion failure for: $*"; exit 1
-            fi
-          }
-          must_fail -D 'part="gasket"'                          # gasket without opt_seal
-          must_fail -D 'lid_edge=5' -D 'part="lid"'             # chamfer thicker than the lid
-          must_fail -D 'wall_t=0' -D 'part="base"'              # zero wall
-          echo "all guarded configs failed as expected"
+          case "${{ matrix.group }}" in
+            bezel)
+          fit tray  empty || exit 1   # bezel vs rear tray — must not collide
+          fit glass empty || exit 1   # bezel vs the panel — must not crush it
+          fit lip    solid "nothing bears on the glass — the bezel retains nothing" || exit 1
+          fit locate solid "the pocket does not stop the slab sliding — is it sized to the tray cavity instead of the glass?" || exit 1
+              ;;
+            frame)
+          fit frame_glass empty || exit 1   # one-piece frame vs the panel — cavity, ledge and windows must clear it
+          fit frame_ledge solid "the adhesive ledge is missing from under the panel border — did the ledge/boss datum drift?" || exit 1
+          fit frame_adh_rail empty || exit 1   # adhesive rails: the smooth zones really are uncut plate
+              ;;
+            dock)
+          fit stand empty || exit 1   # frame seated in the desk dock — must not collide (also proves key/slot alignment)
+          fit seat  solid "the dock's pads never touch the seated frame — nothing carries the case" || exit 1
+              ;;
+            dock-p)
+          fit stand_p  empty || exit 1   # PORTRAIT dock pose, turned one way — keys/ribs must miss solid wall
+          fit stand_p2 empty || exit 1   # ...and turned the other way (the side windows are asymmetric)
+          fit seat_p solid "portrait: the well ribs never touch the case — nothing carries it" || exit 1
+              ;;
+            ports)
+          fit frame_usb_head empty || exit 1   # head-sized prism through the port — must pass clean
+          fit frame_btn_window empty || exit 1 # BOOT/RESET window really open through the wall
+          fit frame_sd_window empty || exit 1  # SD opening really open through the plate
+          fit sd_tether_hole empty || exit 1   # tether anchor hole really open through the plate
+          fit sd_tether_barb solid "the SD cover's barb misses its anchor hole — strap length, hole position or install transform drifted" || exit 1
+              ;;
+            tpu)
+          fit frame_usb_seal solid "the grommet no longer fills the USB port — waist or installed transform drifted" || exit 1
+          fit frame_btn_plug solid "the BOOT/RESET plug misses its window — waist or installed transform drifted" || exit 1
+          fit btn_plug_glass empty || exit 1   # the plug (pips, lip included) must never touch the panel
+          fit frame_sd_seal solid "the SD cover misses its opening/recess — waist or installed transform drifted" || exit 1
+              ;;
+            tpu-selftest)
+              # And prove the gate can still fail: an unknown check must be
+          # rejected as a broken render, not silently pass as "empty".
+          if fit definitely-not-a-check empty >/dev/null 2>&1; then
+            echo "::error::fit gate is inert — a broken render passed as empty"; exit 1
+          fi
+          echo "fit gate self-test: a failed render is correctly rejected"
+              ;;
+            battery-*)
+              # ONE GROUP PER VARIANT. As a single group these 21 bfit calls
+              # blew a 45-minute budget: each renders the FULL source with a
+              # -D override, where every other group probes the much lighter
+              # fitcheck file. The first grouping mis-predicted that — it was
+              # cut assuming the dock POSES were the expensive gates, and the
+              # measured run said otherwise: dock-p 10m46s, ports 14m55s,
+              # battery >45m. Split on the measurement, not the same hunch.
+              b="${{ matrix.group }}"; b="${b#battery-}"
+              if [ "$b" != none ]; then   # no pack, no pack gates
+                  bfit "$b" bat_probe_fit  empty || exit 1   # cavity, curb and rails must clear the pack
+                  bfit "$b" bat_probe_seat solid "the rails never touch the pack — nothing carries it" || exit 1
+                  bfit "$b" bat_probe_grip solid "the fingers never reach the pack — nothing retains it" || exit 1
+              fi
+                bfit "$b" back_flush empty || exit 1
+                bfit "$b" dock_probe_fit  empty || exit 1   # seated case must not collide
+                bfit "$b" dock_probe_seat solid "the dock's pads never touch the seated case — nothing carries it" || exit 1
+                bfit "$b" dock_probe_p    empty || exit 1   # portrait, turned one way
+                bfit "$b" dock_probe_p2   empty || exit 1   # ...and the other
+              ;;
+            *) echo "::error::unknown gate group ${{ matrix.group }}"; exit 1 ;;
+          esac

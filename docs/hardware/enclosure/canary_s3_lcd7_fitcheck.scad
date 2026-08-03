@@ -9,11 +9,57 @@
 //  see that; only putting the parts together can.
 //
 //  So this renders the parts IN THEIR ASSEMBLED POSITIONS and intersects them.
-//  Each check is a solid that MUST come out empty. OpenSCAD writes no file for
-//  an empty top-level object, so the CI test is simply "no file appeared":
+//  Each check is a solid that MUST come out empty. "No file appeared" is the
+//  headline, but it is NOT sufficient on its own, so the runnable recipe is:
 //
-//      openscad --export-format binstl -o /tmp/c.stl -D 'check="tray"' \
-//          canary_s3_lcd7_fitcheck.scad && test ! -f /tmp/c.stl
+//      rm -f /tmp/c.stl                       # a stale file fails you silently
+//      out=$(openscad --export-format binstl -o /tmp/c.stl \
+//            -D 'check="tray"' canary_s3_lcd7_fitcheck.scad 2>&1) || true
+//      if   printf '%s' "$out" | grep -qE 'ERROR|WARNING'; then
+//          echo "FAIL — dirty render, nothing was verified"
+//      elif [ -f /tmp/c.stl ]; then
+//          echo "FAIL — parts intersect"
+//      elif printf '%s' "$out" | grep -q 'Current top level object is empty'; then
+//          echo "PASS"
+//      else
+//          echo "FAIL — no file and no empty marker; did it evaluate at all?"
+//      fi
+//
+//  That is longer than `openscad … && test ! -f /tmp/c.stl` and every line of
+//  it is load-bearing. The short form is wrong TWICE over, and this file has
+//  shipped both mistakes:
+//
+//  ⚠️  DO NOT JOIN THE RUN AND THE TEST WITH &&, and do not "fix" a runner by
+//  checking openscad's exit status. A PASSING check exits 1: OpenSCAD prints
+//  "Current top level object is empty" and returns non-zero whenever it has
+//  nothing to export, which for an empty-expected gate is precisely success.
+//  Under && the test never runs and every green gate reads as red.
+//
+//  ⚠️  AND DO NOT STOP THERE. Splitting the && cures that and leaves the
+//  opposite error intact: `test ! -f` still succeeds when openscad was killed,
+//  ran out of memory or never evaluated, because all of those leave no file
+//  either. That is why the recipe above captures the output and demands the
+//  empty MARKER — the only positive evidence that the check actually ran and
+//  actually came out empty. Both mistakes cost real debugging in one evening:
+//  first an absent file read as a pass when the render had been killed at four
+//  minutes, then frame_glass reported as failing after a clean four-minute
+//  render that had in fact passed.
+//
+//  So a runner judges these ways, and exit status is not among them:
+//    · ERROR or WARNING in the output  -> FAIL (a dirty render verified nothing)
+//    · the file exists                 -> FAIL for a normal check, PASS for an
+//                                         INVERTED one (marked below)
+//    · no file AND the output contains "Current top level object is empty"
+//                                      -> PASS for a normal check
+//    · no file and NO empty marker     -> FAIL. Absence of a file is not
+//                                         evidence: a run killed by a timeout,
+//                                         or one that never evaluated at all,
+//                                         leaves exactly the same nothing
+//                                         behind as a clean pass. Demand the
+//                                         marker and that ambiguity is gone.
+//
+//  .github/workflows/enclosure.yml's fit() is the reference implementation and
+//  already does all of the above — read it before writing another runner.
 //
 //  checks:
 //    tray  — bezel vs back tray. Non-empty = the two collide and the case

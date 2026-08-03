@@ -1019,7 +1019,7 @@
     {
      "id": "side_exit",
      "type": "enum",
-     "label": "— extra cable exit wall",
+     "label": "— extra cable exit wall.",
      "consequence": "",
      "audience": "user",
      "enum": [
@@ -1027,7 +1027,7 @@
       "left",
       "right"
      ],
-     "default": "right"
+     "default": "none"
     },
     {
      "id": "port_labels",

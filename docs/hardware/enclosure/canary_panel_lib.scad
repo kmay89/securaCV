@@ -129,6 +129,15 @@ function panel_db() = [
   //
   //     Not guessed either way. It needs one person, two boards and a caliper;
   //     until then this reproduces shipped behaviour and says so out loud.
+  //
+  // ⚠️  SECOND GAP, found the same way: this record puts USB-C on the TOP
+  //     face, and the case cuts its only cable opening in the BOTTOM wall.
+  //     So a -7B in this case has no hole where its connector is. The
+  //     frame asserts on it rather than printing a case that cannot be
+  //     plugged in. Both gaps are the same shape — the -7B was handled by
+  //     flipping a couple of signs at the point of use, and everything
+  //     that flip did not reach stayed wrong and invisible until the port
+  //     map became data.
   [ "lcd7b", "Waveshare ESP32-S3-Touch-LCD-7B", "drawing",
     [192.96, 110.76, 4.0, 8.2, 1.2],
     [154.88, 86.72, 1.02],                // NOT flipped — see the note above
