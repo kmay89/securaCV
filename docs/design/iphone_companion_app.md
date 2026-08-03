@@ -251,6 +251,39 @@ the token is per-install and revocable, not a global ID), metadata minimization
 (III — severity class + batching/jitter, no precise time), local ownership (IV —
 content is fetched from your own store, never the relay).
 
+### What actually shipped: the same wake, with nobody in the middle
+
+The app implements Tier 2 **without building the relay above** — through the
+user's own iCloud instead (`ios/Sources/SecuraCV/Native/AwayPush.swift`). A
+`CKQuerySubscription` on their **private** database makes Apple's push service
+deliver a wake to all of their devices whenever a wake record appears; a
+device that is home and can see the fleet writes that record.
+
+It is the same contentless wake this section specifies — the coarse class and
+nothing else — and it satisfies the constraints *more* completely than a
+hosted relay would:
+
+| | hosted relay | shipped (iCloud) |
+|---|---|---|
+| Third party in the path | SecuraCV (or a self-hosted box) | none but Apple, whom the user already trusts with their iCloud |
+| APNs key / token registry | we hold both | we hold neither |
+| What a breach leaks | "this household got some alerts" | there is no server to breach |
+| Setup for the user | register with a relay | sign in to iCloud (already done) |
+
+**The honest limit**, stated in the UI rather than hidden: iOS will not run a
+socket in your pocket across town, so *something at home* has to notice and
+post the wake — the phone while it's on Wi-Fi, or better an always-on SecuraCV
+(Apple TV / Mac / a docked iPad). This is the same constraint HomeKit has with
+its home hub. With nothing home, away alerts cannot happen, and `AwayReach`
+says exactly that instead of leaving an "Anywhere" toggle looking like a
+working promise.
+
+The relay is **not abandoned** — it remains the right answer for households
+that want away alerts without iCloud, and it stays cheap to add: the receiving
+side (`Shared/WakePayload.swift`) already decodes both envelope shapes, the
+flat `{"sev": …}` body a relay would send and CloudKit's query notification,
+so standing one up needs no change to the app or the NSE.
+
 ---
 
 ## 5b. The alert *is* the hero — smoke-alarm-grade, on a $12 Canary

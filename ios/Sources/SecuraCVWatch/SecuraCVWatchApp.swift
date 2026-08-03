@@ -1,10 +1,15 @@
 // SecuraCVWatchApp.swift — SecuraCV on your wrist (entry point).
 //
-// The 3-screen scope from the RFC (§3.3), no more: fleet glance, heartbeat,
-// about. The phone's FleetStore is the source of truth; this app renders the
+// The RFC's 3-screen scope (§3.3) plus exactly one: fleet glance, ALERTS,
+// heartbeat, about. The fourth earns its place because the wrist was missing
+// an answer to "what needed me while I wasn't looking?" — the question a
+// watch is best at and the glance deliberately doesn't answer (it shows now,
+// not history). Still no pairing, no key custody, no video — phone territory
+// and invariants, respectively.
+//
+// The phone's FleetStore stays the source of truth; this app renders the
 // WristSnapshot it sends and asks for freshness at the moments that matter
-// (launch, foreground, reachability). No pairing, no key custody, no video —
-// phone territory and invariants, respectively.
+// (launch, foreground, reachability).
 
 import SwiftUI
 
@@ -34,6 +39,10 @@ struct WristRootView: View {
     var body: some View {
         TabView {
             FleetGlanceView()
+            // Second, right after the glance: "how is the fleet now?" and
+            // "what needed me?" are the two questions a wrist gets asked, and
+            // the second one used to have no answer anywhere on the watch.
+            AlertsListView()
             HeartbeatView()
             AboutView()
         }
