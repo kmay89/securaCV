@@ -10,8 +10,10 @@
 import SwiftUI
 
 enum HoneycombGeometry {
-    /// sin(60°) — the vertical pitch factor between hex-packed rows.
-    static let rowPitchFactor = 0.866_025_4
+    /// sin(60°) = √3/2, full double precision — the vertical pitch factor
+    /// between hex-packed rows. (A truncated constant here once made the
+    /// packing test's nearest-neighbour distance come out 0.35 µm short.)
+    static let rowPitchFactor = 0.866_025_403_784_438_6
 
     /// How many cells fit in an even row of the given width.
     static func cellsPerRow(width: Double, diameter: Double, gap: Double) -> Int {
