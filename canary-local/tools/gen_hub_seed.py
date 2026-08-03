@@ -217,6 +217,39 @@ def main() -> None:
             "reversible": True,
         },
         {
+            "id": "mqtt-login",
+            "title": "Make the login your Canaries sign in with",
+            "what": (
+                f"Add a `canary` account to the `{mosquitto['slug']}` add-on's own "
+                "logins, with a password generated on the hub."
+            ),
+            "why": (
+                "The broker refuses anonymous connections — every client must present a "
+                "username and password. Home Assistant is exempt in practice: it reaches "
+                "Mosquitto over the internal container network as the reserved "
+                "`homeassistant` account, which is why the connect step below needs no "
+                "credential. A Canary has no such exemption. It is an ordinary external "
+                "client on your LAN, so without an account of its own a fully provisioned "
+                "hub reports success and then rejects the first device that ever tries to "
+                "publish — and on a screen the size of a matchbox that failure is "
+                "indistinguishable from a wrong Wi-Fi password.\n\n"
+                "A broker-local login rather than a Home Assistant user, deliberately: a "
+                "camera is not a person. A Home Assistant account could also call the Home "
+                "Assistant API; this one can only speak MQTT, which is the whole of what a "
+                "Canary needs. The password is minted here on the hub and never lives in "
+                "this repository, because a password committed here would be a published "
+                "credential on every hub anyone ever flashed. The run prints it once; "
+                "afterwards it is readable from the add-on's own configuration."
+            ),
+            "for_what": "The username and password you type into each Canary when you flash it.",
+            "mqtt_login": {
+                "addon": mosquitto["slug"],
+                "supervisor_slug": mosquitto_sup,
+                "username": "canary",
+            },
+            "reversible": True,
+        },
+        {
             "id": "connect-mqtt",
             "title": "Connect Home Assistant to the broker",
             "what": (

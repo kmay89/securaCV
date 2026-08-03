@@ -50,6 +50,23 @@
   [`docs/hardware/enclosure/README.md`](docs/hardware/enclosure/README.md)
   under "Preview renders".
 
+- **Re-export an STL → regenerate the figures.** The fleet figures
+  ([`docs/design/FLEET_FIGURES.md`](docs/design/FLEET_FIGURES.md)) read their
+  dimensions live off the committed STL bounding boxes, so a re-export moves
+  the drawings every surface shows. Run
+  `node canary-local/tools/figures/gen_figures.mjs` and commit its output in
+  the same change; `--check` is the CI gate and will name every stale file.
+  The generator refuses to emit a figure that has drifted from its part, or
+  one that puts two materials on the same plane — both are real defects, not
+  style notes.
+
+- **Which of these is real?** Don't hand-write a status next to a product.
+  The confidence ladder in `canary-local/devices/figures.json` (shipping /
+  confirmed / prototype / idea) is *derived* from evidence on disk, and the
+  evidence sits beside the verdict. An idea renders as a dashed ghost by
+  construction — if you find yourself wanting to draw a concept as a solid
+  product, that's the invariant working, not a bug.
+
 ## Release & packaging
 
 - **To ship anything, or to answer "why didn't this ship?", read

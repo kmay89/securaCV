@@ -137,6 +137,8 @@ beacon or chirp code, read the Beacon section of `AGENTS.md` in full first.
 | Apple targets | `ios/` (iPhone/iPad), `tvos/` (the Witness Wall) |
 | Architecture docs, not code | `kernel/` — docs only, despite the name |
 | What a word means | `docs/GLOSSARY.md` |
+| What a *thing* looks like | `canary-local/devices/figures.json` + `canary-local/figures/*.svg` — one isometric figure per device, part, board and tool, generated from the committed CAD. Spec: `docs/design/FLEET_FIGURES.md` |
+| Whether something is real or still an idea | the same ledger's `confidence` — derived from evidence on disk (committed STLs · firmware config · released catalog variant), never hand-typed |
 | Which tree is the real one | `docs/CONSOLIDATION.md` |
 | Machine-readable vocabularies | `spec/witness_dictionary.json` |
 | Which build has which feature | `firmware/build_matrix.json` (generated truth), not `firmware/FEATURES.md` (narrative, can lag) |
