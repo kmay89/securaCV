@@ -477,19 +477,21 @@ impl Projection {
     pub fn tick(&mut self) -> Publication {
         self.seq = self.seq.saturating_add(1);
 
-        // Pending pulses (re)arm their hold window, then the window drains by
-        // one tick. Draining after arming is what guarantees a pulse observed
+        // Pending evidence (re)arms its hold window, then the window drains by
+        // one tick. Draining after arming is what guarantees an event observed
         // between two ticks is visible in at least one publication.
         for sig in self.pending.intersect(self.enabled).iter() {
             self.hold[sig.index()] = self.cfg.motion_hold_ticks.max(1);
         }
         self.pending = SignalSet::new();
 
+        // Two independent sources, unioned: `levels` is *reported state*, which
+        // persists until the witness says otherwise, and the hold table is
+        // *evidence with a deadline*, which expires on its own. An event can
+        // therefore assert a signal without ever being able to strand it on —
+        // the bug an event-writes-a-level shortcut would introduce.
         let mut asserted = self.levels.intersect(self.enabled);
         for sig in HomeSignal::ALL {
-            if sig.shape() != Shape::Pulse {
-                continue;
-            }
             let slot = &mut self.hold[sig.index()];
             if *slot > 0 {
                 if self.enabled.contains(sig) {
@@ -507,11 +509,13 @@ impl Projection {
 
     fn assert_pending(&mut self, sig: HomeSignal) {
         match sig.shape() {
-            Shape::Pulse => self.pending.insert(sig),
-            // A latching signal takes effect as a level the moment it is
-            // observed, but — like everything else here — is only ever seen
-            // by the world on a tick boundary.
-            Shape::Latched | Shape::Level => self.levels.insert(sig),
+            // A latching signal is the one thing an event may assert durably:
+            // tamper is meant to survive until a human clears it. Everything
+            // else an event says is evidence, and evidence expires — a
+            // momentary observation must never be able to strand a signal on
+            // forever, which is what writing it straight into `levels` did.
+            Shape::Latched => self.levels.insert(sig),
+            Shape::Pulse | Shape::Level => self.pending.insert(sig),
         }
     }
 }
@@ -520,9 +524,15 @@ impl Projection {
 ///
 /// Deliberately partial: an event with no honest HAP counterpart projects
 /// **nothing** rather than being forced into a sensor that would misdescribe
-/// it. `AcousticImpulseInZone` is the standing example — HAP has no acoustic
-/// sensor, and publishing a sound as "motion" would be a false statement
-/// about the world in someone's home.
+/// it. Two events are mapped to nothing, for two different reasons:
+///
+/// - `AcousticImpulseInZone` — HAP has no acoustic sensor, and publishing a
+///   sound as "motion" would be a false statement about someone's home.
+/// - `ContactStateChange` — it reports that a contact *changed*, not what it
+///   changed **to**. HAP's contact characteristic is a state (open/closed),
+///   so deriving it from a change event would show a door as open every time
+///   it was closed. [`HomeSignal::Contact`] is therefore driven only by
+///   [`Projection::set_level`], from a witness that reports the actual state.
 pub fn signals_for_event(event: &EventType) -> &'static [HomeSignal] {
     match event {
         EventType::BoundaryCrossingObjectLarge
@@ -531,9 +541,8 @@ pub fn signals_for_event(event: &EventType) -> &'static [HomeSignal] {
         | EventType::VehiclePresenceAfterHours
         | EventType::VehicleArrivalDeparture => &[HomeSignal::Motion],
         EventType::PresenceInRestrictedZone => &[HomeSignal::Occupancy],
-        EventType::ContactStateChange => &[HomeSignal::Contact],
         EventType::TamperDetected => &[HomeSignal::Tamper],
-        EventType::AcousticImpulseInZone => &[],
+        EventType::AcousticImpulseInZone | EventType::ContactStateChange => &[],
     }
 }
 
@@ -711,10 +720,84 @@ mod tests {
         // A non-motion event carrying a class must not produce motion_person.
         let mut p = proj();
         assert!(p.set_enabled(HomeSignal::MotionPerson, true));
-        p.observe_event(EventType::ContactStateChange, Some(ObjectClass::Person));
+        p.observe_event(
+            EventType::PresenceInRestrictedZone,
+            Some(ObjectClass::Person),
+        );
         let pubn = p.tick();
         assert!(!pubn.asserted.contains(HomeSignal::MotionPerson));
-        assert!(pubn.asserted.contains(HomeSignal::Contact));
+        assert!(pubn.asserted.contains(HomeSignal::Occupancy));
+    }
+
+    // ---- an event is evidence, and evidence expires ----
+
+    #[test]
+    fn a_presence_event_does_not_strand_occupancy_on_forever() {
+        // A one-shot event carries no current-state value, so asserting a
+        // level from it permanently would mean one presence observation left
+        // the house "occupied" until something unrelated cleared it.
+        let cfg = PacingConfig {
+            tick_ms: 1_000,
+            motion_hold_ticks: 3,
+        };
+        let mut p = Projection::new(cfg).expect("valid");
+        p.observe_event(EventType::PresenceInRestrictedZone, None);
+        for tick in 1..=3 {
+            assert!(
+                p.tick().asserted.contains(HomeSignal::Occupancy),
+                "occupancy should still be held at tick {tick}"
+            );
+        }
+        for _ in 0..20 {
+            assert!(
+                !p.tick().asserted.contains(HomeSignal::Occupancy),
+                "occupancy must expire — an event is evidence, not a state"
+            );
+        }
+    }
+
+    #[test]
+    fn a_contact_change_event_does_not_assert_a_contact_state() {
+        // The event says a contact *changed*, not what it changed to. Deriving
+        // "open" from it would show a door as open every time it was closed.
+        let mut p = proj();
+        p.observe_event(EventType::ContactStateChange, None);
+        assert!(
+            !p.tick().asserted.contains(HomeSignal::Contact),
+            "a change event must not be published as a contact state"
+        );
+        assert!(signals_for_event(&EventType::ContactStateChange).is_empty());
+    }
+
+    #[test]
+    fn contact_is_driven_by_reported_state_and_persists() {
+        // The honest source for a state characteristic: a witness reporting it.
+        let mut p = proj();
+        p.set_level(HomeSignal::Contact, true);
+        for _ in 0..20 {
+            assert!(p.tick().asserted.contains(HomeSignal::Contact));
+        }
+        p.set_level(HomeSignal::Contact, false);
+        assert!(!p.tick().asserted.contains(HomeSignal::Contact));
+    }
+
+    #[test]
+    fn reported_state_outlives_an_expiring_event_for_the_same_signal() {
+        // Radar says "occupied" durably while an event also asserts evidence;
+        // the evidence expiring must not withdraw the reported state.
+        let cfg = PacingConfig {
+            tick_ms: 1_000,
+            motion_hold_ticks: 2,
+        };
+        let mut p = Projection::new(cfg).expect("valid");
+        p.set_level(HomeSignal::Occupancy, true);
+        p.observe_event(EventType::PresenceInRestrictedZone, None);
+        for _ in 0..10 {
+            assert!(
+                p.tick().asserted.contains(HomeSignal::Occupancy),
+                "reported state must survive the event's hold expiring"
+            );
+        }
     }
 
     // ---- tamper ----
