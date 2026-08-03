@@ -150,8 +150,32 @@ struct WristSnapshot: Codable, Hashable, Sendable {
     /// How many rows the cap dropped — a cap is never silent.
     var omittedWitnesses: Int
 
+    // The living canary (Shared/CanaryMood.swift — the display firmware's
+    // mood engine, mirrored). ADDITIVE OPTIONALS by the schema rules: an
+    // older phone simply sends no mood and the wrist derives a safe one.
+    var faceRaw: UInt8?
+    var postureRaw: UInt8?
+    var anxiety: Int?
+    var trustDays: Int?
+    /// Ambient copy only — the Voice rule: a mood line may rephrase
+    /// contentment or name who's being looked for; it never words alarms.
+    var moodLine: String?
+
     var severity: Severity { Severity(tolerant: Int(severityRaw)) }
     var heartbeat: WristHeartbeatState { WristHeartbeatState(tolerant: Int(heartbeatRaw)) }
+
+    /// The character's face, with an honest fallback for a phone too old to
+    /// send one: alarming fleets hand the stage to the instruments (hidden),
+    /// quiet fleets get the calm bird. Same rule the engine would apply.
+    var face: CanaryFace {
+        if let raw = faceRaw { return CanaryFace(tolerant: Int(raw)) }
+        return severity >= .alert ? .hidden : .calm
+    }
+
+    var posture: CanaryPosture {
+        guard let raw = postureRaw else { return .asFace }
+        return CanaryPosture(tolerant: Int(raw))
+    }
 
     /// The same sentence the phone's provably-alive card shows, rendered from
     /// this snapshot's facts at the wrist's own clock.

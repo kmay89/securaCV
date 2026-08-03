@@ -21,13 +21,9 @@ struct FleetGlanceView: View {
                         Label {
                             Text("No fleet yet")
                         } icon: {
-                            // The mascot itself (WatchAssets "Canary"), not a
-                            // generic glyph — the first thing a new user sees
-                            // should feel like ours.
-                            Image("Canary")
-                                .resizable()
-                                .scaledToFit()
-                                .frame(height: 36)
+                            // The character at rest — the first thing a new
+                            // user sees breathes, gently, like ours.
+                            CanaryActor(face: .calm, height: 36)
                         }
                     } description: {
                         Text("Open SecuraCV on your iPhone — your fleet appears here on its own.")
@@ -56,12 +52,27 @@ struct FleetGlanceView: View {
             Section {
                 VStack(alignment: .leading, spacing: Theme.xs) {
                     HStack(spacing: Theme.s) {
-                        SeverityPip(severity: snap.severity)
+                        // The character IS the status while it may be: the
+                        // mood engine's face (same engine as the bedside
+                        // glass). During a real unacknowledged alarm the
+                        // face is .hidden and the instrument takes the
+                        // stage — never cute during a real alarm.
+                        if snap.face == .hidden {
+                            SeverityPip(severity: snap.severity)
+                        } else {
+                            CanaryActor(face: snap.face, posture: snap.posture, height: 34)
+                        }
                         Text(snap.headline).font(.headline).lineLimit(2)
                     }
                     Text("\(snap.healthy)/\(snap.total) healthy")
                         .font(.caption2).foregroundStyle(.secondary)
                         .monospacedDigit()
+                    if let line = snap.moodLine {
+                        Text(line)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
             }
 
