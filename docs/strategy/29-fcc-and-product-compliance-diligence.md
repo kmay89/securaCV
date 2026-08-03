@@ -275,6 +275,11 @@ those choices deletes a whole regulatory category rather than mitigating one.
 
 - [ ] Look up every board in `canary-local/devices/registry.json` on `fccid.io`;
       record grant status per board and flag any marked evaluation-only (§3).
+      **Started** — the record lives at
+      [`docs/hardware/fcc_board_status.md`](../hardware/fcc_board_status.md):
+      XIAO ESP32-S3/Sense and ESP32-C3 have FCC IDs found (Z4T-XIAOESP32S3,
+      Z4T-XIAOESP32C3, verified 2026-08); grant *conditions* unread on every
+      board, all other boards unlooked-up. No claims unlocked yet.
 - [ ] Hold the **plastic-only posture**: ship R0 + R1 only; R2/R3 stay gated
       behind §9 (§7, §8).
 - [ ] Rename customer-facing R1 copy from *"kit"* to **"enclosure set" /
