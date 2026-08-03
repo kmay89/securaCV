@@ -45,6 +45,21 @@ extension WristSnapshot {
                   postureRaw: store.canaryPosture.rawValue,
                   anxiety: store.canaryAnxiety,
                   trustDays: store.canaryTrustDays,
-                  moodLine: store.moodLine)
+                  moodLine: store.moodLine,
+                  alerts: Array(store.alertLog.records
+                      .prefix(WristSync.maxAlertRows)
+                      .map { r in
+                          WristAlert(id: r.id,
+                                     witnessID: r.witnessID,
+                                     name: r.name,
+                                     headline: r.headline,
+                                     severityRaw: r.severityRaw,
+                                     // Already a 10-minute bucket on the
+                                     // phone; it crosses the wire unchanged.
+                                     bucket: r.lastBucket,
+                                     count: r.count,
+                                     deliveryRaw: r.deliveryRaw,
+                                     handlingRaw: r.handlingRaw)
+                      }))
     }
 }
