@@ -142,6 +142,31 @@ test("a figure never claims dimensions its CAD doesn't have", () => {
   }
 });
 
+test("a board figure fills the CAD box it says it came from", () => {
+  // The drift guard used to skip this path entirely, so `board.xiao` shipped
+  // 22.64 x 3.66 x 19.38 while its dims_source claimed CAD measuring
+  // 22.64 x 4.42 x 17.78 — short in depth, over in height. A figure that
+  // names its source must match it.
+  const boards = JSON.parse(readFileSync(join(ROOT, "devices/boards.json"), "utf8")).boards;
+  let checked = 0;
+  for (const f of led.figures) {
+    if (f.dims_source !== "board-cad") continue;
+    const src = boards[f.evidence.vendor_board.key];
+    assert.ok(src, `${f.id} names a board that is in boards.json`);
+    assert.ok(f.drift_guard, `${f.id} records the tolerance it was checked against`);
+    const [w, d, h] = src.dims_mm;
+    assert.ok(Math.abs(f.envelope_mm.w - w) <= f.drift_guard.plan_tol_mm,
+      `${f.id} width ${f.envelope_mm.w} vs CAD ${w}`);
+    assert.ok(Math.abs(f.envelope_mm.h - h) <= f.drift_guard.plan_tol_mm,
+      `${f.id} height ${f.envelope_mm.h} vs CAD ${h}`);
+    assert.ok(f.envelope_mm.d >= d - f.drift_guard.plan_tol_mm
+      && f.envelope_mm.d - d <= f.drift_guard.depth_tol_mm,
+      `${f.id} depth ${f.envelope_mm.d} vs CAD ${d}`);
+    checked++;
+  }
+  assert.ok(checked > 0, "there are board-backed figures to check");
+});
+
 test("a single-part figure fills its part's bounding box", () => {
   // The drift guard, asserted from the outside: the generator refuses to
   // emit a figure whose massing has parted company with the STL, and this
@@ -199,9 +224,10 @@ test("a device type is never guessed onto the wrong hardware", () => {
     assert.ok(f, `${m.device_type} -> unknown figure ${m.figure}`);
     assert.strictEqual(f.role, "device", `${m.device_type} points at a whole device`);
   }
-  // A flavor IS one piece of hardware, so those are exact and unambiguous.
+  // The config-level mapping is kept for auditing only, and each entry must
+  // still point at a real config and a real figure.
   const seen = new Set();
-  for (const fl of dt.flavors) {
+  for (const fl of dt.configs_audit) {
     const key = `${fl.family}/${fl.flavor}`;
     assert.ok(!seen.has(key), `${key} appears once`);
     seen.add(key);
@@ -209,16 +235,36 @@ test("a device type is never guessed onto the wrong hardware", () => {
     assert.ok(existsSync(join(REPO, "firmware/configs", fl.family, fl.flavor, "config.h")),
       `${key} is a real firmware config`);
   }
-  // A type is mappable only when every flavor publishing it agrees.
+  // A type is mappable only when every config publishing it agrees.
   const byType = new Map();
-  for (const fl of dt.flavors) {
+  for (const fl of dt.configs_audit) {
     if (!byType.has(fl.device_type)) byType.set(fl.device_type, new Set());
     byType.get(fl.device_type).add(fl.figure);
   }
   for (const m of dt.mapped) {
     assert.strictEqual(byType.get(m.device_type).size, 1,
-      `${m.device_type} is only mapped because its flavors agree`);
+      `${m.device_type} is only mapped because its configs agree`);
   }
+});
+
+test("no exact per-build lookup is advertised while it cannot be honest", () => {
+  // A config directory is not one piece of hardware: 12 build envs resolve to
+  // canary-display/dash, one of which (dash-b) is a different panel, and
+  // canary-vision/default spans the DevKitM, the XIAO C3 and the XIAO S3. The
+  // build env is no cleaner — watch/-debug/-modes are one board, dash/-dash-b
+  // are two. So an exact lookup would have to guess, which is the bug this
+  // system exists to prevent. It stays absent until firmware DECLARES a
+  // product id, and the ledger says so out loud rather than leaving a hole.
+  const ex = led.device_types.exact_lookup;
+  assert.ok(ex, "the ledger states whether an exact lookup exists");
+  assert.strictEqual(ex.available, false);
+  assert.ok(ex.why && ex.fix, "it says why not, and what would fix it");
+
+  const h = readFileSync(join(REPO, "firmware/common/core/fleet_figures.h"), "utf8");
+  assert.ok(!/figure_for_flavor/.test(h),
+    "the header must not offer a per-build lookup it cannot answer correctly");
+  assert.match(h, /deliberately INCOMPLETE/,
+    "the header is explicit that its table does not cover every device type");
 });
 
 test("CI re-runs the drift gate when a generated copy is touched", () => {

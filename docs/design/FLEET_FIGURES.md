@@ -216,35 +216,51 @@ external references, CSP-safe.
 to *what am I?*. Pure C++, no Arduino/JSON dependency, no allocation: the same
 rules `fleet_model.h` follows, so it stays host-testable.
 
-Two tables, because there are two questions and they do **not** have the same
-precision:
-
 ```cpp
-// EXACT — a firmware config directory is one piece of hardware, known at
-// compile time. A device asking about ITSELF uses this.
-if (const auto* f = canary::figures::figure_for_flavor("canary-sense", "wellbeing")) { … }
-
-// COARSE — for a peer witness, from the DEVICE_TYPE it publishes.
 if (const auto* f = canary::figures::figure_for(w.device_type)) {
   draw_figure(f->figure_id);           // the right picture
   if (f->rev != cached_rev) refetch(); // …and a fresh one
 }
 ```
 
-**The device-type table is deliberately incomplete, and that is the feature.**
-Several published types are shared by more than one board — `canary-dash` by
-both the 4.3″ and the 7″ panel, `canary-nightstand` by both the 1.47″ stick
-and the 1.69″ touch — so the type alone cannot identify the hardware. Those
-types are simply **absent**, `figure_for` returns `nullptr`, and the caller
-draws its generic marker.
+**The table is deliberately incomplete, and that is the feature.** A device
+type appears only when every firmware config that publishes it agrees on one
+figure. Types shared by more than one board — `canary-dash` by both the 4.3″
+and the 7″ panel, `canary-nightstand` by both the 1.47″ stick and the 1.69″
+touch — are **absent**, `figure_for` returns `nullptr`, and the caller draws
+its generic marker.
 
 This is the one place the system nearly defeated itself. The first cut
-resolved unknown types with a regex on the type string, and handed both
+resolved unknown types with a regex on the type string and handed both
 rectangular nightstand boards the round 52 mm Watch Station drum — showing a
-user the wrong physical device, which is precisely the confusion the figures
-exist to remove. **A wrong picture is worse than no picture.** Unresolved
-types are listed with reasons in the ledger's `device_types.unmapped`, so the
-gap stays visible instead of being silently papered over.
+user the wrong physical device, precisely the confusion the figures exist to
+remove. **A wrong picture is worse than no picture.** Unresolved types are
+listed with reasons in the ledger's `device_types.unmapped`.
+
+### The open gap: firmware does not say what product it is
+
+There is **no exact per-build lookup**, and it cannot be added by reading the
+tree. A second review pass found the reason, and it is worth stating plainly
+because it is the unfinished half of "each product self-identifies":
+
+- **A config directory is not one board.** Twelve build environments resolve
+  to `canary-display/dash`, and `canary-display-dash-b` among them is a
+  different panel. `canary-vision/default` is shared by four envs spanning the
+  DevKitM, the XIAO C3 and the XIAO S3.
+- **A build environment is not a clean signal either.**
+  `canary-display-watch`, `-watch-debug` and `-watch-modes` are one board with
+  feature flags; `-dash` and `-dash-b` are two boards. Telling those apart
+  means reading the name suffix and guessing — the same inference that caused
+  the nightstand bug, wearing a different hat.
+- **`board =` cannot separate them.** `dash-b` `extends` `dash` and inherits
+  its board line.
+
+So the fix is not a smarter derivation — it is a **declaration**: a
+`CANARY_PRODUCT_ID` per build env, which the exact table would then key on.
+That is a firmware change across ~39 environment blocks and belongs in its own
+review. Until it lands, the coarse device-type table is the honest ceiling,
+and the ledger records the gap as data (`device_types.exact_lookup`) rather
+than leaving a silent hole.
 
 **Phone and wrist — `ios/Shared/FleetFigures.swift`.** The same polygons as
 flat data a `Canvas` paints at any size. Not an asset catalog and not an SVG

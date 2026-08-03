@@ -193,7 +193,13 @@ const PLAN_TOL = 0.75;   // mm, width & height
 const DEPTH_TOL = 4.0;   // mm, allows proud lenses/buttons/windows
 
 function guardDrift(fig, E, solids, source) {
-  if (source !== 'stl' || fig.parts) return null;
+  // Applies to any figure with ONE dimensional source of truth behind it: a
+  // committed STL, or a committed board mesh. Exempting the board path let
+  // `board.xiao` publish 22.64 x 3.66 x 19.38 while claiming to come from CAD
+  // measuring 22.64 x 4.42 x 17.78 — a figure that both fell short of the part
+  // and overflowed it, under a `dims_source` that said otherwise.
+  if (fig.parts) return null;
+  if (source !== 'stl' && source !== 'board-cad') return null;
   const env = envelopeOf(solids);
   const got = { w: env.size[0], d: env.size[1], h: env.size[2] };
   const bad = [];
@@ -215,21 +221,25 @@ function guardDrift(fig, E, solids, source) {
  * fix is identical: hold every stacked element a hair proud of the one under
  * it. This refuses to emit a figure that breaks the rule. */
 function guardCoplanar(fig, solids) {
-  const planes = new Map(); // "<y>" -> { m, box } of the first solid to claim it
+  // Only FRONT faces are painted, so only front faces can tie in the paint
+  // order — which is the actual defect: which material wins becomes an
+  // accident of sort stability. An earlier cut registered each solid's back
+  // plane too, which made ordinary stacking (the back of one part sitting
+  // flush on the front of the part behind it) trip the guard, and pushed the
+  // specs into EPS gaps that were papering over a false positive.
+  const planes = new Map(); // "<front y>" -> { m, box } of the first claimant
   for (const s of solids) {
     const pts = cornersOf(s);
     const span = (i) => [Math.min(...pts.map((p) => p[i])), Math.max(...pts.map((p) => p[i]))];
-    const [y0, y1] = span(1);
     const box = { x: span(0), z: span(2) };
-    for (const y of new Set([y0, y1])) {
-      const key = y.toFixed(4);
-      const prev = planes.get(key);
-      if (prev && prev.m !== s.m && overlaps(prev.box, box)) {
-        throw new Error(`figures: ${fig.id} puts ${prev.m} and ${s.m} coplanar at y=${key}. `
-          + 'Hold the nearer one proud by EPS (see massing.mjs).');
-      }
-      if (!prev) planes.set(key, { m: s.m, box });
+    const key = span(1)[1].toFixed(4);
+    const prev = planes.get(key);
+    if (prev && prev.m !== s.m && overlaps(prev.box, box)) {
+      throw new Error(`figures: ${fig.id} shows ${prev.m} and ${s.m} at the same depth `
+        + `(y=${key}) with overlapping footprints, so which one paints last is an `
+        + 'accident. Hold the nearer one proud by EPS (see massing.mjs).');
     }
+    if (!prev) planes.set(key, { m: s.m, box });
   }
 }
 
@@ -348,27 +358,38 @@ function walkConfigs() {
 
 /* Which figure does a running device get?
  *
- * The first cut of this guessed with a regex on the published DEVICE_TYPE and
- * got it WRONG: `canary-nightstand` (a rectangular 1.47"/1.69" board) and
- * `canary-nightstand7` (a 7" panel) both matched /watch|nightstand/ and were
- * handed the round 52 mm Watch Station figure. Showing a user the wrong
- * physical device is the precise failure this whole system exists to prevent,
- * so there is no guessing here any more — only these two explicit maps.
+ * An early cut guessed with a regex on the published DEVICE_TYPE, and matched
+ * both rectangular nightstand boards onto the round Watch Station drum. There
+ * is no guessing here any more.
  *
- * FLAVOR is the precise one: a firmware config directory IS one piece of
- * hardware, known at compile time, so a device can always name its own figure
- * exactly.
+ * A device type resolves ONLY when every firmware config that publishes it
+ * agrees on one figure. Types published by more than one board — `canary-dash`
+ * by both the 4.3" and the 7" panel, `canary-nightstand` by both the 1.47"
+ * stick and the 1.69" touch — are OMITTED rather than resolved by a coin flip,
+ * and listed in the ledger's `unmapped_device_types` so the gap is visible
+ * instead of silently wrong. figure_for() returns nullptr for them and the
+ * caller draws its generic marker. A wrong picture is worse than no picture.
  *
- * DEVICE_TYPE is the coarse one, and deliberately incomplete. Several types
- * are published by more than one board — `canary-dash` by both the 4.3" and
- * the 7" panel, `canary-nightstand` by both the 1.47" stick and the 1.69"
- * touch — so the type alone cannot identify the hardware. Those are OMITTED
- * rather than resolved by a coin flip, and listed in the ledger's
- * `unmapped_device_types` so the gap is visible instead of silently wrong.
- * figure_for() returns nullptr for them and the caller draws its generic
- * marker, which is honest. A wrong picture is worse than no picture.
+ * ── The open gap, stated plainly ────────────────────────────────────────
+ * There is deliberately NO exact per-build lookup, because the firmware does
+ * not currently record which physical product a build is for, and nothing on
+ * disk can be read to recover it:
+ *
+ *   · a config directory is not one board — 12 build envs resolve to
+ *     `canary-display/dash`, and `canary-display-dash-b` among them is a
+ *     different panel; `canary-vision/default` is shared by 4 envs spanning
+ *     the DevKitM, the XIAO C3 and the XIAO S3
+ *   · a build env is not a clean signal either — `canary-display-watch`,
+ *     `-watch-debug` and `-watch-modes` are one board with feature flags,
+ *     while `-dash` and `-dash-b` are two boards; telling those apart means
+ *     reading the suffix and guessing, which is the bug above wearing a hat
+ *   · `board =` cannot separate them: dash-b `extends` dash and inherits it
+ *
+ * The fix is for a build to DECLARE its product (a `CANARY_PRODUCT_ID` per
+ * env), not for this generator to infer it. Until that exists, the coarse
+ * table is the honest ceiling. See docs/design/FLEET_FIGURES.md §7.
  */
-const FLAVOR_FIGURE = {
+const CONFIG_FIGURE = {
   'canary-vision/default': 'device.canary-vision',
   'canary-sense/default': 'device.canary-sense',
   'canary-sense/wellbeing': 'device.canary-sense',
@@ -378,14 +399,14 @@ const FLAVOR_FIGURE = {
   'canary-display/dash': 'device.canary-display-dash',
 };
 
-const flavorRows = deviceTypes
-  .map((c) => ({ ...c, figureId: FLAVOR_FIGURE[`${c.family}/${c.flavor}`] || null }))
+const configRows = deviceTypes
+  .map((c) => ({ ...c, figureId: CONFIG_FIGURE[`${c.family}/${c.flavor}`] || null }))
   .map((c) => ({ ...c, fig: c.figureId ? byIdBuilt.get(c.figureId) : null }))
   .sort((a, b) => (`${a.family}/${a.flavor}` < `${b.family}/${b.flavor}` ? -1 : 1));
 
-for (const r of flavorRows) {
+for (const r of configRows) {
   if (r.figureId && !r.fig) {
-    throw new Error(`figures: FLAVOR_FIGURE maps ${r.family}/${r.flavor} to "${r.figureId}", `
+    throw new Error(`figures: CONFIG_FIGURE maps ${r.family}/${r.flavor} to "${r.figureId}", `
       + 'which is not a figure. Fix the map or add the figure.');
   }
 }
@@ -394,7 +415,7 @@ for (const r of flavorRows) {
 // one figure. Anything else is an ambiguity in the firmware's own vocabulary,
 // not something this generator gets to invent an answer for.
 const byType = new Map();
-for (const r of flavorRows) {
+for (const r of configRows) {
   if (!byType.has(r.device_type)) byType.set(r.device_type, new Set());
   byType.get(r.device_type).add(r.figureId);
 }
@@ -416,7 +437,7 @@ for (const [device_type, ids] of [...byType.entries()].sort()) {
     });
   }
 }
-const mappedFlavorRows = flavorRows.filter((r) => r.fig);
+const mappedConfigRows = configRows.filter((r) => r.fig);
 
 /* ── ledger ─────────────────────────────────────────────────────────── */
 
@@ -451,9 +472,18 @@ const ledger = {
   device_types: {
     mapped: uniqueRows.map((r) => ({ device_type: r.device_type, figure: r.fig.id })),
     unmapped,
-    flavors: mappedFlavorRows.map((r) => ({
+    // No exact per-build lookup: see the note above CONFIG_FIGURE. What a
+    // config directory maps to is recorded for auditing, NOT published to the
+    // firmware, because a config directory is not one piece of hardware.
+    configs_audit: mappedConfigRows.map((r) => ({
       family: r.family, flavor: r.flavor, device_type: r.device_type, figure: r.fig.id,
     })),
+    exact_lookup: {
+      available: false,
+      why: 'the firmware does not record which physical product a build is for; '
+        + 'a config directory and a build env are both shared across boards',
+      fix: 'declare a product id per build env, then key the exact table on it',
+    },
   },
   figures: built.map(({ plan, ...rest }) => rest),
 };
@@ -464,26 +494,24 @@ emit(OUT_H, `#pragma once
 // GENERATED by canary-local/tools/figures/gen_figures.mjs — do not edit.
 // Spec: docs/design/FLEET_FIGURES.md
 //
-// A device's own answer to "what am I?", in the fleet's shared vocabulary,
-// so a display, a phone or a watch can draw the correct picture of a witness
-// and can tell when the copy it cached was drawn from older CAD.
+// A device's own answer to "what am I?", in the fleet's shared vocabulary, so
+// a display, a phone or a watch can draw the correct picture of a witness and
+// can tell when the copy it cached was drawn from older CAD.
 //
-// There are two tables because there are two questions, and they do NOT have
-// the same precision:
+// This table is COARSE and deliberately INCOMPLETE. A device type appears
+// here only when every firmware config that publishes it agrees on one
+// figure; types shared by more than one board are ABSENT and figure_for()
+// returns nullptr, so the caller draws its generic marker. An earlier cut
+// guessed with a string match and handed the rectangular nightstand boards
+// the round Watch Station drum — a wrong picture is worse than no picture.
+// The unresolved types, with reasons, are in
+// canary-local/devices/figures.json under device_types.unmapped.
 //
-//   figure_for_flavor(family, flavor)  — EXACT. A firmware config directory
-//     is one piece of hardware, known at compile time. A device asking about
-//     ITSELF should use this.
-//
-//   figure_for(device_type)            — COARSE, and deliberately incomplete.
-//     Several published device types are shared by more than one board, so
-//     the type alone cannot identify the hardware. Those types are simply
-//     ABSENT from this table and the lookup returns nullptr; the caller then
-//     draws its generic marker. A wrong picture is worse than no picture, and
-//     an earlier cut of this file guessed with a string match and handed the
-//     rectangular nightstand boards the round Watch Station drum.
-//     Unresolved types, with reasons, are listed in
-//     canary-local/devices/figures.json under device_types.unmapped.
+// There is no exact per-build lookup, on purpose: the firmware does not
+// record which physical product a build is for, and a config directory and a
+// build env are each shared across different boards, so nothing on disk can
+// recover it. Adding one means a build DECLARING its product id. See
+// docs/design/FLEET_FIGURES.md §7.
 //
 // Pure C++, no Arduino/JSON dependencies, no allocation: the same rules
 // fleet_model.h follows, so this is host-testable and safe in a hot path.
@@ -499,53 +527,21 @@ struct FigureRef {
   const char* confidence;   // shipping | confirmed | prototype | idea
 };
 
-struct FlavorRef {
-  const char* family;       // firmware/configs/<family>/
-  const char* flavor;       // firmware/configs/<family>/<flavor>/
-  const char* figure_id;
-  const char* rev;
-};
-
-// Device types that resolve to exactly one figure. Types published by more
-// than one board are absent ON PURPOSE — see the note above.
 inline constexpr FigureRef kFigures[] = {
 ${uniqueRows.map((r) => `  { "${r.device_type}", "${r.fig.id}", "${r.fig.rev}", "${r.fig.confidence}" },`).join('\n')}
 };
 inline constexpr size_t kFigureCount = sizeof(kFigures) / sizeof(kFigures[0]);
 
-// Every firmware flavor we have a figure for. Exact by construction.
-inline constexpr FlavorRef kFlavorFigures[] = {
-${mappedFlavorRows.map((r) => `  { "${r.family}", "${r.flavor}", "${r.fig.id}", "${r.fig.rev}" },`).join('\n')}
-};
-inline constexpr size_t kFlavorFigureCount =
-    sizeof(kFlavorFigures) / sizeof(kFlavorFigures[0]);
-
-inline bool streq(const char* a, const char* b) {
-  if (!a || !b) return false;
-  while (*a && *a == *b) { a++; b++; }
-  return *a == *b;
-}
-
-// Exact match on the published device type; nullptr when this type cannot be
+// Exact match on the published device type; nullptr when the type cannot be
 // pinned to one board, or we have no figure for it. Draw the generic marker
 // then — never a guessed picture of the wrong product.
 inline const FigureRef* figure_for(const char* device_type) {
   if (!device_type || !device_type[0]) return nullptr;
   for (size_t i = 0; i < kFigureCount; i++) {
-    if (streq(kFigures[i].device_type, device_type)) return &kFigures[i];
-  }
-  return nullptr;
-}
-
-// What THIS build is. The flavor is compile-time truth, so this never has to
-// disambiguate anything.
-inline const FlavorRef* figure_for_flavor(const char* family, const char* flavor) {
-  if (!family || !flavor) return nullptr;
-  for (size_t i = 0; i < kFlavorFigureCount; i++) {
-    if (streq(kFlavorFigures[i].family, family) &&
-        streq(kFlavorFigures[i].flavor, flavor)) {
-      return &kFlavorFigures[i];
-    }
+    const char* a = kFigures[i].device_type;
+    const char* b = device_type;
+    while (*a && *a == *b) { a++; b++; }
+    if (*a == *b) return &kFigures[i];
   }
   return nullptr;
 }

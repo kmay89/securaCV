@@ -326,10 +326,12 @@ export const FIGURES = [
     role: 'board', of: '_universal', supplier: 'seeed',
     board: 'seeed_xiao_esp32s3',
     build: (E) => [
-      // the PCB, the shielded module can, and the USB-C tongue at one end
+      // the PCB, the shielded module can, and the USB-C tongue at one end.
+      // The can is the deepest thing on the board, so it is what reaches the
+      // CAD's full depth — the drift guard checks exactly that.
       slab(E, 'board', 0, E.d * 0.34, 0, 1),
-      { kind: 'box', m: 'metal', face: 'y', at: [E.w * 0.28, E.d * 0.34 - EPS, E.h * 0.2], size: [E.w * 0.44, E.d * 0.4, E.h * 0.6], r: 0.4 },
-      { kind: 'box', m: 'metal', face: 'y', at: [E.w / 2 - 4.4, E.d * 0.34 - EPS, -1.6], size: [8.8, E.d * 0.5, 3.2], r: 0.6, detail: 'full' },
+      { kind: 'box', m: 'metal', face: 'y', at: [E.w * 0.28, E.d * 0.34, E.h * 0.2], size: [E.w * 0.44, E.d * 0.66, E.h * 0.6], r: 0.4 },
+      { kind: 'box', m: 'metal', face: 'y', at: [E.w / 2 - 4.4, E.d * 0.34, 0], size: [8.8, E.d * 0.45, 3.2], r: 0.6, detail: 'full' },
     ],
   },
   {
@@ -339,9 +341,9 @@ export const FIGURES = [
     board: 'seeed_grove_vision_ai_v2',
     build: (E) => [
       slab(E, 'board', 0, E.d * 0.34, 0, 1),
-      { kind: 'box', m: 'dark', face: 'y', at: [E.w * 0.3, E.d * 0.34 - EPS, E.h * 0.25], size: [E.w * 0.4, E.d * 0.4, E.h * 0.5], r: 0.4 },
+      { kind: 'box', m: 'dark', face: 'y', at: [E.w * 0.3, E.d * 0.34, E.h * 0.25], size: [E.w * 0.4, E.d * 0.66, E.h * 0.5], r: 0.4 },
       // the CSI flex connector along the top edge — how the camera attaches
-      { kind: 'box', m: 'metal', face: 'y', at: [2, E.d * 0.34 - EPS, E.h - 3.2], size: [E.w - 4, E.d * 0.5, 3.2], r: 0.4, detail: 'full' },
+      { kind: 'box', m: 'metal', face: 'y', at: [2, E.d * 0.34, E.h - 3.2], size: [E.w - 4, E.d * 0.45, 3.2], r: 0.4, detail: 'full' },
     ],
   },
   {
@@ -355,7 +357,7 @@ export const FIGURES = [
     build: (E) => [
       slab(E, 'board', 0, E.d * 0.4, 0, 1),
       // the antenna array is the whole point of this board — figure it
-      { kind: 'box', m: 'metal', face: 'y', at: [E.w * 0.18, E.d * 0.4 - EPS, E.h * 0.18], size: [E.w * 0.64, E.d * 0.5, E.h * 0.64], r: 0.3 },
+      { kind: 'box', m: 'metal', face: 'y', at: [E.w * 0.18, E.d * 0.4, E.h * 0.18], size: [E.w * 0.64, E.d * 0.6, E.h * 0.64], r: 0.3 },
     ],
   },
   {
@@ -365,8 +367,8 @@ export const FIGURES = [
     board: 'seeed_round_display_xiao',
     build: (E) => [
       { kind: 'cyl', m: 'board', axis: 'y', at: [E.w / 2, 0, E.h / 2], r: E.w / 2, h: E.d * 0.7 },
-      { kind: 'cyl', m: 'glass', axis: 'y', at: [E.w / 2, E.d * 0.7 - EPS, E.h / 2], r: E.w / 2 - 0.6, h: E.d * 0.3 },
-      { kind: 'cyl', m: 'lit', axis: 'y', at: [E.w / 2, E.d, E.h / 2], r: E.w / 2 - 2.4, h: 0.4 },
+      { kind: 'cyl', m: 'glass', axis: 'y', at: [E.w / 2, E.d * 0.7, E.h / 2], r: E.w / 2 - 0.6, h: E.d * 0.3 - 0.4 },
+      { kind: 'cyl', m: 'lit', axis: 'y', at: [E.w / 2, E.d - 0.4, E.h / 2], r: E.w / 2 - 2.4, h: 0.4 },
     ],
   },
 
@@ -394,8 +396,8 @@ export const FIGURES = [
     board: 'waveshare_4_3b',
     build: (E) => [
       { kind: 'box', m: 'shell', face: 'y', at: [0, 0, 0], size: [E.w, E.d * 0.7, E.h], r: 4 },
-      { kind: 'box', m: 'glass', face: 'y', at: [3, E.d * 0.7 - EPS, 3], size: [E.w - 6, E.d * 0.3 + EPS, E.h - 6], r: 2.5 },
-      { kind: 'box', m: 'lit', face: 'y', at: [6.5, E.d - EPS, 6.5], size: [E.w - 13, 0.4, E.h - 13], r: 1.5 },
+      { kind: 'box', m: 'glass', face: 'y', at: [3, E.d * 0.7, 3], size: [E.w - 6, E.d * 0.3 - 0.4, E.h - 6], r: 2.5 },
+      { kind: 'box', m: 'lit', face: 'y', at: [6.5, E.d - 0.4, 6.5], size: [E.w - 13, 0.4, E.h - 13], r: 1.5 },
     ],
   },
 ];
