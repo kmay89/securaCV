@@ -32,14 +32,25 @@ final class LiveActivityController: ObservableObject {
         let attributes = FleetActivityAttributes(fleetName: fleetName)
         activity = try? Activity.request(
             attributes: attributes,
-            content: .init(state: state, staleDate: nil),
+            content: content(for: state),
             pushType: nil
         )
     }
 
     func update(_ state: FleetActivityAttributes.State) async {
         guard let activity else { return }
-        await activity.update(.init(state: state, staleDate: nil))
+        await activity.update(content(for: state))
+    }
+
+    /// Timing honesty + summary ranking: the island's truth STALE-DATES
+    /// (the system dims it rather than presenting old state as current if
+    /// the app stops updating), and an alarmed fleet outranks the everyday
+    /// in the Smart Stack / island contention.
+    private func content(for state: FleetActivityAttributes.State)
+        -> ActivityContent<FleetActivityAttributes.State> {
+        ActivityContent(state: state,
+                        staleDate: Date().addingTimeInterval(15 * 60),
+                        relevanceScore: state.severity >= .alert ? 100 : 50)
     }
 
     func end() async {
