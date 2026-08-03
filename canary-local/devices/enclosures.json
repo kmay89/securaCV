@@ -6702,8 +6702,8 @@
       },
       {
        "name": "vent_tip",
-       "default": "0.72",
-       "comment": "= the library default. DO NOT set this per-case:"
+       "default": "egg_tip()",
+       "comment": "DERIVED from canary_vent_lib.scad — never a typed"
       },
       {
        "name": "vent_pitch_x",

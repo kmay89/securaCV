@@ -62,8 +62,17 @@
 // width w, crown diameter tip*w. Centred on the base circle's centre, so a
 // drop-in swap for a circle of Ø w keeps the base row where it was.
 //
+// THE brand constant, and the ONE place the number lives. A function, not a
+// variable, for two reasons: it does not surface in an adopter's Customizer
+// as an editable knob, and an adopter that wants a local name for it can
+// DERIVE that name (vent_tip = egg_tip()) instead of typing a copy of the
+// number. A typed copy is how "change it here and every case follows"
+// quietly becomes false — the 7" had exactly that copy and would have been
+// left behind by the first change to this line.
+function egg_tip() = 0.72;
+
 // `tip` defaults to the brand constant — see the header before overriding.
-module egg2d(l, w, tip = 0.72) {
+module egg2d(l, w, tip = egg_tip()) {
     r = tip*w/2;
     hull() {
         circle(d = w);
@@ -79,7 +88,7 @@ module egg2d(l, w, tip = 0.72) {
 // (checks: r = R gives phi = 0 → pi·R² + 2·R·d, the stadium; r = 0 gives
 // the circle-to-point teardrop — both verified against a polygon hull to
 // 6 decimals before this shipped in an echo).
-function egg_area(l, w, tip = 0.72) =
+function egg_area(l, w, tip = egg_tip()) =
     let (R = w/2, r = tip*w/2, d = l - R - r,
          phi = asin((R - r)/d))
     (PI/2 + phi*PI/180) * R * R

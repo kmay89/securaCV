@@ -426,12 +426,14 @@ vent_slot_w = 5.2;       // egg base width — the grille is the HATCHERY
                          // vortices or collect dust lines
 vent_slot_l = 7.2;       // egg length (upright: sheds drips on a vertical
                          // face; see the lib header for limits)
-vent_tip    = 0.72;      // = the library default. DO NOT set this per-case:
-                         // the tip ratio is the line-wide brand constant and
-                         // it lives in canary_vent_lib.scad so that changing
-                         // it there changes every case at once. Restated here
-                         // only because this file is the library's one
-                         // adopter and the number is worth reading in place.
+vent_tip    = egg_tip(); // DERIVED from canary_vent_lib.scad — never a typed
+                         // number. The tip ratio is the line-wide brand
+                         // constant; its one home is egg_tip() in the library,
+                         // so changing it there moves this case with it. A
+                         // local copy would read identically today and silently
+                         // strand the 7" wearing the old mark the first time
+                         // the line changed — which is exactly what an earlier
+                         // draft of this line did.
                          //
                          // 0.28 was the FEATHER the library shipped with;
                          // 0.72 is the EGG. Same primitive either way (a hull
@@ -1432,9 +1434,10 @@ assert(vent_tip > 0.15 && vent_tip < 0.85,
        str("grille: vent_tip ", vent_tip, " is outside 0.15..0.85. Below 0.15 ",
            "the crown closes to a needle; above 0.85 the shape is a stadium ",
            "with no taper at all and is no longer a mark. Feather territory is ",
-           "~0.28, egg ~0.72. This case should not be picking either: the tip ",
-           "ratio is the LINE-WIDE constant and its home is the default in ",
-           "canary_vent_lib.scad. Change it there so every adopter follows."));
+           "~0.28, egg ~0.72. This case does not pick either — vent_tip is ",
+           "egg_tip() from canary_vent_lib.scad, the line-wide constant. If ",
+           "this fired, the LIBRARY moved out of band: fix it there, so every ",
+           "adopter follows instead of just this one."));
 stamp_half = stamp_size*0.9 + stamp_size*0.39 + 0.6;   // text block half-height
 assert(!stamp_show || (stamp_depth < back_t - 1.5
        && stamp_dy - stamp_half
