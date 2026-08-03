@@ -7206,8 +7206,8 @@
       },
       {
        "name": "port_lbl_a",
-       "default": "USB",
-       "comment": "beside the bottom exit — a real connector is there"
+       "default": "",
+       "comment": "beside the bottom exit — see above"
       },
       {
        "name": "port_lbl_b",

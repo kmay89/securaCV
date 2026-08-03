@@ -895,7 +895,19 @@ port_labels = true;
 // The earlier reasoning here was that both carry the same cable so both may
 // say USB. That is true about the CABLE and wrong about the WALL, which is
 // what a person standing in front of the case is actually reading.
-port_lbl_a  = "USB";    // beside the bottom exit — a real connector is there
+// OFF. It said "USB" and it was never beside the port: the code places it at
+// vword_x + vword_half + 6.0, which is outboard of the BRAND WORDS, so on the
+// real wall it landed ~30 mm from the opening and past SECURACV — reading as a
+// third brand word near the corner rather than as a caption for anything. The
+// comment above it claimed "just outboard of each opening's flange", which is
+// what it should have done and never did.
+//
+// Not relocated, removed. A USB-C hole in the bottom of a device does not need
+// the word USB beside it, the rating block two rows up already says USB-C
+// INPUT, and a word moulded into plastic is not a caption you can revise
+// later. Set it back to "USB" if a future wall genuinely needs disambiguating
+// — and fix the placement formula at the same time.
+port_lbl_a  = "";       // beside the bottom exit — see above
 port_lbl_b  = "";       // beside the side exit — a hole, so it says nothing
 // RATING STAMP — the little spec block every mains-adjacent thing should
 // carry. It goes on the BACK plate's lower band: hidden behind the case on a

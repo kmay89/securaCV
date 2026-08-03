@@ -170,7 +170,8 @@ def render(part: str, out: Path) -> Path:
         ["openscad", "--export-format", "binstl", "-o", str(out),
          "-D", f'part="{part}"', str(SRC)],
         capture_output=True, text=True)
-    diag = [ln for ln in (r.stderr or "").splitlines()
+    raw = r.stderr or ""
+    diag = [ln for ln in raw.splitlines()
             if "ERROR" in ln or "WARNING" in ln]
     # An EMPTY part is not a failed part, and telling them apart matters.
     # A filament's share of an object is empty whenever the palette simply
@@ -180,12 +181,17 @@ def render(part: str, out: Path) -> Path:
     # broken render, and the fix is NOT to invent a token ink feature so the
     # packager stays happy: it is to drop the volume and say so. Caller
     # decides whether an object with no volumes left is fatal.
-    empty = [ln for ln in diag if "top level object is empty" in ln]
-    hard = [ln for ln in diag if ln not in empty]
-    if empty and not hard and not out.exists():
+    # Match against RAW stderr, not the diagnostic list: OpenSCAD prints
+    # "Current top level object is empty." with NO "WARNING"/"ERROR" prefix,
+    # so it never survives the filter above. Keying on the filtered list is
+    # exactly the bug this comment exists to stop being re-introduced — it
+    # looked right and turned every empty part back into a hard abort.
+    # Empty is: no file, no diagnostics at all, and the marker present.
+    if not out.exists() and not diag and "top level object is empty" in raw:
         return None
-    if hard or not out.exists():
-        raise SystemExit(f"render of {part} failed:\n" + "\n".join(diag[:5]))
+    if diag or not out.exists():
+        raise SystemExit(f"render of {part} failed:\n"
+                         + "\n".join(diag[:5] or raw.splitlines()[-3:]))
     return out
 
 
