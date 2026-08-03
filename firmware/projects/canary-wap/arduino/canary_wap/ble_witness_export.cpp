@@ -100,7 +100,7 @@ static void rebuild_head(uint32_t /*now*/, bool force_notify){
 
 bool init(NimBLEServer* server){
   if (!server) return false;
-  // Treat "fully initialised" as "all three handles are non-null". The
+  // Treat "fully initialized" as "all three handles are non-null". The
   // earlier `if (g_service) return true;` short-circuit was wrong — a
   // partial-init left g_service set with g_head or g_record null, then
   // the next call falsely reported success and tick() ran against a

@@ -33,7 +33,7 @@ static int g_fail = 0;
     }                                                              \
   } while (0)
 
-// A catalogued Unix instant: 1700000000 == 2023-11-14 22:13:20 UTC (Tue).
+// A catalogd Unix instant: 1700000000 == 2023-11-14 22:13:20 UTC (Tue).
 static void test_known_epoch_decomposes() {
   rtc::RtcTime t;
   rtc::from_epoch(1700000000LL, t);

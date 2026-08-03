@@ -81,7 +81,7 @@ judges its claims.
 ### Bench flags (extends the `[BENCH]` list in `mr60_uart.h`)
 
 1. **Distance unit conflict.** Our decoder assumes the `0x0A16` float is
-   metres and scales ×100; the merged ESPHome component publishes the same
+   meters and scales ×100; the merged ESPHome component publishes the same
    float with unit **cm**. If ESPHome is right, the fix is dropping the
    scale in `decode_distance_()` — one line, flagged there. Verify on the
    bench first: a person at 1 m reading `100.0` settles it.
@@ -191,7 +191,7 @@ anchors:
   algorithm's settling time (BHA1 documents a 20 s observation set-up
   time) — a poor trade for a continuous witness; we don't do it.
 - BH1750 ≈ 120 µA active; WS2812 up to ~60 mA full-white (we run dim
-  status colours).
+  status colors).
 
 ### SIM:power (parsed into sense.json — the Lab's rail model, mW)
 
@@ -206,7 +206,7 @@ tied to its nearest published number:
 | wifi_listen_mw | 250 | C6 RX listen ≈ 78 mA @ 3.3 V |
 | wifi_modem_sleep_mw | 30 | DTIM wake windows (Seeed 30 mA figure covers CPU too) |
 | wifi_tx_mw | 1150 | C6 TX burst ≈ 350 mA @ 3.3 V, duty-cycled by publish cadence |
-| led_mw | 30 | WS2812 dim status colours |
+| led_mw | 30 | WS2812 dim status colors |
 | bh1750_mw | 1 | ~120 µA active |
 
 Default model total ≈ 0.83 W ≈ Seeed's 0.8 W active — honest to the anchor.

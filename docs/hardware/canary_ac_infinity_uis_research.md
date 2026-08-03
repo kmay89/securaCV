@@ -87,7 +87,7 @@ wired up before the measurements in §5.1 are run on your own unit.**
 
 | Element | Best current understanding | Confidence |
 |---|---|---|
-| Connector | USB-C receptacle, **not** USB signalling | **High** — universally reported |
+| Connector | USB-C receptacle, **not** USB signaling | **High** — universally reported |
 | Conductors | ~4 used (reports vary 3–4) | Medium |
 | Rail | ~**10 V DC** on VBUS | **High** — multiple independent reports |
 | Who sources the rail | The **device**, not the controller (a Cloudline fan powers the original Controller 67/69 through the cable) | Medium — verified for fans; **assumed** for the ADA3, which is mains-powered and has its own supply |
@@ -105,10 +105,10 @@ Two independent corroborations that the control line really is just a dimmer:
 - The `Controller 69` documentation describes the control type across all UIS
   devices as **"PWM 10 Levels."**
 
-**Wire colours are contested and must not be trusted.** One source reports red
+**Wire colors are contested and must not be trusted.** One source reports red
 = +10 V, black = GND, green (D−) = PWM, yellow (D+) = ground; another reports
 red = +10 V, black = GND, white = NC, yellow = 10 V PWM @ 5 kHz. They disagree
-on which colour is the control line. Colour-coding is a manufacturing detail,
+on which color is the control line. Color-coding is a manufacturing detail,
 not a spec. **Measure, don't assume** (§5.1).
 
 ### 3.1 What this means for the ADA3 specifically
@@ -128,7 +128,7 @@ The user-reported label — **50/60 Hz, 1800 W, 15 A** — matches the published
 **AC-ADA3** North-American specification exactly (Type B plug, 125 V rated,
 100–240 V input, 50/60 Hz, 1800 W, 15 A). `G2317` in orange is a
 manufacturing lot/date marking, not a model number; it does not appear in any
-AC Infinity catalogue and should not be used to identify the part.
+AC Infinity catalog and should not be used to identify the part.
 
 ### 3.3 Naming — two different products, two different projects
 
@@ -375,7 +375,7 @@ distinction is the point.
 If the goal is "use the whole AC Infinity ecosystem," §4 is a complete,
 already-mapped answer requiring zero hardware: buy a Controller 69 Pro or AI+,
 let it own the UIS ports, and have a Canary or the HA integration call the API.
-Every fan, light, pump, and outlet in their catalogue comes along for free, with
+Every fan, light, pump, and outlet in their catalog comes along for free, with
 their sensors and modes intact.
 
 It also has costs that this project in particular should not wave through:

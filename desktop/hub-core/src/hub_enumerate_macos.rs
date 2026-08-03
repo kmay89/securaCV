@@ -9,7 +9,7 @@
 //! [`crate::hub_disk::TargetDisk`]s and the caller runs them through
 //! `hub_disk::classify`.
 //!
-//! The safety-critical judgements, and where macOS hides them:
+//! The safety-critical judgments, and where macOS hides them:
 //!
 //! - *which disk backs the running OS*: on APFS the root volume lives on a
 //!   **synthesized** disk (e.g. `disk3s1`) whose real storage is named by
@@ -262,7 +262,7 @@ fn decode_entities(s: &str) -> String {
         .to_string()
 }
 
-// ── pure judgements over diskutil's answers ─────────────────────────────────
+// ── pure judgments over diskutil's answers ─────────────────────────────────
 
 /// Map any macOS device node to its whole disk:
 ///
@@ -363,7 +363,7 @@ pub fn is_physical(info: &Plist) -> bool {
 /// mounted right now? Direct partitions carry their own `MountPoint`; volumes
 /// of an APFS container count when the container's physical stores sit on this
 /// disk. Advisory only (feeds the "this has data on it" warning, not a
-/// refusal), so a shape we don't recognise reads as unmounted rather than
+/// refusal), so a shape we don't recognize reads as unmounted rather than
 /// failing enumeration.
 pub fn disk_has_mounts(list: &Plist, physical_disk: &str) -> bool {
     let Some(entries) = list.get("AllDisksAndPartitions").and_then(Plist::as_array) else {

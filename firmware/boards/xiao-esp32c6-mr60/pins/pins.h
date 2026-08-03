@@ -70,7 +70,7 @@
 
 // Boot button.
 //
-// ASSUMPTION: The XIAO ESP32-C6 board does not break out a dedicated, labelled
+// ASSUMPTION: The XIAO ESP32-C6 board does not break out a dedicated, labeled
 // user button the way a DevKit does; the common XIAO/ESP32-C convention (and
 // the strapping pin used for download mode on this part) is GPIO9. We map BOOT
 // to GPIO9 (active LOW, internal pull-up) to match that convention until bench

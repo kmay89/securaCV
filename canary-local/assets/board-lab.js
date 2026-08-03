@@ -3,7 +3,7 @@
 // The device sheet's "Board" tab: the vendor's actual CAD (Seeed's published
 // STEP, tessellated to a committed GLB by tools/gen_boards.py) spinning in the
 // SAME WebGL viewer the printed enclosure parts use — real soldermask, gold
-// pads, shield, connectors, straight from the millimetres the vendor drew.
+// pads, shield, connectors, straight from the millimeters the vendor drew.
 // Not an illustration of the board; the board.
 //
 // Data: devices/boards.json (facts recomputed from the committed GLB by the
@@ -23,7 +23,7 @@ const el = (tag, cls, text) => {
 const GH = "https://github.com/kmay89/securaCV/blob/main/";
 
 // per-material gloss so metals shine and soldermask stays satin — the same
-// separation the CAD colours imply (money-shot lighting, honest materials).
+// separation the CAD colors imply (money-shot lighting, honest materials).
 // Exported for the Board Room (board-room.js), which stages the same GLBs.
 const METAL = new Set(["#8d8d8d", "#7f8e98", "#5a5a5a", "#ada186", "#a6a6a6", "#c7d3e3", "#8a8a8a", "#b8bac2"]);
 const GOLD = new Set(["#e7c863", "#e59833", "#d4ab45"]);

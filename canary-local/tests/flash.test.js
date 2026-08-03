@@ -210,7 +210,7 @@ test("validateManifest accepts good, flags bad", async () => {
   assert.ok(validateManifest({ schema: "wrong", products: {} }).some((e) => /schema/.test(e)));
 });
 
-test("manifestEntry refuses a chip-mismatched image (defence in depth)", async () => {
+test("manifestEntry refuses a chip-mismatched image (defense in depth)", async () => {
   const { manifestEntry } = await core();
   const m = goodManifest();
   const wap = catalog.products.find((p) => p.id === "securacv-canary-wap");

@@ -149,7 +149,7 @@ permissions:
 
 # Supersede stale runs: a new push to a PR branch cancels the in-flight run
 # (the wasm job is one of the most expensive in the repo). Pushes to main
-# are never cancelled — full signal per main commit.
+# are never canceled — full signal per main commit.
 concurrency:
   group: canary-local-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

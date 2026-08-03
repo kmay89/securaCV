@@ -153,7 +153,7 @@ pub enum Warning {
     /// The device currently has mounted filesystems that the write will erase.
     HasMountedData,
     /// A non-removable target accepted only because the enumerator marked it
-    /// external — surface that judgement so the operator can sanity-check it.
+    /// external — surface that judgment so the operator can sanity-check it.
     ExternalNonRemovable,
 }
 
@@ -330,7 +330,7 @@ pub fn from_sysblock(
 }
 
 /// Render a byte count as a short human size (`"32.0 GB"`). Uses binary units
-/// but the SI-ish suffix operators recognise; sizing here is for humans reading
+/// but the SI-ish suffix operators recognize; sizing here is for humans reading
 /// a confirm dialog, not for accounting.
 fn fmt_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
@@ -388,7 +388,7 @@ mod tests {
 
     #[test]
     fn system_disk_wins_the_reason_even_if_marked_removable_and_external() {
-        // Defence in depth: a device that is somehow the system disk must still
+        // Defense in depth: a device that is somehow the system disk must still
         // be refused, and refused *as* the system disk, whatever else it claims.
         let d = TargetDisk {
             system: true,

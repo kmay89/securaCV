@@ -152,7 +152,7 @@ bool find_target_addr(const char* fp4, NimBLEAddress& addr_out) {
   const int n = (int)res.getCount();
   for (int i = 0; i < n; i++) {
     // NimBLE 2.x getResults returns a const pointer; 1.4.x returns the device
-    // by value. Normalise to a usable object either way.
+    // by value. Normalize to a usable object either way.
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
     const NimBLEAdvertisedDevice* d = res.getDevice(i);
     if (!d) continue;

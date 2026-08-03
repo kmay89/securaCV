@@ -33,7 +33,7 @@ for (const [dev, d] of Object.entries(asm.devices)) {
       } else {
         assert.fail(`unknown part source: ${p.source}`);
       }
-      if (p.color && !Array.isArray(p.color)) assert.ok(asm.palette[p.color], `unknown palette colour: ${p.color}`);
+      if (p.color && !Array.isArray(p.color)) assert.ok(asm.palette[p.color], `unknown palette color: ${p.color}`);
     }
   });
 
@@ -145,7 +145,7 @@ test("canary-display-watch: seated in the stand's cradle divot (scad v0.2 echo)"
   // drum floor (the 180 in rx: 65+180 = 245), USB end spun to the slot azimuth
   assert.deepStrictEqual(by.xiao.seated.rot, [245, 0, -90], "XIAO upside-down in the socket, USB at 270");
   assert.ok(by.xiao.seated.pos[1] < by.drum.seated.pos[1],
-    "XIAO offset toward the USB slot azimuth (the socket rows sit off-centre on the disc)");
+    "XIAO offset toward the USB slot azimuth (the socket rows sit off-center on the disc)");
   // display: glass along the drum axis, socket-row axis spun onto the USB azimuth
   assert.deepStrictEqual(by.display.seated.rot, [155, -90, 0]);
   // bezel flips from its face-down print (65 + 180) and SNAPS — no fasteners in v0.2
@@ -160,8 +160,8 @@ test("canary-display-watch: seated in the stand's cradle divot (scad v0.2 echo)"
 test("canary-display-dash: panel seats against the frame lip, screws from the back", () => {
   const a = asm.devices["canary-display-dash"];
   const by = Object.fromEntries(a.parts.map((p) => [p.id, p]));
-  // module centre derived from the stand's channel + fin geometry
-  assert.ok(Math.abs(by.panel.seated.pos[1] - (-1.04)) < 0.05, "panel glass 5.6 in front of module centre");
+  // module center derived from the stand's channel + fin geometry
+  assert.ok(Math.abs(by.panel.seated.pos[1] - (-1.04)) < 0.05, "panel glass 5.6 in front of module center");
   assert.strictEqual(by.frame.seated.rot[0], 245, "frame flips from its face-down print");
   assert.strictEqual(by.back.seated.rot[0], 65, "back keeps its outer-face-out print orientation");
   assert.strictEqual(by.screws.instances.length, 4, "four corner-lobe screws");

@@ -45,7 +45,7 @@ alarm instead of lowering the score. That asymmetry is the product.
 | **Standard** | XIAO ESP32-C6 + MR60BHA2 radar | + radar + WiFi-CSI | 5 | ~$45 | **the recommended front door** |
 | **Heavy** | Standard head + XIAO ESP32-S3 vision hub | + contact + tamper + vision | 6 | ~$110 | the rigged, prove-it demo |
 
-**Lite is honestly labelled:** with no radar and no CSI, a slow, device-free,
+**Lite is honestly labeled:** with no radar and no CSI, a slow, device-free,
 still intruder can evade it — right for casual threats, not a determined
 adversary. **Standard** closes the two gaps that matter at a front door (the
 still-breathing body via radar; the device-free walk-through via CSI).
@@ -56,7 +56,7 @@ optical modality on its own MCU, which also keeps the camera off the sensor head
 ## Presets — fully modular, each explained
 
 Pick one preset per build. Each is pure config data
-(`firmware/configs/canary-sentinel/<preset>/`); behaviour never forks by preset,
+(`firmware/configs/canary-sentinel/<preset>/`); behavior never forks by preset,
 only the numbers do.
 
 | Preset | Tier | What it does |
@@ -78,7 +78,7 @@ fusion core does not change.
 `Clear → Aware → Present → Confirmed → Loiter`, with `Anomaly` as an overlay
 that wins and latches. The only thing published is the coarse `FusionResult`:
 level, 0..100 confidence, 0/1/2+ occupancy, near/mid/far band, and which
-modality *classes* corroborated. **No MAC, no centimetres, no per-target track,
+modality *classes* corroborated. **No MAC, no centimeters, no per-target track,
 no imagery, no vitals — ever.** Every transition is Ed25519-signed over a
 `sentinel` v1 canonical and hash-chained (Phase 1), reusing `common/identity` +
 `common/witness` exactly as canary-sense does.

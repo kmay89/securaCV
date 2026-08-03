@@ -318,7 +318,7 @@ render, the ribbon flips, the checklist speaks BOM, every stage walks.
 Every device sheet with a modeled board gets a **Board** tab — the off-the-shelf
 board it runs on, as the vendor's own CAD, spinning in the same WebGL viewer the
 printed enclosure parts use. Not an illustration: Seeed's published STEP, real
-soldermask + gold pads + shield + connectors, true to the millimetres they drew.
+soldermask + gold pads + shield + connectors, true to the millimeters they drew.
 
 The pipeline mirrors the enclosure lab's "generated from source, drift-gated"
 rule, one tier deeper:
@@ -350,7 +350,7 @@ so it lands as a **dimensional model reverse-engineered** — built procedurally
 its proportions taken from a published community shell for the 5″ sibling used as
 a dimensional reference only (attributed, not redistributed — see
 `boards/vendor/README.md`) and its terminal silk from the firmware board notes.
-Clearly labelled as such in its provenance and the viewer ribbon (see §4g).
+Clearly labeled as such in its provenance and the viewer ribbon (see §4g).
 
 ## 4e. The Assemble tab: the build, from the real parts
 
@@ -449,8 +449,8 @@ speak for themselves. Two modes:
 
 The load-bearing honesty rule: **pin anchors are measured on the committed
 mesh, never eyeballed.** `tools/pin_anchors.mjs` clusters each GLB's
-pad-colour islands (union-find on a 0.5 mm vertex grid) and prints their
-centres; the anchors committed into `boards.config.json` → `boards.json` come
+pad-color islands (union-find on a 0.5 mm vertex grid) and prints their
+centers; the anchors committed into `boards.config.json` → `boards.json` come
 from those islands, and `tests/boardroom.test.js` gates that every anchor sits
 inside the mesh's own bbox. Rows whose feature couldn't be confidently located
 on the vendor mesh (e.g. the Vision board's Grove socket) carry **no** anchor
@@ -562,8 +562,8 @@ matters?": nothing is captured unless you armed it, what is captured is
   X25519 → HKDF-SHA256, info `securacv/vault/seal/v1` → ChaCha20-Poly1305), the
   **byte-exact 64-byte `SVLT` header** (which is the AEAD associated data), and a
   *flip a header byte* toggle that shows the tag failing. The key derivation runs
-  for real in WebCrypto where supported; the AEAD step is labelled as illustrated.
-- **Quorum** — the interactive centrepiece, and **not theater**: it generates the
+  for real in WebCrypto where supported; the AEAD step is labeled as illustrated.
+- **Quorum** — the interactive centerpiece, and **not theater**: it generates the
   trustees' Ed25519 keys in your browser, signs each approval with the kernel's
   exact domain separation (`securacv:pwk:trustee-approval:v2`), and counts
   *distinct* valid signatures exactly like `count_valid_distinct_approvals`. Meet
@@ -605,10 +605,10 @@ teaches how you stand one up** — the four commands that just shipped in
 "from zero to a rehearsed quorum" companion.
 
 - **The four commands** as cards — what each does, its flags, straight from the CLI.
-- **The setup ceremony** is the interactive centrepiece: step through
+- **The setup ceremony** is the interactive centerpiece: step through
   `init 2-of-3` → enroll three trustees (import a key, or *mint* one written
   `0600`) → `drill` → `doctor`, and watch a live "vault state" panel track the
-  code's real behaviour — the committed policy stays a **draft** below the
+  code's real behavior — the committed policy stays a **draft** below the
   threshold, goes **live as 2-of-2** the instant it's valid, then **strengthens to
   2-of-3**. The terminal output is the real binary's, recorded.
 - **What `doctor` checks** and **what `drill` rehearses** (a throwaway sandbox that

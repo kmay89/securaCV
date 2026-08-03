@@ -12,12 +12,12 @@
 // Loftie blackout, Mui) emit ZERO light until asked.
 //
 // The Canary Display could not fully take that advice. Its bench verdict was
-// blunt: on a backlit LCD, "off" is not off — bleed leaves a glowing grey
+// blunt: on a backlit LCD, "off" is not off — bleed leaves a glowing gray
 // rectangle, which reads worse in a dark room than a calibrated dim glow. So
 // the LCD nightstand ships a dim floor and treats blackout as a preference.
 //
 // **The watch board is AMOLED, and that verdict does not carry.** An unlit
-// AMOLED pixel is off: no bleed, no grey, no rectangle, and no power. Black is
+// AMOLED pixel is off: no bleed, no gray, no rectangle, and no power. Black is
 // free here in a way it has never been free anywhere else in this project. So
 // the Night Watch inverts the display's default and goes genuinely dark — and
 // this engine exists to make sure "dark" never quietly starts meaning "safe".

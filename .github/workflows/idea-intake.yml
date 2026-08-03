@@ -4,7 +4,7 @@ name: Idea Intake
 #
 # Someone who has never used GitHub just filled in a form because a website
 # button asked them to. Right now, from their side, nothing visibly happened:
-# a page of grey chrome, some labels, silence. This workflow answers them —
+# a page of gray chrome, some labels, silence. This workflow answers them —
 # it confirms the idea landed, says in plain words how a vote works (a 👍 on
 # the FIRST message, which is not obvious and is the single most common thing
 # people get wrong), and says what happens next.

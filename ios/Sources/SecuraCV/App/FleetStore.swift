@@ -130,7 +130,7 @@ final class FleetStore: ObservableObject {
     private func startRefreshLoop() {
         refreshTask?.cancel()
         refreshTask = Task { [weak self] in
-            while !Task.isCancelled {
+            while !Task.isCanceled {
                 await self?.refreshOnce()
                 try? await Task.sleep(for: .seconds(20))
             }

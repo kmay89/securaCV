@@ -69,7 +69,7 @@ The SPA setup form gained a "Device name" field.
 
 ### F3 — No way to physically locate a device
 
-There was no "identify" affordance. The only LED behaviour was the
+There was no "identify" affordance. The only LED behavior was the
 `LED_BUILTIN` blink fallback inside `audible_chirp.h`'s pattern player.
 
 **Fix:** a new non-blocking `PATTERN_IDENTIFY` (triple LED blink + "I'm here"
@@ -110,6 +110,6 @@ session cookie), matching the existing camera-peek pattern.
   `canary-pantry.local` without reboot.
 
 > The delegated-hostname catch-all (`canary.local`) is the one path that should
-> be confirmed on real hardware, since `mdns_delegate_hostname_add` behaviour
+> be confirmed on real hardware, since `mdns_delegate_hostname_add` behavior
 > can't be exercised off-device. If a core lacks it, the unique hostname still
 > works and the build degrades gracefully (see the `ESP_IDF_VERSION` guard).

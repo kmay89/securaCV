@@ -5,15 +5,15 @@
 // boards/boards.config.json (mirrored into devices/boards.json). Those numbers
 // must come from the real mesh, not from eyeballing a render — so this tool
 // reads a committed GLB with the page's OWN loader (assets/glb.js), buckets
-// triangles by material colour, clusters each bucket into connected islands
-// (union-find on a 0.5 mm vertex grid), and prints every island's centre and
-// extent in raw GLB millimetres (the same frame the anchors are stored in;
-// the viewer re-centres by bbox at load, exactly like the anchors' consumer).
+// triangles by material color, clusters each bucket into connected islands
+// (union-find on a 0.5 mm vertex grid), and prints every island's center and
+// extent in raw GLB millimeters (the same frame the anchors are stored in;
+// the viewer re-centers by bbox at load, exactly like the anchors' consumer).
 //
-//   node canary-local/tools/pin_anchors.mjs boards/<id>.glb [#colour] [minTris]
+//   node canary-local/tools/pin_anchors.mjs boards/<id>.glb [#color] [minTris]
 //
-// Typical use: run with the pad colour (XIAO castellations are #e7c863) and
-// read off the 14 pad centres; run with a connector-shell colour to anchor
+// Typical use: run with the pad color (XIAO castellations are #e7c863) and
+// read off the 14 pad centers; run with a connector-shell color to anchor
 // USB-C / Grove / JST rows. Authoring aid only — CI never runs it; the
 // committed anchors are gated by tests/boards.test.js (inside the mesh bbox).
 import { parseGLB } from "../assets/glb.js";
@@ -31,7 +31,7 @@ const hex = (c) => "#" + c.map((x) => Math.round(x * 255).toString(16).padStart(
 const fmt = (v) => +v.toFixed(2);
 console.log(`bbox min ${bbox.min.map(fmt)}  max ${bbox.max.map(fmt)}  center ${bbox.center.map(fmt)}`);
 
-// gather triangles per colour
+// gather triangles per color
 const byColor = new Map();
 for (const p of parts) {
   const h = hex(p.color);

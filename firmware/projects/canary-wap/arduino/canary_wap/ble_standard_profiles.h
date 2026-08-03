@@ -55,13 +55,13 @@ static constexpr uint16_t CHR_BATTERY_LEVEL      = 0x2A19;
 
 // Digital Still Camera. Renders a camera icon in the iOS Bluetooth
 // pane. Swap for 0x0080 (Generic Computer) or 0x0540 (Generic Camera)
-// if a specific host doesn't recognise the subtype.
+// if a specific host doesn't recognize the subtype.
 static constexpr uint16_t GAP_APPEARANCE_CAMERA  = 0x0541;
 
 // Battery-level characteristic — header-shared mutable state. MUST be
 // `inline` (not `static`) so every TU that includes this header sees
 // the SAME instance. With `static`, each TU gets its own private copy:
-// register_battery() in bluetooth_channel.cpp would initialise its
+// register_battery() in bluetooth_channel.cpp would initialize its
 // local pointer, and a later set_battery_level() call from a different
 // .cpp (e.g. a battery-sense driver) would update its own nullptr
 // copy and silently no-op. Caught by gemini-code-assist on PR #333;
@@ -140,7 +140,7 @@ inline void register_all(NimBLEServer* server,
   // exposes it via the advertising object (there is no
   // NimBLEDevice::setAppearance); the value is folded into the adv payload
   // when advertising (re)starts. Guard the pointer — getAdvertising() can
-  // return nullptr if the controller hasn't initialised advertising yet.
+  // return nullptr if the controller hasn't initialized advertising yet.
   if (NimBLEAdvertising* adv = NimBLEDevice::getAdvertising()) {
     adv->setAppearance(appearance);
   }

@@ -148,7 +148,7 @@ input-poll's brief expander direction-flip causes no backlight flicker.
 - `include/canary/io/modbus_rtu.h` — a pure, allocation-free Modbus RTU master
   core: CRC-16/MODBUS, request builders (read holding 0x03 / input 0x04, write
   single 0x06), and a response parser with exception decode. No Arduino deps.
-- `tests_host/test_modbus_rtu.cpp` — host test anchored on the catalogued
+- `tests_host/test_modbus_rtu.cpp` — host test anchored on the catalogd
   CRC-16/MODBUS check value `0x4B37`, plus build/parse roundtrips and CRC / addr
   / func / capacity / exception rejection cases. Run by the "Modbus RTU host
   test" step in `firmware.yml`.

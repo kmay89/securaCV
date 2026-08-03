@@ -41,7 +41,7 @@ SECURACV_ADDON_REPO="https://github.com/kmay89/securaCV"
 SECURACV_ADDON_SLUG="d0491a67_privacy_witness_kernel"
 
 # ---------------------------------------------------------------------------
-# Terminal colours (gracefully degraded if not a tty)
+# Terminal colors (gracefully degraded if not a tty)
 # ---------------------------------------------------------------------------
 if [ -t 1 ]; then
   RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'

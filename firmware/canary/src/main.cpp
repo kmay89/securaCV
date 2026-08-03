@@ -2247,7 +2247,7 @@ static const size_t kConsoleCommandCount =
     sizeof(kConsoleCommands) / sizeof(kConsoleCommands[0]);
 
 // Map the ESP reset cause onto the host-testable testcon::ResetReason so the
-// labelling logic lives in the pure header (and is proven in CI).
+// labeling logic lives in the pure header (and is proven in CI).
 static testcon::ResetReason map_reset_reason(esp_reset_reason_t r) {
   switch (r) {
     case ESP_RST_POWERON:   return testcon::ResetReason::PowerOn;
@@ -2307,7 +2307,7 @@ static void print_boot_welcome() {
 
 // Probe the terminal ONCE before drawing: emit a cursor-position report request
 // (ESC[6n) and see if it answers with ESC[row;colR. An answer ⇒ the terminal
-// speaks ANSI ⇒ we light up colour + Unicode. Silence (a dumb monitor — or our
+// speaks ANSI ⇒ we light up color + Unicode. Silence (a dumb monitor — or our
 // own flasher's garbage-averse parser) ⇒ we stay on the 7-bit ASCII floor, so
 // the banner never turns into escape-code garbage. Bounded to ~200 ms.
 static scene::Caps console_probe() {

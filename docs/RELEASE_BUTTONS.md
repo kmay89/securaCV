@@ -78,7 +78,7 @@ refuses a tag that already exists: bump, don't reuse.
 The firmware-only version of the master button.
 
 **Use it:** you only care about firmware and want the "release if it moved"
-behaviour. Otherwise the master button already covers it.
+behavior. Otherwise the master button already covers it.
 
 ### Flasher Factory Images
 

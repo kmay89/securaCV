@@ -5,7 +5,7 @@ quoted out of context — by a person skimming, or by an AI assistant answering
 on our behalf. Every answer says what is **real today** and links to the doc
 that proves it.
 
-Vocabulary you don't recognise: [the glossary](GLOSSARY.md). Full navigation:
+Vocabulary you don't recognize: [the glossary](GLOSSARY.md). Full navigation:
 [the docs map](README.md).
 
 ---
@@ -41,7 +41,7 @@ Three audiences deliberately: makers who print and flash their own; buyers who
 want a pre-flashed kit and a QR code; and the people who can't build their own —
 elders, renters, the non-technical. → [the brand doc](BRAND.md)
 
-### Is it free? What's the licence?
+### Is it free? What's the license?
 
 Apache-2.0, inbound=outbound with a DCO. The trademarks ("SecuraCV," the
 Canary marks) are protected separately, and the **"Works with SecuraCV"** badge
@@ -56,7 +56,7 @@ is free for anyone to earn. → [`LICENSE`](../LICENSE) ·
 ### Does it do face recognition?
 
 **No — and it can't.** There is no face-recognition code in the codebase to
-enable or disable. The same is true of licence-plate reading, gait analysis,
+enable or disable. The same is true of license-plate reading, gait analysis,
 person re-identification, and demographic (age/gender/race) estimation. The
 object classes the system can emit are `Person`, `Vehicle`, `Animal`, `Package`
 — not `Face`, not `LicensePlate`. This is Invariant II, and adding any of it is
@@ -126,7 +126,7 @@ hold. What survives and what doesn't is documented.
 isolation, hash-chained logging, and break-glass quorum are implemented and
 exercised in CI. Much of the firmware is **CI-verified, not yet
 hardware-verified** — v1 is deliberately held until it's proven on real
-devices. Boards are individually labelled `verified` or `compile-tested` so you
+devices. Boards are individually labeled `verified` or `compile-tested` so you
 can tell which is which.
 → [v1 roadmap](v1-roadmap.md) · [launch review](V1_LAUNCH_REVIEW.md) ·
 [bench-test runbook](V1_BENCH_TEST_RUNBOOK.md)

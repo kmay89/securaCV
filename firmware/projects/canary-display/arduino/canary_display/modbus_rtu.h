@@ -13,7 +13,7 @@
 // first), also per spec. Nothing here blocks, allocates, or logs.
 //
 // CRC-16/MODBUS: poly 0xA001 (reflected 0x8005), init 0xFFFF, no final xor. Its
-// catalogued check value — CRC of the ASCII "123456789" — is 0x4B37, which the
+// catalogd check value — CRC of the ASCII "123456789" — is 0x4B37, which the
 // host test pins as an independent known-answer anchor.
 
 #ifndef CANARY_IO_MODBUS_RTU_H

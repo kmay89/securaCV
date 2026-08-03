@@ -2,7 +2,7 @@
 //
 // The estimate card in the enclosure lab splits into MEASURED (filament mass /
 // length / cost, from the STL's own solid volume + the repo's documented
-// density) and MODELLED (time / energy, a transparent physical model). This
+// density) and MODELED (time / energy, a transparent physical model). This
 // test pins the measured half against ground truth the repo already states —
 // the README §Engineering & materials mass budget ("WAP compact ≈ 12 g/pair …
 // PETG at 1.27 g/cm³") — so the headline numbers stay checkable, not asserted.

@@ -9,7 +9,7 @@ const assert = require("node:assert");
 
 const mod = () => import("../assets/wifi-memory.js");
 
-// A localStorage-shaped mock so the pure behaviour is testable without a browser.
+// A localStorage-shaped mock so the pure behavior is testable without a browser.
 function mockStorage() {
   const m = new Map();
   return {

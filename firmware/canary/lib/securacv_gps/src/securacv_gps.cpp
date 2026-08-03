@@ -318,7 +318,7 @@ void GpsManager::parseNmea(char* line) {
 // ════════════════════════════════════════════════════════════════════════════
 //
 // Mounted cameras sit still in a window. The L76K still emits ~0.3-0.7 m/s
-// of "speed" and a few metres of position scatter from multipath. Surfacing
+// of "speed" and a few meters of position scatter from multipath. Surfacing
 // that raw makes a stationary deployment look like it's drifting — kills
 // credibility for a witness device. The motion filter holds the published
 // position to a smoothed centroid while we're at rest, and only releases it

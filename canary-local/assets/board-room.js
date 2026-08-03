@@ -33,7 +33,7 @@ const SVGNS = "http://www.w3.org/2000/svg";
 
 // ── pure helpers (exported for tests/boardroom.test.js) ─────────────────────
 
-// pinout rows → flag specs: one flag per anchored pad, labelled by the pin
+// pinout rows → flag specs: one flag per anchored pad, labeled by the pin
 // token that pad carries ("D6 / D7" with two anchors → a "D6" and a "D7" flag).
 export function flagSpecs(board) {
   const flags = [];
@@ -128,7 +128,7 @@ function tube(r, h, y0 = 0, seg = 26) {
   }
   return m;
 }
-// cylinder, axis X, x∈[x0,x0+len], centred at (y,z)=(cy,0)
+// cylinder, axis X, x∈[x0,x0+len], centered at (y,z)=(cy,0)
 function tubeX(r, len, x0, cy, seg = 20) {
   const m = new MB(), x1 = x0 + len;
   const ca = m.v([x1, cy, 0], [1, 0, 0]), cb = m.v([x0, cy, 0], [-1, 0, 0]);

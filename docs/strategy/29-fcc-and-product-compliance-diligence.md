@@ -132,7 +132,7 @@ US-only sales need neither, and applying an unearned CE mark is its own offense.
 
 | Concern | Position |
 |---|---|
-| **Marking legibility** | Labels must be permanent and legible to the naked eye. Printed-in text is permanent by definition; for FDM keep it ≥4 mm cap height at 0.4 mm line width with a filament colour swap, or recess a pocket for a laser-printed polyester label. **E-label + box label is less work and looks better.** |
+| **Marking legibility** | Labels must be permanent and legible to the naked eye. Printed-in text is permanent by definition; for FDM keep it ≥4 mm cap height at 0.4 mm line width with a filament color swap, or recess a pocket for a laser-printed polyester label. **E-label + box label is less work and looks better.** |
 | **Flammability** | PETG is typically **UL 94 HB**, not V-0. No federal rule forces V-0 on a 5 V USB limited-power device and the real fire risk there is low — but HB is the answer that fails a retailer safety questionnaire, a UL/ETL listing, or an insurer's underwriting. Flame-retardant V-0 PETG filaments exist if that day comes. |
 | **Heat** | PETG's Tg is ~80 °C. Dashboards and south-facing windows will sag it. A warranty problem, not a legal one — **unless there is a lithium cell inside**, which is the combination to avoid. |
 | **Skin / children** | Mechanically fine, but a children's product triggers CPSIA lead and phthalate limits, which are **third-party lab tested, not self-declared**. See §8. |
@@ -304,7 +304,7 @@ It is not legal advice, is not a substitute for a test lab or an attorney, and
 does not certify anything. Every rule citation is checkable at the linked source
 and should be checked before money moves. The FCC positions here are the
 mainstream reading of the cited sections; the *application* to a specific SKU is
-exactly the judgement a lab and a lawyer are paid for.
+exactly the judgment a lab and a lawyer are paid for.
 
 **Two scope limits worth stating plainly, because both are easy to over-read:**
 

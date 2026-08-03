@@ -384,7 +384,7 @@ function paint() {
 
 function paintTrace(trace, snap, c) {
   // Newest transitions first; show ON states (beeps) as bars, gold when the
-  // beep was alarm-band (tone_x100 ≥ the gate), grey when it wasn't.
+  // beep was alarm-band (tone_x100 ≥ the gate), gray when it wasn't.
   const beeps = (snap.transitions || []).filter((t) => !t.is_on); // OFF-entry carries the prev ON (beep) stats
   trace.innerHTML = "";
   if (!beeps.length) {

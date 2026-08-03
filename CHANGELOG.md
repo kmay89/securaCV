@@ -89,7 +89,7 @@ OTA product so a bedroom glass can never cross-grade into a wall dashboard.
 The honest night light the nightstand line specified is built, on the 7" glass
 and on the small portrait displays that live in hallways — where the screen
 itself *is* the lamp. You summon it, it times out, and it never comes back on
-its own after a reboot. Its light is a decorative scene, never a state colour,
+its own after a reboot. Its light is a decorative scene, never a state color,
 so it cannot say "safe" by glowing — and the instant anything needs attention
 it hands the glass back and stays out until you ask again. The across-the-room
 beacon is never part of the lamp: dark still means all is well.
@@ -104,7 +104,7 @@ lockstep.
 Also: the BOOT button finally does something on the boards without a touch
 panel (tap to peek, double-press for the light, hold to acknowledge); the hub
 weather feed can carry tomorrow's forecast and weather advisories, shown but
-never sounded; and the colour engine gained a Rainbow scene.
+never sounded; and the color engine gained a Rainbow scene.
 
 
 ## [2.4.2] - 2026-07-29
@@ -121,7 +121,7 @@ seconds, warned away by a deliberately non-blocking build loop. Each display
 row now uninstalls other core versions and asserts it got the one it asked
 for, and the fix was proven on the dev channel (a real watch factory image)
 before this version was cut. Nothing on the device changed: same 2.4.1
-firmware behaviour, now actually built and published for every board.
+firmware behavior, now actually built and published for every board.
 
 ## [2.4.1] - 2026-07-28
 
@@ -605,7 +605,7 @@ someone went looking.
   only — Waveshare's wiki stays canonical and linked) from their pages by a
   new parser/refresher `canary-local/tools/gen_board_facts.py`.
 - **It can't go stale.** A weekly (+ on-demand) freshness loop
-  (`.github/workflows/board-facts-freshness.yml`, modelled on the
+  (`.github/workflows/board-facts-freshness.yml`, modeled on the
   Home-Assistant one) re-pulls each vendor page and opens a PR when any fact
   moves. Self-healing: a board's facts advance only on a clean fetch+parse; a
   403 / dead feed / reshaped page keeps the last good snapshot verbatim, and
@@ -673,10 +673,10 @@ someone went looking.
   and the preset→`FusionConfig`→engine pipeline. 77 checks green under
   `-Wall -Wextra -Werror`, wired into the existing host-tests job.
 - **One brain, three cost tiers, five presets.** Lite (C3, PIR+RF+BLE+light —
-  honestly labelled as evadable by a slow device-free intruder), Standard
+  honestly labeled as evadable by a slow device-free intruder), Standard
   (C6+MR60, +radar+CSI — the front-door recommendation), Heavy (dual-board,
   +contact+tamper+vision — the rigged demo). Presets (`door`/`window`/`hallway`/
-  `mailbox-lite`/`perimeter-demo`) are pure config data; behaviour never forks
+  `mailbox-lite`/`perimeter-demo`) are pure config data; behavior never forks
   by preset, only the numbers do. Every channel is compile-time selectable and
   runtime-weightable — fully modular.
 - Board pin maps (`xiao-esp32c6-sentinel`, `xiao-esp32c3-sentinel-lite`), build
@@ -1092,7 +1092,7 @@ someone went looking.
 - **`senselab.html` — the MR60BHA2 placement + pipeline bench.** The radar
   accepts no configuration commands (verified against the vendor library
   and both ESPHome components), so the only knobs that exist are placement
-  and host-side judgement — the Lab stages exactly that: drag a person
+  and host-side judgment — the Lab stages exactly that: drag a person
   through top-down/side views against the real 80°×80° sector, the live
   CS_* range bands and the 1.5 m vitals envelope, with a quality meter
   grounded in the vital-sign radar literature (U-curve optimum ≈ 0.7 m,
@@ -1326,7 +1326,7 @@ someone went looking.
 - **Break-glass console gets a four-step tracker, an up-front "what
   happens when you break the glass" reassurance panel, and a granted state
   that explains the receipt.** Each step carries a one-sentence simple
-  explanation plus a labelled Technical line; quorum-reached and unseal
+  explanation plus a labeled Technical line; quorum-reached and unseal
   outcomes now say what was verified and that the decision (granted or
   denied) was itself recorded as a signed receipt. Trustee share-link page
   copy clarified likewise. Console behavior, endpoints, and the single
@@ -2799,7 +2799,7 @@ below — but nothing documented is allowed to be aspirational at the v1 tag.
   - **BLE presence adapter** (`adapter-ble-presence`): turns ESPresense-style room-presence MQTT
     feeds into coarse presence claims, deliberately discarding device identity.
   - **Meshtastic LoRa-mesh adapter** (`adapter-meshtastic`): turns Meshtastic Detection Sensor
-    Module nodes (PIR/contact/acoustic on a GPIO, alerting over LoRa) into kilometre-scale,
+    Module nodes (PIR/contact/acoustic on a GPIO, alerting over LoRa) into kilometer-scale,
     off-grid witness sources via a gateway node's MQTT JSON uplink. Node ids are local routing
     keys only; positions, precise timestamps, RSSI/SNR, and alert text are never retained
     (export-scrub asserted in `tests/adapter_meshtastic.rs`). Inbound only; the outbound and

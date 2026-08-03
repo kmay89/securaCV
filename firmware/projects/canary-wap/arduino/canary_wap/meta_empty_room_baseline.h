@@ -23,7 +23,7 @@
  *     in the integration layer; pairing fires it on PAIRED.
  *
  * Privacy class: P0. Events carry:
- *   • state_name = "calibrated" | "cancelled" | "failed"
+ *   • state_name = "calibrated" | "canceled" | "failed"
  *   • bundled_count = number of windows accumulated
  * No feature bytes leave the device through the event chokepoint —
  * callers read the int8[32] mean via the getter.
@@ -64,7 +64,7 @@ bool meta_empty_room_baseline_start(uint32_t duration_ms);
 
 /**
  * Cancel an in-progress calibration. Wipes accumulator state and
- * emits a "cancelled" event. Idempotent.
+ * emits a "canceled" event. Idempotent.
  */
 void meta_empty_room_baseline_cancel(void);
 

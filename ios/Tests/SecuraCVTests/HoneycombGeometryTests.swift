@@ -36,7 +36,7 @@ final class HoneycombGeometryTests: XCTestCase {
                 let dx = centers[i].0 - centers[j].0
                 let dy = centers[i].1 - centers[j].1
                 let distance = (dx * dx + dy * dy).squareRoot()
-                // Hex packing: nearest neighbours sit exactly one pitch
+                // Hex packing: nearest neighbors sit exactly one pitch
                 // apart. Tolerance is a float-noise allowance (1 µpoint),
                 // not a design allowance — cells still provably can't touch.
                 XCTAssertGreaterThanOrEqual(distance, pitch - 1e-6,

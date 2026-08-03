@@ -167,7 +167,7 @@ ramp to drive. The boot banner says this out loud so nobody debugs a missing dim
   Warn — or a link dies — the lamp yields the glass back to the truth and stays out until
   someone summons it again. A lamp that silently resumed over an alarm the user just dealt
   with would be exactly the dishonesty §4 was written to prevent.
-- **Never a state signal.** Its light is a look-engine *scene*, never a semantic colour, so
+- **Never a state signal.** Its light is a look-engine *scene*, never a semantic color, so
   it cannot say "safe" by glowing. The WS2812 beacon is **not part of the lamp** on any
   board: that channel stays a pure attention signal, dark when all is well.
 - **"Lantern hours"** (an auto schedule through quiet hours — the hallway-light use case)
@@ -271,7 +271,7 @@ everything else on these boards):
   **no emulated link at all** rather than one that lands on the generic gallery. (Fixing this
   properly also fixed two older overclaims: `dash-modes` and `nightstand-c6` had been deep-linking
   `fleet.html#<their own id>` for ids the emulator registry never knew. They now point at the
-  sibling twin that genuinely shares their glass, labelled as a sibling and not as "1:1".) The
+  sibling twin that genuinely shares their glass, labeled as a sibling and not as "1:1".) The
   emulator's Arduino shim did gain the GPIO surface the new BOOT-button code needs, with
   `emu_button()` for JS to push the level in — so the twin can drive the new gestures the moment
   a build exists.

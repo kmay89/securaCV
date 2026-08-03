@@ -111,7 +111,7 @@ def options_satisfied(desired: dict, current: dict) -> bool:
     """True when every desired option already holds the desired value (shallow).
 
     Used to make setting add-on options idempotent: on a re-run we skip the
-    write rather than stomping options the user may have since customised.
+    write rather than stomping options the user may have since customized.
     """
     return all(current.get(k) == v for k, v in desired.items())
 

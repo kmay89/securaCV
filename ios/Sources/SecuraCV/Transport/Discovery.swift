@@ -37,7 +37,7 @@ final class Discovery: ObservableObject {
             Task { @MainActor in
                 switch state {
                 case .ready: self?.isBrowsing = true
-                case .failed, .cancelled: self?.isBrowsing = false
+                case .failed, .canceled: self?.isBrowsing = false
                 default: break
                 }
             }

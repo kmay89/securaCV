@@ -89,7 +89,7 @@ RESTART = re.compile(r"\b(?:ESP\.restart|esp_restart)\s*\(")
 # rather than a mechanism (does it have this exact include line?): the emulator
 # reaches the same header transitively through wifi_mgr.h, and demanding a
 # redundant include there would mean editing a file the committed wasm `dist/`
-# artifacts are built from, for no behavioural gain. If the header ever stopped
+# artifacts are built from, for no behavioral gain. If the header ever stopped
 # being reachable, that is a compile error, which needs no lint.
 POLICY_USE = re.compile(
     r'#include\s+"(?:network/)?wifi_join_policy\.h"'

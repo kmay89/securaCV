@@ -106,7 +106,7 @@ Severity ladder `ok < notice < warn < alert < tamper` (collapsed from the HA
 component's) with the **timeline-card palette** so a state is the same color
 on the glass and in the app: green `#43a047` ok/verified, amber `#fb8c00`
 attention/stale, red `#e53935` alert/tamper/offline/failed, blue `#03a9f4`
-signed-but-unverified, grey muted. Trust badges: `✓ verified` (earned only),
+signed-but-unverified, gray muted. Trust badges: `✓ verified` (earned only),
 `S signed`, `– unsigned`, `X failed` (loud).
 
 Liveness: `online → stale (3 min silent, amber) → lost (10 min, red, treated
