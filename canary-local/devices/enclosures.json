@@ -6702,8 +6702,8 @@
       },
       {
        "name": "vent_tip",
-       "default": "0.28",
-       "comment": "tip/base ratio — the ONE brand constant; keep"
+       "default": "0.72",
+       "comment": "EGG, not feather — the hatchery mark. The profile"
       },
       {
        "name": "vent_pitch_x",
@@ -6999,8 +6999,8 @@
       },
       {
        "name": "gill_n",
-       "default": "7",
-       "comment": "straight \"gill\" vents per side (±x) wall — the sides"
+       "default": "0",
+       "comment": "SIDE GILLS OFF — they printed ugly on the first case"
       },
       {
        "name": "gill_y0",

@@ -426,8 +426,27 @@ vent_slot_w = 5.2;       // feather base width — the grille is the PLUMAGE
                          // corners to shed vortices or collect dust lines
 vent_slot_l = 7.2;       // feather length (point-up: sheds drips on a
                          // vertical face; see the lib header for limits)
-vent_tip    = 0.28;      // tip/base ratio — the ONE brand constant; keep
-                         // it default so every Canary wears the same mark
+vent_tip    = 0.72;      // EGG, not feather — the hatchery mark. The profile
+                         // is the same primitive either way (a hull of two
+                         // circles, wide end down); the ratio is what decides
+                         // whether it reads as a teardrop with a point or an
+                         // egg with a rounded crown. 0.28 was the feather;
+                         // 0.58 still reads as a pear, 0.72 as an egg — that
+                         // was judged off a render of all three side by side,
+                         // at $fn 96, because at the preview's default facet
+                         // count every one of them looks like a polygon.
+                         //
+                         // ⚠️ THIS IS THE LINE-WIDE BRAND CONSTANT. The comment
+                         // it replaces said "keep it default so every Canary
+                         // wears the same mark", and that is still true — the
+                         // 7" now wears an egg while every other case in the
+                         // catalog still wears a feather. Either the rest of
+                         // the line follows, or the line is deliberately mixed.
+                         // Flagged rather than quietly diverged.
+                         //
+                         // Still self-supporting: the crown is a circle, so the
+                         // top of the hole is an arch, not a bridge — the same
+                         // reason the feather's point was safe.
 vent_pitch_x = 7.6;      // column pitch
 vent_pitch_y = 8.0;      // row pitch
 vent_top = true;         // EXHAUST — slots through the top (+Y) wall
@@ -635,7 +654,13 @@ sd_l  = 40.0;   // length along the slide direction
 // a cost of 12% of the side vent area (3.46 -> 3.02 cm2 across both walls).
 // The back grille and the bottom-intake/top-exhaust path are untouched, and
 // the row is re-centred (gill_y0) so both ends clear their rib equally.
-gill_n  = 7;         // straight "gill" vents per side (±x) wall — the sides
+gill_n  = 0;         // SIDE GILLS OFF — they printed ugly on the first case
+                     // and the case is not short of air: the convection path
+                     // is bottom-wall intake -> top-wall exhaust, and the back
+                     // grille carries the rest. The PORTRAIT dock keys are
+                     // their own slots "past the end of the gill row", so they
+                     // survive this untouched — verified, not assumed.
+                     // Was 7. Set it back if a build needs the side area.
 gill_y0 = -33.0;     // carry vents only; SD access is through the back plate
 gill_w = 2.4;  gill_l = 9.0;  gill_rake = 0;    // rake 0: vertical slots print
                      // cleanest; the raked look read as slashes and bought
@@ -1389,8 +1414,16 @@ assert(glass_edge_t > 0 && glass_edge_t < glass_t,
        "frame: glass_edge_t is the panel's bare-glass border — it must be thinner than the full module stack (glass_t) and non-zero");
 assert(vent_pitch_x - vent_slot_w >= 2.39 && vent_pitch_y - vent_slot_l >= 0.79,
        "grille: feather webs too thin — grow the pitches or shrink the feather");
-assert(vent_tip > 0.15 && vent_tip < 0.6,
-       "grille: vent_tip is the brand constant — a tip outside 0.15..0.6 is not the mark");
+// The band moved with the mark. 0.15..0.6 described a FEATHER — below 0.15 the
+// crown closes to a needle that will not print, above 0.6 the taper stops
+// reading as a point. The egg lives above that, so the band is now stated per
+// motif rather than as one number that quietly means "feather".
+assert(vent_tip > 0.15 && vent_tip < 0.85,
+       str("grille: vent_tip ", vent_tip, " is outside 0.15..0.85. Below 0.15 ",
+           "the crown closes to a needle; above 0.85 the shape is a stadium ",
+           "with no taper at all and is no longer a mark. Feather territory is ",
+           "~0.28, egg ~0.72 — pick one deliberately, it is the brand constant ",
+           "and every other case in the catalog still wears the feather."));
 stamp_half = stamp_size*0.9 + stamp_size*0.39 + 0.6;   // text block half-height
 assert(!stamp_show || (stamp_depth < back_t - 1.5
        && stamp_dy - stamp_half
