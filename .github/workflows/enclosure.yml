@@ -118,12 +118,39 @@ jobs:
     # NOTHING was dropped to fit the clock. All 21 gates run, the inverted
     # ones keep their empty/solid semantics, and the self-test that proves a
     # broken render is rejected still runs as its own group.
-    timeout-minutes: 45
+    # PER-GROUP BUDGETS, sized from measurement rather than one number for
+    # everything. Actuals from the run that forced this (all green except the
+    # two that ran out of clock):
+    #
+    #   tpu-selftest  0.4    dock     9.9    ports          15.6
+    #   tpu           0.6    dock-p  11.0    battery-none   23.6
+    #   bezel         1.7    frame   11.3    battery-3000/10000  8 gates
+    #
+    # battery-none did 5 gates in 23.6 min = 4.71 min/gate, so the 8-gate
+    # variants expect ~37.7 — against a 45 budget. That is 84% consumed by the
+    # expected case, and runner speed varies: the SAME render step took 14m43s
+    # on one runner and 20m11s on another tonight, +37%. 37.7 x 1.37 = 51.6.
+    # 45 was never a safe number; it passed once by luck of the draw.
+    #
+    # Budgets are roughly 2x measured. Small groups keep SMALL budgets on
+    # purpose — a 10-minute ceiling on a 1.7-minute group catches a hang in
+    # minutes, where one generous number for all of them would hide it for an
+    # hour. That is the point of per-group timeouts, not just headroom.
+    timeout-minutes: ${{ matrix.minutes }}
     strategy:
       fail-fast: false
       matrix:
-        group: [bezel, frame, dock, dock-p, ports, tpu, tpu-selftest,
-                battery-none, battery-3000, battery-10000]
+        include:
+          - { group: tpu-selftest,  minutes: 10 }
+          - { group: tpu,           minutes: 10 }
+          - { group: bezel,         minutes: 10 }
+          - { group: dock,          minutes: 25 }
+          - { group: dock-p,        minutes: 25 }
+          - { group: frame,         minutes: 25 }
+          - { group: ports,         minutes: 35 }
+          - { group: battery-none,  minutes: 50 }
+          - { group: battery-3000,  minutes: 75 }
+          - { group: battery-10000, minutes: 75 }
     defaults:
       run:
         working-directory: docs/hardware/enclosure
