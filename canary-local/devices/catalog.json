@@ -861,8 +861,7 @@
     {
      "param": "panel_variant",
      "values": [
-      "lcd7",
-      "lcd7b"
+      "lcd7"
      ],
      "default": "lcd7",
      "audience": "user"

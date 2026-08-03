@@ -212,7 +212,12 @@ part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bez
 // `pv` multiplier at each point of use, which meant every new consumer had to
 // remember to apply it, and a board that differed by anything OTHER than a
 // half turn could not be expressed at all.
-panel_variant = "lcd7";   // ["lcd7","lcd7b"]
+// One id, because one board has been measured. The "lcd7b" option that used to
+// sit beside it was removed: it could not build — it hard-asserted on its own
+// port map and then blocked every later render in the session, so the dropdown
+// was offering a choice that only ever failed. See the registry's tail comment
+// for the two defects it carried and what to measure to add it back properly.
+panel_variant = "lcd7";   // ["lcd7"]
 PANEL   = panel(panel_variant);
 panel_ok = panel_check(PANEL) && panel_assert_printable(PANEL);
 

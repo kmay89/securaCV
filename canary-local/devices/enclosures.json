@@ -6507,8 +6507,7 @@
        "name": "panel_variant",
        "default": "lcd7",
        "enum": [
-        "lcd7",
-        "lcd7b"
+        "lcd7"
        ]
       },
       {

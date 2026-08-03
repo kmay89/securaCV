@@ -106,57 +106,54 @@ function panel_db() = [
       ["RESET",   "top",    12.5,  8.0,  4.0, 3.0, 0.0, "restart"] ],
     "" ],
 
-  // The -7B: same mechanical interface to the hundredth, COMPONENTS a half
-  // turn round — and it is the 1024x600 panel. That is the "two resolutions"
-  // case this registry exists to carry: identical outline, different pixels,
-  // and `res` is a separate field precisely so one can move without the other.
-  //
-  // ⚠️  OPEN QUESTION, recorded rather than resolved. These offsets are stated
-  //     EXACTLY as the previous code computed them, so this record reproduces
-  //     the behaviour that has been in use — m3 and microSD flip sign, the can
-  //     and active-area offsets do NOT. That combination is internally
-  //     inconsistent: if the module is seated a half turn round, its can offset
-  //     (core_dy) and active-area offset (aa_dy) sit on the other side of the
-  //     glass centre too, and they should flip with everything else.
-  //
-  //     Making the flip complete is a one-line change here — and it
-  //     immediately trips the ledge assert, because ledge_top (6.0) exceeds
-  //     the 5.145 mm of border a flipped can leaves at the top. So either the
-  //     offsets genuinely do not flip (this record is right and the comment in
-  //     the case file overstates the rotation), or they do and THE CASE DOES
-  //     NOT FIT A -7B — the asymmetric ledge was sized for the native pose
-  //     only, and no one has held the two boards together to find out.
-  //
-  //     Not guessed either way. It needs one person, two boards and a caliper;
-  //     until then this reproduces shipped behaviour and says so out loud.
-  //
-  // ⚠️  SECOND GAP, found the same way: this record puts USB-C on the TOP
-  //     face, and the case cuts its only cable opening in the BOTTOM wall.
-  //     So a -7B in this case has no hole where its connector is. The
-  //     frame asserts on it rather than printing a case that cannot be
-  //     plugged in. Both gaps are the same shape — the -7B was handled by
-  //     flipping a couple of signs at the point of use, and everything
-  //     that flip did not reach stayed wrong and invisible until the port
-  //     map became data.
-  [ "lcd7b", "Waveshare ESP32-S3-Touch-LCD-7B", "drawing",
-    [192.96, 110.76, 4.0, 8.2, 1.2],
-    [154.88, 86.72, 1.02],                // NOT flipped — see the note above
-    [1024, 600],                          // the second resolution
-    [165.72, 97.60, -1.435],              // NOT flipped — see the note above
-    [165.72, 97.60, 1.6],
-    [5.0, 11.0, 6.9],
-    [126.20, 65.65, -1.5, -0.9],          // flipped, as the old pv did
-    [ ["USB-C",   "top",    0.0,   11.0, 9.0, 3.2, 1.4, "power and flashing"],
-      ["microSD", "back",  -35.65, 26.0, 15.0, 11.0, 0.0, "card slides toward -x"],
-      ["BOOT",    "bottom", 12.5,  8.0,  4.0, 3.0, 0.0, "hold at power-up to flash"],
-      ["RESET",   "bottom",-12.5,  8.0,  4.0, 3.0, 0.0, "restart"] ],
-    "lcd7" ],
 ];
-// A 1024x600 variant of this module exists. It is deliberately ABSENT rather
-// than guessed: nobody here has measured one, and a record is a claim that
-// somebody did. Add it by measuring one — glass, can, hole span, AA — and the
-// case, the gates and the views pick it up with no other edit. Until then a
-// case built for it would be a case built for a board we have never held.
+// ════════════════════════════════════════════════════════════════════════════
+//  THE -7B IS DELIBERATELY ABSENT. Read this before adding it back.
+// ════════════════════════════════════════════════════════════════════════════
+// There WAS a second record here, id "lcd7b", claiming a 1024x600 panel with
+// every component a half turn round. It was removed, and removing it is the
+// honest state: this file's own rule is that a record is a CLAIM SOMEBODY
+// MEASURED ONE, and nobody had. It was reverse-engineered from a drawing plus
+// the sign flips an older `pv` multiplier used to apply at each point of use.
+//
+// It was not inert while it sat here. `panel_variant` is a Customizer dropdown
+// and a user-facing catalog axis, so the row was SELECTABLE — and selecting it
+// could not produce geometry. It hard-asserted every time, then poisoned every
+// later render in that session until the knob was found and put back, which
+// reads to the operator as "the model broke when I changed something else
+// entirely". A choice that can only fail is worse than no choice.
+//
+// The two defects it carried, kept because they are what has to be resolved
+// before any -7B record is trustworthy:
+//
+//   1. AN INCOMPLETE FLIP. m3 and microSD flipped sign; the can offset
+//      (core_dy) and active-area offset (aa_dy) did not. That is internally
+//      inconsistent — a module seated a half turn round has its can and its
+//      active area on the other side of the glass centre too. Completing the
+//      flip is one line, and it immediately trips the ledge assert, because
+//      ledge_top (6.0) exceeds the 5.145 mm of border a flipped can leaves at
+//      the top. So EITHER the offsets genuinely do not flip, OR they do and
+//      THE CASE DOES NOT FIT A -7B AT ALL: the asymmetric ledge was sized for
+//      the native pose only. Nobody has held the two boards together.
+//
+//   2. THE PORT WALL. The record put USB-C on the TOP face while the case cuts
+//      its only cable opening in the BOTTOM wall — a case with no hole where
+//      its connector is. Both defects are the same shape: the -7B was once
+//      handled by flipping a couple of signs at the point of use, and
+//      everything the flip did not reach stayed wrong and invisible until the
+//      port map became data.
+//
+// TO ADD IT BACK, measure a board — glass, can, hole span, active area, and
+// every connector's FACE and offset — and add a record. The case, the gates
+// and the assembly views pick it up with no other edit, and `panel_variant`'s
+// enum in canary_s3_lcd7.scad gains the id. Do not re-derive one by flipping
+// signs; that is exactly what produced the version that had to be deleted.
+//
+// Naming, separately and still open: the physical 800x480 board in hand may
+// itself be the "-7B" in Waveshare's scheme — the owner distinguishes theirs
+// by having no microphone. The MEASUREMENTS in the lcd7 record are validated
+// by a print that fit; only the NAME is uncertain, so nothing about what gets
+// printed depends on settling it.
 
 // ── LOOKUP ──────────────────────────────────────────────────────────────────
 function panel_ids() = [for (p = panel_db()) p[P_ID]];
