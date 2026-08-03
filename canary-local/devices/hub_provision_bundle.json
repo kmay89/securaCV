@@ -58,7 +58,7 @@
       "A curated HA package/automation seeded into CONFIG/ that shells out to the runner on first HA start (HA Core can reach http://supervisor with its own token).",
       "A first-boot provisioner add-on the flasher pre-registers, which runs the bundle."
     ],
-    "note": "HAOS ignores boot-partition files it doesn't recognise, so a bundle that isn't auto-run is harmless \u2014 worst case is a normal onboarding, never a broken boot. The write side is hub_io::seed (the CONFIG/ tree, already used for Wi-Fi). True zero-touch (the hub running the bundle with no companion at all) stays `planned` until a supported HAOS boot hook is pinned on hardware; the companion-over-SSH path is the honest interim, and it too needs its first real-hardware run."
+    "note": "HAOS ignores boot-partition files it doesn't recognize, so a bundle that isn't auto-run is harmless \u2014 worst case is a normal onboarding, never a broken boot. The write side is hub_io::seed (the CONFIG/ tree, already used for Wi-Fi). True zero-touch (the hub running the bundle with no companion at all) stays `planned` until a supported HAOS boot hook is pinned on hardware; the companion-over-SSH path is the honest interim, and it too needs its first real-hardware run."
   },
   "meta": {
     "design": "docs/design/raspberry_pi_hub_flashing.md",

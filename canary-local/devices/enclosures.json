@@ -6852,7 +6852,13 @@
       {
        "name": "frame_boss_d",
        "default": "8.0"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Frame — BOOT/RESET button window",
+     "note": "",
+     "params": [
       {
        "name": "btn_w",
        "default": "25.0",
@@ -6872,7 +6878,13 @@
        "name": "btn_lbl_dx",
        "default": "9.0",
        "comment": "BOOT/RESET label centers, ± of the window center"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Frame — wall mounting (keyholes)",
+     "note": "",
+     "params": [
       {
        "name": "mount_keyholes",
        "default": "true",
@@ -6932,7 +6944,13 @@
        "name": "khm_mouth_c",
        "default": "0.8",
        "comment": "lead-in chamfer around each keyhole's mouth on the"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Frame — glass bonding ledge",
+     "note": "",
+     "params": [
       {
        "name": "adh_t",
        "default": "0.5",
@@ -6967,7 +6985,13 @@
        "name": "ledge_slope_n",
        "default": "20",
        "comment": "steps in the 45° back-slope. Each step overhangs by"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Frame — back-plate branding",
+     "note": "",
+     "params": [
       {
        "name": "brand_back",
        "default": "CANARY",
@@ -6982,10 +7006,16 @@
        "name": "brand_edge",
        "default": "SecuraCV Canary",
        "comment": "debossed on the visible bottom edge"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Frame — adhesive wall rails",
+     "note": "",
+     "params": [
       {
        "name": "adh_rails",
-       "default": "true"
+       "default": "false"
       },
       {
        "name": "adh_rail_dx",
@@ -7006,6 +7036,36 @@
        "name": "adh_mark_w",
        "default": "0.8",
        "comment": "outline moat width"
+      }
+     ]
+    },
+    {
+     "name": "Frame — the Canary mark",
+     "note": "",
+     "params": [
+      {
+       "name": "back_bird",
+       "default": "true"
+      },
+      {
+       "name": "bird_h",
+       "default": "32.0",
+       "comment": "mark height. The clear middle runs about x ±21 between"
+      },
+      {
+       "name": "bird_dx",
+       "default": "0.0",
+       "comment": "centered: the lockup is below it, the rating block is"
+      },
+      {
+       "name": "bird_dy",
+       "default": "6.0",
+       "comment": "upper-right, the QR left — this is the one empty field"
+      },
+      {
+       "name": "bird_rib",
+       "default": "1.2",
+       "comment": "stroke width. WIDER than the coupon's 0.7 test rib on"
       },
       {
        "name": "sd_dx",
@@ -7015,7 +7075,13 @@
       {
        "name": "sd_dy",
        "default": "pnl_port_v(PANEL, \"microSD\")"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Frame — microSD window",
+     "note": "",
+     "params": [
       {
        "name": "sd_w",
        "default": "18.0",
@@ -7025,7 +7091,13 @@
        "name": "sd_l",
        "default": "40.0",
        "comment": "length along the slide direction"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Frame — side gills & dock keys",
+     "note": "",
+     "params": [
       {
        "name": "gill_n",
        "default": "0",
@@ -7059,7 +7131,13 @@
        "name": "dock_key_bx",
        "default": "84.0",
        "comment": "landscape slots' ±dx on the bottom wall (on the pads)"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Frame — label rendering",
+     "note": "",
+     "params": [
       {
        "name": "label_depth",
        "default": "0.5"
@@ -7141,7 +7219,7 @@
       },
       {
        "name": "accent_groups",
-       "default": "[\"mark\"]"
+       "default": "[\"mark\", \"bird\"]"
       },
       {
        "name": "bezel_color",
@@ -7228,7 +7306,13 @@
        "name": "side_dy",
        "default": "0.0",
        "comment": "its center along that wall, + = toward the top edge"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Port — labels & rating block",
+     "note": "",
+     "params": [
       {
        "name": "port_labels",
        "default": "true"
@@ -7246,7 +7330,13 @@
       {
        "name": "rating_stamp",
        "default": "true"
-      },
+      }
+     ]
+    },
+    {
+     "name": "TPU fitments (grommet, plugs, SD cover)",
+     "note": "",
+     "params": [
       {
        "name": "tpu_squeeze",
        "default": "0.2",
@@ -7309,7 +7399,13 @@
        "name": "port_teth_cb",
        "default": "1.4",
        "comment": "counterbore depth at the anchor's OUTER mouth. The"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Port — cable scoop",
+     "note": "",
+     "params": [
       {
        "name": "port_scoop",
        "default": "true"
@@ -7328,7 +7424,13 @@
        "name": "port_scoop_d",
        "default": "7.0",
        "comment": "dish depth (0.8 mm), sqrt(r^2 - d^2) its footprint"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Edge brand & bottom intake vents",
+     "note": "",
+     "params": [
       {
        "name": "edge_text_l",
        "default": "SECURACV",
@@ -7842,6 +7944,10 @@
       {
        "name": "std_intake_x",
        "default": "(edge_vent_n - 1)/2*edge_vent_pitch + edge_vent_w/2"
+      },
+      {
+       "name": "bird_half_w",
+       "default": "back_bird ? bird_h*0.62 : 0"
       },
       {
        "name": "stamp_half",
@@ -8618,33 +8724,6 @@
      "name": "Quality",
      "note": "",
      "params": [
-      {
-       "name": "g_wing",
-       "default": "[[-30,12],[-13,24],[6,18],[24,-6],[9,-17],[-11,-11],[-24,0]]"
-      },
-      {
-       "name": "g_tailu",
-       "default": "[[23,3],[43,-17],[67,-43]]",
-       "comment": "tail edges, converging to a point"
-      },
-      {
-       "name": "g_taill",
-       "default": "[[12,-27],[39,-33],[67,-43]]"
-      },
-      {
-       "name": "g_span",
-       "default": "110",
-       "comment": "design-unit height the mark spans"
-      },
-      {
-       "name": "g_cx",
-       "default": "3.7",
-       "comment": "design-unit bbox center"
-      },
-      {
-       "name": "g_cy",
-       "default": "-0.5"
-      },
       {
        "name": "pocket_cx",
        "default": "-1",

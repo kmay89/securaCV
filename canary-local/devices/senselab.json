@@ -81,7 +81,7 @@
       }
     ],
     "bench": [
-      "DISTANCE float32 is assumed to be in METRES and scaled \u00d7100 to the centimetre integer the presence FSM consumes. If the module already reports centimetres, drop the scale in decode_distance_().",
+      "DISTANCE float32 is assumed to be in METERS and scaled \u00d7100 to the centimeter integer the presence FSM consumes. If the module already reports centimeters, drop the scale in decode_distance_().",
       "BREATH/HEART float32 are assumed to be already in BPM and rounded to the nearest integer for the vitals FSM's plausibility bands.",
       "A single UART frame carries ONE scalar. The MR60 sends presence, count, distance and vitals as separate frames, so this decoder AGGREGATES the latest value of each into every emitted Frame (see \"Aggregation\" below) \u2014 the FSMs expect a combined snapshot. Confirm the per-scalar frame cadence on the bench."
     ],
