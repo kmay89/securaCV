@@ -169,4 +169,18 @@ final class WristSnapshotTests: XCTestCase {
         WristCache.save(snapshot, to: defaults)
         XCTAssertEqual(WristCache.load(from: defaults), snapshot)
     }
+
+    func testThePhoneGlanceCacheSpeaksTheSameContract() throws {
+        let suite = "test-phone-glance-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        XCTAssertNil(PhoneGlanceCache.load(from: defaults))
+        let snapshot = WristSnapshot.sample(now: now)
+        PhoneGlanceCache.save(snapshot, to: defaults)
+        XCTAssertEqual(PhoneGlanceCache.load(from: defaults), snapshot)
+        // Two caches, two groups — never the same container (app groups
+        // don't sync iPhone↔Watch; sharing a name would only lie about it).
+        XCTAssertNotEqual(PhoneGlanceCache.appGroupID, WristCache.appGroupID)
+    }
 }

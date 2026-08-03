@@ -62,7 +62,18 @@
     .skinbtn { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-secondary); border-radius: 999px; padding: 5px 12px 5px 6px; font-size: 12.5px; cursor: pointer; }
     .skinbtn:hover { color: var(--text); }
     .skinbtn[aria-pressed="true"] { border-color: var(--brand); color: var(--text); box-shadow: 0 0 0 1px var(--brand); }
-    .skinbtn .sw { width: 26px; height: 16px; border-radius: 5px; border: 1px solid rgba(0,0,0,.15); background: var(--sw); flex: none; }
+    .skinbtn .sw { width: 26px; height: 16px; border-radius: 5px; border: 1px solid rgba(0,0,0,.15); flex: none; }
+    /* Each swatch is a real rule, not `background: var(--sw)` fed from an
+       inline style — WebKit (Safari, and the app webviews that embed this
+       page) drops a gradient passed through a custom property there, which
+       rendered every chip white. Values mirror the skin blocks above:
+       ground color / accent. */
+    .skinbtn[data-skin="midnight"] .sw { background: linear-gradient(135deg,#0A0E11 50%,#F4C544 50%); }
+    .skinbtn[data-skin="daylight"] .sw { background: linear-gradient(135deg,#F2F5F7 50%,#2563EB 50%); }
+    .skinbtn[data-skin="noir"] .sw { background: linear-gradient(135deg,#0B0B0C 50%,#ECECEC 50%); }
+    .skinbtn[data-skin="sunset"] .sw { background: linear-gradient(135deg,#191021 50%,#FF9E64 50%); }
+    .skinbtn[data-skin="terminal"] .sw { background: linear-gradient(135deg,#050809 50%,#7DFBA0 50%); }
+    .skinbtn[data-skin="paper"] .sw { background: linear-gradient(135deg,#F4EFE6 50%,#B5892A 50%); }
 
     /* ---- syntax highlight tokens (dark code block) ---- */
     .codeblock { display: none; margin-top: 12px; background: #0b1220; border: 1px solid #1e2b3f; border-radius: 12px; padding: 12px 14px; overflow-x: auto; font-family: var(--mono); font-size: 12px; line-height: 1.6; color: #cdd6e6; white-space: pre; }
@@ -191,8 +202,13 @@
     .cp-btn { background: var(--brand); color: #fff; border: 0; border-radius: 10px; padding: 10px 18px; font-size: 13.5px; font-weight: 600; cursor: pointer; }
     .cp-btn:hover { background: var(--brand-dark); }
     .cp-btn.ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); }
+    .cp-btn.golive { background: #16a34a; animation: golivepulse 1.6s ease-in-out infinite; }
+    .cp-btn.golive:hover { background: #15803d; }
+    .cp-btn.golive:disabled { opacity: .7; cursor: default; animation: none; }
+    @keyframes golivepulse { 0%,100% { box-shadow: 0 0 0 0 rgba(22,163,74,.45); } 50% { box-shadow: 0 0 0 7px rgba(22,163,74,0); } }
     .cp-status { margin-top: 12px; font-family: var(--mono); font-size: 12.5px; color: var(--text-secondary); }
     .cp-status.ok { color: #15803d; } .cp-status.err { color: #b45309; }
+    .cp-status.found { color: #15803d; font-weight: 600; }
     .cp-status.scan::after { content: ""; display: inline-block; width: 9px; height: 9px; margin-left: 8px; border-radius: 50%; border: 2px solid var(--brand); border-top-color: transparent; vertical-align: middle; animation: cpspin .7s linear infinite; }
     @keyframes cpspin { to { transform: rotate(360deg); } }
     .cp-or { font-size: 12px; color: var(--text-muted); }
@@ -200,7 +216,7 @@
     .cp-devices .dv { display: inline-flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 12px; border: 1px solid var(--border); border-radius: 999px; padding: 5px 11px; background: var(--bg); }
     .cp-devices .dv .d { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; }
     .cp-devices .dv.off .d { background: var(--text-muted); } .cp-devices .dv.off { color: var(--text-muted); }
-    @media (prefers-reduced-motion: reduce) { .cp-status.scan::after { animation: none; } }
+    @media (prefers-reduced-motion: reduce) { .cp-status.scan::after { animation: none; } .cp-btn.golive { animation: none; } }
     .connect-panel details { margin-top: 12px; }
     .connect-panel summary { cursor: pointer; font-size: 13px; color: var(--brand); }
     .connect-panel details p { font-size: 13px; color: var(--text-secondary); margin-top: 8px; max-width: 70ch; }
@@ -358,12 +374,12 @@
       <p class="live-line" id="liveLine"><span class="live-dot demo" id="liveDot"></span><span id="liveText">Demo fleet — not connected to a kernel</span> · <a href="#connect">connect yours</a></p>
       <div class="skinbar" id="skinbar" role="group" aria-label="Screen skin">
         <span class="lbl">Skin</span>
-        <button class="skinbtn" type="button" data-skin="midnight" style="--sw:linear-gradient(135deg,#0A0E11 50%,#F4C544 50%)"><span class="sw"></span>Midnight</button>
-        <button class="skinbtn" type="button" data-skin="daylight" style="--sw:linear-gradient(135deg,#F2F5F7 50%,#2563EB 50%)"><span class="sw"></span>Daylight</button>
-        <button class="skinbtn" type="button" data-skin="noir" style="--sw:linear-gradient(135deg,#0B0B0C 50%,#ECECEC 50%)"><span class="sw"></span>Noir</button>
-        <button class="skinbtn" type="button" data-skin="sunset" style="--sw:linear-gradient(135deg,#191021 50%,#FF9E64 50%)"><span class="sw"></span>Sunset</button>
-        <button class="skinbtn" type="button" data-skin="terminal" style="--sw:linear-gradient(135deg,#050809 50%,#7DFBA0 50%)"><span class="sw"></span>Terminal</button>
-        <button class="skinbtn" type="button" data-skin="paper" style="--sw:linear-gradient(135deg,#F4EFE6 50%,#B5892A 50%)"><span class="sw"></span>Paper</button>
+        <button class="skinbtn" type="button" data-skin="midnight"><span class="sw"></span>Midnight</button>
+        <button class="skinbtn" type="button" data-skin="daylight"><span class="sw"></span>Daylight</button>
+        <button class="skinbtn" type="button" data-skin="noir"><span class="sw"></span>Noir</button>
+        <button class="skinbtn" type="button" data-skin="sunset"><span class="sw"></span>Sunset</button>
+        <button class="skinbtn" type="button" data-skin="terminal"><span class="sw"></span>Terminal</button>
+        <button class="skinbtn" type="button" data-skin="paper"><span class="sw"></span>Paper</button>
       </div>
     </section>
 
@@ -486,11 +502,12 @@
 
     <section class="connect-panel" id="connect" aria-label="Connect your fleet">
       <h2>Connect your fleet <span class="exp">experimental</span></h2>
-      <p class="cp-sub">This really fetches a kernel over HTTP and shows the Canaries it returns — in place of the demo fleet. Hit <b>Try a live demo kernel</b> to watch it work right here (a real fetch to a live endpoint), or point it at your own kernel's address to see your actual devices. A browser can't scan your LAN by itself, so you give it the address; it also tries <code>canary.local</code> on load.</p>
+      <p class="cp-sub">This really fetches a kernel over HTTP and shows the Canaries it returns — in place of the demo fleet. Hit <b>Try a live demo kernel</b> to watch it work right here (a real fetch to a live endpoint), or point it at your own kernel's address to see your actual devices. A browser can't scan your LAN by itself, so you give it the address — and it keeps watching the two well-known ones (<code>canary.local:8099</code>, then <code>canary.local</code> — a fresh Canary answers there with no hub at all), so when one shows up you get to flip the switch.</p>
       <div class="cp-row">
+        <button class="cp-btn golive" id="goLiveBtn" type="button" hidden>✨ Go live</button>
         <button class="cp-btn" id="liveDemoBtn" type="button">▶ Try a live demo kernel</button>
         <span class="cp-or">or point at your own</span>
-        <input id="kernelUrl" type="text" inputmode="url" spellcheck="false" value="http://canary.local:8099" aria-label="Kernel address">
+        <input id="kernelUrl" type="text" inputmode="url" spellcheck="false" value="http://canary.local" aria-label="Kernel address">
         <button class="cp-btn ghost" id="connectBtn" type="button">Connect</button>
         <button class="cp-btn ghost" id="demoBtn" type="button">Reset</button>
       </div>

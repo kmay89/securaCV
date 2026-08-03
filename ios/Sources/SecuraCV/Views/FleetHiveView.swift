@@ -122,7 +122,20 @@ struct AddCanarySheet: View {
                 let unpaired = store.discovery.found.filter { d in
                     !store.devices.devices.contains { $0.id == d.id }
                 }
-                if unpaired.isEmpty {
+                if store.discoveryConsent != true {
+                    Section {
+                        VStack(alignment: .leading, spacing: Theme.s) {
+                            Label("Discovery is off", systemImage: "antenna.radiowaves.left.and.right.slash")
+                                .font(.headline)
+                            Text("SecuraCV only looks for Canaries on your network after you say so. Enable discovery and any Canary on this Wi-Fi appears here by itself.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Button("Enable discovery") { store.setDiscoveryConsent(true) }
+                                .buttonStyle(.borderedProminent)
+                        }
+                        .padding(.vertical, Theme.xs)
+                    }
+                } else if unpaired.isEmpty {
                     Section {
                         VStack(alignment: .leading, spacing: Theme.s) {
                             Label("No new Canaries in sight", systemImage: "wifi.slash")

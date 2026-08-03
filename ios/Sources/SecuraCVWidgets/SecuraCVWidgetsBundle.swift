@@ -11,5 +11,6 @@ import WidgetKit
 struct SecuraCVWidgetsBundle: WidgetBundle {
     var body: some Widget {
         FleetLiveActivity()
+        PhoneFleetGlanceWidget()
     }
 }

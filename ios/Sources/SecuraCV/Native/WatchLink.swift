@@ -136,6 +136,13 @@ extension WatchLink: WCSessionDelegate {
             switch command {
             case WristSync.commandRefresh:
                 self.replyWithCurrentSnapshot(replyHandler)
+            case WristSync.commandMute:
+                if let id = message[WristSync.muteIDKey] as? String, !id.isEmpty {
+                    self.store?.mute(id)
+                }
+                // Answer with the post-mute snapshot so the wrist row updates
+                // in the same breath as the tap.
+                self.replyWithCurrentSnapshot(replyHandler)
             case WristSync.commandTestAlertPath:
                 // Run the test, THEN answer with the verdict-carrying
                 // snapshot: the reply IS this request's result, so the wrist
