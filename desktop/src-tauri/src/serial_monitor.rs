@@ -93,6 +93,12 @@ fn inspect_line(
     }
 }
 
+/// How long a freshly-connected board may say nothing before the console
+/// explains itself. Long enough that an ordinary boot (or a board mid-reset)
+/// isn't accused of being silent, short enough that nobody has decided their
+/// hardware is dead first.
+const SILENCE_SECS: u64 = 12;
+
 /// Try to (re)open the board's port, retrying until it appears or we're
 /// cancelled. Returns None only when cancelled while waiting — a USB-CDC board
 /// takes a moment to re-enumerate after a reboot, so we wait it out rather than
@@ -112,9 +118,39 @@ fn connect(
         if let Some(name) = matching_port(preferred_port, vid, pid) {
             match serialport::new(&name, baud)
                 .timeout(Duration::from_millis(100))
+                // Assert BOTH modem lines, deliberately, and assert them the
+                // same.
+                //
+                // DTR is not optional on the ESP32-S3 boards: common.ini builds
+                // them with ARDUINO_USB_CDC_ON_BOOT=1, so `Serial` is the chip's
+                // own USB peripheral rather than a bridge, and Arduino's USBCDC
+                // treats "host asserted DTR" as "a terminal is attached". Until
+                // it sees that, the board DISCARDS what it prints. A monitor
+                // that opens the port without raising DTR therefore connects
+                // successfully and then shows a blank console forever — which is
+                // exactly what `screen` and `pio device monitor` don't do,
+                // because they raise it.
+                //
+                // serialport-rs leaves this to chance: `dtr_on_open` defaults to
+                // None, and its own docs note only Linux raises DTR by itself.
+                // So on macOS this was undefined behaviour depending on the
+                // driver, which is a poor thing to hang a diagnostic tool on.
+                //
+                // Matching RTS to DTR is what keeps this safe on the boards that
+                // DO use a USB-UART bridge (the C3 DevKits). There the two lines
+                // drive EN and IO0 through the standard two-transistor circuit,
+                // whose whole design intent is that a reset only fires when the
+                // lines DIFFER — so terminals that raise both leave the board
+                // running. Raising one alone is what would reset it or strand it
+                // in the bootloader.
+                .dtr_on_open(true)
                 .open()
             {
-                Ok(port) => return Some((name, port)),
+                Ok(port) => {
+                    let mut port = port;
+                    let _ = port.write_request_to_send(true);
+                    return Some((name, port));
+                }
                 Err(error) => {
                     // The retry loop is right for a port that's about to
                     // re-enumerate, but on Linux two failures deserve words
@@ -181,6 +217,13 @@ fn monitor_thread(
         // Re-request the manifest on each (re)connect; a rebooted board reprints it.
         let mut next_manifest_request = Instant::now() + Duration::from_millis(700);
         line_buffer.clear();
+        // Silence watch, armed per connection: a board that has said nothing at
+        // all by the deadline gets one explanatory line (see below). Reset on
+        // every reconnect, because a board that came back deserves a fresh
+        // chance to be quiet for its own reasons.
+        let mut heard_anything = false;
+        let mut silence_noted = false;
+        let silence_deadline = Instant::now() + Duration::from_secs(SILENCE_SECS);
 
         // Inner loop: pump the live port until it errors (→ reconnect) or we're
         // cancelled (→ exit).
@@ -205,8 +248,31 @@ fn monitor_thread(
                 next_manifest_request = Instant::now() + Duration::from_secs(3);
             }
 
+            // A console that connects and then shows nothing is the worst shape
+            // a diagnostic tool can take: it looks like the board is dead, when
+            // usually the board is fine and the LINK is the problem. Say so
+            // once, with the things actually worth trying, rather than leaving
+            // someone staring at an empty pane deciding their hardware is
+            // broken. Once only — a monitor that nags every ten seconds gets
+            // ignored, taking the message that mattered with it.
+            if !heard_anything && !silence_noted && Instant::now() >= silence_deadline {
+                silence_noted = true;
+                let _ = app.emit(
+                    "serial:status",
+                    format!(
+                        "Connected to {name}, but the board hasn't said anything for \
+                         {SILENCE_SECS}s. That usually isn't a dead board: it may simply not \
+                         be printing (press EN/RESET to watch it boot), it may be running \
+                         firmware built without a serial console, or another program — a \
+                         second copy of this app, screen, or PlatformIO — may be holding \
+                         the port. Try the reset button first."
+                    ),
+                );
+            }
+
             match port.read(&mut read_buffer) {
                 Ok(count) if count > 0 => {
+                    heard_anything = true;
                     let text = String::from_utf8_lossy(&read_buffer[..count]);
                     let _ = app.emit("serial:log", text.to_string());
                     for character in text.chars() {
