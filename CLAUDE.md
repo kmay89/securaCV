@@ -46,6 +46,27 @@
     `initialism`, `aria-labelledby`. The linter's `ALLOW` list asserts it.
   - See [`AGENTS.md`](AGENTS.md) rule 3b, the canonical statement.
 
+## Generated files — there are NINETEEN, not a handful
+
+Committed generators whose output CI regenerates and byte-diffs. Editing a
+source without re-running the right one leaves a gate to find it, and the
+failure is often nowhere near the edit: a one-word spelling fix in
+`canary-local/tools/hub_seed_apply.py` changed its bytes, which broke a
+**sha256 pin** cross-checked by a Rust unit test in `desktop/hub-io`
+(`test (hub-io)` went red, three layers away from the change).
+
+Don't try to remember the list — derive it:
+
+```sh
+grep -rhoE "python3 [a-zA-Z0-9_/.-]*gen_[a-z_]+\.py|node [a-zA-Z0-9_/.-]*make-[a-z-]+\.mjs" \
+  .github/workflows/*.yml | sort -u
+```
+
+The ones that bite most often: `gen_stamp.py` and `gen_builder_manifest.py`
+(any enclosure `.scad`), `gen_enclosures.py` (catalog JSON),
+`gen_agent_entrypoints.py` (any AGENTS.md edit — six vendor files),
+`gen_hub_provision_bundle.py` (anything it embeds and pins by hash).
+
 ## Enclosure CAD
 
 - **Always send rendering previews.** Any change to an enclosure `.scad`
