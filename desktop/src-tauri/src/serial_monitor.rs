@@ -25,16 +25,51 @@ struct HostReceipt {
     vision: Option<Value>,
 }
 
-fn matching_port(preferred: &str, vid: Option<u16>, pid: Option<u16>) -> Option<String> {
+/// Espressif's own USB vendor ID. A port enumerating under it is the chip's
+/// native USB peripheral rather than a USB-UART bridge, which is the single
+/// fact that decides whether touching DTR is helpful or dangerous — see
+/// [`wants_dtr`].
+const ESPRESSIF_USB_VID: u16 = 0x303A;
+
+/// Whether we should assert DTR on this port.
+///
+/// Only for a NATIVE USB port, and the distinction is not cosmetic:
+///
+///   * Native USB (VID 0x303A) — `Serial` is the chip's own USB peripheral.
+///     Arduino's USBCDC treats "host asserted DTR" as "a terminal is attached"
+///     and DISCARDS its output until it sees that, so without this the console
+///     connects and stays blank forever. There is no reset circuit on these
+///     lines, so asserting DTR cannot disturb the board.
+///
+///   * A USB-UART bridge (CP210x, CH340, FTDI) — DTR and RTS are wired to EN
+///     and IO0 through the standard two-transistor circuit, and the board
+///     resets or drops into the bootloader whenever the two lines DIFFER.
+///     serialport-rs offers no way to move both at once, so ANY sequence we
+///     write passes through a mismatched state and can reset a board that a
+///     monitor has no business resetting. These boards also don't need it:
+///     their `Serial` is a plain UART that transmits regardless.
+///
+/// So: assert where it is required and harmless, and don't touch the lines at
+/// all where it is unnecessary and risky.
+fn wants_dtr(vid: Option<u16>) -> bool {
+    vid == Some(ESPRESSIF_USB_VID)
+}
+
+/// The port to talk to, and its USB vendor ID when we can see one.
+fn matching_port(preferred: &str, vid: Option<u16>, pid: Option<u16>) -> Option<(String, Option<u16>)> {
     let ports = serialport::available_ports().ok()?;
-    if ports.iter().any(|port| port.port_name == preferred) {
-        return Some(preferred.to_string());
+    if let Some(found) = ports.iter().find(|port| port.port_name == preferred) {
+        let seen = match &found.port_type {
+            SerialPortType::UsbPort(info) => Some(info.vid),
+            _ => None,
+        };
+        return Some((preferred.to_string(), seen));
     }
     ports.into_iter().find_map(|port| match port.port_type {
         SerialPortType::UsbPort(info)
             if vid.is_some() && info.vid == vid.unwrap() && pid == Some(info.pid) =>
         {
-            Some(port.port_name)
+            Some((port.port_name, Some(info.vid)))
         }
         _ => None,
     })
@@ -93,8 +128,14 @@ fn inspect_line(
     }
 }
 
+/// How long a freshly-connected board may say nothing before the console
+/// explains itself. Long enough that an ordinary boot (or a board mid-reset)
+/// isn't accused of being silent, short enough that nobody has decided their
+/// hardware is dead first.
+const SILENCE_SECS: u64 = 12;
+
 /// Try to (re)open the board's port, retrying until it appears or we're
-/// cancelled. Returns None only when cancelled while waiting — a USB-CDC board
+/// canceled. Returns None only when canceled while waiting — a USB-CDC board
 /// takes a moment to re-enumerate after a reboot, so we wait it out rather than
 /// give up. `first` only changes the status wording (connecting vs reconnecting).
 fn connect(
@@ -109,11 +150,21 @@ fn connect(
     let mut announced = false;
     let mut open_hint_shown = false;
     while !cancel.load(Ordering::Relaxed) {
-        if let Some(name) = matching_port(preferred_port, vid, pid) {
-            match serialport::new(&name, baud)
-                .timeout(Duration::from_millis(100))
-                .open()
-            {
+        if let Some((name, seen_vid)) = matching_port(preferred_port, vid, pid) {
+            // DTR only where it is required AND harmless — see wants_dtr. On a
+            // native-USB board the chip discards its output until a host raises
+            // DTR, which is why this console was blank while `screen` worked.
+            // On a bridge board the same line is half of a reset circuit, so we
+            // leave both lines exactly as the driver left them: serialport-rs
+            // cannot move DTR and RTS together, so every sequence we could write
+            // passes through a mismatched state, and a mismatch is precisely
+            // what resets the board or drops it into the bootloader. A monitor
+            // must not reset the thing it is monitoring.
+            let mut builder = serialport::new(&name, baud).timeout(Duration::from_millis(100));
+            if wants_dtr(seen_vid) {
+                builder = builder.dtr_on_open(true);
+            }
+            match builder.open() {
                 Ok(port) => return Some((name, port)),
                 Err(error) => {
                     // The retry loop is right for a port that's about to
@@ -171,7 +222,7 @@ fn monitor_thread(
     while !cancel.load(Ordering::Relaxed) {
         let Some((name, mut port)) = connect(&app, &preferred_port, vid, pid, baud, &cancel, first)
         else {
-            break; // cancelled while waiting
+            break; // canceled while waiting
         };
         first = false;
         let _ = app.emit(
@@ -181,9 +232,16 @@ fn monitor_thread(
         // Re-request the manifest on each (re)connect; a rebooted board reprints it.
         let mut next_manifest_request = Instant::now() + Duration::from_millis(700);
         line_buffer.clear();
+        // Silence watch, armed per connection: a board that has said nothing at
+        // all by the deadline gets one explanatory line (see below). Reset on
+        // every reconnect, because a board that came back deserves a fresh
+        // chance to be quiet for its own reasons.
+        let mut heard_anything = false;
+        let mut silence_noted = false;
+        let silence_deadline = Instant::now() + Duration::from_secs(SILENCE_SECS);
 
         // Inner loop: pump the live port until it errors (→ reconnect) or we're
-        // cancelled (→ exit).
+        // canceled (→ exit).
         let reconnect = loop {
             if cancel.load(Ordering::Relaxed) {
                 break false;
@@ -205,8 +263,43 @@ fn monitor_thread(
                 next_manifest_request = Instant::now() + Duration::from_secs(3);
             }
 
+            // A console that connects and then shows nothing is the worst shape
+            // a diagnostic tool can take: it looks like the board is dead, when
+            // usually the board is fine and the LINK is the problem. Say so
+            // once, with the things actually worth trying, rather than leaving
+            // someone staring at an empty pane deciding their hardware is
+            // broken. Once only — a monitor that nags every ten seconds gets
+            // ignored, taking the message that mattered with it.
+            if !heard_anything && !silence_noted && Instant::now() >= silence_deadline {
+                silence_noted = true;
+                let _ = app.emit(
+                    "serial:status",
+                    format!(
+                        "Connected to {name}, but the board hasn't said anything for \
+                         {SILENCE_SECS}s. That usually isn't a dead board: it may simply not \
+                         be printing (press EN/RESET to watch it boot), it may be running \
+                         firmware built without a serial console, or another program — a \
+                         second copy of this app, screen, or PlatformIO — may be holding \
+                         the port. Try the reset button first."
+                    ),
+                );
+            }
+
             match port.read(&mut read_buffer) {
                 Ok(count) if count > 0 => {
+                    // If we already accused the board of being silent, take it
+                    // back the moment it speaks — otherwise the status line goes
+                    // on saying "hasn't said anything" while its output visibly
+                    // streams underneath, which is worse than never having
+                    // warned. This is the common case after someone follows the
+                    // advice and presses RESET.
+                    if silence_noted && !heard_anything {
+                        let _ = app.emit(
+                            "serial:status",
+                            format!("Serial monitor connected to {name} at {baud} baud."),
+                        );
+                    }
+                    heard_anything = true;
                     let text = String::from_utf8_lossy(&read_buffer[..count]);
                     let _ = app.emit("serial:log", text.to_string());
                     for character in text.chars() {
@@ -322,6 +415,43 @@ mod tests {
             &manifest,
             Some(&serde_json::json!({"i2c_ready":true,"module_id":7}))
         ));
+    }
+
+    // ── DTR is a per-board decision, not a global one ───────────────────
+    //
+    // Getting this backwards is destructive in one direction and merely
+    // useless in the other, so it is pinned rather than reasoned about at the
+    // call site.
+
+    #[test]
+    fn native_usb_boards_get_dtr_or_they_never_speak() {
+        // ESP32-S3 targets build with ARDUINO_USB_CDC_ON_BOOT=1, so `Serial` is
+        // the chip's own USB peripheral and Arduino's USBCDC discards output
+        // until a host raises DTR. Without this the console connects and stays
+        // blank forever — the bug this whole change exists to fix.
+        assert!(wants_dtr(Some(ESPRESSIF_USB_VID)));
+        assert_eq!(ESPRESSIF_USB_VID, 0x303A);
+    }
+
+    #[test]
+    fn bridged_boards_are_left_completely_alone() {
+        // CP210x, CH340 and FTDI wire DTR and RTS to EN and IO0 through the
+        // standard two-transistor circuit: the board resets or drops into the
+        // bootloader whenever the lines DIFFER. serialport-rs cannot move both
+        // at once, so any sequence we write passes through a mismatched state.
+        // A monitor must not reset the thing it is monitoring, and these boards
+        // don't need DTR anyway — their Serial is a plain UART.
+        for bridge in [0x10C4u16 /* CP210x */, 0x1A86 /* CH340 */, 0x0403 /* FTDI */] {
+            assert!(!wants_dtr(Some(bridge)), "vid {bridge:#06x} must be left alone");
+        }
+    }
+
+    #[test]
+    fn an_unknown_port_is_left_alone_too() {
+        // No USB descriptor (a real UART, a virtual port, anything we can't
+        // identify) means we can't know whether the lines are wired to a reset
+        // circuit. Doing nothing is the only safe default.
+        assert!(!wants_dtr(None));
     }
 
     #[test]

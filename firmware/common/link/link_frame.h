@@ -17,7 +17,7 @@
 //     each counting from zero will hand the same key/nonce pair to two
 //     different plaintexts on their first frame. That single mistake destroys
 //     both confidentiality and authenticity under ChaCha20-Poly1305 and
-//     AES-GCM alike. The defence is layered: peers derive SEPARATE directional
+//     AES-GCM alike. The defense is layered: peers derive SEPARATE directional
 //     keys (link_session.h), and the nonce built here still carries `dir` and
 //     `session_id` explicitly, so a key mix-up cannot silently collide either.
 //     The nonce is fully recoverable from the frame — never random, never

@@ -209,7 +209,7 @@ fn main() -> Result<()> {
 
     // Be explicit about whether frame sealing into the vault is actually active.
     // Sealing is opt-in: it only runs when BREAK_GLASS_SEAL_TOKEN points at a valid
-    // break-glass token, AND that token is only honoured within the 10-minute bucket
+    // break-glass token, AND that token is only honored within the 10-minute bucket
     // it was issued for (the seal path rejects an out-of-window token as "expired").
     // With no usable token, boundary events are still signed and logged, but NO frame
     // is sealed into the break-glass vault — surface this so an operator never assumes
@@ -230,7 +230,7 @@ fn main() -> Result<()> {
             } else {
                 log::warn!(
                     "vault frame sealing: token present but EXPIRED / outside its validity window \
-                     — a break-glass seal token is honoured only within the 10-minute bucket it was \
+                     — a break-glass seal token is honored only within the 10-minute bucket it was \
                      issued for, so NO frame will be sealed until a fresh BREAK_GLASS_SEAL_TOKEN is \
                      provided. See docs/review/01-flag-report.md F-05."
                 );

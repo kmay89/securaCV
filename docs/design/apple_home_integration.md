@@ -1,13 +1,21 @@
 # Apple Home & the fleet — "automations without surveillance" — design
 
-> **Status:** Draft RFC, research complete (2026-08-03). What exists today:
-> the iOS app already carries the HomeKit entitlement, the usage string
-> ("Only coarse status is shared — never footage"), and a 53-line
-> [`HomeKitBridge.swift`](../../ios/Sources/SecuraCV/Native/HomeKitBridge.swift)
-> stub that states the doctrine but is wired to nothing; the Home Assistant
-> integration already publishes the binary_sensors a HomeKit bridge can
-> project. Everything else in this doc is design. Nothing here ships until
-> the open decisions at the end are settled, and **nothing here is a gate**:
+> **Status:** RFC with its core built. **Real today:** the projection core
+> — the closed signal vocabulary and the cover-traffic pacer that keeps it
+> inside Invariant III — ships as
+> [`src/bridge/homekit.rs`](../../src/bridge/homekit.rs) behind the
+> `bridge-homekit` feature, governed by
+> [`witness_dictionary.json`](../../spec/witness_dictionary.json) →
+> `homekit_projection` and gated in CI by `scripts/lint_dictionary_sync.py`
+> (Rust ids, HAP characteristics, and the Swift mirror all fail the build on
+> drift). [`HomeKitBridge.swift`](../../ios/Sources/SecuraCV/Native/HomeKitBridge.swift)
+> is rewritten as the honest shepherd (§3.0) and mirrors that vocabulary; the
+> iOS app already carries the HomeKit entitlement and usage string; the Home
+> Assistant integration already publishes binary_sensors a HomeKit bridge can
+> project. **Still design:** every lane that actually speaks HAP or Matter to
+> a home (§3.2–§3.5) and the app UI that renders the shepherd. No *lane*
+> ships until the open decisions at the end are settled, and **nothing here
+> is a gate**:
 > the fleet must remain fully usable with no Apple device in the house
 > (the standing parity rule from
 > [`apple_watch_and_notifications.md`](apple_watch_and_notifications.md) §5).
@@ -59,9 +67,10 @@ $20 dumb PIR sensor** — a present-tense boolean, and nothing else. The
 witness intelligence (object classes, sealed chains, attestation, the record
 itself) stays home. We call this the **dumb-PIR bar**. Exactly one opt-in
 step past it exists — the coarse `ObjectClass` word (§3.1), never identity —
-and the one signal that survives even booleans (state-change *timing*, §5)
-is named out loud and owned as an open decision. Honesty by construction
-rather than by promise.
+and the one signal that survives even booleans (state-change *timing*) is
+named out loud and then **bounded by the pacer** (§5), which publishes on a
+metronome rather than on events. Honesty by construction rather than by
+promise.
 
 Why this could genuinely be a showcase integration rather than a checkbox:
 every other security accessory in the Home app asks the user to trade privacy
@@ -459,13 +468,35 @@ design refuses to blur them:
   timing signal carrying no content. This is the same residual the alert
   relay accepts with eyes open ("a compromised relay leaks *'this household
   got some alerts,'* never *what*"), and it must be accepted — or shaped —
-  with the same honesty here, not asserted away. Mitigations on the table:
-  per-signal opt-in (already the law in this doc), motion hold times
-  (which quantize timing), and publishing liveness on a fixed cadence so
-  the projection's traffic is not purely event-driven. Whether that is
-  enough, or Invariant III's "externally" needs a written clarification
-  first, is **open decision #8 — and no accessory lane ships before it is
-  settled.**
+  with the same honesty here, not asserted away.
+
+**How this is settled — the pacer (built: `bridge-homekit`).** Invariant III
+names its own conforming path: network behavior may not vary with event
+occurrence *"unless explicitly configured for cover traffic."* So the
+projection **is** that configuration, and the mechanism is the whole answer:
+
+- **Nothing publishes on an event.** Events only mark state pending;
+  publication happens on a **metronome** (`Projection::tick`) that emits on
+  every tick whether or not anything happened.
+  `publishes_every_tick_even_when_nothing_ever_happens` and
+  `publication_rate_does_not_vary_with_event_rate` are tests, not intentions.
+- **The tick is the external time resolution.** Nothing downstream can place
+  an event more precisely than the tick it fell in, because a finer time
+  never reached the wire. `tick_ms` is therefore a **privacy/latency dial**
+  (default 1 s, bounded 200 ms–10 min, and an out-of-range value is *refused,
+  never clamped*) — the log's 10-minute coarsening instinct, applied to
+  egress.
+- **Count doesn't leak either.** A thousand events inside one tick publish
+  exactly like one: the pacer coalesces by construction, not via a rate
+  limiter someone could tune off.
+
+What this honestly does **not** do: cover traffic is ours only for the hop we
+own (kernel → controller). A downstream Apple home hub relaying changes
+onward has its own traffic pattern we do not control. The guarantee is the
+**bound**, not anonymity — and the bound is real, because a finer time never
+existed on our wire to relay. Decision #8 is therefore resolved by
+construction rather than by amending the constitution; what remains is
+per-lane defaults, which is what #8 now asks.
 
 ---
 
@@ -519,10 +550,11 @@ design refuses to blur them:
 
 | Phase | Depends on | Deliverable | State |
 |---|---|---|---|
-| **A0** | hub households · decision #8 | HA HomeKit Bridge worked recipe (`docs/integrations/`), template sensors included | open — docs only, works with zero new code once #8 is settled |
+| **P0** | — | The projection core: closed signal vocabulary + the cover-traffic pacer, dictionary-governed and linter-gated (`src/bridge/homekit.rs`, `bridge-homekit`) | **built** — 26 tests, incl. the Invariant III properties |
+| **A0** | P0 | HA HomeKit Bridge worked recipe (`docs/integrations/`), template sensors included | open — docs only, works with zero new code (un-paced; see decision #8) |
 | **A1** | A0 | native motion/occupancy binary_sensors in `custom_components/securacv` | open |
-| **A2** | any accessory lane live | app as shepherd + concierge + Doctor card (rewrite `HomeKitBridge.swift` honestly); per-signal consent UI | open |
-| **B1** | decisions #1 and #8 | first non-HA accessory lane: `bridge-homekit` in witnessd **or** `FEATURE_HOMEKIT` on one verified board, measured budget first | open |
+| **A2** | P0 | app as shepherd + concierge + Doctor card; per-signal consent | **partly built** — `HomeKitBridge.swift` rewritten honestly (vocabulary mirror, `HomeKitStanding` + Doctor notes, per-signal consent, tamper refusal); the UI that renders it is open |
+| **B1** | P0 · decision #1 | first accessory lane on top of P0: a HAP server in witnessd **or** `FEATURE_HOMEKIT` on one verified board, measured budget first | open |
 | **B2** | B1 | the other §3 site, if #1 says both | open |
 | **C1** | A2 | App Intents ("is the fleet OK?"), Wall home-context timeline | open |
 | **D1** | B-lane stable | Matter projection of the same table | open |
@@ -559,14 +591,14 @@ design refuses to blur them:
 7. **Doorbell service.** Cameraless HAP doorbell (HomePod chime, no video)
    for the Vision doorbell enclosure — exploration, needs a bench test
    before it's promised anywhere.
-8. **Invariant III and off-LAN state sync** (§5, the timing residual). An
-   Apple home hub relays state changes beyond the LAN as event-correlated,
-   content-free traffic. Settle whether the mitigations in §5 (per-signal
-   opt-in, hold-time quantization, fixed-cadence liveness) satisfy
-   Invariant III as written, or whether its "externally" needs a written
-   clarification in [`spec/invariants.md`](../../spec/invariants.md) first
-   — spec owners decide, and every accessory lane (A0 included, since HA's
-   HomeKit bridge has the same property) blocks on the answer.
+8. **The shipped tick, per lane** (§5). The mechanism is settled and built —
+   the pacer publishes on a metronome, so Invariant III's cover-traffic path
+   is satisfied by construction rather than by amendment. What is still open
+   is the *default* each lane ships: 1 s reads as instant and bounds timing
+   to the second, but a hub lane serving a venue may want coarser, and the
+   HA lane (A0) inherits Home Assistant's own change-driven publishing rather
+   than ours — so the recipe must say plainly that it is the un-paced path
+   until A1 routes it through the projection.
 
 ---
 

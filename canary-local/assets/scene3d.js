@@ -557,7 +557,7 @@ export class DeviceScene {
       model,
       color,
       // role-tagged filament parts ("shell"/"shell2"/"gasket"/"beacon") read
-      // their live colour from the active finish each frame, so a finish swap
+      // their live color from the active finish each frame, so a finish swap
       // or the ambient showcase cross-fades them with no geometry rebuild.
       role,
       gloss,
@@ -809,7 +809,7 @@ export class DeviceScene {
 }
 
 // ── device bodies (dimensions: docs/hardware/enclosure/*.scad) ──────────
-// Printed-shell colours come from the active finish (finishes.js); only the
+// Printed-shell colors come from the active finish (finishes.js); only the
 // functional non-filament parts (glass, lens, solar, radome) stay literal.
 const GLASS_EDGE = [0.05, 0.05, 0.06];
 

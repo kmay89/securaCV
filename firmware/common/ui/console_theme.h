@@ -1,11 +1,11 @@
 /*
  * SecuraCV — console scene engine (host-testable, no Arduino).
  *
- * Composes framed, optionally-coloured text panels for the USB-serial console,
+ * Composes framed, optionally-colored text panels for the USB-serial console,
  * with ONE hard rule that keeps it from ever becoming garbage on the wrong
  * terminal:
  *
- *   The safe floor is 7-bit ASCII, no colour, no cursor control (caps_ascii()).
+ *   The safe floor is 7-bit ASCII, no color, no cursor control (caps_ascii()).
  *   Escape bytes and box-drawing glyphs are emitted ONLY when the terminal has
  *   proven it can handle them (a Device-Attributes / cursor-position reply —
  *   see console_probe in the firmware glue). We never emit an escape we didn't
@@ -19,8 +19,8 @@
  * differ between the Unicode and ASCII tiers, and those are placed one column
  * at a time. So panels align in both tiers.
  *
- * Colour never carries meaning alone (AMBIENT_DISPLAY_STANDARD / WCAG 1.4.1):
- * every state that gets a colour also gets a word.
+ * Color never carries meaning alone (AMBIENT_DISPLAY_STANDARD / WCAG 1.4.1):
+ * every state that gets a color also gets a word.
  *
  * Compiles hosted for tests_host with -Wall -Wextra -Werror.
  *
@@ -56,7 +56,7 @@ inline Caps caps_full(int w, int h) {
   return Caps{true, true, ColorDepth::Ansi256, w > 0 ? w : 80, h > 0 ? h : 24};
 }
 
-// 256-colour palette indices, matching the brand + the ambient-display states.
+// 256-color palette indices, matching the brand + the ambient-display states.
 enum Color { COL_NONE = -1, COL_BRAND = 39, COL_MOSS = 42, COL_AMBER = 214,
              COL_DIM = 245, COL_TEXT = 255 };
 
@@ -113,7 +113,7 @@ inline void hrule(const Renderer& r, const char* title, int inner, int kind) {
   r.nl();
 }
 
-// Left-align `text` (ASCII) inside a panel row, coloured `fg` (COL_NONE = plain),
+// Left-align `text` (ASCII) inside a panel row, colored `fg` (COL_NONE = plain),
 // padded/truncated to the interior. One space of margin on each side.
 inline void row(const Renderer& r, int inner, int fgc, const char* text) {
   const Box b = box_for(r.caps);

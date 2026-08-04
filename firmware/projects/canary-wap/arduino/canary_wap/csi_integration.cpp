@@ -1144,7 +1144,7 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
 
   /* "privacy_ceiling": "p0" | "p1" | "p2". Persisted as int 0/1/2 so
    * apply_privacy_ceiling_from_nvs() can compare against the
-   * CSI_PRIVACY_* enum directly. Unrecognised values are ignored — the
+   * CSI_PRIVACY_* enum directly. Unrecognized values are ignored — the
    * existing persisted value (or P0 default) survives. */
   bool ceiling_changed = false;
   if (const char* k = strstr(body, "\"privacy_ceiling\"")) {
@@ -1167,7 +1167,7 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
 
   if (!wrote_anything) {
     httpd_resp_set_status(req, "400 Bad Request");
-    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"no recognised keys\"}", -1);
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"no recognized keys\"}", -1);
     return ESP_OK;
   }
 
@@ -1496,8 +1496,8 @@ esp_err_t handle_tune_get_coefficients(httpd_req_t* req) {
 
 /* Find one or more "key":value pairs in the body and write each. The
  * parser is intentionally minimal — it walks the body looking for
- * keys we recognise from TUNE_COEFFS and a numeric or true/false RHS.
- * Any unrecognised key is silently ignored (P2; tinkerers are not
+ * keys we recognize from TUNE_COEFFS and a numeric or true/false RHS.
+ * Any unrecognized key is silently ignored (P2; tinkerers are not
  * expected to need detailed feedback on typos). */
 esp_err_t handle_tune_post_coefficients(httpd_req_t* req) {
   CSI_AUTH_OR_RETURN(req);
@@ -1577,7 +1577,7 @@ esp_err_t handle_tune_post_coefficients(httpd_req_t* req) {
 
   if (changed == 0) {
     httpd_resp_set_status(req, "400 Bad Request");
-    return httpd_resp_send(req, "{\"ok\":false,\"reason\":\"no recognised keys\"}", -1);
+    return httpd_resp_send(req, "{\"ok\":false,\"reason\":\"no recognized keys\"}", -1);
   }
 
   if (reinit_presence)  reinit_module("core.presence");

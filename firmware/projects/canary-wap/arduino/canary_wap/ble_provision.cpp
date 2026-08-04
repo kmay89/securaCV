@@ -297,7 +297,7 @@ class CredsCb : public NimBLECharacteristicCallbacks {
     char pw[MAX_PASSWORD_LEN + 1] = {0};
     memcpy(ssid, ssid_in, ssid_in_len);
     memcpy(pw,   pw_in,   pw_in_len);
-    // ssid/pw are zero-initialised so the trailing NUL is already in place.
+    // ssid/pw are zero-initialized so the trailing NUL is already in place.
 
     bool ok = ble_request_wifi_provisioning(ssid, pw);
 

@@ -379,7 +379,7 @@ jobs:
         # CD_GEARS_COMPILED_IDENTITY — which is what makes the image identify
         # as dash-modes instead of plain dash — is derived from them
         # (config.h). Compile without staging and you get a GEARLESS DASH
-        # binary labelled dash-modes: flashing it strips the modes build, and
+        # binary labeled dash-modes: flashing it strips the modes build, and
         # OTA-ing it onto a real modes unit cross-grades that unit down.
         # `setup.sh flavor` writes only that one gitignored file, and the
         # assemble step's product-string check proves the identity before any
@@ -639,7 +639,7 @@ jobs:
             # product check passes (it trusts the manifest), the gears vanish,
             # and the device polls as plain dash forever after.
             if ! strings "$OUT" | grep -qFx "securacv-canary-display-${NAME}"; then
-              echo "::warning::canary-display ${NAME} binary does not identify as 'securacv-canary-display-${NAME}' — skipping its OTA manifest rather than publishing a mislabelled image (a modes build needs 'setup.sh flavor modes' staged before compiling)"
+              echo "::warning::canary-display ${NAME} binary does not identify as 'securacv-canary-display-${NAME}' — skipping its OTA manifest rather than publishing a mislabeled image (a modes build needs 'setup.sh flavor modes' staged before compiling)"
               rm -f "$OUT"
               continue
             fi

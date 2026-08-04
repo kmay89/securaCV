@@ -102,7 +102,7 @@ ok "$IDENT"
 say "Exporting identities from the keychain (expect a macOS Allow prompt)"
 TMPPW="$(openssl rand -hex 16)"; export TMPPW
 security export -t identities -f pkcs12 -P "$TMPPW" -o "$WORK/all.p12" \
-  || die "The keychain export was cancelled or denied. Re-run and click Allow."
+  || die "The keychain export was canceled or denied. Re-run and click Allow."
 ok "exported"
 
 # OpenSSL 3 needs -legacy for the RC2-encrypted PKCS#12 macOS writes; LibreSSL

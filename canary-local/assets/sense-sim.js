@@ -257,7 +257,7 @@ export class FrameParser {
         const valid = this.buf[P] !== 0;
         if (valid) {
           if (n < 8) return false; // malformed: don't enqueue stale aggregate
-          const cm = this._leFloat(P + 4) * 100.0; // [BENCH] metres → cm ×100
+          const cm = this._leFloat(P + 4) * 100.0; // [BENCH] meters → cm ×100
           if (!(cm > 0)) this.agg.distance_cm = 0; // also rejects NaN
           else if (cm > 65535) this.agg.distance_cm = 65535;
           else this.agg.distance_cm = clampU16(Math.floor(cm + 0.5));
@@ -693,7 +693,7 @@ export function powerModel(knobs, rails) {
   add("WiFi TX bursts", rails.wifi_tx_mw * txDuty,
     `${(3600 / knobs.heartbeatS).toFixed(0)} heartbeats + ${knobs.eventsPerHour} events/h × ${knobs.txPerEventMs} ms`);
 
-  if (knobs.ledOn) add("WS2812 status LED", rails.led_mw, "dim presence colours");
+  if (knobs.ledOn) add("WS2812 status LED", rails.led_mw, "dim presence colors");
   if (knobs.lux) add("BH1750 lux", rails.bh1750_mw, "tamper corroboration");
 
   const totalMw = parts.reduce((s, p) => s + p.mw, 0);

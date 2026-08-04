@@ -17,7 +17,7 @@
 //
 // DOM-free logic + parsers live in flash-core.js (tested under node --test);
 // the flashing engine is the vendored, self-hosted esptool-js. This file is
-// the glue and the theatre.
+// the glue and the theater.
 
 import { ESPLoader, Transport } from "./vendor/esptool-js/bundle.js";
 import { md5Raw } from "./vendor/md5/md5.js";
@@ -731,7 +731,7 @@ function coldStartCard() {
     "making — it's unerasable ROM, the same property that makes the board " +
     "impossible to brick from here."));
 
-  // What the user did — carried into the intake report, honestly labelled as
+  // What the user did — carried into the intake report, honestly labeled as
   // their answer rather than our measurement.
   const note = el("p", "fineprint flash-coldstart-note", "");
   const row = el("div", "flash-row flash-coldstart-row");
@@ -1269,7 +1269,7 @@ async function runIntake() {
     }
   } catch { efuses = null; }
 
-  // 2. Is the flash the size its SPI id claims? A relabelled part wraps its
+  // 2. Is the flash the size its SPI id claims? A relabeled part wraps its
   //    address lines, so reading AT a candidate capacity returns offset zero
   //    again. Probing "declared − 4 KB" would not do it: on a 4 MB die
   //    pretending to be 16 MB that address wraps to 0x3FF000, the top of the
@@ -1513,7 +1513,7 @@ function phaseConnected() {
   // Firmware picker (chip-guarded).
   wrap.append(renderPicker());
 
-  // "Which board am I holding?" — a labelled identity panel for each product
+  // "Which board am I holding?" — a labeled identity panel for each product
   // this chip can be, drawn from the honest boards/enclosures catalogs so the
   // user can match the board in their hand and see the product it becomes.
   const idWrap = el("div", "flash-identity-wrap");
@@ -2134,7 +2134,7 @@ function phaseSenseBench(port, product) {
   box.append(el("p", "muted",
     "This is the radar’s own senses, live off the USB cable — the same coarse " +
     "truths it publishes (present/clear, 0/1/2+, near/mid/far), never raw " +
-    "centimetres unless you flip the bench-detail switch below (that raw echo " +
+    "centimeters unless you flip the bench-detail switch below (that raw echo " +
     "stays on this cable). Walk past it. Stand in each band. Then sit " +
     "statue-still and feel the clear timeout breathe out."));
 
@@ -2811,7 +2811,7 @@ function activeManifestUrl() {
 }
 
 // Every manifest fetch carries a generation stamp. Switching channels starts a
-// second fetch without cancelling the first, and the two can land in either
+// second fetch without canceling the first, and the two can land in either
 // order — a slow stable response arriving after a fast dev one would repaint
 // the picker with the versions, SHA-256s and Install targets of the channel the
 // UI says is OFF. That is the silent-wrong case this whole toggle exists to
@@ -4946,7 +4946,7 @@ function phaseMonitor(port, opts = {}) {
     idCard.classList.remove("flash-hidden");
     idCard.append(el("div", "flash-identity-head",
       (signed ? "✓ " : "") + "Your Canary just proved itself"));
-    // The self-check verdict, front and centre — so a headless board (no screen)
+    // The self-check verdict, front and center — so a headless board (no screen)
     // SHOWS you it works instead of being a silent dud. Health IS its self-test.
     {
       // Always show the verdict — including "Self-check pending" when health is
@@ -5141,9 +5141,20 @@ function phaseMonitor(port, opts = {}) {
     // If nothing arrives soon, explain why (many builds stay silent until
     // asked) — but keep the connection; don't tear it down.
     if (quietTimer) clearTimeout(quietTimer);
+    // Same diagnosis the native app gives (desktop/src-tauri/serial_monitor.rs,
+    // SILENCE_SECS) — a console that connects and then shows nothing looks like
+    // a dead board when the board is usually fine and the LINK is the problem,
+    // and browser users deserve the same list of things worth trying rather
+    // than the vague version. The one cause that is NOT shared: this side
+    // hard-resets before opening, so "it booted before you attached" can't
+    // happen here and isn't offered.
     if (!mon.everByted) quietTimer = setTimeout(() => {
       if (!mon.everByted && mon.alive)
-        setStatus("Connected, but quiet so far — many builds only speak when asked: press h for the menu. (If the board just reset, I'll reconnect on my own.)");
+        setStatus("Connected, but the board hasn’t said anything yet. That usually isn’t a " +
+          "dead board: many builds only speak when asked — press h for its menu. It may also " +
+          "be running firmware built without a serial console, or another program (the " +
+          "desktop Flasher app, screen, PlatformIO) may be holding the port. " +
+          "(If the board just reset, I’ll reconnect on my own.)");
     }, 4000);
     const dec = new TextDecoder();
     let buf = con.textContent || "", sample = "", judged = false;

@@ -18,7 +18,7 @@ lighting and outlines) — no images.
 - **Haptics** — per-object vibration patterns on supporting devices (`navigator.vibrate`).
 - **Motion** — pointer parallax by object depth, ambient dust motes in the lamp light
   (canvas), floating idle animation. All disabled under `prefers-reduced-motion`.
-- **Accessible** — objects are real buttons, the dossier is a labelled dialog with
+- **Accessible** — objects are real buttons, the dossier is a labeled dialog with
   focus management and ESC-to-close, visible focus states throughout.
 
 ## Customizing

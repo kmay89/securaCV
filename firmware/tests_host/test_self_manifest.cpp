@@ -226,7 +226,7 @@ static void test_no_features() {
   CHECK(has(std::string(buf), "\"features\":[]"));
 }
 
-// ── null pointers are safe (a half-initialised device must not crash) ───────
+// ── null pointers are safe (a half-initialized device must not crash) ───────
 static void test_null_fields_safe() {
   char buf[1024];
   manifest::Facts f{};   // everything zero/null

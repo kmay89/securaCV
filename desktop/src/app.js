@@ -30,7 +30,7 @@ const openExternal = (url) =>
 const normChip = (s) => String(s || "").toUpperCase().replace(/[\s\-_]+/g, "");
 
 // The firmware release tag a manifest URL is pinned to ("fw-v2.3.0"), or null if
-// it isn't a pinned release asset. Deliberately the same behaviour as
+// it isn't a pinned release asset. Deliberately the same behavior as
 // canary-local/assets/flash-core.js releaseTagFromManifestUrl() — the two
 // flashers do NOT share a frontend, so a diagnostic added to one has to be
 // added to the other or half our users keep getting the vague version.
@@ -169,7 +169,7 @@ async function boot() {
   // force quit can leave the webview's saved session mid-write, and the
   // synchronous `localStorage` read at the top of this file then wedges before
   // first paint. From outside, that is a Dock icon bouncing forever with no
-  // window and nothing to click. The native side can only recognise it by its
+  // window and nothing to click. The native side can only recognize it by its
   // absence, so a good launch has to say so out loud. Deliberately early and
   // deliberately not awaited: a catalog that won't load is a visible error in
   // a working window, not a failed launch.
@@ -2937,7 +2937,7 @@ function hubInit() {
     $("hub-pi-usb-status").textContent = e.payload;
   });
   listen("hub:pi-usb-hint", (e) => {
-    // A recognised failure (on Linux, almost always the missing udev rule) — show
+    // A recognized failure (on Linux, almost always the missing udev rule) — show
     // the actionable fix in the persistent hint line so "done" can't bury it.
     $("hub-pi-usb-hint").textContent = e.payload;
   });
@@ -3163,7 +3163,7 @@ function hubFindItChecklist() {
 // hardware is fine, and the one thing to do next. Cancels are not errors.
 function hubPresentError(raw) {
   const msg = String(raw);
-  if (msg.startsWith("cancelled:")) {
+  if (msg.startsWith("canceled:")) {
     setStatus(
       "hub-result",
       "Stopped, no harm done. The card just needs a fresh flash whenever you're ready — type ERASE again to go.",
@@ -3713,7 +3713,7 @@ function hubArm() {
     $("hub-confirm").value.trim().toUpperCase() === "ERASE" &&
     !hub.busy;
   // Typed Wi-Fi + "wired ethernet" selected is a contradiction, and the old
-  // behaviour resolved it by silently throwing the Wi-Fi away: hubWifiValue()
+  // behavior resolved it by silently throwing the Wi-Fi away: hubWifiValue()
   // returns null, the backend logs "no Wi-Fi to seed (wired ethernet
   // assumed)", and the hub boots with no network. Someone who typed a
   // password meant it — say which one is winning instead of picking one.

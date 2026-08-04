@@ -18,7 +18,7 @@
  *     "keep the two in step" by hand.
  *
  * So it lives here once, as pure data-in/data-out with no Arduino and no heap,
- * and `firmware/tests_host/test_wifi_join_policy.cpp` pins the behaviour.
+ * and `firmware/tests_host/test_wifi_join_policy.cpp` pins the behavior.
  *
  * ## The rule that matters
  *
@@ -88,7 +88,7 @@ inline const char* join_failure_label(JoinFailure f) {
  * @brief The full sentence for a serial log or a portal banner.
  *
  * Says what happened AND that the device stays up, because the previous
- * behaviour was to vanish into a reboot loop and the difference is the whole
+ * behavior was to vanish into a reboot loop and the difference is the whole
  * point of this change.
  */
 inline const char* join_failure_detail(JoinFailure f) {

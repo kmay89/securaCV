@@ -23,6 +23,14 @@ class Preferences {
   // The exact getter/putter shapes the display tree uses.
   uint8_t getUChar(const char* key, uint8_t def = 0);
   size_t putUChar(const char* key, uint8_t v);
+  // ESP32 stores a bool as a one-byte NVS value, so these are the UChar pair
+  // with the cast folded in — not a separate storage shape. Inline here (not
+  // out-of-line beside getUChar) because two translation units implement this
+  // class for two link targets, and an alias belongs in neither of them twice.
+  bool getBool(const char* key, bool def = false) {
+    return getUChar(key, def ? 1 : 0) != 0;
+  }
+  size_t putBool(const char* key, bool v) { return putUChar(key, v ? 1 : 0); }
   uint16_t getUShort(const char* key, uint16_t def = 0);
   size_t putUShort(const char* key, uint16_t v);
   int16_t getShort(const char* key, int16_t def = 0);

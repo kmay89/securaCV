@@ -287,7 +287,7 @@ Everything runs on your local network — no cloud dependencies. The former
 standalone `fleet-manager.html` has been retired in favor of the app.
 
 For the end-to-end multi-device wizard (naming devices, `canary.local`
-catch-all behaviour, Identify), see
+catch-all behavior, Identify), see
 [`docs/onboarding_multiple_canaries.md`](../docs/onboarding_multiple_canaries.md).
 
 ---

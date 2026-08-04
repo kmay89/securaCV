@@ -45,7 +45,7 @@
    * Normalize one aim payload (parsed JSON) into render-ready geometry, or
    * null when the payload is not a usable aim frame. Coordinates mirror the
    * firmware's convention (vision_mgr: bbox x,y = top-left corner in a
-   * fw × fh frame; voxel row/col from the box centre).
+   * fw × fh frame; voxel row/col from the box center).
    */
   function normalizeAimPayload(data) {
     if (!data || typeof data !== "object" || Array.isArray(data)) return null;

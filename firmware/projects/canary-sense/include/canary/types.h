@@ -3,7 +3,7 @@
 
 // Everything the MQTT layer publishes about the radar witness, pre-coarsened
 // at the privacy chokepoint: presence as a debounced state, occupants as a
-// 0/1/2+ bucket, distance ONLY as a near/mid/far band (raw centimetres never
+// 0/1/2+ bucket, distance ONLY as a near/mid/far band (raw centimeters never
 // leave main.cpp), and vitals — wellbeing builds only — as a binary lock
 // plus P1-gated BPM numerics that never appear in events.
 struct SenseSnapshot {

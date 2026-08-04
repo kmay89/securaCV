@@ -1,7 +1,7 @@
 // canary-local/tests/intake.test.mjs — customs, for a board we've never met.
 //
 // The intake check exists for states nobody has on the desk: a board whose
-// secure-boot eFuse was burned by a previous owner, a 4 MB flash relabelled as
+// secure-boot eFuse was burned by a previous owner, a 4 MB flash relabeled as
 // 16 MB, a clone with a hand-rolled MAC. So the decoding is pure and the
 // evidence is synthetic, and this file is the only place those cases are ever
 // exercised.

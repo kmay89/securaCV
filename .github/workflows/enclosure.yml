@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 # A new push to a PR branch supersedes the in-flight render; main is never
-# cancelled (full signal per main commit).
+# canceled (full signal per main commit).
 concurrency:
   group: enclosure-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -99,7 +99,7 @@ jobs:
     # These are full-assembly CGAL intersections, 21 of them, on a 2-core
     # runner. As one serial step the suite has now blown three budgets: 30 min
     # (died at 30:15 "with the geometry all green"), then 75 as part of the
-    # combined job, then 90 with a job all to itself — cancelled at 89m45s.
+    # combined job, then 90 with a job all to itself — canceled at 89m45s.
     # Each time the fix was a larger timeout and each time it bought a few
     # months. The gates are INDEPENDENT, so the sum was never the number that
     # had to fit; it only looked that way because they ran in a row.

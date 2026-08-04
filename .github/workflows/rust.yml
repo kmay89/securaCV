@@ -40,7 +40,7 @@ env:
 
 # Supersede stale runs: a new push to a PR branch cancels the in-flight run
 # for the previous head, so review-fix pushes don't queue duplicate full
-# builds. Pushes to main are never cancelled (full signal per main commit).
+# builds. Pushes to main are never canceled (full signal per main commit).
 concurrency:
   group: rust-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -205,6 +205,17 @@ jobs:
       run: cargo clippy --all-targets --features ingest-v4l2 -- -D warnings
     - name: Clippy (c2pa-export)
       run: cargo clippy --all-targets --features c2pa-export -- -D warnings
+    - name: Clippy (bridge-homekit)
+      run: cargo clippy --all-targets --features bridge-homekit -- -D warnings
+    # The bridge surface is the kernel's egress boundary, and its tests assert
+    # the Invariant III properties the projection exists to hold (publication
+    # happens on a metronome, and its rate does not vary with event rate). Same
+    # reasoning as the adapters job above: a clippy-only gate would compile
+    # those tests and never run them, so the properties would rot silently.
+    - name: Test (bridge-homekit)
+      # Quoted: the trailing `::` in the test filter would otherwise read as
+      # a YAML mapping value and make this workflow unparseable.
+      run: "cargo test --verbose --features bridge-homekit bridge::"
 
   ingest-gstreamer:
     name: Ingest (gstreamer rtsp)

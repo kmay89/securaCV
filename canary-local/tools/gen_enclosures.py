@@ -59,6 +59,7 @@ NON_PRODUCT_SCADS = {
     "canary_s3_lcd7_fitcheck.scad",   # 7" bezel/tray assembly-interference check
     "canary_s3_lcd7_qr.scad",         # generated help-QR bit matrix (gen_qr.py)
     "canary_vent_lib.scad",           # brand vent pattern library — shapes, not a part
+    "canary_mark_lib.scad",           # THE BIRD — the shared mark, geometry not a part
     "canary_panel_lib.scad",          # the PANEL REGISTRY — describes the boards a
                                       # case is built AROUND, not a thing you print
     "canary_mark_lib.scad",           # the HOUSE MARK — the bird as printable

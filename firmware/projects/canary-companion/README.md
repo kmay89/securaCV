@@ -18,7 +18,7 @@ Tamagotchi a story about a dead animal.
 **The Night Watch: black is free here.** Every bedside screen this project
 researched draws the same top complaint — *still too bright at night* — and the
 Canary Display could not fully fix it, because on a backlit LCD "off" is a
-glowing grey rectangle. This board is AMOLED. An unlit pixel is off. So the
+glowing gray rectangle. This board is AMOLED. An unlit pixel is off. So the
 Night Watch inverts the display's default and ships `GoDark`, with one rule
 that outranks the owner's preference: **silence is never rendered as safety.**
 Trouble in the fleet, or a clock that does not know what time it is, breaks
@@ -66,7 +66,7 @@ exercise a happy path. Each is named after the mistake:
 | `test_pet_never_dies_and_never_regresses` | a lifespan creeping back in — it walks **a year of total neglect** |
 | `test_absence_costs_nothing_permanent` | scoring a child's absence against them |
 | `test_ask_never_rings` | the pull becoming a push (a notification, a buzz, a screen wake) |
-| `test_bond_daily_cap_flattens_the_reward` | the flat reward curve being "optimised" into a streak |
+| `test_bond_daily_cap_flattens_the_reward` | the flat reward curve being "optimized" into a streak |
 | `test_trouble_overrides_blackout` | a dark screen that means "trouble" as readily as "all is well" |
 | `test_rollover_does_not_fire_at_night` | a bright panel firing at a sleeping face at 3 a.m. |
 | `test_voice_never_claims_a_missing_channel` | claiming a buzz on a board with no motor fitted |

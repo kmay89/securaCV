@@ -24,8 +24,99 @@
  "counts": {
   "idea": 15,
   "prototype": 4,
-  "confirmed": 0,
-  "shipping": 25
+  "confirmed": 1,
+  "shipping": 24
+ },
+ "device_types": {
+  "mapped": [
+   {
+    "device_type": "canary-sense",
+    "figure": "device.canary-sense"
+   },
+   {
+    "device_type": "canary-vision",
+    "figure": "device.canary-vision"
+   },
+   {
+    "device_type": "canary-watch",
+    "figure": "device.canary-display-watch"
+   },
+   {
+    "device_type": "canary_wap",
+    "figure": "device.canary-wap"
+   },
+   {
+    "device_type": "canary_wap_mobile",
+    "figure": "device.canary-wap"
+   }
+  ],
+  "unmapped": [
+   {
+    "device_type": "canary-dash",
+    "why": "published by more than one board, and at least one has no figure yet (the figured one is device.canary-display-dash)"
+   },
+   {
+    "device_type": "canary-nightstand",
+    "why": "no figure for this hardware yet"
+   },
+   {
+    "device_type": "canary-nightstand7",
+    "why": "no figure for this hardware yet"
+   },
+   {
+    "device_type": "canary-sentinel",
+    "why": "no figure for this hardware yet"
+   }
+  ],
+  "configs_audit": [
+   {
+    "family": "canary-display",
+    "flavor": "dash",
+    "device_type": "canary-dash",
+    "figure": "device.canary-display-dash"
+   },
+   {
+    "family": "canary-display",
+    "flavor": "watch",
+    "device_type": "canary-watch",
+    "figure": "device.canary-display-watch"
+   },
+   {
+    "family": "canary-sense",
+    "flavor": "default",
+    "device_type": "canary-sense",
+    "figure": "device.canary-sense"
+   },
+   {
+    "family": "canary-sense",
+    "flavor": "wellbeing",
+    "device_type": "canary-sense",
+    "figure": "device.canary-sense"
+   },
+   {
+    "family": "canary-vision",
+    "flavor": "default",
+    "device_type": "canary-vision",
+    "figure": "device.canary-vision"
+   },
+   {
+    "family": "canary-wap",
+    "flavor": "default",
+    "device_type": "canary_wap",
+    "figure": "device.canary-wap"
+   },
+   {
+    "family": "canary-wap",
+    "flavor": "mobile",
+    "device_type": "canary_wap_mobile",
+    "figure": "device.canary-wap"
+   }
+  ],
+  "exact_lookup": {
+   "available": false,
+   "why": "the firmware does not record which physical product a build is for; a config directory and a build env are both shared across boards",
+   "fix": "declare a product id per build env, then key the exact table on it"
+  }
  },
  "figures": [
   {
@@ -81,19 +172,29 @@
       "status": "in-development"
      }
     ],
-    "firmware_configs": []
+    "firmware_configs": [],
+    "vendor_board": {
+     "key": "seeed_grove_vision_ai_v2",
+     "vendor": "Seeed Studio",
+     "mpn": "101021040",
+     "mesh_committed": true,
+     "vendor_step": true
+    }
    },
-   "dims_source": "sketch",
+   "dims_source": "board-cad",
    "sketch_note": null,
    "envelope_mm": {
-    "w": 40,
-    "d": 20,
-    "h": 2.8
+    "w": 22.48,
+    "d": 4.46,
+    "h": 17.78
    },
    "traced_to": [],
-   "drift_guard": null,
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
    "solids": 3,
-   "rev": "9ac4f8de",
+   "rev": "8c924aa8",
    "svg": "canary-local/figures/board.grove-vision-ai-v2.svg",
    "glyph": "canary-local/figures/board.grove-vision-ai-v2.glyph.svg"
   },
@@ -109,7 +210,7 @@
      "line": "Seeed MR60BHA2 60 GHz radar"
     }
    ],
-   "confidence": "shipping",
+   "confidence": "confirmed",
    "evidence": {
     "registry_kind": "witness",
     "committed_stls": [],
@@ -130,19 +231,26 @@
       "status": "in-development"
      }
     ],
-    "firmware_configs": []
+    "firmware_configs": [],
+    "vendor_board": {
+     "key": null,
+     "vendor": null,
+     "mpn": null,
+     "mesh_committed": false,
+     "vendor_step": false
+    }
    },
    "dims_source": "sketch",
-   "sketch_note": null,
+   "sketch_note": "the published 24 x 24 mm module outline; no vendor CAD committed",
    "envelope_mm": {
     "w": 24,
-    "d": 24,
-    "h": 1.8
+    "d": 3.2,
+    "h": 24
    },
    "traced_to": [],
    "drift_guard": null,
    "solids": 2,
-   "rev": "28c6014e",
+   "rev": "e0f22290",
    "svg": "canary-local/figures/board.mr60bha2.svg",
    "glyph": "canary-local/figures/board.mr60bha2.glyph.svg"
   },
@@ -163,19 +271,29 @@
     "registry_kind": null,
     "committed_stls": [],
     "catalog_variants": [],
-    "firmware_configs": []
+    "firmware_configs": [],
+    "vendor_board": {
+     "key": "seeed_round_display_xiao",
+     "vendor": "Seeed Studio",
+     "mpn": "104040143",
+     "mesh_committed": true,
+     "vendor_step": true
+    }
    },
-   "dims_source": "sketch",
+   "dims_source": "board-cad",
    "sketch_note": null,
    "envelope_mm": {
-    "w": 39,
-    "d": 5.4,
-    "h": 39
+    "w": 43,
+    "d": 10,
+    "h": 43
    },
    "traced_to": [],
-   "drift_guard": null,
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
    "solids": 3,
-   "rev": "993003f6",
+   "rev": "3e2f04e9",
    "svg": "canary-local/figures/board.round-display.svg",
    "glyph": "canary-local/figures/board.round-display.glyph.svg"
   },
@@ -282,19 +400,29 @@
       "status": "in-development"
      }
     ],
-    "firmware_configs": []
+    "firmware_configs": [],
+    "vendor_board": {
+     "key": "seeed_xiao_esp32s3",
+     "vendor": "Seeed Studio",
+     "mpn": "113991114",
+     "mesh_committed": true,
+     "vendor_step": true
+    }
    },
-   "dims_source": "sketch",
+   "dims_source": "board-cad",
    "sketch_note": null,
    "envelope_mm": {
-    "w": 21,
-    "d": 18.7,
-    "h": 2.6
+    "w": 22.64,
+    "d": 4.42,
+    "h": 17.78
    },
    "traced_to": [],
-   "drift_guard": null,
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
    "solids": 3,
-   "rev": "cd09fbf1",
+   "rev": "987b6a44",
    "svg": "canary-local/figures/board.xiao.svg",
    "glyph": "canary-local/figures/board.xiao.glyph.svg"
   },
@@ -427,19 +555,29 @@
      "nightstand7",
      "touch169",
      "watch"
-    ]
+    ],
+    "vendor_board": {
+     "key": "waveshare_4_3b",
+     "vendor": "Waveshare",
+     "mpn": "ESP32-S3-Touch-LCD-4.3B",
+     "mesh_committed": true,
+     "vendor_step": false
+    }
    },
-   "dims_source": "sketch",
+   "dims_source": "board-cad",
    "sketch_note": null,
    "envelope_mm": {
-    "w": 113.7,
-    "d": 16.35,
-    "h": 73.6
+    "w": 118,
+    "d": 38.9,
+    "h": 79
    },
    "traced_to": [],
-   "drift_guard": null,
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
    "solids": 3,
-   "rev": "9b7ce5f7",
+   "rev": "9bb5e13f",
    "svg": "canary-local/figures/device.canary-display-dash.svg",
    "glyph": "canary-local/figures/device.canary-display-dash.glyph.svg"
   },

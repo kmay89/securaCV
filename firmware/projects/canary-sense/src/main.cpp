@@ -16,7 +16,7 @@
 
   Privacy chokepoint (design doc §2): only coarsened claims leave this file —
   presence as a debounced state, occupant count as a 0/1/2+ bucket, distance
-  as a near/mid/far band. Raw centimetres, per-target data and vitals phases
+  as a near/mid/far band. Raw centimeters, per-target data and vitals phases
   are read and dropped here. Vitals (wellbeing builds) ride the state channel
   as a binary lock plus P1-gated BPM numerics and NEVER appear in events.
 
@@ -227,7 +227,7 @@ static const char* range_str(RangeBand r) {
 }
 
 // ----------------------------------------------------------------------------
-// Status LED (WS2812). Colour encodes presence state at a glance.
+// Status LED (WS2812). Color encodes presence state at a glance.
 // ----------------------------------------------------------------------------
 
 static void led_show(uint8_t r, uint8_t g, uint8_t b) {
@@ -242,7 +242,7 @@ static void led_show(uint8_t r, uint8_t g, uint8_t b) {
 
 // Identify (the wizard's "which device is which" moment): a 10 s white
 // flash driven from HA's identify button or the companion app. While the
-// window is open, identify owns the LED; the presence colour is restored
+// window is open, identify owns the LED; the presence color is restored
 // from g_led_presence when it closes.
 static uint32_t g_identify_until_ms = 0;  // 0 = idle
 static Presence g_led_presence = Presence::Unknown;
@@ -353,7 +353,7 @@ static void identify_tick(uint32_t now) {
     led_for_presence(g_led_presence);  // hand the LED back to presence
     return;
   }
-  // 2 Hz white flash — unmistakable against the steady presence colours.
+  // 2 Hz white flash — unmistakable against the steady presence colors.
   const bool on = ((now / 250) & 1) == 0;
   led_show(on ? 48 : 0, on ? 48 : 0, on ? 48 : 0);
 }
@@ -598,7 +598,7 @@ static void drive_fsms(const Frame& frame, uint32_t now) {
   // One compact, machine-parseable line on any sensing change — the browser
   // flasher's live radar bench reads it off the attended USB console (the
   // same coarse fields MQTT publishes: state, count bucket, range band —
-  // never raw centimetres). Cheap (change-gated) and greppable.
+  // never raw centimeters). Cheap (change-gated) and greppable.
   {
     static Presence    last_state = Presence::Unknown;
     static CountBucket last_count = CountBucket::Zero;

@@ -33,7 +33,7 @@ namespace rf_presence_api {
 // the device api token in a module-local static and wraps each real handler
 // in the auth_gated trampoline: it runs api_auth_check (which enforces the
 // lockout + sends the 401/403/429 on failure) and only then delegates.
-// nullptr keeps the legacy open behaviour for non-production callers; the
+// nullptr keeps the legacy open behavior for non-production callers; the
 // production call site in canary_wap.ino always passes g_device.api_token_str.
 inline const char*& auth_token_storage() {
   static const char* token = nullptr;

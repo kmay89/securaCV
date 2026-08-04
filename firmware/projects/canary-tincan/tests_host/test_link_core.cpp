@@ -191,7 +191,7 @@ static void test_replay_window() {
 // means a knock that can be played back at 2 a.m.
 //
 // It also cannot be left to fall out of the shift arithmetic: shifting a
-// 64-bit value by 64 is undefined behaviour, so the case needs its own branch.
+// 64-bit value by 64 is undefined behavior, so the case needs its own branch.
 static void test_replay_window_boundary() {
   const uint64_t n = 1000;
 
@@ -209,7 +209,7 @@ static void test_replay_window_boundary() {
   CHECK(!past.would_accept(n),
         "replay boundary: past the window, the old counter is below the floor");
 
-  // One inside: unchanged behaviour, guarding the shift path.
+  // One inside: unchanged behavior, guarding the shift path.
   ReplayWindow inside;
   inside.accept(n);
   inside.accept(n + LINK_REPLAY_WINDOW - 1);
@@ -378,7 +378,7 @@ static void test_rssi_first_sample_seeds() {
 }
 
 // Equal-length routes must not displace the incumbent, or a house full of
-// nodes flaps between two equally good neighbours every beacon.
+// nodes flaps between two equally good neighbors every beacon.
 static void test_route_prefers_shorter_and_ignores_ties() {
   NodeTable<4> t;
   t.observe(0xBEEF, -60, 2, 0x1111, 1000);

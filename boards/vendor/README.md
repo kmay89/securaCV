@@ -30,8 +30,8 @@ viewer. Nothing here is fetched at runtime — the page ships the derived mesh
   gap over the stand. The result is just the ~22.5 mm module — see
   `boards/boards.config.json`.
 - **Round Display** is a SolidWorks STEP export that did not carry per-solid
-  colours through the tessellator, so its materials are assigned by geometry
-  (dark PCB + grey glass). The *shape* is the vendor's exact model.
+  colors through the tessellator, so its materials are assigned by geometry
+  (dark PCB + gray glass). The *shape* is the vendor's exact model.
 - The **XIAO ESP32-S3** comes in two entries: the **Sense** (with the stacked
   camera/mic daughterboard, used by the WAP) and the **plain** base module (no
   daughterboard, the Watch Station host that seats in the Round Display socket).
@@ -41,10 +41,10 @@ viewer. Nothing here is fetched at runtime — the page ships the derived mesh
 - The **Raspberry Pi 5** is the largest source here (~7.5 MB gzipped, the vendor
   ships a very detailed ~12k-solid STEP). It is the Home Assistant **hub**, not a
   Canary device board, so it carries no device mapping and lives in the Board
-  Room only. Its STEP has no per-solid colours, so `gen_boards.py`
+  Room only. Its STEP has no per-solid colors, so `gen_boards.py`
   (`materials: "raspberry-pi"`) assigns them from the vendor's own solid names —
   green PCB, metal USB/Ethernet/HDMI shells, gold GPIO, black silicon — and
-  concatenates by colour so the committed GLB stays a handful of parts. It is
+  concatenates by color so the committed GLB stays a handful of parts. It is
   tessellated coarser (`tol_linear` 0.35 mm) than the small boards.
 - The **Waveshare ESP32-S3-Touch-LCD-4.3B** (the Dash) has **no vendor CAD** —
   Waveshare doesn't publish a STEP for it — so there is no file in this
@@ -58,36 +58,36 @@ viewer. Nothing here is fetched at runtime — the page ships the derived mesh
   a power slide on the other. Its proportions and exposed-feature layout are taken from **MaffooClock's
   published shell for the 5″ sibling** (ESP32-S3-Touch-LCD-5/5B, on Printables) —
   used **as a dimensional reference only, not copied or redistributed** (see the
-  licence note below) — scaled to the 4.3B and cross-checked against
+  license note below) — scaled to the 4.3B and cross-checked against
   `firmware/boards/waveshare-esp32s3-lcd43b` and the owner's photos. The case and
   screen are measured approximations; the green **16-position terminal block** —
   its 3.81 mm pitch, silk order and group labels (`6~36V VIN·GND / I2C
   VOUT·GND·SDA·SCL / CAN L·H / RS485 B·A / Iso-I/O DO0·DO1·DI-COM·GND·DI0·DI1`) —
   is transcribed from the firmware silk table. The 16 terminal anchors are read
-  straight off the model (it was built here, so their centres are known — no
-  island detection). Honestly labelled a reverse-engineered dimensional model in
+  straight off the model (it was built here, so their centers are known — no
+  island detection). Honestly labeled a reverse-engineered dimensional model in
   its provenance and the viewer ribbon, like the Round Display's geometry-assigned
   materials. Being code-generated (not a nondeterministic STEP tessellation), its
   GLB is deterministic and byte-stable.
 
-## Licence
+## License
 
 The Seeed XIAO series is **open hardware**; Seeed publishes CAD for these
 products on their wiki and OPL. These files are redistributed here solely to
 render the boards in SecuraCV's own offline viewer, with attribution to Seeed
-Studio. **Verify the specific licence terms for each product on its vendor page
+Studio. **Verify the specific license terms for each product on its vendor page
 before redistributing these models outside this project.** If any vendor
 requests removal, delete the STEP here and the viewer degrades gracefully to
 "no board modeled for this device yet."
 
 The **Waveshare** board is the exception: no vendor CAD is redistributed (there
 is none). Its GLB is our own geometry, authored procedurally from measurements
-and the vendor's published silk/spec — so it carries no vendor-CAD licence, only
+and the vendor's published silk/spec — so it carries no vendor-CAD license, only
 the usual caveat that it's a dimensional approximation, not the manufacturer's
 drawing. Its proportions were informed by **MaffooClock's "Shell for Waveshare
 ESP32-S3 5in Touch Display"** (Printables, **CC-BY-NC-SA 4.0**). That model is a
 *noncommercial* work, so **none of its mesh is copied, tessellated, or
 redistributed here** — it was used purely as a dimensional reference (the kind of
-measurement/fact use that sits outside the licence's copyleft), with attribution
+measurement/fact use that sits outside the license's copyleft), with attribution
 recorded here and in the board's provenance string. If a cleaner primary source
 (vendor drawing, direct measurement) supersedes it, drop the reference.

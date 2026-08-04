@@ -43,7 +43,7 @@ extern "C" int test_ble_scout_broadcast_run() { return 0; }
 namespace {
 
 /* Captured invocation state. The test callback appends each call so
- * tests can assert label-specific behaviour without being thrown off
+ * tests can assert label-specific behavior without being thrown off
  * by callbacks for other paired beacons that happen to be timing out
  * in the same tick. There is no full Scout reset between tests; the
  * registry, tracker, and key persist across the run. */

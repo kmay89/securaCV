@@ -63,7 +63,7 @@ collects. The full table is pinned by the host test:
 
 A Software reset is *always* our own firmware calling `esp_restart()`; a real
 power loss can only surface as a power-on or brownout reset, never as Software.
-So an OTA update or a user reboot is never mislabelled an outage — the reset
+So an OTA update or a user reboot is never mislabeled an outage — the reset
 cause alone settles it, no clean-shutdown flag required.
 
 The signals:

@@ -33,7 +33,7 @@ enum class Presence : uint8_t {
     Present,       // target debounced as present
 };
 
-// Coarse, privacy-safe range band derived from distance. Raw centimetres are
+// Coarse, privacy-safe range band derived from distance. Raw centimeters are
 // never exported; only this band may appear in diagnostics.
 enum class RangeBand : uint8_t {
     Unknown = 0,

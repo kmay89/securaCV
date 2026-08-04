@@ -218,7 +218,7 @@ inline size_t attest_build_message(uint8_t* dst, size_t cap,
 // ════════════════════════════════════════════════════════════════════════════
 
 // Firmware-internal reset cause. main.cpp maps ESP_RST_* onto this so the
-// labelling is host-testable without pulling in esp_system.h.
+// labeling is host-testable without pulling in esp_system.h.
 enum class ResetReason : uint8_t {
   Unknown = 0, PowerOn, Software, Panic, IntWdt, TaskWdt, BrownOut, DeepSleep,
   Watchdog, Sdio, Other,

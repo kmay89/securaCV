@@ -134,12 +134,14 @@ static canary::mode::Mode s_active_mode = canary::mode::Mode::Fleet;
 #ifdef CD_FLAVOR_NIGHTSTAND
 #include "canary/ui/portrait_ui.h"
 #endif
+// song_seed() is called under exactly this pair of flavors further down. The
+// Arduino build gets the declaration for free — the sketch preprocessor
+// compiles every .h/.cpp in the sketch folder together — but this file is
+// built as plain C++ by the emulator, where nothing is implicit, so the
+// include has to be real. Without it the wasm build fails with "no member
+// named 'song_seed' in namespace 'canary::ui'" while all four Arduino CLI
+// builds stay green, which is why it survived review.
 #if defined(CD_FLAVOR_NIGHTSTAND) || defined(CD_NIGHTSTAND7)
-// The shared look, and the lamp's VOICE (song_seed). Guarded to match the
-// flavors look_state.cpp actually compiles for: the header reaches into
-// common/color, which the Arduino watch/dash sketch does not stage, so an
-// unguarded include here would break those builds even though nothing in
-// them calls it.
 #include "canary/ui/look_state.h"
 #endif
 #if defined(FEATURE_LANTERN) && FEATURE_LANTERN

@@ -15,7 +15,7 @@
 //! it says what to do instead. Linux has the same failure under a different
 //! name ("Exec format error", os error 8).
 //!
-//! This module recognises that one class and supplies the missing sentence.
+//! This module recognizes that one class and supplies the missing sentence.
 //! Pure string logic with no dependencies, so it is host-tested on every PR
 //! (the app itself only builds on release tags — see the crate docs).
 

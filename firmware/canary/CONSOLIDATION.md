@@ -29,7 +29,7 @@ Two options were considered in the audit plan:
 ### What "consolidated" means
 
 - `firmware/canary/` (ACTIVE) reaches ≥ 95% feature parity with `canary-wap/arduino/canary_wap/` on the [FEATURES.md](../FEATURES.md) dashboard (every ✅/⚠️ cell in the Arduino column is also ✅ in the canary PIO column, excluding items intentionally scoped out).
-- Arduino IDE path is re-labelled **SUNSET** in `VARIANT_POLICY.md` for one release, then moved to `firmware/projects/_archive/` with the same archive-guard protections as the snapshot.
+- Arduino IDE path is re-labeled **SUNSET** in `VARIANT_POLICY.md` for one release, then moved to `firmware/projects/_archive/` with the same archive-guard protections as the snapshot.
 - `firmware/FEATURES.md`, `firmware/README.md`, and `firmware/ARCHITECTURE.md` are updated to reflect the single-lane world.
 
 ---
@@ -198,7 +198,7 @@ Gaps #8, #9 deferred to Phase 4b (chirp + RF presence bodies).
 Consolidation is **complete** when:
 
 - All 15 gaps in the inventory are ✅ in the canary (PIO) column (or explicitly scoped out with a note).
-- `firmware/projects/canary-wap/` is labelled ARCHIVED in [VARIANT_POLICY.md](../VARIANT_POLICY.md).
+- `firmware/projects/canary-wap/` is labeled ARCHIVED in [VARIANT_POLICY.md](../VARIANT_POLICY.md).
 - `firmware/README.md` documents a single primary build path (`firmware/canary/` PlatformIO).
 - `firmware/FEATURES.md` dashboard collapses to one column for WAP.
 - CI `archive-guard` protects the newly-archived Arduino tree.

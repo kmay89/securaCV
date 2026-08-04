@@ -38,7 +38,7 @@ pub struct BleRoom {
     pub room: String,
     /// Logical zone label the claim is attributed to.
     pub zone_label: String,
-    /// Presence is asserted when the reported `distance` is at or below this (metres).
+    /// Presence is asserted when the reported `distance` is at or below this (meters).
     pub max_distance: f64,
 }
 

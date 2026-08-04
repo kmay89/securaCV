@@ -447,15 +447,15 @@ footer a{color:var(--accent);text-decoration:none}
       <div class="wiz-check-summary" id="wiz-st-summary" role="status" aria-live="polite"></div>
 
       <!-- Shown only when the device is in recovery/safe mode, where every
-           optional peripheral is paused and the check list is mostly grey
+           optional peripheral is paused and the check list is mostly gray
            on hardware that is actually fine. -->
       <p class="wiz-sub err note" id="wiz-st-safemode" style="display:none;margin-top:.6rem"></p>
 
-      <!-- Shown only when a check fails. Explains that greyed rows are
+      <!-- Shown only when a check fails. Explains that grayed rows are
            normal and that the user is not stuck: they can fix-and-rerun
            or continue to the dashboard anyway. -->
       <p class="wiz-sub" id="wiz-st-failnote" style="display:none;margin-top:.6rem">
-        Greyed rows (like Camera or Microphone) just mean that feature isn't on this device &mdash; that's normal.
+        Grayed rows (like Camera or Microphone) just mean that feature isn't on this device &mdash; that's normal.
         Fix anything marked in red and tap <strong>Run again</strong>, or <strong>Continue anyway</strong> to open your Canary now.
         You can re-run these checks any time from the dashboard.
       </p>
@@ -1468,13 +1468,13 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
 
     // Recovery-mode banner. After a few rapid reboots (e.g. a marginal USB
     // supply) the Canary boots into safe mode and skips every optional
-    // peripheral, so the self-test shows a wall of grey "not active" rows
+    // peripheral, so the self-test shows a wall of gray "not active" rows
     // on hardware that is actually fine. Surface that explicitly so the
-    // grey rows read as "paused", not "broken". Returns '' when not in
+    // gray rows read as "paused", not "broken". Returns '' when not in
     // safe mode so the banner stays hidden.
     function safeModeNote(j) {
       return (j && j.safe_mode)
-        ? 'Your Canary is in recovery mode after a few quick restarts, so cameras, storage and radios are paused. This clears on its own once it runs steadily — give it a minute on solid power, then tap Run again. The greyed rows below aren\'t faults.'
+        ? 'Your Canary is in recovery mode after a few quick restarts, so cameras, storage and radios are paused. This clears on its own once it runs steadily — give it a minute on solid power, then tap Run again. The grayed rows below aren\'t faults.'
         : '';
     }
 
@@ -1610,7 +1610,7 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
     summary.classList.add(j.all_passed ? 'pass' : 'fail');
     summary.textContent = j.summary || (j.all_passed ? 'All checks passed.' : 'Checks failed.');
 
-    // Recovery-mode banner (independent of pass/fail): explains the grey
+    // Recovery-mode banner (independent of pass/fail): explains the gray
     // rows on a device that just rebooted a few times, so a healthy unit
     // in safe mode doesn't read as broken.
     const safeNote = $w('wiz-st-safemode');

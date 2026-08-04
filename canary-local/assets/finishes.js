@@ -6,11 +6,11 @@
 //
 // Each finish is TWO-TONE on purpose — a bold primary body with a darker
 // secondary for stands / rear covers / vent insets — because a single
-// saturated colour reads cheap, while a body + graphite accent reads
-// designed. Colours are linear-ish RGB tuned for scene3d's shader (ambient
+// saturated color reads cheap, while a body + graphite accent reads
+// designed. Colors are linear-ish RGB tuned for scene3d's shader (ambient
 // 0.30 + diffuse), not raw hex. `swatch` is the CSS hex for the picker dot.
 //
-// FUNCTIONAL part colours (camera glass, lens barrel, solar sliver, screen
+// FUNCTIONAL part colors (camera glass, lens barrel, solar sliver, screen
 // bezel) are NOT filament and stay literal in the builders — the finish only
 // moves the printed shell, which is the honest thing a filament swap does.
 //
@@ -88,7 +88,7 @@ const lerp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, 
 /**
  * The live RGB for a filament role, mid-cross-fade — read per-frame by the
  * renderer for role-tagged parts. Returns null for non-filament roles so
- * functional parts (glass, lens) keep their literal colour.
+ * functional parts (glass, lens) keep their literal color.
  */
 export function finishColor(role) {
   const key = ROLE_KEY[role];

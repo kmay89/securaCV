@@ -53,7 +53,7 @@ fully backward compatible with existing canaries.
 A **✓ "Signature verified"** badge is shown **only** when the event's Ed25519
 signature actually verified (the integration's `verified` attribute). The card
 deliberately distinguishes weaker states by label (the source of truth, since theme
-colours can vary) so the **"Signature verified"** badge never overclaims —
+colors can vary) so the **"Signature verified"** badge never overclaims —
 signed-but-unverified reuses the ✓ glyph with a "Signed (unverified)" label, as noted below:
 
 | Badge | Meaning |

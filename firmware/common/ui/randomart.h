@@ -38,7 +38,7 @@ static const char RANDOMART_RAMP[] = " .o+=*BOX@%&#/^SE";
 static const int RANDOMART_LEN = (int)(sizeof(RANDOMART_RAMP) - 1) - 1;  // 16
 
 // Walk the bishop over `data` and fill `field[row][col]` with clamped visit
-// counts, then stamp the Start (centre) and End (last square) markers. Pure and
+// counts, then stamp the Start (center) and End (last square) markers. Pure and
 // deterministic: identical bytes always draw the identical field.
 inline void randomart_field(const uint8_t* data, size_t len,
                             uint8_t field[RANDOMART_H][RANDOMART_W]) {

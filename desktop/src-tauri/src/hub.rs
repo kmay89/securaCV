@@ -681,7 +681,7 @@ fn hub_flash_blocking(
             match hub_io::fetch::sha256_file(cp, cancel) {
                 // A cancel during the hash is a cancel, not a bad cache: stop
                 // cleanly and KEEP the file.
-                Err(e) if e.starts_with(hub_io::CANCELLED) => return Err(e),
+                Err(e) if e.starts_with(hub_io::CANCELED) => return Err(e),
                 Err(_) => {
                     // Couldn't even read it — treat as absent and re-download.
                     log("→ couldn't read the local copy; downloading a fresh one".to_string());
@@ -730,7 +730,7 @@ fn hub_flash_blocking(
         log(format!("→ downloading {}", plan.image_url));
         let dl = match hub_io::fetch::download(&plan.image_url, &dest, cancel, &mut progress) {
             Ok(dl) => dl,
-            Err(e) if !e.starts_with(hub_io::CANCELLED) => {
+            Err(e) if !e.starts_with(hub_io::CANCELED) => {
                 log(format!(
                     "→ the download tripped over its shoelaces ({e}) — dusting off and trying once more…"
                 ));

@@ -205,7 +205,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     // 10 ms for supervision timeout. The (24, 40, 0, 400) range is inside
     // Apple's accepted band (min 15 ms, range >= 15 ms, timeout >= 2 s)
     // so iOS won't reject and renegotiate to 30 ms+. Android typically
-    // honours the request directly. Falls back silently to the default
+    // honors the request directly. Falls back silently to the default
     // 30-ms interval if the peer refuses.
     server->updateConnParams(connInfo.getConnHandle(), 24, 40, 0, 400);
 
@@ -1065,7 +1065,7 @@ void cancel_pairing() {
     set_state(g_connection.connected ? BT_CONNECTED : BT_IDLE);
   }
 
-  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Pairing cancelled", nullptr);
+  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Pairing canceled", nullptr);
 }
 
 bool confirm_pairing(uint32_t pin) {
@@ -1486,12 +1486,12 @@ float estimate_distance_m(int8_t rssi_dbm, int8_t tx_ref_dbm) {
   return d;
 }
 
-const char* distance_label(float metres) {
-  if (metres <= 0.0f)  return "unknown";
-  if (metres <= 1.0f)  return "right here";
-  if (metres <= 3.0f)  return "near";
-  if (metres <= 8.0f)  return "nearby";
-  if (metres <= 20.0f) return "in range";
+const char* distance_label(float meters) {
+  if (meters <= 0.0f)  return "unknown";
+  if (meters <= 1.0f)  return "right here";
+  if (meters <= 3.0f)  return "near";
+  if (meters <= 8.0f)  return "nearby";
+  if (meters <= 20.0f) return "in range";
   return "far";
 }
 

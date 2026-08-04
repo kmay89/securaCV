@@ -1,4 +1,4 @@
-//! port_hint — recognise the two Linux-specific reasons a Canary's serial
+//! port_hint — recognize the two Linux-specific reasons a Canary's serial
 //! port won't open, and say the real fix instead of retrying in silence.
 //!
 //! On macOS a USB-CDC port the OS lists is a port the app can open, so the
@@ -37,7 +37,7 @@ pub const BUSY_HINT: &str =
      ModemManager to leave Canaries alone (AppImage users: see INSTALL.md → \"Linux\").";
 
 /// Classify a serial-open failure (or espflash's output around one) into the
-/// Linux fix it needs; `None` for anything unrecognised, so ordinary failures
+/// Linux fix it needs; `None` for anything unrecognized, so ordinary failures
 /// keep their ordinary messages. Permission wins over busy: an EACCES text
 /// that also mentions the device path must not read as "wait it out".
 pub fn linux_open_hint(message: &str) -> Option<&'static str> {

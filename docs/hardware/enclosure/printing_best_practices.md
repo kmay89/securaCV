@@ -102,7 +102,7 @@ For PETG that means:
   the highest temperature that still bridges and doesn't string, which is also
   your strongest. ASA/PC run hotter still and want an enclosure.
 
-### Cooling is the strength ↔ finish dial — for these parts, favour strength
+### Cooling is the strength ↔ finish dial — for these parts, favor strength
 
 More part-cooling fan gives crisper overhangs and cleaner small features, but it
 **freezes each layer before it fully welds to the next**, so it *lowers* Z

@@ -11,14 +11,14 @@
 
 ## TL;DR
 
-[Meshtastic](https://meshtastic.org) is an open LoRa mesh platform with kilometre-scale,
+[Meshtastic](https://meshtastic.org) is an open LoRa mesh platform with kilometer-scale,
 off-grid range — and **no camera or computer-vision story**: its closest feature is the
 Detection Sensor Module, which turns a GPIO pin (PIR, contact switch) into a text alert.
 SecuraCV is exactly the missing half: a privacy-preserving witness pipeline whose events are
 *already* coarse enough to fit a single LoRa packet. The integration runs in both directions:
 
 1. **Inbound (IMPLEMENTED)** — Meshtastic detection-sensor nodes become witness sources via the
-   `adapter-meshtastic` sensor adapter, reaching kilometres beyond the household ESP-NOW mesh.
+   `adapter-meshtastic` sensor adapter, reaching kilometers beyond the household ESP-NOW mesh.
 2. **Outbound (SPECIFIED, not implemented)** — sealed SecuraCV events broadcast over the mesh to
    phones/nodes with no internet, no cell service, no cloud.
 3. **LoRa as an Opera/Beacon/Chirp transport (ROADMAP)** — long-range substrate for the existing

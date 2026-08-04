@@ -105,6 +105,60 @@ def rust_match_pairs(text: str, pattern: str) -> dict[str, str]:
     return {m.group(1): m.group(2) for m in re.finditer(pattern, text)}
 
 
+def _balanced_body(text: str, start: int) -> str:
+    """The brace-balanced block beginning at the first `{` at/after `start`."""
+    open_at = text.find("{", start)
+    if open_at < 0:
+        return ""
+    i = open_at + 1
+    depth = 1
+    while i < len(text) and depth:
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+        i += 1
+    return text[open_at + 1 : i - 1]
+
+
+def rust_fn_body(text: str, name: str, rel: str) -> str:
+    """Body of `fn {name}(...)`, or "" if absent.
+
+    Needed because two functions here (`as_str`, `hap_characteristic`) have
+    identical arm *shapes* — `HomeSignal::X => "y",` — so a file-wide regex
+    cannot tell which mapping it just read, and later arms silently overwrite
+    earlier ones. Scoping to one body is what makes a swapped pair detectable.
+    """
+    m = re.search(r"\bfn\s+" + re.escape(name) + r"\s*\(", text)
+    if not m:
+        err(f"[parse] could not find `fn {name}` in {rel} — update the linter if it moved")
+        return ""
+    return _balanced_body(text, m.end())
+
+
+def swift_computed_property_map(text: str, name: str, rel: str) -> dict[str, str]:
+    """{caseName: returnedString} for a Swift `var {name}: String { switch … }`.
+
+    Handles multi-case arms (`case .a, .b: return "x"`), which is how the
+    class-scoped signals share one HAP characteristic.
+    """
+    m = re.search(r"\bvar\s+" + re.escape(name) + r"\s*:", text)
+    if not m:
+        err(f"[parse] could not find `var {name}` in {rel} — update the linter if it moved")
+        return {}
+    body = _balanced_body(text, m.end())
+    out: dict[str, str] = {}
+    for arm in re.finditer(r"case\s+([^:]+?):\s*return\s+\"([^\"]+)\"", body):
+        for case_name in re.findall(r"\.(\w+)", arm.group(1)):
+            out[case_name] = arm.group(2)
+    return out
+
+
+def snake_to_lower_camel(s: str) -> str:
+    head, *rest = s.split("_")
+    return head + "".join(p[:1].upper() + p[1:] for p in rest)
+
+
 def brace_object_keys(text: str, opener_regex: str, rel: str, what: str) -> list[str]:
     """Keys of a `NAME = { ... }` object (Python dict or JS object literal)."""
     m = re.search(opener_regex, text)
@@ -263,6 +317,53 @@ def main() -> int:
         if f'"{e["label"]}"' not in swift:
             err(f"[drift] EventVocabulary.swift: label {e['label']!r} for {e['id']!r} "
                 "missing or reworded (labels mirror the dictionary verbatim)")
+
+    # --- Apple Home projection (egress vocabulary: Rust core + Swift mirror) ---
+    # The projection is the one vocabulary that leaves the household, so its
+    # drift check is the strictest here: not just the names, but the HAP
+    # characteristic each name projects as. A silent rename on either side
+    # would publish a Canary into someone's home as the wrong kind of sensor.
+    hk = d["homekit_projection"]
+    hk_signals = hk["signals"]
+    hk_ids = [s["id"] for s in hk_signals]
+
+    rust_hk = read("src/bridge/homekit.rs")
+    compare("HomeSignal variants (src/bridge/homekit.rs) vs dictionary",
+            [s["rust_variant"] for s in hk_signals],
+            rust_enum_variants(rust_hk, "HomeSignal", "src/bridge/homekit.rs"))
+
+    # Both mappings are compared *per variant*, from their own function bodies.
+    # A presence-only check would pass when two signals swap characteristics —
+    # publishing a Canary into someone's home as the wrong kind of sensor while
+    # CI stayed green.
+    rust_ids = rust_match_pairs(rust_fn_body(rust_hk, "as_str", "src/bridge/homekit.rs"),
+                                r'HomeSignal::(\w+) => "([a-z0-9_]+)"')
+    rust_haps = rust_match_pairs(
+        rust_fn_body(rust_hk, "hap_characteristic", "src/bridge/homekit.rs"),
+        r'HomeSignal::(\w+) => "([a-z0-9-]+)"')
+    swift_hk = read("ios/Sources/SecuraCV/Native/HomeKitBridge.swift")
+    swift_haps = swift_computed_property_map(
+        swift_hk, "hapCharacteristic", "ios/Sources/SecuraCV/Native/HomeKitBridge.swift")
+
+    for s in hk_signals:
+        rv, sid, hap = s["rust_variant"], s["id"], s["hap_characteristic"]
+        if rust_ids.get(rv) != sid:
+            err(f"[drift] HomeSignal::{rv}.as_str(): dictionary {sid!r} "
+                f"vs code {rust_ids.get(rv)!r}")
+        if rust_haps.get(rv) != hap:
+            err(f"[drift] HomeSignal::{rv}.hap_characteristic(): dictionary "
+                f"{hap!r} vs code {rust_haps.get(rv)!r}")
+        swift_case = snake_to_lower_camel(sid)
+        if swift_haps.get(swift_case) != hap:
+            err(f"[drift] HomeKitBridge.swift .{swift_case}.hapCharacteristic: "
+                f"dictionary {hap!r} vs code {swift_haps.get(swift_case)!r}")
+        if f'"{s["label"]}"' not in swift_hk:
+            err(f"[drift] HomeKitBridge.swift: label {s['label']!r} for "
+                f"{sid!r} missing or reworded (labels mirror the dictionary)")
+
+    compare("HomeKitBridge.swift HomeSignal ids vs dictionary",
+            hk_ids, swift_enum_raw_values(swift_hk, "HomeSignal",
+                                          "ios/Sources/SecuraCV/Native/HomeKitBridge.swift"))
 
     # --- Device-signature format constants (Python + every firmware copy) ---
     sig_py = read("custom_components/securacv/signature.py")
