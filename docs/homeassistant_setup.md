@@ -238,12 +238,12 @@ existing: the integration listens for several signals no firmware publishes yet.
 | `sd_error` | SD Error | Canary publishes `sd_errors` in health | Implemented |
 | `memory_critical` | Memory Critical | derived HA-side from published `free_heap` | Implemented |
 | `enclosure` | Enclosure Open | capacitive-touch tamper published on the tamper topic (as `enclosure_tamper`) | Experimental |
-| `power_loss` | Power Loss | none found (`power_loss_detected` never published) | Experimental |
+| `power_loss` | Power Loss | canary base publishes `{"type":"power_loss"}` on the tamper topic at boot when the power-events classifier reports a restored outage or brownout (`canary_power_events.h`; the WAP and other trees are still pending their boot-path wiring) | Implemented (canary base) |
 | `gps_jamming` | GPS Jamming | none found | Experimental |
 | `motion` | Unexpected Motion | none found (accelerometer signal not published) | Experimental |
 | `gpio` | GPIO Tamper | none found | Experimental |
 | `watchdog` | Watchdog Timeout | none found | Experimental |
-| `unexpected_reboot` | Unexpected Reboot | none found | Experimental |
+| `unexpected_reboot` | Unexpected Reboot | canary base publishes `{"type":"unexpected_reboot"}` on the tamper topic at boot after a fault reset (same power-events path as `power_loss`) | Implemented (canary base) |
 | `battery_remove` | — (no sensor) | none | Planned |
 | `gps_spoof` | — (no sensor) | none | Planned |
 | `capacitive` | — (no sensor; folded into `enclosure` on-device) | touch pad tamper | Planned |

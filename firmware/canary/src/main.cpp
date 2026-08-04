@@ -1806,6 +1806,24 @@ void loop() {
   }
 #endif
 
+  // Publish the boot power lineage once per boot: a restored outage, a
+  // brownout, or a fault reset becomes the {"type":"power_loss"} /
+  // {"type":"unexpected_reboot"} tamper payload the HA integration's
+  // per-type sensors parse (and the adapter's tamper route can seal). A
+  // benign boot builds no payload and stays silent. Same re-arm rule as
+  // the sensing tamper drain above.
+  {
+    static bool s_pe_tamper_pending = true;
+    if (s_pe_tamper_pending && mqtt_connected()) {
+      s_pe_tamper_pending = false;
+      char pe_payload[224];
+      if (canary_pe::ha_tamper_payload(pe_payload, sizeof(pe_payload)) &&
+          !mqtt_publish_tamper(pe_payload, /*retained=*/false)) {
+        s_pe_tamper_pending = true;
+      }
+    }
+  }
+
   // Publish health periodically
   if (mqtt_connected() && now - g_last_mqtt_health_ms >= MQTT_HEALTH_INTERVAL_MS) {
     g_last_mqtt_health_ms = now;

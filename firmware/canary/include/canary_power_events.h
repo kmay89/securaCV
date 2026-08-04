@@ -127,6 +127,15 @@ inline void witness_incident() {
   witness_create_record(payload, cbor.size(), RECORD_STATE_CHANGE, &rec);
 }
 
+// The boot classification as the securacv/<id>/tamper payload the Home
+// Assistant integration's per-type sensors parse ({"type":"power_loss"} /
+// {"type":"unexpected_reboot"}). Returns false for a benign boot — nothing to
+// publish. Called from main.cpp's MQTT drain once the broker is up; the JSON
+// itself is built by the pure core (proven by test_power_events.cpp).
+inline bool ha_tamper_payload(char* out, size_t cap) {
+  return powerevents::ha_tamper_json(g_boot, g_outage_s, out, cap);
+}
+
 // Call every loop: persists the liveness heartbeat on a cadence — and only when
 // the wall clock is actually set, so a board with no clock never writes a
 // meaningless heartbeat. The heartbeat bounds the NEXT outage's lower-bound

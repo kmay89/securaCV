@@ -513,12 +513,15 @@ bool mqtt_publish_chain(const char* json_payload) {
   return s_mqtt.publish(s_topic_chain, json_payload);
 }
 
-bool mqtt_publish_tamper(const char* json_payload) {
+bool mqtt_publish_tamper(const char* json_payload, bool retained) {
   if (!s_mqtt.connected()) return false;
   // NOTE: PubSubClient only supports QoS 0 for publishing.
-  // Use retained=true so the last tamper alert persists on the broker
-  // for subscribers that connect after the event.
-  return s_mqtt.publish(s_topic_tamper, json_payload, true);
+  // Default retained=true so the last tamper alert persists on the broker
+  // for subscribers that connect after the event. Event-shaped payloads
+  // (the boot power lineage) pass retained=false — a retained copy would
+  // re-trigger HA's edge-latching tamper sensors on every HA restart,
+  // days after the incident.
+  return s_mqtt.publish(s_topic_tamper, json_payload, retained);
 }
 
 bool mqtt_publish_transport(const char* json_payload) {

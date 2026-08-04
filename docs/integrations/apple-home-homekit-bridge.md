@@ -143,6 +143,25 @@ legally mandated cadences and stores no audio — and it is *not* a UL-listed
 life-safety device; it is a second messenger for the alarm you already own,
 never a replacement.
 
+**Seal the alarm as evidence (optional):** the push lanes above tell you *now*;
+the adapter host can also make "an alarm was heard" part of the sealed witness
+record. [`adapter_host.example.toml`](../../adapter_host.example.toml) ships
+two routes for the WAP's `sensing` stream, gated on the `acoustic_event` field
+via `state_field` + `state_equals` (never on the cumulative counters beside it,
+which stay nonzero forever after the first detection):
+
+```toml
+[[adapter.route]]
+topic = "securacv/canary-1/sensing"
+kind = "acoustic_impulse_in_zone"
+zone = "smoke_alarm_heard"
+state_field = "acoustic_event"
+state_equals = "smoke_alarm_t3"
+```
+
+One route per device (exact topic match); duplicate the pair with
+`co_alarm_t4` for CO, and swap `canary-1` for each device id.
+
 **Power outage, honestly:** a house that loses power cannot report its own
 death — the hub, the router, and the Apple hub die with it. What works:
 
@@ -169,9 +188,12 @@ death — the hub, the router, and the Apple hub die with it. What works:
               push: { interruption-level: time-sensitive }
   ```
 - **On restore:** the fleet's boot-lineage classifier
-  ([power events](../design/power_events.md)) is built and host-tested; it
-  records the outage as evidence with an honest lower-bound duration. Its
-  boot-path wiring lands hardware-validated, separately.
+  ([power events](../design/power_events.md)) records the outage as evidence
+  with an honest lower-bound duration, and on the canary base tree the
+  classification now reaches Home Assistant as the `Power Loss` tamper
+  sensor turning on — so "the power went out while you were away" is a push
+  you get on power's return, from both lanes. Other firmware trees gain the
+  same wiring hardware-validated, per the design doc's priority order.
 - **Designed:** absence-inference and the powered mesh gateway in the
   [alert relay RFC](../design/alert_relay.md) — the only path that can speak
   *during* the outage — is design-only today, and says so.

@@ -174,6 +174,16 @@ keeps witnessing"*).
   `heartbeat()` (the loop liveness persist). It is the copy-me reference for the
   other trees. *(Compiled on CI/hardware; the pure core it calls is the
   host-tested part.)*
+- **Done — Home Assistant egress:** the base tree also publishes the boot
+  classification on `securacv/<id>/tamper` as the payload the integration's
+  per-type sensors parse — `{"type":"power_loss"}` for a restored outage or
+  brownout (with the honest lower-bound duration in `detail` when one is
+  known), `{"type":"unexpected_reboot"}` for a fault reset, nothing for a
+  benign boot. The JSON builder is `powerevents::ha_tamper_json()` in the pure
+  core, host-tested exactly; the publish is non-retained on purpose (a
+  retained copy would re-trigger HA's edge-latching sensors on every HA
+  restart). This closes the "`power_loss` — none found" row in
+  [`homeassistant_setup.md`](../homeassistant_setup.md) for the base tree.
 - **Next (per firmware, hardware-validated):** apply the same three-call recipe.
   Priority: **canary-display 4.3C** (has a PCF85063 RTC for real wall-clock
   outage times + the scoped on-glass UX) → wap / vision / sense / sentinel.
