@@ -1430,7 +1430,18 @@ qr_dy   = 39.0;   // field center, +y = toward the back edge (a battery
 // Turning it back on is one word, and the asserts will then tell you exactly
 // what it collides with rather than letting it overlap the mark. If you want
 // both, the mark has to come down to about 45 mm and the composition changes.
-qr_back      = false;  // deboss the help QR into the back plate too
+qr_back      = false;  // deboss the help QR into the back PLATE
+// ...but the SCAN COUPON still carries one, and that distinction is the whole
+// point of this line. `qr_back` answers "does the finished plate wear the
+// symbol"; the coupon answers "would a symbol printed by THIS machine, at
+// THIS cell size, in THIS polarity, actually scan" — which is the question you
+// have to answer BEFORE you can decide the first one. Gating the coupon on the
+// plate's setting inverts that: it makes the test unavailable exactly when you
+// need it, and it does so silently, because gen_3mf.py drops a volume that
+// renders empty and packages a blank body-colored plaque instead.
+// (That is not hypothetical — it is what this file did for one commit, and
+// `part="coupon_qr_ink"` exported nothing at all.)
+qr_draw = qr_back || part == "coupon_qr_body" || part == "coupon_qr_ink";
 qr_back_cell = 1.3;    // module size — 3.1 line-widths at 0.42, up from 1.2
                        // (2.9): printable in theory at 1.2, marginal in fact,
                        // and this symbol is the one read off a wall. 1.34 is
@@ -1722,7 +1733,7 @@ fr_keep_fixed = concat(
     // list stores CENTERS, and an egg whose center is just outside the
     // quiet zone would otherwise lay its body across it — at worst sharing
     // a face with a module cell, which CGAL rightly calls non-manifold
-    qr_back ? [[qr_back_dx, qr_back_dy,
+    qr_draw ? [[qr_back_dx, qr_back_dy,
                 qr_back_reach + vent_slot_w/2 + 0.4,
                 qr_back_reach + vent_slot_l/2 + 0.4]] : [],
     // the rating stamp wants unbroken plate under it, same as any deboss
@@ -2462,7 +2473,7 @@ if (bat_on)
          " tracks fr_depth. Heat/care: 1C pack, ≤3 A draw, charge ≤2 A;",
          " if the pack area runs warm to the touch, stop and re-measure",
          " bat_over — the board-side gap is the one that matters"));
-if (qr_back)
+if (qr_draw)
     echo(str("  frame help QR: \"", qr_url(), "\" — ", qr_n, "x", qr_n, " at ",
          qr_back_cell, " mm (", qr_n*qr_back_cell, " mm field) on the back",
          " plate at (", qr_back_dx, ", ", qr_back_dy, "), its grille keepout",
@@ -2861,7 +2872,7 @@ module back_graphics(ink = "all") {
         // body color. Same two filaments, same inlay machinery, opposite
         // assignment, and it is decided by measuring the palette rather than by
         // remembering to think about it.
-        if (qr_back)
+        if (qr_draw)
             translate([qr_back_dx - qr_n*qr_back_cell/2,
                        qr_back_dy + qr_n*qr_back_cell/2,
                        fr_depth - label_back_depth])

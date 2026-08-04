@@ -8391,7 +8391,11 @@
       {
        "name": "qr_back",
        "default": "false",
-       "comment": "deboss the help QR into the back plate too"
+       "comment": "deboss the help QR into the back PLATE"
+      },
+      {
+       "name": "qr_draw",
+       "default": "qr_back || part == \"coupon_qr_body\" || part == \"coupon_qr_ink"
       },
       {
        "name": "qr_back_cell",

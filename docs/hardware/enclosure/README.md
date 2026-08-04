@@ -581,6 +581,17 @@ The QR plaque is two filaments, not three, and it is only the back plate —
 and the accent must never touch a finder pattern, so there is deliberately no
 third slot to put it in.
 
+**The coupon carries a symbol even though the plate does not.** `qr_back` is
+off by default (the badge owns that space — see the three-color section above),
+so the shipped frame has no QR on it. The coupon still does, deliberately:
+`qr_back` answers *"does the finished plate wear the symbol"*, and the coupon
+answers *"would a symbol printed by this machine, at this cell size, in this
+polarity, actually scan"* — which is the question you have to settle **before**
+you can decide the first one. Gating one on the other made the test unavailable
+exactly when it was needed, and silently, because the packager drops a volume
+that renders empty. `gen_3mf.py` now treats an empty volume on this object as a
+hard error rather than a note.
+
 ⚠️ **On this palette the symbol is WHITE ON BLACK — inverted from the spec**,
 because `qr_style` is `bare`: the modules print straight onto the plate so the
 field is the case, with no bright rectangle around it. Readers are supposed to

@@ -1287,7 +1287,7 @@
     {
      "id": "qr_back",
      "type": "bool",
-     "label": "deboss the help QR into the back plate too",
+     "label": "deboss the help QR into the back PLATE",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -1314,7 +1314,7 @@
      "default": "none"
     }
    ],
-   "engineering_param_count": 281,
+   "engineering_param_count": 282,
    "alternatives": [
     "dash_display"
    ],
