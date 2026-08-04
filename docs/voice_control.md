@@ -32,7 +32,8 @@ if you want the full contract; the short version binds everything below:
     push-to-talk, nothing to buy, and the default this page assumes.
   - **A dedicated satellite** (Home Assistant Voice Preview Edition, or an
     ESPHome voice satellite you build) — needed only if you want a
-    hands-free wake word in a room.
+    hands-free wake word in a room. Buying hardware? See
+    [the microphone short list](#which-microphone--the-short-list) below.
   - **Never a Canary.** No firmware path ships audio samples off a Canary,
     and none will be written for this.
 
@@ -112,6 +113,26 @@ rather than not at all:
 
 Enable it by assigning the openWakeWord add-on's wake word (e.g. "okay
 nabu") to your satellite in the assistant's settings.
+
+## Which microphone — the short list
+
+Scoped against three tests: does it work on Home Assistant OS **without
+kernel-driver surgery**, does it fit the satellite contract, and is the
+acoustic hardware honest about far-field pickup. Prices are street prices at
+the time of writing — verify before buying, they drift.
+
+| Pick | What it is | Verdict |
+|---|---|---|
+| **Seeed ReSpeaker Lite Voice Assistant Kit** (~$25–40) | 2-mic array + XMOS XU-316 audio DSP with a pre-soldered **XIAO ESP32-S3**, optional speaker + enclosure | **The recommended satellite.** Runs ESPHome as an Assist satellite with the wake word on-device, so audio streams to the hub only after the wake fires — the cleanest possible fit for the contract's rule 1. The DSP does echo cancellation and noise suppression in hardware. And it's the same XIAO ESP32-S3 family half this project's boards already use — a board we know. |
+| **Home Assistant Voice Preview Edition** (~$59) | The first-party box: XMOS DSP, dual mics, mute switch | The zero-build alternative. Buy it if you'd rather not flash anything; it exists to be exactly this satellite. |
+| **Seeed ReSpeaker XVF3800 USB 4-Mic Array** (~$35–60) | Circular 4-mic array, XMOS XVF3800: AEC, beamforming, 360° far-field to ~5 m, **plain USB audio device** | The hub-attached option. Because it enumerates as standard USB audio, it works on Home Assistant OS with no drivers — pair it with the **Assist Microphone** add-on and the hub itself becomes the room's listening device. Only right if the Pi actually sits in the living space (a hub in a closet can't hear you), and note the transparency shift: the wake-word honesty section above then applies to the hub. |
+| **ReSpeaker 2-Mics Pi HAT (v1/v2)** (~$13) | GPIO HAT for the Pi | **Avoid on Home Assistant OS.** The `seeed-voicecard` kernel driver is not in the HAOS build and the request to add it has been open for years — the cheap HAT is the classic trap. It's fine on a *separate* Pi Zero satellite running Raspberry Pi OS + Wyoming, but that's a harder build than the ReSpeaker Lite for similar money. |
+
+Two rules of thumb fall out: **USB beats HAT on Home Assistant OS** (no
+kernel modules, no forks to babysit), and **a satellite in the room beats a
+better microphone on a hub in a cupboard** — placement is worth more than
+mic count. Whichever you pick, the contract is unchanged: wake word opt-in,
+transcripts transient, queries only, and never a Canary.
 
 ## What voice will refuse — by construction
 
