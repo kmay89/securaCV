@@ -377,7 +377,7 @@ CURATED = [
                         "it → smaller number; slides back off too easily → "
                         "bigger. 0 removes the click.",
             "emblem_h": "How tall the embossed Canary prints. At the default "
-                        "9 mm it spans 11.1 mm — the clear air between the two "
+                        "15.8 mm it spans 15.4 mm — the clear air between the two "
                         "wordmarks. 0 removes the station.",
             "emblem_rib": "No part of the mark is drawn narrower than this, "
                           "so one number decides the whole emblem. Blobbed "

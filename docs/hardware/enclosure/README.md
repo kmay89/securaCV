@@ -512,14 +512,23 @@ the body color, no filament of its own.
 
 | slot | filament | what it prints |
 |---|---|---|
-| 1 | `pal_body` — **Black** | the case, the bezel ring, the vent mouths, and the bird's eye and wing line (they are knocked out of the mark, so the plate shows through them) |
+| 1 | `pal_body` — **Black** | the case, the bezel ring, the vent mouths |
 | 2 | `pal_ink` — **White** | the help QR's modules, and nothing else |
 | 3 | `pal_accent` — **Signal Yellow** (RAL 1003) | the bird, and the three-row lockup under it: SECURACV / CANARY / ERRERlabs |
 
-The bird is a **solid silhouette**, not an outline — `bird_fill = false` gives
-the old line drawing back. Its eye and wing are cut out of the accent inlay,
-so they print in the body color with no extra tool change: the whole mark is
-still one filament laid into one recess.
+The mark is **monoline** — one stroke weight for the outline, the C spiralled
+into the wing, the V in the tail and the notepad alike — so a single number
+(`bird_rib`) decides whether the whole drawing prints, and the library asserts
+it. It is drawn ~62 × 68 mm on the back plate, which is the largest that keeps
+its tail clear of the card window; the vents, the spec block and the help line
+are laid out around it rather than the other way round.
+
+⚠️ **The badge costs back-plate venting.** The grille drops from ~29 cm² to
+about 7 cm² — almost all of it the mark's own keepout, not the size grade. The
+convection path (bottom-wall intake → top-wall exhaust) is not on this plate
+and is untouched, but this panel runs hot and the render echoes the exact
+numbers plus what each decision cost. `bird_h` is the knob that matters;
+`badge_column = false` and `vent_grade = false` are the smaller ones.
 
 The 3MF assigns filament **slots**, not colors, so load them in that order or
 you will print a materially different case from the one described here.

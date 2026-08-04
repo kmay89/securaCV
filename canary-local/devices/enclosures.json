@@ -6371,8 +6371,14 @@
        "default": "true"
       },
       {
+       "name": "mark_bird_ok",
+       "default": "false",
+       "comment": "this plate cannot carry the mark; see above"
+      },
+      {
        "name": "mark_h",
-       "default": "8.5"
+       "default": "8.5",
+       "comment": "kept as the lockup's SCALE reference so mark_word_h()"
       },
       {
        "name": "mark_rib",
@@ -6652,8 +6658,12 @@
        "default": "bez_h - snap_beam_l"
       },
       {
+       "name": "mark_word_h",
+       "default": "mark_h * mark_word_ratio()"
+      },
+      {
        "name": "mark_half",
-       "default": "mark_lockup_h(mark_h)/2"
+       "default": "(mark_bird_ok ? mark_lockup_h(mark_h) : mark_word_h)/2"
       },
       {
        "name": "mark_lo",
@@ -6678,7 +6688,7 @@
       },
       {
        "name": "mark_w",
-       "default": "max(mark_bird_w(mark_h), mark_word_w(mark_h))"
+       "default": "max(mark_bird_ok ? mark_bird_w(mark_h) : 0, mark_word_w(mark_h))"
       },
       {
        "name": "usb_r",
@@ -7386,6 +7396,42 @@
        "name": "vent_pitch_y",
        "default": "8.0",
        "comment": "row pitch"
+      }
+     ]
+    },
+    {
+     "name": "Frame — the graded vent field",
+     "note": "",
+     "params": [
+      {
+       "name": "vent_grade",
+       "default": "true",
+       "comment": "false = every egg full size, as before"
+      },
+      {
+       "name": "vent_k_min",
+       "default": "0.46",
+       "comment": "smallest egg, as a fraction of vent_slot_*. Below"
+      },
+      {
+       "name": "vent_k_drop",
+       "default": "0.52",
+       "comment": "...and any cell that grades BELOW this is not cut at"
+      },
+      {
+       "name": "vent_d0",
+       "default": "34.0",
+       "comment": "mm from the mark's center where the grade starts..."
+      },
+      {
+       "name": "vent_d1",
+       "default": "88.0",
+       "comment": "...and where it reaches full size"
+      },
+      {
+       "name": "badge_column",
+       "default": "true",
+       "comment": "false = let the grille back into the badge's half"
       },
       {
        "name": "vent_top",
@@ -7669,27 +7715,32 @@
       },
       {
        "name": "brand_row_maker",
-       "default": "1.6",
+       "default": "4.4",
        "comment": "maker line, closest to the rim"
       },
       {
        "name": "brand_row_hero",
-       "default": "5.4",
-       "comment": "brand_back"
+       "default": "12.6",
+       "comment": "brand_back — the product name, the biggest row"
       },
       {
        "name": "brand_row_sub",
-       "default": "10.6",
-       "comment": "brand_sub"
+       "default": "21.6",
+       "comment": "brand_sub — the company line, tracked and smaller"
       },
       {
        "name": "brand_sz",
-       "default": "4.0",
-       "comment": "hero + company cap height"
+       "default": "6.0",
+       "comment": "hero cap height"
+      },
+      {
+       "name": "brand_sub_sz",
+       "default": "3.8",
+       "comment": "company line — deliberately UNDER the hero: this"
       },
       {
        "name": "brand_maker_sz",
-       "default": "2.8",
+       "default": "3.0",
        "comment": "the maker row is a footnote, not a third shout"
       }
      ]
@@ -7734,28 +7785,27 @@
       },
       {
        "name": "bird_h",
-       "default": "32.0",
-       "comment": "mark height. The clear middle runs about x ±21 between"
+       "default": "70.0",
+       "comment": "NOMINAL height (mark_span units) — see mark_h_mm() for"
       },
       {
        "name": "bird_dx",
-       "default": "0.0",
-       "comment": "centered: the lockup is below it, the rating block is"
+       "default": "-24.0",
+       "comment": "LEFT of center, and not by taste: the SD mouth owns"
       },
       {
        "name": "bird_dy",
        "default": "6.0",
-       "comment": "upper-right, the QR left — this is the one empty field"
+       "comment": "x 23..48, so a centered mark would put its tail through"
       },
       {
-       "name": "bird_fill",
-       "default": "true",
-       "comment": "solid silhouette (brand art) vs. outline strokes"
+       "name": "brand_dx",
+       "default": "bird_dx"
       },
       {
        "name": "bird_rib",
-       "default": "2.0",
-       "comment": "stroke width. WIDER than the coupon's 0.7 test rib on"
+       "default": "2.6",
+       "comment": "stroke width. The mark is MONOLINE — one weight for"
       },
       {
        "name": "bird_half_w",
@@ -7767,7 +7817,7 @@
       },
       {
        "name": "bird_vent_gap",
-       "default": "1.6",
+       "default": "3.0",
        "comment": "plate left between the mark and the nearest egg. The"
       },
       {
@@ -8340,7 +8390,7 @@
       },
       {
        "name": "qr_back",
-       "default": "true",
+       "default": "false",
        "comment": "deboss the help QR into the back plate too"
       },
       {
@@ -8593,7 +8643,7 @@
       },
       {
        "name": "rating_sz",
-       "default": "3.3",
+       "default": "3.2",
        "comment": "sized to its gap — see the width asserts below"
       },
       {
@@ -8610,13 +8660,66 @@
       },
       {
        "name": "rating_dx",
-       "default": "39.0",
-       "comment": "centered in the clear gap: with the adhesive rails off"
+       "default": "37.0",
+       "comment": "centered between the mark's box and the +x boss pocket"
       },
       {
        "name": "rating_dy",
-       "default": "22.0",
-       "comment": "NOT the lower band: that row belongs to the brand line,"
+       "default": "21.0",
+       "comment": "above the card window, below the top vent band"
+      },
+      {
+       "name": "help_line",
+       "default": "SECURACV.COM/QR"
+      },
+      {
+       "name": "help_sz",
+       "default": "2.8"
+      },
+      {
+       "name": "help_dy",
+       "default": "6.5",
+       "comment": "between the spec block's last row and the card window"
+      },
+      {
+       "name": "help_w",
+       "default": "_lbl_w(help_sz, len(help_line))"
+      },
+      {
+       "name": "help_h",
+       "default": "help_sz*1.45 + 2"
+      },
+      {
+       "name": "brand_sub_y",
+       "default": "-(fr_yi/2 - brand_row_sub)"
+      },
+      {
+       "name": "brand_hero_y",
+       "default": "-(fr_yi/2 - brand_row_hero)"
+      },
+      {
+       "name": "brand_maker_y",
+       "default": "-(fr_yi/2 - brand_row_maker)"
+      },
+      {
+       "name": "brand_band_hi",
+       "default": "brand_sub_y + _lbl_half(brand_sub_sz)"
+      },
+      {
+       "name": "brand_band_lo",
+       "default": "brand_maker_y - _lbl_half(brand_maker_sz)"
+      },
+      {
+       "name": "brand_band_y",
+       "default": "(brand_band_hi + brand_band_lo)/2"
+      },
+      {
+       "name": "brand_band_h",
+       "default": "brand_band_hi - brand_band_lo"
+      },
+      {
+       "name": "fr_keep_base",
+       "default": "concat(fr_keep_fixed, fr_keep_badge)"
       },
       {
        "name": "fr_keepouts",
@@ -8685,12 +8788,17 @@
        "default": "sqrt(port_scoop_r*port_scoop_r - port_scoop_d*port_scoop_d)"
       },
       {
-       "name": "brand_maker_y",
-       "default": "-(fr_yi/2 - brand_row_maker)"
+       "name": "brand_lead_min",
+       "default": "2.6",
+       "comment": "ink-to-ink between rows. Below this the stack reads"
       },
       {
-       "name": "brand_hero_y",
-       "default": "-(fr_yi/2 - brand_row_hero)"
+       "name": "fr_cells",
+       "default": "grille_cells(-m3_ox, m3_oy, fr_keepouts)"
+      },
+      {
+       "name": "fr_cells_flat",
+       "default": "grille_cells(-m3_ox, m3_oy, fr_keepouts, grade = false)"
       },
       {
        "name": "gauge_in",
@@ -9399,18 +9507,16 @@
       },
       {
        "name": "emblem_h",
-       "default": "9.0",
-       "comment": "EMBLEM station: mark height (0 removes the station)."
+       "default": "0",
+       "comment": "set >= mark_min_h(emblem_rib) to bring the station back"
       },
       {
        "name": "emblem_rib",
-       "default": "0.7",
-       "comment": "stroke width, in mm. THE number this station tests:"
+       "default": "0.7"
       },
       {
        "name": "emblem_crown",
-       "default": "0.15",
-       "comment": "how far the stroke tops are drawn in, giving the"
+       "default": "0.15"
       }
      ]
     },
@@ -9423,14 +9529,14 @@
        "default": "true"
       },
       {
-       "name": "glyph_size",
+       "name": "glyph_h",
        "default": "34.0",
-       "comment": "mark width. At 34 the thinnest stroke lands at"
+       "comment": "NOMINAL height (mark_span units) — draws about"
       },
       {
-       "name": "glyph_grow",
-       "default": "0.14",
-       "comment": "per-side thickening that buys that 0.44"
+       "name": "glyph_rib",
+       "default": "0.7",
+       "comment": "stroke width, in mm. THE number this station tests:"
       },
       {
        "name": "glyph_depth",

@@ -84,17 +84,26 @@ emboss_h = 0.6;      // raised-wordmark height (EMBOSS station)
 label_font = "Liberation Sans:style=Bold";
 brand_raised = "CANARY";     // the EMBOSS station's wordmark
 brand_sunk   = "SecuraCV";   // the DEBOSS station's wordmark
-emblem_h = 9.0;      // EMBLEM station: mark height (0 removes the station).
-                     // The mark is ~1.23x wider than tall — at 9 it spans
-                     // 11.1 mm, inside the clear air between the wordmarks.
-emblem_rib = 0.7;    // stroke width, in mm. THE number this station tests:
-                     // no part of the mark is drawn narrower than this, so
-                     // if the rib survives, the whole emblem survives.
-emblem_crown = 0.15; // how far the stroke tops are drawn in, giving the
-                     // strokes a domed crown instead of a flat slab top —
-                     // the difference between a printed mark that catches
-                     // light like metal and one that reads as a sticker.
-                     // 0 = flat top.
+// ⚠️  EMBLEM STATION RETIRED — 0, and the reason is a measurement.
+// The house mark was redrawn to the brand's monoline art: a bird carrying a
+// notepad with a C spiralled into its wing and a V nested in its tail. That
+// drawing has INTERIOR detail, so it has a minimum size — at this station's
+// 0.7 mm rib, mark_min_h(0.7) is 15.6 mm. The air between the EMBOSS and
+// DEBOSS wordmarks is 7.6 mm ("CANARY" at size 7 ends at x -7.5, "SecuraCV"
+// starts at +0.1). The mark cannot go there at any size that is still the mark,
+// and the library asserts rather than letting it print as a blob.
+//
+// The test did not disappear — it MOVED, to the GLYPH station on the bed face
+// below, which is where the coupon's own header always said the full-size mark
+// belonged and which had a 34 mm rectangle reserved for it. That is the better
+// home anyway: every case A-surface in this catalog prints face-down, so a
+// deboss against the textured plate is the question cases actually ask. What
+// is genuinely gone is the CROWN test (emblem_crown domed the stroke tops on a
+// RAISED mark) — and nothing in the catalog embosses the mark any more, so it
+// was testing a treatment none of the cases print.
+emblem_h = 0;        // set >= mark_min_h(emblem_rib) to bring the station back
+emblem_rib = 0.7;
+emblem_crown = 0.15;
 
 /* [GLYPH station — the bird, debossed into the BED-SIDE face] */
 // Why the underside: the mark is LINE ART, and its strokes are ~0.2 mm at
@@ -106,11 +115,18 @@ emblem_crown = 0.15; // how far the stroke tops are drawn in, giving the
 // visible finish. If the beak, the eye ring and the notepad spiral come off
 // the plate crisp, your first layer is dialled for every case in the set.
 // A deboss (not an emboss) so the coupon still sits flat on its own face.
+// These knobs existed and NOTHING READ THEM. The station was described in this
+// file's header, given six parameters and a paragraph of reasoning, and never
+// cut — so the coupon has been shipping without the one test its own header
+// calls "the one that matters most". It is wired up now, with the redrawn mark.
 glyph_show  = true;
-glyph_size  = 34.0;   // mark width. At 34 the thinnest stroke lands at
-                      // ~0.44 mm — one 0.42 line. Smaller is not a style
-                      // choice, it is an unprintable mark
-glyph_grow  = 0.14;   // per-side thickening that buys that 0.44
+glyph_h     = 34.0;   // NOMINAL height (mark_span units) — draws about
+                      // 30 x 32 mm, which is what the reserved rectangle on
+                      // the bed face was always sized for
+glyph_rib   = 0.7;    // stroke width, in mm. THE number this station tests:
+                      // the mark is MONOLINE, so no part of it is narrower
+                      // than this — if the rib survives, the mark survives.
+                      // Below ~0.42 it is thinner than one extrusion
 glyph_depth = 0.5;    // = label_depth's sibling; one bridged layer closes it
 glyph_dx    = -26.5;  // the clear rectangle on the bed face: left of the
 glyph_dy    = 12.0;   // PORT through-hole, above the keyhole pockets
@@ -121,12 +137,30 @@ $fa = 3; $fs = 0.4;
 bw = 90; bh = 68;
 echo(str("Canary fit coupon v0.3-dev — base ", bw, "x", bh, "  (IN DEVELOPMENT)"));
 if (emblem_h > 0) {
-    echo(str("EMBLEM station: mark ", emblem_h, " tall x ", emblem_h*1.23,
+    echo(str("EMBLEM station: mark ", mark_h_mm(emblem_h, emblem_rib),
+             " tall x ", mark_w_mm(emblem_h, emblem_rib),
              " wide, ", emblem_rib, " mm ribs, ", emblem_crown, " mm crown"));
     assert(emblem_rib >= 0.4,
            "emblem_rib below 0.4 mm — thinner than one 0.4 mm extrusion, the mark will not print");
     assert(emblem_crown < emblem_rib/2,
            "emblem_crown >= half the rib — the crown would pinch the strokes off at the top");
+}
+if (glyph_show) {
+    echo(str("GLYPH station: the mark ", mark_h_mm(glyph_h, glyph_rib),
+             " tall x ", mark_w_mm(glyph_h, glyph_rib), " wide, ", glyph_rib,
+             " mm ribs, debossed ", glyph_depth,
+             " mm into the BED face — print it and read the first layer"));
+    // The library refuses an unprintable mark, but it refuses in terms of the
+    // mark. Say it in terms of the station, since this is the station whose
+    // whole job is that number.
+    assert(mark_rib_ok(glyph_h, glyph_rib),
+           str("GLYPH station: ", glyph_rib, " mm ribs at glyph_h ", glyph_h,
+               " close the mark's interior. Raise glyph_h to at least ",
+               mark_min_h(glyph_rib), " mm, or thin glyph_rib."));
+    assert(glyph_dx - mark_w_mm(glyph_h, glyph_rib)/2 > -bw/2 + 2
+           && glyph_dx + mark_w_mm(glyph_h, glyph_rib)/2 < -usb_w/2 - 2
+           && abs(glyph_dy) + mark_h_mm(glyph_h, glyph_rib)/2 < bh/2 - 2,
+           "GLYPH station: the mark runs off the bed face or into the PORT hole");
 }
 
 // ---------------------------------------------------------------------------
@@ -252,7 +286,18 @@ module base() {
         emb(-24, 27, brand_raised, 7);
         // EMBLEM station: the mark, same emboss_h, in the clear air between
         // the two wordmarks (CANARY ends ≈−11.5, SecuraCV starts ≈+5)
-        if (emblem_h > 0) emblem_emb(-3, 27.5, emblem_h);
+        // Centered in the gap between the two wordmarks, and now nearly
+        // filling it: at 15.8 the mark spans 15.4 mm against 16.5 mm of air.
+        // The asserts below hold it there.
+        if (emblem_h > 0) emblem_emb(-3, 25.5, emblem_h);
+        // GLYPH station — the mark debossed into the BED face (z = 0), at a
+        // size that keeps its interior open. This is the first-layer test:
+        // every case A-surface in this catalog prints face-down, so what comes
+        // off the textured plate here is what comes off it on a bezel.
+        if (glyph_show)
+            translate([glyph_dx, glyph_dy, -0.1])
+                linear_extrude(glyph_depth + 0.1)
+                    mark_bird(glyph_h, glyph_rib);
         // CLIP station — the WAP clip coupon, both sides: board-rest rails flush
         // to the board's edge lines and a snap clip on EACH long edge. Press a
         // 1.2 mm scrap (or real board edge) past the lead-ins and feel the click.
