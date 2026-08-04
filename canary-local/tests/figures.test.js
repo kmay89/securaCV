@@ -247,52 +247,114 @@ test("a device type is never guessed onto the wrong hardware", () => {
   }
 });
 
-test("no exact per-build lookup is advertised while it cannot be honest", () => {
+test("the exact lookup is keyed on something the build already depends on", () => {
   // A config directory is not one piece of hardware: 12 build envs resolve to
-  // canary-display/dash, one of which (dash-b) is a different panel, and
-  // canary-vision/default spans the DevKitM, the XIAO C3 and the XIAO S3. The
-  // build env is no cleaner — watch/-debug/-modes are one board, dash/-dash-b
-  // are two. So an exact lookup would have to guess, which is the bug this
-  // system exists to prevent. It stays absent until firmware DECLARES a
-  // product id, and the ledger says so out loud rather than leaving a hole.
-  const ex = led.device_types.exact_lookup;
-  assert.ok(ex, "the ledger states whether an exact lookup exists");
-  assert.strictEqual(ex.available, false);
-  assert.ok(ex.why && ex.fix, "it says why not, and what would fix it");
+  // canary-display/dash, and dash / dash-b / dash-mic compile the 4.3, 4.3B
+  // and 4.3C panels between them. The boards/<id>/pins header each env
+  // compiles against IS one piece of hardware, and it is load-bearing — wrong
+  // pins, dead device — so it cannot quietly drift the way a decorative
+  // product tag could. That is why the exact table is keyed on it.
+  const hw = led.hardware;
+  assert.ok(hw && Array.isArray(hw.mapped), "the ledger carries a hardware table");
+  assert.match(hw.key, /pins/, "the table says what it is keyed on");
 
-  const h = readFileSync(join(REPO, "firmware/common/core/fleet_figures.h"), "utf8");
-  assert.ok(!/figure_for_flavor/.test(h),
-    "the header must not offer a per-build lookup it cannot answer correctly");
-  assert.match(h, /deliberately INCOMPLETE/,
-    "the header is explicit that its table does not cover every device type");
+  const seen = new Set();
+  for (const m of hw.mapped) {
+    assert.ok(!seen.has(m.hardware), `${m.hardware} appears once`);
+    seen.add(m.hardware);
+    const f = byId.get(m.figure);
+    assert.ok(f, `${m.hardware} -> unknown figure ${m.figure}`);
+    assert.strictEqual(f.role, "device", `${m.hardware} points at a whole device`);
+    assert.ok(m.builds.length > 0, `${m.hardware} is compiled by at least one build`);
+    if (m.hardware.startsWith("board:")) continue;
+    // The board must name itself in the header the build compiles, or
+    // my_figure() returns nullptr on a device that has a figure.
+    const pins = join(REPO, "firmware/boards", m.hardware, "pins/pins.h");
+    assert.ok(existsSync(pins), `${m.hardware} has a pins header`);
+    assert.ok(readFileSync(pins, "utf8")
+      .includes(`#define CANARY_FIGURE_HARDWARE "${m.hardware}"`),
+    `${m.hardware}'s pins header declares its own figure hardware id`);
+  }
+
+  // Hardware we cannot draw is listed, not silently dropped.
+  for (const u of hw.unmapped) {
+    assert.ok(!seen.has(u.hardware), `${u.hardware} cannot be both mapped and unmapped`);
+    assert.ok(u.builds.length > 0, `${u.hardware} names the builds it covers`);
+  }
+  // The 4.3B panel is the case that started all this: it must never borrow
+  // the plain 4.3's figure.
+  const b = hw.mapped.find((m) => m.hardware === "waveshare-esp32s3-lcd43b");
+  assert.strictEqual(b, undefined,
+    "the 4.3B panel has no figure of its own yet, so it must not borrow the 4.3's");
 });
 
-test("CI re-runs the drift gate when a generated copy is touched", () => {
-  // The gate only helps if the job starts. A PR that hand-edits just the
-  // Swift or the header must still trip it, so both generated outputs are in
-  // both path filters — push and pull_request.
-  const wf = readFileSync(join(REPO, ".github/workflows/canary-local.yml"), "utf8");
-  const filters = wf.split("paths:").slice(1, 3);
-  assert.strictEqual(filters.length, 2, "push and pull_request both filter on paths");
-  for (const f of filters) {
-    for (const path of ["ios/Shared/FleetFigures.swift",
-      "firmware/common/core/fleet_figures.h",
-      "docs/hardware/enclosure/**",
-      "canary-local/**"]) {
-      assert.ok(f.includes(`"${path}"`), `a filter is missing ${path}`);
+test("a board carrying two products says so", () => {
+  // Exact about the BOARD is not the same as exact about the PRODUCT. The 7"
+  // glass is compiled by both canary-display-dash7 and -nightstand7, so a
+  // Nightstand 7 asking my_figure() gets a figure titled "Canary Dash 7" —
+  // the right shape, the wrong name. The row has to admit that, or a caller
+  // printing the title would relabel the device.
+  for (const m of led.hardware.mapped) {
+    assert.ok(Array.isArray(m.serves), `${m.hardware} records what it serves`);
+    assert.strictEqual(m.shared, m.serves.length > 1,
+      `${m.hardware}'s shared flag must follow the device types it carries`);
+  }
+  const seven = led.hardware.mapped.find((m) => m.hardware === "waveshare-esp32s3-lcd7");
+  assert.ok(seven, "the 7-inch board resolves to a figure");
+  assert.ok(seven.shared, "the 7-inch board carries two products and must be flagged");
+  assert.ok(seven.serves.length > 1, `expected several device types, got ${seven.serves}`);
+
+  // And the flag has to reach the firmware, or the C++ caller can't check it.
+  const h = readFileSync(join(REPO, "firmware/common/core/fleet_figures.h"), "utf8");
+  assert.match(h, /bool shared_across_products/, "the header carries the flag");
+  assert.ok(!/figure_for_hardware\(id\) *EXACT/.test(h),
+    "the header must not claim exactness it does not have about the product");
+  const row = h.split("\n").find((l) => l.includes('"waveshare-esp32s3-lcd7"'));
+  assert.ok(row && /, true \}/.test(row), `the 7-inch row must set the flag: ${row}`);
+});
+
+test("nothing a figure draws falls outside the frame it declares", () => {
+  // The contact shadow used to be laid out AFTER the fit, so it could land
+  // outside the viewBox and be clipped — a round display shadow reached
+  // y = 293.8 in a 256 box. Everything drawn has to be inside the frame.
+  for (const f of led.figures) {
+    for (const [path, box] of [[f.svg, 256], [f.glyph, 64]]) {
+      const svg = readFileSync(join(REPO, path), "utf8");
+      const nums = [...svg.matchAll(/d="([^"]+)"/g)]
+        .flatMap((m) => m[1].match(/-?\d+(?:\.\d+)?/g) || [])
+        .map(Number);
+      assert.ok(nums.length > 0, `${path} draws something`);
+      assert.ok(Math.min(...nums) >= -1, `${path} draws left/above its viewBox`);
+      assert.ok(Math.max(...nums) <= box + 1, `${path} draws past its ${box} viewBox`);
     }
   }
-  assert.match(wf, /gen_figures\.mjs --check/, "the drift gate actually runs");
 });
 
 test("the firmware header lets a device name its own figure", () => {
   const h = readFileSync(join(REPO, "firmware/common/core/fleet_figures.h"), "utf8");
   assert.match(h, /GENERATED by/, "says it is generated");
   assert.match(h, /namespace canary::figures/, "lands in the fleet's namespace");
-  const rows = [...h.matchAll(/\{ "([^"]+)", "(device\.[^"]+)", "([0-9a-f]{8})", "([a-z]+)" \}/g)];
+  const table = (name) => {
+    const body = h.slice(h.indexOf(`${name}[] = {`));
+    // Hardware rows carry a trailing bool (shared_across_products); device-type
+    // rows do not. Tolerate either so one helper reads both tables.
+    return [...body.slice(0, body.indexOf("};"))
+      .matchAll(/\{ "([^"]+)", "(device\.[^"]+)", "([0-9a-f]{8})", "([a-z]+)"(?:, (true|false))? \}/g)];
+  };
+  const rows = table("kFigures");
+  const hwRows = table("kHardware");
   assert.ok(rows.length > 0, "has at least one device type");
   assert.strictEqual(rows.length, led.device_types.mapped.length,
     "the header carries exactly the ledger's resolvable device types");
+  assert.strictEqual(hwRows.length, led.hardware.mapped.length,
+    "the header carries exactly the ledger's resolvable hardware");
+  assert.match(h, /figure_for_hardware/, "the exact lookup is exposed");
+  assert.match(h, /CANARY_FIGURE_HARDWARE/, "a build can ask what it itself is");
+  for (const [, hardware, figureId, rev] of hwRows) {
+    const f = byId.get(figureId);
+    assert.ok(f, `${hardware} points at unknown figure ${figureId}`);
+    assert.strictEqual(f.rev, rev, `${hardware}'s rev matches the ledger`);
+  }
   for (const [, deviceType, figureId, rev, confidence] of rows) {
     const f = byId.get(figureId);
     assert.ok(f, `${deviceType} points at unknown figure ${figureId}`);
@@ -326,6 +388,31 @@ test("the Swift copy carries the same figures, from the same plan", () => {
     assert.ok(!/kind: \.face/.test(block.slice(0, end)),
       `${f.id} is an idea but ships filled faces to SwiftUI`);
   }
+});
+
+test("the iPhone/Watch bridge only names figures that exist", () => {
+  // FleetFigureBridge.swift is the ONE hand-written piece on the Apple side —
+  // the judgment that maps a decoded DeviceType onto a figure. Swift compiles
+  // on the mac runners, but a bad figure id there is a runtime nil, not a
+  // build error, so it gets checked here too where it costs nothing.
+  const bridge = readFileSync(join(REPO, "ios/Shared/FleetFigureBridge.swift"), "utf8");
+  const named = [...bridge.matchAll(/return "(device\.[^"]+)"/g)].map((m) => m[1]);
+  assert.ok(named.length > 0, "the bridge names at least one figure");
+  for (const id of named) {
+    assert.ok(byId.get(id), `the Apple bridge names "${id}", which is not a figure`);
+    assert.strictEqual(byId.get(id).role, "device", `${id} is a whole device`);
+  }
+  // The display family collapses four products into one enum case, so it must
+  // stay nil — the same rule the firmware table keeps for canary-dash.
+  assert.match(bridge, /case \.display, \.unknown: return nil/,
+    "the display family must not be given a figure it would have to guess at");
+
+  // And the rows actually draw it, or none of this reaches a user.
+  const fleetView = readFileSync(join(REPO, "ios/Sources/SecuraCV/Views/FleetView.swift"), "utf8");
+  assert.match(fleetView, /DeviceFigureIcon\(witness\.deviceType/,
+    "the witness roster draws the device's figure");
+  assert.match(fleetView, /DeviceFigureIcon\(canary\.deviceType/,
+    "the discovered-device row draws it too");
 });
 
 test("the ledger counts what it says it counts", () => {

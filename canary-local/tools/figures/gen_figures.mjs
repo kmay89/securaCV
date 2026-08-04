@@ -341,6 +341,57 @@ const byIdBuilt = new Map(built.map((f) => [f.id, f]));
 const deviceTypes = [];
 for (const cfg of walkConfigs()) deviceTypes.push(cfg);
 
+/* Every build env, and the physical board it compiles against. The pins
+ * include is the primary signal; `board =` is the coarse fallback for envs
+ * that carry no pins header of their own. Both are inherited through
+ * `extends`, so a feature env that only adds a flag still resolves. */
+function walkEnvs() {
+  const out = [];
+  const files = [
+    ...globIni(join(ROOT, 'firmware/envs/platformio')),
+    ...globIni(join(ROOT, 'firmware/projects'), true),
+  ];
+  const raw = new Map();
+  for (const file of files) {
+    const txt = readFileSync(file, 'utf8');
+    for (const m of txt.matchAll(/^\[env:([^\]]+)\]\n([\s\S]*?)(?=^\[|$(?![\s\S]))/gm)) {
+      const [, name, body] = m;
+      raw.set(name, {
+        name,
+        pins: (body.match(/boards\/([a-z0-9._-]+)\/pins/) || [])[1] || null,
+        config: (body.match(/configs\/([a-z0-9-]+)\/([a-z0-9_]+)/) || []).slice(1, 3).join('/') || null,
+        board: (body.match(/^board\s*=\s*(\S+)/m) || [])[1] || null,
+        extends: (body.match(/^extends\s*=\s*env:(\S+)/m) || [])[1] || null,
+        file: file.replace(`${ROOT}/`, ''),
+      });
+    }
+  }
+  const resolve = (name, key, seen = new Set()) => {
+    if (seen.has(name) || !raw.has(name)) return null;
+    const e = raw.get(name);
+    return e[key] || (e.extends ? resolve(e.extends, key, new Set([...seen, name])) : null);
+  };
+  for (const name of [...raw.keys()].sort()) {
+    const pins = resolve(name, 'pins');
+    const board = resolve(name, 'board');
+    const config = resolve(name, 'config');
+    const hardware = pins || (board ? `board:${board}` : null);
+    out.push({ env: name, pins, board, config, hardware, file: raw.get(name).file });
+  }
+  return out;
+}
+
+function globIni(dir, nested = false) {
+  if (!existsSync(dir)) return [];
+  const out = [];
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name);
+    if (e.isDirectory() && nested) out.push(...globIni(p));
+    else if (e.isFile() && e.name.endsWith('.ini')) out.push(p);
+  }
+  return out.sort();
+}
+
 function walkConfigs() {
   const out = [];
   const base = join(ROOT, 'firmware/configs');
@@ -360,35 +411,66 @@ function walkConfigs() {
  *
  * An early cut guessed with a regex on the published DEVICE_TYPE, and matched
  * both rectangular nightstand boards onto the round Watch Station drum. There
- * is no guessing here any more.
+ * is no guessing here any more — two lookups, at two honest precisions.
  *
- * A device type resolves ONLY when every firmware config that publishes it
- * agrees on one figure. Types published by more than one board — `canary-dash`
- * by both the 4.3" and the 7" panel, `canary-nightstand` by both the 1.47"
- * stick and the 1.69" touch — are OMITTED rather than resolved by a coin flip,
- * and listed in the ledger's `unmapped_device_types` so the gap is visible
- * instead of silently wrong. figure_for() returns nullptr for them and the
- * caller draws its generic marker. A wrong picture is worse than no picture.
+ * ── HARDWARE (exact) ────────────────────────────────────────────────────
+ * Every build env compiles against exactly one `boards/<id>/pins` header, and
+ * that include is LOAD-BEARING: get it wrong and the device does not work. So
+ * it is already a true, machine-readable statement of which physical board a
+ * build is for — the declaration an earlier pass concluded was missing. It is
+ * not: it was sitting in the build flags all along, one level below where we
+ * were looking.
  *
- * ── The open gap, stated plainly ────────────────────────────────────────
- * There is deliberately NO exact per-build lookup, because the firmware does
- * not currently record which physical product a build is for, and nothing on
- * disk can be read to recover it:
+ * This is why the config directory was the wrong key. `canary-display-dash`
+ * compiles `waveshare-esp32s3-lcd43`, `canary-display-dash-b` compiles
+ * `-lcd43b` and `canary-display-dash-mic` compiles `-lcd43c` — three different
+ * panels, one `configs/canary-display/dash` directory between them.
  *
- *   · a config directory is not one board — 12 build envs resolve to
- *     `canary-display/dash`, and `canary-display-dash-b` among them is a
- *     different panel; `canary-vision/default` is shared by 4 envs spanning
- *     the DevKitM, the XIAO C3 and the XIAO S3
- *   · a build env is not a clean signal either — `canary-display-watch`,
- *     `-watch-debug` and `-watch-modes` are one board with feature flags,
- *     while `-dash` and `-dash-b` are two boards; telling those apart means
- *     reading the suffix and guessing, which is the bug above wearing a hat
- *   · `board =` cannot separate them: dash-b `extends` dash and inherits it
+ * Reading a declaration the build already depends on beats adding a parallel
+ * one that can drift. (SECURACV_OTA_PRODUCT looked like a candidate and is
+ * not: it is an UPDATE CHANNEL, and it deliberately groups dash-b with dash.)
  *
- * The fix is for a build to DECLARE its product (a `CANARY_PRODUCT_ID` per
- * env), not for this generator to infer it. Until that exists, the coarse
- * table is the honest ceiling. See docs/design/FLEET_FIGURES.md §7.
+ * ── DEVICE TYPE (coarse) ────────────────────────────────────────────────
+ * What a peer witness publishes on the wire. It resolves only when every
+ * config publishing it agrees on one figure; `canary-dash` and
+ * `canary-nightstand` are each published by two different panels, so they are
+ * absent and figure_for() returns nullptr. The caller draws its generic
+ * marker. A wrong picture is worse than no picture.
  */
+
+// boards/<id>/pins  ->  the figure of the thing that board is. Envs with no
+// pins header of their own fall back to `board:<platformio id>`.
+const HARDWARE_FIGURE = {
+  'xiao-esp32s3-round': 'device.canary-display-watch',
+  'waveshare-esp32s3-lcd43': 'device.canary-display-dash',
+  'waveshare-esp32s3-lcd7': 'device.canary-display-dash7',
+  'waveshare-esp32s3-touch-lcd169': 'device.canary-display-touch169',
+  'xiao-esp32c6-mr60': 'device.canary-sense',
+  'board:seeed_xiao_esp32s3': 'device.canary-wap',
+  // The two XIAO hosts share the stacked-XIAO enclosure the Vision figure
+  // traces; the DevKitM is a wider, Grove-cabled housing with its own STLs,
+  // so it gets its own figure rather than borrowing one that fits neither.
+  'xiao-esp32c3': 'device.canary-vision',
+  'xiao-esp32s3': 'device.canary-vision',
+  'esp32-c3': 'device.canary-vision-devkit',
+};
+
+/* Hardware we can name but cannot yet draw. Listed so the gap is data, with
+ * the reason beside it, rather than a silent nullptr:
+ *   waveshare-esp32s3-lcd43b / -lcd43c   the 4.3B and 4.3C panels; the Dash
+ *       figure traces the plain 4.3, and these are different housings
+ *   waveshare-esp32s3-lcd147             the S3 1.47" USB-A stick — no panel
+ *       record on disk to size it from, and inventing one is the one place a
+ *       sketch would mislead
+ *   waveshare-esp32c6-lcd147             the C6 1.47" board is not a device in
+ *       registry.json, and the registry is the one id space (CATALOG §4)
+ *   xiao-esp32c3-sentinel-lite / board:seeed_xiao_esp32c6   the Sentinel line
+ *       has no enclosure CAD at all yet
+ */
+
+// firmware/configs/<family>/<flavor> -> figure. Used ONLY to work out which
+// published device types are unambiguous; never as an identity itself, since
+// one config directory serves several panels.
 const CONFIG_FIGURE = {
   'canary-vision/default': 'device.canary-vision',
   'canary-sense/default': 'device.canary-sense',
@@ -397,6 +479,8 @@ const CONFIG_FIGURE = {
   'canary-wap/mobile': 'device.canary-wap',
   'canary-display/watch': 'device.canary-display-watch',
   'canary-display/dash': 'device.canary-display-dash',
+  'canary-display/dash7': 'device.canary-display-dash7',
+  'canary-display/touch169': 'device.canary-display-touch169',
 };
 
 const configRows = deviceTypes
@@ -439,6 +523,82 @@ for (const [device_type, ids] of [...byType.entries()].sort()) {
 }
 const mappedConfigRows = configRows.filter((r) => r.fig);
 
+/* ── hardware: the exact lookup, from the pins each build compiles ────── */
+
+const envs = walkEnvs();
+for (const id of Object.keys(HARDWARE_FIGURE)) {
+  if (!byIdBuilt.get(HARDWARE_FIGURE[id])) {
+    throw new Error(`figures: HARDWARE_FIGURE maps "${id}" to "${HARDWARE_FIGURE[id]}", `
+      + 'which is not a figure. Fix the map or add the figure.');
+  }
+}
+
+// Group the envs by the board they compile against, so the table is one row
+// per piece of hardware rather than one per build.
+const byHardware = new Map();
+for (const e of envs) {
+  if (!e.hardware) continue;            // the OTA tool builds; not a product
+  if (!byHardware.has(e.hardware)) byHardware.set(e.hardware, []);
+  byHardware.get(e.hardware).push(e.env);
+}
+// What DEVICE TYPE each build publishes, so a board can say how many personas
+// it carries. The 7" glass is the live example: canary-display-dash7 and
+// canary-display-nightstand7 are one board and two products.
+const typeOfConfig = new Map(deviceTypes.map((c) => [`${c.family}/${c.flavor}`, c.device_type]));
+const servesOf = (builds) => [...new Set(builds
+  .map((b) => typeOfConfig.get(envs.find((e) => e.env === b)?.config))
+  .filter(Boolean))].sort();
+
+const hardwareRows = [];
+const hardwareGaps = [];
+for (const [hardware, builtBy] of [...byHardware.entries()].sort()) {
+  const builds = builtBy.sort();
+  const serves = servesOf(builds);
+  const figureId = HARDWARE_FIGURE[hardware];
+  if (figureId) {
+    hardwareRows.push({
+      hardware, fig: byIdBuilt.get(figureId), builds, serves,
+      // One board, several products. The SHAPE is still right — that is what a
+      // figure is — but the figure's TITLE names only one of them, so a caller
+      // that wants to name the product must ask the device type, not this.
+      shared: serves.length > 1,
+    });
+  } else {
+    hardwareGaps.push({ hardware, builds, serves });
+  }
+}
+
+// Each mapped board must NAME itself in the very header the build compiles
+// against, or my_figure() silently returns nullptr on a device that does have
+// a figure. Checking it here keeps the id and the pins it travels with from
+// ever disagreeing.
+for (const r of hardwareRows) {
+  if (r.hardware.startsWith('board:')) continue;  // no pins header to carry it
+  const pins = join(ROOT, 'firmware/boards', r.hardware, 'pins/pins.h');
+  if (!existsSync(pins)) {
+    throw new Error(`figures: hardware "${r.hardware}" has a figure but no `
+      + `firmware/boards/${r.hardware}/pins/pins.h to declare it in.`);
+  }
+  const want = `#define CANARY_FIGURE_HARDWARE "${r.hardware}"`;
+  if (!readFileSync(pins, 'utf8').includes(want)) {
+    throw new Error(`figures: firmware/boards/${r.hardware}/pins/pins.h must carry\n`
+      + `  ${want}\n`
+      + 'so a build can name itself. Without it my_figure() returns nullptr on '
+      + 'a device that has a perfectly good figure.');
+  }
+}
+
+// Envs with no hardware signal at all would silently vanish from the table,
+// so name them. The canary-ota project is the OTA tool, not a product.
+const OTA_TOOL_ENVS = new Set(['dev', 'production', 'test']);
+const envsWithoutHardware = envs
+  .filter((e) => !e.hardware && !OTA_TOOL_ENVS.has(e.env))
+  .map((e) => e.env);
+if (envsWithoutHardware.length) {
+  throw new Error(`figures: these build envs declare neither a pins header nor a board, `
+    + `so nothing can say what they run on: ${envsWithoutHardware.join(', ')}`);
+}
+
 /* ── ledger ─────────────────────────────────────────────────────────── */
 
 const counts = Object.fromEntries(LADDER.map((c) => [c, built.filter((f) => f.confidence === c).length]));
@@ -478,12 +638,26 @@ const ledger = {
     configs_audit: mappedConfigRows.map((r) => ({
       family: r.family, flavor: r.flavor, device_type: r.device_type, figure: r.fig.id,
     })),
-    exact_lookup: {
-      available: false,
-      why: 'the firmware does not record which physical product a build is for; '
-        + 'a config directory and a build env are both shared across boards',
-      fix: 'declare a product id per build env, then key the exact table on it',
-    },
+  },
+  // The EXACT lookup. Every build env compiles against exactly one
+  // boards/<id>/pins header, and that include is load-bearing — get it wrong
+  // and the device does not work — so it is a true statement of which
+  // physical board a build is for. Reading it beats adding a parallel
+  // declaration that could drift.
+  hardware: {
+    key: 'the boards/<id>/pins header the build compiles against, or '
+      + 'board:<platformio id> for envs that carry no pins header of their own',
+    mapped: hardwareRows.map((r) => ({
+      hardware: r.hardware,
+      figure: r.fig.id,
+      builds: r.builds,
+      serves: r.serves,
+      // true when this board carries more than one product persona: the
+      // drawing is right for all of them, the figure's title is right for
+      // one. Ask the device type to name the product.
+      shared: r.shared,
+    })),
+    unmapped: hardwareGaps,
   },
   figures: built.map(({ plan, ...rest }) => rest),
 };
@@ -498,20 +672,30 @@ emit(OUT_H, `#pragma once
 // a display, a phone or a watch can draw the correct picture of a witness and
 // can tell when the copy it cached was drawn from older CAD.
 //
-// This table is COARSE and deliberately INCOMPLETE. A device type appears
-// here only when every firmware config that publishes it agrees on one
-// figure; types shared by more than one board are ABSENT and figure_for()
-// returns nullptr, so the caller draws its generic marker. An earlier cut
-// guessed with a string match and handed the rectangular nightstand boards
-// the round Watch Station drum — a wrong picture is worse than no picture.
-// The unresolved types, with reasons, are in
-// canary-local/devices/figures.json under device_types.unmapped.
+// Two lookups, at two HONEST precisions — the distinction matters, because
+// getting it wrong once already showed a user the wrong product:
 //
-// There is no exact per-build lookup, on purpose: the firmware does not
-// record which physical product a build is for, and a config directory and a
-// build env are each shared across different boards, so nothing on disk can
-// recover it. Adding one means a build DECLARING its product id. See
-// docs/design/FLEET_FIGURES.md §7.
+//   figure_for_hardware(id)     Exact about the BOARD, and therefore about
+//     the SHAPE. Keyed on the boards/<id>/pins header the build compiles
+//     against, which is load-bearing (wrong pins, dead device) and therefore a
+//     true statement of which physical board this is. A device asking what it
+//     LOOKS LIKE should use this; pass CANARY_FIGURE_HARDWARE, which each
+//     board's pins header defines.
+//
+//     It is NOT a product name. One board can carry several products — the 7"
+//     glass is both the Dash 7 and the Nightstand 7 — and a figure's title
+//     names only one of them. Rows where that happens set shared_across_products;
+//     to NAME the product, ask the device type, not the board.
+//
+//   figure_for(device_type)     COARSE, and deliberately INCOMPLETE. This is
+//     what a PEER publishes on the wire, and several types are shared by more
+//     than one board — canary-dash by the 4.3" and the 7" panel, canary-
+//     nightstand by the 1.47" stick and the 1.69" touch. Those are ABSENT and
+//     the lookup returns nullptr, so the caller draws its generic marker.
+//     A wrong picture is worse than no picture.
+//
+// Unresolved entries, with reasons, are in canary-local/devices/figures.json
+// under device_types.unmapped and hardware.unmapped.
 //
 // Pure C++, no Arduino/JSON dependencies, no allocation: the same rules
 // fleet_model.h follows, so this is host-testable and safe in a hot path.
@@ -527,23 +711,70 @@ struct FigureRef {
   const char* confidence;   // shipping | confirmed | prototype | idea
 };
 
+struct HardwareRef {
+  const char* hardware;     // the boards/<id>/pins header this build compiles
+  const char* figure_id;
+  const char* rev;
+  const char* confidence;
+  // true when this board carries more than one product. The drawing is right
+  // for all of them; the figure's TITLE is right for one. Do not print the
+  // title as this device's product name when this is set.
+  bool shared_across_products;
+};
+
+// Device types that resolve to exactly one figure. Types published by more
+// than one board are absent ON PURPOSE — see the note above.
 inline constexpr FigureRef kFigures[] = {
 ${uniqueRows.map((r) => `  { "${r.device_type}", "${r.fig.id}", "${r.fig.rev}", "${r.fig.confidence}" },`).join('\n')}
 };
 inline constexpr size_t kFigureCount = sizeof(kFigures) / sizeof(kFigures[0]);
 
-// Exact match on the published device type; nullptr when the type cannot be
-// pinned to one board, or we have no figure for it. Draw the generic marker
-// then — never a guessed picture of the wrong product.
+// One row per piece of hardware we can draw. The board is exact; see
+// shared_across_products for when the product name is not.
+inline constexpr HardwareRef kHardware[] = {
+${hardwareRows.map((r) => `  { "${r.hardware}", "${r.fig.id}", "${r.fig.rev}", "${r.fig.confidence}", ${r.shared} },`
+  + `  // ${r.builds.length} build${r.builds.length === 1 ? '' : 's'}`
+  + (r.shared ? ` — shared by ${r.serves.join(' + ')}` : '')).join('\n')}
+};
+inline constexpr size_t kHardwareCount = sizeof(kHardware) / sizeof(kHardware[0]);
+
+inline bool figure_streq(const char* a, const char* b) {
+  if (!a || !b) return false;
+  while (*a && *a == *b) { a++; b++; }
+  return *a == *b;
+}
+
+// What a PEER is, from the device type it published. nullptr when that type
+// cannot be pinned to one board, or we have no figure for it.
 inline const FigureRef* figure_for(const char* device_type) {
   if (!device_type || !device_type[0]) return nullptr;
   for (size_t i = 0; i < kFigureCount; i++) {
-    const char* a = kFigures[i].device_type;
-    const char* b = device_type;
-    while (*a && *a == *b) { a++; b++; }
-    if (*a == *b) return &kFigures[i];
+    if (figure_streq(kFigures[i].device_type, device_type)) return &kFigures[i];
   }
   return nullptr;
+}
+
+// What THIS build LOOKS LIKE. The pins header is compile-time truth, so the
+// board — and the shape — are exact. Check shared_across_products before
+// using the figure's title as this device's product name.
+inline const HardwareRef* figure_for_hardware(const char* hardware) {
+  if (!hardware || !hardware[0]) return nullptr;
+  for (size_t i = 0; i < kHardwareCount; i++) {
+    if (figure_streq(kHardware[i].hardware, hardware)) return &kHardware[i];
+  }
+  return nullptr;
+}
+
+// Sugar for the common case: the figure of the board this firmware is being
+// compiled for. Boards whose pins header does not define
+// CANARY_FIGURE_HARDWARE get nullptr, the same honest fallback as everywhere
+// else in this header.
+inline const HardwareRef* my_figure() {
+#ifdef CANARY_FIGURE_HARDWARE
+  return figure_for_hardware(CANARY_FIGURE_HARDWARE);
+#else
+  return nullptr;
+#endif
 }
 
 }  // namespace canary::figures

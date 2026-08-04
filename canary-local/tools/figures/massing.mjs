@@ -173,6 +173,30 @@ export const FIGURES = [
     },
   },
 
+  {
+    id: 'device.canary-vision-devkit',
+    title: 'Canary Vision (DevKitM host)',
+    role: 'device', of: 'canary-vision',
+    // The Grove-cabled DevKitM layout is a genuinely different housing from
+    // the stacked-XIAO build — wider, and its own committed STLs. Drawing one
+    // for both would show half the owners the wrong box.
+    parts: [
+      'canary_vision_enclosure_devkit_indoor_back.stl',
+      'canary_vision_enclosure_devkit_indoor_front.stl',
+    ],
+    frame: 'scad-wall',
+    build: (E, P) => {
+      const back = P['canary_vision_enclosure_devkit_indoor_back.stl'];
+      const front = P['canary_vision_enclosure_devkit_indoor_front.stl'];
+      return [
+        { kind: 'box', m: 'shell2', face: 'y', at: [0, 0, 0], size: [back.w, back.d, back.h], r: 2 },
+        { kind: 'box', m: 'shell', face: 'y', at: [0, back.d - EPS, E.h - front.h], size: [front.w, front.d + EPS, front.h], r: 3 },
+        { kind: 'disc', m: 'lens', axis: 'y', at: [E.w / 2, back.d + front.d - EPS, E.h - 14], r: 5.5, h: 1.4 },
+        { kind: 'disc', m: 'accent', axis: 'y', at: [E.w / 2, back.d + front.d - EPS, E.h - front.h + 8], r: 1.8, h: 0.5, detail: 'full' },
+      ];
+    },
+  },
+
   /* ═════════════════════════════════════ Canary Vision Doorbell ══════ */
   {
     id: 'part.doorbell.plate',
@@ -387,6 +411,38 @@ export const FIGURES = [
       { kind: 'cyl', m: 'shell', axis: 'y', at: [E.w / 2, 0, E.h / 2], r: E.w / 2, h: E.d - 2.4 },
       { kind: 'cyl', m: 'glass', axis: 'y', at: [E.w / 2, E.d - 2.4 - EPS, E.h / 2], r: E.w / 2 - 3.5, h: 2.0 },
       { kind: 'cyl', m: 'lit', axis: 'y', at: [E.w / 2, E.d - 0.4, E.h / 2], r: E.w / 2 - 7, h: 0.4 },
+    ],
+  },
+  {
+    id: 'device.canary-display-touch169',
+    title: 'Canary Nightstand Touch',
+    role: 'device', of: 'canary-display-touch169',
+    // The panel record in canary_s3_touch169.scad: bonded glass 41.13 x 33.13,
+    // 2.6 mm at the edge, on a 37.12 x 29.83 PCB. The case around it is still
+    // in development (its STL is gitignored), so the wall is the sketch part.
+    sketch: { w: 46.13, d: 17, h: 38.13 },
+    sketchNote: 'the 1.69" panel record in canary_s3_touch169.scad (glass 41.13 x 33.13) '
+      + 'plus a 2.5 mm bezel wall; no committed case STL yet',
+    build: (E) => [
+      { kind: 'box', m: 'shell', face: 'y', at: [0, 0, 0], size: [E.w, E.d - 2.6, E.h], r: 3 },
+      { kind: 'box', m: 'glass', face: 'y', at: [2.5, E.d - 2.6, 2.5], size: [41.13, 2.2, 33.13], r: 2 },
+      { kind: 'box', m: 'lit', face: 'y', at: [5, E.d - 0.4, 5], size: [36.13, 0.4, 28.13], r: 1.5 },
+    ],
+  },
+  {
+    id: 'device.canary-display-dash7',
+    title: 'Canary Dash 7',
+    role: 'device', of: 'canary-display-dash7',
+    // The two 7" boards share their whole mechanical interface to the
+    // hundredth (canary_s3_lcd7.scad, "Panel variant"): glass 192.96 x 110.76,
+    // active area 154.88 x 86.72, PCB 165.72 x 97.60.
+    sketch: { w: 204.96, d: 22, h: 122.76 },
+    sketchNote: 'the 7" panel record in canary_s3_lcd7.scad (glass 192.96 x 110.76, '
+      + 'active 154.88 x 86.72) plus a 6 mm bezel wall; no committed case STL yet',
+    build: (E) => [
+      { kind: 'box', m: 'shell', face: 'y', at: [0, 0, 0], size: [E.w, E.d - 3, E.h], r: 5 },
+      { kind: 'box', m: 'glass', face: 'y', at: [6, E.d - 3, 6], size: [192.96, 2.6, 110.76], r: 3 },
+      { kind: 'box', m: 'lit', face: 'y', at: [25, E.d - 0.4, 18], size: [154.88, 0.4, 86.72], r: 2 },
     ],
   },
   {
