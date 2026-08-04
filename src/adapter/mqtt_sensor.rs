@@ -70,6 +70,17 @@ pub struct SensorRoute {
     /// gate for numeric sensors: occupant counters, HA statestream sensor states, lux values.
     /// The reading itself is gating-only — it never reaches the claim.
     pub numeric_min: Option<f32>,
+    /// When set, the gating state is read from this JSON field instead of `state`. For
+    /// multiplexed topics — a Canary's `sensing` stream carries `acoustic_event` alongside
+    /// cumulative counters — so a route can gate on the one field that means "now" rather
+    /// than a counter that stays truthy forever. Fails closed: a payload that is not a JSON
+    /// object, or lacks the field, emits nothing. The field value is gating-only.
+    pub state_field: Option<String>,
+    /// When set, the state (from `state` or `state_field`) must equal this string exactly
+    /// (after trimming) to emit a claim. Replaces the truthy gate, the way `numeric_min`
+    /// does — for enum-valued fields where "truthy" is meaningless ("smoke_alarm_t3" vs
+    /// "none"). The matched value is gating-only — it never reaches the claim.
+    pub state_equals: Option<String>,
     /// Provenance declared for this route. `None` → plain adapter attestation;
     /// set to [`Attestation::HaBridged`] on routes fed by an HA
     /// `mqtt_statestream` bridge so the dashboard renders the extra hop honestly.
@@ -85,6 +96,8 @@ impl SensorRoute {
             min_confidence: 0.0,
             require_truthy_state: false,
             numeric_min: None,
+            state_field: None,
+            state_equals: None,
             attestation: None,
         }
     }
@@ -131,15 +144,39 @@ fn parse_truthy(s: &str) -> bool {
 
 /// Pure transform shared by the MQTT and webhook adapters: map one `(topic/path, payload)`
 /// message to at most one claim using a routing table. No I/O — safe to run in the sandbox.
+///
+/// Several routes may share a topic (a multiplexed stream gated by `state_field` /
+/// `state_equals`); the first route whose gates pass wins, so a gated-out route falls
+/// through instead of suppressing its siblings.
 pub fn route_message(routes: &[SensorRoute], topic: &str, payload: &[u8]) -> Option<Claim> {
-    let route = routes.iter().find(|r| r.topic == topic)?;
+    routes
+        .iter()
+        .filter(|r| r.topic == topic)
+        .find_map(|route| route_one(route, payload))
+}
 
+/// Apply one route's gates to one payload.
+fn route_one(route: &SensorRoute, payload: &[u8]) -> Option<Claim> {
     // Parse JSON first; `is_json_object` reflects whether parsing actually succeeded, so a
     // malformed payload that merely starts with '{' is NOT treated as a triggered object.
     let raw = std::str::from_utf8(payload).ok()?;
-    let (parsed, is_json_object) = serde_json::from_str::<SensorPayload>(raw)
+    let (mut parsed, is_json_object) = serde_json::from_str::<SensorPayload>(raw)
         .map(|p| (p, true))
         .unwrap_or((SensorPayload::default(), false));
+
+    // A named state_field redirects the gating state. Fail closed: no JSON object, no
+    // field, or an explicit null all emit nothing — a multiplexed stream must never
+    // trigger on "the field happened to be absent."
+    if let Some(field) = &route.state_field {
+        if !is_json_object {
+            return None;
+        }
+        let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+        match value.get(field) {
+            Some(v) if !v.is_null() => parsed.state = Some(v.clone()),
+            _ => return None,
+        }
+    }
 
     // Numeric gate: when configured, it replaces the truthy gate entirely. A payload that
     // doesn't parse as a number (bare or in `state`) emits nothing — silence over guessing.
@@ -152,6 +189,18 @@ pub fn route_message(routes: &[SensorRoute], topic: &str, payload: &[u8]) -> Opt
         match reading {
             Some(v) if v >= threshold => {}
             _ => return None,
+        }
+    } else if let Some(expected) = &route.state_equals {
+        // Exact-match gate for enum-valued fields; replaces the truthy gate the way
+        // numeric_min does. Reads `state`/`state_field`, or the bare payload for
+        // non-JSON messages. No state at all fails closed.
+        let matches = match (parsed.state_str(), is_json_object) {
+            (Some(s), _) => s.trim() == expected,
+            (None, false) => raw.trim() == expected,
+            (None, true) => false,
+        };
+        if !matches {
+            return None;
         }
     } else {
         let state_truthy = match (parsed.state_str(), is_json_object) {
@@ -519,5 +568,91 @@ mod tests {
             .message_to_claim("s/pir", br#"{"zone":"server_room"}"#)
             .expect("claim");
         assert_eq!(claim.zone_label, "server_room");
+    }
+
+    /// The exact shape the Canary WAP publishes on securacv/<id>/sensing: one
+    /// enum-valued `acoustic_event` field ("smoke_alarm_t3" during the 30 s
+    /// hold, "none" otherwise) beside *cumulative* detection counters that stay
+    /// nonzero forever. Gating must read the enum, never the counters.
+    fn wap_sensing_routes() -> Vec<SensorRoute> {
+        let mut smoke = SensorRoute::new(
+            "securacv/canary-1/sensing",
+            ClaimKind::AcousticImpulseInZone,
+            "smoke_alarm_heard",
+        );
+        smoke.state_field = Some("acoustic_event".into());
+        smoke.state_equals = Some("smoke_alarm_t3".into());
+        let mut co = SensorRoute::new(
+            "securacv/canary-1/sensing",
+            ClaimKind::AcousticImpulseInZone,
+            "co_alarm_heard",
+        );
+        co.state_field = Some("acoustic_event".into());
+        co.state_equals = Some("co_alarm_t4".into());
+        vec![smoke, co]
+    }
+
+    #[test]
+    fn multiplexed_sensing_stream_routes_by_state_field_equality() {
+        let routes = wap_sensing_routes();
+        let smoke_payload =
+            br#"{"acoustic_event":"smoke_alarm_t3","mic_muted":false,"t3_detected":1,"t4_detected":0}"#;
+        let claim = route_message(&routes, "securacv/canary-1/sensing", smoke_payload)
+            .expect("smoke claim");
+        assert_eq!(claim.kind, ClaimKind::AcousticImpulseInZone);
+        assert_eq!(claim.zone_label, "smoke_alarm_heard");
+
+        // A gated-out first route must fall through to its sibling, not
+        // suppress it: the CO payload reaches the second route.
+        let co_payload =
+            br#"{"acoustic_event":"co_alarm_t4","mic_muted":false,"t3_detected":1,"t4_detected":1}"#;
+        let claim = route_message(&routes, "securacv/canary-1/sensing", co_payload)
+            .expect("co claim");
+        assert_eq!(claim.zone_label, "co_alarm_heard");
+    }
+
+    #[test]
+    fn cumulative_counters_never_retrigger_after_the_hold_clears() {
+        // The 60 s heartbeat after a past detection: counters are nonzero but
+        // the event field is back to "none". No claim — this is the exact
+        // false-positive a truthy gate on the counter would produce.
+        let routes = wap_sensing_routes();
+        let heartbeat =
+            br#"{"acoustic_event":"none","mic_muted":false,"t3_detected":5,"t4_detected":2}"#;
+        assert!(route_message(&routes, "securacv/canary-1/sensing", heartbeat).is_none());
+    }
+
+    #[test]
+    fn state_field_fails_closed_on_absent_field_or_non_json() {
+        let routes = wap_sensing_routes();
+        // Field missing entirely.
+        assert!(route_message(&routes, "securacv/canary-1/sensing", br#"{"mic_muted":true}"#)
+            .is_none());
+        // Explicit null.
+        assert!(route_message(
+            &routes,
+            "securacv/canary-1/sensing",
+            br#"{"acoustic_event":null}"#
+        )
+        .is_none());
+        // Not a JSON object at all.
+        assert!(route_message(&routes, "securacv/canary-1/sensing", b"smoke_alarm_t3").is_none());
+    }
+
+    #[test]
+    fn state_equals_reads_bare_payloads_without_a_state_field() {
+        let mut route = SensorRoute::new(
+            "sensors/porch/mode",
+            ClaimKind::ContactStateChange,
+            "porch",
+        );
+        route.state_equals = Some("opened".into());
+        let (adapter, _tx) = MqttSensorAdapter::new(vec![route]);
+        assert!(adapter.message_to_claim("sensors/porch/mode", b"opened").is_some());
+        assert!(adapter.message_to_claim("sensors/porch/mode", b"closed").is_none());
+        // JSON object without a state field: fail closed, never "triggered".
+        assert!(adapter
+            .message_to_claim("sensors/porch/mode", br#"{"battery":97}"#)
+            .is_none());
     }
 }
