@@ -22,10 +22,31 @@
 //    is a feature the slicer silently drops, and a dropped feature makes the
 //    mark read as a different bird.
 //
-//  Proportions are the design: a plump upright body, a big pointed wing, a
-//  long slender tail, and a splayed stance. The stance is not styling — two
-//  feet need ~2.4 mm of separation at badge size or they fuse into one bar on
-//  the plate.
+//  PROPORTIONS — redrawn 2026-08 to the brand art
+//    The mark used to be a lean songbird: a small body carrying a pointed
+//    wing and a tail as long as the bird, drawn as a thin outline. That is
+//    not the bird on the brand art, which is a PLUMP CHICK — one round
+//    head-and-body blob nearly as wide as it is tall, a big eye set high, a
+//    short wedge beak, a soft rounded wing tucked on the flank, a STUB tail,
+//    and two splayed feet under the middle of the body.
+//
+//    Two things fell out of that, and both were real defects, not taste:
+//      · The old tail reached to design x = +67 against a body that stopped
+//        at +25, so the mark's bounding box was 130 x 101 — a bird that was
+//        mostly empty space on its right. On the 7" back plate the vent
+//        grille is kept out by that box, so the tail bought a keepout it did
+//        not fill and still crowded the eggs it did not keep out. The stub
+//        tail brings the box to roughly square, and the grille keepout now
+//        comes from mark_bbox() rather than from a hand-typed 0.62 ratio.
+//      · The outline was drawn at a weight that vanished at badge size. The
+//        mark now has a FILL mode (`fill = true`): the silhouette solid, with
+//        the eye and the wing line knocked back OUT of it in the surrounding
+//        color. On a two-filament part that is the brand art exactly — a
+//        solid accent bird with a body-color eye — and it is the boldest
+//        thing this geometry can be without changing the drawing.
+//
+//    The stance is not styling either — two feet need ~2.4 mm of separation
+//    at badge size or they fuse into one bar on the plate.
 //
 //  Import with `use <canary_mark_lib.scad>` (modules + functions cross; the
 //  design-unit constants are exposed as functions precisely so they do).
@@ -38,18 +59,56 @@ function _chaik(p, cl) = let(n = len(p))
         [ [0.75*a[0] + 0.25*b[0], 0.75*a[1] + 0.25*b[1]],
           [0.25*a[0] + 0.75*b[0], 0.25*a[1] + 0.75*b[1]] ] ];
 function _smooth(p, cl, k = 3) = k <= 0 ? p : _smooth(_chaik(p, cl), cl, k-1);
+function _rev_but_first(p) = [for (i = [len(p)-2 : -1 : 0]) p[i]];
 
 // ── The mark in design units — 110 tall, drawn facing LEFT ─────────────────
-_g_body = [[-38,32],[-35,43],[-26,50],[-12,49],[1,42],[13,29],[21,12],[25,-6],
-           [21,-24],[8,-34],[-9,-36],[-24,-30],[-34,-17],[-40,0],[-41,18]];
-_g_wing = [[-30,12],[-13,24],[6,18],[24,-6],[9,-17],[-11,-11],[-24,0]];
-_g_tailu = [[23,3],[43,-17],[67,-43]];     // tail edges, converging to a point
-_g_taill = [[12,-27],[39,-33],[67,-43]];
+// The head and the breast are ONE outline, which is what makes it read as a
+// chick rather than as a bird with a neck: the brand art has no waist, and a
+// smoothed 14-point egg is the whole silhouette.
+// The control points are deliberately OUTSIDE the shape they describe:
+// three Chaikin passes inscribe the curve in its polygon, so the drawn egg
+// comes in a few units inside these. Read them as a cage, not as an outline.
+_g_body  = [[0,54],[-18,51],[-30,40],[-35,25],[-38,6],[-36,-14],[-25,-27],
+            [-6,-32],[14,-30],[30,-20],[38,-4],[39,16],[34,36],[20,50]];
+// The wing sits ON the flank and stops well inside the body outline, so in
+// fill mode it reads as a line drawn on the bird instead of a hole in it.
+_g_wing  = [[-17,-1],[-3,6],[13,2],[25,-11],[12,-23],[-6,-21],[-19,-11]];
+// STUB tail: two edges converging just past the body, not a streamer.
+_g_tailu = [[30,-8],[42,-14],[54,-21]];
+_g_taill = [[24,-24],[38,-28],[54,-21]];
+// Beak — a short wedge off the cheek, and the eye, which is a FIXED fraction
+// of the mark rather than a multiple of the stroke: the brand art's eye is
+// big and stays big, so a coupon printed at a hairline rib must not shrink it
+// to a pinprick. It only ever grows to clear the stroke minimum.
+_g_beak  = [[-32,22],[-50,17]];
+function _g_beak_root() = 16;   // beak width where it leaves the cheek
+_g_eye   = [-16,28];
+function _g_eye_d()     = 14;
+_g_legs  = [[[-13,-25],[-18,-43]], [[5,-25],[10,-43]]];
+_g_feet  = [[[-28,-46],[-10,-46]], [[2,-46],[20,-46]]];
 
 // Design-unit metrics, as functions so `use <>` carries them.
 function mark_span() = 110;   // design-unit height the mark spans
-function mark_cx()   = 3.7;   // design-unit bbox center
-function mark_cy()   = -0.5;
+
+// The drawn extent, in design units, INCLUDING the stroke's round caps. Every
+// consumer that has to keep something away from the mark asks this rather
+// than carrying its own ratio: the 7" case's grille keepout and the hallway
+// stick's plate-width check were both hand-typed fractions of `h`, and both
+// were stale the moment the drawing moved. `t` is the stroke in design units.
+function mark_x0(t) = -50.0 - t/2;   // beak tip
+function mark_x1(t) =  54.0 + t/2;   // tail tip
+function mark_y0(t) = -46.0 - t/2;   // feet
+function mark_y1(t) =  53.2 + t/2;   // crown of the SMOOTHED egg (its cage
+                                     // tops out at 54; three Chaikin passes
+                                     // on a closed path barely inset it)
+function mark_bbox(t = 0) = [mark_x0(t), mark_y0(t), mark_x1(t), mark_y1(t)];
+function mark_cx(t = 0) = (mark_x0(t) + mark_x1(t)) / 2;   // bbox center
+function mark_cy(t = 0) = (mark_y0(t) + mark_y1(t)) / 2;
+// The same box in mm, for a mark drawn at height `h` with stroke `rib`.
+function mark_w_mm(h, rib) = let (s = h/mark_span())
+    (mark_x1(rib/s) - mark_x0(rib/s)) * s;
+function mark_h_mm(h, rib) = let (s = h/mark_span())
+    (mark_y1(rib/s) - mark_y0(rib/s)) * s;
 
 module _gstroke(pts, t, closed = false) {
     n = len(pts);
@@ -64,29 +123,65 @@ module _gtaper(pts, t0, t1) {           // width runs t0 -> t1 along the path
     }
 }
 
+// The two halves of the drawing, so line mode and fill mode cannot drift into
+// two different birds: everything that bounds the silhouette, and everything
+// that is detail INSIDE it.
+module _mark_shell(t) {
+    _gstroke(_smooth(_g_body, true), t, true);
+    // The tail edges are NOT smoothed. Chaikin on an OPEN polyline discards
+    // its endpoints, which pulled the two edges' shared tip apart into two
+    // blunt ends 3.6 units from each other — a stub tail with a notch bitten
+    // out of it, and in fill mode a loose dash floating off the bird. They
+    // are two near-straight segments; there is nothing for smoothing to do.
+    _gstroke(_g_tailu, t);
+    _gstroke(_g_taill, t);
+    _gtaper(_g_beak, _g_beak_root(), t);             // beak: cone -> t tip
+    for (l = _g_legs) _gstroke(l, t);                // legs, splayed
+    for (f = _g_feet) _gstroke(f, t);                // feet, clear of each other
+}
+module _mark_detail(t) {
+    _gstroke(_smooth(_g_wing, true), t, true);
+    translate(_g_eye) circle(d = max(_g_eye_d(), t*1.4));
+}
+
 // The bird, in design units, stroked at width `t`. Center it with
 // translate([-mark_cx(), -mark_cy()]) and scale by h/mark_span().
-module mark_bird_2d(t) {
-    union() {
-        _gstroke(_smooth(_g_body, true), t, true);
-        _gstroke(_smooth(_g_wing, true), t, true);
-        _gstroke(_smooth(_g_tailu, false, 1), t);
-        _gstroke(_smooth(_g_taill, false, 1), t);
-        _gtaper([[-37,26.5],[-63,27]], 15, t);       // beak: cone -> t tip
-        translate([-27,34]) circle(d = t*1.35);      // eye
-        _gstroke([[-12,-36],[-20,-50]], t);          // legs, splayed
-        _gstroke([[4,-35],[12,-50]], t);
-        _gstroke([[-27,-51],[-13,-51]], t);          // feet, clear of each other
-        _gstroke([[5,-51],[19,-51]], t);
-    }
+//
+// `fill` swaps the outline drawing for the SOLID one: the silhouette filled,
+// with the eye and the wing line knocked back out of it. Both are the same
+// paths, so the two modes are the same bird at two weights — and the knocked-
+// out detail is a full stroke wide, which is the one rule, applied to a hole
+// instead of to a line.
+module mark_bird_2d(t, fill = false) {
+    if (fill)
+        difference() {
+            union() {
+                _mark_shell(t);
+                // The interiors the strokes only outlined. Each is the SAME
+                // path list the stroke walks, closed into a face, so the fill
+                // lands exactly inside its own outline with no seam for the
+                // union to resolve and nothing sticking out past it.
+                polygon(_smooth(_g_body, true));
+                // The tail's two edges share their tip, so the ring walks up
+                // one and back down the other MINUS that shared point —
+                // repeating it would put a zero-length edge in the polygon.
+                polygon(concat(_g_tailu, _rev_but_first(_g_taill)));
+            }
+            _mark_detail(t);
+        }
+    else
+        union() {
+            _mark_shell(t);
+            _mark_detail(t);
+        }
 }
 
 // The bird centered on the origin at a real height `h` (mm), stroked at a real
 // width `rib` (mm). This is the form a case actually wants — it does the
 // design-unit bookkeeping so callers do not repeat it and get it subtly wrong.
-module mark_bird(h, rib) {
+module mark_bird(h, rib, fill = false) {
     s = h / mark_span();
-    scale([s, s]) translate([-mark_cx(), -mark_cy()]) mark_bird_2d(rib / s);
+    scale([s, s]) translate([-mark_cx(), -mark_cy()]) mark_bird_2d(rib / s, fill);
 }
 
 // The bird RAISED, centered on the origin, sitting on z = 0 and standing `ez`

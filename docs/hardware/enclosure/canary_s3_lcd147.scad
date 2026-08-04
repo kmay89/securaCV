@@ -494,7 +494,13 @@ assert(mark_hi <= plate_y/2 - 1.0 && mark_lo >= -plate_y/2 + 1.0,
 mark_adv = 0.875;
 mark_word_chars = 8;                       // "securaCV"
 function mark_word_w(h) = mark_word_chars * mark_adv * h * mark_word_ratio();
-function mark_bird_w(h) = h * 130 / mark_span();   // beak (-63) to tail (+67)
+// The bird's width comes from the library's own bbox, stroke caps included.
+// It used to be `h * 130 / mark_span()` — the old drawing's beak-to-tail span
+// typed into this file. The mark was redrawn (plump chick, stub tail) and 130
+// became 104: a stale constant here would have reserved 4 mm of plate that
+// the bird no longer occupies, and would have been silently WRONG in the
+// other direction the first time the mark grew.
+function mark_bird_w(h) = mark_w_mm(h, mark_rib);
 mark_w = max(mark_bird_w(mark_h), mark_word_w(mark_h));
 assert(mark_w <= plate_x - 2.0,
        str("The mark is ", mark_w, " mm wide on a ", plate_x,

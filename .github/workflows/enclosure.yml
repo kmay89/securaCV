@@ -51,6 +51,13 @@ jobs:
       - name: Build stamp matches the geometry it claims
         run: python3 gen_stamp.py --check
 
+      # The shipped bird artwork is generated from canary_mark_lib.scad, so
+      # the mark cannot be redrawn in the CAD and left stale in the SVG that
+      # goes out for engraving and laser work. Pure Python arithmetic — no
+      # OpenSCAD — so the bytes do not move with the renderer's version.
+      - name: House-mark artwork matches the mark it is drawn from
+        run: python3 gen_mark_svg.py --check
+
       - name: Install OpenSCAD + admesh
         run: |
           sudo apt-get update -qq

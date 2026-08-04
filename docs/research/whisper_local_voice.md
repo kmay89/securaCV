@@ -68,10 +68,12 @@ So the honest statement is:
     port for desktop and mobile embedding, if we ever need in-app dictation.
   - WhisperKit (MIT) — CoreML port for Apple platforms. Noted for
     completeness; §5 explains why we likely never need it.
-- **Hardware floor:** `tiny`/`base`/`small` are practical on Pi-4/5-class hub
-  hardware; bigger models want a desktop CPU or GPU. Latency and accuracy
-  vary by hardware and model — benchmark before promising anything (claims
-  discipline applies to speed too).
+- **Hardware:** the HA Whisper add-on runs CPU-only on Pi-class hub hardware
+  and lets the owner pick the model size. Which size is *usable* for command
+  latency on a given hub is a bench question, not one this document answers:
+  latency and accuracy vary by hardware, model, and quantization — benchmark
+  on the actual hub before recommending a model or promising responsiveness
+  (claims discipline applies to speed too).
 - **What Whisper is not:** a speaker-identification model. But the pipelines
   people build *around* it (diarization, voice profiles) are exactly the
   identity substrate Invariant II bans — see §4.
@@ -111,12 +113,23 @@ nothing is transcribed until the wake word is heard.
 
 ### 3.1 The voice contract (the load-bearing part)
 
-1. **Voice input hardware is a dedicated voice satellite — never a Canary.**
-   An HA Voice PE box, an old phone running the companion app, a push-to-talk
-   button in the app. Canary microphones keep their scalars-not-samples
+1. **Voice input hardware is a dedicated voice satellite — never a Canary —
+   and the boundary is the hardware, not the speaker.** An HA Voice PE box,
+   an old phone running the companion app, a push-to-talk button in the app.
+   "The owner speaking deliberately" is intent, and intent is not
+   mechanically enforceable — rule 5 even forbids the machinery that would
+   check who is talking. So the enforceable line is *which device can feed
+   the pipeline at all*: Canary microphones keep their scalars-not-samples
    barrier unchanged; no firmware path that ships audio samples off a Canary
    exists today and none gets written for this. A device whose promise is
    "it shows, it doesn't watch" does not grow ears as a side effect.
+   **Push-to-talk is the blessed default.** Always-on wake-word listening is
+   an explicit owner opt-in on the satellite, and it must be described
+   honestly as a `won't`, not a `can't`: a false wake (a television, a
+   guest) transiently transcribes a few seconds of room audio before the
+   intent parser shrugs. That residue is why rule 2 is absolute, and why
+   the satellite is a self-declared listening device rather than a witness
+   wearing a second hat.
 2. **Command audio and transcripts are transient.** The waveform and the text
    live exactly long enough to parse an intent, then are gone. Neither is
    ever sealed, journaled, exported, or used as evidence. The *action* the

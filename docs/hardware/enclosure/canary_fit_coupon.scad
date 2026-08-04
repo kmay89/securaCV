@@ -42,6 +42,9 @@
 //
 //  The bird glyph (securacv_bird_glyph.svg) is © ERRERLabs / SecuraCV /
 //  Karl Meves — shipped with the coupon as production art, not clip art.
+//  It is GENERATED from canary_mark_lib.scad by gen_mark_svg.py, so the art
+//  and the geometry below are the same bird by construction. Edit the paths
+//  in the library and re-run the generator; never hand-edit the SVG.
 //
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
 // ============================================================================

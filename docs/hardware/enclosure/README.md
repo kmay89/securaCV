@@ -95,7 +95,7 @@ the `.scad`, no committed STLs; see the [dev gallery](#in-development)):
 | [`canary_bench_fixture.scad`](./canary_bench_fixture.scad) | Labeled **bring-up plate** holding the XIAO + buzzer/LED/button/reed while you wire and test ([bench guide](../bench_bringup.md)) |
 | [`canary_dock.scad`](./canary_dock.scad) | Numbered **provisioning dock** for flashing a fleet of XIAOs in order |
 | [`canary_inserts.scad`](./canary_inserts.scad) | Small **glue/press-in parts**: buzzer horn, anti-glare ring, printed cable gland |
-| [`canary_mark_lib.scad`](./canary_mark_lib.scad) | **The house mark** — the Canary bird as printable geometry, plus the bird-over-wordmark lockup. Authored as stroked paths, not traced artwork (the brand line work is ~0.08 mm wide at badge size and no nozzle lays that down), so the mark is re-drawn at whatever weight a given part can actually print. One bird for the whole line; `canary_fit_coupon.scad` is where its printability gets proven, not where it is defined. Not a printable part |
+| [`canary_mark_lib.scad`](./canary_mark_lib.scad) → [`securacv_bird_glyph.svg`](./securacv_bird_glyph.svg) | **The house mark** — the Canary bird as printable geometry, plus the bird-over-wordmark lockup. Authored as stroked paths, not traced artwork (the brand line work is ~0.08 mm wide at badge size and no nozzle lays that down), so the mark is re-drawn at whatever weight a given part can actually print, and has a `fill` mode for the solid brand form. One bird for the whole line; `canary_fit_coupon.scad` is where its printability gets proven, not where it is defined. The shipped vector art is **generated from it** — run [`gen_mark_svg.py`](./gen_mark_svg.py) after any path edit, or CI's `--check` will say so. Not a printable part |
 | [`canary_vent_lib.scad`](./canary_vent_lib.scad) | **The brand vent pattern** — hatchery grille: upright eggs in offset rows, a clutch in a nest. `use` it wherever a case vents a field; exact open-area maths included. The tip ratio is the line-wide constant and lives here, so changing it moves every adopter at once. Not a printable part |
 | [`canary_shop_tools.scad`](./canary_shop_tools.scad) | Heat-set **insert press guide** + doorbell button accent ring |
 | [`canary_templates_2d.scad`](./canary_templates_2d.scad) → [studs](./template_studs.svg) · [bracket](./template_bracket.svg) · [doorbell](./template_doorbell.svg) | **1:1 paper drill templates** — print the SVG at 100 % (check the 20 mm square), tape to the wall, drill |
@@ -505,16 +505,21 @@ to measure against. Print this before anything larger.
 ### Three-color printing (7" frame, P2S + AMS)
 
 The one-piece frame ships **black-bodied**: black case, black bezel, black egg
-vent mouths, the SECURACV / CANARY lockup in yellow, and the help QR's modules
-in white printed straight onto the plate. Everything else — BOOT/RESET/SD, the
-rating block, the adhesive-rail moats — is plain deboss in the body color, no
-filament of its own.
+vent mouths, the **house mark and its lockup in yellow**, and the help QR's
+modules in white printed straight onto the plate. Everything else —
+BOOT/RESET/SD, the rating block, the adhesive-rail moats — is plain deboss in
+the body color, no filament of its own.
 
 | slot | filament | what it prints |
 |---|---|---|
-| 1 | `pal_body` — **Black** | the case, the bezel ring, the vent mouths |
+| 1 | `pal_body` — **Black** | the case, the bezel ring, the vent mouths, and the bird's eye and wing line (they are knocked out of the mark, so the plate shows through them) |
 | 2 | `pal_ink` — **White** | the help QR's modules, and nothing else |
-| 3 | `pal_accent` — **Signal Yellow** (RAL 1003) | SECURACV and CANARY |
+| 3 | `pal_accent` — **Signal Yellow** (RAL 1003) | the bird, and the three-row lockup under it: SECURACV / CANARY / ERRERlabs |
+
+The bird is a **solid silhouette**, not an outline — `bird_fill = false` gives
+the old line drawing back. Its eye and wing are cut out of the accent inlay,
+so they print in the body color with no extra tool change: the whole mark is
+still one filament laid into one recess.
 
 The 3MF assigns filament **slots**, not colors, so load them in that order or
 you will print a materially different case from the one described here.
