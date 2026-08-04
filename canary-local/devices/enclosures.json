@@ -7423,25 +7423,6 @@
        "comment": "false = let the grille back into the badge's half"
       },
       {
-       "name": "nest_show",
-       "default": "true"
-      },
-      {
-       "name": "nest_n",
-       "default": "3",
-       "comment": "three. Not \"as many as fit\" — three is the count that"
-      },
-      {
-       "name": "nest_pitch",
-       "default": "9.2",
-       "comment": "= vent_pitch_x. The eggs are the grille's own egg at"
-      },
-      {
-       "name": "nest_mark_gap",
-       "default": "0.8",
-       "comment": "plate kept around the mark's stroke where it crosses an"
-      },
-      {
        "name": "vent_top",
        "default": "true",
        "comment": "EXHAUST — slots through the top (+Y) wall"
@@ -7722,19 +7703,19 @@
        "comment": "debossed on the visible bottom edge"
       },
       {
-       "name": "brand_row_maker",
-       "default": "4.4",
-       "comment": "maker line, closest to the rim"
+       "name": "brand_drop_sub",
+       "default": "7.8",
+       "comment": "from the mark's box bottom down to each row's"
       },
       {
-       "name": "brand_row_hero",
-       "default": "12.6",
-       "comment": "brand_back — the product name, the biggest row"
+       "name": "brand_drop_hero",
+       "default": "16.8",
+       "comment": "center. sub is the company line (tracked, smaller),"
       },
       {
-       "name": "brand_row_sub",
-       "default": "21.6",
-       "comment": "brand_sub — the company line, tracked and smaller"
+       "name": "brand_drop_maker",
+       "default": "25.0",
+       "comment": "hero the product name, maker the footnote."
       },
       {
        "name": "brand_sz",
@@ -7803,7 +7784,7 @@
       },
       {
        "name": "bird_dy",
-       "default": "10.0",
+       "default": "13.2",
        "comment": "x 23..48, so a centered mark would put its tail through"
       },
       {
@@ -7822,14 +7803,6 @@
       {
        "name": "bird_half_h",
        "default": "back_bird ? mark_h_mm(bird_h, bird_rib)/2 : 0"
-      },
-      {
-       "name": "nest_dx",
-       "default": "bird_dx - 12.8"
-      },
-      {
-       "name": "nest_dy",
-       "default": "bird_dy - 35.0"
       },
       {
        "name": "bird_vent_gap",
@@ -7869,7 +7842,7 @@
      "params": [
       {
        "name": "soc_win",
-       "default": "true"
+       "default": "false"
       },
       {
        "name": "soc_grow",
@@ -8759,16 +8732,20 @@
        "default": "help_sz*1.45 + 2"
       },
       {
+       "name": "brand_anchor",
+       "default": "back_bird ? bird_dy - bird_half_h : -(fr_yi/2 - 29.4)"
+      },
+      {
        "name": "brand_sub_y",
-       "default": "-(fr_yi/2 - brand_row_sub)"
+       "default": "brand_anchor - brand_drop_sub"
       },
       {
        "name": "brand_hero_y",
-       "default": "-(fr_yi/2 - brand_row_hero)"
+       "default": "brand_anchor - brand_drop_hero"
       },
       {
        "name": "brand_maker_y",
-       "default": "-(fr_yi/2 - brand_row_maker)"
+       "default": "brand_anchor - brand_drop_maker"
       },
       {
        "name": "brand_band_hi",
@@ -8860,10 +8837,6 @@
        "name": "brand_lead_min",
        "default": "2.6",
        "comment": "ink-to-ink between rows. Below this the stack reads"
-      },
-      {
-       "name": "nest_half_w",
-       "default": "(nest_n - 1)*nest_pitch/2 + vent_slot_w/2"
       },
       {
        "name": "soc_half",

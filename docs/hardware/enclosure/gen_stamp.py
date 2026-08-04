@@ -49,12 +49,13 @@ from pathlib import Path
 
 # ── The one human string. Bump it when you change the geometry. ──────────
 # CalVer: YYYY.MM + a letter that revs within the month.
-# (.09y, .09z, .10a, .10b and .10c are all spent — five revisions of this plate
-#  landed while this branch was open. .10c moved the palette; this one
-#  recomposes the back plate itself (the grille off, the nest, the radio
-#  window, the symbol back on), which is a different design and therefore a
-#  different letter rather than a reuse of one already debossed into parts.)
-STAMP_REV = "2026.10d"
+# (.09y through .10d are all spent — six revisions of this plate landed while
+#  this branch was open. .10c moved the palette; .10d recomposed the plate; this
+#  one takes the holes back out of it (no vent eggs, no radio window) and locks
+#  the lockup to the mark. Each is a different DESIGN, so each takes its own
+#  letter rather than reusing one already debossed into a part that is not this
+#  one — that is the whole of what REV is for.)
+STAMP_REV = "2026.10e"
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "canary_s3_lcd7_stamp.scad"

@@ -685,9 +685,13 @@ the released set's largest part at 120.5 mm. Two consequences:
 directional: **intake along the bottom wall, exhaust along the top wall**.
 Mounting it flat against a wall with the top slots blocked converts a
 ventilated case into an oven — and that matters more on the one-piece `frame`
-than it used to, because its back plate is now a composed face and carries no
-grille to radiate through. Nothing in this repo measures the requirement; if a
-built case runs warm, `plate_grille = true` puts the field back.
+than it used to, because its back plate is now a composed face with no grille,
+no vent eggs and no radio window: the only openings in it are the card window
+and the four keyholes. Nothing in this repo measures the requirement. If a
+built case runs warm the recovery is **two** knobs, not one: `plate_grille =
+true` alone restores the field with the badge's column still reserved (~5 cm²),
+and `badge_column = false` alongside it is the whole field (~21 cm²). The
+render echoes both figures so neither has to be quoted from memory.
 
 ### 7b″ · The ring gauge — five grams, and it gates the 110 g print
 

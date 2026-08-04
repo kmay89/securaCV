@@ -462,23 +462,24 @@ plate_grille = false;    // large grille in the ONE-PIECE FRAME's back plate.
                          // OFF — ⚠️ READ THIS BEFORE TURNING IT BACK ON, and
                          // read the honest-thermals note under vent_top too.
                          // That plate is the product's face when it hangs on a
-                         // wall, and it is now composed as one: badge, nest,
-                         // radio window, symbol, small print. Forty-odd eggs of
-                         // lattice across it was the version this replaced.
-                         // The plate keeps exactly three eggs (the nest, below)
-                         // and they are drawn for the composition, not for
-                         // airflow — so this switch is a real trade and not a
-                         // tidy-up. What it costs: ~5 cm2 of open area with the
-                         // badge column claimed, ~19 cm2 without. What it does
-                         // NOT cost: the convection path itself, which is
-                         // bottom-wall intake to top-wall exhaust (vent_bottom
-                         // / vent_top, both still on) and never ran through
-                         // this plate. NOTHING IN THIS REPO MEASURES THE
-                         // REQUIREMENT — no thermal model, no logged die temp
-                         // — so "it will be fine" is not something this file
-                         // is entitled to say. If a built case runs warm, this
-                         // is the first knob, badge_column is the second, and
-                         // either one puts the lattice straight back.
+                         // wall, and it is composed as one: badge, lockup,
+                         // symbol, small print, and NO holes that nothing goes
+                         // through. Forty-odd eggs of lattice across it was the
+                         // version this replaced. So this switch is a real
+                         // trade and not a tidy-up.
+                         // ⚠️ IT IS ALSO NOT THE WHOLE RECOVERY. On its own it
+                         // restores the field with the BADGE COLUMN still
+                         // reserved — about a quarter of what the plate gave
+                         // up. badge_column = false is the other half of the
+                         // knob, and the echo prices both so the difference
+                         // cannot be quoted from memory.
+                         // What it does NOT cost: the convection path itself,
+                         // which is bottom-wall intake to top-wall exhaust
+                         // (vent_bottom / vent_top, both still on) and never
+                         // ran through this plate. NOTHING IN THIS REPO
+                         // MEASURES THE REQUIREMENT — no thermal model, no
+                         // logged die temp — so "it will be fine" is not
+                         // something this file is entitled to say.
 vent_rows = 8;           // grille rows
 vent_cols = 17;          // grille columns
 vent_slot_w = 6.5;       // egg base width — the grille is the HATCHERY
@@ -572,36 +573,6 @@ vent_beat_shift = 1;  // stations the pattern rotates per row.
 // the mark keeps only its own margin (bird_vent_gap). The plate gets busier;
 // the echo will tell you exactly what you bought.
 badge_column = true;  // false = let the grille back into the badge's half
-
-// ── THE NEST ───────────────────────────────────────────────────────────────
-// Three eggs in a row under the mark, their tips running BEHIND the bird's
-// feet. It is the whole of what is left of the grille, and it is a drawing
-// rather than a vent field: with the lattice off, three eggs under a canary is
-// the story the plate used to tell across sixty holes, told once.
-//
-// "Behind" is the part that has to be built rather than hoped for. These are
-// HOLES, and a hole cannot be overlapped by an emboss — the emboss would be
-// left bridging thin air. So the mark's own silhouette is SUBTRACTED from the
-// egg cutters (grown by nest_mark_gap): wherever a foot crosses an egg, the
-// plate under the foot stays solid and the egg is simply cut short there. The
-// bird occludes the eggs the way a thing in front occludes a thing behind, and
-// the feet still print on unbroken plate. Move the mark and the occlusion
-// follows it, because it is computed from the same mark_bird() the badge draws.
-nest_show = true;
-nest_n     = 3;      // three. Not "as many as fit" — three is the count that
-                     // reads as a clutch rather than as a leftover row.
-nest_pitch = 9.2;    // = vent_pitch_x. The eggs are the grille's own egg at
-                     // the grille's own spacing: same shape, same rhythm, so
-                     // the nest is recognizably the last three of what used to
-                     // cover the plate rather than a new motif.
-// Placement is relative to the MARK, so the nest cannot be orphaned by moving
-// the badge — but the two assignments live down beside bird_dx/bird_dy rather
-// than here, because OpenSCAD reads assignments IN ORDER and a forward
-// reference is silently undef, not an error. (nest_dx/nest_dy: search bird_dx.)
-nest_mark_gap = 0.8; // plate kept around the mark's stroke where it crosses an
-                     // egg. 0 would leave the cut tangent to the stroke and
-                     // print as a ragged edge on the foot; this is the visible
-                     // outline that makes the bird read as being in front.
 
 vent_top = true;         // EXHAUST — slots through the top (+Y) wall
 vent_top_n = 14;
@@ -795,13 +766,21 @@ brand_edge = "SecuraCV Canary";               // debossed on the visible bottom 
 // leading, the product name gets to be bigger than the company line above it,
 // and there is 3 mm of air under the last row instead of a hairline.
 //
-// Positions are measured UP from the plate's inner bottom edge, and the two
-// gaps are DERIVED from the row positions rather than typed beside them, so a
-// row that moves cannot leave a stale gap comment behind. The asserts below
-// check both gaps and the rim clearance.
-brand_row_maker =  4.4;  // maker line, closest to the rim
-brand_row_hero  = 12.6;  // brand_back — the product name, the biggest row
-brand_row_sub   = 21.6;  // brand_sub — the company line, tracked and smaller
+// ⚠️ POSITIONS HANG OFF THE MARK, not off the plate's bottom rim, and that
+// change is the whole of "put the logo proper under the bird". Measured up
+// from the rim, the three rows were an independent object that happened to be
+// on the same plate: the mark could move, grow or shrink and the type stayed
+// where it was, which is exactly how it ended up stranded in the last 13 mm
+// with the badge floating 30 mm above it. Measured DOWN from the mark's box,
+// mark + type is ONE lockup — move bird_dx/dy/h and the words follow, and
+// bird_dy becomes a knob that positions the whole logo rather than half of it.
+//
+// The two gaps are DERIVED from these drops rather than typed beside them, so
+// a row that moves cannot leave a stale gap comment behind. The asserts below
+// check both gaps, the rim clearance and the gap to the mark.
+brand_drop_sub   =  7.8; // from the mark's box bottom down to each row's
+brand_drop_hero  = 16.8; // center. sub is the company line (tracked, smaller),
+brand_drop_maker = 25.0; // hero the product name, maker the footnote.
 brand_sz        =  6.0;  // hero cap height
 brand_sub_sz    =  3.8;  // company line — deliberately UNDER the hero: this
                          // is the product's plate, and the tracking is what
@@ -878,21 +857,23 @@ bird_h      = 70.0;  // NOMINAL height (mark_span units) — see mark_h_mm() for
                      // what actually gets drawn; the design span carries
                      // headroom the drawing does not use
 bird_dx     = -18.5; // LEFT of center, and not by taste: the SD mouth owns
-bird_dy     = 10.0;  // x 23..48, so a centered mark would put its tail through
+bird_dy     = 13.2;  // x 23..48, so a centered mark would put its tail through
                      // the card window. Offsetting the badge and letting the
-                     // right-hand field carry the spec block and the window is
-                     // the composition that admits the window exists.
+                     // right-hand field carry the spec block is the
+                     // composition that admits the window exists.
                      // dx moved in from -24: with the grille gone the LEFT
                      // WING is empty plate, and the help QR wants it (qr_back).
                      // The badge had to give back 5.5 mm for the symbol plus
                      // its quiet zone to clear both the mark and the rim —
                      // asserted below, and the assert is 0.6 mm from firing,
                      // so this pair of numbers is a fit, not a preference.
-                     // dy lifted from 6: the nest (three eggs tucked under the
-                     // feet) needs a band between the mark's feet and the
-                     // lockup's top row, and at dy 6 that band was 6.9 mm
-                     // against a 9 mm egg. Lifting the mark 4 mm opens it
-                     // without touching the lockup's leading.
+                     // dy is NOT the mark's taste either: the lockup now hangs
+                     // off the mark (brand_drop_*, below) instead of off the
+                     // plate's bottom rim, so mark + type is ONE object with a
+                     // known height. 13.2 is what centers that object on the
+                     // plate — equal air above the crown and under the maker
+                     // row. Move the mark and the type follows it; move it too
+                     // far and the rim asserts catch the object, not the row.
 // The lockup rides the MARK's column, not the plate's. The badge sits left of
 // center because the card window owns the right, and type centered under a
 // badge that is not centered reads as a mistake in both places at once.
@@ -909,20 +890,6 @@ bird_rib    = 2.6;   // stroke width. The mark is MONOLINE — one weight for
 // branding asserts run, and both have to mean the same box.
 bird_half_w = back_bird ? mark_w_mm(bird_h, bird_rib)/2 : 0;
 bird_half_h = back_bird ? mark_h_mm(bird_h, bird_rib)/2 : 0;
-// THE NEST'S PLACEMENT — declared here and not up in the [Ventilation] block
-// with the rest of its knobs, because it is derived from bird_dx/bird_dy and
-// OpenSCAD reads assignments in order: written above them these two are
-// silently undef, and an undef reaches the cutter as a NaN and drops the eggs
-// off the part with no error at all. (That is not hypothetical; it is what
-// this file did on the first pass.)
-//   dx: centers the row on the span between the mark's two feet, which is a
-//       little left of the mark's own box center — a bird's feet are not
-//       under the middle of a bird.
-//   dy: drops the row so the eggs' tips finish just INSIDE the feet's stroke.
-//       That overlap is what nest2d() subtracts, and it is what makes the
-//       occlusion read; clear of the feet the same three eggs are just holes.
-nest_dx = bird_dx - 12.8;
-nest_dy = bird_dy - 35.0;
 bird_vent_gap = 3.0;  // plate left between the mark and the nearest egg. The
                       // old 0.6 was measured to the keepout box, and with the
                       // box oversized the visible gap was whatever the tail
@@ -945,22 +912,29 @@ sd_l  = 40.0;   // length along the slide direction
 
 /* [Frame — radio window (FCC/IC marking)] */
 // A plain rectangle straight through the plate over the ESP32-S3-WROOM-1's
-// shield can, so the module's own printed grant numbers are readable on the
-// finished case. This is the one opening in this design that exists for
-// PAPERWORK rather than for a person or for air, and it is worth being precise
-// about what it does and does not settle:
+// shield can, so the module's own printed grant numbers read on the finished
+// case — the one opening in this design that would exist for PAPERWORK rather
+// than for a person or for air.
+//
+// OFF. The back plate's rule is now that every hole in it is a hole something
+// goes through: the card window, the four keyholes, and nothing else. A
+// rectangle floating in the top-right corner is the one thing on this face
+// that fails that rule, and it reads as a rectangle rather than as a reason.
+//
+// Turning it on is one word, and here is what that buys and costs, so it is a
+// decision and not a rediscovery:
 //   IT DOES let a module-level FCC/IC grant be cited the way the grant expects
 //   — the marking legible on the exterior of the end product — instead of the
 //   case burying it and the product needing its own label printed and applied.
 //   IT DOES NOT make anything certified. An end product built on a certified
 //   module still has its own obligations, and nothing in this repo has been
 //   through a lab. A window is a window.
-// The position comes from the PANEL RECORD (pnl_soc_*), not from a number
-// typed here, for the same reason the ports do: it is a property of the board,
-// so a second board is a second record and not an edit to this file. It is
-// also, today, the softest number in that record — scaled off the vendor
-// drawing rather than measured — which is why soc_grow is not tight.
-soc_win  = true;
+//   IT IS NOT MEASURED. The position comes from the PANEL RECORD (pnl_soc_*),
+//   not from a number typed here — a property of the board, so a second board
+//   is a second record — but that record's entry is scaled off the vendor
+//   drawing rather than calipered, ±2 mm, which is why soc_grow is not tight.
+//   A BATTERY BUILD CAN STILL TAKE IT AWAY (soc_bat_clash, below).
+soc_win  = false;
 soc_grow = 1.2;  // plate cut back beyond the can on every side. Two jobs: it
                  // is the tolerance on a ±2 mm position (see the panel
                  // record's own warning), and it keeps the cut off the can's
@@ -1965,9 +1939,14 @@ help_h = help_sz*1.45 + 2;
 
 // THE LOCKUP'S BAND — derived from the rows, so it cannot describe a stack
 // that has moved. Top of the company line down to the bottom of the maker row.
-brand_sub_y   = -(fr_yi/2 - brand_row_sub);
-brand_hero_y  = -(fr_yi/2 - brand_row_hero);
-brand_maker_y = -(fr_yi/2 - brand_row_maker);
+// The lockup's anchor: the bottom of the mark's box. With no mark on the plate
+// there is nothing to hang from, so the rows fall back to the rim datum they
+// used to own — a wordmark-only plate is a different composition and should not
+// silently inherit a gap measured from an object that is not there.
+brand_anchor  = back_bird ? bird_dy - bird_half_h : -(fr_yi/2 - 29.4);
+brand_sub_y   = brand_anchor - brand_drop_sub;
+brand_hero_y  = brand_anchor - brand_drop_hero;
+brand_maker_y = brand_anchor - brand_drop_maker;
 brand_band_hi = brand_sub_y + _lbl_half(brand_sub_sz);
 brand_band_lo = brand_maker_y - _lbl_half(brand_maker_sz);
 brand_band_y  = (brand_band_hi + brand_band_lo)/2;
@@ -2010,11 +1989,6 @@ fr_keep_fixed = concat(
     // still lays its body across the edge and reads as a chipped corner
     soc_cut ? [[soc_dx, soc_dy, soc_w/2 + vent_slot_w/2 + 1.5,
                                 soc_h/2 + vent_slot_l/2 + 1.5]] : [],
-    // ...and so does the nest, which is three eggs of its own and must not
-    // have the lattice's eggs land on top of it if the lattice ever returns
-    nest_show ? [[nest_dx, nest_dy,
-                  (nest_n - 1)*nest_pitch/2 + vent_slot_w + 1.5,
-                  vent_slot_l + 1.5]] : [],
     // the rating stamp wants unbroken plate under it, same as any deboss
     rating_stamp ? [[rating_dx, rating_dy, rating_w/2 + 3.5, rating_h/2 + 3]] : [],
     // ...and so does the help line under it
@@ -2571,20 +2545,22 @@ assert(brand_hero_y + _lbl_half(brand_sz)
            brand_hero_y + _lbl_half(brand_sz), ") crowds \"", brand_sub,
            "\" (bottom at ", brand_sub_y - _lbl_half(brand_sub_sz),
            ") — under the ", brand_lead_min,
-           " mm the lockup's rows are supposed to keep. Spread brand_row_* or ",
+           " mm the lockup's rows are supposed to keep. Spread brand_drop_* ",
+           "or ",
            "shrink a size"));
 assert(brand_maker_y + _lbl_half(brand_maker_sz)
        < brand_hero_y - _lbl_half(brand_sz) - brand_lead_min,
        str("frame: the maker line (top at ",
            brand_maker_y + _lbl_half(brand_maker_sz), ") crowds \"",
            brand_back, "\" (bottom at ", brand_hero_y - _lbl_half(brand_sz),
-           ") — lower brand_row_maker or shrink brand_maker_sz"));
+           ") — lower brand_drop_maker or shrink brand_maker_sz"));
 assert(brand_maker_y - _lbl_half(brand_maker_sz) > -(fr_yo/2 - frame_rim) + 2.0,
        str("frame: the maker line (bottom at ",
            brand_maker_y - _lbl_half(brand_maker_sz),
            ") is under 2 mm off the back rim's chamfer at ",
            -(fr_yo/2 - frame_rim),
-           " — raise brand_row_maker. A row that hangs onto the chamfer prints ",
+           " — raise the mark (bird_dy) or tighten brand_drop_maker. A row ",
+           "that hangs onto the chamfer prints ",
            "as a smeared half-deboss and reads as a slicing fault"));
 // ...and the whole band must stay in the plate's own column, clear of the card
 // window's side. The widest row is what this is about, whichever one that is.
@@ -2598,32 +2574,10 @@ assert(brand_dx + brand_band_w/2 < sd_dx - sd_w/2 - 2
 assert(!back_bird || brand_band_hi < bird_dy - bird_half_h - 2.0,
        str("frame: the lockup's top row (", brand_band_hi,
            ") runs into the mark's box (bottom at ", bird_dy - bird_half_h,
-           ") — lower brand_row_sub or shrink bird_h"));
+           ") — raise brand_drop_sub or shrink bird_h"));
 // The spec block and the help line share the right-hand column with the card
 // window. Both directions checked: the column has a top (the vent band) and a
 // bottom (the window's countersunk mouth).
-// ── THE NEST ───────────────────────────────────────────────────────────────
-// Two bounds, and they are the two ways the drawing stops being the drawing.
-// Below: the lockup's band, which owns the bottom of the plate all the way
-// across. Above: the mark itself — the eggs have to REACH the bird, because
-// "behind" is a relationship and not a position. An egg row that clears the
-// mark's box entirely still prints fine and still passes every other check; it
-// just reads as a row of holes under a bird instead of a nest the bird is
-// standing in front of, and nothing else here would notice.
-nest_half_w = (nest_n - 1)*nest_pitch/2 + vent_slot_w/2;
-assert(!nest_show || nest_dy - vent_slot_l/2 > brand_band_hi + 2.0,
-       str("frame: the nest (bottom at ", nest_dy - vent_slot_l/2,
-           ") lands in the lockup's band, which starts at ", brand_band_hi,
-           " — raise nest_dy, or lift the mark and let nest_dy follow it"));
-assert(!nest_show || !back_bird
-       || nest_dy + vent_slot_l/2 > bird_dy - bird_half_h,
-       str("frame: the nest sits clear of the mark (egg tops at ",
-           nest_dy + vent_slot_l/2, ", the mark's box bottoms at ",
-           bird_dy - bird_half_h, "), so nothing occludes it and the three ",
-           "eggs read as loose holes. Raise nest_dy until the tips tuck in."));
-assert(!nest_show || !back_bird
-       || (abs(nest_dx) + nest_half_w < abs(bird_dx) + bird_half_w),
-       "frame: the nest is wider than the mark it sits under — drop nest_n or nest_pitch");
 
 assert(help_line == "" || help_dy - help_h/2 > sd_dy + sd_l/2 + 3.4 + 1.5,
        str("frame: the help line (bottom at ", help_dy - help_h/2,
@@ -2805,44 +2759,35 @@ vent_beat_hits = len([for (ch = vent_beat) if (ch == "#") 1]);
 // fr_cells_nobadge is what the field would give with the badge's claim
 // dropped: the ceiling, not a promise.
 if (!plate_grille)
-    echo(str("  frame back plate: NO GRILLE. It carries ",
-             nest_show ? str(nest_n, " eggs (the nest, ", vent_slot_l, " x ",
-                             vent_slot_w, ", tucked behind the mark's feet — ",
-                             round(nest_n*egg_area(vent_slot_l, vent_slot_w,
-                                                   vent_tip)),
-                             " mm2 before the bird is subtracted out of them)")
-                       : "no eggs at all",
-             soc_bat_clash
-               ? str(", NO radio window — the ", battery, " pack (", bat_l,
-                     " x ", bat_w, ") lies under it and the window would open ",
-                     "onto a cell. Dropped, not asserted, so a battery build ",
-                     "still renders. THE MODULE'S FCC/IC MARKING IS THEREFORE ",
-                     "SEALED IN on this build: it has to go on an applied ",
-                     "label, or use the smaller pack (the 3000 clears the ",
-                     "window by 1.2 mm)")
-               : "",
-             soc_cut ? str(", the radio window (", soc_w, " x ", soc_h,
-                           " at (", soc_dx, ", ", soc_dy, "), ",
-                           round(soc_w*soc_h/100), " cm2 — over the ",
-                           pnl_soc_w(PANEL), " x ", pnl_soc_h(PANEL),
-                           " can, so the module's FCC/IC marking reads from ",
-                           "outside. ⚠️ THAT POSITION IS SCALED OFF THE VENDOR ",
-                           "DRAWING, NOT MEASURED (±2 mm) — caliper the module ",
-                           "before trusting the window to frame the text, and ",
-                           "note that a window certifies nothing by itself)")
-                     : "",
+    echo(str("  frame back plate: NO HOLES AT ALL — no grille, no vent eggs, ",
+             "no radio window. It carries the badge, the lockup locked under ",
+             "it",
              qr_back ? str(", the help QR (", qr_n, "x", qr_n, " at ",
                            qr_back_cell, " mm, ", 2*qr_back_reach,
                            " mm square with its quiet zone, at (",
                            qr_back_dx, ", ", qr_back_dy, "))") : "",
-             " and the lockup. WHAT THAT COSTS: the same beat over the whole ",
-             "field would be ", len(fr_cells_nobadge), " eggs ≈ ",
+             " and the small print. The only openings left in this face are ",
+             "the card window and the four keyholes, all of which something ",
+             "goes through.",
+             // ── the thermal cost, priced by the SAME predicate that cuts ──
+             // Two figures, because ONE of them was misleading. The number
+             // worth quoting is what the field would give with the badge's
+             // claim dropped, and the recovery advice used to name only
+             // plate_grille — which restores the field WITH the badge column
+             // still reserved, i.e. a quarter of what the sentence promised.
+             // Advice that leaves a warm build under the area it advertised
+             // is worse than no advice.
+             " WHAT THAT COSTS: turning the grille back on (plate_grille) is ",
+             len(fr_cells), " eggs ≈ ", round(grille_area(fr_cells)/100),
+             " cm2, because the badge still owns its half of the plate; ",
+             "plate_grille AND badge_column = false is ",
+             len(fr_cells_nobadge), " eggs ≈ ",
              round(grille_area(fr_cells_nobadge)/100),
-             " cm2 of back-plate open area, and this plate gives up all of it. ",
-             "The convection path (bottom-wall intake to top-wall exhaust) is ",
-             "not on this plate and is untouched, and NOTHING IN THIS REPO ",
-             "MEASURES THE REQUIREMENT — if a built case runs warm, ",
-             "plate_grille = true puts the field straight back."));
+             " cm2, which is the whole field and the number this plate is ",
+             "giving up. The convection path (bottom-wall intake to top-wall ",
+             "exhaust) is not on this plate and is untouched, and NOTHING IN ",
+             "THIS REPO MEASURES THE REQUIREMENT — if a built case runs warm, ",
+             "those are the two knobs, in that order."));
 if (plate_grille)
 echo(str("  frame back grille: ", len(fr_cells), " eggs at ", vent_slot_l,
          " x ", vent_slot_w, " ≈ ", round(grille_area(fr_cells)/100),
@@ -3108,35 +3053,6 @@ function grille_cells(ox = m3_ox, oy = m3_oy, keepouts = []) =
 // count times the shoelace area of the SAME polygon the cutter draws.
 function grille_area(cells) =
     len(cells) * egg_area(vent_slot_l, vent_slot_w, vent_tip);
-// ── THE NEST, and how "behind" is actually built ───────────────────────────
-// Three eggs, then the MARK ITSELF subtracted from them. That subtraction is
-// the whole trick and it is worth naming: an emboss cannot overlap a hole (it
-// would print bridging air), so the bird cannot be drawn on top of the eggs.
-// Cutting the bird's own silhouette out of the egg cutters gets the same
-// picture from the other side — the plate stays solid wherever a stroke runs,
-// so the feet print on material, and each egg is simply cut short where the
-// bird passes in front of it. Occlusion, built rather than faked, and it
-// tracks the mark automatically because it IS the mark: change bird_dx,
-// bird_dy, bird_h or bird_rib and the eggs re-cut themselves around the new
-// drawing with no second number to remember.
-//
-// offset(r=) and not offset(delta=): the grown silhouette is what you SEE as
-// the outline between a foot and the egg behind it, and delta leaves spikes at
-// every stroke junction where r leaves the stroke's own round cap.
-module nest2d() {
-    difference() {
-        for (i = [0 : nest_n - 1])
-            translate([nest_dx + (i - (nest_n - 1)/2)*nest_pitch,
-                       nest_dy - vent_slot_l/2 + vent_slot_w/2])
-                egg2d(vent_slot_l, vent_slot_w, vent_tip);
-        if (back_bird)
-            translate([bird_dx, bird_dy])
-                offset(r = nest_mark_gap) mark_bird(bird_h, bird_rib);
-    }
-}
-module vent_nest() {
-    translate([0, 0, -0.1]) linear_extrude(back_t + 0.2) nest2d();
-}
 // The radio can's window. A plain through rectangle — no countersink, no lip,
 // no cover: the card window has all three because a human works it, and this
 // one is read, never touched.
@@ -3177,8 +3093,17 @@ module back() {
         // (the bezel's counterbored ear delivers the M3 into these)
         for (p = lobes())
             translate([p[0], p[1], back_t + cav_d - 12]) cylinder(d = lob_pilot, h = 12.1);
-        // HEAT: back grille
-        if (vent_back) vent_grille();
+        // HEAT: back grille. It takes the RADIO WINDOW's keepout for the
+        // same reason the frame's does: the two cuts overlap near the window's
+        // corner, and a grille egg landing on the boundary turns a plain
+        // rectangle into a rectangle with bites out of it — and takes plate
+        // beyond the shield can's footprint while it is there. The tray built
+        // this without a keepout for one commit; the window is off by default
+        // now, so the defect was invisible in the shipped part and would have
+        // surfaced on whoever turned soc_win on first.
+        if (vent_back) vent_grille(keepouts = soc_cut
+            ? [[-soc_dx, soc_dy, soc_w/2 + vent_slot_w/2 + 1.5,
+                                 soc_h/2 + vent_slot_l/2 + 1.5]] : []);
         // FCC/IC marking window. x is negated because this part is modeled
         // front-side while the plate coordinates every graphic is authored in
         // are BACK-view — the same mirror the frame expresses as -m3_ox. The
@@ -3380,13 +3305,13 @@ module back_graphics(ink = "all") {
         // All three rows ride brand_dx — the MARK's column, not the plate's.
         // The company line is tracked wide and set smaller than the product
         // name: on the back of a product the product's name is the headline.
-        frame_lbl(brand_dx, -(fr_yi/2 - brand_row_sub), brand_sub,
+        frame_lbl(brand_dx, brand_sub_y, brand_sub,
                   size = brand_sub_sz, spacing = 2.0);
-        frame_lbl(brand_dx, -(fr_yi/2 - brand_row_hero), brand_back,
+        frame_lbl(brand_dx, brand_hero_y, brand_back,
                   size = brand_sz, spacing = 1.15);
         // ...and the maker, closing the stack. Narrow and un-tracked so it
         // reads as the footnote it is rather than as a third brand line.
-        frame_lbl(brand_dx, -(fr_yi/2 - brand_row_maker),
+        frame_lbl(brand_dx, brand_maker_y,
                   str(brand_maker, " ", lcd7_stamp_year()),
                   size = brand_maker_sz, spacing = 1.0);
     }
@@ -3480,8 +3405,7 @@ coupon_x1 = fr_xo/2 + 1;      // ...out through the corner
 // print, and that trade is worth re-reading before growing it.
 coupon_h_corner = 34;         // the corner arc's own requirement, unchanged
 coupon_h  = max(coupon_h_corner,
-                (-(fr_yi/2 - brand_row_sub) + _lbl_half(brand_sz) + 3)
-                - (-fr_yo/2 - 1));
+                (brand_sub_y + _lbl_half(brand_sz) + 3) - (-fr_yo/2 - 1));
 module coupon_clip() {
     translate([coupon_x0, -fr_yo/2 - 1, -1])
         cube([coupon_x1 - coupon_x0, coupon_h, fr_depth + 2]);
@@ -4031,8 +3955,6 @@ module frame() {
         // every other surface agrees with you.
         if (plate_grille) translate([0, 0, fz_plate]) vent_grille(-m3_ox, m3_oy,
             keepouts = fr_keepouts);
-        // the nest — the three eggs the grille left behind, under the mark
-        if (nest_show) translate([0, 0, fz_plate]) vent_nest();
         // the radio can's window, so the module's FCC/IC marking reads on the
         // outside of the finished case
         if (soc_cut) translate([0, 0, fz_plate]) soc_window();

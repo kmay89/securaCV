@@ -527,52 +527,64 @@ prose), so a three-filament build is one edit away.
 The mark is **monoline** — one stroke weight for the outline, the C spiralled
 into the wing, the V in the tail and the notepad alike — so a single number
 (`bird_rib`) decides whether the whole drawing prints, and the library asserts
-it. It is drawn ~62 × 68 mm on the back plate, which is the largest that keeps
-its tail clear of the card window; the nest, the spec block, the help QR and
-the radio window are laid out around it rather than the other way round.
+it. It is drawn ~68 × 62 mm on the back plate, which is the largest that keeps
+its tail clear of the card window.
 
-**There is no grille.** `plate_grille` is off, and the plate carries five things,
-each placed against the others rather than dropped into whatever gap was left:
+**The lockup hangs off the mark, not off the plate.** The three rows
+(SECURACV / CANARY / ERRERlabs) are positioned by `brand_drop_*` — distances
+measured *down from the mark's box* — so mark and type are one logo. Move
+`bird_dx` / `bird_dy` / `bird_h` and the words follow. They used to be measured
+up from the plate's bottom rim, which made them an independent object that
+happened to share a plate: the badge could move and the type stayed put, which
+is how it ended up stranded in the last 13 mm with the mark floating 30 mm
+above it. `bird_dy` now positions the whole logo, and 13.2 is what centers that
+object — equal air above the crown and under the maker row.
+
+**Every hole in this face is a hole something goes through.** No grille, no
+vent eggs, no radio window: the only openings are the card window and the four
+keyholes. What is on the plate is on it because it is read:
 
 | on the plate | what it is | where, and why there |
 |---|---|---|
-| the **badge** | the monoline canary | left of center — the card window owns the right |
-| the **nest** | three eggs, tucked *behind* the bird's feet | under the badge; all that is left of the grille |
+| the **logo** | the monoline canary with the three-row lockup locked under it | left of center — the card window owns the right |
 | the **help QR** | 21 × 21 at 1.3 mm, 37.7 mm square with its quiet zone | the outer left wing, the only bare field that fits it |
-| the **radio window** | a plain 20.4 × 21.6 rectangle straight through | over the ESP32-S3-WROOM-1's can, so its FCC/IC marking reads from outside |
 | the **spec block** | 5V ⎓ 2A / USB-C INPUT / INDOOR USE ONLY | the right wing, level with the side port it describes |
 
-The nest is worth a note because of how "behind" is built. These are holes, and
-an emboss cannot overlap a hole — it would print bridging air. So the mark's
-own silhouette is *subtracted* from the egg cutters: the plate stays solid
-wherever a stroke runs, the feet print on material, and each egg is simply cut
-short where the bird passes in front of it. Occlusion built rather than faked,
-and it follows the mark automatically, because it **is** the mark.
+⚠️ **A plate with no grille is a warmer case, and the recovery is TWO knobs,
+not one.** `plate_grille = true` on its own restores the field with the badge's
+column still reserved — about 5 cm². `plate_grille` **and** `badge_column =
+false` is the whole field, about 21 cm², which is what this plate is giving up.
+Quoting the second number while naming only the first knob is how a warm build
+ends up substantially under the area it was promised, so the render echoes both
+and names them in that order. The convection path (bottom-wall intake → top-wall
+exhaust) is not on this plate and is untouched, but this panel runs hot and
+**nothing in this repo measures the requirement** — treat it as a decision to
+check on a real print, not as a validated number.
 
-⚠️ **The composed plate costs all of the back-plate venting.** A full field on
-this plate was ~19 cm² and the nest's three eggs are ~1.4 cm² before the bird
-is subtracted out of them. The convection path (bottom-wall intake → top-wall
-exhaust) is not on this plate and is untouched, but this panel runs hot,
-**nothing in this repo measures the requirement**, and less open area is a
-warmer case — so treat this as a decision to check on a real print, not as a
-validated number. `plate_grille = true` puts the whole field back in one word, and
-the render echoes what every choice is worth.
+### The radio window (`soc_win`) — off, and what turning it on means
 
-⚠️ **The radio window does not certify anything.** It lets a module-level
-FCC/IC grant be cited the way the grant expects — the marking legible on the
-outside of the end product — instead of the case burying it. An end product
-built on a certified module still has its own obligations, and nothing here has
-been through a lab. Its position also comes off the vendor *drawing*, not off
-calipers (±2 mm — see the `P_SOC` note in `canary_panel_lib.scad`), so measure
-the module before trusting the window to frame the text.
+There is a parametric opening over the ESP32-S3-WROOM-1's shield can, so the
+module's own printed FCC/IC grant numbers would read on the outside of the
+finished case. **It is off.** A rectangle floating in the plate's top-right
+corner is the one thing on this face that breaks the rule above — it reads as a
+rectangle rather than as a reason. Turning it on is one word, and these are the
+things to know before you do:
 
-⚠️ **A battery build can take the window away.** The bay is centered on the
-plate, and the 10000 pack (115 × 65) reaches the window's corner — a hole
-looking straight at a lithium cell, in a case designed to hang on a wall. That
-build **drops the window** (it is not an assert: a `battery` setting that
-cannot produce geometry is worse than no setting, and the echo says what was
-dropped and why). On that build the module's marking is sealed in and has to go
-on an applied label. The 3000 pack clears the window by 1.2 mm and keeps it.
+- **It certifies nothing.** It lets a module-level grant be cited the way the
+  grant expects — the marking legible on the exterior of the end product —
+  instead of the case burying it and the product needing its own applied label.
+  An end product built on a certified module still has its own obligations, and
+  nothing here has been through a lab.
+- **Its position is not measured.** It comes from the panel record (`P_SOC`),
+  which is a property of the board — but that entry was scaled off the vendor
+  drawing, not calipered: **±2 mm**. `soc_grow` is deliberately loose to absorb
+  that. The `P_SOC` comment names the two caliper readings that retire it.
+- **A battery build can still take it away.** The bay is centered on the plate
+  and the 10000 pack (115 × 65) reaches the window's corner — a hole looking
+  straight at a lithium cell, in a case designed to hang on a wall. That build
+  **drops** the window rather than asserting (a `battery` setting that cannot
+  produce geometry is worse than no setting), and the echo says what was
+  dropped and why. The 3000 pack clears it by 1.2 mm.
 
 The 3MF assigns filament **slots**, not colors, so load them in that order or
 you will print a materially different case from the one described here.
