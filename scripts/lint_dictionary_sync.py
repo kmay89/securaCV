@@ -145,8 +145,14 @@ def rust_event_signal_map(body: str) -> dict[str, list[str]]:
     is against the vocabulary rather than against Rust spelling.
     """
     out: dict[str, list[str]] = {}
+    # Written to be unambiguous rather than merely correct. The obvious
+    # form — `(?:\s*EventType::\w+\s*\|?)+` — nests a quantifier over a
+    # group whose leading and trailing `\s*` can split the same whitespace
+    # many ways, which is polynomial backtracking waiting to happen. Here
+    # every repetition must consume a literal `EventType::` and a literal
+    # `|`, and `\w`/`\s` are disjoint, so there is exactly one way to match.
     for arm in re.finditer(
-        r"((?:\s*EventType::\w+\s*\|?)+)=>\s*&\[([^\]]*)\]", body
+        r"((?:EventType::\w+\s*\|\s*)*EventType::\w+)\s*=>\s*&\[([^\]]*)\]", body
     ):
         variants = re.findall(r"EventType::(\w+)", arm.group(1))
         signals = [_signal_id(v) for v in re.findall(r"HomeSignal::(\w+)", arm.group(2))]
