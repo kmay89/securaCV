@@ -982,7 +982,7 @@
     {
      "id": "7-touch-dashboard-case",
      "name": "7″ touch dashboard case",
-     "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on molded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (~52 cm² back grille + bottom-wall intake and top-wall exhaust — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centered USB pass-through plus a matching side exit on the microSD's wall (hang the case portrait with that wall down and the cable leaves out the bottom; the leashed blank fills whichever exit is idle) and three TPU fitments: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive leashed press-through BOOT/RESET plug whose press towers reach the button caps at the board edge, and a peel-open SD cover that stays attached. Optional 20° desk dock for the frame (drop-in slot on tilted seat pads, self-centering keys into the frame's keying slots, landscape and portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centers and `pcb_h` are NOMINAL — measure yours",
+     "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on molded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (bottom-wall intake → top-wall exhaust — print in PETG/ASA, this panel runs hot; the two-part tray adds a ~41 cm² back grille, and the one-piece `frame`'s plate deliberately carries none — see the back-plate section), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centered USB pass-through plus a matching side exit on the microSD's wall (hang the case portrait with that wall down and the cable leaves out the bottom; the leashed blank fills whichever exit is idle) and three TPU fitments: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive leashed press-through BOOT/RESET plug whose press towers reach the button caps at the board edge, and a peel-open SD cover that stays attached. Optional 20° desk dock for the frame (drop-in slot on tilted seat pads, self-centering keys into the frame's keying slots, landscape and portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centers and `pcb_h` are NOMINAL — measure yours",
      "status": "in-development",
      "device": "canary-display-dash",
      "selects": {},
@@ -1051,15 +1051,31 @@
     {
      "id": "vent_back",
      "type": "bool",
-     "label": "large grille in the back plate",
+     "label": "grille in the TWO-PART TRAY's back (part=\"back\").",
      "consequence": "",
      "audience": "user",
      "default": true
     },
     {
+     "id": "plate_grille",
+     "type": "bool",
+     "label": "large grille in the ONE-PIECE FRAME's back plate.",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
      "id": "badge_column",
      "type": "bool",
      "label": "false = let the grille back into the badge's half",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "nest_show",
+     "type": "bool",
+     "label": "nest_show",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1116,6 +1132,14 @@
      "id": "back_bird",
      "type": "bool",
      "label": "back_bird",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "soc_win",
+     "type": "bool",
+     "label": "soc_win",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1282,7 +1306,7 @@
      "label": "deboss the help QR into the back PLATE",
      "consequence": "",
      "audience": "user",
-     "default": false
+     "default": true
     },
     {
      "id": "stamp_show",
@@ -1306,7 +1330,7 @@
      "default": "none"
     }
    ],
-   "engineering_param_count": 284,
+   "engineering_param_count": 297,
    "alternatives": [
     "dash_display"
    ],
@@ -1314,8 +1338,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 31,
-    "user_options": 31,
+    "options": 34,
+    "user_options": 34,
     "variant_axes": 1
    }
   },

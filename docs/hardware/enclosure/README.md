@@ -156,7 +156,7 @@ measurements welcome.
 | **Dashboard display case** — Waveshare ESP32-S3-Touch-LCD-4.3 (the [display research](../display_research.md) step-up dashboard): face-down bezel frame, vented screw-on back with keyholes + 75 mm M4 pair, free-standing 25° desk cradle. Panel dims are NOMINAL — measure yours | glass drops in, bezel lip 2.5 | <img src="./preview_dev_dash.png" width="230"> | [`canary_dash_display.scad`](./canary_dash_display.scad) |
 | **S3 hallway stick case** — Waveshare **ESP32-S3-LCD-1.47** (the USB-A STICK, not the C6 header board). The hallway nightlight body: plugs into a wall adapter, the 172x320 glass faces the corridor, and the WS2812 leaves through a **lit white seam** down both long walls. Screwless — four cantilever beams cut into the bezel wall, sized by strain (ε printed at render, PETG budget 1.8%), with ASYMMETRIC return angles: steep at the plug end so it never lets go, shallow at the far end so a thumb pops it for the microSD. The plug end is the whole design problem: the opening is a RECTANGLE (series-A is not a stadium — that is USB-C), the wall is thin and relieved so a recessed receptacle clears it, an assert fails the render if under 11 mm of insertion length survives, and the drop buttress reaches INWARD (outward would eat the very length it protects). The RGB does **not** fire backwards — Waveshare's "clear acrylic sandwich panel" is the tell, the LED glows out the edge gap between the LCD module and the PCB — so the light gets a **seam** along the side walls at exactly that band rather than a hole in the back, which frees the back for the mark. The seam is filled with **unfilled white PETG**, a light pipe rather than a slot, and its x span is derived from the cavity face and asserted: the first version stopped 0.65 mm short and would have shipped a light pipe with no light in it. The side elevation reads 1 mm black / 3 mm white / black. Ties are hidden ribs in the inner 1.2 mm of the wall, so the white line is unbroken and each side presses in as ONE strip. No vents — the case is 8.2 mm of measured stack in a 9.2 mm shell, and the thumb scoop to the USB opening is the airway. Black PETG, yellow mark, white band | screwless snap, thumb-release, 3 filaments, `gen_3mf.py stick` | <img src="./preview_dev_s3_147.png" width="230"> | [`canary_s3_lcd147.scad`](./canary_s3_lcd147.scad) |
 | **C6 display pocket case** — Waveshare **ESP32-C6-LCD-1.47** (portrait), both board builds: `headers="none"` (stripped: no headers, corner pillars removed) or `headers="male"` (as shipped: down-facing pin headers + brass M2 corner pillars — deeper cavity, press bosses land on the pillar tops). Face-down bezel over the active-area window, edge-captured board (no screws into the board), snap-in vented back, blind keyhole. The overhanging BOOT/RST buttons and the USB-C shell (both BACK-mounted — photo-verified) get full-depth insertion channels behind "ear"/"chin" wall bulges, and the USB-C port is a true stadium (full-round ends) sized shell + tolerance. `model="1.47"` is drawn from the Waveshare mechanical drawing; a `"1.69"` preset is parameterised. Heat-escape slots on the sides + a back grille | snap-fit, vented, 2 board builds | <img src="./preview_dev_c6_147.png" width="230"> | [`canary_c6_display.scad`](./canary_c6_display.scad) |
-| **7″ touch dashboard case** — Waveshare **ESP32-S3-Touch-LCD-7** (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on molded M3 standoffs and screws to four **gusseted** outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (~52 cm² back grille + **bottom-wall intake and top-wall exhaust** — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centered **USB pass-through** plus a matching **side exit** on the microSD's wall (hang the case portrait with that wall down and the cable leaves out the bottom; the leashed blank fills whichever exit is idle) and three **TPU fitments**: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive leashed press-through BOOT/RESET plug whose press towers reach the button caps at the board edge, and a peel-open SD cover that stays attached. Optional 20° desk **dock** for the frame (drop-in slot on tilted seat pads, self-centering keys into the frame's keying slots, landscape **and** portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). **Print the `gauge` corner pair first** (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centers and `pcb_h` are NOMINAL — measure yours | glass drops in, lip 10.4, TPU-fitted ports | <img src="./preview_dev_lcd7.png" width="230"> | [`canary_s3_lcd7.scad`](./canary_s3_lcd7.scad) |
+| **7″ touch dashboard case** — Waveshare **ESP32-S3-Touch-LCD-7** (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on molded M3 standoffs and screws to four **gusseted** outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (**bottom-wall intake → top-wall exhaust** — print in PETG/ASA, this panel runs hot; the two-part tray adds a ~41 cm² back grille, and the one-piece `frame`'s plate deliberately carries none — see the back-plate section), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centered **USB pass-through** plus a matching **side exit** on the microSD's wall (hang the case portrait with that wall down and the cable leaves out the bottom; the leashed blank fills whichever exit is idle) and three **TPU fitments**: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive leashed press-through BOOT/RESET plug whose press towers reach the button caps at the board edge, and a peel-open SD cover that stays attached. Optional 20° desk **dock** for the frame (drop-in slot on tilted seat pads, self-centering keys into the frame's keying slots, landscape **and** portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). **Print the `gauge` corner pair first** (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centers and `pcb_h` are NOMINAL — measure yours | glass drops in, lip 10.4, TPU-fitted ports | <img src="./preview_dev_lcd7.png" width="230"> | [`canary_s3_lcd7.scad`](./canary_s3_lcd7.scad) |
 | **1.69″ touch watch-display puck** — Waveshare **ESP32-S3-Touch-LCD-1.69** (rounded-square 240×280 capacitive-touch smartwatch board — S3, IMU, RTC, battery/charger). The bonded glass slab (41.13 × 33.13) overhangs the smaller PCB (37.12 × 29.83) by ~2 mm, so the face lip captures it — no screws (this board has no mount holes). Face-down bezel + snap-in vented back (skirt rides the overhang, 4 nubs, standoffs press the board forward, blind keyhole). USB-C (bottom) + PWR/BOOT/RST (top) + battery/RTC/pin slot (side); side heat slots + back grille; optional 22° cradle. Connector centers NOMINAL — measure yours | snap-fit, vented, edge-captured | <img src="./preview_dev_t169.png" width="230"> | [`canary_s3_touch169.scad`](./canary_s3_touch169.scad) |
 | **Vehicle mount kit** — VHB-taped dash plate with a 10° stud riser + an air-vent louver clip (extruded spring prongs snap over one blade). ⚠️ cabins exceed +60 °C: USB power only, ASA, light colors | set `stud_gap` per case (36 = field) | <img src="./preview_dev_veh.png" width="230"> | [`canary_vehicle_mount.scad`](./canary_vehicle_mount.scad) |
 | **Body-worn clips** — belt leaf-spring clip (prints on its side: flex stays in-plane) + MOLLE/PALS weave plate, both on the two-stud interface; made for the field case's floor keyholes | check local recording law; pair with the sign | <img src="./preview_dev_wear.png" width="230"> | [`canary_wear_clip.scad`](./canary_wear_clip.scad) |
@@ -478,10 +478,12 @@ xvfb-run -a openscad -o preview.png --imgsize 1400,1000 --autocenter --viewall \
 # ROTX ≈ 62 → top three-quarter view; ROTX ≈ 245 → underside
 ```
 
-For the 7" frame's three-color build, render each filament part on its own —
-`part="fil_body"`, `"fil_ink"`, `"fil_accent"`. Those are the reliable views:
-each contains exactly the graphics assigned to that filament, so what you see
-is what that spool prints.
+For the 7" frame's multi-filament build, render each filament part on its own —
+`part="fil_body"`, `"fil_accent"`, and `"fil_ink"` if you have put a group back
+on it. Those are the reliable views: each contains exactly the graphics assigned
+to that filament, so what you see is what that spool prints. (On the shipped
+two-color palette `fil_ink` is empty, and an empty preview is the correct
+answer, not a failed render.)
 
 **Do not judge the palette from `part="frame_color"`.** It composites the
 three parts, but OpenCSG will not reliably color inlays sitting inside the
@@ -513,33 +515,56 @@ the body color, no filament of its own.
 | slot | filament | what it prints |
 |---|---|---|
 | 1 | `pal_body` — **Black** | the case, the bezel ring, the vent mouths |
-| 2 | `pal_ink` — **White** | the help QR's modules, and nothing else |
-| 3 | `pal_accent` — **Signal Yellow** (RAL 1003) | the bird, and the three-row lockup under it: SECURACV / CANARY / ERRERlabs |
+| 2 | `pal_accent` — **Signal Yellow** (RAL 1003) | everything the back plate says: the bird, the three-row lockup under it (SECURACV / CANARY / ERRERlabs), and the help QR's modules |
+
+**Two filaments, not three.** `ink_groups` is empty on purpose — a white QR
+beside a yellow mark made the plate a three-way argument, and the symbol read
+as the loudest thing on a face whose subject is the bird. The mechanism is
+still there (`ink_groups` / `accent_groups` in the case file decide it, and
+every recipe below is derived from those lists rather than naming a spool in
+prose), so a three-filament build is one edit away.
 
 The mark is **monoline** — one stroke weight for the outline, the C spiralled
 into the wing, the V in the tail and the notepad alike — so a single number
 (`bird_rib`) decides whether the whole drawing prints, and the library asserts
 it. It is drawn ~62 × 68 mm on the back plate, which is the largest that keeps
-its tail clear of the card window; the vents, the spec block and the help line
-are laid out around it rather than the other way round.
+its tail clear of the card window; the nest, the spec block, the help QR and
+the radio window are laid out around it rather than the other way round.
 
-The grille is a **clutch**: one egg size (9.0 × 6.5 mm — half again the area
-of the old one, big enough that you read the shape rather than the pattern),
-grouped by a repeating beat (`vent_beat`) rotated one station per row so the
-hits pile into two compact nests instead of tiling. The plate reads eggs on the
-machine half and resolves into one hatched canary, forty times the size, on the
-other. Nothing is drawn to say that — the rhythm and the badge do it, which is
-the only way it stays true when somebody changes a number.
+**There is no grille.** `plate_grille` is off, and the plate carries five things,
+each placed against the others rather than dropped into whatever gap was left:
 
-⚠️ **The badge costs back-plate venting, and it is not a small cost.** The
-grille is ~5 cm² against the ~29 cm² a full field on this plate used to give.
-Almost all of that is the mark's own keepout. The convection path (bottom-wall
-intake → top-wall exhaust) is not on this plate and is untouched, but this
-panel runs hot, nothing in this repo measures the requirement, and a smaller
-grille is a warmer case — so **treat 5 cm² as a decision to check on a real
-print, not as a validated number.** The render echoes what each choice is
-worth. `bird_h` and `badge_column` are the big knobs; turning one `.` into a
-`#` in `vent_beat` is the cheap one, at 46 mm² an egg.
+| on the plate | what it is | where, and why there |
+|---|---|---|
+| the **badge** | the monoline canary | left of center — the card window owns the right |
+| the **nest** | three eggs, tucked *behind* the bird's feet | under the badge; all that is left of the grille |
+| the **help QR** | 21 × 21 at 1.3 mm, 37.7 mm square with its quiet zone | the outer left wing, the only bare field that fits it |
+| the **radio window** | a plain 20.4 × 21.6 rectangle straight through | over the ESP32-S3-WROOM-1's can, so its FCC/IC marking reads from outside |
+| the **spec block** | 5V ⎓ 2A / USB-C INPUT / INDOOR USE ONLY | the right wing, level with the side port it describes |
+
+The nest is worth a note because of how "behind" is built. These are holes, and
+an emboss cannot overlap a hole — it would print bridging air. So the mark's
+own silhouette is *subtracted* from the egg cutters: the plate stays solid
+wherever a stroke runs, the feet print on material, and each egg is simply cut
+short where the bird passes in front of it. Occlusion built rather than faked,
+and it follows the mark automatically, because it **is** the mark.
+
+⚠️ **The composed plate costs all of the back-plate venting.** A full field on
+this plate was ~19 cm² and the nest's three eggs are ~1.4 cm² before the bird
+is subtracted out of them. The convection path (bottom-wall intake → top-wall
+exhaust) is not on this plate and is untouched, but this panel runs hot,
+**nothing in this repo measures the requirement**, and less open area is a
+warmer case — so treat this as a decision to check on a real print, not as a
+validated number. `plate_grille = true` puts the whole field back in one word, and
+the render echoes what every choice is worth.
+
+⚠️ **The radio window does not certify anything.** It lets a module-level
+FCC/IC grant be cited the way the grant expects — the marking legible on the
+outside of the end product — instead of the case burying it. An end product
+built on a certified module still has its own obligations, and nothing here has
+been through a lab. Its position also comes off the vendor *drawing*, not off
+calipers (±2 mm — see the `P_SOC` note in `canary_panel_lib.scad`), so measure
+the module before trusting the window to frame the text.
 
 The 3MF assigns filament **slots**, not colors, so load them in that order or
 you will print a materially different case from the one described here.
@@ -592,16 +617,22 @@ The QR plaque is two filaments, not three, and it is only the back plate —
 and the accent must never touch a finder pattern, so there is deliberately no
 third slot to put it in.
 
-**The coupon carries a symbol even though the plate does not.** `qr_back` is
-off by default (the badge owns that space — see the three-color section above),
-so the shipped frame has no QR on it. The coupon still does, deliberately:
-`qr_back` answers *"does the finished plate wear the symbol"*, and the coupon
+**The plate wears the symbol again, and the coupon is still the thing that
+settles whether it should.** `qr_back` was off while the grille covered the
+plate's left wing — there was no 37.7 mm of bare field for a symbol and its
+quiet zone to sit on. With the grille gone that wing is empty and the symbol
+took it, so the shipped frame now carries the QR and the typed URL
+(`help_line`) has retired: printing the same address twice on one face is not
+redundancy, it is clutter.
+
+The two questions stay separate regardless of which way `qr_back` is set.
+`qr_back` answers *"does the finished plate wear the symbol"*; the coupon
 answers *"would a symbol printed by this machine, at this cell size, in this
 polarity, actually scan"* — which is the question you have to settle **before**
 you can decide the first one. Gating one on the other made the test unavailable
 exactly when it was needed, and silently, because the packager drops a volume
-that renders empty. `gen_3mf.py` now treats an empty volume on this object as a
-hard error rather than a note.
+that renders empty. `gen_3mf.py` treats an empty volume on this object as a
+hard error rather than a note. **Scan the coupon before committing a frame.**
 
 ⚠️ **On this palette the symbol is WHITE ON BLACK — inverted from the spec**,
 because `qr_style` is `bare`: the modules print straight onto the plate so the
