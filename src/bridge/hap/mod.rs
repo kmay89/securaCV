@@ -35,9 +35,15 @@
 //! | [`tlv8`] | The type-length-value codec pairing speaks |
 //! | [`accessory`] | Services, characteristics and the stable-iid scheme |
 //! | [`crypto`] | HKDF-SHA512, ChaCha20-Poly1305 under HAP's nonce rule |
+//! | [`http`] | The narrow HTTP/1.1 subset HAP uses, plus `EVENT/1.0` |
 //! | [`pairing`] | Pair Setup (SRP-6a) and Pair Verify (X25519), and the pairing table |
+//! | [`server`] | Discovery, connections, routing, and the metronome |
+//! | [`session`] | The encrypted frame transport that follows Pair Verify |
 
 pub mod accessory;
 pub mod crypto;
+pub mod http;
 pub mod pairing;
+pub mod server;
+pub mod session;
 pub mod tlv8;
