@@ -1637,3 +1637,64 @@ say so in words the user can act on at the moment it fails; a comment in a
 workflow reaches exactly the people who don't need it. Applies to every app
 target that ships a bundled binary: Flasher, Lab, and the iPhone / iPad /
 tvOS / Mac targets.
+
+### (aa) 2026-08-04 — a lesson applied to one release path, and a lint scoped to the path that was already fixed
+
+**What happened:** entry (q) above, again, in the release path it was never
+applied to. `flasher-release.yml` builds the browser flasher's factory images
+— the rebuild button and the dev channel, the two ways a board gets flashed
+without cutting a version — and all three of its ESP32-S3 products were still
+compiled with the console on UART0: `CDCOnBoot=default` on two, the option
+absent entirely on the third. The same three sketches, built by
+`firmware-release.yml` in the same repo, had carried `CDCOnBoot=cdc` since (q).
+
+So the symptom (q) describes never actually went away for the people most
+likely to hit it. A board flashed from the browser flasher was silent; the
+identical product from a signed release printed fine; "the serial monitor
+doesn't work for some firmwares" stayed true and stayed unexplainable. #1431
+("say something when the board says nothing") was work spent on the symptom.
+
+**Cause, in two layers.** The first is ordinary: a fix went in where the bug
+was noticed and nowhere else, and `flasher-release.yml`'s own header says the
+two paths "can't drift" because they share `build_flash_manifest.py` — true,
+and irrelevant, because they drifted *upstream* of the shared part, in the
+compile flags. Sharing the back half of a pipeline proves nothing about the
+front half.
+
+The second is the one worth the entry. Entry (q) ends with "write the lint that
+compares them", and that lint was written — `scripts/lint_usb_console.py`,
+pointed at `firmware-release.yml`. At the file that had just been fixed. A gate
+aimed at the place you already looked is green on the day you write it and
+green forever after, and its greenness is indistinguishable from coverage. It
+reported OK, truthfully, about the wrong half of the problem, for months, while
+the artifacts users flash carried the bug it was named after.
+
+**The fix:** all three FQBNs matched to their twins in `firmware-release.yml`.
+The lint now derives its own scope instead of being handed one: a workflow is
+in scope when it PUBLISHES something a user flashes (uploads a release asset,
+emits `manifest-flash.json`), so a new release path inherits the rule the day
+it is written. Bench-only workflows are out of scope but cannot leave silently
+— one carrying an S3 FQBN that is neither publishing nor named in `BENCH_ONLY`
+fails the gate. Two vacuous-pass holes closed with it: zero FQBNs found is now
+a failure (restructuring the workflows so the board strings moved made every
+rule pass and printed "OK — 0 ESP32 release FQBN(s) agree"), and a missing
+`common.ini` is now a failure rather than a skipped half-comparison.
+
+**The generalized part:** when you fix a release bug, the question is not "did
+I fix it" but **"which other path ships this exact thing?"** — and the answer
+in this repo is nearly always "two", because there are two flashers, two
+release workflows, and per-target app pipelines that each rebuild the same
+payloads. CLAUDE.md already says this about user-facing diagnostics ("two
+flashers, two frontends"); it is just as true of build flags, which are worse,
+because a flag has no UI to look wrong in.
+
+And when you write the lint that prevents the recurrence: **point it at the
+population, not at the specimen.** Scope it by what a file DOES — publishes,
+builds, ships — computed from the file, so new members join the population
+automatically. A hand-written list of paths is a list of the places you had
+already thought of, and it is exactly as complete as your memory on the day you
+wrote it. Then prove the gate can fail: give it a tree with the bug in it and
+watch it go red, and give it a tree with its own inputs removed and watch it go
+red for that too. A drift gate that has never been observed failing is a
+hypothesis, not a control. Applies to every release target: Flasher, Lab, the
+firmware paths, and the iPhone / iPad / tvOS / Mac pipelines.

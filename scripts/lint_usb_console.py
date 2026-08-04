@@ -68,6 +68,21 @@ PUBLISH_RE = re.compile(
     r"action-gh-release|gh release (?:upload|create)|manifest-flash", re.I
 )
 
+# YAML comments, blanked before ANY rule runs. Both questions this gate asks —
+# "does this workflow publish" and "what board strings does it build" — are
+# questions about what a workflow DOES, and a comment does neither.
+#
+# Getting this wrong in one place and not the other is worse than getting it
+# wrong in both: a bench workflow whose comment reads "# does not emit
+# manifest-flash.json" would be classified as publishing, skip BENCH_ONLY, and
+# then be failed for a bench FQBN that is correct. Prose that describes the
+# rule would break the build. One strip, applied once, for every rule.
+#
+# `#` only opens a comment at line start or after whitespace, which is YAML's
+# own rule — so `foo#bar` survives. To end of line only, never the newline, so
+# line numbers still point where a human is looking.
+YAML_COMMENT = re.compile(r"(?m)(?:(?<=\s)|^)#.*$")
+
 # Workflows that carry an S3 FQBN and are deliberately NOT enforced, with the
 # reason. Nothing these build is flashed by anyone — they compile to prove the
 # tree compiles, and their binaries are measured or discarded, never shipped.
@@ -101,11 +116,20 @@ def cdc_option(fqbn: str) -> str | None:
     return m.group(1) if m else None
 
 
+def code_of(text: str) -> str:
+    """The workflow with its comments blanked, line numbering intact."""
+    return YAML_COMMENT.sub("", text)
+
+
 def board_fqbns(text: str):
-    """(line_no, fqbn) for every board string that is code, not commentary."""
+    """(line_no, fqbn) for every board string in `text`.
+
+    Callers pass COMMENT-STRIPPED text, so an FQBN quoted in prose — including
+    the counter-examples this rule's own comments give — is not a violation of
+    the rule that explains it. That also covers trailing comments, which a
+    line-starts-with-# test missed.
+    """
     for line_no, line in enumerate(text.splitlines(), 1):
-        if line.lstrip().startswith("#"):
-            continue  # a comment explaining the rule is not a violation of it
         for fqbn in FQBN_RE.findall(line):
             yield line_no, fqbn
 
@@ -120,7 +144,7 @@ def main() -> int:
     seen = 0
     checked: list[str] = []
     for wf in sorted(WORKFLOWS.glob("*.yml")):
-        text = wf.read_text(encoding="utf-8")
+        text = code_of(wf.read_text(encoding="utf-8"))
         found = [(n, f) for n, f in board_fqbns(text) if family(f) != "other"]
         if not found:
             continue
