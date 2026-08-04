@@ -504,7 +504,7 @@
   {
    "id": "s3-hallway-stick-case",
    "name": "S3 hallway stick case",
-   "for": "Waveshare ESP32-S3-LCD-1.47 (the USB-A STICK, not the C6 header board). The hallway nightlight body: plugs into a wall adapter, the 172x320 glass faces the corridor, the WS2812 washes the wall through a window in the back. Screwless — four cantilever beams cut into the bezel wall, sized by strain (ε printed at render, PETG budget 1.8%), with ASYMMETRIC return angles: steep at the plug end so it never lets go, shallow at the far end so a thumb pops it for the microSD. The plug end is the whole design problem: the opening is a RECTANGLE (series-A is not a stadium — that is USB-C), the wall is thin and relieved so a recessed receptacle clears it, an assert fails the render if under 11 mm of insertion length survives, and the drop buttress reaches INWARD (outward would eat the very length it protects). Black PETG + one yellow accent: the house mark inlaid in the back",
+   "for": "Waveshare ESP32-S3-LCD-1.47 (the USB-A STICK, not the C6 header board). The hallway nightlight body: plugs into a wall adapter, the 172x320 glass faces the corridor, the WS2812 washes the wall through a window in the back. Screwless — four cantilever beams cut into the bezel wall, sized by strain (ε printed at render, PETG budget 1.8%), with ASYMMETRIC return angles: steep at the plug end so it never lets go, shallow at the far end so a thumb pops it for the microSD. The plug end is the whole design problem: the opening is a RECTANGLE (series-A is not a stadium — that is USB-C), the wall is thin and relieved so a recessed receptacle clears it, an assert fails the render if under 11 mm of insertion length survives, and the drop buttress reaches INWARD (outward would eat the very length it protects). The RGB does not fire backwards — Waveshare's \"clear acrylic sandwich panel\" is the tell, the LED glows out the edge gap between the LCD module and the PCB — so the light gets a seam along the side walls at exactly that band (asserted to land inside it) rather than a hole in the back, which frees the back for the mark. Black PETG + one yellow accent",
    "status": "in-development",
    "note": "screwless snap, thumb-release, 2 filaments",
    "device": null,
@@ -6293,26 +6293,50 @@
     },
     {
      "name": "RGB LED",
-     "note": "the wall wash",
+     "note": "the light SEAM, not a hole in the back",
      "params": [
       {
        "name": "led_win",
-       "default": "true"
+       "default": "false",
+       "comment": "the old back hole. OFF — it points at nothing."
       },
       {
        "name": "led_from_far",
        "default": "6.5",
-       "comment": "window center up from the PCB's FAR edge — MEASURE"
+       "comment": "back-window center up from the PCB's FAR edge — MEASURE"
       },
       {
        "name": "led_d",
        "default": "7.0",
-       "comment": "window Ø"
+       "comment": "back-window Ø"
       },
       {
        "name": "led_skin",
        "default": "0.5",
        "comment": "thickness of the diffuser plug that fills it"
+      },
+      {
+       "name": "light_seam",
+       "default": "true"
+      },
+      {
+       "name": "seam_h",
+       "default": "1.3",
+       "comment": "slot height — a LINE, not a window"
+      },
+      {
+       "name": "seam_dz",
+       "default": "1.1",
+       "comment": "slot bottom, up from the glass front (inside the gap)"
+      },
+      {
+       "name": "seam_webs",
+       "default": "3",
+       "comment": "structural webs breaking each side's slot. The seam runs"
+      },
+      {
+       "name": "seam_web_w",
+       "default": "3.0"
       }
      ]
     },
@@ -6326,7 +6350,7 @@
       },
       {
        "name": "mark_h",
-       "default": "9.0",
+       "default": "10.5",
        "comment": "the BIRD's height; the wordmark scales off it"
       },
       {
@@ -6341,8 +6365,8 @@
       },
       {
        "name": "mark_dy",
-       "default": "2.0",
-       "comment": "up from the back plate's center — the LED window owns"
+       "default": "0",
+       "comment": "CENTERED. It used to sit high to clear the LED window;"
       }
      ]
     },
@@ -6665,6 +6689,16 @@
       {
        "name": "vent_span_hi",
        "default": "vent_center_y + (vent_rows-1)/2*vent_pitch_y + vent_w/2"
+      },
+      {
+       "name": "hook_ped",
+       "default": "(wall - snap_beam_t) + tol_press",
+       "comment": "beam face -> plate edge"
+      },
+      {
+       "name": "kJoin",
+       "default": "0.3",
+       "comment": "overlap into the parent so the union is ONE solid"
       }
      ]
     }

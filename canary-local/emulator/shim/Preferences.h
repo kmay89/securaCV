@@ -41,6 +41,14 @@ class Preferences {
   // millisecond tuning values; keep it an alias of the same 32-bit NVS type.
   uint32_t getULong(const char* key, uint32_t def = 0) { return getUInt(key, def); }
   size_t putULong(const char* key, uint32_t v) { return putUInt(key, v); }
+  // ESP32 stores a bool as a one-byte NVS value, so this is an alias rather
+  // than a separate store — a value written as a bool reads back as a UChar
+  // and vice versa, exactly as the real API behaves. The display tree's
+  // Hallway switch (care/hallway.cpp) uses this spelling.
+  bool getBool(const char* key, bool def = false) {
+    return getUChar(key, def ? 1 : 0) != 0;
+  }
+  size_t putBool(const char* key, bool v) { return putUChar(key, v ? 1 : 0); }
   int32_t getInt(const char* key, int32_t def = 0);
   size_t putInt(const char* key, int32_t v);
   int64_t getLong64(const char* key, int64_t def = 0);

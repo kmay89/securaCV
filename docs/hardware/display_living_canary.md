@@ -104,6 +104,111 @@ familiar splash instead, with the tagline swapped for a quiet
 "hello again" — you two have already met, and a returning boot must
 never feel slower than home.
 
+## The performance engine (`firmware/common/story/` — pure, host-tested)
+
+The meeting above used to be a hard-coded beat array inside `splash.cpp`. It is
+a **Scene** now, played by a shared engine, and that change is worth more than
+the extra lines it bought.
+
+A `Scene` is a list of `Beat`s; a `Beat` is one moment — a **Pose** for the
+bird, a **Gesture** for the light, a **Tone**, and optionally a line of copy
+that types on. (`Pose` and the line are dispatched today; `Gesture` and `Tone`
+are authored in the scripts but not yet consumed by any renderer — see the
+status notes below.) `StoryTeller` walks them and answers one question per frame:
+what should be on stage right now. It knows nothing about LVGL, Arduino or any
+particular glass, because the point is that the same performance runs on the
+watch, the dash, the 1.47" stick, the 7" bedside glass and — as the engine is
+adopted — the phone and the wrist. **A personality that is re-typed per surface
+is four personalities.**
+
+Keeping the script as *data* (`story_scripts.h`) is the other half: the writing
+can be edited by someone who is not editing a renderer, the timing is visible in
+one place, and the whole arc is host-testable — which is the only way a joke
+gets to be the same joke twice.
+
+### The meeting, grown up
+
+`kHello` is the arc, and the shape is deliberate:
+
+- **Presence, then speech.** Three wordless beats — arrive, settle, look at
+  you — before a character is typed. It costs a second and a half and it is the
+  most important thing in the scene.
+- **The setup.** It leans in and offers to tell you what it worked out about
+  you. The light pulls in and dims: the held breath. Every instinct built by
+  every other device in this category says the next line is going to be
+  impressive and faintly threatening.
+- **The punchline is "Nothing."** — one word, on its own beat. Then it itemizes
+  the nothing: not your MAC address, not your IP, not who else is on your wifi.
+  *It could have. Everything else in this house did.* It is a flex, and the flex
+  is that it declined.
+- **The walk-back.** Having been clever for three beats it gets warm again and
+  stays there. The one name it has is a pseudonym it made up itself.
+- **Then the actual job** — the color language ("dark means all is well; if I
+  glow, look at me") and the fleet — which is the part a user needs to retain,
+  and which lands far better after a laugh than cold as a feature list.
+- **The promise last**, in the bird's own voice, because it is the bird's to
+  keep.
+
+**The joke is only funny because it is true.** `common/identity/device_pseudonym.h`
+reads no hardware MAC by construction — the `esp_mac.h` include is deliberately
+absent — so the bird is describing its own implementation. If that ever stopped
+being true the joke would have to go, which is exactly the right incentive.
+
+### Idle vignettes (the Flipper property — written, not yet wired)
+
+A device that is plugged in and idle should occasionally be *caught doing
+something*. `care/ambient_life.h` already rationed the moments; it had nothing
+to release. The scenes now exist — one- and two-beat scenes (a preen, a glance aside, a
+stretch, "Checking on the others", "All quiet. Carry on.") weighted so **roughly
+two thirds are wordless**. A device that speaks every time you look at it stops
+being company and starts being a chatbot on your wall. The rare one is gated on
+trust ≥ 7 days, like every other special here.
+
+**Status:** these are data and tests, not yet behavior. `main.cpp` still
+handles an `AmbientLife` moment by calling `canary_mark_react()` / the glance
+helper directly; nothing calls `story_pick_idle()` or holds a steady-state
+teller. Wiring that dispatch — and `kAlertApproach` on the attention edge —
+is the next slice.
+
+### Alerts: character in the approach, never on the alarm
+
+This is the one place personality and honesty could genuinely fight, so the
+separation is exact. **Rule 5 above is not negotiable** — the bird does not
+stand in front of a live alert making it charming, and no scripted line is ever
+shown on an alarm screen.
+
+What has character is the **approach**: the second between "the glass is calm"
+and "the glass is an instrument". Cutting straight from a warm idle lamp to a
+red panel is a jump scare, and a jump scare is a device people unplug. So
+`kAlertApproach` gives the bird one beat to go upright and still, the light one
+beat to pull in — and then the bird **exits** and the truth owns the stage. Two
+beats, no words, and a departure. The words on an alarm belong to the UI, which
+knows what is actually wrong.
+
+**Status:** `kAlertApproach` is written and host-tested (including that it can
+never be tapped past and that it still runs at night), but nothing plays it on
+the attention edge yet. Same slice as the idle dispatch above.
+
+### What the engine enforces
+
+1. **The truth preempts the story.** `interrupt()` drops a scene instantly and
+   it does **not** resume — a performance that picked up where it left off after
+   an alarm would be saying the alarm was an interruption to the charm rather
+   than the other way round.
+2. **Ambient only, never diagnosis.** The same line `ui/character.h`'s Voice
+   draws. The host tests assert this structurally: a banned-word list fails the
+   build if a script line ever picks up diagnostic vocabulary.
+3. **The user outranks the storyboard.** First tap completes the line, next tap
+   moves on, and the tests prove a determined tapper is out in seconds.
+4. **Night is sacred.** Every idle vignette is `day_only`; the meeting and the
+   alert approach are the two that still run at 3 a.m., because both are things
+   the user is present for.
+
+The writing rules are tested too — plain ASCII (the Montserrat tables carry no
+emoji), short enough to read at three meters, and the comic timing itself is
+asserted, because here timing is data: the setup must be sly, the light must
+narrow for it, a silent beat must hold, and the punchline must land alone.
+
 ## Next pass (spec locked, not yet built)
 
 The dash stage: perch-corner bird with speech-bubble slots and
