@@ -87,6 +87,33 @@ No. Logs stay local, there is no remote indexing and no telemetry (Invariant
 IV). No account is required to run it. Dependencies that phone home are
 forbidden by policy. → [`AGENTS.md`](../AGENTS.md) dependency policy
 
+The one honest footnote is the iPhone app — see the next question.
+
+### The iPhone app uses iCloud. Doesn't that contradict all of this?
+
+It's a fair thing to ask, so here is the whole of it. Two things need to reach
+you when you aren't standing next to a Canary: **your fleet list** (so your iPad
+knows what your iPhone paired) and **an alert when you're away** (iOS will not
+keep a connection open in your pocket — instant push on iPhone must travel
+through Apple, which is a platform fact, not our choice).
+
+Those two things ride **your own iCloud private database**. Not ours — we have
+no server at all. What goes in is a fleet list with no secrets in it, and a wake
+that carries one coarse word (`tamper` / `integrity` / `offline` / `pattern`)
+and nothing else: no device name, no room, no time of ours, no event content.
+The sentence you actually read is composed on your phone from your own data,
+which is why a locked screen only ever says "Something needs your attention."
+
+What never goes in: footage, frames, anything reversible to them, event content,
+precise times, or any key or token. Those are Invariants I and III, and they are
+not negotiable for convenience.
+
+It's opt-in and reversible — away alerts stay off until you arm an "Anywhere"
+rule, and turning them off deletes the subscription outright. Not signed into
+iCloud at all? The app works locally; iCloud is convenience, never a gate.
+→ [iCloud as the backend we don't have](design/cloudkit_backend.md), which also
+argues the parts that are imperfect rather than only the parts that are good
+
 ### Why are the timestamps deliberately vague?
 
 Events are bucketed into 10-minute windows so the log can prove *that*

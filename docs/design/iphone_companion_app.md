@@ -187,8 +187,13 @@ can use the app for a decade having never typed an email.
 **Layer 1 — Your data syncs through *your* iCloud, not our server.** The "clever
 iCloud job that runs" you were reaching for already exists as a platform: it's
 **CloudKit's private database**. The device list, alert rules, pinned-key trust
-metadata, and event *digests* live in **your** iCloud account. Apple end-to-end
-protects it; **SecuraCV has no server in the loop and cannot read any of it.**
+metadata, and event *digests* live in **your** iCloud account. **SecuraCV has no
+server in the loop and cannot read any of it.** (The finer point, because a
+privacy project pays for imprecision: *standard* CloudKit fields are encrypted
+in transit and at rest with keys Apple holds, not end-to-end — fields opted into
+`CKRecord.encryptedValues` are the end-to-end ones. Which of ours are which, and
+why one of them has no choice, is settled in
+[`cloudkit_backend.md`](cloudkit_backend.md) §6.)
 Your second iPhone or your iPad just… has your fleet, because it's your iCloud.
 That is data ownership implemented as infrastructure, not as a pledge. (Secrets
 are handled more carefully — see below.)
