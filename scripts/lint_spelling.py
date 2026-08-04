@@ -58,7 +58,23 @@ EXTS = {".rs", ".py", ".js", ".mjs", ".ts", ".c", ".h", ".cpp", ".hpp", ".md",
 # Extensionless files that are still source. Same reason as .ino.
 EXTRA_NAMES = {"Makefile", "makefile", "GNUmakefile", "Dockerfile"}
 SKIP_DIRS = {".git", "node_modules", "target", "build", "dist", ".venv",
-             "__pycache__"}
+             "__pycache__",
+             # Vendored upstream sources, fetched into the tree by a build and
+             # not ours to respell. canary-local/emulator/build.sh clones LVGL,
+             # ArduinoJson and arduinolibs into third_party/ before the wasm
+             # build; ArduinoJson alone ships a bundled catch.hpp that trips
+             # this gate 240 times. CI never saw it — the lint job gets a
+             # fresh checkout and the wasm job is a different job — so the
+             # only person who ever met those 242 failures was whoever built
+             # the emulator locally and then ran the linter, which is exactly
+             # the person a gate should not be lying to.
+             #
+             # Note this is a DIRECTORY name, not a path: nothing tracked in
+             # git lives under a third_party/ anywhere, so skipping the name
+             # cannot narrow what the gate covers in a clean checkout. (The
+             # tracked vendor/ directories are deliberately NOT skipped —
+             # those files are committed here and do get linted.)
+             "third_party"}
 # This file names the banned forms, so it cannot police itself.
 SKIP_FILES = {"lint_spelling.py"}
 

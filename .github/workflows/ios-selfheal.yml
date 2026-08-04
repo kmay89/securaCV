@@ -82,6 +82,57 @@ jobs:
         working-directory: ios
         run: bash scripts/heal.sh build
 
+      # WHEN THE APP DIES AT LAUNCH, SAY WHAT KILLED IT.
+      #
+      # xcodebuild's whole account of a launch crash is one line — "Test
+      # crashed with signal trap before establishing connection" — and then
+      # the runner is torn down with the evidence on it. That sent two
+      # separate investigations to read source instead of a stack: first an
+      # uncatchable ObjC CKException from CKContainer.default(), then, once
+      # that was fixed, a Swift runtime trap underneath it that this job still
+      # would not name.
+      #
+      # Everything needed is already on disk at that moment. The .ips crash
+      # report carries the faulting frame; the .xcresult carries the test
+      # results and the app log. Neither survives the job. So collect both on
+      # failure — `if: failure()` only, because a green run has nothing to say
+      # and an artifact per nightly is just litter.
+      #
+      # Best-effort throughout (`|| true`, `if-no-files-found: ignore`): a
+      # diagnostic step that can itself fail turns "the app crashed" into "the
+      # step that explains crashes crashed", which is strictly worse.
+      - name: What crashed (diagnostics — failure only)
+        if: failure() && env.RUN_BUILD == 'true'
+        run: |
+          echo "::group::Simulator crash reports"
+          # The simulator writes .ips reports here; newest first, since a
+          # launch crash usually produced the last one.
+          find ~/Library/Logs/DiagnosticReports \
+               ~/Library/Developer/CoreSimulator/Devices/*/data/Library/Logs/DiagnosticReports \
+               -name 'SecuraCV*.ips' -mmin -60 2>/dev/null \
+            | while read -r r; do
+                echo "--- $r"
+                # The header line names the signal; the first frames name the
+                # code. The whole report is long and mostly system frames.
+                head -c 20000 "$r"
+                echo
+              done || true
+          echo "::endgroup::"
+          echo "::group::Swift runtime traps in the test log"
+          # A Swift trap prints "Fatal error: ..." with file and line before it
+          # aborts. If it reached any log on disk, this finds it.
+          grep -rh -m 20 -E 'Fatal error|Precondition failed|__swift_runtime' \
+            ios/build/Logs 2>/dev/null || echo "(none found on disk)"
+          echo "::endgroup::"
+      - name: Keep the .xcresult (failure only)
+        if: failure() && env.RUN_BUILD == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-selfheal-xcresult
+          path: ios/build/Logs/Test/*.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Summary
         if: env.RUN_BUILD == 'true'
         run: echo "::notice title=iOS self-heal::App regenerated from project.yml and rebuilt + tested against current contracts. It did not rot."

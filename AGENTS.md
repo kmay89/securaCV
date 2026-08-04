@@ -169,6 +169,7 @@ These run on every PR. Run the relevant one locally before you push.
 | `scripts/lint_feature_flags.sh` | Feature-flag hygiene |
 | `scripts/lint_version_sync.sh`, `desktop/scripts/check_app_versions.py` | One version per app across `tauri.conf.json` / `package.json` / `Cargo.toml` |
 | `scripts/lint_bom.py` | BOM CSVs schema-clean and wired to the generator |
+| `scripts/lint_cloudkit_container.py` | No `CKContainer.default()`; the container identifier matches both entitlements files |
 
 Full list: [`.github/workflows/lint.yml`](.github/workflows/lint.yml) and
 [`docs/ci.md`](docs/ci.md).
