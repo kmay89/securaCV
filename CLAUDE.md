@@ -46,7 +46,7 @@
     `initialism`, `aria-labelledby`. The linter's `ALLOW` list asserts it.
   - See [`AGENTS.md`](AGENTS.md) rule 3b, the canonical statement.
 
-## Generated files — there are NINETEEN, not a handful
+## Generated files — there are TWENTY, not a handful
 
 Committed generators whose output CI regenerates and byte-diffs. Editing a
 source without re-running the right one leaves a gate to find it, and the
@@ -65,7 +65,10 @@ grep -rhoE "python3 [a-zA-Z0-9_/.-]*gen_[a-z_]+\.py|node [a-zA-Z0-9_/.-]*make-[a
 The ones that bite most often: `gen_stamp.py` and `gen_builder_manifest.py`
 (any enclosure `.scad`), `gen_enclosures.py` (catalog JSON),
 `gen_agent_entrypoints.py` (any AGENTS.md edit — six vendor files),
-`gen_hub_provision_bundle.py` (anything it embeds and pins by hash).
+`gen_hub_provision_bundle.py` (anything it embeds and pins by hash),
+`gen_apple_home_docs.py` (any `homekit_projection` change in the dictionary —
+the Apple Home quickstart's signal table is a privacy promise, so a stale one
+is a false statement rather than merely old).
 
 ## Enclosure CAD
 

@@ -95,6 +95,16 @@ jobs:
         run: python3 tools/test_away_access_check.py
       - name: Docs index — no stragglers, no dead links
         run: python3 scripts/lint_docs_index.py
+      - name: Apple Home docs match the vocabulary they describe
+        # The quickstart tells a user exactly what their Canaries will publish
+        # into their home — which signals, which are OFF by default, how
+        # coarse the metronome is. Those are privacy promises, and a stale one
+        # is not merely out of date: it is a false statement to the person
+        # deciding whether to publish their home into Apple's ecosystem. So
+        # the tables are generated from spec/witness_dictionary.json and this
+        # byte-diffs them. Flip a default in the dictionary without
+        # regenerating and the build stops here.
+        run: python3 scripts/gen_apple_home_docs.py --check
       - name: US spellings (AGENTS.md rule 3b)
         # The script's regex is the ONE enumerated list of banned forms in the
         # repo; rule 3b points at it rather than naming them, because a rule
