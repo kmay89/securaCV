@@ -121,7 +121,13 @@ SETS = {
         ("color coupon", COUPON,                        (100, 150)),
         ("QR coupon",     QR_COUPON,                     (60, 80)),
     ],
-    "coupon": [("color coupon", COUPON, (128, 128))],
+    # Centered in X, but pushed UP in Y to clear the tower zone below-right.
+    # It sat at y 128 while the band was 33 mm tall; the band now reaches the
+    # lockup mid-plate and is 51.8 mm, which walked its lower edge into the
+    # tower's rectangle. The packer refused the plate rather than shipping a
+    # layout the slicer would complain about — the growth is the lockup rework's
+    # cost, and this is the second place it had to be paid.
+    "coupon": [("color coupon", COUPON, (128, 150))],
     "qr":     [("QR coupon", QR_COUPON, (128, 128))],
     "frame":  [("frame", FRAME, (128, 128))],
 }
