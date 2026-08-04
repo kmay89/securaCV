@@ -81,13 +81,20 @@ verify_schema() {
     missing=1
   fi
 
+  # Missing `sev` is as fatal as a missing type, not a cosmetic gap.
+  # AwayPush.publishWake ALWAYS sets this field, and production CloudKit
+  # rejects a save carrying a field the schema doesn't define — so the write
+  # fails, no record is created, no push is sent, and away alerts are dead.
+  # (The extension's generic-line fallback decodes a notification that lacks
+  # a class; it cannot rescue a write that never succeeded.)
   if grep -A20 "RECORD TYPE ${RECORD_TYPE}" "$SCHEMA_FILE" 2>/dev/null \
      | grep -q "\b${WAKE_FIELD}\b"; then
     ok "the ${WAKE_FIELD} field is present (the coarse wake class)"
   elif [ "$missing" -eq 0 ]; then
-    printf '\033[0;33m!\033[0m %s exists but has no %s field\n' "$RECORD_TYPE" "$WAKE_FIELD"
-    note "A wake with no class still pushes, but the extension can't word it"
-    note "specifically — it falls back to the generic line."
+    printf '\033[0;31m✗\033[0m %s exists but has no %s field\n' "$RECORD_TYPE" "$WAKE_FIELD"
+    note "Every wake write sets ${WAKE_FIELD}, and production rejects a save with an"
+    note "undefined field — so no wake would ever be written and no push sent."
+    missing=1
   fi
 
   # createdTimestamp is what `creationDate` maps to in the schema language.
@@ -102,7 +109,7 @@ verify_schema() {
   fi
 
   if [ "$missing" -eq 1 ] && [ "$hard_fail" = "strict" ]; then
-    die "refusing to promote a schema without ${RECORD_TYPE} — it would deploy nothing and look like it worked."
+    die "refusing to promote: the schema is missing ${RECORD_TYPE} or its ${WAKE_FIELD} field, so away alerts would be inoperative while the deploy looked like it worked."
   fi
 }
 
