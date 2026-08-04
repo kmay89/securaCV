@@ -29,7 +29,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::io::{IsTerminal, Write as _};
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::time::{Duration, Instant};
 
@@ -299,6 +299,75 @@ fn prompt(question: &str, default: &str) -> Result<String> {
     Ok(if t.is_empty() { default.to_string() } else { t })
 }
 
+/// Where the state file goes when the user did not say.
+///
+/// Beside the config, absolutized. A bare `hap_state.json` is relative to the
+/// working directory, so a config at `~/.config/securacv/hap.toml` later
+/// started by a service from `/` would mint a **brand-new accessory identity**
+/// — and every existing pairing in the house would stop working, with nothing
+/// to explain why.
+fn default_state_beside(config: &Path) -> PathBuf {
+    let dir = config
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    // `canonicalize` fails when the directory does not exist yet — which is
+    // the common case, since the wizard creates it when it saves. Falling
+    // back to the relative path would reintroduce the very bug this avoids,
+    // so resolve against the working directory by hand instead.
+    let dir = dir.canonicalize().unwrap_or_else(|_| {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(&dir))
+            .unwrap_or(dir)
+    });
+    dir.join("hap_state.json")
+}
+
+/// Ask for something that must not appear on screen.
+///
+/// The broker password went through the ordinary prompt, which echoes — so it
+/// sat in plain sight, in the scrollback, and in any terminal recording. This
+/// turns echo off for the duration and restores it afterward, even on the
+/// error path.
+#[cfg(unix)]
+fn prompt_secret(question: &str) -> Result<String> {
+    use std::os::unix::io::AsRawFd;
+
+    let fd = std::io::stdin().as_raw_fd();
+    let mut term: libc::termios = unsafe { std::mem::zeroed() };
+    // If the terminal will not tell us its settings we cannot turn echo off;
+    // falling back to an echoed prompt is better than refusing to continue,
+    // but the user is told so they can decide.
+    if unsafe { libc::tcgetattr(fd, &mut term) } != 0 {
+        println!("      (cannot disable echo on this terminal — it will be visible)");
+        return prompt(question, "");
+    }
+    let original = term;
+    term.c_lflag &= !libc::ECHO;
+    unsafe { libc::tcsetattr(fd, libc::TCSANOW, &term) };
+
+    print!("{question} ");
+    let flushed = std::io::stdout().flush();
+    let mut line = String::new();
+    let read = std::io::stdin().read_line(&mut line);
+
+    // Restore before propagating anything, or a failure leaves the user's
+    // shell with echo off and no way to see what they are typing.
+    unsafe { libc::tcsetattr(fd, libc::TCSANOW, &original) };
+    println!();
+
+    flushed?;
+    read?;
+    Ok(line.trim().to_string())
+}
+
+#[cfg(not(unix))]
+fn prompt_secret(question: &str) -> Result<String> {
+    println!("      (echo cannot be disabled on this platform — it will be visible)");
+    prompt(question, "")
+}
+
 fn step(n: u8, of: u8, title: &str) {
     println!("\n\x1b[1m[{n}/{of}]\x1b[0m {title}");
 }
@@ -312,8 +381,43 @@ fn run_setup(cli: &Cli) -> Result<()> {
         ));
     }
 
+    // Rerunning setup on a paired bridge must not renumber anyone: accessory
+    // ids come from list position and controllers cache them. So the existing
+    // answers are loaded and become the defaults, and the fleet is MERGED
+    // rather than replaced.
+    let existing = if cli.config.exists() {
+        match config::load(&cli.config) {
+            Ok(c) => Some(c),
+            Err(e) => {
+                println!(
+                    "\x1b[33m•\x1b[0m Could not read {}: {e}",
+                    cli.config.display()
+                );
+                println!("  Starting fresh. The old file will be overwritten.\n");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let base = existing.clone().unwrap_or_default();
+
     println!("\x1b[1mSecuraCV → Apple Home\x1b[0m");
     println!("Three questions and a QR code.\n");
+    if existing.is_some() {
+        println!(
+            "\x1b[32m✓\x1b[0m Found your existing setup ({} {} already configured).",
+            base.canaries.len(),
+            if base.canaries.len() == 1 {
+                "Canary"
+            } else {
+                "Canaries"
+            }
+        );
+        println!("  Your answers below become the new defaults. Devices you already");
+        println!("  have keep their place in the list — renaming is safe, reordering");
+        println!("  is not, so nothing gets moved.\n");
+    }
     println!("Your Canaries will appear in the Home app as ordinary sensors —");
     println!("motion, occupancy, contact — that Siri and automations understand.");
     println!("No video leaves. There is no field in the vocabulary for it.");
@@ -337,7 +441,7 @@ fn run_setup(cli: &Cli) -> Result<()> {
 
     // ---- 2. Which Canaries? ------------------------------------------------
     step(2, 4, "Looking for Canaries…");
-    let mut mqtt = MqttConfig::default();
+    let mut mqtt = base.mqtt.clone();
     let use_mqtt = wizard::parse_yes_no(
         &prompt("      Is your fleet publishing to an MQTT broker?", "y")?,
         true,
@@ -353,7 +457,7 @@ fn run_setup(cli: &Cli) -> Result<()> {
         let user = prompt("      Username (blank for none):", "")?;
         if !user.is_empty() {
             mqtt.username = Some(user);
-            let pass = prompt("      Password:", "")?;
+            let pass = prompt_secret("      Password:")?;
             if !pass.is_empty() {
                 mqtt.password = Some(pass);
             }
@@ -384,19 +488,27 @@ fn run_setup(cli: &Cli) -> Result<()> {
         }
     }
 
-    while fleet.is_empty() {
-        println!("      Add a Canary by hand.");
+    // Adding by hand is *required* only when there is nothing at all —
+    // neither discovered now nor configured before. On a re-run it is offered,
+    // because the usual reason to run setup again is to add a device.
+    loop {
+        let required = fleet.is_empty() && base.canaries.is_empty();
+        if required {
+            println!("      Add a Canary by hand.");
+        } else if !wizard::parse_yes_no(&prompt("      Add a Canary by hand?", "n")?, false) {
+            break;
+        }
         let id = prompt("      MQTT device id:", "")?;
         if id.is_empty() {
-            return Err(anyhow!(
-                "no Canaries chosen — nothing to publish, so setup stopped here"
-            ));
+            if required {
+                return Err(anyhow!(
+                    "no Canaries chosen — nothing to publish, so setup stopped here"
+                ));
+            }
+            break;
         }
         let name = prompt("      Name in the Home app:", &wizard::suggest_name(&id))?;
         fleet.push(CanaryConfig { id, name });
-        if !wizard::parse_yes_no(&prompt("      Add another?", "n")?, false) {
-            break;
-        }
     }
 
     // ---- 3. How much to tell it? ------------------------------------------
@@ -442,21 +554,21 @@ fn run_setup(cli: &Cli) -> Result<()> {
     let state_path = cli
         .state
         .clone()
-        .unwrap_or_else(|| PathBuf::from("hap_state.json"));
+        .unwrap_or_else(|| default_state_beside(&cli.config));
     let cfg = BridgeConfig {
-        bridge_name: cli
-            .bridge_name
-            .clone()
-            .unwrap_or_else(|| "SecuraCV".to_string()),
-        state: state_path,
-        bind: cli
-            .bind
-            .clone()
-            .unwrap_or_else(|| "0.0.0.0:51826".to_string()),
+        bridge_name: cli.bridge_name.clone().unwrap_or(base.bridge_name),
+        state: cli.state.clone().unwrap_or(if existing.is_some() {
+            base.state
+        } else {
+            state_path
+        }),
+        bind: cli.bind.clone().unwrap_or(base.bind),
         tick_ms,
         enable_class,
         mqtt,
-        canaries: fleet,
+        // Existing devices keep their slots; only genuinely new ones are
+        // appended. See `config::merge_fleet` for why this is not a re-sort.
+        canaries: config::merge_fleet(&base.canaries, &fleet),
     };
     cfg.validate()?;
     config::save(&cli.config, &cfg)
@@ -498,10 +610,14 @@ fn discover_canaries(mqtt: &MqttConfig, window: Duration) -> Vec<String> {
 
     let mut ids: BTreeSet<String> = BTreeSet::new();
     let deadline = Instant::now() + window;
-    for event in connection.iter() {
-        if Instant::now() >= deadline {
+    // `iter()` blocks until the next event, so on a broker with nothing
+    // retained it would sit past the advertised window until the keepalive
+    // fires — a wizard step that promises four seconds and takes thirty.
+    // A timed receive bounds it to the window we told the user about.
+    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+        let Ok(event) = connection.recv_timeout(remaining) else {
             break;
-        }
+        };
         if let Ok(Event::Incoming(Incoming::Publish(p))) = event {
             if let Ok(topic) = std::str::from_utf8(p.topic.as_ref()) {
                 let mut parts = topic.split('/');
@@ -1004,6 +1120,21 @@ mod tests {
         assert_eq!(QrStyle::Light.style(), Some(qr::Style::Blocks));
         assert_eq!(QrStyle::Dark.style(), Some(qr::Style::BlocksInverted));
         assert_eq!(QrStyle::Off.style(), None);
+    }
+
+    /// A relative state path is how every pairing in a house silently dies:
+    /// a config in `~/.config` later started by a service from `/` would mint
+    /// a brand-new accessory identity. The default must be absolute, and
+    /// beside the config, even when that directory does not exist yet.
+    #[test]
+    fn the_default_state_path_is_absolute_and_beside_the_config() {
+        let p = default_state_beside(Path::new("cfg/hap.toml"));
+        assert!(p.is_absolute(), "got {p:?}");
+        assert!(p.ends_with("cfg/hap_state.json"), "got {p:?}");
+
+        let bare = default_state_beside(Path::new("hap.toml"));
+        assert!(bare.is_absolute(), "got {bare:?}");
+        assert!(bare.ends_with("hap_state.json"), "got {bare:?}");
     }
 
     #[test]
