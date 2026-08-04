@@ -84,7 +84,7 @@ Now press the Assist button and ask:
 | You say | It answers with |
 |---|---|
 | "Is the fleet OK?" | Device count, signature-trust summary, kernel reachability — worst news first. |
-| "What was the last witness event?" | The newest event's coarse label and a ten-minute-floor relative time. |
+| "What was the last witness event?" | The newest event's coarse label, a ten-minute-floor relative time, and its trust status — an unsigned or key-mismatched publish is named out loud, never spoken as the plain truth. |
 
 The answers keep the project's vocabulary discipline out loud:
 **"verified" is spoken only for a device whose Ed25519 signature checked
@@ -132,7 +132,7 @@ nabu") to your satellite in the assistant's settings.
 | Symptom | Likely cause |
 |---|---|
 | "Sorry, I couldn't understand that" | Sentences file not at `/config/custom_sentences/en/securacv.yaml`, or HA not restarted since copying it. |
-| Sentence matches but errors | SecuraCV integration not loaded, or an old version without `intent.py` (needs 0.7.0+). |
+| Sentence matches but errors | SecuraCV integration not loaded, or an older version without `intent.py` — update the integration. |
 | Answers are slow | Whisper model too big for the hub — drop a size in the add-on config. |
 | Wake word never fires | openWakeWord not assigned to the satellite, or the satellite has no mic path configured. |
 

@@ -68,14 +68,18 @@ def test_brief_kernel_ok_is_anded_across_entries():
 
 def test_record_canary_event_creates_device_slot():
     devices: dict = {}
-    record_canary_event(devices, "cv-1", "contact_state_change", 42.0)
+    record_canary_event(devices, "cv-1", "contact_state_change", 42.0, trusted=True, reason="ok")
     assert devices["cv-1"]["last_event"] == {
         "event_type": "contact_state_change",
         "received_at": 42.0,
+        "trusted": True,
+        "reason": "ok",
     }
-    # A newer event replaces the old one in place.
+    # A newer event replaces the old one in place; no verdict -> None, which
+    # must speak as unverified, never as trusted-by-default.
     record_canary_event(devices, "cv-1", "tamper_detected", 43.0)
     assert devices["cv-1"]["last_event"]["event_type"] == "tamper_detected"
+    assert devices["cv-1"]["last_event"]["trusted"] is None
     # Empty device_id is ignored rather than minting a phantom device.
     record_canary_event(devices, "", "x", 44.0)
     assert set(devices) == {"cv-1"}
@@ -128,14 +132,73 @@ def test_speak_last_event_uses_friendly_label_and_coarse_time():
             "last_event": {
                 "event_type": "boundary_crossing_object_large",
                 "received_at": NOW - 120,
+                "trusted": True,
+                "reason": "ok",
             }
         }
     }
     speech = speak_last_event(fleet_brief([_entry(devices)], NOW))
     assert speech == (
         "Large object crossed boundary, within the last ten minutes, "
-        "from Canary gate."
+        "from Canary gate. The event signature is verified against the "
+        "device's pinned key."
     )
+
+
+def test_speak_last_event_trust_qualifiers_never_launder():
+    # A key-mismatch publish must be called out, not spoken as the truth.
+    mismatch = {
+        "gate": {
+            "last_event": {
+                "event_type": "tamper_detected",
+                "received_at": NOW - 60,
+                "trusted": False,
+                "reason": "mismatch",
+            }
+        }
+    }
+    speech = speak_last_event(fleet_brief([_entry(mismatch)], NOW))
+    assert "key does not match its pin" in speech
+    assert "treat this event as unverified" in speech
+
+    # No verdict at all (verifier never ran) speaks as unverified too —
+    # never trusted-by-default.
+    unknown = {
+        "gate": {
+            "last_event": {
+                "event_type": "contact_state_change",
+                "received_at": NOW - 60,
+            }
+        }
+    }
+    speech = speak_last_event(fleet_brief([_entry(unknown)], NOW))
+    assert "published without a verified signature" in speech
+    assert "verified against" not in speech
+
+
+def test_speak_last_event_names_both_sources_when_they_differ():
+    devices = {
+        "gate": {
+            "last_event": {
+                "event_type": "boundary_crossing_object_large",
+                "received_at": NOW - 60,
+                "trusted": True,
+                "reason": "ok",
+            }
+        }
+    }
+    kernel = {"ok": True, "latest_event": {"event_type": "TamperDetected"}}
+    speech = speak_last_event(fleet_brief([_entry(devices, kernel=kernel)], NOW))
+    assert "from Canary gate" in speech
+    assert "The kernel log's latest event is Tamper detected." in speech
+
+    # Same label on both sides -> no redundant second sentence.
+    kernel_same = {
+        "ok": True,
+        "latest_event": {"event_type": "BoundaryCrossingObjectLarge"},
+    }
+    speech = speak_last_event(fleet_brief([_entry(devices, kernel=kernel_same)], NOW))
+    assert "kernel log's latest" not in speech
 
 
 def test_speak_last_event_kernel_fallback_and_none():

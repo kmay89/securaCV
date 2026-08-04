@@ -117,7 +117,10 @@ def _record_last_event(
 
     The last-event sensor holds its state on the entity; the voice brief
     (voice.py, via intent.py) reads entry_data instead, so the event is
-    mirrored there with its hub arrival time.
+    mirrored there with its hub arrival time. Must be called AFTER
+    _verify_and_record so the fresh trust verdict rides along — a spoken
+    answer that omitted it would launder an unsigned or key-mismatched
+    publish into "the latest witness event".
     """
     domain_data = hass.data.get(DOMAIN)
     if not isinstance(domain_data, dict):
@@ -128,11 +131,19 @@ def _record_last_event(
     devices = entry_data.get("devices")
     if not isinstance(devices, dict):
         return
+    verdict = entry_data.get("verify", {}).get(device_id)
+    trusted: bool | None = None
+    reason: str | None = None
+    if isinstance(verdict, dict):
+        trusted = bool(verdict.get("trusted"))
+        reason = verdict.get("reason")
     record_canary_event(
         devices,
         device_id,
         str(event_type) if event_type is not None else None,
         time.time(),
+        trusted=trusted,
+        reason=reason,
     )
 
 
@@ -749,9 +760,6 @@ class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
             self._attr_native_value = data.get(
                 "event_type", data.get("type", data.get("event", "unknown"))
             )
-            _record_last_event(
-                self.hass, self._entry, self._device_id, self._attr_native_value
-            )
             # Two event dialects share the events topic: the CSI canary's
             # (event_id/state/category/...) and the radar witness's
             # canary-sense shape (event/seq/occupants/range). Dispatch on
@@ -764,6 +772,12 @@ class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
             else:
                 _verify_and_record(self.hass, self._entry, self._device_id,
                                    data, verify_event)
+            # Mirror the event for the voice brief AFTER the verifier has
+            # stamped its verdict, so a spoken answer can carry the trust
+            # qualifier a forged/unsigned publish deserves (voice.py).
+            _record_last_event(
+                self.hass, self._entry, self._device_id, self._attr_native_value
+            )
             attrs: dict[str, Any] = {
                 "timestamp": data.get("timestamp", ""),
                 "zone": data.get("zone", ""),

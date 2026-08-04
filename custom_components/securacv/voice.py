@@ -45,17 +45,24 @@ def record_canary_event(
     device_id: str,
     event_type: str | None,
     received_at: float,
+    trusted: bool | None = None,
+    reason: str | None = None,
 ) -> None:
     """Stash the newest event for a device where fleet_brief() can read it.
 
     ``devices`` is entry_data["devices"]; the device slot may not exist yet
     (an event can arrive before the first status publish), so create it.
+    ``trusted``/``reason`` are the verify verdict stamped for this publish
+    (call this AFTER the verifier ran); ``None`` means no verdict exists,
+    which speaks as unverified — never as trusted-by-default.
     """
     if not device_id:
         return
     devices.setdefault(device_id, {})["last_event"] = {
         "event_type": event_type,
         "received_at": received_at,
+        "trusted": trusted,
+        "reason": reason,
     }
 
 
@@ -105,6 +112,8 @@ def fleet_brief(entries: list[dict[str, Any]], now: float) -> dict[str, Any]:
                         "device_id": device_id,
                         "event_type": last.get("event_type"),
                         "received_at": float(last["received_at"]),
+                        "trusted": last.get("trusted"),
+                        "reason": last.get("reason"),
                     }
         kernel = entry.get("kernel")
         if isinstance(kernel, dict):
@@ -199,15 +208,46 @@ def speak_fleet_status(brief: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
+def _canary_trust_clause(canary: dict[str, Any]) -> str:
+    """The spoken trust qualifier for a Canary event. Never silent when weak.
+
+    The verdict stamped at record time rides in the event; ``None`` (no
+    verifier ran) speaks as unverified, never as trusted-by-default — the
+    spoken sentence is quotable, so it keeps the same honesty ladder as
+    the dashboards.
+    """
+    if canary.get("trusted"):
+        return " The event signature is verified against the device's pinned key."
+    if canary.get("reason") == "mismatch":
+        return (
+            " Caution: that device's key does not match its pin — "
+            "treat this event as unverified."
+        )
+    return " The event was published without a verified signature."
+
+
 def speak_last_event(brief: dict[str, Any]) -> str:
-    """The newest witness event, spoken with its coarse label and time."""
+    """The newest witness event, spoken with its coarse label, time, and trust.
+
+    When both sources exist (setup mode "both"), the Canary event's arrival
+    time and the kernel log's latest are not comparable — the kernel export
+    carries a coarse bucket, not an arrival stamp — so rather than invent an
+    ordering, both are spoken when they differ.
+    """
     canary = brief.get("canary_latest")
+    kernel_event = brief.get("kernel_latest_event")
+
     if canary:
         label = event_type_metadata(canary.get("event_type"))["label"]
         when = ago_phrase(brief["now"] - canary["received_at"])
-        return f"{label}, {when}, from Canary {canary['device_id']}."
+        speech = f"{label}, {when}, from Canary {canary['device_id']}."
+        speech += _canary_trust_clause(canary)
+        if kernel_event:
+            kernel_label = event_type_metadata(kernel_event.get("event_type"))["label"]
+            if kernel_label != label:
+                speech += f" The kernel log's latest event is {kernel_label}."
+        return speech
 
-    kernel_event = brief.get("kernel_latest_event")
     if kernel_event:
         label = event_type_metadata(kernel_event.get("event_type"))["label"]
         return f"{label} — the latest event in the kernel log."
