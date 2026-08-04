@@ -698,8 +698,17 @@ module bezel_light_seam() {
 // always precisely as deep as the wall it sits in — including where the wall
 // thickens into a button ear. The ribs are subtracted with clearance, so each
 // side prints as ONE continuous strip carrying its own notches.
+// The band exists only where the seam does. `light_band` on its own is not
+// enough: with light_seam off, bezel() never cuts the pocket, so a band built
+// anyway would be a strip of white occupying wall the bezel still has — two
+// solids claiming the same material, which the 3MF packager would hand the
+// AMS as an unresolvable overlap and the configurator would happily export.
+// Same rule, same reason, as light_plug and led_win: a part that fills a
+// feature does not get to outlive the feature.
+band_on = light_seam && light_band;
+
 module light_band() {
-    difference() {
+    if (band_on) difference() {
         intersection() {
             seam_prisms(band_clear);
             difference() {
@@ -990,7 +999,7 @@ module back_assembly() { color("#1a1a1a") back_body(); color("#f5c518") back_acc
 // the LAST color — it renders the entire bezel white. The same caveat is on
 // the 7" frame's frame_color and in README §"Preview renders". These views are
 // good for silhouette and for fit; use part="palette" to see the colors.
-module bezel_assembly() { color("#1a1a1a") bezel(); if (light_band) color("#f2f2f2") light_band(); }
+module bezel_assembly() { color("#1a1a1a") bezel(); if (band_on) color("#f2f2f2") light_band(); }
 
 // The three filaments, spread far enough apart that no two solids overlap —
 // which is the whole point, because non-overlapping groups are the ONE case
@@ -998,7 +1007,7 @@ module bezel_assembly() { color("#1a1a1a") bezel(); if (light_band) color("#f2f2
 // like in black, white and yellow", and it cannot lie the way an assembly can.
 module palette_row() {
     color("#1a1a1a") bezel();
-    if (light_band) translate([xo + 8, 0, 0]) color("#f2f2f2") light_band();
+    if (band_on) translate([xo + 8, 0, 0]) color("#f2f2f2") light_band();
     translate([2*(xo + 8), 0, 0]) {
         color("#1a1a1a") back_body();
         color("#f5c518") back_accent();

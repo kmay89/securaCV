@@ -306,7 +306,7 @@ def build(setname: str) -> Path:
         # accent volume typically dips a hair into the body it unions with (a
         # boolean needs the overlap), which puts it below z=0 once the part is
         # already lying face-down. The lift is per GROUP, never per volume —
-        # levelling volumes independently is exactly how you shear an inlay
+        # leveling volumes independently is exactly how you shear an inlay
         # out of its recess.
         zlift = -min(p[2] for p in allv)
         off = (center[0] - (x0 + x1) / 2, center[1] - (y0 + y1) / 2,

@@ -6703,6 +6703,10 @@
        "comment": "clears the outer face, button ear included"
       },
       {
+       "name": "band_on",
+       "default": "light_seam && light_band"
+      },
+      {
        "name": "hook_ped",
        "default": "(wall - snap_beam_t) + tol_press",
        "comment": "beam face -> plate edge"
