@@ -486,6 +486,54 @@ vent_tip    = egg_tip(); // DERIVED from canary_vent_lib.scad — never a typed
                          // same reason the feather's point was safe.
 vent_pitch_x = 7.6;      // column pitch
 vent_pitch_y = 8.0;      // row pitch
+
+/* [Frame — the graded vent field] */
+// ════════════════════════════════════════════════════════════════════════════
+//  THE FIELD GRADES AROUND THE MARK — and it is a thermal decision, not only
+//  a drawing one. Read both halves before turning the knobs.
+//
+//  THE DRAWING. A uniform grille of 98 identical eggs across the whole plate
+//  is a perforated panel with a logo on it. Every hole competes with the mark
+//  for the same attention, and the mark loses, because there are 98 of them.
+//  Grading the egg SIZE with distance from the mark fixes that with no new
+//  shapes and no new tooling: nearest the badge the field fades out entirely,
+//  and it opens up toward the plate's edges. The eye reads the small end as
+//  distance and the large end as depth — the plate looks like it recedes
+//  around the badge instead of being tiled behind it.
+//
+//  THE COST, stated plainly because it is real: the plate's open area drops
+//  from ~29 cm2 to what the echo reports for your config. The convection path
+//  proper is UNTOUCHED — bottom-wall intake to top-wall exhaust, neither of
+//  which lives on this plate — and the back grille was always the third
+//  contributor rather than the path. But this panel runs a 7" backlight and
+//  an ESP32-S3, "runs hot" is in this file's env line, and a smaller grille is
+//  a warmer case. vent_grade = false restores the flat field exactly.
+//
+//  The gradient is RADIAL from the mark's center, not from the plate's, so it
+//  is visibly the badge that organizes it. That the mark sits left of center
+//  makes the field asymmetric; that reads as intent because it is.
+// ════════════════════════════════════════════════════════════════════════════
+vent_grade  = true;   // false = every egg full size, as before
+vent_k_min  = 0.46;   // smallest egg, as a fraction of vent_slot_*. Below
+                      // ~0.4 the egg's own crown radius stops printing as an
+                      // arch and starts needing a bridge — the shape's floor,
+                      // not a taste one
+vent_k_drop = 0.52;   // ...and any cell that grades BELOW this is not cut at
+                      // all. This is what makes the field fade to bare plate
+                      // beside the mark rather than ending on a hard edge:
+                      // the smallest eggs that survive are vent_k_min, and
+                      // everything smaller becomes margin
+vent_d0     = 34.0;   // mm from the mark's center where the grade starts...
+vent_d1     = 88.0;   // ...and where it reaches full size
+
+// ── THE ONE KNOB TO TURN IF IT RUNS HOT ────────────────────────────────────
+// The badge owns the left half of the plate and carries no vents at all. That
+// is most of what this revision costs thermally — far more than the grade —
+// and it is one word to undo, so the trade is a choice and not a fait
+// accompli. With it false the grille fills the whole field again, graded, and
+// the mark keeps only its own margin (bird_vent_gap). The plate gets busier;
+// the echo will tell you exactly what you bought.
+badge_column = true;  // false = let the grille back into the badge's half
 vent_top = true;         // EXHAUST — slots through the top (+Y) wall
 vent_top_n = 14;
 vent_bottom = true;      // INTAKE — slots through the bottom (−Y) wall, placed
@@ -670,17 +718,29 @@ brand_sub  = "SECURACV";         // the small tracked company line beneath
 // lcd7_stamp_year() at the rating block for why that is not a style choice.
 brand_maker = "ERRERlabs";       // the maker row, under the hero line
 brand_edge = "SecuraCV Canary";               // debossed on the visible bottom edge
-// The lockup's rows, measured UP from the plate's inner bottom edge. The two
-// existing rows do NOT move: the company line already sits 0.8 mm under the
-// grille's bottom egg row, so lifting the stack to make room below would have
-// cost a row of vents. The band BELOW the hero line was empty instead — 5.6 mm
-// of plate between the letters and the rim chamfer, which is where the maker
-// row goes. Both clearances are asserted rather than eyeballed.
-brand_row_maker = 1.6;   // maker line, closest to the rim
-brand_row_hero  = 5.4;   // brand_back
-brand_row_sub   = 10.6;  // brand_sub
-brand_sz        = 4.0;   // hero + company cap height
-brand_maker_sz  = 2.8;   // the maker row is a footnote, not a third shout
+// THE LOCKUP HAS A BAND NOW, not a leftover. The three rows used to be jammed
+// into the last 13 mm above the rim because everything above them was grille —
+// 3.3 mm of leading between rows whose caps are 4 mm tall, which is what
+// "squished" looks like when you measure it. With the vents cleared out of the
+// mark's field the whole bottom of the plate is free, so the rows get real
+// leading, the product name gets to be bigger than the company line above it,
+// and there is 3 mm of air under the last row instead of a hairline.
+//
+// Positions are measured UP from the plate's inner bottom edge, and the two
+// gaps are DERIVED from the row positions rather than typed beside them, so a
+// row that moves cannot leave a stale gap comment behind. The asserts below
+// check both gaps and the rim clearance.
+brand_row_maker =  4.4;  // maker line, closest to the rim
+brand_row_hero  = 12.6;  // brand_back — the product name, the biggest row
+brand_row_sub   = 21.6;  // brand_sub — the company line, tracked and smaller
+brand_sz        =  6.0;  // hero cap height
+brand_sub_sz    =  3.8;  // company line — deliberately UNDER the hero: this
+                         // is the product's plate, and the tracking is what
+                         // gives the company line its presence, not its size
+brand_maker_sz  =  3.0;  // the maker row is a footnote, not a third shout
+// (The lockup rides the MARK's column — brand_dx is set beside bird_dx, below,
+// because OpenSCAD reads assignments in order and a forward reference here is
+// silently undefined rather than an error.)
 
 /* [Frame — adhesive wall rails] */
 // Adhesive WALL mounting — the no-screws alternative to the keyholes. Two
@@ -734,37 +794,42 @@ adh_mark_w  = 0.8;   // outline moat width
 // (brand words, rating block, QR) is a deboss for the same reason, and they
 // all share one floor depth so a single tool change serves the lot.
 back_bird   = true;
-bird_h      = 32.0;  // mark height. The clear middle runs about x ±21 between
-                     // the QR's quiet zone and the SD mouth, so this is sized
-                     // to that gap rather than to the plate
-bird_dx     = 0.0;   // centered: the lockup is below it, the rating block is
-bird_dy     = 6.0;   // upper-right, the QR left — this is the one empty field
-// SOLID, not an outline. The mark used to be drawn as a 1.2 mm line and it
-// read as a wire diagram of a bird from arm's length — the one graphic on
-// this plate that is supposed to be recognizable across a room was the
-// faintest thing on it. `fill` hands mark_bird() its silhouette instead, with
-// the eye and the wing knocked back out in the BODY color, which is the brand
-// art's own construction: a solid accent bird with a dark eye.
+// THE PLATE IS THE BADGE'S, and everything else is laid out around it. That
+// is the reordering this revision is: the mark used to be sized to whatever
+// gap the QR and the SD mouth left over (32 mm, "the clear middle runs about
+// x ±21"), which is how you get a logo that looks like it was fitted in
+// afterwards — because it was. Now the mark is placed first, at the size it
+// wants, and the vents, the spec block and the help line take what is left.
 //
-// It also fixes the accent's economics rather than breaking them. PRINT
-// COLORS argues the accent should be small and deliberate, and a solid mark
-// is more accent area than an outlined one — but it is the SAME footprint
-// (the outline's bounding shape), in the same 1.2 mm skin band, on the same
-// tool change. It costs no extra swap and no extra layer; it just stops
-// spending the swap on something nobody can see.
-bird_fill   = true;  // solid silhouette (brand art) vs. outline strokes
-bird_rib    = 2.0;   // stroke width. WIDER than the coupon's 0.7 test rib on
-                     // purpose: this is a deboss read by shadow, not an emboss
-                     // read by highlight, and a 0.7 groove at 0.42 line width
-                     // fills in with the skin above it. In fill mode it is
-                     // the OUTLINE weight and the width of the knocked-out
-                     // eye/wing lines, so it still has to clear the nozzle.
+// 70 nominal draws about 62 x 68 mm: the largest mark that keeps its tail
+// clear of the microSD mouth and its crown clear of the top vent band, on a
+// plate whose usable field is 197 x 115 minus four keyholes, four boss
+// pockets and a 40 mm card window. Every one of those clearances is asserted.
+bird_h      = 70.0;  // NOMINAL height (mark_span units) — see mark_h_mm() for
+                     // what actually gets drawn; the design span carries
+                     // headroom the drawing does not use
+bird_dx     = -24.0; // LEFT of center, and not by taste: the SD mouth owns
+bird_dy     = 6.0;   // x 23..48, so a centered mark would put its tail through
+                     // the card window. Offsetting the badge and letting the
+                     // right-hand field carry the spec block and the vents is
+                     // the composition that admits the window exists.
+// The lockup rides the MARK's column, not the plate's. The badge sits left of
+// center because the card window owns the right, and type centered under a
+// badge that is not centered reads as a mistake in both places at once.
+brand_dx    = bird_dx;
+bird_rib    = 2.6;   // stroke width. The mark is MONOLINE — one weight for
+                     // the outline, the C, the V and the pad alike — so this
+                     // one number decides whether the whole drawing prints.
+                     // 2.6 at h = 70 is 4.1 design units against the 4.9 the
+                     // drawing can carry (mark_rib_ok, asserted in the
+                     // library): the proportion the brand art uses, with the
+                     // shoulder notch and the C's mouth still open.
 // The mark's real footprint, straight off the library, stroke caps included.
 // Hoisted here because the grille keepouts are assembled long before the
 // branding asserts run, and both have to mean the same box.
 bird_half_w = back_bird ? mark_w_mm(bird_h, bird_rib)/2 : 0;
 bird_half_h = back_bird ? mark_h_mm(bird_h, bird_rib)/2 : 0;
-bird_vent_gap = 1.6;  // plate left between the mark and the nearest egg. The
+bird_vent_gap = 3.0;  // plate left between the mark and the nearest egg. The
                       // old 0.6 was measured to the keepout box, and with the
                       // box oversized the visible gap was whatever the tail
                       // happened to leave — about 1 mm on the right and less
@@ -1348,7 +1413,24 @@ qr_dy   = 39.0;   // field center, +y = toward the back edge (a battery
 //                 silently come out inverted.
 // The module SHAPE is safe either way: the opening in qr_field2d was decode-
 // tested at 0.22/0.30/0.40 rounding and reads at all three.
-qr_back      = true;   // deboss the help QR into the back plate too
+// ⚠️  OFF, and this is the one thing in this revision that COSTS you something.
+// The symbol plus its quiet zone is a 37.7 mm square — after the card window's
+// 40 mm it is the second-largest object on the plate, and the two of them plus
+// a mark worth looking at do not fit on a 197 x 115 field that also carries
+// four keyholes and four boss pockets. Every arrangement tried put something
+// within 2 mm of something else, which is not a canvas, it is a packing
+// problem with a bird in it.
+//
+// So the plate carries the help URL as TYPE instead (help_line, below the spec
+// block). You read it and type it rather than scanning it — worse, and
+// honestly worse, not "equivalent". What is unaffected: the DOCK still carries
+// a scannable symbol, and so do the coupons, so the QR is still proven and
+// still reachable — just not molded into the hero face.
+//
+// Turning it back on is one word, and the asserts will then tell you exactly
+// what it collides with rather than letting it overlap the mark. If you want
+// both, the mark has to come down to about 45 mm and the composition changes.
+qr_back      = false;  // deboss the help QR into the back plate too
 qr_back_cell = 1.3;    // module size — 3.1 line-widths at 0.42, up from 1.2
                        // (2.9): printable in theory at 1.2, marginal in fact,
                        // and this symbol is the one read off a wall. 1.34 is
@@ -1563,26 +1645,69 @@ sd_teth_y = sd_dy + sd_l/2 + sd_lip + sd_teth_gap;   // tether anchor hole cente
 // reason — what voltage, what connector, indoors or out — and at 2.6 mm it
 // was the smallest type on the plate, below the BOOT/RESET labels, debossed
 // in the body color on a black part. It is now the size the gap can actually
-// carry, which is not a free choice: the block is boxed between the mark on
-// its left and the top-right keyhole's reach, and rating_w grows with the
-// longest line, so the asserts below are what set this ceiling. 3.3 with the
-// block re-centered in that gap is what fits.
-rating_sz = 3.3;    // sized to its gap — see the width asserts below
+// carry, which is not a free choice: rating_w grows with the longest line and
+// the block is boxed between the mark on its left and the +x boss pocket on
+// its right, so the asserts below are what set this ceiling.
+rating_sz = 3.2;    // sized to its gap — see the width asserts below
 rating_lh = rating_sz*1.45;
 // width from the LONGEST line, the same way the edge words size themselves,
 // so editing rating_lines can never silently overrun the gap it sits in
 rating_w  = 2*0.392*rating_sz*max([for (l = rating_lines) len(l)]);
 rating_h  = rating_lh*len(rating_lines) + 2;
-rating_dx = 39.0;   // centered in the clear gap: with the adhesive rails off
-                    // its left neighbor is the MARK (ends ~16), and the
-                    // keyhole's reach starts ~61. It sat at 42 — centered in
-                    // the gap the rails leave, which is the narrower gap and
-                    // not the one this build has
-rating_dy = 22.0;   // NOT the lower band: that row belongs to the brand line,
-                    // and the first render had the two sets of glyphs sitting
-                    // on top of each other. This is the clear field right of
-                    // the adhesive rails, inboard of the top-right keyhole.
-fr_keep_base = concat(
+// THE RIGHT-HAND COLUMN. With the badge holding the left of the plate and the
+// card window holding the bottom right, the strip above that window is the one
+// place a spec block can sit without crowding either — so the plate reads as
+// three things (badge, small print, window) stacked down the right instead of
+// four things scattered. It used to live in the top-right corner, which is
+// where a fourth thing goes when nobody has decided where things go.
+rating_dx = 37.0;   // centered between the mark's box and the +x boss pocket
+rating_dy = 21.0;   // above the card window, below the top vent band
+// The help URL, as TYPE — this is the line that replaces the back-plate QR
+// (see qr_back for what that cost and why). It sits under the spec block, in
+// the same column, because "where do I get help" is small print too.
+help_line = "SECURACV.COM/QR";
+help_sz   = 2.8;
+help_dy   = 6.5;    // between the spec block's last row and the card window
+
+// ── Type metrics ───────────────────────────────────────────────────────────
+// OpenSCAD has no text-metrics primitive, so every layout number that depends
+// on how wide or tall a line renders has to be ESTIMATED — and estimated in
+// ONE place, or the estimate drifts between the thing that draws the type and
+// the thing that keeps vents off it. 0.392 per character per mm of size is the
+// advance the rating block was calibrated against; `sp` is text()'s spacing
+// multiplier, which scales the advance and therefore the width.
+//
+// Deliberately a hair pessimistic. The failure these guard against is type
+// running into a vent hole or off a chamfer, and both are only visible on a
+// printed part.
+function _lbl_w(sz, n, sp = 1) = 2*0.392*sz*n*sp;
+// text(valign="center") centers the FONT box, which runs about -0.21 to +0.73
+// of the size around the baseline — so the half-height is 0.47*size, not the
+// cap height. Using cap height here under-reports a gap by a third of a line.
+function _lbl_half(sz) = sz*0.47;
+
+help_w = _lbl_w(help_sz, len(help_line));
+help_h = help_sz*1.45 + 2;
+
+// THE LOCKUP'S BAND — derived from the rows, so it cannot describe a stack
+// that has moved. Top of the company line down to the bottom of the maker row.
+brand_sub_y   = -(fr_yi/2 - brand_row_sub);
+brand_hero_y  = -(fr_yi/2 - brand_row_hero);
+brand_maker_y = -(fr_yi/2 - brand_row_maker);
+brand_band_hi = brand_sub_y + _lbl_half(brand_sub_sz);
+brand_band_lo = brand_maker_y - _lbl_half(brand_maker_sz);
+brand_band_y  = (brand_band_hi + brand_band_lo)/2;
+brand_band_h  = brand_band_hi - brand_band_lo;
+brand_band_w  = max(_lbl_w(brand_sub_sz, len(brand_sub), 2.0),
+                    _lbl_w(brand_sz, len(brand_back), 1.15),
+                    _lbl_w(brand_maker_sz, len(brand_maker) + 5, 1.0));
+
+// The keepouts SPLIT by who owns them, so the open-area echo can attribute
+// the loss instead of lumping it. fr_keep_fixed is the hardware and the
+// small print — things the grille never had a claim on. fr_keep_badge is
+// what this revision spends on the mark, and it is the number worth arguing
+// with when the case runs warm.
+fr_keep_fixed = concat(
     // grown with the doubler pads + mouth chamfers
     mount_keyholes ? [for (sx = [1,-1], sy = [1,-1])
         [sx*khm_dx, sy*(khm_y + khm_len/2),
@@ -1600,20 +1725,49 @@ fr_keep_base = concat(
     qr_back ? [[qr_back_dx, qr_back_dy,
                 qr_back_reach + vent_slot_w/2 + 0.4,
                 qr_back_reach + vent_slot_l/2 + 0.4]] : [],
-    // the mark wants unbroken plate under it — a vent egg laid across the
-    // bird would share a face with a deboss floor, which CGAL calls
-    // non-manifold, and would read as a hole punched through the logo
-    // Half-extents from the LIBRARY's own bbox, not from a ratio typed here.
-    // 0.62*bird_h and bird_h/2 were the old drawing's proportions frozen into
-    // this file: they described a bird 39.7 mm wide, so the grille was kept
-    // out of a box the mark did not fill on the right — while the eggs it did
-    // not keep out sat a millimeter off the tail. Ask the mark instead and
-    // the keepout follows the drawing whenever the drawing moves.
-    back_bird ? [[bird_dx, bird_dy,
-                  bird_half_w + vent_slot_w/2 + bird_vent_gap,
-                  bird_half_h + vent_slot_l/2 + bird_vent_gap]] : [],
     // the rating stamp wants unbroken plate under it, same as any deboss
-    rating_stamp ? [[rating_dx, rating_dy, rating_w/2 + 2, rating_h/2 + 2]] : []);
+    rating_stamp ? [[rating_dx, rating_dy, rating_w/2 + 3.5, rating_h/2 + 3]] : [],
+    // ...and so does the help line under it
+    help_line == "" ? [] : [[rating_dx, help_dy, help_w/2 + 2, help_h/2 + 2]],
+    // THE LOCKUP'S BAND — the whole width of it, not just the type's own box.
+    // Two reasons, and the second is the one that matters. First, the lockup
+    // never had a keepout at all: it got away with it because the grille's
+    // bottom egg row happened to stop 0.8 mm above the company line, a
+    // clearance nothing checked and nothing owned, and the moment the rows
+    // moved for their new leading that row landed on them. Second, a keepout
+    // sized to the type leaves the eggs BESIDE it — five at one end of the
+    // band, four at the other, marooned under the lockup like crumbs. A band
+    // either belongs to the type or it belongs to the grille. This one is the
+    // type's, all the way across, and the plate is quieter for it.
+    [[0, brand_band_y, pcb_w/2,
+      brand_band_h/2 + vent_slot_l/2 + 1.5]],
+    // THE BADGE'S COLUMN, all of it. The grille used to leave a stranded block
+    // of eggs out past the mark's left shoulder — legal, since it cleared
+    // every keepout, and wrong, because a dozen small holes in the corner of
+    // an otherwise empty half read as debris rather than as ventilation. The
+    // plate is two halves now: the left is the badge's and carries nothing
+    // else, the right is the machine's and carries the spec block, the help
+    // line, the card window and every vent. Splitting it here rather than by
+    // hand-placing the field means the split MOVES with the mark.
+    // THE GUTTER between the badge and the card window, below the spec block.
+    // "SD" and the help line stand in it, and a single column of eggs was
+    // standing in it too — one column, four eggs, wedged between the mark's
+    // tail and the window's mouth, which is the exact place a plate can least
+    // afford noise. Vents belong in a field; this is a margin.
+    [[(bird_dx + bird_half_w + sd_dx - sd_w/2 - 3.4)/2,
+      (help_dy + help_h/2 - fr_yo/2)/2,
+      (sd_dx - sd_w/2 - 3.4 - bird_dx - bird_half_w)/2 + vent_slot_w/2,
+      (help_dy + help_h/2 + fr_yo/2)/2]]);
+// What the badge claims: its own box plus its margin, and — unless you turn
+// badge_column off — the rest of its half of the plate.
+fr_keep_badge = !back_bird ? [] : concat(
+    [[bird_dx, bird_dy,
+      bird_half_w + vent_slot_w/2 + bird_vent_gap,
+      bird_half_h + vent_slot_l/2 + bird_vent_gap]],
+    badge_column ? [[-pcb_w/2 - 1, 0,
+                     pcb_w/2 + 1 + bird_dx + bird_half_w + bird_vent_gap,
+                     pcb_h]] : []);
+fr_keep_base = concat(fr_keep_fixed, fr_keep_badge);
 fr_keep_rails = adh_rails ? [for (sx = [1,-1])
     [sx*adh_rail_dx, 0,
      adh_rail_w/2 + adh_mark_w + vent_slot_w/2 + 0.6,
@@ -1816,12 +1970,37 @@ assert(!(back_bird && adh_rails),
            "each side) sit under a ", 2*bird_half_w, " mm mark. Pick one: ",
            "back_bird=false for a Command-strip build, or adh_rails=false ",
            "(the default) to keep the mark and reclaim 64 grille slots."));
+// THE BADGE OWNS THE PLATE, so these are the checks that decide how big it is
+// allowed to get. Each one names the thing it hit, because "the mark is too
+// big" is not actionable and "the mark's tail is 1.2 mm into the card window"
+// is. The QR clause is conditional now: with qr_back off there is no quiet
+// zone to stay out of, and asserting one anyway would reserve 38 mm of plate
+// for geometry that is not cut — the same mistake the rating block's left
+// bound made against the adhesive rails.
+assert(!back_bird || bird_dx + bird_half_w < sd_dx - sd_w/2 - 2,
+       str("frame: the mark (", mark_w_mm(bird_h, bird_rib),
+           " mm wide at bird_dx ", bird_dx, ", right edge ",
+           bird_dx + bird_half_w, ") runs into the card window at ",
+           sd_dx - sd_w/2, " — shrink bird_h or move bird_dx left"));
+assert(!back_bird || !qr_back
+       || bird_dx - bird_half_w > qr_back_dx + qr_back_reach + 2,
+       str("frame: the mark runs into the help QR's quiet zone. These two are ",
+           "the plate's biggest objects and they do not both fit beside a ",
+           "40 mm card window at this mark size — bring bird_h down to about ",
+           "45, or leave qr_back off and keep the URL as type (help_line)."));
+// ...and it has to stay ON the plate, clear of the rim chamfer and of the four
+// M3 boss head pockets, which are real holes and not just keepouts.
 assert(!back_bird
-       || (bird_dx - bird_half_w > qr_back_dx + qr_back_reach + 2
-           && bird_dx + bird_half_w < sd_dx - sd_w/2 - 2),
-       str("frame: the Canary mark (", 2*bird_half_w, " mm wide at bird_dx ",
-           bird_dx, ") runs into the QR quiet zone or the SD mouth — shrink ",
-           "bird_h or move bird_dx"));
+       || (abs(bird_dx) + bird_half_w < fr_xo/2 - frame_rim - 2
+           && abs(bird_dy) + bird_half_h < fr_yo/2 - frame_rim - 2),
+       "frame: the mark hangs off the plate's flat — shrink bird_h");
+assert(!back_bird || min([for (sx = [1,-1], sy = [1,-1])
+           max(abs(bird_dx - (-m3_ox + sx*m3_dx/2)) - bird_half_w - cb_d/2 - 1.5,
+               abs(bird_dy - ( m3_oy + sy*m3_dy/2)) - bird_half_h - cb_d/2 - 1.5)]) > 0,
+       str("frame: the mark's box reaches an M3 boss head pocket. The four of ",
+           "them sit at (±", m3_dx/2, ", ±", m3_dy/2, ") off the pattern ",
+           "center and are counterbores, not keepouts — move bird_dx/dy or ",
+           "shrink bird_h."));
 stamp_half = stamp_size*0.9 + stamp_size*0.39 + 0.6;   // text block half-height
 assert(!stamp_show || (stamp_depth < back_t - 1.5
        && stamp_dy - stamp_half
@@ -2023,36 +2202,59 @@ assert(!rating_stamp || !mount_keyholes
 assert(!rating_stamp || norm([rating_dx - sd_dx, rating_dy - sd_dy])
        > rating_h/2 + sd_l/2 + 4,
        "frame: rating stamp crowds the SD window");
-// THE LOCKUP'S BOTTOM ROW. The maker line went in under the hero line, into
-// the only band of the plate that was empty — and "empty" there is 5.6 mm
-// between the hero line's descender box and the point where the back rim's
-// chamfer starts rolling the surface away. Both ends are checked, because a
-// row that hangs off the chamfer prints as a smeared half-deboss and looks
-// like a slicing fault rather than like a layout mistake.
-//
-// Type extents, not cap heights: text(valign="center") centers the FONT box,
-// which runs about -0.21 to +0.73 of the size around the baseline. Using cap
-// height here would under-report the gap by a third of a line.
-function _lbl_half(size) = size*0.47;
-brand_maker_y = -(fr_yi/2 - brand_row_maker);
-brand_hero_y  = -(fr_yi/2 - brand_row_hero);
+// THE LOCKUP'S LEADING. "Not squished" is a look, so it is checked as one:
+// every gap between rows, and the air under the last row, against the type's
+// real extents. The rows are free to move — the asserts are what stop them
+// closing up again the next time something else needs the space.
+brand_lead_min = 2.6;   // ink-to-ink between rows. Below this the stack reads
+                        // as one block of type rather than three lines
+assert(brand_hero_y + _lbl_half(brand_sz)
+       < brand_sub_y - _lbl_half(brand_sub_sz) - brand_lead_min,
+       str("frame: \"", brand_back, "\" (top at ",
+           brand_hero_y + _lbl_half(brand_sz), ") crowds \"", brand_sub,
+           "\" (bottom at ", brand_sub_y - _lbl_half(brand_sub_sz),
+           ") — under the ", brand_lead_min,
+           " mm the lockup's rows are supposed to keep. Spread brand_row_* or ",
+           "shrink a size"));
 assert(brand_maker_y + _lbl_half(brand_maker_sz)
-       < brand_hero_y - _lbl_half(brand_sz) - 0.4,
+       < brand_hero_y - _lbl_half(brand_sz) - brand_lead_min,
        str("frame: the maker line (top at ",
-           brand_maker_y + _lbl_half(brand_maker_sz), ") runs into \"",
+           brand_maker_y + _lbl_half(brand_maker_sz), ") crowds \"",
            brand_back, "\" (bottom at ", brand_hero_y - _lbl_half(brand_sz),
            ") — lower brand_row_maker or shrink brand_maker_sz"));
-assert(brand_maker_y - _lbl_half(brand_maker_sz) > -(fr_yo/2 - frame_rim) + 0.8,
+assert(brand_maker_y - _lbl_half(brand_maker_sz) > -(fr_yo/2 - frame_rim) + 2.0,
        str("frame: the maker line (bottom at ",
            brand_maker_y - _lbl_half(brand_maker_sz),
-           ") reaches the back rim's chamfer at ", -(fr_yo/2 - frame_rim),
-           " — raise brand_row_maker"));
-// ...and it must stay in the plate's own column, clear of the SD mouth's side.
-// The hero line above it is the wider of the two and already passes this, but
-// the maker row carries a YEAR that grows by a character on a CalVer bump.
-assert(0.392*brand_maker_sz*(len(brand_maker) + 6) < abs(sd_dx) - sd_w/2 - 2
-       || abs(brand_maker_y - sd_dy) > sd_l/2 + 4,
-       "frame: the maker line reaches the SD window's column — shrink brand_maker_sz");
+           ") is under 2 mm off the back rim's chamfer at ",
+           -(fr_yo/2 - frame_rim),
+           " — raise brand_row_maker. A row that hangs onto the chamfer prints ",
+           "as a smeared half-deboss and reads as a slicing fault"));
+// ...and the whole band must stay in the plate's own column, clear of the card
+// window's side. The widest row is what this is about, whichever one that is.
+assert(brand_dx + brand_band_w/2 < sd_dx - sd_w/2 - 2
+       || abs(brand_band_y - sd_dy) > sd_l/2 + 6.7 + brand_band_h/2,
+       str("frame: the lockup (right edge ", brand_dx + brand_band_w/2,
+           ") reaches the card window's column at ", sd_dx - sd_w/2 - 2,
+           " — narrow the tracking, shrink a size, or move brand_dx"));
+// The badge and its lockup are one thing; if the rows drift up into the mark
+// they stop being a caption and start being a collision.
+assert(!back_bird || brand_band_hi < bird_dy - bird_half_h - 2.0,
+       str("frame: the lockup's top row (", brand_band_hi,
+           ") runs into the mark's box (bottom at ", bird_dy - bird_half_h,
+           ") — lower brand_row_sub or shrink bird_h"));
+// The spec block and the help line share the right-hand column with the card
+// window. Both directions checked: the column has a top (the vent band) and a
+// bottom (the window's countersunk mouth).
+assert(help_line == "" || help_dy - help_h/2 > sd_dy + sd_l/2 + 3.4 + 1.5,
+       str("frame: the help line (bottom at ", help_dy - help_h/2,
+           ") sits on the card window's mouth at ", sd_dy + sd_l/2 + 3.4,
+           " — raise help_dy"));
+assert(help_line == "" || !rating_stamp
+       || help_dy + help_h/2 < rating_dy - rating_h/2 - 1.5,
+       "frame: the help line runs into the spec block above it — lower help_dy");
+assert(help_line == "" || !back_bird
+       || rating_dx - help_w/2 > bird_dx + bird_half_w + 1.5,
+       "frame: the help line reaches the mark's box — shorten it or move rating_dx");
 assert(!qr_back || !mount_keyholes
        || abs(qr_back_dx) + qr_back_reach
           < khm_dx - (mount_portrait ? khm_plen + khm_slide_w/2 + khm_pad_w : 10) - 2,
@@ -2108,7 +2310,7 @@ assert(fr_yo/2 + 2 < std_open/2,
 echo(str("Canary 7in touch v0.9-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
          " mm, window ", view_w, " x ", view_h, ", lip ", lip_min,
          " mm, tray grille ~",
-         round(vent_back ? len(grille_cells())*egg_area(vent_slot_l, vent_slot_w, vent_tip)/100 : 0),
+         round(vent_back ? grille_area(grille_cells())/100 : 0),
          " cm2 open (computed, boss dodges included)",
          "  (IN DEVELOPMENT — MEASURE CONNECTORS)"));
 // The panel this case is for, read straight off the registry record — so a
@@ -2146,17 +2348,43 @@ echo(str("  frame mounting: 4x keyhole, ", back_t + khm_pad_t,
                          "the moat outlines (case pulls off its wall halves ",
                          "first; the tabs are then exposed)")
                    : "off"));
-echo(str("  frame back grille: ", len(grille_cells(-m3_ox, m3_oy, fr_keepouts)),
-         " slots ≈ ", round(len(grille_cells(-m3_ox, m3_oy, fr_keepouts))
-                            *egg_area(vent_slot_l, vent_slot_w, vent_tip)/100), " cm2 open",
+// The grille's honest number, and what the grade cost it. `flat` is the SAME
+// cell list with the gradient switched off, so the comparison is like for
+// like rather than against a remembered figure — and it is the number to
+// argue with if the case runs hot.
+// THE GRILLE'S HONEST NUMBER, and where the rest of it went. Three lists, one
+// pass each, so the attribution comes out of the same predicate the cutter
+// uses rather than out of a memory of what the plate used to be:
+//   fr_cells      what is actually cut
+//   ..._flat      the same keepouts with the size grade switched off
+//   ..._nobadge   the same again with the badge's claim dropped
+// The order of the subtractions is the order of the design decisions, and the
+// big one is not the grade — it is how large the mark is.
+fr_cells        = grille_cells(-m3_ox, m3_oy, fr_keepouts);
+fr_cells_flat   = grille_cells(-m3_ox, m3_oy, fr_keepouts, grade = false);
+fr_cells_nobadge = grille_cells(-m3_ox, m3_oy,
+                                concat(fr_keep_fixed, fr_keep_rails), grade = false);
+echo(str("  frame back grille: ", len(fr_cells), " slots ≈ ",
+         round(grille_area(fr_cells)/100), " cm2 open",
+         !back_bird ? "" : str(
+           " — the plate is the BADGE's now, and this is what that costs. A ",
+           "flat, un-graded field on the same keepouts is ",
+           round(grille_area(fr_cells_flat)/100), " cm2; with the badge's ",
+           "claim dropped as well it is ",
+           round(grille_area(fr_cells_nobadge)/100),
+           " cm2. So the size grade is worth ",
+           round((grille_area(fr_cells_flat) - grille_area(fr_cells))/100),
+           " cm2 and the MARK is worth ",
+           round((grille_area(fr_cells_nobadge) - grille_area(fr_cells_flat))/100),
+           " cm2 — if this case runs warm, bird_h is the knob that matters and ",
+           "vent_grade is not. The convection path itself (bottom-wall intake ",
+           "to top-wall exhaust) is not on this plate and is untouched."),
          adh_rails ? str(" — the adhesive rails cost ",
              len(grille_cells(-m3_ox, m3_oy, fr_keep_base))
-             - len(grille_cells(-m3_ox, m3_oy, fr_keepouts)), " slots ≈ ",
-             round((len(grille_cells(-m3_ox, m3_oy, fr_keep_base))
-                    - len(grille_cells(-m3_ox, m3_oy, fr_keepouts)))
-                   *egg_area(vent_slot_l, vent_slot_w, vent_tip)/100),
-             " cm2 (adh_rails=false reclaims them); the bottom-intake → ",
-             "top-exhaust wall vents are untouched either way") : ""));
+             - len(fr_cells), " slots ≈ ",
+             round((grille_area(grille_cells(-m3_ox, m3_oy, fr_keep_base))
+                    - grille_area(fr_cells))/100),
+             " cm2 (adh_rails=false reclaims them)") : ""));
 echo(str("  frame two-color (optional, single extruder): prints back-plate-",
          "down — ACCENT BACK SKIN: start in the accent color, swap to the ",
          "body color at z = ", frame_rim, " mm (every deboss floor sits at ",
@@ -2352,24 +2580,48 @@ module bezel_print() { bezel(); }
 // computed by the same predicate that cuts the slots and cannot drift.
 // A slot survives if it sits inside the PCB footprint, off the bosses, and
 // out of every caller-supplied [x, y, half_w, half_h] keepout rectangle.
-function grille_cells(ox = m3_ox, oy = m3_oy, keepouts = []) =
+// The size a cell grades to, as a fraction of the nominal egg — 1 with the
+// grade off, and 0 for a cell that grades below the drop threshold, which is
+// how the field fades to bare plate beside the mark instead of stopping on a
+// straight edge. Radial from the MARK, so the badge is visibly what organizes
+// it; with no mark on the plate there is nothing to grade around and the field
+// stays flat.
+function vent_k(x, y, grade = true) =
+    !(grade && vent_grade && back_bird) ? 1
+  : let (d = norm([x - bird_dx, y - bird_dy]),
+         f = (d - vent_d0) / (vent_d1 - vent_d0),
+         k = vent_k_min + (1 - vent_k_min) * min(1, max(0, f)))
+    k < vent_k_drop ? 0 : k;
+
+// Cells are [x, y, k]. k rides along rather than being recomputed by every
+// consumer, because the open-area echo, the accent rings and the cutter all
+// have to agree about how big each egg is — and "computed twice" is how the
+// echoed area and the cut area stop matching.
+function grille_cells(ox = m3_ox, oy = m3_oy, keepouts = [], grade = true) =
     [for (r = [0:vent_rows-1], c = [0:vent_cols-1])
         let (x = (c - (vent_cols-1)/2) * vent_pitch_x
                  + (r % 2 == 1 ? vent_pitch_x/2 : 0) - vent_pitch_x/4,
-             y = (r - (vent_rows-1)/2) * vent_pitch_y)
-        if (abs(x) < pcb_w/2 - 6 && abs(y) < pcb_h/2 - 6
+             y = (r - (vent_rows-1)/2) * vent_pitch_y,
+             k = vent_k(x, y, grade))
+        if (k > 0 && abs(x) < pcb_w/2 - 6 && abs(y) < pcb_h/2 - 6
             && min([for (sx = [1,-1], sy = [1,-1])
                    max(abs(x - (ox + sx*m3_dx/2)) - 6,
                        abs(y - (oy + sy*m3_dy/2)) - 9)]) > 0
             && (len(keepouts) == 0 ||
                 min([for (k = keepouts)
                     max(abs(x - k[0]) - k[2], abs(y - k[1]) - k[3])]) > 0))
-        [x, y]];
+        [x, y, k]];
+// Open area of a cell list, in mm2 — the shoelace area of the SAME eggs the
+// cutter draws, each at its own graded size. Not len(cells)*one_egg any more:
+// with the grade on, that would overstate a faded field by a third.
+function _vsum(v, i = 0, acc = 0) = i >= len(v) ? acc : _vsum(v, i + 1, acc + v[i]);
+function grille_area(cells) =
+    _vsum([for (p = cells) egg_area(vent_slot_l*p[2], vent_slot_w*p[2], vent_tip)]);
 module vent_grille(ox = m3_ox, oy = m3_oy, keepouts = []) {
     for (p = grille_cells(ox, oy, keepouts))
-        translate([p[0], p[1] - vent_slot_l/2 + vent_slot_w/2, -0.1])
+        translate([p[0], p[1] - vent_slot_l*p[2]/2 + vent_slot_w*p[2]/2, -0.1])
             linear_extrude(back_t + 0.2)
-                egg2d(vent_slot_l, vent_slot_w, vent_tip);
+                egg2d(vent_slot_l*p[2], vent_slot_w*p[2], vent_tip);
 }
 module back() {
     total_d = cav_d + back_t;   // full tray depth (floor + cavity to glass ledge)
@@ -2554,11 +2806,14 @@ module back_graphics(ink = "all") {
         // "SD" sits beside the tether channel (its old spot above the mouth
         // is exactly where the strap now runs)
         frame_lbl(sd_dx - 8, sd_teth_y, "SD");
-        // rating stamp — stacked lines in the upper-right clear gap
+        // spec block — stacked lines in the right-hand column, above the card
+        // window; the help URL closes the column under it
         if (rating_stamp) for (i = [0:len(rating_lines)-1])
             frame_lbl(rating_dx, rating_dy + rating_h/2 - 1
                                  - (i + 0.5)*rating_lh,
                       rating_lines[i], rating_sz);
+        if (help_line != "")
+            frame_lbl(rating_dx, help_dy, help_line, help_sz);
     }
     if (all || ink == "bird")
         // The mark, in the clear middle the adhesive rails used to own.
@@ -2568,7 +2823,7 @@ module back_graphics(ink = "all") {
         if (back_bird)
             translate([bird_dx, bird_dy, fr_depth - label_back_depth])
                 linear_extrude(label_back_depth + 0.1)
-                    mark_bird(bird_h, bird_rib, bird_fill);
+                    mark_bird(bird_h, bird_rib);
     if (all || ink == "mark") {
         // THE LOCKUP — all three rows, and with the bird the only thing on
         // the plate that takes the accent. The maker row joined it when it
@@ -2580,19 +2835,16 @@ module back_graphics(ink = "all") {
         // together without dragging the functional labels along with them.
         // They are one mark, so they are one group.
         //
-        // The company line sits beside the SD recess (mouth bottom -47.2), so
-        // it must stay inside x ±23.2 — it renders ±17.
-        frame_lbl(0, -(fr_yi/2 - brand_row_sub), brand_sub,
-                  size = brand_sz, spacing = 1.6);
-        // The product name is DEAD CENTER on the plate, BELOW the SD recess
-        // where only the nail scoop is left — at this row the scoop spans
-        // x 32.3..39.0 and the line renders ±28, so ~4 of daylight. Grow it
-        // and it walks into the SD: this layout is preview-verified.
-        frame_lbl(0, -(fr_yi/2 - brand_row_hero), brand_back,
+        // All three rows ride brand_dx — the MARK's column, not the plate's.
+        // The company line is tracked wide and set smaller than the product
+        // name: on the back of a product the product's name is the headline.
+        frame_lbl(brand_dx, -(fr_yi/2 - brand_row_sub), brand_sub,
+                  size = brand_sub_sz, spacing = 2.0);
+        frame_lbl(brand_dx, -(fr_yi/2 - brand_row_hero), brand_back,
                   size = brand_sz, spacing = 1.15);
         // ...and the maker, closing the stack. Narrow and un-tracked so it
         // reads as the footnote it is rather than as a third brand line.
-        frame_lbl(0, -(fr_yi/2 - brand_row_maker),
+        frame_lbl(brand_dx, -(fr_yi/2 - brand_row_maker),
                   str(brand_maker, " ", lcd7_stamp_year()),
                   size = brand_maker_sz, spacing = 1.0);
     }
@@ -2763,10 +3015,13 @@ module vent_accent_rings() {
         translate([0, 0, fr_depth - vent_accent_d])
             linear_extrude(vent_accent_d + 0.1)   // overshoots; frame() bounds it
                 for (p = grille_cells(-m3_ox, m3_oy, fr_keepouts))
-                    translate([p[0], p[1] - vent_slot_l/2 + vent_slot_w/2])
+                    translate([p[0], p[1] - vent_slot_l*p[2]/2 + vent_slot_w*p[2]/2])
                         difference() {
+                            // p[2] is the cell's graded size — the ring has to
+                            // follow the hole it lines, or a faded egg near
+                            // the mark gets a full-size ring floating round it
                             offset(r = vent_accent_w)
-                                egg2d(vent_slot_l, vent_slot_w, vent_tip);
+                                egg2d(vent_slot_l*p[2], vent_slot_w*p[2], vent_tip);
                             // NOT the bare egg. The vent hole is cut with
                             // exactly this profile, so a bare inner boundary
                             // lands on the hole's own wall — the same plane,
@@ -2779,7 +3034,7 @@ module vent_accent_rings() {
                             // coplanar. Same fix as the dock's phantom
                             // over-lip walls (#1373).
                             offset(r = -vent_accent_eps)
-                                egg2d(vent_slot_l, vent_slot_w, vent_tip);
+                                egg2d(vent_slot_l*p[2], vent_slot_w*p[2], vent_tip);
                         }
 }
 

@@ -3319,7 +3319,7 @@
         "tol_press": "Parts pushed in to stay: magnets, light pipes. They should seat firmly by thumb.",
         "tol_hole": "Self-tapping M2 pilots: threads should bite without splitting the post.",
         "kh_click": "The keyhole retention bump. Mate won't slide past it → smaller number; slides back off too easily → bigger. 0 removes the click.",
-        "emblem_h": "How tall the embossed Canary prints. At the default 9 mm it spans 11.1 mm — the clear air between the two wordmarks. 0 removes the station.",
+        "emblem_h": "How tall the embossed Canary prints. At the default 15.8 mm it spans 15.4 mm — the clear air between the two wordmarks. 0 removes the station.",
         "emblem_rib": "No part of the mark is drawn narrower than this, so one number decides the whole emblem. Blobbed and closed up → smaller; broken or missing → bigger. Below 0.4 mm is thinner than one extrusion.",
         "emblem_crown": "Domes the tops of the strokes instead of leaving them flat slabs, so the mark catches light like metal. 0 is a flat top; keep it under half the stroke or the crown pinches the strokes off."
       },
@@ -3333,7 +3333,7 @@
         "emblem_rib": "mm",
         "emblem_crown": "mm"
       },
-      "sha256": "934609397d912f8270ac015347539dcd8c95a33b1ad990f16c93b16824c27e2a",
+      "sha256": "6a5d60e1af8f36d1e1b1782b510dc3b1cb38c805558fa6d8ed5ba14ecec5f53e",
       "groups": [
         {
           "name": "What to render",
@@ -3576,8 +3576,7 @@
             {
               "name": "emblem_h",
               "type": "number",
-              "default": 9.0,
-              "desc": "EMBLEM station: mark height (0 removes the station)."
+              "default": 15.8
             },
             {
               "name": "emblem_rib",

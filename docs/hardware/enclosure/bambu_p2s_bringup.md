@@ -841,9 +841,9 @@ other and already assigned to filaments 1 / 2 / 3. Open it directly —
 
    | slot | filament | what it prints |
    |---|---|---|
-   | 1 | `pal_body` — **Black** | the case, the bezel ring, the vent mouths, and the bird's eye and wing (knocked out of the mark) |
+   | 1 | `pal_body` — **Black** | the case, the bezel ring, the vent mouths |
    | 2 | `pal_ink` — **White** | the help QR's modules, and nothing else |
-   | 3 | `pal_accent` — **Signal Yellow** (RAL 1003) | the bird and the lockup: SECURACV / CANARY / ERRERlabs |
+   | 3 | `pal_accent` — **Signal Yellow** (RAL 1003) | the mark and the lockup: SECURACV / CANARY / ERRERlabs |
 
 3. Open `lcd7_frame.3mf` and slice.
 
