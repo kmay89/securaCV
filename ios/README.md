@@ -194,9 +194,12 @@ rot:
 - **Check the Fleet** — the one honest answer, spoken from the same glance
   cache the widgets render. No app launch, no radio, instant. "All's well —
   5 of 5 healthy."
-- **Test Alert Path** — the provably-alive round trip from anywhere a
-  Shortcut can run. Opens the app on purpose: the proof should be seen on
-  the card and heard in the chirp, not narrated.
+- **Test Alert Path** — the alert self-test from anywhere a Shortcut can
+  run: posts a real notification and confirms iOS accepted it, the same
+  green check the provably-alive card lights. Opens the app on purpose: the
+  proof should be seen on the card and heard in the chirp, not narrated.
+  The spoken verdict claims only what the test proved — "alerts can reach
+  this device," never a device→relay round trip it didn't make.
 - **Quiet Hour** — every paired Canary muted for an hour in one verb, and
   the confirmation names, every time, what a mute can never silence: tamper
   and signature failures still come through (the same

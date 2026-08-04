@@ -106,10 +106,14 @@ final class GlanceAnswerTests: XCTestCase {
 
     // MARK: - the path test verdict
 
-    func testAVerifiedPathTestSaysTheFleetCanReachYou() {
+    func testAVerifiedPathTestClaimsOnlyWhatItProved() {
+        // The self-test posts a local notification and confirms iOS accepted
+        // it — the verdict says that, never a device→relay round trip it
+        // didn't make (rule 4: don't overclaim).
         let verdict = GlanceAnswer.pathTest(verified: true,
                                             summary: "Delivery verified just now")
-        XCTAssertEqual(verdict, "Your fleet can reach you — delivery verified just now.")
+        XCTAssertEqual(verdict, "Alerts can reach this device — delivery verified just now.")
+        XCTAssertFalse(verdict.contains("fleet can reach you"), verdict)
     }
 
     func testAFailedPathTestPassesTheSystemsObjectionThrough() {

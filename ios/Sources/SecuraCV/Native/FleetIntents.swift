@@ -6,9 +6,11 @@
 //
 //   * Check the Fleet   — the one honest answer, spoken from the glance
 //                         cache; no app launch, no radio, instant.
-//   * Test Alert Path   — the provably-alive round trip (docs §5b), from
-//                         anywhere a Shortcut can run. Opens the app: the
-//                         proof should be seen and heard, not narrated.
+//   * Test Alert Path   — the alert self-test (docs §5b): posts a real
+//                         notification and confirms iOS accepted it. Opens
+//                         the app: the proof should be seen and heard, not
+//                         narrated. The verdict claims only what the test
+//                         proved (rule 4: don't overclaim).
 //   * Quiet Hour        — every paired Canary muted for an hour, in one
 //                         verb. Tamper and failed signatures still punch
 //                         through (Witness.effectiveSeverity owns that; no
@@ -63,7 +65,7 @@ struct CheckFleetIntent: AppIntent {
 struct TestAlertPathIntent: AppIntent {
     static let title: LocalizedStringResource = "Test Alert Path"
     static let description = IntentDescription(
-        "Prove the whole alert path end-to-end and light the green check.")
+        "Run the alert self-test — post a real notification and confirm it can reach you.")
     /// The test posts a real notification and earns a real chirp — it should
     /// happen in front of the user, on the provably-alive card.
     static let openAppWhenRun = true
@@ -92,11 +94,15 @@ struct QuietHourIntent: AppIntent {
             count = store.quietFleet()
         } else {
             // Cold phone: write the same durable ledger the store re-applies
-            // at every fold. Ids come from the glance cache — the fleet as
-            // last published — demo rows excluded so sample data never
-            // inflates the honest count.
-            let ids = (PhoneGlanceCache.load()?.witnesses.map(\.id) ?? [])
-                .filter { !$0.hasPrefix(DemoFleet.idPrefix) }
+            // at every fold. The durable paired list is the source of truth —
+            // the glance cache caps at WristSync.maxWitnessRows and may omit
+            // rows, and a Quiet Hour that silently skipped Canary #25 would
+            // be the lie this app refuses to tell. Cached glance ids are
+            // unioned in so provisional rows get their hour too; demo rows
+            // excluded so sample data never inflates the honest count.
+            let paired = DeviceStore().devices.map(\.id)
+            let glanced = PhoneGlanceCache.load()?.witnesses.map(\.id) ?? []
+            let ids = Set(paired + glanced).filter { !$0.hasPrefix(DemoFleet.idPrefix) }
             let ledger = MuteLedger()
             let until = Date().addingTimeInterval(3600)
             for id in ids { ledger.set(until: until, for: id) }

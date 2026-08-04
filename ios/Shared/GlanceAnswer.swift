@@ -71,12 +71,16 @@ enum GlanceAnswer {
     }
 
     /// The path test's verdict, spoken. `summary` is HeartbeatCopy's sentence
-    /// (the same one the provably-alive card and the wrist show) — wrapped
-    /// when it verified, passed through untouched when it did not, because a
-    /// failure's wording is the system's real objection, not ours to soften.
+    /// (the same one the provably-alive card and the wrist show). The verified
+    /// wording claims exactly what today's self-test proved — this device
+    /// posted a real notification and iOS accepted it — never a device→relay
+    /// round trip it didn't make (AGENTS rule 4: don't overclaim; the away
+    /// closure swap in FleetStore.runTestAlert earns bigger words when it
+    /// ships). A failure passes through untouched: the system's real
+    /// objection, not ours to soften.
     static func pathTest(verified: Bool, summary: String) -> String {
         guard verified else { return ensurePeriod(summary) }
-        return "Your fleet can reach you — \(lowercasedFirst(summary))."
+        return "Alerts can reach this device — \(lowercasedFirst(summary))."
     }
 
     // MARK: - composition helpers
