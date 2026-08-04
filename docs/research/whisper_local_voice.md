@@ -68,10 +68,12 @@ So the honest statement is:
     port for desktop and mobile embedding, if we ever need in-app dictation.
   - WhisperKit (MIT) — CoreML port for Apple platforms. Noted for
     completeness; §5 explains why we likely never need it.
-- **Hardware floor:** `tiny`/`base`/`small` are practical on Pi-4/5-class hub
-  hardware; bigger models want a desktop CPU or GPU. Latency and accuracy
-  vary by hardware and model — benchmark before promising anything (claims
-  discipline applies to speed too).
+- **Hardware:** the HA Whisper add-on runs CPU-only on Pi-class hub hardware
+  and lets the owner pick the model size. Which size is *usable* for command
+  latency on a given hub is a bench question, not one this document answers:
+  latency and accuracy vary by hardware, model, and quantization — benchmark
+  on the actual hub before recommending a model or promising responsiveness
+  (claims discipline applies to speed too).
 - **What Whisper is not:** a speaker-identification model. But the pipelines
   people build *around* it (diarization, voice profiles) are exactly the
   identity substrate Invariant II bans — see §4.

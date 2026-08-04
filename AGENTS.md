@@ -52,7 +52,13 @@ surveillance code was never written, so there is no setting to turn off.
 
 **1. Never add an identity-inferring capability.** No face recognition or
 embeddings, no license-plate OCR, no person re-identification, no gait analysis,
-no demographic (age/gender/race) estimation, no audio transcription. `ObjectClass`
+no demographic (age/gender/race) estimation, no audio transcription of anything
+witnessed — nothing in this project ever turns overheard speech into text, and
+no witness pipeline grows a speech model. The one thing that is *not* witnessing
+is the owner deliberately commanding the hub by voice; that narrow, hub-local
+path and the five rules that bound it (satellite mics only — never a Canary;
+transient transcripts; local only; no security-posture changes by voice; no
+speaker recognition) live in `docs/research/whisper_local_voice.md`. `ObjectClass`
 is `Person | Vehicle | Animal | Package` — never `Face` or `LicensePlate`. This
 is Invariant II (`spec/invariants.md`) and it is a rejected PR, not a config flag.
 
