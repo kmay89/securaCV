@@ -196,7 +196,7 @@ per the firmware layering rules (`firmware/ARCHITECTURE.md`).
       not yet).
 - [ ] **BOOT button pin** confirmed (assumed GPIO9 in `pins.h` — verify).
 - [ ] **BH1750 lux** readings sane on the kit's I2C bus.
-- [ ] **WS2812** presence colours visible (green present / blue clear /
+- [ ] **WS2812** presence colors visible (green present / blue clear /
       amber no-radar).
 
 ## License

@@ -1,6 +1,6 @@
 // canary-local/tests/boards.test.js — the boards.json honesty gate.
 //
-// boards.json claims dimensions, triangle counts and material colours for each
+// boards.json claims dimensions, triangle counts and material colors for each
 // committed board GLB. This test re-derives those facts from the committed mesh
 // using the page's OWN loader (assets/glb.js) and asserts they match — so the
 // JSON can never drift from what the browser will actually render. It also
@@ -51,7 +51,7 @@ for (const [bid, b] of Object.entries(JSON.parse(readFileSync(join(ROOT, "device
         `dim[${i}] ${v.toFixed(2)} ≠ ${b.dims_mm[i]}`);
     });
 
-    // material buckets (colour → triangles) match
+    // material buckets (color → triangles) match
     const got = new Map();
     for (const p of parsed.parts) {
       const h = hex(p.color);

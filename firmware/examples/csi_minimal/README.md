@@ -29,7 +29,7 @@ arduino-cli upload  --fqbn esp32:esp32:esp32s3 --port /dev/ttyACM0 .
 arduino-cli monitor --port /dev/ttyACM0 -c baudrate=115200
 ```
 
-If the `motion` column rises when you wave your hand within a few metres of
+If the `motion` column rises when you wave your hand within a few meters of
 the board, CSI is working. Sit still and the `breathing` column should
 gently lock onto a value in the 0.15–0.45 Hz band.
 

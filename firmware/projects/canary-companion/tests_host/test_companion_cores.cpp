@@ -237,7 +237,7 @@ static void test_play_is_deterministic() {
 }
 
 // Difficulty preserves the SHAPE of a rhythm — a child who learned round three
-// on easy must still recognise it on hard.
+// on easy must still recognize it on hard.
 static void test_difficulty_preserves_rhythm_shape() {
   const EchoPattern easy = echo_pattern(3, 0);
   const EchoPattern hard = echo_pattern(3, 2);

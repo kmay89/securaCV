@@ -186,7 +186,7 @@ class ProductUrlSafety(unittest.TestCase):
                               f"{src} accepted {url!r}")
 
     def test_rejects_urls_python_and_a_browser_parse_differently(self):
-        """The parser-differential class, refused rather than modelled.
+        """The parser-differential class, refused rather than modeled.
 
         urlsplit reports the host of `https://evil.example\\@digikey.com/x`
         as digikey.com (backslash is an ordinary character, so the authority

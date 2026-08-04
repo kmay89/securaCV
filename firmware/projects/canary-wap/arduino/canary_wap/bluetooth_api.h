@@ -23,7 +23,7 @@ namespace bluetooth_api {
 // ════════════════════════════════════════════════════════════════════════════
 //
 // Every /api/bluetooth/* endpoint in this module is post-setup-only — BLE
-// initialises after WiFi is up, so there's no captive-portal flow that
+// initializes after WiFi is up, so there's no captive-portal flow that
 // needs to hit these routes without an API token. The dashboard's
 // secureFetch already attaches `Authorization: Bearer <api_token>` on
 // every call, so wrapping handlers in api_auth_check is a plumbing-only
@@ -47,7 +47,7 @@ template<esp_err_t (*Real)(httpd_req_t*)>
 static esp_err_t bt_auth_gated(httpd_req_t* req) {
   const char* tok = auth_token_storage();
   // tok == nullptr means register_routes was called without a token —
-  // historical signature. Keep the open behaviour in that case so a
+  // historical signature. Keep the open behavior in that case so a
   // miswired caller doesn't lock itself out, but every in-tree caller
   // now supplies a real token (see canary_wap.ino).
   if (tok && !api_auth_check(req, tok)) return ESP_OK;
@@ -327,7 +327,7 @@ inline esp_err_t handle_bluetooth_pair_start(httpd_req_t* req) {
 // POST /api/bluetooth/pair/cancel - Cancel pairing
 inline esp_err_t handle_bluetooth_pair_cancel(httpd_req_t* req) {
   bluetooth_channel::cancel_pairing();
-  return send_success(req, "Pairing cancelled");
+  return send_success(req, "Pairing canceled");
 }
 
 // POST /api/bluetooth/pair/confirm - Confirm pairing PIN
@@ -644,7 +644,7 @@ static inline void register_api_handler(httpd_handle_t server, const char* uri,
 // Call this to register all Bluetooth API routes with the HTTP server.
 // api_token: pointer to the device's persistent api_token_str. Must outlive
 // the HTTP server (in practice: backed by g_device, lives for the process).
-// nullptr keeps the legacy open behaviour for backwards compatibility.
+// nullptr keeps the legacy open behavior for backwards compatibility.
 inline void register_routes(httpd_handle_t server, const char* api_token = nullptr) {
   auth_token_storage() = api_token;
 

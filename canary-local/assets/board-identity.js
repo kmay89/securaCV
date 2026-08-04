@@ -2,7 +2,7 @@
 //
 // A per-product identity panel for the flasher: the labeled reference that
 // tells you WHAT the board is and WHERE to look on it (a clean card of its
-// pins/features, colour-coded the way the vendor pinouts are), framed by the
+// pins/features, color-coded the way the vendor pinouts are), framed by the
 // enclosure it becomes — the finished product — with a jump to the live 3D
 // model in the Board Room. Everything is drawn from the honest catalogs
 // (devices/boards.json + devices/enclosures.json), no scraped images.
@@ -11,7 +11,7 @@
 // point is defensive: if the catalogs or a field are missing, the panel
 // quietly renders what it can (or nothing) rather than throwing into the flow.
 
-// The vendor-legend function classes (Seeed's colour language), used to tint
+// The vendor-legend function classes (Seeed's color language), used to tint
 // each pin/feature so a physical board is easy to match.
 export const PIN_CLASSES = {
   touch:   { label: "Touch",   color: "#f2a9b6" },
@@ -53,7 +53,7 @@ export function shortDeviceId(productId) {
 }
 
 // Resolve product → the board(s) that make it, from boards.json.device_board.
-// Returns the first board that carries a pinout (the one worth labelling).
+// Returns the first board that carries a pinout (the one worth labeling).
 export function boardForProduct(boards, productId) {
   if (!boards || !boards.boards) return null;
   const short = shortDeviceId(productId);
@@ -137,7 +137,7 @@ export function buildIdentityPanel(doc, product, boards, enclosures) {
   const facts = [board.vendor, product.chip, dimsLabel(board.dims_mm)].filter(Boolean).join(" · ");
   if (facts) card.append(mk("div", "flash-identity-facts", facts));
   card.append(mk("p", "flash-identity-lead",
-    "Match it to the board in your hand — here's what each labelled part is and where to look."));
+    "Match it to the board in your hand — here's what each labeled part is and where to look."));
 
   const list = mk("div", "flash-identity-pins");
   for (const p of board.pinout || []) {

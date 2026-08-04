@@ -39,7 +39,7 @@ enum Channel : uint8_t {
   CH_NONE = 0,
   CH_HAPTIC = 1 << 0,  // DRV2605L + LRA, probed at 0x5A
   CH_SOUND = 1 << 1,   // ES8311 codec + PA enable, transducer probed
-  CH_GLASS = 1 << 2,   // the panel itself: a flash, a pulse, a colour
+  CH_GLASS = 1 << 2,   // the panel itself: a flash, a pulse, a color
 };
 
 // What the boot probe found. Everything defaults to absent, so a probe that
@@ -54,7 +54,7 @@ struct VoiceCapabilities {
 //
 // Small on purpose. A device with forty distinct buzzes has taught its owner
 // nothing; a device with six has taught them six things. Each entry below is a
-// thing the wearer can learn to recognise without looking.
+// thing the wearer can learn to recognize without looking.
 
 enum class Utterance : uint8_t {
   Tick = 0,      // a control acknowledged a touch — the smallest possible click

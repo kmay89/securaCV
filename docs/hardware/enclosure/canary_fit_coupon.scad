@@ -46,6 +46,10 @@
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
 // ============================================================================
 
+use <canary_mark_lib.scad>   // THE BIRD — one mark for the whole
+                             // catalog; see that file's header for why
+                             // it is authored rather than traced
+
 /* [What to render] */
 part = "all";        // ["base","mate","strip","all"]
 
@@ -108,9 +112,6 @@ glyph_depth = 0.5;    // = label_depth's sibling; one bridged layer closes it
 glyph_dx    = -26.5;  // the clear rectangle on the bed face: left of the
 glyph_dy    = 12.0;   // PORT through-hole, above the keyhole pockets
 
-// The house mark itself: one definition for the whole line.
-use <canary_mark_lib.scad>
-
 /* [Quality] */
 $fa = 3; $fs = 0.4;
 
@@ -137,8 +138,10 @@ if (emblem_h > 0) {
 // ---------------------------------------------------------------------------
 // (The bird itself now lives in canary_mark_lib.scad — one definition of the
 // house mark for the whole line, the same way canary_vent_lib.scad owns the
-// egg. This coupon is where its printability gets PROVEN, not where it is
-// defined; see the rib/crown knobs above.)
+// egg, so the 7" back plate and this coupon cannot drift into two slightly
+// different birds. This coupon is where its printability gets PROVEN, not
+// where it is defined; see the rib/crown knobs above. Everything crosses as a
+// function because OpenSCAD's use<> does not carry variables.)
 // ---------------------------------------------------------------------------
 
 module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
@@ -153,20 +156,8 @@ module emb(x, y, s, size = 7) { translate([x, y, base_t - 0.05]) linear_extrude(
 // slab top — that is what makes an embossed mark catch light like metal. The
 // footprint is still a full rib wide; only the crown draws in.
 module emblem_emb(px, py, h) {
-    s  = h / mark_span();
-    t  = emblem_rib / s;                       // stroke, in design units
-    ez = emboss_h + 0.05;
-    n  = emblem_crown > 0 ? 4 : 1;
     translate([px, py, base_t - 0.05])
-        for (i = [0:n-1]) {
-            // the inset runs 0 at the base to the FULL crown on the top slice;
-            // the slice's z is a separate ramp, or the last one would sit proud
-            f   = n > 1 ? i/(n - 1) : 0;
-            ins = (emblem_crown / s) * (1 - sqrt(1 - f*f));
-            translate([0, 0, i*ez/n]) linear_extrude(ez/n + 0.01)
-                scale([s, s]) translate([-mark_cx(), -mark_cy()])
-                    offset(r = -ins) mark_bird_2d(t);
-        }
+        mark_emboss(h, emboss_h + 0.05, emblem_rib, emblem_crown);
 }
 module keyhole_pocket(px, py) {         // blind, from the back (z=0 face)
     translate([px, py, 0]) union() {

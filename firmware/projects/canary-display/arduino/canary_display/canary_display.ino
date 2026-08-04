@@ -127,12 +127,30 @@ static canary::mode::Mode s_active_mode = canary::mode::Mode::Fleet;
 #ifdef CD_NIGHTSTAND7
 #include "nightstand7_ui.h"
 #endif
+#if defined(CD_FLAVOR_NIGHTSTAND) || defined(CD_NIGHTSTAND7)
+// song_seed() below is called under exactly this pair of flavor guards, and
+// nothing else in this file pulled the header in — so the bedside builds were
+// the only ones that failed, and only in the emulator/wasm job that compiles
+// them. Guard the include with the same condition as the call so the two can
+// never drift apart again.
+#include "look_state.h"
+#endif
 #ifdef CD_FLAVOR_DASH
 #include "portrait7_ui.h"   // the 7"/dash portrait column (rotated)
 #include "lvgl_port.h"      // set_rotation / set_dim
 #endif
 #ifdef CD_FLAVOR_NIGHTSTAND
 #include "portrait_ui.h"
+#endif
+// song_seed() is called under exactly this pair of flavors further down. The
+// Arduino build gets the declaration for free — the sketch preprocessor
+// compiles every .h/.cpp in the sketch folder together — but this file is
+// built as plain C++ by the emulator, where nothing is implicit, so the
+// include has to be real. Without it the wasm build fails with "no member
+// named 'song_seed' in namespace 'canary::ui'" while all four Arduino CLI
+// builds stay green, which is why it survived review.
+#if defined(CD_FLAVOR_NIGHTSTAND) || defined(CD_NIGHTSTAND7)
+#include "look_state.h"
 #endif
 #if defined(FEATURE_LANTERN) && FEATURE_LANTERN
 #include "lantern.h"   // the honest, user-summoned night light

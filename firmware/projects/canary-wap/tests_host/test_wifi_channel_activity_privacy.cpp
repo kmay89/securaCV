@@ -15,7 +15,7 @@
  *   - The emitted event is a fixed literal ("channel_active") with a bounded
  *     0..100 intensity, regardless of the (arbitrary) input feature bytes —
  *     so no raw aggregate byte can leak through as an identifier.
- *   - Behaviour: warmup suppresses emits; a quiet channel stays silent; a burst
+ *   - Behavior: warmup suppresses emits; a quiet channel stays silent; a burst
  *     above the room's own baseline fires exactly one glow (then cools down).
  */
 #include <cassert>

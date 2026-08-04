@@ -76,7 +76,7 @@ extern "C" int csi_event_invariants_run() { return 0; }
 
 namespace {
 
-/* ── Track host commit hooks to verify behaviour ─────────────────────────── */
+/* ── Track host commit hooks to verify behavior ─────────────────────────── */
 
 struct CapturedCommit {
   uint32_t              event_id;
@@ -440,7 +440,7 @@ void test_ble_events_strip_mac_precision_fields() {
        * close_slot re-adds duration_sec to bundled rows because
        * "how long was this bundle open" is legitimate metadata for
        * any bundled event regardless of allow-list. Asserting it
-       * here would fight that intentional behaviour for the four
+       * here would fight that intentional behavior for the four
        * stateful types that go through the bundler; the
        * MAC-precision fields below are what spec §10 actually
        * enforces, and the bundler doesn't touch those. */
@@ -483,7 +483,7 @@ void test_multilink_fusion_strips_unauthorized_fields() {
    * close_slot re-adds it to bundled rows as "how long was this bundle
    * open" — legitimate metadata for any bundled event regardless of
    * allow-list. Asserting it here would fight that intentional bundler
-   * behaviour; the NOTE / BREATHING_* checks below are what the
+   * behavior; the NOTE / BREATHING_* checks below are what the
    * fusion-specific privacy story actually enforces.)
    *
    * Future contributors changing the manifest WILL break this test.
@@ -573,7 +573,7 @@ void test_ble_scout_strips_unauthorized_fields() {
      * to closed bundle rows regardless of allow-list (see the same
      * carve-out documented in test_ble_events_strip_mac_precision_
      * fields), so asserting its removal would fight intentional
-     * behaviour. The fields below ARE the privacy contract. */
+     * behavior. The fields below ARE the privacy contract. */
     v.present_fields = CSI_FIELD_STATE_NAME
                      | CSI_FIELD_NOTE
                      | CSI_FIELD_TIME_BUCKET

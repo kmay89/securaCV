@@ -1,7 +1,7 @@
 /* Host tests for firmware/common/health/boot_policy.h — the crash-loop /
  * safe-mode boot decision (docs/design/self_star_roadmap.md, TODO 2).
  *
- * These PROVE the recovery behaviour that keeps a bad firmware image from
+ * These PROVE the recovery behavior that keeps a bad firmware image from
  * bricking trust, so it can be locked in CI rather than trusted to a review of
  * boot-path glue:
  *   · a genuinely good image never trips safe mode (it reaches healthy and

@@ -90,7 +90,7 @@ static bool payload_is(const uint8_t* payload, unsigned int len, const char* tok
 
 // canary-sense coarse-vocabulary decoders (the ONLY words that ever cross the
 // wire about what the radar saw — see the device's privacy chokepoint). An
-// unrecognised word maps to the safe "unknown/0" slot, never a crash.
+// unrecognized word maps to the safe "unknown/0" slot, never a crash.
 static uint8_t str_to_presence(const char* s) {
   if (!s) return 0;
   if (strcmp(s, "present") == 0) return 2;

@@ -399,7 +399,7 @@ static void draw_panel() {
   banner("2 - panel");
   // A 1px frame at the extreme edge: if the 22-px column offset is wrong, one
   // vertical edge is missing or the frame is clipped. Cheaper to read than a
-  // colour chart.
+  // color chart.
   gfx->drawRect(0, 0, LCD_W, LCD_H, WHITE);
   gfx->drawRect(1, 1, LCD_W - 2, LCD_H - 2, WHITE);
   gfx->fillRect(20, 140, 100, 60, RED);

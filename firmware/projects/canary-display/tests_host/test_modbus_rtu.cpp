@@ -28,7 +28,7 @@ static int g_fail = 0;
 
 // ── CRC-16/MODBUS ───────────────────────────────────────────────────────────
 static void test_crc_known_answer() {
-  // The catalogued CRC-16/MODBUS check value: CRC of ASCII "123456789" = 0x4B37.
+  // The cataloged CRC-16/MODBUS check value: CRC of ASCII "123456789" = 0x4B37.
   // This is an authoritative, implementation-independent anchor.
   const uint8_t check[] = {'1', '2', '3', '4', '5', '6', '7', '8', '9'};
   CHECK(mb::crc16(check, sizeof(check)) == 0x4B37, "CRC check value 0x4B37");

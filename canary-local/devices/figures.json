@@ -370,6 +370,11 @@
       "status": "in-development"
      },
      {
+      "product": "s3_lcd147",
+      "variant": "s3-hallway-stick-case",
+      "status": "in-development"
+     },
+     {
       "product": "shop_tools",
       "variant": "shop-tools",
       "status": "in-development"
@@ -2847,6 +2852,11 @@
      {
       "product": "relay_solar",
       "variant": "solar-lora-relay-pod",
+      "status": "in-development"
+     },
+     {
+      "product": "s3_lcd147",
+      "variant": "s3-hallway-stick-case",
       "status": "in-development"
      },
      {

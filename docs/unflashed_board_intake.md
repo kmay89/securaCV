@@ -58,7 +58,7 @@ it.
 | HID injection at plug-in (BadUSB) | **Yes** — native USB, TinyUSB mode | The cold-start gesture. Nothing else. |
 | Wi-Fi beaconing, joining open APs | Yes, but it holds none of your credentials | Cold start; then the full erase |
 | Hostile firmware surviving our install | Only via a *partial* write | Forced full erase on first contact |
-| Relabelled flash (4 MB sold as 16 MB) | Common | The alias probe |
+| Relabeled flash (4 MB sold as 16 MB) | Common | The alias probe |
 | eFuses already burned by a prior owner | Yes — and **erase cannot undo it** | The block-0 read → refuse the board |
 | Cloned part with a bogus MAC | Yes | Structural MAC checks + duplicate detection |
 | A modified circuit board | Yes | **Nothing.** Out of software's reach entirely. |
@@ -139,7 +139,7 @@ clean.
 
 ### 2. Is the flash the size it claims?
 
-A flash die reports its capacity in its JEDEC id, and a relabelled part simply
+A flash die reports its capacity in its JEDEC id, and a relabeled part simply
 lies: address lines above the real capacity wrap, so a read past the end comes
 back as a mirror of the start.
 

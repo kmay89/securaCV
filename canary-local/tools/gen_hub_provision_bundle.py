@@ -34,7 +34,7 @@ The one honest gap — first-boot AUTO-run:
   flasher's first-boot companion drives it over SSH from the operator's computer;
   the same command works typed by hand. `sh provision.sh` still works from the
   Advanced SSH & Web Terminal add-on (python3 + SUPERVISOR_TOKEN present). HAOS
-  ignores boot-partition files it doesn't recognise, so a bundle that isn't run
+  ignores boot-partition files it doesn't recognize, so a bundle that isn't run
   is harmless — worst case is a normal onboarding, never a broken boot.
 
 Emits (drift-gated, like its sibling generators):
@@ -183,7 +183,7 @@ def build_manifest() -> dict:
                 "A first-boot provisioner add-on the flasher pre-registers, which runs the bundle.",
             ],
             "note": (
-                "HAOS ignores boot-partition files it doesn't recognise, so a bundle that isn't "
+                "HAOS ignores boot-partition files it doesn't recognize, so a bundle that isn't "
                 "auto-run is harmless — worst case is a normal onboarding, never a broken boot. The "
                 "write side is hub_io::seed (the CONFIG/ tree, already used for Wi-Fi). True "
                 "zero-touch (the hub running the bundle with no companion at all) stays `planned` "

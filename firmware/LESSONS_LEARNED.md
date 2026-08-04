@@ -899,7 +899,7 @@
   The CSI→rf_presence fusion hook was never registered.
 - **Fix:** wire the probe (10 Hz ESP-NOW broadcast; peers sense each
   other); AGC-normalized true-magnitude per-subcarrier temporal
-  variance; CFO-cancelling relative band rotation
+  variance; CFO-canceling relative band rotation
   (Im(C_b·conj(C_tot))/|C_tot|²); breathing on a cross-window envelope
   ring (~64 s); register the fusion hook; refuse to tick presence
   modules on <2-frame windows (no data ≠ empty room) and surface the

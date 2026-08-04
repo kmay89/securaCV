@@ -420,7 +420,7 @@ fn an_existing_config_directory_is_reused_not_duplicated() {
 #[test]
 fn a_file_larger_than_one_cluster_round_trips_exactly() {
     let (mut img, vol) = fat16_volume();
-    // 5 clusters and a bit, with a recognisable pattern so a mis-ordered chain
+    // 5 clusters and a bit, with a recognizable pattern so a mis-ordered chain
     // shows up as wrong bytes rather than the right length.
     let big: Vec<u8> = (0..(2048 * 5 + 37)).map(|i| (i % 251) as u8).collect();
     insert_file(&mut img, &vol, &["CONFIG", "big.bin"], &big).unwrap();
@@ -817,7 +817,7 @@ fn every_error_renders_a_sentence_an_operator_can_act_on() {
 #[test]
 fn the_fat32_free_cluster_count_is_kept_truthful() {
     // FSInfo's counts are hints, but a stale "plenty free" is how a driver ends
-    // up handing out a cluster we just used, and an uninitialised one makes
+    // up handing out a cluster we just used, and an uninitialized one makes
     // `fsck.fat` report a volume it would repair. Neither is what an operator
     // should find on their card.
     let (mut img, vol) = fat32_volume();

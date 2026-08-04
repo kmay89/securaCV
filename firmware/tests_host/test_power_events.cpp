@@ -3,7 +3,7 @@
  * the durable outage-log ring. Pins the full classification table (so a change
  * to how a boot's power story is named breaks CI, not a review), the correct
  * terminology, the honest lower-bound outage arithmetic, and the ring/counter
- * behaviour the firmware persists.
+ * behavior the firmware persists.
  *
  * Build: see firmware/tests_host/Makefile (POWEREVT_BIN), -I ../common,
  *        -std=c++17 -Wall -Wextra -Werror.
@@ -99,7 +99,7 @@ static void test_software_reset_is_always_intentional() {
   CHECK(classify(sig(ResetKind::Software, false, false)) ==
             BootPower::CleanReboot,
         "software reset is intentional even with no flag and no marker "
-        "(so an OTA/reboot is never mislabelled an outage)");
+        "(so an OTA/reboot is never mislabeled an outage)");
 }
 
 static void test_unknown_reset_stays_honest() {
@@ -159,12 +159,12 @@ static void test_make_event_only_carries_outage_for_an_outage() {
 static void test_log_init_and_validity() {
   Log L;
   log_init(L);
-  CHECK(log_valid(L), "a freshly initialised log is valid");
+  CHECK(log_valid(L), "a freshly initialized log is valid");
   CHECK(L.count == 0 && L.total_outages == 0 && L.longest_outage_s == 0,
         "fresh log is empty with zero counters");
 
-  Log bad{};  // all-zero: magic wrong -> rejected (uninitialised NVS blob)
-  CHECK(!log_valid(bad), "an uninitialised blob is rejected");
+  Log bad{};  // all-zero: magic wrong -> rejected (uninitialized NVS blob)
+  CHECK(!log_valid(bad), "an uninitialized blob is rejected");
   Log hi = L;
   hi.version = kLogVersion + 1;
   CHECK(!log_valid(hi), "a future version is rejected");

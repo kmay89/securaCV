@@ -3,8 +3,8 @@
  *
  * The pure *decision* half of "a bad firmware image must not be able to brick
  * trust" (docs/design/self_star_roadmap.md, TODO 2 — Boot safe-mode + A/B
- * auto-rollback). All the state lives in one NVS counter and all the judgement
- * lives in one pure function, so CI proves the recovery behaviour instead of
+ * auto-rollback). All the state lives in one NVS counter and all the judgment
+ * lives in one pure function, so CI proves the recovery behavior instead of
  * trusting a review of boot-path glue.
  *
  * WHAT THIS IS, AND ISN'T

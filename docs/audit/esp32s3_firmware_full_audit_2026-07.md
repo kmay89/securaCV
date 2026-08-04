@@ -9,7 +9,7 @@ hardware can and cannot do.
 (ESP-IDF, SoC capability headers, datasheets), the Seeed wiki, and the WiFi-sensing / BLE-tracking
 literature. Every load-bearing "can we / can't we" fact was adversarially verified against primary
 sources; the top three high-impact firmware findings were re-confirmed line-by-line before
-inclusion. Hardware behaviour was **not** bench-validated (no board in the loop) — claims tagged
+inclusion. Hardware behavior was **not** bench-validated (no board in the loop) — claims tagged
 *bench-unverified* rest on code reading, not observation.
 
 > Companion: the board-definition corrections from the Seeed documentation comparison shipped
@@ -560,7 +560,7 @@ Grouped by what it costs. Nothing here is speculative — each maps to a specifi
 
 ## 9. What this audit did **not** cover / caveats
 
-- **No hardware in the loop.** Runtime behaviour (WDT recovery, A/B rollback, brownout reaction, real
+- **No hardware in the loop.** Runtime behavior (WDT recovery, A/B rollback, brownout reaction, real
   CSI frame rates, mesh on-air) is inferred from code, not observed. The repo's own open item #610
   (on-device CSI/mesh verification) and the OTA rollback bench test remain the gating validations.
 - **Non-S3 subsystems** (canary-sense mmWave on the C6) were audited only for the fusion story; the

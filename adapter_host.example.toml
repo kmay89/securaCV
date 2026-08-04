@@ -226,7 +226,7 @@ min_confidence = 0.6
 # Adapter: BLE presence gateway (ESPresense / room-presence style)
 # Turns a popular DIY BLE presence mesh into a witness source. Subscribes to ESPresense's
 # per-room distance topics and emits a coarse presence claim for the ROOM when a device is within
-# `max_distance` metres. Device id/name are intentionally ignored — no identity is retained.
+# `max_distance` meters. Device id/name are intentionally ignored — no identity is retained.
 # ---------------------------------------------------------------------------
 [[adapter]]
 type = "ble_presence"
@@ -237,11 +237,11 @@ topic = "espresense/devices/#"   # room is taken from the last topic segment
 [[adapter.room]]
 room = "lobby"          # matched (case-insensitively) against the last topic segment
 zone = "lobby"          # logical zone the presence claim is attributed to
-max_distance = 4.0      # metres; present when reported distance <= this
+max_distance = 4.0      # meters; present when reported distance <= this
 
 # ---------------------------------------------------------------------------
 # Adapter: Meshtastic LoRa mesh (Detection Sensor Module nodes)
-# Kilometre-scale, off-grid witness sources: a Meshtastic node with the Detection Sensor
+# Kilometer-scale, off-grid witness sources: a Meshtastic node with the Detection Sensor
 # Module (PIR / contact switch on a GPIO) alerts over LoRa; a gateway node uplinks to this
 # broker. Gateway config: MQTT module enabled=true AND json_enabled=true. Use a PRIVATE
 # channel with a non-default PSK — the default LongFast key is public, and the mesh is an

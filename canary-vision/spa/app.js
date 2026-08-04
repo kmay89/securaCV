@@ -1714,18 +1714,18 @@ function normalizeBaseUrl(host) {
 // body's gate_ttl_seconds), so a press anywhere in our 60 s window lands.
 // Returns a handle with cancel(); callers must cancel on navigation.
 function startReceiptCapture(baseUrl, handlers) {
-  var cancelled = false;
+  var canceled = false;
   var gateTtl = 30;
 
   function tick(remaining) {
-    if (cancelled) return;
+    if (canceled) return;
     CanaryAPI.request(baseUrl, '/api/provisioning-receipt')
       .then(function (receipt) {
-        if (cancelled) return;
+        if (canceled) return;
         handlers.onReceipt(receipt);
       })
       .catch(function (err) {
-        if (cancelled) return;
+        if (canceled) return;
         if (err && err.status === 404) {
           // Firmware predates the BOOT gate — fall back to manual entry.
           handlers.onUnsupported();
@@ -1747,7 +1747,7 @@ function startReceiptCapture(baseUrl, handlers) {
   tick(RECEIPT_POLL_TICKS);
 
   return {
-    cancel: function () { cancelled = true; },
+    cancel: function () { canceled = true; },
   };
 }
 

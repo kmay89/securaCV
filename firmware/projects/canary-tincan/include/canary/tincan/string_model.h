@@ -14,7 +14,7 @@
 // vocabulary for it. That is the entire reason link state is a picture here
 // rather than a "last seen 14:02" string.
 //
-// Two behaviours worth testing without hardware:
+// Two behaviors worth testing without hardware:
 //
 //  * THE COOLDOWN IS SHOWN TO THE SENDER, NOT THE RECEIVER. Sibling knock-spam
 //    is real and the obvious fixes are all wrong: a block list teaches a kid to
@@ -64,7 +64,7 @@ enum class StringState : uint8_t {
   Cut,       // revoked — terminal
 };
 
-// The colour a kid picks for their canary. Ordering is a stable wire contract.
+// The color a kid picks for their canary. Ordering is a stable wire contract.
 enum class BirdColor : uint8_t {
   Sun = 0,
   Sky,

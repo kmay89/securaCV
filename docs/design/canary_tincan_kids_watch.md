@@ -106,7 +106,7 @@ firmware may touch)*, `HAS_SD_CARD 1`, `HAS_PSRAM 1`, `HAS_USB_CDC 1`,
 
 A tin-can telephone is two cans joined by a string. Speaking into one can makes
 its base act as a diaphragm; the vibration becomes a **longitudinal wave in the
-string** — a travelling variation in tension — and the far can's base replays
+string** — a traveling variation in tension — and the far can's base replays
 it. It only works if the string is **taut**. Slack string, no call. Sound moves
 through the solid better than through air, which is why a whisper carries
 further down a string than across a room.
@@ -142,7 +142,7 @@ invented is better than a phone call. We are building the second hour.
   broadcast to any stranger on the channel.
 
 The gap: **nothing does quiet, private, house-scoped, zero-account sibling
-signalling.** That's the Tin Can.
+signaling.** That's the Tin Can.
 
 ---
 
@@ -175,7 +175,7 @@ disabled.
    directory, no discovery of non-household watches, and no way to tie a string
    in a school playground.
 6. **No account, no login, no PII.** No name, no birthday, no photo, no email.
-   A kid's whole identity is a bird colour and a three-glyph mark they pick on
+   A kid's whole identity is a bird color and a three-glyph mark they pick on
    first boot. Nothing about a child is transmitted to us because there is no
    "us" in the data path.
 7. **No cloud.** The firmware has no internet client. Not "we don't use one" —
@@ -190,7 +190,7 @@ disabled.
    [`bird_mood.h`](../../firmware/projects/canary-display/include/canary/care/bird_mood.h)
    — *"no random sadness for variety, no cheerful mask over a degraded system"*
    — extends to: **no sadness about the child at all.** The bird reacts to the
-   string, never to the kid's behaviour.
+   string, never to the kid's behavior.
 10. **Not a safety device, not a medical device, not a locator, not a phone.**
     This is stated on the box, on the boot screen, and in the parent app's
     first-run — not buried in terms. §9.2.
@@ -331,7 +331,7 @@ Hold a finger on the Can screen. The far watch feels a sustained ramp for as
 long as you hold, and the string on both screens pulls visibly taut.
 
 **If both kids hold at once**, both watches lock into a shared pulse and the
-line glows. That is the emotional centre of the whole device: two children in
+line glows. That is the emotional center of the whole device: two children in
 different rooms, each feeling the other holding on. It costs a boolean each way
 and it is the thing they'll show their grandmother.
 
@@ -365,12 +365,12 @@ Every string owns its own key. One frame shape, versioned, small:
 - **Nonce discipline — the thing to get right.** A single shared key plus a
   per-endpoint counter would put the *same* key/nonce pair on the first frame
   each watch sends, and nonce reuse destroys both confidentiality and
-  authenticity under ChaCha20-Poly1305 and AES-GCM alike. Two defences, both
+  authenticity under ChaCha20-Poly1305 and AES-GCM alike. Two defenses, both
   required: the directional keys above mean the two send streams never share a
   key at all, and the nonce is constructed as `dir ‖ ctr` (never random, never
   implicit) so it is recoverable from the frame and unique within a stream.
 - `ctr` is **64-bit**, monotonic, and **persisted to NVS before first use of a
-  value** — a reboot must never rewind it. It is also the replay defence: a
+  value** — a reboot must never rewind it. It is also the replay defense: a
   sliding window rejects anything not strictly ahead, so a recorded knock can't
   be replayed at 2 a.m. A counter that would wrap, or that cannot be persisted,
   forces a re-tie rather than a rollover.
@@ -478,7 +478,7 @@ automation/`adapter_host` script.
 **Vocabulary — fixed, six entries:**
 `Come inside` · `Dinner` · `Bedtime` · `Come find me` · `Answer me` · `All clear`
 
-**Behaviour:**
+**Behavior:**
 
 - Full-screen on the kid's watch, a distinct haptic pattern that belongs to no
   other message, and a chime phrase from the existing

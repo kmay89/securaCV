@@ -2,7 +2,7 @@
 //! targets, safely.
 //!
 //! Step 2 of the native Pi hub writer (docs/design/raspberry_pi_hub_flashing.md).
-//! The safety-critical judgement here is *which physical disk backs the running
+//! The safety-critical judgment here is *which physical disk backs the running
 //! OS* — so `hub_disk::classify` can refuse it — and *which non-removable disks
 //! are external* — so an SSD/NVMe (the Pi 5 durable default) is still offerable.
 //! Get the first wrong and we could offer the operator's own boot disk; get the
@@ -299,7 +299,7 @@ tmpfs /run tmpfs rw 0 0
     }
 
     #[test]
-    fn is_external_recognises_usb_only() {
+    fn is_external_recognizes_usb_only() {
         assert!(is_external(
             "../devices/pci0000:00/0000:00:14.0/usb2/2-1/2-1:1.0/host4/target4:0:0/4:0:0:0/block/sdb"
         ));

@@ -2,7 +2,7 @@
  * @file test_sentinel_fusion.cpp
  * @brief Host tests for sentinel.fusion (common/fusion/sentinel_fusion).
  *
- * Proves the load-bearing behaviours of the fusion brain WITHOUT hardware:
+ * Proves the load-bearing behaviors of the fusion brain WITHOUT hardware:
  *   - scoring monotonicity and the present/confirmed thresholds,
  *   - the independence bonus (two independent modalities => Confirmed; a
  *     single strong channel, however loud, never Confirms),

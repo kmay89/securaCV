@@ -91,11 +91,10 @@
 //     outline entirely — verify which board you have.
 // ============================================================================
 
-use <canary_vent_lib.scad>  // the brand vent shape: egg2d
 use <canary_mark_lib.scad>  // the house mark: bird + wordmark lockup
 
 /* [What to render] */
-part = "all";   // ["bezel","back","light","all","exploded","fil_body","fil_accent","fit_section"]
+part = "all";   // ["bezel","back","light","all","exploded","palette","fil_body","fil_accent","fil_light","fit_section"]
 
 /* [Board] — ESP32-S3-LCD-1.47, from the Waveshare drawing (mm) */
 board_l = 36.37;   // PCB long axis (Y), EXCLUDING the USB-A plug
@@ -109,10 +108,14 @@ aa_w  = 17.39;     // active area, short (X)
 lcm_l = 36.28;     // LCD module outline, long
 lcm_w = 19.39;     // LCD module outline, short
 
-// Back-side clearance: the tallest thing behind the PCB sets this. On this
-// board that is the microSD cage / the module can, not the USB shell (the
-// shell is off the end, not under the board).
-back_stack = 4.6;  // MEASURE
+// THE MEASURED STACK (kmay89): glass front to the back of everything on the
+// board is 8.2 mm. This is the number the case's whole depth is built on, so
+// it is stated once and the back-side clearance is DERIVED from it rather than
+// guessed separately — a guessed back_stack is how the first cut of this case
+// came out 1.65 mm fatter than the hardware needs, which on a stick you hold
+// is the difference between snug and chunky.
+stack_total = 8.2;   // MEASURED — glass front to board back
+back_stack = stack_total - lcd_rise - pcb_t;   // derived, not guessed
 
 /* [USB-A plug] — the standard, plus what the board does with it */
 // USB-A series-A plug shell, per the USB 2.0 mechanical drawing. These are
@@ -137,10 +140,10 @@ usb_clear = 0.35;  // per-side clearance around the shell in its opening
 usb_wall = 1.8;
 // Chamfer depth on the outer face around the opening. Bounded by how much
 // wall there is above and below the plug — the shell straddles the board, so
-// its bottom edge sits only a couple of millimetres above the bezel face and
+// its bottom edge sits only a couple of millimeters above the bezel face and
 // a greedy relief cuts straight through it. The two asserts below hold the
 // line; if you want more relief, you need a deeper case, not a bigger number.
-usb_relief = 1.0;
+usb_relief = 0.5;
 
 /* [Drop collar] — the reason this case exists in one piece */
 collar_on = true;
@@ -173,40 +176,111 @@ sd_from_usb = 15.0;  // slot MOUTH center, down from the plug-end edge — MEASU
 sd_w = 13.0;         // window width (card is 11 mm + finger room)
 sd_l = 9.0;          // window length along the board
 
-/* [RGB LED] — the wall wash */
-// The WS2812 (GPIO38) is the ambient beacon. In a hallway the back faces the
-// wall, so this window turns the beacon into a wash of color on the wall
-// behind the device — which is the nicest thing this board does and would be
-// completely hidden by a solid back.
-led_win = true;
-led_from_far = 6.5;  // window center up from the PCB's FAR edge — MEASURE
-led_d = 7.0;         // window Ø
+/* [RGB LED] — the light SEAM, not a hole in the back */
+//
+// The WS2812 (GPIO38) is the ambient beacon, and where its light comes OUT is
+// the thing this case has to get right.
+//
+// It does not fire backwards. Waveshare ship this board with a "clear acrylic
+// sandwich panel for cool lighting effects": clear plates front and back, and
+// the LED glows out the EDGE GAP between the LCD module and the PCB. On this
+// case that gap is the band from the glass (z = face_t) back to the PCB front
+// face (z = face_t + lcd_rise) — about 3.6 mm of open perimeter that a solid
+// side wall seals shut.
+//
+// So the light gets a SEAM around the sides rather than a hole in the back:
+// a slot at that band, which reads as a glowing line along the screen's edge.
+// That is both the effect the board was designed for and a better one for a
+// hallway — a line of color at the screen edge is legible from an angle, where
+// a wall wash is only legible from in front.
+//
+// It also frees the back plate: the mark now gets the whole clean face, which
+// is what it wanted anyway.
+led_win = false;      // the old back hole. OFF — it points at nothing.
+led_from_far = 6.5;  // back-window center up from the PCB's FAR edge — MEASURE
+led_d = 7.0;         // back-window Ø
 led_skin = 0.5;      // thickness of the diffuser plug that fills it
+
+light_seam = true;
+// THE BAND. The seam is not left as an open slot — it is filled with a strip
+// of WHITE / natural PETG, which is a light pipe: the RGB enters its cut end
+// and the strip glows evenly along its length instead of throwing a hard bar
+// of light through a hole. White PETG is the right plastic for it (translucent
+// and diffusing rather than clear), and it turns the seam from a gap in the
+// case into a lit feature.
+//
+// Two ways to build it, and the geometry serves both:
+//   - CO-PRINTED (AMS / multi-material): a third filament alongside the black
+//     body and the yellow mark — the same three-spool arrangement the 7" frame
+//     already uses. `python3 gen_3mf.py stick` packages exactly this, and sets
+//     band_clear = 0 so the band fuses to the walls it fills.
+//   - SEPARATE INSERTS: print part="fil_light" on its own and press the two
+//     strips in. Keep band_clear at its default so they actually go in.
+//
+// Either way the outer line is CONTINUOUS — the ties across the seam are ribs
+// hidden behind the strip, not breaks in it. See seam_web_ribs.
+light_band = true;
+band_clear = 0.10;   // per-face clearance; 0 for a co-printed band
+// Measured off the board (kmay89), stated as the SIDE ELEVATION because that
+// is what you look at: 1 mm of black, then 3 mm of white, then black to the
+// back. The 1 mm is the bezel face; the white starts immediately behind it
+// (seam_dz = 0) and runs to 4 mm.
+//
+// That lands the band's far edge essentially ON the PCB front face — which is
+// the point, and is why the assert below no longer holds it clear of that
+// plane. The WS2812 sits on the PCB front, so the band has to reach it: the
+// strip's inner face is what collects the light and pipes it along. A band
+// held politely short of the board would glow a great deal less.
+seam_h = 3.0;        // band thickness — the white in the 1 / 3 / black stack
+seam_dz = 0.0;       // band starts level with the glass front, i.e. directly
+                     // behind the 1 mm face
+seam_webs = 3;       // HIDDEN ribs tying the bezel face to its walls across the
+                     // seam. The seam runs most of the wall, so without them
+                     // the face hangs off its corners alone — and this case is
+                     // designed around being dropped. They sit behind the
+                     // strip, not through it: the white line stays unbroken.
+                     // 0 is legal and gives a bare continuous slot.
+seam_web_w = 3.0;    // rib width along the seam
+seam_web_d = 1.2;    // how far into the 2.1 mm wall a rib reaches, leaving the
+                     // rest as white you can still see at that spot
 
 /* [Branding] — one yellow mark, on the back */
 mark_show = true;
-mark_h = 9.0;        // the BIRD's height; the wordmark scales off it
+// The BIRD's height; the wordmark scales off it. Sized so the WHOLE lockup
+// fits the plate with real margin — see the width assert below. At 10.5 the
+// accent measured 22.08 mm wide against a 20.52 mm plate, i.e. it hung off
+// BOTH edges, and nothing caught it because the only assert here checked the
+// mark's height.
+mark_h = 8.5;
 mark_rib = 0.9;      // stroke width. Below ~0.8 the mark stops being a mark
                      // at this size — two 0.42 lines is the floor
 mark_depth = 0.7;    // deboss depth; the accent inlay fills it flush
-mark_dy = 2.0;       // up from the back plate's center — the LED window owns
-                     // the far end, so the lockup sits above it
+// The lockup is not quite symmetric about x=0: mark_cx() centers the BIRD,
+// whose beak (-63) and tail (+67) are themselves off-center in design units,
+// while the wordmark centers on 0. That leaves the right margin ~0.2 mm
+// tighter than the left at every size. Nudge the group back.
+mark_dx = -0.10;
+mark_dy = 0;         // CENTERED. It used to sit high to clear the LED window;
+                     // with the light moved to the side seam the back is one
+                     // clean face and the mark can have the middle of it.
 
-/* [Vents] — the brand egg, and a real thermal need */
-// The board README is explicit: "S3 + octal PSRAM heat-soak into a small
-// stick that plugs into an already-warm port." A sealed stick would cook.
-opt_vent = true;
-vent_rows = 3;
-vent_cols = 2;
-vent_l = 4.0;        // egg long axis
-vent_w = 2.2;        // egg short axis
-vent_pitch_y = 5.0;
-// The clutch lives on the ONE clear stretch of long wall — below the button
-// ear and above the free-end snap beam. That gap is about 12.5 mm on this
-// board, and three rows at this pitch very nearly fill it; the two asserts
-// below are what stop a later tweak from quietly cutting a vent through a
-// snap slot, which would turn a spring into a hinge.
-vent_center_y = -2.95;
+/* [Cooling] — deliberately no vents */
+// There are none, and that is the design rather than an omission.
+//
+// A stick plugged into a wall outlet stands VERTICAL, and this case already
+// has an opening at each end of that vertical: the thumb scoop through the far
+// wall's rim at the bottom, and the clearance around the USB shell in its
+// opening at the top. Bottom intake, top exhaust — that is a chimney, and it
+// is the orientation the device is always in.
+//
+// So the clutch of egg vents that used to run down both long walls was solving
+// a problem the geometry had already solved, at the cost of the two faces you
+// actually look at, plus a fight for wall space with the snap beams and the
+// button ears. Cleaner to look at, easier to print, fewer holes to collect
+// dust, and no less air.
+//
+// If a bench test ever shows this board genuinely needs more: put them on the
+// SHORT walls, where the chimney already runs and where nobody looks.
 
 /* [Snap fit] — the feel */
 // WHERE THE BEAMS LIVE, and why it is not the obvious place.
@@ -220,8 +294,11 @@ vent_center_y = -2.95;
 // plate stays a flat plate (which is what the branding wants), and nothing
 // ever reaches into the board's space.
 snap_w = 4.6;        // beam width
-snap_beam_l = 8.0;   // free beam LENGTH — see the strain note below
-snap_beam_t = 1.0;   // beam thickness (the wall is locally thinned to this)
+// A thinner case leaves less wall to carry a beam, so the beam gets LONGER
+// per unit thickness, not shorter: strain goes as t/L², so trading 0.15 mm of
+// thickness buys back more than the 1.2 mm of length the shallower case costs.
+snap_beam_l = 6.8;   // free beam LENGTH — see the strain note below
+snap_beam_t = 0.85;  // beam thickness (the wall is locally thinned to this)
 snap_eng = 0.55;     // engagement depth (how far the hook stands proud)
 snap_flat = 0.5;     // the flat that actually seats
 snap_slot = 0.9;     // U-slot width freeing each side of the beam
@@ -244,7 +321,12 @@ flick_scoop = 7.0;   // Ø of the scoop through the bezel rim that reaches it
 
 /* [Shell] */
 wall = 2.1;
-face_t = 1.8;        // bezel face over the glass border
+// The bezel face, and it is a LOOK as much as a thickness. The side elevation
+// reads (kmay89): 1 mm black, then 3 mm of white band, then black to the back.
+// So the face is 1 mm and the band starts immediately behind it — which is
+// also where it should start optically, because the glass front sits on this
+// face's inner ledge and the light escapes the moment the glass ends.
+face_t = 1.0;        // bezel face over the glass border
 back_t = 2.0;        // rear plate
 r_out = 3.2;         // outer corner radius
 preload = 0.25;      // compliant squeeze on the PCB (rib crush), not a clamp
@@ -341,10 +423,11 @@ plate_y = yc - 2*tol_press;
 plate_z0 = bez_h - back_t;          // plate underside, in bezel coordinates
 
 // Where the snap beams sit along Y. Both long walls are crowded — the buttons
-// need an ear at btn_y and the vents need a clear run — so the pairs are
-// pushed to the two ends: the locking pair OUTBOARD of the button ear (nearer
-// the plug), the free pair down at the thumb end. The asserts below are what
-// keep that arrangement true if anyone moves a button or a vent.
+// need an ear at btn_y and the light seam wants the clear run between the
+// pairs — so the pairs are pushed to the two ends: the locking pair OUTBOARD
+// of the button ear (nearer the plug), the free pair down at the thumb end.
+// The asserts below are what keep that arrangement true if anyone moves a
+// button; moving one also moves the seam, which is derived from these.
 snap_y_lock = yc/2 - 4.2;
 snap_y_free = -yc/2 + 6.0;
 
@@ -398,7 +481,25 @@ assert(!sd_window || (yc/2 - sd_from_usb) - sd_l/2 - 0.8 >= mark_hi,
        str("The card window runs into the mark. Lower mark_dy or move ",
            "sd_from_usb — and remember sd_from_usb is a MEASURE item."));
 assert(mark_hi <= plate_y/2 - 1.0 && mark_lo >= -plate_y/2 + 1.0,
-       "The mark runs off the edge of the back plate — shrink mark_h.");
+       "The mark runs off the TOP or BOTTOM of the back plate — shrink mark_h.");
+
+// ── ...and the width, which is the one that actually bit ──────────────────
+// OpenSCAD has no text-metrics primitive, so the wordmark's width cannot be
+// measured here — it has to be ESTIMATED. `mark_adv` is a per-character
+// advance as a fraction of cap height, calibrated against a measured render:
+// at mark_h = 8.5 the exported accent spans 17.84 mm and this returns 17.85.
+// Deliberately a hair pessimistic, because the failure it guards against is a
+// mark hanging off the plate — which is exactly what shipped before it existed,
+// unnoticed, because the only check here was vertical.
+mark_adv = 0.875;
+mark_word_chars = 8;                       // "securaCV"
+function mark_word_w(h) = mark_word_chars * mark_adv * h * mark_word_ratio();
+function mark_bird_w(h) = h * 130 / mark_span();   // beak (-63) to tail (+67)
+mark_w = max(mark_bird_w(mark_h), mark_word_w(mark_h));
+assert(mark_w <= plate_x - 2.0,
+       str("The mark is ", mark_w, " mm wide on a ", plate_x,
+           " mm plate — it will hang off the sides. Shrink mark_h; the ",
+           "wordmark, not the bird, is what sets this width."));
 
 // ===========================================================================
 //  PRIMITIVES
@@ -473,7 +574,7 @@ module bezel_usb() {
 module bezel_collar() {
     // The drop buttress. It reaches INWARD from the plug-end wall, never
     // outward — this is the whole subtlety of the feature. An outward collar
-    // is the obvious shape and it is wrong: every millimetre outside the end
+    // is the obvious shape and it is wrong: every millimeter outside the end
     // wall comes straight off the plug's usable insertion length, and 3 mm of
     // handsome ring is 3 mm the plug no longer reaches into the socket.
     //
@@ -507,35 +608,141 @@ module bezel_buttons() {
             cylinder(h = wall + ear_bump + 2, d = btn_d, center = true);
 }
 
-// Side vents: the house egg, in offset rows (the clutch), on the clear
-// stretch of long wall between the two snap pairs.
+// ── The light seam ────────────────────────────────────────────────────────
+// A slot through both long walls at the LCD/PCB sandwich gap, so the RGB
+// escapes as a line along the screen's edge instead of being sealed in by a
+// solid wall.
 //
-// Upright on a vertical face is the point — a drip running down the skin
-// meets the crown and parts around the opening instead of pooling on a flat
-// slot top. Nothing here is rated for anything; it is drip logic, and it is
-// free, so it may as well be right.
-module bezel_vents() {
-    for (sx = [-1, 1], r = [0 : vent_rows-1], c = [0 : vent_cols-1]) {
-        y = vent_center_y + (r - (vent_rows-1)/2) * vent_pitch_y;
-        z = face_t + cav_d*0.30 + c * (vent_l + 1.5)
-            + (r % 2) * (vent_l + 1.5)/2;
-        translate([sx * (xo/2 + 1), y, z]) rotate([0, 90*sx, 0])
-            linear_extrude(wall + ear_bump + 2, center = true)
-                egg2d(vent_l, vent_w);
+// THE SEAM MUST OPEN INTO THE CAVITY, and that is not automatic. This slot
+// was first written as a fixed-width cube parked near the outer face; the
+// numbers worked out to an inner face at x = 11.01 against a cavity wall at
+// 10.36, so it left a 0.65 mm curtain of black plastic between the LED and
+// the band. It looked perfect in every render — a clean white line down each
+// side — and would have shipped a light pipe with no light in it. So the x
+// span is DERIVED from the cavity and outer faces, and asserted, rather than
+// composed out of wall thicknesses that happen to add up.
+
+// The run: between the two snap pairs, which is also the stretch with no
+// button ear on it.
+seam_y_lo = snap_y_free + snap_half + 1.0;
+seam_y_hi = snap_y_lock - snap_half - 1.0;
+
+seam_x_in  = xc/2 - 1.0;                // starts inside the cavity: no lip, no curtain
+seam_x_out = xo/2 + ear_bump + 1.0;     // clears the outer face, button ear included
+assert(!light_seam || seam_x_in < xc/2,
+       str("The light seam's inner face is at x=", seam_x_in, ", outside the ",
+           "cavity wall at ", xc/2, ". The band would be a white inlay that ",
+           "never sees the LED."));
+assert(!light_seam || seam_x_out > xo/2 + ear_bump,
+       str("The light seam stops at x=", seam_x_out, ", short of the outer ",
+           "surface at ", xo/2 + ear_bump, ". It would be a buried pocket."));
+
+// The seam volume. `shrink` insets the visible faces so the same geometry
+// serves as the CUT (0) and as the BAND that fills it (band_clear) — they can
+// never drift apart into a strip that does not fit its own slot.
+module seam_prisms(shrink = 0) {
+    z0 = face_t + seam_dz;
+    y_lo = seam_y_lo;
+    y_hi = seam_y_hi;
+    for (sx = [-1, 1])
+        translate([sx * (seam_x_in + seam_x_out)/2,
+                   (y_lo + y_hi)/2,
+                   z0 + seam_h/2])
+            cube([seam_x_out - seam_x_in,
+                  (y_hi - y_lo) - 2*shrink,
+                  seam_h - 2*shrink], center = true);
+}
+
+// The ties that keep the bezel face bolted to its walls, and the reason they
+// are RIBS rather than webs. The seam runs most of the wall, so something has
+// to carry load across it or the face hangs off the corners alone — and this
+// case is designed around being dropped. The first version broke the slot
+// itself into segments, which does tie the face down but also chops the white
+// line into a row of 2.3 mm dashes: unpressable as inserts, and it reads as a
+// dotted line rather than a lit edge.
+//
+// So the tie moves INBOARD. The slot stays continuous through the outer skin
+// — one unbroken white line per side, which is the look — and the ribs live in
+// the inner `seam_web_d` of the wall, hidden behind the strip. Load still
+// crosses: face rim -> rib -> wall, through solid material the whole way.
+// `grow` swells them so the white strip gets notches it slides over rather
+// than an interference fit against them.
+module seam_web_ribs(grow = 0) {
+    z0 = face_t + seam_dz;
+    span = seam_y_hi - seam_y_lo;
+    // Ribs sit at the interior boundaries of (webs + 1) equal stretches.
+    step = span / (seam_webs + 1);
+    if (seam_webs > 0)
+        for (sx = [-1, 1], i = [1 : seam_webs])
+            translate([sx * (xc/2 + seam_web_d/2),
+                       seam_y_lo + i * step,
+                       z0 + seam_h/2])
+                cube([seam_web_d + 2*grow,
+                      seam_web_w + 2*grow,
+                      seam_h + 2], center = true);
+}
+
+// A rib that ate the whole wall would leave no white to see; one that ate none
+// would not tie anything. Hold it to a real ligament on both sides.
+assert(!light_seam || seam_webs == 0 || (seam_web_d >= 0.6 && seam_web_d <= wall - 0.8),
+       str("Seam rib depth ", seam_web_d, " mm has to sit between 0.6 mm (a ",
+           "tie worth having) and ", wall - 0.8, " mm (leaving 0.8 mm of white ",
+           "still visible in front of it)."));
+
+module bezel_light_seam() {
+    difference() { seam_prisms(0); seam_web_ribs(0); }
+}
+
+// The band: exactly the wall material the seam removed, minus clearance. Built
+// by intersecting the seam prism with the bezel's own shell, so a strip is
+// always precisely as deep as the wall it sits in — including where the wall
+// thickens into a button ear. The ribs are subtracted with clearance, so each
+// side prints as ONE continuous strip carrying its own notches.
+// The band exists only where the seam does. `light_band` on its own is not
+// enough: with light_seam off, bezel() never cuts the pocket, so a band built
+// anyway would be a strip of white occupying wall the bezel still has — two
+// solids claiming the same material, which the 3MF packager would hand the
+// AMS as an unresolvable overlap and the configurator would happily export.
+// Same rule, same reason, as light_plug and led_win: a part that fills a
+// feature does not get to outlive the feature.
+band_on = light_seam && light_band;
+
+module light_band() {
+    if (band_on) difference() {
+        intersection() {
+            seam_prisms(band_clear);
+            difference() {
+                union() {
+                    bezel_solid();
+                    if (opt_btn) for (sx = [-1, 1])
+                        translate([sx * (xo/2 + ear_bump/2 - 0.01), btn_y, face_t])
+                            linear_extrude(bez_h - face_t)
+                                rrect(ear_bump + 0.02, ear_w + 2, 0.8);
+                }
+                bezel_cavity();
+            }
+        }
+        seam_web_ribs(band_clear);
     }
 }
 
-// The vents must not eat a snap slot or a button ear.
-vent_span_lo = vent_center_y - (vent_rows-1)/2*vent_pitch_y - vent_w/2;
-vent_span_hi = vent_center_y + (vent_rows-1)/2*vent_pitch_y + vent_w/2;
-assert(!opt_vent || vent_span_hi <= min(btn_y - ear_half,
-                                        snap_y_lock - snap_half),
-       str("The vent clutch (up to y=", vent_span_hi, ") runs into the button ",
-           "ear or the plug-end snap. Lower vent_center_y or tighten ",
-           "vent_pitch_y."));
-assert(!opt_vent || vent_span_lo >= snap_y_free + snap_half,
-       str("The vent clutch (down to y=", vent_span_lo, ") runs into the ",
-           "free-end snap beam. Raise vent_center_y."));
+// The band must clear the LCD module at the front and REACH the PCB front at
+// the back. Those are the two real constraints and they point in opposite
+// directions:
+//   - start too early and the band fouls the display module's own edge;
+//   - stop short of the PCB and the strip's end never sees the LED, so the
+//     whole feature is a white line that does not light up.
+// So the far edge is allowed to land on the PCB plane (within a printing
+// tolerance), not held clear of it.
+// The band may start level with the glass (that is the design) but never in
+// FRONT of it — there it would undercut the face that retains the board.
+assert(!light_seam || seam_dz >= 0.0,
+       str("The light band starts ", seam_dz,
+           " mm behind the glass — negative means it undercuts the face."));
+assert(!light_seam || seam_dz + seam_h <= lcd_rise + 0.25,
+       str("The light band spans ", seam_dz, " .. ", seam_dz + seam_h,
+           " mm behind the glass, past the PCB front face at ", lcd_rise,
+           " mm. It would collide with the board."));
 
 // ── The snap beams, cut into the bezel wall ───────────────────────────────
 // Each is freed by a U-slot (two vertical slots through the wall, joined at
@@ -545,13 +752,28 @@ assert(!opt_vent || vent_span_lo >= snap_y_free + snap_half,
 // Hook cross-section, in (inward, up) with z=0 at the hook's shoulder. The
 // BOTTOM face is the shallow lead-in — that is the one the plate's edge rides
 // on the way in — and the TOP face is the steep return that holds it there.
+//
+// THE PEDESTAL, and why it is not optional. The beam is what survives the
+// inside relief, which means the beam is the wall's OUTER skin — it sits
+// `wall - snap_beam_t` further out than the cavity face. A hook drawn from the
+// cavity face would therefore float in mid-air, attached to nothing: the mesh
+// gate in render.sh catches it as extra disconnected parts, which is exactly
+// how this was found. So the hook starts at the BEAM's inner face and carries
+// a pedestal across the gap to the plate's edge; only the last `snap_eng`
+// beyond that edge is engagement, which is what the plate's groove and the
+// strain figure are both sized against.
+hook_ped = (wall - snap_beam_t) + tol_press;   // beam face -> plate edge
+kJoin = 0.3;   // overlap into the parent so the union is ONE solid
+
 module hook_profile(ret) {
     lead_run = snap_eng / tan(snap_lead);
     ret_run  = snap_eng / tan(ret);
-    polygon([[0, -lead_run],
-             [snap_eng, 0],
-             [snap_eng, snap_flat],
-             [0, snap_flat + ret_run]]);
+    polygon([[-kJoin, -lead_run],
+             [hook_ped, -lead_run],
+             [hook_ped + snap_eng, 0],
+             [hook_ped + snap_eng, snap_flat],
+             [hook_ped, snap_flat + ret_run],
+             [-kJoin, snap_flat + ret_run]]);
 }
 
 function hook_h(ret) = snap_eng/tan(snap_lead) + snap_flat + snap_eng/tan(ret);
@@ -585,7 +807,8 @@ module bezel_hooks() {
         yy  = sy > 0 ? snap_y_lock : snap_y_free;
         ret = sy > 0 ? snap_ret_lock : snap_ret_free;
         for (sx = [-1, 1])
-            translate([sx * (xc/2), yy, groove_mid_z - snap_flat/2])
+            translate([sx * (xc/2 + wall - snap_beam_t), yy,
+                       groove_mid_z - snap_flat/2])
                 rotate([90, 0, 0])
                     linear_extrude(snap_w, center = true)
                         scale([-sx, 1]) hook_profile(ret);
@@ -616,8 +839,8 @@ module bezel() {
             bezel_window();
             bezel_usb();
             if (opt_btn) bezel_buttons();
-            if (opt_vent) bezel_vents();
             bezel_snap_relief();
+            if (light_seam) bezel_light_seam();
             bezel_flick_scallop();
         }
         // Hooks go on AFTER the reliefs are cut, or the slots would eat them.
@@ -633,16 +856,25 @@ module bezel() {
 // that looks into the case), z = back_t its outer face (the one that wears
 // the mark). The renderer places it.
 module back_plate() {
-    difference() {
-        linear_extrude(back_t) rrect(plate_x, plate_y, r_in);
-
-        // Lead-in chamfer on the bottom outer edge — this is the face that
-        // rides the hooks' shallow lead-in on the way down, so the plate
-        // guides itself in rather than needing to be aimed.
-        lead = snap_eng + 0.3;
-        translate([0, 0, -0.01]) linear_extrude(lead + 0.01, scale =
-                (plate_x) / (plate_x - 2*lead))
-            rrect(plate_x - 2*lead, plate_y - 2*lead, max(0.4, r_in - lead));
+    // Lead-in chamfer on the bottom OUTER edge — this is the face that rides
+    // the hooks' shallow lead-in on the way down, so the plate guides itself
+    // in rather than needing to be aimed.
+    //
+    // Built as a hull from a smaller bottom profile up to the full outline,
+    // NOT as a subtracted taper. Subtracting one removes the middle of the
+    // plate's underside rather than its edge, which both guts the plate and
+    // leaves the PCB ribs standing on air — the mesh gate counts those as
+    // extra parts, which is how the mistake surfaced.
+    lead = snap_eng + 0.3;
+    union() {
+        hull() {
+            linear_extrude(0.01)
+                rrect(plate_x - 2*lead, plate_y - 2*lead, max(0.4, r_in - lead));
+            translate([0, 0, lead]) linear_extrude(0.01)
+                rrect(plate_x, plate_y, r_in);
+        }
+        translate([0, 0, lead]) linear_extrude(back_t - lead)
+            rrect(plate_x, plate_y, r_in);
     }
 }
 
@@ -667,10 +899,13 @@ module back_groove() {
 // drop a bending moment across the board; a rib that gives 0.25 mm turns the
 // same impact into a squeeze the PCB does not care about.
 module back_ribs() {
+    // Extruded a hair PAST z=0 into the plate: a rib that merely touches the
+    // underside is a separate solid to CGAL, and the mesh gate counts it as
+    // another part. Same reason as the hook pedestal above.
     rib_h = back_stack - preload;
     for (sy = [-1, 1], sx = [-1, 1])
         translate([sx * (xc/2 - 3.2), sy * (yc/2 - 4.5), -rib_h])
-            linear_extrude(rib_h) square([1.2, 5.0], center = true);
+            linear_extrude(rib_h + kJoin) square([1.2, 5.0], center = true);
 }
 
 // The thumb-flick ramp. The plate's far end carries a wedge that stands proud
@@ -710,7 +945,7 @@ module back_cutouts() {
 // be generated a hair larger so the yellow inlay actually touches the walls
 // of the pocket it sits in rather than rattling inside it.
 module back_mark(grow = 0) {
-    translate([0, mark_dy, back_t - mark_depth])
+    translate([mark_dx, mark_dy, back_t - mark_depth])
         linear_extrude(mark_depth + 0.02)
             offset(r = grow)
                 mark_lockup(mark_h, mark_rib);
@@ -738,8 +973,12 @@ module back_accent() {
 // The diffuser plug for the LED window. Natural / translucent PETG. A press
 // fit, because a nightlight whose window falls out onto the hallway floor at
 // 3 a.m. is worse than no window.
+//
+// It only exists when the window does: with led_win off there is no hole for
+// it to fill, and a part list that keeps offering it is a part list that gets
+// one printed.
 module light_plug() {
-    translate([0, 0, 0]) {
+    if (led_win) translate([0, 0, 0]) {
         cylinder(h = led_skin, d = led_d - 0.15);
         // A retaining flange on the inside face.
         translate([0, 0, led_skin]) cylinder(h = 0.8, d = led_d + 1.4);
@@ -752,6 +991,29 @@ module light_plug() {
 
 module back_assembly() { color("#1a1a1a") back_body(); color("#f5c518") back_accent(); }
 
+// The bezel as it looks assembled: black body, white light band.
+//
+// ⚠️ DO NOT JUDGE THE PALETTE FROM THIS, or from any part that composites it
+// ("all", "exploded", "fit_section"). The band sits exactly in the pocket it
+// was cut from, and OpenCSG merges the two into one product and paints it with
+// the LAST color — it renders the entire bezel white. The same caveat is on
+// the 7" frame's frame_color and in README §"Preview renders". These views are
+// good for silhouette and for fit; use part="palette" to see the colors.
+module bezel_assembly() { color("#1a1a1a") bezel(); if (band_on) color("#f2f2f2") light_band(); }
+
+// The three filaments, spread far enough apart that no two solids overlap —
+// which is the whole point, because non-overlapping groups are the ONE case
+// OpenCSG colors reliably. This is the view that answers "what does it look
+// like in black, white and yellow", and it cannot lie the way an assembly can.
+module palette_row() {
+    color("#1a1a1a") bezel();
+    if (band_on) translate([xo + 8, 0, 0]) color("#f2f2f2") light_band();
+    translate([2*(xo + 8), 0, 0]) {
+        color("#1a1a1a") back_body();
+        color("#f5c518") back_accent();
+    }
+}
+
 // PRINT ORIENTATION for the back is mark-face-DOWN (so the ribs point up and
 // print in air-free order, and the A-surface takes the textured plate's
 // finish — the same rule every case in this catalog follows). The assembly
@@ -761,15 +1023,17 @@ module back_printed() { rotate([180, 0, 0]) translate([0, 0, -back_t]) back_asse
 if (part == "bezel") bezel();
 else if (part == "back") back_printed();
 else if (part == "light") light_plug();
+else if (part == "fil_light") light_band();
+else if (part == "palette") palette_row();
 else if (part == "fil_body") rotate([180, 0, 0]) translate([0, 0, -back_t]) back_body();
 else if (part == "fil_accent") rotate([180, 0, 0]) translate([0, 0, -back_t]) back_accent();
 else if (part == "all") {
-    bezel();
+    bezel_assembly();
     translate([xo + 6, 0, 0]) back_printed();
     translate([xo + 6, yo/2 + 8, 0]) light_plug();
 }
 else if (part == "exploded") {
-    bezel();
+    bezel_assembly();
     translate([0, 0, plate_z0 + 15]) back_assembly();
 }
 else if (part == "fit_section") {
@@ -777,7 +1041,7 @@ else if (part == "fit_section") {
     // collar, the plug opening, the board seat and the snap engagement
     // actually agree with each other.
     difference() {
-        union() { bezel(); translate([0, 0, plate_z0]) back_assembly(); }
+        union() { bezel_assembly(); translate([0, 0, plate_z0]) back_assembly(); }
         translate([-xo, -yo, -5]) cube([xo, 2*yo, bez_h + 40]);
     }
 }

@@ -27,7 +27,7 @@ proposal, see [`docs/hardware/tv_display_design.md`](../../../docs/hardware/tv_d
 ## Try it right now (no hardware)
 
 Open `index.html?demo=1` in any browser — it renders a synthetic fleet,
-loudly labelled **DEMO · NOT A LIVE FLEET** so it can never be mistaken for a
+loudly labeled **DEMO · NOT A LIVE FLEET** so it can never be mistaken for a
 real one (per [`display_modes.md`](../../../docs/hardware/display_modes.md)).
 
 ```
@@ -39,7 +39,7 @@ firmware/projects/canary-display/tv/index.html?demo=1
 | Param | Default | Meaning |
 |-------|---------|---------|
 | `src=http://192.168.1.42` | same origin | Data origin. Omit when the page is served **by** the Canary (`/tv`) — then it's same-origin and needs no config or CORS. Set it for a stick that serves the page locally and points at a Canary's IP. |
-| `demo=1` | off | Render a synthetic fleet, labelled DEMO. |
+| `demo=1` | off | Render a synthetic fleet, labeled DEMO. |
 | `rooms=1` | off | Group the roll-call by room instead of by severity. |
 | `poll=2000` | 2000 | Snapshot poll interval, milliseconds. |
 

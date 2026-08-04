@@ -10,7 +10,7 @@ const assert = require("node:assert");
 
 const mod = () => import("../assets/vision-session.js");
 
-// A sessionStorage-shaped mock so the behaviour is testable without a browser.
+// A sessionStorage-shaped mock so the behavior is testable without a browser.
 function mockStorage() {
   const m = new Map();
   return {

@@ -94,7 +94,7 @@ and what to expect after updating. Heading grammar is
   - **An interrupted update.** Installing an update moves the app itself, so
     being stopped part-way can leave a copy that won't open at all. That one
     only a reinstall can fix — the repair would have to run from the copy that
-    moved — so the Flasher now recognises it and tells you, instead of leaving
+    moved — so the Flasher now recognizes it and tells you, instead of leaving
     you guessing. It only says so when the update genuinely didn't land: if
     you're already running the version that was being installed, it stays
     quiet. And quitting during an install is now refused outright, whether you

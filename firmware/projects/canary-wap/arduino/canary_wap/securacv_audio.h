@@ -357,7 +357,7 @@ bool audio_set_thresholds(uint16_t rms_on, uint16_t rms_off);
  * the SAME number the on/off hysteresis uses — exposing it lets the UI
  * draw a level meter without adding a second audio path. Returns 0 when
  * muted or never run. `age_ms_out` reports how long ago the value was
- * produced; the UI can grey out the meter if it's stale (> ~200 ms). */
+ * produced; the UI can gray out the meter if it's stale (> ~200 ms). */
 bool audio_get_live_level(uint16_t* rms_out, uint32_t* age_ms_out);
 
 /* Copy up to `max` most-recent transitions (newest first) into `out`,

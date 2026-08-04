@@ -142,7 +142,7 @@ test("wire golden: each frame type decodes like the firmware golden test", async
   const parser = new S.FrameParser();
   parser.push(S.framePeople(true));
   parser.push(S.frameCount(1));
-  parser.push(S.frameDistance(1.5)); // metres on the wire → 150 cm aggregate
+  parser.push(S.frameDistance(1.5)); // meters on the wire → 150 cm aggregate
   parser.push(S.frameBreath(15.5));  // rounds half-up → 16
   parser.push(S.frameHeart(72));
   let last = null, n = 0;

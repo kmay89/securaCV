@@ -40,7 +40,7 @@ enum AudioSession {
         try? session.setActive(true)
     }
 
-    /// Configure for two-way doorbell talk (mic + speaker, echo-cancelled).
+    /// Configure for two-way doorbell talk (mic + speaker, echo-canceled).
     static func prepareForTalk() {
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playAndRecord, mode: .voiceChat,

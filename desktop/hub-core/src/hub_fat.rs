@@ -156,7 +156,7 @@ impl FatError {
         match self {
             FatError::Io(e) => format!("couldn't read or write the image file: {e}"),
             FatError::NoPartitionTable => {
-                "the downloaded image has no partition table we recognise (neither GPT nor MBR) \
+                "the downloaded image has no partition table we recognize (neither GPT nor MBR) \
                  — it may be truncated or not a disk image at all"
                     .to_string()
             }
@@ -674,7 +674,7 @@ impl FatVolume {
     /// Keep FAT32's FSInfo hints in step with what we just allocated.
     ///
     /// The free-cluster count is only a hint — `0xFFFFFFFF` means "unknown" and
-    /// is legal — but `fsck.fat` reports an uninitialised summary as something
+    /// is legal — but `fsck.fat` reports an uninitialized summary as something
     /// it would repair, and an operator who runs a disk check on their card
     /// should see a clean bill, not a warning we chose to leave behind. The
     /// count is exact rather than estimated: `allocate` has just scanned the
