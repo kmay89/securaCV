@@ -46,7 +46,8 @@ ios/
   project.yml              XcodeGen spec — the single source of truth (edit this, never a .pbxproj)
   Shared/                  compiled into app + widgets + watch: fleet enums, Theme,
                            FleetActivityAttributes, WristSnapshot (the phone→watch
-                           contract), WristCache, BuildInfo
+                           contract), WristCache, GlanceAnswer (the one spoken
+                           sentence), BuildInfo
   Sources/
     SecuraCV/App/          entry, FleetStore (the one observable)
     SecuraCV/Model/        Witness, witness-chain, FleetRollup (mirror fleet_model.h + api.md)
@@ -54,7 +55,8 @@ ios/
     SecuraCV/Security/     Keychain, DeviceStore, ChainVerifier (Ed25519 on-device)
     SecuraCV/Cloud/        CloudSync (CloudKit private DB — the user's own iCloud)
     SecuraCV/Alerts/       AlertCenter (interruption levels), Heartbeat (provably-alive)
-    SecuraCV/Native/       LiveActivity, WatchLink (WCSession → wrist), HomeKitBridge, MediaRoute
+    SecuraCV/Native/       LiveActivity, WatchLink (WCSession → wrist), HomeKitBridge,
+                           MediaRoute, FleetIntents (Siri / Shortcuts / Action button)
     SecuraCV/Views/        Today / Fleet / Alerts / Keys + Pair + DeviceDetail
     SecuraCVWidgets/       Dynamic Island / Live Activity UI
     SecuraCVNotificationService/  NSE: shape the content-free wake into a shown alert
@@ -179,6 +181,41 @@ snapshot in a watch-local app group so the complications render without
 waking anything. The phone's `FleetStore` stays the only source of truth: the
 wrist remembers, orders, and requests — it never invents state. Design of
 record: [`docs/design/apple_watch_and_notifications.md`](../docs/design/apple_watch_and_notifications.md).
+
+## Ask, don't open — Siri, Shortcuts, Spotlight, the Action button
+
+The way a daily app stays wanted instead of resented: most days you never
+open it, because the platform asks on your behalf. The app exports exactly
+four verbs as App Intents (`Sources/SecuraCV/Native/FleetIntents.swift`),
+live in Siri, the Shortcuts app, Spotlight, and the Action button picker the
+moment the app is installed — zero setup, no in-app configuration screen to
+rot:
+
+- **Check the Fleet** — the one honest answer, spoken from the same glance
+  cache the widgets render. No app launch, no radio, instant. "All's well —
+  5 of 5 healthy."
+- **Test Alert Path** — the provably-alive round trip from anywhere a
+  Shortcut can run. Opens the app on purpose: the proof should be seen on
+  the card and heard in the chirp, not narrated.
+- **Quiet Hour** — every paired Canary muted for an hour in one verb, and
+  the confirmation names, every time, what a mute can never silence: tamper
+  and signature failures still come through (the same
+  `Witness.effectiveSeverity` punch-through as every other mute path).
+- **Resume Alerts** — the symmetric verb, so quiet is never a trap.
+
+This is also the flexibility story with no scope creep: "quiet the fleet
+when my mow-the-lawn timer starts," "check the fleet when I arrive home,"
+"Action button = test my alerts" are all *Shortcuts automations the user
+composes*, not settings we ship. The OS owns the combinatorics; the app
+contributes four verbs and stays simple.
+
+The honesty rules travel into the spoken answer
+(`Shared/GlanceAnswer.swift`, host-tested): an old snapshot says its age
+("As of 40 minutes ago: …"), a quiet fleet with a dark delivery heartbeat
+answers with both facts, and sample data says "Sample data" in the sentence
+itself. Intents that only read answer from the cache and never launch
+anything; intents that act prefer the live store and fall back to the same
+durable ledgers the store folds at launch — one behavior, cold or warm.
 
 ## Build it (on a Mac)
 

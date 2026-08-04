@@ -499,6 +499,27 @@ final class FleetStore: ObservableObject {
         applyMutesAndRepublish()
     }
 
+    /// The Quiet Hour verb (Siri / Shortcuts / the Action button): every
+    /// real witness muted at once. Demo rows are skipped — sample data must
+    /// never inflate the honest count — and tamper still punches through per
+    /// row (Witness.effectiveSeverity owns that guarantee; this path cannot
+    /// weaken it). Returns how many were quieted, for the spoken dialog.
+    @discardableResult
+    func quietFleet(for duration: TimeInterval = 3600) -> Int {
+        let ids = witnesses.map(\.id).filter { !$0.hasPrefix(DemoFleet.idPrefix) }
+        for id in ids { mute(id, for: duration) }
+        return ids.count
+    }
+
+    /// The symmetric verb: clear every active mute, so a quiet hour is never
+    /// a trap someone forgets they set. Returns how many mutes it ended.
+    @discardableResult
+    func resumeFleet() -> Int {
+        let ids = muteLedger.activeMutes()
+        for id in ids { unmute(id) }
+        return ids.count
+    }
+
     private func applyMutesAndRepublish() {
         var rows = witnesses
         for i in rows.indices {
