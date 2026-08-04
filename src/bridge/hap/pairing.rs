@@ -256,14 +256,12 @@ pub struct PairSetup {
     b: [u8; 48],
     verifier: Vec<u8>,
     srp_key: Option<Vec<u8>>,
-    attempts: u8,
 }
 
 impl std::fmt::Debug for PairSetup {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PairSetup")
             .field("state", &self.state)
-            .field("attempts", &self.attempts)
             .finish_non_exhaustive()
     }
 }
@@ -296,7 +294,6 @@ impl PairSetup {
             b,
             verifier,
             srp_key: None,
-            attempts: 0,
         })
     }
 
@@ -306,11 +303,21 @@ impl PairSetup {
     /// for the controller to render, never a dropped connection, because a
     /// silent drop is indistinguishable from a network fault and produces
     /// the worst pairing UX there is.
+    /// `attempts` is the **accessory-wide** failed-attempt counter, owned by
+    /// the server rather than by this exchange.
+    ///
+    /// It has to live outside the connection. HAP's brute-force limit is the
+    /// only thing making an eight-digit code safe to print on a sticker, and
+    /// a counter that resets when a `PairSetup` is constructed resets on
+    /// every new TCP connection — so an attacker simply reconnects after 99
+    /// guesses and continues forever. Per-connection state cannot bound a
+    /// per-accessory secret.
     pub fn handle(
         &mut self,
         body: &[u8],
         identity: &AccessoryIdentity,
         store: &mut PairingStore,
+        attempts: &mut u32,
     ) -> Vec<u8> {
         let request = match Tlv::decode(body) {
             Ok(t) => t,
@@ -319,11 +326,11 @@ impl PairSetup {
         let state = request.get_u8(ty::STATE).unwrap_or(0);
         let reply_state = state.saturating_add(1);
 
-        match self.step(&request, state, identity, store) {
+        match self.step(&request, state, identity, store, attempts) {
             Ok(tlv) => tlv.encode(),
             Err(e) => {
                 if e == PairError::Authentication {
-                    self.attempts = self.attempts.saturating_add(1);
+                    *attempts = attempts.saturating_add(1);
                 }
                 // Reset the exchange on any failure: a controller must start
                 // from M1 rather than retry a step in place, so a partially
@@ -342,8 +349,9 @@ impl PairSetup {
         state: u8,
         identity: &AccessoryIdentity,
         store: &mut PairingStore,
+        attempts: &mut u32,
     ) -> Result<Tlv, PairError> {
-        if self.attempts >= MAX_SETUP_ATTEMPTS {
+        if *attempts >= u32::from(MAX_SETUP_ATTEMPTS) {
             return Err(PairError::MaxTries);
         }
         match state {
@@ -736,11 +744,26 @@ mod tests {
             store: &mut PairingStore,
             code: &str,
         ) -> Result<(String, [u8; 32]), Vec<u8>> {
+            let mut attempts = 0u32;
+            self.pair_setup_counted(setup, identity, store, code, &mut attempts)
+        }
+
+        /// The same exchange, against a caller-owned attempt counter — the
+        /// shape the server uses, where the counter outlives the connection.
+        fn pair_setup_counted(
+            &self,
+            setup: &mut PairSetup,
+            identity: &AccessoryIdentity,
+            store: &mut PairingStore,
+            code: &str,
+            attempts: &mut u32,
+        ) -> Result<(String, [u8; 32]), Vec<u8>> {
             // M1
             let mut m1 = Tlv::new();
             m1.push_u8(ty::STATE, 1)
                 .push_u8(ty::METHOD, method::PAIR_SETUP);
-            let m2 = Tlv::decode(&setup.handle(&m1.encode(), identity, store)).expect("tlv");
+            let m2 =
+                Tlv::decode(&setup.handle(&m1.encode(), identity, store, attempts)).expect("tlv");
             if m2.get(ty::ERROR).is_some() {
                 return Err(m2.encode());
             }
@@ -758,7 +781,8 @@ mod tests {
             m3.push_u8(ty::STATE, 3)
                 .push(ty::PUBLIC_KEY, a_pub)
                 .push(ty::PROOF, cv.proof().to_vec());
-            let m4 = Tlv::decode(&setup.handle(&m3.encode(), identity, store)).expect("tlv");
+            let m4 =
+                Tlv::decode(&setup.handle(&m3.encode(), identity, store, attempts)).expect("tlv");
             if m4.get(ty::ERROR).is_some() {
                 return Err(m4.encode());
             }
@@ -791,7 +815,8 @@ mod tests {
             let sealed = crypto::seal(&session_key, nonce::PS_MSG05, b"", &sub.encode());
             let mut m5 = Tlv::new();
             m5.push_u8(ty::STATE, 5).push(ty::ENCRYPTED_DATA, sealed);
-            let m6 = Tlv::decode(&setup.handle(&m5.encode(), identity, store)).expect("tlv");
+            let m6 =
+                Tlv::decode(&setup.handle(&m5.encode(), identity, store, attempts)).expect("tlv");
             if m6.get(ty::ERROR).is_some() {
                 return Err(m6.encode());
             }
@@ -1022,7 +1047,7 @@ mod tests {
         let mut m1 = Tlv::new();
         m1.push_u8(ty::STATE, 1)
             .push_u8(ty::METHOD, method::PAIR_SETUP);
-        let reply = Tlv::decode(&setup.handle(&m1.encode(), &id, &mut store)).expect("tlv");
+        let reply = Tlv::decode(&setup.handle(&m1.encode(), &id, &mut store, &mut 0)).expect("tlv");
         assert_eq!(reply.get_u8(ty::ERROR), Some(tlv_error::UNAVAILABLE));
     }
 
@@ -1036,7 +1061,7 @@ mod tests {
         let mut m5 = Tlv::new();
         m5.push_u8(ty::STATE, 5)
             .push(ty::ENCRYPTED_DATA, vec![0u8; 64]);
-        let reply = Tlv::decode(&setup.handle(&m5.encode(), &id, &mut store)).expect("tlv");
+        let reply = Tlv::decode(&setup.handle(&m5.encode(), &id, &mut store, &mut 0)).expect("tlv");
         assert!(reply.get(ty::ERROR).is_some());
         assert!(store.is_empty());
     }
@@ -1047,7 +1072,7 @@ mod tests {
         let mut store = PairingStore::new();
         let mut setup = PairSetup::new(CODE).expect("setup");
         for junk in [vec![0xFF; 3], vec![0x06, 0x01, 0x01, 0x03], vec![]] {
-            let out = setup.handle(&junk, &id, &mut store);
+            let out = setup.handle(&junk, &id, &mut store, &mut 0);
             assert!(!out.is_empty(), "must always answer with a TLV");
         }
         let mut verify = PairVerify::new();
@@ -1107,20 +1132,35 @@ mod tests {
 
     /// Brute force is the realistic attack on an eight-digit code, so the
     /// attempt counter must actually latch.
+    /// The lockout must survive reconnection.
+    ///
+    /// A counter living on `PairSetup` resets every time one is constructed —
+    /// which the server does per TCP connection — so an attacker just
+    /// reconnects and keeps guessing. This drives a **fresh `PairSetup` each
+    /// round**, exactly as a reconnecting attacker would, against one
+    /// caller-owned counter.
     #[test]
-    fn repeated_failures_trip_max_tries() {
+    fn max_tries_survives_reconnection() {
         let id = identity();
         let mut store = PairingStore::new();
-        let mut setup = PairSetup::new(CODE).expect("setup");
         let ctrl = TestController::new("attacker");
+        let mut attempts = 0u32;
 
         for _ in 0..MAX_SETUP_ATTEMPTS {
-            let _ = ctrl.pair_setup(&mut setup, &id, &mut store, "000-00-000");
+            // A brand-new exchange every round: the reconnecting attacker.
+            let mut setup = PairSetup::new(CODE).expect("setup");
+            let _ =
+                ctrl.pair_setup_counted(&mut setup, &id, &mut store, "000-00-000", &mut attempts);
         }
+        assert_eq!(attempts, u32::from(MAX_SETUP_ATTEMPTS));
+
+        // Even on a completely fresh connection, the accessory is now shut.
+        let mut fresh = PairSetup::new(CODE).expect("setup");
         let mut m1 = Tlv::new();
         m1.push_u8(ty::STATE, 1)
             .push_u8(ty::METHOD, method::PAIR_SETUP);
-        let reply = Tlv::decode(&setup.handle(&m1.encode(), &id, &mut store)).expect("tlv");
+        let reply =
+            Tlv::decode(&fresh.handle(&m1.encode(), &id, &mut store, &mut attempts)).expect("tlv");
         assert_eq!(reply.get_u8(ty::ERROR), Some(tlv_error::MAX_TRIES));
     }
 

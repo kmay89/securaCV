@@ -63,6 +63,12 @@ pub struct ServerState {
     /// Bumped whenever the accessory database changes shape, so controllers
     /// know to re-read `/accessories` instead of trusting their cache.
     pub config_number: u64,
+    /// Failed pair-setup attempts, accessory-wide.
+    ///
+    /// Lives here rather than on a [`Connection`] because a per-connection
+    /// counter is no limit at all: an attacker reconnects and starts over.
+    /// See [`PairSetup::handle`].
+    pub setup_attempts: u32,
 }
 
 impl ServerState {
@@ -120,12 +126,12 @@ impl Fleet {
     /// Advance every projection one beat and copy the results into
     /// `state.fleet`.
     ///
-    /// Returns the `(aid, iid)` pairs whose value changed, which is what a
-    /// subscribed controller is notified about. Note what this means: the
-    /// *set of changes* is computed on the tick, so two events in one tick
-    /// produce one notification and zero events produce none — while the
-    /// tick itself happens regardless. Publication rate stays constant; only
-    /// the notification content varies, and only at tick granularity.
+    /// Returns the `(aid, iid)` pairs whose value changed. That list is for
+    /// observability and tests only — deliberately **not** for deciding
+    /// whether to notify. [`Connection::notification`] sends the full
+    /// subscribed set every tick regardless, because gating frames on
+    /// "something changed" makes socket traffic proportional to event
+    /// occurrence, which is the leak the pacing exists to remove.
     pub fn tick(&mut self, state: &mut ServerState) -> Vec<(u64, u64)> {
         let mut changed = Vec::new();
         for (aid, projection) in &mut self.projections {
@@ -269,22 +275,41 @@ impl Connection {
         }
     }
 
-    /// Build an `EVENT/1.0` notification for the given characteristics,
-    /// filtered to this connection's subscriptions.
+    /// Build this tick's `EVENT/1.0` notification: the current value of every
+    /// characteristic this controller subscribed to.
     ///
-    /// Returns `None` when nothing this controller cares about changed —
-    /// which is *not* a cover-traffic hole, because the pacing that matters
-    /// already happened upstream in [`Fleet::tick`]: this method cannot be
-    /// reached off-tick.
-    pub fn notification(&mut self, changed: &[(u64, u64)], state: &ServerState) -> Option<Vec<u8>> {
+    /// # This is the cover traffic, and it is why nothing here looks at what
+    /// # changed
+    ///
+    /// An earlier version sent only *changed* characteristics and returned
+    /// `None` otherwise. That was a real leak, and a subtle one: the
+    /// projection was paced, but the **socket** was not. An observer on the
+    /// LAN — or the hub relaying onward — sees a frame on ticks where
+    /// something happened and silence on ticks where nothing did, which is
+    /// network behavior varying in proportion to event occurrence. That is
+    /// precisely what Invariant III forbids, and pacing the layer above it
+    /// does not help if this layer re-introduces it.
+    ///
+    /// So: one frame per tick per subscribed connection, carrying current
+    /// values whether or not they moved. Redundant notifications are legal
+    /// HAP and controllers coalesce them.
+    ///
+    /// **Frame length is held constant too.** `true` is one byte shorter
+    /// than `false`, so an unpadded body would shrink and grow with the
+    /// values inside it, and ChaCha20-Poly1305 is a stream cipher — the
+    /// ciphertext length would leak exactly what the payload refused to say.
+    /// One trailing space per `true` pads every frame to the width it would
+    /// have had with all values false, which is constant for a given
+    /// subscription set. JSON ignores trailing whitespace.
+    ///
+    /// Returns `None` only when there is no session or no subscription —
+    /// both static properties of the connection, not event-correlated.
+    pub fn notification(&mut self, state: &ServerState) -> Option<Vec<u8>> {
         // No session, no notification: an unauthenticated peer is told
         // nothing about the fleet's state.
         self.session.as_ref()?;
         let mut entries = Vec::new();
-        for (aid, iid) in changed {
-            if !self.subscriptions.contains(&(*aid, *iid)) {
-                continue;
-            }
+        for (aid, iid) in &self.subscriptions {
             if let Some(value) = state.value_at(*aid, *iid) {
                 entries.push(format!(r#"{{"aid":{aid},"iid":{iid},"value":{value}}}"#));
             }
@@ -292,16 +317,21 @@ impl Connection {
         if entries.is_empty() {
             return None;
         }
-        let body = format!(r#"{{"characteristics":[{}]}}"#, entries.join(","));
+        let mut body = format!(r#"{{"characteristics":[{}]}}"#, entries.join(","));
+        let short_by = body.matches(":true").count();
+        body.extend(std::iter::repeat_n(' ', short_by));
         Some(self.wrap(http::event(body.as_bytes())))
     }
 
     fn route(&mut self, req: &Request, state: &mut ServerState) -> Vec<u8> {
         match (req.method.as_str(), req.path()) {
             ("POST", "/pair-setup") => {
-                let body = self
-                    .pair_setup
-                    .handle(&req.body, &state.identity, &mut state.pairings);
+                let body = self.pair_setup.handle(
+                    &req.body,
+                    &state.identity,
+                    &mut state.pairings,
+                    &mut state.setup_attempts,
+                );
                 // A completed setup changes what the accessory advertises
                 // (it is no longer discoverable), so the config number moves.
                 if self.pair_setup.is_complete() {
@@ -566,11 +596,48 @@ pub fn txt_records(
     txt
 }
 
-/// A live connection: its protocol state and the socket it answers on.
-type LiveConnection = Arc<Mutex<(Connection, TcpStream)>>;
+/// A live connection: its protocol state, its socket, and whether the thread
+/// serving it is still running.
+///
+/// # Lock order
+///
+/// Every thread that takes more than one of these locks takes them in this
+/// order, and never any other:
+///
+/// > `ServerState` → the connection list → [`LiveConnection::proto`] → [`LiveConnection::write`]
+///
+/// This is not style. The reader thread needs the state (to route a request)
+/// and the connection (to feed it); the metronome needs the state (to read
+/// values) and every connection (to notify it). Taking them in opposite
+/// orders is a textbook inversion, and the deadlock it produces is permanent
+/// — the tick thread and a request thread wedge holding one lock each, and
+/// all HAP traffic stops until the process is restarted.
+///
+/// `write` is deliberately a separate, leaf-level lock so a slow or wedged
+/// socket cannot hold the protocol state hostage.
+struct LiveConnection {
+    proto: Mutex<Connection>,
+    write: Mutex<TcpStream>,
+    /// Cleared when the serving thread exits. A dropped connection's mutex
+    /// still locks perfectly well, so liveness has to be tracked explicitly
+    /// rather than inferred from whether a lock succeeds — otherwise dead
+    /// entries accumulate and, after `MAX_CONNECTIONS` lifetime reconnects,
+    /// the server refuses every new controller until restart.
+    alive: AtomicBool,
+}
+
+impl LiveConnection {
+    fn is_alive(&self) -> bool {
+        self.alive.load(Ordering::Relaxed)
+    }
+
+    fn retire(&self) {
+        self.alive.store(false, Ordering::Relaxed);
+    }
+}
 
 /// Every connection the server is currently serving.
-type Connections = Arc<Mutex<Vec<LiveConnection>>>;
+type Connections = Arc<Mutex<Vec<Arc<LiveConnection>>>>;
 
 /// A running server's handle.
 pub struct HapServer {
@@ -658,24 +725,40 @@ pub fn serve(
         std::thread::spawn(move || {
             while !stop.load(Ordering::Relaxed) {
                 std::thread::sleep(period);
-                let changed = match state.lock() {
-                    Ok(mut s) => tick(&mut s),
-                    Err(_) => break,
-                };
-                let Ok(s) = state.lock() else { break };
+
+                // Lock order: state, then the list, then each connection.
+                let Ok(mut s) = state.lock() else { break };
+                tick(&mut s);
                 let Ok(mut conns) = connections.lock() else {
                     break;
                 };
-                conns.retain(|conn| {
-                    let Ok(mut guard) = conn.lock() else {
-                        return false;
+                conns.retain(|c| c.is_alive());
+
+                // Build every frame under the locks, write none of them: a
+                // blocked socket must not stall the metronome, and a stalled
+                // metronome would be a visible gap in the cadence.
+                let mut outbound: Vec<(Arc<LiveConnection>, Vec<u8>)> = Vec::new();
+                for conn in conns.iter() {
+                    let Ok(mut proto) = conn.proto.lock() else {
+                        conn.retire();
+                        continue;
                     };
-                    let (connection, stream) = &mut *guard;
-                    match connection.notification(&changed, &s) {
-                        Some(bytes) => stream.write_all(&bytes).is_ok(),
-                        None => true,
+                    if let Some(bytes) = proto.notification(&s) {
+                        outbound.push((Arc::clone(conn), bytes));
                     }
-                });
+                }
+                drop(conns);
+                drop(s);
+
+                for (conn, bytes) in outbound {
+                    let Ok(mut stream) = conn.write.lock() else {
+                        conn.retire();
+                        continue;
+                    };
+                    if stream.write_all(&bytes).is_err() {
+                        conn.retire();
+                    }
+                }
             }
         });
     }
@@ -698,7 +781,9 @@ pub fn serve(
                 let Ok(mut conns) = connections.lock() else {
                     break;
                 };
-                conns.retain(|c| c.lock().is_ok());
+                // Drop entries whose thread has exited before testing the
+                // cap, or routine controller reconnects would fill it.
+                conns.retain(|c| c.is_alive());
                 if conns.len() >= MAX_CONNECTIONS {
                     continue;
                 }
@@ -708,8 +793,12 @@ pub fn serve(
                 let Ok(peer) = stream.try_clone() else {
                     continue;
                 };
-                let shared = Arc::new(Mutex::new((connection, stream)));
-                conns.push(Arc::clone(&shared));
+                let live = Arc::new(LiveConnection {
+                    proto: Mutex::new(connection),
+                    write: Mutex::new(stream),
+                    alive: AtomicBool::new(true),
+                });
+                conns.push(Arc::clone(&live));
                 drop(conns);
 
                 let state = Arc::clone(&state);
@@ -721,15 +810,26 @@ pub fn serve(
                             Ok(0) | Err(_) => break,
                             Ok(n) => n,
                         };
-                        let Ok(mut guard) = shared.lock() else { break };
-                        let (connection, stream) = &mut *guard;
-                        let Ok(mut s) = state.lock() else { break };
-                        let out = connection.feed(&buf[..n], &mut s);
-                        drop(s);
-                        if !out.is_empty() && stream.write_all(&out).is_err() {
-                            break;
+                        // Same order as the metronome: state, then proto.
+                        // Both are released before the socket write, which
+                        // takes only the leaf `write` lock.
+                        let out = {
+                            let Ok(mut s) = state.lock() else { break };
+                            let Ok(mut proto) = live.proto.lock() else {
+                                break;
+                            };
+                            proto.feed(&buf[..n], &mut s)
+                        };
+                        if !out.is_empty() {
+                            let Ok(mut stream) = live.write.lock() else {
+                                break;
+                            };
+                            if stream.write_all(&out).is_err() {
+                                break;
+                            }
                         }
                     }
+                    live.retire();
                 });
             }
         });
@@ -760,6 +860,7 @@ pub fn state_for(
         bridge_name: bridge_name.into(),
         setup_code: setup_code.into(),
         config_number: 1,
+        setup_attempts: 0,
     }
 }
 
@@ -1030,9 +1131,11 @@ mod tests {
             .expect("projection")
             .observe_event(crate::EventType::BoundaryCrossingObjectLarge, None);
         let changed = fleet.tick(&mut state);
-        let note = conn
-            .notification(&changed, &state)
-            .expect("motion notification");
+        assert!(
+            changed.iter().any(|(aid, _)| *aid == 2),
+            "the event must have moved a characteristic, or the assertion below is vacuous"
+        );
+        let note = conn.notification(&state).expect("motion notification");
         let decoded = ctrl.read_body(&note);
         let text = String::from_utf8(decoded).expect("utf8");
         assert!(text.contains(r#""value":true"#), "got: {text}");
@@ -1095,7 +1198,7 @@ mod tests {
         let changed = fleet.tick(&mut state);
         assert!(!changed.is_empty());
         assert!(
-            conn.notification(&changed, &state).is_none(),
+            conn.notification(&state).is_none(),
             "no subscription, no notification"
         );
     }
@@ -1274,5 +1377,105 @@ mod tests {
         ] {
             let _ = conn.feed(junk, &mut state);
         }
+    }
+
+    /// A paired, verified controller subscribed to this Canary's motion
+    /// characteristic — the starting point for the cover-traffic tests.
+    fn paired_and_subscribed() -> (ServerState, Connection, Controller) {
+        let (mut state, mut conn) = fixture();
+        let mut ctrl = Controller::new("controller-1");
+        ctrl.pair_setup(&mut conn, &mut state, CODE);
+        ctrl.pair_verify(&mut conn, &mut state);
+
+        let motion_iid = state.fleet[0]
+            .characteristics()
+            .into_iter()
+            .find(|(_, s)| *s == HomeSignal::Motion)
+            .map(|(i, _)| i)
+            .expect("motion");
+        let put = format!(r#"{{"characteristics":[{{"aid":2,"iid":{motion_iid},"ev":true}}]}}"#);
+        let wire = ctrl.request(
+            "PUT",
+            "/characteristics",
+            content_type::JSON,
+            put.as_bytes(),
+        );
+        let out = conn.feed(&wire, &mut state);
+        ctrl.read_body(&out);
+        (state, conn, ctrl)
+    }
+
+    /// The property the pacer exists for, asserted at the **socket** layer
+    /// rather than at the projection layer.
+    ///
+    /// A previous version sent a frame only when a subscribed value changed,
+    /// so an observer could tell an event-bearing tick from an idle one just
+    /// by watching for traffic. Both the frame *count* and the frame *length*
+    /// must be identical whether or not anything happened.
+    #[test]
+    fn every_tick_emits_one_frame_of_constant_size() {
+        let (mut state, mut conn, _ctrl) = paired_and_subscribed();
+        let mut fleet = Fleet::new([2u64], PacingConfig::default()).expect("fleet");
+
+        let mut quiet = Vec::new();
+        for _ in 0..10 {
+            fleet.tick(&mut state);
+            quiet.push(
+                conn.notification(&state)
+                    .expect("a frame on every tick, even an idle one")
+                    .len(),
+            );
+        }
+
+        fleet
+            .projection_mut(2)
+            .expect("p")
+            .observe_event(crate::EventType::BoundaryCrossingObjectLarge, None);
+        fleet.tick(&mut state);
+        let busy = conn.notification(&state).expect("frame").len();
+        assert!(
+            state.fleet[0].last.asserted.contains(HomeSignal::Motion),
+            "the event must actually have asserted motion, or this proves nothing"
+        );
+
+        fleet
+            .projection_mut(2)
+            .expect("p")
+            .set_level(HomeSignal::Occupancy, true);
+        fleet.tick(&mut state);
+        let busier = conn.notification(&state).expect("frame").len();
+
+        let baseline = quiet[0];
+        assert!(
+            quiet.iter().all(|n| *n == baseline),
+            "idle ticks vary in size: {quiet:?}"
+        );
+        assert_eq!(
+            busy, baseline,
+            "an event-bearing tick is distinguishable by frame size"
+        );
+        assert_eq!(
+            busier, baseline,
+            "a second asserted signal is distinguishable by frame size"
+        );
+    }
+
+    /// The padding must not break the JSON a controller has to parse.
+    #[test]
+    fn padded_notifications_are_still_valid_json() {
+        let (mut state, mut conn, mut ctrl) = paired_and_subscribed();
+        let mut fleet = Fleet::new([2u64], PacingConfig::default()).expect("fleet");
+        fleet
+            .projection_mut(2)
+            .expect("p")
+            .observe_event(crate::EventType::BoundaryCrossingObjectLarge, None);
+        fleet.tick(&mut state);
+
+        let frame = conn.notification(&state).expect("frame");
+        let text = String::from_utf8(ctrl.read_body(&frame)).expect("utf8");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&text).expect("a controller must be able to parse this");
+        assert!(parsed["characteristics"].is_array(), "got: {text:?}");
+        assert!(text.ends_with(' '), "expected trailing pad, got: {text:?}");
     }
 }

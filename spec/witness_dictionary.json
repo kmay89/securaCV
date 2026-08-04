@@ -90,7 +90,21 @@
       { "id": "motion_vehicle", "rust_variant": "MotionVehicle", "hap_characteristic": "motion-detected", "shape": "pulse", "default_enabled": false, "label": "Motion (vehicle)" },
       { "id": "motion_animal", "rust_variant": "MotionAnimal", "hap_characteristic": "motion-detected", "shape": "pulse", "default_enabled": false, "label": "Motion (animal)" },
       { "id": "motion_package", "rust_variant": "MotionPackage", "hap_characteristic": "motion-detected", "shape": "pulse", "default_enabled": false, "label": "Motion (package)" }
-    ]
+    ],
+    "event_signals": {
+      "$comment": "Which signals an event asserts \u2014 the egress half of the event vocabulary, mirrored Rust src/bridge/homekit.rs `signals_for_event` <-> Python custom_components/securacv/const.py `HOMEKIT_EVENT_SIGNALS`. Deliberately partial: an event with no honest HAP counterpart maps to [] rather than being forced into a sensor that would misdescribe it, and the two empties are empty for different reasons. AcousticImpulseInZone has no HAP acoustic sensor, and publishing a sound as motion would be a false statement about someone's home. ContactStateChange reports that a contact CHANGED, not what it changed to, while HAP's contact characteristic is a state \u2014 deriving one from the other would show a door as open every time it was closed, so the contact signal is driven only by reported state.",
+      "map": {
+        "BoundaryCrossingObjectLarge": ["motion"],
+        "BoundaryCrossingObjectSmall": ["motion"],
+        "ObjectRemovedFromZone": ["motion"],
+        "VehiclePresenceAfterHours": ["motion"],
+        "VehicleArrivalDeparture": ["motion"],
+        "PresenceInRestrictedZone": ["occupancy"],
+        "TamperDetected": ["tamper"],
+        "AcousticImpulseInZone": [],
+        "ContactStateChange": []
+      }
+    }
   },
 
   "signature_format": {

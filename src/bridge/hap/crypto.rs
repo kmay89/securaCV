@@ -16,6 +16,32 @@ use hkdf::Hkdf;
 use sha2::Sha512;
 
 /// HKDF salt/info pairs, verbatim from the HAP specification.
+///
+/// # These are protocol constants, not secrets — and they cannot be randomized
+///
+/// A scanner will flag every one of these as a "hard-coded cryptographic
+/// value … used as a salt," so the reasoning is recorded here rather than
+/// rediscovered in each review.
+///
+/// The rule that fires is aimed at **password hashing**, where a per-user
+/// random salt is what stops one rainbow table from breaking every account.
+/// That is not what these are. These are HKDF **domain-separation contexts**
+/// (RFC 5869 §3.1, which explicitly permits a fixed — even empty — salt), and
+/// Apple fixes their exact byte values in the HAP specification. Both ends of
+/// the exchange derive with the same strings; randomizing ours would not make
+/// anything stronger, it would make pairing fail 100% of the time.
+///
+/// The secrecy in every one of these derivations comes from the **input key
+/// material**, never the salt:
+///
+/// - pair-setup derives from the SRP shared secret, which exists only because
+///   both sides knew the setup code
+/// - pair-verify derives from a fresh per-connection X25519 shared secret
+///
+/// Both are high-entropy and per-session. The salts' only job is to guarantee
+/// that four different derivations from one secret cannot collide — which is
+/// asserted by `every_kdf_context_is_distinct` and
+/// `session_directions_do_not_share_a_key` below.
 pub mod kdf {
     pub const PAIR_SETUP_ENCRYPT_SALT: &[u8] = b"Pair-Setup-Encrypt-Salt";
     pub const PAIR_SETUP_ENCRYPT_INFO: &[u8] = b"Pair-Setup-Encrypt-Info";

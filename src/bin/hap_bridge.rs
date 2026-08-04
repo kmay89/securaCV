@@ -28,7 +28,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, SyncSender};
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
@@ -37,6 +37,7 @@ use rumqttc::{Event, Incoming, MqttOptions, QoS};
 use witness_kernel::bridge::hap::server::{self, serve, state_for, Fleet, CATEGORY_BRIDGE};
 use witness_kernel::bridge::hap::store;
 use witness_kernel::bridge::homekit::{HomeSignal, PacingConfig};
+use witness_kernel::detect::ObjectClass;
 use witness_kernel::EventType;
 
 /// A `(device id, observation)` pair on its way from MQTT to a projection.
@@ -44,9 +45,25 @@ type ObservationMsg = (String, Observation);
 
 /// One coarse fact learned from the fleet, on its way to a projection.
 enum Observation {
-    Event(EventType),
+    Event(EventType, Option<ObjectClass>),
     Level(HomeSignal, bool),
 }
+
+/// How many observations may wait for the next tick.
+///
+/// FR-4: the MQTT thread produces without waiting and the metronome consumes
+/// once per tick, so an unbounded channel is a memory leak with a publisher
+/// on the other end of it. Overflow is dropped and counted rather than
+/// buffered — a bridge that runs out of memory tells a home nothing at all,
+/// which is strictly worse than one that missed a beat and said so.
+const OBSERVATION_QUEUE: usize = 1024;
+
+/// How many observations one tick will drain.
+///
+/// Without this, a publisher faster than the tick keeps the drain loop fed
+/// forever and publication never happens — the cadence would stall exactly
+/// when the fleet is busiest, which is both a liveness bug and a timing leak.
+const DRAIN_PER_TICK: usize = 4096;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -146,6 +163,37 @@ fn parse_class_signal(s: &str) -> Result<HomeSignal, String> {
 /// into "motion" would be a false statement about someone's home.
 fn parse_event_type(s: &str) -> Option<EventType> {
     serde_json::from_str::<EventType>(&format!("\"{s}\"")).ok()
+}
+
+/// Read a named boolean field out of a JSON payload, if it is there.
+///
+/// Returns `None` when the field is absent or unreadable, so a snapshot that
+/// simply does not carry this field leaves the signal alone instead of
+/// asserting that it is false.
+fn json_bool_field(payload: &[u8], field: &str) -> Option<bool> {
+    let value: serde_json::Value = serde_json::from_slice(payload).ok()?;
+    match value.get(field)? {
+        serde_json::Value::Bool(b) => Some(*b),
+        serde_json::Value::String(s) => Some(is_truthy_word(s)),
+        serde_json::Value::Number(n) => Some(n.as_f64().is_some_and(|f| f != 0.0)),
+        _ => None,
+    }
+}
+
+/// Map a payload's class word onto the sanctioned [`ObjectClass`] vocabulary.
+///
+/// Anything unrecognized becomes `None`, never a guess: the class word is the
+/// one sanctioned step past the dumb-PIR bar, so it is asserted only when the
+/// pipeline actually said it. `Unknown` maps to `None` too — the projection
+/// treats it as no class at all.
+fn parse_object_class(s: &str) -> Option<ObjectClass> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "person" => Some(ObjectClass::Person),
+        "vehicle" => Some(ObjectClass::Vehicle),
+        "animal" => Some(ObjectClass::Animal),
+        "package" => Some(ObjectClass::Package),
+        _ => None,
+    }
 }
 
 /// Read a payload as a boolean. Accepts the plain words a device might send
@@ -254,7 +302,8 @@ fn main() -> Result<()> {
         log::info!("accessory {aid} publishes: {}", signals.join(", "));
     }
 
-    let (tx, rx): (Sender<ObservationMsg>, Receiver<ObservationMsg>) = mpsc::channel();
+    let (tx, rx): (SyncSender<ObservationMsg>, Receiver<ObservationMsg>) =
+        mpsc::sync_channel(OBSERVATION_QUEUE);
     if !args.no_mqtt {
         spawn_mqtt(&args, tx)?;
     } else {
@@ -262,18 +311,23 @@ fn main() -> Result<()> {
     }
 
     let state_path = args.state.clone();
+    let mut persisted_pairings = state.pairings.clone();
+    let mut persisted_config = state.config_number;
     let server = serve(args.bind, server_state, pacing, move |s| {
         // Drain everything learned since the last beat. Observations only
         // ever mark state pending; nothing here publishes. Publication is
         // the tick below, and it happens whether or not this drained
         // anything — that is the cover traffic.
-        while let Ok((device, observation)) = rx.try_recv() {
+        for _ in 0..DRAIN_PER_TICK {
+            let Ok((device, observation)) = rx.try_recv() else {
+                break;
+            };
             let Some(aid) = aid_of.get(&device) else {
                 continue;
             };
             if let Some(projection) = fleet.projection_mut(*aid) {
                 match observation {
-                    Observation::Event(e) => projection.observe_event(e, None),
+                    Observation::Event(e, class) => projection.observe_event(e, class),
                     Observation::Level(sig, on) => projection.set_level(sig, on),
                 }
             }
@@ -282,11 +336,20 @@ fn main() -> Result<()> {
 
         // Persist a pairing change as soon as it happens: a controller that
         // paired and then lost power to the bridge must still be paired.
-        let stored = s.pairings.list().len();
-        if stored != state.pairings.len() || s.config_number != state.config_number {
-            state.absorb(&s.pairings, s.config_number);
-            if let Err(e) = store::save(&state_path, &state) {
-                log::error!("could not persist HAP pairings: {e}");
+        //
+        // Compare CONTENTS, not the count. An AddPairing that replaces an
+        // existing controller's key or demotes it from admin changes neither
+        // the table length nor the config number, so a length check would
+        // skip the save and the old key — or the old admin permission —
+        // would come back on the next restart.
+        state.absorb(&s.pairings, s.config_number);
+        if state.pairings != persisted_pairings || state.config_number != persisted_config {
+            match store::save(&state_path, &state) {
+                Ok(()) => {
+                    persisted_pairings = state.pairings.clone();
+                    persisted_config = state.config_number;
+                }
+                Err(e) => log::error!("could not persist HAP pairings: {e}"),
             }
         }
         changed
@@ -318,7 +381,7 @@ fn main() -> Result<()> {
 
 /// Subscribe to the fleet's MQTT topics and translate them into
 /// [`Observation`]s.
-fn spawn_mqtt(args: &Args, tx: Sender<ObservationMsg>) -> Result<()> {
+fn spawn_mqtt(args: &Args, tx: SyncSender<ObservationMsg>) -> Result<()> {
     let client_id = format!("securacv-hap-{}", std::process::id());
     let mut options = MqttOptions::new(client_id, (args.mqtt_host.as_str(), args.mqtt_port));
     options.set_keep_alive(60);
@@ -329,7 +392,12 @@ fn spawn_mqtt(args: &Args, tx: Sender<ObservationMsg>) -> Result<()> {
 
     let (client, mut connection) = rumqttc::ClientBuilder::new(options).capacity(64).build();
     let prefix = args.mqtt_prefix.clone();
-    for suffix in ["events", "presence", "tamper", "status"] {
+    // `state` is where presence actually lives. The firmware publishes a
+    // retained per-variant snapshot there (canary-sense `topics.h` builds
+    // `securacv/<id>/state`, and its HA discovery reads
+    // `value_json.presence`); there is no `presence` topic on the wire, so
+    // subscribing to one would leave Home occupancy permanently false.
+    for suffix in ["events", "state", "tamper", "status"] {
         client
             .subscribe(format!("{prefix}/+/{suffix}"), QoS::AtMostOnce)
             .with_context(|| format!("failed to subscribe to {prefix}/+/{suffix}"))?;
@@ -351,19 +419,31 @@ fn spawn_mqtt(args: &Args, tx: Sender<ObservationMsg>) -> Result<()> {
                         continue;
                     };
                     let observation = match kind {
-                        "events" => serde_json::from_slice::<serde_json::Value>(&p.payload)
-                            .ok()
-                            .and_then(|v| {
+                        "events" => {
+                            let value =
+                                serde_json::from_slice::<serde_json::Value>(&p.payload).ok();
+                            let event = value.as_ref().and_then(|v| {
                                 ["event_type", "type", "event"].iter().find_map(|k| {
-                                    v.get(*k).and_then(|x| x.as_str()).map(String::from)
+                                    v.get(*k)
+                                        .and_then(|x| x.as_str())
+                                        .and_then(parse_event_type)
                                 })
-                            })
-                            .and_then(|s| parse_event_type(&s))
-                            .map(Observation::Event),
-                        "presence" => Some(Observation::Level(
-                            HomeSignal::Occupancy,
-                            truthy(&p.payload),
-                        )),
+                            });
+                            // The coarse class rides along when the pipeline
+                            // knew one. It only ever reaches the wire if the
+                            // matching class-scoped signal was explicitly
+                            // enabled — the projection enforces that, not us.
+                            let class = value.as_ref().and_then(|v| {
+                                ["object_class", "class", "label"].iter().find_map(|k| {
+                                    v.get(*k)
+                                        .and_then(|x| x.as_str())
+                                        .and_then(parse_object_class)
+                                })
+                            });
+                            event.map(|e| Observation::Event(e, class))
+                        }
+                        "state" => json_bool_field(&p.payload, "presence")
+                            .map(|on| Observation::Level(HomeSignal::Occupancy, on)),
                         // Tamper latches: a witness reporting that it was
                         // interfered with must stay reported until a human
                         // clears it, so a "false" here is deliberately not a
@@ -377,8 +457,21 @@ fn spawn_mqtt(args: &Args, tx: Sender<ObservationMsg>) -> Result<()> {
                         _ => None,
                     };
                     if let Some(observation) = observation {
-                        if tx.send((device.to_string(), observation)).is_err() {
-                            break;
+                        // Bounded, and non-blocking on purpose: blocking here
+                        // would let a slow tick apply backpressure all the way
+                        // into the MQTT event loop and stall the broker
+                        // connection. A full queue drops the observation and
+                        // says so.
+                        match tx.try_send((device.to_string(), observation)) {
+                            Ok(()) => {}
+                            Err(mpsc::TrySendError::Full(_)) => {
+                                log::warn!(
+                                    "observation queue full ({OBSERVATION_QUEUE}); dropped an \
+                                     update from {device} — the fleet is publishing faster than \
+                                     the tick can drain"
+                                );
+                            }
+                            Err(mpsc::TrySendError::Disconnected(_)) => break,
                         }
                     }
                 }
@@ -474,5 +567,44 @@ mod tests {
         assert!(!truthy(&[0xFF, 0xFE, 0x00]));
         assert!(!truthy(b"{ not json"));
         assert!(!truthy(br#"{"unrelated":"on"}"#));
+    }
+
+    /// Only the four sanctioned coarse classes parse. Anything else — most
+    /// importantly anything identity-shaped — is `None`, never a guess.
+    #[test]
+    fn only_sanctioned_object_classes_parse() {
+        assert_eq!(parse_object_class("person"), Some(ObjectClass::Person));
+        assert_eq!(parse_object_class("Vehicle"), Some(ObjectClass::Vehicle));
+        assert_eq!(parse_object_class(" animal "), Some(ObjectClass::Animal));
+        assert_eq!(parse_object_class("package"), Some(ObjectClass::Package));
+        for other in ["unknown", "face", "license_plate", "alice", ""] {
+            assert_eq!(parse_object_class(other), None, "{other} must not parse");
+        }
+    }
+
+    /// Presence rides inside the `state` snapshot; a snapshot without the
+    /// field must leave the signal alone rather than asserting "not present".
+    #[test]
+    fn presence_is_read_from_the_state_snapshot() {
+        assert_eq!(
+            json_bool_field(br#"{"presence":true,"rssi":-40}"#, "presence"),
+            Some(true)
+        );
+        assert_eq!(
+            json_bool_field(br#"{"presence":false}"#, "presence"),
+            Some(false)
+        );
+        assert_eq!(
+            json_bool_field(br#"{"presence":"on"}"#, "presence"),
+            Some(true)
+        );
+        assert_eq!(
+            json_bool_field(br#"{"presence":1}"#, "presence"),
+            Some(1.0 != 0.0)
+        );
+        // Absent, or unreadable: say nothing.
+        assert_eq!(json_bool_field(br#"{"other":true}"#, "presence"), None);
+        assert_eq!(json_bool_field(b"{ not json", "presence"), None);
+        assert_eq!(json_bool_field(b"", "presence"), None);
     }
 }
