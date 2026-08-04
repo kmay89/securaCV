@@ -39,7 +39,7 @@ use rumqttc::{Event, Incoming, MqttOptions, QoS};
 
 use witness_kernel::bridge::hap::config::{self, BridgeConfig, CanaryConfig, MqttConfig};
 use witness_kernel::bridge::hap::server::{self, serve, state_for, Fleet, CATEGORY_BRIDGE};
-use witness_kernel::bridge::hap::{discover, qr, store, wizard};
+use witness_kernel::bridge::hap::{discover, qr, store, tty, wizard};
 use witness_kernel::bridge::homekit::{HomeSignal, PacingConfig};
 use witness_kernel::detect::ObjectClass;
 use witness_kernel::EventType;
@@ -327,45 +327,40 @@ fn default_state_beside(config: &Path) -> PathBuf {
 /// Ask for something that must not appear on screen.
 ///
 /// The broker password went through the ordinary prompt, which echoes — so it
-/// sat in plain sight, in the scrollback, and in any terminal recording. This
-/// turns echo off for the duration and restores it afterward, even on the
-/// error path.
-#[cfg(unix)]
+/// sat in plain sight, in the scrollback, and in any terminal recording.
+///
+/// The termios handling lives in [`tty`], not here: getting echo *back* on is
+/// the hard half, and it has to survive Ctrl-C, which kills the process
+/// without running destructors. See that module for why a `Drop` guard alone
+/// is not enough. Where echo cannot be suppressed at all — piped input, no
+/// terminal — the prompt still runs, and says so, because a visible password
+/// beats a setup that will not continue.
 fn prompt_secret(question: &str) -> Result<String> {
-    use std::os::unix::io::AsRawFd;
-
-    let fd = std::io::stdin().as_raw_fd();
-    let mut term: libc::termios = unsafe { std::mem::zeroed() };
-    // If the terminal will not tell us its settings we cannot turn echo off;
-    // falling back to an echoed prompt is better than refusing to continue,
-    // but the user is told so they can decide.
-    if unsafe { libc::tcgetattr(fd, &mut term) } != 0 {
-        println!("      (cannot disable echo on this terminal — it will be visible)");
-        return prompt(question, "");
-    }
-    let original = term;
-    term.c_lflag &= !libc::ECHO;
-    unsafe { libc::tcsetattr(fd, libc::TCSANOW, &term) };
+    let guard = match tty::hide_stdin_echo() {
+        Ok(g) => Some(g),
+        Err(e) => {
+            println!("      (echo cannot be turned off here, so this will be visible: {e})");
+            None
+        }
+    };
+    let hidden = guard.is_some();
 
     print!("{question} ");
     let flushed = std::io::stdout().flush();
     let mut line = String::new();
     let read = std::io::stdin().read_line(&mut line);
+    drop(guard);
 
-    // Restore before propagating anything, or a failure leaves the user's
-    // shell with echo off and no way to see what they are typing.
-    unsafe { libc::tcsetattr(fd, libc::TCSANOW, &original) };
-    println!();
+    // The Enter that ended the line was swallowed along with the echo, so
+    // supply the newline it would have drawn — but only when it was actually
+    // eaten, or an echoing fallback gets a stray blank line.
+    if hidden {
+        println!();
+    }
 
     flushed?;
     read?;
     Ok(line.trim().to_string())
-}
-
-#[cfg(not(unix))]
-fn prompt_secret(question: &str) -> Result<String> {
-    println!("      (echo cannot be disabled on this platform — it will be visible)");
-    prompt(question, "")
 }
 
 fn step(n: u8, of: u8, title: &str) {
@@ -454,12 +449,35 @@ fn run_setup(cli: &Cli) -> Result<()> {
             .parse()
             .unwrap_or(1883);
         mqtt.prefix = prompt("      Topic prefix:", &mqtt.prefix)?;
-        let user = prompt("      Username (blank for none):", "")?;
-        if !user.is_empty() {
-            mqtt.username = Some(user);
-            let pass = prompt_secret("      Password:")?;
-            if !pass.is_empty() {
-                mqtt.password = Some(pass);
+        // A saved login is offered explicitly rather than silently carried
+        // over. Cloning `base.mqtt` and then only *setting* on a non-empty
+        // answer made the prompt below a lie: pressing Enter at "blank for
+        // none" kept the old credentials, so anonymous access was
+        // unreachable and a stale secret outlived a broker change.
+        //
+        // Asked as its own question rather than by reserving a word like
+        // "none" at the username prompt — any such word is also a username
+        // somebody has.
+        let keep_saved = match &mqtt.username {
+            Some(user) => wizard::parse_yes_no(
+                &prompt(&format!("      Saved login for \"{user}\". Keep it?"), "y")?,
+                true,
+            ),
+            None => false,
+        };
+        if !keep_saved {
+            let user = prompt("      Username (blank for none):", "")?;
+            if user.is_empty() {
+                // "None" has to mean none, including for the password — it
+                // belonged to a login the user just declined.
+                mqtt.username = None;
+                mqtt.password = None;
+            } else {
+                mqtt.username = Some(user);
+                let pass = prompt_secret("      Password:")?;
+                // Likewise blank: a password-less login, not the previous
+                // password, which may be for an entirely different broker.
+                mqtt.password = (!pass.is_empty()).then_some(pass);
             }
         }
 
