@@ -261,29 +261,6 @@
    }
   },
   {
-   "id": "cradle_lib",
-   "scad": "canary_cradle_lib.scad",
-   "title": "Canary — CRADLE LIBRARY (the click-on wall dock)",
-   "family": "universal",
-   "device_compat": [],
-   "class": "accessory",
-   "fit": "standard",
-   "variant_axes": [],
-   "variants": [],
-   "render_parts": [],
-   "options": [],
-   "engineering_param_count": 0,
-   "alternatives": [],
-   "remix_of": null,
-   "counts": {
-    "variants": 0,
-    "released": 0,
-    "options": 0,
-    "user_options": 0,
-    "variant_axes": 0
-   }
-  },
-  {
    "id": "dash_display",
    "scad": "canary_dash_display.scad",
    "title": "Canary — DASHBOARD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
