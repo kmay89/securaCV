@@ -119,23 +119,51 @@ jobs:
     # ones keep their empty/solid semantics, and the self-test that proves a
     # broken render is rejected still runs as its own group.
     # PER-GROUP BUDGETS, sized from measurement rather than one number for
-    # everything. Actuals from the run that forced this (all green except the
-    # two that ran out of clock):
+    # everything — and RE-MEASURED, because the geometry grew out from under
+    # the last set. Gate-step minutes from two consecutive green runs on main,
+    # 2026-08-03 (A = dffa31e9 12:56 UTC, B = e51bc8bf 21:30 UTC):
     #
-    #   tpu-selftest  0.4    dock     9.9    ports          15.6
-    #   tpu           0.6    dock-p  11.0    battery-none   23.6
-    #   bezel         1.7    frame   11.3    battery-3000/10000  8 gates
+    #   group            A       B     old budget   B / old
+    #   tpu-selftest    0.0     0.0        10          0%
+    #   tpu             0.3     0.4        10          4%
+    #   bezel           1.2     6.2        10         62%
+    #   dock           10.1     7.0        25         28%
+    #   dock-p         10.8    15.1        25         61%
+    #   frame          12.1    16.7        25         67%
+    #   ports          16.3    21.4        35         61%
+    #   battery-none   24.4    32.3        50         65%
+    #   battery-3000   36.0    50.9        75         68%
+    #   battery-10000  37.2    50.0        75         67%
     #
-    # battery-none did 5 gates in 23.6 min = 4.71 min/gate, so the 8-gate
-    # variants expect ~37.7 — against a 45 budget. That is 84% consumed by the
-    # expected case, and runner speed varies: the SAME render step took 14m43s
-    # on one runner and 20m11s on another tonight, +37%. 37.7 x 1.37 = 51.6.
-    # 45 was never a safe number; it passed once by luck of the draw.
+    # THE GEOMETRY GOT HEAVIER, and the budgets did not follow. The only change
+    # to the 7" sources between A and B was #1423 (first-fit pass): it turned
+    # the side exit back on at the +x wall, cut the button plug's leash channel
+    # and anchor into the top wall's skin, grew the BOOT/RESET pips into
+    # towers, and re-drew the vent egg as a tangent-arc ovoid. Those land in
+    # the tray and frame walls — exactly the solids these gates intersect. The
+    # bezel group, which intersects the assembled bezel against back(), went
+    # 1.2 -> 6.2 minutes: 5x, on a budget written when it was a 1.7-minute job.
     #
-    # Budgets are roughly 2x measured. Small groups keep SMALL budgets on
-    # purpose — a 10-minute ceiling on a 1.7-minute group catches a hang in
-    # minutes, where one generous number for all of them would hide it for an
-    # hour. That is the point of per-group timeouts, not just headroom.
+    # It then timed out for real on the #1426 merge run: killed at 10m13s with
+    # openscad still running. Note how that surfaces — GitHub reports a job
+    # that hit timeout-minutes as a cancellation, not a failure, so the check
+    # reads as though a human hit a button. It was the clock.
+    #
+    # The old note already worked out why 45 was unsafe at 84% consumed: the
+    # SAME render step took 14m43s on one runner and 20m11s on another, +37%.
+    # Apply that to the B column and 60-68% consumed is 82-93% on a slow
+    # runner — every one of these was one unlucky draw from red.
+    #
+    # Budgets below are ~2x the B column, which is the rule that was always
+    # written down here; only the measurements were stale. Small groups keep
+    # SMALL budgets on purpose — a 10-minute ceiling on a 25-second group
+    # catches a hang in minutes, where one generous number for all of them
+    # would hide it for an hour. That is the point of per-group timeouts, not
+    # just headroom.
+    #
+    # If a group starts consuming most of its budget again, re-measure and
+    # re-cut rather than doubling: a gate that got slower is telling you the
+    # part got heavier, and that is worth knowing before the timeout is.
     timeout-minutes: ${{ matrix.minutes }}
     strategy:
       fail-fast: false
@@ -143,14 +171,14 @@ jobs:
         include:
           - { group: tpu-selftest,  minutes: 10 }
           - { group: tpu,           minutes: 10 }
-          - { group: bezel,         minutes: 10 }
+          - { group: bezel,         minutes: 15 }
           - { group: dock,          minutes: 25 }
-          - { group: dock-p,        minutes: 25 }
-          - { group: frame,         minutes: 25 }
-          - { group: ports,         minutes: 35 }
-          - { group: battery-none,  minutes: 50 }
-          - { group: battery-3000,  minutes: 75 }
-          - { group: battery-10000, minutes: 75 }
+          - { group: dock-p,        minutes: 35 }
+          - { group: frame,         minutes: 35 }
+          - { group: ports,         minutes: 45 }
+          - { group: battery-none,  minutes: 65 }
+          - { group: battery-3000,  minutes: 105 }
+          - { group: battery-10000, minutes: 105 }
     defaults:
       run:
         working-directory: docs/hardware/enclosure
