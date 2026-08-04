@@ -138,6 +138,16 @@ Four rules keep "beautiful" from decaying into "busy":
   like a promise. See the design doc §5 for why this replaced the hosted
   relay — which stays easy to add, since the receiver already decodes both
   payload shapes.
+- **The CloudKit schema is a command, not a ritual.**
+  `scripts/cloudkit_schema.sh check` / `promote` inspects the development
+  schema and deploys it to production. It exists because the failure it
+  guards is silent: CloudKit auto-creates record types in development on
+  first write, production does not, and a production build missing
+  `WitnessWake` throws no error and warns nobody — away alerts just never
+  arrive. The script refuses to promote a schema that lacks the type
+  (deploying nothing while looking like success is the trap), and warns
+  when create-time isn't queryable, which is what `sweepOldWakes` needs.
+
 - **First-class ecosystem citizenship.** Alerts are actionable (Ack /
   Mute 1 hour, mirrored to the wrist by the system) with relevance-ranked
   summaries; a real **Focus filter** (`FleetFocusFilter`) lets each Focus
