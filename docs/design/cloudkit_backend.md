@@ -66,7 +66,7 @@ if a third appears without being declared.
 | Field | Value | Why it is the minimum |
 |---|---|---|
 | `sev` | one of `tamper` / `integrity` / `offline` / `pattern` | Four values. The receiving extension needs *some* class to pick the right sentence and interruption level — `tamper` earns the smoke-alarm treatment, the others do not. |
-| *(nothing else)* | — | No device name, no zone, no event content, no timestamp of ours. CloudKit's own creation date is coarse enough to route on and never reaches the notification. |
+| *(nothing else)* | — | No device name, no zone, no event content, and no timestamp we write. CloudKit stamps every record with a precise creation date of its own, which we do not control and cannot switch off — §6.4 says what that costs. It never reaches the notification. |
 
 The lock screen shows a deliberately generic line ("Your Canaries — Something
 needs your attention"). The real sentence is composed **on the phone**, from the
@@ -175,7 +175,7 @@ Not "what we haven't gotten to" — what is refused, with the reason:
 |---|---|
 | **Footage, frames, thumbnails, embeddings** | Invariant I. Raw media never leaves the device during normal operation, and reversible derivatives count as raw media. There is no encryption story that makes this acceptable, because the objection isn't confidentiality — it's custody. |
 | **Event content** — what happened, in which zone, at what time | Invariant III. A wake says *a kind of trouble*, never the trouble. |
-| **Precise timestamps** | Invariant III. Events are bucketed to 10-minute windows locally; nothing finer is ever emitted, and certainly not to a cloud. |
+| **Event times, at any precision** | Invariant III. No record carries a time we wrote *about an event*. The log buckets events to 10-minute windows, and none of that is put in a record at all. This row is narrower than it looks, though — two timestamps reach iCloud regardless, one of them event-correlated. They are named and costed in §6.4 rather than hidden behind this line. |
 | **Per-device tokens, pinned keys, the vault private key** | Keychain, device-bound. The sealed-snapshot promise is that only the phone can open a snapshot; a synced key softens that to "any of your phones," which may be an acceptable *opt-in* but is never a default and never silent. |
 | **A public or shared database** | A public database is a database we could read. A shared one is a sharing mechanism we would then have to secure. Neither is needed for anything above. |
 | **An APNs key or a device-token registry of ours** | The whole point of §1. Holding one recreates the server we refused, and "this household got some alerts" becomes learnable by whoever holds it. |
@@ -252,6 +252,55 @@ production data to migrate, and it upgrades the claim from *"SecuraCV cannot
 read your fleet list"* (true today) to *"nobody but you can"* (not true today).
 Tracked in §9.
 
+### 6.4 Two precise timestamps reach iCloud, and one of them is event-correlated
+
+An earlier draft of this document claimed that nothing finer than a 10-minute
+bucket ever leaves for a cloud. That was false, and it was the exact failure
+mode this document is supposed to be an antidote to — a privacy claim written
+from the intent rather than from the code. Both timestamps, stated plainly:
+
+**`PairedDevice.pairedAt` — a full-precision `Date`, written by us.**
+`CloudSync.push()` stores it as-is. It is not an event time: it says when you
+paired a Canary, once, at install. But it is precise, we chose to write it, and
+"we only ever emit coarse times" was not a thing we could say.
+
+Coarsening it is not free, which is worth knowing before someone tries.
+`pairedAt` is the **last-writer-wins key** for cross-device merge
+(`DeviceStore.mergeFromCloud`, which keeps the existing record when
+`existing.pairedAt >= ref.pairedAt`). Bucket it to 10 minutes and two edits
+inside one bucket compare equal, so the incoming one is silently dropped — a
+correctness bug traded for a privacy gain that is small, since the leak is one
+install-time moment per device rather than anything about your day. The real fix
+is a separate monotonic merge counter, at which point `pairedAt` can be
+coarsened or dropped from the record entirely. Queued as §9.5, next to the
+`encryptedValues` change it should land with.
+
+**CloudKit's per-record creation date — precise, ours to neither set nor
+remove.** Every record gets one. For `PairedDevice` this is another install-time
+moment and uninteresting. For `WitnessWake` it is not: **the creation date of a
+wake is, to within seconds, the time the event happened**, sitting in the user's
+private database until the sweep clears it (under 24 hours). That is a genuinely
+precise event time in a cloud, and no wording makes it otherwise.
+
+What bounds it, honestly:
+
+- It is in the **user's own** private database. Custody is theirs; SecuraCV
+  cannot read it (Invariant IV holds).
+- It never reaches the notification, so nothing on a lock screen exposes it.
+- It says *when*, never *what* or *which* — there is no zone, no device, and
+  four possible values of `sev` next to it.
+- `sweepOldWakes` deletes it within a day. That is a retention bound, not
+  encryption, and it is worth exactly what a retention bound is worth: the
+  window is short, and during the window the timestamp exists.
+- It only exists at all if the user armed an "Anywhere" rule, and
+  `AwayPush.disable()` removes the whole path.
+
+This is the same residual as §6.1 seen from the storage side rather than the
+network side, and it has the same answer: it is the price of instant away alerts
+on iOS, it is opt-in, and it is stated rather than asserted away. A metronome
+(§9.2) would blunt the *network* signal and would not touch this one — only
+encrypting the record's own metadata would, which CloudKit does not offer.
+
 *A note on wording, because a privacy project pays for imprecision:* the
 companion RFC's phrase "Apple end-to-end protects it" was doing more work than
 standard CloudKit fields support. **"SecuraCV has no server in the loop and
@@ -319,6 +368,10 @@ when the API is silent to the *code*.
 3. **`aps-environment` in the distribution build** (§3). Verify against real
    delivery metrics once production has traffic; correct the entitlements if
    automatic signing is not rewriting it.
-4. **A third record type.** Do not add one without a row in the requirements
-   table — CI will stop you, which is the point — and without arguing it against
-   §5 here first.
+4. **A third record type, or a new field on an existing one.** Do not add either
+   without updating the requirements table — CI will stop you, which is the
+   point — and without arguing it against §5 here first.
+5. **A monotonic merge counter for `PairedDevice`** (§6.4), so `pairedAt` stops
+   being load-bearing for conflict resolution and can be coarsened or dropped
+   from the record. Same `CloudSync` write path as decision 1; they should land
+   together, since both need one schema promotion rather than two.

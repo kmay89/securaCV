@@ -30,20 +30,27 @@ fix that works is a gate rather than a promise.
 
 A THIRD RULE, THE SAME SHAPE, A DIFFERENT SILENCE
 -------------------------------------------------
-  3. EVERY CKRECORD TYPE THE APP USES IS LISTED IN ios/scripts/
-     cloudkit_schema.sh. CloudKit invents record types on first write in the
-     DEVELOPMENT environment and refuses to in production, so a type nobody
-     deployed makes every save and every query against it fail — and both
-     CloudKit call sites in this app swallow their errors on purpose, because a
-     failed sync must never stall the local alert already reaching the person
-     in the room. The result is a feature that is simply dead in the shipped
-     app with nothing anywhere to point at.
+  3. EVERY CKRECORD TYPE **AND FIELD** THE APP WRITES IS LISTED IN
+     ios/scripts/cloudkit_schema.sh. CloudKit invents record types and fields
+     on first write in the DEVELOPMENT environment and refuses to in
+     production, so anything nobody deployed makes every save against that type
+     fail — and both CloudKit call sites in this app swallow their errors on
+     purpose, because a failed sync must never stall the local alert already
+     reaching the person in the room. The result is a feature that is simply
+     dead in the shipped app with nothing anywhere to point at.
 
      `cloudkit_schema.sh` is the tool that promotes the schema and answers
-     "did it ship?" — and it can only check the types it has been told about.
-     Its first version knew only `WitnessWake`, while `CloudSync` had been
-     writing and querying `PairedDevice` since the day it was written. Nothing
-     caught that, because nothing was looking. This rule looks.
+     "did it ship?" — and it can only check what it has been told about. Its
+     first version knew only `WitnessWake`, while `CloudSync` had been writing
+     and querying `PairedDevice` since the day it was written. Nothing caught
+     that, because nothing was looking. This rule looks.
+
+     FIELDS ARE NOT A LESSER CASE OF THE SAME BUG — they are the nastier one.
+     A missing type at least fails only its own feature. A single undeclared
+     field makes production reject the WHOLE save, so adding one field to a
+     shipped record type kills every write of that type, including the ones
+     that worked yesterday. Checking type names alone would wave that through,
+     because the type was already listed.
 
 Run: python3 scripts/lint_cloudkit_container.py   (exit 0 = clean, 1 = drift)
 """
@@ -80,8 +87,9 @@ SCHEMA_SCRIPT = "ios/scripts/cloudkit_schema.sh"
 # Rows of that table look like `WitnessWake|sev|-|createdTimestamp` and are the
 # only lines in the file that begin with a bare identifier followed by a pipe.
 # Matching the shape rather than parsing the heredoc keeps this gate working if
-# the table grows a column, which is the likelier edit.
-SCHEMA_ROW_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_]*)\|", re.MULTILINE)
+# the table grows a trailing column, which is the likelier edit; the two columns
+# read here (type, fields) are the leading ones and stay put.
+SCHEMA_ROW_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_]*)\|([^|\n]*)", re.MULTILINE)
 
 # How a record type's name reaches CloudKit from Swift. Two spellings, because
 # the app uses both and a gate that knows only one is a gate with a hole:
@@ -96,6 +104,35 @@ RECORD_TYPE_INLINE = re.compile(r'\brecordType\s*:\s*"([A-Za-z_][A-Za-z0-9_]*)"'
 RECORD_TYPE_CONST = re.compile(
     r'\blet\s+\w*[Rr]ecordType\w*\s*(?::\s*String\s*)?=\s*"([A-Za-z_][A-Za-z0-9_]*)"'
 )
+
+# FIELDS, which are the other half of the same silent failure. Production
+# rejects a save carrying a field the schema doesn't define, so a NEW field on
+# an EXISTING record type kills every write to that type — and checking only
+# type names would wave it through, because the type was already listed.
+#
+# Attribution is the hard part: `record["name"] = …` says nothing about which
+# record type `record` is. So rather than lex Swift (see `code_of` for why this
+# file refuses to), the scan tracks the one shape the app actually writes:
+#
+#     let record = CKRecord(recordType: <literal or constant>)   -> binds a name
+#     record[<literal or constant>] = …                          -> a field of it
+#
+# Bindings are file-scoped, which is why two files can both call their variable
+# `record` without confusing the gate.
+#
+# Known limit, stated rather than papered over: a record obtained from a fetch
+# (`try res.get()`) is not a binding this sees, so fields only ever READ are not
+# checked. That is the harmless direction — reading an undefined field returns
+# nil, while writing one fails the save.
+CK_RECORD_BINDING = re.compile(
+    r"\b(?:let|var)\s+(\w+)\s*=\s*CKRecord\s*\(\s*recordType\s*:\s*([^,)]+)"
+)
+SUBSCRIPT_ASSIGN = re.compile(r"\b(\w+)\s*\[\s*([^\]]+?)\s*\]\s*=(?!=)")
+
+# Any `let NAME = "value"`, so a record type or field key written as a constant
+# (`Self.wakeRecordType`, `WakePayload.classKey`) can be resolved to its string.
+STRING_CONST = re.compile(r'\b(?:static\s+)?let\s+(\w+)\s*(?::\s*String\s*)?=\s*"([^"]*)"')
+STRING_LITERAL = re.compile(r'^"([^"]*)"$')
 
 errors: list[str] = []
 
@@ -232,11 +269,109 @@ def record_types_in_swift() -> dict[str, str]:
     return found
 
 
+def string_constants() -> dict[str, set[str]]:
+    """Every `let NAME = "value"` in the Swift sources, NAME -> {values}.
+
+    A set rather than a single value on purpose: two files may each define a
+    constant with the same bare name, and resolving `Foo.classKey` by its last
+    component would then be a coin flip. Collisions are reported at the point of
+    use (below) instead of guessed at, because a wrong guess here invents a
+    field name and fails the build for a reason that isn't true.
+    """
+    out: dict[str, set[str]] = {}
+    for root in SWIFT_ROOTS:
+        base = ROOT / root
+        if not base.is_dir():
+            continue
+        for f in sorted(base.rglob("*.swift")):
+            blob = code_of(f.read_text(encoding="utf-8"))
+            for name, value in STRING_CONST.findall(blob):
+                out.setdefault(name, set()).add(value)
+    return out
+
+
+def resolve(expr: str, consts: dict[str, set[str]], where: str, what: str) -> str | None:
+    """A Swift expression in record-type or field-key position -> its string.
+
+    Handles the two spellings the app uses: a literal, or a reference to a
+    string constant (`Self.wakeRecordType`, `WakePayload.classKey`), matched on
+    the last dotted component. Anything else returns None and is reported by the
+    caller — a gate that silently ignores what it cannot read is a gate with a
+    hole in exactly the shape of the next mistake.
+    """
+    expr = expr.strip()
+    literal = STRING_LITERAL.match(expr)
+    if literal:
+        return literal.group(1)
+
+    name = expr.split(".")[-1].strip()
+    values = consts.get(name)
+    if not values:
+        errors.append(
+            f"[unresolvable] {where}: cannot tell what {what} `{expr}` is. This "
+            "gate resolves a string literal or a `let NAME = \"…\"` constant "
+            "referenced by name. Use one of those, or teach this linter the new "
+            "spelling — do not leave it unreadable, because unreadable reads as "
+            "'nothing to check'."
+        )
+        return None
+    if len(values) > 1:
+        errors.append(
+            f"[ambiguous] {where}: {what} `{expr}` resolves by its last "
+            f"component to more than one value ({', '.join(sorted(values))}). "
+            "Rename one of the constants so the gate does not have to guess."
+        )
+        return None
+    return next(iter(values))
+
+
+def record_fields_in_swift(consts: dict[str, set[str]]) -> dict[str, dict[str, str]]:
+    """Fields written into each CKRecord, as {record type: {field: where}}."""
+    out: dict[str, dict[str, str]] = {}
+    for root in SWIFT_ROOTS:
+        base = ROOT / root
+        if not base.is_dir():
+            continue
+        for f in sorted(base.rglob("*.swift")):
+            rel = f.relative_to(ROOT)
+            blob = code_of(f.read_text(encoding="utf-8"))
+
+            # Which local names hold a CKRecord, and of what type. File-scoped.
+            bound: dict[str, str] = {}
+            for m in CK_RECORD_BINDING.finditer(blob):
+                ident, type_expr = m.group(1), m.group(2)
+                line_no = blob.count("\n", 0, m.start()) + 1
+                rtype = resolve(type_expr, consts, f"{rel}:{line_no}", "record type")
+                if rtype is None:
+                    continue
+                if bound.get(ident, rtype) != rtype:
+                    errors.append(
+                        f"[rebound] {rel}:{line_no}: `{ident}` holds a "
+                        f"{bound[ident]} record earlier in this file and a "
+                        f"{rtype} one here, so field writes cannot be attributed "
+                        "to either. Give them different names."
+                    )
+                    continue
+                bound[ident] = rtype
+
+            for m in SUBSCRIPT_ASSIGN.finditer(blob):
+                ident, key_expr = m.group(1), m.group(2)
+                if ident not in bound:
+                    continue  # an ordinary dictionary, not one of our records
+                line_no = blob.count("\n", 0, m.start()) + 1
+                field = resolve(key_expr, consts, f"{rel}:{line_no}", "field key")
+                if field is None:
+                    continue
+                out.setdefault(bound[ident], {}).setdefault(field, f"{rel}:{line_no}")
+    return out
+
+
 def check_schema_coverage() -> None:
     text = read(SCHEMA_SCRIPT)
     if text is None:
         return
-    listed = set(SCHEMA_ROW_RE.findall(text))
+    rows = {t: set(f.split()) - {"-"} for t, f in SCHEMA_ROW_RE.findall(text)}
+    listed = set(rows)
     if not listed:
         errors.append(
             f"[unparsable] {SCHEMA_SCRIPT} no longer contains a `Type|fields|…` "
@@ -268,6 +403,37 @@ def check_schema_coverage() -> None:
             "next person to distrust the table."
         )
 
+    # Fields, for the types both sides agree exist. A type missing from one side
+    # is already reported above; comparing its fields would just repeat that.
+    written = record_fields_in_swift(string_constants())
+    for rtype in sorted(listed & set(used)):
+        want = rows[rtype]
+        got = written.get(rtype, {})
+
+        for field, where in sorted(got.items()):
+            if field not in want:
+                errors.append(
+                    f"[unlisted field] {where}: \"{rtype}\" is written with a "
+                    f"\"{field}\" field that {SCHEMA_SCRIPT} does not require. "
+                    "Production rejects a save carrying a field its schema "
+                    "doesn't define — so once this ships, EVERY write of this "
+                    f"record type fails, not just the new field. Add \"{field}\" "
+                    f"to the {rtype} row, then promote the schema."
+                )
+
+        # The reverse only when the gate could see any writes at all. A type
+        # written somewhere this scan cannot attribute would otherwise report
+        # all of its fields as stale, which is a lie in the loud direction.
+        if got:
+            for field in sorted(want - set(got)):
+                errors.append(
+                    f"[stale field] {SCHEMA_SCRIPT} requires \"{field}\" on "
+                    f"\"{rtype}\", but no Swift source writes it. Drop it from "
+                    "the row if the app stopped setting it — a schema "
+                    "requirement nobody writes is one more thing standing "
+                    "between a real gap and the person reading this output."
+                )
+
 
 def main() -> int:
     want = declared_identifier()
@@ -284,10 +450,17 @@ def main() -> int:
         for e in errors:
             print(f"  {e}", file=sys.stderr)
         return 1
-    types = ", ".join(sorted(record_types_in_swift())) or "none"
+    # Print what was actually matched, not just "OK". A silent gate that has
+    # quietly stopped finding anything looks exactly like a clean tree.
+    written = record_fields_in_swift(string_constants())
+    types = record_types_in_swift()
+    summary = ", ".join(
+        f"{t} ({', '.join(sorted(written.get(t, {}))) or 'no fields written'})"
+        for t in sorted(types)
+    ) or "none"
     print(
         f'CloudKit container OK — "{want}" everywhere, no .default() call '
-        f"sites, schema table covers: {types}."
+        f"sites, schema table covers: {summary}."
     )
     return 0
 
