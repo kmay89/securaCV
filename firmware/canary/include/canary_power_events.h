@@ -127,6 +127,24 @@ inline void witness_incident() {
   witness_create_record(payload, cbor.size(), RECORD_STATE_CHANGE, &rec);
 }
 
+// How long the periodic health payload keeps reflecting this boot's power
+// lineage (power_loss_detected / unexpected_reboot). The one-shot tamper
+// message below is non-retained, and after a whole-house outage the hub
+// reboots slower than the Canary — a late-subscribing Home Assistant would
+// miss it entirely. Health repeats on a cadence, so the flag rides there
+// until the hold lapses; HA's health parse then clears the sensor itself.
+inline constexpr uint32_t kIncidentHoldMs = 3600000u;  // 1 h
+
+// True while the periodic health payload should carry power_loss_detected.
+inline bool health_power_flag(uint32_t now_ms) {
+  return powerevents::is_power_incident(g_boot) && now_ms < kIncidentHoldMs;
+}
+
+// True while it should carry unexpected_reboot (a fault-reset lineage).
+inline bool health_fault_flag(uint32_t now_ms) {
+  return g_boot == powerevents::BootPower::Fault && now_ms < kIncidentHoldMs;
+}
+
 // The boot classification as the securacv/<id>/tamper payload the Home
 // Assistant integration's per-type sensors parse ({"type":"power_loss"} /
 // {"type":"unexpected_reboot"}). Returns false for a benign boot — nothing to

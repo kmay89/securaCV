@@ -299,11 +299,15 @@ impl MqttSensorAdapter {
     }
 
     /// Topics this adapter wants subscribed (for the feeder/binary).
+    /// Deduplicated: several routes may share one multiplexed topic, and the
+    /// feeder should subscribe to it once.
     pub fn topics(&self) -> Vec<String> {
+        let mut seen = std::collections::BTreeSet::new();
         self.routes
             .lock()
             .expect("routes mutex")
             .iter()
+            .filter(|r| seen.insert(r.topic.clone()))
             .map(|r| r.topic.clone())
             .collect()
     }

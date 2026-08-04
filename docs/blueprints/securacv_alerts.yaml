@@ -116,8 +116,10 @@ blueprint:
         (e.g. binary_sensor.securacv_canary_<id>_tamper_power_loss). Turns
         on when the device boots after a restored outage or a brownout —
         the push carries the classifier's own sentence, including the
-        honest lower-bound outage duration when one is known. Leave empty
-        to skip.
+        honest lower-bound outage duration when one is known. Note: the
+        aggregate tamper sensor above also reacts to power events, so
+        configuring both sends two pushes for one outage — pick the
+        wording you prefer, or keep both on purpose. Leave empty to skip.
       selector:
         entity:
           domain: binary_sensor

@@ -227,9 +227,10 @@ the fleet appears in the Home app as *sensor* accessories
 PIR would report; one opt-in setting can add the coarse object class —
 person, vehicle, animal, package — never identity), so your automations can
 answer the witness — lights on when a person crosses the driveway, the whole
-house responding to tamper. Built today: `witnessd` speaks HAP directly
-(bridge site B — the Home app pairs with the hub, no Home Assistant in the
-path, behind the `bridge-homekit` feature with its setup wizard), and if you
+house responding to tamper. Built today: the hub speaks HAP directly
+(bridge site B — the Home app pairs with it, no Home Assistant in the path;
+the two-minute wizard is in the
+[Apple Home quickstart](integrations/apple-home-quickstart.md)), and if you
 run the Home Assistant hub, HA's own HomeKit Bridge projects the securacv
 sensors with zero new code — the worked recipe is
 [apple-home-homekit-bridge.md](integrations/apple-home-homekit-bridge.md).

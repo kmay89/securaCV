@@ -15,6 +15,13 @@ via the shipped [alert blueprints](../blueprints/securacv_alerts.yaml). Apple
 Home is an *additional* renderer of the same truth, never the only one — that is
 the degradation table in the RFC (§7), kept on purpose.
 
+> **Not running Home Assistant?** The other lane needs nothing but the hub
+> binary and an Apple TV or HomePod: `witnessd`'s own HAP bridge, with a
+> two-minute setup wizard — see the
+> [Apple Home quickstart](apple-home-quickstart.md). This recipe is the
+> zero-new-code lane for households already on the HA hub; both lanes end
+> with the same sensors in the same Home app.
+
 ## 1) Overview
 
 What Apple Home gets — and all it gets — is the closed, present-tense signal

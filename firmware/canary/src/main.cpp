@@ -2039,6 +2039,14 @@ static void mqtt_publish_health_update() {
   doc["firmware_version"] = FIRMWARE_VERSION;
   doc["tamper_detected"] = device.tamper_active;
 
+  /* Power lineage flags, held for kIncidentHoldMs after boot: the tamper
+   * topic's one-shot message is non-retained, so a hub that reboots slower
+   * than the Canary (every whole-house outage) learns about the incident
+   * from here instead. HA's health parse clears the sensors once the hold
+   * lapses and the flags go false. */
+  doc["power_loss_detected"] = canary_pe::health_power_flag(millis());
+  doc["unexpected_reboot"] = canary_pe::health_fault_flag(millis());
+
   /* SD endurance metrics: lifetime write counters (NVS-persisted), wear
    * estimate against the configured TBW rating, and the replacement
    * recommendation latch. HA's SD Wear / SD Replacement sensors read
