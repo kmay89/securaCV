@@ -216,6 +216,15 @@ jobs:
       # Quoted: the trailing `::` in the test filter would otherwise read as
       # a YAML mapping value and make this workflow unparseable.
       run: "cargo test --verbose --features bridge-homekit bridge::"
+    - name: Clippy (bridge-homekit-server)
+      run: cargo clippy --all-targets --features bridge-homekit-server -- -D warnings
+    # The server lane carries the pairing crypto and the encrypted session, so
+    # its tests are the ones that would rot most quietly: a transcript bug
+    # still compiles. The end-to-end test drives the accessory with an
+    # independently written controller, which is what makes it worth running
+    # rather than merely building.
+    - name: Test (bridge-homekit-server)
+      run: "cargo test --verbose --features bridge-homekit-server bridge::"
 
   ingest-gstreamer:
     name: Ingest (gstreamer rtsp)
