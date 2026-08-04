@@ -104,6 +104,24 @@ QR_COUPON = [("body", "coupon_qr_body", 1, LCD7, {})] + (
     [] if _QR_FIL == "body"
     else [(_QR_FIL, "coupon_qr_fill", FIL_SLOT[_QR_FIL], LCD7, {})])
 
+# Objects whose volumes are ALL required — an empty one is a hard error here,
+# not a dropped volume with a note.
+#
+# The general rule (drop it, say so, carry on) is right for the color coupon:
+# a palette that puts no ink on that object is a real configuration, and the
+# operator just loads one fewer spool. It is exactly wrong for the QR coupon,
+# whose entire job is to be SCANNED. Drop its ink and you package a blank
+# body-colored plaque, print it, and learn nothing — while the run log says
+# "EMPTY: the palette puts no ink on this object", which reads like a palette
+# decision rather than a broken test.
+#
+# That happened: turning the back plate's `qr_back` off also stopped the coupon
+# drawing a symbol, because the coupon intersects the frame's ink and the frame
+# had none. The .scad fix is `qr_draw` (the coupon carries the symbol whether or
+# not the plate does); this is the second lock, so the next way it breaks is
+# caught by the packager rather than by a printed part that will not scan.
+REQUIRE_ALL = {"QR coupon"}
+
 # ── The hallway stick (Waveshare ESP32-S3-LCD-1.47) ────────────────────────
 # Two objects, three filaments, and the whole reason it is worth packaging:
 # both objects have a second color that lives INSIDE a recess in the first.
@@ -322,6 +340,13 @@ def build(setname: str) -> tuple:
             stl = render(part, HERE / f"_3mf_{Path(src).stem}_{part}{tag}.stl",
                          src, defs)
             if stl is None:            # this color is not on this object
+                if gname in REQUIRE_ALL:
+                    raise SystemExit(
+                        f"'{gname}': the {_n} volume (part=\"{part}\") rendered "
+                        f"EMPTY, and this object needs all of its volumes — a "
+                        f"QR coupon with no symbol on it is a test that cannot "
+                        f"fail. Check that the symbol is drawn for this part "
+                        f"(see qr_draw in {src}).")
                 dropped.append((_n, slot))
                 continue
             oid += 1

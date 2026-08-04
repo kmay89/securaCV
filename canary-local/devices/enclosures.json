@@ -7364,22 +7364,22 @@
       },
       {
        "name": "vent_rows",
-       "default": "11",
+       "default": "8",
        "comment": "grille rows"
       },
       {
        "name": "vent_cols",
-       "default": "20",
+       "default": "17",
        "comment": "grille columns"
       },
       {
        "name": "vent_slot_w",
-       "default": "5.2",
+       "default": "6.5",
        "comment": "egg base width — the grille is the HATCHERY"
       },
       {
        "name": "vent_slot_l",
-       "default": "7.2",
+       "default": "9.0",
        "comment": "egg length (upright: sheds drips on a vertical"
       },
       {
@@ -7389,44 +7389,28 @@
       },
       {
        "name": "vent_pitch_x",
-       "default": "7.6",
+       "default": "9.2",
        "comment": "column pitch"
       },
       {
        "name": "vent_pitch_y",
-       "default": "8.0",
+       "default": "10.2",
        "comment": "row pitch"
       }
      ]
     },
     {
-     "name": "Frame — the graded vent field",
+     "name": "Frame — the clutch",
      "note": "",
      "params": [
       {
-       "name": "vent_grade",
-       "default": "true",
-       "comment": "false = every egg full size, as before"
+       "name": "vent_beat",
+       "default": "##.###."
       },
       {
-       "name": "vent_k_min",
-       "default": "0.46",
-       "comment": "smallest egg, as a fraction of vent_slot_*. Below"
-      },
-      {
-       "name": "vent_k_drop",
-       "default": "0.52",
-       "comment": "...and any cell that grades BELOW this is not cut at"
-      },
-      {
-       "name": "vent_d0",
-       "default": "34.0",
-       "comment": "mm from the mark's center where the grade starts..."
-      },
-      {
-       "name": "vent_d1",
-       "default": "88.0",
-       "comment": "...and where it reaches full size"
+       "name": "vent_beat_shift",
+       "default": "1",
+       "comment": "stations the pattern rotates per row."
       },
       {
        "name": "badge_column",
@@ -8395,7 +8379,15 @@
       {
        "name": "qr_back",
        "default": "false",
-       "comment": "deboss the help QR into the back plate too"
+       "comment": "deboss the help QR into the back PLATE"
+      },
+      {
+       "name": "qr_coupon",
+       "default": "part == \"coupon_qr_body\" || part == \"coupon_qr_fill"
+      },
+      {
+       "name": "qr_draw",
+       "default": "qr_back || qr_coupon"
       },
       {
        "name": "qr_back_cell",
@@ -8801,8 +8793,8 @@
        "default": "grille_cells(-m3_ox, m3_oy, fr_keepouts)"
       },
       {
-       "name": "fr_cells_flat",
-       "default": "grille_cells(-m3_ox, m3_oy, fr_keepouts, grade = false)"
+       "name": "vent_beat_hits",
+       "default": "len([for (ch = vent_beat) if (ch == \"#\") 1])"
       },
       {
        "name": "ink_live",

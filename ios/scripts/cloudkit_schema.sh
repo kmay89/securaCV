@@ -2,30 +2,52 @@
 #
 # cloudkit_schema.sh — inspect and promote the app's CloudKit schema.
 #
-# The away-alert path (Native/AwayPush.swift) writes a content-free
-# `WitnessWake` record to the USER's own private database, and a
-# CKQuerySubscription on that type is what makes Apple push the wake to
-# their other devices. CloudKit auto-creates record types in DEVELOPMENT on
-# first write, but production has no such magic: the type and its index must
-# be deployed deliberately.
+# WHAT LIVES IN THE CONTAINER
+#   Everything SecuraCV keeps in iCloud is in ONE container, in the USER's own
+#   PRIVATE database. SecuraCV runs no server and cannot read any of it
+#   (Invariant IV, realized as infrastructure rather than promised in copy).
+#   Two record types, and they are the whole list:
 #
-# That asymmetry is a trap, because the failure is silent. A production build
-# with no `WitnessWake` in its schema does not error at launch, does not warn,
-# and does not tell the user anything — away alerts simply never arrive. This
-# script exists so "did the schema ship?" is a command with an answer instead
-# of a thing someone remembers to click.
+#     * WitnessWake  — the content-free away-alert wake. A CKQuerySubscription
+#                      on this type is what makes Apple push a wake to the
+#                      user's other devices (Native/AwayPush.swift).
+#     * PairedDevice — the fleet list, so a second iPhone or an iPad "just has
+#                      your fleet" (Cloud/CloudSync.swift).
 #
-# The two things production needs:
-#   * RECORD TYPE WitnessWake, with the `sev` field (the coarse wake class —
-#     the only thing a wake is allowed to carry).
-#   * A QUERYABLE index on the create-time field. AwayPush.sweepOldWakes
-#     queries `creationDate < cutoff` to clear day-old wakes out of the
-#     user's iCloud; without the index that query fails at runtime and the
-#     litter accumulates.
+#   Why they are here at all, what will never join them, and the trade-offs
+#   taken with eyes open: docs/design/cloudkit_backend.md.
+#
+# WHY THIS SCRIPT EXISTS
+#   CloudKit auto-creates record types and indexes in DEVELOPMENT on first
+#   write. Production has no such magic: types and indexes must be deployed
+#   deliberately.
+#
+#   That asymmetry is a trap, because the failure is silent in BOTH directions.
+#   Production rejects a save carrying a field the schema doesn't define, and
+#   rejects a query against a field with no queryable index — and both call
+#   sites in this app deliberately swallow their errors, because a failed sync
+#   must never stall the local alert already reaching the person in the room.
+#   So a half-deployed schema does not error at launch, does not warn, and does
+#   not tell the user anything. The feature simply never works.
+#
+#   This script exists so "did the schema ship?" is a command with an answer
+#   instead of a thing someone remembers to click.
+#
+# THE TABLE IS THE POINT
+#   `requirements` below is the list of everything production needs. Adding a
+#   CKRecord type to the app and forgetting to add it here is the exact drift
+#   this script was written to prevent — and it happened: the first version of
+#   this file knew only about WitnessWake, while CloudSync had been writing and
+#   querying PairedDevice the whole time. So the table is now cross-checked
+#   against the Swift sources by scripts/lint_cloudkit_container.py, which runs
+#   in CI on every push. Edit the table; the checks below read it.
 #
 # Usage:
 #   ios/scripts/cloudkit_schema.sh check      # export dev, report what's there
 #   ios/scripts/cloudkit_schema.sh promote    # verify, then deploy to production
+#
+#   `check` exits non-zero when something required is missing, so it can gate a
+#   release step rather than only inform a human reading the scrollback.
 #
 # Config (env, or edit the defaults):
 #   SECURACV_TEAM_ID       Apple team id — the same value CI passes as
@@ -40,13 +62,73 @@ set -euo pipefail
 
 CONTAINER="${SECURACV_CK_CONTAINER:-iCloud.com.securacv.witness}"
 TEAM_ID="${SECURACV_TEAM_ID:-${APPLE_DEVELOPMENT_TEAM:-}}"
-RECORD_TYPE="WitnessWake"
-WAKE_FIELD="sev"
 SCHEMA_FILE="${TMPDIR:-/tmp}/securacv-schema.ckdb"
 
 die() { printf '\033[0;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 ok()  { printf '\033[0;32m✓\033[0m %s\n' "$*"; }
-note(){ printf '  %s\n' "$*"; }
+bad() { printf '\033[0;31m✗\033[0m %s\n' "$*"; }
+warn(){ printf '\033[0;33m!\033[0m %s\n' "$*"; }
+note(){ printf '    %s\n' "$*"; }
+
+# --- what production must have ----------------------------------------------
+#
+# One row per record type:
+#
+#   type | fields every write sets | indexes the app's queries REQUIRE | advised
+#
+# `-` means "none". A REQUIRED index is one whose absence kills the feature; an
+# ADVISED one degrades it without breaking it, so it warns instead of failing.
+# Field names are spelled exactly as the app writes them, because that is what
+# production compares against.
+requirements() {
+  cat <<'EOF'
+WitnessWake|sev|-|createdTimestamp
+PairedDevice|name deviceType baseURL pairedAt|recordName|-
+EOF
+}
+
+# The user-visible symptom of a missing type. A gate that says "record type not
+# found" makes someone go read Swift; a gate that names what the user loses
+# makes the priority obvious from the terminal.
+why_type() {
+  case "$1" in
+    WitnessWake)
+      echo "away alerts never arrive — the wake write is rejected, so no push is ever sent" ;;
+    PairedDevice)
+      echo "the fleet never appears on a second iPhone or iPad — the sync read comes back empty, forever" ;;
+    *)
+      echo "the feature behind this record type silently does nothing" ;;
+  esac
+}
+
+why_index() {
+  case "$1.$2" in
+    WitnessWake.createdTimestamp)
+      echo "AwayPush.sweepOldWakes queries 'creationDate < cutoff'; without the index the query fails and spent wakes accumulate in the user's iCloud" ;;
+    PairedDevice.recordName)
+      echo "CloudSync.pull() queries every PairedDevice with a match-all predicate, which production refuses without a queryable index; the error is swallowed, so fleet sync reads empty and looks like 'you have no devices'" ;;
+    *)
+      echo "a query the app depends on fails at runtime" ;;
+  esac
+}
+
+# How a missing type gets created in development, so the fix is a paragraph and
+# not a research project. CloudKit only mints a type when something writes one.
+how_to_seed() {
+  case "$1" in
+    WitnessWake)
+      note "Fix: on a device signed into iCloud, open a development build, set an"
+      note "     alert rule to \"Anywhere\" in Alerts -> Tell me when…, and run a"
+      note "     test alert. Then re-run this script." ;;
+    PairedDevice)
+      note "Fix: on a device signed into iCloud, open a development build and pair"
+      note "     one Canary. The first pair writes the record type. Then re-run"
+      note "     this script." ;;
+    *)
+      note "Fix: exercise the feature once in a development build signed into"
+      note "     iCloud so CloudKit mints the type, then re-run this script." ;;
+  esac
+}
 
 command -v xcrun >/dev/null 2>&1 || die "xcrun not found — this needs a Mac with Xcode."
 xcrun cktool --help >/dev/null 2>&1 || die "cktool unavailable — needs Xcode 14 or newer."
@@ -64,52 +146,113 @@ export_dev_schema() {
   ok "exported to $SCHEMA_FILE"
 }
 
-# The guard that matters. Importing a schema that lacks the record type is a
-# silent no-op that LOOKS like success — you would come away believing away
-# alerts were deployed when nothing changed. Refuse instead.
+# The whole `RECORD TYPE X ( … );` stanza, or nothing.
+#
+# The first version of this file read a fixed `grep -A20` window after the
+# header line. That silently under-reads: CloudKit's exported schema lists its
+# own system fields alongside yours, so PairedDevice's five fields plus the
+# GRANT lines run well past twenty — and a check that looks in the wrong window
+# reports "field missing" for a field that is right there, or worse, misses a
+# real gap because the window ended early. Read to the closing paren instead.
+record_block() {
+  awk -v t="$1" '
+    $0 ~ "RECORD TYPE[[:space:]]+" t "[[:space:]]*\\(" { inblock = 1 }
+    inblock { print }
+    inblock && /\);[[:space:]]*$/ { exit }
+  ' "$SCHEMA_FILE"
+}
+
+# A field name, matched on word boundaries so `name` does not match `recordName`
+# and `sev` does not match `severity`. `grep -w` is the portable spelling of
+# that on both BSD and GNU grep.
+block_has_field() {
+  printf '%s\n' "$1" | grep -qw -- "$2"
+}
+
+# The exported schema spells an index as an attribute on the field line
+# (`recordName NAME QUERYABLE`, `createdTimestamp TIMESTAMP QUERYABLE`), so the
+# test is "one line carries both the field and the word QUERYABLE."
+block_has_queryable() {
+  printf '%s\n' "$1" | grep -w -- "$2" | grep -qi "QUERYABLE"
+}
+
+missing=0   # something REQUIRED is absent — promoting would ship a dead feature
+degraded=0  # only advised indexes are absent — the feature works, imperfectly
+
 verify_schema() {
-  local hard_fail="$1" missing=0
+  local hard_fail="$1"
+  local type fields req_idx adv_idx block field idx
 
-  if grep -q "RECORD TYPE ${RECORD_TYPE}" "$SCHEMA_FILE"; then
-    ok "${RECORD_TYPE} is in the development schema"
+  while IFS='|' read -r type fields req_idx adv_idx; do
+    [ -n "$type" ] || continue
+    printf '\n%s\n' "$type"
+
+    block="$(record_block "$type")"
+    if [ -z "$block" ]; then
+      bad "$type is NOT in the development schema"
+      note "Without it: $(why_type "$type")."
+      note "CloudKit creates types on first write, and nothing has written one yet."
+      how_to_seed "$type"
+      missing=1
+      continue
+    fi
+    ok "$type is in the development schema"
+
+    # A missing field is as fatal as a missing type, not a cosmetic gap.
+    # Production rejects a save carrying a field the schema doesn't define, so
+    # the write fails, no record is created, and the feature is dead.
+    for field in $fields; do
+      [ "$field" = "-" ] && continue
+      if block_has_field "$block" "$field"; then
+        ok "  field $field"
+      else
+        bad "  $type exists but has no $field field"
+        note "Every write sets it, and production rejects a save with an undefined"
+        note "field — so nothing is ever written. Effect: $(why_type "$type")."
+        missing=1
+      fi
+    done
+
+    for idx in $req_idx; do
+      [ "$idx" = "-" ] && continue
+      if block_has_queryable "$block" "$idx"; then
+        ok "  $idx is QUERYABLE"
+      else
+        bad "  $idx is not QUERYABLE (required)"
+        note "$(why_index "$type" "$idx")."
+        note "Add it in the dashboard: Schema -> Indexes -> $type -> $idx (Queryable),"
+        note "then re-export."
+        missing=1
+      fi
+    done
+
+    for idx in $adv_idx; do
+      [ "$idx" = "-" ] && continue
+      if block_has_queryable "$block" "$idx"; then
+        ok "  $idx is QUERYABLE"
+      else
+        warn "  $idx is not QUERYABLE (advised)"
+        note "$(why_index "$type" "$idx")."
+        note "Add it in the dashboard: Schema -> Indexes -> $type -> $idx (Queryable),"
+        note "then re-export."
+        degraded=1
+      fi
+    done
+  done <<EOF
+$(requirements)
+EOF
+
+  printf '\n'
+  if [ "$missing" -eq 1 ]; then
+    bad "the schema is incomplete — at least one feature would be inoperative in production"
+  elif [ "$degraded" -eq 1 ]; then
+    warn "everything works, but something advised is missing (see above)"
   else
-    printf '\033[0;31m✗\033[0m %s is NOT in the development schema\n' "$RECORD_TYPE"
-    note "CloudKit creates types on first write, and nothing has written a wake yet."
-    note "Fix: on a device signed into iCloud, open a development build, set an"
-    note "     alert rule to \"Anywhere\" in Alerts -> Tell me when…, and run a"
-    note "     test alert. Then re-run this script."
-    missing=1
-  fi
-
-  # Missing `sev` is as fatal as a missing type, not a cosmetic gap.
-  # AwayPush.publishWake ALWAYS sets this field, and production CloudKit
-  # rejects a save carrying a field the schema doesn't define — so the write
-  # fails, no record is created, no push is sent, and away alerts are dead.
-  # (The extension's generic-line fallback decodes a notification that lacks
-  # a class; it cannot rescue a write that never succeeded.)
-  if grep -A20 "RECORD TYPE ${RECORD_TYPE}" "$SCHEMA_FILE" 2>/dev/null \
-     | grep -q "\b${WAKE_FIELD}\b"; then
-    ok "the ${WAKE_FIELD} field is present (the coarse wake class)"
-  elif [ "$missing" -eq 0 ]; then
-    printf '\033[0;31m✗\033[0m %s exists but has no %s field\n' "$RECORD_TYPE" "$WAKE_FIELD"
-    note "Every wake write sets ${WAKE_FIELD}, and production rejects a save with an"
-    note "undefined field — so no wake would ever be written and no push sent."
-    missing=1
-  fi
-
-  # createdTimestamp is what `creationDate` maps to in the schema language.
-  if grep -A20 "RECORD TYPE ${RECORD_TYPE}" "$SCHEMA_FILE" 2>/dev/null \
-     | grep -qi "createdTimestamp.*QUERYABLE"; then
-    ok "create-time is QUERYABLE (sweepOldWakes can clear old wakes)"
-  elif [ "$missing" -eq 0 ]; then
-    printf '\033[0;33m!\033[0m create-time is not marked QUERYABLE\n'
-    note "Away alerts still work; the day-old sweep will fail and wakes pile up"
-    note "in the user's iCloud. Add a Queryable index on createdTimestamp in the"
-    note "dashboard (Schema -> Indexes -> ${RECORD_TYPE}), then re-export."
+    ok "every record type, field, and index this app depends on is present"
   fi
 
   if [ "$missing" -eq 1 ] && [ "$hard_fail" = "strict" ]; then
-    die "refusing to promote: the schema is missing ${RECORD_TYPE} or its ${WAKE_FIELD} field, so away alerts would be inoperative while the deploy looked like it worked."
+    die "refusing to promote: deploying this would look like it worked while the feature stayed dead. Fix the gaps above first."
   fi
 }
 
@@ -118,6 +261,7 @@ case "${1:-check}" in
     export_dev_schema
     verify_schema lenient
     printf '\nNothing was deployed. Run with "promote" to push this to production.\n'
+    [ "$missing" -eq 0 ] || exit 1
     ;;
   promote)
     export_dev_schema
@@ -132,10 +276,13 @@ case "${1:-check}" in
       --environment production \
       --file "$SCHEMA_FILE"
     ok "production schema updated"
-    printf '\nVerify for real: install the TestFlight build on a phone signed into\n'
-    printf 'iCloud, arm an "Anywhere" rule, and let a Canary go dark while that\n'
-    printf 'phone is on cellular. If nothing arrives, the Alerts tab states the\n'
-    printf 'actual reason rather than failing silently.\n'
+    printf '\nVerify for real, both halves:\n'
+    printf '  * Away alerts — install the TestFlight build on a phone signed into\n'
+    printf '    iCloud, arm an "Anywhere" rule, and let a Canary go dark while that\n'
+    printf '    phone is on cellular. If nothing arrives, the Alerts tab states the\n'
+    printf '    actual reason rather than failing silently.\n'
+    printf '  * Fleet sync — sign a second device into the same iCloud account and\n'
+    printf '    confirm the paired Canaries appear without pairing them again.\n'
     ;;
   *)
     die "usage: $(basename "$0") [check|promote]"

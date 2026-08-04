@@ -184,8 +184,16 @@ final class AwayPush: ObservableObject {
         guard subscribed else { return }
         let record = CKRecord(recordType: Self.wakeRecordType)
         record[WakePayload.classKey] = wake.rawValue as CKRecordValue
-        // No name. No id. No timestamp of ours — CloudKit's own creation date
-        // is coarse enough for routing and never reaches the notification.
+        // No name. No id. No timestamp of ours.
+        //
+        // CloudKit stamps its own creation date on the record, and this comment
+        // used to call that "coarse enough for routing," which read as though
+        // the date were coarse. It is not: it is precise, we cannot switch it
+        // off, and for a wake it is — to within seconds — the time the event
+        // happened, sitting in the user's private database until sweepOldWakes
+        // clears it. It never reaches the notification, it says when and never
+        // what, and custody is the user's. That is the honest bound, and it is
+        // argued rather than waved at in docs/design/cloudkit_backend.md §6.4.
         CloudContainer.shared.privateCloudDatabase.save(record) { _, _ in }
         #endif
     }

@@ -523,12 +523,23 @@ it. It is drawn ~62 × 68 mm on the back plate, which is the largest that keeps
 its tail clear of the card window; the vents, the spec block and the help line
 are laid out around it rather than the other way round.
 
-⚠️ **The badge costs back-plate venting.** The grille drops from ~29 cm² to
-about 7 cm² — almost all of it the mark's own keepout, not the size grade. The
-convection path (bottom-wall intake → top-wall exhaust) is not on this plate
-and is untouched, but this panel runs hot and the render echoes the exact
-numbers plus what each decision cost. `bird_h` is the knob that matters;
-`badge_column = false` and `vent_grade = false` are the smaller ones.
+The grille is a **clutch**: one egg size (9.0 × 6.5 mm — half again the area
+of the old one, big enough that you read the shape rather than the pattern),
+grouped by a repeating beat (`vent_beat`) rotated one station per row so the
+hits pile into two compact nests instead of tiling. The plate reads eggs on the
+machine half and resolves into one hatched canary, forty times the size, on the
+other. Nothing is drawn to say that — the rhythm and the badge do it, which is
+the only way it stays true when somebody changes a number.
+
+⚠️ **The badge costs back-plate venting, and it is not a small cost.** The
+grille is ~5 cm² against the ~29 cm² a full field on this plate used to give.
+Almost all of that is the mark's own keepout. The convection path (bottom-wall
+intake → top-wall exhaust) is not on this plate and is untouched, but this
+panel runs hot, nothing in this repo measures the requirement, and a smaller
+grille is a warmer case — so **treat 5 cm² as a decision to check on a real
+print, not as a validated number.** The render echoes what each choice is
+worth. `bird_h` and `badge_column` are the big knobs; turning one `.` into a
+`#` in `vent_beat` is the cheap one, at 46 mm² an egg.
 
 The 3MF assigns filament **slots**, not colors, so load them in that order or
 you will print a materially different case from the one described here.
@@ -580,6 +591,17 @@ The QR plaque is two filaments, not three, and it is only the back plate —
 3 mm, not the frame's 23.5. The symbol is INK modules in a BODY-color field,
 and the accent must never touch a finder pattern, so there is deliberately no
 third slot to put it in.
+
+**The coupon carries a symbol even though the plate does not.** `qr_back` is
+off by default (the badge owns that space — see the three-color section above),
+so the shipped frame has no QR on it. The coupon still does, deliberately:
+`qr_back` answers *"does the finished plate wear the symbol"*, and the coupon
+answers *"would a symbol printed by this machine, at this cell size, in this
+polarity, actually scan"* — which is the question you have to settle **before**
+you can decide the first one. Gating one on the other made the test unavailable
+exactly when it was needed, and silently, because the packager drops a volume
+that renders empty. `gen_3mf.py` now treats an empty volume on this object as a
+hard error rather than a note.
 
 ⚠️ **On this palette the symbol is WHITE ON BLACK — inverted from the spec**,
 because `qr_style` is `bare`: the modules print straight onto the plate so the

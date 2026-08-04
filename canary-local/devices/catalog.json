@@ -1057,14 +1057,6 @@
      "default": true
     },
     {
-     "id": "vent_grade",
-     "type": "bool",
-     "label": "false = every egg full size, as before",
-     "consequence": "",
-     "audience": "user",
-     "default": true
-    },
-    {
      "id": "badge_column",
      "type": "bool",
      "label": "false = let the grille back into the badge's half",
@@ -1287,7 +1279,7 @@
     {
      "id": "qr_back",
      "type": "bool",
-     "label": "deboss the help QR into the back plate too",
+     "label": "deboss the help QR into the back PLATE",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -1322,8 +1314,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 32,
-    "user_options": 32,
+    "options": 31,
+    "user_options": 31,
     "variant_axes": 1
    }
   },

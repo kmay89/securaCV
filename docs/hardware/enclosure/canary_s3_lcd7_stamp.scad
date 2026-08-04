@@ -6,5 +6,5 @@
 // refuses the commit. See that script's header for what SRC does and
 // does not prove (provenance, NOT authenticity).
 // Functions, not variables, so nothing here surfaces in the Customizer.
-function lcd7_stamp_rev() = "2026.10a";
-function lcd7_stamp_src() = "REQK4MTE";
+function lcd7_stamp_rev() = "2026.10c";
+function lcd7_stamp_src() = "KZ398BRF";
