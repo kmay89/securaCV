@@ -9,11 +9,17 @@
 // Two lookups, at two HONEST precisions — the distinction matters, because
 // getting it wrong once already showed a user the wrong product:
 //
-//   figure_for_hardware(id)     EXACT. Keyed on the boards/<id>/pins header
-//     the build compiles against, which is load-bearing (wrong pins, dead
-//     device) and therefore a true statement of which physical board this is.
-//     A device asking about ITSELF should use this. Pass CANARY_FIGURE_HARDWARE,
-//     which each board's pins header defines.
+//   figure_for_hardware(id)     Exact about the BOARD, and therefore about
+//     the SHAPE. Keyed on the boards/<id>/pins header the build compiles
+//     against, which is load-bearing (wrong pins, dead device) and therefore a
+//     true statement of which physical board this is. A device asking what it
+//     LOOKS LIKE should use this; pass CANARY_FIGURE_HARDWARE, which each
+//     board's pins header defines.
+//
+//     It is NOT a product name. One board can carry several products — the 7"
+//     glass is both the Dash 7 and the Nightstand 7 — and a figure's title
+//     names only one of them. Rows where that happens set shared_across_products;
+//     to NAME the product, ask the device type, not the board.
 //
 //   figure_for(device_type)     COARSE, and deliberately INCOMPLETE. This is
 //     what a PEER publishes on the wire, and several types are shared by more
@@ -44,6 +50,10 @@ struct HardwareRef {
   const char* figure_id;
   const char* rev;
   const char* confidence;
+  // true when this board carries more than one product. The drawing is right
+  // for all of them; the figure's TITLE is right for one. Do not print the
+  // title as this device's product name when this is set.
+  bool shared_across_products;
 };
 
 // Device types that resolve to exactly one figure. Types published by more
@@ -57,17 +67,18 @@ inline constexpr FigureRef kFigures[] = {
 };
 inline constexpr size_t kFigureCount = sizeof(kFigures) / sizeof(kFigures[0]);
 
-// One row per piece of hardware we can draw. Exact by construction.
+// One row per piece of hardware we can draw. The board is exact; see
+// shared_across_products for when the product name is not.
 inline constexpr HardwareRef kHardware[] = {
-  { "board:seeed_xiao_esp32s3", "device.canary-wap", "5fab1e20", "shipping" },  // 4 builds
-  { "esp32-c3", "device.canary-vision-devkit", "996e322d", "shipping" },  // 2 builds
-  { "waveshare-esp32s3-lcd43", "device.canary-display-dash", "9bb5e13f", "prototype" },  // 2 builds
-  { "waveshare-esp32s3-lcd7", "device.canary-display-dash7", "cdff74a9", "prototype" },  // 2 builds
-  { "waveshare-esp32s3-touch-lcd169", "device.canary-display-touch169", "72fa8cf1", "prototype" },  // 1 build
-  { "xiao-esp32c3", "device.canary-vision", "421d34f1", "shipping" },  // 1 build
-  { "xiao-esp32c6-mr60", "device.canary-sense", "112abb6d", "shipping" },  // 3 builds
-  { "xiao-esp32s3", "device.canary-vision", "421d34f1", "shipping" },  // 1 build
-  { "xiao-esp32s3-round", "device.canary-display-watch", "64d11931", "prototype" },  // 3 builds
+  { "board:seeed_xiao_esp32s3", "device.canary-wap", "5fab1e20", "shipping", false },  // 4 builds
+  { "esp32-c3", "device.canary-vision-devkit", "996e322d", "shipping", false },  // 2 builds
+  { "waveshare-esp32s3-lcd43", "device.canary-display-dash", "9bb5e13f", "prototype", false },  // 2 builds
+  { "waveshare-esp32s3-lcd7", "device.canary-display-dash7", "cdff74a9", "prototype", true },  // 2 builds — shared by canary-dash + canary-nightstand7
+  { "waveshare-esp32s3-touch-lcd169", "device.canary-display-touch169", "72fa8cf1", "prototype", false },  // 1 build
+  { "xiao-esp32c3", "device.canary-vision", "421d34f1", "shipping", false },  // 1 build
+  { "xiao-esp32c6-mr60", "device.canary-sense", "112abb6d", "shipping", false },  // 3 builds
+  { "xiao-esp32s3", "device.canary-vision", "421d34f1", "shipping", false },  // 1 build
+  { "xiao-esp32s3-round", "device.canary-display-watch", "64d11931", "prototype", false },  // 3 builds
 };
 inline constexpr size_t kHardwareCount = sizeof(kHardware) / sizeof(kHardware[0]);
 
@@ -87,7 +98,9 @@ inline const FigureRef* figure_for(const char* device_type) {
   return nullptr;
 }
 
-// What THIS build is. Exact — the pins header is compile-time truth.
+// What THIS build LOOKS LIKE. The pins header is compile-time truth, so the
+// board — and the shape — are exact. Check shared_across_products before
+// using the figure's title as this device's product name.
 inline const HardwareRef* figure_for_hardware(const char* hardware) {
   if (!hardware || !hardware[0]) return nullptr;
   for (size_t i = 0; i < kHardwareCount; i++) {
@@ -98,7 +111,8 @@ inline const HardwareRef* figure_for_hardware(const char* hardware) {
 
 // Sugar for the common case: the figure of the board this firmware is being
 // compiled for. Boards whose pins header does not define
-// CANARY_FIGURE_HARDWARE get nullptr, same honest fallback as everywhere else.
+// CANARY_FIGURE_HARDWARE get nullptr, the same honest fallback as everywhere
+// else in this header.
 inline const HardwareRef* my_figure() {
 #ifdef CANARY_FIGURE_HARDWARE
   return figure_for_hardware(CANARY_FIGURE_HARDWARE);

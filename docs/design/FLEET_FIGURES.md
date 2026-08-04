@@ -124,6 +124,12 @@ Solids are painted back to front by their center's depth along the view axis.
 Within one convex solid the visible faces tile its silhouette exactly, so
 they need no sorting among themselves.
 
+**The frame is a promise.** Everything a figure draws — including the contact
+shadow, which is a footprint scaled outward from the object — has to sit
+inside the viewBox it declares, so the fit is computed over the shadow too. It
+wasn't at first, and a round display's shadow reached y = 293.8 in a 256 box:
+clipped on every surface that drew it.
+
 **The coplanar rule.** Never author two different-material faces on the same
 plane. The `.glb` generators learned this the hard way (z-fighting on the
 GPU — see the website's working notes); here the failure is quieter and the
@@ -262,8 +268,16 @@ travels with:
 ```
 
 ```cpp
-if (const auto* me = canary::figures::my_figure()) { … }   // what I am — exact
+if (const auto* me = canary::figures::my_figure()) { … }   // what I look like
 ```
+
+**Exact about the board is not exact about the product.** One board can carry
+several products: the 7″ glass is compiled by both `canary-display-dash7` and
+`canary-display-nightstand7`, so a Nightstand 7 asking `my_figure()` gets a
+figure whose *shape* is right and whose *title* says "Canary Dash 7". Rows
+where that happens set `shared_across_products` and the ledger lists what the
+board `serves`; to **name** the product, ask the device type, not the board.
+A figure is a picture first.
 
 The generator refuses to emit a figure for a board whose pins header is
 missing that line, so the id and the pins can never drift apart. Boards we

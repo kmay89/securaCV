@@ -136,7 +136,9 @@
      "canary-wap-default",
      "canary-wap-mobile",
      "canary-wap-usbdrive"
-    ]
+    ],
+    "serves": [],
+    "shared": false
    },
    {
     "hardware": "esp32-c3",
@@ -144,7 +146,11 @@
     "builds": [
      "canary-vision-debug",
      "canary-vision-default"
-    ]
+    ],
+    "serves": [
+     "canary-vision"
+    ],
+    "shared": false
    },
    {
     "hardware": "waveshare-esp32s3-lcd43",
@@ -152,7 +158,11 @@
     "builds": [
      "canary-display-dash",
      "canary-display-dash-ble5"
-    ]
+    ],
+    "serves": [
+     "canary-dash"
+    ],
+    "shared": false
    },
    {
     "hardware": "waveshare-esp32s3-lcd7",
@@ -160,21 +170,34 @@
     "builds": [
      "canary-display-dash7",
      "canary-display-nightstand7"
-    ]
+    ],
+    "serves": [
+     "canary-dash",
+     "canary-nightstand7"
+    ],
+    "shared": true
    },
    {
     "hardware": "waveshare-esp32s3-touch-lcd169",
     "figure": "device.canary-display-touch169",
     "builds": [
      "canary-display-touch169"
-    ]
+    ],
+    "serves": [
+     "canary-nightstand"
+    ],
+    "shared": false
    },
    {
     "hardware": "xiao-esp32c3",
     "figure": "device.canary-vision",
     "builds": [
      "canary-vision-xiao-c3"
-    ]
+    ],
+    "serves": [
+     "canary-vision"
+    ],
+    "shared": false
    },
    {
     "hardware": "xiao-esp32c6-mr60",
@@ -183,14 +206,22 @@
      "canary-sense-debug",
      "canary-sense-default",
      "canary-sense-wellbeing"
-    ]
+    ],
+    "serves": [
+     "canary-sense"
+    ],
+    "shared": false
    },
    {
     "hardware": "xiao-esp32s3",
     "figure": "device.canary-vision",
     "builds": [
      "canary-vision-xiao-s3"
-    ]
+    ],
+    "serves": [
+     "canary-vision"
+    ],
+    "shared": false
    },
    {
     "hardware": "xiao-esp32s3-round",
@@ -199,7 +230,11 @@
      "canary-display-watch",
      "canary-display-watch-debug",
      "canary-display-watch-modes"
-    ]
+    ],
+    "serves": [
+     "canary-watch"
+    ],
+    "shared": false
    }
   ],
   "unmapped": [
@@ -210,18 +245,27 @@
      "canary-sentinel-door",
      "canary-sentinel-hallway",
      "canary-sentinel-window"
+    ],
+    "serves": [
+     "canary-sentinel"
     ]
    },
    {
     "hardware": "waveshare-esp32c6-lcd147",
     "builds": [
      "canary-display-nightstand-c6"
+    ],
+    "serves": [
+     "canary-nightstand"
     ]
    },
    {
     "hardware": "waveshare-esp32s3-lcd147",
     "builds": [
      "canary-display-nightstand-s3"
+    ],
+    "serves": [
+     "canary-nightstand"
     ]
    },
    {
@@ -236,19 +280,26 @@
      "canary-display-dash-sd",
      "canary-display-dash-vault",
      "canary-display-playground"
+    ],
+    "serves": [
+     "canary-dash"
     ]
    },
    {
     "hardware": "waveshare-esp32s3-lcd43c",
     "builds": [
      "canary-display-dash-mic"
+    ],
+    "serves": [
+     "canary-dash"
     ]
    },
    {
     "hardware": "xiao-esp32c3-sentinel-lite",
     "builds": [
      "canary-sentinel-lite"
-    ]
+    ],
+    "serves": []
    }
   ]
  },

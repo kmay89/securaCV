@@ -65,10 +65,15 @@ final class FleetFigureTests: XCTestCase {
                                             "\(figure.id) has a face that isn't a polygon")
                 for p in points {
                     XCTAssertTrue(p.x.isFinite && p.y.isFinite, "\(figure.id) has a non-finite point")
+                    // Everything drawn must be inside the frame the figure
+                    // declares — including the contact shadow, which the
+                    // generator folds into the fit. It did not always: a round
+                    // display shadow reached y = 293.8 in a 256 box and was
+                    // being clipped on every surface that drew it.
                     XCTAssertTrue(p.x >= -1 && p.x <= figure.size + 1,
-                                  "\(figure.id) has a point outside its own viewBox")
+                                  "\(figure.id) has a point outside its own viewBox: x=\(p.x)")
                     XCTAssertTrue(p.y >= -1 && p.y <= figure.size + 1,
-                                  "\(figure.id) has a point outside its own viewBox")
+                                  "\(figure.id) has a point outside its own viewBox: y=\(p.y)")
                 }
             }
         }

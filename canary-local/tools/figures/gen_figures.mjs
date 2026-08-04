@@ -359,6 +359,7 @@ function walkEnvs() {
       raw.set(name, {
         name,
         pins: (body.match(/boards\/([a-z0-9._-]+)\/pins/) || [])[1] || null,
+        config: (body.match(/configs\/([a-z0-9-]+)\/([a-z0-9_]+)/) || []).slice(1, 3).join('/') || null,
         board: (body.match(/^board\s*=\s*(\S+)/m) || [])[1] || null,
         extends: (body.match(/^extends\s*=\s*env:(\S+)/m) || [])[1] || null,
         file: file.replace(`${ROOT}/`, ''),
@@ -373,8 +374,9 @@ function walkEnvs() {
   for (const name of [...raw.keys()].sort()) {
     const pins = resolve(name, 'pins');
     const board = resolve(name, 'board');
+    const config = resolve(name, 'config');
     const hardware = pins || (board ? `board:${board}` : null);
-    out.push({ env: name, pins, board, hardware, file: raw.get(name).file });
+    out.push({ env: name, pins, board, config, hardware, file: raw.get(name).file });
   }
   return out;
 }
@@ -539,14 +541,30 @@ for (const e of envs) {
   if (!byHardware.has(e.hardware)) byHardware.set(e.hardware, []);
   byHardware.get(e.hardware).push(e.env);
 }
+// What DEVICE TYPE each build publishes, so a board can say how many personas
+// it carries. The 7" glass is the live example: canary-display-dash7 and
+// canary-display-nightstand7 are one board and two products.
+const typeOfConfig = new Map(deviceTypes.map((c) => [`${c.family}/${c.flavor}`, c.device_type]));
+const servesOf = (builds) => [...new Set(builds
+  .map((b) => typeOfConfig.get(envs.find((e) => e.env === b)?.config))
+  .filter(Boolean))].sort();
+
 const hardwareRows = [];
 const hardwareGaps = [];
 for (const [hardware, builtBy] of [...byHardware.entries()].sort()) {
+  const builds = builtBy.sort();
+  const serves = servesOf(builds);
   const figureId = HARDWARE_FIGURE[hardware];
   if (figureId) {
-    hardwareRows.push({ hardware, fig: byIdBuilt.get(figureId), builds: builtBy.sort() });
+    hardwareRows.push({
+      hardware, fig: byIdBuilt.get(figureId), builds, serves,
+      // One board, several products. The SHAPE is still right — that is what a
+      // figure is — but the figure's TITLE names only one of them, so a caller
+      // that wants to name the product must ask the device type, not this.
+      shared: serves.length > 1,
+    });
   } else {
-    hardwareGaps.push({ hardware, builds: builtBy.sort() });
+    hardwareGaps.push({ hardware, builds, serves });
   }
 }
 
@@ -630,7 +648,14 @@ const ledger = {
     key: 'the boards/<id>/pins header the build compiles against, or '
       + 'board:<platformio id> for envs that carry no pins header of their own',
     mapped: hardwareRows.map((r) => ({
-      hardware: r.hardware, figure: r.fig.id, builds: r.builds,
+      hardware: r.hardware,
+      figure: r.fig.id,
+      builds: r.builds,
+      serves: r.serves,
+      // true when this board carries more than one product persona: the
+      // drawing is right for all of them, the figure's title is right for
+      // one. Ask the device type to name the product.
+      shared: r.shared,
     })),
     unmapped: hardwareGaps,
   },
@@ -650,11 +675,17 @@ emit(OUT_H, `#pragma once
 // Two lookups, at two HONEST precisions — the distinction matters, because
 // getting it wrong once already showed a user the wrong product:
 //
-//   figure_for_hardware(id)     EXACT. Keyed on the boards/<id>/pins header
-//     the build compiles against, which is load-bearing (wrong pins, dead
-//     device) and therefore a true statement of which physical board this is.
-//     A device asking about ITSELF should use this. Pass CANARY_FIGURE_HARDWARE,
-//     which each board's pins header defines.
+//   figure_for_hardware(id)     Exact about the BOARD, and therefore about
+//     the SHAPE. Keyed on the boards/<id>/pins header the build compiles
+//     against, which is load-bearing (wrong pins, dead device) and therefore a
+//     true statement of which physical board this is. A device asking what it
+//     LOOKS LIKE should use this; pass CANARY_FIGURE_HARDWARE, which each
+//     board's pins header defines.
+//
+//     It is NOT a product name. One board can carry several products — the 7"
+//     glass is both the Dash 7 and the Nightstand 7 — and a figure's title
+//     names only one of them. Rows where that happens set shared_across_products;
+//     to NAME the product, ask the device type, not the board.
 //
 //   figure_for(device_type)     COARSE, and deliberately INCOMPLETE. This is
 //     what a PEER publishes on the wire, and several types are shared by more
@@ -685,6 +716,10 @@ struct HardwareRef {
   const char* figure_id;
   const char* rev;
   const char* confidence;
+  // true when this board carries more than one product. The drawing is right
+  // for all of them; the figure's TITLE is right for one. Do not print the
+  // title as this device's product name when this is set.
+  bool shared_across_products;
 };
 
 // Device types that resolve to exactly one figure. Types published by more
@@ -694,9 +729,12 @@ ${uniqueRows.map((r) => `  { "${r.device_type}", "${r.fig.id}", "${r.fig.rev}", 
 };
 inline constexpr size_t kFigureCount = sizeof(kFigures) / sizeof(kFigures[0]);
 
-// One row per piece of hardware we can draw. Exact by construction.
+// One row per piece of hardware we can draw. The board is exact; see
+// shared_across_products for when the product name is not.
 inline constexpr HardwareRef kHardware[] = {
-${hardwareRows.map((r) => `  { "${r.hardware}", "${r.fig.id}", "${r.fig.rev}", "${r.fig.confidence}" },  // ${r.builds.length} build${r.builds.length === 1 ? '' : 's'}`).join('\n')}
+${hardwareRows.map((r) => `  { "${r.hardware}", "${r.fig.id}", "${r.fig.rev}", "${r.fig.confidence}", ${r.shared} },`
+  + `  // ${r.builds.length} build${r.builds.length === 1 ? '' : 's'}`
+  + (r.shared ? ` — shared by ${r.serves.join(' + ')}` : '')).join('\n')}
 };
 inline constexpr size_t kHardwareCount = sizeof(kHardware) / sizeof(kHardware[0]);
 
@@ -716,7 +754,9 @@ inline const FigureRef* figure_for(const char* device_type) {
   return nullptr;
 }
 
-// What THIS build is. Exact — the pins header is compile-time truth.
+// What THIS build LOOKS LIKE. The pins header is compile-time truth, so the
+// board — and the shape — are exact. Check shared_across_products before
+// using the figure's title as this device's product name.
 inline const HardwareRef* figure_for_hardware(const char* hardware) {
   if (!hardware || !hardware[0]) return nullptr;
   for (size_t i = 0; i < kHardwareCount; i++) {
@@ -727,7 +767,8 @@ inline const HardwareRef* figure_for_hardware(const char* hardware) {
 
 // Sugar for the common case: the figure of the board this firmware is being
 // compiled for. Boards whose pins header does not define
-// CANARY_FIGURE_HARDWARE get nullptr, same honest fallback as everywhere else.
+// CANARY_FIGURE_HARDWARE get nullptr, the same honest fallback as everywhere
+// else in this header.
 inline const HardwareRef* my_figure() {
 #ifdef CANARY_FIGURE_HARDWARE
   return figure_for_hardware(CANARY_FIGURE_HARDWARE);
