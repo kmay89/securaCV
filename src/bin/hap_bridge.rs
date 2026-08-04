@@ -34,9 +34,7 @@ use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use rumqttc::{Event, Incoming, MqttOptions, QoS};
 
-use witness_kernel::bridge::hap::server::{
-    self, serve, state_for, Fleet, CATEGORY_BRIDGE,
-};
+use witness_kernel::bridge::hap::server::{self, serve, state_for, Fleet, CATEGORY_BRIDGE};
 use witness_kernel::bridge::hap::store;
 use witness_kernel::bridge::homekit::{HomeSignal, PacingConfig};
 use witness_kernel::EventType;
@@ -197,7 +195,10 @@ fn main() -> Result<()> {
     println!("  Pairing URI: {uri}");
     println!("  Device ID  : {}", state.device_id);
     println!();
-    println!("In the Home app: Add Accessory → More options… → pick \"{}\",", args.bridge_name);
+    println!(
+        "In the Home app: Add Accessory → More options… → pick \"{}\",",
+        args.bridge_name
+    );
     println!("then enter the setup code above. It is not a secret to protect");
     println!("forever — it is a password to type once — but anyone who has it");
     println!("can pair while the bridge is unpaired, so treat it like a door key.");
@@ -220,12 +221,7 @@ fn main() -> Result<()> {
         .iter()
         .map(|(id, name)| (name.as_str(), id.as_str()))
         .collect();
-    let mut server_state = state_for(
-        identity,
-        &args.bridge_name,
-        &state.setup_code,
-        &canaries,
-    );
+    let mut server_state = state_for(identity, &args.bridge_name, &state.setup_code, &canaries);
     server_state.pairings = state.pairing_store();
     server_state.config_number = state.config_number;
 
@@ -301,7 +297,11 @@ fn main() -> Result<()> {
         "HAP bridge listening on {} — {} {} bridged, tick {} ms",
         server.local_addr(),
         args.canaries.len(),
-        if args.canaries.len() == 1 { "Canary" } else { "Canaries" },
+        if args.canaries.len() == 1 {
+            "Canary"
+        } else {
+            "Canaries"
+        },
         args.tick_ms
     );
 
@@ -354,15 +354,16 @@ fn spawn_mqtt(args: &Args, tx: Sender<ObservationMsg>) -> Result<()> {
                         "events" => serde_json::from_slice::<serde_json::Value>(&p.payload)
                             .ok()
                             .and_then(|v| {
-                                ["event_type", "type", "event"]
-                                    .iter()
-                                    .find_map(|k| v.get(*k).and_then(|x| x.as_str()).map(String::from))
+                                ["event_type", "type", "event"].iter().find_map(|k| {
+                                    v.get(*k).and_then(|x| x.as_str()).map(String::from)
+                                })
                             })
                             .and_then(|s| parse_event_type(&s))
                             .map(Observation::Event),
-                        "presence" => {
-                            Some(Observation::Level(HomeSignal::Occupancy, truthy(&p.payload)))
-                        }
+                        "presence" => Some(Observation::Level(
+                            HomeSignal::Occupancy,
+                            truthy(&p.payload),
+                        )),
                         // Tamper latches: a witness reporting that it was
                         // interfered with must stay reported until a human
                         // clears it, so a "false" here is deliberately not a
@@ -444,7 +445,11 @@ mod tests {
             br#"{"value":true}"#,
             br#"true"#,
         ] {
-            assert!(truthy(yes), "expected truthy: {:?}", std::str::from_utf8(yes));
+            assert!(
+                truthy(yes),
+                "expected truthy: {:?}",
+                std::str::from_utf8(yes)
+            );
         }
         for no in [
             &b"0"[..],
@@ -454,7 +459,11 @@ mod tests {
             br#"{"state":"off"}"#,
             b"",
         ] {
-            assert!(!truthy(no), "expected falsey: {:?}", std::str::from_utf8(no));
+            assert!(
+                !truthy(no),
+                "expected falsey: {:?}",
+                std::str::from_utf8(no)
+            );
         }
     }
 

@@ -36,10 +36,10 @@
 use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::SysRng;
 use rand::TryRng;
-use zeroize::Zeroize;
 use sha2::Sha512;
 use srp::{ClientG3072, ServerG3072};
 use x25519_dalek::{PublicKey as XPublicKey, StaticSecret};
+use zeroize::Zeroize;
 
 use super::crypto::{self, kdf, nonce};
 use super::tlv8::{error as tlv_error, ty, Tlv};
@@ -418,9 +418,7 @@ impl PairSetup {
             return Err(PairError::UnexpectedState);
         }
         let srp_key = self.srp_key.as_deref().ok_or(PairError::UnexpectedState)?;
-        let sealed = request
-            .get(ty::ENCRYPTED_DATA)
-            .ok_or(PairError::Unknown)?;
+        let sealed = request.get(ty::ENCRYPTED_DATA).ok_or(PairError::Unknown)?;
 
         let session_key = crypto::hkdf_sha512(
             srp_key,
@@ -453,8 +451,8 @@ impl PairSetup {
         controller_info.extend_from_slice(&controller_ltpk);
         verify_signature(&controller_ltpk, &controller_info, controller_sig)?;
 
-        let controller_id = String::from_utf8(controller_id.to_vec())
-            .map_err(|_| PairError::Unknown)?;
+        let controller_id =
+            String::from_utf8(controller_id.to_vec()).map_err(|_| PairError::Unknown)?;
 
         // The mirror image: we sign our own identity so the controller can
         // pin us on every later Pair Verify.
@@ -655,16 +653,13 @@ impl PairVerify {
         let accessory_pk = self.accessory_pk.ok_or(PairError::UnexpectedState)?;
         let controller_pk = self.controller_pk.ok_or(PairError::UnexpectedState)?;
 
-        let sealed = request
-            .get(ty::ENCRYPTED_DATA)
-            .ok_or(PairError::Unknown)?;
+        let sealed = request.get(ty::ENCRYPTED_DATA).ok_or(PairError::Unknown)?;
         let plaintext = crypto::open(&session_key, nonce::PV_MSG03, b"", sealed)
             .map_err(|_| PairError::Authentication)?;
         let sub = Tlv::decode(&plaintext).map_err(|_| PairError::Unknown)?;
 
         let controller_id = sub.get(ty::IDENTIFIER).ok_or(PairError::Unknown)?;
-        let controller_id =
-            std::str::from_utf8(controller_id).map_err(|_| PairError::Unknown)?;
+        let controller_id = std::str::from_utf8(controller_id).map_err(|_| PairError::Unknown)?;
         let signature = sub.get(ty::SIGNATURE).ok_or(PairError::Unknown)?;
 
         // An unknown controller fails exactly like a bad signature. Telling
@@ -809,8 +804,8 @@ mod tests {
             )
             .expect("M6 opens");
             let sub = Tlv::decode(&opened).expect("tlv");
-            let acc_id = String::from_utf8(sub.get(ty::IDENTIFIER).expect("id").to_vec())
-                .expect("utf8");
+            let acc_id =
+                String::from_utf8(sub.get(ty::IDENTIFIER).expect("id").to_vec()).expect("utf8");
             let acc_ltpk: [u8; 32] = sub.get(ty::PUBLIC_KEY).expect("ltpk").try_into().unwrap();
 
             // The accessory's signature must check out, or a controller
@@ -844,7 +839,8 @@ mod tests {
             let my_pk = XPublicKey::from(&secret).to_bytes();
 
             let mut m1 = Tlv::new();
-            m1.push_u8(ty::STATE, 1).push(ty::PUBLIC_KEY, my_pk.to_vec());
+            m1.push_u8(ty::STATE, 1)
+                .push(ty::PUBLIC_KEY, my_pk.to_vec());
             let m2 = Tlv::decode(&verify.handle(&m1.encode(), identity, store)).expect("tlv");
             if m2.get(ty::ERROR).is_some() {
                 return Err(m2.encode());
@@ -870,8 +866,12 @@ mod tests {
             acc_info.extend_from_slice(&acc_pk);
             acc_info.extend_from_slice(acc_id);
             acc_info.extend_from_slice(&my_pk);
-            verify_signature(accessory_ltpk, &acc_info, sub.get(ty::SIGNATURE).expect("sig"))
-                .expect("accessory proves itself");
+            verify_signature(
+                accessory_ltpk,
+                &acc_info,
+                sub.get(ty::SIGNATURE).expect("sig"),
+            )
+            .expect("accessory proves itself");
 
             let mut info = Vec::new();
             info.extend_from_slice(&my_pk);
@@ -914,7 +914,10 @@ mod tests {
         assert_eq!(acc_ltpk, id.ltpk());
         assert!(setup.is_complete());
         assert_eq!(store.len(), 1);
-        assert_eq!(store.get("controller-uuid-1").map(|p| p.ltpk), Some(ctrl.ltpk()));
+        assert_eq!(
+            store.get("controller-uuid-1").map(|p| p.ltpk),
+            Some(ctrl.ltpk())
+        );
     }
 
     /// The whole point of SRP here: a wrong setup code must fail, and must
@@ -990,9 +993,13 @@ mod tests {
             .expect("setup");
 
         let mut v1 = PairVerify::new();
-        let k1 = ctrl.pair_verify(&mut v1, &id, &store, &acc_ltpk).expect("v1");
+        let k1 = ctrl
+            .pair_verify(&mut v1, &id, &store, &acc_ltpk)
+            .expect("v1");
         let mut v2 = PairVerify::new();
-        let k2 = ctrl.pair_verify(&mut v2, &id, &store, &acc_ltpk).expect("v2");
+        let k2 = ctrl
+            .pair_verify(&mut v2, &id, &store, &acc_ltpk)
+            .expect("v2");
 
         assert_ne!(k1.read, k2.read, "sessions must not share keys");
         assert_ne!(k1.write, k2.write);
@@ -1027,7 +1034,8 @@ mod tests {
         let mut setup = PairSetup::new(CODE).expect("setup");
 
         let mut m5 = Tlv::new();
-        m5.push_u8(ty::STATE, 5).push(ty::ENCRYPTED_DATA, vec![0u8; 64]);
+        m5.push_u8(ty::STATE, 5)
+            .push(ty::ENCRYPTED_DATA, vec![0u8; 64]);
         let reply = Tlv::decode(&setup.handle(&m5.encode(), &id, &mut store)).expect("tlv");
         assert!(reply.get(ty::ERROR).is_some());
         assert!(store.is_empty());

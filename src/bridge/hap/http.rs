@@ -176,7 +176,11 @@ pub fn response(status: u16, content_type: &str, body: &[u8]) -> Vec<u8> {
 
 /// Build a response with no body (HAP's 204 for a successful write).
 pub fn empty_response(status: u16) -> Vec<u8> {
-    format!("HTTP/1.1 {status} {}\r\nContent-Length: 0\r\n\r\n", reason(status)).into_bytes()
+    format!(
+        "HTTP/1.1 {status} {}\r\nContent-Length: 0\r\n\r\n",
+        reason(status)
+    )
+    .into_bytes()
 }
 
 /// Build an `EVENT/1.0` notification — the accessory speaking first, which

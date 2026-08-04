@@ -254,8 +254,7 @@ mod tests {
     fn exact_multiple_of_255_does_not_swallow_the_next_item() {
         let value = vec![9u8; 255];
         let mut t = Tlv::new();
-        t.push(ty::PUBLIC_KEY, value.clone())
-            .push_u8(ty::STATE, 4);
+        t.push(ty::PUBLIC_KEY, value.clone()).push_u8(ty::STATE, 4);
         let decoded = Tlv::decode(&t.encode()).expect("decodes");
         assert_eq!(decoded.get(ty::PUBLIC_KEY), Some(value.as_slice()));
         assert_eq!(decoded.get_u8(ty::STATE), Some(4));
@@ -264,7 +263,10 @@ mod tests {
     #[test]
     fn truncated_input_is_an_error_not_a_panic() {
         // Length byte claims 8 bytes; only 2 follow.
-        assert_eq!(Tlv::decode(&[0x03, 0x08, 0x01, 0x02]), Err(TlvError::Truncated));
+        assert_eq!(
+            Tlv::decode(&[0x03, 0x08, 0x01, 0x02]),
+            Err(TlvError::Truncated)
+        );
         assert_eq!(Tlv::decode(&[0x03]), Err(TlvError::Truncated));
     }
 

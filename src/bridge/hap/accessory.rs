@@ -161,10 +161,7 @@ fn service_name(sig: HomeSignal) -> &'static str {
 /// The index of a signal in [`HomeSignal::ALL`] — the basis of its stable iid
 /// block.
 fn signal_index(sig: HomeSignal) -> u64 {
-    HomeSignal::ALL
-        .iter()
-        .position(|s| *s == sig)
-        .unwrap_or(0) as u64
+    HomeSignal::ALL.iter().position(|s| *s == sig).unwrap_or(0) as u64
 }
 
 /// The first iid of a signal's block. Stable for the life of the accessory,
@@ -196,7 +193,11 @@ fn value_json(sig: HomeSignal, asserted: bool) -> String {
     match value_format(sig) {
         "bool" => {
             // HAP booleans go on the wire as true/false.
-            if asserted { "true".into() } else { "false".into() }
+            if asserted {
+                "true".into()
+            } else {
+                "false".into()
+            }
         }
         _ => {
             // Contact is the one signal whose HAP enum is not "1 means the
@@ -205,7 +206,11 @@ fn value_json(sig: HomeSignal, asserted: bool) -> String {
             // when the contact is OPEN, so it maps straight to 1/0 — but the
             // reasoning is written down because the polarity is easy to
             // invert by accident and the failure is silent.
-            if asserted { "1".into() } else { "0".into() }
+            if asserted {
+                "1".into()
+            } else {
+                "0".into()
+            }
         }
     }
 }
@@ -363,11 +368,7 @@ fn accessory_information_json(iid: u64, name: &str, serial: &str, model: &str) -
         string_characteristic_json(iid + 3, chr::MODEL, model),
         string_characteristic_json(iid + 4, chr::NAME, name),
         string_characteristic_json(iid + 5, chr::SERIAL_NUMBER, serial),
-        string_characteristic_json(
-            iid + 6,
-            chr::FIRMWARE_REVISION,
-            env!("CARGO_PKG_VERSION"),
-        ),
+        string_characteristic_json(iid + 6, chr::FIRMWARE_REVISION, env!("CARGO_PKG_VERSION")),
     ];
     format!(
         r#"{{"iid":{iid},"type":"{}","characteristics":[{}]}}"#,
@@ -388,7 +389,11 @@ fn bridge_json(name: &str, serial: &str) -> String {
 }
 
 /// The whole fleet, as the `/accessories` document.
-pub fn accessories_json(bridge_name: &str, bridge_serial: &str, fleet: &[CanaryAccessory]) -> String {
+pub fn accessories_json(
+    bridge_name: &str,
+    bridge_serial: &str,
+    fleet: &[CanaryAccessory],
+) -> String {
     let mut all = vec![bridge_json(bridge_name, bridge_serial)];
     all.extend(fleet.iter().map(CanaryAccessory::to_json));
     format!(r#"{{"accessories":[{}]}}"#, all.join(","))
@@ -486,11 +491,10 @@ mod tests {
             "class-scoped signals are off at the dumb-PIR bar"
         );
         a.enabled.insert(HomeSignal::MotionPerson);
-        assert!(
-            a.characteristics()
-                .iter()
-                .any(|(_, s)| *s == HomeSignal::MotionPerson)
-        );
+        assert!(a
+            .characteristics()
+            .iter()
+            .any(|(_, s)| *s == HomeSignal::MotionPerson));
     }
 
     /// Contact's HAP enum is inverted relative to the others; assert the

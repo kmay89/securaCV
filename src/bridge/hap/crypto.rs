@@ -164,7 +164,10 @@ mod tests {
         let key = [7u8; 32];
         let sealed = seal(&key, &counter_nonce(0), &[0x10, 0x00], b"body");
         assert!(open(&key, &counter_nonce(0), &[0x10, 0x00], &sealed).is_ok());
-        assert_eq!(open(&key, &counter_nonce(0), &[0x11, 0x00], &sealed), Err(AeadError));
+        assert_eq!(
+            open(&key, &counter_nonce(0), &[0x11, 0x00], &sealed),
+            Err(AeadError)
+        );
     }
 
     #[test]
@@ -180,7 +183,11 @@ mod tests {
     fn every_kdf_context_is_distinct() {
         let ikm = [3u8; 32];
         let keys = [
-            hkdf_sha512(&ikm, kdf::PAIR_SETUP_ENCRYPT_SALT, kdf::PAIR_SETUP_ENCRYPT_INFO),
+            hkdf_sha512(
+                &ikm,
+                kdf::PAIR_SETUP_ENCRYPT_SALT,
+                kdf::PAIR_SETUP_ENCRYPT_INFO,
+            ),
             hkdf_sha512(
                 &ikm,
                 kdf::PAIR_SETUP_CONTROLLER_SIGN_SALT,
@@ -191,7 +198,11 @@ mod tests {
                 kdf::PAIR_SETUP_ACCESSORY_SIGN_SALT,
                 kdf::PAIR_SETUP_ACCESSORY_SIGN_INFO,
             ),
-            hkdf_sha512(&ikm, kdf::PAIR_VERIFY_ENCRYPT_SALT, kdf::PAIR_VERIFY_ENCRYPT_INFO),
+            hkdf_sha512(
+                &ikm,
+                kdf::PAIR_VERIFY_ENCRYPT_SALT,
+                kdf::PAIR_VERIFY_ENCRYPT_INFO,
+            ),
             hkdf_sha512(&ikm, kdf::CONTROL_SALT, kdf::CONTROL_READ_INFO),
             hkdf_sha512(&ikm, kdf::CONTROL_SALT, kdf::CONTROL_WRITE_INFO),
         ];
@@ -214,6 +225,9 @@ mod tests {
     #[test]
     fn hap_nonce_is_zero_padded_at_the_front() {
         assert_eq!(hap_nonce(nonce::PS_MSG05), *b"\0\0\0\0PS-Msg05");
-        assert_eq!(hap_nonce(&counter_nonce(1)), [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            hap_nonce(&counter_nonce(1)),
+            [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0]
+        );
     }
 }

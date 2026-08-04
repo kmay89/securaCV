@@ -40,8 +40,8 @@ pub const FORMAT_VERSION: u32 = 1;
 /// Note that `123-45-678` is on this list, which is why it appears only in
 /// tests here and never as a default.
 const FORBIDDEN_CODES: [&str; 12] = [
-    "00000000", "11111111", "22222222", "33333333", "44444444", "55555555", "66666666",
-    "77777777", "88888888", "99999999", "12345678", "87654321",
+    "00000000", "11111111", "22222222", "33333333", "44444444", "55555555", "66666666", "77777777",
+    "88888888", "99999999", "12345678", "87654321",
 ];
 
 /// One pairing, as stored.
@@ -241,7 +241,12 @@ pub fn random_setup_code() -> Result<String> {
         if FORBIDDEN_CODES.contains(&digits.as_str()) {
             continue;
         }
-        return Ok(format!("{}-{}-{}", &digits[..3], &digits[3..5], &digits[5..]));
+        return Ok(format!(
+            "{}-{}-{}",
+            &digits[..3],
+            &digits[3..5],
+            &digits[5..]
+        ));
     }
 }
 
@@ -331,7 +336,10 @@ mod tests {
         assert_eq!(reloaded.config_number, 4);
         let restored = reloaded.pairing_store();
         assert_eq!(restored.len(), 1);
-        assert_eq!(restored.get("controller-1").map(|p| p.ltpk), Some([7u8; 32]));
+        assert_eq!(
+            restored.get("controller-1").map(|p| p.ltpk),
+            Some([7u8; 32])
+        );
         assert_eq!(restored.get("controller-1").map(|p| p.admin), Some(true));
     }
 
@@ -391,7 +399,9 @@ mod tests {
         for _ in 0..50 {
             let id = random_setup_id().expect("id");
             assert_eq!(id.len(), 4);
-            assert!(id.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()));
+            assert!(id
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()));
         }
     }
 

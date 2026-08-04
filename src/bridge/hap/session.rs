@@ -176,7 +176,10 @@ mod tests {
                 delivered = Some(frame);
             }
         }
-        assert_eq!(delivered.as_deref(), Some(&b"a body worth several reads"[..]));
+        assert_eq!(
+            delivered.as_deref(),
+            Some(&b"a body worth several reads"[..])
+        );
         assert!(buf.is_empty());
     }
 
@@ -205,7 +208,10 @@ mod tests {
         let (mut accessory, mut controller) = pair();
         let frame = accessory.seal(b"once");
         let mut wire = frame.clone();
-        controller.open_frame(&mut wire).expect("ok").expect("frame");
+        controller
+            .open_frame(&mut wire)
+            .expect("ok")
+            .expect("frame");
 
         // The same bytes again, now at counter 1.
         let mut replay = frame;
@@ -312,7 +318,10 @@ mod tests {
         assert_eq!(wire.len(), MAX_FRAME_ON_WIRE);
         assert_eq!(accessory.counters().0, 1);
         assert_eq!(
-            controller.open_frame(&mut wire).expect("ok").map(|f| f.len()),
+            controller
+                .open_frame(&mut wire)
+                .expect("ok")
+                .map(|f| f.len()),
             Some(MAX_FRAME_PLAINTEXT)
         );
     }

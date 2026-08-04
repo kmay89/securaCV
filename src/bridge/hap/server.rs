@@ -29,7 +29,7 @@ use std::time::Duration;
 
 use super::accessory::{accessories_json, CanaryAccessory, BRIDGE_AID};
 use super::http::{self, content_type, HttpError, Request};
-use super::pairing::{AccessoryIdentity, PairSetup, PairVerify, PairError, Pairing, PairingStore};
+use super::pairing::{AccessoryIdentity, PairError, PairSetup, PairVerify, Pairing, PairingStore};
 use super::session::Session;
 use super::tlv8::{error as tlv_error, method, ty, Tlv};
 use crate::bridge::homekit::{HomeSignal, PacingConfig, Projection};
@@ -83,7 +83,11 @@ impl ServerState {
     fn all_characteristics(&self) -> Vec<(u64, u64)> {
         self.fleet
             .iter()
-            .flat_map(|a| a.characteristics().into_iter().map(move |(iid, _)| (a.aid, iid)))
+            .flat_map(|a| {
+                a.characteristics()
+                    .into_iter()
+                    .map(move |(iid, _)| (a.aid, iid))
+            })
             .collect()
     }
 }
@@ -272,11 +276,7 @@ impl Connection {
     /// which is *not* a cover-traffic hole, because the pacing that matters
     /// already happened upstream in [`Fleet::tick`]: this method cannot be
     /// reached off-tick.
-    pub fn notification(
-        &mut self,
-        changed: &[(u64, u64)],
-        state: &ServerState,
-    ) -> Option<Vec<u8>> {
+    pub fn notification(&mut self, changed: &[(u64, u64)], state: &ServerState) -> Option<Vec<u8>> {
         // No session, no notification: an unauthenticated peer is told
         // nothing about the fleet's state.
         self.session.as_ref()?;
@@ -371,9 +371,7 @@ impl Connection {
                 }
                 // HAP's own "no such characteristic" status, rather than
                 // omitting the entry and leaving the controller to guess.
-                None => entries.push(format!(
-                    r#"{{"aid":{aid},"iid":{iid},"status":-70409}}"#
-                )),
+                None => entries.push(format!(r#"{{"aid":{aid},"iid":{iid},"status":-70409}}"#)),
             }
         }
         let body = format!(r#"{{"characteristics":[{}]}}"#, entries.join(","));
@@ -424,7 +422,11 @@ impl Connection {
     /// `POST /pairings` — add, remove and list, per HAP.
     fn pairings(&mut self, req: &Request, state: &mut ServerState) -> Vec<u8> {
         let Ok(request) = Tlv::decode(&req.body) else {
-            return http::response(200, content_type::TLV8, &Tlv::error_response(2, tlv_error::UNKNOWN));
+            return http::response(
+                200,
+                content_type::TLV8,
+                &Tlv::error_response(2, tlv_error::UNKNOWN),
+            );
         };
 
         // Only an admin controller may change the pairing list. Without this
@@ -462,7 +464,8 @@ impl Connection {
                 }
             }
             Some(method::REMOVE_PAIRING) => {
-                if let Ok(id) = String::from_utf8(request.get(ty::IDENTIFIER).unwrap_or_default().to_vec())
+                if let Ok(id) =
+                    String::from_utf8(request.get(ty::IDENTIFIER).unwrap_or_default().to_vec())
                 {
                     state.pairings.remove(&id);
                 }
@@ -702,7 +705,9 @@ pub fn serve(
                 let Ok(connection) = Connection::new(&setup_code) else {
                     continue;
                 };
-                let Ok(peer) = stream.try_clone() else { continue };
+                let Ok(peer) = stream.try_clone() else {
+                    continue;
+                };
                 let shared = Arc::new(Mutex::new((connection, stream)));
                 conns.push(Arc::clone(&shared));
                 drop(conns);
@@ -860,7 +865,8 @@ mod tests {
 
         fn pair_setup(&mut self, conn: &mut Connection, state: &mut ServerState, code: &str) {
             let mut m1 = Tlv::new();
-            m1.push_u8(ty::STATE, 1).push_u8(ty::METHOD, method::PAIR_SETUP);
+            m1.push_u8(ty::STATE, 1)
+                .push_u8(ty::METHOD, method::PAIR_SETUP);
             let wire = self.request("POST", "/pair-setup", content_type::TLV8, &m1.encode());
             let body = self.read_body(&conn.feed(&wire, state));
             let m2 = Tlv::decode(&body).expect("m2");
@@ -922,7 +928,8 @@ mod tests {
             let my_pk = XPublicKey::from(&secret).to_bytes();
 
             let mut m1 = Tlv::new();
-            m1.push_u8(ty::STATE, 1).push(ty::PUBLIC_KEY, my_pk.to_vec());
+            m1.push_u8(ty::STATE, 1)
+                .push(ty::PUBLIC_KEY, my_pk.to_vec());
             let wire = self.request("POST", "/pair-verify", content_type::TLV8, &m1.encode());
             let body = self.read_body(&conn.feed(&wire, state));
             let m2 = Tlv::decode(&body).expect("m2");
@@ -994,10 +1001,13 @@ mod tests {
             .find(|(_, s)| *s == HomeSignal::Motion)
             .map(|(i, _)| i)
             .expect("motion");
-        let put = format!(
-            r#"{{"characteristics":[{{"aid":2,"iid":{motion_iid},"ev":true}}]}}"#
+        let put = format!(r#"{{"characteristics":[{{"aid":2,"iid":{motion_iid},"ev":true}}]}}"#);
+        let wire = ctrl.request(
+            "PUT",
+            "/characteristics",
+            content_type::JSON,
+            put.as_bytes(),
         );
-        let wire = ctrl.request("PUT", "/characteristics", content_type::JSON, put.as_bytes());
         let out = conn.feed(&wire, &mut state);
         assert!(!out.is_empty());
         // Consume the response: every sealed frame must be opened, or the
@@ -1058,7 +1068,8 @@ mod tests {
         let secret = StaticSecret::from(scalar);
         let my_pk = XPublicKey::from(&secret).to_bytes();
         let mut m1 = Tlv::new();
-        m1.push_u8(ty::STATE, 1).push(ty::PUBLIC_KEY, my_pk.to_vec());
+        m1.push_u8(ty::STATE, 1)
+            .push(ty::PUBLIC_KEY, my_pk.to_vec());
         let wire = ctrl.request("POST", "/pair-verify", content_type::TLV8, &m1.encode());
         let body = ctrl.read_body(&conn.feed(&wire, &mut state));
         let m2 = Tlv::decode(&body).expect("tlv");
@@ -1099,7 +1110,12 @@ mod tests {
         ctrl.pair_verify(&mut conn, &mut state);
 
         let put = r#"{"characteristics":[{"aid":9,"iid":9999,"ev":true},{"aid":2,"iid":424242,"ev":true}]}"#;
-        let wire = ctrl.request("PUT", "/characteristics", content_type::JSON, put.as_bytes());
+        let wire = ctrl.request(
+            "PUT",
+            "/characteristics",
+            content_type::JSON,
+            put.as_bytes(),
+        );
         conn.feed(&wire, &mut state);
         assert!(conn.subscriptions().is_empty());
     }
@@ -1143,7 +1159,12 @@ mod tests {
         ctrl.pair_setup(&mut conn, &mut state, CODE);
         ctrl.pair_verify(&mut conn, &mut state);
 
-        let wire = ctrl.request("GET", "/characteristics?id=2.99999", content_type::JSON, b"");
+        let wire = ctrl.request(
+            "GET",
+            "/characteristics?id=2.99999",
+            content_type::JSON,
+            b"",
+        );
         let text = String::from_utf8(ctrl.read_body(&conn.feed(&wire, &mut state))).expect("utf8");
         assert!(text.contains("-70409"), "got: {text}");
     }
@@ -1157,7 +1178,8 @@ mod tests {
 
         let mut conn2 = Connection::new(CODE).expect("conn");
         let mut m1 = Tlv::new();
-        m1.push_u8(ty::STATE, 1).push_u8(ty::METHOD, method::PAIR_SETUP);
+        m1.push_u8(ty::STATE, 1)
+            .push_u8(ty::METHOD, method::PAIR_SETUP);
         let mut ctrl2 = Controller::new("controller-2");
         let wire = ctrl2.request("POST", "/pair-setup", content_type::TLV8, &m1.encode());
         let body = ctrl2.read_body(&conn2.feed(&wire, &mut state));
