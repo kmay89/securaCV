@@ -173,24 +173,49 @@ sd_from_usb = 15.0;  // slot MOUTH center, down from the plug-end edge — MEASU
 sd_w = 13.0;         // window width (card is 11 mm + finger room)
 sd_l = 9.0;          // window length along the board
 
-/* [RGB LED] — the wall wash */
-// The WS2812 (GPIO38) is the ambient beacon. In a hallway the back faces the
-// wall, so this window turns the beacon into a wash of color on the wall
-// behind the device — which is the nicest thing this board does and would be
-// completely hidden by a solid back.
-led_win = true;
-led_from_far = 6.5;  // window center up from the PCB's FAR edge — MEASURE
-led_d = 7.0;         // window Ø
+/* [RGB LED] — the light SEAM, not a hole in the back */
+//
+// The WS2812 (GPIO38) is the ambient beacon, and where its light comes OUT is
+// the thing this case has to get right.
+//
+// It does not fire backwards. Waveshare ship this board with a "clear acrylic
+// sandwich panel for cool lighting effects": clear plates front and back, and
+// the LED glows out the EDGE GAP between the LCD module and the PCB. On this
+// case that gap is the band from the glass (z = face_t) back to the PCB front
+// face (z = face_t + lcd_rise) — about 3.6 mm of open perimeter that a solid
+// side wall seals shut.
+//
+// So the light gets a SEAM around the sides rather than a hole in the back:
+// a slot at that band, which reads as a glowing line along the screen's edge.
+// That is both the effect the board was designed for and a better one for a
+// hallway — a line of color at the screen edge is legible from an angle, where
+// a wall wash is only legible from in front.
+//
+// It also frees the back plate: the mark now gets the whole clean face, which
+// is what it wanted anyway.
+led_win = false;      // the old back hole. OFF — it points at nothing.
+led_from_far = 6.5;  // back-window center up from the PCB's FAR edge — MEASURE
+led_d = 7.0;         // back-window Ø
 led_skin = 0.5;      // thickness of the diffuser plug that fills it
+
+light_seam = true;
+seam_h = 1.3;        // slot height — a LINE, not a window
+seam_dz = 1.1;       // slot bottom, up from the glass front (inside the gap)
+seam_webs = 3;       // structural webs breaking each side's slot. The seam runs
+                     // most of the wall, so without webs the bezel face hangs
+                     // off its walls at the corners alone — and this case is
+                     // designed around being dropped.
+seam_web_w = 3.0;
 
 /* [Branding] — one yellow mark, on the back */
 mark_show = true;
-mark_h = 9.0;        // the BIRD's height; the wordmark scales off it
+mark_h = 10.5;       // the BIRD's height; the wordmark scales off it
 mark_rib = 0.9;      // stroke width. Below ~0.8 the mark stops being a mark
                      // at this size — two 0.42 lines is the floor
 mark_depth = 0.7;    // deboss depth; the accent inlay fills it flush
-mark_dy = 2.0;       // up from the back plate's center — the LED window owns
-                     // the far end, so the lockup sits above it
+mark_dy = 0;         // CENTERED. It used to sit high to clear the LED window;
+                     // with the light moved to the side seam the back is one
+                     // clean face and the mark can have the middle of it.
 
 /* [Vents] — the brand egg, and a real thermal need */
 // The board README is explicit: "S3 + octal PSRAM heat-soak into a small
@@ -517,13 +542,45 @@ module bezel_buttons() {
 module bezel_vents() {
     for (sx = [-1, 1], r = [0 : vent_rows-1], c = [0 : vent_cols-1]) {
         y = vent_center_y + (r - (vent_rows-1)/2) * vent_pitch_y;
-        z = face_t + cav_d*0.30 + c * (vent_l + 1.5)
+        // Behind the PCB, not across the sandwich gap: that band belongs to
+        // the light seam now, and the heat is on this side anyway (the module
+        // can and the PSRAM sit on the board's back).
+        z = z_pcb_back + 0.8 + c * (vent_l + 1.5)
             + (r % 2) * (vent_l + 1.5)/2;
         translate([sx * (xo/2 + 1), y, z]) rotate([0, 90*sx, 0])
             linear_extrude(wall + ear_bump + 2, center = true)
                 egg2d(vent_l, vent_w);
     }
 }
+
+// ── The light seam ────────────────────────────────────────────────────────
+// A slot through both long walls at the LCD/PCB sandwich gap, so the RGB
+// escapes as a line along the screen's edge instead of being sealed in by a
+// solid wall. Broken by webs so the bezel face stays properly tied to its
+// walls — see the note at seam_webs.
+module bezel_light_seam() {
+    z0 = face_t + seam_dz;
+    // Run the seam between the two snap pairs, which is also the stretch with
+    // no button ear on it.
+    y_lo = snap_y_free + snap_half + 1.0;
+    y_hi = snap_y_lock - snap_half - 1.0;
+    span = y_hi - y_lo;
+    // Webs divide the run into (webs + 1) lit segments.
+    seg = (span - seam_webs * seam_web_w) / (seam_webs + 1);
+    for (sx = [-1, 1], i = [0 : seam_webs])
+        translate([sx * (xo/2 + 1),
+                   y_lo + i * (seg + seam_web_w) + seg/2,
+                   z0 + seam_h/2])
+            cube([wall + ear_bump + 2, seg, seam_h], center = true);
+}
+
+// The seam has to sit INSIDE the sandwich gap. Above it and the slot looks
+// into the PCB's edge; below it and the slot looks at the bezel's own face
+// ledge. Either way no light comes out and the case has a decorative hole.
+assert(!light_seam || (seam_dz >= 0.6 && seam_dz + seam_h <= lcd_rise - 0.4),
+       str("The light seam (", face_t + seam_dz, " .. ",
+           face_t + seam_dz + seam_h, ") falls outside the LCD/PCB gap (",
+           face_t, " .. ", face_t + lcd_rise, "). Adjust seam_dz/seam_h."));
 
 // The vents must not eat a snap slot or a button ear.
 vent_span_lo = vent_center_y - (vent_rows-1)/2*vent_pitch_y - vent_w/2;
@@ -634,6 +691,7 @@ module bezel() {
             if (opt_btn) bezel_buttons();
             if (opt_vent) bezel_vents();
             bezel_snap_relief();
+            if (light_seam) bezel_light_seam();
             bezel_flick_scallop();
         }
         // Hooks go on AFTER the reliefs are cut, or the slots would eat them.
