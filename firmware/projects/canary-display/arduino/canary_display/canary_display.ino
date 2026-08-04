@@ -134,6 +134,14 @@ static canary::mode::Mode s_active_mode = canary::mode::Mode::Fleet;
 #ifdef CD_FLAVOR_NIGHTSTAND
 #include "portrait_ui.h"
 #endif
+#if defined(CD_FLAVOR_NIGHTSTAND) || defined(CD_NIGHTSTAND7)
+// The shared look, and the lamp's VOICE (song_seed). Guarded to match the
+// flavors look_state.cpp actually compiles for: the header reaches into
+// common/color, which the Arduino watch/dash sketch does not stage, so an
+// unguarded include here would break those builds even though nothing in
+// them calls it.
+#include "look_state.h"
+#endif
 #if defined(FEATURE_LANTERN) && FEATURE_LANTERN
 #include "lantern.h"   // the honest, user-summoned night light
 #include "hallway.h"   // Hallway mode: the nightlight, made easy
