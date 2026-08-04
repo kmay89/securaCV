@@ -234,7 +234,7 @@ bool AuthManager::check(httpd_req_t* req, const char* expected_token) {
   size_t expected_len = strlen(expected_token);
 
   // Length mismatch is a hard no — comparison below would be incorrect, but
-  // we still want constant-time behaviour on the matching-length path. A
+  // we still want constant-time behavior on the matching-length path. A
   // length mismatch leaks only that the token is wrong-length, which is
   // acceptable and matches industry norms.
   if (token_len != expected_len) {

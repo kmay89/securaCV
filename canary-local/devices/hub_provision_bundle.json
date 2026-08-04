@@ -20,7 +20,7 @@
       "source": "canary-local/devices/hub_seed.json",
       "bundle_path": "hub_seed.json",
       "card_path": "CONFIG/securacv/hub_seed.json",
-      "sha256": "25bb9bf6252889918f17d71550d6e1cc9a0129aa9d327b70e1c6fad905073f89"
+      "sha256": "7799460759a7c26323cb928ac1c715ed3bf0963b93caa68b109735da1c1dcb96"
     },
     {
       "role": "frigate-config",
@@ -34,7 +34,7 @@
       "source": "canary-local/tools/hub_seed_apply.py",
       "bundle_path": "hub_seed_apply.py",
       "card_path": "CONFIG/securacv/hub_seed_apply.py",
-      "sha256": "5332903990e0838fe0a8c7535271eae4beecd757ad63dc2b13ca1ec47cf43949"
+      "sha256": "6081fe8ae1ce15f34f953dac47b7dbae602feb6580e1c605373db42665e454e6"
     },
     {
       "role": "host-runner",
@@ -58,7 +58,7 @@
       "A curated HA package/automation seeded into CONFIG/ that shells out to the runner on first HA start (HA Core can reach http://supervisor with its own token).",
       "A first-boot provisioner add-on the flasher pre-registers, which runs the bundle."
     ],
-    "note": "HAOS ignores boot-partition files it doesn't recognise, so a bundle that isn't auto-run is harmless \u2014 worst case is a normal onboarding, never a broken boot. The write side is hub_io::seed (the CONFIG/ tree, already used for Wi-Fi). True zero-touch (the hub running the bundle with no companion at all) stays `planned` until a supported HAOS boot hook is pinned on hardware; the companion-over-SSH path is the honest interim, and it too needs its first real-hardware run."
+    "note": "HAOS ignores boot-partition files it doesn't recognize, so a bundle that isn't auto-run is harmless \u2014 worst case is a normal onboarding, never a broken boot. The write side is hub_io::seed (the CONFIG/ tree, already used for Wi-Fi). True zero-touch (the hub running the bundle with no companion at all) stays `planned` until a supported HAOS boot hook is pinned on hardware; the companion-over-SSH path is the honest interim, and it too needs its first real-hardware run."
   },
   "meta": {
     "design": "docs/design/raspberry_pi_hub_flashing.md",

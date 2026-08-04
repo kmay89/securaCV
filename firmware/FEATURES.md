@@ -356,6 +356,6 @@ Post-archive (2026-04), the ACTIVE canonical tree is `firmware/canary/` (Platfor
 ### Priority Actions
 
 1. **canary (PIO)**: Close the remaining UX gaps (camera streaming, full dashboard tabs) so it can fully replace the Arduino compatibility lane.
-2. **canary-wap (PIO)**: Implement common module bodies that currently exist only as headers; decide whether to retire this lane in favour of the Arduino compatibility tree + canary.
+2. **canary-wap (PIO)**: Implement common module bodies that currently exist only as headers; decide whether to retire this lane in favor of the Arduino compatibility tree + canary.
 3. **Fleet management**: Create scalable multi-device dashboard (canary-vision SPA follow-up).
 4. **Dashboard integrity**: Wire CI to fail on `✅ → ⚠️/❌` regressions in the Feature-Parity Dashboard unless the PR cites an issue.

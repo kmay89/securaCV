@@ -1,7 +1,7 @@
 // canary-local/assets/hub-setup-wizard.js — the "don't feel lost" Hub wizard.
 //
 // Home Assistant + MQTT is where non-technical people give up: too many
-// screens, unlabelled fields, no idea what to type. This wizard walks them
+// screens, unlabeled fields, no idea what to type. This wizard walks them
 // through it one small step at a time, in plain words — what each thing IS and
 // WHY, the exact value to type (with a copy button), and a "Stuck?" panel on
 // every step that always has a next move, so nobody hits a dead end. Progress

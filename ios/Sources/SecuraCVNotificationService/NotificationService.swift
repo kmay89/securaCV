@@ -19,12 +19,18 @@ final class NotificationService: UNNotificationServiceExtension {
         self.content = mutable
         guard let content = mutable else { contentHandler(request.content); return }
 
-        // The wake carries only a coarse severity class + a signed token.
-        let sev = (content.userInfo["sev"] as? String) ?? "alert"
+        // The wake carries only a coarse severity class. WakePayload knows
+        // both envelope shapes (CloudKit's query notification today, a
+        // self-hosted relay's flat body later) and owns the sentences, so the
+        // app and this extension can never word the same wake differently.
+        let wake = WakePayload.wakeClass(from: content.userInfo) ?? .pattern
         content.title = "Your Canaries"
-        content.body = Self.line(for: sev)
-        content.interruptionLevel = (sev == "tamper") ? .critical : .timeSensitive
-        content.sound = (sev == "tamper") ? .defaultCritical : .default
+        content.body = wake.line
+        content.interruptionLevel = wake.isLifeSafety ? .critical : .timeSensitive
+        content.sound = wake.isLifeSafety ? .defaultCritical : .default
+        // Rank inside the system's summary the same way local alerts do, so a
+        // wake and an on-Wi-Fi alert about the same trouble sort together.
+        content.relevanceScore = wake.isLifeSafety ? 0.9 : 0.6
 
         // (Full build: verify content.userInfo["sig"] against the pinned key and
         // drop the notification if it doesn't check out; then hydrate detail from
@@ -35,15 +41,6 @@ final class NotificationService: UNNotificationServiceExtension {
     override func serviceExtensionTimeWillExpire() {
         if let content { /* deliver our best-effort composed content */
             handler?(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
-        }
-    }
-
-    private static func line(for sev: String) -> String {
-        switch sev {
-        case "tamper": return "A Canary reports tamper — open to see which."
-        case "integrity": return "A signature or chain check failed."
-        case "offline": return "A Canary went dark."
-        default: return "A Canary needs your attention."
         }
     }
 }

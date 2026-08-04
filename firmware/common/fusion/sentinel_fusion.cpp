@@ -3,7 +3,7 @@
  * @brief Implementation of sentinel.fusion (see sentinel_fusion.h).
  *
  * Pure hosted C++ (no Arduino / RTOS). The scorer and the FSM are separated so
- * the scoring math can be unit-tested independently of the timing behaviour.
+ * the scoring math can be unit-tested independently of the timing behavior.
  */
 
 #include "sentinel_fusion.h"

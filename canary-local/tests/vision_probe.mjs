@@ -89,7 +89,7 @@ try {
   await page.waitForSelector(".vis-ws-model.on", { timeout: 4000 });
   // the other models exist but refuse politely
   const dim = await page.$(".vis-ws-model.dim");
-  if (!dim) fail("greyed alternative models missing");
+  if (!dim) fail("grayed alternative models missing");
   await page.locator(".vis-ws-model.on").click();
   await page.waitForSelector(".vis-progress-fill", { timeout: 4000 });
   // upload completes into the live preview

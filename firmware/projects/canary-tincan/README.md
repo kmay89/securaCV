@@ -103,7 +103,7 @@ Two properties that make the relay safe to run anywhere:
 
 No PlatformIO environment, no `src/`, no display driver, no radio glue. The
 board is registered at **compile-tested** tier with `used_by: []` — the same
-Phase-0 posture as `xiao-esp32c6-sentinel` — because this tree honours the
+Phase-0 posture as `xiao-esp32c6-sentinel` — because this tree honors the
 repo's rule that nothing is claimed as working until it has been built and run.
 Adding a build env before there is a runtime to build would put a green tick
 next to something that does not exist.

@@ -131,7 +131,7 @@ function witnessRoutes(state) {
   //
   // It does NO camera capture or detection work (one Ed25519 sign + hash only), so it cannot raise
   // device load. Three flood guards: (1) simulateLimiter caps trigger volume; (2) the default path
-  // honours tryEmitEvent's activity-session suppression/cooldown; (3) `force` (suppression bypass)
+  // honors tryEmitEvent's activity-session suppression/cooldown; (3) `force` (suppression bypass)
   // is devMode-only. event_type is allowlisted to envelope-nameable, non-identifying types.
   router.post('/api/v1/witness/simulate', simulateLimiter, (req, res) => {
     // Minting signed, hash-chained witness records is a test/demo affordance only. Outside dev

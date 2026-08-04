@@ -295,7 +295,7 @@ period** — the scanner runs 4 s bursts every 20 s while the broker is down
 (`chirp_scan.cpp` `BURST_MS`/`PERIOD_MS`), so budget **~20 s worst case,
 ~10 s typical**, depending on where the tamper lands relative to the next
 burst. Trigger the tamper a few times to see the spread rather than judging
-a single shot. The event is labelled **"tamper (chirp)"** (coarser trust —
+a single shot. The event is labeled **"tamper (chirp)"** (coarser trust —
 never "verified"); a known Canary files under its real card by fingerprint
 **suffix** (not a `SCV-XXXX` twin); restore the broker → the scan stops and
 MQTT resumes as the richer channel.
@@ -304,7 +304,7 @@ MQTT resumes as the richer channel.
 > Want the crisp **<10 s** figure from the spec's demo acceptance? Shorten
 > `PERIOD_MS` (e.g. to 8000) in `chirp_scan.cpp` for the bench run — it trades
 > battery/coexistence headroom for latency. The 4 s/20 s default is the
-> shipping balance; the sign-off gate is the *behaviour* (tamper crosses the
+> shipping balance; the sign-off gate is the *behavior* (tamper crosses the
 > dead broker at all), not a stopwatch number.
 
 ### F6. Broker self-discovery — the "configure once" demo (§ discovery)

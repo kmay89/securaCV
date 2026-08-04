@@ -82,12 +82,12 @@ shipped: *still too bright at night*. The products people love — Braun, the
 Loftie blackout, Mui — emit **zero** light until asked.
 
 The Canary Display could not take that advice. Its bench verdict was blunt: on a
-backlit LCD, "off" is not off. Backlight bleed leaves a glowing grey rectangle,
+backlit LCD, "off" is not off. Backlight bleed leaves a glowing gray rectangle,
 which reads *worse* in a dark room than a calibrated dim glow. So the LCD
 nightstand ships a dim floor and treats blackout as a preference.
 
 **The watch board is AMOLED, and that verdict does not carry.** An unlit AMOLED
-pixel is off — no bleed, no grey, no rectangle, and no power. Black is free here
+pixel is off — no bleed, no gray, no rectangle, and no power. Black is free here
 in a way it has never been free anywhere else in this project.
 
 So the Night Watch **inverts the display's default**: `NightStyle::GoDark` is
@@ -246,7 +246,7 @@ dopamine-and-guilt loop, ancestor to the streak and the pull-to-refresh.
 
 There is one more piece worth naming. The P1's only game was **left-or-right**:
 the pet faces a direction, you guess, you are right half the time. That is a coin
-toss with a sprite on it. It cannot be practised and cannot be understood, so the
+toss with a sprite on it. It cannot be practiced and cannot be understood, so the
 only thing bringing a child back is the reward schedule. It is, precisely, a slot
 machine for seven-year-olds.
 
@@ -327,7 +327,7 @@ deterministic, and neither has a random reward.
   reasoning about rhythm ([`knock_codec.h`](../../firmware/projects/canary-tincan/include/canary/tincan/knock_codec.h)):
   a human wrist cannot reproduce 3 ms of precision, so gaps are compared on a
   tolerance. Harder difficulties play the **same rhythms faster** rather than
-  different ones, so a child who learned round three can still recognise it.
+  different ones, so a child who learned round three can still recognize it.
   Scoring is partial credit — there is no "you lost".
 - **Steady** — hold your wrist level while the bird preens. The calmest possible
   use of a motion sensor, and deliberately the opposite of the shake-games this

@@ -327,7 +327,7 @@ with signature — genuinely good design).
 - **CID/CSD/`cardType` never read** — wear is a pure write-volume estimate vs a hard-coded 32 TBW;
   real card identity would also catch counterfeit/worn cards. **[P2]**
 - **The idle 192 KB `spiffs` partition** should become a LittleFS chain-head journal (§1.3),
-  giving card-independent, wear-levelled power-loss safety for `seq`/`chain_head`. **[P1]**
+  giving card-independent, wear-leveled power-loss safety for `seq`/`chain_head`. **[P1]**
 
 ### 3.6 Power / battery / thermal (`securacv_power*`, `securacv_lowpower`, `securacv_thermal*`)
 

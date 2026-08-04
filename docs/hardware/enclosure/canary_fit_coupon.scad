@@ -46,6 +46,10 @@
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
 // ============================================================================
 
+use <canary_mark_lib.scad>   // THE BIRD — one mark for the whole
+                             // catalog; see that file's header for why
+                             // it is authored rather than traced
+
 /* [What to render] */
 part = "all";        // ["base","mate","strip","all"]
 
@@ -132,55 +136,12 @@ if (emblem_h > 0) {
 //  art is line work ~0.08 mm wide at badge size, which no nozzle can lay down.
 //  Chaikin corner-cutting rounds the polylines; three passes is plenty.
 // ---------------------------------------------------------------------------
-function _chaik(p, cl) = let(n = len(p))
-    [ for (i = [0 : (cl ? n-1 : n-2)]) each
-        let(a = p[i], b = p[(i+1) % n])
-        [ [0.75*a[0] + 0.25*b[0], 0.75*a[1] + 0.25*b[1]],
-          [0.25*a[0] + 0.75*b[0], 0.25*a[1] + 0.75*b[1]] ] ];
-function _smooth(p, cl, k = 3) = k <= 0 ? p : _smooth(_chaik(p, cl), cl, k-1);
-
-// the mark in design units — 110 tall, drawn facing LEFT. Proportions are
-// the point here: a plump upright body, a big pointed wing, a long slender
-// tail and a splayed stance. The stance is not styling — two feet need ~2.4 mm
-// of separation at this size or they fuse into one bar on the plate.
-g_body = [[-38,32],[-35,43],[-26,50],[-12,49],[1,42],[13,29],[21,12],[25,-6],
-          [21,-24],[8,-34],[-9,-36],[-24,-30],[-34,-17],[-40,0],[-41,18]];
-g_wing = [[-30,12],[-13,24],[6,18],[24,-6],[9,-17],[-11,-11],[-24,0]];
-g_tailu = [[23,3],[43,-17],[67,-43]];      // tail edges, converging to a point
-g_taill = [[12,-27],[39,-33],[67,-43]];
-g_span = 110;        // design-unit height the mark spans
-g_cx   = 3.7;        // design-unit bbox center
-g_cy   = -0.5;
-
-module _gstroke(pts, t, closed = false) {
-    n = len(pts);
-    for (i = [0:n-2]) hull() { translate(pts[i]) circle(d = t); translate(pts[i+1]) circle(d = t); }
-    if (closed) hull() { translate(pts[n-1]) circle(d = t); translate(pts[0]) circle(d = t); }
-}
-module _gtaper(pts, t0, t1) {           // width runs t0 -> t1 along the path
-    n = len(pts);
-    for (i = [0:n-2]) hull() {
-        translate(pts[i])   circle(d = t0 + (t1-t0)*i/(n-1));
-        translate(pts[i+1]) circle(d = t0 + (t1-t0)*(i+1)/(n-1));
-    }
-}
-// Nothing here may be drawn thinner than t. The tail and beak taper, so they
-// bottom out AT t rather than running to a point — a point is a feature the
-// slicer drops, and one dropped feature would make the rib reading a lie.
-module bird_glyph_2d(t) {
-    union() {
-        _gstroke(_smooth(g_body, true), t, true);
-        _gstroke(_smooth(g_wing, true), t, true);
-        _gstroke(_smooth(g_tailu, false, 1), t);
-        _gstroke(_smooth(g_taill, false, 1), t);
-        _gtaper([[-37,26.5],[-63,27]], 15, t);       // beak: cone -> t tip
-        translate([-27,34]) circle(d = t*1.35);      // eye
-        _gstroke([[-12,-36],[-20,-50]], t);          // legs, splayed
-        _gstroke([[4,-35],[12,-50]], t);
-        _gstroke([[-27,-51],[-13,-51]], t);          // feet, clear of each other
-        _gstroke([[5,-51],[19,-51]], t);
-    }
-}
+// (The bird itself now lives in canary_mark_lib.scad — one definition of the
+// house mark for the whole line, the same way canary_vent_lib.scad owns the
+// egg, so the 7" back plate and this coupon cannot drift into two slightly
+// different birds. This coupon is where its printability gets PROVEN, not
+// where it is defined; see the rib/crown knobs above. Everything crosses as a
+// function because OpenSCAD's use<> does not carry variables.)
 // ---------------------------------------------------------------------------
 
 module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
@@ -195,20 +156,8 @@ module emb(x, y, s, size = 7) { translate([x, y, base_t - 0.05]) linear_extrude(
 // slab top — that is what makes an embossed mark catch light like metal. The
 // footprint is still a full rib wide; only the crown draws in.
 module emblem_emb(px, py, h) {
-    s  = h / g_span;
-    t  = emblem_rib / s;                       // stroke, in design units
-    ez = emboss_h + 0.05;
-    n  = emblem_crown > 0 ? 4 : 1;
     translate([px, py, base_t - 0.05])
-        for (i = [0:n-1]) {
-            // the inset runs 0 at the base to the FULL crown on the top slice;
-            // the slice's z is a separate ramp, or the last one would sit proud
-            f   = n > 1 ? i/(n - 1) : 0;
-            ins = (emblem_crown / s) * (1 - sqrt(1 - f*f));
-            translate([0, 0, i*ez/n]) linear_extrude(ez/n + 0.01)
-                scale([s, s]) translate([-g_cx, -g_cy])
-                    offset(r = -ins) bird_glyph_2d(t);
-        }
+        mark_emboss(h, emboss_h + 0.05, emblem_rib, emblem_crown);
 }
 module keyhole_pocket(px, py) {         // blind, from the back (z=0 face)
     translate([px, py, 0]) union() {

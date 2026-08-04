@@ -32,7 +32,7 @@ struct WakeProbe {
 };
 
 // Fixed-width 4-char marker so rows always align; the WORD carries the meaning
-// (OK / !!), colour is only a bonus (WCAG 1.4.1 / the ambient-display rule).
+// (OK / !!), color is only a bonus (WCAG 1.4.1 / the ambient-display rule).
 inline const char* probe_marker(ProbeState s) {
   switch (s) {
     case ProbeState::Pending: return "[..]";
@@ -53,7 +53,7 @@ inline int probe_color(ProbeState s) {
 }
 
 // One probe row: "[OK] NVS read/write                      12ms" — marker + label
-// left, duration right, coloured by state.
+// left, duration right, colored by state.
 inline void probe_row(const Renderer& r, int inner, const WakeProbe& p) {
   const int contentw = inner - 2;
   char ms[16];

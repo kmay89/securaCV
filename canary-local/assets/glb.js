@@ -4,7 +4,7 @@
 // export (cascadio STEP→GLB, or a KiCad glTF export) emits — indexed
 // triangles, f32 POSITION + NORMAL, u16/u32 indices, a node TRS/matrix tree,
 // and pbrMetallicRoughness.baseColorFactor per material. Positions are baked
-// to world space and scaled to millimetres (glTF ships metres), so the parts
+// to world space and scaled to millimeters (glTF ships meters), so the parts
 // drop straight into the same DeviceScene the printed STL parts use.
 //
 // Same spirit as stl.js: no three.js, no CDN — these pages work with the
@@ -13,7 +13,7 @@
 // committed .glb, exactly as it only reads committed .stl for enclosures.
 //
 // Returns { parts:[{pos,nrm,uv,idx,color:[r,g,b]}], bbox:{min,max,size,center},
-//           triangles } — parts grouped by material colour, then split so no
+//           triangles } — parts grouped by material color, then split so no
 // part exceeds 65535 vertices (DeviceScene indexes with Uint16).
 
 const CT = { 5120: Int8Array, 5121: Uint8Array, 5122: Int16Array,
@@ -108,7 +108,7 @@ export function parseGLB(bufferOrView, { scale = 1000 } = {}) {
     return [f[0], f[1], f[2]];
   };
   const key = (c) => c.map((v) => Math.round(v * 255)).join(",");
-  const buckets = new Map(); // colourKey → {color, pos, nrm}
+  const buckets = new Map(); // colorKey → {color, pos, nrm}
 
   const bb = { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] };
   const grow = (p) => { for (let i = 0; i < 3; i++) { if (p[i] < bb.min[i]) bb.min[i] = p[i]; if (p[i] > bb.max[i]) bb.max[i] = p[i]; } };
@@ -126,7 +126,7 @@ export function parseGLB(bufferOrView, { scale = 1000 } = {}) {
     for (let t = 0; t < idx.length; t += 3) {
       for (let e = 0; e < 3; e++) {
         const vi = idx[t + e];
-        // Full node tree FIRST (the metre→mm scale can live on an
+        // Full node tree FIRST (the meter→mm scale can live on an
         // intermediate node, composed with rotations), then scale the
         // finished world point — uniform scale-at-the-end is safe.
         const wp = tp(world, P.data[vi * 3], P.data[vi * 3 + 1], P.data[vi * 3 + 2]);

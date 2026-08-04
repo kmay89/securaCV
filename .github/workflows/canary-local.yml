@@ -32,6 +32,9 @@ on:
       - "firmware/boards/xiao-esp32c6-mr60/**"
       - "firmware/boards/waveshare-esp32s3-lcd43/**"
       - "firmware/common/**"
+      - "ios/Shared/FleetFigures.swift"
+      - "firmware/common/core/fleet_figures.h"
+      - "docs/design/FLEET_FIGURES.md"
       - "firmware/flavors.json"
       - "firmware/envs/**"
       - "canary-local/tools/gen_flash.py"
@@ -99,6 +102,9 @@ on:
       - "firmware/boards/xiao-esp32c6-mr60/**"
       - "firmware/boards/waveshare-esp32s3-lcd43/**"
       - "firmware/common/**"
+      - "ios/Shared/FleetFigures.swift"
+      - "firmware/common/core/fleet_figures.h"
+      - "docs/design/FLEET_FIGURES.md"
       - "firmware/flavors.json"
       - "firmware/envs/**"
       - "canary-local/tools/gen_flash.py"
@@ -149,7 +155,7 @@ permissions:
 
 # Supersede stale runs: a new push to a PR branch cancels the in-flight run
 # (the wasm job is one of the most expensive in the repo). Pushes to main
-# are never cancelled — full signal per main commit.
+# are never canceled — full signal per main commit.
 concurrency:
   group: canary-local-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

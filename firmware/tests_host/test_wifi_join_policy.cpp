@@ -162,7 +162,7 @@ static void setup_opens_only_for_a_problem_setup_can_fix() {
 static void a_device_that_worked_before_never_throws_away_its_config() {
   // The nightmare: a Canary that has been running for months loses its AP for
   // ten minutes and responds by wiping into setup mode, advertising an open
-  // provisioning network to the neighbourhood and forgetting a good config.
+  // provisioning network to the neighborhood and forgetting a good config.
   WifiRetry s;
   s.ever_online = true;
   s.attempts = 1000;

@@ -68,7 +68,7 @@ MOUSER_URL = "https://api.mouser.com/api/v1/search/partnumber"
 # clicks. It arrives as third-party text, so it is checked here — at the
 # boundary, once — and only an https link at the distributor we actually
 # asked is ever written to the snapshot. Anything else (javascript:, a
-# redirector on another host, a scheme we don't recognise) becomes None and
+# redirector on another host, a scheme we don't recognize) becomes None and
 # the row simply renders without a link. See docs/hardware/bom_pipeline.md.
 DISTRIBUTOR_DOMAIN = {"digikey": "digikey.com", "mouser": "mouser.com"}
 DISTRIBUTOR_ORIGIN = {"digikey": "https://www.digikey.com",
@@ -288,7 +288,7 @@ def assemble(parts, old, fetched, note, attempted=None):
     miss, suppress the documented no-match exception, and republish stale
     stock/prices as if fresh. Instead it becomes provenance "carried":
     last-known numbers retained for reference, but no longer trusted as
-    live anywhere downstream (the Build-it overlay only honours
+    live anywhere downstream (the Build-it overlay only honors
     digikey/mouser provenance).
     """
     old_parts = old.get("parts") or {}

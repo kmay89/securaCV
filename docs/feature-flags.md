@@ -10,7 +10,7 @@
 
 ## Why a registry
 
-SecuraCV gates behaviour with flags at four different layers. Each layer was
+SecuraCV gates behavior with flags at four different layers. Each layer was
 internally consistent, but nothing tied them together — there was no one place
 that said *what flags exist, what they default to, and when they get removed*.
 This file is that place. It does **not** duplicate the per-layer detail (e.g. the
@@ -22,18 +22,18 @@ firmware parity matrix); it indexes it and points at the authoritative source.
 |---|---|---|---|
 | **Rust compile-time** | Optional native deps / backends that shouldn't be in every build (codecs, ONNX, PQC, adapters) | Cargo `[features]` + `#[cfg(feature=…)]` / `required-features` | [`Cargo.toml`](../Cargo.toml) `[features]` |
 | **Firmware compile-time** | Per-board capability selection on memory-constrained ESP32 targets | `FEATURE_*` C macros / `build_flags` | [`firmware/FEATURES.md`](../firmware/FEATURES.md) (parity matrix) |
-| **Runtime config** | Operator-tunable behaviour that must change without rebuilding (backend choice, thresholds, retention, detection toggles) | TOML + `WITNESS_*` env (kernel) and JSON device-state (canary-vision) | [`config.example.toml`](../config.example.toml), [`canary-vision/device-api/lib/device-state.js`](../canary-vision/device-api/lib/device-state.js) |
+| **Runtime config** | Operator-tunable behavior that must change without rebuilding (backend choice, thresholds, retention, detection toggles) | TOML + `WITNESS_*` env (kernel) and JSON device-state (canary-vision) | [`config.example.toml`](../config.example.toml), [`canary-vision/device-api/lib/device-state.js`](../canary-vision/device-api/lib/device-state.js) |
 | **Capability gating** | Hiding declared-but-unbuilt surface so the product never advertises what no device can do | `ALL_* ` vs `FUTURE_*` lists | [`custom_components/securacv/const.py`](../custom_components/securacv/const.py) |
 
 **Decision rule:** if a flag selects *which code is compiled* → compile-time
-(Cargo/firmware). If it tunes *running behaviour* → runtime config. If it hides
+(Cargo/firmware). If it tunes *running behavior* → runtime config. If it hides
 *an unfinished feature from users* → capability gate (and it stays gated until
 wired end-to-end — see the convention below). Don't reach for a runtime config
 key to do a compile-time job, or vice-versa.
 
 ## Conventions (normative)
 
-1. **Default off for unfinished work.** A flag guarding incomplete behaviour
+1. **Default off for unfinished work.** A flag guarding incomplete behavior
    ships **off by default**. Merging behind an off flag is fine; advertising it
    is not.
 2. **Never advertise unbuilt features.** Declared-but-unimplemented capabilities
@@ -84,6 +84,7 @@ Source of truth: `Cargo.toml:55-71`. Default build enables **none** of these
 | `adapter-meshtastic` | off | stable | Meshtastic LoRa-mesh detection-sensor adapter | keep |
 | `adapter-can-bus` | off | exp | Passive-only vehicle CAN bus adapter (arrival/departure claims via Linux SocketCAN) | promote to stable once bench-validated against a real vehicle (docs/hardware/canary_vehicle_can.md) |
 | `adapter-sandbox` | off | stable | Sandbox/test adapter | keep |
+| `bridge-homekit` | off | exp | Apple Home egress projection core: the closed coarse-boolean vocabulary plus the pacer that publishes on a fixed cadence rather than on events (`src/bridge/homekit.rs`, docs/design/apple_home_integration.md). Pure Rust — no HAP server or socket yet | promote to stable when a HAP lane actually ships and open decision #6 (one accessory per Canary vs per signal) is settled |
 | `pqc-signatures` | off | exp | ML-DSA post-quantum signatures | promote once PQC signing is a supported deployment mode |
 | `pqc-vault` | off | exp | ML-KEM post-quantum vault sealing | promote once PQC vault is supported |
 | `pqc-tls` | off | exp | PQC-capable TLS stack | promote once PQC transport is supported |

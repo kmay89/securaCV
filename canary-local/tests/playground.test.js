@@ -45,12 +45,12 @@ test("every station wire lands on a declared terminal", () => {
   for (const st of pg.stations) {
     for (const [term, net] of st.wires) {
       assert.ok(terms.has(term), `${st.id}: wire to unknown terminal ${term}`);
-      assert.ok(pg.colors[net], `${st.id}: wire net ${net} has no colour`);
+      assert.ok(pg.colors[net], `${st.id}: wire net ${net} has no color`);
     }
   }
 });
 
-test("every terminal net has a colour and a position", () => {
+test("every terminal net has a color and a position", () => {
   const pg = playground();
   for (const [id, t] of Object.entries(pg.terminals)) {
     assert.ok(pg.colors[t.net], `${id}: net ${t.net} missing from colors`);

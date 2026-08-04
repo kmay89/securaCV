@@ -302,7 +302,7 @@ void accumulate(const int8_t* iq, uint8_t subcarrier_cnt,
      * full-window rotation saturates and typical walking lands 30–90. */
     const int64_t mag2 = dot_t * dot_t + cross_t * cross_t;  /* ≤ ~5.7e12 */
     /* Coherence floor: with |C_tot| < 64 there is no usable common
-     * reference (deep fade, or bands cancelling) and the normalized
+     * reference (deep fade, or bands canceling) and the normalized
      * ratio blows up — skip the pair instead of injecting garbage. */
     if (mag2 >= 4096) {
       const int64_t norm = (mag2 >> 9) + 1;

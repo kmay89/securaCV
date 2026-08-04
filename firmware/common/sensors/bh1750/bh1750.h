@@ -24,7 +24,7 @@ namespace securacv::sensors {
 class BH1750 {
 public:
     // Probe the sensor and start continuous high-resolution sampling.
-    // `wire` must already be initialised (Wire.begin with board pins).
+    // `wire` must already be initialized (Wire.begin with board pins).
     // Returns false — and stays inert — when nothing ACKs at `addr`.
     bool begin(TwoWire& wire, uint8_t addr);
 

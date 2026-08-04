@@ -7,7 +7,7 @@
 //
 // The 1996 Tamagotchi's only game was left-or-right: the pet faces a direction,
 // you guess which, you are right half the time. That is a coin toss with a
-// sprite on it. It cannot be practised, it cannot be understood, and getting
+// sprite on it. It cannot be practiced, it cannot be understood, and getting
 // better at it is not possible — which means the only thing driving a child
 // back to it is the reward schedule, not the game. It is, precisely, a slot
 // machine for seven-year-olds.
@@ -93,7 +93,7 @@ inline EchoPattern echo_pattern(uint8_t round, uint8_t difficulty) {
   const uint8_t r = round < MAX_ROUNDS_PER_SESSION ? round : MAX_ROUNDS_PER_SESSION - 1;
   p.taps = kTaps[r];
   // Harder difficulties play the same rhythms faster. The SHAPE is preserved,
-  // which is what lets a child who learned round three at easy recognise it.
+  // which is what lets a child who learned round three at easy recognize it.
   const uint16_t num = difficulty >= 2 ? 7 : (difficulty == 1 ? 85 : 100);
   const uint16_t den = difficulty >= 2 ? 10 : 100;
   for (uint8_t i = 0; i + 1 < p.taps; i++) {

@@ -100,13 +100,13 @@ Bytes pl_target_count(uint32_t n) {
     put_le32(p, n);
     return p;
 }
-Bytes pl_distance(float metres, bool valid = true) {
+Bytes pl_distance(float meters, bool valid = true) {
     Bytes p;
     p.push_back(valid ? 1 : 0);
     p.push_back(0);
     p.push_back(0);
     p.push_back(0);
-    put_le_float(p, metres);
+    put_le_float(p, meters);
     return p;
 }
 Bytes pl_breath(float bpm) {
@@ -324,7 +324,7 @@ void test_unknown_type_skipped_counted() {
     feed(p, build_frame(0x1234, payload));
     assert(drain(p).empty());
     assert(p.unknown_count() == 1);
-    assert(p.error_count() == 0);  // not corruption — just unrecognised
+    assert(p.error_count() == 0);  // not corruption — just unrecognized
 
     // Still in sync for the next known frame.
     feed(p, frame_heart(70.0f));

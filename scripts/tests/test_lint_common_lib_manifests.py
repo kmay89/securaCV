@@ -20,7 +20,7 @@ Two defects were found in the guard itself by the fixtures below, before it
 worked:
 
 1. **The walk did not follow `extends = env:<name>`.** Section keys carry the
-   prefix (`[env:canary-display-dash]`), so normalising the value to `dash`
+   prefix (`[env:canary-display-dash]`), so normalizing the value to `dash`
    produced a key matching nothing and silently ended the chain. The guard
    passed the tree, passed a hand-written direct case, and was blind to the
    real bug — where BOTH halves arrive through `extends` and the offending

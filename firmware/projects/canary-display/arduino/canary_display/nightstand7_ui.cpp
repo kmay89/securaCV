@@ -662,7 +662,7 @@ void nightstand7_ui_update(const Fleet& fleet, uint32_t now,
         lv_obj_set_style_bg_color(s_chip[i], sev_color(s, false), 0);
         lv_obj_align(s_chip[i], LV_ALIGN_LEFT_MID, x, y);
         // Bounded name: an LVGL label self-sizes, so a long room name would
-        // walk over its neighbour. Truncate in C (the same %.Ns the comfort
+        // walk over its neighbor. Truncate in C (the same %.Ns the comfort
         // line uses) rather than depend on a long-mode enum that was renamed
         // across the LVGL major boundary this project straddles.
         lv_label_set_text_fmt(s_chip_name[i], "%.8s",

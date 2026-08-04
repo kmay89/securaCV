@@ -1260,7 +1260,7 @@
         "emulated": {
           "href": "fleet.html#canary-display-dash",
           "label": "🧪 the closest twin — the same glass, its sibling build",
-          "how": "This board has no WASM build of its own yet, so the twin runs the sibling that shares its glass and its face. The pixels and the behaviour are right; the build id on screen is the sibling's."
+          "how": "This board has no WASM build of its own yet, so the twin runs the sibling that shares its glass and its face. The pixels and the behavior are right; the build id on screen is the sibling's."
         }
       },
       "pick_label": "Dash · Modes — the 4.3B multi-tool"
@@ -1455,7 +1455,7 @@
         "emulated": {
           "href": "fleet.html#canary-display-nightstand-s3",
           "label": "🧪 the closest twin — the same glass, its sibling build",
-          "how": "This board has no WASM build of its own yet, so the twin runs the sibling that shares its glass and its face. The pixels and the behaviour are right; the build id on screen is the sibling's."
+          "how": "This board has no WASM build of its own yet, so the twin runs the sibling that shares its glass and its face. The pixels and the behavior are right; the build id on screen is the sibling's."
         }
       },
       "pick_label": "Nightstand C6 — the 1.47″ pin-header board"
@@ -1694,7 +1694,7 @@
     },
     "range_near_cm": {
       "label": "Near band",
-      "what": "Inside this distance counts as “near”. Only the coarse band ever leaves the device — raw centimetres stay on the board.",
+      "what": "Inside this distance counts as “near”. Only the coarse band ever leaves the device — raw centimeters stay on the board.",
       "default": "150 cm in this build."
     },
     "range_mid_cm": {
@@ -1818,7 +1818,7 @@
     },
     "radar_bench": {
       "label": "The radar bench",
-      "what": "The Sense's live senses off the USB cable: presence, the near/mid/far band, the 0/1/2+ count — the same coarse truths it publishes, never raw centimetres."
+      "what": "The Sense's live senses off the USB cable: presence, the near/mid/far band, the 0/1/2+ count — the same coarse truths it publishes, never raw centimeters."
     },
     "field_bench": {
       "label": "The field bench",

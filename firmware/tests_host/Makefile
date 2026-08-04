@@ -106,7 +106,7 @@ SCENE_BIN = $(BUILD_DIR)/test_console_scene
 # Fleet view (common/ui/fleet_view.h): the console face of the self-* roadmap's
 # Fleet map — "which other Canaries can this one hear." Proves the ASCII tier
 # stays escape-free / 7-bit / width-aligned (same contract as the trust card),
-# that presence is rendered honestly as UNSIGNED with worded (not colour-only)
+# that presence is rendered honestly as UNSIGNED with worded (not color-only)
 # attention states, and pins a golden render. Pure header over the console
 # engine + the fleet-link wire constants; no Arduino deps.
 FLEETVIEW_HDRS = ../common/ui/fleet_view.h ../common/ui/console_theme.h \
@@ -190,6 +190,16 @@ LOOK_SRC  = $(LOOK_DIR)/color_engine.cpp $(LOOK_DIR)/look_engine.cpp
 LOOK_HDRS = $(LOOK_DIR)/color_engine.h $(LOOK_DIR)/look_engine.h
 LOOK_BIN  = $(BUILD_DIR)/test_look_engine
 
+# The plumage engine (common/color/plumage.*): the birdsong light-language the
+# hallway nightlight speaks — syllable envelopes, per-device voice, the phrase
+# scheduler, and the rising-band render. Its most important assertions are the
+# honesty ones: under Warn/Alert and under safe_dark its output must be
+# BIT-IDENTICAL to the look engine's, because plumage delegates those paths
+# rather than reimplementing them.
+PLUMAGE_SRC  = $(LOOK_SRC) $(LOOK_DIR)/plumage.cpp
+PLUMAGE_HDRS = $(LOOK_HDRS) $(LOOK_DIR)/plumage.h
+PLUMAGE_BIN  = $(BUILD_DIR)/test_plumage
+
 .PHONY: all run clean
 all: run
 
@@ -256,10 +266,13 @@ $(PRESET_LITE_BIN): test_sentinel_presets.cpp $(FUSION_SRC) $(SENT_PRESET_HDR) $
 $(LOOK_BIN): test_look_engine.cpp $(LOOK_SRC) $(LOOK_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_look_engine.cpp $(LOOK_SRC) -o $@
 
+$(PLUMAGE_BIN): test_plumage.cpp $(PLUMAGE_SRC) $(PLUMAGE_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_plumage.cpp $(PLUMAGE_SRC) -o $@
+
 $(TUNECON_BIN): test_tuning_console.cpp $(TUNECON_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_tuning_console.cpp -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(WIFIJOIN_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(TUNECON_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(WIFIJOIN_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(TUNECON_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -280,6 +293,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(PRESET_DOOR_BIN)
 	./$(PRESET_LITE_BIN)
 	./$(LOOK_BIN)
+	./$(PLUMAGE_BIN)
 	./$(TUNECON_BIN)
 
 clean:

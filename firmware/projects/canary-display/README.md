@@ -25,7 +25,7 @@ runtimes in `src/mode/`, the Settings → modes doorway, and dedicated CI envs
 (`canary-display-dash-modes` / `-watch-modes`). Every flag defaults off —
 default builds are byte-identical — and each gear is bench-pending per the
 spec's Waves ledger. What plugs into the 4.3B's terminals — and why — is
-catalogued in
+cataloged in
 [`display_peripheral_catalog.md`](../../../docs/hardware/display_peripheral_catalog.md).
 
 > ⚠️ **DEV STATUS (v0.1):** compile/CI-verified; **not yet validated on

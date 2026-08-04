@@ -7,7 +7,7 @@
 //
 //   * Is this node here right now?   (liveness, with an honest middle state)
 //   * How strong is the link?        (smoothed RSSI, not the last sample)
-//   * How do I reach it?             (hop count + which neighbour to hand to)
+//   * How do I reach it?             (hop count + which neighbor to hand to)
 //
 // The design rule inherited from the displays
 // (docs/hardware/display_discovery_and_resilience.md): ABSENCE IS A STATE, NOT
@@ -57,7 +57,7 @@ struct Node {
   int16_t rssi_ema = 0;      // dBm, smoothed. Only meaningful when heard_once.
   bool heard_once = false;
   uint32_t last_heard_ms = 0;
-  uint8_t hops = 0;          // 0 = direct neighbour
+  uint8_t hops = 0;          // 0 = direct neighbor
   uint16_t via = 0;          // next hop to use; 0 when direct
   // When we last heard this node THROUGH the selected next hop. Tracked apart
   // from last_heard_ms because they answer different questions: "is this node
@@ -118,7 +118,7 @@ struct NodeTable {
   //
   //   1. A strictly SHORTER path always wins.
   //   2. An EQUAL-length path does NOT displace the incumbent. Ties would
-  //      otherwise flap between two equally good neighbours every beacon, and
+  //      otherwise flap between two equally good neighbors every beacon, and
   //      route flap in a house full of nodes is what turns "seamless" into
   //      "why did that take four seconds".
   //   3. But an incumbent whose own path has gone quiet must be replaceable,
@@ -176,7 +176,7 @@ struct NodeTable {
  private:
   // Prefer a genuinely free slot; otherwise take the node we have not heard
   // from in longest, and only if it is already Lost. A table full of live
-  // nodes refuses to admit another rather than silently dropping a neighbour
+  // nodes refuses to admit another rather than silently dropping a neighbor
   // that is still talking to us.
   Node* alloc_or_evict(uint32_t now_ms) {
     for (size_t i = 0; i < N; i++) {

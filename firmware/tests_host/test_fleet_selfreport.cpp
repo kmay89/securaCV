@@ -112,7 +112,7 @@ static void test_offline_degraded() {
   CHECK(s.back() == '}');
 }
 
-// ── null / empty fields are safe (a half-initialised device must not crash) ─
+// ── null / empty fields are safe (a half-initialized device must not crash) ─
 static void test_null_fields_safe() {
   char buf[512];
   FleetSelfDevice d{};             // everything zero/null

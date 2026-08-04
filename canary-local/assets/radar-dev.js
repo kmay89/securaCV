@@ -133,7 +133,7 @@ function bootTwin(wellbeing) {
   };
   state.twin = twin;
   state.wellbeing = wellbeing;
-  // Boot theatre: the real banner, verbatim from the firmware (drift-gated
+  // Boot theater: the real banner, verbatim from the firmware (drift-gated
   // data) — so the twin's first breath looks exactly like the cable's.
   const banner = state.data.serial.banner || [];
   banner.forEach((l, i) => setTimeout(() => emitLine(l), i * 25));

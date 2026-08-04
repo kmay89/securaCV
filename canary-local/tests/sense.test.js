@@ -6,7 +6,7 @@
 //     the design doc, the registry) so a hand-edit that bypasses the
 //     generator — or firmware drift — is caught here, not just by the
 //     generator's own asserts. Every threshold, topic, HA entity, boot line
-//     and LED colour the page shows must still exist in the source it
+//     and LED color the page shows must still exist in the source it
 //     claims to come from.
 //  2. Exercise the DOM-free cores the page ships (sense-ui.js: bootLines,
 //     rangeBandOf, countBucketOf, makePresenceFSM, makeVitalsFSM) so the
@@ -89,7 +89,7 @@ test("vitals thresholds are the wellbeing config's own", () => {
   assert.deepStrictEqual(v.heart_bpm, [cint(cfgWellbeing, "CS_HEART_MIN_BPM"), cint(cfgWellbeing, "CS_HEART_MAX_BPM")]);
 });
 
-test("the LED grammar is main.cpp's led_for_presence, colour for colour", () => {
+test("the LED grammar is main.cpp's led_for_presence, color for color", () => {
   const rgb = {};
   for (const s of data.fsm.presence.states) rgb[s.name] = s.rgb;
   assert.ok(mainCpp.includes(`led_show(${rgb.Present.join(", ")})`), "Present LED drifted");
