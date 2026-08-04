@@ -32,32 +32,22 @@ final class CloudSync {
 
     private init() {}
 
-    /// Is it even SAFE to touch CloudKit in this build?
-    ///
-    /// `CKContainer.default()` raises an Objective-C `CKException` when the
-    /// running process has no usable iCloud container — and an ObjC
-    /// exception cannot be caught from Swift, so `try?` does not help and
-    /// the process simply aborts. That is exactly what happens on a
-    /// simulator with no signed-in account: the app died at launch inside
-    /// `onAppear`, taking the whole test suite with it.
-    ///
-    /// `ubiquityIdentityToken` is the cheap, NON-throwing way to ask the
-    /// same question, so it goes first and nothing constructs a container
-    /// until it says yes.
-    static var canTouchCloudKit: Bool {
-        FileManager.default.ubiquityIdentityToken != nil
-    }
-
     /// Ask CloudKit whether this user has an account we may use. Cheap, safe
     /// to call repeatedly, and the only thing that may set `isAvailable`.
+    ///
+    /// There is no "is it safe to touch CloudKit" pre-check here, and that is
+    /// deliberate — see CloudContainer.swift. The crash this used to cause was
+    /// `CKContainer.default()` raising an uncatchable ObjC exception while
+    /// resolving a container from an absent entitlement; naming the container
+    /// removes that path entirely, so there is nothing left to guard. A guard
+    /// in front of it could only subtract: every cheap pre-check available
+    /// here answers a DIFFERENT question than "may I construct a container",
+    /// and getting it wrong switches iCloud off for people who have it — the
+    /// exact silent-disable the `isAvailable` comment above is a memorial to.
     @discardableResult
     func refreshAvailability() async -> Bool {
         #if canImport(CloudKit)
-        guard Self.canTouchCloudKit else {
-            isAvailable = false
-            return false
-        }
-        let status = try? await CKContainer.default().accountStatus()
+        let status = try? await CloudContainer.shared.accountStatus()
         isAvailable = (status == .available)
         #else
         isAvailable = false
@@ -68,7 +58,7 @@ final class CloudSync {
     func push(_ devices: [PairedDeviceRef]) {
         #if canImport(CloudKit)
         guard isAvailable else { return }
-        let db = CKContainer.default().privateCloudDatabase
+        let db = CloudContainer.shared.privateCloudDatabase
         for ref in devices {
             let record = CKRecord(recordType: "PairedDevice", recordID: .init(recordName: ref.id))
             record["name"] = ref.name as CTKValue
@@ -84,7 +74,7 @@ final class CloudSync {
     func pull() async -> [PairedDeviceRef] {
         #if canImport(CloudKit)
         guard isAvailable else { return [] }
-        let db = CKContainer.default().privateCloudDatabase
+        let db = CloudContainer.shared.privateCloudDatabase
         let query = CKQuery(recordType: "PairedDevice", predicate: NSPredicate(value: true))
         guard let result = try? await db.records(matching: query) else { return [] }
         return result.matchResults.compactMap { _, res in
