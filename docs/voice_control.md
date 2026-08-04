@@ -1,0 +1,144 @@
+# Talking to your fleet — local voice on the hub
+
+How to ask "is the fleet OK?" out loud and get an honest answer, with every
+stage — wake word, speech-to-text, the answer itself, text-to-speech —
+running on your own Raspberry Pi hub. No cloud, no account, no subscription,
+and no audio leaving the house.
+
+This page is the worked recipe for the design in
+[Whisper local voice](research/whisper_local_voice.md). Read that page's §3.1
+if you want the full contract; the short version binds everything below:
+
+1. **Voice input comes from a dedicated voice satellite — never a Canary.**
+   Canary microphones (where they exist at all) reduce sound to single
+   numbers and structurally cannot ship speech anywhere. That stays true.
+2. **Command audio and transcripts are transient** — parsed for an intent,
+   then gone. Never journaled, sealed, or exported.
+3. **Everything is local.** The pipeline below is Home Assistant's own
+   Wyoming stack running as add-ons on the hub.
+4. **Voice may ask; it may not act.** The SecuraCV intents are read-only by
+   construction — there is no sentence that arms, disarms, mutes, or unseals
+   anything, because a spoken word carries no signature.
+5. **No voice profiles, no "respond only to me."** That would be speaker
+   recognition, which this project never implements.
+
+## What you need
+
+- The hub: Home Assistant OS on a Raspberry Pi (the
+  [full-stack path](full_stack_setup.md)), with the SecuraCV integration
+  installed.
+- A voice satellite — pick one:
+  - **Your phone** (the Home Assistant companion app's Assist button) —
+    push-to-talk, nothing to buy, and the default this page assumes.
+  - **A dedicated satellite** (Home Assistant Voice Preview Edition, or an
+    ESPHome voice satellite you build) — needed only if you want a
+    hands-free wake word in a room.
+  - **Never a Canary.** No firmware path ships audio samples off a Canary,
+    and none will be written for this.
+
+## The pipeline
+
+```
+wake word (openWakeWord)  ─►  STT (Whisper)  ─►  SecuraCV intent  ─►  answer (Piper)
+   on the satellite/hub        on the hub          on the hub          on the hub
+```
+
+## Set it up
+
+### 1. Install the three add-ons
+
+**Settings → Add-ons → Add-on Store**, install and start:
+
+- **Whisper** — speech-to-text (the `faster-whisper` engine).
+- **Piper** — text-to-speech.
+- **openWakeWord** — wake-word detection (only needed for hands-free use;
+  skip it for push-to-talk).
+
+Home Assistant discovers each one as a **Wyoming** integration —
+**Settings → Devices & Services** will prompt; accept all.
+
+On model size: the Whisper add-on's model is a dropdown. Start with the
+smallest (`tiny`/`tiny-int8`) and move up only if your hub keeps pace —
+which size is *usable* on your Pi is something you find out on your Pi,
+not something this page can promise.
+
+### 2. Create the local assistant
+
+**Settings → Voice assistants → Add assistant**:
+
+- **Conversation agent:** Home Assistant (the built-in, local agent — this
+  is what routes sentences to the SecuraCV intents).
+- **Speech-to-text:** the Whisper add-on.
+- **Text-to-speech:** Piper.
+- **Wake word:** leave off for push-to-talk; see §4 to opt in.
+
+### 3. Teach it the fleet sentences
+
+Copy [`voice_sentences_en.yaml`](voice_sentences_en.yaml) from this repo to
+the hub as `/config/custom_sentences/en/securacv.yaml` (create the folders
+if they don't exist — the **File editor** or **Samba** add-on both work),
+then restart Home Assistant.
+
+Now press the Assist button and ask:
+
+| You say | It answers with |
+|---|---|
+| "Is the fleet OK?" | Device count, signature-trust summary, kernel reachability — worst news first. |
+| "What was the last witness event?" | The newest event's coarse label, a ten-minute-floor relative time, and its trust status — an unsigned or key-mismatched publish is named out loud, never spoken as the plain truth. |
+
+The answers keep the project's vocabulary discipline out loud:
+**"verified" is spoken only for a device whose Ed25519 signature checked
+against its pinned key.** A device the hub has merely received MQTT from is
+"heard" — the same honest ladder the dashboards use. A key mismatch leads
+the answer, because that is the one thing you'd want interrupted first.
+
+### 4. Optional: a wake word — and what turning it on means
+
+Push-to-talk needs no fine print: audio is captured only while you hold the
+button. A wake word is different, and this project describes it honestly
+rather than not at all:
+
+- An always-on wake-word satellite runs a tiny local model listening for
+  one phrase; nothing is transcribed until it fires.
+- **False wakes happen.** A television or a guest can trip it, and when it
+  fires, the next few seconds of room audio are transiently transcribed on
+  your hub before the intent parser shrugs and discards them. That residue
+  is why the voice contract's "transcripts are never retained" rule is
+  absolute — but it makes wake-word listening a **`won't`, not a `can't`**.
+- So: wake words are an explicit opt-in, on hardware whose whole stated job
+  is listening (the satellite), in rooms where you accept that trade. The
+  Canaries and the mic-free promise of every other surface are untouched
+  either way.
+
+Enable it by assigning the openWakeWord add-on's wake word (e.g. "okay
+nabu") to your satellite in the assistant's settings.
+
+## What voice will refuse — by construction
+
+- **No actions.** The integration registers query intents only
+  (`custom_components/securacv/intent.py`). "Disarm the siren" isn't a
+  sentence it knows, and there is no handler it could reach if it were.
+  Anything that changes the security posture stays on authenticated
+  surfaces.
+- **No identity questions.** "Who was at the gate?" has no answer anywhere
+  in the system — that's Invariant II, not a missing feature.
+- **No cloud assistants on this page.** Alexa/Google integration requires a
+  publicly reachable endpoint — the exact thing
+  [the remote-access page](away_access.md) exists to talk you out of. If
+  you want them anyway, that page explains the honest trade.
+
+## Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| "Sorry, I couldn't understand that" | Sentences file not at `/config/custom_sentences/en/securacv.yaml`, or HA not restarted since copying it. |
+| Sentence matches but errors | SecuraCV integration not loaded, or an older version without `intent.py` — update the integration. |
+| Answers are slow | Whisper model too big for the hub — drop a size in the add-on config. |
+| Wake word never fires | openWakeWord not assigned to the satellite, or the satellite has no mic path configured. |
+
+## Related
+
+- [Whisper local voice — the research and the line it never crosses](research/whisper_local_voice.md)
+- [Home Assistant setup](homeassistant_setup.md) · [the full stack](full_stack_setup.md)
+- [Reaching your fleet from away](away_access.md) — the same local-first
+  posture, applied to remote access

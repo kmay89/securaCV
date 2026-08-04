@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 from homeassistant.components import mqtt
@@ -44,6 +45,7 @@ from .const import (
 )
 from .device_trust import TrustStore
 from . import async_record_verify
+from .voice import record_canary_event
 from .health_metrics import (
     battery_charging,
     battery_percent,
@@ -106,6 +108,43 @@ def _trust_attrs(
         "pinned_fingerprint": verify.get("pinned_fingerprint"),
         "received_fingerprint": verify.get("received_fingerprint"),
     }
+
+
+def _record_last_event(
+    hass: HomeAssistant, entry: ConfigEntry, device_id: str, event_type: Any
+) -> None:
+    """Stash a Canary's newest event where the Assist intents read it.
+
+    The last-event sensor holds its state on the entity; the voice brief
+    (voice.py, via intent.py) reads entry_data instead, so the event is
+    mirrored there with its hub arrival time. Must be called AFTER
+    _verify_and_record so the fresh trust verdict rides along — a spoken
+    answer that omitted it would launder an unsigned or key-mismatched
+    publish into "the latest witness event".
+    """
+    domain_data = hass.data.get(DOMAIN)
+    if not isinstance(domain_data, dict):
+        return
+    entry_data = domain_data.get(entry.entry_id)
+    if not isinstance(entry_data, dict):
+        return
+    devices = entry_data.get("devices")
+    if not isinstance(devices, dict):
+        return
+    verdict = entry_data.get("verify", {}).get(device_id)
+    trusted: bool | None = None
+    reason: str | None = None
+    if isinstance(verdict, dict):
+        trusted = bool(verdict.get("trusted"))
+        reason = verdict.get("reason")
+    record_canary_event(
+        devices,
+        device_id,
+        str(event_type) if event_type is not None else None,
+        time.time(),
+        trusted=trusted,
+        reason=reason,
+    )
 
 
 def _device_type_for(
@@ -733,6 +772,12 @@ class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
             else:
                 _verify_and_record(self.hass, self._entry, self._device_id,
                                    data, verify_event)
+            # Mirror the event for the voice brief AFTER the verifier has
+            # stamped its verdict, so a spoken answer can carry the trust
+            # qualifier a forged/unsigned publish deserves (voice.py).
+            _record_last_event(
+                self.hass, self._entry, self._device_id, self._attr_native_value
+            )
             attrs: dict[str, Any] = {
                 "timestamp": data.get("timestamp", ""),
                 "zone": data.get("zone", ""),

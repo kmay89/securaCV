@@ -1,0 +1,25 @@
+# SecuraCV — Assist sentences for the local voice pipeline (English).
+#
+# Copy this file to /config/custom_sentences/en/securacv.yaml on the hub,
+# then reload Home Assistant (or restart the conversation integration).
+# Setup recipe and the voice contract: docs/voice_control.md.
+#
+# Both intents are read-only queries handled by the SecuraCV integration
+# (custom_components/securacv/intent.py). There are deliberately no
+# sentences that arm, disarm, mute, or unseal anything — a spoken word
+# carries no signature, so those actions stay on authenticated surfaces.
+language: "en"
+intents:
+  SecuracvFleetStatus:
+    data:
+      - sentences:
+          - "is the fleet (OK|okay|alright|all right)"
+          - "how is (the|my) fleet [doing]"
+          - "(fleet|canary) status"
+          - "are (the|my) canaries (OK|okay)"
+  SecuracvLastEvent:
+    data:
+      - sentences:
+          - "what was the (last|latest) [witness] event"
+          - "(any|were there [any]) [witness] events [overnight|today|recently]"
+          - "what did the (fleet|canaries) (see|witness) [overnight|today|recently]"
