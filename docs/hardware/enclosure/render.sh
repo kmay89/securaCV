@@ -152,7 +152,14 @@ devstl dev_lcd7_back.stl     canary_s3_lcd7.scad -D 'part="back"'
 devstl dev_lcd7_frame.stl    canary_s3_lcd7.scad -D 'part="frame"'
 devstl dev_lcd7_frame_gauge.stl canary_s3_lcd7.scad -D 'part="frame_gauge"'
 devstl dev_lcd7_stand.stl    canary_s3_lcd7.scad -D 'part="stand"'
-devstl dev_lcd7_cradle.stl   canary_s3_lcd7.scad -D 'part="cradle"'
+# The 7" wall plate. mount_cradle is OFF by default on this case (its dock
+# pads collide with the desk stand's slot — see the flag), so the plate has
+# to be asked for explicitly or it asserts. Rendered anyway: the part exists,
+# so it gets mesh-checked like everything else rather than rotting unbuilt
+# behind a flag.
+devstl dev_lcd7_cradle.stl   canary_s3_lcd7.scad -D 'part="cradle"' \
+                                                 -D 'mount_cradle=true' \
+                                                 -D 'mount_keyholes=false'
 devstl dev_lcd7_stand_gauge.stl canary_s3_lcd7.scad -D 'part="stand_gauge"'
 # corner gauge — the ~16.5 g sanity print that comes before the ~158 g case pair
 devstl dev_lcd7_gauge_bezel.stl canary_s3_lcd7.scad -D 'part="gauge_bezel"'
