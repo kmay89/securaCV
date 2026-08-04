@@ -105,7 +105,7 @@ final class AwayPush: ObservableObject {
         #if canImport(CloudKit)
         // The account IS the availability check — don't gate on a flag owned
         // elsewhere, or this path inherits that flag's bugs on top of its own.
-        let container = CKContainer.default()
+        let container = CloudContainer.shared
         let status = try? await container.accountStatus()
         guard status == .available else {
             reach = .unavailable("Sign in to iCloud to get alerts when you're away.")
@@ -134,7 +134,7 @@ final class AwayPush: ObservableObject {
     /// delivered again. Opt-out has to be as real as opt-in (§5).
     func disable() async {
         #if canImport(CloudKit)
-        let db = CKContainer.default().privateCloudDatabase
+        let db = CloudContainer.shared.privateCloudDatabase
         _ = try? await db.deleteSubscription(withID: Self.subscriptionID)
         #endif
         subscribed = false
@@ -184,7 +184,7 @@ final class AwayPush: ObservableObject {
         record[WakePayload.classKey] = wake.rawValue as CKRecordValue
         // No name. No id. No timestamp of ours — CloudKit's own creation date
         // is coarse enough for routing and never reaches the notification.
-        CKContainer.default().privateCloudDatabase.save(record) { _, _ in }
+        CloudContainer.shared.privateCloudDatabase.save(record) { _, _ in }
         #endif
     }
 
@@ -193,7 +193,7 @@ final class AwayPush: ObservableObject {
     func sweepOldWakes(now: Date = Date()) async {
         #if canImport(CloudKit)
         guard subscribed else { return }
-        let db = CKContainer.default().privateCloudDatabase
+        let db = CloudContainer.shared.privateCloudDatabase
         let cutoff = now.addingTimeInterval(-86_400) as NSDate
         let query = CKQuery(recordType: Self.wakeRecordType,
                             predicate: NSPredicate(format: "creationDate < %@", cutoff))

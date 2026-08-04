@@ -37,7 +37,7 @@ final class CloudSync {
     @discardableResult
     func refreshAvailability() async -> Bool {
         #if canImport(CloudKit)
-        let status = try? await CKContainer.default().accountStatus()
+        let status = try? await CloudContainer.shared.accountStatus()
         isAvailable = (status == .available)
         #else
         isAvailable = false
@@ -48,7 +48,7 @@ final class CloudSync {
     func push(_ devices: [PairedDeviceRef]) {
         #if canImport(CloudKit)
         guard isAvailable else { return }
-        let db = CKContainer.default().privateCloudDatabase
+        let db = CloudContainer.shared.privateCloudDatabase
         for ref in devices {
             let record = CKRecord(recordType: "PairedDevice", recordID: .init(recordName: ref.id))
             record["name"] = ref.name as CTKValue
@@ -64,7 +64,7 @@ final class CloudSync {
     func pull() async -> [PairedDeviceRef] {
         #if canImport(CloudKit)
         guard isAvailable else { return [] }
-        let db = CKContainer.default().privateCloudDatabase
+        let db = CloudContainer.shared.privateCloudDatabase
         let query = CKQuery(recordType: "PairedDevice", predicate: NSPredicate(value: true))
         guard let result = try? await db.records(matching: query) else { return [] }
         return result.matchResults.compactMap { _, res in
