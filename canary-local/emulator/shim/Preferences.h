@@ -23,14 +23,6 @@ class Preferences {
   // The exact getter/putter shapes the display tree uses.
   uint8_t getUChar(const char* key, uint8_t def = 0);
   size_t putUChar(const char* key, uint8_t v);
-  // ESP32 stores a bool as a one-byte NVS value, so these are the UChar pair
-  // with the cast folded in — not a separate storage shape. Inline here (not
-  // out-of-line beside getUChar) because two translation units implement this
-  // class for two link targets, and an alias belongs in neither of them twice.
-  bool getBool(const char* key, bool def = false) {
-    return getUChar(key, def ? 1 : 0) != 0;
-  }
-  size_t putBool(const char* key, bool v) { return putUChar(key, v ? 1 : 0); }
   uint16_t getUShort(const char* key, uint16_t def = 0);
   size_t putUShort(const char* key, uint16_t v);
   int16_t getShort(const char* key, int16_t def = 0);
@@ -44,7 +36,15 @@ class Preferences {
   // ESP32 stores a bool as a one-byte NVS value, so this is an alias rather
   // than a separate store — a value written as a bool reads back as a UChar
   // and vice versa, exactly as the real API behaves. The display tree's
-  // Hallway switch (care/hallway.cpp) uses this spelling.
+  // Hallway switch (care/hallway.cpp) uses this spelling. Inline, like the
+  // ULong pair above and for the same reason: TWO translation units
+  // (src/emu_support.cpp and vision/vision_core_shim.cpp) implement this class
+  // for two link targets, and an alias belongs in neither of them twice.
+  //
+  // There was briefly a SECOND, byte-identical copy of this pair up beside
+  // getUChar: #1426 and #1435 each added it independently to fix the same
+  // Hallway link error, and main merged both. Neither PR's CI could see it —
+  // each was green alone and the redeclaration only existed in the merge.
   bool getBool(const char* key, bool def = false) {
     return getUChar(key, def ? 1 : 0) != 0;
   }

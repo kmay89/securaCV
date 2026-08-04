@@ -220,7 +220,7 @@ assert(is_num(egg_area(7, 4)),
        "canary_vent_lib.scad is MISSING — this case cuts its grille and gills with it. Download canary_vent_lib.scad from the same folder and keep the two files side by side.");
 
 /* [What to render] */
-part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_port","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","dock_probe_fit","dock_probe_seat","dock_probe_p","dock_probe_p2","ring_gauge","port_teth_hole","port_teth_barb","port_barb_proud","plug_teth_hole","plug_teth_barb","back_flush","fil_body","fil_ink","fil_accent","coupon_body","coupon_ink","coupon_accent","coupon_qr_body","coupon_qr_ink","frame_color","fil_overlap","fil_gap","all"]
+part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_port","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","dock_probe_fit","dock_probe_seat","dock_probe_p","dock_probe_p2","ring_gauge","port_teth_hole","port_teth_barb","port_barb_proud","plug_teth_hole","plug_teth_barb","back_flush","fil_body","fil_ink","fil_accent","coupon_body","coupon_ink","coupon_accent","coupon_qr_body","coupon_qr_fill","frame_color","fil_overlap","fil_gap","all"]
 
 /* [Board] */
 // The board selector gets its own group because it is the FIRST decision and
@@ -871,15 +871,32 @@ label_font  = "Liberation Sans:style=Bold";
 //  with open eyes:
 //    · many current phone cameras decode inverted symbols; many older and
 //      embedded readers do not, and the standard does not require it.
-//    · nothing here can test it. print part="coupon_qr_body"/"coupon_qr_ink"
+//    · nothing here can test it. print part="coupon_qr_body"/"coupon_qr_fill"
 //      and scan it with the phones you actually care about.
 //    · the way back is one word: qr_style = "plaque".
 //  Whichever style is chosen, assigning the modules their OWN filament is
 //  what makes the symbol possible at all — on the single-extruder z-swap
 //  recipe the module floors print in the BODY filament, so the modules and
 //  the field cannot differ no matter what swap height is used.
-//  Corollary, and please do not "improve" this: the modules must stay INK.
-//  Yellow against either body color is far too low a contrast to decode.
+//
+//  ⚠️  THE MODULES ARE NOW ACCENT, AND THIS PARAGRAPH USED TO FORBID THAT.
+//  It read: "the modules must stay INK — yellow against either body color is
+//  far too low a contrast to decode." That was written when the body could be
+//  WHITE, where yellow-on-white is hopeless and the warning was simply right.
+//  The body is black now and the call was made deliberately for looks, so the
+//  rule is restated rather than deleted, because the concern has not gone
+//  away — it has only shrunk:
+//    · RAL 1003 is luma 0.68; the old white ink was 0.95; the black field is
+//      0.11. Contrast against the field drops by roughly a third.
+//    · the polarity is UNCHANGED in kind — light modules on a dark field,
+//      inverted, exactly as the white build was. This is not a new risk
+//      category, it is more of the existing one.
+//    · a WHITE body with accent modules remains genuinely unscannable. The
+//      qr_dark_on_light computation below is derived from the two colors that
+//      actually meet, so it says so on its own rather than relying on this
+//      comment being read.
+//  SCAN THE COUPON. At this pairing that is not a formality, and it is the
+//  only instrument in the project that can settle it.
 //
 //  HOW TO RE-COLOR
 //  Regrouping the palette is a one-word edit in back_graphics()'s `ink`
@@ -889,10 +906,15 @@ label_font  = "Liberation Sans:style=Bold";
 //  recess it fills.
 //
 //  PRINTING IT — Bambu Studio, P2S + AMS
-//    1. Export the three parts:  fil_body / fil_ink / fil_accent
-//    2. Load fil_body, then right-click → Add part → Load, and add the other
-//       two. They arrive already in position: all three are exported in the
-//       SAME coordinate frame, so do NOT re-center or drop-to-bed any of them.
+//    1. Export the parts the ACTIVE palette actually uses. With the shipped
+//       two-color default that is fil_body and fil_accent ONLY: ink_groups is
+//       empty, so fil_ink is an empty object and OpenSCAD writes NO FILE for
+//       it — following a three-part recipe here just sends you looking for a
+//       file that was never created. The render-time echo names the live list,
+//       so trust that over this comment if the palette has been edited.
+//    2. Load fil_body, then right-click → Add part → Load, and add the rest.
+//       They arrive already in position: every part is exported in the SAME
+//       coordinate frame, so do NOT re-center or drop-to-bed any of them.
 //    3. Assign a filament to each part.
 //    4. Slice. Expect the purge tower to be short — see the table above.
 //  Single-extruder fallback (no AMS): print part="frame" — the WHOLE part —
@@ -2146,11 +2168,24 @@ echo(str("  frame two-color (optional, single extruder): prints back-plate-",
          "to the accent at z = ", fr_depth - frame_foot, " mm — the last ",
          frame_foot, " mm of the print is only the front rim and its entry ",
          "chamfer"));
+// Which per-filament parts actually EXIST for the active palette. An empty
+// group list means that filament's part renders as an empty object and
+// OpenSCAD writes no file at all, so naming it in the recipe is worse than
+// useless. Derived from the same lists the geometry partitions on.
+ink_live    = len(ink_groups) > 0 || bezel_color == "ink" || vent_ring_color == "ink";
+accent_live = len(accent_groups) > 0 || bezel_color == "accent"
+              || vent_ring_color == "accent";
+fil_live    = str("fil_body (", pal_body, ")",
+                  ink_live    ? str(", fil_ink (", pal_ink, ")") : "",
+                  accent_live ? str(", fil_accent (", pal_accent, ")") : "");
+fil_live_n  = 1 + (ink_live ? 1 : 0) + (accent_live ? 1 : 0);
 if (print_colors)
-    echo(str("  frame THREE-COLOR (P2S + AMS): export fil_body (", pal_body,
-             "), fil_ink (", pal_ink, "), fil_accent (", pal_accent,
-             ") — all three share part=\"frame\"'s orientation, so load ",
-             "fil_body then Add part → Load the other two and do NOT re-center",
+    echo(str("  frame ", fil_live_n, "-COLOR (P2S + AMS): export ", fil_live,
+             " — and ONLY those. A filament with no groups renders an EMPTY",
+             " object and OpenSCAD writes NO FILE for it, so a recipe naming",
+             " all three sends you hunting for a file that was never created.",
+             " They share part=\"frame\"'s orientation, so load ",
+             "fil_body then Add part → Load the rest and do NOT re-center",
              " or drop-to-bed. INK takes the front bezel ring (the last ",
              bezel_ink_t, " mm of the print) plus ", ink_groups,
              "; ACCENT takes ", accent_groups, ". Tool changes are confined to",
@@ -2170,7 +2205,15 @@ if (print_colors)
              qr_dark_on_light
                ? " — dark-on-light, the polarity the spec asks for"
                : " — LIGHT-ON-DARK, inverted from the spec and chosen for looks",
-             ". Do not put the accent on the finder patterns"));
+             // This used to end "do not put the accent on the finder
+             // patterns", which is now self-contradictory: the accent IS the
+             // symbol. The real rule it was reaching for survives — the
+             // modules and the field must be ONE filament each, never mixed
+             // within the symbol — and that holds by construction, since the
+             // whole "qr" group takes a single filament.
+             ". Modules and field are one filament each by construction; scan",
+             " the coupon (part=\"coupon_qr_body\"/\"coupon_qr_fill\") before",
+             " committing a frame"));
 echo(str("  stand: ", stand_w, " x ", std_d, " base, ", stand_ang,
          "° recline, slot ", std_cd, " mm for the ", fr_depth,
          " mm frame, seat ", stand_floor_h, " mm over the desk (plug room), ",
@@ -2237,7 +2280,7 @@ if (qr_back)
                  " \"plaque\""),
          ". It costs",
          " no extra swap: the back skin is already a tool change. Rehearse it",
-         " with part=\"coupon_qr_body\"/\"coupon_qr_ink\" and SCAN THE COUPON",
+         " with part=\"coupon_qr_body\"/\"coupon_qr_fill\" and SCAN THE COUPON",
          " before committing a frame — at this polarity that is not a",
          " formality, and cell size is the other thing only a phone can",
          " settle"));
@@ -2766,6 +2809,14 @@ module claimed_by(which) {
 }
 module frame_ink()    { union() { back_inlay(ink_groups);    claimed_by("ink"); } }
 module frame_accent() { union() { back_inlay(accent_groups); claimed_by("accent"); } }
+// The filament the QR's modules actually land on, so the scan coupon can be
+// cut from it without naming a spool that the group lists may have moved.
+module frame_qrfill() {
+    f = grp_fil("qr");
+    if (f == "accent")   frame_accent();
+    else if (f == "ink") frame_ink();
+    else                 frame_bodycol();
+}
 // Subtract only what another filament actually claimed. With both knobs on
 // "body" nothing is subtracted at all and the case is one solid color — which
 // is the point: "black bezel" must cost zero tool changes, not a black inlay.
@@ -3895,14 +3946,21 @@ else if (part == "coupon_accent")
     rotate([180, 0, 0]) translate([0, 0, -fr_depth])
         intersection() { frame_accent(); coupon_clip(); }
 // QR SCAN COUPON — two filaments, back plate only. See coupon_qr_clip() for
-// why this is its own plaque instead of a longer band. No accent part: the
-// QR is INK on BODY and the accent must never touch a finder pattern.
+// why this is its own plaque instead of a longer band.
+//
+// The second volume FOLLOWS THE GROUP rather than naming a filament. It used
+// to intersect frame_ink() and be called coupon_qr_ink, which was true only
+// while "qr" lived in ink_groups: the moment it moved to the accent, this
+// part rendered EMPTY, OpenSCAD wrote no file, and the packer produced a
+// body-only plaque — a scan coupon with no symbol on it, handed to someone
+// told to scan it before committing a frame. The coupon has to print the two
+// colors that actually meet on the plate, so it asks which those are.
 else if (part == "coupon_qr_body")
     rotate([180, 0, 0]) translate([0, 0, -fr_depth])
         intersection() { frame_bodycol(); coupon_qr_clip(); }
-else if (part == "coupon_qr_ink")
+else if (part == "coupon_qr_fill")
     rotate([180, 0, 0]) translate([0, 0, -fr_depth])
-        intersection() { frame_ink(); coupon_qr_clip(); }
+        intersection() { frame_qrfill(); coupon_qr_clip(); }
 else if (part == "fil_body")   rotate([180, 0, 0]) translate([0, 0, -fr_depth]) frame_bodycol();
 else if (part == "fil_ink")    rotate([180, 0, 0]) translate([0, 0, -fr_depth]) frame_ink();
 else if (part == "fil_accent") rotate([180, 0, 0]) translate([0, 0, -fr_depth]) frame_accent();

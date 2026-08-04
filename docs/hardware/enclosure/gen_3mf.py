@@ -44,6 +44,7 @@ The "not from Bambu Lab, load geometry and color data only" dialog on open is
 expected and harmless — it means the filament assignment was read.
 """
 import struct
+import re
 import subprocess
 import sys
 import zipfile
@@ -61,11 +62,31 @@ COUPON = [("body", "coupon_body", 1),
 FRAME = [("body", "fil_body", 1),
          ("ink", "fil_ink", 2),
          ("accent", "fil_accent", 3)]
-# The QR plaque is deliberately TWO filaments, not three. The symbol is ink
-# modules on a body-color field, and the accent must never land on a finder
-# pattern — a three-slot version of this would only offer a way to break it.
-QR_COUPON = [("body", "coupon_qr_body", 1),
-             ("ink", "coupon_qr_ink", 2)]
+# The QR plaque is deliberately TWO filaments, not three: the symbol's modules
+# on a body-color field. WHICH filament carries the modules is READ FROM THE
+# SCAD rather than named here — canary_s3_lcd7.scad's ink_groups/accent_groups
+# are the only place that decides, and a hardcoded slot in this file went stale
+# the instant "qr" moved to the accent. The failure was silent and nasty: the
+# scad's coupon part rendered empty, OpenSCAD wrote no file, and this packer
+# shipped a body-only plaque — a scan coupon with no symbol, handed to someone
+# told to scan it before committing a frame.
+FIL_SLOT = {"body": 1, "ink": 2, "accent": 3}
+
+
+def group_filament(group: str) -> str:
+    """Which filament a back-plate group takes, per the .scad's own lists."""
+    src = SRC.read_text(encoding="utf-8")
+    for name, fil in (("accent_groups", "accent"), ("ink_groups", "ink")):
+        m = re.search(rf"^{name}\s*=\s*\[([^\]]*)\]", src, re.M)
+        if m and re.search(rf'"{re.escape(group)}"', m.group(1)):
+            return fil
+    return "body"
+
+
+_QR_FIL = group_filament("qr")
+QR_COUPON = [("body", "coupon_qr_body", 1)] + (
+    [] if _QR_FIL == "body"
+    else [(_QR_FIL, "coupon_qr_fill", FIL_SLOT[_QR_FIL])])
 
 # A "set" is a list of OBJECTS. Each object is (name, volumes, plate center).
 # Volumes within one object are parts of it and stay registered to each other;

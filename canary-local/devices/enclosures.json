@@ -7129,7 +7129,7 @@
         "coupon_ink",
         "coupon_accent",
         "coupon_qr_body",
-        "coupon_qr_ink",
+        "coupon_qr_fill",
         "frame_color",
         "fil_overlap",
         "fil_gap",
@@ -8663,6 +8663,14 @@
       {
        "name": "port_scoop_ftp",
        "default": "sqrt(port_scoop_r*port_scoop_r - port_scoop_d*port_scoop_d)"
+      },
+      {
+       "name": "ink_live",
+       "default": "len(ink_groups) > 0 || bezel_color == \"ink\" || vent_ring_color == \"ink"
+      },
+      {
+       "name": "fil_live_n",
+       "default": "1 + (ink_live ? 1 : 0) + (accent_live ? 1 : 0)"
       },
       {
        "name": "gauge_in",
