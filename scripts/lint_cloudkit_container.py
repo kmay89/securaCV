@@ -112,21 +112,45 @@ def check_entitlements(want: str) -> None:
             )
 
 
-def code_of(line: str) -> str:
-    """The line with its `//` comment removed.
+BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+LINE_COMMENT = re.compile(r"//[^\n]*")
 
-    The rule has to be explainable somewhere, and the place it is explained —
-    CloudContainer.swift's header — necessarily writes the banned call out in
-    prose. Blanket-skipping that file would blind the gate to a real call site
-    in the one file most likely to grow one, so strip comments instead and keep
-    checking every file's actual code.
 
-    Deliberately naive: a `//` inside a string literal ends the scan early. The
-    cost is a missed call on a line that both contains a string with `//` in it
-    AND calls the banned API after it; the alternative is lexing Swift here,
-    which is a much larger thing to maintain correctly than this gate is worth.
+def _blank(m: re.Match[str]) -> str:
+    """Replace a comment with spaces, keeping its newlines.
+
+    Blanking rather than deleting is what lets the scan run over the whole file
+    and still report a true line number: every byte outside a newline keeps its
+    position.
     """
-    return line.split("//", 1)[0]
+    return "".join("\n" if c == "\n" else " " for c in m.group(0))
+
+
+def code_of(text: str) -> str:
+    """A whole Swift source with its comments blanked out, offsets intact.
+
+    WHY COMMENTS GO, AND WHY THE FILE STAYS
+      The rule has to be explainable somewhere, and the place it is explained —
+      CloudContainer.swift's header — necessarily writes the banned call out in
+      prose. Blanket-skipping that file would blind the gate to a real call
+      site in the one file most likely to grow one. Blanking comments keeps
+      every file's actual code checked.
+
+    WHY THE WHOLE FILE AND NOT LINE BY LINE
+      `CKContainer\\n    .default()` is ordinary Swift — a chained call split
+      across lines, which is what a formatter produces the moment the
+      expression gets long. Matching per line never sees both halves, so the
+      ban would have quietly stopped covering the exact formatting a real call
+      site is most likely to arrive in.
+
+    Deliberately not a Swift lexer: a `//` or `/*` inside a string literal is
+    treated as a comment. The residual risk is a FALSE POSITIVE (a string that
+    looks like a comment hides code from the scan, or contains the banned call
+    verbatim), which fails loudly and is fixed by looking. That is the right
+    direction for a ban to err; the alternative is maintaining a Swift lexer
+    here, which is a much larger thing to keep correct than this gate is worth.
+    """
+    return LINE_COMMENT.sub(_blank, BLOCK_COMMENT.sub(_blank, text))
 
 
 def check_no_default_calls() -> None:
@@ -135,13 +159,14 @@ def check_no_default_calls() -> None:
         if not base.is_dir():
             continue
         for f in sorted(base.rglob("*.swift")):
-            for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
-                if BANNED_CALL.search(code_of(line)):
-                    errors.append(
-                        f"[banned] {f.relative_to(ROOT)}:{i}: CKContainer.default() "
-                        "raises an uncatchable ObjC exception in an unsigned "
-                        "build. Use CloudContainer.shared."
-                    )
+            blob = code_of(f.read_text(encoding="utf-8"))
+            for m in BANNED_CALL.finditer(blob):
+                line_no = blob.count("\n", 0, m.start()) + 1
+                errors.append(
+                    f"[banned] {f.relative_to(ROOT)}:{line_no}: CKContainer.default() "
+                    "raises an uncatchable ObjC exception in an unsigned "
+                    "build. Use CloudContainer.shared."
+                )
 
 
 def main() -> int:
