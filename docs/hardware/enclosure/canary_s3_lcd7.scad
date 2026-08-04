@@ -451,16 +451,16 @@ side_open_h = 40.0;     side_open_dy = 0.0;     // tall slot on each short wall
 // A grille alone only radiates; convection needs a low inlet and a high
 // outlet, so the bottom wall takes air in and the top wall lets it out.
 vent_back = true;        // large grille in the back plate
-vent_rows = 11;          // grille rows
-vent_cols = 20;          // grille columns
-vent_slot_w = 5.2;       // egg base width — the grille is the HATCHERY
+vent_rows = 8;           // grille rows
+vent_cols = 17;          // grille columns
+vent_slot_w = 6.5;       // egg base width — the grille is the HATCHERY
                          // pattern (canary_vent_lib.scad): upright eggs in
                          // offset rows, a clutch in a nest. One egg passes
                          // 44% more air than the slat it replaced (29.4 vs
                          // 20.4 mm2 per cell — the tangent-arc flanks added
                          // ~2% over the old straight-flank capsule) with no
                          // slot corners to shed vortices or collect dust lines
-vent_slot_l = 7.2;       // egg length (upright: sheds drips on a vertical
+vent_slot_l = 9.0;       // egg length (upright: sheds drips on a vertical
                          // face; see the lib header for limits)
 vent_tip    = egg_tip(); // DERIVED from canary_vent_lib.scad — never a typed
                          // number. The tip ratio is the line-wide brand
@@ -484,47 +484,57 @@ vent_tip    = egg_tip(); // DERIVED from canary_vent_lib.scad — never a typed
                          // Still self-supporting: the crown is a circle, so
                          // the top of the hole is an arch, not a bridge — the
                          // same reason the feather's point was safe.
-vent_pitch_x = 7.6;      // column pitch
-vent_pitch_y = 8.0;      // row pitch
+vent_pitch_x = 9.2;      // column pitch
+vent_pitch_y = 10.2;     // row pitch
 
-/* [Frame — the graded vent field] */
+/* [Frame — the clutch] */
 // ════════════════════════════════════════════════════════════════════════════
-//  THE FIELD GRADES AROUND THE MARK — and it is a thermal decision, not only
-//  a drawing one. Read both halves before turning the knobs.
+//  THE GRILLE IS A CLUTCH OF EGGS, and the badge is what hatched out of it.
 //
-//  THE DRAWING. A uniform grille of 98 identical eggs across the whole plate
-//  is a perforated panel with a logo on it. Every hole competes with the mark
-//  for the same attention, and the mark loses, because there are 98 of them.
-//  Grading the egg SIZE with distance from the mark fixes that with no new
-//  shapes and no new tooling: nearest the badge the field fades out entirely,
-//  and it opens up toward the plate's edges. The eye reads the small end as
-//  distance and the large end as depth — the plate looks like it recedes
-//  around the badge instead of being tiled behind it.
+//  ONE SIZE. An earlier cut of this graded the egg SIZE with distance from the
+//  mark — small near the badge, opening up toward the edges — on the theory
+//  that a size ramp reads as depth. On the part it reads as a mistake: eggs
+//  are a known object, and a field of them at nine different sizes looks like
+//  a misprint rather than like perspective. Every egg here is the same egg.
+//  That is also the only version of this that can claim to be a clutch.
 //
-//  THE COST, stated plainly because it is real: the plate's open area drops
-//  from ~29 cm2 to what the echo reports for your config. The convection path
-//  proper is UNTOUCHED — bottom-wall intake to top-wall exhaust, neither of
-//  which lives on this plate — and the back grille was always the third
-//  contributor rather than the path. But this panel runs a 7" backlight and
-//  an ESP32-S3, "runs hot" is in this file's env line, and a smaller grille is
-//  a warmer case. vent_grade = false restores the flat field exactly.
+//  BELIEVABLE, therefore BIGGER. The old egg was 7.2 x 5.2 mm at a 7.6 x 8.0
+//  pitch, which is as large as that pitch can carry (the web asserts were both
+//  at their floor). At that size and that density it reads as perforation —
+//  the shape is an egg but nothing about the field says so. This one is
+//  9.0 x 6.5 on a 9.2 x 10.2 pitch: the same 1.38 proportion, half again the
+//  area each, and enough plate between them that you see the shape instead of
+//  the pattern.
 //
-//  The gradient is RADIAL from the mark's center, not from the plate's, so it
-//  is visibly the badge that organizes it. That the mark sits left of center
-//  makes the field asymmetric; that reads as intent because it is.
+//  AND IT HAS A RHYTHM. A uniform lattice is a grille; a clutch is grouped.
+//  vent_beat is a repeating pattern of hits and rests read across each row and
+//  ROTATED one step per row, so the field breaks into little groups of two and
+//  three with clear plate between them, and no two rows line up into stripes.
+//  It costs the count exactly what it says it costs — the echo reports the
+//  open area either way, and the rests are where "as many as we need and no
+//  more" is actually spent.
+//
+//  THE STORY, since it is the point and not decoration: the plate reads eggs,
+//  eggs, eggs across the machine half, and resolves on the left into one
+//  hatched canary at forty times the size. Nothing is drawn to say that. The
+//  rhythm and the badge do it, which is the only way it stays true when
+//  somebody changes a number.
 // ════════════════════════════════════════════════════════════════════════════
-vent_grade  = true;   // false = every egg full size, as before
-vent_k_min  = 0.46;   // smallest egg, as a fraction of vent_slot_*. Below
-                      // ~0.4 the egg's own crown radius stops printing as an
-                      // arch and starts needing a bridge — the shape's floor,
-                      // not a taste one
-vent_k_drop = 0.52;   // ...and any cell that grades BELOW this is not cut at
-                      // all. This is what makes the field fade to bare plate
-                      // beside the mark rather than ending on a hard edge:
-                      // the smallest eggs that survive are vent_k_min, and
-                      // everything smaller becomes margin
-vent_d0     = 34.0;   // mm from the mark's center where the grade starts...
-vent_d1     = 88.0;   // ...and where it reaches full size
+// Hits and rests, one character per station, read left to right across a row.
+// Any two characters would do; '#' and '.' are chosen because the pattern is
+// legible AS a pattern in the source, which is where it gets edited.
+vent_beat  = "##.###.";
+vent_beat_shift = 1;  // stations the pattern rotates per row.
+                      // ONE, and the reason is what it does to the rows above
+                      // and below rather than anything about the row itself.
+                      // At 3 the groups walk sideways and the field reads as a
+                      // diagonal drift — a scatter, not a clutch. At 1 each
+                      // row's group overlaps its neighbors' by all but one
+                      // station, so the hits pile into compact blobs: a nest
+                      // of seven low on the machine half and a trio up by the
+                      // spec block. Two groups, which is the rhythm this was
+                      // asked for — egg, egg, egg … egg, egg. Set 0 for the
+                      // same beat every row, which stripes.
 
 // ── THE ONE KNOB TO TURN IF IT RUNS HOT ────────────────────────────────────
 // The badge owns the left half of the plate and carries no vents at all. That
@@ -1430,7 +1440,19 @@ qr_dy   = 39.0;   // field center, +y = toward the back edge (a battery
 // Turning it back on is one word, and the asserts will then tell you exactly
 // what it collides with rather than letting it overlap the mark. If you want
 // both, the mark has to come down to about 45 mm and the composition changes.
-qr_back      = false;  // deboss the help QR into the back plate too
+qr_back      = false;  // deboss the help QR into the back PLATE
+// ...but the SCAN COUPON still carries one, and that distinction is the whole
+// point of this line. `qr_back` answers "does the finished plate wear the
+// symbol"; the coupon answers "would a symbol printed by THIS machine, at
+// THIS cell size, in THIS polarity, actually scan" — which is the question you
+// have to answer BEFORE you can decide the first one. Gating the coupon on the
+// plate's setting inverts that: it makes the test unavailable exactly when you
+// need it, and it does so silently, because gen_3mf.py drops a volume that
+// renders empty and packages a blank body-colored plaque instead.
+// (That is not hypothetical — it is what this file did for one commit, and
+// `part="coupon_qr_ink"` exported nothing at all.)
+qr_coupon = part == "coupon_qr_body" || part == "coupon_qr_ink";
+qr_draw   = qr_back || qr_coupon;
 qr_back_cell = 1.3;    // module size — 3.1 line-widths at 0.42, up from 1.2
                        // (2.9): printable in theory at 1.2, marginal in fact,
                        // and this symbol is the one read off a wall. 1.34 is
@@ -1712,8 +1734,13 @@ fr_keep_fixed = concat(
     mount_keyholes ? [for (sx = [1,-1], sy = [1,-1])
         [sx*khm_dx, sy*(khm_y + khm_len/2),
          10 + (mount_portrait ? khm_plen : 0), 20]] : [],
-    // the SD keepout covers the countersunk mouth and the nail scoop
-    [[sd_dx, sd_dy, sd_w/2 + 3.4, sd_l/2 + 6.7]],
+    // the SD keepout covers the countersunk mouth and the nail scoop — plus
+    // the egg's own half-extents, because the cell list stores CENTERS and an
+    // egg whose center clears the mouth by a hair still hangs its body over
+    // it. One did, on the window's top corner, and it read as a chip rather
+    // than as a vent.
+    [[sd_dx, sd_dy, sd_w/2 + 3.4 + vent_slot_w/2 + 1.5,
+                    sd_l/2 + 6.7 + vent_slot_l/2 + 1.5]],
     // ...and the tether zone: strap channel + anchor hole past the rim
     sd_tether ? [[sd_dx, (sd_dy + sd_l/2 - 1 + sd_teth_y + 2)/2, 4.3,
                   (sd_teth_y + 2 - (sd_dy + sd_l/2 - 1))/2 + 5.1]] : [],
@@ -1722,7 +1749,7 @@ fr_keep_fixed = concat(
     // list stores CENTERS, and an egg whose center is just outside the
     // quiet zone would otherwise lay its body across it — at worst sharing
     // a face with a module cell, which CGAL rightly calls non-manifold
-    qr_back ? [[qr_back_dx, qr_back_dy,
+    qr_draw ? [[qr_back_dx, qr_back_dy,
                 qr_back_reach + vent_slot_w/2 + 0.4,
                 qr_back_reach + vent_slot_l/2 + 0.4]] : [],
     // the rating stamp wants unbroken plate under it, same as any deboss
@@ -2352,39 +2379,39 @@ echo(str("  frame mounting: 4x keyhole, ", back_t + khm_pad_t,
 // cell list with the gradient switched off, so the comparison is like for
 // like rather than against a remembered figure — and it is the number to
 // argue with if the case runs hot.
-// THE GRILLE'S HONEST NUMBER, and where the rest of it went. Three lists, one
-// pass each, so the attribution comes out of the same predicate the cutter
-// uses rather than out of a memory of what the plate used to be:
+// THE GRILLE'S HONEST NUMBER, and what the badge cost it. Two lists, one pass
+// each, so the attribution comes out of the same predicate the cutter uses
+// rather than out of a memory of what the plate used to be:
 //   fr_cells      what is actually cut
-//   ..._flat      the same keepouts with the size grade switched off
-//   ..._nobadge   the same again with the badge's claim dropped
-// The order of the subtractions is the order of the design decisions, and the
-// big one is not the grade — it is how large the mark is.
-fr_cells        = grille_cells(-m3_ox, m3_oy, fr_keepouts);
-fr_cells_flat   = grille_cells(-m3_ox, m3_oy, fr_keepouts, grade = false);
+//   ..._nobadge   the same beat and the same keepouts, with the badge's claim
+//                 dropped — i.e. the most this field could give
+fr_cells         = grille_cells(-m3_ox, m3_oy, fr_keepouts);
 fr_cells_nobadge = grille_cells(-m3_ox, m3_oy,
-                                concat(fr_keep_fixed, fr_keep_rails), grade = false);
-echo(str("  frame back grille: ", len(fr_cells), " slots ≈ ",
-         round(grille_area(fr_cells)/100), " cm2 open",
+                                concat(fr_keep_fixed, fr_keep_rails));
+// How many of the stations the BEAT itself declines. This is where "as many as
+// we need and no more" is actually spent, so it is reported as a count rather
+// than left implicit in the pattern string.
+vent_beat_hits = len([for (ch = vent_beat) if (ch == "#") 1]);
+echo(str("  frame back grille: ", len(fr_cells), " eggs at ", vent_slot_l,
+         " x ", vent_slot_w, " ≈ ", round(grille_area(fr_cells)/100),
+         " cm2 open. Beat \"", vent_beat, "\" — ", vent_beat_hits, " of ",
+         len(vent_beat), " stations carry an egg, rotated ", vent_beat_shift,
+         " per row, so the clutch groups instead of tiling",
          !back_bird ? "" : str(
-           " — the plate is the BADGE's now, and this is what that costs. A ",
-           "flat, un-graded field on the same keepouts is ",
-           round(grille_area(fr_cells_flat)/100), " cm2; with the badge's ",
-           "claim dropped as well it is ",
-           round(grille_area(fr_cells_nobadge)/100),
-           " cm2. So the size grade is worth ",
-           round((grille_area(fr_cells_flat) - grille_area(fr_cells))/100),
-           " cm2 and the MARK is worth ",
-           round((grille_area(fr_cells_nobadge) - grille_area(fr_cells_flat))/100),
-           " cm2 — if this case runs warm, bird_h is the knob that matters and ",
-           "vent_grade is not. The convection path itself (bottom-wall intake ",
-           "to top-wall exhaust) is not on this plate and is untouched."),
+           ". The BADGE owns the other half of the plate: the same beat with ",
+           "its claim dropped would be ", len(fr_cells_nobadge), " eggs ≈ ",
+           round(grille_area(fr_cells_nobadge)/100), " cm2, so the mark is ",
+           "worth ", round((grille_area(fr_cells_nobadge)
+                            - grille_area(fr_cells))/100),
+           " cm2 of back-plate open area. If this case runs warm, bird_h and ",
+           "badge_column are the knobs, and the beat is the cheap one — every ",
+           "'.' you turn into a '#' is ",
+           round(egg_area(vent_slot_l, vent_slot_w, vent_tip)),
+           " mm2 back. The convection path itself (bottom-wall intake to ",
+           "top-wall exhaust) is not on this plate and is untouched."),
          adh_rails ? str(" — the adhesive rails cost ",
              len(grille_cells(-m3_ox, m3_oy, fr_keep_base))
-             - len(fr_cells), " slots ≈ ",
-             round((grille_area(grille_cells(-m3_ox, m3_oy, fr_keep_base))
-                    - grille_area(fr_cells))/100),
-             " cm2 (adh_rails=false reclaims them)") : ""));
+             - len(fr_cells), " eggs (adh_rails=false reclaims them)") : ""));
 echo(str("  frame two-color (optional, single extruder): prints back-plate-",
          "down — ACCENT BACK SKIN: start in the accent color, swap to the ",
          "body color at z = ", frame_rim, " mm (every deboss floor sits at ",
@@ -2462,7 +2489,7 @@ if (bat_on)
          " tracks fr_depth. Heat/care: 1C pack, ≤3 A draw, charge ≤2 A;",
          " if the pack area runs warm to the touch, stop and re-measure",
          " bat_over — the board-side gap is the one that matters"));
-if (qr_back)
+if (qr_draw)
     echo(str("  frame help QR: \"", qr_url(), "\" — ", qr_n, "x", qr_n, " at ",
          qr_back_cell, " mm (", qr_n*qr_back_cell, " mm field) on the back",
          " plate at (", qr_back_dx, ", ", qr_back_dy, "), its grille keepout",
@@ -2580,48 +2607,39 @@ module bezel_print() { bezel(); }
 // computed by the same predicate that cuts the slots and cannot drift.
 // A slot survives if it sits inside the PCB footprint, off the bosses, and
 // out of every caller-supplied [x, y, half_w, half_h] keepout rectangle.
-// The size a cell grades to, as a fraction of the nominal egg — 1 with the
-// grade off, and 0 for a cell that grades below the drop threshold, which is
-// how the field fades to bare plate beside the mark instead of stopping on a
-// straight edge. Radial from the MARK, so the badge is visibly what organizes
-// it; with no mark on the plate there is nothing to grade around and the field
-// stays flat.
-function vent_k(x, y, grade = true) =
-    !(grade && vent_grade && back_bird) ? 1
-  : let (d = norm([x - bird_dx, y - bird_dy]),
-         f = (d - vent_d0) / (vent_d1 - vent_d0),
-         k = vent_k_min + (1 - vent_k_min) * min(1, max(0, f)))
-    k < vent_k_drop ? 0 : k;
+// Does this station carry an egg? The beat is read across the row and rotated
+// by the row index, so the groups walk sideways as you go up the plate instead
+// of stacking into columns of rests.
+//
+// Rotation, not a hash: a pseudo-random field would also avoid stripes, and it
+// would look like a fault. A clutch is grouped, and grouping is periodic.
+function vent_hit(c, r) =
+    let (n = len(vent_beat),
+         i = ((c + r*vent_beat_shift) % n + n) % n)
+    vent_beat[i] == "#";
 
-// Cells are [x, y, k]. k rides along rather than being recomputed by every
-// consumer, because the open-area echo, the accent rings and the cutter all
-// have to agree about how big each egg is — and "computed twice" is how the
-// echoed area and the cut area stop matching.
-function grille_cells(ox = m3_ox, oy = m3_oy, keepouts = [], grade = true) =
+function grille_cells(ox = m3_ox, oy = m3_oy, keepouts = []) =
     [for (r = [0:vent_rows-1], c = [0:vent_cols-1])
         let (x = (c - (vent_cols-1)/2) * vent_pitch_x
                  + (r % 2 == 1 ? vent_pitch_x/2 : 0) - vent_pitch_x/4,
-             y = (r - (vent_rows-1)/2) * vent_pitch_y,
-             k = vent_k(x, y, grade))
-        if (k > 0 && abs(x) < pcb_w/2 - 6 && abs(y) < pcb_h/2 - 6
+             y = (r - (vent_rows-1)/2) * vent_pitch_y)
+        if (vent_hit(c, r) && abs(x) < pcb_w/2 - 6 && abs(y) < pcb_h/2 - 6
             && min([for (sx = [1,-1], sy = [1,-1])
                    max(abs(x - (ox + sx*m3_dx/2)) - 6,
                        abs(y - (oy + sy*m3_dy/2)) - 9)]) > 0
             && (len(keepouts) == 0 ||
                 min([for (k = keepouts)
                     max(abs(x - k[0]) - k[2], abs(y - k[1]) - k[3])]) > 0))
-        [x, y, k]];
-// Open area of a cell list, in mm2 — the shoelace area of the SAME eggs the
-// cutter draws, each at its own graded size. Not len(cells)*one_egg any more:
-// with the grade on, that would overstate a faded field by a third.
-function _vsum(v, i = 0, acc = 0) = i >= len(v) ? acc : _vsum(v, i + 1, acc + v[i]);
+        [x, y]];
+// Open area of a cell list, in mm2 — every egg the same egg, so this is the
+// count times the shoelace area of the SAME polygon the cutter draws.
 function grille_area(cells) =
-    _vsum([for (p = cells) egg_area(vent_slot_l*p[2], vent_slot_w*p[2], vent_tip)]);
+    len(cells) * egg_area(vent_slot_l, vent_slot_w, vent_tip);
 module vent_grille(ox = m3_ox, oy = m3_oy, keepouts = []) {
     for (p = grille_cells(ox, oy, keepouts))
-        translate([p[0], p[1] - vent_slot_l*p[2]/2 + vent_slot_w*p[2]/2, -0.1])
+        translate([p[0], p[1] - vent_slot_l/2 + vent_slot_w/2, -0.1])
             linear_extrude(back_t + 0.2)
-                egg2d(vent_slot_l*p[2], vent_slot_w*p[2], vent_tip);
+                egg2d(vent_slot_l, vent_slot_w, vent_tip);
 }
 module back() {
     total_d = cav_d + back_t;   // full tray depth (floor + cavity to glass ledge)
@@ -2789,7 +2807,16 @@ module frame_lbl(x, y, s, size = 4.0, spacing = 1.0) {
 // ----------------------------------------------------------------------------
 module back_graphics(ink = "all") {
     all = ink == "all";
-    if (all || ink == "moat")
+    // THE QR COUPON CARRIES THE SYMBOL AND NOTHING ELSE. Everything below
+    // except the QR is suppressed for it, and that is not tidiness — the
+    // coupon is a 37.7 mm square cut out of the plate at the symbol's
+    // position, and at this mark size the badge's own strokes run straight
+    // through that square. Left in, they print as recesses across the finder
+    // patterns (the coupon has no accent volume to fill them), and a failed
+    // scan would be telling you about the bird rather than about the cell size
+    // or the polarity you printed it to test. A test that can fail for the
+    // wrong reason is not a test.
+    if (!qr_coupon && (all || ink == "moat"))
         if (adh_rails) for (sx = [1, -1])
             translate([sx*adh_rail_dx, 0, fr_depth - label_back_depth])
                 linear_extrude(label_back_depth + 0.1) difference() {
@@ -2797,7 +2824,7 @@ module back_graphics(ink = "all") {
                             2 + adh_mark_w);
                     rrect2d(adh_rail_w, adh_rail_l, 2);
                 }
-    if (all || ink == "text") {
+    if (!qr_coupon && (all || ink == "text")) {
         // back view, buttons at the TOP: BOOT on the left (-x here), RESET on
         // the right, as on the board; "SD" beside the card window so nobody
         // hunts for the socket
@@ -2815,7 +2842,7 @@ module back_graphics(ink = "all") {
         if (help_line != "")
             frame_lbl(rating_dx, help_dy, help_line, help_sz);
     }
-    if (all || ink == "bird")
+    if (!qr_coupon && (all || ink == "bird"))
         // The mark, in the clear middle the adhesive rails used to own.
         // mark_bird() does the design-unit bookkeeping — the scale off the
         // library's own span, and the shift by its bbox center — so bird_dx/dy
@@ -2824,7 +2851,7 @@ module back_graphics(ink = "all") {
             translate([bird_dx, bird_dy, fr_depth - label_back_depth])
                 linear_extrude(label_back_depth + 0.1)
                     mark_bird(bird_h, bird_rib);
-    if (all || ink == "mark") {
+    if (!qr_coupon && (all || ink == "mark")) {
         // THE LOCKUP — all three rows, and with the bird the only thing on
         // the plate that takes the accent. The maker row joined it when it
         // left the rating block: product, company, maker are one mark and
@@ -2861,7 +2888,7 @@ module back_graphics(ink = "all") {
         // body color. Same two filaments, same inlay machinery, opposite
         // assignment, and it is decided by measuring the palette rather than by
         // remembering to think about it.
-        if (qr_back)
+        if (qr_draw)
             translate([qr_back_dx - qr_n*qr_back_cell/2,
                        qr_back_dy + qr_n*qr_back_cell/2,
                        fr_depth - label_back_depth])
@@ -3015,13 +3042,10 @@ module vent_accent_rings() {
         translate([0, 0, fr_depth - vent_accent_d])
             linear_extrude(vent_accent_d + 0.1)   // overshoots; frame() bounds it
                 for (p = grille_cells(-m3_ox, m3_oy, fr_keepouts))
-                    translate([p[0], p[1] - vent_slot_l*p[2]/2 + vent_slot_w*p[2]/2])
+                    translate([p[0], p[1] - vent_slot_l/2 + vent_slot_w/2])
                         difference() {
-                            // p[2] is the cell's graded size — the ring has to
-                            // follow the hole it lines, or a faded egg near
-                            // the mark gets a full-size ring floating round it
                             offset(r = vent_accent_w)
-                                egg2d(vent_slot_l*p[2], vent_slot_w*p[2], vent_tip);
+                                egg2d(vent_slot_l, vent_slot_w, vent_tip);
                             // NOT the bare egg. The vent hole is cut with
                             // exactly this profile, so a bare inner boundary
                             // lands on the hole's own wall — the same plane,
@@ -3034,7 +3058,7 @@ module vent_accent_rings() {
                             // coplanar. Same fix as the dock's phantom
                             // over-lip walls (#1373).
                             offset(r = -vent_accent_eps)
-                                egg2d(vent_slot_l*p[2], vent_slot_w*p[2], vent_tip);
+                                egg2d(vent_slot_l, vent_slot_w, vent_tip);
                         }
 }
 
