@@ -5,8 +5,8 @@
 #   URL: https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_alerts.yaml
 #
 # Creates one automation covering smoke/CO alarm detection, tamper alerts,
-# chain integrity failures, device offline, and GPS loss. Every alert is
-# opt-in: pick the sensors you want monitored, leave the rest empty.
+# power loss, chain integrity failures, device offline, and GPS loss. Every
+# alert is opt-in: pick the sensors you want monitored, leave the rest empty.
 #
 # Where to find the sensors (entity IDs follow
 # `<domain>.securacv_canary_<device_id>_<name>`):
@@ -14,6 +14,8 @@
 #                    (or `_tamper_detected` if discovered from firmware)
 #   - Smoke heard:   the "Smoke Alarm Heard" binary sensor (mic builds only)
 #   - CO heard:      the "CO Alarm Heard" binary sensor (mic builds only)
+#   - Power loss:    the per-type "Power Loss" tamper sensor (canary base
+#                    builds publish it at boot after an outage/brownout)
 #   - Chain valid:   binary_sensor.securacv_canary_<id>_chain_valid
 #   - Online:        binary_sensor.securacv_canary_<id>_online
 #   - GPS fix:       the "GPS Fix" binary sensor (GPS builds only)
@@ -22,9 +24,10 @@ blueprint:
   name: "SecuraCV Canary Alerts"
   description: >-
     Monitor a SecuraCV Canary witness device and send notifications for
-    smoke/CO alarms heard by the device, tamper events, chain integrity
-    failures, device offline, and GPS loss. Each alert type is enabled by
-    selecting its sensor — leave an input empty to skip that alert.
+    smoke/CO alarms heard by the device, tamper events, power loss, chain
+    integrity failures, device offline, and GPS loss. Each alert type is
+    enabled by selecting its sensor — leave an input empty to skip that
+    alert.
     Privacy by design — only semantic events, never raw video or audio.
   domain: automation
   author: "ERRERlabs"
@@ -106,6 +109,21 @@ blueprint:
           multiple: false
       default: []
 
+    power_entity:
+      name: "Power Loss sensor (optional)"
+      description: >-
+        The per-type "Power Loss" tamper sensor
+        (e.g. binary_sensor.securacv_canary_<id>_tamper_power_loss). Turns
+        on when the device boots after a restored outage or a brownout —
+        the push carries the classifier's own sentence, including the
+        honest lower-bound outage duration when one is known. Leave empty
+        to skip.
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: false
+      default: []
+
     notify_service:
       name: "Notification Service"
       description: >-
@@ -156,6 +174,11 @@ trigger:
     for:
       minutes: 2
     id: gps_lost
+
+  - platform: state
+    entity_id: !input power_entity
+    to: "on"
+    id: power_loss
 
 condition: []
 
@@ -222,6 +245,21 @@ action:
                 Check device immediately.
               data:
                 tag: securacv-tamper
+                importance: high
+
+      - conditions:
+          - condition: trigger
+            id: power_loss
+        sequence:
+          - service: !input notify_service
+            data:
+              title: "SecuraCV Power Event"
+              message: >-
+                {{ state_attr(trigger.entity_id, 'detail')
+                   or 'The device lost power and is back.' }}
+                ({{ trigger.entity_id }})
+              data:
+                tag: securacv-power
                 importance: high
 
       - conditions:

@@ -209,6 +209,11 @@ death — the hub, the router, and the Apple hub die with it. What works:
    broker, so it cannot stand in for this step.)
 4. Leave the LAN (cellular), have a housemate press the test button again:
    the push still arrives — that's the home hub doing its job.
+5. Outage drill (canary base builds): unplug a Canary for a minute and plug
+   it back in. On reboot the `Power Loss` tamper sensor turns on and the
+   [alert blueprint](../blueprints/securacv_alerts.yaml)'s power input
+   pushes the classifier's own sentence — with the lower-bound duration
+   when the device had a clock to measure it.
 5. Unplug the bridge briefly: accessories go "No Response" in Home, and HA's
    own availability topics recover on reconnect (the bridge re-asserts
    retained state after backoff — self-healing is already in

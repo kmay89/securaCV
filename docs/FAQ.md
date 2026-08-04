@@ -220,17 +220,21 @@ card](lovelace_timeline.md).
 
 ### Does it work with Apple Home? What about HomeKit Secure Video?
 
-**Apple Home: designed, not built** — the RFC is
+**Apple Home: yes, two lanes** — the design is
 [the Apple Home design doc](design/apple_home_integration.md). The shape:
-each Canary appears in the Home app as a *sensor* accessory
+the fleet appears in the Home app as *sensor* accessories
 (motion/occupancy/contact/tamper/liveness — by default no more than a dumb
 PIR would report; one opt-in setting can add the coarse object class —
 person, vehicle, animal, package — never identity), so your automations can
-answer the witness — lights on when
-a person crosses the driveway, the whole house responding to tamper. If you
-run the Home Assistant hub, HA's own HomeKit Bridge can project the
-existing securacv sensors into Apple Home today; the worked recipe is the
-RFC's first deliverable.
+answer the witness — lights on when a person crosses the driveway, the whole
+house responding to tamper. Built today: `witnessd` speaks HAP directly
+(bridge site B — the Home app pairs with the hub, no Home Assistant in the
+path, behind the `bridge-homekit` feature with its setup wizard), and if you
+run the Home Assistant hub, HA's own HomeKit Bridge projects the securacv
+sensors with zero new code — the worked recipe is
+[apple-home-homekit-bridge.md](integrations/apple-home-homekit-bridge.md).
+Device-native pairing (a Canary in the Home app with no hub at all) and
+Matter are still design, per the RFC's phasing table.
 
 **HomeKit Secure Video: no — and on purpose.** HKSV's core loop uploads the
 raw clip on every motion trigger, which is exactly what Invariant I ("No
