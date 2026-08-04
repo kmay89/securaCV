@@ -39,6 +39,10 @@ TOPIC_MESH = "mesh"
 TOPIC_CHIRP = "chirp"
 TOPIC_TRANSPORT = "transport"
 TOPIC_PRESENCE = "presence"
+# The retained per-variant snapshot. This — not `presence` — is where the
+# firmware actually publishes presence: canary-sense's topics.h builds
+# `securacv/<id>/state`, and its own HA discovery reads `value_json.presence`.
+TOPIC_STATE = "state"
 
 # =============================================================================
 # Transport Types - Multi-path resilience
@@ -542,3 +546,21 @@ HOMEKIT_EVENT_SIGNALS = {
 # automation written against a Canary behaves like one written against a
 # sensor the user already owns.
 HOMEKIT_MOTION_HOLD_SECONDS = 10
+
+
+def homekit_signals_for_event(event_type: str) -> tuple[str, ...]:
+    """Return the HomeKit signals an event asserts, or () for none.
+
+    Accepts the kernel's CamelCase enum names and the snake_case form, so a
+    payload from either producer resolves. An unrecognized event asserts
+    NOTHING rather than falling back to motion — inventing a claim about
+    someone's home is worse than staying quiet.
+    """
+    if not event_type:
+        return ()
+    key = event_type.strip()
+    if key in HOMEKIT_EVENT_SIGNALS:
+        return HOMEKIT_EVENT_SIGNALS[key]
+    # snake_case -> CamelCase, so "boundary_crossing_object_large" resolves.
+    camel = "".join(part[:1].upper() + part[1:] for part in key.split("_"))
+    return HOMEKIT_EVENT_SIGNALS.get(camel, ())
