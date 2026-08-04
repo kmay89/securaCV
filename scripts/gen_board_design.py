@@ -80,7 +80,24 @@ def bom_rows(csv_name: str) -> dict:
     return out
 
 
-def price_of(mpn: str, pricing: dict, fallback_usd, fallback_basis: str, qty_basis: int):
+def quotes_of(design: dict) -> dict:
+    """MPN -> list of human-entered volume quotes from board.json.
+
+    A distributor snapshot is what a catalog publishes; a quote is what a
+    supplier actually said. For the one question this model exists to answer —
+    does the module stay above the crossover price at the volume we would buy?
+    — the catalog cannot answer it (Digi-Key publishes no break for the XIAO at
+    all) and a quote can. So quotes outrank snapshots, and they are the only
+    place in this pipeline where a human types a price on purpose.
+    """
+    out: dict = {}
+    for q in design.get("volume_quotes", {}).get("quotes", []):
+        out.setdefault(q["mpn"], []).append(q)
+    return out
+
+
+def price_of(mpn: str, pricing: dict, fallback_usd, fallback_basis: str, qty_basis: int,
+             quotes: dict | None = None):
     """Best price for an MPN at the model's volume, with honest provenance.
 
     Returns (unit_usd, provenance, break_qty). `break_qty` is the volume the
@@ -95,6 +112,19 @@ def price_of(mpn: str, pricing: dict, fallback_usd, fallback_basis: str, qty_bas
     line that could not be matched, and in which direction that biases the
     answer.
     """
+    # A real quote at or below the basis volume beats anything a catalog says.
+    best_quote = None
+    for q in (quotes or {}).get(mpn, []):
+        if int(q["qty"]) <= qty_basis:
+            if best_quote is None or float(q["unit_usd"]) < float(best_quote["unit_usd"]):
+                best_quote = q
+    if best_quote is not None:
+        return (
+            float(best_quote["unit_usd"]),
+            f"quote:{best_quote['source']}",
+            int(best_quote["qty"]),
+        )
+
     entry = (pricing.get("parts") or {}).get(mpn)
     if entry and entry.get("unit_usd") is not None:
         prov = entry.get("provenance") or "csv-seed"
@@ -120,11 +150,12 @@ def money(x: float) -> float:
 def build_cost_model(design: dict, pricing: dict) -> dict:
     fab = design["fab"]
     qty = int(fab["qty_basis"])
+    quotes = quotes_of(design)
 
     # ── The carrier: parts on (and shipped with) the new board ──────────────
     def line_for(ref: str, spec: dict, est_key: str) -> dict:
         unit, prov, brk = price_of(
-            spec["mpn"], pricing, spec.get(est_key), "estimate", qty
+            spec["mpn"], pricing, spec.get(est_key), "estimate", qty, quotes
         )
         if unit is None:
             raise SystemExit(
@@ -169,7 +200,7 @@ def build_cost_model(design: dict, pricing: dict) -> dict:
             continue
         mpn = (row.get("MPN") or "").strip()
         seed = (row.get("UnitUSD") or "").strip() or None
-        unit, prov, brk = price_of(mpn, pricing, seed, "csv-seed", qty)
+        unit, prov, brk = price_of(mpn, pricing, seed, "csv-seed", qty, quotes)
         n = int((row.get("Qty") or "1").strip() or 1)
         absorbed.append(
             {
@@ -213,7 +244,7 @@ def build_cost_model(design: dict, pricing: dict) -> dict:
             )
         mpn = (row.get("MPN") or "").strip()
         seed = (row.get("UnitUSD") or "").strip() or None
-        unit, prov, brk = price_of(mpn, pricing, seed, "csv-seed", qty)
+        unit, prov, brk = price_of(mpn, pricing, seed, "csv-seed", qty, quotes)
         n = int((row.get("Qty") or "1").strip() or 1)
         contested.append(
             {
@@ -260,9 +291,42 @@ def build_cost_model(design: dict, pricing: dict) -> dict:
     # current modeled price, so this is a floor on that part alone.
     dominant = max(absorbed, key=lambda a: a["ext_usd"]) if absorbed else None
     sensitivity = None
+    decision = None
     if dominant is not None:
         rest = module_unit_usd - dominant["ext_usd"]
         crossover = (carrier_unit_usd - rest) / max(dominant["qty"], 1)
+        # The model's own verdict. A quote at the basis volume settles it; a
+        # qty-1 catalog price cannot, and must not be allowed to read as if it
+        # had. GO/STOP is only claimed when the price it rests on is real.
+        quoted = dominant["provenance"].startswith("quote:")
+        volume_ok = dominant["price_at_qty"] is not None and dominant["price_at_qty"] >= qty
+        if quoted or volume_ok:
+            verdict_state = "GO" if dominant["unit_usd"] > crossover else "STOP"
+            verdict_why = (
+                f"{dominant['mpn']} is priced at ${dominant['unit_usd']:.2f} at qty "
+                f"{dominant['price_at_qty']} ({dominant['provenance']}), "
+                f"{'above' if verdict_state == 'GO' else 'at or below'} the "
+                f"${money(crossover):.2f} crossover."
+            )
+        else:
+            verdict_state = "UNRESOLVED"
+            verdict_why = (
+                f"{dominant['mpn']} is only priced at qty "
+                f"{dominant['price_at_qty']} (${dominant['unit_usd']:.2f}, "
+                f"{dominant['provenance']}), below the {qty}-unit basis. That is "
+                "a catalog price for one piece, not the price we would pay, so it "
+                "cannot decide the program in either direction. Add a real quote "
+                "to board.json `volume_quotes` and this becomes GO or STOP "
+                "automatically."
+            )
+        decision = {
+            "state": verdict_state,
+            "why": verdict_why,
+            "crossover_unit_usd": money(crossover),
+            "depends_on_mpn": dominant["mpn"],
+            "how_to_resolve": design.get("volume_quotes", {}).get("how_to_get_one"),
+        }
+
         sensitivity = {
             "question": (
                 f"How cheap would {dominant['mpn']} have to get before this "
@@ -334,6 +398,7 @@ def build_cost_model(design: dict, pricing: dict) -> dict:
             if breakeven_units is not None
             else "No break-even: the carrier does not cost less than the module build.",
         },
+        "decision": decision,
         "sensitivity": sensitivity,
         "confidence_accounting": {
             "note": (

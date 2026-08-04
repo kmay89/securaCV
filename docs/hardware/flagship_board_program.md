@@ -238,6 +238,36 @@ That bar tightened from $9.12 to $11.32 when the contested antenna credit came
 out of the headline. Which is the point of separating them: the program's
 viability should not rest on a claim the repo itself disputes.
 
+### The model now returns its own verdict — and it currently says UNRESOLVED
+
+`cost_model.json` carries a `decision` block. It will only say **GO** or
+**STOP** when the price it rests on is real:
+
+> **UNRESOLVED** — *102010469 is only priced at qty 1 ($15.90, digikey), below
+> the 1000-unit basis. That is a catalog price for one piece, not the price we
+> would pay, so it cannot decide the program in either direction.*
+
+That is a deliberate refusal, and it corrects a temptation this document had.
+$15.90 sits comfortably above $11.32, which *reads* like reassurance — but a
+one-piece catalog price is not evidence about a thousand-piece purchase, and
+letting it stand in for one is exactly how a project talks itself into NRE.
+Paste a real quote into `board.json` → `volume_quotes` and the verdict flips
+automatically on the next generator run.
+
+**GO is not binary — the margin matters.** Both paths are verified by
+injection, and the interesting result is how fast the case decays inside the
+GO region:
+
+| Quote at qty 1000 | Verdict | Saving/unit | Break-even |
+|---|---|---|---|
+| $12.40 | GO | **$1.08** | **143 units** |
+| $9.50 | STOP | −$1.82 | never |
+
+So a quote that merely clears $11.32 is not a green light. At $12.40 the board
+is technically worth building and practically marginal — 143 units before it
+pays back, for about a dollar a unit. **Treat anything under roughly $13 as a
+STOP in practice**, whatever the arithmetic says.
+
 ---
 
 ## 4 · The pipeline
@@ -310,11 +340,23 @@ first; this section only adds the sequencing.
 
 Three things follow, in order:
 
-1. **Do the `fcc_board_status.md` homework now.** It has no row for
-   ESP32-S3-WROOM-1 and no grant PDF has been opened. That lookup is free, it
-   is the gate on the only five-figure saving in this program, and it can be
-   done today. Until that column says ✅, modular approval is *promising and
-   unconfirmed* — the posture that document requires.
+1. **The `fcc_board_status.md` homework is half done.** The module's grant is
+   now *identified* — **FCC ID `2AC7Z-ESPS3WROOM1`**, Espressif Systems
+   (Shanghai), equipment class DTS, tested by Sporton (Kunshan) mid-2022 — and
+   the **-1U variant holds a separate grant** (`2AC7Z-ESPS3WROOM1U`), so
+   choosing the u.FL part is a certification decision, not a connector choice.
+   The grant PDFs themselves could **not** be read: `fcc.report`, `fccid.io`
+   and `documentation.espressif.com` are all unreachable from the build
+   environment, so the "conditions read" column stays ❌ and modular approval
+   stays *promising and unconfirmed*.
+
+   One unverified lead is recorded there deliberately: a search summary
+   asserted a **20 cm antenna-to-user separation** condition (standard mobile
+   classification). If real, it is fine for a wall-mounted Canary and a problem
+   for a doorbell, nightstand or watch-puck — those would fall into *portable*
+   and need SAR work the modular grant does not carry. Check it first; do not
+   cite it. The 15-minute closing procedure is written out in
+   [`fcc_board_status.md`](./fcc_board_status.md).
 2. **Change the board before the first SDoC, not after.** The SDoC attaches to
    the SKU. Certifying a XIAO-based SKU and then moving to a carrier pays it
    twice; moving first pays it once.
@@ -366,9 +408,18 @@ documentation:
 
 1. **Look up the ESP32-S3-WROOM-1 grant** and fill in its
    `fcc_board_status.md` row. Free, today, and it gates $5–15k.
-2. **Get one volume quote on the XIAO ESP32-S3 Sense.** One number decides
-   this program, and the model already says which side of $11.32 it has to land
-   on.
+2. **Get one volume quote on the XIAO ESP32-S3 Sense** — and the cheapest way
+   to get it may be free. Mouser **already has a resolved SKU** for this part
+   (`713-102010469`) that has never been fetched, because
+   `pricing.json` → `sources.mouser` is `false`: **`MOUSER_API_KEY` is unset.**
+   Mouser publishes volume breaks for Seeed parts far more often than Digi-Key
+   does, so setting that one Actions secret
+   ([`bom_pipeline_setup.md`](./bom_pipeline_setup.md)) may let the existing
+   nightly job answer this with no human in the loop. If it doesn't, ask Seeed
+   directly for 100/500/1000 pricing on `102010469`. Either way the answer
+   lands as one row in `volume_quotes` and the verdict recomputes — remembering
+   that anything under roughly **$13** is a practical STOP even though the
+   arithmetic clears at $11.32.
 3. **If it clears, buy one Flux seat and capture the board.** The intent, the
    gates and the cost model are already here; capture is the only step that
    needs a tool we do not run.

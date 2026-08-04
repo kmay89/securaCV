@@ -101,6 +101,19 @@
     }
   ],
 
+  "volume_quotes": {
+    "_comment": "The ONE place in this pipeline where a human types a price on purpose. Everything else is fetched or estimated-with-a-basis; a quote is what a supplier actually said, so it outranks a catalog snapshot and settles the crossover question the catalog cannot. Paste one row here and cost_model.json's `decision` flips from UNRESOLVED to GO or STOP on the next generator run — no prose to rewrite, no argument to re-have.",
+    "schema": "{ mpn, qty, unit_usd, source, dated, note } — qty is the volume the price applies at; the model uses the deepest quote at or below fab.qty_basis.",
+    "quotes": [],
+    "why_empty": "No real volume quote exists yet. Asking a supplier is a human action — it needs an account and a conversation — and inventing a plausible number here would defeat the entire point of this file.",
+    "what_is_known_today": [
+      "Digi-Key resolves 102010469 at $15.90 but publishes NO volume break at all (pricing.json `breaks` is a single qty-1 row). That is why the decision is UNRESOLVED rather than GO: a one-piece catalog price cannot answer a 1,000-piece question.",
+      "Mouser already has a resolved SKU for this part (713-102010469) but has never been fetched — pricing.json `sources.mouser` is false because MOUSER_API_KEY is unset (docs/hardware/bom_pipeline_setup.md). Mouser publishes volume breaks for Seeed parts far more often than Digi-Key does.",
+      "Retail sightings at qty 1 cluster around $15.90-$21.15 depending on channel, all well above the $11.32 crossover — but qty-1 retail is not evidence about qty-1000 and is recorded here only so nobody re-does the search."
+    ],
+    "how_to_get_one": "Cheapest first: (1) set MOUSER_API_KEY as an Actions secret — the nightly bom-pricing job then fetches Mouser's published breaks for a SKU it already resolves, and if those reach the basis volume the question answers itself with no human in the loop; (2) failing that, ask Seeed directly (they sell the XIAO and quote volume readily) for 100/500/1000 pricing on 102010469; (3) Digi-Key/Mouser will both quote a volume price on request even when they publish none. Any of the three lands as one row above."
+  },
+
   "known_tradeoffs": [
     {
       "id": "no-load-sharing",

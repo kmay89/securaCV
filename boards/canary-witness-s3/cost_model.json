@@ -2,7 +2,7 @@
   "generated_by": "scripts/gen_board_design.py",
   "board": "canary-witness-s3",
   "confidence": "idea",
-  "pricing_as_of": "2026-08-03T12:35:54Z",
+  "pricing_as_of": "2026-08-04T11:33:25Z",
   "qty_basis": 1000,
   "carrier": {
     "parts_usd": 9.6795,
@@ -322,6 +322,13 @@
     },
     "breakeven_units": 34,
     "breakeven_note": "Units that must be built before the carrier has paid back its own NRE. It excludes certification entirely — the Part 15B SDoC in board.json `certification` is owed whether or not this board exists, because it attaches to shipping a radio, not to which PCB the radio sits on."
+  },
+  "decision": {
+    "state": "UNRESOLVED",
+    "why": "102010469 is only priced at qty 1 ($15.90, digikey), below the 1000-unit basis. That is a catalog price for one piece, not the price we would pay, so it cannot decide the program in either direction. Add a real quote to board.json `volume_quotes` and this becomes GO or STOP automatically.",
+    "crossover_unit_usd": 11.3215,
+    "depends_on_mpn": "102010469",
+    "how_to_resolve": "Cheapest first: (1) set MOUSER_API_KEY as an Actions secret — the nightly bom-pricing job then fetches Mouser's published breaks for a SKU it already resolves, and if those reach the basis volume the question answers itself with no human in the loop; (2) failing that, ask Seeed directly (they sell the XIAO and quote volume readily) for 100/500/1000 pricing on 102010469; (3) Digi-Key/Mouser will both quote a volume price on request even when they publish none. Any of the three lands as one row above."
   },
   "sensitivity": {
     "question": "How cheap would 102010469 have to get before this carrier stops paying for itself?",
