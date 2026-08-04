@@ -4,7 +4,7 @@ Two lanes, both ending with your fleet in the Home app. Pick one:
 
 | You have… | Go to | Time |
 |---|---|---|
-| Home Assistant already running | [the HomeKit Bridge recipe](home-assistant-homekit-bridge.md) | ~5 min, no new code |
+| Home Assistant already running | [the HomeKit Bridge recipe](apple-home-homekit-bridge.md) | ~5 min, no new code |
 | An Apple TV or HomePod and nothing else | [§1 below](#1-the-native-lane-hap_bridge) | ~10 min, one build |
 
 Either way you need **one Apple TV or HomePod** signed into your Apple

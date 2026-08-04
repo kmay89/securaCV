@@ -208,7 +208,7 @@ async def _setup_mqtt_binary_sensors(
         # Motion + occupancy. These exist so the HomeKit Bridge (and any
         # other consumer) sees the standard device classes rather than a
         # template built by hand in someone's YAML — see
-        # docs/integrations/home-assistant-homekit-bridge.md.
+        # docs/integrations/apple-home-homekit-bridge.md.
         if topic_type == TOPIC_EVENTS and "presence_sensors" not in entities_added[device_id]:
             entities_added[device_id].add("presence_sensors")
             new_entities.extend([
