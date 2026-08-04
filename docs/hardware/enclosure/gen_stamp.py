@@ -49,7 +49,7 @@ from pathlib import Path
 
 # ── The one human string. Bump it when you change the geometry. ──────────
 # CalVer: YYYY.MM + a letter that revs within the month.
-STAMP_REV = "2026.09y"
+STAMP_REV = "2026.10a"
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "canary_s3_lcd7_stamp.scad"
@@ -65,6 +65,12 @@ SOURCES = [
                                # and the stamp would still claim the old design.
     "canary_vent_lib.scad",
     "canary_mark_lib.scad",   # THE BIRD — a mark change IS a geometry change
+    "canary_cradle_lib.scad",  # the wall dock's studs, clips and pockets are
+                               # cut into this case's back plate, so a change
+                               # to the interface IS a change to this design.
+                               # Same argument as the panel registry above:
+                               # left out, the dock could move while the stamp
+                               # went on claiming the old revision.
     "canary_s3_lcd7_qr.scad",
 ]
 

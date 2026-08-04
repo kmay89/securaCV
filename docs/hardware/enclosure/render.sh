@@ -126,6 +126,9 @@ devstl dev_field_bezel.stl   canary_field_case.scad -D 'part="bezel"'
 devstl dev_dash_frame.stl    canary_dash_display.scad -D 'part="frame"'
 devstl dev_dash_back.stl     canary_dash_display.scad -D 'part="back"'
 devstl dev_dash_stand.stl    canary_dash_display.scad -D 'part="stand"'
+# the click-on wall cradle — ONE interface, two cases (canary_cradle_lib.scad).
+# Each case sizes its own plate; the studs, clips and pockets are the library's.
+devstl dev_dash_cradle.stl   canary_dash_display.scad -D 'part="cradle"'
 devstl dev_vehicle_dash.stl  canary_vehicle_mount.scad -D 'part="dash"'
 devstl dev_vehicle_vent.stl  canary_vehicle_mount.scad -D 'part="vent"'
 devstl dev_wear_clip.stl     canary_wear_clip.scad -D 'part="clip"'
@@ -149,6 +152,7 @@ devstl dev_lcd7_back.stl     canary_s3_lcd7.scad -D 'part="back"'
 devstl dev_lcd7_frame.stl    canary_s3_lcd7.scad -D 'part="frame"'
 devstl dev_lcd7_frame_gauge.stl canary_s3_lcd7.scad -D 'part="frame_gauge"'
 devstl dev_lcd7_stand.stl    canary_s3_lcd7.scad -D 'part="stand"'
+devstl dev_lcd7_cradle.stl   canary_s3_lcd7.scad -D 'part="cradle"'
 devstl dev_lcd7_stand_gauge.stl canary_s3_lcd7.scad -D 'part="stand_gauge"'
 # corner gauge — the ~16.5 g sanity print that comes before the ~158 g case pair
 devstl dev_lcd7_gauge_bezel.stl canary_s3_lcd7.scad -D 'part="gauge_bezel"'

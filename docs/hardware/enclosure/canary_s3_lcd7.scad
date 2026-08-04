@@ -211,6 +211,7 @@
 use <canary_panel_lib.scad> // THE PANEL REGISTRY — every panel/board number
                             // this file uses comes from there, not from here
 use <canary_vent_lib.scad>  // the brand vent shape: egg2d / egg_area
+use <canary_cradle_lib.scad>  // the click-on wall dock, shared with the 4.3"
 use <canary_mark_lib.scad>  // THE BIRD — mark_bird, shared with the coupon
 use <canary_s3_lcd7_stamp.scad>   // GENERATED build stamp — see gen_stamp.py
 // Downloaded this file on its own? It CUTS ITS VENTS with that library — a
@@ -218,9 +219,11 @@ use <canary_s3_lcd7_stamp.scad>   // GENERATED build stamp — see gen_stamp.py
 // warning. This guard turns that into a hard stop instead:
 assert(is_num(egg_area(7, 4)),
        "canary_vent_lib.scad is MISSING — this case cuts its grille and gills with it. Download canary_vent_lib.scad from the same folder and keep the two files side by side.");
+assert(is_num(cr_pad_h()),
+       "canary_cradle_lib.scad is MISSING — this case docks on it. Download canary_cradle_lib.scad from the same folder and keep the three files side by side.");
 
 /* [What to render] */
-part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_port","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","dock_probe_fit","dock_probe_seat","dock_probe_p","dock_probe_p2","ring_gauge","port_teth_hole","port_teth_barb","port_barb_proud","plug_teth_hole","plug_teth_barb","back_flush","fil_body","fil_ink","fil_accent","coupon_body","coupon_ink","coupon_accent","coupon_qr_body","coupon_qr_ink","frame_color","fil_overlap","fil_gap","all"]
+part = "all";        // ["bezel","back","frame","frame_gauge","gauge","gauge_bezel","gauge_tray","stand","stand_gauge","radius_gauge","grommet_usb","plug_port","plug_buttons","plug_sd","bat_probe_fit","bat_probe_seat","bat_probe_grip","dock_probe_fit","dock_probe_seat","dock_probe_p","dock_probe_p2","ring_gauge","cradle","cradle_dock","port_teth_hole","port_teth_barb","port_barb_proud","plug_teth_hole","plug_teth_barb","back_flush","fil_body","fil_ink","fil_accent","coupon_body","coupon_ink","coupon_accent","coupon_qr_body","coupon_qr_ink","frame_color","fil_overlap","fil_gap","all"]
 
 /* [Board] */
 // The board selector gets its own group because it is the FIRST decision and
@@ -574,7 +577,29 @@ btn_dx = 0.0;        // window center offset along the top wall
 btn_lbl_dx = 9.0;    // BOOT/RESET label centers, ± of the window center
 
 /* [Frame — wall mounting (keyholes)] */
-mount_keyholes = true;  // wall-mount keyholes through the back plate, one in
+// THE DOCK — v0.11. A wall plate takes the screws and this case CLICKS onto
+// it (canary_cradle_lib.scad, shared with the 4.3" dash). Two rigid T-studs
+// carry the weight at the top, two sprung clips stop the bottom swinging
+// out, and the case lifts off for service without touching the wall screws.
+//
+// It REPLACES the keyholes rather than joining them, and not by preference:
+// both want the same four corners of the same plate. The keyholes are still
+// here, fully wired, one flag away — they are the print-validated mount and
+// the cradle is not yet — but exactly one of the two may be on, and the
+// assert below enforces it instead of letting the two cut into each other.
+// (The adhesive rails are unaffected and remain the no-screws alternative
+// to both.)
+mount_cradle = true;    // dock on the wall cradle (part="cradle")
+cradle_dx = 72.0;       // half-span of the four dock features. Chosen to
+cradle_dy = 34.0;       // thread the crowded back: outboard of the rating
+                        // block (which reaches x ≈ 60.4 at rating_sz 3.3)
+                        // and of the help QR's quiet zone (x ≈ 62.2), and
+                        // clear of the SD countersink — all ASSERTED below
+                        // rather than eyeballed, which is not decoration:
+                        // 68 looked right, and the rating assert caught it
+                        // overlapping by 0.2 mm because main had grown the
+                        // stamp from 2.6 to 3.3 since the span was picked.
+mount_keyholes = false; // wall-mount keyholes through the back plate, one in
 khm_dx = 78.5;          // EACH of the four corners (first-print feedback: two
 khm_y  = 34.0;          // held the case but let the bottom float off the wall).
 khm_head_d  = 9.5;      // All four share one orientation — head hole LOW,
@@ -1613,7 +1638,10 @@ fr_keep_base = concat(
                   bird_half_w + vent_slot_w/2 + bird_vent_gap,
                   bird_half_h + vent_slot_l/2 + bird_vent_gap]] : [],
     // the rating stamp wants unbroken plate under it, same as any deboss
-    rating_stamp ? [[rating_dx, rating_dy, rating_w/2 + 2, rating_h/2 + 2]] : []);
+    rating_stamp ? [[rating_dx, rating_dy, rating_w/2 + 2, rating_h/2 + 2]] : [],
+    // ...and the dock pads want solid plate to stand on — a pad rooted over
+    // a field of vent eggs is a pad rooted on nothing
+    mount_cradle ? cradle_keepouts(cradle_dx, cradle_dy) : []);
 fr_keep_rails = adh_rails ? [for (sx = [1,-1])
     [sx*adh_rail_dx, 0,
      adh_rail_w/2 + adh_mark_w + vent_slot_w/2 + 0.6,
@@ -1694,6 +1722,33 @@ assert(!plug_tether || (abs(plug_teth_dx) - sd_teth_hole/2 - 0.45 > btn_w/2 + 1.
        "frame: plug leash anchor lands on the window bevel or off the top wall's flat span");
 assert(!plug_tether || plug_chan_d <= frame_wall - 0.8,
        "frame: plug leash channel leaves under 0.8 of top-wall web — shallow plug_chan_d");
+// THE DOCK. Exactly one screw-mount may own the back plate's corners.
+assert(!(mount_cradle && mount_keyholes),
+       "frame: the cradle and the keyholes both want the back plate's four corners — pick one (mount_cradle or mount_keyholes)");
+assert(!mount_cradle || cradle_selfcheck(), "cradle interface self-check failed");
+assert(!mount_cradle || cradle_span_ok(cradle_dx, cradle_dy),
+       "frame: cradle span too small — the case would pivot on its dock, or the clip arms would meet in the middle");
+// the plate must disappear behind the case
+assert(!mount_cradle
+       || (cradle_plate_w(cradle_dx) <= fr_xo - 8 && cradle_plate_h(cradle_dy) <= fr_yo - 8),
+       "frame: the cradle plate is bigger than the case it should hide behind — shrink the span");
+// ...and the pads must miss everything the back plate already carries. The
+// rating block is the tight one: it reaches x = rating_dx + rating_w/2, and
+// the first span tried (dx = 58) put a stud pad straight through it.
+assert(!mount_cradle || !rating_stamp
+       || cradle_dx - (cr_stud_head() + 9)/2 > rating_dx + rating_w/2 + 2,
+       "frame: a cradle stud pad lands on the rating block — widen cradle_dx");
+assert(!mount_cradle || !qr_back
+       || cradle_dx - (cr_stud_head() + 9)/2 > abs(qr_back_dx) + qr_back_reach + 2,
+       "frame: a cradle pad reaches the back QR's quiet zone");
+assert(!mount_cradle || !adh_rails
+       || cradle_dx - (cr_barb_w() + 9)/2 > adh_rail_dx + adh_rail_w/2 + adh_mark_w + 2,
+       "frame: a cradle pad lands on an adhesive rail zone");
+assert(!mount_cradle
+       || min([for (p = cradle_clips(cradle_dx, cradle_dy))
+               max(abs(p[0] - sd_dx) - (cr_barb_w() + 9)/2 - sd_w/2 - sd_lip,
+                   abs(p[1] - sd_dy) - (cr_barb_w() + cr_eng() + 11)/2 - sd_l/2 - sd_lip)]) > 1,
+       "frame: a cradle clip pad collides with the SD cover's countersink");
 assert(!mount_keyholes || (khm_dx + khm_head_d/2 + khm_pad_w + 1.5 < fr_xi/2
        && khm_y + khm_len + khm_slide_w/2 + khm_pad_w + 1.5 < fr_yi/2
        && khm_y - khm_head_d/2 - khm_pad_w > 2),
@@ -2266,6 +2321,17 @@ if (usb_port)
              usb_head_w, " x ", usb_head_h, " head; grommet grips a Ø",
              usb_wire_d, " jacket. TPU fitments (grommet_usb / plug_buttons / ",
              "plug_sd): TPU 90-95A, EXTERNAL spool, never the AMS"));
+if (mount_cradle)
+    echo(str("  DOCK: cradle at ±", cradle_dx, " x ±", cradle_dy,
+             " — wall plate ", cradle_plate_w(cradle_dx), " x ",
+             cradle_plate_h(cradle_dy), " (hides behind a ", fr_xo, " x ",
+             fr_yo, " case), two M4/#8 wall screws in slotted holes. The case",
+             " floats ", cr_pad_h(), " mm off the wall on four pads: two",
+             " rigid T-studs carry it, two sprung clips hold the bottom in.",
+             " Clip strain at full deflection ", cr_strain()*100,
+             " % (budget 2). Print the plate FACE-DOWN in PETG — the arms",
+             " bend in the print plane, so no layer bond is ever in tension.",
+             " Keyholes are OFF: the two mounts want the same four corners"));
 if (side_exit != "none")
     echo(str("  side exit: same ", usb_open_w, " x ", usb_open_h,
              " stadium through the ", side_exit,
@@ -2985,6 +3051,10 @@ module frame() {
                     cylinder(d1 = frame_boss_d, d2 = frame_boss_d + 3, h = 1.51);
             }
             if (bat_on) frame_bat_bay();
+            // dock pads on the back plate's OUTER face. They are the only
+            // thing on this case that stands proud of that face, which is
+            // why back_flush's premise had to change with them — see there.
+            if (mount_cradle) cradle_pads(cradle_dx, cradle_dy, fr_depth);
             // keyhole DOUBLER pads on the plate's inner face: the wall
             // screw's head clamps back_t + khm_pad_t of material and the
             // slide's catch shears a wider section. They sit in the clear
@@ -3283,6 +3353,9 @@ module frame() {
                                     for (dx = [0, px*khm_plen]) translate([dx, 0])
                                         circle(d = khm_slide_w + e*2*(khm_mouth_c + 0.05));
             }
+        // the dock pockets — blind keyholes in the top pads, stepped barb
+        // pockets in the bottom pair. Nothing here reaches the cavity.
+        if (mount_cradle) cradle_pad_cuts(cradle_dx, cradle_dy, fr_depth);
         // Every deboss on the back skin — rail moats, labels, the lockup, the
         // rating block and the help QR — in one tool, so the color inlays
         // can be cut from the same solid. The layout notes live at the module.
@@ -3950,6 +4023,27 @@ else if (part == "fil_overlap")
     }
 else if (part == "fil_gap")
     difference() { frame(); frame_bodycol(); frame_ink(); frame_accent(); }
+else if (part == "cradle") {
+    assert(mount_cradle, "part=\"cradle\" needs mount_cradle = true");
+    cradle_plate(cradle_dx, cradle_dy,
+                 cradle_plate_w(cradle_dx), cradle_plate_h(cradle_dy));
+}
+// DOCK FIT GATE — the seated plate against the case it seats in. Must be
+// EMPTY. This is the one probe that tests the whole engagement at once
+// (every stud in its keyhole, every hook in its pocket, every clearance),
+// and it earned that billing on the 4.3": it caught the clip hook flared at
+// the wrong end, reported as a 0.7 mm sliver at the barb's outboard base.
+// No dimension check would have found that — each number was individually
+// fine and the assembly was still impossible.
+else if (part == "cradle_dock") {
+    assert(mount_cradle, "part=\"cradle_dock\" needs mount_cradle = true");
+    intersection() {
+        frame();
+        cradle_docked(fr_depth)
+            cradle_plate(cradle_dx, cradle_dy,
+                         cradle_plate_w(cradle_dx), cradle_plate_h(cradle_dy));
+    }
+}
 else if (part == "gauge")       gauge();
 else if (part == "gauge_tray")  gauge_corner("back");
 else if (part == "gauge_bezel") gauge_corner("bezel");
@@ -4034,8 +4128,16 @@ else if (part == "plug_teth_barb") {
 // WALL-MOUNT FLUSHNESS: hung on its keyholes the case bears on the back
 // plate, so nothing — no fitment, no leash head, no strap — may stand proud
 // of it, or the case rocks on that point instead of lying flat. Must be
-// EMPTY. The slab starts 0.02 clear of the plate so a coplanar face cannot
-// mint the zero-volume sheets that fail the render instead of the check.
+// EMPTY. The slab starts 0.02 clear of the bearing plane so a coplanar face
+// cannot mint the zero-volume sheets that fail the render instead of the
+// check.
+//
+// WHICH plane that is depends on how the case is hung, and the gate has to
+// follow: on a keyhole build the case bears on the back PLATE, but on a
+// cradle build it bears on its four PAD TIPS and the plate between them is
+// deliberately held cr_pad_h off the wall. Probing at the plate on a cradle
+// build would report the dock itself as a flushness defect — the gate would
+// be measuring the wrong surface and failing honest geometry.
 else if (part == "back_flush")
     intersection() {
         union() {
@@ -4044,7 +4146,8 @@ else if (part == "back_flush")
             button_plug_installed();
             sd_cover_installed();
         }
-        translate([-fr_xo/2 - 5, -fr_yo/2 - 5, fr_depth + 0.02])
+        translate([-fr_xo/2 - 5, -fr_yo/2 - 5,
+                   fr_depth + (mount_cradle ? cr_pad_h() : 0) + 0.02])
             cube([fr_xo + 10, fr_yo + 10, 10]);
     }
 else if (part == "dock_probe_fit")

@@ -261,6 +261,29 @@
    }
   },
   {
+   "id": "cradle_lib",
+   "scad": "canary_cradle_lib.scad",
+   "title": "Canary — CRADLE LIBRARY (the click-on wall dock)",
+   "family": "universal",
+   "device_compat": [],
+   "class": "accessory",
+   "fit": "standard",
+   "variant_axes": [],
+   "variants": [],
+   "render_parts": [],
+   "options": [],
+   "engineering_param_count": 0,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 0,
+    "released": 0,
+    "options": 0,
+    "user_options": 0,
+    "variant_axes": 0
+   }
+  },
+  {
    "id": "dash_display",
    "scad": "canary_dash_display.scad",
    "title": "Canary — DASHBOARD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
@@ -270,12 +293,23 @@
    ],
    "class": "primary",
    "fit": "standard",
-   "variant_axes": [],
+   "variant_axes": [
+    {
+     "param": "mount",
+     "values": [
+      "cradle",
+      "none"
+     ],
+     "default": "cradle",
+     "audience": "user",
+     "note": "— \"none\" leaves the back bare for"
+    }
+   ],
    "variants": [
     {
      "id": "dashboard-display-case",
      "name": "Dashboard display case",
-     "for": "Waveshare ESP32-S3-Touch-LCD-4.3 (the [display research](../display_research.md) step-up dashboard): face-down bezel frame, vented screw-on back with keyholes + 75 mm M4 pair, free-standing 25° desk cradle. Panel dims are NOMINAL — measure yours",
+     "for": "Waveshare ESP32-S3-Touch-LCD-4.3 (the [display research](../display_research.md) step-up dashboard): face-down bezel frame, vented screw-on back that clicks onto a wall cradle ([`canary_cradle_lib.scad`](./canary_cradle_lib.scad) — two rigid T-studs carry it, two sprung clips hold the bottom, pull it off for service), free-standing 25° desk cradle. v0.2 retires the old back pattern: a 75 mm M4 pair on one centerline crossed with two keyholes on the other made an X of four holes and two fastener systems, which the dock replaces with one plate and two screws. Panel dims are NOMINAL — measure yours",
      "status": "in-development",
      "device": "canary-display-dash",
      "selects": {},
@@ -302,7 +336,8 @@
    "render_parts": [
     "frame",
     "back",
-    "stand"
+    "stand",
+    "cradle"
    ],
    "options": [
     {
@@ -314,7 +349,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 21,
+   "engineering_param_count": 22,
    "alternatives": [
     "s3_lcd7"
    ],
@@ -324,7 +359,7 @@
     "released": 0,
     "options": 1,
     "user_options": 1,
-    "variant_axes": 0
+    "variant_axes": 1
    }
   },
   {
@@ -1005,6 +1040,8 @@
     "dock_probe_p",
     "dock_probe_p2",
     "ring_gauge",
+    "cradle",
+    "cradle_dock",
     "port_teth_hole",
     "port_teth_barb",
     "port_barb_proud",
@@ -1073,12 +1110,20 @@
      "default": true
     },
     {
+     "id": "mount_cradle",
+     "type": "bool",
+     "label": "dock on the wall cradle (part=\"cradle\")",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "mount_keyholes",
      "type": "bool",
      "label": "wall-mount keyholes through the back plate, one in",
      "consequence": "",
      "audience": "user",
-     "default": true
+     "default": false
     },
     {
      "id": "mount_portrait",
@@ -1298,7 +1343,7 @@
      "default": "none"
     }
    ],
-   "engineering_param_count": 261,
+   "engineering_param_count": 263,
    "alternatives": [
     "dash_display"
    ],
@@ -1306,8 +1351,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 31,
-    "user_options": 31,
+    "options": 32,
+    "user_options": 32,
     "variant_axes": 1
    }
   },

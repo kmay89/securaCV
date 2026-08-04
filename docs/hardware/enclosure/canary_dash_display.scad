@@ -21,8 +21,15 @@
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
 // ============================================================================
 
+use <canary_cradle_lib.scad>   // the click-on wall dock — shared with the 7"
+// Downloaded this file alone? The back's dock pads and their pockets come
+// from that library. A missing one would render a back plate with four blind
+// bumps and no way to hang it, with only a console warning. Hard stop:
+assert(is_num(cr_pad_h()),
+       "canary_cradle_lib.scad is MISSING — this case docks on it. Download canary_cradle_lib.scad from the same folder and keep the two files side by side.");
+
 /* [What to render] */
-part = "all";        // ["frame","back","stand","all"]
+part = "all";        // ["frame","back","stand","cradle","all"]
 
 /* [Panel] — Waveshare ESP32-S3-Touch-LCD-4.3. MEASURE YOURS */
 panel_l = 106.3;     // glass outline X — MEASURE
@@ -52,11 +59,24 @@ lob_d = 7.0;  lob_o = 2.2;   // lobe Ø / diagonal offset outboard of the cavity
 pilot_d = 1.7;  screw_c = 2.4;  cb_d = 4.4;  cb_h = 1.4;
 
 /* [Rear mounts] */
-// A true VESA-75 SQUARE cannot fit this panel (the shell is only ~74 mm
-// tall) — the back carries a 75 mm HORIZONTAL M4 pair on the centerline
-// (matches Waveshare's case-back spacing) plus two through-keyholes.
-mnt_pair = 75.0;     // horizontal M4 pair spacing
-kh_head_d = 8.0;  kh_shank_d = 4.2;  kh_slot_l = 8.0;   // Ø8 passes a real #6/#8 pan head after FDM shrink
+// v0.2: the back DOCKS on a cradle (canary_cradle_lib.scad) — a wall plate
+// takes the screws and the case clicks onto it.
+//
+// What it replaces, and why. v0.1 put a 75 mm horizontal M4 pair on one
+// centerline and two keyholes on the other, so the four mount points formed
+// a DIAMOND across the back: two different fastener systems, crossed, each
+// covering for what the other could not do. It was never a pattern anyone
+// chose — it was the residue of "a true VESA-75 square does not fit a 74 mm
+// shell" plus "but it should also hang on two screws." The cradle makes the
+// question go away: the wall gets one plate with two screws in it, and the
+// case gets four low pads and no fasteners at all.
+mount = "cradle";    // ["cradle","none"] — "none" leaves the back bare for
+                     // a desk-only build (the stand needs no mount features)
+cradle_dx = 38.0;    // half-span of the four dock features, X…
+cradle_dy = 16.0;    // …and Y. Asserted below: wide enough that the case
+                     // cannot pivot on them and the clip arms clear each
+                     // other, small enough that the plate hides behind the
+                     // case and the pads miss the vent rows.
 
 /* [Vents] */
 vent_n = 8;  vent_w = 1.2;  vent_l = 16.0;
@@ -85,7 +105,20 @@ assert(bez_lip >= 1.5, "bezel lip < 1.5 mm won't retain the glass");
 // lobe must clear the cavity corner (cavity corner radius = 2)
 assert(sqrt(2)*(lob_o + 2) >= lob_d/2 + 2 + 0.2,
        "screw lobe intrudes into the panel cavity — raise lob_o or shrink lob_d");
-assert(mnt_pair + 8 <= out_l, "M4 pair doesn't fit — grow the shell or shrink mnt_pair");
+// The dock interface checks itself (strain budget, engagement, pad depth) —
+// `use <>` does not run a library's top-level asserts, so the adopter has to
+// ask. See the note in canary_cradle_lib.scad's header.
+assert(mount != "cradle" || cradle_selfcheck(), "cradle interface self-check failed");
+assert(mount != "cradle" || cradle_span_ok(cradle_dx, cradle_dy),
+       "dash: cradle span too small — the case would pivot on its dock, or the clip arms would meet in the middle");
+// the plate has to HIDE behind the case, or the mount is back on the outside
+assert(mount != "cradle"
+       || (cradle_plate_w(cradle_dx) <= out_l - 6 && cradle_plate_h(cradle_dy) <= out_w - 6),
+       "dash: the cradle plate is bigger than the case it should disappear behind — shrink the span");
+// ...and the pads must miss the vent rows, which own y = ±(out_w/2 - 20 .. -4)
+assert(mount != "cradle"
+       || cradle_dx - (cr_barb_w() + 9)/2 > (vent_n - 1)*8/2 + vent_w,
+       "dash: a cradle pad lands on the back vent row — widen cradle_dx or narrow the vent field");
 assert(usb_h <= stack_t, "usb_h exceeds the rear stack depth");
 assert(cb_h + 1.0 <= back_t, "counterbore through the back plate");
 
@@ -132,28 +165,35 @@ module frame() {
     }
 }
 
-// ---- back (z0 = outer face; print outer-face-down) ---------------------------
+// ---- back (z0 = outer face) ---------------------------------------------------
+// The dock pads stand on the OUTER (wall-facing) face, which in this part's
+// frame is z = 0 — hence the mirror. Getting that backwards puts four solid
+// bumps inside the cavity, on top of the board, and the render still exports
+// a perfectly watertight mesh that is simply wrong; the counterbores at z ≈ 0
+// are the tell, since screws enter from outside.
+//
+// PRINT IT PADS-UP (inner face on the bed). v0.1 said outer-face-down for a
+// clean A-surface, which was never the point here — the outer face is the one
+// against the wall. Pads-up puts the pocket bridges where a bridge belongs
+// and leaves nothing overhanging.
 module back() {
     difference() {
-        linear_extrude(back_t) outline2d();
+        union() {
+            linear_extrude(back_t) outline2d();
+            if (mount == "cradle")
+                mirror([0, 0, 1]) cradle_pads(cradle_dx, cradle_dy, 0);
+        }
+        if (mount == "cradle")
+            mirror([0, 0, 1]) cradle_pad_cuts(cradle_dx, cradle_dy, 0);
         // screw counterbores + clearance (screws from the back into the bosses)
         for (p = bosses()) translate([p[0], p[1], 0]) {
             translate([0, 0, -0.1]) cylinder(d = cb_d, h = cb_h + 0.1);
             translate([0, 0, -0.1]) cylinder(d = screw_c, h = back_t + 0.2);
         }
-        // 75 mm horizontal M4 pair on the centerline. NOTE: arm screws max
-        // M4 x (arm plate + 2.4) — longer tips enter the cavity; the +3 mm
-        // rear clearance in cav_t is the buffer, not an invitation
-        for (sx = [1, -1])
-            translate([sx*mnt_pair/2, 0, -0.1]) cylinder(d = 4.5, h = back_t + 0.2);
-        // two through-keyholes on the vertical centerline (hang direction: up)
-        for (yc = [18, -18]) translate([0, yc, 0]) {
-            translate([0, -kh_slot_l/2, -0.1]) cylinder(d = kh_head_d, h = back_t + 0.2);
-            translate([0, 0, -0.1]) linear_extrude(back_t + 0.2) hull() {
-                translate([0, -kh_slot_l/2]) circle(d = kh_shank_d);
-                translate([0,  kh_slot_l/2]) circle(d = kh_shank_d);
-            }
-        }
+        // (v0.1's M4 pair + centerline keyholes lived here — the diamond.
+        //  They are gone, not disabled: the cradle covers both jobs, and a
+        //  back plate carrying two retired mount systems as well as the live
+        //  one is how a part ends up with four holes nobody can explain.)
         // vent slots (top third, mirrored bottom third)
         for (i = [0:vent_n - 1], sy = [1, -1])
             translate([-((vent_n - 1)*8)/2 + i*8 - vent_w/2, sy*(out_w/2 - 12) - vent_l/2, -0.1])
@@ -188,12 +228,41 @@ module stand() {
         cube([stand_w - 30, 3, 6]);
 }
 
+// ---- the wall cradle ----------------------------------------------------------
+// Prints face-down exactly as modeled: studs and clip barbs point up, and
+// every overhang on it is either a 45° ramp or the T-stud's 1.3 mm collar.
+module cradle() {
+    assert(mount == "cradle", "part=\"cradle\" needs mount=\"cradle\"");
+    cradle_plate(cradle_dx, cradle_dy,
+                 cradle_plate_w(cradle_dx), cradle_plate_h(cradle_dy));
+}
+
 // ---- selector -----------------------------------------------------------------
-if      (part == "frame") frame();
-else if (part == "back")  back();
-else if (part == "stand") stand();
+if      (part == "frame")  frame();
+else if (part == "back")   back();
+else if (part == "stand")  stand();
+else if (part == "cradle") cradle();
+// DOCK FIT GATE — the seated plate against the back it seats in. Must be
+// EMPTY: studs sit in their keyholes, barbs in their pockets, and nothing
+// touches anything. This is the check that a span, a tolerance or a moved
+// feature cannot quietly break, because it tests the whole engagement at
+// once rather than each dimension on its own. (The back is modeled with its
+// outer face at z = 0, so that is the z0 the dock transform wants.)
+else if (part == "dock_probe") {
+    assert(mount == "cradle", "part=\"dock_probe\" needs mount=\"cradle\"");
+    // The SAME mirror the pads are built under — this part models its outer
+    // face at z = 0 with the case behind it, so the dock grows in -z. Without
+    // it the plate lands on the far side and only its studs and barbs reach
+    // back into the slab, which is exactly what this gate reported the first
+    // time it ran: four small volumes, one per feature. A gate that can
+    // localize its own failure to "the four things that stick out" is worth
+    // more than one that just says no.
+    intersection() { back(); mirror([0, 0, 1]) cradle_docked(0) cradle(); }
+}
 else {
     frame();
     translate([0, out_w + 14, 0]) back();
     translate([0, -(out_w/2 + stand_d/2 + 16), 0]) stand();
+    if (mount == "cradle")
+        translate([out_l + 20, out_w + 14, 0]) cradle();
 }
