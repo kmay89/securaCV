@@ -952,16 +952,24 @@
      "consequence": "",
      "audience": "user",
      "default": true
+    },
+    {
+     "id": "mark_bird_ok",
+     "type": "bool",
+     "label": "this plate cannot carry the mark; see above",
+     "consequence": "",
+     "audience": "user",
+     "default": false
     }
    ],
-   "engineering_param_count": 111,
+   "engineering_param_count": 112,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 7,
-    "user_options": 7,
+    "options": 8,
+    "user_options": 8,
     "variant_axes": 0
    }
   },
@@ -1070,6 +1078,22 @@
      "default": true
     },
     {
+     "id": "vent_grade",
+     "type": "bool",
+     "label": "false = every egg full size, as before",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "badge_column",
+     "type": "bool",
+     "label": "false = let the grille back into the badge's half",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "vent_top",
      "type": "bool",
      "label": "EXHAUST — slots through the top (+Y) wall",
@@ -1129,14 +1153,6 @@
      "id": "back_bird",
      "type": "bool",
      "label": "back_bird",
-     "consequence": "",
-     "audience": "user",
-     "default": true
-    },
-    {
-     "id": "bird_fill",
-     "type": "bool",
-     "label": "solid silhouette (brand art) vs. outline strokes",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1303,7 +1319,7 @@
      "label": "deboss the help QR into the back plate too",
      "consequence": "",
      "audience": "user",
-     "default": true
+     "default": false
     },
     {
      "id": "stamp_show",
@@ -1327,7 +1343,7 @@
      "default": "none"
     }
    ],
-   "engineering_param_count": 263,
+   "engineering_param_count": 283,
    "alternatives": [
     "dash_display"
    ],
@@ -1335,8 +1351,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 32,
-    "user_options": 32,
+    "options": 33,
+    "user_options": 33,
     "variant_axes": 1
    }
   },

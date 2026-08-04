@@ -42,6 +42,7 @@
 //! | [`pairing`] | Pair Setup (SRP-6a) and Pair Verify (X25519), and the pairing table |
 //! | [`server`] | Discovery, connections, routing, and the metronome |
 //! | [`store`] | Identity, setup code and pairings across restarts |
+//! | [`tty`] | Turning terminal echo off, and getting it back on however we leave |
 //! | [`wizard`] | The guessing and prompt-parsing behind `hap_bridge setup` |
 //! | [`session`] | The encrypted frame transport that follows Pair Verify |
 
@@ -56,4 +57,5 @@ pub mod server;
 pub mod session;
 pub mod store;
 pub mod tlv8;
+pub mod tty;
 pub mod wizard;

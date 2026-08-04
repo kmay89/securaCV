@@ -7,4 +7,4 @@
 // does not prove (provenance, NOT authenticity).
 // Functions, not variables, so nothing here surfaces in the Customizer.
 function lcd7_stamp_rev() = "2026.10b";
-function lcd7_stamp_src() = "3G1Y7TQ9";
+function lcd7_stamp_src() = "FNN96Q8F";

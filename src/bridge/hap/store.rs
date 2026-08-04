@@ -201,9 +201,15 @@ pub fn save(path: &Path, state: &PersistedState) -> Result<()> {
     Ok(())
 }
 
-/// Refuse a state file that anyone but its owner can read.
+/// Refuse a file holding a secret that anyone but its owner can read.
+///
+/// Shared with [`config`](super::config), whose file can carry the broker
+/// password. Both refuse rather than silently tightening the mode: quietly
+/// re-hiding a secret that has already been exposed to every local user
+/// hides the fact that it *was* exposed, which is the part the operator
+/// needs to act on.
 #[cfg(unix)]
-fn check_permissions(path: &Path) -> Result<()> {
+pub fn refuse_if_group_or_world_readable(path: &Path, holds: &str) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let mode = fs::metadata(path)
         .with_context(|| format!("failed to stat {}", path.display()))?
@@ -211,9 +217,8 @@ fn check_permissions(path: &Path) -> Result<()> {
         .mode();
     if mode & 0o077 != 0 {
         return Err(anyhow!(
-            "HAP state {} is mode {:o}: it holds the accessory's private key and must not be \
-             readable by group or other. Fix with `chmod 600 {}` — and treat the key as exposed, \
-             because it was.",
+            "{} is mode {:o}: it holds {holds} and must not be readable by group or other. \
+             Fix with `chmod 600 {}` — and treat the secret as exposed, because it was.",
             path.display(),
             mode & 0o777,
             path.display()
@@ -223,8 +228,12 @@ fn check_permissions(path: &Path) -> Result<()> {
 }
 
 #[cfg(not(unix))]
-fn check_permissions(_path: &Path) -> Result<()> {
+pub fn refuse_if_group_or_world_readable(_path: &Path, _holds: &str) -> Result<()> {
     Ok(())
+}
+
+fn check_permissions(path: &Path) -> Result<()> {
+    refuse_if_group_or_world_readable(path, "the accessory's private key")
 }
 
 /// A random `XXX-XX-XXX` setup code that is not one HAP forbids.
