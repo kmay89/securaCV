@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CloudKit container gate — no `CKContainer.default()`, and one identifier.
+"""CloudKit container gate — no `CKContainer.default()`, one identifier, one schema list.
 
 TWO RULES, ONE CRASH BEHIND BOTH
 --------------------------------
@@ -27,6 +27,23 @@ So:
 Rule 2 is the reason this is a linter and not a code review note: "two numbers
 that must agree, typed twice" is the failure this repo keeps meeting, and the
 fix that works is a gate rather than a promise.
+
+A THIRD RULE, THE SAME SHAPE, A DIFFERENT SILENCE
+-------------------------------------------------
+  3. EVERY CKRECORD TYPE THE APP USES IS LISTED IN ios/scripts/
+     cloudkit_schema.sh. CloudKit invents record types on first write in the
+     DEVELOPMENT environment and refuses to in production, so a type nobody
+     deployed makes every save and every query against it fail — and both
+     CloudKit call sites in this app swallow their errors on purpose, because a
+     failed sync must never stall the local alert already reaching the person
+     in the room. The result is a feature that is simply dead in the shipped
+     app with nothing anywhere to point at.
+
+     `cloudkit_schema.sh` is the tool that promotes the schema and answers
+     "did it ship?" — and it can only check the types it has been told about.
+     Its first version knew only `WitnessWake`, while `CloudSync` had been
+     writing and querying `PairedDevice` since the day it was written. Nothing
+     caught that, because nothing was looking. This rule looks.
 
 Run: python3 scripts/lint_cloudkit_container.py   (exit 0 = clean, 1 = drift)
 """
@@ -56,6 +73,29 @@ ENTITLEMENT_KEY = "com.apple.developer.icloud-container-identifiers"
 # Where a `.default()` call would be a crash waiting for an unsigned build.
 SWIFT_ROOTS = ["ios", "tvos"]
 BANNED_CALL = re.compile(r"\bCKContainer\s*\.\s*default\s*\(")
+
+# The schema tool, and the table inside it that lists what production needs.
+SCHEMA_SCRIPT = "ios/scripts/cloudkit_schema.sh"
+
+# Rows of that table look like `WitnessWake|sev|-|createdTimestamp` and are the
+# only lines in the file that begin with a bare identifier followed by a pipe.
+# Matching the shape rather than parsing the heredoc keeps this gate working if
+# the table grows a column, which is the likelier edit.
+SCHEMA_ROW_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_]*)\|", re.MULTILINE)
+
+# How a record type's name reaches CloudKit from Swift. Two spellings, because
+# the app uses both and a gate that knows only one is a gate with a hole:
+#   * inline   — CKRecord(recordType: "PairedDevice", …), CKQuery(recordType: …)
+#   * by name  — static let wakeRecordType = "WitnessWake", passed to
+#                CKQuerySubscription and CKRecord as a constant
+# The second pattern keys on the identifier containing "RecordType", which is
+# the naming this repo already uses and the one a reviewer would expect. A
+# constant named something else would slip past — so if you add one, name it
+# for what it is.
+RECORD_TYPE_INLINE = re.compile(r'\brecordType\s*:\s*"([A-Za-z_][A-Za-z0-9_]*)"')
+RECORD_TYPE_CONST = re.compile(
+    r'\blet\s+\w*[Rr]ecordType\w*\s*(?::\s*String\s*)?=\s*"([A-Za-z_][A-Za-z0-9_]*)"'
+)
 
 errors: list[str] = []
 
@@ -169,11 +209,72 @@ def check_no_default_calls() -> None:
                 )
 
 
+def record_types_in_swift() -> dict[str, str]:
+    """Every CloudKit record type the app names, mapped to where it says it.
+
+    Comments are blanked first (`code_of`), so the prose in AwayPush.swift and
+    in this repo's docs-in-headers style can describe a record type without
+    the gate mistaking the description for a call site.
+    """
+    found: dict[str, str] = {}
+    for root in SWIFT_ROOTS:
+        base = ROOT / root
+        if not base.is_dir():
+            continue
+        for f in sorted(base.rglob("*.swift")):
+            blob = code_of(f.read_text(encoding="utf-8"))
+            for pattern in (RECORD_TYPE_INLINE, RECORD_TYPE_CONST):
+                for m in pattern.finditer(blob):
+                    line_no = blob.count("\n", 0, m.start()) + 1
+                    found.setdefault(
+                        m.group(1), f"{f.relative_to(ROOT)}:{line_no}"
+                    )
+    return found
+
+
+def check_schema_coverage() -> None:
+    text = read(SCHEMA_SCRIPT)
+    if text is None:
+        return
+    listed = set(SCHEMA_ROW_RE.findall(text))
+    if not listed:
+        errors.append(
+            f"[unparsable] {SCHEMA_SCRIPT} no longer contains a `Type|fields|…` "
+            "table. A coverage gate that cannot find what it checks is worse "
+            "than no gate — fix the pattern in this linter, do not delete the "
+            "check."
+        )
+        return
+
+    used = record_types_in_swift()
+
+    for rtype, where in sorted(used.items()):
+        if rtype not in listed:
+            errors.append(
+                f"[unlisted] {where}: record type \"{rtype}\" is used by the app "
+                f"but is not in {SCHEMA_SCRIPT}'s requirements table. "
+                "Production does not auto-create record types, so nobody would "
+                "deploy it and every read and write against it would fail "
+                "silently. Add a row naming its fields and the indexes its "
+                "queries need."
+            )
+
+    for rtype in sorted(listed - set(used)):
+        errors.append(
+            f"[stale] {SCHEMA_SCRIPT} requires record type \"{rtype}\", but no "
+            "Swift source names it. Either the app dropped it (remove the row) "
+            "or it is reached by a spelling this gate cannot see (name the "
+            "constant `…RecordType`). A requirement nobody needs teaches the "
+            "next person to distrust the table."
+        )
+
+
 def main() -> int:
     want = declared_identifier()
     if want is not None:
         check_entitlements(want)
     check_no_default_calls()
+    check_schema_coverage()
 
     if errors:
         print(
@@ -183,7 +284,11 @@ def main() -> int:
         for e in errors:
             print(f"  {e}", file=sys.stderr)
         return 1
-    print(f'CloudKit container OK — "{want}" everywhere, no .default() call sites.')
+    types = ", ".join(sorted(record_types_in_swift())) or "none"
+    print(
+        f'CloudKit container OK — "{want}" everywhere, no .default() call '
+        f"sites, schema table covers: {types}."
+    )
     return 0
 
 

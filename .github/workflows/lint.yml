@@ -114,7 +114,7 @@ jobs:
         # It also self-tests that its ban pattern never starts matching correct
         # English (characteristic, realistic, colored, …).
         run: python3 scripts/lint_spelling.py
-      - name: CloudKit container — named, never defaulted
+      - name: CloudKit container — named, never defaulted, fully deployed
         # CKContainer.default() reads an entitlement and raises an ObjC
         # CKException when there isn't one. Swift can't catch that, so an
         # unsigned build (CI builds exactly that) aborts on launch — which is
@@ -122,6 +122,12 @@ jobs:
         # iCloud. The gate bans the call and cross-checks the one hardcoded
         # container identifier against both entitlements files, because a
         # name that drifts silently swaps one broken iCloud for another.
+        # It also checks that every CKRecord type the app uses is listed in
+        # ios/scripts/cloudkit_schema.sh: production never auto-creates a
+        # record type, so one nobody deployed makes every read and write
+        # against it fail — silently, because both call sites swallow errors
+        # on purpose. PairedDevice was missing from that table for its whole
+        # life. See docs/design/cloudkit_backend.md.
         run: python3 scripts/lint_cloudkit_container.py
       - name: Agent entrypoints match AGENTS.md
         # Every AI tool reads a different filename (GEMINI.md, QWEN.md,
