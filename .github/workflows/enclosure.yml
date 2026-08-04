@@ -63,16 +63,34 @@ jobs:
           # (Benign CGAL cache statistics lines are not matched by these patterns.)
           ! grep -E 'ERROR|WARNING|Object isn.t a valid 2-manifold' render.log
 
-      - name: Verify STLs are watertight single parts
+      - name: Verify STLs are watertight, with the expected number of parts
         run: |
           status=0
+          # Almost everything here is ONE solid, and a second part means a
+          # floating hook or a stray inlay. The exceptions are parts that are
+          # genuinely a SET, and each states its count rather than opting out
+          # of the check — a count is a regression guard, an exemption is not.
+          #
+          #   dev_s3_147_band.stl — the hallway stick's white light band: one
+          #   continuous strip per long wall, so exactly 2. It was 8 when the
+          #   ties across the seam were webs through the outer skin, which
+          #   chopped the strip into 2.3 mm dashes; moving them to hidden
+          #   inboard ribs made each side whole. If this ever reads 8 again,
+          #   that regression is back.
+          expect_parts() {
+            case "$1" in
+              dev_s3_147_band.stl) echo 2 ;;
+              *)                   echo 1 ;;
+            esac
+          }
           for f in *.stl; do
+            want=$(expect_parts "$f")
             out=$(admesh "$f")
             parts=$(echo "$out" | sed -n 's/.*Number of parts *: *\([0-9]*\).*/\1/p')
             bad=$(echo "$out"   | sed -n 's/^Total disconnected facets *: *\([0-9]*\).*/\1/p')
-            echo "$f: parts=$parts disconnected=$bad"
-            if [ "$parts" != "1" ] || [ "$bad" != "0" ]; then
-              echo "::error file=docs/hardware/enclosure/$f::bad mesh (parts=$parts, disconnected=$bad)"
+            echo "$f: parts=$parts (want $want) disconnected=$bad"
+            if [ "$parts" != "$want" ] || [ "$bad" != "0" ]; then
+              echo "::error file=docs/hardware/enclosure/$f::bad mesh (parts=$parts, want $want, disconnected=$bad)"
               status=1
             fi
           done
