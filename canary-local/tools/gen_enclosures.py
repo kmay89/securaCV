@@ -62,6 +62,9 @@ NON_PRODUCT_SCADS = {
     "canary_mark_lib.scad",           # THE BIRD — the shared mark, geometry not a part
     "canary_panel_lib.scad",          # the PANEL REGISTRY — describes the boards a
                                       # case is built AROUND, not a thing you print
+    "canary_mark_lib.scad",           # the HOUSE MARK — the bird as printable
+                                      # geometry for other parts to wear, not a
+                                      # part in its own right
     "canary_s3_lcd7_stamp.scad",      # generated build stamp (gen_stamp.py)
 }
 

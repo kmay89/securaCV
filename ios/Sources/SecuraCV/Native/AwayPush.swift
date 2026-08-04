@@ -105,6 +105,9 @@ final class AwayPush: ObservableObject {
         #if canImport(CloudKit)
         // The account IS the availability check — don't gate on a flag owned
         // elsewhere, or this path inherits that flag's bugs on top of its own.
+        // Constructing the container is safe on its own: CloudContainer names
+        // it, so nothing here can hit the uncatchable-exception path that
+        // CKContainer.default() had.
         let container = CloudContainer.shared
         let status = try? await container.accountStatus()
         guard status == .available else {

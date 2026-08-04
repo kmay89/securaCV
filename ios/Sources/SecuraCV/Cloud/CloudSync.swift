@@ -34,6 +34,16 @@ final class CloudSync {
 
     /// Ask CloudKit whether this user has an account we may use. Cheap, safe
     /// to call repeatedly, and the only thing that may set `isAvailable`.
+    ///
+    /// There is no "is it safe to touch CloudKit" pre-check here, and that is
+    /// deliberate — see CloudContainer.swift. The crash this used to cause was
+    /// `CKContainer.default()` raising an uncatchable ObjC exception while
+    /// resolving a container from an absent entitlement; naming the container
+    /// removes that path entirely, so there is nothing left to guard. A guard
+    /// in front of it could only subtract: every cheap pre-check available
+    /// here answers a DIFFERENT question than "may I construct a container",
+    /// and getting it wrong switches iCloud off for people who have it — the
+    /// exact silent-disable the `isAvailable` comment above is a memorial to.
     @discardableResult
     func refreshAvailability() async -> Bool {
         #if canImport(CloudKit)
