@@ -88,6 +88,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [Example automations](homeassistant_automations.yaml) — copy-paste YAML
 - [HA + Frigate over MQTT, worked example](integrations/home-assistant-frigate-mqtt.md)
 - [MR60BHA2 radar via ESPHome](integrations/mr60bha2_esphome.md)
+- [Apple Home via the HA HomeKit Bridge, worked recipe](integrations/apple-home-homekit-bridge.md) — phase A0 of the [Apple Home RFC](design/apple_home_integration.md): motion/smoke/occupancy into the Home app with zero new code, remote notifications via the household's own Apple TV/HomePod hub, the three redundant push lanes (Apple Home / HA companion / AwayPush), and the honest power-outage story (UPS today, outage-as-evidence on restore, alert-relay mesh designed)
 - Onboarding flows: [multiple Canaries](onboarding_multiple_canaries.md) · [the unified wizard](onboarding_unified_wizard.md) · [workflow evaluation](onboarding_workflow_evaluation.md)
 - [One onboarding, every board (design)](design/onboarding_shared_module.md) — inventory + phased plan for extracting the WAP's network stack (captive DNS/probes, `canary.local`, the join wizard) into `firmware/common/network/`: today three divergent portals exist and Sense/Vision ship with none
 - [The one-flash Pi hub (design)](design/raspberry_pi_hub_flashing.md) — RFC: type Wi-Fi, write the card, boot a self-healing Home Assistant hub — built on HAOS so it never rots
