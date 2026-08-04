@@ -7688,23 +7688,59 @@
       },
       {
        "name": "bird_h",
-       "default": "32.0",
-       "comment": "mark height. The clear middle runs about x ±21 between"
+       "default": "33.0",
+       "comment": "the bird's height, and the module the whole lockup is"
       },
       {
-       "name": "bird_dx",
-       "default": "0.0",
-       "comment": "centered: the lockup is below it, the rating block is"
+       "name": "mark_dx",
+       "default": "0.5",
+       "comment": "group center x — the middle of the clear column, not"
       },
       {
        "name": "bird_dy",
+       "default": "12.0",
+       "comment": "the BIRD's center y. The words hang below it, so the"
+      },
+      {
+       "name": "word_sz",
        "default": "6.0",
-       "comment": "upper-right, the QR left — this is the one empty field"
+       "comment": "CANARY — the hero line, half again the old 4.0"
+      },
+      {
+       "name": "sub_sz",
+       "default": "3.6",
+       "comment": "SECURACV — the tracked company line above it"
+      },
+      {
+       "name": "word_gap",
+       "default": "4.2",
+       "comment": "bird's baseline → the company line"
+      },
+      {
+       "name": "line_gap",
+       "default": "2.6",
+       "comment": "company line → hero line"
       },
       {
        "name": "bird_rib",
        "default": "1.2",
        "comment": "stroke width. WIDER than the coupon's 0.7 test rib on"
+      },
+      {
+       "name": "mark_sub_y",
+       "default": "bird_dy - bird_h/2 - word_gap - sub_sz/2"
+      },
+      {
+       "name": "mark_word_y",
+       "default": "mark_sub_y - sub_sz/2 - line_gap - word_sz/2"
+      },
+      {
+       "name": "mark_top_y",
+       "default": "bird_dy + bird_h/2"
+      },
+      {
+       "name": "mark_bot_y",
+       "default": "mark_word_y - word_sz/2"
       },
       {
        "name": "sd_dx",
@@ -7831,6 +7867,14 @@
        "default": "pal_lum(pal_body_rgb) < pal_lum(pal_ink_rgb)"
       },
       {
+       "name": "ink_groups",
+       "default": "[]"
+      },
+      {
+       "name": "accent_groups",
+       "default": "[\"mark\", \"bird\", \"qr\"]"
+      },
+      {
        "name": "qr_style",
        "default": "bare",
        "enum": [
@@ -7841,24 +7885,24 @@
        "comment": "help-QR look"
       },
       {
-       "name": "qr_plaque",
-       "default": "qr_style == \"auto\" ? body_is_dark : qr_style == \"plaque"
+       "name": "qr_fill_rgb",
+       "default": "grp_rgb(\"qr\")"
+      },
+      {
+       "name": "qr_mod_rgb",
+       "default": "qr_plaque ? pal_body_rgb : qr_fill_rgb"
+      },
+      {
+       "name": "qr_field_rgb",
+       "default": "qr_plaque ? qr_fill_rgb  : pal_body_rgb"
       },
       {
        "name": "qr_dark_on_light",
-       "default": "qr_plaque ? body_is_dark : !body_is_dark"
+       "default": "pal_lum(qr_mod_rgb) < pal_lum(qr_field_rgb)"
       },
       {
        "name": "bezel_ink_t",
        "default": "0.6"
-      },
-      {
-       "name": "ink_groups",
-       "default": "[\"qr\"]"
-      },
-      {
-       "name": "accent_groups",
-       "default": "[\"mark\", \"bird\"]"
       },
       {
        "name": "bezel_color",
@@ -8604,7 +8648,7 @@
       },
       {
        "name": "bird_half_w",
-       "default": "back_bird ? bird_h*0.62 : 0"
+       "default": "back_bird ? mark_half_w : 0"
       },
       {
        "name": "stamp_half",
