@@ -526,7 +526,7 @@
   {
    "id": "7-touch-dashboard-case",
    "name": "7″ touch dashboard case",
-   "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on molded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (~52 cm² back grille + bottom-wall intake and top-wall exhaust — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centered USB pass-through plus a matching side exit on the microSD's wall (hang the case portrait with that wall down and the cable leaves out the bottom; the leashed blank fills whichever exit is idle) and three TPU fitments: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive leashed press-through BOOT/RESET plug whose press towers reach the button caps at the board edge, and a peel-open SD cover that stays attached. Optional 20° desk dock for the frame (drop-in slot on tilted seat pads, self-centering keys into the frame's keying slots, landscape and portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centers and `pcb_h` are NOMINAL — measure yours",
+   "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on molded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (bottom-wall intake → top-wall exhaust — print in PETG/ASA, this panel runs hot; the two-part tray adds a ~41 cm² back grille, and the one-piece `frame`'s plate deliberately carries none — see the back-plate section), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centered USB pass-through plus a matching side exit on the microSD's wall (hang the case portrait with that wall down and the cable leaves out the bottom; the leashed blank fills whichever exit is idle) and three TPU fitments: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive leashed press-through BOOT/RESET plug whose press towers reach the button caps at the board edge, and a peel-open SD cover that stays attached. Optional 20° desk dock for the frame (drop-in slot on tilted seat pads, self-centering keys into the frame's keying slots, landscape and portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centers and `pcb_h` are NOMINAL — measure yours",
    "status": "in-development",
    "note": "glass drops in, lip 10.4, TPU-fitted ports",
    "device": "canary-display-dash",
@@ -7360,7 +7360,12 @@
       {
        "name": "vent_back",
        "default": "true",
-       "comment": "large grille in the back plate"
+       "comment": "grille in the TWO-PART TRAY's back (part=\"back\")."
+      },
+      {
+       "name": "plate_grille",
+       "default": "false",
+       "comment": "large grille in the ONE-PIECE FRAME's back plate."
       },
       {
        "name": "vent_rows",
@@ -7698,19 +7703,19 @@
        "comment": "debossed on the visible bottom edge"
       },
       {
-       "name": "brand_row_maker",
-       "default": "4.4",
-       "comment": "maker line, closest to the rim"
+       "name": "brand_drop_sub",
+       "default": "7.8",
+       "comment": "from the mark's box bottom down to each row's"
       },
       {
-       "name": "brand_row_hero",
-       "default": "12.6",
-       "comment": "brand_back — the product name, the biggest row"
+       "name": "brand_drop_hero",
+       "default": "16.8",
+       "comment": "center. sub is the company line (tracked, smaller),"
       },
       {
-       "name": "brand_row_sub",
-       "default": "21.6",
-       "comment": "brand_sub — the company line, tracked and smaller"
+       "name": "brand_drop_maker",
+       "default": "25.0",
+       "comment": "hero the product name, maker the footnote."
       },
       {
        "name": "brand_sz",
@@ -7774,12 +7779,12 @@
       },
       {
        "name": "bird_dx",
-       "default": "-24.0",
+       "default": "-18.5",
        "comment": "LEFT of center, and not by taste: the SD mouth owns"
       },
       {
        "name": "bird_dy",
-       "default": "6.0",
+       "default": "13.2",
        "comment": "x 23..48, so a centered mark would put its tail through"
       },
       {
@@ -7828,6 +7833,42 @@
        "name": "sd_l",
        "default": "40.0",
        "comment": "length along the slide direction"
+      }
+     ]
+    },
+    {
+     "name": "Frame — radio window (FCC/IC marking)",
+     "note": "",
+     "params": [
+      {
+       "name": "soc_win",
+       "default": "false"
+      },
+      {
+       "name": "soc_grow",
+       "default": "1.2",
+       "comment": "plate cut back beyond the can on every side. Two jobs: it"
+      },
+      {
+       "name": "soc_r",
+       "default": "1.2",
+       "comment": "corner round. \"Plain rectangle\" is the brief and this still"
+      },
+      {
+       "name": "soc_dx",
+       "default": "pnl_has_soc(PANEL) ? pnl_soc_u(PANEL) : 0"
+      },
+      {
+       "name": "soc_dy",
+       "default": "pnl_has_soc(PANEL) ? pnl_soc_v(PANEL) : 0"
+      },
+      {
+       "name": "soc_w",
+       "default": "pnl_has_soc(PANEL) ? pnl_soc_w(PANEL) + 2*soc_grow : 0"
+      },
+      {
+       "name": "soc_h",
+       "default": "pnl_has_soc(PANEL) ? pnl_soc_h(PANEL) + 2*soc_grow : 0"
       }
      ]
     },
@@ -8378,7 +8419,7 @@
       },
       {
        "name": "qr_back",
-       "default": "false",
+       "default": "true",
        "comment": "deboss the help QR into the back PLATE"
       },
       {
@@ -8396,7 +8437,7 @@
       },
       {
        "name": "qr_back_dx",
-       "default": "-41.3",
+       "default": "-75.4",
        "comment": "field center, back-view coords (+x = back-view right)."
       },
       {
@@ -8603,6 +8644,11 @@
        "comment": "worst-case thick pack"
       },
       {
+       "name": "soc_cut",
+       "default": "soc_win && !soc_bat_clash",
+       "comment": "what actually gets cut"
+      },
+      {
        "name": "fr_depth",
        "default": "fr_depth0 + bat_extra"
       },
@@ -8656,17 +8702,17 @@
       },
       {
        "name": "rating_dx",
-       "default": "37.0",
-       "comment": "centered between the mark's box and the +x boss pocket"
+       "default": "70.0",
+       "comment": "AT THE PORT. What a spec block is for is answering \"what"
       },
       {
        "name": "rating_dy",
-       "default": "21.0",
-       "comment": "above the card window, below the top vent band"
+       "default": "0.0",
+       "comment": "do I plug in here\", so it belongs beside the thing you"
       },
       {
        "name": "help_line",
-       "default": "SECURACV.COM/QR"
+       "default": ""
       },
       {
        "name": "help_sz",
@@ -8675,7 +8721,7 @@
       {
        "name": "help_dy",
        "default": "6.5",
-       "comment": "between the spec block's last row and the card window"
+       "comment": "(unused while help_line is empty — kept so turning the"
       },
       {
        "name": "help_w",
@@ -8686,16 +8732,20 @@
        "default": "help_sz*1.45 + 2"
       },
       {
+       "name": "brand_anchor",
+       "default": "back_bird ? bird_dy - bird_half_h : -(fr_yi/2 - 29.4)"
+      },
+      {
        "name": "brand_sub_y",
-       "default": "-(fr_yi/2 - brand_row_sub)"
+       "default": "brand_anchor - brand_drop_sub"
       },
       {
        "name": "brand_hero_y",
-       "default": "-(fr_yi/2 - brand_row_hero)"
+       "default": "brand_anchor - brand_drop_hero"
       },
       {
        "name": "brand_maker_y",
-       "default": "-(fr_yi/2 - brand_row_maker)"
+       "default": "brand_anchor - brand_drop_maker"
       },
       {
        "name": "brand_band_hi",
@@ -8787,6 +8837,10 @@
        "name": "brand_lead_min",
        "default": "2.6",
        "comment": "ink-to-ink between rows. Below this the stack reads"
+      },
+      {
+       "name": "soc_half",
+       "default": "[soc_w/2, soc_h/2]"
       },
       {
        "name": "fr_cells",

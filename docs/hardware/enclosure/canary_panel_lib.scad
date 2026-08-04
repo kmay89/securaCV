@@ -70,6 +70,16 @@ P_STACK  = 8;   // [standoff, comp_h, standoff_len] — glass back → PCB, tall
 P_M3     = 9;   // [dx, dy, ox, oy]      — mount hole SPAN and pattern offset
 P_PORTS  = 10;  // list of port records, see PORT FIELDS
 P_FLIP   = 11;  // id of the board this is a half-turn from, or "" — doc only
+P_SOC    = 12;  // [u, v, w, h] — the radio module's SHIELD CAN, in back-plate
+                // coords (+u = back-view right, +v = back-view up), or [] if
+                // the board's module has not been located. This is the ONLY
+                // field that describes something nobody plugs into: it exists
+                // because the module's shield is where the FCC/IC grant
+                // numbers are printed, and a case that seals them in is a case
+                // whose compliance marking has to be reprinted on a label
+                // somewhere else. A window over the can lets the module's own
+                // marking BE the marking. Size the can, not the module: the
+                // PCB-antenna end of a WROOM carries no text.
 
 // ── PORT FIELDS ─────────────────────────────────────────────────────────────
 // A port is where a human plugs something in, so the fields are the ones a
@@ -104,7 +114,25 @@ function panel_db() = [
       ["microSD", "back",   35.65, -26.0, 15.0, 11.0, 0.0, "card slides toward +x"],
       ["BOOT",    "top",   -12.5,  8.0,  4.0, 3.0, 0.0, "hold at power-up to flash"],
       ["RESET",   "top",    12.5,  8.0,  4.0, 3.0, 0.0, "restart"] ],
-    "" ],
+    "",
+    // ⚠️ SCALED OFF THE VENDOR DRAWING, NOT MEASURED — the one soft number in
+    // an otherwise measured record, and the case says so out loud in its echo.
+    // The drawing dimensions the outline (165.72 x 97.60) and the M3 chain
+    // (19.76 + 126.20 + 19.76), so the frame it establishes is exact; the
+    // MODULE is not dimensioned on it, so its center was scaled off the
+    // artwork against that frame and then turned a half turn, because the
+    // drawing is posed component-side-up with the microSD at top-left and this
+    // project's back view is the other way round (microSD bottom-right, which
+    // is what the microSD port record above says). Expect ±2 mm.
+    //   TO MEASURE IT: with the board out of the case, caliper from the PCB's
+    //   right and top edges to the shield can's near corners, then subtract
+    //   half the outline (82.86, 48.80) to get u, v. Two numbers, five minutes,
+    //   and they retire this comment.
+    // 18.0 x 19.2 is the WROOM-1 can — the module is 18.0 x 25.5 overall, but
+    // the extra 6.3 is the PCB antenna, which carries no marking and must not
+    // be windowed (a hole over the antenna is a hole over the one part of the
+    // module that wants dielectric, not air).
+    [44.5, 36.0, 18.0, 19.2] ],
 
 ];
 // ════════════════════════════════════════════════════════════════════════════
@@ -208,6 +236,15 @@ function pnl_m3_ox(p)     = p[P_M3][2];
 function pnl_m3_oy(p)     = p[P_M3][3];
 function pnl_ports(p)     = p[P_PORTS];
 function pnl_flip(p)      = p[P_FLIP];
+// The radio can. pnl_has_soc() is the guard every consumer must ask first:
+// a record written before this field existed returns undef, and an undef that
+// reaches a translate() becomes a NaN and then a part with a hole in the
+// wrong place — the exact failure the port accessors assert against.
+function pnl_has_soc(p)   = is_list(p[P_SOC]) && len(p[P_SOC]) == 4;
+function pnl_soc_u(p)     = p[P_SOC][0];
+function pnl_soc_v(p)     = p[P_SOC][1];
+function pnl_soc_w(p)     = p[P_SOC][2];
+function pnl_soc_h(p)     = p[P_SOC][3];
 
 // One port by name. Asserts rather than returning undef, because a silent
 // undef becomes a NaN four expressions later and reports as a geometry bug.
