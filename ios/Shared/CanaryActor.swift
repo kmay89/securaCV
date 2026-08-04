@@ -45,7 +45,27 @@ struct CanaryActor: View {
             bird
                 .frame(height: height)
                 .id(identity)                 // face change = clean restart
-                .onAppear { if !holdsStill { beat = true } }
+                // The phase flag must be DRIVEN by stillness, not merely
+                // consulted alongside it. `.animation(_:value:)` only takes
+                // effect when `beat` changes, so a repeatForever already in
+                // flight keeps running no matter what `loop()` returns on a
+                // later render — the wrist could drop and the bird would
+                // breathe on. And a view first built while dimmed never set
+                // `beat` at all, so raising the wrist left it frozen.
+                // Both directions are handled here, at the one flag.
+                .onAppear { beat = !holdsStill }
+                .onChange(of: holdsStill) { _, still in
+                    if still {
+                        // Cancel the loop outright: re-setting the phase
+                        // inside a transaction that disables animations
+                        // snaps to the base pose instead of easing there.
+                        var cut = Transaction()
+                        cut.disablesAnimations = true
+                        withTransaction(cut) { beat = false }
+                    } else {
+                        beat = true          // wrist up — the bird resumes
+                    }
+                }
                 .accessibilityHidden(true)    // the words nearby carry the meaning
         }
     }
