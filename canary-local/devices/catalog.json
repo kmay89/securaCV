@@ -474,7 +474,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 32,
+   "engineering_param_count": 26,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -698,6 +698,29 @@
    }
   },
   {
+   "id": "mark_lib",
+   "scad": "canary_mark_lib.scad",
+   "title": "Canary — HOUSE MARK LIBRARY (the bird, as printable geometry)",
+   "family": "universal",
+   "device_compat": [],
+   "class": "accessory",
+   "fit": "standard",
+   "variant_axes": [],
+   "variants": [],
+   "render_parts": [],
+   "options": [],
+   "engineering_param_count": 0,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 0,
+    "released": 0,
+    "options": 0,
+    "user_options": 0,
+    "variant_axes": 0
+   }
+  },
+  {
    "id": "mount_adapters",
    "scad": "canary_mount_adapters.scad",
    "title": "Canary — UNIVERSAL MOUNT ADAPTERS  ⚠️ IN DEVELOPMENT (v0.1-dev)",
@@ -840,6 +863,99 @@
     "released": 0,
     "options": 1,
     "user_options": 1,
+    "variant_axes": 0
+   }
+  },
+  {
+   "id": "s3_lcd147",
+   "scad": "canary_s3_lcd147.scad",
+   "title": "Canary — ESP32-S3-LCD-1.47 \"HALLWAY\" CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "universal",
+   "device_compat": [
+    "_universal"
+   ],
+   "class": "primary",
+   "fit": "standard",
+   "variant_axes": [],
+   "variants": [
+    {
+     "id": "s3-hallway-stick-case",
+     "name": "S3 hallway stick case",
+     "for": "Waveshare ESP32-S3-LCD-1.47 (the USB-A STICK, not the C6 header board). The hallway nightlight body: plugs into a wall adapter, the 172x320 glass faces the corridor, the WS2812 washes the wall through a window in the back. Screwless — four cantilever beams cut into the bezel wall, sized by strain (ε printed at render, PETG budget 1.8%), with ASYMMETRIC return angles: steep at the plug end so it never lets go, shallow at the far end so a thumb pops it for the microSD. The plug end is the whole design problem: the opening is a RECTANGLE (series-A is not a stadium — that is USB-C), the wall is thin and relieved so a recessed receptacle clears it, an assert fails the render if under 11 mm of insertion length survives, and the drop buttress reaches INWARD (outward would eat the very length it protects). Black PETG + one yellow accent: the house mark inlaid in the back",
+     "status": "in-development",
+     "device": "_universal",
+     "selects": {},
+     "preview": "preview_dev_s3_147.png",
+     "parts": []
+    }
+   ],
+   "render_parts": [
+    "bezel",
+    "back",
+    "light",
+    "exploded",
+    "fil_body",
+    "fil_accent",
+    "fit_section"
+   ],
+   "options": [
+    {
+     "id": "collar_on",
+     "type": "bool",
+     "label": "collar_on",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_btn",
+     "type": "bool",
+     "label": "opt_btn",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "sd_window",
+     "type": "bool",
+     "label": "sd_window",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
+     "id": "led_win",
+     "type": "bool",
+     "label": "led_win",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "mark_show",
+     "type": "bool",
+     "label": "mark_show",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_vent",
+     "type": "bool",
+     "label": "opt_vent",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    }
+   ],
+   "engineering_param_count": 101,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 6,
+    "user_options": 6,
     "variant_axes": 0
    }
   },
