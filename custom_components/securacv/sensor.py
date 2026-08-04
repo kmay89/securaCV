@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 from homeassistant.components import mqtt
@@ -44,6 +45,7 @@ from .const import (
 )
 from .device_trust import TrustStore
 from . import async_record_verify
+from .voice import record_canary_event
 from .health_metrics import (
     battery_charging,
     battery_percent,
@@ -106,6 +108,32 @@ def _trust_attrs(
         "pinned_fingerprint": verify.get("pinned_fingerprint"),
         "received_fingerprint": verify.get("received_fingerprint"),
     }
+
+
+def _record_last_event(
+    hass: HomeAssistant, entry: ConfigEntry, device_id: str, event_type: Any
+) -> None:
+    """Stash a Canary's newest event where the Assist intents read it.
+
+    The last-event sensor holds its state on the entity; the voice brief
+    (voice.py, via intent.py) reads entry_data instead, so the event is
+    mirrored there with its hub arrival time.
+    """
+    domain_data = hass.data.get(DOMAIN)
+    if not isinstance(domain_data, dict):
+        return
+    entry_data = domain_data.get(entry.entry_id)
+    if not isinstance(entry_data, dict):
+        return
+    devices = entry_data.get("devices")
+    if not isinstance(devices, dict):
+        return
+    record_canary_event(
+        devices,
+        device_id,
+        str(event_type) if event_type is not None else None,
+        time.time(),
+    )
 
 
 def _device_type_for(
@@ -720,6 +748,9 @@ class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
                 raise TypeError("Event payload is not a JSON object")
             self._attr_native_value = data.get(
                 "event_type", data.get("type", data.get("event", "unknown"))
+            )
+            _record_last_event(
+                self.hass, self._entry, self._device_id, self._attr_native_value
             )
             # Two event dialects share the events topic: the CSI canary's
             # (event_id/state/category/...) and the radar witness's
