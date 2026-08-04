@@ -87,7 +87,7 @@ Full performance.
   time in Adaptive performance during streaming. That's it working correctly;
   it returns to full pace as the air cools.
 - **Enclosures need airflow.** A fully sealed, unventilated mount is the
-  documented worst case. A few millimetres of vent or standoff gap makes a
+  documented worst case. A few millimeters of vent or standoff gap makes a
   measurable difference. The printable SecuraCV enclosures include
   ventilation for this reason.
 - **Keep it off heat sources** — radiators, set-top boxes, power bricks,

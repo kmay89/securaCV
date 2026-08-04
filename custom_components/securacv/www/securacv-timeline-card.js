@@ -186,8 +186,8 @@
    *   "logged"     — kernel HTTP path: present in the log, no per-event sig here
    *   "failed"     — verification ran and failed / trust mismatch (⚠)
    * The card intentionally distinguishes these by label (the source of truth, since theme
-   * colours can vary) so only the "Signature verified" badge means a real check; "signed"
-   * reuses the ✓ glyph with a "Signed (unverified)" label and a distinct theme colour, and
+   * colors can vary) so only the "Signature verified" badge means a real check; "signed"
+   * reuses the ✓ glyph with a "Signed (unverified)" label and a distinct theme color, and
    * is never shown as the verified badge.
    */
   function resolveVerification(signals) {

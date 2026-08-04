@@ -264,7 +264,7 @@ Raspberry Pi Imager.
     aligned tail satisfy raw-disk alignment. The pure `physical_drive_number`
     path parser is host-tested, and the FFI is cross-`cargo check`ed +
     `clippy -D warnings`ed for `x86_64-pc-windows-gnu` (it type-checks; only
-    runtime behaviour needs a machine). It is **kept disabled** —
+    runtime behavior needs a machine). It is **kept disabled** —
     `hub_io::write::write_backend_available()` returns `false` on Windows, so
     the flasher fails fast *before any download* on an unsupported/unvalidated
     OS rather than dead-ending at the write. Enabling Windows is a one-line flip
@@ -315,7 +315,7 @@ Raspberry Pi Imager.
     Derived from `hub_image.json` (slugs/repositories) + the curated Frigate
     config and drift-gated, so a slug fixed in the catalog can't stay wrong here;
     an add-on that vanishes fails the generator loudly rather than emitting a
-    wrong plan (both behaviours verified).
+    wrong plan (both behaviors verified).
   - *Provisioning executor (landed 2026-07-25):*
     [`canary-local/tools/hub_seed_apply.py`](../../canary-local/tools/hub_seed_apply.py)
     is the piece that *runs* the plan, replacing `install.sh`'s punt (the `ha`
@@ -390,7 +390,7 @@ Raspberry Pi Imager.
     the seeds still need their first validated run on a real Pi (does this HAOS
     build import the root-partition `authorized_keys`, does the console open,
     does `host_provision.sh` complete?). HAOS ignores files it doesn't
-    recognise, so an un-run bundle is harmless and the guide still carries the
+    recognize, so an un-run bundle is harmless and the guide still carries the
     user from `homeassistant.local:8123`.
   - *Account pre-seed (minting + opt-in seed IMPLEMENTED 2026-07-23; HAOS
     acceptance OUTSTANDING):* the flasher collects the operator's

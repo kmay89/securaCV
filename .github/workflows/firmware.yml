@@ -6,7 +6,7 @@ on:
     paths:
       - 'firmware/**'
       - '.github/workflows/firmware.yml'
-      # The release workflow is a checked INPUT here, not just a neighbour:
+      # The release workflow is a checked INPUT here, not just a neighbor:
       # "Regression Guards" runs check_ota_channels.py, which reads the
       # manifests firmware-release.yml publishes and fails when firmware polls
       # one that nothing signs. Without this path, a PR that only edits the
@@ -17,7 +17,7 @@ on:
     paths:
       - 'firmware/**'
       - '.github/workflows/firmware.yml'
-      # The release workflow is a checked INPUT here, not just a neighbour:
+      # The release workflow is a checked INPUT here, not just a neighbor:
       # "Regression Guards" runs check_ota_channels.py, which reads the
       # manifests firmware-release.yml publishes and fails when firmware polls
       # one that nothing signs. Without this path, a PR that only edits the
@@ -25,25 +25,25 @@ on:
       - '.github/workflows/firmware-release.yml'
 
 # A new push to a PR branch supersedes its in-flight run; main is never
-# cancelled.
+# canceled.
 #
 # This used to cancel on every ref, main included, and that quietly destroyed
 # the signal this workflow exists to produce. The build takes ~30 minutes and
 # merges arrive in bursts — three landed within about a minute on 2026-07-24 —
 # so each merge killed the previous run before it could report. Four of the
-# five main builds that day ended `cancelled`, including both halves of a
+# five main builds that day ended `canceled`, including both halves of a
 # link-error fix; the one that did finish reported the failure, but by then
-# the broken commit was already on main and the next merge cancelled the
+# the broken commit was already on main and the next merge canceled the
 # correction's build too.
 #
-# A cancelled build is not a neutral outcome. It is indistinguishable at a
+# A canceled build is not a neutral outcome. It is indistinguishable at a
 # glance from one that has not finished, so main can sit broken while looking
-# merely busy. Queueing costs runner minutes; cancelling costs the ability to
+# merely busy. Queueing costs runner minutes; canceling costs the ability to
 # know whether main compiles. This matches what nearly every other workflow
 # here already does, and what the website's site-checks.yml does.
 concurrency:
   # PRs collapse per branch: a new push makes the old build irrelevant, so
-  # cancelling it is free. Pushes to a BRANCH (main) get a group per COMMIT,
+  # canceling it is free. Pushes to a BRANCH (main) get a group per COMMIT,
   # which looks redundant next to `cancel-in-progress: false` and is not.
   #
   # `cancel-in-progress: false` only promises not to cancel the RUNNING run.
@@ -51,10 +51,10 @@ concurrency:
   # commits landing faster than the build takes, each new commit evicts the
   # one waiting behind it. The display build takes ~50 minutes — long enough
   # that this happened for real: the run verifying a fix to a red main
-  # (fw 2.4.3 era) was cancelled by the next two merges, so the fix sat
+  # (fw 2.4.3 era) was canceled by the next two merges, so the fix sat
   # unverified and the repair looked stalled. A merged commit whose build
   # never ran is the failure this exists to prevent, and it is silent —
-  # "cancelled" reads like housekeeping, not like a gap in coverage.
+  # "canceled" reads like housekeeping, not like a gap in coverage.
   #
   # Per-commit groups cost concurrent runners on a busy day; an unverified
   # main costs a bad release. Revisit if runner minutes become the binding
@@ -863,7 +863,7 @@ jobs:
       - name: Build + run canary-display Modbus RTU host test
         # The RS485/Modbus master's framing + CRC-16/MODBUS live in the pure
         # core (canary/io/modbus_rtu.h) so every byte on the 4.3B A/B terminal
-        # is host-verified without a board. Anchored on the catalogued
+        # is host-verified without a board. Anchored on the cataloged
         # CRC-16/MODBUS check value 0x4B37 plus build/parse roundtrips,
         # exception decoding, and CRC/addr/func/capacity rejection cases.
         run: |

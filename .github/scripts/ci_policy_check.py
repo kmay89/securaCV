@@ -17,7 +17,7 @@ an exemption must be visible and reviewable, with a comment saying why):
       `concurrency` group (supersede stale PR runs; queue — never
       cancel — release publishes); a workflow that fires on tag pushes
       or release events must not set a bare `cancel-in-progress: true`
-      (a run cancelled mid-publish leaves half-uploaded assets)
+      (a run canceled mid-publish leaves half-uploaded assets)
   R4  every action ref is pinned to a tag or SHA — never a mutable
       branch ref (@main/@master) or a floating docker :latest
   R5  pull_request workflows are path-filtered so unrelated PRs don't
@@ -149,7 +149,7 @@ def check_workflow(path: str, policy: dict) -> list[str]:
             and conc.get("cancel-in-progress") is True):
         problems.append(
             f"{name}: R3 — fires on tags/release but sets a bare "
-            f"`cancel-in-progress: true`; a cancelled run can die "
+            f"`cancel-in-progress: true`; a canceled run can die "
             f"mid-publish with half-uploaded release assets. Use `false`, "
             f"or a condition that excludes the publish path (see "
             f"desktop-release.yml), or exempt in publish_cancel_ok with a "
@@ -164,9 +164,9 @@ def check_workflow(path: str, policy: dict) -> list[str]:
     #
     # That is not theoretical: firmware.yml carried a bare `true`, and on
     # 2026-07-24 three merges landed within about a minute against a
-    # ~30-minute build. Four of five main builds that day ended `cancelled`,
+    # ~30-minute build. Four of five main builds that day ended `canceled`,
     # including both halves of a link-error fix — the broken commit reached
-    # main and the correction's build was cancelled too.
+    # main and the correction's build was canceled too.
     #
     # CI.md's R3 prose already prescribes the conditional form; only the
     # publish half was ever enforced, so this case slipped through for as long
@@ -181,7 +181,7 @@ def check_workflow(path: str, policy: dict) -> list[str]:
             f"`cancel-in-progress: true`, so a merge landing behind another "
             f"cancels the first one's build and main's state goes unknown. "
             f"Use `${{{{ github.event_name == 'pull_request' }}}}` to "
-            f"supersede PR runs without ever cancelling main, or exempt in "
+            f"supersede PR runs without ever canceling main, or exempt in "
             f"branch_cancel_ok with a reason."
         )
 

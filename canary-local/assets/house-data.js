@@ -11,12 +11,12 @@
 // x=0 and y=0. z is height above the room's floor slab.
 import { CANDIDATES } from "./chooser-data.js";
 
-export const WALL_H = 3.0; // storey wall height, units
+export const WALL_H = 3.0; // story wall height, units
 export const SLAB_T = 0.3; // floor slab thickness, units
 
 export const FLOORS = [
   { id: "ground", z: 0 },
-  { id: "upper", z: 5.6 }, // exploded dollhouse gap between storeys
+  { id: "upper", z: 5.6 }, // exploded dollhouse gap between stories
 ];
 
 // Interior rooms are rectangles on a floor; `outside: true` rooms are
@@ -49,7 +49,7 @@ export const DIVIDERS = [
 export const SENSE_COPY = {
   camera: {
     label: "on-device camera",
-    how: "Person detection runs on the camera module's own chip. The picture is born, judged, and destroyed in the same square centimetre.",
+    how: "Person detection runs on the camera module's own chip. The picture is born, judged, and destroyed in the same square centimeter.",
     emits: "“person: yes” + confidence, Ed25519-signed — pixels never leave the device.",
   },
   wifi: {
@@ -59,7 +59,7 @@ export const SENSE_COPY = {
   },
   radar: {
     label: "60 GHz mmWave radar",
-    how: "Millimetre-wave radar resolves that someone is there — range and motion — while physically unable to resolve who.",
+    how: "Millimeter-wave radar resolves that someone is there — range and motion — while physically unable to resolve who.",
     emits: "presence / occupants / range, Ed25519-signed — identity is impossible by construction.",
   },
   breath: {

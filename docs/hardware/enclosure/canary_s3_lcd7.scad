@@ -211,6 +211,7 @@
 use <canary_panel_lib.scad> // THE PANEL REGISTRY — every panel/board number
                             // this file uses comes from there, not from here
 use <canary_vent_lib.scad>  // the brand vent shape: egg2d / egg_area
+use <canary_mark_lib.scad>  // THE BIRD — mark_bird, shared with the coupon
 use <canary_s3_lcd7_stamp.scad>   // GENERATED build stamp — see gen_stamp.py
 // Downloaded this file on its own? It CUTS ITS VENTS with that library — a
 // missing lib would render a sealed, overheating case with only a console
@@ -565,10 +566,14 @@ glass_guard  = -0.2; // WIPE RELIEF, from the first fitting print: the rim
 standoff_len = pnl_stud_len(PANEL);  // the panel's own white M3 standoffs, PCB back → tip — MEASURE
 frame_boss_h = 3.0;  // boss standing proud of the back plate's inner face
 frame_boss_d = 8.0;
+
+/* [Frame — BOOT/RESET button window] */
 btn_w  = 25.0;       // BOOT/RESET access window through the TOP wall (measured)
 btn_h  = 13.5;       // window height across the wall's depth
 btn_dx = 0.0;        // window center offset along the top wall
 btn_lbl_dx = 9.0;    // BOOT/RESET label centers, ± of the window center
+
+/* [Frame — wall mounting (keyholes)] */
 mount_keyholes = true;  // wall-mount keyholes through the back plate, one in
 khm_dx = 78.5;          // EACH of the four corners (first-print feedback: two
 khm_y  = 34.0;          // held the case but let the bottom float off the wall).
@@ -622,6 +627,8 @@ plate_fillet = 1.6;     // 45° fillet ring where the walls meet the back
                         // grille never reaches the perimeter, so no vent is
                         // lost. 0 disables.
 khm_mouth_c = 0.8;      // lead-in chamfer around each keyhole's mouth on the
+
+/* [Frame — glass bonding ledge] */
                         // outer skin, so the case slips over the screw heads
                         // without catching on an elephant-footed rim
 // Adhesive ledge — the panel ships with adhesive strips on its BACK border
@@ -638,6 +645,8 @@ ledge_top  = 6.0;   // along the button (top) edge
 ledge_bot  = 2.0;   // along the FPC (bottom) edge — keep small, the FPC lives there
 ledge_slope_max = max(ledge_side, ledge_top, ledge_bot);  // deepest back-slope
 ledge_slope_n   = 20;  // steps in the 45° back-slope. Each step overhangs by
+
+/* [Frame — back-plate branding] */
                        // its own height, so ANY count self-supports; this only
                        // sets how smooth the sloped face reads.
 // Every ledge carries a 45° back-slope wedge down to its wall, so the frame
@@ -650,6 +659,8 @@ brand_back = "CANARY";   // the back lockup's HERO line — centered,
                                  // size is a spec, not a name)
 brand_sub  = "SECURACV";         // the small tracked company line beneath
 brand_edge = "SecuraCV Canary";               // debossed on the visible bottom edge
+
+/* [Frame — adhesive wall rails] */
 // Adhesive WALL mounting — the no-screws alternative to the keyholes. Two
 // outlined rails on the back plate are kept smooth and uninterrupted: no
 // grille slot, keyhole pad, boss pocket or deboss ever lands inside one
@@ -675,13 +686,41 @@ brand_edge = "SecuraCV Canary";               // debossed on the visible bottom 
 // plate has no other clear 70 mm column (the SD zone, boss pockets and
 // keyhole pads own the rest). Screw-mount builds can set adh_rails=false
 // and reclaim every slot.
-adh_rails   = true;
+// OFF, and the mark took the space. The two smooth 17 x 74 zones were the
+// only clear full-height columns on the plate, and they cost the grille 64
+// slots (~18 cm2) to buy a no-drill mount most builds do not use — while
+// making the back read as two blank rectangles. The bird now sits in that
+// clear middle instead. Set true for a Command-strip build and the bird
+// keeps out of the rails' way automatically (its keepout is asserted).
+adh_rails   = false;
 adh_rail_dx = 12.0;  // rail centers at ±this — the only clear full-height
                      // columns on the plate: inboard of the SD mouth, the
                      // boss head pockets and the keyhole pads (all asserted)
 adh_rail_w  = 17.0;  // zone width  — 15.9 strip + placement slack
 adh_rail_l  = 74.0;  // zone length — 70 strip + placement slack
 adh_mark_w  = 0.8;   // outline moat width
+
+/* [Frame — the Canary mark] */
+// THE BIRD, debossed into the middle of the back plate where the adhesive
+// rails used to be. Geometry comes from canary_mark_lib.scad so the coupon's
+// emblem station and this are the same bird — that library's header explains
+// why it is authored rather than traced from the brand art.
+//
+// DEBOSSED, not raised, and that is not a style choice: the frame prints
+// BACK-PLATE-DOWN, so this face is against the build plate. A raised mark
+// there would have to protrude below z = 0. Every other graphic on this face
+// (brand words, rating block, QR) is a deboss for the same reason, and they
+// all share one floor depth so a single tool change serves the lot.
+back_bird   = true;
+bird_h      = 32.0;  // mark height. The clear middle runs about x ±21 between
+                     // the QR's quiet zone and the SD mouth, so this is sized
+                     // to that gap rather than to the plate
+bird_dx     = 0.0;   // centered: the lockup is below it, the rating block is
+bird_dy     = 6.0;   // upper-right, the QR left — this is the one empty field
+bird_rib    = 1.2;   // stroke width. WIDER than the coupon's 0.7 test rib on
+                     // purpose: this is a deboss read by shadow, not an emboss
+                     // read by highlight, and a 0.7 groove at 0.42 line width
+                     // fills in with the skin above it
 // microSD access — the card slides DOWNWARD out of its push-push socket (the
 // purple-rectangle zone on the Rev1.2 board photo: right side, below center,
 // in-use back view). The opening in the BACK PLATE covers the socket, the
@@ -691,8 +730,12 @@ adh_mark_w  = 0.8;   // outline moat width
 // the socket 6.35 mm nearer the plate's center.
 sd_dx = pnl_port_u(PANEL, "microSD");  // opening center, + = back-view right (42.0 − 6.35, measured)
 sd_dy = pnl_port_v(PANEL, "microSD");
+
+/* [Frame — microSD window] */
 sd_w  = 18.0;   // width — fingertip-sized, not card-sized
 sd_l  = 40.0;   // length along the slide direction
+
+/* [Frame — side gills & dock keys] */
 // 7 per side, not 8. The r9.05 corner round eats 5.85 mm off each end of the
 // side wall's flat, and the portrait dock needs a rib landing outboard of the
 // last gill: at 8 gills that wanted 95.8 mm of flat against 92.7 mm available.
@@ -740,6 +783,8 @@ dock_key_dx = 40.4;   // tracks stand_rib_x (asserted within half a rib) — bot
                       // pulled inboard when glass_r 3.2 grew the corner —
                       // the slot must stay on the wall's flat span)
 dock_key_bx = 84.0;   // landscape slots' ±dx on the bottom wall (on the pads)
+
+/* [Frame — label rendering] */
 label_depth = 0.5;
 label_back_depth = 1.2;  // BACK-plate deboss depth (BOOT/RESET/SD/brand and
                      // the rail moats) — deliberately DEEPER than the
@@ -889,7 +934,7 @@ bezel_ink_t = 0.6;
 // rectangles and four lines of white type competing with the one word that is
 // supposed to carry the accent.
 ink_groups    = ["qr"];
-accent_groups = ["mark"];
+accent_groups = ["mark", "bird"];
 
 // The two surfaces that are NOT back-plate groups and so cannot be moved by
 // the lists above — each picks a filament by name instead. "body" means the
@@ -938,6 +983,8 @@ side_dy   = 0.0;      // its center along that wall, + = toward the top edge.
                       // 0 = centered: clear of the ±dock_key_dx keying slots
                       // (asserted) and over the dock well's open span when
                       // docked portrait, so the exit works there too.
+
+/* [Port — labels & rating block] */
 // Port labels: which opening is which, embossed on the outer skin beside it
 // (deboss floors read in the body color through the accent skin, so on a
 // two-color print the words come out colored for free — no extra swap).
@@ -983,6 +1030,8 @@ function lcd7_stamp_year() = let (r = lcd7_stamp_rev())
     str(r[0], r[1], r[2], r[3]);
 rating_lines = ["5V = 2A", "USB-C INPUT", "INDOOR USE ONLY",
                 str("ERRERlabs ", lcd7_stamp_year())];
+
+/* [TPU fitments (grommet, plugs, SD cover)] */
 // TPU fit system — these two do for the TPU parts what tol_slide/tol_hole do
 // for the rigid ones. TPU seats by squeeze, so its knobs are interferences,
 // not clearances.
@@ -1065,6 +1114,8 @@ port_tether  = true;
 port_teth_dx = -12.6;  // anchor hole center along the wall, from the port
                        // center — asserted clear of the brand words below
 port_teth_cb = 1.4;    // counterbore depth at the anchor's OUTER mouth. The
+
+/* [Port — cable scoop] */
                        // barb's mushroom has to flare INSIDE this pocket: the
                        // shaft stops at its floor, so the head seats flush
                        // with the skin instead of standing proud of the face
@@ -1089,6 +1140,8 @@ port_scoop_dx = 11.0;  // scoop center from the port center — just past the
                        // the dish undercuts the flange's rim by ~1.2 mm
 port_scoop_r  = 7.8;   // sphere radius / stand-off: r - port_scoop_d sets the
 port_scoop_d  = 7.0;   // dish depth (0.8 mm), sqrt(r^2 - d^2) its footprint
+
+/* [Edge brand & bottom intake vents] */
 // Bottom-edge brand — CRISP DEBOSS into the wall's outer skin. v0.6: the
 // slat-stencil vents this replaces cut the letters THROUGH the wall, which
 // forced tie bands across every glyph (or the counters fall out) — and on
@@ -1306,7 +1359,7 @@ $fa = 3; $fs = 0.5;
 // under it are not offered as knobs. Without it, every derived value in the
 // rest of this file — and there are ~68 of them — piles into whichever group
 // happened to be declared last, which was [Quality]. A panel of 68 computed
-// intermediates labelled "Quality" is not a settings page, it is a place
+// intermediates labeled "Quality" is not a settings page, it is a place
 // people give up. If you add a REAL knob, put it in a group ABOVE this line.
 
 // ----------------------------------------------------------------------------
@@ -1477,6 +1530,12 @@ fr_keep_base = concat(
     qr_back ? [[qr_back_dx, qr_back_dy,
                 qr_back_reach + vent_slot_w/2 + 0.4,
                 qr_back_reach + vent_slot_l/2 + 0.4]] : [],
+    // the mark wants unbroken plate under it — a vent egg laid across the
+    // bird would share a face with a deboss floor, which CGAL calls
+    // non-manifold, and would read as a hole punched through the logo
+    back_bird ? [[bird_dx, bird_dy,
+                  bird_h*0.62 + vent_slot_w/2 + 0.6,
+                  bird_h/2 + vent_slot_l/2 + 0.6]] : [],
     // the rating stamp wants unbroken plate under it, same as any deboss
     rating_stamp ? [[rating_dx, rating_dy, rating_w/2 + 2, rating_h/2 + 2]] : []);
 fr_keep_rails = adh_rails ? [for (sx = [1,-1])
@@ -1658,6 +1717,34 @@ assert(vent_tip > 0.15 && vent_tip < 0.85,
            "egg_tip() from canary_vent_lib.scad, the line-wide constant. If ",
            "this fired, the LIBRARY moved out of band: fix it there, so every ",
            "adopter follows instead of just this one."));
+// The mark must stay inside the clear middle: clear of the QR's quiet zone on
+// the left, the SD mouth on the right, and the lockup below. Derived from the
+// same numbers those features use, so moving any of them moves this bound too
+// rather than leaving a stale constant behind.
+bird_half_w = back_bird ? bird_h*0.62 : 0;
+// THE MARK AND THE RAILS WANT THE SAME PLATE. That is not a coincidence to
+// guard against — it is the whole reason the bird could move in: the rails
+// were the only clear full-height columns, so the middle they vacated is
+// exactly where the mark now sits. Rails at +/-12 with a 17 wide zone span
+// x 3.5..20.5 either side of center; a 32 mm bird spans +/-19.8. They
+// overlap almost completely, and a Customizer user who turns the rails back
+// on gets a mark debossed across both adhesive landing zones — which is both
+// ugly and a worse bond, since the strip needs smooth plate.
+//
+// Mutually exclusive, then, and said out loud rather than silently resolved:
+// auto-suppressing one would change the geometry without telling anyone.
+assert(!(back_bird && adh_rails),
+       str("frame: the Canary mark and the adhesive rails both need the ",
+           "middle of the back plate — the rails' landing zones (x 3.5..20.5 ",
+           "each side) sit under a ", 2*bird_half_w, " mm mark. Pick one: ",
+           "back_bird=false for a Command-strip build, or adh_rails=false ",
+           "(the default) to keep the mark and reclaim 64 grille slots."));
+assert(!back_bird
+       || (bird_dx - bird_half_w > qr_back_dx + qr_back_reach + 2
+           && bird_dx + bird_half_w < sd_dx - sd_w/2 - 2),
+       str("frame: the Canary mark (", 2*bird_half_w, " mm wide at bird_dx ",
+           bird_dx, ") runs into the QR quiet zone or the SD mouth — shrink ",
+           "bird_h or move bird_dx"));
 stamp_half = stamp_size*0.9 + stamp_size*0.39 + 0.6;   // text block half-height
 assert(!stamp_show || (stamp_depth < back_t - 1.5
        && stamp_dy - stamp_half
@@ -2356,6 +2443,15 @@ module back_graphics(ink = "all") {
                                  - (i + 0.5)*rating_lh,
                       rating_lines[i], rating_sz);
     }
+    if (all || ink == "bird")
+        // The mark, in the clear middle the adhesive rails used to own.
+        // mark_bird() does the design-unit bookkeeping — the scale off the
+        // library's own span, and the shift by its bbox center — so bird_dx/dy
+        // place the MARK's middle rather than the paths' arbitrary origin.
+        if (back_bird)
+            translate([bird_dx, bird_dy, fr_depth - label_back_depth])
+                linear_extrude(label_back_depth + 0.1)
+                    mark_bird(bird_h, bird_rib);
     if (all || ink == "mark") {
         // THE LOCKUP — both lines, and the only thing on the plate that takes
         // the accent. The hero product name used to live in "text" alongside

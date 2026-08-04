@@ -473,7 +473,7 @@ static const uint32_t PROVISIONING_GATE_TTL_MS = 30000;
 // ════════════════════════════════════════════════════════════════════════════
 //
 // Mounted cameras sit still in a window: the L76K still emits ~0.3–0.7 m/s of
-// "speed" and a few metres of position wander from multipath. If we surface
+// "speed" and a few meters of position wander from multipath. If we surface
 // that raw, the dashboard looks like the camera is drifting around — which
 // kills credibility for evidence chains. The motion filter below holds the
 // displayed position to a smoothed anchor whenever the device is at rest, and
@@ -2835,7 +2835,7 @@ static FixState update_state(const GnssFix* fx, FixState cur) {
 // ════════════════════════════════════════════════════════════════════════════
 //
 // Why this exists: the L76K — like every consumer GNSS — emits a non-zero
-// speed and a few metres of position scatter even when the device is bolted
+// speed and a few meters of position scatter even when the device is bolted
 // to a wall. The witness chain still records the raw fix (we never lie about
 // what the receiver said), but the API/UI publishes a filtered view so a
 // stationary mounted camera presents as stationary. The filter has two modes:
@@ -5505,7 +5505,7 @@ static esp_err_t handle_mesh_pair_confirm(httpd_req_t* req) {
 static esp_err_t handle_mesh_pair_cancel(httpd_req_t* req) {
   g_health.http_requests++;
   mesh_network::cancel_pairing();
-  log_health(SCV_LOG_INFO, SCV_CAT_MESH, "Pairing cancelled", nullptr);
+  log_health(SCV_LOG_INFO, SCV_CAT_MESH, "Pairing canceled", nullptr);
   return http_send_json(req, "{\"ok\":true}");
 }
 
@@ -8088,7 +8088,7 @@ static esp_err_t handle_selftest_wrap(httpd_req_t* req) {
   // Compare-and-swap so this read-modify-write can't clobber a concurrent
   // update from loop() — critically, if loop() disarms the deadline (stores
   // 0) between our load and store, the CAS fails, reloads dl == 0, and the
-  // guard drops out WITHOUT re-arming a reboot loop() just cancelled. Only
+  // guard drops out WITHOUT re-arming a reboot loop() just canceled. Only
   // extends an already-armed deadline; reboot_deadline_extend never pulls it
   // sooner, so a lost race can at worst leave a slightly longer window.
   uint32_t dl = __atomic_load_n(&g_setup_grace_reboot_at_ms, __ATOMIC_ACQUIRE);
@@ -8770,7 +8770,7 @@ static void wifi_check_connection() {
       // reason instead of waiting for the full timeout. WiFi.status() returns
       // a uint8_t; compare directly against the well-known constants rather
       // than narrowing to wl_status_t (which would invoke implementation-
-      // defined behaviour for any future status value the enum doesn't list).
+      // defined behavior for any future status value the enum doesn't list).
       const uint8_t wl = WiFi.status();
       const char* fail_reason = nullptr;
       if (wl == WL_NO_SSID_AVAIL) {
@@ -9179,7 +9179,7 @@ static void wifi_init_provisioning() {
 
   // Start mDNS with this device's UNIQUE hostname (e.g. canary-kitchen or
   // canary-aabb). Each Canary owns a distinct <host>.local, so a second
-  // device never collides with the first — the previous behaviour hardcoded
+  // device never collides with the first — the previous behavior hardcoded
   // "canary" for every unit and relied on RFC 6762 §9 conflict renaming,
   // which the ESPmDNS wrapper does not perform reliably. The bare
   // "canary.local" catch-all is then claimed separately (first-wins) by

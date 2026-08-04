@@ -13,7 +13,7 @@
 
      Query options (all optional):
        ?src=http://192.168.1.42   data origin (default: same origin as this page)
-       ?demo=1                    render a synthetic fleet, loudly labelled DEMO
+       ?demo=1                    render a synthetic fleet, loudly labeled DEMO
        ?rooms=1                   group witnesses by room
        ?poll=2000                 poll interval ms (default 2000)
 -->
@@ -70,7 +70,7 @@ body.night #stage{ filter:sepia(.7) hue-rotate(-28deg) saturate(2.2) brightness(
 #clock small{ font-size:2vh; color:var(--mut); margin-left:.4vw; }
 
 /* Transport / freshness banner — AD-Core: a dead transport is bannered
-   within one render cycle; last-known is labelled as such. */
+   within one render cycle; last-known is labeled as such. */
 #banner{
   flex:0 0 auto; display:none; align-items:center; gap:1.2vw;
   padding:1.4vh 2vw; border-radius:1.4vh; font-size:2.4vh; font-weight:600;
@@ -102,7 +102,7 @@ body.night #stage{ filter:sepia(.7) hue-rotate(-28deg) saturate(2.2) brightness(
 #sub{ font-size:3vh; color:var(--mut); margin-top:1.4vh; }
 #trust{ font-size:2vh; color:var(--mut); margin-top:1vh; }
 
-/* ── Roll-call: every witness, always with label + glyph, never colour
+/* ── Roll-call: every witness, always with label + glyph, never color
        alone (AD-Core §2.2 / WCAG 1.4.1) ────────────────────────────── */
 #fleet{ flex:0 0 auto; display:grid; gap:1.6vw; grid-auto-rows:1fr;
   grid-template-columns:repeat(auto-fit,minmax(20vw,1fr)); }
@@ -177,7 +177,7 @@ body.demo #demo{ display:inline-block; }
   if (DEMO) document.body.classList.add("demo");
 
   // ── severity vocabulary (fleet_model.h Sev ladder, worst-last) ───────
-  // Never colour-only: each state carries word + glyph + border position.
+  // Never color-only: each state carries word + glyph + border position.
   var SEV = [
     {key:"ok",     word:"All quiet",   ic:"✓", css:"s0", cvar:"--ok"},
     {key:"notice", word:"Activity",    ic:"•", css:"s1", cvar:"--notice"},
@@ -255,7 +255,7 @@ body.demo #demo{ display:inline-block; }
     var n = (s.witnesses||[]).length;
     $("sub").textContent = worst===0
       ? (n ? "All " + n + " Canaries reporting" : "No Canaries yet")
-      : summarise(s.witnesses);
+      : summarize(s.witnesses);
     // AD-Core §2.5 / §5: this browser did NOT verify signatures on its own
     // silicon, so it must not say "verified". State the source honestly.
     $("trust").textContent = (s.acked ? "Acknowledged · " : "")
@@ -336,7 +336,7 @@ body.demo #demo{ display:inline-block; }
     if (sec < 3600) return Math.round(sec/60) + "m ago";
     return Math.round(sec/3600) + "h ago";
   }
-  function summarise(ws){
+  function summarize(ws){
     ws = ws || [];
     var by = {};
     ws.forEach(function(w){ var L=witnessLive(w); if(L.sev>=2){ (by[w.name||w.room||"a Canary"]=1); } });
@@ -345,7 +345,7 @@ body.demo #demo{ display:inline-block; }
     return names.slice(0,3).join(", ") + (names.length>3? " +"+(names.length-3) : "");
   }
 
-  // ── demo fleet (loudly labelled; can never be mistaken for a real one,
+  // ── demo fleet (loudly labeled; can never be mistaken for a real one,
   //    per docs/hardware/display_modes.md) ──────────────────────────────
   function demoSnap(){
     var t = new Date();

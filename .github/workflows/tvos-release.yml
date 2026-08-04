@@ -43,7 +43,7 @@ on:
         options: [debugging, release-testing, app-store-connect]
         default: app-store-connect
 
-# One release build per ref. A `tvos-v*` tag build must never be cancelled
+# One release build per ref. A `tvos-v*` tag build must never be canceled
 # mid-upload (a half-delivered TestFlight build), so only the cheap manual
 # smoke-test dispatch auto-cancels — and only when it is NOT publishing.
 concurrency:

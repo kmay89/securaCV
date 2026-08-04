@@ -62,7 +62,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
-# A new push to a PR branch cancels the in-flight run; main is never cancelled.
+# A new push to a PR branch cancels the in-flight run; main is never canceled.
 concurrency:
   group: hub-core-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}

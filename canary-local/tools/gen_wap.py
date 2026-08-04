@@ -118,7 +118,7 @@ if not BOARD_ID:
 BOARD_NAME_FULL = boards.get("boards", {}).get(BOARD_ID, {}).get("name", "")
 
 # --------------------------------------------------------------------------- #
-# 2. the SoftAP + captive portal (constants parsed; behaviour validated)
+# 2. the SoftAP + captive portal (constants parsed; behavior validated)
 # --------------------------------------------------------------------------- #
 
 AP_SSID_PREFIX = grab(WAP_SERVER_H, r'AP_SSID_PREFIX\s*=\s*"([^"]+)"', "AP_SSID_PREFIX")

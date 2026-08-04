@@ -1005,7 +1005,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div id="liveActivityPill" class="sensing-pill sensing-pill--offline">Offline</div>
         </div>
         <!-- Five quick-glance indicators. Each one lights up red while
-             its underlying event is fresh; otherwise stays grey. -->
+             its underlying event is fresh; otherwise stays gray. -->
         <div class="live-indicator-row">
           <div class="live-indicator" id="liveIndSmoke" data-state="off">
             <div class="live-indicator__icon">🔥</div>
@@ -1395,7 +1395,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div>
             <div class="card-title">Touch</div>
             <div class="card-subtitle">
-              A capacitive pad wired to a side GPIO. Three behaviours, all
+              A capacitive pad wired to a side GPIO. Three behaviors, all
               local: a silent panic long-press, an enclosure-tamper
               detector, and an optional proximity hint. No audio, no
               video.
@@ -3371,7 +3371,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         } else if (evt === 'approach' && tAge >= 0 && tAge < 60000) {
           tcPill.className = 'sensing-pill sensing-pill--motion';
           tcPill.textContent = 'Approach';
-          tcExp.textContent = 'A hand or body passed within a few centimetres of the pad without contact.';
+          tcExp.textContent = 'A hand or body passed within a few centimeters of the pad without contact.';
         } else {
           tcPill.className = 'sensing-pill sensing-pill--quiet';
           tcPill.textContent = 'Idle';
@@ -4325,7 +4325,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
            (data.rssi_dbm === undefined || data.rssi_dbm === 0) ? '--' : data.rssi_dbm);
 
       // Five indicator chips. "on" = critical/alarming (red);
-      // "info" = informational (blue); "off" = grey.
+      // "info" = informational (blue); "off" = gray.
       const setInd = (id, state) => {
         const e = document.getElementById(id);
         if (e) e.dataset.state = state;
@@ -5111,7 +5111,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             alert('Successfully joined opera!');
           }
         } else if (data.state === 'NO_OPERA' || data.state === 'DISABLED') {
-          // Pairing cancelled or failed
+          // Pairing canceled or failed
           stopPairingPolling();
           refreshOpera();
         }

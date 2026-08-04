@@ -7,7 +7,7 @@
 //        millis()/1000 uptime. Replay protection is provided by the counter
 //        alone in v0.2.
 //   O2 — opera_secret persistence requires flash encryption to be enabled.
-//        Tested here as a behavioural predicate: a "FE-off" load attempt
+//        Tested here as a behavioral predicate: a "FE-off" load attempt
 //        wipes the in-memory secret and returns failure.
 //   O3 — remove_peer() initiates a rekey transaction that only commits the
 //        new opera_secret after all surviving members ACK (or after a
@@ -45,7 +45,7 @@ bool persist_opera_config(OperaConfig& cfg, bool fe_enabled) {
 bool load_opera_config(OperaConfig& cfg, bool fe_enabled,
                        const uint8_t* on_disk_secret) {
   if (!fe_enabled) {
-    // FE off: wipe in-memory and return failure (matches v0.2 behaviour).
+    // FE off: wipe in-memory and return failure (matches v0.2 behavior).
     std::memset(cfg.secret, 0, OPERA_SECRET_SIZE);
     std::memset(cfg.opera_id, 0, OPERA_ID_SIZE);
     cfg.configured = false;

@@ -111,7 +111,7 @@ any platform.
 ### 2026-08-02 — Cutting the firmware train invalidated every committed emulator artifact, and one of them failed as a UI timeout
 
 - **Symptom:** bumping the release train from 2.4.2 to 2.4.3 — a version-only
-  change, no behaviour touched — turned two green CI jobs red. One said what it
+  change, no behavior touched — turned two green CI jobs red. One said what it
   meant (`artifact fw (2.4.2) matches registry train (2.4.3)`). The other did
   not: `VISION_PROBE_FAIL: waiting for locator('#play')`, a Playwright timeout
   that reads like a flaky browser test or a broken page.
@@ -164,7 +164,7 @@ any platform.
   launch advances and reads the previous one **before `tauri::Builder`** — the
   only moment when no webview is holding the store open. An install window is
   marked on disk before the first byte is written, so an interrupted update is
-  *recognised* on the next launch and the user is told to reinstall (the only
+  *recognized* on the next launch and the user is told to reinstall (the only
   cure) instead of guessing; sidecar PIDs are recorded while they run and
   reaped on the next launch; a launch that never reported a usable window gets
   its webview store cleared once — once, not in a loop.
@@ -783,7 +783,7 @@ Two independent failures, one release day, both invisible-by-design.
   `TAG+="uaccess"` + `0666`), and `tauri.conf.json`'s `deb.files` installs it to
   `/usr/lib/udev/rules.d/`. INSTALL.md documents the manual add for AppImage
   users (no package to install it). Belt: `hub_core::hub_usbboot` (host-tested)
-  recognises rpiboot's device-open failures so the app shows the fix in-line
+  recognizes rpiboot's device-open failures so the app shows the fix in-line
   instead of a silent wait, gated to Linux where it applies.
 - **Applies to:** **every bundled native tool that opens a USB device** — today
   `rpiboot`, tomorrow anything similar. Two rules generalize. **macOS "just
@@ -1365,7 +1365,7 @@ Two independent failures, one release day, both invisible-by-design.
   (i) the display firmware missing from five releases and (j) the
   core-version pairing. The pattern is always the same: the path we
   TEST and the path we SHIP are configured in different files, and
-  nothing compares them. When a build knob changes behaviour and lives
+  nothing compares them. When a build knob changes behavior and lives
   in two places, write the lint that compares them — a knob whose only
   symptom is silence will not report itself.
 
@@ -1566,7 +1566,7 @@ The rules that fall out of this:
 - **Prefer checking the property over the mechanism.** This lint asks "does
   this file speak the shared vocabulary?" rather than "does it contain this
   include line" — the latter would have forced a cosmetic edit to a file the
-  committed wasm `dist/` artifacts are built from, for no behavioural gain.
+  committed wasm `dist/` artifacts are built from, for no behavioral gain.
 
 ### (y) 2026-08-02 — imagestack layers are declared front-to-back, and the painting order is the exact opposite
 

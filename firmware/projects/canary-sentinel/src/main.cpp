@@ -28,7 +28,7 @@
   PRIVACY CHOKEPOINT (design doc §5, requirement R4). Only the coarse
   FusionResult ever leaves this file: an ordinal level, a 0..100 confidence, a
   0/1/2+ occupant bucket, a near/mid/far band, and which modality CLASSES
-  corroborated. Raw centimetres, per-target data, MACs and imagery are read,
+  corroborated. Raw centimeters, per-target data, MACs and imagery are read,
   used to form a Vote, and dropped here. They never cross emit_claim().
 */
 

@@ -22,7 +22,7 @@
 //!    atomic and can leave a partial bundle that macOS refuses to finish
 //!    launching. Either way the user is stuck and nothing inside the app can
 //!    undo it, because the thing that would run the repair is the thing that
-//!    moved. All this module can do is *recognise* it afterwards and say so —
+//!    moved. All this module can do is *recognize* it afterwards and say so —
 //!    which beats a silent bounce, and is why the marker lives in the app data
 //!    dir and not in the bundle.
 //!
@@ -719,7 +719,7 @@ pub fn report(app: &AppHandle, guard: &Arc<LaunchGuard>) {
 
 /// Watch this launch actually become usable, and say something if it doesn't.
 ///
-/// This is the second line of defence. The first — clearing a wedged store on
+/// This is the second line of defense. The first — clearing a wedged store on
 /// the way up — handles the case we know how to fix. This one catches the case
 /// we don't: after [`LAUNCH_TIMEOUT`] with no `ui_ready`, offer the user the
 /// same reset by hand rather than leaving them with a bouncing icon.
@@ -1069,7 +1069,7 @@ mod tests {
     }
 
     #[test]
-    fn asking_for_a_reset_by_hand_is_honoured_even_after_the_automatic_one() {
+    fn asking_for_a_reset_by_hand_is_honored_even_after_the_automatic_one() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir = tmp.path().join("state");
         let home = tmp.path().join("home");

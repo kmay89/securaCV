@@ -24,7 +24,7 @@ enum WallState: Equatable {
     case live(FleetSnapshot, asOf: Date)
     /// We had a fleet, and now we don't. The last good snapshot is kept so the
     /// screen can say "this is what we last verified, and when" instead of
-    /// going blank — but it is labelled stale, never presented as current.
+    /// going blank — but it is labeled stale, never presented as current.
     case stale(FleetSnapshot, since: Date, reason: String)
     /// Never got a fleet from this address.
     case unreachable(reason: String)
@@ -67,7 +67,7 @@ final class WallModel {
         self.hubAddress = defaults.string(forKey: Self.hubKey) ?? ""
     }
 
-    // No `deinit` cancelling the poll task, for two reasons. It cannot compile
+    // No `deinit` canceling the poll task, for two reasons. It cannot compile
     // under complete concurrency checking — `deinit` is nonisolated and
     // `pollTask` is @MainActor — and it would be unreachable anyway: the task
     // holds `self` for the duration of each `pollLoop` call, so deinit cannot
@@ -77,7 +77,7 @@ final class WallModel {
     /// Start (or restart) the Wall. With a saved address it polls that hub;
     /// with nothing saved it SEARCHES the LAN first — the setup step is
     /// "turn the TV on". Safe to call repeatedly — an in-flight loop is
-    /// always cancelled first, so a viewer mashing Connect can't leave two
+    /// always canceled first, so a viewer mashing Connect can't leave two
     /// loops fighting over `state`.
     func start() {
         pollTask?.cancel()
@@ -153,7 +153,7 @@ final class WallModel {
             do {
                 try await Task.sleep(nanoseconds: UInt64(backoff.nextDelay() * 1_000_000_000))
             } catch {
-                return   // cancelled
+                return   // canceled
             }
         }
     }
@@ -208,7 +208,7 @@ final class WallModel {
             do {
                 try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             } catch {
-                return   // cancelled
+                return   // canceled
             }
         }
     }

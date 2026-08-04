@@ -10,7 +10,7 @@ This document defines the **lifecycle**, **ownership**, and **maintenance cadenc
 
 ## Classification
 
-Every firmware variant is labelled with exactly one of the following statuses:
+Every firmware variant is labeled with exactly one of the following statuses:
 
 | Label | Meaning | Accepts new features? | Accepts security fixes? | Build-gated? |
 |---|---|:---:|:---:|:---:|
@@ -81,7 +81,7 @@ Variants move between labels via explicit, reviewed transitions. No label change
 
 ### Rules
 
-1. **Promoting to ACTIVE** requires retiring or re-labelling the current ACTIVE tree in the same change.
+1. **Promoting to ACTIVE** requires retiring or re-labeling the current ACTIVE tree in the same change.
 2. **Demoting ACTIVE → COMPATIBILITY** requires:
    - A replacement ACTIVE tree already present and passing CI
    - An explicit row update in this file and in [FIRMWARE_VARIANT_AUDIT.md](FIRMWARE_VARIANT_AUDIT.md)
@@ -116,7 +116,7 @@ When reviewing a firmware PR, confirm:
 
 - [ ] The PR touches the ACTIVE tree for new features (or a SPECIALIZED tree within scope).
 - [ ] Any COMPATIBILITY-tree change is either a security fix or an explicitly scoped backport.
-- [ ] No files under `firmware/projects/_archive/**` are touched unless the PR is labelled `[archive-edit]` and the change is a forward-graduation.
+- [ ] No files under `firmware/projects/_archive/**` are touched unless the PR is labeled `[archive-edit]` and the change is a forward-graduation.
 - [ ] [FIRMWARE_VARIANT_AUDIT.md](FIRMWARE_VARIANT_AUDIT.md) and [FEATURES.md](FEATURES.md) are updated if feature parity shifts.
 - [ ] Label changes (ACTIVE/COMPATIBILITY/SPECIALIZED/ARCHIVED) are reflected in this file in the same PR.
 

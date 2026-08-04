@@ -137,7 +137,7 @@ usb_clear = 0.35;  // per-side clearance around the shell in its opening
 usb_wall = 1.8;
 // Chamfer depth on the outer face around the opening. Bounded by how much
 // wall there is above and below the plug — the shell straddles the board, so
-// its bottom edge sits only a couple of millimetres above the bezel face and
+// its bottom edge sits only a couple of millimeters above the bezel face and
 // a greedy relief cuts straight through it. The two asserts below hold the
 // line; if you want more relief, you need a deeper case, not a bigger number.
 usb_relief = 1.0;
@@ -473,7 +473,7 @@ module bezel_usb() {
 module bezel_collar() {
     // The drop buttress. It reaches INWARD from the plug-end wall, never
     // outward — this is the whole subtlety of the feature. An outward collar
-    // is the obvious shape and it is wrong: every millimetre outside the end
+    // is the obvious shape and it is wrong: every millimeter outside the end
     // wall comes straight off the plug's usable insertion length, and 3 mm of
     // handsome ring is 3 mm the plug no longer reaches into the socket.
     //

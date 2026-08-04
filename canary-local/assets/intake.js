@@ -198,7 +198,7 @@ export function efuseFindings(scan) {
 }
 
 // ── is the flash really the size it says? ───────────────────────────────────
-// A flash chip reports its capacity in its SPI JEDEC id, and a relabelled part
+// A flash chip reports its capacity in its SPI JEDEC id, and a relabeled part
 // simply lies: address lines above the real capacity wrap around, so the top
 // of the "16 MB" chip is a mirror of the bottom of the real 4 MB one. Reading
 // both ends and comparing catches it without writing anything.
@@ -254,7 +254,7 @@ export function flashAliasVerdict({ declaredBytes, head, probes } = {}) {
     return { level: "stop",
       label: `Flash is ${formatSize(hit.atBytes)}, not the ${formatSize(declaredBytes)} it claims`,
       detail: `Reading at ${formatSize(hit.atBytes)} returns the same bytes as offset zero — ` +
-              "the address lines are wrapping, which is exactly what a relabelled flash " +
+              "the address lines are wrapping, which is exactly what a relabeled flash " +
               "part does. Anything written past the real capacity would be silently lost." };
   }
   return { level: "clear", label: `Flash reads a genuine ${formatSize(declaredBytes)}` };
@@ -314,7 +314,7 @@ export function duplicateMacCheck(roster, mac) {
 // ── what did it arrive running? ─────────────────────────────────────────────
 // Matched on the `esp_app_desc_t` project name and partition labels — real
 // strings read off the board, not hashes of images we'd have to claim to have
-// catalogued. Anything unmatched is reported as unrecognized, which is an
+// cataloged. Anything unmatched is reported as unrecognized, which is an
 // invitation to look at the backup, not a verdict.
 export const KNOWN_STOCK = [
   { match: /^micropython/i, name: "MicroPython" },

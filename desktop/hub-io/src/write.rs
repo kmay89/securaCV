@@ -437,7 +437,7 @@ fn authopen(path: &str) -> Result<std::fs::File, String> {
             Ok(unsafe { std::fs::File::from_raw_fd(fd_keep) })
         }
         _ => Err(
-            "macOS didn't authorize writing the disk (the authorization prompt was cancelled or \
+            "macOS didn't authorize writing the disk (the authorization prompt was canceled or \
              authopen failed)"
                 .to_string(),
         ),
@@ -823,9 +823,9 @@ mod tests {
     }
 
     #[test]
-    fn cancelling_mid_write_stops_between_chunks_with_the_neutral_marker() {
+    fn canceling_mid_write_stops_between_chunks_with_the_neutral_marker() {
         // The Stop button's contract: flip the token, and the loop exits at
-        // the next chunk boundary with the CANCELLED marker — never a panic,
+        // the next chunk boundary with the CANCELED marker — never a panic,
         // never a hang, and the UI can tell "stopped" from "failed".
         let img = image_bytes();
         let sha = sha_of(&img);
@@ -841,7 +841,7 @@ mod tests {
             &mut |_: Progress| cancel_after_first_tick.cancel(),
         )
         .unwrap_err();
-        assert!(err.starts_with(crate::CANCELLED), "{err}");
+        assert!(err.starts_with(crate::CANCELED), "{err}");
     }
 
     #[test]

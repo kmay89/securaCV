@@ -17,7 +17,7 @@ The central flag registry it recommends now exists at
 ## Part A — Feature flags
 
 **Verdict: the mechanisms are good and layer-appropriate; the *coordination* was
-missing.** SecuraCV gates behaviour at four layers, each internally consistent,
+missing.** SecuraCV gates behavior at four layers, each internally consistent,
 but until this review there was no single index, no written lifecycle, and the
 one excellent "don't advertise unbuilt work" pattern was applied by hand with no
 guard.
@@ -73,7 +73,7 @@ the registry; convention written in its "Conventions" section.
 **FF-05 (Process) — Default detection is flag-gated off, but that's underspecified
 to users.** `backend-tract` (real ONNX) is off by default; the default build is the
 frame-diff stub (flag-report **F-01**). That's a legitimate *experimental* flag —
-now labelled as such in the registry — but the user-facing "what does the default
+now labeled as such in the registry — but the user-facing "what does the default
 build actually detect" gap is F-01's to close, not solved here.
 
 **Orphaned-flag guard.** `scripts/lint_feature_flags.sh` also fails if a Cargo

@@ -3472,7 +3472,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         return;
       }
       if (safe && j.safe_mode) {
-        safe.textContent = 'This Canary is in recovery mode after a few quick restarts, so cameras, storage and radios are paused. This clears on its own once it runs steadily — the greyed rows below aren’t faults.';
+        safe.textContent = 'This Canary is in recovery mode after a few quick restarts, so cameras, storage and radios are paused. This clears on its own once it runs steadily — the grayed rows below aren’t faults.';
         safe.style.display = 'block';
       }
       if (summ) summ.textContent = j.summary || (j.all_passed ? 'All checks passed.' : 'Some checks need attention.');
@@ -5304,7 +5304,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         return;
       }
       // Sort by signal strength (closest first) so the most relevant devices
-      // float to the top — same behaviour as Apple Find My.
+      // float to the top — same behavior as Apple Find My.
       devices.sort((a, b) => (b.rssi || -200) - (a.rssi || -200));
       list.innerHTML = devices.map(d => {
         const bars = rssiBarCount(d.rssi);

@@ -163,7 +163,7 @@ const char* state_word(Sev s) {
   }
 }
 
-// Clock digits, centred across the column. Bigger at night — a dark room's
+// Clock digits, centered across the column. Bigger at night — a dark room's
 // one instrument. Colon between HH and MM.
 void build_clock(lv_obj_t* scr) {
   const int dw = 92, dh = 156, t = 18, gap = 10, cw = 22;

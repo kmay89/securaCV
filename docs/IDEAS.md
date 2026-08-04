@@ -100,7 +100,7 @@ If this project ended tomorrow, the record of what people asked for and what was
 decided doesn't go anywhere.
 
 **What it actually costs you.** One free account, about thirty seconds to make,
-and a page of unfamiliar grey chrome the first time. That's the real trade, and
+and a page of unfamiliar gray chrome the first time. That's the real trade, and
 we're not going to pretend it's nothing — it's why
 [securacv.com/ideas](https://securacv.com/ideas) exists as a friendlier front
 door, why the site walks you to the exact button, and why the intake bot's first

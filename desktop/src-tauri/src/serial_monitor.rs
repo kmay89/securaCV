@@ -135,7 +135,7 @@ fn inspect_line(
 const SILENCE_SECS: u64 = 12;
 
 /// Try to (re)open the board's port, retrying until it appears or we're
-/// cancelled. Returns None only when cancelled while waiting — a USB-CDC board
+/// canceled. Returns None only when canceled while waiting — a USB-CDC board
 /// takes a moment to re-enumerate after a reboot, so we wait it out rather than
 /// give up. `first` only changes the status wording (connecting vs reconnecting).
 fn connect(
@@ -222,7 +222,7 @@ fn monitor_thread(
     while !cancel.load(Ordering::Relaxed) {
         let Some((name, mut port)) = connect(&app, &preferred_port, vid, pid, baud, &cancel, first)
         else {
-            break; // cancelled while waiting
+            break; // canceled while waiting
         };
         first = false;
         let _ = app.emit(
@@ -241,7 +241,7 @@ fn monitor_thread(
         let silence_deadline = Instant::now() + Duration::from_secs(SILENCE_SECS);
 
         // Inner loop: pump the live port until it errors (→ reconnect) or we're
-        // cancelled (→ exit).
+        // canceled (→ exit).
         let reconnect = loop {
             if cancel.load(Ordering::Relaxed) {
                 break false;

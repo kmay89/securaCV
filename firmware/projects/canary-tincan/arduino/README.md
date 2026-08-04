@@ -64,7 +64,7 @@ A 2px frame at the extreme edge plus red/green/blue blocks. Two questions:
   That offset is not guessable — the CO5300's controller RAM is wider than the
   visible glass — so it is the first number to doubt if the image looks shifted.
 - **Is the R/G/B order correct?** If it reads B/G/R, the panel wants a
-  colour-order flag.
+  color-order flag.
 
 *Hold a finger for 2s to advance from here on.*
 

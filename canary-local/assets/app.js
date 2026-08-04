@@ -67,7 +67,7 @@ async function main() {
   // The models cross-fade to the active finish live (role-tagged shell parts
   // read it per-frame — no rebuild). On a first visit, run the ambient
   // showcase: a slow, calm cycle through the palette that demos customisation
-  // until the visitor picks a swatch. Honour a saved choice and reduced motion.
+  // until the visitor picks a swatch. Honor a saved choice and reduced motion.
   if (!hasUserChoice() && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
     startFinishShowcase();
   }

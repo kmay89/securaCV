@@ -100,7 +100,7 @@ void csi_event_values_init(csi_event_values_t* out);
  * blocked" is itself a side channel.
  *
  * The chokepoint may bundle the emit with prior same-state events; in that
- * case it returns the existing bundle's event_id, signalling to the caller
+ * case it returns the existing bundle's event_id, signaling to the caller
  * that "this was rolled into a previous row."
  *
  * Thread safety: callable from any task that produces CSI windows. NOT
@@ -256,7 +256,7 @@ bool csi_event_find(uint32_t event_id, csi_event_record_t* out);
 /**
  * Mark an event dismissed by the user. Increments the values->dismissed flag,
  * routes a notification to the originating module, and updates the in-memory
- * record so the dashboard can grey it out. Local-only.
+ * record so the dashboard can gray it out. Local-only.
  */
 bool csi_event_dismiss(uint32_t event_id);
 

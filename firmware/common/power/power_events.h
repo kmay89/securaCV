@@ -147,9 +147,9 @@ inline const char* boot_power_detail(BootPower k) {
     case BootPower::OutageRestored: return "Mains power came back after an outage.";
     case BootPower::Brownout:       return "The supply dipped and the board reset itself to protect what it had saved.";
     case BootPower::Fault:          return "The last run hit a fault and restarted itself.";
-    case BootPower::Unknown:        return "Restarted for a reason this board didn't recognise.";
+    case BootPower::Unknown:        return "Restarted for a reason this board didn't recognize.";
   }
-  return "Restarted for a reason this board didn't recognise.";
+  return "Restarted for a reason this board didn't recognize.";
 }
 
 // What to actually DO. The brownout text is the whole point: it names a CURRENT
@@ -201,7 +201,7 @@ struct Signals {
 
 // THE per-boot classification. Pure function of its Signals.
 //
-// Order of judgement:
+// Order of judgment:
 //   · No prior session at all → ColdBoot (nothing to have lost).
 //   · Brownout / Fault resets are explicit hardware causes → reported verbatim.
 //   · DeepSleepWake is always an intended return → CleanReboot.
