@@ -289,6 +289,55 @@ the 7" model, not the printer.
 
 ---
 
+## 6b · Print #2½ — the hallway stick (your first AMS job)
+
+> ⚠️ **Status: in development.** No committed STL, same convention as every
+> in-development design.
+
+Do this one before the 7" frame if you have the AMS loaded. It is the cheapest
+three-filament print in the catalog — both halves of the
+[S3 hallway stick](./canary_s3_lcd147.scad) on one plate, about **20 g** — and
+it rehearses everything the frame will ask of you: an inlay registered inside
+a recess, a tool change on a small part, and a purge tower that outweighs the
+job.
+
+```sh
+python3 gen_3mf.py stick     # writes stick_case.3mf
+```
+
+Load the slots **before** you open the file. With one slot loaded there is
+nothing for parts 2 and 3 to point at, and it reads as "the parts are
+missing":
+
+| slot | filament |
+|---|---|
+| 1 | Black PETG |
+| 2 | Signal Yellow PETG (RAL 1003) |
+| 3 | **Unfilled** white PETG — natural/translucent |
+
+Slot 3 is the one to get right, and it is not a color choice. Those two strips
+down the long walls are the light pipe that carries the WS2812 out of the gap
+between the LCD module and the PCB. Carbon-filled, glitter or "matte white"
+filament is opaque: the case will look correct and the seam will be dead.
+
+Open `stick_case.3mf` directly — both objects are already positioned, already
+registered, and already on their filaments. Slice as-is. Expect the purge
+tower to dwarf the parts; that is normal for a 20 g three-filament plate and
+the plate leaves it the whole right half of the bed on purpose.
+
+**What it proves.** Press the bezel and the back together: they should click
+positively and come apart only under a deliberate thumb flick at the far end.
+Look down the side in the light — the white band should read as one unbroken
+line from snap to snap, with three faint shadows where the internal ribs sit
+behind it. If the band is a row of dashes rather than a line, you are printing
+an older revision of the `.scad`.
+
+**No AMS?** Print `part="bezel"` and `part="back"` in black, then
+`part="fil_light"` alone in white and press the two strips in — that is what
+the default `band_clear = 0.10` is for.
+
+---
+
 ## 7 · Print #3 — the 7" dashboard
 
 > ⚠️ **Status: in development — FIRST REAL PRINT DONE (2026-08).** That print

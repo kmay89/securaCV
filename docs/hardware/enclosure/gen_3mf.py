@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Package the 7" case's per-filament parts into ONE Bambu-readable 3MF.
+"""Package a case's per-filament parts into ONE Bambu-readable 3MF.
 
     python3 gen_3mf.py tests      # ALL the test parts, laid out on one plate
     python3 gen_3mf.py coupon     # just the color + fit coupon
-    python3 gen_3mf.py frame      # the whole case
+    python3 gen_3mf.py frame      # the whole 7" case
+    python3 gen_3mf.py stick      # the hallway stick: bezel + band, back + mark
 
 Renders the parts it needs with OpenSCAD, then writes a single object whose
 volumes are already registered to each other and already assigned to
@@ -51,21 +52,43 @@ from collections import Counter
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-SRC = HERE / "canary_s3_lcd7.scad"
+LCD7 = "canary_s3_lcd7.scad"
+STICK = "canary_s3_lcd147.scad"
 
-# name -> (scad part, filament slot). Slot order IS the palette order, so a
-# spool in the wrong slot swaps the lettering's colors — see PRINT COLORS.
-COUPON = [("body", "coupon_body", 1),
-          ("ink", "coupon_ink", 2),
-          ("accent", "coupon_accent", 3)]
-FRAME = [("body", "fil_body", 1),
-         ("ink", "fil_ink", 2),
-         ("accent", "fil_accent", 3)]
+# A volume is (name, scad part, filament slot, source .scad, extra -D defines).
+# The source is per-volume and not global because two different cases in this
+# directory both expose a part called `fil_body` — keying the render cache on
+# the part name alone would hand one case's plate the other case's geometry,
+# which is the exact class of silent-wrong-output this file exists to prevent.
+#
+# Slot order IS the palette order, so a spool in the wrong slot swaps the
+# lettering's colors — see PRINT COLORS.
+COUPON = [("body", "coupon_body", 1, LCD7, {}),
+          ("ink", "coupon_ink", 2, LCD7, {}),
+          ("accent", "coupon_accent", 3, LCD7, {})]
+FRAME = [("body", "fil_body", 1, LCD7, {}),
+         ("ink", "fil_ink", 2, LCD7, {}),
+         ("accent", "fil_accent", 3, LCD7, {})]
 # The QR plaque is deliberately TWO filaments, not three. The symbol is ink
 # modules on a body-color field, and the accent must never land on a finder
 # pattern — a three-slot version of this would only offer a way to break it.
-QR_COUPON = [("body", "coupon_qr_body", 1),
-             ("ink", "coupon_qr_ink", 2)]
+QR_COUPON = [("body", "coupon_qr_body", 1, LCD7, {}),
+             ("ink", "coupon_qr_ink", 2, LCD7, {})]
+
+# ── The hallway stick (Waveshare ESP32-S3-LCD-1.47) ────────────────────────
+# Two objects, three filaments, and the whole reason it is worth packaging:
+# both objects have a second color that lives INSIDE a recess in the first.
+#
+# band_clear = 0 on the band is not a tweak, it is the co-print mode the .scad
+# documents. The slot is always cut at full size; only the loose INSERT is
+# shrunk, so a band rendered at the default 0.10 would print 0.2 mm smaller
+# than its own pocket in every direction and leave the AMS to bridge a gap
+# that should not exist. At 0 the band exactly fills the slot it was cut from
+# and fuses to the walls, which is what an AMS is for.
+STICK_BEZEL = [("body", "bezel", 1, STICK, {}),
+               ("band", "fil_light", 3, STICK, {"band_clear": "0"})]
+STICK_BACK = [("body", "fil_body", 1, STICK, {}),
+              ("mark", "fil_accent", 2, STICK, {})]
 
 # A "set" is a list of OBJECTS. Each object is (name, volumes, plate center).
 # Volumes within one object are parts of it and stay registered to each other;
@@ -93,8 +116,8 @@ SETS = {
     # outline is wrong, and nobody should spend a three-filament print to find
     # that out. `tests` writes both files in that order.
     "gauges": [
-        ("ring gauge",    [("ring", "ring_gauge", 1)],   (128, 180)),
-        ("corner gauge",  [("corner", "frame_gauge", 1)], (128, 60)),
+        ("ring gauge",   [("ring", "ring_gauge", 1, LCD7, {})],   (128, 180)),
+        ("corner gauge", [("corner", "frame_gauge", 1, LCD7, {})], (128, 60)),
     ],
     "color": [
         ("color coupon", COUPON,                        (100, 150)),
@@ -103,7 +126,28 @@ SETS = {
     "coupon": [("color coupon", COUPON, (128, 128))],
     "qr":     [("QR coupon", QR_COUPON, (128, 128))],
     "frame":  [("frame", FRAME, (128, 128))],
+    # Both halves of the stick on one plate: it is a 25 x 41 mm part, the pair
+    # is under 20 g, and splitting it across two jobs would build the purge
+    # tower twice for no reason.
+    "stick": [("stick bezel", STICK_BEZEL, (100, 150)),
+              ("stick back",  STICK_BACK,  (100, 95))],
 }
+# The file each set writes. Named per CASE, not per set, so two cases' plates
+# can never overwrite each other.
+OUTPUT = {"gauges": "lcd7_gauges", "color": "lcd7_color",
+          "coupon": "lcd7_coupon", "qr": "lcd7_qr", "frame": "lcd7_frame",
+          "stick": "stick_case"}
+assert set(OUTPUT) == set(SETS), "every set needs an output name"
+# Volume tuples grew a source and a defines dict when a second case moved in
+# here, and a set written inline (rather than through one of the named lists
+# above) is easy to miss. This is cheap and it fails at import, not four
+# minutes into a CGAL render — which is how the miss was actually found.
+for _set, _groups in SETS.items():
+    for _gname, _vols, _center in _groups:
+        for _v in _vols:
+            assert len(_v) == 5, (
+                f"{_set}/{_gname}: volume {_v!r} is not "
+                "(name, part, slot, source, defines)")
 BED = 256.0          # P2S build plate, mm square
 PLATE_MARGIN = 4.0   # keep parts off the very edge
 
@@ -130,16 +174,21 @@ TOWER_ZONES = {
     # The frame spans y 70.5 … 185.5, so the tower goes in the clear strip
     # BELOW it — the only place on the plate big enough once the case is down.
     "frame":  (40.0, 8.0, 216.0, 64.0),
+    # The stick is tiny and both objects sit left of x=115, so the tower gets
+    # the whole right half — a three-filament tower on a part this small
+    # purges far more plastic than the part itself weighs, and cramping it is
+    # the one way to make a 20 g print fail.
+    "stick":  (140.0, 40.0, 250.0, 210.0),
 }
 
 
 def _sources_mtime() -> float:
     """Newest mtime across everything that can change a part's geometry."""
-    return max(p.stat().st_mtime for p in SRC.parent.glob("*.scad")
+    return max(p.stat().st_mtime for p in HERE.glob("*.scad")
                if not p.name.startswith("_"))
 
 
-def render(part: str, out: Path) -> Path:
+def render(part: str, out: Path, src: str, defines: dict) -> Path:
     """Export one part to binary STL, failing loudly on any diagnostic.
 
     The cache is mtime-checked against the sources, and that check is not
@@ -166,10 +215,11 @@ def render(part: str, out: Path) -> Path:
     if out.exists() and out.stat().st_mtime >= _sources_mtime():
         return out
     out.unlink(missing_ok=True)
-    r = subprocess.run(
-        ["openscad", "--export-format", "binstl", "-o", str(out),
-         "-D", f'part="{part}"', str(SRC)],
-        capture_output=True, text=True)
+    cmd = ["openscad", "--export-format", "binstl", "-o", str(out),
+           "-D", f'part="{part}"']
+    for k, v in defines.items():
+        cmd += ["-D", f"{k}={v}"]
+    r = subprocess.run(cmd + [str(HERE / src)], capture_output=True, text=True)
     raw = r.stderr or ""
     diag = [ln for ln in raw.splitlines()
             if "ERROR" in ln or "WARNING" in ln]
@@ -235,8 +285,10 @@ def build(setname: str) -> Path:
     groups, oid = [], 0
     for gname, vols, center in SETS[setname]:
         meshes, dropped = [], []
-        for _n, part, slot in vols:
-            stl = render(part, HERE / f"_3mf_{part}.stl")
+        for _n, part, slot, src, defs in vols:
+            tag = "".join(f"_{k}{v}" for k, v in sorted(defs.items()))
+            stl = render(part, HERE / f"_3mf_{Path(src).stem}_{part}{tag}.stl",
+                         src, defs)
             if stl is None:            # this color is not on this object
                 dropped.append((_n, slot))
                 continue
@@ -250,7 +302,15 @@ def build(setname: str) -> Path:
         # the group's own extent, so the plate offset centers the WHOLE object
         allv = [p for m in meshes for p in m[3]]
         x0, x1, y0, y1 = bbox(allv)
-        off = (center[0] - (x0 + x1) / 2, center[1] - (y0 + y1) / 2)
+        # ...and lift the whole group so nothing starts below the plate. An
+        # accent volume typically dips a hair into the body it unions with (a
+        # boolean needs the overlap), which puts it below z=0 once the part is
+        # already lying face-down. The lift is per GROUP, never per volume —
+        # leveling volumes independently is exactly how you shear an inlay
+        # out of its recess.
+        zlift = -min(p[2] for p in allv)
+        off = (center[0] - (x0 + x1) / 2, center[1] - (y0 + y1) / 2,
+               zlift if zlift > 0 else 0.0)
         foot = (x0 + off[0], x1 + off[0], y0 + off[1], y1 + off[1])
         print(f"  {gname:14} {len(meshes)} part(s), "
               f"{x1-x0:6.1f} x {y1-y0:5.1f} mm  at ({center[0]}, {center[1]})")
@@ -329,7 +389,7 @@ def build(setname: str) -> Path:
             for m in meshes)
         res.append(f'  <object id="{aid}" type="model">\n   <components>\n'
                    f'{comps}\n   </components>\n  </object>')
-        xf = f"1 0 0 0 1 0 0 0 1 {off[0]:.4f} {off[1]:.4f} 0"
+        xf = f"1 0 0 0 1 0 0 0 1 {off[0]:.4f} {off[1]:.4f} {off[2]:.4f}"
         items.append(f'  <item objectid="{aid}" transform="{xf}"/>')
         bcfg.append(
             f' <object id="{aid}">\n'
@@ -356,7 +416,7 @@ def build(setname: str) -> Path:
              + '\n </resources>\n <build>\n' + "\n".join(items)
              + '\n </build>\n</model>')
 
-    name = f"lcd7_{setname}"
+    name = OUTPUT[setname]
     bambu = ('<?xml version="1.0" encoding="UTF-8"?>\n<config>\n'
              + "\n".join(bcfg) + '\n</config>')
     prusa = ('<?xml version="1.0" encoding="UTF-8"?>\n<config>\n'

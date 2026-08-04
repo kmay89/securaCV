@@ -135,13 +135,15 @@ devstl dev_c6_147_back.stl   canary_c6_display.scad -D 'model="1.47"' -D 'part="
 # same board sold with factory down-facing pin headers → deeper case
 devstl dev_c6_147_hdr_bezel.stl canary_c6_display.scad -D 'model="1.47"' -D 'headers="male"' -D 'part="bezel"'
 devstl dev_c6_147_hdr_back.stl  canary_c6_display.scad -D 'model="1.47"' -D 'headers="male"' -D 'part="back"'
-# The USB-A stick (hallway nightlight body). Two printed parts plus the
-# diffuser plug; the mesh gate below is what actually proves the snap beams,
-# the vent clutch and the inward drop buttress are still one watertight solid
-# after any parameter change.
+# The USB-A stick (hallway nightlight body). Three printed parts — bezel, back
+# plate, and the white light-band strips that fill the seam. The mesh gate
+# below is what actually proves the snap beams, the seam's hidden ribs and the
+# inward drop buttress are still one watertight solid after any parameter
+# change. For the AMS build these are packaged together instead:
+# `python3 gen_3mf.py stick`.
 devstl dev_s3_147_bezel.stl  canary_s3_lcd147.scad -D 'part="bezel"'
 devstl dev_s3_147_back.stl   canary_s3_lcd147.scad -D 'part="back"'
-devstl dev_s3_147_light.stl  canary_s3_lcd147.scad -D 'part="light"'
+devstl dev_s3_147_band.stl   canary_s3_lcd147.scad -D 'part="fil_light"'
 devstl dev_lcd7_bezel.stl    canary_s3_lcd7.scad -D 'part="bezel"'
 devstl dev_lcd7_back.stl     canary_s3_lcd7.scad -D 'part="back"'
 devstl dev_lcd7_frame.stl    canary_s3_lcd7.scad -D 'part="frame"'
