@@ -80,7 +80,7 @@ State state();
 void print_status();
 
 // Guided walkthroughs printed to the serial console. These SURFACE existing
-// firmware/tooling behaviour (they do not perform destructive actions):
+// firmware/tooling behavior (they do not perform destructive actions):
 //   recovery — the witness-chain "SD-wins" reconciliation (witness_recover_from_sd)
 //              and how to verify the log off-device.
 //   unseal   — how sealed evidence is opened on a computer with the operator's

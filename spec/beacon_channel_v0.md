@@ -454,7 +454,7 @@ The lint script enforces non-WEA frequencies in any pattern named `*BEACON*` or 
 - `Alarm` displays with the template text, severity, and a single calming amber (#E67E22) accent color. **Never red.** Background remains the normal UI background; the alarm is presented as an attention-deserving block, not a screen takeover.
 - `Cancel` for an active alarm transitions immediately to `Supervisory`. The cancellation is as prominent as the original alarm.
 - `Trouble` displays a small yellow indicator with the specific cause ("neighbor Cairn missing selftest", "time unsynced", "airtime saturated").
-- `Supervisory` displays a small grey indicator with the cause.
+- `Supervisory` displays a small gray indicator with the cause.
 
 ## 8. Rate limiting and abuse prevention
 

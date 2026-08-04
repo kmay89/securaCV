@@ -135,6 +135,15 @@ devstl dev_c6_147_back.stl   canary_c6_display.scad -D 'model="1.47"' -D 'part="
 # same board sold with factory down-facing pin headers → deeper case
 devstl dev_c6_147_hdr_bezel.stl canary_c6_display.scad -D 'model="1.47"' -D 'headers="male"' -D 'part="bezel"'
 devstl dev_c6_147_hdr_back.stl  canary_c6_display.scad -D 'model="1.47"' -D 'headers="male"' -D 'part="back"'
+# The USB-A stick (hallway nightlight body). Three printed parts — bezel, back
+# plate, and the white light-band strips that fill the seam. The mesh gate
+# below is what actually proves the snap beams, the seam's hidden ribs and the
+# inward drop buttress are still one watertight solid after any parameter
+# change. For the AMS build these are packaged together instead:
+# `python3 gen_3mf.py stick`.
+devstl dev_s3_147_bezel.stl  canary_s3_lcd147.scad -D 'part="bezel"'
+devstl dev_s3_147_back.stl   canary_s3_lcd147.scad -D 'part="back"'
+devstl dev_s3_147_band.stl   canary_s3_lcd147.scad -D 'part="fil_light"'
 devstl dev_lcd7_bezel.stl    canary_s3_lcd7.scad -D 'part="bezel"'
 devstl dev_lcd7_back.stl     canary_s3_lcd7.scad -D 'part="back"'
 devstl dev_lcd7_frame.stl    canary_s3_lcd7.scad -D 'part="frame"'
@@ -206,6 +215,7 @@ if [[ "${1:-}" != "--no-png" ]]; then
   (SRC="canary_vision_pro_mount.scad"; png "preview_dev_visionpro.png" -D 'part="plate"')
   (SRC="canary_wear_clip.scad";     png "preview_dev_wear.png"    -D 'part="all"')
   (SRC="canary_c6_display.scad";    png "preview_dev_c6_147.png"  -D 'model="1.47"' -D 'part="all"')
+  (SRC="canary_s3_lcd147.scad";     png "preview_dev_s3_147.png"  -D 'part="exploded"')
   (SRC="canary_s3_lcd7.scad";       png "preview_dev_lcd7.png"    -D 'part="all"')
   (SRC="canary_s3_touch169.scad";   png "preview_dev_t169.png"    -D 'part="all"')
   (SRC="canary_fit_coupon.scad";    png "preview_dev_coupon.png"  -D 'part="all"')

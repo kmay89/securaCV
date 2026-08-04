@@ -284,7 +284,7 @@ void cancel() {
   Outcome o = step(s_state, Event::Cancel);
   if (o.relock) {
     apply(o);
-    Serial.println("[usb-onboard] cancelled — re-locked");
+    Serial.println("[usb-onboard] canceled — re-locked");
   }
 }
 

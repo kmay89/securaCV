@@ -9,7 +9,7 @@
  *
  * The 8-bin breathing FFT lives at v[12..19]. We pick the dominant bin and
  * map it to BPM using the band's 0.1..0.5 Hz coverage:
- *   bin index i (0..7) ↔ centre frequency (0.1 + i*0.05) Hz
+ *   bin index i (0..7) ↔ center frequency (0.1 + i*0.05) Hz
  *                     ↔ BPM = 60 * f
  */
 

@@ -249,7 +249,7 @@ export function senseCards(snapshot, meta) {
   cards.push({
     v: 1, id: "range_band", kind: "band", icon: "ruler", title: "Range band",
     options: ["near", "mid", "far"], value: s.range === "unknown" ? null : s.range,
-    privacy: "P2", footer: "raw centimetres never leave the device — band only",
+    privacy: "P2", footer: "raw centimeters never leave the device — band only",
   });
 
   cards.push({

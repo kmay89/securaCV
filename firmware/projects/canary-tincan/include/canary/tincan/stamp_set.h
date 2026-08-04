@@ -14,7 +14,7 @@
 //     declines all of them.
 //
 // Each stamp carries its own haptic and (where an output transducer exists) a
-// chime phrase, so a stamp is recognisable in a pocket without looking. Ids
+// chime phrase, so a stamp is recognizable in a pocket without looking. Ids
 // are a stable wire contract: APPEND ONLY, never reorder — a reordered table
 // would silently turn one child's "sandwich" into another's "bedtime" across a
 // firmware version boundary.

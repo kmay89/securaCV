@@ -219,15 +219,15 @@
   }
 
   // ── Audio: play firmware-rendered frames verbatim ──────────────────────
-  let ac=null, master=null, analyser=null, active=0, rafId=0;
+  let ac=null, master=null, analyzer=null, active=0, rafId=0;
   const STEP = 0.006;  // frames are emitted at the firmware's 6 ms control tick
   function ensureAudio(){
     if(ac) return;
     ac = new (window.AudioContext||window.webkitAudioContext)();
     master = ac.createGain(); master.gain.value = 0.16;
     const lp = ac.createBiquadFilter(); lp.type="lowpass"; lp.frequency.value=5600; lp.Q.value=0.4;
-    analyser = ac.createAnalyser(); analyser.fftSize = 2048;
-    master.connect(lp); lp.connect(analyser); analyser.connect(ac.destination);
+    analyzer = ac.createAnalyzer(); analyzer.fftSize = 2048;
+    master.connect(lp); lp.connect(analyzer); analyzer.connect(ac.destination);
   }
   function play(id, btn){
     ensureAudio(); if(ac.state==="suspended") ac.resume();
@@ -269,8 +269,8 @@
     const w=cv.getBoundingClientRect().width, h=cv.getBoundingClientRect().height;
     cx.clearRect(0,0,w,h);
     cx.strokeStyle=css("--scope-grid"); cx.lineWidth=1; cx.beginPath(); cx.moveTo(0,h/2); cx.lineTo(w,h/2); cx.stroke();
-    if(!analyser) return;
-    const buf=new Uint8Array(analyser.fftSize); analyser.getByteTimeDomainData(buf);
+    if(!analyzer) return;
+    const buf=new Uint8Array(analyzer.fftSize); analyzer.getByteTimeDomainData(buf);
     cx.lineWidth=2; cx.strokeStyle=css("--scope-line"); cx.lineJoin="round"; cx.beginPath();
     for(let i=0;i<buf.length;i++){ const x=i/(buf.length-1)*w, y=h/2+(buf[i]-128)/128*(h*0.42); i?cx.lineTo(x,y):cx.moveTo(x,y); }
     cx.stroke(); cx.shadowBlur=10; cx.shadowColor=css("--scope-line"); cx.stroke(); cx.shadowBlur=0;

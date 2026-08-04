@@ -111,7 +111,7 @@ any platform.
 ### 2026-08-02 — Cutting the firmware train invalidated every committed emulator artifact, and one of them failed as a UI timeout
 
 - **Symptom:** bumping the release train from 2.4.2 to 2.4.3 — a version-only
-  change, no behaviour touched — turned two green CI jobs red. One said what it
+  change, no behavior touched — turned two green CI jobs red. One said what it
   meant (`artifact fw (2.4.2) matches registry train (2.4.3)`). The other did
   not: `VISION_PROBE_FAIL: waiting for locator('#play')`, a Playwright timeout
   that reads like a flaky browser test or a broken page.
@@ -164,7 +164,7 @@ any platform.
   launch advances and reads the previous one **before `tauri::Builder`** — the
   only moment when no webview is holding the store open. An install window is
   marked on disk before the first byte is written, so an interrupted update is
-  *recognised* on the next launch and the user is told to reinstall (the only
+  *recognized* on the next launch and the user is told to reinstall (the only
   cure) instead of guessing; sidecar PIDs are recorded while they run and
   reaped on the next launch; a launch that never reported a usable window gets
   its webview store cleared once — once, not in a loop.
@@ -783,7 +783,7 @@ Two independent failures, one release day, both invisible-by-design.
   `TAG+="uaccess"` + `0666`), and `tauri.conf.json`'s `deb.files` installs it to
   `/usr/lib/udev/rules.d/`. INSTALL.md documents the manual add for AppImage
   users (no package to install it). Belt: `hub_core::hub_usbboot` (host-tested)
-  recognises rpiboot's device-open failures so the app shows the fix in-line
+  recognizes rpiboot's device-open failures so the app shows the fix in-line
   instead of a silent wait, gated to Linux where it applies.
 - **Applies to:** **every bundled native tool that opens a USB device** — today
   `rpiboot`, tomorrow anything similar. Two rules generalize. **macOS "just
@@ -1365,7 +1365,7 @@ Two independent failures, one release day, both invisible-by-design.
   (i) the display firmware missing from five releases and (j) the
   core-version pairing. The pattern is always the same: the path we
   TEST and the path we SHIP are configured in different files, and
-  nothing compares them. When a build knob changes behaviour and lives
+  nothing compares them. When a build knob changes behavior and lives
   in two places, write the lint that compares them — a knob whose only
   symptom is silence will not report itself.
 
@@ -1566,7 +1566,7 @@ The rules that fall out of this:
 - **Prefer checking the property over the mechanism.** This lint asks "does
   this file speak the shared vocabulary?" rather than "does it contain this
   include line" — the latter would have forced a cosmetic edit to a file the
-  committed wasm `dist/` artifacts are built from, for no behavioural gain.
+  committed wasm `dist/` artifacts are built from, for no behavioral gain.
 
 ### (y) 2026-08-02 — imagestack layers are declared front-to-back, and the painting order is the exact opposite
 
@@ -1637,3 +1637,132 @@ say so in words the user can act on at the moment it fails; a comment in a
 workflow reaches exactly the people who don't need it. Applies to every app
 target that ships a bundled binary: Flasher, Lab, and the iPhone / iPad /
 tvOS / Mac targets.
+
+### (aa) 2026-08-04 — a lesson applied to one release path, and a lint scoped to the path that was already fixed
+
+**What happened:** entry (q) above, again, in the release path it was never
+applied to. `flasher-release.yml` builds the browser flasher's factory images
+— the rebuild button and the dev channel, the two ways a board gets flashed
+without cutting a version — and all three of its ESP32-S3 products were still
+compiled with the console on UART0: `CDCOnBoot=default` on two, the option
+absent entirely on the third. The same three sketches, built by
+`firmware-release.yml` in the same repo, had carried `CDCOnBoot=cdc` since (q).
+
+So the symptom (q) describes never actually went away for the people most
+likely to hit it. A board flashed from the browser flasher was silent; the
+identical product from a signed release printed fine; "the serial monitor
+doesn't work for some firmwares" stayed true and stayed unexplainable. #1431
+("say something when the board says nothing") was work spent on the symptom.
+
+**Cause, in two layers.** The first is ordinary: a fix went in where the bug
+was noticed and nowhere else, and `flasher-release.yml`'s own header says the
+two paths "can't drift" because they share `build_flash_manifest.py` — true,
+and irrelevant, because they drifted *upstream* of the shared part, in the
+compile flags. Sharing the back half of a pipeline proves nothing about the
+front half.
+
+The second is the one worth the entry. Entry (q) ends with "write the lint that
+compares them", and that lint was written — `scripts/lint_usb_console.py`,
+pointed at `firmware-release.yml`. At the file that had just been fixed. A gate
+aimed at the place you already looked is green on the day you write it and
+green forever after, and its greenness is indistinguishable from coverage. It
+reported OK, truthfully, about the wrong half of the problem, for months, while
+the artifacts users flash carried the bug it was named after.
+
+**The fix:** all three FQBNs matched to their twins in `firmware-release.yml`.
+The lint now derives its own scope instead of being handed one: a workflow is
+in scope when it PUBLISHES something a user flashes (uploads a release asset,
+emits `manifest-flash.json`), so a new release path inherits the rule the day
+it is written. Bench-only workflows are out of scope but cannot leave silently
+— one carrying an S3 FQBN that is neither publishing nor named in `BENCH_ONLY`
+fails the gate. Two vacuous-pass holes closed with it: zero FQBNs found is now
+a failure (restructuring the workflows so the board strings moved made every
+rule pass and printed "OK — 0 ESP32 release FQBN(s) agree"), and a missing
+`common.ini` is now a failure rather than a skipped half-comparison.
+
+**The generalized part:** when you fix a release bug, the question is not "did
+I fix it" but **"which other path ships this exact thing?"** — and the answer
+in this repo is nearly always "two", because there are two flashers, two
+release workflows, and per-target app pipelines that each rebuild the same
+payloads. CLAUDE.md already says this about user-facing diagnostics ("two
+flashers, two frontends"); it is just as true of build flags, which are worse,
+because a flag has no UI to look wrong in.
+
+And when you write the lint that prevents the recurrence: **point it at the
+population, not at the specimen.** Scope it by what a file DOES — publishes,
+builds, ships — computed from the file, so new members join the population
+automatically. A hand-written list of paths is a list of the places you had
+already thought of, and it is exactly as complete as your memory on the day you
+wrote it. Then prove the gate can fail: give it a tree with the bug in it and
+watch it go red, and give it a tree with its own inputs removed and watch it go
+red for that too. A drift gate that has never been observed failing is a
+hypothesis, not a control. Applies to every release target: Flasher, Lab, the
+firmware paths, and the iPhone / iPad / tvOS / Mac pipelines.
+
+### (ab) 2026-08-04 — CloudKit does not fail without an entitlement, it dies; and the second fix died the same way
+
+**What happened:** every iOS test failed, on every branch, for four days. Not
+one of them was about iCloud. The whole account CI gave was
+
+```
+SecuraCV encountered an error (Early unexpected exit, operation never finished
+bootstrapping. Underlying Error: Test crashed with signal abrt before
+establishing connection.)
+```
+
+**Cause:** `CKContainer.default()` resolves its container by reading
+`com.apple.developer.icloud-container-identifiers`. With no entitlement it does
+not return nil and does not throw — it raises an Objective-C `CKException`,
+"containerIdentifier can not be nil". Swift cannot catch that. The `try?` at
+the call site is on `accountStatus()`; the process is already gone inside
+`default()` before the await is reached. A build with `CODE_SIGNING_ALLOWED=NO`
+carries no entitlements, CI builds exactly that, and #1430 had just wired
+`CloudSync.refreshAvailability()` into `FleetStore.onAppear()`.
+
+**The first fix was wrong, and it is the useful half of this entry.** Naming
+the container — `CKContainer(identifier:)` instead of `.default()` — reasons
+that the exception comes from resolving a nil identifier out of a missing
+entitlement, so handing it a non-nil string skips that path and any real
+entitlement problem then arrives as a `CKError` on the operation, which the
+existing `try?` handles. That reasoning is sound and the conclusion is false.
+CloudKit logs "Significant issue at CKContainer.m:748: your process must have a
+com.apple.developer.icloud-services entitlement" and then traps *inside*
+`__allocating_init(identifier:)` — `EXC_BREAKPOINT`, `brk 1`, equally
+uncatchable. The signal changed from abrt to trap and nothing else did. It
+shipped as "unverified, selfheal is the check that matters", and selfheal duly
+said no.
+
+**Fix:** decide at COMPILE time, because every runtime test is either wrong or
+unavailable. `ubiquityIdentityToken` is cheap and non-throwing but answers
+about iCloud *Documents*; this app declares no ubiquity container, so gating on
+it risks switching iCloud off for every real user to protect a build nobody
+ships. Reading the entitlement from the code signature needs `SecTask*`, which
+is not in the public iOS SDK. What IS known for certain, before the app runs,
+is that an unsigned build cannot carry entitlements — so `heal.sh` sets
+`SECURACV_NO_CLOUDKIT` on the same line it passes `CODE_SIGNING_ALLOWED=NO`,
+and the CloudKit paths are compiled out of exactly those builds. Signed builds
+never see the flag, so it cannot mask a fault where CloudKit really works.
+
+**Applies to:** any framework whose init can trap — CloudKit, and by the same
+shape anything reading entitlements at construction. Three generalizations,
+each paid for here:
+
+**A framework that traps has no runtime guard, only a compile-time one.** Once
+construction itself is the thing that dies, there is no object to hold and no
+error to inspect; "call it and handle the failure" is not available at any
+price. Ask whether the process could *ever* succeed, answer it before the
+process starts, and compile the rest away.
+
+**When a fix changes the signal but not the outcome, that is data, not
+progress.** abrt to trap was the whole result of the first attempt, and it read
+as movement. The test to apply is not "did the failure change" but "did the
+failure stop"; anything else invites shipping the same bug with a new symptom.
+
+**A crash the CI cannot describe will be diagnosed by guessing.** Two rounds
+went to reading source because the job discarded the `.ips` report and the
+`.xcresult` before anyone could look. It now keeps both on failure — and the
+very first run that did named the faulting frame in one line
+(`CloudContainer.swift:62`, `CKContainer.__allocating_init(identifier:)`),
+after two rounds of reasoning had gotten it wrong. Collecting the evidence is
+cheaper than being clever, and it belongs in every job that can crash a
+process: Flasher, Lab, tvOS, and the iPhone / iPad / Mac targets.

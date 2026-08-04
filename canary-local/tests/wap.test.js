@@ -262,6 +262,6 @@ test("cable spine: trails away from the port and stays behind the connector", as
   // the port is on the base's −X wall; the light pipe is on the lid face —
   // both measured from the committed compact STLs (33.7 × 37.6 base)
   assert.ok(WAP_PORT[0] < -16 && WAP_PORT[0] > -17.5, "port off the −X wall");
-  assert.ok(Math.abs(WAP_PORT[1]) < 0.01, "USB slot is y-centred (usb_w 10.5 notch)");
+  assert.ok(Math.abs(WAP_PORT[1]) < 0.01, "USB slot is y-centered (usb_w 10.5 notch)");
   assert.ok(WAP_LED[2] > 7, "light pipe sits on the lid face, toward the viewer");
 });

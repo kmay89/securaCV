@@ -41,7 +41,7 @@ test("formatDetections: labels SSCMA boxes with the class name + %", async () =>
   assert.deepStrictEqual(formatDetections([[1, 2, 3]]), []); // too short
   assert.deepStrictEqual(formatDetections([["x", 0, 1, 1, 90, 0]]), []); // non-numeric geom
   // A custom model (bench passes an empty class map when job.pinned is false)
-  // must NOT be labelled "person" — class 0 reads the generic "object".
+  // must NOT be labeled "person" — class 0 reads the generic "object".
   const custom = formatDetections([[100, 80, 40, 60, 92, 0]], []);
   assert.strictEqual(custom[0].label, "object");
   assert.strictEqual(custom[0].text, "object · 92%");

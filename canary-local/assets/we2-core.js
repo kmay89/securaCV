@@ -282,7 +282,7 @@ export function modelInfoJson({ version, sha256 }) {
 export const WE2_CLASSES = ["person"];
 
 // Normalize an SSCMA detection box — [x, y, w, h, score, target] — into a
-// labelled object the preview draws. `score` is already 0-100 (a percent).
+// labeled object the preview draws. `score` is already 0-100 (a percent).
 // Unknown targets get a generic label instead of breaking; garbage is dropped.
 // Pure + host-tested (tests/we2.test.js).
 export function formatDetections(boxes, classes = WE2_CLASSES) {

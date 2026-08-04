@@ -51,7 +51,7 @@ surveillance code was never written, so there is no setting to turn off.
 ## Non-negotiables
 
 **1. Never add an identity-inferring capability.** No face recognition or
-embeddings, no licence-plate OCR, no person re-identification, no gait analysis,
+embeddings, no license-plate OCR, no person re-identification, no gait analysis,
 no demographic (age/gender/race) estimation, no audio transcription. `ObjectClass`
 is `Person | Vehicle | Animal | Package` — never `Face` or `LicensePlate`. This
 is Invariant II (`spec/invariants.md`) and it is a rejected PR, not a config flag.
@@ -68,17 +68,26 @@ exception is the Unix `flock(2)` syscall, which is a real API name; do not renam
 it. Use "fleet" (already established across the firmware, e.g. `fleet_model.h`)
 or plain "your Canaries" / "the devices."
 
-**3b. US spellings, always.** `color`, `center`, `meter`, `behavior`, `analyze`,
-`gray`, `license`, `labeled`, `canceled`, `optimize`, `recognize`, `catalog`.
-Not `colour`, `centre`, `metre`, `behaviour`, `analyse`, `grey`, `licence`,
-`labelled`, `cancelled`, `optimise`, `recognise`, `catalogue`. This covers
-user-facing copy, device UI strings, docs, comments and code identifiers alike.
+**3b. US spellings, always.** Write `color`, `center`, `meter`, `behavior`,
+`analyze`, `gray`, `license`, `labeled`, `canceled`, `optimize`, `recognize`,
+`catalog` — never the British forms of those words. This covers user-facing
+copy, device UI strings, docs, comments and code identifiers alike, and
+`scripts/lint_spelling.py` fails the build on any of them.
 
-Four things keep their spelling because they are not ours to respell: SPDX tags
-and `LICENSE`/`LICENCE` filenames, third-party API and CSS identifiers already
-spelled a particular way (CSS accepts `grey`, but write `gray`), quoted text
-from an external source, and words that are the same in both (`analysis`,
-`parameter`, `diameter` — none of those are British).
+**The banned forms are enumerated ONCE, in that script's regex — read them
+there, and do not repeat them in prose here.** This paragraph used to spell
+them out as "write X, not Y", and the first repo-wide sweep duly rewrote its
+own rule: the "not Y" column came back as a list of the *correct* spellings,
+so the rule forbade exactly what it required. A regex in a linter is the one
+place a sweep has no reason to touch.
+
+Not ours to respell: SPDX tags and license filenames, third-party API and CSS
+identifiers already spelled a particular way, and quoted external text. And
+some words only *look* British to a substring match — `analysis`, `emphasis`,
+`parameter`, `diameter`, `characteristic`, `realistic`, `optimistic`,
+`initialism` are all correct. The linter's `ALLOW` list names them and
+self-tests that the ban pattern never starts matching them; that check earned
+itself on its first run, when `colou?r` matched `colored`.
 
 **4. Don't oversell, and don't overclaim.** "Verified" means *an Ed25519
 signature checked against a pinned key* — nothing looser. No performance claim
@@ -160,6 +169,7 @@ These run on every PR. Run the relevant one locally before you push.
 | `scripts/lint_feature_flags.sh` | Feature-flag hygiene |
 | `scripts/lint_version_sync.sh`, `desktop/scripts/check_app_versions.py` | One version per app across `tauri.conf.json` / `package.json` / `Cargo.toml` |
 | `scripts/lint_bom.py` | BOM CSVs schema-clean and wired to the generator |
+| `scripts/lint_cloudkit_container.py` | No `CKContainer.default()`; the container identifier matches both entitlements files |
 
 Full list: [`.github/workflows/lint.yml`](.github/workflows/lint.yml) and
 [`docs/ci.md`](docs/ci.md).

@@ -3,7 +3,7 @@
  * Proves the two properties that make a themed serial console safe rather than
  * fragile:
  *   1. RANDOMART is a faithful, deterministic drunken-bishop walk — the trust
- *      centrepiece must be stable and bounded.
+ *      centerpiece must be stable and bounded.
  *   2. The ASCII tier NEVER emits an escape byte or a non-7-bit byte, and every
  *      framed line aligns to the same width — so on an unknown terminal the
  *      banner degrades to clean text instead of `^[[..m` garbage (which our own
@@ -75,7 +75,7 @@ static void test_randomart_walk() {
   // Deterministic.
   CHECK(memcmp(f1, f2, sizeof f1) == 0);
 
-  // Start marker at the centre; End marker exists exactly once elsewhere-or-not.
+  // Start marker at the center; End marker exists exactly once elsewhere-or-not.
   CHECK(f1[RANDOMART_H / 2][RANDOMART_W / 2] == (uint8_t)(RANDOMART_LEN - 1)); // 'S'
   int ends = 0, starts = 0;
   for (int y = 0; y < RANDOMART_H; ++y)
@@ -132,14 +132,14 @@ static void test_randomart_golden() {
 
 static void test_randomart_all_zero() {
   // All-zero bytes: every step is up-left → the bishop clamps into the top-left
-  // corner. Start stays centred; End lands at (0,0).
+  // corner. Start stays centered; End lands at (0,0).
   uint8_t z[16]; memset(z, 0, sizeof z);
   uint8_t f[RANDOMART_H][RANDOMART_W];
   randomart_field(z, sizeof z, f);
-  CHECK(f[RANDOMART_H / 2][RANDOMART_W / 2] == (uint8_t)(RANDOMART_LEN - 1)); // 'S' centre
+  CHECK(f[RANDOMART_H / 2][RANDOMART_W / 2] == (uint8_t)(RANDOMART_LEN - 1)); // 'S' center
   CHECK(f[0][0] == (uint8_t)RANDOMART_LEN);                                   // 'E' corner
-  // Empty input is safe and degenerate: with no walk, start == end == centre,
-  // so the End marker (written last) sits on the centre. Just must not crash.
+  // Empty input is safe and degenerate: with no walk, start == end == center,
+  // so the End marker (written last) sits on the center. Just must not crash.
   uint8_t f0[RANDOMART_H][RANDOMART_W];
   randomart_field(nullptr, 0, f0);
   CHECK(f0[RANDOMART_H / 2][RANDOMART_W / 2] == (uint8_t)RANDOMART_LEN); // 'E'
@@ -179,7 +179,7 @@ static void test_ascii_tier_is_safe() {
   CHECK(sk.s.find('S') != std::string::npos);
 }
 
-// ── the full tier does light up (colour + Unicode) ──────────────────────────
+// ── the full tier does light up (color + Unicode) ──────────────────────────
 static void test_full_tier_lights_up() {
   Sink sk;
   Renderer r{collect, &sk, caps_full(100, 40)};
@@ -187,14 +187,14 @@ static void test_full_tier_lights_up() {
   trust_card(r, t);
   CHECK(sk.s.find("\x1b[") != std::string::npos);          // has SGR/escapes
   CHECK(sk.s.find("\xe2\x94\x8c") != std::string::npos);   // has ┌ (Unicode border)
-  CHECK(sk.s.find("\x1b[0m") != std::string::npos);        // resets colour
+  CHECK(sk.s.find("\x1b[0m") != std::string::npos);        // resets color
   CHECK(sk.s.find("canary-7fA3") != std::string::npos);
   // Cursor is never left hidden by a static scene.
   CHECK(sk.s.find("\x1b[?25l") == std::string::npos);
 }
 
-// ── health colours carry a word too (WCAG 1.4.1) ────────────────────────────
-static void test_health_has_a_word_not_just_colour() {
+// ── health colors carry a word too (WCAG 1.4.1) ────────────────────────────
+static void test_health_has_a_word_not_just_color() {
   for (int h : {100, 70, -1}) {
     Sink sk;
     Renderer r{collect, &sk, caps_full(90, 30)};
@@ -206,7 +206,7 @@ static void test_health_has_a_word_not_just_colour() {
   }
 }
 
-// ── the tamper state is loud in text, not colour alone ──────────────────────
+// ── the tamper state is loud in text, not color alone ──────────────────────
 static void test_tamper_is_worded() {
   Sink sk;
   Renderer r{collect, &sk, caps_ascii()};
@@ -226,7 +226,7 @@ static const WakeProbe kProbes[10] = {
 };
 
 static void test_wake_markers_carry_words() {
-  // Every state has a distinct, ASCII, meaning-bearing marker (not colour only).
+  // Every state has a distinct, ASCII, meaning-bearing marker (not color only).
   CHECK(std::string(probe_marker(ProbeState::Pending)) == "[..]");
   CHECK(std::string(probe_marker(ProbeState::Running)) == "[~~]");
   CHECK(std::string(probe_marker(ProbeState::Pass)) == "[OK]");
@@ -278,7 +278,7 @@ static void test_wake_full_tier_lights_up() {
   Sink sk;
   Renderer r{collect, &sk, caps_full(100, 40)};
   wake_frame(r, TRUST_INNER, kProbes, 10, 90, true);
-  CHECK(sk.s.find("\x1b[") != std::string::npos);        // colour/escapes
+  CHECK(sk.s.find("\x1b[") != std::string::npos);        // color/escapes
   CHECK(sk.s.find("\x1b[0m") != std::string::npos);      // resets
   CHECK(sk.s.find("\xe2\x94\x8c") != std::string::npos); // ┌ Unicode border
 }
@@ -300,7 +300,7 @@ static void test_welcome_card() {
   Sink sk2; Renderer r2{collect, &sk2, caps_full(90, 30)};
   welcome_card(r2, nullptr, nullptr);
   CHECK(sk2.s.find("securacv.com/canary") != std::string::npos);
-  CHECK(sk2.s.find("\x1b[") != std::string::npos); // colour at the confirmed tier
+  CHECK(sk2.s.find("\x1b[") != std::string::npos); // color at the confirmed tier
 }
 
 static void test_mood_cards_are_ascii_and_privacy_safe() {
@@ -343,7 +343,7 @@ int main() {
   test_randomart_all_zero();
   test_ascii_tier_is_safe();
   test_full_tier_lights_up();
-  test_health_has_a_word_not_just_colour();
+  test_health_has_a_word_not_just_color();
   test_tamper_is_worded();
   test_wake_markers_carry_words();
   test_wake_ascii_tier_is_safe_and_aligned();

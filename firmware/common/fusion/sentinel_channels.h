@@ -127,7 +127,7 @@ inline Occupancy occupancy_from_count(uint8_t targets) {
 }
 
 /**
- * Coarse range band from a raw distance in centimetres (radar). The centimetre
+ * Coarse range band from a raw distance in centimeters (radar). The centimeter
  * value is consumed HERE and never leaves — only the band does.
  */
 inline RangeBand range_from_cm(uint16_t distance_cm, uint16_t near_cm,

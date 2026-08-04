@@ -154,7 +154,7 @@ measurements welcome.
 | **Witness signage plate** — "presence sensing in use / no video stored", debossed, 3 parametric lines | check local signage rules | <img src="./preview_dev_sign.png" width="230"> | [`canary_sign.scad`](./canary_sign.scad) |
 | **Field case** — bag-carry rugged witness at the honest top of the FDM ceiling: Ø1.5 O-ring cord (27 % squeeze), six-lobe clamp, zero external ports (open to charge), bonded PC lens disc behind a contrast-color trim bezel, ePTFE vent, 4 mm walls, TPU impact boot + lanyard. CER‑4 intent: IP67 + MIL‑STD‑810H transit drop — [earn the rating, don't assume it](./field_ratings.md) | 72 × 39 × 21 body; boot on ≈ 94 wide | <img src="./preview_dev_field.png" width="230"> | [`canary_field_case.scad`](./canary_field_case.scad) |
 | **Dashboard display case** — Waveshare ESP32-S3-Touch-LCD-4.3 (the [display research](../display_research.md) step-up dashboard): face-down bezel frame, vented screw-on back with keyholes + 75 mm M4 pair, free-standing 25° desk cradle. Panel dims are NOMINAL — measure yours | glass drops in, bezel lip 2.5 | <img src="./preview_dev_dash.png" width="230"> | [`canary_dash_display.scad`](./canary_dash_display.scad) |
-| **S3 hallway stick case** — Waveshare **ESP32-S3-LCD-1.47** (the USB-A STICK, not the C6 header board). The hallway nightlight body: plugs into a wall adapter, the 172x320 glass faces the corridor, the WS2812 washes the wall through a window in the back. Screwless — four cantilever beams cut into the bezel wall, sized by strain (ε printed at render, PETG budget 1.8%), with ASYMMETRIC return angles: steep at the plug end so it never lets go, shallow at the far end so a thumb pops it for the microSD. The plug end is the whole design problem: the opening is a RECTANGLE (series-A is not a stadium — that is USB-C), the wall is thin and relieved so a recessed receptacle clears it, an assert fails the render if under 11 mm of insertion length survives, and the drop buttress reaches INWARD (outward would eat the very length it protects). Black PETG + one yellow accent: the house mark inlaid in the back | screwless snap, thumb-release, 2 filaments | <img src="./preview_dev_s3_147.png" width="230"> | [`canary_s3_lcd147.scad`](./canary_s3_lcd147.scad) |
+| **S3 hallway stick case** — Waveshare **ESP32-S3-LCD-1.47** (the USB-A STICK, not the C6 header board). The hallway nightlight body: plugs into a wall adapter, the 172x320 glass faces the corridor, and the WS2812 leaves through a **lit white seam** down both long walls. Screwless — four cantilever beams cut into the bezel wall, sized by strain (ε printed at render, PETG budget 1.8%), with ASYMMETRIC return angles: steep at the plug end so it never lets go, shallow at the far end so a thumb pops it for the microSD. The plug end is the whole design problem: the opening is a RECTANGLE (series-A is not a stadium — that is USB-C), the wall is thin and relieved so a recessed receptacle clears it, an assert fails the render if under 11 mm of insertion length survives, and the drop buttress reaches INWARD (outward would eat the very length it protects). The RGB does **not** fire backwards — Waveshare's "clear acrylic sandwich panel" is the tell, the LED glows out the edge gap between the LCD module and the PCB — so the light gets a **seam** along the side walls at exactly that band rather than a hole in the back, which frees the back for the mark. The seam is filled with **unfilled white PETG**, a light pipe rather than a slot, and its x span is derived from the cavity face and asserted: the first version stopped 0.65 mm short and would have shipped a light pipe with no light in it. The side elevation reads 1 mm black / 3 mm white / black. Ties are hidden ribs in the inner 1.2 mm of the wall, so the white line is unbroken and each side presses in as ONE strip. No vents — the case is 8.2 mm of measured stack in a 9.2 mm shell, and the thumb scoop to the USB opening is the airway. Black PETG, yellow mark, white band | screwless snap, thumb-release, 3 filaments, `gen_3mf.py stick` | <img src="./preview_dev_s3_147.png" width="230"> | [`canary_s3_lcd147.scad`](./canary_s3_lcd147.scad) |
 | **C6 display pocket case** — Waveshare **ESP32-C6-LCD-1.47** (portrait), both board builds: `headers="none"` (stripped: no headers, corner pillars removed) or `headers="male"` (as shipped: down-facing pin headers + brass M2 corner pillars — deeper cavity, press bosses land on the pillar tops). Face-down bezel over the active-area window, edge-captured board (no screws into the board), snap-in vented back, blind keyhole. The overhanging BOOT/RST buttons and the USB-C shell (both BACK-mounted — photo-verified) get full-depth insertion channels behind "ear"/"chin" wall bulges, and the USB-C port is a true stadium (full-round ends) sized shell + tolerance. `model="1.47"` is drawn from the Waveshare mechanical drawing; a `"1.69"` preset is parameterised. Heat-escape slots on the sides + a back grille | snap-fit, vented, 2 board builds | <img src="./preview_dev_c6_147.png" width="230"> | [`canary_c6_display.scad`](./canary_c6_display.scad) |
 | **7″ touch dashboard case** — Waveshare **ESP32-S3-Touch-LCD-7** (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on molded M3 standoffs and screws to four **gusseted** outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (~52 cm² back grille + **bottom-wall intake and top-wall exhaust** — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centered **USB pass-through** plus a matching **side exit** on the microSD's wall (hang the case portrait with that wall down and the cable leaves out the bottom; the leashed blank fills whichever exit is idle) and three **TPU fitments**: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive leashed press-through BOOT/RESET plug whose press towers reach the button caps at the board edge, and a peel-open SD cover that stays attached. Optional 20° desk **dock** for the frame (drop-in slot on tilted seat pads, self-centering keys into the frame's keying slots, landscape **and** portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). **Print the `gauge` corner pair first** (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centers and `pcb_h` are NOMINAL — measure yours | glass drops in, lip 10.4, TPU-fitted ports | <img src="./preview_dev_lcd7.png" width="230"> | [`canary_s3_lcd7.scad`](./canary_s3_lcd7.scad) |
 | **1.69″ touch watch-display puck** — Waveshare **ESP32-S3-Touch-LCD-1.69** (rounded-square 240×280 capacitive-touch smartwatch board — S3, IMU, RTC, battery/charger). The bonded glass slab (41.13 × 33.13) overhangs the smaller PCB (37.12 × 29.83) by ~2 mm, so the face lip captures it — no screws (this board has no mount holes). Face-down bezel + snap-in vented back (skirt rides the overhang, 4 nubs, standoffs press the board forward, blind keyhole). USB-C (bottom) + PWR/BOOT/RST (top) + battery/RTC/pin slot (side); side heat slots + back grille; optional 22° cradle. Connector centers NOMINAL — measure yours | snap-fit, vented, edge-captured | <img src="./preview_dev_t169.png" width="230"> | [`canary_s3_touch169.scad`](./canary_s3_touch169.scad) |
@@ -601,6 +601,41 @@ the QR polarity constraint that makes the AMS necessary are documented at the
 edit `ink_groups` / `accent_groups` — each inlay is cut from the same solid as
 the recess it fills, so nothing has to be kept in sync by hand. `fil_overlap`
 and `fil_gap` gate that the three parts tile the frame exactly.
+
+### Three-color printing (hallway stick, P2S + AMS)
+
+The S3 hallway stick is the other three-filament part in this directory, and
+it is a far cheaper first multi-color job than the 7" frame: both halves fit
+one plate at about 20 g of part.
+
+```bash
+python3 gen_3mf.py stick      # writes stick_case.3mf — two objects, three filaments
+```
+
+| slot | filament | what it prints |
+|---|---|---|
+| 1 | **Black PETG** | the bezel and the back plate — everything structural |
+| 2 | **Signal Yellow PETG** (RAL 1003) | the bird + securaCV mark, on the back only |
+| 3 | **White PETG** (natural/translucent, *not* filled) | the two light-band strips down the long walls |
+
+Slot 3 is a functional part, not decoration: those strips are the light pipe
+that carries the WS2812 out of the LCD/PCB sandwich gap, so **unfilled**
+white matters. Carbon- or glitter-filled white is opaque and will print a
+handsome case with a dead seam.
+
+The packaged plate renders the band with `band_clear = 0`, which is the
+co-print mode the `.scad` documents: the slot is always cut at full size and
+only the loose INSERT is shrunk, so a band packaged at the default 0.10 would
+print 0.2 mm undersize in every direction and ask the AMS to bridge a gap that
+should not be there. At 0 the band exactly fills the pocket it was cut from —
+provably, since the bezel subtracts `seam − ribs` and the band *is*
+`(seam ∩ shell) − ribs`, so the two volumes cannot overlap and cannot leave a
+void.
+
+**No AMS?** Print `part="bezel"` and `part="back"` in black, then
+`part="fil_light"` on its own in white and press the two strips in — that is
+what the default `band_clear = 0.10` is for. Each side is one continuous
+strip carrying its own rib notches, so it goes in as a single piece.
 
 ## Key parameters to check first
 

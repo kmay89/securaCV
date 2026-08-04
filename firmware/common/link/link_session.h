@@ -17,7 +17,7 @@
 //
 //  2. THE TWO DIRECTIONS GET DIFFERENT KEYS. The shared secret is expanded
 //     through HKDF into K_AB and K_BA using distinct, versioned info strings.
-//     This is the primary defence against the nonce-reuse trap described in
+//     This is the primary defense against the nonce-reuse trap described in
 //     link_frame.h: the two send streams never share a key, so even a nonce
 //     construction bug cannot collide across directions. The HKDF itself is
 //     the runtime's job (mbedtls); this header owns the *labels*, because a

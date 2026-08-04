@@ -12,7 +12,7 @@ a laptop. For a **witness device**, that first impression should do a job:
 convince a human that *this is the device they think it is, running the firmware
 they think it is* — and look like the work of people who sweat the details.
 
-So the centrepiece isn't a mascot. It's a **trust card**: a framed identity the
+So the centerpiece isn't a mascot. It's a **trust card**: a framed identity the
 operator can verify by eye.
 
 ```
@@ -48,9 +48,9 @@ walk (`ssh-keygen -lv`, `sshkey.c fingerprint_randomart`) run over the device's
 public key: 32 unmemorable bytes become one small, stable picture. A human
 memorises the shape once; a swapped board or a tampered key draws a visibly
 different picture. Verifiable identity you can check with your eyes, needing no
-tool — exactly the property a witness device should make effortless. On a colour
+tool — exactly the property a witness device should make effortless. On a color
 terminal the same card lights up (brand-blue frame, moss/amber health), but the
-colour is a bonus: **every state that gets a colour also gets a word** (WCAG
+color is a bonus: **every state that gets a color also gets a word** (WCAG
 1.4.1 / the ambient-display house rule), and the whole card is fully legible in
 plain text.
 
@@ -61,10 +61,10 @@ the wrong terminal. Over a bare serial link you can't read `terminfo`, so the
 engine follows a strict **capability ladder** and a probe:
 
 - **Tier 0 — the ASCII floor (default).** 7-bit ASCII only, borders from `+ - |`,
-  no colour, no cursor control, `\r\n` line ends. This is what we emit when we
+  no color, no cursor control, `\r\n` line ends. This is what we emit when we
   know nothing. It is *authored to be genuinely nice on its own* — animation and
-  colour are never required to convey the trust info.
-- **Tier 1 — confirmed ANSI + Unicode.** Box-drawing `─│┌┐└┘`, 256-colour, only
+  color are never required to convey the trust info.
+- **Tier 1 — confirmed ANSI + Unicode.** Box-drawing `─│┌┐└┘`, 256-color, only
   after the terminal proves itself.
 
 **The probe** (`console_probe`, firmware): emit a cursor-position report request
@@ -86,8 +86,8 @@ proven to contain zero escape bytes and zero non-7-bit bytes.
 - [x] Assume 80 columns (the card is 54 wide, fits comfortably); never draw wider than known width.
 - [x] Every framed line aligns to the same width — content is ASCII so byte length == column width; only borders differ per tier. *(host-tested)*
 - [x] CRLF line endings (raw PuTTY / screen / minicom don't translate LF).
-- [x] Always `ESC[0m` after a coloured run; never leave the cursor hidden (the static card never emits `ESC[?25l`). *(host-tested)*
-- [x] Colour never carries meaning alone — health/tamper always carry a word. *(host-tested)*
+- [x] Always `ESC[0m` after a colored run; never leave the cursor hidden (the static card never emits `ESC[?25l`). *(host-tested)*
+- [x] Color never carries meaning alone — health/tamper always carry a word. *(host-tested)*
 - [x] The emitter only ever produces a fixed whitelist of sequences; it never echoes untrusted bytes inside an escape (ANSI-injection hygiene).
 - [x] Feature-gated (`FEATURE_CONSOLE_THEME`) for flash budget; pure header composition, no heap.
 
@@ -99,7 +99,7 @@ A pure, host-testable engine with a thin serial adapter — the same shape as
 | File | Role |
 |------|------|
 | `firmware/common/ui/randomart.h` | The drunken-bishop walk (pure, deterministic, bounded). Hash-agnostic; we feed it the public key. |
-| `firmware/common/ui/console_theme.h` | `Caps` (the capability tier) + `Renderer` (colour/border primitives, gated) + panel primitives (`hrule`, `row`, `center_into`). |
+| `firmware/common/ui/console_theme.h` | `Caps` (the capability tier) + `Renderer` (color/border primitives, gated) + panel primitives (`hrule`, `row`, `center_into`). |
 | `firmware/common/ui/console_scenes.h` | The `trust_card` scene, composed from the above. |
 | `firmware/common/ui/console_wake.h` | The animated-wake frames + gated cursor-control helpers (the `a` command). |
 | `firmware/tests_host/test_console_scene.cpp` | Proves the randomart walk and the ASCII-tier safety + alignment invariants. |
@@ -110,7 +110,7 @@ string collector in tests — so all composition is pure and unit-tested.
 
 ### The randomart walk (our convention)
 
-Faithful to OpenSSH: a 17×9 field of visit counters; start at centre; for each
+Faithful to OpenSSH: a 17×9 field of visit counters; start at center; for each
 byte, 4 steps of 2 bits (bit 0 = horizontal, bit 1 = vertical), clamping at the
 walls (which is what makes coins pile along edges); glyph ramp
 `" .o+=*BOX@%&#/^SE"` with `S`/`E` the start/end markers. OpenSSH computes its art
@@ -154,10 +154,10 @@ a **Tier-1, skippable bonus** that degrades cleanly:
 Pure composition in `firmware/common/ui/console_wake.h`; timing / skip /
 `diag_run_selftest()` live in `main.cpp:run_wake()`. Host-tested: ASCII tier
 escape-free + width-aligned, cursor control emitted only at the ANSI tier,
-markers carry words (`OK`/`!!`, never colour alone), and the running frame hides
+markers carry words (`OK`/`!!`, never color alone), and the running frame hides
 the score.
 
-## Open-source lineage / licences
+## Open-source lineage / licenses
 
 Ideas borrowed, nothing copied: drunken-bishop from **OpenSSH** (BSD); the
 diff-redraw model from **notcurses** / **tcell** (Apache-2.0); big-text banners,

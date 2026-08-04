@@ -365,7 +365,7 @@ inline void probe_microphone(ProbeResult* r, JsonObject metric) {
     set_detail(r, "PDM mic armed · T3/T4 cadence detector running");
   } else if (audio_is_muted()) {
     // Muted-by-user is a deliberate state, not a hardware failure —
-    // the wizard greys the row rather than failing the pre-flight.
+    // the wizard grays the row rather than failing the pre-flight.
     r->status = Status::SKIP;
     r->code   = 0;
     set_detail(r, "Muted by user");
@@ -381,7 +381,7 @@ inline void probe_microphone(ProbeResult* r, JsonObject metric) {
   }
 #else
   // No mic in this build profile. Audible chirp uses a piezo OUTPUT,
-  // not a mic input. Report ABSENT cleanly so the wizard greys the
+  // not a mic input. Report ABSENT cleanly so the wizard grays the
   // row instead of failing the whole pre-flight.
   metric["compiled_in"] = false;
   r->status = Status::ABSENT;
@@ -439,7 +439,7 @@ inline void probe_gpio(ProbeResult* r, JsonObject metric) {
 
 // ─────────────────────────────────────────────────────────────────────
 // Optional peripherals — these are honest about absence: a board with no
-// GPS / no battery / no buzzer reports ABSENT (greyed, non-blocking), and
+// GPS / no battery / no buzzer reports ABSENT (grayed, non-blocking), and
 // only ever PASS/SKIP/ABSENT — never FAIL — so a missing optional part can
 // never gate setup. The user-facing "what to look into" guidance lives in
 // the companion UI's hint matrix, keyed by these probe names + statuses.
@@ -461,7 +461,7 @@ inline void probe_gps(ProbeResult* r, JsonObject metric) {
              g_hw.gps_state == GPS_LOST_FIX ||
              g_hw.gps_ever_detected) {
     // Module is wired but hasn't locked on yet. Not a failure — GPS needs
-    // sky view and a minute or two. SKIP keeps it greyed-but-noted.
+    // sky view and a minute or two. SKIP keeps it grayed-but-noted.
     r->status = Status::SKIP;
     r->code   = 0;
     set_detail(r, "Module detected · waiting for fix");
@@ -619,7 +619,7 @@ inline bool run_to_json(JsonDocument& doc) {
   doc["skip_count"]   = skip_n;
   // Safe mode (rapid-reboot recovery) skips every peripheral init, so on a
   // healthy unit it produces a wall of SKIP/ABSENT rows that looks like
-  // mass failure. Surface it so the UI can explain the grey rows instead
+  // mass failure. Surface it so the UI can explain the gray rows instead
   // of letting the user read a recovering device as a broken one.
   doc["safe_mode"]    = g_hw.safe_mode;
   // "all_passed" excludes ABSENT/SKIP — those aren't problems, they're

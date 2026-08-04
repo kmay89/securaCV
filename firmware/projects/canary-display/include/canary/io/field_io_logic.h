@@ -51,7 +51,7 @@ struct Debounce {
 // Bounded siren/strobe controller for an isolated output.
 //
 // Drives while a real alert stands unacknowledged, but never indefinitely: after
-// `max_on_ms` of continuous drive it caps OFF (neighbour-friendly, and a stuck
+// `max_on_ms` of continuous drive it caps OFF (neighbor-friendly, and a stuck
 // alert can't hold a physical output on forever). It re-arms only once the alert
 // clears or is acked — so a *fresh* alert can sound again, but the same standing
 // one can't re-trigger without human acknowledgement.

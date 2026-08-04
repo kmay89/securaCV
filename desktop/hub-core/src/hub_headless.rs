@@ -295,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn a_reflashed_hub_is_recognised_from_ssh_output() {
+    fn a_reflashed_hub_is_recognized_from_ssh_output() {
         assert!(host_key_changed(
             "@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@"
         ));

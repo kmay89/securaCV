@@ -485,7 +485,7 @@ fully offline posture the OTA engine also offers.
 | Path | Role |
 |---|---|
 | `canary-local/flash.html` | the page shell (hero + `<main>` + module script); carries the strict CSP + the SRI import map |
-| `canary-local/assets/flash.js` | the renderer + esptool-js glue (the theatre) |
+| `canary-local/assets/flash.js` | the renderer + esptool-js glue (the theater) |
 | `canary-local/assets/flash-core.js` | DOM-free core: chip guard, image parsers, manifest logic, BLE console contract + snapshot parser (tested) |
 | `canary-local/assets/flash.css` | styles, on the Lab's design tokens |
 | `canary-local/assets/vendor/esptool-js/` | vendored esptool-js (self-hosted, no CDN) |

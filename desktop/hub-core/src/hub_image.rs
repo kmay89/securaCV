@@ -109,7 +109,7 @@ pub struct WritePlan {
 }
 
 /// Resolve the catalog into a [`WritePlan`] for one board. Pure; the only
-/// judgement is "is this board real, does it have a URL, and can we trust a
+/// judgment is "is this board real, does it have a URL, and can we trust a
 /// pinned hash yet" — everything the writer needs decided in one tested place.
 pub fn resolve(catalog: &CatalogView, board_id: &str) -> Result<WritePlan, ResolveError> {
     let board = catalog
@@ -394,7 +394,7 @@ mod tests {
 
     #[test]
     fn pinned_catalog_but_empty_board_hash_still_falls_back() {
-        // Defence: the catalog says pinned, but this board's sha is blank —
+        // Defense: the catalog says pinned, but this board's sha is blank —
         // don't invent trust; fall back to HA's checksum.
         let mut cat = unpinned_catalog();
         cat.pinned = true; // board sha256 stays ""

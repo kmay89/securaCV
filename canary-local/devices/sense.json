@@ -70,7 +70,7 @@
         {
           "id": "0x0A16",
           "name": "DISTANCE",
-          "decodes": "byte[0] valid flag, float32 LE @ [4..7] (metres)"
+          "decodes": "byte[0] valid flag, float32 LE @ [4..7] (meters)"
         },
         {
           "id": "0x0A14",
@@ -157,7 +157,7 @@
     ],
     "identify": {
       "seconds": 10,
-      "pattern": "2 Hz white flash \u2014 unmistakable against the steady presence colours"
+      "pattern": "2 Hz white flash \u2014 unmistakable against the steady presence colors"
     }
   },
   "events": [
@@ -768,7 +768,7 @@
         "height": "2.2\u20133.0 m, facing straight down, ~2 m sensing radius",
         "aim": "that spec belongs to the MR60FDA2 fall kit (same protocol family, different radar firmware \u2014 cross-flashing bricks it); the BHA2 prefers wall/bedside",
         "range": "\u2014",
-        "best_for": "noted here so you don't ceiling-mount a BHA2 expecting FDA2 behaviour",
+        "best_for": "noted here so you don't ceiling-mount a BHA2 expecting FDA2 behavior",
         "src": "seeed"
       }
     ],
@@ -788,7 +788,7 @@
       ],
       "near_cm": 150,
       "mid_cm": 350,
-      "note": "the near/mid/far bands are the firmware's own range gates (host-side zone gating) \u2014 raw centimetres never leave the device",
+      "note": "the near/mid/far bands are the firmware's own range gates (host-side zone gating) \u2014 raw centimeters never leave the device",
       "fov_flag": "Seeed's own numbers disagree: the mmWave comparison table says 120\u00b0\u00d7100\u00b0 (presence) while the module datasheet says an 80\u00b0\u00d780\u00b0 sector (vitals). The lab below draws the conservative 80\u00b0 \u2014 treat the extra width as bonus, never as budget"
     },
     "avoid": [
@@ -804,7 +804,7 @@
       },
       {
         "what": "glass or thin wooden panels between radar and room",
-        "why": "Seeed explicitly says do not rely on through-glass/through-panel detection; at 60 GHz (an O\u2082 absorption band) every wall is a hard boundary \u2014 which is also why it never leaks into the neighbour's flat",
+        "why": "Seeed explicitly says do not rely on through-glass/through-panel detection; at 60 GHz (an O\u2082 absorption band) every wall is a hard boundary \u2014 which is also why it never leaks into the neighbor's flat",
         "src": "seeed"
       },
       {
@@ -1021,7 +1021,7 @@
     {
       "id": "approach",
       "label": "Walk toward it",
-      "blurb": "Range band steps far \u2192 mid \u2192 near as you close in \u2014 the host-side zone gate in action; raw centimetres never publish.",
+      "blurb": "Range band steps far \u2192 mid \u2192 near as you close in \u2014 the host-side zone gate in action; raw centimeters never publish.",
       "state": "Present",
       "led": "green",
       "event": null,

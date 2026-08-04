@@ -179,7 +179,7 @@ FRAME_TYPES = []
 for const, wire_name, decode in [
     ("MR60_TYPE_PEOPLE_EXIST", "PEOPLE_EXIST", "uint16 LE has_target (nonzero == present)"),
     ("MR60_TYPE_TARGET_COUNT", "PRINT_CLOUD", "uint32 LE target count"),
-    ("MR60_TYPE_DISTANCE", "DISTANCE", "byte[0] valid flag, float32 LE @ [4..7] (metres)"),
+    ("MR60_TYPE_DISTANCE", "DISTANCE", "byte[0] valid flag, float32 LE @ [4..7] (meters)"),
     ("MR60_TYPE_BREATH_RATE", "BREATH_RATE", "float32 LE (breaths/min)"),
     ("MR60_TYPE_HEART_RATE", "HEART_RATE", "float32 LE (beats/min)"),
 ]:
@@ -253,7 +253,7 @@ FSM = {
     },
     "count_buckets": ["0", "1", "2+"],
     "range_bands": ["near", "mid", "far"],
-    "identify": {"seconds": 10, "pattern": "2 Hz white flash — unmistakable against the steady presence colours"},
+    "identify": {"seconds": 10, "pattern": "2 Hz white flash — unmistakable against the steady presence colors"},
 }
 # chokepoint vocabulary + event names are load-bearing page copy
 for needle in ('return "present"', 'return "clear"', 'return "unknown"',
@@ -664,7 +664,7 @@ PLACEMENT = {
          "height": "2.2–3.0 m, facing straight down, ~2 m sensing radius",
          "aim": "that spec belongs to the MR60FDA2 fall kit (same protocol family, different radar firmware — cross-flashing bricks it); the BHA2 prefers wall/bedside",
          "range": "—",
-         "best_for": "noted here so you don't ceiling-mount a BHA2 expecting FDA2 behaviour",
+         "best_for": "noted here so you don't ceiling-mount a BHA2 expecting FDA2 behavior",
          "src": "seeed"},
     ],
     "radome": {
@@ -680,14 +680,14 @@ PLACEMENT = {
         "vitals_core_m": [0.5, 1.5],
         "near_cm": FSM["presence"]["near_cm"],
         "mid_cm": FSM["presence"]["mid_cm"],
-        "note": "the near/mid/far bands are the firmware's own range gates (host-side zone gating) — raw centimetres never leave the device",
+        "note": "the near/mid/far bands are the firmware's own range gates (host-side zone gating) — raw centimeters never leave the device",
         "fov_flag": "Seeed's own numbers disagree: the mmWave comparison table says 120°×100° (presence) while the module datasheet says an 80°×80° sector (vitals). The lab below draws the conservative 80° — treat the extra width as bonus, never as budget",
     },
     "avoid": [
         # Seeed's official interference list (getting-started wiki, note block)
         {"what": "fans, A/C, swaying curtains and plants", "why": "micro-movement is motion to FMCW radar — officially acknowledged, and the #1 community false-positive; wind through a window makes curtains a permanent occupant", "src": "seeed"},
         {"what": "large metal surfaces and mirrors in-beam", "why": "radar mirrors — reflections fold ghost targets (or the next room) into your zone", "src": "seeed"},
-        {"what": "glass or thin wooden panels between radar and room", "why": "Seeed explicitly says do not rely on through-glass/through-panel detection; at 60 GHz (an O₂ absorption band) every wall is a hard boundary — which is also why it never leaks into the neighbour's flat", "src": "seeed"},
+        {"what": "glass or thin wooden panels between radar and room", "why": "Seeed explicitly says do not rely on through-glass/through-panel detection; at 60 GHz (an O₂ absorption band) every wall is a hard boundary — which is also why it never leaks into the neighbor's flat", "src": "seeed"},
         {"what": "another mmWave radar installed close by", "why": "two 60 GHz emitters raise each other's noise floor — officially listed interference", "src": "seeed"},
         {"what": "vibrating mounts and flowing water", "why": "the radar can't tell its own motion from the room's; water films and flow scatter the beam — both on Seeed's official list", "src": "seeed"},
         {"what": "low-quality USB power supplies", "why": "on Seeed's official interference list — a noisy 5 V rail degrades the radar front-end; budget 5 V/1 A clean", "src": "seeed"},
@@ -803,7 +803,7 @@ SANDBOX = [
               {"suffix": "chain", "payload": '{"length":+1}'}],
      "ha": "binary_sensor.<id>_presence -> ON"},
     {"id": "approach", "label": "Walk toward it",
-     "blurb": "Range band steps far → mid → near as you close in — the host-side zone gate in action; raw centimetres never publish.",
+     "blurb": "Range band steps far → mid → near as you close in — the host-side zone gate in action; raw centimeters never publish.",
      "state": "Present", "led": "green", "event": None,
      "serial": None,
      "mqtt": [{"suffix": "state", "payload": '{"presence":true,"range":"near"}'}],

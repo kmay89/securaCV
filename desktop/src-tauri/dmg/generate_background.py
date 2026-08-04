@@ -65,7 +65,7 @@ def center(draw, cx, cy, text, fnt, fill):
 def main():
     img = vgrad((W, H), INK_TOP, INK_BOTTOM).convert("RGBA")
 
-    # Warm canary glow low-centre, well clear of the text.
+    # Warm canary glow low-center, well clear of the text.
     glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     ImageDraw.Draw(glow).ellipse([W * 0.18, H * 0.34, W * 0.82, H * 0.86], fill=CANARY + (38,))
     img = Image.alpha_composite(img, glow.filter(ImageFilter.GaussianBlur(120)))

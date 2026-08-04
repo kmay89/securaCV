@@ -113,7 +113,7 @@ void syllable_shape(Syllable k, uint8_t t, uint8_t restlessness,
 // ── Voice ──────────────────────────────────────────────────────────────────
 
 Voice voice_from_id(uint32_t device_id) {
-  // Avalanche the id so neighbouring ids (a bench full of sequential Canaries)
+  // Avalanche the id so neighboring ids (a bench full of sequential Canaries)
   // get genuinely different personalities rather than adjacent ones.
   uint32_t h = device_id ? device_id : 0x9E3779B9u;
   h ^= h >> 16;

@@ -10,7 +10,7 @@ state machine that validates the MR60BHA2 header/data checksums and decodes the
 presence, target-count, distance, breath-rate and heart-rate frames (wire
 format + source URLs documented at the top of `mr60_uart.h`). The presence and
 vitals FSMs are unchanged. Everything compiles and is host-tested today; the
-exact float units (distance metres→cm, BPM) are marked `[BENCH]` in
+exact float units (distance meters→cm, BPM) are marked `[BENCH]` in
 `mr60_uart.h` for confirmation against real hardware.
 
 ## Modules

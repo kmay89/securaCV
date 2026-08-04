@@ -19,7 +19,7 @@
 // firmware's own header AND replays the host test's scenarios through this
 // port, so a drift in either side breaks CI.
 //
-// The privacy barrier is modelled honestly: this core takes an RMS SCALAR per
+// The privacy barrier is modeled honestly: this core takes an RMS SCALAR per
 // frame — never samples — exactly as the runtime does after it averages each
 // 20 ms buffer to one number and zeroes it. Nothing that could carry speech
 // ever reaches here, in the firmware or in this file.

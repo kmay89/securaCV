@@ -102,7 +102,7 @@ fn fsck_clean(path: &Path) -> String {
     let (ok, text) = run(Command::new("fsck.fat").arg("-n").arg("-v").arg(path));
     assert!(ok, "fsck.fat rejected the filesystem:\n{text}");
     // A zero exit is necessary but not sufficient: fsck.fat reports some
-    // findings (an uninitialised free-cluster summary, for one) without failing.
+    // findings (an uninitialized free-cluster summary, for one) without failing.
     // These are its actual complaint phrases — each one names damage we could
     // plausibly do, so matching them is the point. They must be specific enough
     // not to collide with `-v` progress lines like "Checking free cluster

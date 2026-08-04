@@ -112,7 +112,7 @@ badged, without the app needing an MQTT client.
 |---------|---------|-------------------|
 | canary-wap | `POST /api/identify` (existing) | LED blink + chirp |
 | canary-vision | HA **Identify** button → `securacv/<id>/identify/set` | 10 s 2 Hz LED flash (boards without a user LED echo-only) |
-| canary-sense | HA **Identify** button → `securacv/<id>/identify/set` | 10 s 2 Hz **white** WS2812 flash, then the presence colour returns |
+| canary-sense | HA **Identify** button → `securacv/<id>/identify/set` | 10 s 2 Hz **white** WS2812 flash, then the presence color returns |
 
 Both MQTT variants publish a non-retained echo on `securacv/<id>/identify`
 (`on`/`off`) bracketing the blink window, so any dashboard can pulse the
@@ -194,7 +194,7 @@ the branch decision is a pure function of the peer record
       TXT complete, survives a WiFi outage/reconnect (STA_GOT_IP re-announce).
 - [ ] canary-vision (C3 + XIAO C3/S3): same, plus identify on each host
       board (DevKit GPIO8, XIAO S3 GPIO21 active-low, XIAO C3 echo-only).
-- [ ] canary-sense identify: white flash overrides presence colour and
+- [ ] canary-sense identify: white flash overrides presence color and
       hands back cleanly; echo bracketing verified in HA + app.
 - [ ] WAP fleet-scan payload carries `dt`/`role`; SPA badges render from a
       live WAP relay.

@@ -24,7 +24,7 @@ publish_cancel_ok: []
 
 # R3 (branch half): branch-push workflows allowed to keep a bare
 # `cancel-in-progress: true`. Only for workflows that produce no signal worth
-# preserving — cancelling a *test* on main hides whether main is healthy,
+# preserving — canceling a *test* on main hides whether main is healthy,
 # which is the whole reason the rule exists.
 branch_cancel_ok:
   - pages.yml # a deploy, not a test: only the newest content is worth

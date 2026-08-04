@@ -31,7 +31,7 @@ namespace canary::fleet {
 // Card kinds (schema v1), in the doc's order.
 enum class CardKind : uint8_t { Binary, Stat, Band, Sparkline, Event, Trust };
 
-// Severity accent — the card's own small ladder (maps to Quiet Glass colours
+// Severity accent — the card's own small ladder (maps to Quiet Glass colors
 // at render time). None = no accent (neutral/idle).
 enum class CardSev : uint8_t { None, Ok, Notice, Warn, Alert };
 

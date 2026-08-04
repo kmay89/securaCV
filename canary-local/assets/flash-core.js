@@ -189,7 +189,7 @@ export function validateManifest(m) {
 }
 
 // Resolve the release entry for a product, guarding that the manifest's
-// chipFamily agrees with the physically-detected chip (defence in depth: the
+// chipFamily agrees with the physically-detected chip (defense in depth: the
 // catalog already filtered by chip; this refuses a manifest that contradicts
 // the silicon in hand).
 export function manifestEntry(manifest, product, detected) {
@@ -1112,7 +1112,7 @@ export function classifyFlashError(err) {
 }
 
 // ── deep-link focus (arriving from the website's /checkup selector) ─────────
-// The /checkup "Flash in browser" button links here as ?product=<id>. We honour
+// The /checkup "Flash in browser" button links here as ?product=<id>. We honor
 // it only as a FOCUS hint — the picker still shows just the products the
 // detected chip can take (the chip guard always wins), and if the requested id
 // is among them we lead with that one instead of a wall of options. A bad/absent

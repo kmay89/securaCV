@@ -89,7 +89,7 @@ export function buildProtocol(data) {
 // scene state is owned by the page driver (sense.js); this builds the two
 // views + controls and calls onChange() whenever the user moves something.
 
-const STAGE = { W: 460, H: 380, SCALE: 52, MX: 30 }; // px per metre, margins
+const STAGE = { W: 460, H: 380, SCALE: 52, MX: 30 }; // px per meter, margins
 
 export function buildStage(data, scene, onChange) {
   const hw = data.hardware;
@@ -294,7 +294,7 @@ function drawSide(svg, scene, hw, view) {
   svg.innerHTML = "";
   const ox = STAGE.MX, S = STAGE.SCALE;
   const floorY = STAGE.H - 40;
-  const zy = (z) => floorY - z * S; // metres above floor → px
+  const zy = (z) => floorY - z * S; // meters above floor → px
   svg.append(svgel("line", { x1: 8, y1: floorY, x2: STAGE.W - 8, y2: floorY, class: "slab-floor" }));
   // wall or ceiling line
   if (scene.mount === "ceiling") {

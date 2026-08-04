@@ -2,7 +2,7 @@
 //
 // Loads operator.html in headless Chromium and walks the setup ceremony end to
 // end: step through init → enroll×3 → drill → doctor and confirm the live "vault
-// state" tracks the code's real behaviour — the committed policy stays a draft
+// state" tracks the code's real behavior — the committed policy stays a draft
 // below the threshold, goes live as 2-of-2 the instant it's valid, strengthens
 // to 2-of-3, and the drill/doctor output renders. Zero page errors.
 //

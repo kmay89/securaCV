@@ -1,7 +1,7 @@
 //! hub_enumerate_windows — the Windows half of disk enumeration: PowerShell
 //! `Get-Disk`'s JSON, turned into classified hub targets, safely.
 //!
-//! Same shape as the Linux and macOS enumerators: every *judgement* is a pure
+//! Same shape as the Linux and macOS enumerators: every *judgment* is a pure
 //! function over already-captured `Get-Disk … | ConvertTo-Json` text,
 //! host-tested on any runner without a Windows box in sight. Only the thin
 //! `enumerate()` wrapper (built for Windows alone) actually spawns PowerShell,
@@ -9,7 +9,7 @@
 //! eligibility itself — it builds [`crate::hub_disk::TargetDisk`]s and the
 //! caller runs them through `hub_disk::classify`.
 //!
-//! The safety-critical judgements, and where Windows keeps them:
+//! The safety-critical judgments, and where Windows keeps them:
 //!
 //! - *which disk backs the running OS*: `Get-Disk` reports `IsBoot` / `IsSystem`
 //!   per disk, and the wrapper also asks which disk hosts the system drive
@@ -314,7 +314,7 @@ fn head(s: &str) -> &str {
     &s[..end]
 }
 
-// ── pure judgements over Get-Disk's answers ─────────────────────────────────
+// ── pure judgments over Get-Disk's answers ─────────────────────────────────
 
 /// The Windows raw-disk path for a physical drive number, e.g. `2` →
 /// `\\.\PhysicalDrive2` — what the writer opens.
@@ -448,7 +448,7 @@ pub fn disks_from_output(root: &Json) -> Result<Vec<TargetDisk>, String> {
 #[cfg(target_os = "windows")]
 pub fn enumerate() -> Result<Vec<TargetDisk>, String> {
     // Emit a stable, minimal JSON: the system-drive host disk, and one row per
-    // disk with exactly the fields the pure judgements read. UTF-8 without a BOM
+    // disk with exactly the fields the pure judgments read. UTF-8 without a BOM
     // so the parser gets clean bytes; every field is coerced to a plain type so
     // ConvertTo-Json can't surprise us with a nested CIM object.
     const SCRIPT: &str = r#"

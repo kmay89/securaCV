@@ -351,6 +351,13 @@ if [[ "$FLAVOR" == "nightstand" || "$FLAVOR" == "touch169" ]]; then
   FIRMWARE_SRCS+=(
     "$FW/common/color/color_engine.cpp"
     "$FW/common/color/look_engine.cpp"
+    # The plumage TU joins its two siblings for the same reason: ui/look_state.cpp
+    # holds a canary::color::Plumage, and portrait_ui.cpp / hal/ambient_led.cpp
+    # call plumage_bands()/plumage_led(). All three call sites sit behind
+    # CD_FLAVOR_NIGHTSTAND, which BOTH portrait configs define — so this belongs
+    # in this block and not the watch/dash list, whose bytes it would move for a
+    # TU they compile to nothing.
+    "$FW/common/color/plumage.cpp"
     # The WS2812 beacon TU: emscripten-aware by design (the hardware write
     # is skipped in the browser) and double-gated, so it is real code on
     # the nightstand (HAS_RGBLED 1) and an empty TU on the touch169.

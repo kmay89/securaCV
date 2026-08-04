@@ -8,7 +8,7 @@
  *      degrades to clean text, not `^[[..m` garbage (which our own flasher would
  *      flag as wrong-baud). Same contract as the trust card.
  *   2. The card is HONEST: it says presence is UNSIGNED, and every attention
- *      state (tamper/alert/degraded) is worded, not colour-only (WCAG 1.4.1).
+ *      state (tamper/alert/degraded) is worded, not color-only (WCAG 1.4.1).
  *   3. The pure formatters (age / percent / flag words) are exact and bounded.
  *   4. A GOLDEN render is pinned, so an accidental format change fails loudly.
  *      (Device-console stability pin — not a cross-repo wire contract like the
@@ -111,7 +111,7 @@ static void test_card_is_honest_and_shows_the_fleet() {
   CHECK(sk.s.find("a1b2") != std::string::npos);          // a peer id
   CHECK(sk.s.find("Heard 3 of 16 nearby") != std::string::npos);
   CHECK(sk.s.find("UNSIGNED") != std::string::npos);       // the honesty line
-  // Attention states are WORDED, not colour-only.
+  // Attention states are WORDED, not color-only.
   CHECK(sk.s.find("degraded") != std::string::npos);
   CHECK(sk.s.find("alert") != std::string::npos);
   CHECK(sk.s.find("muted") != std::string::npos);
@@ -140,14 +140,14 @@ static void test_empty_roster() {
   CHECK(w == (size_t)(FLEET_INNER + 2));
 }
 
-// ── 4. the full tier lights up (colour + Unicode) ───────────────────────────
+// ── 4. the full tier lights up (color + Unicode) ───────────────────────────
 static void test_full_tier_lights_up() {
   Sink sk;
   Renderer r{collect, &sk, caps_full(100, 40)};
   fleet_card(r, sample());
   CHECK(sk.s.find("\x1b[") != std::string::npos);          // has SGR/escapes
   CHECK(sk.s.find("\xe2\x94\x8c") != std::string::npos);   // has U+250C border
-  CHECK(sk.s.find("\x1b[0m") != std::string::npos);        // resets colour
+  CHECK(sk.s.find("\x1b[0m") != std::string::npos);        // resets color
   CHECK(sk.s.find("canary-7fA3") != std::string::npos);
   CHECK(sk.s.find("\x1b[?25l") == std::string::npos);      // never hides the cursor
 }

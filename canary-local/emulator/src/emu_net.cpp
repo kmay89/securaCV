@@ -129,7 +129,7 @@ JoinFailure wifi_last_failure() { return JoinFailure::Unknown; }
 
 // The setup fallback exists for credentials that are set but WRONG. The
 // emulator has no credentials to be wrong, and raising a SoftAP wizard in a
-// browser tab would be theatre, so this is honestly false.
+// browser tab would be theater, so this is honestly false.
 bool wifi_wants_setup() { return false; }
 
 // ── tz_auto contract ────────────────────────────────────────────────────

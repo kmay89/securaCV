@@ -134,7 +134,7 @@ power or house internet.
   chirp is a **best-effort bonus on top**, never the thing you trust (we already found the Meshtastic
   OFF-transition unreliable, meshtastic/firmware#8977, and a supercap last-gasp timing-critical).
 - **Carry the poke out over the mesh to an independently-powered gateway.** A battery/solar mesh
-  gateway (or a neighbour's node, or a small cellular-backed hub) that has power *and* connectivity
+  gateway (or a neighbor's node, or a small cellular-backed hub) that has power *and* connectivity
   when the house doesn't is what actually delivers the alert. The gateway runs the §3 relay.
 - **Normal times stay simple:** device → hub → relay over the LAN. The mesh path is the *fallback the
   outage forces*, not the everyday path.

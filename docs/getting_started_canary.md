@@ -78,7 +78,7 @@ That's it. You're now talking to the device.
 The dashboard opens on the **Status** tab. Tap **Sensing** in the top nav
 to see what the radio is feeling, in plain English.
 
-You'll see a coloured pill at the top of the page:
+You'll see a colored pill at the top of the page:
 
 | Pill | What it means |
 |---|---|
@@ -142,7 +142,7 @@ and CO alarm in your home already emits:
 | **T3** | NFPA 72 / ISO 8201 (smoke) | Three half-second beeps, half-second gaps, then 1.5 s silence — repeating. |
 | **T4** | UL 2034 (carbon monoxide) | Four short beeps, half-second silence, then five-second silence — repeating. |
 
-When the Canary recognises the pattern, the card turns red and the
+When the Canary recognizes the pattern, the card turns red and the
 status pill reads **🔥 Smoke alarm pattern** or **⚠ CO alarm pattern**.
 That same event flows through the witness chain so a Home Assistant
 automation can react — for example, send everyone in the house a push
@@ -154,7 +154,7 @@ What this card **does not** do:
 - It does not record audio. Ever. The microphone's output is reduced
   to a single loudness number every 20 ms, then the sample buffer is
   zeroed *in place* before the next 20 ms arrives.
-- It does not recognise voices, words, or specific sounds beyond the
+- It does not recognize voices, words, or specific sounds beyond the
   two regulatory cadences. Speech is structurally impossible to
   recover from a binary on/off envelope.
 - It does not phone home. The match is local.
@@ -184,7 +184,7 @@ honest because lying about safety equipment gets people hurt.
 | Same alarm through a closed bedroom door | Often works but slower; detection rate drops sharply. |
 | Alarm one room over or more | **Unreliable.** Treat as a bonus, not a guarantee. |
 | Running dishwasher / TV / loud conversation in the same room as the alarm | The noise can pin the envelope into the "ON" state between beeps and break the cadence match. Move the Canary closer to the alarm if you can. |
-| Alarm with a non-standard cadence (proprietary, older European, voice annunciator) | Won't match. The Canary only recognises NFPA 72 (T3, smoke) and UL 2034 (T4, CO). |
+| Alarm with a non-standard cadence (proprietary, older European, voice annunciator) | Won't match. The Canary only recognizes NFPA 72 (T3, smoke) and UL 2034 (T4, CO). |
 | Alarm's low-battery "chirp" every 30–60 s | Won't match — that's not the alarm cadence. |
 | You have no smoke or CO alarm | The Canary cannot warn you. It is not a primary detector. |
 
@@ -202,7 +202,7 @@ trust us; you should be able to check.
 - **Mute it.** The Acoustic Alarms card has a `Mute microphone` button.
   Clicking it calls `POST /api/audio/mute`, which physically
   uninstalls the I2S driver and releases GPIO 41/42. The card pill
-  turns grey, the level meter goes to zero, and the `enabled` field
+  turns gray, the level meter goes to zero, and the `enabled` field
   in `/api/status` flips to `false`. The mute persists across reboots
   (stored as the `mic_muted` bool in the `securacv` NVS namespace).
 - **Inspect.** Hit `GET /api/audio/level` — when muted, `running` is
@@ -328,7 +328,7 @@ header), waiting for one of three things:
   less than half of its calibrated baseline; held there for more
   than 5 s, `enclosure_tamper` fires.
 - **Brief approach (optional) → presence courtesy.** Off by default;
-  a hand or body within a few centimetres triggers `approach` once
+  a hand or body within a few centimeters triggers `approach` once
   per 1.5 s.
 
 The first ~2 s after boot are spent calibrating the baseline — during
@@ -446,7 +446,7 @@ Three things are **structurally impossible** with this device — not
    callback that receives them; only a 32-byte numeric summary of the
    room's RF shape is kept, and that summary is bucketed to integers
    so device-fingerprinting is information-theoretically impossible.
-2. Recognise a face or record audio. There is no camera frame storage
+2. Recognize a face or record audio. There is no camera frame storage
    in the firmware (the optional Peek tab is a live MJPEG passthrough,
    never written to SD). The microphone is not enabled in this build.
 3. Tell anyone outside your home what it sees. The Canary is on its own
@@ -590,7 +590,7 @@ Once on your network, both variants:
 Every Vision and Sense exposes an **Identify** button in Home Assistant
 (on the device page, next to its entities). Press it and that device
 blinks its LED for ten seconds — the fastest way to tell three
-identical white boxes apart while you're labelling rooms.
+identical white boxes apart while you're labeling rooms.
 
 ### What's different from the WAP flow
 

@@ -2,7 +2,7 @@
 
 The endpoints exposed by the canary-wap firmware for consuming CSI sensing
 data, listing the day's events, and (for power users) exploring or tuning
-the live model. Privacy is a runtime gate: every endpoint is labelled with
+the live model. Privacy is a runtime gate: every endpoint is labeled with
 the privacy class it can return, and the chokepoint enforces the class
 based on the user's settings.
 

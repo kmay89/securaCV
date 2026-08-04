@@ -68,7 +68,7 @@ function wall(g, x0, y0, x1, y1, z0, h, fill, cls) {
   return q;
 }
 
-// Iso ellipse (a circle in plan) centred on a world point.
+// Iso ellipse (a circle in plan) centered on a world point.
 function planRing(cx, cy, z, r, attrs, cls) {
   const [sx, sy] = px(cx, cy, z);
   const g = el("g", { transform: `translate(${sx},${sy})` }, cls);
@@ -76,7 +76,7 @@ function planRing(cx, cy, z, r, attrs, cls) {
   return g;
 }
 
-// A wedge (sector) in the floor plane: centre, aim degrees, half-angle,
+// A wedge (sector) in the floor plane: center, aim degrees, half-angle,
 // radius — projected point-by-point so it sits properly in iso.
 function planWedge(cx, cy, z, aim, half, r, attrs, cls) {
   const p = [px(cx, cy, z)];
@@ -101,7 +101,7 @@ function planArc(cx, cy, z, aim, half, r, attrs, cls) {
 const stage = document.getElementById("stage");
 const svg = el("svg", { id: "house-svg", role: "img" });
 svg.setAttribute("aria-label",
-  "Isometric cutaway of a two-storey home showing where each Canary witness lives and what it senses");
+  "Isometric cutaway of a two-story home showing where each Canary witness lives and what it senses");
 const world = el("g", { id: "world" });
 svg.append(world);
 stage.append(svg);
@@ -410,7 +410,7 @@ svg.prepend(defs);
 drawYard();
 drawFloor("ground");
 drawFloor("upper");
-// dashed guides tying the exploded storeys back together
+// dashed guides tying the exploded stories back together
 for (const [cx, cy] of [[0, 0], [10, 0], [0, 6.5], [10, 6.5]]) {
   const [x1s, y1s] = px(cx, cy, WALL_H + 0.15);
   const [x2s, y2s] = px(cx, cy, FLOORS[1].z - SLAB_T - 0.15);

@@ -48,7 +48,7 @@ void compute_fingerprint(const uint8_t* pubkey, uint8_t* fp_out) {
 }
 
 // Reimplements revoke_beacon_set_entry + on_peer_tampered's combined
-// behaviour. Returns true if a matching entry was found and revoked (or
+// behavior. Returns true if a matching entry was found and revoked (or
 // was already revoked — idempotent).
 bool on_peer_tampered_impl(std::vector<SetEntry>& set, const uint8_t* pubkey) {
   uint8_t fp[DEVICE_FP_SIZE];

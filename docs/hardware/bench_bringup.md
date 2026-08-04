@@ -3,13 +3,13 @@
 > The fastest path from parts to a beeping board. This validates the three
 > things the peripheral build plan is about — **audible chirp, status LED, and
 > the button** — on a bare XIAO ESP32-S3 Sense, with the *minimum* shopping list
-> and no enclosure, battery, or weatherproofing. For the full parts catalogue and
+> and no enclosure, battery, or weatherproofing. For the full parts catalog and
 > wiring rationale, see the
 > [Canary Peripheral Build Plan & BOM](./canary_peripheral_build_plan.md).
 >
 > 🖨️ **Have a 3D printer?** Two small prints make this hour easier: the
 > [bench bring-up fixture](./enclosure/canary_bench_fixture.scad) holds the
-> XIAO and every peripheral in labelled stations while you wire (with a
+> XIAO and every peripheral in labeled stations while you wire (with a
 > sliding magnet for repeatable tamper tests), and the
 > [fit coupon](./enclosure/canary_fit_coupon.scad) calibrates your printer
 > for the [enclosures](./enclosure/) you'll print afterwards.
