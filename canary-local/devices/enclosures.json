@@ -7658,9 +7658,39 @@
        "comment": "the small tracked company line beneath"
       },
       {
+       "name": "brand_maker",
+       "default": "ERRERlabs",
+       "comment": "the maker row, under the hero line"
+      },
+      {
        "name": "brand_edge",
        "default": "SecuraCV Canary",
        "comment": "debossed on the visible bottom edge"
+      },
+      {
+       "name": "brand_row_maker",
+       "default": "1.6",
+       "comment": "maker line, closest to the rim"
+      },
+      {
+       "name": "brand_row_hero",
+       "default": "5.4",
+       "comment": "brand_back"
+      },
+      {
+       "name": "brand_row_sub",
+       "default": "10.6",
+       "comment": "brand_sub"
+      },
+      {
+       "name": "brand_sz",
+       "default": "4.0",
+       "comment": "hero + company cap height"
+      },
+      {
+       "name": "brand_maker_sz",
+       "default": "2.8",
+       "comment": "the maker row is a footnote, not a third shout"
       }
      ]
     },
@@ -7718,9 +7748,27 @@
        "comment": "upper-right, the QR left — this is the one empty field"
       },
       {
+       "name": "bird_fill",
+       "default": "true",
+       "comment": "solid silhouette (brand art) vs. outline strokes"
+      },
+      {
        "name": "bird_rib",
-       "default": "1.2",
+       "default": "2.0",
        "comment": "stroke width. WIDER than the coupon's 0.7 test rib on"
+      },
+      {
+       "name": "bird_half_w",
+       "default": "back_bird ? mark_w_mm(bird_h, bird_rib)/2 : 0"
+      },
+      {
+       "name": "bird_half_h",
+       "default": "back_bird ? mark_h_mm(bird_h, bird_rib)/2 : 0"
+      },
+      {
+       "name": "bird_vent_gap",
+       "default": "1.6",
+       "comment": "plate left between the mark and the nearest egg. The"
       },
       {
        "name": "sd_dx",
@@ -7985,6 +8033,10 @@
       {
        "name": "rating_stamp",
        "default": "true"
+      },
+      {
+       "name": "rating_lines",
+       "default": "[\"5V = 2A\", \"USB-C INPUT\", \"INDOOR USE ONLY\"]"
       }
      ]
     },
@@ -8541,8 +8593,8 @@
       },
       {
        "name": "rating_sz",
-       "default": "2.6",
-       "comment": "finer than the port labels — a spec block, not a sign"
+       "default": "3.3",
+       "comment": "sized to its gap — see the width asserts below"
       },
       {
        "name": "rating_lh",
@@ -8558,8 +8610,8 @@
       },
       {
        "name": "rating_dx",
-       "default": "42.0",
-       "comment": "centered in the clear gap: rail moat ends ~23, the"
+       "default": "39.0",
+       "comment": "centered in the clear gap: with the adhesive rails off"
       },
       {
        "name": "rating_dy",
@@ -8619,10 +8671,6 @@
        "default": "(edge_vent_n - 1)/2*edge_vent_pitch + edge_vent_w/2"
       },
       {
-       "name": "bird_half_w",
-       "default": "back_bird ? bird_h*0.62 : 0"
-      },
-      {
        "name": "stamp_half",
        "default": "stamp_size*0.9 + stamp_size*0.39 + 0.6",
        "comment": "text block half-height"
@@ -8635,6 +8683,14 @@
       {
        "name": "port_scoop_ftp",
        "default": "sqrt(port_scoop_r*port_scoop_r - port_scoop_d*port_scoop_d)"
+      },
+      {
+       "name": "brand_maker_y",
+       "default": "-(fr_yi/2 - brand_row_maker)"
+      },
+      {
+       "name": "brand_hero_y",
+       "default": "-(fr_yi/2 - brand_row_hero)"
       },
       {
        "name": "gauge_in",
