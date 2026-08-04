@@ -131,6 +131,13 @@ c2pa-export = ["dep:c2pa", "dep:rcgen"]
 name = "witnessd"
 path = "src/bin/witnessd.rs"
 
+# The Apple Home bridge. Gated on the feature so a default build neither
+# compiles the HAP stack nor carries its dependencies.
+[[bin]]
+name = "hap_bridge"
+path = "src/bin/hap_bridge.rs"
+required-features = ["bridge-homekit-server"]
+
 [[bin]]
 name = "log_verify"
 path = "src/bin/log_verify.rs"

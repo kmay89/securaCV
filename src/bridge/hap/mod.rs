@@ -38,6 +38,7 @@
 //! | [`http`] | The narrow HTTP/1.1 subset HAP uses, plus `EVENT/1.0` |
 //! | [`pairing`] | Pair Setup (SRP-6a) and Pair Verify (X25519), and the pairing table |
 //! | [`server`] | Discovery, connections, routing, and the metronome |
+//! | [`store`] | Identity, setup code and pairings across restarts |
 //! | [`session`] | The encrypted frame transport that follows Pair Verify |
 
 pub mod accessory;
@@ -46,4 +47,5 @@ pub mod http;
 pub mod pairing;
 pub mod server;
 pub mod session;
+pub mod store;
 pub mod tlv8;
