@@ -32,11 +32,31 @@ final class CloudSync {
 
     private init() {}
 
+    /// Is it even SAFE to touch CloudKit in this build?
+    ///
+    /// `CKContainer.default()` raises an Objective-C `CKException` when the
+    /// running process has no usable iCloud container — and an ObjC
+    /// exception cannot be caught from Swift, so `try?` does not help and
+    /// the process simply aborts. That is exactly what happens on a
+    /// simulator with no signed-in account: the app died at launch inside
+    /// `onAppear`, taking the whole test suite with it.
+    ///
+    /// `ubiquityIdentityToken` is the cheap, NON-throwing way to ask the
+    /// same question, so it goes first and nothing constructs a container
+    /// until it says yes.
+    static var canTouchCloudKit: Bool {
+        FileManager.default.ubiquityIdentityToken != nil
+    }
+
     /// Ask CloudKit whether this user has an account we may use. Cheap, safe
     /// to call repeatedly, and the only thing that may set `isAvailable`.
     @discardableResult
     func refreshAvailability() async -> Bool {
         #if canImport(CloudKit)
+        guard Self.canTouchCloudKit else {
+            isAvailable = false
+            return false
+        }
         let status = try? await CKContainer.default().accountStatus()
         isAvailable = (status == .available)
         #else
