@@ -20,6 +20,25 @@ struct DeviceDetailView: View {
         store.witnesses.first { $0.id == witness.id } ?? witness
     }
 
+    @ObservedObject private var home = HomeKitBridge.shared
+
+    private var standing: HomeKitStanding {
+        home.standing(for: liveWitness,
+                      presentInHome: home.seenInHome(liveWitness),
+                      homeHubPresent: home.homeHubPresent)
+    }
+
+    private var standingLabel: String {
+        switch standing {
+        case .off: return "Off"
+        case .needsAuthorization: return "Needs access"
+        case .notPaired: return "Not seen"
+        case .paired: return "In the home"
+        case .pairedWithoutHomeHub: return "In the home, no hub"
+        case .staleInHome: return "Stale"
+        }
+    }
+
     var body: some View {
         List {
             Section("Trust") {
@@ -45,6 +64,20 @@ struct DeviceDetailView: View {
                 if let r = witness.rssiDBM { LabeledContent("Wi-Fi", value: "\(r) dBm") }
                 if let b = witness.batteryPct, b >= 0 { LabeledContent("Battery", value: "\(b)%") }
                 if !witness.firmware.isEmpty { LabeledContent("Firmware", value: witness.firmware) }
+            }
+
+            if home.isEnabled {
+                // The Doctor row: what Apple Home and the fleet each say
+                // about this Canary, and one calm line when they disagree.
+                Section {
+                    LabeledContent("Apple Home", value: standingLabel)
+                } footer: {
+                    if let note = standing.doctorNote {
+                        Label(note, systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(Theme.color(.warn))
+                    }
+                }
             }
 
             if witness.deviceType == .wap {
