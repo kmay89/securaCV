@@ -13,9 +13,10 @@
 //     x-squash, anchored at the perch — mass, not scaling.
 //   * The story is the fleet's truth: every motion maps 1:1 to a face the
 //     mood engine named (the honesty rule). No idle randomness.
-//   * Stillness is a pose too: Reduce Motion gets the same story as a held
-//     posture; `hidden` renders NOTHING — during a real alarm the character
-//     leaves the stage to the instruments, by firmware rule.
+//   * Stillness is a pose too: Reduce Motion AND the watch's Always-On
+//     Display (wrist down) both get the same story as a held posture;
+//     `hidden` renders NOTHING — during a real alarm the character leaves
+//     the stage to the instruments, by firmware rule.
 
 import SwiftUI
 
@@ -25,7 +26,17 @@ struct CanaryActor: View {
     var height: CGFloat = 56
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    // Wrist down: watchOS keeps the view on screen but dimmed (Always-On
+    // Display), and a repeatForever animation left running there burns
+    // battery for motion nobody is looking at. Apple's guidance is to hold
+    // still; this is the same "held pose" the character already knows how to
+    // strike for Reduce Motion, so idle costs nothing and looks deliberate.
+    // Harmless on iOS/iPadOS, where the value is simply always false.
+    @Environment(\.isLuminanceReduced) private var luminanceReduced
     @State private var beat = false   // the one phase flag; each face times it differently
+
+    /// The one gate: either reason to be still means still.
+    private var holdsStill: Bool { reduceMotion || luminanceReduced }
 
     var body: some View {
         if face == .hidden {
@@ -34,7 +45,7 @@ struct CanaryActor: View {
             bird
                 .frame(height: height)
                 .id(identity)                 // face change = clean restart
-                .onAppear { if !reduceMotion { beat = true } }
+                .onAppear { if !holdsStill { beat = true } }
                 .accessibilityHidden(true)    // the words nearby carry the meaning
         }
     }
@@ -102,7 +113,7 @@ struct CanaryActor: View {
     }
 
     private func loop(_ period: Double) -> Animation? {
-        reduceMotion ? nil : .easeInOut(duration: period).repeatForever(autoreverses: true)
+        holdsStill ? nil : .easeInOut(duration: period).repeatForever(autoreverses: true)
     }
 }
 
