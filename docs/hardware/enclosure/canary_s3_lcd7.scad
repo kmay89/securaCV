@@ -2680,7 +2680,28 @@ module back_inlay(groups) {
 // It runs the full depth, so the front rim and the back plate are both on it.
 coupon_x0 = -40;              // just past the lockup's center
 coupon_x1 = fr_xo/2 + 1;      // ...out through the corner
-coupon_h  = 34;               // tall enough to contain the whole corner arc
+// Tall enough for BOTH jobs, and the lockup's reach is DERIVED rather than
+// typed. It was a flat 34, which worked only while the wordmark was pinned to
+// the plate's bottom edge: moving the lockup into the middle of the plate left
+// the band containing no accent geometry at all, and the color coupon — whose
+// entire job is to rehearse the palette — silently became a single-color part.
+// gen_3mf.py said so out loud ("EMPTY: the palette puts no accent on this
+// object"), which is that warning earning its place, but the coupon should not
+// have needed a human to notice. Now the band grows to reach the wordmark, so
+// moving the mark moves the coupon with it.
+//
+// THIS IS NOT FREE: 34 -> 52.8 mm, a ~55% taller coupon, because the lockup is
+// mid-plate now instead of at the bottom edge where 34 happened to reach it.
+// The QR's note below rejects exactly this trade at ~40 mm and spends a
+// separate plaque instead, and that remains the better answer if the mark ever
+// moves further up — the band's virtue is answering registration AND corner
+// fit in ONE print, and past some height a second small plaque is cheaper than
+// the plate it drags along. At 19 mm it is still worth keeping as one part.
+coupon_h_corner = 34;         // the corner arc's own requirement, unchanged
+coupon_h  = back_bird
+    ? max(coupon_h_corner,
+          (mark_sub_y + sub_sz/2 + 3) - (-fr_yo/2 - 1))
+    : coupon_h_corner;
 module coupon_clip() {
     translate([coupon_x0, -fr_yo/2 - 1, -1])
         cube([coupon_x1 - coupon_x0, coupon_h, fr_depth + 2]);

@@ -8693,9 +8693,9 @@
        "comment": "...out through the corner"
       },
       {
-       "name": "coupon_h",
+       "name": "coupon_h_corner",
        "default": "34",
-       "comment": "tall enough to contain the whole corner arc"
+       "comment": "the corner arc's own requirement, unchanged"
       },
       {
        "name": "coupon_qr_margin",
