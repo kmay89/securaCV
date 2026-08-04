@@ -103,7 +103,7 @@
 
   "volume_quotes": {
     "_comment": "The ONE place in this pipeline where a human types a price on purpose. Everything else is fetched or estimated-with-a-basis; a quote is what a supplier actually said, so it outranks a catalog snapshot and settles the crossover question the catalog cannot. Paste one row here and cost_model.json's `decision` flips from UNRESOLVED to GO or STOP on the next generator run — no prose to rewrite, no argument to re-have.",
-    "schema": "{ mpn, qty, unit_usd, source, dated, note } — qty is the volume the price applies at; the model uses the deepest quote at or below fab.qty_basis.",
+    "schema": "{ mpn, qty, unit_usd, source, dated, note } — qty is the volume the price applies at. Selection is by TIER, not by price: among quotes at or below fab.qty_basis the model takes the one whose qty is CLOSEST to the basis, breaking ties on the most recent `dated` and then the lower price. Picking the cheapest instead would let a stray 100-unit promo decide a 1000-unit program. If the selected tier sits below the basis, the line is reported as not volume-matched, same as a distributor break.",
     "quotes": [],
     "why_empty": "No real volume quote exists yet. Asking a supplier is a human action — it needs an account and a conversation — and inventing a plausible number here would defeat the entire point of this file.",
     "what_is_known_today": [

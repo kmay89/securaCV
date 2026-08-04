@@ -113,11 +113,19 @@ def price_of(mpn: str, pricing: dict, fallback_usd, fallback_basis: str, qty_bas
     answer.
     """
     # A real quote at or below the basis volume beats anything a catalog says.
-    best_quote = None
-    for q in (quotes or {}).get(mpn, []):
-        if int(q["qty"]) <= qty_basis:
-            if best_quote is None or float(q["unit_usd"]) < float(best_quote["unit_usd"]):
-                best_quote = q
+    #
+    # Selection is by TIER, not by price. Among quotes at or below the basis
+    # volume, take the one whose qty is closest to it — that is the tier that
+    # actually applies at the volume we would buy. Picking the cheapest instead
+    # lets a stray 100-unit promo decide a 1000-unit program: a $10 hundred-off
+    # would override a $11.50 thousand-quote and flip GO to STOP on a price
+    # nobody offered at that volume. Ties break on the most recent `dated`
+    # (an old quote must not outrank a fresh one), then on the lower price.
+    def rank(q):
+        return (int(q["qty"]), str(q.get("dated", "")), -float(q["unit_usd"]))
+
+    applicable = [q for q in (quotes or {}).get(mpn, []) if int(q["qty"]) <= qty_basis]
+    best_quote = max(applicable, key=rank) if applicable else None
     if best_quote is not None:
         return (
             float(best_quote["unit_usd"]),
@@ -298,31 +306,59 @@ def build_cost_model(design: dict, pricing: dict) -> dict:
         # The model's own verdict. A quote at the basis volume settles it; a
         # qty-1 catalog price cannot, and must not be allowed to read as if it
         # had. GO/STOP is only claimed when the price it rests on is real.
+        # May this price decide a `qty`-unit program at all? The two sources
+        # have different semantics and both traps point the same way — toward
+        # a GO nobody earned:
+        #
+        #  · a distributor break at N means "N or more", so any N in (1, qty]
+        #    genuinely applies at qty. N == 1 is just list price, not a volume
+        #    price, and is the case this whole refusal exists for.
+        #  · a QUOTE at N means "we priced N units". Below the basis it is only
+        #    an upper bound on what we would really pay, and on the replaced
+        #    side an upper bound overstates the module's cost — which flatters
+        #    the carrier. So a low-volume quote is not an answer either.
+        at = dominant["price_at_qty"]
         quoted = dominant["provenance"].startswith("quote:")
-        volume_ok = dominant["price_at_qty"] is not None and dominant["price_at_qty"] >= qty
-        if quoted or volume_ok:
-            verdict_state = "GO" if dominant["unit_usd"] > crossover else "STOP"
+        if at is None:
+            decidable = False
+        elif quoted:
+            decidable = at >= qty
+        else:
+            decidable = 1 < at <= qty
+
+        # Compare against the SAME rounded crossover that gets reported, or
+        # quoting the published number back lands a hair above it and reads GO
+        # at what is actually exact break-even.
+        crossover_reported = money(crossover)
+        if decidable:
+            verdict_state = "GO" if dominant["unit_usd"] > crossover_reported else "STOP"
             verdict_why = (
                 f"{dominant['mpn']} is priced at ${dominant['unit_usd']:.2f} at qty "
-                f"{dominant['price_at_qty']} ({dominant['provenance']}), "
+                f"{at} ({dominant['provenance']}), "
                 f"{'above' if verdict_state == 'GO' else 'at or below'} the "
-                f"${money(crossover):.2f} crossover."
+                f"${crossover_reported:.2f} crossover."
             )
         else:
             verdict_state = "UNRESOLVED"
             verdict_why = (
-                f"{dominant['mpn']} is only priced at qty "
-                f"{dominant['price_at_qty']} (${dominant['unit_usd']:.2f}, "
-                f"{dominant['provenance']}), below the {qty}-unit basis. That is "
-                "a catalog price for one piece, not the price we would pay, so it "
-                "cannot decide the program in either direction. Add a real quote "
-                "to board.json `volume_quotes` and this becomes GO or STOP "
-                "automatically."
+                f"{dominant['mpn']} is priced at ${dominant['unit_usd']:.2f} at qty "
+                f"{at} ({dominant['provenance']}), which cannot answer a {qty}-unit "
+                "question: "
+                + (
+                    f"a quote for {at} units is only an upper bound on the "
+                    f"{qty}-unit price, and on the replaced side an upper bound "
+                    "flatters the carrier."
+                    if quoted
+                    else "that is a catalog price for one piece, not the price we "
+                    "would pay."
+                )
+                + f" Add a quote at qty {qty} to board.json `volume_quotes` and "
+                "this becomes GO or STOP automatically."
             )
         decision = {
             "state": verdict_state,
             "why": verdict_why,
-            "crossover_unit_usd": money(crossover),
+            "crossover_unit_usd": crossover_reported,
             "depends_on_mpn": dominant["mpn"],
             "how_to_resolve": design.get("volume_quotes", {}).get("how_to_get_one"),
         }

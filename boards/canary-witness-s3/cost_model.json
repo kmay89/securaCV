@@ -325,7 +325,7 @@
   },
   "decision": {
     "state": "UNRESOLVED",
-    "why": "102010469 is only priced at qty 1 ($15.90, digikey), below the 1000-unit basis. That is a catalog price for one piece, not the price we would pay, so it cannot decide the program in either direction. Add a real quote to board.json `volume_quotes` and this becomes GO or STOP automatically.",
+    "why": "102010469 is priced at $15.90 at qty 1 (digikey), which cannot answer a 1000-unit question: that is a catalog price for one piece, not the price we would pay. Add a quote at qty 1000 to board.json `volume_quotes` and this becomes GO or STOP automatically.",
     "crossover_unit_usd": 11.3215,
     "depends_on_mpn": "102010469",
     "how_to_resolve": "Cheapest first: (1) set MOUSER_API_KEY as an Actions secret — the nightly bom-pricing job then fetches Mouser's published breaks for a SKU it already resolves, and if those reach the basis volume the question answers itself with no human in the loop; (2) failing that, ask Seeed directly (they sell the XIAO and quote volume readily) for 100/500/1000 pricing on 102010469; (3) Digi-Key/Mouser will both quote a volume price on request even when they publish none. Any of the three lands as one row above."
