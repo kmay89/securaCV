@@ -1,0 +1,232 @@
+{
+  "schema": "securacv-board-design-1",
+  "id": "canary-witness-s3",
+  "name": "Canary Witness S3 carrier",
+  "confidence": "idea",
+  "confidence_note": "A design on paper with a computed cost case — no committed fabrication files, no bench-validated build, nothing ordered. It renders as an idea until a populated board passes the v1 bench runbook. Do not draw it as a product; do not put it in the store.",
+
+  "thesis": "Replace the $15.90 XIAO ESP32-S3 Sense and the WAP's loose discrete parts with one carrier built around the pre-certified ESP32-S3-WROOM-1 module — pin-for-pin identical to the XIAO on every signal the firmware names, so the existing verified firmware runs unmodified and the existing bench runbook is the acceptance test. The saving is the module's vendor margin plus the hand-wiring; the risk is bounded because the radio keeps its modular grant and the software keeps its evidence.",
+
+  "invariants": [
+    "PIN-COMPATIBLE. Every GPIO in `pin_map` matches the value the firmware already uses, cited to the file it comes from. lint_board_design.py fails the build if the two drift. A carrier that needs a firmware change has given back the saving it was built for.",
+    "PRE-CERTIFIED RADIO. The design uses the ESP32-S3-WROOM-1 module with its own FCC/IC grant, never bare ESP32-S3 silicon. This keeps the product on modular approval and off the $5-15k intentional-radiator test — see docs/strategy/18-unit-economics-and-production-scale.md section 4.",
+    "NO PIXELS ON THE BUS THAT DO NOT ALREADY TRAVEL IT. The carrier exposes exactly the sensor set the XIAO Sense already carries. It adds no radio, no second camera, and no network path the privacy invariants have not already been written against."
+  ],
+
+  "compare_to": {
+    "device": "canary-wap",
+    "csv": "bom_canary_wap.csv",
+    "note": "The module build this carrier replaces. `absorbs` lists the RefDes rows in that CSV whose function moves onto the carrier PCB; the cost model prices the module build from those rows using the same pricing.json snapshot, so the comparison can never be a hand-typed number. RefDes strings are matched verbatim against the CSV (including the combined 'R4,R5' divider row), and the generator fails loudly on any that no longer exist.",
+    "absorbs": ["U1", "Q1", "Dfb1", "R1", "R2", "C1", "R6", "R4,R5", "SW1", "ANT1"],
+    "absorbs_rationale": {
+      "U1": "the XIAO itself — its ESP32-S3, camera, mic and SD slot become U1/J-CAM/MK1/J-SD on the carrier",
+      "Q1": "buzzer drive MOSFET — placed on the carrier",
+      "Dfb1": "buzzer flyback diode — placed on the carrier",
+      "R1": "buzzer series resistor — placed on the carrier",
+      "R2": "WS2812 data series resistor — placed on the carrier",
+      "C1": "WS2812 decoupling — placed on the carrier",
+      "R6": "touch electrode ESD series resistor — placed on the carrier",
+      "R4,R5": "VBAT 2:1 divider pair — placed on the carrier as R-DIV, keeping DIVIDER_RATIO 2.0",
+      "SW1": "multifunction tactile button — placed on the carrier",
+      "ANT1": "external u.FL whip antenna — eliminated outright by choosing the PCB-antenna module variant"
+    },
+    "not_absorbed_note": "The piezo (BZ1), the RGB LED (DLED1), the reed switch (SW2) and magnet (MAG1), the touch pad (TP1), the battery (BT1), the GNSS module (M1), the microSD card (SD1), the USB cable (CBL1) and every enclosure/sealing row stay exactly as they are. The carrier changes what is on a PCB, not what is in the box."
+  },
+
+  "pin_map": {
+    "_comment": "Signal -> GPIO, every row citing the canonical board pin header that fixes it. firmware/boards/xiao-esp32s3-sense/pins/pins.h is data-only by repo rule (the registry guard enforces 'pins are data') and is what firmware/scripts/pin_budget.py already scores, which makes it the right contract for a carrier to be measured against — not a sketch-local copy. lint_board_design.py re-reads every `source` and fails on drift. GPIO numbers are ESP32-S3 GPIO numbers, not XIAO silkscreen labels.",
+    "cam_xclk":   { "gpio": 10, "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "CAM_PIN_XCLK" },
+    "cam_siod":   { "gpio": 40, "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "CAM_PIN_SIOD" },
+    "cam_sioc":   { "gpio": 39, "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "CAM_PIN_SIOC" },
+    "cam_d7":     { "gpio": 48, "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "CAM_PIN_D7" },
+    "cam_d6":     { "gpio": 11, "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "CAM_PIN_D6" },
+    "cam_d5":     { "gpio": 12, "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "CAM_PIN_D5" },
+    "cam_d4":     { "gpio": 14, "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "CAM_PIN_D4" },
+    "cam_d3":     { "gpio": 16, "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "CAM_PIN_D3" },
+    "cam_d2":     { "gpio": 18, "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "CAM_PIN_D2" },
+    "cam_d1":     { "gpio": 17, "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "CAM_PIN_D1" },
+    "cam_d0":     { "gpio": 15, "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "CAM_PIN_D0" },
+    "cam_vsync":  { "gpio": 38, "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "CAM_PIN_VSYNC" },
+    "cam_href":   { "gpio": 47, "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "CAM_PIN_HREF" },
+    "cam_pclk":   { "gpio": 13, "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "CAM_PIN_PCLK" },
+    "sd_sck":     { "gpio": 7,  "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "SD_PIN_SCK" },
+    "sd_miso":    { "gpio": 8,  "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "SD_PIN_MISO" },
+    "sd_mosi":    { "gpio": 9,  "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "SD_PIN_MOSI" },
+    "sd_cs":      { "gpio": 21, "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "SD_PIN_CS" },
+    "mic_clk":    { "gpio": 42, "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "MIC_PIN_CLK" },
+    "mic_data":   { "gpio": 41, "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "MIC_PIN_DATA" },
+    "vbat_sense": { "gpio": 1,  "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "VBAT_PIN" },
+    "status_led": { "gpio": 3,  "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "EXT_LED_PIN_DEFAULT" },
+    "tamper":     { "gpio": 4,  "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "TAMPER_PIN_DEFAULT" },
+    "gnss_tx":    { "gpio": 43, "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "GNSS_PIN_TX" },
+    "gnss_rx":    { "gpio": 44, "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "GNSS_PIN_RX" },
+    "boot_button":{ "gpio": 0,  "source": "firmware/boards/xiao-esp32s3-sense/pins/pins.h", "token": "BOOT_BUTTON_PIN" }
+  },
+
+  "pin_map_unenforced": {
+    "_comment": "The one signal the carrier routes that no constant in the Sense's pins.h fixes. BUZZER_PIN_DEFAULT exists for the esp32-c3 board (GPIO 2) but the S3 Sense header declares no buzzer, so there is nothing to gate against; the value comes from boards/boards.config.json's canary-wap pinout. When a buzzer constant lands in the Sense header, this row graduates into pin_map and the linter starts holding it.",
+    "chirp": { "gpio": 2, "source": "boards/boards.config.json", "status": "driven at runtime by the WAP sketch (LEDC PWM), no board-header constant" }
+  },
+
+  "resolved_questions": [
+    {
+      "id": "gpio21-collision",
+      "question": "Does the XIAO ESP32-S3 Sense really share GPIO 21 between the SD chip-select and the onboard status LED?",
+      "status": "RESOLVED from the repo — no bench time needed",
+      "evidence": "firmware/boards/xiao-esp32s3-sense/pins/pins.h defines both SD_PIN_CS 21 and LED_BUILTIN 21, and its own comment states it plainly: 'While the SD card is mounted, GPIO21 belongs to the SD driver: writing the LED asserts/deasserts the card's CS, and doing so mid-transaction corrupts SD I/O.' The header's prescribed workaround is to route status indication to EXT_LED_PIN_DEFAULT (GPIO 3) or gate LED writes on SD idleness.",
+      "what_the_carrier_does": "Keeps SD_CS on GPIO 21 (pin-compatibility is the point) and wires the only status indicator to GPIO 3 — EXT_LED_PIN_DEFAULT, the escape hatch the firmware already documents and already supports. There is no second LED on GPIO 21 to collide with. The carrier does not fix this defect with new code; it fixes it by not building the defect, at zero cost.",
+      "why_it_matters": "This is the clearest argument that a carrier buys something other than money. On the XIAO the conflict is unavoidable silicon and the firmware pays for it forever in gating logic; on a board we lay out, it simply does not exist."
+    }
+  ],
+
+  "open_questions": [
+    {
+      "id": "rail-headroom",
+      "question": "The regulator is specified at 600 mA (AP2112K-3.3). Camera capture plus a Wi-Fi TX burst is the worst case and the XIAO's own regulator is the only evidence we have that it fits.",
+      "status": "VERIFY on the bench",
+      "why_it_matters": "An under-specified rail browns out under exactly the condition the device exists for — capturing while transmitting. Measure the XIAO's rail current during a PEEK-plus-uplink before committing the part."
+    }
+  ],
+
+  "parts": [
+    { "ref": "U1", "mpn": "ESP32-S3-WROOM-1-N8R8", "mfr": "Espressif Systems", "qty": 1, "category": "MCU Module",
+      "desc": "ESP32-S3 module, 8 MB flash / 8 MB octal PSRAM, PCB antenna, pre-certified radio",
+      "est_unit_usd": 2.20, "basis": "docs/strategy/18-unit-economics-and-production-scale.md section 2 (module -> bare-silicon table, reel/LCSC at ~1k)",
+      "note": "The -N8R8 stack matches firmware/boards/boards.json for xiao-esp32s3-sense (8 MB flash, 8 MB octal PSRAM), so partitions and the qio_opi memory type carry over unchanged. PCB-antenna variant deliberately: it removes the u.FL whip from the BOM and keeps the grant's antenna condition satisfied by the module itself.",
+      "alt": { "mpn": "ESP32-S3-WROOM-1U-N8R8", "why": "u.FL variant — only if an enclosure or a metal mount makes the PCB antenna unusable. Changes the antenna condition on the modular grant; re-read the grant before choosing it." } },
+
+    { "ref": "J-CAM", "mpn": "FH12-24S-0.5SH(55)", "mfr": "Hirose", "qty": 1, "category": "Connector",
+      "desc": "24-pin 0.5 mm FPC connector, bottom contact — OV2640 camera ribbon",
+      "est_unit_usd": 0.60, "basis": "estimate — distributor catalog range for 24-pin 0.5 mm FPC at ~1k; not yet distributor-verified",
+      "note": "Camera stays a ribbon-attached module, not a soldered sensor. It is the highest-failure, most-likely-to-change part; keeping it field-replaceable is worth the connector." },
+
+    { "ref": "MK1", "mpn": "MSM261D3526H1CPM", "mfr": "MEMSensing", "qty": 1, "category": "Sensor",
+      "desc": "PDM MEMS microphone, bottom port",
+      "est_unit_usd": 0.60, "basis": "estimate — the exact part the firmware names; not yet distributor-verified",
+      "note": "Named in firmware/projects/canary-wap/arduino/canary_wap/securacv_audio.h as the Sense's mic. Using the same part means the acoustic detectors keep the response curve they were tuned against." },
+
+    { "ref": "J-SD", "mpn": "DM3AT-SF-PEJM5", "mfr": "Hirose", "qty": 1, "category": "Connector",
+      "desc": "microSD push-push socket, SMT",
+      "est_unit_usd": 0.55, "basis": "estimate — distributor catalog range at ~1k; not yet distributor-verified" },
+
+    { "ref": "U2", "mpn": "AP2112K-3.3TRG1", "mfr": "Diodes Incorporated", "qty": 1, "category": "Power",
+      "desc": "LDO regulator, 3.3 V 600 mA, SOT-25",
+      "est_unit_usd": 0.14, "basis": "estimate — distributor catalog range at ~1k; not yet distributor-verified",
+      "note": "See open question rail-headroom before this is committed." },
+
+    { "ref": "U3", "mpn": "MCP73831T-2ACI/OT", "mfr": "Microchip Technology", "qty": 1, "category": "Power",
+      "desc": "Single-cell LiPo charge controller, 500 mA programmable, SOT-23-5",
+      "est_unit_usd": 0.55, "basis": "estimate — distributor catalog range at ~1k; not yet distributor-verified",
+      "alt": { "mpn": "TP4056", "why": "roughly 0.45 USD cheaper and ubiquitous, but no reliable lifecycle data and thermal regulation is weaker. Qualify it only if the charge current is derated and the bench confirms the case temperature." } },
+
+    { "ref": "J-USB", "mpn": "USB4085-GF-A", "mfr": "GCT", "qty": 1, "category": "Connector",
+      "desc": "USB-C receptacle, 16-pin, USB 2.0",
+      "est_unit_usd": 0.55, "basis": "estimate — distributor catalog range at ~1k; not yet distributor-verified",
+      "note": "The S3 has native USB, so there is no USB-to-UART bridge on this board at all. That is a real part and a real cost the XIAO also avoids — the saving over a CH340-class design is already in the baseline, not additional." },
+
+    { "ref": "D-ESD", "mpn": "USBLC6-2SC6", "mfr": "STMicroelectronics", "qty": 1, "category": "Protection",
+      "desc": "USB ESD protection array, SOT-23-6",
+      "est_unit_usd": 0.12, "basis": "estimate — distributor catalog range at ~1k; not yet distributor-verified" },
+
+    { "ref": "J-BAT", "mpn": "S2B-PH-SM4-TB", "mfr": "JST", "qty": 1, "category": "Connector",
+      "desc": "JST PH 2.0 mm 2-pin battery header, SMT",
+      "est_unit_usd": 0.22, "basis": "estimate — distributor catalog range at ~1k; not yet distributor-verified" },
+
+    { "ref": "SW1", "mpn": "TS-1187A-B-A-B", "mfr": "XKB Connectivity", "qty": 2, "category": "Switch",
+      "desc": "Tactile switch 3x2 mm SMT — BOOT and RESET",
+      "est_unit_usd": 0.05, "basis": "estimate — distributor catalog range at ~1k; not yet distributor-verified" },
+
+    { "ref": "R-DIV", "mpn": "RC0805FR-07100KL", "mfr": "YAGEO", "qty": 2, "category": "Passive",
+      "desc": "Resistor 100 kOhm 1% — VBAT 2:1 sense divider",
+      "note": "Deliberately the same MPN the WAP BOM already carries (RefDes R4,R5), so this row prices from the live pricing.json snapshot instead of an estimate. The 1% tolerance is load-bearing: power_monitor.h applies DIVIDER_RATIO 2.0 and warns when readings fall outside DIVIDER_DETECT_MIN_MV..MAX_MV. Package may drop to 0402 at capture; that does not move the price materially." },
+
+    { "ref": "J-EXP", "mpn": "EXPANSION-HDR-2X7-1MM", "mfr": "Generic", "qty": 1, "category": "Connector",
+      "desc": "2x7 1.0 mm expansion header — chirp, status LED, tamper, GNSS UART, spare 3V3/GND",
+      "est_unit_usd": 0.18, "basis": "estimate — generic fine-pitch header at ~1k; not distributor-verified",
+      "note": "Everything in pin_map_unenforced lands here rather than being soldered down. Those signals are feature-gated or undriven in the firmware today, so committing them to fixed parts on the PCB would be building for a feature that does not exist yet. The header keeps the option open at 0.18 USD." },
+
+    { "ref": "PASSIVES", "mpn": "PASSIVE-BANK-0402", "mfr": "Generic", "qty": 1, "category": "Passive",
+      "desc": "Decoupling, bulk, strapping and divider passives — approximately 24 0402 parts across roughly 6 unique values",
+      "est_unit_usd": 0.35, "unique_values": 6, "basis": "estimate — reel pricing at ~1k across roughly 6 unique values; the placement fee, not the part cost, dominates and is counted in fab.pcba_placement_usd",
+      "note": "Deliberately one line. Pricing 24 individual 0402 rows to the cent is false precision at this stage; what matters to the cost model is the bank total and the unique-part count that drives the PCBA setup fee." }
+  ],
+
+  "off_board_parts": {
+    "_comment": "Not on the carrier PCB, but bundled into the XIAO's price on the other side of the comparison — so the cost model must count them or the carrier looks cheaper than it is. ONLY parts in that situation belong here. A part that appears unchanged on both sides (the piezo, the RGB LED, the reed switch, the battery) is deliberately absent: it cancels, and listing it here would double-count it against a module side that never dropped it.",
+    "refs": [
+      { "mpn": "OV2640-24PIN-MODULE", "desc": "OV2640 camera module on 24-pin FPC ribbon — bundled inside the XIAO ESP32-S3 Sense, bought separately for the carrier", "qty": 1, "est_unit_usd": 3.50, "basis": "docs/strategy/18-unit-economics-and-production-scale.md section 2 (camera sensor ~3-5 USD)" }
+    ]
+  },
+
+  "nets": {
+    "_comment": "Connectivity intent, keyed by signal name and GPIO. It deliberately does NOT carry ESP32-S3-WROOM-1 physical pin numbers: those come off the datasheet during schematic capture, verified by the tool's own ERC, and inventing them here would be exactly the confident-but-wrong artifact this repo exists to prevent. See docs/hardware/flagship_board_program.md, 'What this repo generates and what the EDA tool generates'.",
+    "power": [
+      { "net": "VBUS",  "class": "power", "nodes": ["J-USB.VBUS", "D-ESD.VBUS", "U3.VIN"], "note": "5 V from USB-C" },
+      { "net": "VBAT",  "class": "power", "nodes": ["J-BAT.+", "U3.VBAT", "R-DIV.top"], "note": "single-cell LiPo" },
+      { "net": "VSYS",  "class": "power", "nodes": ["U3.VBAT", "U2.VIN"], "note": "power-path output feeding the regulator" },
+      { "net": "+3V3",  "class": "power", "nodes": ["U2.VOUT", "U1.3V3", "MK1.VDD", "J-SD.VDD", "J-CAM.VDD"] },
+      { "net": "GND",   "class": "power", "nodes": ["U1.GND", "U2.GND", "U3.GND", "MK1.GND", "J-SD.GND", "J-CAM.GND", "J-USB.GND", "J-BAT.-", "D-ESD.GND"] }
+    ],
+    "signals": [
+      { "net": "CAM_XCLK",  "class": "signal", "signal": "cam_xclk",  "nodes": ["U1.IO10", "J-CAM.XCLK"] },
+      { "net": "CAM_SIOD",  "class": "signal", "signal": "cam_siod",  "nodes": ["U1.IO40", "J-CAM.SIOD"] },
+      { "net": "CAM_SIOC",  "class": "signal", "signal": "cam_sioc",  "nodes": ["U1.IO39", "J-CAM.SIOC"] },
+      { "net": "CAM_D7",    "class": "signal", "signal": "cam_d7",    "nodes": ["U1.IO48", "J-CAM.D7"] },
+      { "net": "CAM_D6",    "class": "signal", "signal": "cam_d6",    "nodes": ["U1.IO11", "J-CAM.D6"] },
+      { "net": "CAM_D5",    "class": "signal", "signal": "cam_d5",    "nodes": ["U1.IO12", "J-CAM.D5"] },
+      { "net": "CAM_D4",    "class": "signal", "signal": "cam_d4",    "nodes": ["U1.IO14", "J-CAM.D4"] },
+      { "net": "CAM_D3",    "class": "signal", "signal": "cam_d3",    "nodes": ["U1.IO16", "J-CAM.D3"] },
+      { "net": "CAM_D2",    "class": "signal", "signal": "cam_d2",    "nodes": ["U1.IO18", "J-CAM.D2"] },
+      { "net": "CAM_D1",    "class": "signal", "signal": "cam_d1",    "nodes": ["U1.IO17", "J-CAM.D1"] },
+      { "net": "CAM_D0",    "class": "signal", "signal": "cam_d0",    "nodes": ["U1.IO15", "J-CAM.D0"] },
+      { "net": "CAM_VSYNC", "class": "signal", "signal": "cam_vsync", "nodes": ["U1.IO38", "J-CAM.VSYNC"] },
+      { "net": "CAM_HREF",  "class": "signal", "signal": "cam_href",  "nodes": ["U1.IO47", "J-CAM.HREF"] },
+      { "net": "CAM_PCLK",  "class": "signal", "signal": "cam_pclk",  "nodes": ["U1.IO13", "J-CAM.PCLK"] },
+      { "net": "SD_SCK",    "class": "signal", "signal": "sd_sck",    "nodes": ["U1.IO7", "J-SD.CLK"] },
+      { "net": "SD_MISO",   "class": "signal", "signal": "sd_miso",   "nodes": ["U1.IO8", "J-SD.DAT0"] },
+      { "net": "SD_MOSI",   "class": "signal", "signal": "sd_mosi",   "nodes": ["U1.IO9", "J-SD.CMD"] },
+      { "net": "SD_CS",     "class": "signal", "signal": "sd_cs",     "nodes": ["U1.IO21", "J-SD.DAT3"] },
+      { "net": "MIC_CLK",   "class": "signal", "signal": "mic_clk",   "nodes": ["U1.IO42", "MK1.CLK"] },
+      { "net": "MIC_DATA",  "class": "signal", "signal": "mic_data",  "nodes": ["U1.IO41", "MK1.DOUT"] },
+      { "net": "VBAT_SENSE","class": "signal", "signal": "vbat_sense","nodes": ["U1.IO1", "R-DIV.mid"], "note": "2:1 divider, ratio 2.0 per power_monitor.h DIVIDER_RATIO" },
+      { "net": "CHIRP",     "class": "signal", "signal": "chirp",     "nodes": ["U1.IO2", "J-EXP.CHIRP"], "note": "GPIO 2 is an ESP32-S3 strapping pin — the buzzer drive must not hold it at reset. Check the boot-mode level at capture; firmware/boards/PIN_BUDGET.md flags this pin as conditional for exactly this reason." },
+      { "net": "STATUS_LED","class": "signal", "signal": "status_led","nodes": ["U1.IO3", "J-EXP.LED"], "note": "EXT_LED_PIN_DEFAULT — the only status indicator on this board. Deliberately NOT GPIO 21; see resolved_questions/gpio21-collision." },
+      { "net": "TAMPER",    "class": "signal", "signal": "tamper",    "nodes": ["U1.IO4", "J-EXP.TAMPER"], "note": "INPUT_PULLUP, active low per TAMPER_ACTIVE" },
+      { "net": "BOOT_N",    "class": "signal", "signal": "boot_button","nodes": ["U1.IO0", "SW1.BOOT"], "note": "BOOT_BUTTON_ACTIVE is LOW — switch to GND" },
+      { "net": "RESET_N",   "class": "signal", "nodes": ["U1.EN", "SW1.RST"], "note": "Module reset; the EN pin is not a GPIO and so carries no pin_map row" },
+      { "net": "GNSS_TX",   "class": "signal", "signal": "gnss_tx",   "nodes": ["U1.IO43", "J-EXP.GNSS_TX"] },
+      { "net": "GNSS_RX",   "class": "signal", "signal": "gnss_rx",   "nodes": ["U1.IO44", "J-EXP.GNSS_RX"] },
+      { "net": "USB_DP",    "class": "signal", "nodes": ["U1.IO20", "J-USB.DP", "D-ESD.IO1"] },
+      { "net": "USB_DM",    "class": "signal", "nodes": ["U1.IO19", "J-USB.DM", "D-ESD.IO2"] }
+    ]
+  },
+
+  "fab": {
+    "_comment": "Fabrication assumptions for the cost model. Every number is an estimate with a stated basis; none is a quote. A real quote replaces these and the model recomputes.",
+    "layers": 4,
+    "size_mm": [50.0, 25.0],
+    "finish": "ENIG",
+    "qty_basis": 1000,
+    "pcb_unit_usd": 0.80,
+    "pcb_basis": "estimate — 4-layer ENIG at 50x25 mm, offshore prototype-house pricing at 1k; not a quote",
+    "pcba_setup_usd": 100.0,
+    "pcba_setup_basis": "docs/strategy/18-unit-economics-and-production-scale.md section 3a (turnkey PCBA setup/stencil ~50-100 USD)",
+    "unique_parts_note": "Derived by the generator from the parts list (each part counts its `unique_values`, default 1), never typed here — the setup fee scales with unique parts, so a hand-typed count is a break-even that silently drifts as parts are added.",
+    "pcba_placement_usd": 3.0,
+    "pcba_placement_basis": "docs/strategy/18-unit-economics-and-production-scale.md section 3a (~3 USD per unique part)",
+    "assembly_unit_usd": 1.20,
+    "assembly_basis": "estimate — per-unit placement labor at 1k on a turnkey line; not a quote",
+    "nre_design_usd": 0.0,
+    "nre_design_basis": "Zero by construction: the design is authored in-repo and captured in free tooling, so doc 18 section 3a's 3,000-8,000 USD PCB-design line is replaced by our own time. If that time is ever bought instead, put the real figure here and the break-even moves with it."
+  },
+
+  "certification": {
+    "_comment": "What crossing the line actually costs, per docs/strategy/29-fcc-and-product-compliance-diligence.md and doc 18 section 4. Nothing here is unlocked by this file existing.",
+    "radio_path": "modular approval inherited from the ESP32-S3-WROOM-1 grant",
+    "radio_path_conditions": "Inherited only if Espressif's integration guidelines are followed — antenna keep-out honored, no metal or battery in the keep-out, and the host labeled with the module's FCC ID. Violating any of these forfeits the grant and puts the intentional-radiator test back on the bill.",
+    "still_required_usd": [1500, 4000],
+    "still_required": "Part 15 Subpart B SDoC per SKU — unavoidable for anything with a radio in the box, kit or assembled (doc 18 section 4 corrects the old kit-exemption myth; 47 CFR 15.23 covers only 5 or fewer units built for personal use and not marketed).",
+    "grant_conditions_read": false,
+    "grant_conditions_note": "docs/hardware/fcc_board_status.md has no row for ESP32-S3-WROOM-1 yet and no grant PDF has been opened. Until that column says yes, treat the modular-approval path as promising and unconfirmed — exactly the posture that doc requires."
+  }
+}

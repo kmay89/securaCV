@@ -137,6 +137,17 @@ jobs:
         run: python3 scripts/lint_common_lib_manifests.py
       - name: BOM CSVs — schema-clean and wired into the generator
         run: python3 scripts/lint_bom.py
+      - name: Board designs — pin map matches firmware, netlist coheres
+        # A carrier board's entire cost case is that the firmware does NOT
+        # change. If a GPIO moves in a board's pins.h and not in board.json,
+        # the carrier has quietly stopped being drop-in — and nothing would
+        # notice until a populated board came back from the fab.
+        run: python3 scripts/lint_board_design.py
+      - name: Board cost models are regenerated
+        # cost_model.json/connections.csv are generated from board.json +
+        # pricing.json. Committed so the model is reviewable in a diff and
+        # works offline; byte-checked so nobody can hand-edit a saving in.
+        run: python3 scripts/gen_board_design.py --check
       - name: BOM pricing engine — contract tests
         run: python3 scripts/tests/test_bom_pricing.py
       - name: verify_pipeline.sh false-pass regression tests

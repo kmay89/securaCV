@@ -1,0 +1,365 @@
+{
+  "generated_by": "scripts/gen_board_design.py",
+  "board": "canary-witness-s3",
+  "confidence": "idea",
+  "pricing_as_of": "2026-08-03T12:35:54Z",
+  "qty_basis": 1000,
+  "carrier": {
+    "parts_usd": 9.6795,
+    "pcb_usd": 0.8,
+    "assembly_usd": 1.2,
+    "unit_usd": 11.6795,
+    "lines": [
+      {
+        "ref": "U1",
+        "mpn": "ESP32-S3-WROOM-1-N8R8",
+        "qty": 1,
+        "unit_usd": 2.2,
+        "ext_usd": 2.2,
+        "provenance": "estimate",
+        "verified": false,
+        "price_at_qty": null,
+        "volume_matched": true,
+        "basis": "docs/strategy/18-unit-economics-and-production-scale.md section 2 (module -> bare-silicon table, reel/LCSC at ~1k)"
+      },
+      {
+        "ref": "J-CAM",
+        "mpn": "FH12-24S-0.5SH(55)",
+        "qty": 1,
+        "unit_usd": 0.6,
+        "ext_usd": 0.6,
+        "provenance": "estimate",
+        "verified": false,
+        "price_at_qty": null,
+        "volume_matched": true,
+        "basis": "estimate — distributor catalog range for 24-pin 0.5 mm FPC at ~1k; not yet distributor-verified"
+      },
+      {
+        "ref": "MK1",
+        "mpn": "MSM261D3526H1CPM",
+        "qty": 1,
+        "unit_usd": 0.6,
+        "ext_usd": 0.6,
+        "provenance": "estimate",
+        "verified": false,
+        "price_at_qty": null,
+        "volume_matched": true,
+        "basis": "estimate — the exact part the firmware names; not yet distributor-verified"
+      },
+      {
+        "ref": "J-SD",
+        "mpn": "DM3AT-SF-PEJM5",
+        "qty": 1,
+        "unit_usd": 0.55,
+        "ext_usd": 0.55,
+        "provenance": "estimate",
+        "verified": false,
+        "price_at_qty": null,
+        "volume_matched": true,
+        "basis": "estimate — distributor catalog range at ~1k; not yet distributor-verified"
+      },
+      {
+        "ref": "U2",
+        "mpn": "AP2112K-3.3TRG1",
+        "qty": 1,
+        "unit_usd": 0.14,
+        "ext_usd": 0.14,
+        "provenance": "estimate",
+        "verified": false,
+        "price_at_qty": null,
+        "volume_matched": true,
+        "basis": "estimate — distributor catalog range at ~1k; not yet distributor-verified"
+      },
+      {
+        "ref": "U3",
+        "mpn": "MCP73831T-2ACI/OT",
+        "qty": 1,
+        "unit_usd": 0.55,
+        "ext_usd": 0.55,
+        "provenance": "estimate",
+        "verified": false,
+        "price_at_qty": null,
+        "volume_matched": true,
+        "basis": "estimate — distributor catalog range at ~1k; not yet distributor-verified"
+      },
+      {
+        "ref": "J-USB",
+        "mpn": "USB4085-GF-A",
+        "qty": 1,
+        "unit_usd": 0.55,
+        "ext_usd": 0.55,
+        "provenance": "estimate",
+        "verified": false,
+        "price_at_qty": null,
+        "volume_matched": true,
+        "basis": "estimate — distributor catalog range at ~1k; not yet distributor-verified"
+      },
+      {
+        "ref": "D-ESD",
+        "mpn": "USBLC6-2SC6",
+        "qty": 1,
+        "unit_usd": 0.12,
+        "ext_usd": 0.12,
+        "provenance": "estimate",
+        "verified": false,
+        "price_at_qty": null,
+        "volume_matched": true,
+        "basis": "estimate — distributor catalog range at ~1k; not yet distributor-verified"
+      },
+      {
+        "ref": "J-BAT",
+        "mpn": "S2B-PH-SM4-TB",
+        "qty": 1,
+        "unit_usd": 0.22,
+        "ext_usd": 0.22,
+        "provenance": "estimate",
+        "verified": false,
+        "price_at_qty": null,
+        "volume_matched": true,
+        "basis": "estimate — distributor catalog range at ~1k; not yet distributor-verified"
+      },
+      {
+        "ref": "SW1",
+        "mpn": "TS-1187A-B-A-B",
+        "qty": 2,
+        "unit_usd": 0.05,
+        "ext_usd": 0.1,
+        "provenance": "estimate",
+        "verified": false,
+        "price_at_qty": null,
+        "volume_matched": true,
+        "basis": "estimate — distributor catalog range at ~1k; not yet distributor-verified"
+      },
+      {
+        "ref": "R-DIV",
+        "mpn": "RC0805FR-07100KL",
+        "qty": 2,
+        "unit_usd": 0.0097,
+        "ext_usd": 0.0195,
+        "provenance": "digikey",
+        "verified": true,
+        "price_at_qty": 1000,
+        "volume_matched": true,
+        "basis": null
+      },
+      {
+        "ref": "J-EXP",
+        "mpn": "EXPANSION-HDR-2X7-1MM",
+        "qty": 1,
+        "unit_usd": 0.18,
+        "ext_usd": 0.18,
+        "provenance": "estimate",
+        "verified": false,
+        "price_at_qty": null,
+        "volume_matched": true,
+        "basis": "estimate — generic fine-pitch header at ~1k; not distributor-verified"
+      },
+      {
+        "ref": "PASSIVES",
+        "mpn": "PASSIVE-BANK-0402",
+        "qty": 1,
+        "unit_usd": 0.35,
+        "ext_usd": 0.35,
+        "provenance": "estimate",
+        "verified": false,
+        "price_at_qty": null,
+        "volume_matched": true,
+        "basis": "estimate — reel pricing at ~1k across roughly 6 unique values; the placement fee, not the part cost, dominates and is counted in fab.pcba_placement_usd"
+      },
+      {
+        "ref": "(off-board) OV2640-24PIN-MODULE",
+        "mpn": "OV2640-24PIN-MODULE",
+        "qty": 1,
+        "unit_usd": 3.5,
+        "ext_usd": 3.5,
+        "provenance": "estimate",
+        "verified": false,
+        "price_at_qty": null,
+        "volume_matched": true,
+        "basis": "docs/strategy/18-unit-economics-and-production-scale.md section 2 (camera sensor ~3-5 USD)"
+      }
+    ]
+  },
+  "module_build_replaced": {
+    "csv": "bom_canary_wap.csv",
+    "unit_usd": 18.458,
+    "lines": [
+      {
+        "ref": "U1",
+        "mpn": "102010469",
+        "qty": 1,
+        "unit_usd": 15.9,
+        "ext_usd": 15.9,
+        "provenance": "digikey",
+        "verified": true,
+        "price_at_qty": 1,
+        "volume_matched": false,
+        "why": "the XIAO itself — its ESP32-S3, camera, mic and SD slot become U1/J-CAM/MK1/J-SD on the carrier"
+      },
+      {
+        "ref": "Q1",
+        "mpn": "2N7002",
+        "qty": 1,
+        "unit_usd": 0.0446,
+        "ext_usd": 0.0446,
+        "provenance": "digikey",
+        "verified": true,
+        "price_at_qty": 500,
+        "volume_matched": false,
+        "why": "buzzer drive MOSFET — placed on the carrier"
+      },
+      {
+        "ref": "Dfb1",
+        "mpn": "1N4148",
+        "qty": 1,
+        "unit_usd": 0.0262,
+        "ext_usd": 0.0262,
+        "provenance": "digikey",
+        "verified": true,
+        "price_at_qty": 500,
+        "volume_matched": false,
+        "why": "buzzer flyback diode — placed on the carrier"
+      },
+      {
+        "ref": "R1",
+        "mpn": "RC0805FR-07100RL",
+        "qty": 1,
+        "unit_usd": 0.0097,
+        "ext_usd": 0.0097,
+        "provenance": "digikey",
+        "verified": true,
+        "price_at_qty": 1000,
+        "volume_matched": true,
+        "why": "buzzer series resistor — placed on the carrier"
+      },
+      {
+        "ref": "R2",
+        "mpn": "RC0805FR-07330RL",
+        "qty": 1,
+        "unit_usd": 0.0097,
+        "ext_usd": 0.0097,
+        "provenance": "digikey",
+        "verified": true,
+        "price_at_qty": 1000,
+        "volume_matched": true,
+        "why": "WS2812 data series resistor — placed on the carrier"
+      },
+      {
+        "ref": "C1",
+        "mpn": "CL21B104KBCNNNC",
+        "qty": 1,
+        "unit_usd": 0.0194,
+        "ext_usd": 0.0194,
+        "provenance": "digikey",
+        "verified": true,
+        "price_at_qty": 500,
+        "volume_matched": false,
+        "why": "WS2812 decoupling — placed on the carrier"
+      },
+      {
+        "ref": "R6",
+        "mpn": "RC0805FR-071KL",
+        "qty": 1,
+        "unit_usd": 0.0097,
+        "ext_usd": 0.0097,
+        "provenance": "digikey",
+        "verified": true,
+        "price_at_qty": 1000,
+        "volume_matched": true,
+        "why": "touch electrode ESD series resistor — placed on the carrier"
+      },
+      {
+        "ref": "R4,R5",
+        "mpn": "RC0805FR-07100KL",
+        "qty": 2,
+        "unit_usd": 0.0097,
+        "ext_usd": 0.0195,
+        "provenance": "digikey",
+        "verified": true,
+        "price_at_qty": 1000,
+        "volume_matched": true,
+        "why": "VBAT 2:1 divider pair — placed on the carrier as R-DIV, keeping DIVIDER_RATIO 2.0"
+      },
+      {
+        "ref": "SW1",
+        "mpn": "B3F-1000",
+        "qty": 1,
+        "unit_usd": 0.2192,
+        "ext_usd": 0.2192,
+        "provenance": "digikey",
+        "verified": true,
+        "price_at_qty": 500,
+        "volume_matched": false,
+        "why": "multifunction tactile button — placed on the carrier"
+      },
+      {
+        "ref": "ANT1",
+        "mpn": "2.4G-UFL-WHIP",
+        "qty": 1,
+        "unit_usd": 2.2,
+        "ext_usd": 2.2,
+        "provenance": "csv-seed",
+        "verified": false,
+        "price_at_qty": 1,
+        "volume_matched": false,
+        "why": "external u.FL whip antenna — eliminated outright by choosing the PCB-antenna module variant"
+      }
+    ]
+  },
+  "delta": {
+    "saving_per_unit_usd": 6.7785,
+    "nre_usd": 154.0,
+    "nre_breakdown": {
+      "design_usd": 0.0,
+      "pcba_setup_usd": 100.0,
+      "unique_parts": 18,
+      "unique_part_placement_usd": 54.0
+    },
+    "breakeven_units": 23,
+    "breakeven_note": "Units that must be built before the carrier has paid back its own NRE. It excludes certification entirely — the Part 15B SDoC in board.json `certification` is owed whether or not this board exists, because it attaches to shipping a radio, not to which PCB the radio sits on."
+  },
+  "sensitivity": {
+    "question": "How cheap would 102010469 have to get before this carrier stops paying for itself?",
+    "dominant_replaced_mpn": "102010469",
+    "modeled_unit_usd": 15.9,
+    "modeled_at_qty": 1,
+    "crossover_unit_usd": 9.1215,
+    "verdict": "The carrier is cheaper while 102010469 costs more than $9.12/unit. It is modeled at $15.90 at qty 1. This is the number to re-check against a real volume quote before committing NRE — it needs no estimate to compute, only the price of one part."
+  },
+  "confidence_accounting": {
+    "note": "Share of the compared dollars that a distributor actually resolved this snapshot, versus a human's stated estimate. Read the saving with this number next to it.",
+    "priced_usd": 28.1375,
+    "distributor_verified_usd": 16.2775,
+    "estimated_usd": 11.86,
+    "verified_share": 0.5785,
+    "unverified_mpns": [
+      "2.4G-UFL-WHIP",
+      "AP2112K-3.3TRG1",
+      "DM3AT-SF-PEJM5",
+      "ESP32-S3-WROOM-1-N8R8",
+      "EXPANSION-HDR-2X7-1MM",
+      "FH12-24S-0.5SH(55)",
+      "MCP73831T-2ACI/OT",
+      "MSM261D3526H1CPM",
+      "OV2640-24PIN-MODULE",
+      "PASSIVE-BANK-0402",
+      "S2B-PH-SM4-TB",
+      "TS-1187A-B-A-B",
+      "USB4085-GF-A",
+      "USBLC6-2SC6"
+    ],
+    "volume_mismatch": {
+      "note": "Lines the snapshot could only price below the 1000-unit basis. On the replaced side this OVERSTATES the saving (we credit ourselves a low-volume price for a part we are dropping); on the carrier side it understates it. Any line here is a volume quote waiting to be got.",
+      "replaced_side_overstates_by_at_most_usd": 18.4094,
+      "replaced_side_mpns": [
+        "102010469",
+        "1N4148",
+        "2.4G-UFL-WHIP",
+        "2N7002",
+        "B3F-1000",
+        "CL21B104KBCNNNC"
+      ],
+      "carrier_side_mpns": []
+    }
+  }
+}
