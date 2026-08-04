@@ -251,7 +251,21 @@ mark_show = true;
 // accent measured 22.08 mm wide against a 20.52 mm plate, i.e. it hung off
 // BOTH edges, and nothing caught it because the only assert here checked the
 // mark's height.
-mark_h = 8.5;
+// ⚠️  THE BIRD IS NOT ON THIS PART, and it is not an omission.
+// The house mark was redrawn to the brand's monoline art — a bird with a C
+// spiralled into its wing and a V nested in its tail, carrying a notepad. That
+// drawing has INTERIOR detail, and interior detail has a minimum size:
+// mark_min_h(0.9) is 20.1 mm, against a back plate 20.3 mm ACROSS. The bird
+// would be wider than the plate before it was legible on it.
+//
+// So this part carries the WORDMARK alone (mark_wordmark), which is what
+// canary_mark_lib.scad's MINIMUM SIZE section says to do. The alternative was
+// a second, simplified bird for small parts, and a second bird in the line is
+// the one thing that library exists to prevent. If this case ever gets a
+// bigger face, put the mark back — it is one call.
+mark_bird_ok = false;   // this plate cannot carry the mark; see above
+mark_h = 8.5;        // kept as the lockup's SCALE reference so mark_word_h()
+                     // and the plate asserts read the same as they always did
 mark_rib = 0.9;      // stroke width. Below ~0.8 the mark stops being a mark
                      // at this size — two 0.42 lines is the floor
 mark_depth = 0.7;    // deboss depth; the accent inlay fills it flush
@@ -469,7 +483,10 @@ assert(lip_w >= 0.8 && lip_l >= 0.8,
 // The back is the one clean surface this case has. These check the two
 // windows against the lockup's real footprint rather than trusting the
 // numbers to stay compatible when somebody measures the board and moves them.
-mark_half   = mark_lockup_h(mark_h)/2;
+// The wordmark alone is one line of type, so the group's height is the cap
+// height — not mark_lockup_h(), which measures a stack this part no longer has.
+mark_word_h = mark_h * mark_word_ratio();
+mark_half   = (mark_bird_ok ? mark_lockup_h(mark_h) : mark_word_h)/2;
 mark_lo     = mark_dy - mark_half;
 mark_hi     = mark_dy + mark_half;
 led_y       = -yc/2 + led_from_far;
@@ -496,12 +513,12 @@ mark_word_chars = 8;                       // "securaCV"
 function mark_word_w(h) = mark_word_chars * mark_adv * h * mark_word_ratio();
 // The bird's width comes from the library's own bbox, stroke caps included.
 // It used to be `h * 130 / mark_span()` — the old drawing's beak-to-tail span
-// typed into this file. The mark was redrawn (plump chick, stub tail) and 130
-// became 104: a stale constant here would have reserved 4 mm of plate that
-// the bird no longer occupies, and would have been silently WRONG in the
-// other direction the first time the mark grew.
+// typed into this file, which would have been silently WRONG the first time
+// the mark moved. It moved. (With mark_bird_ok false the bird is not drawn,
+// so the wordmark alone sets the width — but the term stays in the max() so
+// putting the bird back cannot skip this check.)
 function mark_bird_w(h) = mark_w_mm(h, mark_rib);
-mark_w = max(mark_bird_w(mark_h), mark_word_w(mark_h));
+mark_w = max(mark_bird_ok ? mark_bird_w(mark_h) : 0, mark_word_w(mark_h));
 assert(mark_w <= plate_x - 2.0,
        str("The mark is ", mark_w, " mm wide on a ", plate_x,
            " mm plate — it will hang off the sides. Shrink mark_h; the ",
@@ -954,7 +971,8 @@ module back_mark(grow = 0) {
     translate([mark_dx, mark_dy, back_t - mark_depth])
         linear_extrude(mark_depth + 0.02)
             offset(r = grow)
-                mark_lockup(mark_h, mark_rib);
+                if (mark_bird_ok) mark_lockup(mark_h, mark_rib);
+                else              mark_wordmark(mark_word_h);
 }
 
 module back_body() {

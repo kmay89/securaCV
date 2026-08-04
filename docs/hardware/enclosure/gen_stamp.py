@@ -49,9 +49,10 @@ from pathlib import Path
 
 # ── The one human string. Bump it when you change the geometry. ──────────
 # CalVer: YYYY.MM + a letter that revs within the month.
-# (main shipped .09y in #1446; this merge moves the geometry again, so it is
-#  the next letter rather than either branch's value.)
-STAMP_REV = "2026.09z"
+# (#1446 shipped .09y and #1452 took .09z, so the month's letters are spent.
+#  This merge moves the geometry again, so it rolls to the next block rather
+#  than reusing a revision that is already debossed into a different design.)
+STAMP_REV = "2026.10a"
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "canary_s3_lcd7_stamp.scad"

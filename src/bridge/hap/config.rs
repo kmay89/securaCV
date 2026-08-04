@@ -215,6 +215,34 @@ impl BridgeConfig {
     }
 }
 
+/// Merge a newly chosen fleet into an existing one **without moving anyone**.
+///
+/// Rerunning the wizard to add or rename a Canary must not renumber the ones
+/// already paired. Accessory ids come from list position and controllers
+/// cache them, so a re-sort would leave the Home app's "Porch" tile — and
+/// every automation written against it — pointing at the garage. Nothing
+/// downstream can detect that; it just silently starts lying.
+///
+/// So: existing entries keep their positions, a rename updates the name in
+/// place, and genuinely new devices are appended.
+///
+/// Note what is deliberately *not* done — an existing Canary the user did not
+/// re-select is **kept**, not dropped. Removing it would shift every device
+/// after it up one, which is the same bug by another route. Deleting a Canary
+/// is an edit to the file, made deliberately, with the consequence visible.
+pub fn merge_fleet(existing: &[CanaryConfig], chosen: &[CanaryConfig]) -> Vec<CanaryConfig> {
+    let mut merged: Vec<CanaryConfig> = existing.to_vec();
+    for pick in chosen {
+        match merged.iter_mut().find(|c| c.id == pick.id) {
+            // Already known: keep the slot, take the (possibly new) name.
+            Some(slot) => slot.name = pick.name.clone(),
+            // New: the end of the list is the only safe place for it.
+            None => merged.push(pick.clone()),
+        }
+    }
+    merged
+}
+
 /// Resolve a class-scoped signal by its dictionary id.
 ///
 /// Only class-scoped signals resolve. The rest of the vocabulary is not the
@@ -236,7 +264,13 @@ pub fn class_signal_names() -> Vec<&'static str> {
 }
 
 /// Read a config file.
+///
+/// Refuses one that group or other can read. This file can carry the broker
+/// password, so it gets exactly the treatment the state file gets — and the
+/// quickstart promises as much, which would be a lie if `save` set the mode
+/// and `load` never checked it.
 pub fn load(path: &Path) -> anyhow::Result<BridgeConfig> {
+    super::store::refuse_if_group_or_world_readable(path, "your broker credentials")?;
     let text = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("could not read {}: {e}", path.display()))?;
     let cfg: BridgeConfig = toml::from_str(&text)
@@ -403,6 +437,76 @@ mod tests {
         assert!(names.contains(&"motion_package"));
     }
 
+    /// The property the whole merge exists for: an already-paired Canary
+    /// must never change position, because position is its accessory id.
+    #[test]
+    fn merging_never_moves_an_existing_canary() {
+        let existing = sample().canaries;
+        // The wizard rediscovers the fleet lexicographically — garage first.
+        let chosen = vec![
+            CanaryConfig {
+                id: "garage-canary".into(),
+                name: "Garage Canary".into(),
+            },
+            CanaryConfig {
+                id: "porch-canary".into(),
+                name: "Porch Canary".into(),
+            },
+        ];
+        let merged = merge_fleet(&existing, &chosen);
+        let ids: Vec<&str> = merged.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["porch-canary", "garage-canary"],
+            "rediscovery must not re-sort a paired fleet"
+        );
+    }
+
+    #[test]
+    fn merging_appends_new_canaries_at_the_end() {
+        let existing = sample().canaries;
+        let chosen = vec![CanaryConfig {
+            id: "shed-canary".into(),
+            name: "Shed Canary".into(),
+        }];
+        let merged = merge_fleet(&existing, &chosen);
+        let ids: Vec<&str> = merged.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids, vec!["porch-canary", "garage-canary", "shed-canary"]);
+    }
+
+    #[test]
+    fn merging_renames_in_place() {
+        let existing = sample().canaries;
+        let chosen = vec![CanaryConfig {
+            id: "porch-canary".into(),
+            name: "Front Door".into(),
+        }];
+        let merged = merge_fleet(&existing, &chosen);
+        assert_eq!(merged[0].id, "porch-canary");
+        assert_eq!(merged[0].name, "Front Door", "a rename keeps the slot");
+        assert_eq!(merged.len(), 2, "renaming must not drop the other device");
+    }
+
+    /// Dropping an unselected device would shift everyone after it up one —
+    /// the same silent repointing by another route.
+    #[test]
+    fn merging_keeps_a_canary_the_user_did_not_reselect() {
+        let existing = sample().canaries;
+        let chosen = vec![CanaryConfig {
+            id: "porch-canary".into(),
+            name: "Porch Canary".into(),
+        }];
+        let merged = merge_fleet(&existing, &chosen);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[1].id, "garage-canary");
+    }
+
+    #[test]
+    fn merging_into_nothing_is_just_the_choice() {
+        let chosen = sample().canaries;
+        assert_eq!(merge_fleet(&[], &chosen), chosen);
+    }
+
     #[test]
     fn save_and_load_round_trip_on_disk() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -421,6 +525,28 @@ mod tests {
         save(&path, &sample()).expect("saves");
         let mode = std::fs::metadata(&path).expect("stat").permissions().mode();
         assert_eq!(mode & 0o777, 0o600, "it can hold a broker password");
+    }
+
+    /// The config can hold a broker password, so a world-readable one is
+    /// refused exactly like the state file — and the quickstart says so,
+    /// which would be a false promise if only `save` enforced it.
+    #[cfg(unix)]
+    #[test]
+    fn a_world_readable_config_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("hap.toml");
+        save(&path, &sample()).expect("saves");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+
+        let err = load(&path).expect_err("must refuse");
+        let msg = err.to_string();
+        assert!(msg.contains("644"), "got: {msg}");
+        assert!(msg.contains("chmod 600"), "must say how to fix it: {msg}");
+        assert!(
+            msg.contains("broker credentials"),
+            "must say what leaked: {msg}"
+        );
     }
 
     /// Loading validates, so a hand-edited file that is subtly wrong fails at

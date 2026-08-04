@@ -14,9 +14,9 @@ inlay and laser work. They were separate files with separate drawings, so
 the .scad and false of the repo: redrawing the mark left the SVG showing the
 old one, and nothing would have said so.
 
-So the SVG is DERIVED now. This script reads the path constants straight out
-of the .scad, applies the same Chaikin smoothing the .scad applies, and writes
-the artwork. Change the bird in one place; the art follows or CI fails.
+So the SVG is DERIVED. This script reads the path constants straight out of the
+.scad, applies the same Chaikin smoothing the .scad applies, and writes the
+artwork. Change the bird in one place; the art follows or CI fails.
 
 WHY IT PARSES THE .SCAD INSTEAD OF ASKING OPENSCAD
 -------------------------------------------------
@@ -34,41 +34,69 @@ with a missing wing.
 
 THE ARTWORK
 -----------
-The FILLED form — the silhouette solid, with the eye and the wing knocked back
-out of it — because that is the brand art's own construction and what the 7"
-case prints in accent filament. Stroke weight is the case's own line weight
-expressed in design units, so the drawn shape matches the molded one.
+The mark is MONOLINE — one stroke weight for the outline, the C, the V and the
+notepad alike — so the SVG is one group of stroked paths and nothing else. No
+fills, no masks, no knock-outs: there is no silhouette to fill, because the
+drawing IS the line. That also makes it importable anywhere. Engravers, laser
+drivers and cutters vary wildly in what they do with masks and compound fills;
+every one of them understands a stroked path.
 
-TWO GROUPS, NOT A MASK. The knock-outs are a second group painted in #fff over
-a first group painted in #000, which is exactly the two-filament part: the
-mark in accent, the eye and the wing line in body color. An SVG <mask> would
-be the tidier way to say "transparent hole", and it is the wrong one here —
-this file's job is to be imported by engravers, laser drivers and cutters, and
-mask support in that software ranges from partial to absent. Two flat groups
-import as two flat groups everywhere. Recolor them to the real filaments.
+The weight is READ OFF THE 7" CASE (`bird_h` / `bird_rib`), so the drawn art
+and the molded mark are the same weight by construction rather than by two
+numbers that agree today.
 """
-import math
 import re
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SRC = HERE / "canary_mark_lib.scad"
+CASE = HERE / "canary_s3_lcd7.scad"
 OUT = HERE / "securacv_bird_glyph.svg"
-
-# The stroke, in DESIGN units. The 7" case draws the mark 32 mm tall with a
-# 2.0 mm rib, and mark_span() is 110 — so 2.0 / (32/110) = 6.875. Written as
-# that division rather than as 6.875 so the two cannot drift apart silently.
-CASE_MARK_H = 32.0
-CASE_MARK_RIB = 2.0
 
 # Rendered size on paper. The glyph is scale-free; this only sets what an
 # importer sees before it scales the thing.
 DOC_MM = 60.0
 
+# The drawing, as (constant name, closed?, smoothing passes) — the SAME three
+# facts mark_bird_2d() uses for each path. Listed here rather than inferred,
+# because "which paths are closed" is a property of the drawing and a wrong
+# guess produces a bird with a hole in it that still validates as SVG.
+PATHS = [
+    ("_m_head", False, 2),
+    ("_m_beak", False, 0),
+    ("_m_strap", False, 0),
+    ("_m_pad", True, 2),
+    ("_m_padclip", False, 0),
+    ("_m_belly", False, 2),
+    ("_m_back", False, 2),
+    ("_m_tailend", False, 2),
+    ("_m_wing", False, 2),
+    ("_m_cee", False, 2),
+    ("_m_vee", False, 0),
+]
+GROUPS = [("_m_legs", False, 0), ("_m_feet", False, 1)]
+
 
 def _scad() -> str:
     return SRC.read_text(encoding="utf-8")
+
+
+def _case_num(name: str) -> float:
+    """Pull `name = <number>;` out of the 7" case — its Customizer default.
+
+    Not duplicated as a constant here, deliberately. The first version of this
+    script copied bird_h and bird_rib in, which meant --check could not see a
+    re-weighted mark at all: change the case's rib and this would regenerate
+    the identical old-weight SVG and pass, while the workflow step above it
+    claimed the artwork matched the molded mark. A drift check that cannot
+    detect the drift it names is worse than no check, because it is believed.
+    """
+    m = re.search(rf"^{re.escape(name)}\s*=\s*(-?[\d.]+)\s*;",
+                  CASE.read_text(encoding="utf-8"), re.M)
+    if not m:
+        raise SystemExit(f"gen_mark_svg: {name} not found in {CASE.name}")
+    return float(m.group(1))
 
 
 def _num_list(name: str, depth: int) -> list:
@@ -78,8 +106,7 @@ def _num_list(name: str, depth: int) -> list:
     3 = list of lists of points) and is checked, not assumed — a path that
     changed shape is a parse that must fail, not one that guesses.
     """
-    src = _scad()
-    m = re.search(rf"^{re.escape(name)}\s*=\s*(\[.*?\]);", src, re.S | re.M)
+    m = re.search(rf"^{re.escape(name)}\s*=\s*(\[.*?\]);", _scad(), re.S | re.M)
     if not m:
         raise SystemExit(f"gen_mark_svg: {name} not found in {SRC.name}")
     body = m.group(1)
@@ -105,15 +132,16 @@ def _fn(name: str) -> float:
 
 
 def _bbox_term(name: str) -> float:
-    """Pull the constant out of `function mark_x0(t) = -50.0 - t/2;`."""
-    m = re.search(rf"^function\s+{re.escape(name)}\(t\)\s*=\s*(-?[\d.]+)\s*[-+]\s*t/2;",
-                  _scad(), re.M)
+    """Pull the constant out of `function mark_x0(t) = -51.2 - t/2;`."""
+    m = re.search(
+        rf"^function\s+{re.escape(name)}\(t\)\s*=\s*(-?[\d.]+)\s*[-+]\s*t/2;",
+        _scad(), re.M)
     if not m:
         raise SystemExit(f"gen_mark_svg: function {name}(t) not found in {SRC.name}")
     return float(m.group(1))
 
 
-def chaikin(pts, closed, k=3):
+def chaikin(pts, closed, k):
     """The .scad's _chaik/_smooth, arithmetic for arithmetic."""
     for _ in range(k):
         n = len(pts)
@@ -140,86 +168,45 @@ def path_d(pts, closed):
     return d + " Z" if closed else d
 
 
-def beak_shapes(p0, p1, r0, r1):
-    """The .scad's _gtaper as SVG: two circles plus their outer tangent quad.
-
-    _gtaper hulls a circle at each end; the hull of two circles is exactly
-    that. Overlapping shapes in one fill group union, so no boolean is needed.
-    """
-    dx, dy = p1[0] - p0[0], p1[1] - p0[1]
-    dist = math.hypot(dx, dy)
-    if dist <= abs(r0 - r1):
-        raise SystemExit("gen_mark_svg: beak circles nest — no external tangent")
-    # Angle from the center line to each external tangent point.
-    a = math.atan2(dy, dx)
-    b = math.acos((r0 - r1) / dist)
-    quad = [(p0[0] + r0 * math.cos(a + b), p0[1] + r0 * math.sin(a + b)),
-            (p1[0] + r1 * math.cos(a + b), p1[1] + r1 * math.sin(a + b)),
-            (p1[0] + r1 * math.cos(a - b), p1[1] + r1 * math.sin(a - b)),
-            (p0[0] + r0 * math.cos(a - b), p0[1] + r0 * math.sin(a - b))]
-    pts = " ".join(f"{f(x)},{f(-y)}" for x, y in quad)
-    return [f'<circle cx="{f(p0[0])}" cy="{f(-p0[1])}" r="{f(r0)}"/>',
-            f'<circle cx="{f(p1[0])}" cy="{f(-p1[1])}" r="{f(r1)}"/>',
-            f'<polygon points="{pts}"/>']
-
-
 def build() -> str:
-    rib = CASE_MARK_RIB / (CASE_MARK_H / _fn("mark_span"))
+    rib = _case_num("bird_rib") / (_case_num("bird_h") / _fn("mark_span"))
 
-    body = chaikin(_num_list("_g_body", 2), True)
-    wing = chaikin(_num_list("_g_wing", 2), True)
-    tailu = _num_list("_g_tailu", 2)      # unsmoothed in the .scad — see there
-    taill = _num_list("_g_taill", 2)
-    beak = _num_list("_g_beak", 2)
-    eye = _num_list("_g_eye", 1)
-    legs = _num_list("_g_legs", 3)
-    feet = _num_list("_g_feet", 3)
-    eye_d = max(_fn("_g_eye_d"), rib * 1.4)
-    beak_root = _fn("_g_beak_root")
+    paths = [path_d(chaikin(_num_list(n, 2), closed, k), closed)
+             for n, closed, k in PATHS]
+    for name, closed, k in GROUPS:
+        paths += [path_d(chaikin(seg, closed, k), closed)
+                  for seg in _num_list(name, 3)]
+    eye = _num_list("_m_eye", 1)
+    eye_d = max(_fn("_m_eye_d"), rib)
 
     x0 = _bbox_term("mark_x0") - rib / 2
     x1 = _bbox_term("mark_x1") + rib / 2
     y0 = _bbox_term("mark_y0") - rib / 2
     y1 = _bbox_term("mark_y1") + rib / 2
-    # Air around the box so a round cap sitting exactly on it is not clipped
-    # by a viewer that rounds the viewBox the other way — and so the beak tip,
+    # Air around the box so a round cap sitting exactly on it is not clipped by
+    # a viewer that rounds the viewBox the other way — and so the beak's tip,
     # which is the closest thing to an edge, does not READ as clipped either.
     pad = 2.0
     vb = (x0 - pad, -(y1 + pad), (x1 - x0) + 2 * pad, (y1 - y0) + 2 * pad)
-
-    caps = 'stroke-linecap="round" stroke-linejoin="round"'
-
-    # The mark. Strokes carry the rib; the beak does NOT — _gtaper hulls two
-    # circles whose diameters ARE the finished width, so stroking it as well
-    # would inflate the beak by half a rib all round and push its tip out
-    # through the viewBox. (It did, on the first generated file.)
-    solid = [f'<path d="{path_d(body, True)}"/>',
-             f'<path d="{path_d(tailu + taill[-2::-1], True)}"/>',
-             f'<g stroke="none">{"".join(beak_shapes(beak[0], beak[1], beak_root / 2, rib / 2))}</g>']
-    for seg in legs + feet:
-        solid.append(f'<path fill="none" d="{path_d(seg, False)}"/>')
 
     lines = [
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{f(vb[0])} {f(vb[1])}'
         f' {f(vb[2])} {f(vb[3])}" width="{f(DOC_MM)}mm" height='
         f'"{f(DOC_MM * vb[3] / vb[2])}mm">',
         "  <title>SecuraCV Bird Glyph</title>",
-        "  <desc>The Canary house mark. GENERATED from "
-        "canary_mark_lib.scad by gen_mark_svg.py — edit the paths there, not "
-        "here. Scalable outline geometry for embossing, engraving, inlay, "
-        "stamping, or laser cutting. Two groups, one per filament: #000 is the "
-        "mark, #fff is what the mark's own color is knocked out of it.</desc>",
-        f'  <g id="securacv-bird-mark" fill="#000" stroke="#000"'
-        f' stroke-width="{f(rib)}" {caps}>',
+        "  <desc>The Canary house mark: a monoline bird carrying a notepad, "
+        "with a C spiralled into its wing and a V nested in its tail. GENERATED "
+        "from canary_mark_lib.scad by gen_mark_svg.py — edit the paths there, "
+        "not here. One stroke weight throughout, taken from the 7\" case, for "
+        "embossing, engraving, inlay, stamping or laser cutting.</desc>",
+        f'  <g id="securacv-bird" fill="none" stroke="#000"'
+        f' stroke-width="{f(rib)}" stroke-linecap="round"'
+        ' stroke-linejoin="round">',
     ]
-    lines += [f"    {s}" for s in solid]
+    lines += [f'    <path d="{d}"/>' for d in paths]
     lines += [
-        "  </g>",
-        f'  <g id="securacv-bird-knockout" fill="#fff" stroke="#fff"'
-        f' stroke-width="{f(rib)}" {caps}>',
-        f'    <path fill="none" d="{path_d(wing, True)}"/>',
-        f'    <circle stroke="none" cx="{f(eye[0])}" cy="{f(-eye[1])}"'
-        f' r="{f(eye_d / 2)}"/>',
+        f'    <circle fill="#000" stroke="none" cx="{f(eye[0])}"'
+        f' cy="{f(-eye[1])}" r="{f(eye_d / 2)}"/>',
         "  </g>",
         "</svg>",
         "",
