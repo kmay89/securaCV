@@ -698,29 +698,6 @@
    }
   },
   {
-   "id": "mark_lib",
-   "scad": "canary_mark_lib.scad",
-   "title": "Canary — HOUSE MARK LIBRARY (the bird, as printable geometry)",
-   "family": "universal",
-   "device_compat": [],
-   "class": "accessory",
-   "fit": "standard",
-   "variant_axes": [],
-   "variants": [],
-   "render_parts": [],
-   "options": [],
-   "engineering_param_count": 0,
-   "alternatives": [],
-   "remix_of": null,
-   "counts": {
-    "variants": 0,
-    "released": 0,
-    "options": 0,
-    "user_options": 0,
-    "variant_axes": 0
-   }
-  },
-  {
    "id": "mount_adapters",
    "scad": "canary_mount_adapters.scad",
    "title": "Canary — UNIVERSAL MOUNT ADAPTERS  ⚠️ IN DEVELOPMENT (v0.1-dev)",
