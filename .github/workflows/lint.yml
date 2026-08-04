@@ -104,6 +104,15 @@ jobs:
         # It also self-tests that its ban pattern never starts matching correct
         # English (characteristic, realistic, colored, …).
         run: python3 scripts/lint_spelling.py
+      - name: CloudKit container — named, never defaulted
+        # CKContainer.default() reads an entitlement and raises an ObjC
+        # CKException when there isn't one. Swift can't catch that, so an
+        # unsigned build (CI builds exactly that) aborts on launch — which is
+        # how every iOS test failed for reasons that had nothing to do with
+        # iCloud. The gate bans the call and cross-checks the one hardcoded
+        # container identifier against both entitlements files, because a
+        # name that drifts silently swaps one broken iCloud for another.
+        run: python3 scripts/lint_cloudkit_container.py
       - name: Agent entrypoints match AGENTS.md
         # Every AI tool reads a different filename (GEMINI.md, QWEN.md,
         # copilot-instructions.md, .cursor/rules, .clinerules, .windsurfrules).
