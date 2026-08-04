@@ -29,7 +29,7 @@ stands: the events — absolutely; the video — never.
 | Motion Sensor (per zone) | `binary_sensor.pwk_<zone>_motion` (`device_class: motion`, auto-off 10 min) | `event_mqtt_bridge` (runs by default in the add-on) |
 | Smoke Sensor | `binary_sensor.<canary_id>_smoke_alarm` ("Smoke Alarm Heard", `device_class: smoke`) | Canary WAP acoustic detector (`FEATURE_ACOUSTIC_EVENTS`, NFPA 72 T3 cadence) |
 | Carbon Monoxide Sensor | `binary_sensor.<canary_id>_co_alarm` ("CO Alarm Heard", `device_class: carbon_monoxide`) | Same detector, UL 2034 T4 cadence — a separate entity, so it needs its own include line |
-| Occupancy Sensor | template sensor over a presence topic (§5) | Canary Sense radar / ESPHome kit, until phase A1 ships native entities |
+| Occupancy Sensor | `binary_sensor.<canary_id>_occupancy` (`device_class: occupancy`) | The integration itself, natively — phase A1, shipped. A template is now only needed for a presence source the integration does not own (§5) |
 
 ## 2) Architecture
 
@@ -77,7 +77,7 @@ homekit:
         - binary_sensor.*_smoke_alarm       # Canary WAP acoustic T3 (smoke)
         - binary_sensor.*_co_alarm          # Canary WAP acoustic T4 (CO)
       include_entities:
-        - binary_sensor.securacv_occupancy  # the §5 template, if you add it
+        - binary_sensor.*_occupancy         # native (A1); or the §5 template for a foreign source
 ```
 
 Deliberately **excluded**: the connectivity/`problem`/storage/chain entities.
@@ -90,12 +90,22 @@ Restart Home Assistant, then in the Home app: **Add Accessory → More options �
 SecuraCV Bridge**, and enter the pairing code shown in HA's notification
 sidebar. Room-assign each sensor once; names follow the entity names.
 
-## 5) Template occupancy (until A1)
+## 5) Template occupancy — now only for foreign presence sources
 
-The integration does not yet publish a native occupancy entity (that is phase
-A1). If a Canary Sense or an ESPHome mmWave kit publishes presence over MQTT —
-for example via the `mqtt_statestream` path from the
-[MR60BHA2 recipe](mr60bha2_esphome.md) — a template sensor bridges the gap:
+**A1 has shipped**, so the integration publishes native
+`binary_sensor.<canary_id>_motion` and `…_occupancy` entities itself. Occupancy
+tracks the retained `state` snapshot (`securacv/<id>/state`, field `presence`)
+and the events vocabulary; motion auto-clears after a hold window matching the
+kernel's own, so an automation written against a Canary behaves like one
+written against a sensor you already own. **Prefer the native entities** —
+which events raise which signal is dictionary-governed and CI-gated across the
+Rust kernel and the Python integration, so it cannot drift from what the
+witness actually said.
+
+A template is still the answer for a presence source the integration does not
+own — an ESPHome mmWave kit, say, publishing over MQTT via the
+`mqtt_statestream` path from the
+[MR60BHA2 recipe](mr60bha2_esphome.md):
 
 ```yaml
 template:
@@ -106,8 +116,8 @@ template:
         state: "{{ is_state('binary_sensor.mr60bha2_person_information', 'on') }}"
 ```
 
-Swap the inner entity for whatever your presence source created. When A1 lands
-native entities, delete the template and re-include the native one.
+Swap the inner entity for whatever your presence source created, and include
+it alongside the native entities rather than instead of them.
 
 ## 6) Notifications, three redundant lanes
 
