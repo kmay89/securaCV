@@ -345,7 +345,7 @@ struct PairingContext {
  * should do next. ActionType::NONE means "no I/O this call".
  * ────────────────────────────────────────────────────────────────────────── */
 
-/* Initialise a context. State becomes IDLE. */
+/* Initialize a context. State becomes IDLE. */
 void context_init(PairingContext& ctx);
 
 /* Begin pairing as the initiator (an existing opera member who has a

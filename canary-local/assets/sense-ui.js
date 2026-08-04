@@ -59,7 +59,7 @@ export function bootLines(serial) {
   return out;
 }
 
-// The privacy chokepoint's range gate, mirrored: raw centimetres in, coarse
+// The privacy chokepoint's range gate, mirrored: raw centimeters in, coarse
 // band out. Same comparisons as mr60_presence.cpp's band_of().
 export function rangeBandOf(cm, cfg) {
   if (!(cm > 0)) return "unknown";
@@ -141,7 +141,7 @@ export function makeVitalsFSM(cfg) {
   };
 }
 
-// Presence state → the WS2812 colour main.cpp shows for it.
+// Presence state → the WS2812 color main.cpp shows for it.
 export function ledFor(state, fsm) {
   const s = (fsm.presence.states || []).find((x) => x.name.toLowerCase() === state);
   return s ? { led: s.led, rgb: s.rgb } : { led: "amber", rgb: [24, 8, 0] };
@@ -190,7 +190,7 @@ export function buildDevice(data, bus) {
   }
   side.append(facts);
 
-  // LED grammar — the state colours from main.cpp, live on the bench
+  // LED grammar — the state colors from main.cpp, live on the bench
   const ledRow = el("div", "sense-leds");
   const dots = {};
   for (const s of data.fsm.presence.states) {
@@ -389,7 +389,7 @@ export function buildRadarLab(data, bus) {
   wrap.append(stage, side);
 
   // ---- the simulated room --------------------------------------------------
-  // World coords in metres, device at (0,0) facing +x, cone ±40°. The canvas
+  // World coords in meters, device at (0,0) facing +x, cone ±40°. The canvas
   // shows 0..6.5 m of x and −3..3 m of y.
   const FOV = (data.radar.fov_deg * Math.PI / 180) / 2;   // half-angle
   const MAXR = data.radar.presence_max_m;

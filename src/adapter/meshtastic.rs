@@ -5,7 +5,7 @@
 //! alert broadcast over the LoRa mesh. A gateway node with the MQTT module enabled
 //! (`mqtt.enabled = true`, `mqtt.json_enabled = true`) uplinks every packet it hears as JSON to
 //! topics like `msh/<REGION>/2/json/<CHANNEL>/!<gatewayid>`. This adapter subscribes to those
-//! uplinks and turns configured nodes into witness sources, giving the kernel kilometre-scale,
+//! uplinks and turns configured nodes into witness sources, giving the kernel kilometer-scale,
 //! off-grid sensor reach far beyond the household ESP-NOW mesh.
 //!
 //! # Privacy posture

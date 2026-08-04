@@ -12,7 +12,7 @@ permissions:
 
 # Cheap grep-based lints that cross-check firmware headers, spec tables, and
 # flag declarations repo-wide — kept unfiltered on purpose, but stale PR runs
-# are still cancelled when a new head arrives.
+# are still canceled when a new head arrives.
 concurrency:
   group: repo-lints-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -95,6 +95,15 @@ jobs:
         run: python3 tools/test_away_access_check.py
       - name: Docs index — no stragglers, no dead links
         run: python3 scripts/lint_docs_index.py
+      - name: US spellings (AGENTS.md rule 3b)
+        # The script's regex is the ONE enumerated list of banned forms in the
+        # repo; rule 3b points at it rather than naming them, because a rule
+        # that spells British words out gets rewritten by the next spelling
+        # sweep into a rule forbidding the correct spellings. That happened to
+        # four separate copies of this rule across two repos in one day.
+        # It also self-tests that its ban pattern never starts matching correct
+        # English (characteristic, realistic, colored, …).
+        run: python3 scripts/lint_spelling.py
       - name: Agent entrypoints match AGENTS.md
         # Every AI tool reads a different filename (GEMINI.md, QWEN.md,
         # copilot-instructions.md, .cursor/rules, .clinerules, .windsurfrules).

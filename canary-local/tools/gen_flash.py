@@ -753,7 +753,7 @@ def prove_block(role: str, product_id: str) -> dict:
             p["emulated"]["how"] = (
                 "This board has no WASM build of its own yet, so the twin runs the "
                 "sibling that shares its glass and its face. The pixels and the "
-                "behaviour are right; the build id on screen is the sibling's.")
+                "behavior are right; the build id on screen is the sibling's.")
         else:
             p.pop("emulated")
             return p
@@ -1306,7 +1306,7 @@ def settings_help_block(vision: dict, sense_default: dict, sense_wellbeing: dict
         "range_near_cm": {
             "label": "Near band",
             "what": "Inside this distance counts as “near”. Only the coarse band ever "
-                    "leaves the device — raw centimetres stay on the board.",
+                    "leaves the device — raw centimeters stay on the board.",
             "default": f"{sk['range_near_cm']} cm in this build.",
         },
         "range_mid_cm": {
@@ -1490,7 +1490,7 @@ def settings_help_block(vision: dict, sense_default: dict, sense_wellbeing: dict
             "label": "The radar bench",
             "what": "The Sense's live senses off the USB cable: presence, the near/mid/"
                     "far band, the 0/1/2+ count — the same coarse truths it publishes, "
-                    "never raw centimetres.",
+                    "never raw centimeters.",
         },
         "field_bench": {
             "label": "The field bench",

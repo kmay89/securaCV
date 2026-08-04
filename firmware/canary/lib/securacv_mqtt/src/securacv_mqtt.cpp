@@ -182,7 +182,7 @@ static void on_mqtt_message(char* topic, byte* payload, unsigned int len) {
       if (s_ota_auto_cmd_cb) s_ota_auto_cmd_cb(false);
     } else {
       log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK,
-                 "MQTT: unrecognised auto-update payload", nullptr);
+                 "MQTT: unrecognized auto-update payload", nullptr);
     }
     return;
   }
@@ -226,7 +226,7 @@ static void on_mqtt_message(char* topic, byte* payload, unsigned int len) {
 
   if (!recognized) {
     log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK,
-               "MQTT: unrecognised mic command payload", nullptr);
+               "MQTT: unrecognized mic command payload", nullptr);
     return;
   }
   if (s_mic_mute_cmd_cb) s_mic_mute_cmd_cb(muted);

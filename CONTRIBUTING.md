@@ -35,7 +35,7 @@ contributor should start:
 - **Improve a guide, an enclosure, or a translation** — content and design
   PRs under `docs/`, `docs/hardware/enclosure/`, and the guides are low-risk
   and high-value.
-- Look for issues labelled **`good first issue`** and **`help wanted`**.
+- Look for issues labeled **`good first issue`** and **`help wanted`**.
 
 Who owns what — and which maintainer seats are open — is in
 [`MAINTAINERS.md`](MAINTAINERS.md). Be kind; see

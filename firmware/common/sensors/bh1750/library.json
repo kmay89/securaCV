@@ -1,7 +1,7 @@
 {
     "name": "bh1750_lux",
     "version": "0.1.0",
-    "description": "Minimal board-agnostic driver for the ROHM BH1750 ambient-light sensor over I2C (continuous high-resolution mode). Vendored instead of pulling a library dependency, per the same supply-chain reasoning as the MR60 frame parser. Pins are the caller's job: hand it an initialised TwoWire.",
+    "description": "Minimal board-agnostic driver for the ROHM BH1750 ambient-light sensor over I2C (continuous high-resolution mode). Vendored instead of pulling a library dependency, per the same supply-chain reasoning as the MR60 frame parser. Pins are the caller's job: hand it an initialized TwoWire.",
     "keywords": ["bh1750", "lux", "illuminance", "i2c", "ambient-light"],
     "authors": [
         {

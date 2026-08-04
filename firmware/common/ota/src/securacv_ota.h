@@ -366,7 +366,7 @@ esp_err_t securacv_ota_register_selftest(const securacv_selftest_t *test);
  *
  * Call in setup() after critical subsystems are initialized. If the device
  * just booted into a new OTA image, runs all registered self-tests:
- * pass -> firmware marked valid (rollback cancelled); any required test
+ * pass -> firmware marked valid (rollback canceled); any required test
  * fails -> firmware marked invalid and the device reboots into the
  * previous version.
  *

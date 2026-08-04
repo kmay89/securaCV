@@ -1,4 +1,4 @@
-//! hub_usbboot — read rpiboot's output and recognise the one Linux failure that
+//! hub_usbboot — read rpiboot's output and recognize the one Linux failure that
 //! looks like nothing: it can't OPEN the Pi's USB device.
 //!
 //! On Linux the bundled `rpiboot` runs as the user, and opening the Pi's

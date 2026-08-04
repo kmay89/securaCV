@@ -321,7 +321,7 @@ pub fn inject_into_image(
     // `ssh_key_written` would be true, and the console would simply never
     // open — the companion would fail on every card with no clue why. Writing
     // both costs two directory entries, HAOS ignores files it does not
-    // recognise, and it removes the guess. When a hardware pass identifies the
+    // recognize, and it removes the guess. When a hardware pass identifies the
     // real one, drop the other.
     //
     // BOTH must land to count as written: a half-placed key is exactly the

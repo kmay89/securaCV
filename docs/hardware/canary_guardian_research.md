@@ -29,7 +29,7 @@ things are only possible when the sensor moves with the body:
   the witness *at the incident*, with no cell and no mains.
 - **Mobility across zones.** "Arrived home / left the safe zone" requires the subject to carry the
   emitter; a fixed sensor only ever sees who passes *it*.
-- **Consenting agency.** A worn beacon is armed, pressed, and cancelled *by the wearer*. That's an
+- **Consenting agency.** A worn beacon is armed, pressed, and canceled *by the wearer*. That's an
   ethical posture a fixed surveillance sensor can't occupy — and it's the whole reason this device
   is allowed to exist in a privacy-first fleet.
 
@@ -80,7 +80,7 @@ discrete signed claim, not a stream.
 
 **How well does Meshtastic serve this — honestly?**
 
-- **Range:** a direct link runs **a few hundred metres to ~1–2 km in urban** clutter without a
+- **Range:** a direct link runs **a few hundred meters to ~1–2 km in urban** clutter without a
   repeater, **3–5 km suburban**, **10–15 km line-of-sight**. A body-worn antenna near flesh performs
   *worse* than these figures — plan for the low end and lean on a **fleet of fixed relay nodes** (your
   home Canaries, a Fence Guard) to catch the shout.
@@ -91,7 +91,7 @@ discrete signed claim, not a stream.
   dense meshes degrade past ~50–80 nodes on default presets.
 
 **So we frame it truthfully:** a Meshtastic duress beacon is a **best-effort, off-grid, no-cell-needed
-shout your own people can hear** — genuinely valuable exactly where cellular fails and a family/neighbour
+shout your own people can hear** — genuinely valuable exactly where cellular fails and a family/neighbor
 fleet exists to listen. It is **not** a 911-grade guaranteed alarm, and the docs must never imply it is.
 **Hedge it:** pair the LoRa burst with a **BLE-to-phone fallback** — if a paired phone is in range, it
 relays over cell too. That's what the commercial dual-mode buttons do, and it's the right belt-and-braces.
@@ -137,7 +137,7 @@ Build the IMU in, but be ruthless about what it's allowed to do. The literature 
 A false "fall occurred" written into a **tamper-evident** log is worse than useless — it's permanent
 garbage in the one place that's supposed to be trustworthy. So: a suspected impact **starts a local "are
 you OK?" countdown the wearer can cancel** (a wake-on-IMU-interrupt is a great *power* trick regardless).
-Only if the countdown expires uncancelled does it escalate — and even then it escalates as a *check-in
+Only if the countdown expires uncanceled does it escalate — and even then it escalates as a *check-in
 failure*, not an asserted "fall." Raw IMU heuristics never write an unqualified claim.
 
 ---
@@ -153,7 +153,7 @@ minimum:
 | Duress press | **`duress_asserted`** | **new** | Coarse zone + coarse time. The one genuinely new concept — "a person deliberately called for help." Deserves to read as itself in the timeline, not as a generic alarm. |
 | "I'm OK" heartbeat | *(liveness, not a sealed claim)* | no | The heartbeat is a presence signal; the *alert* is absence-inferred consumer-side, exactly like Car-Mode's departure. No new kind — silence is the event. |
 | Entered/left safe zone | reuse `presence_in_restricted_zone` or a future `zone_presence_change` | tbd | Settle in design: person-scoped zone crossing may fit an existing kind or want its own. Not blocking the duress flagship. |
-| Suspected impact (uncancelled) | escalates via the check-in path | no | Never its own "fall" claim (§3.4). |
+| Suspected impact (uncanceled) | escalates via the check-in path | no | Never its own "fall" claim (§3.4). |
 
 **Decision to lock during firmware design, not now:** whether zone-presence reuses an existing kind.
 `duress_asserted` is the only addition the flagship needs.
@@ -165,7 +165,7 @@ minimum:
 A body-worn always-on radio is *structurally* the same object as a stalking tool. The cautionary tale is
 explicit: reported GPS-tracker misuse in coercive-control cases **rose 317% (2018→2023)**, and the core
 critique of AirTags was that they were "designed without a thought for privacy or physical security."
-Guardian's defence is to be *architecturally incapable* of being that thing.
+Guardian's defense is to be *architecturally incapable* of being that thing.
 
 **Deliberately does NOT:**
 

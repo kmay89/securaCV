@@ -10,7 +10,7 @@
  *   IDLE -> [start()] -> CALIBRATING -> [duration elapses] -> IDLE +
  *           baseline stored + "calibrated" event emitted.
  *
- *   CALIBRATING -> [cancel()] -> IDLE + "cancelled" event emitted.
+ *   CALIBRATING -> [cancel()] -> IDLE + "canceled" event emitted.
  *
  *   CALIBRATING -> [duration elapses but fewer than MIN_WINDOWS
  *                   contributed] -> IDLE + "failed" event emitted +
@@ -56,7 +56,7 @@ static uint32_t s_started_ms    = 0;
 static uint32_t s_duration_ms   = META_EMPTY_ROOM_DEFAULT_DURATION_MS;
 
 /* Stored baseline (most recent successful calibration). Separate from
- * the accumulator so a cancelled / failed run doesn't clobber a good
+ * the accumulator so a canceled / failed run doesn't clobber a good
  * baseline already in place. */
 static int8_t   s_baseline_mean[CSI_FEATURE_DIM];
 static uint32_t s_baseline_n   = 0;
@@ -91,7 +91,7 @@ void emit_status(const char* status, uint32_t windows) {
    * a >65k-window calibration still produces a defined value. */
   v.bundled_count  = (windows > UINT16_MAX) ? UINT16_MAX : (uint16_t)windows;
   /* Event type_name is "baseline_status" rather than "baseline_calibrated"
-   * because the same event carries state_name = "calibrated" | "cancelled"
+   * because the same event carries state_name = "calibrated" | "canceled"
    * | "failed". Consumers filter by state_name. */
   (void)csi_event_emit("meta.empty_room_baseline", "baseline_status", &v);
 }
@@ -210,7 +210,7 @@ void meta_empty_room_baseline_cancel(void) {
   memset(s_sum, 0, sizeof(s_sum));
   s_in_progress_n = 0;
   s_state         = State::IDLE;
-  emit_status("cancelled", partial);
+  emit_status("canceled", partial);
 }
 
 bool meta_empty_room_baseline_is_calibrating(void) {

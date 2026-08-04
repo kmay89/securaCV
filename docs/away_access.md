@@ -195,7 +195,7 @@ convenience.
 
 That honesty has a price, and the tool prints it: it can see the mapping your
 router admits to, and it **cannot** see a hole punched upstream of your router
-— carrier-grade NAT, a second router, or a tunnel daemon dialling out from
+— carrier-grade NAT, a second router, or a tunnel daemon dialing out from
 inside. If you run any of those, check them yourself.
 
 ## Alerts need none of this

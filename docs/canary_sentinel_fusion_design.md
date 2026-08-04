@@ -25,7 +25,7 @@ because any one sensor is magic, but because it fuses several *physically
 independent* ones and treats disagreement and blinding as suspicion. It speaks
 the same small, signed, privacy-preserving vocabulary as the rest of the fleet
 (presence as a state, occupancy as 0/1/2+, range as near/mid/far — no MACs, no
-centimetres, no imagery), and it ships in three cost tiers so the same brain
+centimeters, no imagery), and it ships in three cost tiers so the same brain
 guards a mailbox for ~$18 or a front door with the full rig.
 
 This is the real deal, and the honesty is part of the product: **Lite is
@@ -77,7 +77,7 @@ with a straight face.
 
 ## 4. The fusion math
 
-Implemented in `sentinel_fusion.cpp`; summarised here.
+Implemented in `sentinel_fusion.cpp`; summarized here.
 
 **Per channel, per tick.** Each enabled channel contributes its latest coarse
 `Vote` (decayed to `None` once older than its `stale_ms`):
@@ -116,7 +116,7 @@ else                                                                → Clear
 sustained: rising transitions need `present_debounce_ms`, falling transitions
 need `clear_debounce_ms` (hysteresis against flapping at the threshold).
 
-All thresholds, weights, and timers are **data** (per preset). No behaviour forks
+All thresholds, weights, and timers are **data** (per preset). No behavior forks
 by preset — only these numbers do, per the firmware architecture's config rules.
 
 ## 5. Privacy chokepoint (non-negotiable, same as the fleet)
@@ -131,7 +131,7 @@ composition layer may publish is the coarse `FusionResult`:
 - `modality_bits` — *which classes* corroborated, never which device
 
 No MAC is ever stored (RF/BLE are aggregate counts; `common/rf_presence`
-guarantees this). No distance in centimetres, no per-target track, no imagery,
+guarantees this). No distance in centimeters, no per-target track, no imagery,
 no vitals leave the device. Every published transition is Ed25519-signed over a
 `sentinel` v1 canonical and hash-chained, reusing `common/identity` and
 `common/witness` exactly as canary-sense does — HA TOFU-pins the pubkey and
@@ -142,7 +142,7 @@ renders the "device-verified ✓" badge with zero new verifier code.
 Different costs, one brain. The tier is a **board + a set of enabled channels**;
 the fusion core is identical across all three.
 
-### Sentinel Lite — "good enough, honestly labelled" · ~$18 `[BENCH]`
+### Sentinel Lite — "good enough, honestly labeled" · ~$18 `[BENCH]`
 - **Board:** one XIAO ESP32-C3 (or C6). Onboard radio only.
 - **Channels:** PIR + WiFi-RF + BLE + ambient light.
 - **Modality classes available:** Thermal, CarriedRadio, Optical (3).

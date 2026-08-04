@@ -61,7 +61,7 @@ struct GpsUtcTime {
 };
 
 // Motion filter output. The L76K reports ~0.3-0.7 m/s of phantom speed and a
-// few metres of position scatter even when the device sits still in a window.
+// few meters of position scatter even when the device sits still in a window.
 // The witness chain still records the raw GnssFix (so we never lie about what
 // the receiver saw), but the API/UI consumes MotionView so a stationary
 // mounted camera presents as truly stationary. Real motion still shows up:

@@ -6,7 +6,7 @@
  * Standard-tier modalities, a fast present-debounce so a real approach commits
  * quickly, and a loiter timer so someone who lingers at the door is surfaced.
  *
- * Everything in this file is DATA. Behaviour never forks by preset — only these
+ * Everything in this file is DATA. Behavior never forks by preset — only these
  * numbers do (firmware/ARCHITECTURE.md config rules). The project's
  * sentinel_config.h maps these macros onto a securacv::fusion::FusionConfig.
  *

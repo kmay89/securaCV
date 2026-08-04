@@ -172,7 +172,7 @@ Rgb plumage_led(uint32_t now_ms, const LookParams& p, Sev worst, bool safe_dark,
                 const Plumage& song, uint8_t depth);
 
 // The glass field: `count` bands top->bottom. The resting field is the look
-// engine's wash; the note rides it as a band of light travelling bottom-to-top
+// engine's wash; the note rides it as a band of light traveling bottom-to-top
 // over the syllable, added (never subtracted), so the lamp cannot dip.
 void plumage_bands(uint32_t now_ms, const LookParams& p, Sev worst,
                    bool safe_dark, const Plumage& song, uint8_t depth,

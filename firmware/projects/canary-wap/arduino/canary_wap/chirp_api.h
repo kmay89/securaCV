@@ -643,7 +643,7 @@ static inline void register_api_handler(httpd_handle_t server, const char* uri,
 
 // Register all chirp API routes with the HTTP server, Bearer-gated.
 // api_token: device's persistent api_token_str (must outlive the server).
-// nullptr keeps legacy open behaviour for non-production callers; production
+// nullptr keeps legacy open behavior for non-production callers; production
 // callers MUST supply a real token.
 inline void register_routes(httpd_handle_t server, const char* api_token = nullptr) {
   auth_token_storage() = api_token;

@@ -21,7 +21,7 @@
 //     read as a completed pair. The UI's explicit "set up another board" path
 //     also resets immediately (flash.js), for when you don't want to wait.
 //
-// Pure + storage/clock-injectable so the behaviour is proven in host tests
+// Pure + storage/clock-injectable so the behavior is proven in host tests
 // (tests/vision_session.test.js) without a real sessionStorage or wall clock.
 
 const STORE_KEY = "scv-vision";

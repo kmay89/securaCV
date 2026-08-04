@@ -733,7 +733,7 @@
           "Enclosure: a screenless pendant/pocket puck, self-announcing (visible/haptic 'I'm on') — the anti-AirTag, printed and validated like every other Canary shell."
         ],
         "request_title": "Concept request: Canary Guardian (worn duress witness)",
-        "request_body": "Seen the Guardian concept card. What I'd want from a worn, off-grid duress beacon:\n\n- who would wear it (self / lone worker / kid / elder):\n- is there a home/neighbour fleet of nodes to hear it:\n- cell coverage where you'd rely on it:\n- check-in, zone-presence, or just the panic button:\n"
+        "request_body": "Seen the Guardian concept card. What I'd want from a worn, off-grid duress beacon:\n\n- who would wear it (self / lone worker / kid / elder):\n- is there a home/neighbor fleet of nodes to hear it:\n- cell coverage where you'd rely on it:\n- check-in, zone-presence, or just the panic button:\n"
       },
       "persona": {
         "name": "Pip the Pocket Sentry",
@@ -848,7 +848,7 @@
       },
       "persona": {
         "name": "Vale the Range Watcher",
-        "accent": "dawn grey and far-sight blue",
+        "accent": "dawn gray and far-sight blue",
         "shape": "keen-eyed canary perched high on a post, head tilted down the lane, faint radar rings fanning out ahead",
         "story": "Vale sits at the edge of things and watches the way in. It cannot see faces and does not want to — it only knows 'something large is coming this way' from 'something small just left', and it says so in one quiet signed word over the mesh, then dozes again to save its wings for the season. Vale wears a concept ribbon because honest products say what is real, and it would rather miss a squirrel than ever learn to tell one person from another.",
         "specialty": "Low-power approach radar concept",
@@ -1712,7 +1712,7 @@
       },
       "persona": {
         "name": "Scout the Edge Watcher",
-        "accent": "curb grey and warning red",
+        "accent": "curb gray and warning red",
         "shape": "alert little canary on a fencepost at the yard's edge, eyes on an invisible line at the curb, a faint radar fan toward the street",
         "story": "Scout watches the line between the yard and the road, and calls out when a little one seems to be heading for it. It's honest about being just a lookout: it can miss a child, it can cry wolf at a blowing leaf or the neighbor's dog, and it can never grab a toddler's hand — only a fence and a grown-up can. Scout wears a concept ribbon because honest products say what is real, and it would rather bother you about a dog than ever stay quiet for a child.",
         "specialty": "Boundary-plane child-warning concept (NOT a barrier)",
@@ -1815,7 +1815,7 @@
       },
       "persona": {
         "name": "Wicket the Gate Minder",
-        "accent": "iron grey and latch brass",
+        "accent": "iron gray and latch brass",
         "shape": "tidy little canary perched on a gate latch, one wing resting on the hinge, feeling the swing",
         "story": "Wicket sits on the gate and feels it move — the swing of it opening, the settle of it closing, the long stillness that means someone left it open. It knows nothing about who passed, only the gate itself. Wicket wears a concept ribbon because honest products say what is real, and it is proud that it can nap for years on a single little cell and still never miss the gate swinging.",
         "specialty": "Ultra-low-power gate/contact concept",
@@ -2156,11 +2156,11 @@
           "Enclosure: reuse canary_vehicle_mount.scad, validate heat behavior on a sun-baked dash."
         ],
         "request_title": "Concept request: Canary Vehicle Guard (parked-car IMU + mesh witness)",
-        "request_body": "Seen the Vehicle Guard concept card. What I'd want from a parked-car witness:\n\n- theft/tow alert, find-my-car, or both:\n- always-hot fuse tap or internal battery:\n- is there a home/neighbour mesh to hear it park:\n- any interest in the cabin thermometer (temp only, not occupancy):\n"
+        "request_body": "Seen the Vehicle Guard concept card. What I'd want from a parked-car witness:\n\n- theft/tow alert, find-my-car, or both:\n- always-hot fuse tap or internal battery:\n- is there a home/neighbor mesh to hear it park:\n- any interest in the cabin thermometer (temp only, not occupancy):\n"
       },
       "persona": {
         "name": "Watchman the Wheel Warden",
-        "accent": "asphalt grey and amber hazard",
+        "accent": "asphalt gray and amber hazard",
         "shape": "sturdy little canary curled up asleep on a tiny wheel chock, one eye cracked open, a faint radio ring above",
         "story": "Watchman naps in the parked car all day and does nothing at all — until the car moves without you, and then it sends one quiet signed word to your people over the mesh. It refuses to read the car's secrets or map where you go; it only knows 'still' from 'moved' and 'here' from 'gone'. Watchman wears a concept ribbon because honest products say what is real — and because it would rather guard a still car than pretend to guard a moving one.",
         "specialty": "Parked-car mesh witness concept",

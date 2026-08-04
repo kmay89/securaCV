@@ -205,7 +205,7 @@ recorded epoch-stamped with the **verbatim signed chain head that was live
 when it fired** — so the Proof-on-Glass QR works on a week-old event
 exactly as on a live one. History never becomes hearsay. The **dash** gets
 a full history modal (tap the "Past 24h" line → a wall-clock log; tap any
-row → its signed chain as a QR; a two-tap "erase all" honours sovereignty).
+row → its signed chain as a QR; a two-tap "erase all" honors sovereignty).
 The **watch** gets a read-only HISTORY page in the tap-cycle — the durable,
 verdict-carrying story. Both surfaces render only records with a known
 clock (no guessed timeline).

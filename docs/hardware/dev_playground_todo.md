@@ -55,7 +55,7 @@ mirrored in the others breaks the build. In dependency order:
    prototype in `playground.h`. New stations are **EVT-only** (see gotchas).
 2. **Generator** (`gen_playground.py`): add the station dict — `id`, blurbs,
    `wires`, **instructions (must be byte-identical to the firmware META prose)**,
-   `code`, `stimulus`, `expect`. Add pin-tracker + terminal/colour entries if the
+   `code`, `stimulus`, `expect`. Add pin-tracker + terminal/color entries if the
    station lands on a new terminal.
 3. **Regenerate the data:** `python3 canary-local/tools/gen_playground.py`
    (writes `canary-local/devices/playground.json`).

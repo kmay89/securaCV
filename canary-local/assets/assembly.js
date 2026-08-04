@@ -249,7 +249,7 @@ export class Assembly {
       })),
       center: spec.center || [0, 0, 0],
     };
-    // one persistent dashed leader per part (seated centre → its explode
+    // one persistent dashed leader per part (seated center → its explode
     // vector); its live length is a model-matrix scale, never a buffer rebuild
     const scw = M.mul(part.seated, M.t(part.center[0], part.center[1], part.center[2]));
     part.leaderBase = [scw[12], scw[13], scw[14]];
@@ -281,7 +281,7 @@ export class Assembly {
   }
 
   _updateLeaders(t) {
-    // scale each persistent leader from 0..t about its seated centre — no
+    // scale each persistent leader from 0..t about its seated center — no
     // buffer churn while scrubbing the slider
     const hidden = t < 0.02;
     for (const p of this.parts) {

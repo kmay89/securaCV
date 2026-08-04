@@ -43,7 +43,7 @@ static constexpr const char* CT_HTML  = "text/html; charset=utf-8";
 static constexpr const char* CT_PLAIN = "text/plain";
 
 enum class ProbeKind {
-  None,                  // not a recognised probe path
+  None,                  // not a recognized probe path
   AppleInstructionPage,  // 200 text/html — firmware serves CAPTIVE_PORTAL_HTML
   AndroidNoContent,      // 204, empty body
   WindowsNcsiBody,       // 200 text/plain — `body` holds the NCSI string
@@ -82,7 +82,7 @@ inline const char* windows_ncsi_body(const char* path) {
 }
 
 // Classify a request path into the probe platform whose connectivity check it
-// is. Recognises the exact probe URIs the firmware registers — matching the
+// is. Recognizes the exact probe URIs the firmware registers — matching the
 // path component, so a trailing query string (req->uri keeps it) still routes
 // to the right platform; anything else → None.
 inline ProbeKind classify(const char* path) {
@@ -103,7 +103,7 @@ inline ProbeKind classify(const char* path) {
 // the status line, sets `content_type` (when non-null), and sends `body`
 // (Windows), CAPTIVE_PORTAL_HTML (Apple), or nothing (Android 204).
 //
-// Unrecognised paths fall back to the Apple instruction page: a 200 HTML page
+// Unrecognized paths fall back to the Apple instruction page: a 200 HTML page
 // is the connection-preserving safe default. In the firmware this never fires
 // — only the six exact probe URIs are routed here; everything else hits the
 // HTTPS redirect — but the fallback keeps a misregistration from 404-ing a

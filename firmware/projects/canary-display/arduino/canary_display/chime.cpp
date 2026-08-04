@@ -95,7 +95,7 @@ void voice_play(Voice v, uint8_t ramp) {
   if (s_pin < 0) return;
 
   const VoiceCat cat = voice_category(v);
-  // Interaction tones are optional: honour the user's opt-out before we even
+  // Interaction tones are optional: honor the user's opt-out before we even
   // consult loudness. (Night silences them via the model regardless.)
   if (cat == VoiceCat::Interaction && !s_interactions) return;
 

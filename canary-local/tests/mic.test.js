@@ -8,7 +8,7 @@
 // mirrored breaks CI here.
 //
 //   presets / windows / wake / wire names  <- arduino/canary_display/mic_logic.h
-//   detector behaviour                      <- the scenarios in tests_host/
+//   detector behavior                      <- the scenarios in tests_host/
 //                                              test_mic_logic.cpp, re-run in JS
 //
 // Sections: "honesty" (the sim carries exactly the firmware's numbers) and

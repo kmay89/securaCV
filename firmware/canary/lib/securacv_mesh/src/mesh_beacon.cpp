@@ -27,7 +27,7 @@ bool encode(BeaconState     state,
 
   /* Bounded label length. nullptr/"" → label_len=0. Otherwise count
    * up to MAX_LABEL_BYTES; we tolerate over-long labels by truncating
-   * silently rather than failing, matching the pairing-side behaviour
+   * silently rather than failing, matching the pairing-side behavior
    * where strncpy already caps at MAX_LABEL_LEN. */
   size_t lbl = 0;
   if (label != nullptr) {

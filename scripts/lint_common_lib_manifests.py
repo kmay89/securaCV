@@ -70,7 +70,7 @@ SRC_EXT = {".cpp", ".c", ".h", ".hpp", ".ino"}
 def ini_sections(envs_dir):
     """{section name: {'file','text','extends'}} across every env .ini.
 
-    Section names keep their `[env:...]` spelling; `extends` is normalised to
+    Section names keep their `[env:...]` spelling; `extends` is normalized to
     the bare section name so a chain can be walked without caring whether a
     parent was written `env:canary-display-dash` or `canary_display_base`.
     """

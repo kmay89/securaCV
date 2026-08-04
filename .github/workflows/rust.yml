@@ -40,7 +40,7 @@ env:
 
 # Supersede stale runs: a new push to a PR branch cancels the in-flight run
 # for the previous head, so review-fix pushes don't queue duplicate full
-# builds. Pushes to main are never cancelled (full signal per main commit).
+# builds. Pushes to main are never canceled (full signal per main commit).
 concurrency:
   group: rust-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

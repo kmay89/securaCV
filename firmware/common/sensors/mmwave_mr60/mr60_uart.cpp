@@ -167,7 +167,7 @@ bool FrameParser::decode_and_queue_(size_t payload_len) {
                 // Valid flag set but payload too short for the float: the
                 // frame is malformed — do not enqueue stale aggregate data.
                 if (n < 8) return false;
-                // [BENCH] float32 assumed metres -> centimetres (×100).
+                // [BENCH] float32 assumed meters -> centimeters (×100).
                 // Range-check before the float->integer cast (UB otherwise
                 // for NaN/inf/out-of-range values off the wire).
                 const float cm = le_float(p + 4) * 100.0f;
@@ -197,7 +197,7 @@ bool FrameParser::decode_and_queue_(size_t payload_len) {
             return true;
         }
         default:
-            // Well-framed but unrecognised type: skip silently, count it.
+            // Well-framed but unrecognized type: skip silently, count it.
             ++unknown_count_;
             return false;
     }

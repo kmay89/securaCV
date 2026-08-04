@@ -236,7 +236,7 @@ inline esp_err_t handle_revoke(httpd_req_t* req) {
 // Helper: parse CAP-aligned enum from either string label OR uint8_t code.
 // `ArduinoJson::JsonVariant | 0` returns 0 on string inputs, which would
 // silently coerce every string-typed value to 0 (= Immediate / Extreme /
-// Observed) — the WRONG behaviour for an origination endpoint.
+// Observed) — the WRONG behavior for an origination endpoint.
 // gemini P1 closure: explicit string → enum mapping with a numeric fallback
 // for callers that pass the wire-format code directly.
 

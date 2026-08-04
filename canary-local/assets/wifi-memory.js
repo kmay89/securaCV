@@ -14,7 +14,7 @@
 // A browser cannot read the OS's saved Wi-Fi password (sandbox); the native
 // desktop flasher can upgrade the persistent store to the OS keychain.
 //
-// Pure + storage-injectable so the behaviour is proven in host tests
+// Pure + storage-injectable so the behavior is proven in host tests
 // (tests/wifi_memory.test.js) without a real localStorage.
 
 const STORE_KEY = "scv-wifi";

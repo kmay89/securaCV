@@ -95,7 +95,7 @@ describe('safeModeNote', () => {
     assert.equal(L.safeModeNote(undefined), '');
     const note = L.safeModeNote({ safe_mode: true });
     assert.ok(note.length > 0);
-    // Explains grey rows as paused-not-broken and how to clear it.
+    // Explains gray rows as paused-not-broken and how to clear it.
     assert.match(note, /recovery/i);
     assert.match(note, /paused/i);
     assert.doesNotMatch(note, /faulty/i);

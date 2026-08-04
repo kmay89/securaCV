@@ -1607,7 +1607,7 @@ static bool json_extract_string(const char* body, const char* key,
      * intentionally NOT decoded: those fields are ASCII in practice
      * and adding UTF-16 surrogate handling for one corner case isn't
      * worth the parser surface (PR #394 review r3213674569). An
-     * unrecognised escape passes the next char through literally —
+     * unrecognized escape passes the next char through literally —
      * matches how the existing /api/settings POST parser handles
      * nonsense, and avoids a silent reject for marginally-malformed
      * input. */

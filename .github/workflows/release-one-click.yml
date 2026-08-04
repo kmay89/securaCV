@@ -149,7 +149,7 @@ jobs:
               echo ""
               echo "Publishing it **overwrites that release's assets** instead of cutting a"
               echo "new download, so nobody's in-app updater will offer it. That is the right"
-              echo "behaviour only when you are deliberately re-uploading after a packaging"
+              echo "behavior only when you are deliberately re-uploading after a packaging"
               echo "fix. To ship a new version, bump all three version files first —"
               echo "\`python3 desktop/scripts/check_app_versions.py\` keeps them honest."
               echo ""

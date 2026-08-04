@@ -48,10 +48,10 @@ function load(file, base = PREVIEW) {
   return p;
 }
 
-// The finish role a placed part animates with, INFERRED from its colour so a
+// The finish role a placed part animates with, INFERRED from its color so a
 // caller can't silently mislabel one: shell2()/shell() return the stable
 // per-finish arrays, so an identity match names the role. Anything else (a
-// literal colour) gets no role and keeps its colour through the showcase.
+// literal color) gets no role and keeps its color through the showcase.
 function roleFor(color, explicit) {
   if (explicit !== undefined) return explicit;
   const f = activeFinish();
@@ -100,11 +100,11 @@ async function realWatch(scene) {
   const cS = stand.bbox.center;                          // ≈ (0, 4.07, 29.8)
   const A = 65 * Math.PI / 180;                          // pocket axis = Rx(65°)·ẑ
   const Ra = M4.rotX(A);
-  const p0 = [0, 3.03 - cS[1], 27.36 - cS[2]];           // scad's drum seat, stand-centred
+  const p0 = [0, 3.03 - cS[1], 27.36 - cS[2]];           // scad's drum seat, stand-centered
   const a = [0, -Math.sin(A), Math.cos(A)];
   const along = (s) => [p0[0], p0[1] + a[1] * s, p0[2] + a[2] * s];
   seatPart(scene, stand, { G, D: [0, 0, 0], color: shell2(), gloss: 0.18 });
-  seatPart(scene, drum, { G, D: along(10.5), R: Ra, gloss: 0.22 });           // drum centre at s=10.5
+  seatPart(scene, drum, { G, D: along(10.5), R: Ra, gloss: 0.22 });           // drum center at s=10.5
   seatPart(scene, bezel, { G, D: along(20.1), R: M4.mul(Ra, rotXpi), gloss: 0.3 }); // face-down print → face out
   scene.addMesh(screenPlane(37.5, 37.5, true), {         // the Ø37.7 glass behind the Ø39.4 aperture
     screen: true,
@@ -115,7 +115,7 @@ async function realWatch(scene) {
 
 // canary_dash_display.scad — the panel sits in the stand's channel, back
 // against the 25° fin. Bottom-rear edge at (y −5.19, z 4) with the back
-// plane on the fin face (the SCAD's own derivation); module centre works
+// plane on the fin face (the SCAD's own derivation); module center works
 // out to (0, 4.04, 42.73) in the stand frame for the 118.1 × 78 × 16 body.
 // (As committed, the 6 mm rear rail's top corner pokes ~2.4 mm into that
 // plane — flagged in the scad; the overlap is buried inside the channel.)
@@ -130,7 +130,7 @@ async function realDash(scene) {
   const cS = stand.bbox.center;                          // (0, 0, 21.87)
   const A = 65 * Math.PI / 180;                          // recline: module ẑ = Rx(65°)·ẑ
   const Ra = M4.rotX(A);
-  const C = [0, 4.04 - cS[1], 42.73 - cS[2]];            // module centre (derivation above)
+  const C = [0, 4.04 - cS[1], 42.73 - cS[2]];            // module center (derivation above)
   const w = [0, -Math.cos(25 * Math.PI / 180), Math.sin(25 * Math.PI / 180)]; // face normal
   const off = (s) => [C[0], C[1] + w[1] * s, C[2] + w[2] * s];
   seatPart(scene, stand, { G, D: [0, 0, 0], color: shell2(), gloss: 0.18 });

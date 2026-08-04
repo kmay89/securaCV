@@ -29,7 +29,7 @@ constexpr bool kSilentBodyIsAnomaly = true;  // preset-overridable (hallway=off)
 
 // R4 — Privacy chokepoint: only the coarse securacv::fusion::FusionResult may
 // leave the device (level, 0..100 confidence, 0/1/2+ occupancy, near/mid/far
-// band, corroborating modality classes). No MAC, no centimetres, no per-target
+// band, corroborating modality classes). No MAC, no centimeters, no per-target
 // track, no imagery, no vitals — ever.
 constexpr bool kExportRawMeasurements = false;
 
@@ -51,7 +51,7 @@ enum class Tier : uint8_t { kLite = 0, kStandard, kHeavy };
 // runtime-weightable (ChannelSpec). Adding a sensor is a driver + an adapter +
 // a weight; the fusion core does not change.
 
-// R9 — Honest labelling. Lite IS evadable by a slow, device-free, still
+// R9 — Honest labeling. Lite IS evadable by a slow, device-free, still
 // intruder and the product says so. Standard closes the front-door gaps.
 constexpr bool kAdvertiseTierLimits = true;
 

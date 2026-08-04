@@ -12,7 +12,7 @@ introducing PR — the rules below can't rot by forgetting.
 |---|------|-----|
 | R1 | Every workflow declares `permissions` (top-level or per-job) | Least-privilege `GITHUB_TOKEN`, always explicit — a workflow that needs `write` says so where reviewers see it |
 | R2 | Every job sets `timeout-minutes` | A hung job otherwise burns the 360-minute default. Pick ~2–3× the healthy runtime — the timeout is a circuit breaker, not a race |
-| R3 | Push/PR workflows declare a `concurrency` group; neither tag/release-triggered **nor branch-push** workflows may set a bare `cancel-in-progress: true` | PR groups cancel superseded runs (`cancel-in-progress: ${{ github.event_name == 'pull_request' }}`); anything that **publishes** (releases, GHCR, Pages-adjacent) queues with `cancel-in-progress: false` or a condition excluding the publish path — never kill a run mid-upload. A bare `true` also cancels **main**: a burst of merges then kills each build before it reports, and main's state goes unknown while merely looking busy. A cancelled build reads the same as an unfinished one. Exemptions: `ci-policy.yml → publish_cancel_ok` / `branch_cancel_ok`, each with a reason |
+| R3 | Push/PR workflows declare a `concurrency` group; neither tag/release-triggered **nor branch-push** workflows may set a bare `cancel-in-progress: true` | PR groups cancel superseded runs (`cancel-in-progress: ${{ github.event_name == 'pull_request' }}`); anything that **publishes** (releases, GHCR, Pages-adjacent) queues with `cancel-in-progress: false` or a condition excluding the publish path — never kill a run mid-upload. A bare `true` also cancels **main**: a burst of merges then kills each build before it reports, and main's state goes unknown while merely looking busy. A canceled build reads the same as an unfinished one. Exemptions: `ci-policy.yml → publish_cancel_ok` / `branch_cancel_ok`, each with a reason |
 | R4 | Action refs are pinned to a tag or SHA — never `@main`/`@master`, never docker `:latest` | A mutable ref can change under a release run; third-party actions with secrets access get SHAs |
 | R5 | `pull_request` workflows are path-filtered | Unrelated PRs shouldn't pay for your workflow. Repo-wide checks that are unfiltered *on purpose* are listed in `ci-policy.yml → unfiltered_ok`, each with a reason |
 | R6 | `push` and `pull_request` path lists are identical | Copy-paste drift between the two silently makes main verify different things than PRs |
@@ -43,8 +43,8 @@ one carries a comment saying why. Run the checker locally with
 - **Expensive matrix legs skip PRs when a cheaper leg gives the signal**
   (e.g. addon-image builds amd64-only on PRs; the QEMU aarch64 build
   runs on main/tags where the multi-arch push happens).
-- Main pushes are **never cancelled** — full signal per main commit is a
-  repo convention; only superseded PR runs get cancelled.
+- Main pushes are **never canceled** — full signal per main commit is a
+  repo convention; only superseded PR runs get canceled.
 
 ## Adding a new workflow — checklist
 

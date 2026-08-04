@@ -158,19 +158,19 @@ test("finishes: finishColor cross-fades only filament roles, functional parts pa
   const canary = FINISHES.find((f) => f.id === "canary");
   setFinish("canary");
   await sleep(1650); // let any in-flight cross-fade settle (fadeDur 1500)
-  // a settled finish returns the exact role colour; unknown roles pass through
+  // a settled finish returns the exact role color; unknown roles pass through
   assert.deepStrictEqual(finishColor("shell"), canary.shell);
   assert.deepStrictEqual(finishColor("beacon"), canary.beacon);
   assert.strictEqual(finishColor("glass"), null, "non-filament role is untouched");
   assert.strictEqual(finishColor(null), null);
-  // a fresh pick begins from the previous colour — the first frame of the
+  // a fresh pick begins from the previous color — the first frame of the
   // cross-fade is at (or extremely close to) where it was, not a hard jump
   const graphite = FINISHES.find((f) => f.id === "graphite");
   setFinish("graphite");
   const first = finishColor("shell");
   const dToOld = Math.hypot(...first.map((v, i) => v - canary.shell[i]));
   const dToNew = Math.hypot(...first.map((v, i) => v - graphite.shell[i]));
-  assert.ok(dToOld < dToNew, "the fade starts nearer the outgoing colour than the incoming one");
+  assert.ok(dToOld < dToNew, "the fade starts nearer the outgoing color than the incoming one");
   setFinish("canary");
 });
 

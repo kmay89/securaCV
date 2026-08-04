@@ -90,7 +90,7 @@ export function cablePoint(t, bz = CABLE_BEZIER) {
 // committed compact STLs, mapped through realTwoPart's placement (base at
 // z −fz/2+nest/2, lid flipped at +bz/2−nest/2):
 //   USB slot: base −X wall (x −16.85), the y ±5.25 notch (usb_w 10.5),
-//             connector centre z ≈ 6.6 raw → scene (−16.85, 0, −1.45)
+//             connector center z ≈ 6.6 raw → scene (−16.85, 0, −1.45)
 //   light pipe: lid Ø3.2 at raw (5.44, −1.68) → scene (5.44, 1.68, 8.05)
 export const WAP_PORT = [-16.85, 0, -1.45];
 export const WAP_LED = [5.44, 1.68, 8.05];

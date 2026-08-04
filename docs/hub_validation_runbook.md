@@ -87,13 +87,13 @@ First capture reality, then pick the mechanism (design §7 step 5):
   restore-backup path accepts a curated backup as the no-typing fallback.
 - ☐ Record the winner in the design doc §8 as a dated decision.
 
-Note: the app's account panel is labelled **experimental** and writes the
+Note: the app's account panel is labeled **experimental** and writes the
 minted `.storage` under the boot partition's `CONFIG/` (Mechanism B) — so a
 single opt-in flash is now the fastest way to run the Mechanism B experiment
 above. After booting, report whether `homeassistant.local:8123` showed a
 login page (win) or the setup wizard (B doesn't work → fall back to A or C).
 
-## 5 · The UX behaviours (worth a look while you're here)
+## 5 · The UX behaviors (worth a look while you're here)
 
 These aren't safety gates but they're the "feels like magic" surface — sanity
 check each once on real hardware:

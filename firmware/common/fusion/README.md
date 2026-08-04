@@ -76,7 +76,7 @@ wins over everything and latches.
 
 ## Privacy
 
-The engine never sees a MAC, a distance in centimetres, a per-target track,
+The engine never sees a MAC, a distance in centimeters, a per-target track,
 imagery, or vitals — it sees `Vote`s. It emits an ordinal `Level`, a `0/1/2+`
 occupant bucket, a `near/mid/far` band, a `0..100` confidence, and a bitmask of
 which *modality classes* corroborated — never which device, never who. That

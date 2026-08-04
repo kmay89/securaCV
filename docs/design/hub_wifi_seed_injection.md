@@ -47,7 +47,7 @@ retry.
 ## Why more retrying is the wrong answer
 
 Lengthening the window or adding more `diskutil` nudges makes a flaky step
-slower, not dependable, and it keeps a hard dependency on OS behaviour we
+slower, not dependable, and it keeps a hard dependency on OS behavior we
 neither control nor can test in CI. Every platform gets its own version of the
 problem (`udisksctl` on Linux, drive letters on Windows), and each is a
 separate source of "worked on my machine".

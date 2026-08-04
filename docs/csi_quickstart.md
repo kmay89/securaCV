@@ -22,7 +22,7 @@ ships with a captive-portal setup page that walks the phone through it.
    home.
 5. **Switch your phone back to your home Wi-Fi** and tap the
    "Open canary.local" button. The pearlescent dashboard opens, and
-   the orb at the centre should already be gently pulsing if anyone is
+   the orb at the center should already be gently pulsing if anyone is
    in the room.
 6. **Step out for one minute** when the dashboard suggests it. The device
    uses that minute to learn what your empty room looks like; afterwards,

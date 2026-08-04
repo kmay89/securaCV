@@ -1,6 +1,6 @@
 {
  "generated_by": "canary-local/tools/gen_boards.py",
- "note": "Vendor board CAD (boards/vendor/*.step) tessellated to a committed GLB by cascadio; geometry facts recomputed from the committed mesh by the page's own loader (tools/glb_facts.mjs \u2192 assets/glb.js). See boards/vendor/README.md for provenance and licence.",
+ "note": "Vendor board CAD (boards/vendor/*.step) tessellated to a committed GLB by cascadio; geometry facts recomputed from the committed mesh by the page's own loader (tools/glb_facts.mjs \u2192 assets/glb.js). See boards/vendor/README.md for provenance and license.",
  "device_board": {
   "canary-wap": [
    "seeed_xiao_esp32s3_sense",
@@ -305,7 +305,7 @@
    ],
    "blurb": "21 x 17.8 mm. ESP32-S3, 8 MB flash / 8 MB PSRAM, onboard LiPo charger; the Sense expansion adds the OV camera + PDM mic on a stacked B2B board. The WAP build uses the plain-facing pins for chirp, tamper, LED and GNSS.",
    "doc": "https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/",
-   "provenance": "Seeed Studio open-hardware CAD (STEP). Redistributed here as the board's source of truth for the local viewer; see boards/vendor/README.md. Verify Seeed's licence terms before external redistribution."
+   "provenance": "Seeed Studio open-hardware CAD (STEP). Redistributed here as the board's source of truth for the local viewer; see boards/vendor/README.md. Verify Seeed's license terms before external redistribution."
   },
   "seeed_grove_vision_ai_v2": {
    "name": "Seeed Grove Vision AI V2",
@@ -404,7 +404,7 @@
    ],
    "blurb": "Himax WiseEye2 HX6538 (Arm Cortex-M55 + Ethos-U55 NPU) that runs the vision model on-board and hands the host only labels + boxes over I2C (address 0x62) \u2014 no pixels cross the wire. A XIAO seats in the module's XIAO-footprint socket (I2C + UART, zero wiring) and runs canary-vision; the module's own USB-C is the model/SenseCraft port, the XIAO's USB-C is the firmware port. The OV5647 rides the CSI flex and is posed per-device by the models (it is not rigid to the board). The vendor demo stand + loose camera from the source assembly are stripped, leaving just the module.",
    "doc": "https://wiki.seeedstudio.com/grove_vision_ai_v2/",
-   "provenance": "Seeed Studio CAD (STEP) supplied with a printable stand + camera shroud + adapter and a posed OV5647 camera. The generator strips all of that so only the board remains: the loose camera drops by name (rpi cam), and the printed stand/mount drops by a Y-plane cut (drop_below_y) \u2014 merge_primitives fuses the stand's solids into unnamed material buckets, so a name match can't reach them, but the stand sits entirely below the board with a clean air gap. The OV5647 rides a flex and is posed per-device by the models, not welded to the board. Verify Seeed's licence terms before external redistribution."
+   "provenance": "Seeed Studio CAD (STEP) supplied with a printable stand + camera shroud + adapter and a posed OV5647 camera. The generator strips all of that so only the board remains: the loose camera drops by name (rpi cam), and the printed stand/mount drops by a Y-plane cut (drop_below_y) \u2014 merge_primitives fuses the stand's solids into unnamed material buckets, so a name match can't reach them, but the stand sits entirely below the board with a clean air gap. The OV5647 rides a flex and is posed per-device by the models, not welded to the board. Verify Seeed's license terms before external redistribution."
   },
   "seeed_round_display_xiao": {
    "name": "Seeed Round Display for XIAO",
@@ -501,7 +501,7 @@
    ],
    "blurb": "\u00d8 43.0 mm PCB disc (the \u201c39 mm\u201d in marketing copy is the glass), 1.28-in GC9A01 (240x240) with CST816S touch, PCF8563 RTC, microSD and a LiPo charger; it seats a XIAO on its back socket. The backlight on D6/GPIO43 is PWM-dimmable \u2014 that is the bedside night floor.",
    "doc": "https://wiki.seeedstudio.com/get_start_round_display/",
-   "provenance": "Seeed Studio CAD (SolidWorks STEP export). This export did not carry per-solid colours through the tessellator, so materials are assigned by geometry (dark PCB + grey glass); the shape is the vendor's exact model. Verify Seeed's licence terms before external redistribution."
+   "provenance": "Seeed Studio CAD (SolidWorks STEP export). This export did not carry per-solid colors through the tessellator, so materials are assigned by geometry (dark PCB + gray glass); the shape is the vendor's exact model. Verify Seeed's license terms before external redistribution."
   },
   "seeed_xiao_esp32s3": {
    "name": "Seeed XIAO ESP32-S3",
@@ -563,7 +563,7 @@
     "dist_factor": 2.7
    },
    "pads": {
-    "_comment": "Same 2x7 castellations as the Sense, but this vendor STEP sits in its own frame: USB-C at +X (x=13.8), +Y component side. Pad centres are render-verified against the committed mesh. Names follow the XIAO ESP32-S3 footprint the same way the Sense entry documents its own: D0 sits at the USB end (so the +X pad of each row), and \u2014 this being the identical board to the Sense \u2014 the D0\u2013D6 edge is the one that lands on the Sense's D-row under the same component-up/USB-forward chirality, here the z=-14.4 edge. The z=+2.4 edge carries the 5V/GND/3V3/D10\u2013D7 rail.",
+    "_comment": "Same 2x7 castellations as the Sense, but this vendor STEP sits in its own frame: USB-C at +X (x=13.8), +Y component side. Pad centers are render-verified against the committed mesh. Names follow the XIAO ESP32-S3 footprint the same way the Sense entry documents its own: D0 sits at the USB end (so the +X pad of each row), and \u2014 this being the identical board to the Sense \u2014 the D0\u2013D6 edge is the one that lands on the Sense's D-row under the same component-up/USB-forward chirality, here the z=-14.4 edge. The z=+2.4 edge carries the 5V/GND/3V3/D10\u2013D7 rail.",
     "D0": [
      8.24,
      0.4,
@@ -732,7 +732,7 @@
    ],
    "blurb": "21 x 17.8 mm. The plain XIAO ESP32-S3 (ESP32-S3, 8 MB flash / 8 MB PSRAM, onboard LiPo charger) with no Sense expansion \u2014 the same 2x7 castellated footprint that seats in the Round Display's socket for the Watch Station. The Watch build (canary-display-watch) runs on this host; the display's SPI/backlight/touch/RTC/microSD all come through the socket.",
    "doc": "https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/",
-   "provenance": "Seeed Studio open-hardware CAD (STEP) for the plain XIAO ESP32-S3 \u2014 the same base module as the Sense, without the stacked camera/mic daughterboard. Redistributed here as the board's source of truth for the local viewer; see boards/vendor/README.md. Verify Seeed's licence terms before external redistribution."
+   "provenance": "Seeed Studio open-hardware CAD (STEP) for the plain XIAO ESP32-S3 \u2014 the same base module as the Sense, without the stacked camera/mic daughterboard. Redistributed here as the board's source of truth for the local viewer; see boards/vendor/README.md. Verify Seeed's license terms before external redistribution."
   },
   "quectel_l76k_gnss": {
    "name": "L76K GNSS Module for XIAO",
@@ -943,7 +943,7 @@
    ],
    "blurb": "The L76K GNSS module (Quectel L76K receiver + ceramic patch antenna) on a XIAO-footprint carrier. In the WAP field build it talks to the XIAO over UART at 9600 baud: the module's TX crosses to the board's RX (D7) and its RX to the board's TX (D6). The patch antenna wants a clear view of the sky \u2014 that is why the WAP goes outdoors.",
    "doc": "https://wiki.seeedstudio.com/Get_Started_with_L76K_GNSS_Module_for_XIAO/",
-   "provenance": "Seeed Studio open-hardware CAD (STEP) for the L76K GNSS Module for XIAO \u2014 a Quectel L76K receiver + ceramic patch antenna on a XIAO-footprint carrier. Redistributed here as the board's source of truth for the local viewer; see boards/vendor/README.md. Verify Seeed's licence terms before external redistribution."
+   "provenance": "Seeed Studio open-hardware CAD (STEP) for the L76K GNSS Module for XIAO \u2014 a Quectel L76K receiver + ceramic patch antenna on a XIAO-footprint carrier. Redistributed here as the board's source of truth for the local viewer; see boards/vendor/README.md. Verify Seeed's license terms before external redistribution."
   },
   "raspberry_pi_5": {
    "name": "Raspberry Pi 5",
@@ -1008,7 +1008,7 @@
    ],
    "blurb": "85 x 56 mm. The Raspberry Pi 5 that runs Home Assistant as the fleet's hub \u2014 the Canaries report to it over the network (MQTT), so almost nothing wires to its GPIO. Shown here for completeness: the 40-pin GPIO header, the stacked USB-A / Ethernet cluster, dual micro-HDMI, and the USB-C power in.",
    "doc": "https://www.raspberrypi.com/documentation/computers/raspberry-pi.html",
-   "provenance": "Raspberry Pi Ltd mechanical CAD (STEP). Redistributed here as the board's source of truth for the local viewer; see boards/vendor/README.md. The STEP carried no per-solid colours, so materials are assigned by the vendor's own part names (PCB green, metal shells on the USB/Ethernet/HDMI shields, gold on the GPIO header, black silicon) \u2014 the shape is the vendor's exact model, only the colour is ours. The Pi 5 is the Home Assistant hub the Canary fleet reports to (docs / homeassistant.html), not a Canary device board \u2014 it lives in the Board Room only, tessellated coarser (tol 0.35 mm) to keep the committed mesh reasonable."
+   "provenance": "Raspberry Pi Ltd mechanical CAD (STEP). Redistributed here as the board's source of truth for the local viewer; see boards/vendor/README.md. The STEP carried no per-solid colors, so materials are assigned by the vendor's own part names (PCB green, metal shells on the USB/Ethernet/HDMI shields, gold on the GPIO header, black silicon) \u2014 the shape is the vendor's exact model, only the color is ours. The Pi 5 is the Home Assistant hub the Canary fleet reports to (docs / homeassistant.html), not a Canary device board \u2014 it lives in the Board Room only, tessellated coarser (tol 0.35 mm) to keep the committed mesh reasonable."
   },
   "waveshare_4_3b": {
    "name": "Waveshare ESP32-S3-Touch-LCD-4.3B",

@@ -89,6 +89,34 @@ module mark_bird(h, rib) {
     scale([s, s]) translate([-mark_cx(), -mark_cy()]) mark_bird_2d(rib / s);
 }
 
+// The bird RAISED, centered on the origin, sitting on z = 0 and standing `ez`
+// tall. `h` is the finished height of the mark in mm, `rib` the stroke width
+// in mm, `crown` how far the stroke tops draw in.
+//
+// The strokes are a short stack of inward offsets on a quarter-circle profile,
+// so each carries a DOMED crown rather than a flat slab top — that is what
+// makes an embossed mark catch light like metal instead of reading as a
+// sticker. The footprint stays a full rib wide; only the crown draws in.
+//
+// This is the emboss every part shares. It lives here rather than in the part
+// that first needed it for the usual reason: the coupon proves the crown
+// prints, and a case that re-derived the offset stack would be proving
+// something slightly different.
+module mark_emboss(h, ez, rib = 0.7, crown = 0.15) {
+    s = h / mark_span();
+    t = rib / s;                                  // stroke, in design units
+    n = crown > 0 ? 4 : 1;
+    for (i = [0:n-1]) {
+        // the inset runs 0 at the base to the FULL crown on the top slice; the
+        // slice's z is a separate ramp, or the last one would sit proud
+        f   = n > 1 ? i/(n - 1) : 0;
+        ins = (crown / s) * (1 - sqrt(1 - f*f));
+        translate([0, 0, i*ez/n]) linear_extrude(ez/n + 0.01)
+            scale([s, s]) translate([-mark_cx(), -mark_cy()])
+                offset(r = -ins) mark_bird_2d(t);
+    }
+}
+
 // ── The lockup: bird over wordmark ─────────────────────────────────────────
 // The stacked lockup the brand uses — the bird sitting above the company
 // word. `h` is the BIRD's height; the word is sized off it so the proportion
@@ -97,13 +125,22 @@ module mark_bird(h, rib) {
 // The word is real text, not paths: at badge size a nozzle draws letterforms
 // far better than it draws a traced outline of them, and a font substitution
 // degrades to "a slightly different sans" rather than to nothing.
+// The two proportions, as functions, because BOTH the module below and
+// mark_lockup_h() need them and a lockup whose stated height disagrees with
+// its drawn height is a caller laying out into the middle of it. They did
+// disagree: the module used a 0.22 gap while the height function said 0.16,
+// so mark_lockup_h() under-reported by 0.06*h — 1.92 mm at the 7" case's
+// h = 32. Typed twice is how that happens; derived once is how it stops.
+function mark_word_ratio() = 0.30;   // cap height, as a fraction of the bird
+function mark_gap_ratio()  = 0.22;   // bird-to-word gap, same basis
+
 module mark_lockup(h, rib, word = "securaCV", font = "DejaVu Sans:style=Bold") {
     // The bird's drawn extent is a little under `h` (the design span includes
     // headroom), so the gap is measured generously — at badge size the feet
     // and the ascenders are the two things that touch first, and a mark whose
     // word collides with its bird reads as a printing fault, not a lockup.
-    word_h = h * 0.30;              // cap height, as a fraction of the bird
-    gap    = h * 0.22;
+    word_h = h * mark_word_ratio();
+    gap    = h * mark_gap_ratio();
     // Centering: the pair spans (h + gap + word_h); shift so its middle is 0.
     translate([0, (gap + word_h) / 2]) mark_bird(h, rib);
     translate([0, -(h + gap) / 2 + word_h / 2])
@@ -111,5 +148,7 @@ module mark_lockup(h, rib, word = "securaCV", font = "DejaVu Sans:style=Bold") {
              halign = "center", valign = "center");
 }
 
-// Height of the whole lockup, for callers laying out around it.
-function mark_lockup_h(h) = h + h*0.16 + h*0.30;
+// Height of the whole lockup, for callers laying out around it. Same three
+// terms the module stacks, in the same order — change a ratio above and this
+// follows rather than drifting.
+function mark_lockup_h(h) = h*(1 + mark_gap_ratio() + mark_word_ratio());
