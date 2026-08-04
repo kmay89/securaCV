@@ -154,6 +154,17 @@ in Secure Enclave, shown once, never written to the cloud. Plus the pinned-key
 trust list (TOFU): what "Verified" means for each device, and a visible,
 auditable "this key changed" alarm.
 
+**⑤ The fifth surface is not a screen: ask, don't open.** The app exports
+four verbs as App Intents — *check the fleet*, *test the alert path*, *quiet
+hour*, *resume alerts* — so Siri, the Shortcuts app, Spotlight, the Action
+button, and Focus/location automations can ask on the user's behalf with
+zero setup. This is how the app earns "daily touchpoint" without becoming a
+daily chore, and how it stays flexible without scope creep: "quiet the fleet
+while I mow" is a Shortcut the user composes, not a setting we ship. The
+spoken answer keeps every honesty rule (an old snapshot states its age,
+sample data is labeled, a quiet hour can never silence tamper) — see
+`ios/README.md` "Ask, don't open" and `ios/Shared/GlanceAnswer.swift`.
+
 Pairing a device is a **guided, physical-presence flow**, reusing the existing
 Trust-on-Pair gate: the app finds the Canary over mDNS/BLE, tells you to
 **short-tap the BOOT button**, and receives the one-shot `{device_id, base_url,

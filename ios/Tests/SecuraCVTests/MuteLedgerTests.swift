@@ -68,4 +68,29 @@ final class MuteLedgerTests: XCTestCase {
         XCTAssertEqual(rows[0].effectiveSeverity, .tamper,
                        "mute quiets nagging, never the smoke alarm")
     }
+
+    // MARK: - the fleet-wide verbs (Quiet Hour / Resume Alerts)
+
+    func testActiveMutesListsOnlyUnexpiredEntries() throws {
+        let (ledger, defaults, suite) = try freshLedger()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        ledger.set(until: Date().addingTimeInterval(3600), for: "canary-a")
+        ledger.set(until: Date().addingTimeInterval(3600), for: "canary-b")
+        ledger.set(until: Date().addingTimeInterval(-60), for: "canary-expired")
+        XCTAssertEqual(Set(ledger.activeMutes()), ["canary-a", "canary-b"])
+    }
+
+    func testClearAllReturnsEveryWitnessToFullVolume() throws {
+        let (ledger, defaults, suite) = try freshLedger()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        ledger.set(until: Date().addingTimeInterval(3600), for: "canary-a")
+        ledger.set(until: Date().addingTimeInterval(3600), for: "canary-b")
+        ledger.clearAll()
+        XCTAssertTrue(ledger.activeMutes().isEmpty)
+        var rows = [Witness(id: "canary-a"), Witness(id: "canary-b")]
+        ledger.apply(to: &rows)
+        XCTAssertTrue(rows.allSatisfy { $0.mutedUntil == nil })
+    }
 }
