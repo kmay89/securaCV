@@ -87,6 +87,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [Alert & digest blueprints](blueprints/canary_sense_wellbeing.md) — plus the YAML: [alerts](blueprints/securacv_alerts.yaml), [daily digest](blueprints/securacv_daily_digest.yaml), [after-hours presence](blueprints/canary_sense_after_hours_presence.yaml), [lights-out tamper](blueprints/canary_sense_lights_out_tamper.yaml), [welfare check](blueprints/canary_sense_welfare_check.yaml)
 - [Example automations](homeassistant_automations.yaml) — copy-paste YAML
 - [HA + Frigate over MQTT, worked example](integrations/home-assistant-frigate-mqtt.md)
+- [Apple Home quickstart](integrations/apple-home-quickstart.md) — nothing to a sensor in the Home app, both lanes, with the troubleshooting table
 - [Apple Home via the HA HomeKit Bridge](integrations/home-assistant-homekit-bridge.md) — your Canaries in the Home app with no new code; says plainly where this lane is un-paced and when to use the native one instead
 - [MR60BHA2 radar via ESPHome](integrations/mr60bha2_esphome.md)
 - Onboarding flows: [multiple Canaries](onboarding_multiple_canaries.md) · [the unified wizard](onboarding_unified_wizard.md) · [workflow evaluation](onboarding_workflow_evaluation.md)
