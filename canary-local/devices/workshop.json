@@ -1031,6 +1031,11 @@
        "name": "stand",
        "file": "preview/canary_dash_display_stand.stl",
        "preview_mesh": true
+      },
+      {
+       "name": "cradle",
+       "file": "preview/canary_dash_display_cradle.stl",
+       "preview_mesh": true
       }
      ],
      "preview": "preview_dev_dash.png"

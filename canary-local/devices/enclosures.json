@@ -488,7 +488,7 @@
      "name": "back",
      "file": "preview/canary_dash_display_back.stl",
      "preview_mesh": true,
-     "print_note": "prints outer-face-down; vents + keyholes need no support",
+     "print_note": "prints PADS-UP (inner face on the bed) — the dock pads and their pocket bridges are the last layers, not the first",
      "material": "PETG / ASA (PLA indoors)"
     },
     {
@@ -496,6 +496,13 @@
      "file": "preview/canary_dash_display_stand.stl",
      "preview_mesh": true,
      "print_note": "prints flat; fin + rails are additive — no supports",
+     "material": "PETG / ASA (PLA indoors)"
+    },
+    {
+     "name": "cradle",
+     "file": "preview/canary_dash_display_cradle.stl",
+     "preview_mesh": true,
+     "print_note": "prints flat as modeled — no supports by design",
      "material": "PETG / ASA (PLA indoors)"
     }
    ],
@@ -7559,7 +7566,7 @@
      "params": [
       {
        "name": "mount_cradle",
-       "default": "true",
+       "default": "false",
        "comment": "dock on the wall cradle (part=\"cradle\")"
       },
       {
@@ -7574,7 +7581,7 @@
       },
       {
        "name": "mount_keyholes",
-       "default": "false",
+       "default": "true",
        "comment": "wall-mount keyholes through the back plate, one in"
       },
       {

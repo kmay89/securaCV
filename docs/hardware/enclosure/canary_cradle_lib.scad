@@ -192,6 +192,22 @@ function cradle_span_ok(dx, dy) =
 // pads and the keepouts can never drift apart.
 function cradle_studs(dx, dy) = [for (sx = [1,-1]) [sx*dx,  dy]];
 function cradle_clips(dx, dy) = [for (sx = [1,-1]) [sx*dx, -dy]];
+// …and where the CASE's clip features go, which is NOT the same place.
+//
+// The case is offered to the studs and then DROPS cr_drop to capture them,
+// so in the case's own coordinates every plate feature ends up cr_drop
+// higher than where it started. The keyhole already knew that — its channel
+// runs cr_drop past its mouth — but the clip pocket was drawn at the barb's
+// un-dropped position, which made "studs captured" and "clips engaged" two
+// states the case could not be in at once: seat the studs and each barb is
+// 6 mm clear of the pocket it is supposed to be latched into.
+//
+// So the case's clip features live cr_drop above the plate's barbs, and the
+// case then engages them the way a thermostat does: hook the top, drop it,
+// swing the bottom in. The clips only ever move in Z, never along the drop,
+// which is also why the arms may run horizontally — a clip that deflected
+// along the drop axis would be cammed by its own pocket on the way down.
+function cradle_case_clips(dx, dy) = [for (sx = [1,-1]) [sx*dx, -dy + cr_drop()]];
 
 // Rounded footprint each case-side pad claims, as [x, y, rx, ry] — the same
 // shape the grille/graphics keepout lists in the adopters speak.
@@ -199,7 +215,7 @@ function cradle_keepouts(dx, dy) =
     concat([for (p = cradle_studs(dx, dy))
                 [p[0], p[1] + cr_drop()/2,
                  cr_stud_head()/2 + 4.5, (cr_drop() + cr_stud_head())/2 + 4.5]],
-           [for (p = cradle_clips(dx, dy))
+           [for (p = cradle_case_clips(dx, dy))
                 [p[0], p[1], cr_barb_w()/2 + 4.5, cr_barb_w()/2 + 4.5]]);
 
 module _cr_rrect(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
@@ -210,9 +226,12 @@ module _cr_rrect(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center =
 // by the barb, its slot AND the case-side pocket, so the three can never
 // drift out of register — which they would the first time somebody adjusted
 // one of them by hand.
-module _cr_clip_at(dx, dy, sx) {
-    translate([sx*dx, -dy, 0]) mirror([sx > 0 ? 0 : 1, 0, 0]) rotate([0, 0, 90])
-        children();
+// `ddy` is the drop offset: 0 for the plate's own barbs, cr_drop() for the
+// case-side pockets that receive them once the case has dropped onto its
+// studs. See cradle_case_clips().
+module _cr_clip_at(dx, dy, sx, ddy = 0) {
+    translate([sx*dx, -dy + ddy, 0]) mirror([sx > 0 ? 0 : 1, 0, 0])
+        rotate([0, 0, 90]) children();
 }
 
 // ── THE WALL PLATE ──────────────────────────────────────────────────────────
@@ -269,13 +288,27 @@ module _cr_tstud() {
 // One clip, drawn for the +x corner (the -x one is mirrored by the caller).
 // The tongue runs UP from the barb toward the plate's middle, so its root is
 // in solid ring material and its tip — the barb — sits at the corner.
+// The tongue's FOOTPRINT — the tapered arm plus the pad the barb stands on.
+// The U-slot is derived from this same outline (see _cr_clip_slot), which is
+// the only way the two can be guaranteed to agree: the first cut drew them
+// independently, put the parting cut at the barb's flare instead of at the
+// arm's edge, and left a 0.3–1.0 mm strip of plate welding the "free" side
+// of the tongue to the ring for its whole length. The arm could not deflect
+// at all, so the barb could never have passed its own pocket throat — and
+// nothing in a render shows you that, because a welded tongue looks exactly
+// like a free one.
+module _cr_tongue2d() {
+    polygon([[-cr_arm_w()/2,      -cr_barb_w()/2],
+             [ cr_arm_w()/2,      -cr_barb_w()/2],
+             [ cr_arm_w_root()/2,  cr_arm_l()],
+             [-cr_arm_w_root()/2,  cr_arm_l()]]);
+    translate([-cr_arm_w()/2, -cr_barb_w()/2])
+        square([cr_arm_w() + cr_eng(), cr_barb_w()]);
+}
+
 module _cr_clip() {
     // tapered tongue, lying in the plate's plane
-    linear_extrude(cr_plate_t()) polygon([
-        [-cr_arm_w()/2,      0],
-        [ cr_arm_w()/2,      0],
-        [ cr_arm_w_root()/2, cr_arm_l()],
-        [-cr_arm_w_root()/2, cr_arm_l()]]);
+    linear_extrude(cr_plate_t()) _cr_tongue2d();
     // barb: sits ON the plate's top face and rises cr_barb_h. Section in XZ,
     // read anticlockwise from the inboard base:
     //   · outboard wall straight up to cr_barb_land — the catch face
@@ -306,18 +339,22 @@ module _cr_clip() {
 // from the ring, and a rounded relief at the ROOT — a square internal corner
 // there is the crack starter, same doctrine as every boss root in this
 // catalog.
+// The U-slot: a uniform cr_arm_slot gap all the way around the tongue's own
+// outline, opened everywhere EXCEPT across the root. Deriving it by offset
+// rather than drawing it by hand means it tracks the taper and the barb's
+// flare automatically, and it cannot be left short on one side — which is
+// exactly how the tongue ended up welded to the ring the first time.
+// offset() rounds the corners for free, so the root fillet the old version
+// bolted on as a circle is now just what the geometry does.
 module _cr_clip_slot() {
-    translate([0, -0.1, -0.1]) linear_extrude(cr_plate_t() + 0.2) {
-        // inboard swing gap
-        translate([-cr_arm_w()/2 - cr_arm_slot(), 0])
-            square([cr_arm_slot(), cr_arm_l() + cr_barb_w()/2 + 0.1]);
-        // outboard parting cut
-        translate([cr_arm_w()/2 + cr_eng(), 0])
-            square([1.2, cr_arm_l() + cr_barb_w()/2 + 0.1]);
-        // root relief
-        translate([-cr_arm_w()/2 - cr_arm_slot()/2, cr_arm_l() + 0.1])
-            circle(d = cr_arm_slot() + 1.2);
-    }
+    translate([0, 0, -0.1]) linear_extrude(cr_plate_t() + 0.2)
+        difference() {
+            offset(r = cr_arm_slot()) _cr_tongue2d();
+            _cr_tongue2d();
+            // the root stays attached — this is a cantilever, not a hole
+            translate([-(cr_arm_w_root()/2 + cr_arm_slot() + 1), cr_arm_l() - 0.01])
+                square([cr_arm_w_root() + 2*cr_arm_slot() + 2, cr_arm_slot() + 2]);
+        }
 }
 
 // The barb's mating pocket, drawn in the CLIP'S OWN local frame so it is
@@ -371,7 +408,7 @@ module cradle_pads(dx, dy, z0) {
                 _cr_rrect(cr_stud_head() + 9, cr_drop() + cr_stud_head() + 9, 4);
     // the clip pads are elongated along X, because that is the way the barb
     // protrudes and springs once the arm is laid inboard along the width
-    for (p = cradle_clips(dx, dy))
+    for (p = cradle_case_clips(dx, dy))
         translate([p[0], p[1], z0 - cr_sink()])
             linear_extrude(cr_pad_h() + cr_sink())
                 _cr_rrect(cr_barb_w() + 9, cr_barb_w() + cr_eng() + 11, 4);
@@ -410,7 +447,7 @@ module cradle_pad_cuts(dx, dy, z0) {
         // BOTTOM: the stepped barb pocket, placed by the very same transform
         // the barb itself is — see _cr_clip_pocket().
         for (sx = [1, -1]) translate([0, 0, -0.01])
-            _cr_clip_at(dx, dy, sx) _cr_clip_pocket();
+            _cr_clip_at(dx, dy, sx, cr_drop()) _cr_clip_pocket();
     }
 }
 
@@ -431,8 +468,8 @@ module cradle_pad_cuts(dx, dy, z0) {
 // the check answering. Same reason the battery probes carry a `drop`. Pass
 // gap = 0 only if you want to model the true seated contact for a picture.
 module cradle_docked(z0, gap = 0.02) {
-    translate([0, 0, z0 + cr_pad_h() + cr_plate_t() + gap]) mirror([0, 0, 1])
-        children();
+    translate([0, cr_drop(), z0 + cr_pad_h() + cr_plate_t() + gap])
+        mirror([0, 0, 1]) children();
 }
 
 // The plate's own outline, for an adopter that wants to check its back has

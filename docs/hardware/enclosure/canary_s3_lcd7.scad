@@ -589,7 +589,18 @@ btn_lbl_dx = 9.0;    // BOOT/RESET label centers, ± of the window center
 // assert below enforces it instead of letting the two cut into each other.
 // (The adhesive rails are unaffected and remain the no-screws alternative
 // to both.)
-mount_cradle = true;    // dock on the wall cradle (part="cradle")
+// ⚠️ OPT-IN ON THIS CASE, and the reason is the DESK DOCK. The 7" drops into
+// a stand whose slot is cut to the case's exact depth (std_cd = fr_depth +
+// 2*stand_clear). Six millimeters of dock pads on the back no longer fit it:
+// with mount_cradle on, the `fit stand` gate goes solid by ~2350 mm³ — the
+// two lower pads buried in the stand's well. That is not a tolerance to nudge,
+// it is two mounting systems wanting the same 6 mm of air, and the honest
+// options are to deepen the stand's slot for cradle builds (which moves a
+// print-validated part and every dock/seat gate with it) or to keep the pads
+// out of the well. Either is a real design call, so this ships OFF and the
+// keyholes stay the default until it is made — the interface, the plate, the
+// pads and the gates are all here and one flag away.
+mount_cradle = false;   // dock on the wall cradle (part="cradle")
 cradle_dx = 72.0;       // half-span of the four dock features. Chosen to
 cradle_dy = 34.0;       // thread the crowded back: outboard of the rating
                         // block (which reaches x ≈ 60.4 at rating_sz 3.3)
@@ -599,7 +610,7 @@ cradle_dy = 34.0;       // thread the crowded back: outboard of the rating
                         // 68 looked right, and the rating assert caught it
                         // overlapping by 0.2 mm because main had grown the
                         // stamp from 2.6 to 3.3 since the span was picked.
-mount_keyholes = false; // wall-mount keyholes through the back plate, one in
+mount_keyholes = true;  // wall-mount keyholes through the back plate, one in
 khm_dx = 78.5;          // EACH of the four corners (first-print feedback: two
 khm_y  = 34.0;          // held the case but let the bottom float off the wall).
 khm_head_d  = 9.5;      // All four share one orientation — head hole LOW,
