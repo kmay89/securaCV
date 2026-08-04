@@ -27,7 +27,8 @@ stands: the events — absolutely; the video — never.
 | Signal in Apple Home | Backing entity today | Source |
 |---|---|---|
 | Motion Sensor (per zone) | `binary_sensor.pwk_<zone>_motion` (`device_class: motion`, auto-off 10 min) | `event_mqtt_bridge` (runs by default in the add-on) |
-| Smoke Sensor | `binary_sensor.<canary_id>_smoke_alarm` ("Smoke Alarm Heard", `device_class: smoke`) | Canary WAP acoustic detector (`FEATURE_ACOUSTIC_EVENTS`, NFPA 72 T3 / UL 2034 T4 cadences) |
+| Smoke Sensor | `binary_sensor.<canary_id>_smoke_alarm` ("Smoke Alarm Heard", `device_class: smoke`) | Canary WAP acoustic detector (`FEATURE_ACOUSTIC_EVENTS`, NFPA 72 T3 cadence) |
+| Carbon Monoxide Sensor | `binary_sensor.<canary_id>_co_alarm` ("CO Alarm Heard", `device_class: carbon_monoxide`) | Same detector, UL 2034 T4 cadence — a separate entity, so it needs its own include line |
 | Occupancy Sensor | template sensor over a presence topic (§5) | Canary Sense radar / ESPHome kit, until phase A1 ships native entities |
 
 ## 2) Architecture
@@ -73,7 +74,8 @@ homekit:
     filter:
       include_entity_globs:
         - binary_sensor.pwk_*_motion        # per-zone motion
-        - binary_sensor.*_smoke_alarm       # Canary WAP acoustic T3/T4
+        - binary_sensor.*_smoke_alarm       # Canary WAP acoustic T3 (smoke)
+        - binary_sensor.*_co_alarm          # Canary WAP acoustic T4 (CO)
       include_entities:
         - binary_sensor.securacv_occupancy  # the §5 template, if you add it
 ```
@@ -123,18 +125,39 @@ prominent safety alert on every device in the home, including Apple Watch.
 Run all three. They fail independently, which is the point.
 
 **Smoke and CO, end to end:** the dumb alarm on the ceiling sounds → a Canary
-WAP hears the T3 (smoke) or T4 (CO) cadence → `binary_sensor.<id>_smoke_alarm`
-turns on → Apple Home and the HA blueprint both push, at home or away. The
-detector listens only for those two legally mandated cadences and stores no
-audio — and it is *not* a UL-listed life-safety device; it is a second messenger
-for the alarm you already own, never a replacement.
+WAP hears the cadence → the matching entity turns on
+(`binary_sensor.<id>_smoke_alarm` for T3, `binary_sensor.<id>_co_alarm` for
+T4 — two entities, both in the §4 include list) → Apple Home and the HA
+blueprint both push, at home or away. The detector listens only for those two
+legally mandated cadences and stores no audio — and it is *not* a UL-listed
+life-safety device; it is a second messenger for the alarm you already own,
+never a replacement.
 
 **Power outage, honestly:** a house that loses power cannot report its own
 death — the hub, the router, and the Apple hub die with it. What works:
 
 - **Today:** put the Pi, modem, and router on a small UPS and add Home
-  Assistant's upstream UPS integration (NUT). "Mains lost, on battery" then
-  goes out through both push lanes during the minutes of battery you bought.
+  Assistant's upstream UPS integration (NUT). That alone only creates
+  entities — nothing shipped here alerts on them, and the shipped blueprint
+  does not cover UPS state — so add the automation yourself and the push
+  goes out over the HA companion lane during the minutes of battery you
+  bought (the HomeKit lane has no honest rendering for a UPS; leave it out):
+
+  ```yaml
+  automation:
+    - alias: "Mains lost — on battery"
+      trigger:
+        - platform: state
+          entity_id: sensor.ups_status   # your NUT status entity
+          to: "OB DISCHRG"
+      action:
+        - service: notify.mobile_app_your_phone
+          data:
+            title: "Power outage"
+            message: "House is on UPS battery."
+            data:
+              push: { interruption-level: time-sensitive }
+  ```
 - **On restore:** the fleet's boot-lineage classifier
   ([power events](../design/power_events.md)) is built and host-tested; it
   records the outage as evidence with an honest lower-bound duration. Its
@@ -148,10 +171,12 @@ death — the hub, the router, and the Apple hub die with it. What works:
 1. `mosquitto_sub -t 'witness/#' -v` on the hub shows zone counts and motion.
 2. Walk a zone: `binary_sensor.pwk_<zone>_motion` turns on in HA, and the
    matching Motion Sensor fires in the Home app within a second or two.
-3. WAP test drill (Lab → Acoustic card, or a real alarm test button): the
-   smoke entity trips in HA and the Home app raises the safety alert.
-4. Leave the LAN (cellular), repeat via a housemate or the test drill: the
-   push still arrives — that's the home hub doing its job.
+3. Hold your real alarm's test button: the smoke (or CO) entity trips in HA
+   and the Home app raises the safety alert. (The Lab's Acoustic card is a
+   staged in-browser simulation of this contract — it never reaches your
+   broker, so it cannot stand in for this step.)
+4. Leave the LAN (cellular), have a housemate press the test button again:
+   the push still arrives — that's the home hub doing its job.
 5. Unplug the bridge briefly: accessories go "No Response" in Home, and HA's
    own availability topics recover on reconnect (the bridge re-asserts
    retained state after backoff — self-healing is already in
