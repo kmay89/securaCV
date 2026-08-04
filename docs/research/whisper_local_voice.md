@@ -113,12 +113,23 @@ nothing is transcribed until the wake word is heard.
 
 ### 3.1 The voice contract (the load-bearing part)
 
-1. **Voice input hardware is a dedicated voice satellite — never a Canary.**
-   An HA Voice PE box, an old phone running the companion app, a push-to-talk
-   button in the app. Canary microphones keep their scalars-not-samples
+1. **Voice input hardware is a dedicated voice satellite — never a Canary —
+   and the boundary is the hardware, not the speaker.** An HA Voice PE box,
+   an old phone running the companion app, a push-to-talk button in the app.
+   "The owner speaking deliberately" is intent, and intent is not
+   mechanically enforceable — rule 5 even forbids the machinery that would
+   check who is talking. So the enforceable line is *which device can feed
+   the pipeline at all*: Canary microphones keep their scalars-not-samples
    barrier unchanged; no firmware path that ships audio samples off a Canary
    exists today and none gets written for this. A device whose promise is
    "it shows, it doesn't watch" does not grow ears as a side effect.
+   **Push-to-talk is the blessed default.** Always-on wake-word listening is
+   an explicit owner opt-in on the satellite, and it must be described
+   honestly as a `won't`, not a `can't`: a false wake (a television, a
+   guest) transiently transcribes a few seconds of room audio before the
+   intent parser shrugs. That residue is why rule 2 is absolute, and why
+   the satellite is a self-declared listening device rather than a witness
+   wearing a second hat.
 2. **Command audio and transcripts are transient.** The waveform and the text
    live exactly long enough to parse an intent, then are gone. Neither is
    ever sealed, journaled, exported, or used as evidence. The *action* the
