@@ -807,49 +807,98 @@ you when it stops fitting its keepout.
 
 ### 7c′ · The three-color case (AMS)
 
-The one-piece frame can print as a **white case with a black bezel, black
-lettering and one yellow word**. It is a genuine three-filament print, but it is
-laid out so the AMS barely works: color changes are confined to two thin bands
-and the ~110 layers in between never change tools.
+The one-piece frame prints as a **black case with the house mark in yellow and
+the help QR's modules in white**. It is a genuine three-filament print, but it
+is laid out so the AMS barely works: color changes are confined to two thin
+bands and the ~105 layers in between never change tools.
+
+> **⚠️ If your case came into Bambu Studio in ONE color, this is the step you
+> want.** There are only two ways that happens, and both are easy to hit:
+> exporting `part="frame"` (that mesh is the whole case as a single solid — it
+> has no color information in it, and it is *correct* for the single-extruder
+> recipe in §7b′), or exporting the three filament parts and opening them with
+> **File → Open**, which loads them as three independent OBJECTS. Studio then
+> auto-arranges objects across the plate, which is right for objects and fatal
+> for parts of one thing. The three parts are only meaningful in the SAME
+> coordinate frame: the mark sits in a recess cut into the body, so moving one
+> a millimeter puts the bird beside its own hole rather than in it.
+
+**Run the packager. Do not hand-assemble it.**
 
 ```sh
-openscad --export-format binstl -o lcd7_fil_body.stl   -D 'part="fil_body"'   canary_s3_lcd7.scad
-openscad --export-format binstl -o lcd7_fil_ink.stl    -D 'part="fil_ink"'    canary_s3_lcd7.scad
-openscad --export-format binstl -o lcd7_fil_accent.stl -D 'part="fil_accent"' canary_s3_lcd7.scad
+python3 gen_3mf.py frame      # writes lcd7_frame.3mf
 ```
 
-In Bambu Studio:
+That writes ONE 3MF: one object, three volumes, already registered to each
+other and already assigned to filaments 1 / 2 / 3. Open it directly —
+**File → Open**, no importing of parts, no re-centering.
 
-1. Load `lcd7_fil_body.stl`.
-2. Right-click it → **Add part → Load**, and add the ink and accent STLs.
-3. Assign a filament to each part.
-4. Slice.
+1. **Add three filament slots in Bambu Studio first.** With one slot loaded
+   there is nothing for volumes 2 and 3 to point at, and it looks like the
+   parts are missing.
+2. Load them **in this order** — the 3MF assigns slot numbers, not colors, so
+   a spool in the wrong slot prints a different case:
 
-**Do not re-center, rotate, or drop-to-bed the added parts.** All three are
-exported in the same coordinate frame as `part="frame"`, so they arrive already
-registered to each other. Moving one moves the lettering out of its own recess.
+   | slot | filament | what it prints |
+   |---|---|---|
+   | 1 | `pal_body` — **Black** | the case, the bezel ring, the vent mouths, and the bird's eye and wing (knocked out of the mark) |
+   | 2 | `pal_ink` — **White** | the help QR's modules, and nothing else |
+   | 3 | `pal_accent` — **Signal Yellow** (RAL 1003) | the bird and the lockup: SECURACV / CANARY / ERRERlabs |
+
+3. Open `lcd7_frame.3mf` and slice.
+
+The **"not from Bambu Lab, load geometry and color data only"** dialog on open
+is expected and is the good outcome — it means the filament assignment was
+read. If you never see that dialog, you opened an STL.
+
+**Rehearse the colors on the coupon first** (§7c): `gen_3mf.py color` writes a
+plate with the color coupon and the QR plaque on it, and it is a few grams
+against the frame's ~160.
+
+<details><summary>Exporting the STLs by hand (only if you are not using the packager)</summary>
+
+```sh
+for f in body ink accent; do
+  openscad --export-format binstl -o lcd7_fil_$f.stl -D "part=\"fil_$f\"" canary_s3_lcd7.scad
+done
+```
+
+Then in Studio: load `lcd7_fil_body.stl`, right-click it → **Add part → Load**,
+and add the other two — **Add part**, never File → Open. **Do not re-center,
+rotate, or drop-to-bed the added parts.** All three are exported in the same
+coordinate frame as `part="frame"`, so they arrive already registered.
+
+This is the path the packager exists to replace: an instruction that must be
+obeyed for the output to be correct is a design defect, not a documentation
+problem. It got the first real attempt wrong.
+
+</details>
 
 | Band (print z) | What is there | Filaments in play |
 |---|---|---|
 | 0 – 1.2 | back skin, every deboss floor | body + ink + accent |
-| 1.2 – 22.9 | the shell — nothing but wall | body only |
-| 22.9 – 23.5 | front bezel ring + edge chamfer | ink only |
+| 1.2 – 22.7 | the shell — nothing but wall | body only |
+| 22.7 – 23.3 | front bezel ring + edge chamfer | body only, unless `bezel_color` says otherwise |
 
-That middle band is the whole point: it is 21.7 mm of a 23.5 mm part with **zero**
+That middle band is the whole point: it is 21.5 mm of a 23.3 mm part with **zero**
 tool changes, so the purge tower stays short. The bezel is the full ring rather
 than "top and bottom bands" for the same reason — the front rim is a uniform
 2 mm all the way round, so bands would not be a visible distinction, they would
 just add a tool change to every one of those last layers.
 
+The render echoes the exact bands and the exact group→filament assignment for
+*your* config — read that, not this table, if you have changed anything.
+
 **Why this needs the AMS at all.** The single-extruder recipe (§7b′, color
-swaps at fixed heights) cannot produce a white case with a scannable QR. The
-QR's modules are the deboss *floors*, and on a z-swap they print in whichever
-filament is running at floor height — so a white body puts **white modules on a
-dark field**, which no reader will decode. There is no swap height that fixes
-it; the field and the modules are at different heights, but the wrong way
-round. Giving the modules their own filament is what makes the combination
-possible. For the same reason, **the finder patterns must stay black** —
-yellow-on-white has nowhere near enough contrast.
+swaps at fixed heights) cannot produce a case with a QR whose modules differ
+from its field at all. The QR's modules are the deboss *floors*, and on a
+z-swap every deboss floor prints in whichever filament is running at floor
+height — so the modules and the plate around them come out the SAME color, and
+there is no swap height that fixes it, because the field and the modules are at
+different heights but the wrong way round. Giving the modules their own
+filament is what makes the symbol possible. For the same reason, **the modules
+must stay in the ink filament** — yellow against either body color has nowhere
+near enough contrast to decode.
 
 **The AMS carries the case's three rigid filaments and nothing else.** The TPU
 fitments still come off the external spool (§0), and they print on their own
