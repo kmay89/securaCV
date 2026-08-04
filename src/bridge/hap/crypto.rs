@@ -42,15 +42,34 @@ use sha2::Sha512;
 /// that four different derivations from one secret cannot collide — which is
 /// asserted by `every_kdf_context_is_distinct` and
 /// `session_directions_do_not_share_a_key` below.
+// The five `*_SALT` constants below are each suppressed for
+// `rust/hard-coded-cryptographic-value`. The suppressions are deliberate and
+// narrow — one per line, so a genuinely hard-coded key added to this module
+// later is still caught. They sit on the preceding line rather than the
+// declaration itself because code scanning hashes the alert's own line: a
+// same-line comment would close the alert as "fixed" and open a fresh one.
+//
+// The justification is the module doc above, in short: these are HKDF
+// domain-separation contexts whose bytes Apple fixes in the HAP
+// specification, not password salts. Randomizing them cannot strengthen
+// anything — the controller derives with the same strings — it can only make
+// pairing fail. The entropy is in the input key material (the SRP shared
+// secret, and a fresh per-connection X25519 secret), which is exactly where
+// the query's threat model wants it.
 pub mod kdf {
+    // codeql[rust/hard-coded-cryptographic-value]
     pub const PAIR_SETUP_ENCRYPT_SALT: &[u8] = b"Pair-Setup-Encrypt-Salt";
     pub const PAIR_SETUP_ENCRYPT_INFO: &[u8] = b"Pair-Setup-Encrypt-Info";
+    // codeql[rust/hard-coded-cryptographic-value]
     pub const PAIR_SETUP_CONTROLLER_SIGN_SALT: &[u8] = b"Pair-Setup-Controller-Sign-Salt";
     pub const PAIR_SETUP_CONTROLLER_SIGN_INFO: &[u8] = b"Pair-Setup-Controller-Sign-Info";
+    // codeql[rust/hard-coded-cryptographic-value]
     pub const PAIR_SETUP_ACCESSORY_SIGN_SALT: &[u8] = b"Pair-Setup-Accessory-Sign-Salt";
     pub const PAIR_SETUP_ACCESSORY_SIGN_INFO: &[u8] = b"Pair-Setup-Accessory-Sign-Info";
+    // codeql[rust/hard-coded-cryptographic-value]
     pub const PAIR_VERIFY_ENCRYPT_SALT: &[u8] = b"Pair-Verify-Encrypt-Salt";
     pub const PAIR_VERIFY_ENCRYPT_INFO: &[u8] = b"Pair-Verify-Encrypt-Info";
+    // codeql[rust/hard-coded-cryptographic-value]
     pub const CONTROL_SALT: &[u8] = b"Control-Salt";
     /// Accessory → controller. Named from the *controller's* point of view,
     /// which is the spec's convention and the opposite of the intuitive one:
