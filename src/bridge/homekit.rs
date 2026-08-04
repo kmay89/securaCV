@@ -163,7 +163,9 @@ impl HomeSignal {
             | HomeSignal::MotionVehicle
             | HomeSignal::MotionAnimal
             | HomeSignal::MotionPackage => Shape::Pulse,
-            HomeSignal::Occupancy | HomeSignal::Contact | HomeSignal::Active
+            HomeSignal::Occupancy
+            | HomeSignal::Contact
+            | HomeSignal::Active
             | HomeSignal::LowBattery => Shape::Level,
             HomeSignal::Tamper => Shape::Latched,
         }
@@ -267,7 +269,9 @@ impl SignalSet {
 
     /// Iterate the signals in the set, in declaration order.
     pub fn iter(self) -> impl Iterator<Item = HomeSignal> {
-        HomeSignal::ALL.into_iter().filter(move |s| self.contains(*s))
+        HomeSignal::ALL
+            .into_iter()
+            .filter(move |s| self.contains(*s))
     }
 }
 
