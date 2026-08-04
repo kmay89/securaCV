@@ -9507,17 +9507,16 @@
       },
       {
        "name": "emblem_h",
-       "default": "15.8"
+       "default": "0",
+       "comment": "set >= mark_min_h(emblem_rib) to bring the station back"
       },
       {
        "name": "emblem_rib",
-       "default": "0.7",
-       "comment": "stroke width, in mm. THE number this station tests:"
+       "default": "0.7"
       },
       {
        "name": "emblem_crown",
-       "default": "0.15",
-       "comment": "how far the stroke tops are drawn in, giving the"
+       "default": "0.15"
       }
      ]
     },
@@ -9530,14 +9529,14 @@
        "default": "true"
       },
       {
-       "name": "glyph_size",
+       "name": "glyph_h",
        "default": "34.0",
-       "comment": "mark width. At 34 the thinnest stroke lands at"
+       "comment": "NOMINAL height (mark_span units) — draws about"
       },
       {
-       "name": "glyph_grow",
-       "default": "0.14",
-       "comment": "per-side thickening that buys that 0.44"
+       "name": "glyph_rib",
+       "default": "0.7",
+       "comment": "stroke width, in mm. THE number this station tests:"
       },
       {
        "name": "glyph_depth",

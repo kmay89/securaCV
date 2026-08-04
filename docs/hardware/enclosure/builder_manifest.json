@@ -3333,7 +3333,7 @@
         "emblem_rib": "mm",
         "emblem_crown": "mm"
       },
-      "sha256": "6a5d60e1af8f36d1e1b1782b510dc3b1cb38c805558fa6d8ed5ba14ecec5f53e",
+      "sha256": "065c01d1d3dabbd613831e0fb83159b20afd32f7d955b0f031d70f8176ba98ae",
       "groups": [
         {
           "name": "What to render",
@@ -3576,19 +3576,18 @@
             {
               "name": "emblem_h",
               "type": "number",
-              "default": 15.8
+              "default": 0,
+              "desc": "set >= mark_min_h(emblem_rib) to bring the station back"
             },
             {
               "name": "emblem_rib",
               "type": "number",
-              "default": 0.7,
-              "desc": "stroke width, in mm. THE number this station tests:"
+              "default": 0.7
             },
             {
               "name": "emblem_crown",
               "type": "number",
-              "default": 0.15,
-              "desc": "how far the stroke tops are drawn in, giving the"
+              "default": 0.15
             }
           ]
         },
@@ -3601,16 +3600,16 @@
               "default": true
             },
             {
-              "name": "glyph_size",
+              "name": "glyph_h",
               "type": "number",
               "default": 34.0,
-              "desc": "mark width. At 34 the thinnest stroke lands at"
+              "desc": "NOMINAL height (mark_span units) — draws about"
             },
             {
-              "name": "glyph_grow",
+              "name": "glyph_rib",
               "type": "number",
-              "default": 0.14,
-              "desc": "per-side thickening that buys that 0.44"
+              "default": 0.7,
+              "desc": "stroke width, in mm. THE number this station tests:"
             },
             {
               "name": "glyph_depth",
