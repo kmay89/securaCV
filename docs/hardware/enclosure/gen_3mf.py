@@ -252,8 +252,11 @@ def bbox(verts):
     return min(xs), max(xs), min(ys), max(ys)
 
 
-def build(setname: str) -> Path:
-    groups, oid = [], 0
+def build(setname: str) -> tuple:
+    """Returns (path, used_slots) — the slots are what actually SURVIVED the
+    render, not what SETS listed. An empty volume is dropped here, so the
+    table over-reports: for the two-color palette it still names slot 2."""
+    groups, oid, used_slots = [], 0, set()
     for gname, vols, center in SETS[setname]:
         meshes, dropped = [], []
         for _n, part, slot in vols:
@@ -277,6 +280,7 @@ def build(setname: str) -> Path:
               f"{x1-x0:6.1f} x {y1-y0:5.1f} mm  at ({center[0]}, {center[1]})")
         for m in meshes:
             print(f"      {m[1]:7} {len(m[4]):>6} triangles  filament {m[2]}")
+            used_slots.add(m[2])
         # Loud, never silent: a filament missing from a plate changes what the
         # operator has to load, and a color coupon that quietly stopped
         # rehearsing a color is worse than one that never claimed to.
@@ -402,7 +406,7 @@ def build(setname: str) -> Path:
         z.writestr("3D/3dmodel.model", model)
         z.writestr("Metadata/model_settings.config", bambu)
         z.writestr("Metadata/Slic3r_PE_model.config", prusa)
-    return out
+    return out, sorted(used_slots)
 
 
 def main() -> int:
@@ -412,7 +416,7 @@ def main() -> int:
     if which == "tests":
         for i, part in enumerate(("gauges", "color"), 1):
             print(f"packaging {part}  (plate {i} of 2):")
-            print(f"OK {build(part).name}")
+            print(f"OK {build(part)[0].name}")
         print("\n  Print lcd7_gauges.3mf FIRST: one filament, no tool change,")
         print("  no purge tower. The ring gauge on it is the cheapest thing")
         print("  that can tell you the whole outline is wrong, and nobody")
@@ -423,14 +427,19 @@ def main() -> int:
         print(f"usage: gen_3mf.py [tests | {' | '.join(SETS)}]", file=sys.stderr)
         return 2
     print(f"packaging {which}:")
-    out = build(which)
+    out, slots = build(which)
     print(f"OK {out.name}  {out.stat().st_size / 1e6:.2f} MB")
     print("  open it directly — already positioned and already on their "
           "filaments.")
-    print("  Add the filament SLOTS in Bambu Studio first: with one slot "
-          "loaded there is")
-    print("  nothing for parts 2 and 3 to point at, and it reads as 'the "
-          "parts are missing'.")
+    # Name the slots this plate ACTUALLY uses. "parts 2 and 3" was right only
+    # while every object was three-filament; the two-color palette uses slots
+    # 1 and 3, so a fixed sentence sends the operator to load the wrong spool
+    # into the one slot the plate does not touch.
+    named = (", ".join(str(s) for s in slots[:-1]) + f" and {slots[-1]}"
+             if len(slots) > 1 else str(slots[0]))
+    print(f"  Add filament SLOTS {named} in Bambu Studio first: with one slot")
+    print("  loaded there is nothing for the other volumes to point at, and it")
+    print("  reads as 'the parts are missing'.")
     return 0
 
 
