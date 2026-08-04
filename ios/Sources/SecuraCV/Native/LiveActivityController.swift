@@ -53,14 +53,22 @@ final class LiveActivityController: ObservableObject {
                         relevanceScore: state.severity >= .alert ? 100 : 50)
     }
 
-    func end() async {
-        await activity?.end(nil, dismissalPolicy: .immediate)
+    /// The episode resolved: show the final "back to quiet" state for a short
+    /// linger, then leave the stage (IslandPolicy owns both the decision and
+    /// the linger). Adopts an activity a previous launch left behind, so a
+    /// quiet cold start CLEANS UP a stale pill rather than ignoring it —
+    /// nothing to do in the common case, because quiet fleets never start one.
+    func endEpisode(with state: FleetActivityAttributes.State) async {
+        let live = activity ?? Activity<FleetActivityAttributes>.activities.first
         activity = nil
+        guard let live else { return }
+        await live.end(content(for: state),
+                       dismissalPolicy: .after(Date().addingTimeInterval(IslandPolicy.allClearLinger)))
     }
     #else
     var isSupported: Bool { false }
     func start(fleetName: String, state: FleetActivityAttributes.State) {}
     func update(_ state: FleetActivityAttributes.State) async {}
-    func end() async {}
+    func endEpisode(with state: FleetActivityAttributes.State) async {}
     #endif
 }

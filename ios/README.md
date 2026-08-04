@@ -150,6 +150,15 @@ Four rules keep "beautiful" from decaying into "busy":
   the same views the watch complications render, over the same snapshot),
   and the Live Activity stale-dates so the island never presents old truth
   as current.
+- **The island is an episode, not wallpaper.** `Shared/IslandPolicy.swift`
+  (host-tested, FeedbackPolicy's twin) decides when the Live Activity may
+  exist at all: a condition at warn or above, the dead-man's-switch talking,
+  or a path test in flight. It lingers a few minutes on the all-clear, then
+  leaves the stage — an ordinary quiet day puts *nothing* in the status bar,
+  the ambient twin of "an ordinary week produces zero haptics." The
+  always-there glance for people who want one is the Lock Screen / Home
+  Screen widget — ground the user chose to give it, not ground the app
+  squats on.
 
 ## On your iPad
 

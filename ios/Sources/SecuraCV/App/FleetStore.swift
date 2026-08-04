@@ -734,8 +734,19 @@ final class FleetStore: ObservableObject {
     private func pushLiveActivity() {
         let ago: Int? = heartbeat.lastVerified.map { Int(Date().timeIntervalSince($0)) }
         let state = FleetActivityAttributes.State(fleet: witnesses, lastVerifiedAgo: ago)
-        LiveActivityController.shared.start(fleetName: fleetName, state: state)
-        Task { await LiveActivityController.shared.update(state) }
+        // The island is an episode, not wallpaper (IslandPolicy): it exists
+        // only while something is live — a condition at warn or above, the
+        // dead-man's-switch talking, or a path test the user just started —
+        // and leaves the stage (with a short all-clear linger) when the
+        // episode resolves. A quiet fleet on an ordinary day puts nothing in
+        // the status bar; the widgets are the always-there glance.
+        if IslandPolicy.shouldShow(worstSeverity: worstSeverity,
+                                   heartbeat: heartbeat.wristState) {
+            LiveActivityController.shared.start(fleetName: fleetName, state: state)
+            Task { await LiveActivityController.shared.update(state) }
+        } else {
+            Task { await LiveActivityController.shared.endEpisode(with: state) }
+        }
     }
 
     // MARK: - test alert (the "provably alive" button)
