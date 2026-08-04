@@ -7155,7 +7155,7 @@
         "coupon_ink",
         "coupon_accent",
         "coupon_qr_body",
-        "coupon_qr_ink",
+        "coupon_qr_fill",
         "frame_color",
         "fil_overlap",
         "fil_gap",
@@ -7925,8 +7925,12 @@
        "comment": "RAL 1003 — #F9A800"
       },
       {
-       "name": "body_is_dark",
-       "default": "pal_lum(pal_body_rgb) < pal_lum(pal_ink_rgb)"
+       "name": "ink_groups",
+       "default": "[]"
+      },
+      {
+       "name": "accent_groups",
+       "default": "[\"mark\", \"bird\", \"qr\"]"
       },
       {
        "name": "qr_style",
@@ -7939,24 +7943,24 @@
        "comment": "help-QR look"
       },
       {
-       "name": "qr_plaque",
-       "default": "qr_style == \"auto\" ? body_is_dark : qr_style == \"plaque"
+       "name": "qr_fill_rgb",
+       "default": "grp_rgb(\"qr\")"
+      },
+      {
+       "name": "qr_mod_rgb",
+       "default": "qr_plaque ? pal_body_rgb : qr_fill_rgb"
+      },
+      {
+       "name": "qr_field_rgb",
+       "default": "qr_plaque ? qr_fill_rgb  : pal_body_rgb"
       },
       {
        "name": "qr_dark_on_light",
-       "default": "qr_plaque ? body_is_dark : !body_is_dark"
+       "default": "pal_lum(qr_mod_rgb) < pal_lum(qr_field_rgb)"
       },
       {
        "name": "bezel_ink_t",
        "default": "0.6"
-      },
-      {
-       "name": "ink_groups",
-       "default": "[\"qr\"]"
-      },
-      {
-       "name": "accent_groups",
-       "default": "[\"mark\", \"bird\"]"
       },
       {
        "name": "bezel_color",
@@ -8379,7 +8383,7 @@
       },
       {
        "name": "qr_coupon",
-       "default": "part == \"coupon_qr_body\" || part == \"coupon_qr_ink"
+       "default": "part == \"coupon_qr_body\" || part == \"coupon_qr_fill"
       },
       {
        "name": "qr_draw",
@@ -8793,6 +8797,14 @@
        "default": "len([for (ch = vent_beat) if (ch == \"#\") 1])"
       },
       {
+       "name": "ink_live",
+       "default": "len(ink_groups) > 0 || bezel_color == \"ink\" || vent_ring_color == \"ink"
+      },
+      {
+       "name": "fil_live_n",
+       "default": "1 + (ink_live ? 1 : 0) + (accent_live ? 1 : 0)"
+      },
+      {
        "name": "gauge_in",
        "default": "34",
        "comment": "how far inward from the cavity corner the sample reaches"
@@ -8813,9 +8825,9 @@
        "comment": "...out through the corner"
       },
       {
-       "name": "coupon_h",
+       "name": "coupon_h_corner",
        "default": "34",
-       "comment": "tall enough to contain the whole corner arc"
+       "comment": "the corner arc's own requirement, unchanged"
       },
       {
        "name": "coupon_qr_margin",

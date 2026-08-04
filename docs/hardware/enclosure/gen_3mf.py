@@ -45,6 +45,7 @@ The "not from Bambu Lab, load geometry and color data only" dialog on open is
 expected and harmless — it means the filament assignment was read.
 """
 import struct
+import re
 import subprocess
 import sys
 import zipfile
@@ -69,11 +70,39 @@ COUPON = [("body", "coupon_body", 1, LCD7, {}),
 FRAME = [("body", "fil_body", 1, LCD7, {}),
          ("ink", "fil_ink", 2, LCD7, {}),
          ("accent", "fil_accent", 3, LCD7, {})]
-# The QR plaque is deliberately TWO filaments, not three. The symbol is ink
-# modules on a body-color field, and the accent must never land on a finder
-# pattern — a three-slot version of this would only offer a way to break it.
-QR_COUPON = [("body", "coupon_qr_body", 1, LCD7, {}),
-             ("ink", "coupon_qr_ink", 2, LCD7, {})]
+# The QR plaque is deliberately TWO filaments, not three: the symbol's modules
+# on a body-color field. WHICH filament carries the modules is READ FROM THE
+# SCAD rather than named here — canary_s3_lcd7.scad's ink_groups/accent_groups
+# are the only place that decides, and a hardcoded slot in this file went stale
+# the instant "qr" moved to the accent. The failure was silent and nasty: the
+# scad's coupon part rendered empty, OpenSCAD wrote no file, and this packer
+# shipped a body-only plaque — a scan coupon with no symbol, handed to someone
+# told to scan it before committing a frame.
+#
+# Note this is the ONE volume list that is derived. The others may name a
+# filament that the palette does not currently load: build() renders them,
+# finds an empty object, drops the volume and says so out loud. That is the
+# right behavior for a body/ink/accent triple, where a missing color is a fact
+# about the palette. It is the WRONG behavior here, because dropping the
+# modules leaves a plaque that is still printable, still two-sided, and no
+# longer a scan coupon.
+FIL_SLOT = {"body": 1, "ink": 2, "accent": 3}
+
+
+def group_filament(group: str) -> str:
+    """Which filament a back-plate group takes, per the .scad's own lists."""
+    src = (HERE / LCD7).read_text(encoding="utf-8")
+    for name, fil in (("accent_groups", "accent"), ("ink_groups", "ink")):
+        m = re.search(rf"^{name}\s*=\s*\[([^\]]*)\]", src, re.M)
+        if m and re.search(rf'"{re.escape(group)}"', m.group(1)):
+            return fil
+    return "body"
+
+
+_QR_FIL = group_filament("qr")
+QR_COUPON = [("body", "coupon_qr_body", 1, LCD7, {})] + (
+    [] if _QR_FIL == "body"
+    else [(_QR_FIL, "coupon_qr_fill", FIL_SLOT[_QR_FIL], LCD7, {})])
 
 # Objects whose volumes are ALL required — an empty one is a hard error here,
 # not a dropped volume with a note.
@@ -299,8 +328,11 @@ def bbox(verts):
     return min(xs), max(xs), min(ys), max(ys)
 
 
-def build(setname: str) -> Path:
-    groups, oid = [], 0
+def build(setname: str) -> tuple:
+    """Returns (path, used_slots) — the slots are what actually SURVIVED the
+    render, not what SETS listed. An empty volume is dropped here, so the
+    table over-reports: for the two-color palette it still names slot 2."""
+    groups, oid, used_slots = [], 0, set()
     for gname, vols, center in SETS[setname]:
         meshes, dropped = [], []
         for _n, part, slot, src, defs in vols:
@@ -341,6 +373,7 @@ def build(setname: str) -> Path:
               f"{x1-x0:6.1f} x {y1-y0:5.1f} mm  at ({center[0]}, {center[1]})")
         for m in meshes:
             print(f"      {m[1]:7} {len(m[4]):>6} triangles  filament {m[2]}")
+            used_slots.add(m[2])
         # Loud, never silent: a filament missing from a plate changes what the
         # operator has to load, and a color coupon that quietly stopped
         # rehearsing a color is worse than one that never claimed to.
@@ -466,7 +499,7 @@ def build(setname: str) -> Path:
         z.writestr("3D/3dmodel.model", model)
         z.writestr("Metadata/model_settings.config", bambu)
         z.writestr("Metadata/Slic3r_PE_model.config", prusa)
-    return out
+    return out, sorted(used_slots)
 
 
 def main() -> int:
@@ -476,7 +509,7 @@ def main() -> int:
     if which == "tests":
         for i, part in enumerate(("gauges", "color"), 1):
             print(f"packaging {part}  (plate {i} of 2):")
-            print(f"OK {build(part).name}")
+            print(f"OK {build(part)[0].name}")
         print("\n  Print lcd7_gauges.3mf FIRST: one filament, no tool change,")
         print("  no purge tower. The ring gauge on it is the cheapest thing")
         print("  that can tell you the whole outline is wrong, and nobody")
@@ -487,14 +520,19 @@ def main() -> int:
         print(f"usage: gen_3mf.py [tests | {' | '.join(SETS)}]", file=sys.stderr)
         return 2
     print(f"packaging {which}:")
-    out = build(which)
+    out, slots = build(which)
     print(f"OK {out.name}  {out.stat().st_size / 1e6:.2f} MB")
     print("  open it directly — already positioned and already on their "
           "filaments.")
-    print("  Add the filament SLOTS in Bambu Studio first: with one slot "
-          "loaded there is")
-    print("  nothing for parts 2 and 3 to point at, and it reads as 'the "
-          "parts are missing'.")
+    # Name the slots this plate ACTUALLY uses. "parts 2 and 3" was right only
+    # while every object was three-filament; the two-color palette uses slots
+    # 1 and 3, so a fixed sentence sends the operator to load the wrong spool
+    # into the one slot the plate does not touch.
+    named = (", ".join(str(s) for s in slots[:-1]) + f" and {slots[-1]}"
+             if len(slots) > 1 else str(slots[0]))
+    print(f"  Add filament SLOTS {named} in Bambu Studio first: with one slot")
+    print("  loaded there is nothing for the other volumes to point at, and it")
+    print("  reads as 'the parts are missing'.")
     return 0
 
 
