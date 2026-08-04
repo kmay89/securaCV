@@ -1698,3 +1698,71 @@ watch it go red, and give it a tree with its own inputs removed and watch it go
 red for that too. A drift gate that has never been observed failing is a
 hypothesis, not a control. Applies to every release target: Flasher, Lab, the
 firmware paths, and the iPhone / iPad / tvOS / Mac pipelines.
+
+### (ab) 2026-08-04 — CloudKit does not fail without an entitlement, it dies; and the second fix died the same way
+
+**What happened:** every iOS test failed, on every branch, for four days. Not
+one of them was about iCloud. The whole account CI gave was
+
+```
+SecuraCV encountered an error (Early unexpected exit, operation never finished
+bootstrapping. Underlying Error: Test crashed with signal abrt before
+establishing connection.)
+```
+
+**Cause:** `CKContainer.default()` resolves its container by reading
+`com.apple.developer.icloud-container-identifiers`. With no entitlement it does
+not return nil and does not throw — it raises an Objective-C `CKException`,
+"containerIdentifier can not be nil". Swift cannot catch that. The `try?` at
+the call site is on `accountStatus()`; the process is already gone inside
+`default()` before the await is reached. A build with `CODE_SIGNING_ALLOWED=NO`
+carries no entitlements, CI builds exactly that, and #1430 had just wired
+`CloudSync.refreshAvailability()` into `FleetStore.onAppear()`.
+
+**The first fix was wrong, and it is the useful half of this entry.** Naming
+the container — `CKContainer(identifier:)` instead of `.default()` — reasons
+that the exception comes from resolving a nil identifier out of a missing
+entitlement, so handing it a non-nil string skips that path and any real
+entitlement problem then arrives as a `CKError` on the operation, which the
+existing `try?` handles. That reasoning is sound and the conclusion is false.
+CloudKit logs "Significant issue at CKContainer.m:748: your process must have a
+com.apple.developer.icloud-services entitlement" and then traps *inside*
+`__allocating_init(identifier:)` — `EXC_BREAKPOINT`, `brk 1`, equally
+uncatchable. The signal changed from abrt to trap and nothing else did. It
+shipped as "unverified, selfheal is the check that matters", and selfheal duly
+said no.
+
+**Fix:** decide at COMPILE time, because every runtime test is either wrong or
+unavailable. `ubiquityIdentityToken` is cheap and non-throwing but answers
+about iCloud *Documents*; this app declares no ubiquity container, so gating on
+it risks switching iCloud off for every real user to protect a build nobody
+ships. Reading the entitlement from the code signature needs `SecTask*`, which
+is not in the public iOS SDK. What IS known for certain, before the app runs,
+is that an unsigned build cannot carry entitlements — so `heal.sh` sets
+`SECURACV_NO_CLOUDKIT` on the same line it passes `CODE_SIGNING_ALLOWED=NO`,
+and the CloudKit paths are compiled out of exactly those builds. Signed builds
+never see the flag, so it cannot mask a fault where CloudKit really works.
+
+**Applies to:** any framework whose init can trap — CloudKit, and by the same
+shape anything reading entitlements at construction. Three generalizations,
+each paid for here:
+
+**A framework that traps has no runtime guard, only a compile-time one.** Once
+construction itself is the thing that dies, there is no object to hold and no
+error to inspect; "call it and handle the failure" is not available at any
+price. Ask whether the process could *ever* succeed, answer it before the
+process starts, and compile the rest away.
+
+**When a fix changes the signal but not the outcome, that is data, not
+progress.** abrt to trap was the whole result of the first attempt, and it read
+as movement. The test to apply is not "did the failure change" but "did the
+failure stop"; anything else invites shipping the same bug with a new symptom.
+
+**A crash the CI cannot describe will be diagnosed by guessing.** Two rounds
+went to reading source because the job discarded the `.ips` report and the
+`.xcresult` before anyone could look. It now keeps both on failure — and the
+very first run that did named the faulting frame in one line
+(`CloudContainer.swift:62`, `CKContainer.__allocating_init(identifier:)`),
+after two rounds of reasoning had gotten it wrong. Collecting the evidence is
+cheaper than being clever, and it belongs in every job that can crash a
+process: Flasher, Lab, tvOS, and the iPhone / iPad / Mac targets.
