@@ -182,7 +182,7 @@
   },
   "module_build_replaced": {
     "csv": "bom_canary_wap.csv",
-    "unit_usd": 18.458,
+    "unit_usd": 16.258,
     "lines": [
       {
         "ref": "U1",
@@ -291,23 +291,28 @@
         "price_at_qty": 500,
         "volume_matched": false,
         "why": "multifunction tactile button — placed on the carrier"
-      },
+      }
+    ]
+  },
+  "contested_upside": {
+    "note": "Excluded from saving_per_unit_usd on purpose. Each line is a part the carrier's design choice removes, where this repo's own sources disagree about whether the module build needed it. Settle them on a bench, then move them into `absorbs` or drop them — do not let them drift into the headline unresolved.",
+    "usd_per_unit": 2.2,
+    "saving_if_all_upheld_usd": 6.7785,
+    "lines": [
       {
         "ref": "ANT1",
         "mpn": "2.4G-UFL-WHIP",
-        "qty": 1,
-        "unit_usd": 2.2,
-        "ext_usd": 2.2,
+        "required_in_csv": "Optional",
+        "usd": 2.2,
         "provenance": "csv-seed",
-        "verified": false,
-        "price_at_qty": 1,
-        "volume_matched": false,
-        "why": "external u.FL whip antenna — eliminated outright by choosing the PCB-antenna module variant"
+        "claim": "The PCB-antenna WROOM-1 variant needs no external whip, so a carrier build never buys one.",
+        "dispute": "docs/hardware/bom_canary_wap.csv marks ANT1 Optional and notes 'XIAO has onboard antenna.' firmware/boards/boards.json says of the same board: 'External u.FL antenna required — WiFi and BLE (pairing + offline console) need it seated; without it Bluetooth may not work at all.' Both cannot be true.",
+        "how_to_settle_it": "Bench, not documentation: run the WAP's BLE pairing and offline console on a Sense with the u.FL whip removed. Whichever way it goes, fix the loser — this contradiction misleads anyone buying parts today, independently of whether this board is ever built."
       }
     ]
   },
   "delta": {
-    "saving_per_unit_usd": 6.7785,
+    "saving_per_unit_usd": 4.5785,
     "nre_usd": 154.0,
     "nre_breakdown": {
       "design_usd": 0.0,
@@ -315,7 +320,7 @@
       "unique_parts": 18,
       "unique_part_placement_usd": 54.0
     },
-    "breakeven_units": 23,
+    "breakeven_units": 34,
     "breakeven_note": "Units that must be built before the carrier has paid back its own NRE. It excludes certification entirely — the Part 15B SDoC in board.json `certification` is owed whether or not this board exists, because it attaches to shipping a radio, not to which PCB the radio sits on."
   },
   "sensitivity": {
@@ -323,17 +328,16 @@
     "dominant_replaced_mpn": "102010469",
     "modeled_unit_usd": 15.9,
     "modeled_at_qty": 1,
-    "crossover_unit_usd": 9.1215,
-    "verdict": "The carrier is cheaper while 102010469 costs more than $9.12/unit. It is modeled at $15.90 at qty 1. This is the number to re-check against a real volume quote before committing NRE — it needs no estimate to compute, only the price of one part."
+    "crossover_unit_usd": 11.3215,
+    "verdict": "The carrier is cheaper while 102010469 costs more than $11.32/unit. It is modeled at $15.90 at qty 1. This is the number to re-check against a real volume quote before committing NRE — it needs no estimate to compute, only the price of one part."
   },
   "confidence_accounting": {
     "note": "Share of the compared dollars that a distributor actually resolved this snapshot, versus a human's stated estimate. Read the saving with this number next to it.",
-    "priced_usd": 28.1375,
+    "priced_usd": 25.9375,
     "distributor_verified_usd": 16.2775,
-    "estimated_usd": 11.86,
-    "verified_share": 0.5785,
+    "estimated_usd": 9.66,
+    "verified_share": 0.6276,
     "unverified_mpns": [
-      "2.4G-UFL-WHIP",
       "AP2112K-3.3TRG1",
       "DM3AT-SF-PEJM5",
       "ESP32-S3-WROOM-1-N8R8",
@@ -350,11 +354,10 @@
     ],
     "volume_mismatch": {
       "note": "Lines the snapshot could only price below the 1000-unit basis. On the replaced side this OVERSTATES the saving (we credit ourselves a low-volume price for a part we are dropping); on the carrier side it understates it. Any line here is a volume quote waiting to be got.",
-      "replaced_side_overstates_by_at_most_usd": 18.4094,
+      "replaced_side_overstates_by_at_most_usd": 16.2094,
       "replaced_side_mpns": [
         "102010469",
         "1N4148",
-        "2.4G-UFL-WHIP",
         "2N7002",
         "B3F-1000",
         "CL21B104KBCNNNC"

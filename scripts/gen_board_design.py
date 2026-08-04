@@ -197,6 +197,38 @@ def build_cost_model(design: dict, pricing: dict) -> dict:
 
     saving_unit_usd = module_unit_usd - carrier_unit_usd
 
+    # Parts a design choice REMOVES rather than integrates, where the repo's own
+    # sources disagree about whether the module build needs them at all. These
+    # stay out of the headline on purpose: an unresolved question must not
+    # silently inflate a saving. Reported as upside, priced from the same rows.
+    contested = []
+    for ref, spec in (cmp_spec.get("contested_eliminations") or {}).items():
+        if ref.startswith("_"):
+            continue
+        row = rows.get(ref)
+        if row is None:
+            raise SystemExit(
+                f"gen_board_design.py: contested_eliminations names {ref}, which "
+                f"is not in {cmp_spec['csv']}"
+            )
+        mpn = (row.get("MPN") or "").strip()
+        seed = (row.get("UnitUSD") or "").strip() or None
+        unit, prov, brk = price_of(mpn, pricing, seed, "csv-seed", qty)
+        n = int((row.get("Qty") or "1").strip() or 1)
+        contested.append(
+            {
+                "ref": ref,
+                "mpn": mpn,
+                "required_in_csv": (row.get("Required") or "").strip(),
+                "usd": money(unit * n),
+                "provenance": prov,
+                "claim": spec.get("claim"),
+                "dispute": spec.get("the_repo_disagrees_with_itself"),
+                "how_to_settle_it": spec.get("how_to_settle_it"),
+            }
+        )
+    contested_usd = sum(c["usd"] for c in contested)
+
     # ── NRE and the break-even that falls out of it ─────────────────────────
     # Unique parts drive the PCBA setup fee, so derive the count from the parts
     # list rather than trusting a hand-typed number that drifts as parts land.
@@ -267,6 +299,18 @@ def build_cost_model(design: dict, pricing: dict) -> dict:
             "csv": cmp_spec["csv"],
             "unit_usd": money(module_unit_usd),
             "lines": absorbed,
+        },
+        "contested_upside": {
+            "note": (
+                "Excluded from saving_per_unit_usd on purpose. Each line is a "
+                "part the carrier's design choice removes, where this repo's "
+                "own sources disagree about whether the module build needed it. "
+                "Settle them on a bench, then move them into `absorbs` or drop "
+                "them — do not let them drift into the headline unresolved."
+            ),
+            "usd_per_unit": money(contested_usd),
+            "saving_if_all_upheld_usd": money(saving_unit_usd + contested_usd),
+            "lines": contested,
         },
         "delta": {
             "saving_per_unit_usd": money(saving_unit_usd),

@@ -29,6 +29,12 @@ It means the `verified`-tier firmware runs unmodified and
 [`v1_bench_validation_runbook.md`](../../docs/hardware/v1_bench_validation_runbook.md)
 is the acceptance test rather than a new one someone has to write.
 
+**One asterisk, and it is recorded rather than buried.** The status indicator
+sits on GPIO 3 (`EXT_LED_PIN_DEFAULT`) to keep it off the SD chip select — but
+the firmware writes `LED_BUILTIN` (GPIO 21) and writes GPIO 3 nowhere. Until a
+one-line board definition sets `LED_BUILTIN` to 3 for this board, a populated
+carrier has no working indicator. See `follow_up_work` in `board.json`.
+
 So 25 signals in `pin_map` are gated against
 [`firmware/boards/xiao-esp32s3-sense/pins/pins.h`](../../firmware/boards/xiao-esp32s3-sense/pins/pins.h)
 on every CI run. **If that header moves and this file does not, the build goes

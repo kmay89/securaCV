@@ -16,8 +16,9 @@
   "compare_to": {
     "device": "canary-wap",
     "csv": "bom_canary_wap.csv",
-    "note": "The module build this carrier replaces. `absorbs` lists the RefDes rows in that CSV whose function moves onto the carrier PCB; the cost model prices the module build from those rows using the same pricing.json snapshot, so the comparison can never be a hand-typed number. RefDes strings are matched verbatim against the CSV (including the combined 'R4,R5' divider row), and the generator fails loudly on any that no longer exist.",
-    "absorbs": ["U1", "Q1", "Dfb1", "R1", "R2", "C1", "R6", "R4,R5", "SW1", "ANT1"],
+    "note": "The module build this carrier replaces. `absorbs` lists the RefDes rows in that CSV whose function MOVES ONTO the carrier PCB; the cost model prices them from the same pricing.json snapshot, so the comparison can never be a hand-typed number. RefDes strings are matched verbatim against the CSV (including the combined 'R4,R5' divider row) and the generator fails loudly on any that no longer exist.",
+    "configuration": "This compares against a WAP built WITH the options the carrier integrates — buzzer drive, status LED, tamper, touch, VBAT sense, button. That is a coherent configuration, and it is the only fair one: the carrier places those functions on the PCB whether or not a given build populates them, so the comparison must assume a build that wants them. A bare WAP with none of the options would replace only U1 and is not what this board is for.",
+    "absorbs": ["U1", "Q1", "Dfb1", "R1", "R2", "C1", "R6", "R4,R5", "SW1"],
     "absorbs_rationale": {
       "U1": "the XIAO itself — its ESP32-S3, camera, mic and SD slot become U1/J-CAM/MK1/J-SD on the carrier",
       "Q1": "buzzer drive MOSFET — placed on the carrier",
@@ -27,8 +28,17 @@
       "C1": "WS2812 decoupling — placed on the carrier",
       "R6": "touch electrode ESD series resistor — placed on the carrier",
       "R4,R5": "VBAT 2:1 divider pair — placed on the carrier as R-DIV, keeping DIVIDER_RATIO 2.0",
-      "SW1": "multifunction tactile button — placed on the carrier",
-      "ANT1": "external u.FL whip antenna — eliminated outright by choosing the PCB-antenna module variant"
+      "SW1": "multifunction tactile button — placed on the carrier"
+    },
+    "contested_eliminations": {
+      "_comment": "Parts a design CHOICE removes rather than integrates. Deliberately NOT in `absorbs`: the generator reports them as a separate upside line so the headline saving never rests on a claim the repo itself disputes. PR review flagged the original treatment (crediting ANT1 unconditionally inside `absorbs`) and was right to — an Optional row summed regardless of build configuration is a thumb on the scale.",
+      "ANT1": {
+        "usd_if_real": 2.20,
+        "claim": "The PCB-antenna WROOM-1 variant needs no external whip, so a carrier build never buys one.",
+        "the_repo_disagrees_with_itself": "docs/hardware/bom_canary_wap.csv marks ANT1 Optional and notes 'XIAO has onboard antenna.' firmware/boards/boards.json says of the same board: 'External u.FL antenna required — WiFi and BLE (pairing + offline console) need it seated; without it Bluetooth may not work at all.' Both cannot be true.",
+        "why_it_is_not_in_the_headline": "If boards.json is right, this is a genuine $2.20 saving and arguably a functional upgrade. If the CSV is right, crediting it is fiction. Rather than pick a side to make a number look better, the model excludes it and reports it separately.",
+        "how_to_settle_it": "Bench, not documentation: run the WAP's BLE pairing and offline console on a Sense with the u.FL whip removed. Whichever way it goes, fix the loser — this contradiction misleads anyone buying parts today, independently of whether this board is ever built."
+      }
     },
     "not_absorbed_note": "The piezo (BZ1), the RGB LED (DLED1), the reed switch (SW2) and magnet (MAG1), the touch pad (TP1), the battery (BT1), the GNSS module (M1), the microSD card (SD1), the USB cable (CBL1) and every enclosure/sealing row stay exactly as they are. The carrier changes what is on a PCB, not what is in the box."
   },
@@ -74,8 +84,29 @@
       "question": "Does the XIAO ESP32-S3 Sense really share GPIO 21 between the SD chip-select and the onboard status LED?",
       "status": "RESOLVED from the repo — no bench time needed",
       "evidence": "firmware/boards/xiao-esp32s3-sense/pins/pins.h defines both SD_PIN_CS 21 and LED_BUILTIN 21, and its own comment states it plainly: 'While the SD card is mounted, GPIO21 belongs to the SD driver: writing the LED asserts/deasserts the card's CS, and doing so mid-transaction corrupts SD I/O.' The header's prescribed workaround is to route status indication to EXT_LED_PIN_DEFAULT (GPIO 3) or gate LED writes on SD idleness.",
-      "what_the_carrier_does": "Keeps SD_CS on GPIO 21 (pin-compatibility is the point) and wires the only status indicator to GPIO 3 — EXT_LED_PIN_DEFAULT, the escape hatch the firmware already documents and already supports. There is no second LED on GPIO 21 to collide with. The carrier does not fix this defect with new code; it fixes it by not building the defect, at zero cost.",
-      "why_it_matters": "This is the clearest argument that a carrier buys something other than money. On the XIAO the conflict is unavoidable silicon and the firmware pays for it forever in gating logic; on a board we lay out, it simply does not exist."
+      "what_the_carrier_does": "Keeps SD_CS on GPIO 21 (pin-compatibility is the point) and puts the only status indicator on GPIO 3 — EXT_LED_PIN_DEFAULT, which is also where boards/boards.config.json already plans the WS2812. There is no LED on GPIO 21 to collide with, so the hardware conflict is not built.",
+      "correction": "An earlier revision of this file claimed the carrier 'fixes this defect at zero cost, with no new code.' That was wrong and PR review caught it. EXT_LED_PIN_DEFAULT is DECLARED in pins.h and written NOWHERE in the firmware; the live indicator is LED_BUILTIN (GPIO 21), written by audible_chirp.h and by the BOOT-button handler in canary_wap.ino. The firmware's actual mitigation is a narrow `if (!sd_mount_in_flight())` guard, which covers the mount window and not normal mounted operation.",
+      "what_is_actually_true": "The carrier makes the fix POSSIBLE; it does not deliver it. On the XIAO, GPIO 21 is physically both SD_CS and the LED, so no amount of code can separate them — the gating guard is the best available. On the carrier they are separate nets, and a one-line board-header definition (LED_BUILTIN 3 for this board) makes the indicator real and stops status writes from touching SD_CS at all.",
+      "what_this_costs": "Until that firmware change lands, a populated carrier has NO working status indicator: the unchanged firmware writes GPIO 21, which on this board drives nothing but the SD chip select. This is the one place the 'firmware runs unmodified' thesis has an asterisk, and it is tracked in follow_up_work rather than buried.",
+      "why_it_still_matters": "It is a smaller claim than the one it replaces, but a real one: the carrier converts an unfixable hardware conflict into a one-line software change."
+    }
+  ],
+
+  "follow_up_work": [
+    {
+      "id": "led-builtin-for-carrier",
+      "blocks": "a populated carrier having any working status indicator",
+      "work": "Add a board definition for canary-witness-s3 that sets LED_BUILTIN to 3 (or teach the WAP sketch to write EXT_LED_PIN_DEFAULT). One line, but it IS a firmware change and this program should not pretend otherwise.",
+      "why_not_now": "There is no board to run it on, and firmware/boards/<id>/pins/pins.h is the registry the pin-budget gate scores — adding an entry for a board with confidence `idea` would put a phantom board in that ledger. It lands when the board does."
+    }
+  ],
+
+  "known_tradeoffs": [
+    {
+      "id": "no-load-sharing",
+      "what": "The MCP73831 charges the cell and the load hangs off the same node, so with USB connected the device is powered THROUGH the battery rather than beside it.",
+      "cost": "The cell sees charge/discharge cycling while plugged in, and a load transient during charge is seen by the charger as battery current. This is the standard cheap-charger topology — it is also exactly what the XIAO does today, so it is not a regression.",
+      "when_to_revisit": "If a mains-powered SKU is expected to sit plugged in for years, a real power-path part (for example a BQ2407x) separates the load from the cell and roughly doubles the charger line item. Do not pay for it on a battery-first device."
     }
   ],
 
@@ -162,8 +193,7 @@
     "_comment": "Connectivity intent, keyed by signal name and GPIO. It deliberately does NOT carry ESP32-S3-WROOM-1 physical pin numbers: those come off the datasheet during schematic capture, verified by the tool's own ERC, and inventing them here would be exactly the confident-but-wrong artifact this repo exists to prevent. See docs/hardware/flagship_board_program.md, 'What this repo generates and what the EDA tool generates'.",
     "power": [
       { "net": "VBUS",  "class": "power", "nodes": ["J-USB.VBUS", "D-ESD.VBUS", "U3.VIN"], "note": "5 V from USB-C" },
-      { "net": "VBAT",  "class": "power", "nodes": ["J-BAT.+", "U3.VBAT", "R-DIV.top"], "note": "single-cell LiPo" },
-      { "net": "VSYS",  "class": "power", "nodes": ["U3.VBAT", "U2.VIN"], "note": "power-path output feeding the regulator" },
+      { "net": "VBAT",  "class": "power", "nodes": ["J-BAT.+", "U3.VBAT", "U2.VIN", "R-DIV.top"], "note": "Single-cell LiPo. The MCP73831 is a charger, NOT a load-sharing / power-path device: its VBAT pin is one battery terminal, so the cell, the charger terminal and the regulator input are electrically ONE node. An earlier revision of this file split them into VBAT and VSYS, which was a contradiction — the same physical pin on two named nets — and would have forced schematic capture to either short them or invent a power-path device that is not in the parts list. See known_tradeoffs/no-load-sharing for what this topology costs." },
       { "net": "+3V3",  "class": "power", "nodes": ["U2.VOUT", "U1.3V3", "MK1.VDD", "J-SD.VDD", "J-CAM.VDD"] },
       { "net": "GND",   "class": "power", "nodes": ["U1.GND", "U2.GND", "U3.GND", "MK1.GND", "J-SD.GND", "J-CAM.GND", "J-USB.GND", "J-BAT.-", "D-ESD.GND"] }
     ],

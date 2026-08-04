@@ -2,11 +2,10 @@ net,net_class,signal,gpio,ref,pin,note
 VBUS,power,,,J-USB,VBUS,5 V from USB-C
 VBUS,power,,,D-ESD,VBUS,5 V from USB-C
 VBUS,power,,,U3,VIN,5 V from USB-C
-VBAT,power,,,J-BAT,+,single-cell LiPo
-VBAT,power,,,U3,VBAT,single-cell LiPo
-VBAT,power,,,R-DIV,top,single-cell LiPo
-VSYS,power,,,U3,VBAT,power-path output feeding the regulator
-VSYS,power,,,U2,VIN,power-path output feeding the regulator
+VBAT,power,,,J-BAT,+,"Single-cell LiPo. The MCP73831 is a charger, NOT a load-sharing / power-path device: its VBAT pin is one battery terminal, so the cell, the charger terminal and the regulator input are electrically ONE node. An earlier revision of this file split them into VBAT and VSYS, which was a contradiction — the same physical pin on two named nets — and would have forced schematic capture to either short them or invent a power-path device that is not in the parts list. See known_tradeoffs/no-load-sharing for what this topology costs."
+VBAT,power,,,U3,VBAT,"Single-cell LiPo. The MCP73831 is a charger, NOT a load-sharing / power-path device: its VBAT pin is one battery terminal, so the cell, the charger terminal and the regulator input are electrically ONE node. An earlier revision of this file split them into VBAT and VSYS, which was a contradiction — the same physical pin on two named nets — and would have forced schematic capture to either short them or invent a power-path device that is not in the parts list. See known_tradeoffs/no-load-sharing for what this topology costs."
+VBAT,power,,,U2,VIN,"Single-cell LiPo. The MCP73831 is a charger, NOT a load-sharing / power-path device: its VBAT pin is one battery terminal, so the cell, the charger terminal and the regulator input are electrically ONE node. An earlier revision of this file split them into VBAT and VSYS, which was a contradiction — the same physical pin on two named nets — and would have forced schematic capture to either short them or invent a power-path device that is not in the parts list. See known_tradeoffs/no-load-sharing for what this topology costs."
+VBAT,power,,,R-DIV,top,"Single-cell LiPo. The MCP73831 is a charger, NOT a load-sharing / power-path device: its VBAT pin is one battery terminal, so the cell, the charger terminal and the regulator input are electrically ONE node. An earlier revision of this file split them into VBAT and VSYS, which was a contradiction — the same physical pin on two named nets — and would have forced schematic capture to either short them or invent a power-path device that is not in the parts list. See known_tradeoffs/no-load-sharing for what this topology costs."
 +3V3,power,,,U2,VOUT,
 +3V3,power,,,U1,3V3,
 +3V3,power,,,MK1,VDD,

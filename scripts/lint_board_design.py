@@ -117,6 +117,12 @@ def lint_board(design_path: Path, failures: list) -> None:
     # not fine is a ref nobody declared.
     all_pins = {**pin_map, **design.get("pin_map_unenforced", {})}
     seen_nets = set()
+    # REF.PIN -> the net that already claimed it. One physical pin cannot sit
+    # on two named nets: either they are the same net and one name is a lie, or
+    # capture has to invent a part to separate them. PR review on #1455 found
+    # exactly this (a charger's VBAT pin on both VBAT and VSYS) and this gate
+    # did not catch it — so now it does.
+    node_owner: dict = {}
 
     for group in ("power", "signals"):
         for net in design.get("nets", {}).get(group, []):
@@ -142,6 +148,16 @@ def lint_board(design_path: Path, failures: list) -> None:
                         f"net {name} references part {ref!r}, which is not in "
                         "`parts` (and is not a documented virtual designator)"
                     )
+                owner = node_owner.get(node)
+                if owner is not None and owner != name:
+                    fail(
+                        f"node {node} is on two nets, {owner} and {name} — one "
+                        "physical pin cannot belong to two named nets. Either "
+                        "they are the same net under two names, or the design "
+                        "needs a part that separates them and does not have one."
+                    )
+                else:
+                    node_owner[node] = name
 
             sig = net.get("signal")
             if sig:

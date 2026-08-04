@@ -31,8 +31,8 @@ Doc 18 §6 says *"do not spin a custom PCB until >500 committed units,"* and
 that conclusion is sound for the assumptions it makes — it budgets
 **$3,000–8,000 of paid PCB design**. Take that line to zero by doing the
 design in-house and the arithmetic changes completely: NRE falls to **$154**
-and the board pays for itself at **23 units**, not 500. The saving per unit is
-*smaller* than doc 18 estimated (**$6.78**, not $15–25) because the WAP's
+and the board pays for itself at **34 units**, not 500. The saving per unit is
+*smaller* than doc 18 estimated (**$4.58**, not $15–25) because the WAP's
 module is a $15.90 XIAO, not the $29 Grove module doc 18 was reasoning about.
 Both corrections point the same way — the barrier was never the per-unit
 economics, it was the NRE, and the NRE is mostly a choice.
@@ -111,7 +111,7 @@ the whole program:
   25 signals are held that way; only the chirp pin is unenforced, because the
   Sense's header declares no buzzer constant to hold it against.
 
-### It also fixes a real defect, for free
+### It makes a real defect fixable — which is not the same as fixing it
 
 `pins.h` defines **`SD_PIN_CS 21`** and **`LED_BUILTIN 21`** — the same pin —
 and says so plainly:
@@ -120,13 +120,31 @@ and says so plainly:
 > LED asserts/deasserts the card's CS, and doing so mid-transaction corrupts SD
 > I/O."*
 
-On the XIAO that is unavoidable silicon, and the firmware pays for it forever
-in gating logic. On a board we lay out, it simply does not exist: SD_CS stays
-on GPIO 21 for pin-compatibility, and the only status indicator goes to GPIO 3
-(`EXT_LED_PIN_DEFAULT`) — the escape hatch the firmware already documents and
-already supports. **This is the clearest evidence that a carrier buys
-something other than money.** No new code, no new risk, one less way to
-corrupt evidence on disk.
+On the XIAO that is unavoidable silicon. On a carrier the two are separate
+nets: SD_CS stays on GPIO 21 for pin-compatibility, and the status indicator
+goes to GPIO 3 (`EXT_LED_PIN_DEFAULT`, also where `boards.config.json` already
+plans the WS2812).
+
+**But the carrier alone does not fix it, and an earlier draft of this document
+claimed it did.** PR review was right to catch that. The facts:
+
+- `EXT_LED_PIN_DEFAULT` is *declared* in `pins.h` and **written nowhere** in
+  the firmware.
+- The live indicator is `LED_BUILTIN` (GPIO 21), written by `audible_chirp.h`
+  and by the BOOT-button handler in `canary_wap.ino`.
+- The existing mitigation is a narrow `if (!sd_mount_in_flight())` guard, which
+  covers the mount window — not normal mounted operation.
+
+So on a populated carrier running unmodified firmware, the GPIO 3 indicator is
+dark and status writes still toggle GPIO 3's absent LED... no: they still
+toggle **GPIO 21**, which on this board is nothing but the SD chip select.
+Making the indicator real needs a one-line board definition (`LED_BUILTIN 3`
+for this board). **That is a firmware change, and this program should not
+pretend otherwise** — it is tracked in `board.json` under `follow_up_work`.
+
+The honest claim is the smaller one: *the carrier converts an unfixable
+hardware conflict into a one-line software change.* It is also the one place
+the "firmware runs unmodified" thesis carries an asterisk.
 
 ### The radio is the part we do not design
 
@@ -158,10 +176,36 @@ it.
 | | |
 |---|---|
 | Carrier, per unit | **$11.68** (parts $9.68 + PCB $0.80 + assembly $1.20) |
-| Module-build rows it replaces | **$18.46** |
-| **Saving per unit** | **$6.78** |
+| Module-build rows it replaces | **$16.26** |
+| **Saving per unit** | **$4.58** |
 | NRE | **$154** — design $0, PCBA setup $100, 18 unique parts × $3 |
-| **Break-even** | **23 units** |
+| **Break-even** | **34 units** |
+| Contested upside, excluded | **$2.20** (the u.FL whip — see below) |
+
+The comparison is against a WAP built **with** the options the carrier
+integrates (buzzer drive, status LED, tamper, touch, VBAT sense, button). That
+is the only fair configuration: the carrier places those functions on the PCB
+whether or not a given build populates them.
+
+### One credit is deliberately excluded, because the repo disagrees with itself
+
+An earlier revision credited the $2.20 u.FL whip antenna as removed — the
+WROOM-1 PCB-antenna variant needs no external whip. PR review flagged it, and
+the reason it is now excluded is worth stating, because **the repo contradicts
+itself on this part**:
+
+- `bom_canary_wap.csv` marks `ANT1` *Optional*: "XIAO has onboard antenna."
+- `firmware/boards/boards.json` says of the same board: "**External u.FL
+  antenna required** — WiFi and BLE (pairing + offline console) need it seated;
+  without it Bluetooth may not work at all."
+
+Both cannot be true. If `boards.json` is right this is a real $2.20 saving and
+arguably a functional upgrade; if the CSV is right, crediting it is fiction.
+Rather than pick whichever makes the number look better, the model reports it
+as `contested_upside` and leaves the headline at $4.58. **Settle it on a bench**
+— run BLE pairing and the offline console on a Sense with the whip removed —
+and fix whichever source loses. That contradiction misleads anyone buying parts
+today, whether or not this board is ever built.
 
 ### Read it with its own confidence numbers
 
@@ -178,16 +222,21 @@ cannot afford.
   The model names this explicitly: up to **$18.41** of the replaced side is
   priced below the 1k basis.
 
-So the honest headline is not "$6.78." It is the sensitivity, which needs no
+So the honest headline is not "$4.58." It is the sensitivity, which needs no
 estimate at all — only the price of one part:
 
 > **The carrier is cheaper while the XIAO ESP32-S3 Sense costs more than
-> $9.12/unit.** It is modeled at $15.90 at qty 1.
+> $11.32/unit.** It is modeled at $15.90 at qty 1.
 
-That is the number to take to a real volume quote. If Seeed quotes the Sense
-above ~$9.12 at the volume we would actually buy, the carrier wins and the
-break-even is real. If they quote below it, this program should stop — and the
-model will say so without anyone having to re-argue it.
+That is the number to take to a real volume quote, and it is a **demanding**
+bar — only ~29% of headroom below today's qty-1 price. If Seeed quotes the
+Sense above ~$11.32 at the volume we would actually buy, the carrier wins and
+the break-even is real. If they quote below it, this program should stop — and
+the model will say so without anyone having to re-argue it.
+
+That bar tightened from $9.12 to $11.32 when the contested antenna credit came
+out of the headline. Which is the point of separating them: the program's
+viability should not rest on a claim the repo itself disputes.
 
 ---
 
@@ -318,7 +367,7 @@ documentation:
 1. **Look up the ESP32-S3-WROOM-1 grant** and fill in its
    `fcc_board_status.md` row. Free, today, and it gates $5–15k.
 2. **Get one volume quote on the XIAO ESP32-S3 Sense.** One number decides
-   this program, and the model already says which side of $9.12 it has to land
+   this program, and the model already says which side of $11.32 it has to land
    on.
 3. **If it clears, buy one Flux seat and capture the board.** The intent, the
    gates and the cost model are already here; capture is the only step that
