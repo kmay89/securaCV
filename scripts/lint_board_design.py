@@ -42,6 +42,16 @@ BOARDS = REPO / "boards"
 
 LADDER = {"idea", "prototype", "confirmed", "shipping"}
 
+# A netlist node naming an MCU GPIO: "U1.IO42". Anchored and digit-bounded so
+# it cannot match a neighboring refdes ("U10.IO4") or a pin whose name merely
+# starts with IO.
+IO_NODE_RE = re.compile(r"^(?P<ref>[A-Za-z0-9_-]+)\.IO(?P<gpio>\d+)$")
+
+# The part whose pins the pin_map is about. Derived from this category rather
+# than assumed to be "U1", so a board that names its MCU anything else still
+# gets its GPIO cross-check.
+MCU_CATEGORY = "MCU Module"
+
 # Virtual designators: real nodes on the board that are not standalone parts.
 # Kept explicit so a typo'd refdes can't hide behind a permissive rule.
 VIRTUAL_REFS = {"R-DIV"}
@@ -116,6 +126,17 @@ def lint_board(design_path: Path, failures: list) -> None:
     # Connector-ish refs appear in nets with pin names; that is fine. What is
     # not fine is a ref nobody declared.
     all_pins = {**pin_map, **design.get("pin_map_unenforced", {})}
+
+    mcu_refs = [
+        p["ref"] for p in design.get("parts", []) if p.get("category") == MCU_CATEGORY
+    ]
+    if len(mcu_refs) != 1:
+        fail(
+            f"expected exactly one part with category {MCU_CATEGORY!r} to anchor "
+            f"the GPIO cross-check, found {len(mcu_refs)}: {mcu_refs or 'none'}"
+        )
+    mcu_ref = mcu_refs[0] if len(mcu_refs) == 1 else None
+
     seen_nets = set()
     # REF.PIN -> the net that already claimed it. One physical pin cannot sit
     # on two named nets: either they are the same net and one name is a lie, or
@@ -169,10 +190,17 @@ def lint_board(design_path: Path, failures: list) -> None:
                     continue
                 gpio = all_pins[sig]["gpio"]
                 # The MCU node must name the same GPIO the pin map fixes.
-                mcu = [n for n in nodes if n.startswith("U1.IO")]
-                for node in mcu:
-                    got = int(node.split(".IO", 1)[1])
-                    if got != gpio:
+                # Parsed structurally (REF + ".IO" + digits, anchored) against
+                # the MCU refdes derived from the parts list — not a substring
+                # test on a hardcoded "U1.IO". Two reasons: a prefix test also
+                # matches "U10.IO4" and silently skips the check on a board
+                # whose MCU is not literally U1, and CodeQL reads the bare
+                # literal as a hostname because ".IO" is a TLD.
+                for node in nodes:
+                    m = IO_NODE_RE.match(node)
+                    if not m or m.group("ref") != mcu_ref:
+                        continue
+                    if int(m.group("gpio")) != gpio:
                         fail(
                             f"net {name} wires {node} but signal {sig!r} is "
                             f"GPIO {gpio} — the netlist and the pin map "
