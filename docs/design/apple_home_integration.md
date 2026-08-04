@@ -268,13 +268,12 @@ Assistant's own `homekit` integration projects entities into Apple Home. Our
 binary_sensors today (connectivity, tamper, problem classes). Two
 deliverables make this lane real:
 
-- **A0 — a worked recipe doc** in [`docs/integrations/`](../README.md), in
-  the style of
-  [`home-assistant-frigate-mqtt.md`](../integrations/home-assistant-frigate-mqtt.md):
-  the HA HomeKit Bridge include-list, plus template binary_sensors
-  (`device_class: motion` / `occupancy`) derived from securacv MQTT events
-  for the sensors the integration doesn't yet publish natively. Works with
-  zero new code in this repo.
+- **A0 — a worked recipe doc**, shipped:
+  [`apple-home-homekit-bridge.md`](../integrations/apple-home-homekit-bridge.md) —
+  the HA HomeKit Bridge include-list, a template occupancy binary_sensor for
+  what the integration doesn't yet publish natively, the three redundant
+  notification lanes, and the un-paced caveat decision #8 requires it to
+  state. Zero new code in this repo.
 - **A1 — native motion/occupancy binary_sensors** in
   `custom_components/securacv`, fed by the events/presence topics it already
   subscribes to, so the recipe sheds its template section. Dictionary-checked
@@ -551,7 +550,7 @@ per-lane defaults, which is what #8 now asks.
 | Phase | Depends on | Deliverable | State |
 |---|---|---|---|
 | **P0** | — | The projection core: closed signal vocabulary + the cover-traffic pacer, dictionary-governed and linter-gated (`src/bridge/homekit.rs`, `bridge-homekit`) | **built** — 26 tests, incl. the Invariant III properties |
-| **A0** | P0 | HA HomeKit Bridge worked recipe (`docs/integrations/`), template sensors included | open — docs only, works with zero new code (un-paced; see decision #8) |
+| **A0** | P0 | HA HomeKit Bridge worked recipe (`docs/integrations/`), template sensors included | **shipped** — [`apple-home-homekit-bridge.md`](../integrations/apple-home-homekit-bridge.md) (un-paced; see decision #8) |
 | **A1** | A0 | native motion/occupancy binary_sensors in `custom_components/securacv` | open |
 | **A2** | P0 | app as shepherd + concierge + Doctor card; per-signal consent | **partly built** — `HomeKitBridge.swift` rewritten honestly (vocabulary mirror, `HomeKitStanding` + Doctor notes, per-signal consent, tamper refusal); the UI that renders it is open |
 | **B1** | P0 · decision #1 | first accessory lane on top of P0: a HAP server in witnessd **or** `FEATURE_HOMEKIT` on one verified board, measured budget first | open |
