@@ -504,9 +504,9 @@
   {
    "id": "s3-hallway-stick-case",
    "name": "S3 hallway stick case",
-   "for": "Waveshare ESP32-S3-LCD-1.47 (the USB-A STICK, not the C6 header board). The hallway nightlight body: plugs into a wall adapter, the 172x320 glass faces the corridor, the WS2812 washes the wall through a window in the back. Screwless — four cantilever beams cut into the bezel wall, sized by strain (ε printed at render, PETG budget 1.8%), with ASYMMETRIC return angles: steep at the plug end so it never lets go, shallow at the far end so a thumb pops it for the microSD. The plug end is the whole design problem: the opening is a RECTANGLE (series-A is not a stadium — that is USB-C), the wall is thin and relieved so a recessed receptacle clears it, an assert fails the render if under 11 mm of insertion length survives, and the drop buttress reaches INWARD (outward would eat the very length it protects). The RGB does not fire backwards — Waveshare's \"clear acrylic sandwich panel\" is the tell, the LED glows out the edge gap between the LCD module and the PCB — so the light gets a seam along the side walls at exactly that band (asserted to land inside it) rather than a hole in the back, which frees the back for the mark. Black PETG + one yellow accent",
+   "for": "Waveshare ESP32-S3-LCD-1.47 (the USB-A STICK, not the C6 header board). The hallway nightlight body: plugs into a wall adapter, the 172x320 glass faces the corridor, and the WS2812 leaves through a lit white seam down both long walls. Screwless — four cantilever beams cut into the bezel wall, sized by strain (ε printed at render, PETG budget 1.8%), with ASYMMETRIC return angles: steep at the plug end so it never lets go, shallow at the far end so a thumb pops it for the microSD. The plug end is the whole design problem: the opening is a RECTANGLE (series-A is not a stadium — that is USB-C), the wall is thin and relieved so a recessed receptacle clears it, an assert fails the render if under 11 mm of insertion length survives, and the drop buttress reaches INWARD (outward would eat the very length it protects). The RGB does not fire backwards — Waveshare's \"clear acrylic sandwich panel\" is the tell, the LED glows out the edge gap between the LCD module and the PCB — so the light gets a seam along the side walls at exactly that band rather than a hole in the back, which frees the back for the mark. The seam is filled with unfilled white PETG, a light pipe rather than a slot, and its x span is derived from the cavity face and asserted: the first version stopped 0.65 mm short and would have shipped a light pipe with no light in it. The side elevation reads 1 mm black / 3 mm white / black. Ties are hidden ribs in the inner 1.2 mm of the wall, so the white line is unbroken and each side presses in as ONE strip. No vents — the case is 8.2 mm of measured stack in a 9.2 mm shell, and the thumb scoop to the USB opening is the airway. Black PETG, yellow mark, white band",
    "status": "in-development",
-   "note": "screwless snap, thumb-release, 2 filaments",
+   "note": "screwless snap, thumb-release, 3 filaments, `gen_3mf.py stick`",
    "device": null,
    "preview": "preview_dev_s3_147.png",
    "parts": [],
@@ -6094,8 +6094,10 @@
         "light",
         "all",
         "exploded",
+        "palette",
         "fil_body",
         "fil_accent",
+        "fil_light",
         "fit_section"
        ]
       }
@@ -6146,9 +6148,14 @@
        "comment": "LCD module outline, short"
       },
       {
+       "name": "stack_total",
+       "default": "8.2",
+       "comment": "MEASURED — glass front to board back"
+      },
+      {
        "name": "back_stack",
-       "default": "4.6",
-       "comment": "MEASURE"
+       "default": "stack_total - lcd_rise - pcb_t",
+       "comment": "derived, not guessed"
       }
      ]
     },
@@ -6197,7 +6204,7 @@
       },
       {
        "name": "usb_relief",
-       "default": "1.0"
+       "default": "0.5"
       }
      ]
     },
@@ -6320,23 +6327,38 @@
        "default": "true"
       },
       {
+       "name": "light_band",
+       "default": "true"
+      },
+      {
+       "name": "band_clear",
+       "default": "0.10",
+       "comment": "per-face clearance; 0 for a co-printed band"
+      },
+      {
        "name": "seam_h",
-       "default": "1.3",
-       "comment": "slot height — a LINE, not a window"
+       "default": "3.0",
+       "comment": "band thickness — the white in the 1 / 3 / black stack"
       },
       {
        "name": "seam_dz",
-       "default": "1.1",
-       "comment": "slot bottom, up from the glass front (inside the gap)"
+       "default": "0.0",
+       "comment": "band starts level with the glass front, i.e. directly"
       },
       {
        "name": "seam_webs",
        "default": "3",
-       "comment": "structural webs breaking each side's slot. The seam runs"
+       "comment": "HIDDEN ribs tying the bezel face to its walls across the"
       },
       {
        "name": "seam_web_w",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "rib width along the seam"
+      },
+      {
+       "name": "seam_web_d",
+       "default": "1.2",
+       "comment": "how far into the 2.1 mm wall a rib reaches, leaving the"
       }
      ]
     },
@@ -6350,8 +6372,7 @@
       },
       {
        "name": "mark_h",
-       "default": "10.5",
-       "comment": "the BIRD's height; the wordmark scales off it"
+       "default": "8.5"
       },
       {
        "name": "mark_rib",
@@ -6364,45 +6385,13 @@
        "comment": "deboss depth; the accent inlay fills it flush"
       },
       {
+       "name": "mark_dx",
+       "default": "-0.10"
+      },
+      {
        "name": "mark_dy",
        "default": "0",
        "comment": "CENTERED. It used to sit high to clear the LED window;"
-      }
-     ]
-    },
-    {
-     "name": "Vents",
-     "note": "the brand egg, and a real thermal need",
-     "params": [
-      {
-       "name": "opt_vent",
-       "default": "true"
-      },
-      {
-       "name": "vent_rows",
-       "default": "3"
-      },
-      {
-       "name": "vent_cols",
-       "default": "2"
-      },
-      {
-       "name": "vent_l",
-       "default": "4.0",
-       "comment": "egg long axis"
-      },
-      {
-       "name": "vent_w",
-       "default": "2.2",
-       "comment": "egg short axis"
-      },
-      {
-       "name": "vent_pitch_y",
-       "default": "5.0"
-      },
-      {
-       "name": "vent_center_y",
-       "default": "-2.95"
       }
      ]
     },
@@ -6417,12 +6406,12 @@
       },
       {
        "name": "snap_beam_l",
-       "default": "8.0",
+       "default": "6.8",
        "comment": "free beam LENGTH — see the strain note below"
       },
       {
        "name": "snap_beam_t",
-       "default": "1.0",
+       "default": "0.85",
        "comment": "beam thickness (the wall is locally thinned to this)"
       },
       {
@@ -6493,7 +6482,7 @@
       },
       {
        "name": "face_t",
-       "default": "1.8",
+       "default": "1.0",
        "comment": "bezel face over the glass border"
       },
       {
@@ -6679,16 +6668,43 @@
        "default": "-yc/2 + led_from_far"
       },
       {
+       "name": "mark_adv",
+       "default": "0.875"
+      },
+      {
+       "name": "mark_word_chars",
+       "default": "8",
+       "comment": "\"securaCV\""
+      },
+      {
+       "name": "mark_w",
+       "default": "max(mark_bird_w(mark_h), mark_word_w(mark_h))"
+      },
+      {
        "name": "usb_r",
        "default": "0.35"
       },
       {
-       "name": "vent_span_lo",
-       "default": "vent_center_y - (vent_rows-1)/2*vent_pitch_y - vent_w/2"
+       "name": "seam_y_lo",
+       "default": "snap_y_free + snap_half + 1.0"
       },
       {
-       "name": "vent_span_hi",
-       "default": "vent_center_y + (vent_rows-1)/2*vent_pitch_y + vent_w/2"
+       "name": "seam_y_hi",
+       "default": "snap_y_lock - snap_half - 1.0"
+      },
+      {
+       "name": "seam_x_in",
+       "default": "xc/2 - 1.0",
+       "comment": "starts inside the cavity: no lip, no curtain"
+      },
+      {
+       "name": "seam_x_out",
+       "default": "xo/2 + ear_bump + 1.0",
+       "comment": "clears the outer face, button ear included"
+      },
+      {
+       "name": "band_on",
+       "default": "light_seam && light_band"
       },
       {
        "name": "hook_ped",
@@ -7642,9 +7658,39 @@
        "comment": "the small tracked company line beneath"
       },
       {
+       "name": "brand_maker",
+       "default": "ERRERlabs",
+       "comment": "the maker row, under the hero line"
+      },
+      {
        "name": "brand_edge",
        "default": "SecuraCV Canary",
        "comment": "debossed on the visible bottom edge"
+      },
+      {
+       "name": "brand_row_maker",
+       "default": "1.6",
+       "comment": "maker line, closest to the rim"
+      },
+      {
+       "name": "brand_row_hero",
+       "default": "5.4",
+       "comment": "brand_back"
+      },
+      {
+       "name": "brand_row_sub",
+       "default": "10.6",
+       "comment": "brand_sub"
+      },
+      {
+       "name": "brand_sz",
+       "default": "4.0",
+       "comment": "hero + company cap height"
+      },
+      {
+       "name": "brand_maker_sz",
+       "default": "2.8",
+       "comment": "the maker row is a footnote, not a third shout"
       }
      ]
     },
@@ -7688,59 +7734,41 @@
       },
       {
        "name": "bird_h",
-       "default": "33.0",
-       "comment": "the bird's height, and the module the whole lockup is"
+       "default": "32.0",
+       "comment": "mark height. The clear middle runs about x ±21 between"
       },
       {
-       "name": "mark_dx",
-       "default": "0.5",
-       "comment": "group center x — the middle of the clear column, not"
+       "name": "bird_dx",
+       "default": "0.0",
+       "comment": "centered: the lockup is below it, the rating block is"
       },
       {
        "name": "bird_dy",
-       "default": "12.0",
-       "comment": "the BIRD's center y. The words hang below it, so the"
-      },
-      {
-       "name": "word_sz",
        "default": "6.0",
-       "comment": "CANARY — the hero line, half again the old 4.0"
+       "comment": "upper-right, the QR left — this is the one empty field"
       },
       {
-       "name": "sub_sz",
-       "default": "3.6",
-       "comment": "SECURACV — the tracked company line above it"
-      },
-      {
-       "name": "word_gap",
-       "default": "4.2",
-       "comment": "bird's baseline → the company line"
-      },
-      {
-       "name": "line_gap",
-       "default": "2.6",
-       "comment": "company line → hero line"
+       "name": "bird_fill",
+       "default": "true",
+       "comment": "solid silhouette (brand art) vs. outline strokes"
       },
       {
        "name": "bird_rib",
-       "default": "1.2",
+       "default": "2.0",
        "comment": "stroke width. WIDER than the coupon's 0.7 test rib on"
       },
       {
-       "name": "mark_sub_y",
-       "default": "bird_dy - bird_h/2 - word_gap - sub_sz/2"
+       "name": "bird_half_w",
+       "default": "back_bird ? mark_w_mm(bird_h, bird_rib)/2 : 0"
       },
       {
-       "name": "mark_word_y",
-       "default": "mark_sub_y - sub_sz/2 - line_gap - word_sz/2"
+       "name": "bird_half_h",
+       "default": "back_bird ? mark_h_mm(bird_h, bird_rib)/2 : 0"
       },
       {
-       "name": "mark_top_y",
-       "default": "bird_dy + bird_h/2"
-      },
-      {
-       "name": "mark_bot_y",
-       "default": "mark_word_y - word_sz/2"
+       "name": "bird_vent_gap",
+       "default": "1.6",
+       "comment": "plate left between the mark and the nearest egg. The"
       },
       {
        "name": "sd_dx",
@@ -7861,10 +7889,6 @@
        "name": "pal_accent_rgb",
        "default": "[0.976, 0.659, 0.000]",
        "comment": "RAL 1003 — #F9A800"
-      },
-      {
-       "name": "body_is_dark",
-       "default": "pal_lum(pal_body_rgb) < pal_lum(pal_ink_rgb)"
       },
       {
        "name": "ink_groups",
@@ -8013,6 +8037,10 @@
       {
        "name": "rating_stamp",
        "default": "true"
+      },
+      {
+       "name": "rating_lines",
+       "default": "[\"5V = 2A\", \"USB-C INPUT\", \"INDOOR USE ONLY\"]"
       }
      ]
     },
@@ -8569,8 +8597,8 @@
       },
       {
        "name": "rating_sz",
-       "default": "2.6",
-       "comment": "finer than the port labels — a spec block, not a sign"
+       "default": "3.3",
+       "comment": "sized to its gap — see the width asserts below"
       },
       {
        "name": "rating_lh",
@@ -8586,8 +8614,8 @@
       },
       {
        "name": "rating_dx",
-       "default": "42.0",
-       "comment": "centered in the clear gap: rail moat ends ~23, the"
+       "default": "39.0",
+       "comment": "centered in the clear gap: with the adhesive rails off"
       },
       {
        "name": "rating_dy",
@@ -8647,10 +8675,6 @@
        "default": "(edge_vent_n - 1)/2*edge_vent_pitch + edge_vent_w/2"
       },
       {
-       "name": "bird_half_w",
-       "default": "back_bird ? mark_half_w : 0"
-      },
-      {
        "name": "stamp_half",
        "default": "stamp_size*0.9 + stamp_size*0.39 + 0.6",
        "comment": "text block half-height"
@@ -8663,6 +8687,14 @@
       {
        "name": "port_scoop_ftp",
        "default": "sqrt(port_scoop_r*port_scoop_r - port_scoop_d*port_scoop_d)"
+      },
+      {
+       "name": "brand_maker_y",
+       "default": "-(fr_yi/2 - brand_row_maker)"
+      },
+      {
+       "name": "brand_hero_y",
+       "default": "-(fr_yi/2 - brand_row_hero)"
       },
       {
        "name": "ink_live",

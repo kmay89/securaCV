@@ -59,6 +59,18 @@ build() {
   generate
   # -derivedDataPath is pinned (git-ignored build/) so the embed proof below
   # can find the products without guessing at DerivedData hashes.
+  #
+  # CODE_SIGNING_ALLOWED=NO and SECURACV_NO_CLOUDKIT are ONE decision, so they
+  # are made on one line. A build without signing carries no entitlements, and
+  # an app with no iCloud entitlement cannot construct a CKContainer — it does
+  # not fail, it dies: `CKContainer.default()` raises an ObjC exception,
+  # `CKContainer(identifier:)` traps in __allocating_init. Neither is catchable
+  # from Swift, so the app aborted at launch and every test "failed" for
+  # reasons that had nothing to do with iCloud (RELEASE_LESSONS (ab)).
+  #
+  # The flag compiles those paths out of exactly the builds that could never
+  # run them. Signed builds — device, TestFlight, App Store — never see it, so
+  # this cannot mask a real CloudKit fault where CloudKit actually works.
   xcodebuild \
     -project SecuraCV.xcodeproj \
     -scheme SecuraCV \
@@ -68,6 +80,7 @@ build() {
     SECURACV_BUILD_REV="${SECURACV_BUILD_REV:-dev}" \
     SECURACV_FW_TRAIN="${SECURACV_FW_TRAIN:-0.x}" \
     CODE_SIGNING_ALLOWED=NO \
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS='$(inherited) SECURACV_NO_CLOUDKIT' \
     clean build test
 
   # Prove the watch app actually EMBEDDED (Embed Watch Content), not merely

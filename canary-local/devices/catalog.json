@@ -858,7 +858,7 @@
     {
      "id": "s3-hallway-stick-case",
      "name": "S3 hallway stick case",
-     "for": "Waveshare ESP32-S3-LCD-1.47 (the USB-A STICK, not the C6 header board). The hallway nightlight body: plugs into a wall adapter, the 172x320 glass faces the corridor, the WS2812 washes the wall through a window in the back. Screwless — four cantilever beams cut into the bezel wall, sized by strain (ε printed at render, PETG budget 1.8%), with ASYMMETRIC return angles: steep at the plug end so it never lets go, shallow at the far end so a thumb pops it for the microSD. The plug end is the whole design problem: the opening is a RECTANGLE (series-A is not a stadium — that is USB-C), the wall is thin and relieved so a recessed receptacle clears it, an assert fails the render if under 11 mm of insertion length survives, and the drop buttress reaches INWARD (outward would eat the very length it protects). The RGB does not fire backwards — Waveshare's \"clear acrylic sandwich panel\" is the tell, the LED glows out the edge gap between the LCD module and the PCB — so the light gets a seam along the side walls at exactly that band (asserted to land inside it) rather than a hole in the back, which frees the back for the mark. Black PETG + one yellow accent",
+     "for": "Waveshare ESP32-S3-LCD-1.47 (the USB-A STICK, not the C6 header board). The hallway nightlight body: plugs into a wall adapter, the 172x320 glass faces the corridor, and the WS2812 leaves through a lit white seam down both long walls. Screwless — four cantilever beams cut into the bezel wall, sized by strain (ε printed at render, PETG budget 1.8%), with ASYMMETRIC return angles: steep at the plug end so it never lets go, shallow at the far end so a thumb pops it for the microSD. The plug end is the whole design problem: the opening is a RECTANGLE (series-A is not a stadium — that is USB-C), the wall is thin and relieved so a recessed receptacle clears it, an assert fails the render if under 11 mm of insertion length survives, and the drop buttress reaches INWARD (outward would eat the very length it protects). The RGB does not fire backwards — Waveshare's \"clear acrylic sandwich panel\" is the tell, the LED glows out the edge gap between the LCD module and the PCB — so the light gets a seam along the side walls at exactly that band rather than a hole in the back, which frees the back for the mark. The seam is filled with unfilled white PETG, a light pipe rather than a slot, and its x span is derived from the cavity face and asserted: the first version stopped 0.65 mm short and would have shipped a light pipe with no light in it. The side elevation reads 1 mm black / 3 mm white / black. Ties are hidden ribs in the inner 1.2 mm of the wall, so the white line is unbroken and each side presses in as ONE strip. No vents — the case is 8.2 mm of measured stack in a 9.2 mm shell, and the thumb scoop to the USB opening is the airway. Black PETG, yellow mark, white band",
      "status": "in-development",
      "device": "_universal",
      "selects": {},
@@ -871,8 +871,10 @@
     "back",
     "light",
     "exploded",
+    "palette",
     "fil_body",
     "fil_accent",
+    "fil_light",
     "fit_section"
    ],
    "options": [
@@ -917,23 +919,23 @@
      "default": true
     },
     {
+     "id": "light_band",
+     "type": "bool",
+     "label": "light_band",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "mark_show",
      "type": "bool",
      "label": "mark_show",
      "consequence": "",
      "audience": "user",
      "default": true
-    },
-    {
-     "id": "opt_vent",
-     "type": "bool",
-     "label": "opt_vent",
-     "consequence": "",
-     "audience": "user",
-     "default": true
     }
    ],
-   "engineering_param_count": 107,
+   "engineering_param_count": 111,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -1098,6 +1100,14 @@
      "id": "back_bird",
      "type": "bool",
      "label": "back_bird",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "bird_fill",
+     "type": "bool",
+     "label": "solid silhouette (brand art) vs. outline strokes",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1288,7 +1298,7 @@
      "default": "none"
     }
    ],
-   "engineering_param_count": 262,
+   "engineering_param_count": 264,
    "alternatives": [
     "dash_display"
    ],
@@ -1296,8 +1306,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 30,
-    "user_options": 30,
+    "options": 31,
+    "user_options": 31,
     "variant_axes": 1
    }
   },

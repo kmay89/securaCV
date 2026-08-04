@@ -268,7 +268,30 @@ export function planFigure(figure, opts = {}) {
   );
   if (solids.length === 0) throw new Error(`iso: figure "${figure.id}" has no solids at detail=${detail}`);
 
-  // Fit: project every solid's ring at both z levels, take the screen bbox.
+  // The contact shadow: the footprint at z=0, flattened. Grounds the object
+  // the way the fleet's product shots do. Computed BEFORE the fit, and folded
+  // into it — a shadow laid out afterwards can fall outside the viewBox and be
+  // clipped, which is what happened to the round display (a point at y=293.8
+  // in a 256 box). Everything drawn has to be inside the frame it declares.
+  const wantsShadow = !ghost && detail !== 'glyph' && figure.ground !== false;
+  let shadowRing = null;
+  if (wantsShadow) {
+    let fx0 = Infinity; let fy0 = Infinity; let fx1 = -Infinity; let fy1 = -Infinity;
+    for (const s of solids) {
+      for (const [x, y] of cornersOf(s)) {
+        if (x < fx0) fx0 = x;
+        if (x > fx1) fx1 = x;
+        if (y < fy0) fy0 = y;
+        if (y > fy1) fy1 = y;
+      }
+    }
+    const pad2 = Math.max(fx1 - fx0, fy1 - fy0) * 0.06;
+    shadowRing = ringRect(fx0 - pad2, fy0 - pad2, (fx1 - fx0) + 2 * pad2,
+      (fy1 - fy0) + 2 * pad2, Math.min(fx1 - fx0, fy1 - fy0) * 0.35 + pad2);
+  }
+
+  // Fit: project every solid's ring at both z levels, plus the shadow, and
+  // take the screen bbox.
   let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
   const see = (x, y, z) => {
     const [px, py] = project(x, y, z);
@@ -278,6 +301,7 @@ export function planFigure(figure, opts = {}) {
     if (py > maxY) maxY = py;
   };
   for (const s of solids) for (const [x, y, z] of cornersOf(s)) see(x, y, z);
+  if (shadowRing) for (const [x, y] of shadowRing) see(x, y, 0);
 
   const span = Math.max(maxX - minX, maxY - minY, 1e-6);
   const sc = (size - 2 * pad) / span;
@@ -291,23 +315,10 @@ export function planFigure(figure, opts = {}) {
     return [px * sc + ox, py * sc + oy];
   });
 
-  // Contact shadow: the footprint at z=0, flattened. Grounds the object the
-  // way the fleet's product shots do. Skipped for ghosts (nothing is there
-  // to cast one) and for glyphs (it muddies at 20 px).
-  if (!ghost && detail !== 'glyph' && figure.ground !== false) {
-    let fx0 = Infinity; let fy0 = Infinity; let fx1 = -Infinity; let fy1 = -Infinity;
-    for (const s of solids) {
-      for (const [x, y] of cornersOf(s)) {
-        if (x < fx0) fx0 = x;
-        if (x > fx1) fx1 = x;
-        if (y < fy0) fy0 = y;
-        if (y > fy1) fy1 = y;
-      }
-    }
-    const pad2 = Math.max(fx1 - fx0, fy1 - fy0) * 0.06;
-    const foot = ringRect(fx0 - pad2, fy0 - pad2, (fx1 - fx0) + 2 * pad2,
-      (fy1 - fy0) + 2 * pad2, Math.min(fx1 - fx0, fy1 - fy0) * 0.35 + pad2);
-    ops.push({ kind: 'shadow', pts: flat(foot.map(([x, y]) => [x, y, 0])) });
+  // Skipped for ghosts (nothing is there to cast one) and for glyphs (it
+  // muddies at 20 px) — see wantsShadow above.
+  if (shadowRing) {
+    ops.push({ kind: 'shadow', pts: flat(shadowRing.map(([x, y]) => [x, y, 0])) });
   }
 
   // Painter's algorithm across solids, nearest last. Ties break on id so the

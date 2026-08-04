@@ -29,6 +29,9 @@ struct SecuraCVApp: App {
                     #if canImport(UIKit)
                     PushDelegate.store = store
                     #endif
+                    // The intents' landing pad (Siri / Shortcuts / Action
+                    // button) — same pattern, same timing as the push one.
+                    AppIntentBridge.store = store
                     store.onAppear()
                 }
         }

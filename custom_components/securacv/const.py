@@ -39,6 +39,10 @@ TOPIC_MESH = "mesh"
 TOPIC_CHIRP = "chirp"
 TOPIC_TRANSPORT = "transport"
 TOPIC_PRESENCE = "presence"
+# The retained per-variant snapshot. This — not `presence` — is where the
+# firmware actually publishes presence: canary-sense's topics.h builds
+# `securacv/<id>/state`, and its own HA discovery reads `value_json.presence`.
+TOPIC_STATE = "state"
 
 # =============================================================================
 # Transport Types - Multi-path resilience
@@ -503,3 +507,60 @@ def event_type_metadata(event_type: str | None) -> dict[str, str]:
     if meta is None:
         return {"label": event_type, "icon": DEFAULT_EVENT_ICON}
     return meta
+
+
+# =============================================================================
+# Apple Home projection — the egress vocabulary
+# =============================================================================
+# Which HomeKit signals an event asserts. This is a MIRROR of
+# `signals_for_event` in src/bridge/homekit.rs, and both are generated from
+# `homekit_projection.event_signals` in spec/witness_dictionary.json;
+# scripts/lint_dictionary_sync.py fails CI on any drift between the three.
+#
+# Deliberately partial. An event with no honest HAP counterpart maps to an
+# empty tuple rather than being forced into a sensor that would misdescribe
+# it, and the two empties are empty for different reasons:
+#
+#   - AcousticImpulseInZone: HAP has no acoustic sensor, and publishing a
+#     sound as "motion" would be a false statement about someone's home.
+#   - ContactStateChange: it reports that a contact CHANGED, not what it
+#     changed to. HAP's contact characteristic is a state, so deriving one
+#     from the other would show a door as open every time it was closed.
+#
+# Keys are the kernel's CamelCase enum names, as they arrive on MQTT.
+HOMEKIT_EVENT_SIGNALS = {
+    "BoundaryCrossingObjectLarge": ("motion",),
+    "BoundaryCrossingObjectSmall": ("motion",),
+    "ObjectRemovedFromZone": ("motion",),
+    "VehiclePresenceAfterHours": ("motion",),
+    "VehicleArrivalDeparture": ("motion",),
+    "PresenceInRestrictedZone": ("occupancy",),
+    "TamperDetected": ("tamper",),
+    "AcousticImpulseInZone": (),
+    "ContactStateChange": (),
+}
+
+# How long a motion signal stays asserted after the event that raised it.
+# Matches the kernel's default hold window (10 ticks x 1 s), which in turn
+# matches the ~10 s dwell commodity HomeKit motion sensors use — so an
+# automation written against a Canary behaves like one written against a
+# sensor the user already owns.
+HOMEKIT_MOTION_HOLD_SECONDS = 10
+
+
+def homekit_signals_for_event(event_type: str) -> tuple[str, ...]:
+    """Return the HomeKit signals an event asserts, or () for none.
+
+    Accepts the kernel's CamelCase enum names and the snake_case form, so a
+    payload from either producer resolves. An unrecognized event asserts
+    NOTHING rather than falling back to motion — inventing a claim about
+    someone's home is worse than staying quiet.
+    """
+    if not event_type:
+        return ()
+    key = event_type.strip()
+    if key in HOMEKIT_EVENT_SIGNALS:
+        return HOMEKIT_EVENT_SIGNALS[key]
+    # snake_case -> CamelCase, so "boundary_crossing_object_large" resolves.
+    camel = "".join(part[:1].upper() + part[1:] for part in key.split("_"))
+    return HOMEKIT_EVENT_SIGNALS.get(camel, ())

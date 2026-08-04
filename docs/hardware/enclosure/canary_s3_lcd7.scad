@@ -658,7 +658,29 @@ brand_back = "CANARY";   // the back lockup's HERO line — centered,
                                  // family is one Display line, the panel
                                  // size is a spec, not a name)
 brand_sub  = "SECURACV";         // the small tracked company line beneath
+// THE MAKER LINE, and where it moved from. It used to be the fourth row of
+// the RATING BLOCK — filed with "5V = 2A" and "INDOOR USE ONLY" in the
+// upper-right corner, at rating type size, which said the company name was a
+// specification of the power supply. It belongs to the lockup: product name,
+// company, maker. So it is the bottom row of the lockup now, in the lockup's
+// column, and the rating block is three lines of electrical facts with nothing
+// else mixed into them.
+//
+// The YEAR still comes from the build stamp rather than being typed — see
+// lcd7_stamp_year() at the rating block for why that is not a style choice.
+brand_maker = "ERRERlabs";       // the maker row, under the hero line
 brand_edge = "SecuraCV Canary";               // debossed on the visible bottom edge
+// The lockup's rows, measured UP from the plate's inner bottom edge. The two
+// existing rows do NOT move: the company line already sits 0.8 mm under the
+// grille's bottom egg row, so lifting the stack to make room below would have
+// cost a row of vents. The band BELOW the hero line was empty instead — 5.6 mm
+// of plate between the letters and the rim chamfer, which is where the maker
+// row goes. Both clearances are asserted rather than eyeballed.
+brand_row_maker = 1.6;   // maker line, closest to the rim
+brand_row_hero  = 5.4;   // brand_back
+brand_row_sub   = 10.6;  // brand_sub
+brand_sz        = 4.0;   // hero + company cap height
+brand_maker_sz  = 2.8;   // the maker row is a footnote, not a third shout
 
 /* [Frame — adhesive wall rails] */
 // Adhesive WALL mounting — the no-screws alternative to the keyholes. Two
@@ -712,45 +734,42 @@ adh_mark_w  = 0.8;   // outline moat width
 // (brand words, rating block, QR) is a deboss for the same reason, and they
 // all share one floor depth so a single tool change serves the lot.
 back_bird   = true;
-// ONE LOCKUP, not a bird and two stray words. The wordmark used to be pinned
-// to the bottom edge at y -45/-50 with the bird floating 50 mm above it, and
-// nothing in fr_keepouts reserved the type's rows — so the grille laid eggs
-// straight through SECURACV and CANARY. Two defects, one cause: the mark was
-// never modeled as a group, so it could neither be composed nor protected.
-// It is a group now; mark_span() below is its bounding box, and that box is
-// what the vent field is told to avoid.
+bird_h      = 32.0;  // mark height. The clear middle runs about x ±21 between
+                     // the QR's quiet zone and the SD mouth, so this is sized
+                     // to that gap rather than to the plate
+bird_dx     = 0.0;   // centered: the lockup is below it, the rating block is
+bird_dy     = 6.0;   // upper-right, the QR left — this is the one empty field
+// SOLID, not an outline. The mark used to be drawn as a 1.2 mm line and it
+// read as a wire diagram of a bird from arm's length — the one graphic on
+// this plate that is supposed to be recognizable across a room was the
+// faintest thing on it. `fill` hands mark_bird() its silhouette instead, with
+// the eye and the wing knocked back out in the BODY color, which is the brand
+// art's own construction: a solid accent bird with a dark eye.
 //
-// The center column is the plate's one genuinely empty field, and it is
-// bounded, so the sizes here are not free: the QR's quiet zone ends at
-// x -22.4 and the SD mouth's keepout starts at x +23.3, which is why the
-// group centers just right of zero and why bird_h has an assert under it.
-bird_h      = 33.0;  // the bird's height, and the module the whole lockup is
-                     // proportioned from
-mark_dx     = 0.5;   // group center x — the middle of the clear column, not
-                     // the middle of the plate; those differ by half the
-                     // difference between the QR's reach and the SD's
-bird_dy     = 12.0;  // the BIRD's center y. The words hang below it, so the
-                     // group reads top-down: mark, company, product
-word_sz     = 6.0;   // CANARY — the hero line, half again the old 4.0
-sub_sz      = 3.6;   // SECURACV — the tracked company line above it
-word_gap    = 4.2;   // bird's baseline → the company line
-line_gap    = 2.6;   // company line → hero line
-bird_rib    = 1.2;   // stroke width. WIDER than the coupon's 0.7 test rib on
+// It also fixes the accent's economics rather than breaking them. PRINT
+// COLORS argues the accent should be small and deliberate, and a solid mark
+// is more accent area than an outlined one — but it is the SAME footprint
+// (the outline's bounding shape), in the same 1.2 mm skin band, on the same
+// tool change. It costs no extra swap and no extra layer; it just stops
+// spending the swap on something nobody can see.
+bird_fill   = true;  // solid silhouette (brand art) vs. outline strokes
+bird_rib    = 2.0;   // stroke width. WIDER than the coupon's 0.7 test rib on
                      // purpose: this is a deboss read by shadow, not an emboss
                      // read by highlight, and a 0.7 groove at 0.42 line width
-                     // fills in with the skin above it
-// Row centers, derived once and used by BOTH the drawing code and the keepout
-// — the whole point of the rework is that those two cannot disagree.
-mark_sub_y  = bird_dy - bird_h/2 - word_gap - sub_sz/2;
-mark_word_y = mark_sub_y - sub_sz/2 - line_gap - word_sz/2;
-// Half-extents of the whole group. The bird is the widest row (0.62 is the
-// library's drawn half-span as a fraction of its height); the type is checked
-// against it rather than assumed narrower.
-mark_half_w = max(bird_h*0.62,
-                  0.392*sub_sz*len(brand_sub)*1.6,
-                  0.392*word_sz*len(brand_back)*1.15);
-mark_top_y  = bird_dy + bird_h/2;
-mark_bot_y  = mark_word_y - word_sz/2;
+                     // fills in with the skin above it. In fill mode it is
+                     // the OUTLINE weight and the width of the knocked-out
+                     // eye/wing lines, so it still has to clear the nozzle.
+// The mark's real footprint, straight off the library, stroke caps included.
+// Hoisted here because the grille keepouts are assembled long before the
+// branding asserts run, and both have to mean the same box.
+bird_half_w = back_bird ? mark_w_mm(bird_h, bird_rib)/2 : 0;
+bird_half_h = back_bird ? mark_h_mm(bird_h, bird_rib)/2 : 0;
+bird_vent_gap = 1.6;  // plate left between the mark and the nearest egg. The
+                      // old 0.6 was measured to the keepout box, and with the
+                      // box oversized the visible gap was whatever the tail
+                      // happened to leave — about 1 mm on the right and less
+                      // under the feet. Now the box IS the bird, so this
+                      // number is the gap you actually see.
 // microSD access — the card slides DOWNWARD out of its push-push socket (the
 // purple-rectangle zone on the Rev1.2 board photo: right side, below center,
 // in-use back view). The opening in the BACK PLATE covers the socket, the
@@ -833,14 +852,22 @@ label_font  = "Liberation Sans:style=Bold";
 // ════════════════════════════════════════════════════════════════════════════
 //
 //  THE PALETTE
-//    BODY   white   the case itself — every surface you touch
-//    INK    black   the front bezel, every back-plate word, the QR's modules
-//    ACCENT yellow  the SECURACV company line, and nothing else
+//    BODY   black   the case itself — every surface you touch
+//    INK    white   the help QR's modules
+//    ACCENT yellow  the MARK: the bird, and the three-row lockup under it
+//                   (SECURACV / CANARY / ERRERlabs)
 //
-//  The accent is deliberately ONE word. A yellow case is a toy; a white case
-//  with one yellow word is a product. Spending the third filament on the
-//  smallest element on the part is the whole idea — it reads as intent rather
-//  than decoration, and it costs a few tool changes on three layers.
+//  The accent is deliberately the BRAND and nothing else. A yellow case is a
+//  toy; a black case with a yellow mark on it is a product. Everything
+//  functional — BOOT/RESET, SD, the rating block — stays a plain deboss in
+//  the body color, so the one thing wearing a second filament is the one
+//  thing that is supposed to be looked at. It costs a few tool changes on
+//  three layers.
+//
+//  (This block used to say "the SECURACV company line, and nothing else",
+//  which stopped being true when the bird and the product name joined the
+//  accent group, and was two edits stale by the time anyone read it. The
+//  authority is `accent_groups` below; this paragraph describes it.)
 //
 //  WHY THIS IS CHEAP (the part that matters on a P2S)
 //  Every AMS tool change purges filament, so the cost of a multi-color print
@@ -956,8 +983,21 @@ pal_accent_rgb = [0.976, 0.659, 0.000];   // RAL 1003 — #F9A800
 // black, and the QR's polarity has to follow that or the symbol stops
 // scanning. Rec. 709 luma; the comparison is all that matters, not the units.
 function pal_lum(c) = 0.2126*c[0] + 0.7152*c[1] + 0.0722*c[2];
-body_is_dark = pal_lum(pal_body_rgb) < pal_lum(pal_ink_rgb);
+// (There was a body_is_dark here, body against INK, and the QR's polarity was
+//  computed from it. It is gone rather than left sitting unused: with the ink
+//  list empty it compared the body to a spool this palette does not load, and
+//  a value that names the wrong pair is how the descriptions drifted in the
+//  first place. Polarity now comes from qr_mod_rgb/qr_field_rgb below — the
+//  two colors that actually meet.)
 
+// Which back-plate groups take which filament. Edit these, not the geometry.
+// A group in NEITHER list is still cut — it just gets no inlay, so it reads as
+// a plain deboss in the body color. That is the "emboss, no color" setting,
+// and it is the default for "text" (BOOT/RESET/SD and the rating block) and
+// "moat" (the adhesive-rail outlines): on a black case those were two white
+// rectangles and four lines of white type competing with the one word that is
+// supposed to carry the accent.
+//
 // TWO COLORS, not three. Everything that is not the case is the accent: the
 // bird, the lockup, and the QR. The ink list is deliberately EMPTY — a white
 // QR next to a yellow mark made the back plate a three-way argument, and the
@@ -1016,13 +1056,9 @@ qr_dark_on_light = pal_lum(qr_mod_rgb) < pal_lum(qr_field_rgb);
 // existing front-ring swap band exactly, so the AMS build and the
 // single-extruder build put their color boundary in the same place.
 bezel_ink_t = 0.6;
-// Which back-plate groups take which filament. Edit these, not the geometry.
-// A group in NEITHER list is still cut — it just gets no inlay, so it reads as
-// a plain deboss in the body color. That is the "emboss, no color" setting,
-// and it is the default for "text" (BOOT/RESET/SD and the rating block) and
-// "moat" (the adhesive-rail outlines): on a black case those were two white
-// rectangles and four lines of white type competing with the one word that is
-// supposed to carry the accent.
+// (ink_groups / accent_groups — the back-plate group lists — live UP at the
+//  palette, above the QR block: OpenSCAD hoists function definitions but not
+//  variable assignments, and the QR's derived polarity has to read them.)
 // The two surfaces that are NOT back-plate groups and so cannot be moved by
 // the lists above — each picks a filament by name instead. "body" means the
 // surface is simply not partitioned: no inlay is added and nothing is
@@ -1115,8 +1151,10 @@ rating_stamp = true;
 // characters. Bump the design, the molded year follows.
 function lcd7_stamp_year() = let (r = lcd7_stamp_rev())
     str(r[0], r[1], r[2], r[3]);
-rating_lines = ["5V = 2A", "USB-C INPUT", "INDOOR USE ONLY",
-                str("ERRERlabs ", lcd7_stamp_year())];
+// Electrical facts only. The maker line lives with the lockup now — see
+// brand_maker — so this block is what a person checks before plugging the
+// thing in, and every row of it answers that question.
+rating_lines = ["5V = 2A", "USB-C INPUT", "INDOOR USE ONLY"];
 
 /* [TPU fitments (grommet, plugs, SD cover)] */
 // TPU fit system — these two do for the TPU parts what tol_slide/tol_hole do
@@ -1587,14 +1625,25 @@ assert(!mount_keyholes || min([for (sx = [1,-1], sy = [1,-1], p = fr_bosses)
 // cost (their keepouts are the one deliberate vent trade in this case).
 sd_teth_y = sd_dy + sd_l/2 + sd_lip + sd_teth_gap;   // tether anchor hole center
 // the rating stamp's block, and the smooth keepout it claims from the grille
-rating_sz = 2.6;    // finer than the port labels — a spec block, not a sign
+// SIZE. This block is the one graphic on the case a person reads for a
+// reason — what voltage, what connector, indoors or out — and at 2.6 mm it
+// was the smallest type on the plate, below the BOOT/RESET labels, debossed
+// in the body color on a black part. It is now the size the gap can actually
+// carry, which is not a free choice: the block is boxed between the mark on
+// its left and the top-right keyhole's reach, and rating_w grows with the
+// longest line, so the asserts below are what set this ceiling. 3.3 with the
+// block re-centered in that gap is what fits.
+rating_sz = 3.3;    // sized to its gap — see the width asserts below
 rating_lh = rating_sz*1.45;
 // width from the LONGEST line, the same way the edge words size themselves,
 // so editing rating_lines can never silently overrun the gap it sits in
 rating_w  = 2*0.392*rating_sz*max([for (l = rating_lines) len(l)]);
 rating_h  = rating_lh*len(rating_lines) + 2;
-rating_dx = 42.0;   // centered in the clear gap: rail moat ends ~23, the
-                    // keyhole's reach starts ~61
+rating_dx = 39.0;   // centered in the clear gap: with the adhesive rails off
+                    // its left neighbor is the MARK (ends ~16), and the
+                    // keyhole's reach starts ~61. It sat at 42 — centered in
+                    // the gap the rails leave, which is the narrower gap and
+                    // not the one this build has
 rating_dy = 22.0;   // NOT the lower band: that row belongs to the brand line,
                     // and the first render had the two sets of glyphs sitting
                     // on top of each other. This is the clear field right of
@@ -1629,14 +1678,19 @@ fr_keep_base = concat(
     // a face with a module cell, which CGAL rightly calls non-manifold
     qr_back ? [vent_clear(qr_back_dx, qr_back_dy,
                           qr_back_reach, qr_back_reach, 0.4)] : [],
-    // The WHOLE lockup wants unbroken plate under it — bird AND both words.
-    // A vent egg laid across any of it would share a face with a deboss floor,
-    // which CGAL calls non-manifold, and would read as a hole punched through
-    // the logo. This used to reserve the bird alone while the type sat
-    // unprotected at the plate's bottom edge, which is exactly where the
-    // grille put eggs through SECURACV and CANARY. One box, whole group.
-    back_bird ? [vent_clear(mark_dx, (mark_top_y + mark_bot_y)/2,
-                            mark_half_w, (mark_top_y - mark_bot_y)/2)] : [],
+    // the mark wants unbroken plate under it — a vent egg laid across the
+    // bird would share a face with a deboss floor, which CGAL calls
+    // non-manifold, and would read as a hole punched through the logo
+    // Half-extents from the LIBRARY's own bbox, not from a ratio typed here.
+    // 0.62*bird_h and bird_h/2 were the old drawing's proportions frozen into
+    // this file: they described a bird 39.7 mm wide, so the grille was kept
+    // out of a box the mark did not fill on the right — while the eggs it did
+    // not keep out sat a millimeter off the tail. Ask the mark instead and
+    // the keepout follows the drawing whenever the drawing moves.
+    // (vent_clear's pad is bird_vent_gap here rather than the 0.6 default:
+    //  this box IS the bird, so that number is the gap you actually see.)
+    back_bird ? [vent_clear(bird_dx, bird_dy, bird_half_w, bird_half_h,
+                            bird_vent_gap)] : [],
     // the rating stamp wants unbroken plate under it, same as any deboss
     rating_stamp ? [vent_clear(rating_dx, rating_dy,
                                rating_w/2, rating_h/2)] : [],
@@ -1830,9 +1884,8 @@ assert(vent_tip > 0.15 && vent_tip < 0.85,
 // the left, the SD mouth on the right, and the lockup below. Derived from the
 // same numbers those features use, so moving any of them moves this bound too
 // rather than leaving a stale constant behind.
-// The GROUP's half-width, not the bird's — the type is measured too, so a
-// wordmark grown past the bird trips this instead of silently overhanging.
-bird_half_w = back_bird ? mark_half_w : 0;
+// (bird_half_w / bird_half_h are hoisted to the mark's knob block — the
+// grille keepouts need them, and they are assembled well above here.)
 // THE MARK AND THE RAILS WANT THE SAME PLATE. That is not a coincidence to
 // guard against — it is the whole reason the bird could move in: the rails
 // were the only clear full-height columns, so the middle they vacated is
@@ -1851,19 +1904,19 @@ assert(!(back_bird && adh_rails),
            "back_bird=false for a Command-strip build, or adh_rails=false ",
            "(the default) to keep the mark and reclaim 64 grille slots."));
 assert(!back_bird
-       || (mark_dx - bird_half_w > qr_back_dx + qr_back_reach + 2
-           && mark_dx + bird_half_w < sd_dx - sd_w/2 - 2),
-       str("frame: the Canary lockup (", 2*bird_half_w, " mm wide at mark_dx ",
-           mark_dx, ") runs into the QR quiet zone (right edge ",
+       || (bird_dx - bird_half_w > qr_back_dx + qr_back_reach + 2
+           && bird_dx + bird_half_w < sd_dx - sd_w/2 - 2),
+       str("frame: the Canary mark (", 2*bird_half_w, " mm wide at bird_dx ",
+           bird_dx, ") runs into the QR quiet zone (right edge ",
            qr_back_dx + qr_back_reach, ") or the SD mouth (left edge ",
-           sd_dx - sd_w/2, ") — shrink bird_h/word_sz or move mark_dx"));
-// The lockup must also stay ON the plate: it is ~50 mm tall now, not 32, and
-// the rows are derived, so a bird_dy that used to be fine can walk the hero
-// line off the bottom edge without anything else complaining.
-assert(!back_bird || (mark_top_y < fr_yi/2 - 3 && mark_bot_y > -(fr_yi/2 - 3)),
-       str("frame: the Canary lockup spans y ", mark_bot_y, "..", mark_top_y,
-           ", outside the plate's usable ", -(fr_yi/2 - 3), "..", fr_yi/2 - 3,
-           " — lower bird_dy or shrink the group"));
+           sd_dx - sd_w/2, ") — shrink bird_h or move bird_dx"));
+// ...and it must stay ON the plate in y, which the bbox now answers directly.
+assert(!back_bird
+       || (bird_dy + bird_half_h < fr_yi/2 - 3
+           && bird_dy - bird_half_h > -(fr_yi/2 - 3)),
+       str("frame: the Canary mark spans y ", bird_dy - bird_half_h, "..",
+           bird_dy + bird_half_h, ", outside the plate's usable ",
+           -(fr_yi/2 - 3), "..", fr_yi/2 - 3, " — move bird_dy or shrink bird_h"));
 stamp_half = stamp_size*0.9 + stamp_size*0.39 + 0.6;   // text block half-height
 assert(!stamp_show || (stamp_depth < back_t - 1.5
        && stamp_dy - stamp_half
@@ -2047,15 +2100,54 @@ assert(!port_labels || !usb_port
        "frame: the bottom port label runs off the wall's flat span — shorten port_lbl_a");
 assert(!rating_stamp || rating_dy - rating_h/2 > -(fr_yi/2 - 6) + 5,
        "frame: rating stamp overlaps the brand line's row — raise rating_dy");
-assert(!rating_stamp || rating_dx - rating_w/2
-       > adh_rail_dx + adh_rail_w/2 + adh_mark_w + 2,
-       "frame: rating stamp overlaps an adhesive rail moat");
+// The block's LEFT neighbor depends on the build, and asserting against the
+// wrong one costs real type size. With the rails on it is the outer moat;
+// with them off (the default) there is no moat on the plate at all and the
+// nearest thing is the mark. The old line asserted the moat unconditionally,
+// so a case with no rails was still laying out around where they would have
+// been — 5 mm of gap reserved for geometry that is not cut.
+rating_left_lim = adh_rails ? adh_rail_dx + adh_rail_w/2 + adh_mark_w + 2
+                            : bird_dx + bird_half_w + 2;
+assert(!rating_stamp || rating_dx - rating_w/2 > rating_left_lim,
+       str("frame: the rating stamp (left edge ", rating_dx - rating_w/2,
+           ") runs into ", adh_rails ? "an adhesive rail moat" : "the Canary mark",
+           " at ", rating_left_lim, " — shrink rating_sz or move rating_dx"));
 assert(!rating_stamp || !mount_keyholes
        || rating_dx + rating_w/2 < khm_dx - khm_plen - khm_slide_w/2 - khm_pad_w - 2,
        "frame: rating stamp reaches a keyhole");
 assert(!rating_stamp || norm([rating_dx - sd_dx, rating_dy - sd_dy])
        > rating_h/2 + sd_l/2 + 4,
        "frame: rating stamp crowds the SD window");
+// THE LOCKUP'S BOTTOM ROW. The maker line went in under the hero line, into
+// the only band of the plate that was empty — and "empty" there is 5.6 mm
+// between the hero line's descender box and the point where the back rim's
+// chamfer starts rolling the surface away. Both ends are checked, because a
+// row that hangs off the chamfer prints as a smeared half-deboss and looks
+// like a slicing fault rather than like a layout mistake.
+//
+// Type extents, not cap heights: text(valign="center") centers the FONT box,
+// which runs about -0.21 to +0.73 of the size around the baseline. Using cap
+// height here would under-report the gap by a third of a line.
+function _lbl_half(size) = size*0.47;
+brand_maker_y = -(fr_yi/2 - brand_row_maker);
+brand_hero_y  = -(fr_yi/2 - brand_row_hero);
+assert(brand_maker_y + _lbl_half(brand_maker_sz)
+       < brand_hero_y - _lbl_half(brand_sz) - 0.4,
+       str("frame: the maker line (top at ",
+           brand_maker_y + _lbl_half(brand_maker_sz), ") runs into \"",
+           brand_back, "\" (bottom at ", brand_hero_y - _lbl_half(brand_sz),
+           ") — lower brand_row_maker or shrink brand_maker_sz"));
+assert(brand_maker_y - _lbl_half(brand_maker_sz) > -(fr_yo/2 - frame_rim) + 0.8,
+       str("frame: the maker line (bottom at ",
+           brand_maker_y - _lbl_half(brand_maker_sz),
+           ") reaches the back rim's chamfer at ", -(fr_yo/2 - frame_rim),
+           " — raise brand_row_maker"));
+// ...and it must stay in the plate's own column, clear of the SD mouth's side.
+// The hero line above it is the wider of the two and already passes this, but
+// the maker row carries a YEAR that grows by a character on a CalVer bump.
+assert(0.392*brand_maker_sz*(len(brand_maker) + 6) < abs(sd_dx) - sd_w/2 - 2
+       || abs(brand_maker_y - sd_dy) > sd_l/2 + 4,
+       "frame: the maker line reaches the SD window's column — shrink brand_maker_sz");
 assert(!qr_back || !mount_keyholes
        || abs(qr_back_dx) + qr_back_reach
           < khm_dx - (mount_portrait ? khm_plen + khm_slide_w/2 + khm_pad_w : 10) - 2,
@@ -2548,8 +2640,9 @@ module frame_lbl(x, y, s, size = 4.0, spacing = 1.0) {
 //
 //  `ink` selects a color group, so regrouping the palette is a one-word edit
 //  here rather than a hunt through frame():
-//    "text"  BOOT / RESET / SD, the product name, the rating block
-//    "mark"  the SECURACV company line — the accent word
+//    "text"  BOOT / RESET / SD and the rating block — the functional labels
+//    "mark"  the lockup: SECURACV / CANARY / the maker row
+//    "bird"  the house mark itself
 //    "qr"    the help symbol's modules
 //    "moat"  the adhesive rails' outline hairlines
 //    "all"   every group (what frame() cuts)
@@ -2584,29 +2677,40 @@ module back_graphics(ink = "all") {
                       rating_lines[i], rating_sz);
     }
     if (all || ink == "bird")
-        // The bird, at the TOP of the lockup. mark_bird() does the design-unit
-        // bookkeeping — the scale off the library's own span, and the shift by
-        // its bbox center — so mark_dx/bird_dy place the MARK's middle rather
-        // than the paths' arbitrary origin.
+        // The mark, in the clear middle the adhesive rails used to own.
+        // mark_bird() does the design-unit bookkeeping — the scale off the
+        // library's own span, and the shift by its bbox center — so bird_dx/dy
+        // place the MARK's middle rather than the paths' arbitrary origin.
         if (back_bird)
-            translate([mark_dx, bird_dy, fr_depth - label_back_depth])
+            translate([bird_dx, bird_dy, fr_depth - label_back_depth])
                 linear_extrude(label_back_depth + 0.1)
-                    mark_bird(bird_h, bird_rib);
+                    mark_bird(bird_h, bird_rib, bird_fill);
     if (all || ink == "mark") {
-        // THE LOCKUP — both lines, and the only thing on the plate that takes
-        // the accent. The hero product name used to live in "text" alongside
+        // THE LOCKUP — all three rows, and with the bird the only thing on
+        // the plate that takes the accent. The maker row joined it when it
+        // left the rating block: product, company, maker are one mark and
+        // therefore one filament, the same argument that moved the hero line
+        // in. The hero product name used to live in "text" alongside
         // BOOT/RESET/SD; that was fine when "text" was ink and the accent was
         // one word, but it meant CANARY and SECURACV could not be colored
         // together without dragging the functional labels along with them.
         // They are one mark, so they are one group.
         //
-        // Both lines hang under the bird on the derived rows, so the group
-        // moves as one: change bird_dy and the type follows it. They used to
-        // be pinned to the plate's bottom edge, 50 mm from the bird they
-        // belong to and squarely inside the vent field.
-        frame_lbl(mark_dx, mark_sub_y, brand_sub, size = sub_sz, spacing = 1.6);
-        frame_lbl(mark_dx, mark_word_y, brand_back, size = word_sz,
-                  spacing = 1.15);
+        // The company line sits beside the SD recess (mouth bottom -47.2), so
+        // it must stay inside x ±23.2 — it renders ±17.
+        frame_lbl(0, -(fr_yi/2 - brand_row_sub), brand_sub,
+                  size = brand_sz, spacing = 1.6);
+        // The product name is DEAD CENTER on the plate, BELOW the SD recess
+        // where only the nail scoop is left — at this row the scoop spans
+        // x 32.3..39.0 and the line renders ±28, so ~4 of daylight. Grow it
+        // and it walks into the SD: this layout is preview-verified.
+        frame_lbl(0, -(fr_yi/2 - brand_row_hero), brand_back,
+                  size = brand_sz, spacing = 1.15);
+        // ...and the maker, closing the stack. Narrow and un-tracked so it
+        // reads as the footnote it is rather than as a third brand line.
+        frame_lbl(0, -(fr_yi/2 - brand_row_maker),
+                  str(brand_maker, " ", lcd7_stamp_year()),
+                  size = brand_maker_sz, spacing = 1.0);
     }
     if (all || ink == "qr")
         // In back-view coords, no mirror: viewed from the back, +x is right.
@@ -2681,27 +2785,25 @@ module back_inlay(groups) {
 coupon_x0 = -40;              // just past the lockup's center
 coupon_x1 = fr_xo/2 + 1;      // ...out through the corner
 // Tall enough for BOTH jobs, and the lockup's reach is DERIVED rather than
-// typed. It was a flat 34, which worked only while the wordmark was pinned to
-// the plate's bottom edge: moving the lockup into the middle of the plate left
-// the band containing no accent geometry at all, and the color coupon — whose
-// entire job is to rehearse the palette — silently became a single-color part.
-// gen_3mf.py said so out loud ("EMPTY: the palette puts no accent on this
+// typed. It was a flat 34, which is right only for as long as the wordmark
+// stays pinned to the plate's bottom edge: lift the lockup and the band ends
+// up containing no accent geometry at all, and the color coupon — whose entire
+// job is to rehearse the palette — silently becomes a single-color part.
+// gen_3mf.py does say so out loud ("EMPTY: the palette puts no accent on this
 // object"), which is that warning earning its place, but the coupon should not
-// have needed a human to notice. Now the band grows to reach the wordmark, so
-// moving the mark moves the coupon with it.
+// need a human to notice. So the band asks the lockup where its top row is.
 //
-// THIS IS NOT FREE: 34 -> 52.8 mm, a ~55% taller coupon, because the lockup is
-// mid-plate now instead of at the bottom edge where 34 happened to reach it.
-// The QR's note below rejects exactly this trade at ~40 mm and spends a
-// separate plaque instead, and that remains the better answer if the mark ever
-// moves further up — the band's virtue is answering registration AND corner
-// fit in ONE print, and past some height a second small plaque is cheaper than
-// the plate it drags along. At 19 mm it is still worth keeping as one part.
+// At stock dims the CORNER's requirement still wins — the arc needs 34 and the
+// lockup only needs ~18.5 — so this changes no geometry today. It is here for
+// the day the rows move: a lockup lifted mid-plate would want ~53, a ~55%
+// taller coupon, and at that point the QR's note below applies — past some
+// height a second small plaque is cheaper than the plate a taller band drags
+// along. The band's virtue is answering registration AND corner fit in ONE
+// print, and that trade is worth re-reading before growing it.
 coupon_h_corner = 34;         // the corner arc's own requirement, unchanged
-coupon_h  = back_bird
-    ? max(coupon_h_corner,
-          (mark_sub_y + sub_sz/2 + 3) - (-fr_yo/2 - 1))
-    : coupon_h_corner;
+coupon_h  = max(coupon_h_corner,
+                (-(fr_yi/2 - brand_row_sub) + _lbl_half(brand_sz) + 3)
+                - (-fr_yo/2 - 1));
 module coupon_clip() {
     translate([coupon_x0, -fr_yo/2 - 1, -1])
         cube([coupon_x1 - coupon_x0, coupon_h, fr_depth + 2]);

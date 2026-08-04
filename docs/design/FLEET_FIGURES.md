@@ -12,22 +12,18 @@ without showing you the nozzle. The mental load of mapping a name onto a
 shape is real, it is paid by every user on every screen, and it is
 avoidable — once — by making the picture part of the data.
 
-> **Status — read this before quoting the rest.** The system is real and
-> CI-gated: the generator, the ledger, the 44 committed figures, and the
-> generated binding for each surface are all in the tree. But *generated* is
-> not the same as *consumed*, and only one surface consumes them today:
+> **Status.** The system is real and CI-gated: the generator, the ledger, the
+> 47 committed figures, and each surface's generated binding are in the tree.
+> What consumes them today:
 >
-> | Surface | Binding | Consumed by a UI? |
+> | Surface | Binding | Drawn in a UI? |
 > |---|---|---|
-> | Web | `canary-local/figures/*.svg` + the ledger | **Yes** — the website's `/figures` catalog |
-> | Firmware | `firmware/common/core/fleet_figures.h` | Not yet — no translation unit includes it |
-> | iPhone / Watch / widgets | `ios/Shared/FleetFigures.swift` | Not yet — no view calls `FleetFigureView` |
+> | Web | the SVGs + the ledger | **Yes** — the website's `/figures` catalog |
+> | iPhone · Watch · widgets | `ios/Shared/FleetFigures.swift` | **Yes** — the witness roster and the pairing rows |
+> | Firmware | `firmware/common/core/fleet_figures.h` | Not yet — the lookup is wired and each board names itself, but no screen draws it |
 > | Emulator | the same SVGs | Not yet |
 >
-> So the glass, the wrist and the phone still draw their existing generic
-> visuals. Wiring each one is a UI change in that surface's own render path,
-> deliberately not bundled here — see §10. §8 lists what is *never* coming.
-
+> §10 is what wiring the remaining two involves.
 ---
 
 ## 1. What was wrong
@@ -127,6 +123,12 @@ outline in two axes, extruded along the third:
 Solids are painted back to front by their center's depth along the view axis.
 Within one convex solid the visible faces tile its silhouette exactly, so
 they need no sorting among themselves.
+
+**The frame is a promise.** Everything a figure draws — including the contact
+shadow, which is a footprint scaled outward from the object — has to sit
+inside the viewBox it declares, so the fit is computed over the shadow too. It
+wasn't at first, and a round display's shadow reached y = 293.8 in a 256 box:
+clipped on every surface that drew it.
 
 **The coplanar rule.** Never author two different-material faces on the same
 plane. The `.glb` generators learned this the hard way (z-fighting on the
@@ -237,35 +239,74 @@ user the wrong physical device, precisely the confusion the figures exist to
 remove. **A wrong picture is worse than no picture.** Unresolved types are
 listed with reasons in the ledger's `device_types.unmapped`.
 
-### The open gap: firmware does not say what product it is
+### The exact lookup: `figure_for_hardware()`
 
-There is **no exact per-build lookup**, and it cannot be added by reading the
-tree. A second review pass found the reason, and it is worth stating plainly
-because it is the unfinished half of "each product self-identifies":
+Every build env compiles against exactly one `boards/<id>/pins` header, and
+that include is **load-bearing** — wrong pins, dead device. So it is already a
+true, machine-readable statement of which physical board a build is for.
 
-- **A config directory is not one board.** Twelve build environments resolve
-  to `canary-display/dash`, and `canary-display-dash-b` among them is a
-  different panel. `canary-vision/default` is shared by four envs spanning the
-  DevKitM, the XIAO C3 and the XIAO S3.
-- **A build environment is not a clean signal either.**
-  `canary-display-watch`, `-watch-debug` and `-watch-modes` are one board with
-  feature flags; `-dash` and `-dash-b` are two boards. Telling those apart
-  means reading the name suffix and guessing — the same inference that caused
-  the nightstand bug, wearing a different hat.
-- **`board =` cannot separate them.** `dash-b` `extends` `dash` and inherits
-  its board line.
+An earlier pass concluded firmware had no such declaration and would need one
+added. It was wrong: the declaration was sitting in the build flags, one level
+below where that pass was looking. Reading something the build already depends
+on beats adding a parallel field that can drift — and it explains why the
+config directory was the wrong key all along:
 
-So the fix is not a smarter derivation — it is a **declaration**: a
-`CANARY_PRODUCT_ID` per build env, which the exact table would then key on.
-That is a firmware change across ~39 environment blocks and belongs in its own
-review. Until it lands, the coarse device-type table is the honest ceiling,
-and the ledger records the gap as data (`device_types.exact_lookup`) rather
-than leaving a silent hole.
+| build env | config directory | pins header | panel |
+|---|---|---|---|
+| `canary-display-dash` | `canary-display/dash` | `waveshare-esp32s3-lcd43` | 4.3″ |
+| `canary-display-dash-b` | `canary-display/dash` | `waveshare-esp32s3-lcd43b` | 4.3B |
+| `canary-display-dash-mic` | `canary-display/dash` | `waveshare-esp32s3-lcd43c` | 4.3C |
+
+Three panels, one config directory between them. The pins column separates
+them cleanly.
+
+Each mapped board then names itself, in that same header, next to the pins it
+travels with:
+
+```c
+#define CANARY_FIGURE_HARDWARE "xiao-esp32c6-mr60"
+```
+
+```cpp
+if (const auto* me = canary::figures::my_figure()) { … }   // what I look like
+```
+
+**Exact about the board is not exact about the product.** One board can carry
+several products: the 7″ glass is compiled by both `canary-display-dash7` and
+`canary-display-nightstand7`, so a Nightstand 7 asking `my_figure()` gets a
+figure whose *shape* is right and whose *title* says "Canary Dash 7". Rows
+where that happens set `shared_across_products` and the ledger lists what the
+board `serves`; to **name** the product, ask the device type, not the board.
+A figure is a picture first.
+
+The generator refuses to emit a figure for a board whose pins header is
+missing that line, so the id and the pins can never drift apart. Boards we
+can't draw yet (the 4.3B and 4.3C housings, the 1.47″ boards, the Sentinel
+line) are listed in the ledger's `hardware.unmapped` with the builds they
+cover — a gap you can query, not a silent `nullptr`.
+
+> One candidate that looked right and wasn't: `SECURACV_OTA_PRODUCT`. It's an
+> **update channel**, and it deliberately groups `dash-b` with `dash`. Keying
+> figures on it would have reproduced the exact bug.
 
 **Phone and wrist — `ios/Shared/FleetFigures.swift`.** The same polygons as
 flat data a `Canvas` paints at any size. Not an asset catalog and not an SVG
 parser. Shared by `SecuraCV`, `SecuraCVWatch` and both widget bundles, so
 none of them can drift from each other or from the web.
+
+Beside it sits `FleetFigureBridge.swift` — hand-written, and the only piece of
+judgment on the Apple side: which `DeviceType` maps to which figure, and
+`DeviceFigureIcon`, which draws the figure at whatever size a row gives it and
+falls back to the type's SF Symbol when it can't honestly draw the thing
+itself. `.display` is deliberately nil: that enum case covers four different
+products, so a figure there would be a coin flip. Same rule as the firmware
+table, kept by a test named after it.
+
+```swift
+DeviceFigureIcon(witness.deviceType, size: 30)
+```
+
+The witness roster and the pairing rows draw it today.
 
 ```swift
 if let fig = FleetFigure.forDeviceType(witness.deviceType) {
@@ -336,18 +377,16 @@ with a note saying what the sketch is based on, and sits at `confirmed`.
 The bindings exist; making a surface *use* one is a change in that surface's
 own render path, and belongs in that surface's own review:
 
-- **The glass.** `#include "canary/figures/fleet_figures.h"` in the display
-  firmware, then draw the figure beside a witness in the roll call. Costs
-  flash for the table (~5 rows of `constexpr` pointers) plus whatever the
-  renderer needs; a device that can't draw SVG can still use the *ids* to pick
-  a bitmap.
-- **The phone and the wrist.** `FleetFigureView(fig)` in the fleet glance
-  views. The data is already shared by both widget bundles.
+- **The glass.** `#include "core/fleet_figures.h"` in the display firmware,
+  then draw the figure beside a witness in the roll call. The lookup is wired
+  and every mapped board already names itself, so what's left is the renderer:
+  a device that can't draw polygons can still use the *ids* to pick a bitmap.
+  Costs flash for the two tables (~14 rows of `constexpr` pointers).
 - **The emulator.** It already loads from `canary-local/`; the SVGs sit next
   to what it reads.
 
-Each wants its own before/after and its own visual check, which is why none of
-them rides along with the generator.
+Each wants its own before/after and its own visual check, which is why neither
+rides along with the generator. The Apple side is **done** — see §7.
 
 ---
 

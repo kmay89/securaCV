@@ -23,6 +23,23 @@ class Preferences {
   // The exact getter/putter shapes the display tree uses.
   uint8_t getUChar(const char* key, uint8_t def = 0);
   size_t putUChar(const char* key, uint8_t v);
+  // ESP32 stores a bool as a one-byte NVS value, so these are the UChar pair
+  // with the cast folded in — not a separate storage shape. A value written as
+  // a bool reads back as a UChar and vice versa, exactly as the real API
+  // behaves. The display tree's Hallway switch (care/hallway.cpp) uses this
+  // spelling.
+  //
+  // Inline here (not out-of-line beside getUChar) because two translation
+  // units implement this class for two link targets, and an alias belongs in
+  // neither of them twice. Keep this pair in ONE place for the same reason —
+  // it was briefly declared twice, once here and once down beside the ULong
+  // aliases, after two branches added it independently and a merge kept both.
+  // Two identical inline definitions in one class is a hard compile error
+  // ("class member cannot be redeclared"), not a duplicate the compiler folds.
+  bool getBool(const char* key, bool def = false) {
+    return getUChar(key, def ? 1 : 0) != 0;
+  }
+  size_t putBool(const char* key, bool v) { return putUChar(key, v ? 1 : 0); }
   uint16_t getUShort(const char* key, uint16_t def = 0);
   size_t putUShort(const char* key, uint16_t v);
   int16_t getShort(const char* key, int16_t def = 0);
@@ -33,22 +50,6 @@ class Preferences {
   // millisecond tuning values; keep it an alias of the same 32-bit NVS type.
   uint32_t getULong(const char* key, uint32_t def = 0) { return getUInt(key, def); }
   size_t putULong(const char* key, uint32_t v) { return putUInt(key, v); }
-  // ESP32 stores a bool as a one-byte NVS value, so this is an alias rather
-  // than a separate store — a value written as a bool reads back as a UChar
-  // and vice versa, exactly as the real API behaves. The display tree's
-  // Hallway switch (care/hallway.cpp) uses this spelling. Inline, like the
-  // ULong pair above and for the same reason: TWO translation units
-  // (src/emu_support.cpp and vision/vision_core_shim.cpp) implement this class
-  // for two link targets, and an alias belongs in neither of them twice.
-  //
-  // There was briefly a SECOND, byte-identical copy of this pair up beside
-  // getUChar: #1426 and #1435 each added it independently to fix the same
-  // Hallway link error, and main merged both. Neither PR's CI could see it —
-  // each was green alone and the redeclaration only existed in the merge.
-  bool getBool(const char* key, bool def = false) {
-    return getUChar(key, def ? 1 : 0) != 0;
-  }
-  size_t putBool(const char* key, bool v) { return putUChar(key, v ? 1 : 0); }
   int32_t getInt(const char* key, int32_t def = 0);
   size_t putInt(const char* key, int32_t v);
   int64_t getLong64(const char* key, int64_t def = 0);

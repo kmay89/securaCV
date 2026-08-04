@@ -274,8 +274,16 @@ jobs:
       - name: Build canary-wap (arduino-cli)
         run: |
           # PSRAM=opi is REQUIRED (build_config.h #errors on S3 without it).
+          # CDCOnBoot=cdc is REQUIRED TOO, and for a reason that is invisible
+          # from here: on an S3 the console goes to UART0 without it, so a board
+          # flashed from THIS path had a silent serial monitor while the same
+          # product from firmware-release.yml printed fine. The two paths are
+          # meant to be interchangeable — same sketch, same manifest builder —
+          # so their FQBNs have to match. scripts/lint_usb_console.py compares
+          # every publishing workflow's board strings against common.ini now,
+          # which is what finally caught this one.
           arduino-cli compile \
-            --fqbn esp32:esp32:XIAO_ESP32S3:PSRAM=opi \
+            --fqbn esp32:esp32:XIAO_ESP32S3:PSRAM=opi,CDCOnBoot=cdc \
             --libraries firmware/common \
             --output-dir /tmp/wap-build \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
@@ -321,7 +329,7 @@ jobs:
           mkdir -p "${LIBDIR}"
           cp lv_conf.h "${LIBDIR}/lv_conf.h"
           if ! arduino-cli compile \
-              --fqbn 'esp32:esp32:XIAO_ESP32S3:PSRAM=opi,CDCOnBoot=default,USBMode=hwcdc' \
+              --fqbn 'esp32:esp32:XIAO_ESP32S3:PSRAM=opi,CDCOnBoot=cdc,USBMode=hwcdc' \
               --output-dir /tmp/display-watch-build canary_display.ino; then
             echo "::warning::canary-display 'watch' build failed — absent from the browser flasher this rebuild"
           fi
@@ -352,7 +360,7 @@ jobs:
           LIBDIR="$(arduino-cli config get directories.user)/libraries"
           mkdir -p "${LIBDIR}"
           cp lv_conf.h "${LIBDIR}/lv_conf.h"
-          DASH_FQBN='esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=huge_app,CDCOnBoot=default,USBMode=hwcdc'
+          DASH_FQBN='esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=huge_app,CDCOnBoot=cdc,USBMode=hwcdc'
           for P in dash modes; do
             # `modes` needs its gear flags staged: the board is the plain dash
             # 4.3B, and CD_GEARS_COMPILED_IDENTITY (what makes the image a

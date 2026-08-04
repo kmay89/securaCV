@@ -268,13 +268,12 @@ Assistant's own `homekit` integration projects entities into Apple Home. Our
 binary_sensors today (connectivity, tamper, problem classes). Two
 deliverables make this lane real:
 
-- **A0 — a worked recipe doc** in [`docs/integrations/`](../README.md), in
-  the style of
-  [`home-assistant-frigate-mqtt.md`](../integrations/home-assistant-frigate-mqtt.md):
-  the HA HomeKit Bridge include-list, plus template binary_sensors
-  (`device_class: motion` / `occupancy`) derived from securacv MQTT events
-  for the sensors the integration doesn't yet publish natively. Works with
-  zero new code in this repo.
+- **A0 — a worked recipe doc**, shipped:
+  [`apple-home-homekit-bridge.md`](../integrations/apple-home-homekit-bridge.md) —
+  the HA HomeKit Bridge include-list, a template occupancy binary_sensor for
+  what the integration doesn't yet publish natively, the three redundant
+  notification lanes, and the un-paced caveat decision #8 requires it to
+  state. Zero new code in this repo.
 - **A1 — native motion/occupancy binary_sensors** in
   `custom_components/securacv`, fed by the events/presence topics it already
   subscribes to, so the recipe sheds its template section. Dictionary-checked
@@ -551,10 +550,10 @@ per-lane defaults, which is what #8 now asks.
 | Phase | Depends on | Deliverable | State |
 |---|---|---|---|
 | **P0** | — | The projection core: closed signal vocabulary + the cover-traffic pacer, dictionary-governed and linter-gated (`src/bridge/homekit.rs`, `bridge-homekit`) | **built** — 26 tests, incl. the Invariant III properties |
-| **A0** | P0 | HA HomeKit Bridge worked recipe (`docs/integrations/`), template sensors included | open — docs only, works with zero new code (un-paced; see decision #8) |
-| **A1** | A0 | native motion/occupancy binary_sensors in `custom_components/securacv` | open |
+| **A0** | P0 | HA HomeKit Bridge worked recipe (`docs/integrations/`), template sensors included | **shipped** — [`apple-home-homekit-bridge.md`](../integrations/apple-home-homekit-bridge.md) (un-paced; see decision #8) |
+| **A1** | A0 | native motion/occupancy binary_sensors in `custom_components/securacv` | **built** — `SecuraCVCanaryMotionSensor` / `…OccupancySensor`, driven by `homekit_projection.event_signals`, now dictionary-governed and linter-gated across Rust + Python. The recipe's §5 template drops to a fallback for radar sources the integration does not own |
 | **A2** | P0 | app as shepherd + concierge + Doctor card; per-signal consent | **partly built** — `HomeKitBridge.swift` rewritten honestly (vocabulary mirror, `HomeKitStanding` + Doctor notes, per-signal consent, tamper refusal); the UI that renders it is open |
-| **B1** | P0 · decision #1 | first accessory lane on top of P0: a HAP server in witnessd **or** `FEATURE_HOMEKIT` on one verified board, measured budget first | open |
+| **B1** | P0 · decision #1 | first accessory lane on top of P0: a HAP server in witnessd | **built** — `src/bridge/hap/` + the `hap_bridge` binary: TLV8, SRP-6a pair setup, X25519 pair verify, the encrypted session, mDNS. Both published `hap` crates failed the FR-14 gate (one does not compile, the other cannot be resolved), so the protocol is built on primitives already in the tree |
 | **B2** | B1 | the other §3 site, if #1 says both | open |
 | **C1** | A2 | App Intents ("is the fleet OK?"), Wall home-context timeline | open |
 | **D1** | B-lane stable | Matter projection of the same table | open |
@@ -562,9 +561,12 @@ per-lane defaults, which is what #8 now asks.
 
 ## 9. Open decisions (settle before building past A1)
 
-1. **Bridge-site order.** A-only first (prove demand on hub households),
-   then witnessd-vs-firmware for the first native lane? Firmware is the
-   magic but carries the budget risk; witnessd covers the venue story.
+1. ~~**Bridge-site order.**~~ **Settled: all of them, witnessd first.** The
+   A lane (docs + native HA sensors) and the witnessd HAP server shipped
+   together, because the two answer different households and neither blocks
+   the other. Firmware (site C) remains last, and remains gated on a
+   *measured* flash/RAM budget rather than an estimate — that gate is the
+   whole reason it is not simply "next".
 2. **Commercial licensing.** Self-flashed DIY Canaries ride the
    non-commercial HAP spec exactly as Homebridge/HomeSpan users do
    ("Add Anyway" is the honest, normalized UX). *Selling pre-flashed kits*

@@ -102,12 +102,11 @@ final class AwayPush: ObservableObject {
         #if canImport(UIKit)
         UIApplication.shared.registerForRemoteNotifications()
         #endif
-        #if canImport(CloudKit)
+        #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
         // The account IS the availability check — don't gate on a flag owned
         // elsewhere, or this path inherits that flag's bugs on top of its own.
-        // Constructing the container is safe on its own: CloudContainer names
-        // it, so nothing here can hit the uncatchable-exception path that
-        // CKContainer.default() had.
+        // Whether we may construct a container at all is a different question,
+        // settled at compile time by the `#if` above (CloudContainer.swift).
         let container = CloudContainer.shared
         let status = try? await container.accountStatus()
         guard status == .available else {
@@ -136,7 +135,7 @@ final class AwayPush: ObservableObject {
     /// Turn the away path off: delete the subscription so no wake can be
     /// delivered again. Opt-out has to be as real as opt-in (§5).
     func disable() async {
-        #if canImport(CloudKit)
+        #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
         let db = CloudContainer.shared.privateCloudDatabase
         _ = try? await db.deleteSubscription(withID: Self.subscriptionID)
         #endif
@@ -144,7 +143,7 @@ final class AwayPush: ObservableObject {
         reach = .unavailable("Away alerts are off.")
     }
 
-    #if canImport(CloudKit)
+    #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
     private func saveSubscription(in db: CKDatabase) async throws {
         let subscription = CKQuerySubscription(
             recordType: Self.wakeRecordType,
@@ -179,7 +178,7 @@ final class AwayPush: ObservableObject {
     /// stall the local notification that is already reaching the person in
     /// front of us.
     func publishWake(_ wake: WakeClass) {
-        #if canImport(CloudKit)
+        #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
         // Our OWN readiness: a wake with no subscription behind it is a row
         // written into iCloud that can wake nobody.
         guard subscribed else { return }
@@ -194,7 +193,7 @@ final class AwayPush: ObservableObject {
     /// Old wakes are litter: they carry nothing, but they are still rows in
     /// the user's iCloud. Sweep anything older than a day on launch.
     func sweepOldWakes(now: Date = Date()) async {
-        #if canImport(CloudKit)
+        #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
         guard subscribed else { return }
         let db = CloudContainer.shared.privateCloudDatabase
         let cutoff = now.addingTimeInterval(-86_400) as NSDate
