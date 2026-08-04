@@ -8671,6 +8671,11 @@
        "comment": "worst-case thick pack"
       },
       {
+       "name": "soc_cut",
+       "default": "soc_win && !soc_bat_clash",
+       "comment": "what actually gets cut"
+      },
+      {
        "name": "fr_depth",
        "default": "fr_depth0 + bat_extra"
       },

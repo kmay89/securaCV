@@ -566,6 +566,14 @@ been through a lab. Its position also comes off the vendor *drawing*, not off
 calipers (±2 mm — see the `P_SOC` note in `canary_panel_lib.scad`), so measure
 the module before trusting the window to frame the text.
 
+⚠️ **A battery build can take the window away.** The bay is centered on the
+plate, and the 10000 pack (115 × 65) reaches the window's corner — a hole
+looking straight at a lithium cell, in a case designed to hang on a wall. That
+build **drops the window** (it is not an assert: a `battery` setting that
+cannot produce geometry is worse than no setting, and the echo says what was
+dropped and why). On that build the module's marking is sealed in and has to go
+on an applied label. The 3000 pack clears the window by 1.2 mm and keeps it.
+
 The 3MF assigns filament **slots**, not colors, so load them in that order or
 you will print a materially different case from the one described here.
 

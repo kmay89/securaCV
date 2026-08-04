@@ -1811,6 +1811,28 @@ ledge_z  = glass_guard + glass_edge_t + adh_t;  // ledge front face
 bat_on  = battery != "none";
 bat_l   = bat_dims[0];  bat_w = bat_dims[1];
 bat_t   = bat_dims[2] + bat_tol;               // worst-case thick pack
+
+// ── THE RADIO WINDOW vs THE BATTERY BAY ────────────────────────────────────
+// A BATTERY BUILD PUTS A LITHIUM PACK BEHIND THAT WINDOW. The bay is centered
+// on the plate and the 10000 pack is 115 x 65, which reaches the window's
+// corner; the pack lies against the plate on its rails, so the window would
+// look straight at a cell in a case whose whole point is that it hangs on a
+// wall. The 3000 pack (65 x 35) clears it — by 1.2 mm, which is why this is
+// computed rather than remembered.
+//
+// It DROPS THE WINDOW rather than asserting. An assert here reads as the
+// careful choice and is the wrong one: it makes `battery = "10000"` a
+// selection that cannot produce geometry, which is the exact failure this
+// project deleted the -7B record over — "a choice that can only fail is worse
+// than no choice", and the operator experiences it as the model breaking when
+// they changed something unrelated. Nothing is silent about it: the echo says
+// the window was dropped, says why, and says what to do instead.
+// Declared here and not up with soc_win because it needs bat_l/bat_w, and
+// OpenSCAD reads assignments in order.
+soc_bat_clash = soc_win && bat_on
+    && max(abs(soc_dx) - soc_w/2 - (bat_l/2 + bat_clr),
+           abs(soc_dy) - soc_h/2 - (bat_w/2 + bat_clr)) <= 0;
+soc_cut = soc_win && !soc_bat_clash;   // what actually gets cut
 fr_depth0 = glass_guard + glass_t + pcb_standoff + pcb_t + standoff_len
           + frame_boss_h + back_t;
 // The battery stack, front face -> plate inner face: component ceiling
@@ -1986,7 +2008,7 @@ fr_keep_fixed = concat(
     // the egg's half-extents for the same reason the card window does: the
     // cell list stores centers, and an egg centered just outside the window
     // still lays its body across the edge and reads as a chipped corner
-    soc_win ? [[soc_dx, soc_dy, soc_w/2 + vent_slot_w/2 + 1.5,
+    soc_cut ? [[soc_dx, soc_dy, soc_w/2 + vent_slot_w/2 + 1.5,
                                 soc_h/2 + vent_slot_l/2 + 1.5]] : [],
     // ...and so does the nest, which is three eggs of its own and must not
     // have the lattice's eggs land on top of it if the lattice ever returns
@@ -2647,7 +2669,7 @@ assert(!qr_back || !mount_keyholes
 // boss root removes exactly the material the boss is spread into the floor to
 // gain.
 soc_half = [soc_w/2, soc_h/2];
-assert(!soc_win || min([for (p = fr_bosses)
+assert(!soc_cut || min([for (p = fr_bosses)
            norm([max(0, abs(soc_dx - p[0]) - soc_half[0]),
                  max(0, abs(soc_dy - p[1]) - soc_half[1])])])
        > (frame_boss_d + 3)/2 + 1.2,
@@ -2656,32 +2678,21 @@ assert(!soc_win || min([for (p = fr_bosses)
            "sit at ", fr_bosses, " and spread to Ø", frame_boss_d + 3,
            " where they meet the floor — shrink soc_grow, or re-measure the ",
            "module (the record's position is scaled off a drawing, ±2 mm)."));
-assert(!soc_win || on_back_flat(soc_dx, soc_dy, soc_w/2, soc_h/2, 2.0),
+assert(!soc_cut || on_back_flat(soc_dx, soc_dy, soc_w/2, soc_h/2, 2.0),
        "frame: the radio window hangs off the plate's flat — shrink soc_grow");
 // vs the card window and the spec block, which share its half of the plate
-assert(!soc_win || max(abs(soc_dx - sd_dx) - soc_w/2 - sd_w/2 - sd_lip - 2,
+assert(!soc_cut || max(abs(soc_dx - sd_dx) - soc_w/2 - sd_w/2 - sd_lip - 2,
                        abs(soc_dy - sd_dy) - soc_h/2 - sd_l/2 - sd_lip - 2) > 0,
        "frame: the radio window reaches the card window's countersunk mouth");
-assert(!soc_win || !rating_stamp
+assert(!soc_cut || !rating_stamp
        || max(abs(soc_dx - rating_dx) - soc_w/2 - rating_w/2 - 2,
               abs(soc_dy - rating_dy) - soc_h/2 - rating_h/2 - 2) > 0,
        "frame: the radio window reaches the spec block — move rating_dy down");
 // vs the badge, which is the other thing on this plate that can move
-assert(!soc_win || !back_bird
+assert(!soc_cut || !back_bird
        || max(abs(soc_dx - bird_dx) - soc_w/2 - bird_half_w - 2,
               abs(soc_dy - bird_dy) - soc_h/2 - bird_half_h - 2) > 0,
        "frame: the radio window reaches the mark's box — move bird_dx left");
-// A BATTERY BUILD PUTS A LITHIUM PACK BEHIND THIS HOLE. The bay is centered on
-// the plate and the 10000 pack is 115 x 65, which reaches the window's corner.
-// That is not a clearance nit: it is an opening onto a cell, in a case whose
-// whole point is that it can hang on a wall.
-assert(!soc_win || !bat_on
-       || max(abs(soc_dx) - soc_w/2 - (bat_l/2 + bat_clr),
-              abs(soc_dy) - soc_h/2 - (bat_w/2 + bat_clr)) > 0,
-       str("frame: the radio window opens onto the battery bay (the ", battery,
-           " pack is ", bat_l, " x ", bat_w, ", and the bay is centered on the ",
-           "plate). Print this build with soc_win = false and put the module's ",
-           "FCC/IC marking on an applied label, or use the smaller pack."));
 // Portrait slides: cut + doubler pad must stay inside the plate's flat
 // field, clear of the wall fillet ring.
 assert(!mount_portrait || !mount_keyholes
@@ -2801,7 +2812,16 @@ if (!plate_grille)
                                                    vent_tip)),
                              " mm2 before the bird is subtracted out of them)")
                        : "no eggs at all",
-             soc_win ? str(", the radio window (", soc_w, " x ", soc_h,
+             soc_bat_clash
+               ? str(", NO radio window — the ", battery, " pack (", bat_l,
+                     " x ", bat_w, ") lies under it and the window would open ",
+                     "onto a cell. Dropped, not asserted, so a battery build ",
+                     "still renders. THE MODULE'S FCC/IC MARKING IS THEREFORE ",
+                     "SEALED IN on this build: it has to go on an applied ",
+                     "label, or use the smaller pack (the 3000 clears the ",
+                     "window by 1.2 mm)")
+               : "",
+             soc_cut ? str(", the radio window (", soc_w, " x ", soc_h,
                            " at (", soc_dx, ", ", soc_dy, "), ",
                            round(soc_w*soc_h/100), " cm2 — over the ",
                            pnl_soc_w(PANEL), " x ", pnl_soc_h(PANEL),
@@ -3163,7 +3183,7 @@ module back() {
         // front-side while the plate coordinates every graphic is authored in
         // are BACK-view — the same mirror the frame expresses as -m3_ox. The
         // tray carries no badge, so it gets the window and not the nest.
-        if (soc_win) soc_window(mx = true);
+        if (soc_cut) soc_window(mx = true);
         // Connector openings span the band the rear-side connectors actually
         // occupy: the tray floor up to the PCB underside. (v0.1 measured this
         // from the glass instead, and left 3.3 mm of wall across their bottoms.)
@@ -4015,7 +4035,7 @@ module frame() {
         if (nest_show) translate([0, 0, fz_plate]) vent_nest();
         // the radio can's window, so the module's FCC/IC marking reads on the
         // outside of the finished case
-        if (soc_win) translate([0, 0, fz_plate]) soc_window();
+        if (soc_cut) translate([0, 0, fz_plate]) soc_window();
         // microSD access through the back plate: socket + slide travel +
         // fingertip, so the card comes out without being dropped inside
         translate([sd_dx, sd_dy, fz_plate - 0.1])
