@@ -34,18 +34,26 @@
 //! |---|---|
 //! | [`tlv8`] | The type-length-value codec pairing speaks |
 //! | [`accessory`] | Services, characteristics and the stable-iid scheme |
+//! | [`config`] | What the wizard writes down, so it is asked once |
+//! | [`discover`] | Finding Apple hubs on the network, so the wizard can look instead of ask |
 //! | [`crypto`] | HKDF-SHA512, ChaCha20-Poly1305 under HAP's nonce rule |
 //! | [`http`] | The narrow HTTP/1.1 subset HAP uses, plus `EVENT/1.0` |
+//! | [`qr`] | The setup code as a QR you can scan off your terminal |
 //! | [`pairing`] | Pair Setup (SRP-6a) and Pair Verify (X25519), and the pairing table |
 //! | [`server`] | Discovery, connections, routing, and the metronome |
 //! | [`store`] | Identity, setup code and pairings across restarts |
+//! | [`wizard`] | The guessing and prompt-parsing behind `hap_bridge setup` |
 //! | [`session`] | The encrypted frame transport that follows Pair Verify |
 
 pub mod accessory;
+pub mod config;
 pub mod crypto;
+pub mod discover;
 pub mod http;
 pub mod pairing;
+pub mod qr;
 pub mod server;
 pub mod session;
 pub mod store;
 pub mod tlv8;
+pub mod wizard;
