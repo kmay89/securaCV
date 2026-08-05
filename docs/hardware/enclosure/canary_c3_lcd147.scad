@@ -63,17 +63,23 @@
 //     seam are hidden inboard ribs (`seam_web_*`), so the white line is
 //     unbroken and each wall's strip presses in as ONE piece.
 //
-//  5. TWO BOARD BUILDS, ONE FILE (same contract as the C6 case):
-//       headers="none" — stripped board: header pins not soldered and the
-//                        four factory brass M2 corner pillars removed; the
-//                        case stays shallow (the back-mounted USB shell and
-//                        TF cage set the depth).
-//       headers="male" — the board as it ships assembled: pin headers
-//                        soldered pointing DOWN plus the brass pillars. The
-//                        cavity deepens to swallow base + pins, the press
-//                        bosses land on the flat brass pillar TOPS, and the
+//  5. THREE BOARD BUILDS, ONE FILE (the C6 case's contract, plus one):
+//       headers="pillars" — the board AS WAVESHARE SHIPS IT: the four brass
+//                        M2 corner pillars installed, header pins NOT
+//                        soldered (the product photos show exactly this).
+//                        The cavity deepens just enough to swallow the
+//                        pillars, the press bosses land on the flat brass
+//                        pillar TOPS (the best press pads on the board),
+//                        and the lid skirt gets a corner notch around each
+//                        pillar — the USB-end pair sits close enough to the
+//                        edge that the pillars rise into the skirt's band.
+//       headers="none" — stripped board: no headers AND the pillars
+//                        unscrewed; the case stays shallowest (the
+//                        back-mounted USB shell and TF cage set the depth).
+//       headers="male" — headers soldered pointing DOWN plus the pillars.
+//                        The cavity deepens to swallow base + pins, and the
 //                        snap skirt goes thin to clear the pin rows.
-//     Either way the board is captured by its edges — nothing screws into it.
+//     Every way the board is captured by its edges — nothing screws into it.
 //
 //  ── THE LID IS KEYED — it fits ONE way, and that is load-bearing ─────────
 //  The C6 case's lid is 180°-rotation symmetric. This one cannot be: the
@@ -117,8 +123,8 @@
 
 /* [What to render] */
 part  = "all";      // ["bezel","lid","light","all","exploded","palette"]
-// board build: "none" = stripped (no headers, corner pillars removed), "male" = as shipped (down-facing headers + brass corner pillars)
-headers = "none";   // ["none","male"]
+// board build: "pillars" = as Waveshare ships it (brass corner pillars on, headers not soldered), "none" = stripped (pillars unscrewed too), "male" = down-facing headers + pillars
+headers = "pillars";   // ["pillars","none","male"]
 
 /* [Board] — ESP32-C3-LCD-1.47, from the Waveshare drawing (mm) */
 board_l = 36.37;   // PCB long axis (Y, portrait height)
@@ -204,10 +210,18 @@ vent_w = 1.4;
 /* [Board pillars] — the four M2 positions, off the Waveshare drawing. NOT a
    symmetric pattern: the USB-end pair sits wide, the far pair inboard. The
    lid's press bosses land here, which is why the lid is keyed. */
-hole_ix_usb = 1.27;  // USB-end pair: inset from the ±X edges (17.78 span) — MEASURE
+hole_ix_usb = 2.00;  // USB-end pair: inset from the ±X edges — the drawing's
+                     // 2.00. The rejected reading was 1.27 (17.78 as a hole
+                     // span rather than the header column span, which is
+                     // exactly 7 x 2.54): that would hang a Ø3.5 pillar 0.3
+                     // past the PCB edge and into the bezel wall, and the
+                     // product photos show no pillar overhang. The pillar
+                     // clearance asserts below are what a wrong value trips
+                     // — MEASURE
 hole_iy_usb = 2.40;  //               inset from the USB (−Y) edge
 hole_ix_far = 3.52;  // far pair: inset from the ±X edges — MEASURE
 hole_iy_far = 1.97;  //           inset from the far (+Y) edge
+brass_d = 3.5;       // pillar body Ø (round brass M2 standoff) — MEASURE
 
 /* [Print tolerances] — tune with canary_fit_coupon.scad */
 tol_slide = 0.20; tol_press = 0.10; tol_hole = 0.30;
@@ -223,11 +237,16 @@ ear_skin = 1.2;  // wall skin left outside a button/USB clearance channel
 /* [Snap fit] — lid skirt into the bezel walls. Shallow in both builds (the
    edge zone behind the PCB is busy), THIN in the headers build to stay
    outboard of the pin rows. */
-snap_w = 4.0; snap_h = 1.6; snap_depth = 1.4; snap_proud = 0.5;
-nub_y0 = 13.0;   // nub pair centers (±Y) on the ±X walls — pushed toward the
-                 // far end, threading between the button ears (btn_up sits
-                 // mid-wall on this board) and the corner posts; the two
-                 // asserts below hold both sides of that squeeze
+snap_w = 3.2; snap_h = 1.6; snap_depth = 1.4; snap_proud = 0.5;
+nub_y0 = 12.4;   // nub pair centers (±Y) on the ±X walls — threading a
+                 // THREE-way squeeze: outboard of the button ears (btn_up
+                 // sits mid-wall on this board), inboard of the corner
+                 // posts, and — the one the first cut missed — short of the
+                 // USB-end brass pillars, whose flanks rise right behind
+                 // the wall at y ±(board_l/2 − hole_iy_usb). The assembled-
+                 // fit check against modeled pillars caught a 0.03 mm³
+                 // nub-to-pillar graze at snap_w 4.0 / nub_y0 13.0; the
+                 // asserts below now hold all three sides.
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;
@@ -235,7 +254,15 @@ $fa = 3; $fs = 0.4;
 // ----------------------------------------------------------------------------
 //  Derived.  X = short axis, Y = long axis (portrait), Z = toward the glass.
 // ----------------------------------------------------------------------------
-stack_eff = (headers == "male") ? max(back_stack, hdr_drop) : back_stack;
+// pillars_in: the brass corner pillars are on the board (as-shipped and
+// headers builds alike) — the bosses land on their tops and the skirt is
+// notched around them.
+pillars_in = (headers != "none");
+// The pillars build deepens only as far as the pillars demand: brass_h plus
+// a working boss (0.8). The male build swallows header base + pins instead.
+stack_eff = (headers == "male")    ? max(back_stack, hdr_drop)
+          : (headers == "pillars") ? max(back_stack, brass_h + 0.8)
+          :                          back_stack;
 
 xc = board_w + 2*tol_slide;   yc = board_l + 2*tol_slide;   // board cavity
 xo = xc + 2*wall;             yo = yc + 2*wall;             // outer shell
@@ -273,11 +300,11 @@ skirt_wall = (headers == "male") ? 1.0 : 1.6;
 skirt_dep  = snap_depth + snap_h/2 + 0.4;
 skirt_x = xc - 2*tol_press;   skirt_y = yc - 2*tol_press;
 
-// press bosses: cut to the EXACT stack (no preload — rule 3). On the
-// assembled board they land on the flat brass pillar tops; stripped, on the
+// press bosses: cut to the EXACT stack (no preload — rule 3). With pillars
+// on the board they land on the flat brass pillar tops; stripped, on the
 // bare PCB corners over the same M2 positions.
-stand_d   = (headers == "male") ? 4.6 : 4.2;
-stand_len = stack_eff - ((headers == "male") ? brass_h : 0);
+stand_d   = pillars_in ? 4.6 : 4.2;
+stand_len = stack_eff - (pillars_in ? brass_h : 0);
 // the four positions in CASE frame (USB end = −Y); the lid module flips Y
 stand_case = [[ board_w/2 - hole_ix_usb, -(board_l/2 - hole_iy_usb)],
               [-(board_w/2 - hole_ix_usb), -(board_l/2 - hole_iy_usb)],
@@ -327,6 +354,22 @@ assert(skirt_dep >= snap_depth + snap_h/2, "skirt too short to carry the snap nu
 assert(stand_len >= 0.6, "press bosses shorter than 0.6 — brass_h nearly fills the cavity; check hdr_drop/brass_h");
 assert(headers != "male" || hdr_drop >= brass_h + 0.5,
        "corner pillars taller than the cavity below the PCB — check brass_h/hdr_drop");
+assert(!pillars_in || brass_h > 0.5,
+       "a pillars build with brass_h ~0 makes no sense — measure the pillars or set headers=\"none\"");
+// The pillars are real cylinders standing on the board, and two case features
+// live right beside them. Both of these fired for real during the assembled-
+// fit checks — they are not hypothetical.
+assert(!pillars_in || board_w/2 - hole_ix_usb + brass_d/2 <= xc/2 - 0.15,
+       str("a Ø", brass_d, " pillar at hole_ix_usb=", hole_ix_usb,
+           " reaches x=", board_w/2 - hole_ix_usb + brass_d/2,
+           ", into the bezel wall at ", xc/2, " — re-measure hole_ix_usb ",
+           "and brass_d (the 1.27 reading of the drawing does this)"));
+assert(!pillars_in || nub_y0 + snap_w/2 - 0.95 <=
+       (board_l/2 - hole_iy_usb) - brass_d/2 - 0.4,
+       str("a snap nub reaches y=", nub_y0 + snap_w/2 - 0.95,
+           ", into the USB-end pillar's flank at y=",
+           (board_l/2 - hole_iy_usb) - brass_d/2,
+           " — pull nub_y0 in or slim snap_w"));
 assert(headers != "male" || hdr_drop > back_stack, "headers=male but hdr_drop is shallower than the stripped-board clearance");
 assert(headers != "male" || tol_slide + hdr_inset - 0.35 >= tol_press + skirt_wall + 0.25,
        "skirt would sit in the header pin row — thin skirt_wall or re-measure hdr_inset");
@@ -495,11 +538,38 @@ module lid() {
                 difference() {
                     rrect2d(skirt_x, skirt_y, r_in);
                     rrect2d(skirt_x - 2*skirt_wall, skirt_y - 2*skirt_wall, max(0.4, r_in - skirt_wall));
-                    // USB relief — ONE end only (lid +Y = case −Y): the key
-                    translate([usb_dx, skirt_y/2]) square([usb_w + 2, 3*skirt_wall], center = true);
+                    // USB relief — ONE end only (lid +Y = case −Y): the key.
+                    // usb_w + 4, not + 2: the extra millimeter per side makes
+                    // this cut MEET the pillar notches beside it. At + 2 a
+                    // 0.05 mm whisker of skirt survived between the relief's
+                    // edge and the notch circle's reach — one triangle wide,
+                    // full skirt height, found by slicing the STL, not by
+                    // admesh (it was watertight and connected).
+                    translate([usb_dx, skirt_y/2]) square([usb_w + 4, 3*skirt_wall], center = true);
                     // button-body reliefs at the real button positions
                     if (opt_btn) for (sx = [1, -1])
                         translate([sx*skirt_x/2, -btn_y]) square([3*skirt_wall, btn_body_w + 2], center = true);
+                    // pillar notches: in the pillars build the cavity is only
+                    // brass_h + 0.8 deep, so the pillars rise INTO the
+                    // skirt's band, and the USB-end pair sits close enough
+                    // to the edge to land in the ring itself. Notch the
+                    // corners around every pillar position; in the deeper
+                    // male build the pillars stop below the skirt and the
+                    // notches are merely harmless.
+                    //
+                    // HULLED OUTWARD, not a bare circle. A circle tangent to
+                    // the ring leaves a crescent of skirt standing outboard
+                    // of it — a ~0.3 mm blade, full skirt height, at every
+                    // corner. Watertight, one part, invisible in admesh, and
+                    // it printed as four fragile wisps in the preview. The
+                    // hull sweeps the notch radially out past the ring so
+                    // the corner cut runs clean through.
+                    if (pillars_in) for (p = stand_case)
+                        let (n = norm([p[0], p[1]]), s = 1 + 6/n)
+                        hull() {
+                            translate([p[0], -p[1]]) circle(d = stand_d + 2.2);
+                            translate([p[0]*s, -p[1]*s]) circle(d = stand_d + 2.2);
+                        }
                 }
             // press bosses over the four M2 pillar positions (lid y = −case y).
             // TRIMMED to the cavity footprint: the USB-end pillar pair sits

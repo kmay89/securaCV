@@ -526,9 +526,9 @@
   {
    "id": "c3-pocket-display-case",
    "name": "C3 pocket display case",
-   "for": "Waveshare ESP32-C3-LCD-1.47 (portrait; the C6 sibling's exact outline + panel, plus a TF slot and an RGB LED), both board builds: `headers=\"none\"` (stripped) or `headers=\"male\"` (down-facing headers + brass pillars — deeper case, press bosses land on the flat pillar tops). Three PETG spools: black body, yellow snap lid, white light band — the band does the job of Waveshare's clear-acrylic sandwich. Measured off the hardware: 1 mm behind the glass front, 2.8 mm tall — a U of light up both long walls and across the LED's end wall, tied by hidden inboard ribs so each wall presses in ONE unbroken strip, and the slot's inner face is derived from the cavity and asserted (the stick case's no-black-curtain lesson, kept). The glass is located, not clamped: bosses cut to the exact component stack (no preload), and the face touches the panel only on a land over the module border — the innermost 0.5 mm of lip is relieved 0.25 so the window rim never puts a contact line on the glass edge. Full-depth ear/chin insertion channels (BOOT/RST and the USB-C shell all overhang the PCB edges), true-stadium USB-C opening centered on the shell with an outer overmold relief, and a keyed lid: the board's M2 pillar pattern is asymmetric, so offered the wrong way round the skirt lands on the USB shell and refuses to close — the error is physical, not a rattle you discover later. Keyhole hangs it USB-down. microSD swaps with the lid off (the slot mouth faces down-board; no wall window could pass a card)",
+   "for": "Waveshare ESP32-C3-LCD-1.47 (portrait; the C6 sibling's exact outline + panel, plus a TF slot and an RGB LED), three board builds: `headers=\"pillars\"` (the board as Waveshare ships it — brass corner pillars on, headers not soldered; the press bosses land on the flat pillar tops and the lid skirt is notched around each pillar), `\"none\"` (stripped, pillars unscrewed — the shallowest case), or `\"male\"` (down-facing headers + pillars — deepest, thin skirt clear of the pin rows). Three PETG spools: black body, yellow snap lid, white light band — the band does the job of Waveshare's clear-acrylic sandwich. Measured off the hardware: 1 mm behind the glass front, 2.8 mm tall — a U of light up both long walls and across the LED's end wall, tied by hidden inboard ribs so each wall presses in ONE unbroken strip, and the slot's inner face is derived from the cavity and asserted (the stick case's no-black-curtain lesson, kept). The glass is located, not clamped: bosses cut to the exact component stack (no preload), and the face touches the panel only on a land over the module border — the innermost 0.5 mm of lip is relieved 0.25 so the window rim never puts a contact line on the glass edge. Full-depth ear/chin insertion channels (BOOT/RST and the USB-C shell all overhang the PCB edges), true-stadium USB-C opening centered on the shell with an outer overmold relief, and a keyed lid: the board's M2 pillar pattern is asymmetric, so offered the wrong way round the skirt lands on the USB shell and refuses to close — the error is physical, not a rattle you discover later. Keyhole hangs it USB-down. microSD swaps with the lid off (the slot mouth faces down-board; no wall window could pass a card)",
    "status": "in-development",
-   "note": "3 filaments, snap lid, keyed, 2 board builds",
+   "note": "3 filaments, snap lid, keyed, 3 board builds, `gen_3mf.py c3`",
    "device": null,
    "preview": "preview_dev_c3_147.png",
    "parts": [],
@@ -7141,8 +7141,9 @@
       },
       {
        "name": "headers",
-       "default": "none",
+       "default": "pillars",
        "enum": [
+        "pillars",
         "none",
         "male"
        ]
@@ -7373,8 +7374,8 @@
       },
       {
        "name": "hole_ix_usb",
-       "default": "1.27",
-       "comment": "USB-end pair: inset from the ±X edges (17.78 span) — MEASURE"
+       "default": "2.00",
+       "comment": "USB-end pair: inset from the ±X edges — the drawing's"
       },
       {
        "name": "hole_iy_usb",
@@ -7390,6 +7391,11 @@
        "name": "hole_iy_far",
        "default": "1.97",
        "comment": "inset from the far (+Y) edge"
+      },
+      {
+       "name": "brass_d",
+       "default": "3.5",
+       "comment": "pillar body Ø (round brass M2 standoff) — MEASURE"
       }
      ]
     },
@@ -7429,8 +7435,8 @@
       },
       {
        "name": "nub_y0",
-       "default": "13.0",
-       "comment": "nub pair centers (±Y) on the ±X walls — pushed toward the"
+       "default": "12.4",
+       "comment": "nub pair centers (±Y) on the ±X walls — threading a"
       }
      ]
     },
@@ -7439,8 +7445,8 @@
      "note": "",
      "params": [
       {
-       "name": "stack_eff",
-       "default": "(headers == \"male\") ? max(back_stack, hdr_drop) : back_stack"
+       "name": "pillars_in",
+       "default": "(headers != \"none\")"
       },
       {
        "name": "cav_d",
@@ -7536,11 +7542,11 @@
       },
       {
        "name": "stand_d",
-       "default": "(headers == \"male\") ? 4.6 : 4.2"
+       "default": "pillars_in ? 4.6 : 4.2"
       },
       {
        "name": "stand_len",
-       "default": "stack_eff - ((headers == \"male\") ? brass_h : 0)"
+       "default": "stack_eff - (pillars_in ? brass_h : 0)"
       },
       {
        "name": "seam_z0",
