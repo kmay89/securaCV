@@ -227,7 +227,7 @@ pub fn fleet_shape_hash(canaries: &[CanaryConfig]) -> String {
         hasher.update(c.id.as_bytes());
         hasher.update([0u8]);
         hasher.update(c.name.as_bytes());
-        hasher.update([b'\n']);
+        hasher.update(*b"\n");
     }
     hex::encode(hasher.finalize())
 }
