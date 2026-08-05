@@ -7299,8 +7299,8 @@
       },
       {
        "name": "btn_up",
-       "default": "11.31",
-       "comment": "button center up from the USB (−Y) PCB edge — the"
+       "default": "7.0",
+       "comment": "button center up from the USB (−Y) PCB edge. The first"
       },
       {
        "name": "btn_dz",
@@ -7457,8 +7457,8 @@
       },
       {
        "name": "nub_y0",
-       "default": "12.4",
-       "comment": "nub pair centers (±Y) on the ±X walls — threading a"
+       "default": "5.0",
+       "comment": "nub pair centers (±Y) on the ±X walls — the C6 case's"
       }
      ]
     },
@@ -7519,7 +7519,7 @@
       },
       {
        "name": "usb_slide",
-       "default": "usb_w + 0.35",
+       "default": "usb_w + 0.15",
        "comment": "insertion notch — a hair looser than"
       },
       {

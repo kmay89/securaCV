@@ -114,9 +114,12 @@
 //  ⚠️ DEV STATUS: dimensioned from the Waveshare outline drawing plus the
 //     C6 sibling case's two fit prints (same PCB outline, same panel — its
 //     stadium/button/ear numbers transfer). Every number tagged MEASURE is
-//     one to check with calipers before a long print. The ones that will
-//     bite: btn_up (the drawing's 11.31 is read as button center from the
-//     USB edge — same reading the S3 stick file made, but it is a reading),
+//     one to check with calipers before a long print. The one that DID
+//     bite: btn_up. The drawing's 11.31 was read as button center from the
+//     USB edge; the first assembly (photo, kmay89) showed the ears landing
+//     4.4 mm up-board of the buttons — 11.31 is measured from the BOARD
+//     CENTER (18.185 − 11.31 = 6.875 ≈ the C6's fit-tested 7.0). Fixed,
+//     and the USB slide channel snugged in the same round. Still open:
 //     hdr_inset (drawing candidates are 1.27 and 2.00 — measure which),
 //     pcb_t, usb_proud, and the pillar pattern insets.
 // ============================================================================
@@ -171,8 +174,14 @@ usb_relief = 0.8;  // outer-face relief around the opening: a stadium recess
    the PCB with side-facing actuators, flanking the TF cage. */
 opt_btn = true;
 btn_d   = 3.0;     // access hole Ø — a tool tip passes, a pocket corner doesn't
-btn_up  = 11.31;   // button center up from the USB (−Y) PCB edge — the
-                   // drawing's 11.31, same reading as the S3 stick — MEASURE
+btn_up  = 7.0;     // button center up from the USB (−Y) PCB edge. The first
+                   // assembly (photo, kmay89) caught the drawing's 11.31 as a
+                   // CENTER-referenced dim, not edge-referenced: the board's
+                   // ears hit plain wall 4.4 mm up-board of the buttons.
+                   // 18.185 − 11.31 = 6.875 ≈ the C6 case's fit-tested 7.0 on
+                   // this same outline, and the photo's header-pitch ruler
+                   // agrees (≈6.9). Fit-confirmed by that print — not MEASURE
+                   // anymore.
 btn_dz  = 1.0;     // actuator center behind the PCB back face — MEASURE
 btn_proud  = 1.8;  // black actuator overhang past the PCB edge — MEASURE
 btn_ch_w   = 3.4;  // actuator channel width — hugs the nub, nothing more
@@ -238,15 +247,16 @@ ear_skin = 1.2;  // wall skin left outside a button/USB clearance channel
    edge zone behind the PCB is busy), THIN in the headers build to stay
    outboard of the pin rows. */
 snap_w = 3.2; snap_h = 1.6; snap_depth = 1.4; snap_proud = 0.5;
-nub_y0 = 12.4;   // nub pair centers (±Y) on the ±X walls — threading a
-                 // THREE-way squeeze: outboard of the button ears (btn_up
-                 // sits mid-wall on this board), inboard of the corner
-                 // posts, and — the one the first cut missed — short of the
-                 // USB-end brass pillars, whose flanks rise right behind
-                 // the wall at y ±(board_l/2 − hole_iy_usb). The assembled-
-                 // fit check against modeled pillars caught a 0.03 mm³
-                 // nub-to-pillar graze at snap_w 4.0 / nub_y0 13.0; the
-                 // asserts below now hold all three sides.
+nub_y0 = 5.0;    // nub pair centers (±Y) on the ±X walls — the C6 case's
+                 // number, and the same THREE-way squeeze it threads:
+                 // clear of the button ears (which sit LOW on this board —
+                 // btn_up 7.0 put them right where the first cut's nubs
+                 // were at 12.4), inboard of the corner posts, and short
+                 // of the USB-end brass pillars, whose flanks rise right
+                 // behind the wall at y ±(board_l/2 − hole_iy_usb). The
+                 // asserts below hold all three sides; the earlier
+                 // assembled-fit check that caught a 0.03 mm³ nub-to-
+                 // pillar graze (snap_w 4.0 / nub_y0 13.0) still gates.
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;
@@ -281,8 +291,13 @@ btn_y     = -board_l/2 + btn_up;         // button center (Y)
 btn_reach = btn_proud + tol_slide;
 btn_body_reach = btn_body_p + tol_slide;
 usb_reach = usb_proud + tol_slide;
-usb_slide = usb_w + 0.35;                // insertion notch — a hair looser than
-                                         // the visible stadium
+usb_slide = usb_w + 0.15;                // insertion notch — a hair looser than
+                                         // the visible stadium. Was +0.35; the
+                                         // first assembly showed a visible
+                                         // ≈0.3 mm daylight per side around
+                                         // the shell, so the channel now hugs
+                                         // it (≈0.18/side over the 8.94 shell)
+                                         // — still a free drop, no daylight
 ear_bump  = max(0, btn_reach + ear_skin - wall);
 chin_bump = max(0, usb_reach + ear_skin - wall);
 ear_w  = btn_ch_w + 4;
