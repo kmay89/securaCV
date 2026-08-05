@@ -610,8 +610,8 @@ mod tests {
         // suppress it: the CO payload reaches the second route.
         let co_payload =
             br#"{"acoustic_event":"co_alarm_t4","mic_muted":false,"t3_detected":1,"t4_detected":1}"#;
-        let claim = route_message(&routes, "securacv/canary-1/sensing", co_payload)
-            .expect("co claim");
+        let claim =
+            route_message(&routes, "securacv/canary-1/sensing", co_payload).expect("co claim");
         assert_eq!(claim.zone_label, "co_alarm_heard");
     }
 
@@ -630,8 +630,12 @@ mod tests {
     fn state_field_fails_closed_on_absent_field_or_non_json() {
         let routes = wap_sensing_routes();
         // Field missing entirely.
-        assert!(route_message(&routes, "securacv/canary-1/sensing", br#"{"mic_muted":true}"#)
-            .is_none());
+        assert!(route_message(
+            &routes,
+            "securacv/canary-1/sensing",
+            br#"{"mic_muted":true}"#
+        )
+        .is_none());
         // Explicit null.
         assert!(route_message(
             &routes,
@@ -645,15 +649,16 @@ mod tests {
 
     #[test]
     fn state_equals_reads_bare_payloads_without_a_state_field() {
-        let mut route = SensorRoute::new(
-            "sensors/porch/mode",
-            ClaimKind::ContactStateChange,
-            "porch",
-        );
+        let mut route =
+            SensorRoute::new("sensors/porch/mode", ClaimKind::ContactStateChange, "porch");
         route.state_equals = Some("opened".into());
         let (adapter, _tx) = MqttSensorAdapter::new(vec![route]);
-        assert!(adapter.message_to_claim("sensors/porch/mode", b"opened").is_some());
-        assert!(adapter.message_to_claim("sensors/porch/mode", b"closed").is_none());
+        assert!(adapter
+            .message_to_claim("sensors/porch/mode", b"opened")
+            .is_some());
+        assert!(adapter
+            .message_to_claim("sensors/porch/mode", b"closed")
+            .is_none());
         // JSON object without a state field: fail closed, never "triggered".
         assert!(adapter
             .message_to_claim("sensors/porch/mode", br#"{"battery":97}"#)
