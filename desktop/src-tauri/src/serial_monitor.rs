@@ -71,22 +71,25 @@ enum PortChoice {
 /// Pick the board's port from what the OS reports — pure, so the reconnect
 /// rules live in tests rather than in a story about what probably happens.
 ///
-/// The ordering encodes what a flash does to a native-USB board. After
-/// espflash's reset the whole USB device drops off the bus and re-enumerates:
-/// the path can change (macOS renumbers `usbmodem` freely), and the PID can
-/// change too, because the ROM bootloader (0x303A:0x1001) and the application
-/// are different USB devices wearing the same vendor ID. A monitor that
-/// demands the exact identity it saw before the flash therefore waits forever
-/// for a device that no longer exists — which is precisely the "it never
-/// connects until I replug it" ritual. So:
+/// The rules encode what a flash does to a native-USB board. After espflash's
+/// reset the whole USB device drops off the bus and re-enumerates: the path
+/// can change (macOS renumbers `usbmodem` freely), and the PID can change
+/// too, because the ROM bootloader (0x303A:0x1001) and the application are
+/// different USB devices wearing the same vendor ID. A monitor that demands
+/// the exact identity it saw before the flash therefore waits forever for a
+/// device that no longer exists — which is precisely the "it never connects
+/// until I replug it" ritual. So:
 ///
-///   1. the exact path we were on — strongest signal, nothing re-enumerated;
-///   2. the exact VID:PID we remembered — the path moved, the identity didn't;
-///   3. the sole Espressif-VID port present, when we were tracking an
-///      Espressif board — the identity moved too (bootloader ↔ app), but
-///      there's only one candidate it could be;
-///   4. two or more Espressif ports and no exact match → Ambiguous, never a
-///      guess.
+///   * the exact path we were on wins outright — nothing re-enumerated;
+///   * an Espressif-tracked board otherwise matches only as the SOLE
+///     Espressif-VID port present. Not "the port wearing the remembered
+///     VID:PID": an identity names a product, not a device, and after a flash
+///     our board may be wearing any Espressif identity — so with two such
+///     ports the one carrying the old identity may well be the OTHER board;
+///   * a bridge-tracked board matches its exact VID:PID, but only when
+///     unique — the bridge's identity is stable across the ESP's resets, and
+///     duplicated the moment a second board of the same model is attached;
+///   * anything plural → Ambiguous, said out loud, never a guess.
 fn choose_port(
     preferred: &str,
     want_vid: Option<u16>,
@@ -96,18 +99,38 @@ fn choose_port(
     if let Some((name, vid, _)) = ports.iter().find(|(name, _, _)| name == preferred) {
         return PortChoice::Found(name.clone(), *vid);
     }
-    if let Some((name, vid, _)) = ports
-        .iter()
-        .find(|(_, vid, pid)| want_vid.is_some() && *vid == want_vid && *pid == want_pid)
-    {
-        return PortChoice::Found(name.clone(), *vid);
-    }
+    // Past the exact path, everything is identity — and a USB identity names a
+    // PRODUCT, not a device. Two boards of the same model are
+    // indistinguishable by VID:PID, and a just-flashed native-USB board can
+    // come back wearing ANY Espressif identity (bootloader or app). So an
+    // identity match is only evidence when it is the ONLY candidate: for an
+    // Espressif-tracked board, the only trustworthy facts are "the exact path
+    // survived" and "there is exactly one Espressif device here". Letting a
+    // unique-looking VID:PID match win while a second Espressif port sat on
+    // the bus was the review finding: the OTHER board could be the one
+    // wearing the remembered identity, and the first connection carries the
+    // one-shot post-flash reset — a coin-flip that reboots and certifies
+    // somebody else's Canary.
     if want_vid == Some(ESPRESSIF_USB_VID) {
         let espressif: Vec<_> = ports
             .iter()
             .filter(|(_, vid, _)| *vid == Some(ESPRESSIF_USB_VID))
             .collect();
         match espressif.as_slice() {
+            [] => PortChoice::Absent,
+            [(name, vid, _)] => PortChoice::Found(name.clone(), *vid),
+            _ => PortChoice::Ambiguous,
+        }
+    } else if want_vid.is_some() {
+        // A bridge board: its identity is stable (the bridge chip never
+        // re-enumerates when the ESP behind it resets), so an exact VID:PID
+        // match is meaningful — but still only when unique, because two
+        // boards on the same bridge chip share it.
+        let matches: Vec<_> = ports
+            .iter()
+            .filter(|(_, vid, pid)| *vid == want_vid && *pid == want_pid)
+            .collect();
+        match matches.as_slice() {
             [] => PortChoice::Absent,
             [(name, vid, _)] => PortChoice::Found(name.clone(), *vid),
             _ => PortChoice::Ambiguous,
@@ -686,16 +709,58 @@ mod tests {
     }
 
     #[test]
-    fn two_espressif_boards_but_one_exact_match_is_not_ambiguous() {
-        // The remembered identity breaks the tie — ambiguity is only for when
-        // nothing does.
+    fn a_remembered_identity_does_not_break_a_two_espressif_tie() {
+        // The first version of this test asserted the OPPOSITE — that the
+        // remembered VID:PID breaks the tie — and review overturned it. A USB
+        // identity names a product, not a device: after a flash our board can
+        // come back wearing any Espressif identity, so the port that still
+        // wears the remembered one may well be the OTHER board. With the
+        // one-shot post-flash reset riding the first connection, guessing
+        // here reboots and certifies somebody else's Canary. Refuse.
         let ports = vec![
             port("/dev/cu.usbmodem103", 0x303A, 0x0002),
             port("/dev/cu.usbmodem104", 0x303A, 0x1001),
         ];
         assert_eq!(
             choose_port("/dev/cu.usbmodem101", Some(0x303A), Some(0x1001), &ports),
-            PortChoice::Found("/dev/cu.usbmodem104".into(), Some(0x303A))
+            PortChoice::Ambiguous
+        );
+    }
+
+    #[test]
+    fn identical_twin_boards_are_ambiguous() {
+        // The common real bench: two of the same product, byte-identical
+        // identities. Any pick is a coin flip, and a silent coin flip is the
+        // worst outcome a monitor can produce.
+        let ports = vec![
+            port("/dev/cu.usbmodem103", 0x303A, 0x1001),
+            port("/dev/cu.usbmodem104", 0x303A, 0x1001),
+        ];
+        assert_eq!(
+            choose_port("/dev/cu.usbmodem101", Some(0x303A), Some(0x1001), &ports),
+            PortChoice::Ambiguous
+        );
+    }
+
+    #[test]
+    fn a_bridge_board_matches_by_identity_only_when_unique() {
+        // A bridge chip's identity is stable across the ESP's resets, so a
+        // unique match is meaningful — and a duplicated one still is not.
+        let one = vec![
+            port("/dev/ttyUSB0", 0x10C4, 0xEA60),
+            port("/dev/cu.usbmodem103", 0x303A, 0x1001), // unrelated native board
+        ];
+        assert_eq!(
+            choose_port("/dev/ttyUSB9", Some(0x10C4), Some(0xEA60), &one),
+            PortChoice::Found("/dev/ttyUSB0".into(), Some(0x10C4))
+        );
+        let two = vec![
+            port("/dev/ttyUSB0", 0x10C4, 0xEA60),
+            port("/dev/ttyUSB1", 0x10C4, 0xEA60),
+        ];
+        assert_eq!(
+            choose_port("/dev/ttyUSB9", Some(0x10C4), Some(0xEA60), &two),
+            PortChoice::Ambiguous
         );
     }
 
