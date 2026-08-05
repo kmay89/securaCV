@@ -71,6 +71,34 @@ final class AutomationConciergeTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testAuthoredRecognitionSurvivesRenames() {
+        // The Hue lesson: name-keyed sync rots on the first rename. Ours is
+        // anchored by UUID — a renamed trigger stays ours; an unanchored
+        // stranger with no prefix never becomes ours.
+        let id = UUID()
+        XCTAssertTrue(HomeKitBridge.isAuthored(
+            name: "Whatever the owner renamed it to", id: id,
+            anchors: [id.uuidString]))
+        XCTAssertTrue(HomeKitBridge.isAuthored(
+            name: "SecuraCV: Porch Tamper → Bright House", id: UUID(), anchors: []),
+            "pre-anchor authorship still recognized by prefix")
+        XCTAssertFalse(HomeKitBridge.isAuthored(
+            name: "Good Morning", id: UUID(), anchors: [id.uuidString]))
+    }
+
+    @MainActor
+    func testAnchorsPersistAndForget() {
+        let defaults = UserDefaults(suiteName: "test-anchors-\(UUID().uuidString)")!
+        defer { defaults.removePersistentDomain(forName: defaults.description) }
+        let id = UUID()
+        HomeKitBridge.rememberAuthored(id, defaults: defaults)
+        XCTAssertEqual(defaults.stringArray(forKey: HomeKitBridge.authoredIDsKey),
+                       [id.uuidString])
+        HomeKitBridge.forgetAuthored(id, defaults: defaults)
+        XCTAssertEqual(defaults.stringArray(forKey: HomeKitBridge.authoredIDsKey), [])
+    }
+
     func testClassScopedSignalsCollapseOntoMotion() {
         // Same collapse as hapCharacteristic: the class word is consent
         // metadata, not a different sensor.

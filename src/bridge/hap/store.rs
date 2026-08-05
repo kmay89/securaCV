@@ -70,6 +70,14 @@ pub struct PersistedState {
     pub seed: String,
     /// The accessory database's config number.
     pub config_number: u64,
+    /// Hash of the fleet shape (ids + names, in order) the config number
+    /// last accounted for. When `hap.toml`'s fleet changes — a Canary
+    /// added, removed, renamed, or reordered — the next start bumps `c#`
+    /// so controllers re-read `/accessories` instead of trusting their
+    /// cache. Empty on files written before this field existed: treated
+    /// as unknown, so the first start after upgrade bumps once.
+    #[serde(default)]
+    pub fleet_hash: String,
     /// Paired controllers.
     pub pairings: Vec<StoredPairing>,
 }
@@ -88,6 +96,7 @@ impl PersistedState {
             setup_id: random_setup_id()?,
             seed: hex::encode(seed),
             config_number: 1,
+            fleet_hash: String::new(),
             pairings: Vec::new(),
         })
     }
