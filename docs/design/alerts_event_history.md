@@ -142,7 +142,7 @@ loop:
 | Relaunch fold: rebuild `postedAlerts`/`ackedAlerts` from open records so an alarm that outlives the app never re-posts as fresh news | `AlertLedger.foldOpenAlerts` + `FleetStore.init` |
 | Resolution wired at the dedupe-prune site; badge sync | `FleetStore.evaluateAlerts()` / `syncBadge()` |
 | App-icon badge = unseen count (deduped writes) | `AlertCenter.setBadge` |
-| Day-sectioned history ("Earlier today" / "Yesterday" / dates), Ongoing/Cleared chips, unseen dots, settled-row removal, clear-history with an honest "the sealed witness logs stay" dialog, seen-marking on tab exit | `ios/Sources/SecuraCV/Views/AlertsView.swift` + `AlertHistory.daySections` |
+| Day-sectioned history ("Earlier today" / "Yesterday" / dates), Ongoing/Cleared chips, unseen dots, settled-row removal, clear-history (settled rows only — a live alarm can be acked or muted, never made to vanish) with an honest "the sealed witness logs stay" dialog, seen-marking on tab exit | `ios/Sources/SecuraCV/Views/AlertsView.swift` + `AlertHistory.daySections` |
 | Wrist parity: cap-aware needs-you-first rows (`AlertHistory.wristRows` — a live alarm never falls off the 12-row cap behind settled history), additive-optional `resolved` flag, "Cleared" chip on the watch | `WristSnapshot+App.swift`, `Shared/WristSnapshot.swift`, `SecuraCVWatch/Views/AlertsListView.swift` |
 | Lifecycle tests (resolution, reopen, sweep exemptions, fold, day grouping, wrist cap) | `ios/Tests/SecuraCVTests/AlertHistoryTests.swift` |
 

@@ -97,12 +97,13 @@ struct AlertsView: View {
                                 isPresented: $confirmingClear,
                                 titleVisibility: .visible) {
                 Button("Clear history", role: .destructive) {
-                    store.alertLog.clear()
+                    store.clearAlertHistory()
                 }
             } message: {
                 // Honest about what it is and isn't: this is the phone's
-                // notebook, not the fleet's sealed witness chain.
-                Text("Removes this phone's alert history. The fleet's signed witness logs stay on your devices, untouched.")
+                // notebook, not the fleet's sealed witness chain — and it
+                // clears history, never a live alarm.
+                Text("Removes this phone's settled alert history. Anything that still needs you stays, and the fleet's signed witness logs stay on your devices, untouched.")
             }
             .sheet(isPresented: $showingRules) {
                 AlertRulesSheet(center: store.alerts)

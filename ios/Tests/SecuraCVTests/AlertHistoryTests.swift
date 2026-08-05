@@ -298,6 +298,43 @@ final class AlertHistoryTests: XCTestCase {
                       "time may not delete a live condition")
     }
 
+    func testClearHistoryNeverTakesALiveAlarm() throws {
+        let (ledger, defaults, suite) = try freshLedger()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        ledger.note(id: "live|4|Tamper detected", witnessID: "live", name: "Porch",
+                    severity: .tamper, headline: "Tamper detected")
+        ledger.note(id: "done|3|Gone dark", witnessID: "done", name: "Garage",
+                    severity: .alert, headline: "Gone dark")
+        ledger.resolve(witnessID: "done")
+
+        ledger.clearSettled()
+        XCTAssertEqual(ledger.records.map(\.witnessID), ["live"],
+                       "an ongoing alarm can be acked or muted, never made to vanish — "
+                       + "clearing it would also stay cleared, since the dedupe still "
+                       + "holds its fingerprint and nothing would re-create the row")
+    }
+
+    func testASupersededConditionResolvesBeforeItsReplacementOpens() throws {
+        let (ledger, defaults, suite) = try freshLedger()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        // The FleetStore sequence when a witness escalates without a calm
+        // gap (dark → tamper, still live throughout): resolve the old story,
+        // then note the new one.
+        ledger.note(id: "w|3|Gone dark", witnessID: "w", name: "Garage",
+                    severity: .alert, headline: "Gone dark")
+        ledger.resolve(witnessID: "w")
+        ledger.note(id: "w|4|Tamper detected", witnessID: "w", name: "Garage",
+                    severity: .tamper, headline: "Tamper detected")
+
+        let byID = Dictionary(uniqueKeysWithValues: ledger.records.map { ($0.id, $0) })
+        XCTAssertFalse(try XCTUnwrap(byID["w|3|Gone dark"]).isOpen,
+                       "the superseded record must not sit Ongoing forever, exempt from retention")
+        XCTAssertTrue(try XCTUnwrap(byID["w|4|Tamper detected"]).isOpen,
+                      "the new condition is the live one")
+    }
+
     func testRemoveTakesExactlyOneRow() throws {
         let (ledger, defaults, suite) = try freshLedger()
         defer { defaults.removePersistentDomain(forName: suite) }

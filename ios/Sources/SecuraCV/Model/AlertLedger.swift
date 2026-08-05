@@ -154,9 +154,15 @@ final class AlertLedger: ObservableObject {
         if records.count != before { save() }
     }
 
-    func clear() {
-        records = []
-        save()
+    /// The user's "Clear history": settled rows only. Rows that still need a
+    /// human survive — an ongoing alarm can be acked or muted, never made to
+    /// vanish from the one list whose job is showing it. (A cleared live row
+    /// would also stay gone: the news-dedupe still holds its fingerprint, so
+    /// nothing would re-create it until the condition changed.)
+    func clearSettled() {
+        let before = records.count
+        records.removeAll { !$0.needsYou }
+        if records.count != before { save() }
     }
 
     // MARK: - reading

@@ -677,6 +677,13 @@ final class FleetStore: ObservableObject {
         syncBadge()
     }
 
+    /// "Clear history" — settled rows only (the ledger keeps anything that
+    /// still needs a human), and the badge is retold the truth immediately.
+    func clearAlertHistory() {
+        alertLog.clearSettled()
+        syncBadge()
+    }
+
     /// The app badge is the unseen count — "something landed that you have
     /// not looked at" — kept in one place so every path that changes the
     /// ledger leaves the icon telling the truth.
@@ -697,6 +704,14 @@ final class FleetStore: ObservableObject {
             let fingerprint = alertFingerprint(w)
             guard postedAlerts[w.id] != fingerprint else { continue }   // already told
             guard ackedAlerts[w.id] != fingerprint else { continue }    // user said "seen it"
+            if postedAlerts[w.id] != nil {
+                // The condition CHANGED without a calm gap (dark became
+                // tamper): the old record's story is over even though the
+                // witness never left the live set — close it, or it sits
+                // "Ongoing" forever, exempt from retention. The new
+                // condition gets its own record just below.
+                alertLog.resolve(witnessID: w.id)
+            }
             postedAlerts[w.id] = fingerprint
 
             // The ledger key must carry the witness: `alertFingerprint` is
