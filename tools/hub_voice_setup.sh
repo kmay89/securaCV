@@ -31,7 +31,12 @@ warn() { printf ' [warn] %s\n' "$*"; FAILS=$((FAILS+1)); }
 
 have_ha() { command -v ha >/dev/null 2>&1; }
 
-addon_installed() { ha addons info "$1" >/dev/null 2>&1; }
+# `ha addons info` also answers for store-only (not-installed) add-ons, so
+# success alone proves nothing. An installed add-on reports a non-null
+# "version" string; a store-only one reports "version": null.
+addon_installed() {
+  ha addons info "$1" --raw-json 2>/dev/null | grep -Eq '"version": *"'
+}
 
 addon_started() {
   ha addons info "$1" --raw-json 2>/dev/null | grep -Eq '"state": *"started"'
@@ -83,7 +88,11 @@ head_ "2. The satellite runtime (Assist Satellite)"
 SAT_SLUG="$(find_satellite_slug || true)"
 if [ -z "$SAT_SLUG" ] && [ "$MODE" != verify ]; then
   say "   adding the OHF-Voice apps repository..."
-  ha store add-repository "$OHF_APPS_REPO" >/dev/null 2>&1 || true
+  # The HA CLI command is `ha store add <repository>` (store_repositories_add.go).
+  if ! ha store add "$OHF_APPS_REPO" >/dev/null; then
+    warn "could not add $OHF_APPS_REPO to the store — add it under Settings -> Add-ons -> Store -> (top-right menu) Repositories"
+  fi
+  ha store reload >/dev/null 2>&1 || true
   SAT_SLUG="$(find_satellite_slug || true)"
 fi
 if [ -n "$SAT_SLUG" ]; then
