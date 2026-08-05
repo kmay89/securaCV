@@ -403,9 +403,11 @@ test("the iPhone/Watch bridge only names figures that exist", () => {
     assert.strictEqual(byId.get(id).role, "device", `${id} is a whole device`);
   }
   // The display family collapses four products into one enum case, so it must
-  // stay nil — the same rule the firmware table keeps for canary-dash.
-  assert.match(bridge, /case \.display, \.unknown: return nil/,
-    "the display family must not be given a figure it would have to guess at");
+  // stay nil — the same rule the firmware table keeps for canary-dash. The
+  // nightlight rides the same nil until the generated map carries its own
+  // figure (the C3 pocket case): a borrowed sibling shape would be a guess.
+  assert.match(bridge, /case \.display, \.nightlight, \.unknown: return nil/,
+    "the display family (and the figure-less nightlight) must not be given a figure they would have to guess at");
 
   // And the rows actually draw it, or none of this reaches a user.
   const fleetView = readFileSync(join(REPO, "ios/Sources/SecuraCV/Views/FleetView.swift"), "utf8");
