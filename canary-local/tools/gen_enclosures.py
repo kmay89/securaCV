@@ -733,6 +733,13 @@ OPTION_ENUM_PARAMS = {
     # vanished from the workshop instead of gaining two settings. They are
     # exactly the kind of choice a buyer makes, so they are named here.
     "bezel_color", "vent_ring_color", "qr_style",
+    # C3 pocket case: what the lid's back carries — the Canary wordmark or
+    # the keyhole mount. Same trap as vent_ring_color above, sprung a second
+    # time: this replaced a bool (opt_keyhole) with a string enum, and the
+    # control disappeared from the workshop rather than becoming two
+    # settings. A buyer choosing "branded back" over "hangs on a screw" is
+    # exactly the kind of choice this set is for.
+    "lid_back",
 }
 ENGINEERING_OPTIONS = {
     "lid_ribs", "kh_lock", "hinge_teeth", "bracket_tripod", "screw_insert",

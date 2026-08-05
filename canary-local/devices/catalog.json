@@ -115,7 +115,7 @@
     {
      "id": "c3-pocket-display-case",
      "name": "C3 pocket display case",
-     "for": "Waveshare ESP32-C3-LCD-1.47 (portrait; the C6 sibling's exact outline + panel, plus a TF slot and an RGB LED), three board builds: `headers=\"pillars\"` (the board as Waveshare ships it — brass corner pillars on, headers not soldered; the press bosses land on the flat pillar tops and the lid skirt is notched around each pillar), `\"none\"` (stripped, pillars unscrewed — the shallowest case), or `\"male\"` (down-facing headers + pillars — deepest, thin skirt clear of the pin rows). Three PETG spools: black body, yellow snap lid, white light band — the band does the job of Waveshare's clear-acrylic sandwich. Measured off the hardware: 1 mm behind the glass front, 2.8 mm tall — a U of light up both long walls and across the LED's end wall, tied by hidden inboard ribs so each wall presses in ONE unbroken strip, and the slot's inner face is derived from the cavity and asserted (the stick case's no-black-curtain lesson, kept). The glass is located, not clamped: bosses cut to the exact component stack (no preload), and the face touches the panel only on a land over the module border — the innermost 0.5 mm of lip is relieved 0.25 so the window rim never puts a contact line on the glass edge. Full-depth ear/chin insertion channels (BOOT/RST and the USB-C shell all overhang the PCB edges), true-stadium USB-C opening centered on the shell with an outer overmold relief, and a keyed lid: the board's M2 pillar pattern is asymmetric, so offered the wrong way round the skirt lands on the USB shell and refuses to close — the error is physical, not a rattle you discover later. Keyhole hangs it USB-down. microSD swaps with the lid off (the slot mouth faces down-board; no wall window could pass a card)",
+     "for": "Waveshare ESP32-C3-LCD-1.47 (portrait; the C6 sibling's exact outline + panel, plus a TF slot and an RGB LED), three board builds: `headers=\"pillars\"` (the board as Waveshare ships it — brass corner pillars on, headers not soldered; the press bosses span the measured 2.8 mm to land on the flat pillar tops and hold the board against the bezel, and the lid skirt is notched around each pillar), `\"none\"` (stripped, pillars unscrewed — the shallowest case), or `\"male\"` (down-facing headers + pillars — deepest, thin skirt clear of the pin rows). Three PETG spools, and the slots are roles: slot 1 body = YELLOW (bezel and lid both), slot 2 mark = BLACK, slot 3 light = WHITE. The white does the job of Waveshare's clear-acrylic sandwich: measured off the hardware at 1 mm behind the glass front, 2.8 mm tall, and it is ONE continuous U — up both long walls, around both far corners, across the LED's end wall — white through the full wall depth with no ties crossing it. Both earlier cuts are lessons kept: outer-skin webs chop the strip into dashes, inboard ribs put black slats in the light path, and a strip that stops short of the corners goes dark exactly where it turns. The black is the branding: the lid's back carries the \"Canary\" wordmark, debossed and filled at zero clearance so the AMS fuses it. The wordmark alone, not the bird — [`canary_mark_lib.scad`](./canary_mark_lib.scad) states a ~30 mm minimum for the mark's interior detail and this lid is 25.12 mm across. It carries the mark instead of the keyhole (`lid_back`); both want the middle of that face. The glass is located, not clamped: bosses cut to the exact component stack (no preload), and the face touches the panel only on a land over the module border — the innermost 0.5 mm of lip is relieved 0.25 so the window rim never puts a contact line on the glass edge. BOOT/RST are printed-in-place flexure paddles: a press pad cut free by a 0.55 mm slot on three sides, hinged at its USB end, a boss on its back over the actuator — press it with a fingertip, no tool, nothing internal exposed, and the pad sits recessed so a pocket squeeze lands on the ear rim instead. USB-C is a true stadium hugging the shell at ~0.05 mm per side with a chamfered rim for the plug's overmold (the recessed ring it replaced left a 0.4 mm floor over the insertion slot and broke out on the first print). Keyed lid: the board's M2 pillar pattern is asymmetric, so offered the wrong way round the skirt lands on the USB shell and refuses to close — the error is physical, not a rattle you discover later. Asymmetric snap nubs give it a real click. microSD swaps with the lid off (the slot mouth faces down-board; no wall window could pass a card)",
      "status": "in-development",
      "device": "_universal",
      "selects": {},
@@ -127,6 +127,7 @@
     "bezel",
     "lid",
     "light",
+    "mark",
     "exploded",
     "palette"
    ],
@@ -148,12 +149,16 @@
      "default": true
     },
     {
-     "id": "opt_keyhole",
-     "type": "bool",
-     "label": "keyhole in the lid — hangs the case USB-down, slot up",
+     "id": "lid_back",
+     "type": "enum",
+     "label": "back of the lid: brand or wall mount",
      "consequence": "",
      "audience": "user",
-     "default": true
+     "enum": [
+      "mark",
+      "keyhole"
+     ],
+     "default": "mark"
     },
     {
      "id": "opt_vent",
@@ -164,7 +169,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 91,
+   "engineering_param_count": 96,
    "alternatives": [],
    "remix_of": null,
    "counts": {
