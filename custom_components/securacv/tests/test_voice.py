@@ -368,12 +368,60 @@ def test_whats_up_weather_close():
         weather={"condition": "partlycloudy", "temp": 71.6},
     )
     speech = speak_whats_up(brief)
-    assert "Outside it's 72 degrees and partly cloudy." in speech
+    assert (
+        "Outside it's 72 degrees and partly cloudy — plenty of bright spells."
+        in speech
+    )
     # Condition-only and absent-weather cases.
     just_condition = fleet_brief([_entry({"gate": {}})], NOW, weather={"condition": "rainy"})
-    assert "Outside it looks rainy." in speak_whats_up(just_condition)
+    assert "Outside it looks rainy — the garden will be glad." in speak_whats_up(just_condition)
     no_weather = fleet_brief([_entry({"gate": {}})], NOW)
     assert "Outside" not in speak_whats_up(no_weather)
+
+
+# The complete HA weather condition vocabulary. If HA adds a condition,
+# add a phrase — the fallback keeps it speakable meanwhile.
+_ALL_HA_CONDITIONS = (
+    "sunny", "clear-night", "partlycloudy", "cloudy", "windy",
+    "windy-variant", "fog", "rainy", "pouring", "lightning",
+    "lightning-rainy", "hail", "snowy", "snowy-rainy", "exceptional",
+)
+
+
+def test_weather_speaks_every_ha_condition_year_round():
+    for condition in _ALL_HA_CONDITIONS:
+        brief = fleet_brief([_entry({"g": {}})], NOW, weather={"condition": condition, "temp": 40})
+        speech = speak_whats_up(brief)
+        # Every condition gets a real phrase: no raw hyphens, no camel
+        # squish, and always the warm second clause.
+        assert "Outside it's 40 degrees and " in speech
+        weather_line = speech.split("Outside it's 40 degrees and ", 1)[1]
+        assert "-" not in weather_line.split(" — ")[0]
+        assert "partlycloudy" not in speech
+        assert " — " in weather_line, condition
+
+
+def test_weather_seasonal_spot_checks_stay_optimistic():
+    def line(condition, temp):
+        brief = fleet_brief([_entry({"g": {}})], NOW, weather={"condition": condition, "temp": temp})
+        return speak_whats_up(brief).split("Outside it's ", 1)[1]
+
+    # Winter, spring, summer, fall — the year-round demo.
+    assert line("snowy", 28) == "28 degrees and snowing — it'll be pretty out there."
+    assert line("rainy", 55) == "55 degrees and rainy — the garden will be glad."
+    assert line("sunny", 84) == "84 degrees and sunny — a good one to step out in."
+    assert line("windy", 61) == "61 degrees and windy — the fresh kind."
+    # Night gets its stars.
+    assert line("clear-night", 48) == "48 degrees and clear — good stars if you look up."
+
+
+def test_weather_exceptional_is_never_sugarcoated():
+    brief = fleet_brief([_entry({"g": {}})], NOW, weather={"condition": "exceptional", "temp": 90})
+    speech = speak_whats_up(brief)
+    assert "worth checking the forecast" in speech
+    # An unknown custom condition degrades to plain words, not silence.
+    custom = fleet_brief([_entry({"g": {}})], NOW, weather={"condition": "volcanic-ash"})
+    assert "Outside it looks volcanic ash." in speak_whats_up(custom)
 
 
 def test_whats_up_mentions_pending_updates_last():

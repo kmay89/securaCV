@@ -50,13 +50,28 @@ _ALERT_EVENT_TYPES = frozenset(
     {"tamper_detected", "acoustic_smoke_alarm", "acoustic_co_alarm"}
 )
 
-# HA weather-entity conditions that need a human spelling; anything not
-# listed falls back to hyphens-to-spaces.
-_WEATHER_WORDS = {
-    "partlycloudy": "partly cloudy",
-    "clear-night": "clear",
-    "lightning-rainy": "stormy",
-    "snowy-rainy": "sleety",
+# The complete HA weather-entity condition vocabulary, each with a warm,
+# year-round spoken phrase. Optimistic on purpose — weather small talk is
+# allowed to be kind — with one honesty override: "exceptional" is HA's
+# severe/unusual marker, and danger is never spun as charm. A condition
+# not in this table (a custom integration's invention) falls back to
+# hyphens-to-spaces, spoken plainly.
+_WEATHER_SPEECH = {
+    "sunny": "sunny — a good one to step out in",
+    "clear-night": "clear — good stars if you look up",
+    "partlycloudy": "partly cloudy — plenty of bright spells",
+    "cloudy": "cloudy — soft light all day",
+    "windy": "windy — the fresh kind",
+    "windy-variant": "windy — the fresh kind",
+    "fog": "foggy — it usually lifts",
+    "rainy": "rainy — the garden will be glad",
+    "pouring": "pouring — a good day to be cozy inside",
+    "lightning": "a thunderstorm — quite a light show from a window",
+    "lightning-rainy": "stormy — dramatic out there, snug in here",
+    "hail": "hailing — it passes quickly, best let it",
+    "snowy": "snowing — it'll be pretty out there",
+    "snowy-rainy": "sleety — the kind to admire from indoors",
+    "exceptional": "unusual out there — worth checking the forecast before heading out",
 }
 
 
@@ -434,7 +449,7 @@ def speak_whats_up(brief: dict[str, Any]) -> str:
     weather = brief.get("weather")
     if isinstance(weather, dict) and (weather.get("condition") or weather.get("temp") is not None):
         condition = str(weather.get("condition") or "").lower().strip()
-        condition = _WEATHER_WORDS.get(condition, condition.replace("-", " "))
+        condition = _WEATHER_SPEECH.get(condition, condition.replace("-", " "))
         temp = weather.get("temp")
         if temp is not None and condition:
             parts.append(f"Outside it's {round(temp)} degrees and {condition}.")
