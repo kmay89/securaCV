@@ -7294,8 +7294,8 @@
       },
       {
        "name": "btn_d",
-       "default": "3.0",
-       "comment": "access hole Ø — a tool tip passes, a pocket corner doesn't"
+       "default": "6.5",
+       "comment": "access hole Ø — sized for a BARE FINGERTIP, no tool."
       },
       {
        "name": "btn_up",
@@ -7512,7 +7512,8 @@
       },
       {
        "name": "ear_w",
-       "default": "btn_ch_w + 4"
+       "default": "max(btn_body_w, btn_d) + 3.0",
+       "comment": "the ear covers the widest of the"
       },
       {
        "name": "chin_w",

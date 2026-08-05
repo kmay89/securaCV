@@ -191,7 +191,16 @@ usb_relief = 0.8;  // outer-face relief around the opening: a stadium recess
 /* [Buttons] — BOOT/RST on the two side (±X) walls, mounted on the BACK of
    the PCB with side-facing actuators, flanking the TF cage. */
 opt_btn = true;
-btn_d   = 3.0;     // access hole Ø — a tool tip passes, a pocket corner doesn't
+btn_d   = 6.5;     // access hole Ø — sized for a BARE FINGERTIP, no tool.
+                   // The press/no-press line is the RECESS, not the hole: the
+                   // actuator tip sits ear_skin + 0.4 (≈1.6 mm) below the
+                   // ear's outer face, plus ~0.25 mm of switch travel. A
+                   // deliberate pad press bulges ~2 mm into a Ø6.5 opening
+                   // and reaches the click; a flat finger gripping the case
+                   // spans the hole and bulges well under 1 mm, so handling
+                   // pressure stops short. Was Ø3.0 (tool-tip only) — the
+                   // buttons must be pressable by hand (kmay89), and the
+                   // recess is what keeps a press deliberate.
 btn_up  = 7.0;     // button center up from the USB (−Y) PCB edge. The first
                    // assembly (photo, kmay89) caught the drawing's 11.31 as a
                    // CENTER-referenced dim, not edge-referenced: the board's
@@ -318,7 +327,9 @@ usb_slide = usb_w + 0.15;                // insertion notch — a hair looser th
                                          // — still a free drop, no daylight
 ear_bump  = max(0, btn_reach + ear_skin - wall);
 chin_bump = max(0, usb_reach + ear_skin - wall);
-ear_w  = btn_ch_w + 4;
+ear_w  = max(btn_body_w, btn_d) + 3.0;   // the ear covers the widest of the
+                                         // switch-body relief and the finger
+                                         // hole, 1.5 mm of wall each side
 chin_w = usb_w + 4;
 
 // window lip: (module − active area)/2 per side; the LAND is what is left of
@@ -401,8 +412,13 @@ assert(!pillars_in || nub_y0 + snap_w/2 - 0.95 <=
 assert(headers != "male" || hdr_drop > back_stack, "headers=male but hdr_drop is shallower than the stripped-board clearance");
 assert(headers != "male" || tol_slide + hdr_inset - 0.35 >= tol_press + skirt_wall + 0.25,
        "skirt would sit in the header pin row — thin skirt_wall or re-measure hdr_inset");
-assert(!opt_btn || min([for (y = nub_ys()) abs(y - btn_y)]) >= max(btn_ch_w, btn_body_w)/2 + snap_w/2 + 1.0,
-       "a snap window overlaps the button clearance cutouts — shift nub_y0/btn_up");
+assert(!opt_btn || min([for (y = nub_ys()) abs(y - btn_y)]) >= max(btn_ch_w, btn_body_w, btn_d)/2 + snap_w/2 + 1.0,
+       "a snap window overlaps the button clearance cutouts or the finger hole — shift nub_y0/btn_up");
+assert(!opt_btn || ear_w >= btn_d + 1.2 + 1.2,
+       str("the chamfered finger hole (rim Ø", btn_d + 1.2, ") leaves less than ",
+           "0.6 mm of ear on each side — widen ear_w or shrink btn_d"));
+assert(!opt_btn || btn_y - ear_w/2 >= -(yo/2 - r_out) + 0.4,
+       "the ear bulge runs into the USB-end outer corner — check btn_up/ear_w");
 assert(nub_y0 + snap_w/2 <= yc/2 - r_out, "snap windows run into the corner posts — pull nub_y0 in");
 // the band: placed on the panel, open to the cavity, whole enough to matter
 assert(!light_seam || seam_dz >= 0,
@@ -521,10 +537,14 @@ module bezel() {
         translate([usb_dx, -(yo/2 + chin_bump) + usb_relief/2 - 0.01, z_usb]) rotate([90, 0, 0])
             linear_extrude(usb_relief + 0.02, center = true)
                 stadium2d(usb_w + 2*usb_relief, usb_h + 2*usb_relief);
-        // BOOT / RST access holes through the ear skin
-        if (opt_btn) for (sx = [1, -1])
+        // BOOT / RST finger holes through the ear skin, entry chamfered so
+        // the fingertip funnels in instead of meeting a square rim
+        if (opt_btn) for (sx = [1, -1]) {
             translate([sx*xo/2, btn_y, z_btn])
                 rotate([0, 90, 0]) cylinder(d = btn_d, h = 2*(wall + ear_bump + 1), center = true);
+            translate([sx*(xo/2 + ear_bump - 0.6), btn_y, z_btn])
+                rotate([0, sx*90, 0]) cylinder(d1 = btn_d, d2 = btn_d + 1.2, h = 0.61);
+        }
         // heat-escape slots, BEHIND the light band
         if (opt_vent) for (sx = [1, -1], i = [0:vent_n-1])
             translate([sx*xo/2, vent_dy - (vent_n-1)*vent_pitch/2 + i*vent_pitch, (vent_z0 + vent_z1)/2])
