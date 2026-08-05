@@ -135,14 +135,27 @@ inline void witness_incident() {
 // until the hold lapses; HA's health parse then clears the sensor itself.
 inline constexpr uint32_t kIncidentHoldMs = 3600000u;  // 1 h
 
+// The hold, latched: once it lapses it never re-arms, so the 32-bit millis()
+// wrap at ~49.7 days cannot resurrect an hour of stale power alerts. (The
+// comparison alone would read "young again" every wrap.)
+inline bool hold_active(uint32_t now_ms) {
+  static bool s_expired = false;
+  if (s_expired) return false;
+  if (now_ms >= kIncidentHoldMs) {
+    s_expired = true;
+    return false;
+  }
+  return true;
+}
+
 // True while the periodic health payload should carry power_loss_detected.
 inline bool health_power_flag(uint32_t now_ms) {
-  return powerevents::is_power_incident(g_boot) && now_ms < kIncidentHoldMs;
+  return powerevents::is_power_incident(g_boot) && hold_active(now_ms);
 }
 
 // True while it should carry unexpected_reboot (a fault-reset lineage).
 inline bool health_fault_flag(uint32_t now_ms) {
-  return g_boot == powerevents::BootPower::Fault && now_ms < kIncidentHoldMs;
+  return g_boot == powerevents::BootPower::Fault && hold_active(now_ms);
 }
 
 // The boot classification as the securacv/<id>/tamper payload the Home
