@@ -801,6 +801,23 @@ fn serve_with(cfg: &BridgeConfig, no_mqtt: bool, style: QrStyle, show_pairing: b
         .iter()
         .map(|c| (c.name.as_str(), c.id.as_str()))
         .collect();
+    // Never-rot: if the fleet's shape moved since the last start (a Canary
+    // added, removed, renamed, or reordered in hap.toml), bump the config
+    // number now — the TXT record advertises the new c# from first packet,
+    // and paired controllers re-read /accessories instead of trusting a
+    // cache that no longer describes this fleet. No sync button: the
+    // accessory database says when it changed.
+    let shape = config::fleet_shape_hash(&cfg.canaries, &cfg.enable_class);
+    if state.fleet_hash != shape {
+        state.config_number += 1;
+        state.fleet_hash = shape;
+        store::save(&cfg.state, &state)?;
+        log::info!(
+            "fleet shape changed since last start; config number is now {}",
+            state.config_number
+        );
+    }
+
     let mut server_state = state_for(identity, &cfg.bridge_name, &state.setup_code, &canaries);
     server_state.pairings = state.pairing_store();
     server_state.config_number = state.config_number;

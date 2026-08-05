@@ -13,6 +13,7 @@ from ..voice import (
     record_canary_event,
     speak_fleet_status,
     speak_last_event,
+    speak_whats_up,
 )
 
 NOW = 1_000_000.0
@@ -209,6 +210,233 @@ def test_speak_last_event_kernel_fallback_and_none():
         speak_last_event(fleet_brief([], NOW))
         == "No witness events since the hub started listening."
     )
+
+
+def test_whats_up_reads_naturally_all_good():
+    devices = {
+        "gate": {
+            "status": "online",
+            "last_event": {
+                "event_type": "boundary_crossing_object_large",
+                "received_at": NOW - 7200,
+                "trusted": True,
+                "reason": "ok",
+            },
+        },
+        "porch": {"status": '{"status": "online", "firmware_version": "1.0"}'},
+    }
+    verify = {k: {"trusted": True, "reason": "ok"} for k in ("gate", "porch")}
+    speech = speak_whats_up(fleet_brief([_entry(devices, verify)], NOW))
+    assert speech == (
+        "Pretty quiet — the last thing witnessed was large object crossed "
+        "boundary, about 2 hours ago, from the gate Canary. "
+        "All 2 Canaries are online, every signature verified."
+    )
+
+
+def test_whats_up_never_calls_a_stale_device_online():
+    # A discovered, verified device whose retained status says offline must
+    # not be spoken as online — "in the fleet" is the honest word.
+    devices = {"gate": {"status": "online"}, "shed": {"status": "offline"}}
+    verify = {k: {"trusted": True, "reason": "ok"} for k in ("gate", "shed")}
+    speech = speak_whats_up(fleet_brief([_entry(devices, verify)], NOW))
+    assert "are online" not in speech
+    assert "2 Canaries in the fleet, 1 online, 2 verified." in speech
+
+
+def test_whats_up_kernel_outage_is_never_spoken_as_quiet():
+    # Kernel configured but unreachable, nothing cached: silence means
+    # "can't see", not "nothing happened".
+    down = _entry(kernel={"ok": False, "latest_event": None})
+    speech = speak_whats_up(fleet_brief([down], NOW))
+    assert "All quiet" not in speech
+    assert "won't claim it's been quiet" in speech
+    # And the outage is not repeated as a second sentence.
+    assert speech.count("can't reach the witness kernel") == 1
+
+    # A cached kernel event while the kernel is down is labeled stale.
+    stale = _entry(kernel={"ok": False, "latest_event": {"event_type": "TamperDetected"}})
+    speech = speak_whats_up(fleet_brief([stale], NOW))
+    assert "may be stale" in speech
+    assert "Pretty quiet" not in speech
+
+
+def test_whats_up_recent_activity_changes_the_opener():
+    devices = {
+        "gate": {
+            "last_event": {
+                "event_type": "contact_state_change",
+                "received_at": NOW - 300,
+                "trusted": True,
+                "reason": "ok",
+            }
+        }
+    }
+    verify = {"gate": {"trusted": True, "reason": "ok"}}
+    speech = speak_whats_up(fleet_brief([_entry(devices, verify)], NOW))
+    assert speech.startswith("Some activity lately —")
+    assert "within the last ten minutes" in speech
+
+
+def test_whats_up_quiet_and_empty_cases():
+    # Devices but no events yet: an honest all-quiet, not an error.
+    speech = speak_whats_up(fleet_brief([_entry({"gate": {}})], NOW))
+    assert "All quiet — nothing witnessed since I started listening." in speech
+    # Nothing configured at all: says so, invites a later ask.
+    assert "haven't heard from any Canaries" in speak_whats_up(fleet_brief([], NOW))
+
+
+def test_whats_up_leads_with_trouble_and_holds_untrusted_loosely():
+    # A tamper event is alert-class, so it takes the first sentence; the
+    # key-mismatch heads-up follows, softened to "Also, heads up".
+    devices = {
+        "gate": {
+            "last_event": {
+                "event_type": "tamper_detected",
+                "received_at": NOW - 60,
+                "trusted": False,
+                "reason": "mismatch",
+            }
+        }
+    }
+    verify = {"gate": {"trusted": False, "reason": "mismatch"}}
+    speech = speak_whats_up(fleet_brief([_entry(devices, verify)], NOW))
+    assert speech.startswith("First thing: tamper detected")
+    assert "Also, heads up: gate is publishing" in speech
+    assert "hold it loosely" in speech
+    # The reserved word never leaks into an unverified fleet's health line.
+    assert "every signature verified" not in speech
+
+    # A non-alert event with a mismatch keeps the mismatch first.
+    quiet_devices = {
+        "gate": {
+            "last_event": {
+                "event_type": "contact_state_change",
+                "received_at": NOW - 60,
+                "trusted": False,
+                "reason": "mismatch",
+            }
+        }
+    }
+    speech = speak_whats_up(fleet_brief([_entry(quiet_devices, verify)], NOW))
+    assert speech.startswith("Heads up first: gate is publishing")
+
+
+def test_whats_up_alert_class_event_leads_even_over_mismatch():
+    # A smoke-alarm pattern is the first sentence, ahead of the key
+    # mismatch heads-up, which softens to "Also, heads up".
+    devices = {
+        "kitchen": {
+            "status": "online",
+            "last_event": {
+                "event_type": "acoustic_smoke_alarm",
+                "received_at": NOW - 300,
+                "trusted": True,
+                "reason": "ok",
+            },
+        },
+        "gate": {"status": "online"},
+    }
+    verify = {
+        "kitchen": {"trusted": True, "reason": "ok"},
+        "gate": {"trusted": False, "reason": "mismatch"},
+    }
+    speech = speak_whats_up(fleet_brief([_entry(devices, verify)], NOW))
+    assert speech.startswith(
+        "First thing: acoustic smoke alarm, within the last ten minutes, "
+        "from the kitchen Canary."
+    )
+    assert "Also, heads up: gate" in speech
+    # The kernel's CamelCase spelling of an alert type leads too.
+    tamper = {
+        "shed": {
+            "last_event": {
+                "event_type": "TamperDetected",
+                "received_at": NOW - 60,
+                "trusted": True,
+                "reason": "ok",
+            }
+        }
+    }
+    assert speak_whats_up(fleet_brief([_entry(tamper)], NOW)).startswith("First thing:")
+
+
+def test_whats_up_weather_close():
+    brief = fleet_brief(
+        [_entry({"gate": {"status": "online"}}, {"gate": {"trusted": True, "reason": "ok"}})],
+        NOW,
+        weather={"condition": "partlycloudy", "temp": 71.6},
+    )
+    speech = speak_whats_up(brief)
+    assert (
+        "Outside it's 72 degrees and partly cloudy — plenty of bright spells."
+        in speech
+    )
+    # Condition-only and absent-weather cases.
+    just_condition = fleet_brief([_entry({"gate": {}})], NOW, weather={"condition": "rainy"})
+    assert "Outside it looks rainy — the garden will be glad." in speak_whats_up(just_condition)
+    no_weather = fleet_brief([_entry({"gate": {}})], NOW)
+    assert "Outside" not in speak_whats_up(no_weather)
+
+
+# The complete HA weather condition vocabulary. If HA adds a condition,
+# add a phrase — the fallback keeps it speakable meanwhile.
+_ALL_HA_CONDITIONS = (
+    "sunny", "clear-night", "partlycloudy", "cloudy", "windy",
+    "windy-variant", "fog", "rainy", "pouring", "lightning",
+    "lightning-rainy", "hail", "snowy", "snowy-rainy", "exceptional",
+)
+
+
+def test_weather_speaks_every_ha_condition_year_round():
+    for condition in _ALL_HA_CONDITIONS:
+        brief = fleet_brief([_entry({"g": {}})], NOW, weather={"condition": condition, "temp": 40})
+        speech = speak_whats_up(brief)
+        # Every condition gets a real phrase: no raw hyphens, no camel
+        # squish, and always the warm second clause.
+        assert "Outside it's 40 degrees and " in speech
+        weather_line = speech.split("Outside it's 40 degrees and ", 1)[1]
+        assert "-" not in weather_line.split(" — ")[0]
+        assert "partlycloudy" not in speech
+        assert " — " in weather_line, condition
+
+
+def test_weather_seasonal_spot_checks_stay_optimistic():
+    def line(condition, temp):
+        brief = fleet_brief([_entry({"g": {}})], NOW, weather={"condition": condition, "temp": temp})
+        return speak_whats_up(brief).split("Outside it's ", 1)[1]
+
+    # Winter, spring, summer, fall — the year-round demo.
+    assert line("snowy", 28) == "28 degrees and snowing — it'll be pretty out there."
+    assert line("rainy", 55) == "55 degrees and rainy — the garden will be glad."
+    assert line("sunny", 84) == "84 degrees and sunny — a good one to step out in."
+    assert line("windy", 61) == "61 degrees and windy — the fresh kind."
+    # Night gets its stars.
+    assert line("clear-night", 48) == "48 degrees and clear — good stars if you look up."
+
+
+def test_weather_exceptional_is_never_sugarcoated():
+    brief = fleet_brief([_entry({"g": {}})], NOW, weather={"condition": "exceptional", "temp": 90})
+    speech = speak_whats_up(brief)
+    assert "worth checking the forecast" in speech
+    # An unknown custom condition degrades to plain words, not silence.
+    custom = fleet_brief([_entry({"g": {}})], NOW, weather={"condition": "volcanic-ash"})
+    assert "Outside it looks volcanic ash." in speak_whats_up(custom)
+
+
+def test_whats_up_mentions_pending_updates_last():
+    brief = fleet_brief(
+        [_entry({"gate": {}}, {"gate": {"trusted": True, "reason": "ok"}})],
+        NOW,
+        pending_updates=["Home Assistant Core", "Whisper", "Piper"],
+    )
+    speech = speak_whats_up(brief)
+    assert speech.endswith(
+        "Also, 3 updates are waiting when you have a minute — "
+        "Home Assistant Core and Whisper and 1 more."
+    )
+    one = fleet_brief([_entry({"gate": {}})], NOW, pending_updates=["Whisper"])
+    assert "Whisper has an update waiting" in speak_whats_up(one)
 
 
 def test_sentences_yaml_matches_registered_intents():

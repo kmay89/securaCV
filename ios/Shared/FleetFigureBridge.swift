@@ -27,7 +27,10 @@ extension DeviceType {
         case .wap: return "device.canary-wap"
         case .vision: return "device.canary-vision"
         case .sense: return "device.canary-sense"
-        case .display, .unknown: return nil
+        // .nightlight is nil for the same reason as .display: its figure
+        // (the C3 pocket case) enters through the fleet-figures pipeline,
+        // and until the generated map carries it the SF moon is honest.
+        case .display, .nightlight, .unknown: return nil
         }
     }
 
@@ -69,7 +72,7 @@ struct DeviceFigureIcon: View {
 #if DEBUG
 #Preview("Device figures") {
     VStack(alignment: .leading, spacing: 12) {
-        ForEach([DeviceType.wap, .vision, .sense, .display, .unknown], id: \.rawValue) { t in
+        ForEach([DeviceType.wap, .vision, .sense, .display, .nightlight, .unknown], id: \.rawValue) { t in
             HStack(spacing: 10) {
                 DeviceFigureIcon(t, size: 44)
                 VStack(alignment: .leading) {

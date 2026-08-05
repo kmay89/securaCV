@@ -2800,12 +2800,53 @@ function phaseWapBench(port, product) {
   return box;
 }
 
+/* The picker slot: the board's own figure when the catalog carries one, a
+ * neutral placeholder when it doesn't (docs/design/FLEET_FIGURES.md).
+ *
+ * Every row gets a slot of the SAME size either way. That is the whole trick:
+ * the list never reflows as figures land for more of the fleet — a
+ * placeholder simply becomes a drawing. The words stay primary; the figure is
+ * there so you can recognize the board in your hand without parsing a model
+ * number, which is the moment this picker actually gets used.
+ *
+ * The placeholder deliberately does NOT resemble any product. Drawing a
+ * plausible-looking generic board would be worse than drawing nothing: the
+ * one failure this whole system exists to prevent is somebody matching their
+ * hardware against a picture of different hardware.
+ */
+function figureSlot(p) {
+  const slot = el("div", "flash-fig");
+  const f = p.figure;
+  if (f && f.svg) {
+    slot.innerHTML = f.svg;
+    slot.title = f.shared
+      ? `${f.title} — this board is also built as another product`
+      : f.title;
+    return slot;
+  }
+  slot.classList.add("is-placeholder");
+  slot.innerHTML =
+    '<svg viewBox="0 0 64 64" aria-hidden="true">' +
+    '<rect x="12" y="18" width="40" height="28" rx="3"/>' +
+    '<rect class="c" x="20" y="26" width="24" height="12" rx="1.5"/></svg>';
+  slot.append(el("span", null, (p.chip || "").replace("ESP32-", "")));
+  slot.title = "No drawing for this board yet";
+  return slot;
+}
+
 function productRow(p) {
   const row = el("div", "flash-product");
   row.dataset.id = p.id;
+  row.append(figureSlot(p));
   const left = el("div", "flash-product-main");
   left.append(el("div", "flash-product-name", p.name));
   left.append(el("div", "flash-product-tag muted", p.tagline));
+  if (p.figure && p.figure.shared) {
+    // One board, two flashable products. Say it rather than let the drawing
+    // imply this row is the only thing that board becomes.
+    left.append(el("div", "flash-product-note",
+      "This board is also sold as another product — check the name, not just the picture."));
+  }
   const ver = el("div", "flash-product-ver");
   ver.dataset.for = p.id;
   left.append(ver);
@@ -5065,7 +5106,8 @@ function phaseMonitor(port, opts = {}) {
   const mon = {
     alive: true, port: null, reader: null, writer: null,
     manualBaud: false, session: 0, everByted: false,
-    lastPort: null, forced: null, reopenSame: false, waiting: null,
+    lastPort: null, lastVid: null, ambiguityNoted: false,
+    forced: null, reopenSame: false, waiting: null,
   };
   let celebrated = !opts.celebrate;
   let quietTimer = null;
@@ -5101,13 +5143,34 @@ function phaseMonitor(port, opts = {}) {
   }
 
   // Re-find a granted port (no user gesture needed — only requestPort() is
-  // gesture-gated; getPorts()/open() are not). Prefer the same board.
+  // gesture-gated; getPorts()/open() are not).
+  //
+  // Same board or no board — never "a" board. Web Serial grants persist
+  // across sessions, so getPorts() can hold every board this user has EVER
+  // approved on this site; the old `ports[0]` fallback could silently attach
+  // the console to a Canary granted weeks ago (the desktop app had the same
+  // class of bug, found in the same review). The ladder mirrors the native
+  // one as far as Web Serial allows: the same port object wins outright; a
+  // sole same-vendor candidate is the board back under a new identity (a
+  // re-enumeration mints a new object); anything plural is a question only a
+  // human can answer — and the reconnect button, which is a chooser, is
+  // exactly that human answering.
   async function reacquire() {
     try {
       const ports = await navigator.serial.getPorts();
       if (!ports.length) return null;
       if (mon.lastPort && ports.includes(mon.lastPort)) return mon.lastPort;
-      return ports[0];
+      const vendor = mon.lastVid;
+      const candidates = vendor == null ? ports : ports.filter((p) => {
+        try { return p.getInfo().usbVendorId === vendor; } catch { return false; }
+      });
+      if (candidates.length === 1) return candidates[0];
+      if (candidates.length > 1 && !mon.ambiguityNoted) {
+        mon.ambiguityNoted = true;
+        setStatus("More than one granted board could be yours — press “reconnect the " +
+          "board” and pick it, or unplug the others.");
+      }
+      return null;
     } catch { return null; }
   }
 
@@ -5148,6 +5211,10 @@ function phaseMonitor(port, opts = {}) {
     const mySession = ++mon.session;
     await p.open({ baudRate: baud });
     mon.port = mon.lastPort = p;
+    // Remember the board's USB vendor for reacquire(): a re-enumeration mints
+    // a new port object, so the vendor is the one identity that survives.
+    try { mon.lastVid = p.getInfo().usbVendorId ?? null; } catch { mon.lastVid = null; }
+    mon.ambiguityNoted = false;
     try { mon.writer = p.writable.getWriter(); } catch {}
     mon.reader = p.readable.getReader();
     reconnectBtn.classList.add("flash-hidden");

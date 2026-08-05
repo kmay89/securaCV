@@ -41,6 +41,7 @@ README stays the narrative source for those stories.
 | `esp32c3-super-mini` | ESP32-C3 | 15 | 2 (13%) | 6 | 5 | 2 |
 | `esp32cam-ai-thinker` | ESP32 | 24 | 21 (88%) | 0 | 3 | 0 |
 | `freenove-esp32s3-cam` | ESP32-S3 | 33 | 21 (64%) | 4 | 5 | 3 |
+| `waveshare-esp32c3-lcd147` | ESP32-C3 | 15 | 6 (40%) | 2 | 4 | 3 |
 | `waveshare-esp32c6-lcd147` | ESP32-C6 | 24 | 10 (42%) | 2 | 4 | 8 |
 | `waveshare-esp32c6-lcd169` | ESP32-C6 | 24 | 7 (29%) | 0 | 7 | 10 |
 | `waveshare-esp32s3-amoled206` | ESP32-S3 | 33 | 21 (64%) | 0 | 5 | 7 |
@@ -256,6 +257,39 @@ Capabilities on: `HAS_BLE`, `HAS_CAMERA`, `HAS_GNSS_UART`, `HAS_PSRAM`, `HAS_SD_
 Capabilities off (room to grow): `HAS_MICROPHONE`.
 
 **Thermals:** Same S3 heat sources as the flagship (camera PEEK + Wi-Fi bursts) on a larger PCB with more copper — runs cooler than the XIAO. Die-temp watchdog covers it.
+
+### `waveshare-esp32c3-lcd147` — Waveshare ESP32-C3-LCD-1.47
+
+ESP32-C3 · flash 4 MB · PSRAM 0 MB · pin map [`pins/pins.h`](waveshare-esp32c3-lcd147/pins/pins.h)
+
+**6/15 committed** · 2 assigned · 4 conditional · **3 free** (2 ADC-capable)
+
+| GPIO | bucket | held by / trade | notes |
+|---|---|---|---|
+| 0 | **free** | — | ADC, sleep-wake |
+| 1 | **free** | — | ADC, sleep-wake |
+| 2 | committed | IMU_INT_PIN | ADC, sleep-wake, strap⚠ |
+| 3 | assigned | I2C_PIN_SCL | ADC, sleep-wake |
+| 4 | assigned | I2C_PIN_SDA | ADC, sleep-wake |
+| 5 | committed | SD_PIN_MOSI, TFT_PIN_MOSI | ADC, sleep-wake |
+| 6 | committed | SD_PIN_MISO, TFT_PIN_MISO |  |
+| 7 | committed | SD_PIN_CLK, TFT_PIN_SCK |  |
+| 8 | committed | TFT_PIN_DC | strap⚠ |
+| 9 | committed | BOOT_BUTTON_PIN | strap⚠ |
+| 10 | **free** | — |  |
+| 18 | conditional | USB-Serial/JTAG — free only if you give up USB |  |
+| 19 | conditional | USB-Serial/JTAG — free only if you give up USB |  |
+| 20 | conditional | UART0 console — free only if you give up the serial log |  |
+| 21 | conditional | UART0 console — free only if you give up the serial log |  |
+
+⚠ 5 pin define(s) are `-1` — not wired OR not yet verified (see the comments in pins.h): `BUZZER_PIN`, `SD_PIN_CS`, `TFT_PIN_BL`, `TFT_PIN_CS`, `TFT_PIN_RST`. Free counts above may shrink as these resolve.
+
+Peripheral demand (declared pin map vs MCU): SPI 1/1 · I2C 1/1 · UART 0/2 · RMT TX 0/2 · LEDC 0/6.
+
+Capabilities on: `HAS_BACKLIGHT_PWM`, `HAS_BLE`, `HAS_DISPLAY`, `HAS_IMU`, `HAS_SD_CARD`, `HAS_USB_CDC`, `HAS_WIFI`.
+Capabilities off (room to grow): `HAS_BATTERY`, `HAS_CAMERA`, `HAS_MICROPHONE`, `HAS_NATIVE_USB`, `HAS_PSRAM`, `HAS_RGBLED`, `HAS_RTC`, `HAS_THREAD_ZIGBEE`, `HAS_TOUCH`.
+
+**Thermals:** Enclosed pocket case (canary_c3_lcd147.scad) with a lamp duty cycle: the nightlight flavor hard-caps backlight duty at 50% in the HAL — a heat budget, not a preference. Thermally trivial below that cap.
 
 ### `waveshare-esp32c6-lcd147` — Waveshare ESP32-C6-LCD-1.47
 

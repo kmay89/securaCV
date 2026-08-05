@@ -31,12 +31,37 @@ from .const import DOMAIN
 
 INTENT_FLEET_STATUS = "SecuracvFleetStatus"
 INTENT_LAST_EVENT = "SecuracvLastEvent"
+INTENT_WHATS_UP = "SecuracvWhatsUp"
 
 
 async def async_setup_intents(hass: HomeAssistant) -> None:
     """Register the SecuraCV voice intents."""
     intent.async_register(hass, FleetStatusIntentHandler())
     intent.async_register(hass, LastEventIntentHandler())
+    intent.async_register(hass, WhatsUpIntentHandler())
+
+
+def _pending_updates(hass: HomeAssistant) -> list[str]:
+    """Human names of updates the hub is waiting to install.
+
+    Read from the ``update`` entities HA/Supervisor already maintain — an
+    entity in state "on" has an update pending. The trailing " Update" that
+    most friendly names carry is trimmed so speech doesn't say "the Core
+    Update has an update". Defensive throughout: on any surprise, the
+    casual answer simply doesn't mention updates.
+    """
+    names: list[str] = []
+    try:
+        for state in hass.states.async_all("update"):
+            if state.state != "on":
+                continue
+            name = state.attributes.get("friendly_name") or state.entity_id
+            if name.lower().endswith(" update"):
+                name = name[: -len(" update")]
+            names.append(name)
+    except Exception:  # noqa: BLE001 - never let a listing break the answer
+        return []
+    return sorted(names)
 
 
 def _snapshot(hass: HomeAssistant) -> list[dict[str, Any]]:
@@ -100,3 +125,50 @@ class LastEventIntentHandler(_BriefIntentHandler):
 
     def _speak(self, brief: dict[str, Any]) -> str:
         return voice.speak_last_event(brief)
+
+
+def _weather(hass: HomeAssistant) -> dict[str, Any] | None:
+    """Condition + temperature from the hub's first live weather entity.
+
+    Defensive like _pending_updates: any surprise means the casual answer
+    simply doesn't mention the weather.
+    """
+    try:
+        for state in hass.states.async_all("weather"):
+            if state.state in ("unknown", "unavailable", ""):
+                continue
+            temp = state.attributes.get("temperature")
+            return {
+                "condition": state.state,
+                "temp": temp if isinstance(temp, (int, float)) else None,
+            }
+    except Exception:  # noqa: BLE001 - never let weather break the answer
+        return None
+    return None
+
+
+class WhatsUpIntentHandler(intent.IntentHandler):
+    """The casual one — 'what's up' gets one warm, honest reply.
+
+    Unlike the crisp intents, this brief also carries the hub's pending
+    updates and its weather entity's snapshot, so the answer can mention
+    what's waiting on the owner and what it's like outside.
+    """
+
+    intent_type = INTENT_WHATS_UP
+    description = (
+        "Conversational fleet catch-up: alerts and attention items first, "
+        "latest activity, health, weather, pending updates"
+    )
+
+    async def async_handle(self, intent_obj: intent.Intent) -> intent.IntentResponse:
+        hass = intent_obj.hass
+        brief = voice.fleet_brief(
+            _snapshot(hass),
+            time.time(),
+            pending_updates=_pending_updates(hass),
+            weather=_weather(hass),
+        )
+        response = intent_obj.create_response()
+        response.async_set_speech(voice.speak_whats_up(brief))
+        return response

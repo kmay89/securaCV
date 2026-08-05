@@ -56,6 +56,10 @@
     "why": "published by boards with different figures (device.canary-display-dash, device.canary-display-dash7)"
    },
    {
+    "device_type": "canary-nightlight",
+    "why": "no figure for this hardware yet"
+   },
+   {
     "device_type": "canary-nightstand",
     "why": "published by more than one board, and at least one has no figure yet (the figured one is device.canary-display-touch169)"
    },
@@ -257,6 +261,15 @@
     ],
     "serves": [
      "canary-vision"
+    ]
+   },
+   {
+    "hardware": "waveshare-esp32c3-lcd147",
+    "builds": [
+     "canary-display-nightlight-c3"
+    ],
+    "serves": [
+     "canary-nightlight"
     ]
    },
    {
@@ -750,6 +763,7 @@
     "firmware_configs": [
      "dash",
      "dash7",
+     "nightlight",
      "nightstand",
      "nightstand7",
      "touch169",
@@ -800,6 +814,7 @@
     "firmware_configs": [
      "dash",
      "dash7",
+     "nightlight",
      "nightstand",
      "nightstand7",
      "touch169",
@@ -840,6 +855,7 @@
     "firmware_configs": [
      "dash",
      "dash7",
+     "nightlight",
      "nightstand",
      "nightstand7",
      "touch169",
@@ -896,6 +912,7 @@
     "firmware_configs": [
      "dash",
      "dash7",
+     "nightlight",
      "nightstand",
      "nightstand7",
      "touch169",
