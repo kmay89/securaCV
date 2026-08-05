@@ -556,7 +556,7 @@ per-lane defaults, which is what #8 now asks.
 | **B1** | P0 · decision #1 | first accessory lane on top of P0: a HAP server in witnessd | **built** — `src/bridge/hap/` + the `hap_bridge` binary: TLV8, SRP-6a pair setup, X25519 pair verify, the encrypted session, mDNS. Both published `hap` crates failed the FR-14 gate (one does not compile, the other cannot be resolved), so the protocol is built on primitives already in the tree |
 | **B2** | B1 | the other §3 site, if #1 says both | open |
 | **C1** | A2 | App Intents ("is the fleet OK?"), Wall home-context timeline | open |
-| **D1** | B-lane stable | Matter projection of the same table | open |
+| **D1** | B-lane stable | Matter projection of the same table | **data landed (D0)** — `matter_device_type` in the dictionary + `HomeSignal::matter_device_type()`, linter-gated like the HAP column: occupancy/contact map, everything else is an honest `None` (tamper/active/low-battery are HAP status characteristics; the class signals have no Matter dimension). The wire — an actual Matter stack — stays gated on B-lane stability |
 | **—** | never | HKSV video lanes, familiar faces | refused (§2), revisit triggers recorded |
 
 ## 9. Open decisions (settle before building past A1)
