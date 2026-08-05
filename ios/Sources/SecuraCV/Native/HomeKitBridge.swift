@@ -395,7 +395,6 @@ final class HomeKitBridge: ObservableObject {
         else {
             return
         }
-        Self.forgetAuthored(id)
         try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
             home.removeTrigger(trigger) { error in
                 if let error { c.resume(throwing: error) } else { c.resume() }

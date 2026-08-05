@@ -215,14 +215,22 @@ impl BridgeConfig {
     }
 }
 
-/// A stable digest of the fleet's shape — ids and names, in order. When it
+/// A stable digest of everything that shapes the `/accessories` document —
+/// the fleet (ids and names, in order) and the class-signal consent. When it
 /// moves between starts, the accessory database a controller cached is no
 /// longer the truth, and the config number must bump so the Home app
 /// re-reads `/accessories` instead of showing stale tiles. Order-sensitive
-/// on purpose: accessory ids come from list position.
-pub fn fleet_shape_hash(canaries: &[CanaryConfig]) -> String {
+/// on purpose: accessory ids come from list position. Consent is in the
+/// hash because iids stay stable across consent changes but the *document*
+/// does not — enabling the class signals adds characteristics a cached
+/// controller would otherwise never learn about.
+pub fn fleet_shape_hash(canaries: &[CanaryConfig], enable_class: &[String]) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
+    for name in enable_class {
+        hasher.update(name.as_bytes());
+        hasher.update([1u8]);
+    }
     for c in canaries {
         hasher.update(c.id.as_bytes());
         hasher.update([0u8]);
@@ -327,29 +335,48 @@ mod tests {
         let base = vec![canary("porch-canary", "Porch Canary")];
         let same = vec![canary("porch-canary", "Porch Canary")];
         assert_eq!(
-            fleet_shape_hash(&base),
-            fleet_shape_hash(&same),
+            fleet_shape_hash(&base, &[]),
+            fleet_shape_hash(&same, &[]),
             "an unchanged fleet must not bump c# on every restart"
         );
         // Rename, add, and reorder each move the hash — each is a change a
         // paired controller must be told to re-read, or its tiles go stale
         // (accessory ids come from list position; names come from here).
         let renamed = vec![canary("porch-canary", "Front Door Canary")];
-        assert_ne!(fleet_shape_hash(&base), fleet_shape_hash(&renamed));
+        assert_ne!(
+            fleet_shape_hash(&base, &[]),
+            fleet_shape_hash(&renamed, &[])
+        );
         let grown = vec![
             canary("porch-canary", "Porch Canary"),
             canary("garage-canary", "Garage Canary"),
         ];
-        assert_ne!(fleet_shape_hash(&base), fleet_shape_hash(&grown));
+        assert_ne!(fleet_shape_hash(&base, &[]), fleet_shape_hash(&grown, &[]));
         let reordered = vec![
             canary("garage-canary", "Garage Canary"),
             canary("porch-canary", "Porch Canary"),
         ];
-        assert_ne!(fleet_shape_hash(&grown), fleet_shape_hash(&reordered));
+        assert_ne!(
+            fleet_shape_hash(&grown, &[]),
+            fleet_shape_hash(&reordered, &[])
+        );
         // And the separator can't be confused by adversarial names.
         let tricky_a = vec![canary("a", "b\nc")];
         let tricky_b = vec![canary("a", "b"), canary("c", "")];
-        assert_ne!(fleet_shape_hash(&tricky_a), fleet_shape_hash(&tricky_b));
+        assert_ne!(
+            fleet_shape_hash(&tricky_a, &[]),
+            fleet_shape_hash(&tricky_b, &[])
+        );
+        // Consent reshapes the /accessories document (the class-scoped
+        // characteristics appear or vanish) even though iids hold still —
+        // so it must move the hash too, or a cached controller never
+        // learns the class signals were turned on.
+        let class = vec!["motion_person".to_string()];
+        assert_ne!(
+            fleet_shape_hash(&base, &[]),
+            fleet_shape_hash(&base, &class),
+            "a consent-only change must bump c#"
+        );
     }
 
     fn sample() -> BridgeConfig {

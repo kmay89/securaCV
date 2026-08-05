@@ -807,7 +807,7 @@ fn serve_with(cfg: &BridgeConfig, no_mqtt: bool, style: QrStyle, show_pairing: b
     // and paired controllers re-read /accessories instead of trusting a
     // cache that no longer describes this fleet. No sync button: the
     // accessory database says when it changed.
-    let shape = config::fleet_shape_hash(&cfg.canaries);
+    let shape = config::fleet_shape_hash(&cfg.canaries, &cfg.enable_class);
     if state.fleet_hash != shape {
         state.config_number += 1;
         state.fleet_hash = shape;
