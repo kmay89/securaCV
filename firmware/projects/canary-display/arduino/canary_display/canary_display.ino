@@ -144,8 +144,14 @@ static canary::mode::Mode s_active_mode = canary::mode::Mode::Fleet;
 #include "portrait7_ui.h"   // the 7"/dash portrait column (rotated)
 #include "lvgl_port.h"      // set_rotation / set_dim
 #endif
-#ifdef CD_FLAVOR_NIGHTSTAND
+#if defined(CD_FLAVOR_NIGHTSTAND) && !defined(CD_NIGHTLIGHT)
 #include "portrait_ui.h"
+#endif
+#ifdef CD_NIGHTLIGHT
+// The Canary Nightlight (C3 pocket board) rides the nightstand flavor and
+// swaps the face — the same arrangement the Nightstand 7 has with the dash.
+#include "nightlight_ui.h"
+#include "nightlight_glue.h"
 #endif
 // song_seed() is called under exactly this pair of flavors further down. The
 // Arduino build gets the declaration for free — the sketch preprocessor
@@ -351,9 +357,24 @@ static canary::care::AmbientLife g_life;
 static bool lantern_lit(uint32_t now, bool night) {
   using canary::fleet::Sev;
   auto& fleet = canary::fleet::the_fleet();
+#ifdef CD_NIGHTLIGHT
+  // The nightlight's lamp never encodes link state: this flavor never
+  // renders safety as light, so only a real fleet condition (Warn+) takes
+  // the lamp back. A router reboot must not put a kid's nightlight out —
+  // the glance line carries the link honesty in words instead. (The face's
+  // attention gate in nightlight_ui.cpp is the same rule; keep them agreed.)
+  const bool attention = fleet.worst(now) >= Sev::Warn;
+#else
+  // A NEVER-CONFIGURED broker is the true standalone case (same reading as
+  // apply_brightness's night floor): the mqtt leg is not a truth this
+  // device owes, so only a real wifi drop or a configured-but-dark broker
+  // counts as link trouble.
   const bool link_down =
-      !canary::net::wifi_connected() || !canary::net::mqtt_connected();
+      !canary::net::wifi_connected() ||
+      (!canary::net::mqtt_connected() &&
+       !canary::net::mqtt_broker_is_placeholder());
   const bool attention = fleet.worst(now) >= Sev::Warn || link_down;
+#endif
   return canary::care::lantern().active(now, night, attention);
 }
 #endif
@@ -466,8 +487,11 @@ static void ui_ack_hold(bool active) {
 #endif
   }
 #endif
-#ifdef CD_FLAVOR_NIGHTSTAND
+#if defined(CD_FLAVOR_NIGHTSTAND) && !defined(CD_NIGHTLIGHT)
   canary::ui::portrait_ui_ack_hold(active);
+#endif
+#ifdef CD_NIGHTLIGHT
+  canary::ui::nightlight_ui_ack_hold(active);
 #endif
 }
 
@@ -820,8 +844,11 @@ static void render(uint32_t now) {
       // them (its create reads character_night()).
       dash_face_create();
 #endif
-#ifdef CD_FLAVOR_NIGHTSTAND
+#if defined(CD_FLAVOR_NIGHTSTAND) && !defined(CD_NIGHTLIGHT)
       canary::ui::portrait_ui_create();
+#endif
+#ifdef CD_NIGHTLIGHT
+      canary::ui::nightlight_ui_create();
 #endif
     }
   }
@@ -913,7 +940,7 @@ static void render(uint32_t now) {
 #endif
   }
 #endif
-#ifdef CD_FLAVOR_NIGHTSTAND
+#if defined(CD_FLAVOR_NIGHTSTAND) && !defined(CD_NIGHTLIGHT)
   canary::ui::PortraitState st;
   st.night = night_look;
   st.wifi_ok = canary::net::wifi_connected();
@@ -936,6 +963,47 @@ static void render(uint32_t now) {
   }
   st.bird = bird;
   canary::ui::portrait_ui_update(fleet, now, st);
+#endif
+#ifdef CD_NIGHTLIGHT
+  {
+    canary::ui::NightlightState st;
+    st.night = night_look;
+    st.wifi_ok = canary::net::wifi_connected();
+    st.wifi_reason =
+        st.wifi_ok ? nullptr
+                   : canary::net::join_failure_label(canary::net::wifi_last_failure());
+    st.mqtt_ok = canary::net::mqtt_connected();
+    // A never-configured broker is the standalone case: the mqtt leg is not
+    // a truth this device owes, so the glance line stays quiet about it.
+    st.standalone = canary::net::mqtt_broker_is_placeholder();
+    st.acked = fleet.ack_active(now);
+    st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
+    if (st.time_valid) {
+      // The face's date line wants the weekday too — one more localtime
+      // read on the 1 Hz render tick costs nothing.
+      time_t t = time(nullptr);
+      struct tm lt;
+      localtime_r(&t, &lt);
+      st.wday = lt.tm_wday;
+      st.mday = lt.tm_mday;
+      st.mon = lt.tm_mon + 1;
+    }
+    st.bird = bird;
+    // The companion's visits: calm + idle is the whole gate (same rule as
+    // ambient life) — a visit can't begin over an alarm, a modal surface,
+    // or link trouble the glance line is busy being honest about.
+    {
+      using canary::fleet::Sev;
+      const bool calm = fleet.worst(now) < Sev::Warn;
+      const bool idle = !canary::ui::settings_ui_active() &&
+                        !canary::ui::commission_ui_active();
+      const int minute_of_day =
+          st.time_valid ? st.clock_hh * 60 + st.clock_mm : -1;
+      st.visit = canary::care::nightlight_visits().step(
+          now, minute_of_day, night, calm && idle && g_display_ok);
+    }
+    canary::ui::nightlight_ui_update(fleet, now, st);
+  }
 #endif
 
   apply_brightness(now, night);
@@ -1046,10 +1114,22 @@ void setup() {
 #endif
 #endif
 #ifdef CD_FLAVOR_NIGHTSTAND
+#ifdef CD_NIGHTLIGHT
+  boot_kvf("Glass",  "ST7789T 1.47\" %dx%d portrait SPI (no touch)",
+           TFT_WIDTH, TFT_HEIGHT);
+  boot_kvf("SPI",    "SCK=%d MOSI=%d DC=%d off=%d — CS/RST/BL via EXIO@0x%02X",
+           TFT_PIN_SCK, TFT_PIN_MOSI, TFT_PIN_DC, TFT_COL_OFFSET,
+           EXIO_I2C_ADDR);
+  boot_kv("Face",    "nightlight (7-seg clock + companion + lamp)");
+  // Say the heat budget out loud at boot: the HAL clips the expander PWM.
+  boot_kvf("Lamp",   "backlight duty capped at %d%% (heat; HAL-enforced)",
+           CD_BL_MAX_PCT);
+#else
   boot_kv("Glass",   "ST7789 1.47\" 172x320 portrait SPI (no touch)");
   boot_kvf("SPI",    "SCK=%d MOSI=%d CS=%d DC=%d BL=%d(PWM) off=%d",
            TFT_PIN_SCK, TFT_PIN_MOSI, TFT_PIN_CS, TFT_PIN_DC, TFT_PIN_BL,
            TFT_COL_OFFSET);
+#endif
 #if defined(FEATURE_AMBIENT_LED) && FEATURE_AMBIENT_LED
   boot_kvf("Beacon", "WS2812 x%d on GPIO%d (RMT) — the state channel",
            RGBLED_COUNT, RGBLED_PIN);
@@ -1182,8 +1262,11 @@ void setup() {
 #ifdef CD_FLAVOR_DASH
     dash_face_create();   // landscape poster or portrait column, per rotation
 #endif
-#ifdef CD_FLAVOR_NIGHTSTAND
+#if defined(CD_FLAVOR_NIGHTSTAND) && !defined(CD_NIGHTLIGHT)
     canary::ui::portrait_ui_create();
+#endif
+#ifdef CD_NIGHTLIGHT
+    canary::ui::nightlight_ui_create();
 #endif
     render(canary::ms_now());
     lv_timer_handler();
@@ -1279,6 +1362,11 @@ void setup() {
     // The lamp's voice comes from the same identity, for the same reason:
     // distinct across devices, reproducible within one.
     canary::ui::song_seed(h, millis());
+#endif
+#ifdef CD_NIGHTLIGHT
+    // The companion's visit cadence too — plus the nightlight prefs
+    // (12-hour clock, lamp strength) from NVS.
+    canary::care::nightlight_begin(h);
 #endif
   }
 
@@ -1702,8 +1790,11 @@ void loop() {
         }
 #endif
 #endif
-#ifdef CD_FLAVOR_NIGHTSTAND
+#if defined(CD_FLAVOR_NIGHTSTAND) && !defined(CD_NIGHTLIGHT)
         canary::ui::portrait_ui_life_glance(now);
+#endif
+#ifdef CD_NIGHTLIGHT
+        canary::ui::nightlight_ui_life_glance(now);
 #endif
         fleet.mark_dirty();
         break;

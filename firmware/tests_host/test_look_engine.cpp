@@ -83,7 +83,7 @@ static void test_breath() {
 
 static void test_scenes() {
   printf("scenes...\n");
-  CHECK(kSceneCount == 10, "ten scenes");
+  CHECK(kSceneCount == 11, "eleven scenes");
   for (uint8_t i = 0; i < kSceneCount; i++) {
     CHECK(kScenes[i].n_stops >= 1 && kScenes[i].n_stops <= 4, "stop count sane");
     CHECK(kScenes[i].id != nullptr && kScenes[i].name != nullptr, "scene named");

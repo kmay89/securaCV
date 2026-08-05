@@ -31,6 +31,14 @@ const Scene kScenes[] = {
   // this scene exactly like every other: it dresses the calm only.
   {"rainbow",  "Rainbow",     Motion::Sweep,   4,
      {{0,230,217},{90,230,217},{180,230,217},{270,230,217}}},
+  // Bright white, kept a touch warm (a true 0-saturation white reads blue
+  // on these panels) with a faint breathing shimmer so the lamp still feels
+  // alive. Appended last so every stored scene index keeps its meaning.
+  // "Bright" is relative to the device's own ceiling: on the nightlight the
+  // HAL caps backlight duty at 50% (heat), and this scene is as bright as
+  // that budget allows.
+  {"moonbeam", "Moonbeam",    Motion::Breathe, 4,
+     {{40,26,255},{42,15,242},{38,20,255},{40,31,248}}},
 };
 const uint8_t kSceneCount = (uint8_t)(sizeof(kScenes) / sizeof(kScenes[0]));
 

@@ -179,6 +179,22 @@
     "thermal_notes": "PIR needs thermal stability — keep the sensor stalk clear of the MCU and out of drafts."
   },
   {
+    "id": "waveshare-esp32c3-lcd147",
+    "name": "Waveshare ESP32-C3-LCD-1.47",
+    "vendor": "Waveshare",
+    "mcu": "ESP32-C3",
+    "flash_mb": 4,
+    "psram_mb": 0,
+    "pio_board": "esp32-c3-devkitm-1",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": [
+      "canary-display"
+    ],
+    "notes": "Nightstand Line pocket node ('Canary Nightlight'): ST7789T portrait SPI driven 180x320/offset-30 per the vendor demo (marketing says 172x320 — see the board README), LCD CS/RST + SD CS + BACKLIGHT PWM all behind Waveshare's I2C EXIO expander at 0x24 (no LEDC backlight pin), QMI8658 IMU on the shared bus, NO WS2812 — the glass itself is the lamp. Single-core C3, NO PSRAM (lean single-buffer). Wired as the canary-display 'nightlight' flavor on the core-2.x display base (env canary-display-nightlight-c3): display_1in47.cpp EXIO path + nightlight_ui.cpp. Pin map from the vendor engineering-sample repo + schematic (they agree); bench validation pending.",
+    "thermal_notes": "Enclosed pocket case (canary_c3_lcd147.scad) with a lamp duty cycle: the nightlight flavor hard-caps backlight duty at 50% in the HAL — a heat budget, not a preference. Thermally trivial below that cap."
+  },
+  {
     "id": "waveshare-esp32c6-lcd147",
     "name": "Waveshare ESP32-C6-LCD-1.47",
     "vendor": "Waveshare",

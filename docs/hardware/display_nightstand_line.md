@@ -26,6 +26,7 @@ glance across a dark room, the bird **breathes and lives**, and **a touch reveal
 |---|---|---|---|---|
 | `waveshare-esp32c6-lcd147` | ESP32-C6, 1-core 160 MHz, **no PSRAM** | ST7789 172×320 SPI | 1× WS2812 (GPIO8) | nightstand (pin-header) |
 | `waveshare-esp32s3-lcd147` | ESP32-S3, 2-core 240 MHz, 8 MB PSRAM | ST7789 172×320 SPI (same panel) | 1× WS2812 (GPIO38) | plug-in ambient (USB-A stick) |
+| `waveshare-esp32c3-lcd147` | ESP32-C3, 1-core 160 MHz, **no PSRAM** | ST7789T 180×320 SPI, CS/RST/**BL** via I2C EXIO expander | — (the glass IS the lamp) | **nightlight** (pocket case, kid's bedside) — 7-seg clock + companion + lamp, `CD_NIGHTLIGHT` face over this flavor's HAL, backlight duty HAL-capped at 50% (heat). See `firmware/configs/canary-display/nightlight/` |
 | `waveshare-esp32s3-lcd7` | ESP32-S3R8, 8 MB **octal** PSRAM | 800×480 RGB parallel + GT911 5-pt touch | — | the big glass (desk) |
 
 **Two families, not three:** the two 1.47" boards **share the ST7789 172×320 panel** → one new SPI HAL,
