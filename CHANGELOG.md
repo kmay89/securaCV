@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### The hub finishes its own sign-in, and the Flasher stops lying about USB
+
+Two Flasher (desktop app) fixes, one promise made real:
+
+- **The hub account is now created over Home Assistant's own setup API.** The
+  opt-in account panel used to rest entirely on the experimental `.storage`
+  card seed — unvalidated on hardware, so first boot could land on a setup
+  wizard holding credentials HA had never heard of. Now the first-boot watch
+  finishes onboarding the moment the hub answers: it reads the hub's real
+  state (`GET /api/onboarding`), creates the owner if the slot is open,
+  completes the remaining wizard pages, revokes the ephemeral token it used,
+  and **verifies the typed login actually opens the hub** before saying so.
+  It converges from any starting state — seed applied, seed ignored, wizard
+  half-clicked in a browser, a previous run dead partway — and reports
+  honestly when a human still has a click left (including an owner account it
+  didn't create). New host-tested `hub_io::onboarding` module; the card seed
+  stays as a harmless head start.
+- **The USB "Connected" dot can no longer outlive the board.** After a flash
+  the serial monitor auto-starts, and starting it froze the 1 Hz port watcher
+  — so unplugging the Canary left "Connected · ESP32-S3" on screen forever.
+  The watcher now keeps enumerating (a read-only OS query) while the monitor
+  owns the port: a rebooting board shows "waiting for it to come back", a
+  really-gone board drops to "Scanning for a Canary" within seconds. The
+  in-browser flasher gets the same honesty via Web Serial's `disconnect`
+  event — unplugging while parked on the connected card returns to the
+  connect step instead of showing a chip that isn't there.
+
 ## [2.4.5] - 2026-08-03
 
 ### The setup wizard stops crashing — for the reasons 2.4.4 didn't reach

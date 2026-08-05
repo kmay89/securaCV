@@ -142,6 +142,10 @@ PRODUCTS = [
     },
     {
         "id": "securacv-canary-wap",
+        # The WAP's Arduino sketch compiles no boards/<id>/pins header, so
+        # there is nothing to derive the figure from. Declared instead —
+        # checked against the ledger, and the one product here that is.
+        "figure": "device.canary-wap",
         "family": "wap",
         "board_label": "Seeed XIAO ESP32-S3",
         "name": "Canary WAP",
@@ -1542,6 +1546,98 @@ def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+FIGURES_LEDGER = REPO / "canary-local/devices/figures.json"
+FIGURES_PICKER = REPO / "canary-local/devices/figures.picker.json"
+
+
+def figure_hardware_for(project: str, env: str) -> str | None:
+    """Which board this build compiles against, in the fleet-figure vocabulary.
+
+    Read from the pins header the build actually includes — the same
+    load-bearing declaration `gen_figures.mjs` keys its exact lookup on
+    (docs/design/FLEET_FIGURES.md §7). A build that names no such header gets
+    None and the picker shows its placeholder; the coarse PlatformIO `board`
+    is deliberately NOT a fallback, because `seeed_xiao_esp32s3` alone is
+    shared by the all-rounder Canary, the WAP, a Vision host and the Watch
+    Station, and picking one of those would put the wrong device on the row.
+    """
+    # Arduino profile builds (canary-display, canary-wap): the sketch compiles
+    # a flat pins_<profile>.h next to it.
+    if env.startswith("profile:") or env.startswith("arduino:"):
+        prof = env.split(":", 1)[1]
+        for sketch in sorted((REPO / project).glob("arduino/*/")):
+            for cand in (sketch / f"pins_{prof.lower()}.h", sketch / "pins.h"):
+                if not cand.exists():
+                    continue
+                m = re.search(r'#define\s+CANARY_FIGURE_HARDWARE\s+"([^"]+)"', read(cand))
+                if m:
+                    return m.group(1)
+        return None
+    # PlatformIO envs: the -I boards/<id>/pins include, inherited via extends.
+    blocks: dict[str, str] = {}
+    for ini in sorted((REPO / "firmware/envs/platformio").glob("*.ini")) + [
+        REPO / project / "platformio.ini"
+    ]:
+        if not ini.exists():
+            continue
+        for name, body in re.findall(r"^\[env:([^\]]+)\]\n(.*?)(?=^\[|\Z)", read(ini), re.S | re.M):
+            blocks[name] = body
+    seen: set[str] = set()
+    cur = env
+    while cur and cur in blocks and cur not in seen:
+        seen.add(cur)
+        m = re.search(r"boards/([a-z0-9._-]+)/pins", blocks[cur])
+        if m:
+            return m.group(1)
+        ext = re.search(r"^extends\s*=\s*env:(\S+)", blocks[cur], re.M)
+        cur = ext.group(1) if ext else None
+    return None
+
+
+def figure_block(p: dict) -> dict | None:
+    """The picker figure for one flash target, or None for the placeholder.
+
+    Two ways a product can name a figure, in this order:
+      1. the pins header its build compiles (derived — preferred, and the only
+         one that cannot drift from the firmware)
+      2. an explicit `figure` key in the PRODUCTS row (declared — for builds
+         that compile no boards/ pins header, like the WAP's Arduino sketch)
+    Either way the id is checked against the generated ledger, so a figure
+    that has been renamed or removed fails the build here rather than showing
+    a blank slot to somebody holding a board.
+    """
+    ledger = json.loads(read(FIGURES_LEDGER))
+    picker = json.loads(read(FIGURES_PICKER))["figures"]
+    by_hw = {m["hardware"]: m for m in ledger["hardware"]["mapped"]}
+
+    hw = figure_hardware_for(p["project"], p["env"])
+    if hw and hw in by_hw:
+        row = by_hw[hw]
+        fid, via = row["figure"], "the pins header this build compiles"
+        shared = bool(row.get("shared"))
+    elif p.get("figure"):
+        fid, via, shared = p["figure"], "declared in the product table", False
+        hw = hw or None
+    else:
+        return None
+
+    if fid not in picker:
+        die(f"{p['id']}: figure '{fid}' is not in figures.picker.json — "
+            f"run canary-local/tools/figures/gen_figures.mjs first")
+    meta = next((f for f in ledger["figures"] if f["id"] == fid), None)
+    return {
+        "id": fid,
+        "title": meta["title"] if meta else fid,
+        "hardware": hw,
+        "via": via,
+        # One board, more than one product: the drawing is right for all of
+        # them, the title names one. The picker says so rather than implying
+        # this row is the only thing that board becomes.
+        "shared": shared,
+        "svg": picker[fid],
+    }
+
+
 def board_for_env(project: str, env: str) -> str:
     """Re-derive a build env's PlatformIO board from the firmware tree.
 
@@ -1750,6 +1846,9 @@ def main() -> None:
         elif role == "sense":
             entry["reflexes"] = sense_reflexes[
                 "wellbeing" if "wellbeing" in p["id"] else "default"]
+        fig = figure_block(p)
+        if fig:
+            entry["figure"] = fig
         products_out.append(entry)
 
     # Family coverage: every family has products; a family with a variant

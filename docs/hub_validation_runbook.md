@@ -68,6 +68,23 @@ Both OSes, reader path first (it isolates the writer from the gadget):
 
 ## 4 · Account pre-seed ground truth + restore mechanism
 
+**The shipping promise no longer hangs on this section.** Since 2026-08-05 the
+app finishes the account over Home Assistant's own onboarding API the moment
+the hub answers (`hub_io::onboarding`, design §7 step 5) — it creates the
+owner, completes the wizard's remaining pages, and verifies the login, from
+whatever state first boot actually produced. Validate that first:
+
+- ☐ Flash with an account typed (seed on or off), keep the app open, boot the
+  hub: the first-boot watch must report the account created and the login
+  verified, and `homeassistant.local:8123` must accept those credentials with
+  no wizard shown.
+- ☐ Complete onboarding by hand in a browser first, then let the watch run:
+  it must detect the foreign owner and say so plainly — never claim success.
+
+The card-seed work below is still worth doing (a working seed collapses the
+window where the hub sits onboarding-less, and it is the only story when the
+app is closed during first boot), but it is a head start now, not the promise.
+
 First capture reality, then pick the mechanism (design §7 step 5):
 
 - ☐ On a stock-flashed hub, complete onboarding by hand (any throwaway
@@ -87,11 +104,12 @@ First capture reality, then pick the mechanism (design §7 step 5):
   restore-backup path accepts a curated backup as the no-typing fallback.
 - ☐ Record the winner in the design doc §8 as a dated decision.
 
-Note: the app's account panel is labeled **experimental** and writes the
-minted `.storage` under the boot partition's `CONFIG/` (Mechanism B) — so a
-single opt-in flash is now the fastest way to run the Mechanism B experiment
-above. After booting, report whether `homeassistant.local:8123` showed a
-login page (win) or the setup wizard (B doesn't work → fall back to A or C).
+Note: the app's account panel writes the minted `.storage` under the boot
+partition's `CONFIG/` (Mechanism B) — so a single opt-in flash is the fastest
+way to run the Mechanism B experiment above. To see what the SEED did (as
+opposed to the API companion), boot with the app closed and check whether
+`homeassistant.local:8123` shows a login page (B works) or the setup wizard
+(B doesn't → the companion, or A/C, carries the story).
 
 ## 5 · The UX behaviors (worth a look while you're here)
 

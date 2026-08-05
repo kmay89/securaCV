@@ -7143,7 +7143,7 @@
    ]
   },
   "canary_c3_lcd147.scad": {
-   "title": "Canary — ESP32-C3-LCD-1.47 POCKET CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — ESP32-C3-LCD-1.47 POCKET CASE  ⚠️ IN DEVELOPMENT (v0.2-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -7213,8 +7213,13 @@
       },
       {
        "name": "brass_h",
-       "default": "5.0",
-       "comment": "factory pillar height above the PCB back — MEASURE"
+       "default": "3.0",
+       "comment": "factory pillar height above the PCB back — MEASURED"
+      },
+      {
+       "name": "stand_gap",
+       "default": "2.8",
+       "comment": "lid inner face → pillar top — MEASURED (kmay89, print"
       }
      ]
     },
@@ -7260,13 +7265,13 @@
       },
       {
        "name": "usb_w",
-       "default": "9.15",
-       "comment": "stadium opening width — shell + 0.2"
+       "default": "9.05",
+       "comment": "stadium opening width — shell + 0.11 total"
       },
       {
        "name": "usb_h",
-       "default": "3.45",
-       "comment": "stadium opening height — shell + 0.2"
+       "default": "3.35",
+       "comment": "stadium opening height — shell + 0.09 total"
       },
       {
        "name": "usb_dx",
@@ -7284,18 +7289,43 @@
        "comment": "shell overhang past the PCB edge — MEASURE"
       },
       {
-       "name": "usb_relief",
-       "default": "0.8",
-       "comment": "outer-face relief around the opening: a stadium recess"
+       "name": "usb_cham",
+       "default": "0.6",
+       "comment": "outer-rim CHAMFER around the stadium — the plug's"
       },
       {
        "name": "opt_btn",
        "default": "true"
       },
       {
-       "name": "btn_d",
-       "default": "6.5",
-       "comment": "access hole Ø — sized for a BARE FINGERTIP, no tool."
+       "name": "pad_l",
+       "default": "8.2",
+       "comment": "paddle length (Y) — hinge at the USB end, press pad at"
+      },
+      {
+       "name": "pad_h",
+       "default": "5.4",
+       "comment": "paddle height (Z), centered on the actuator — a CAP,"
+      },
+      {
+       "name": "pad_slot",
+       "default": "0.55",
+       "comment": "flex slot around the three free sides — prints clean in"
+      },
+      {
+       "name": "pad_recess",
+       "default": "0.6",
+       "comment": "pad face below the ear's outer face: the squeeze guard,"
+      },
+      {
+       "name": "pad_boss_d",
+       "default": "2.6",
+       "comment": "press boss Ø on the pad's back — rides inside the"
+      },
+      {
+       "name": "pad_boss_l",
+       "default": "0.25",
+       "comment": "boss reach: leaves free_gap (asserted) before contact"
       },
       {
        "name": "btn_up",
@@ -7364,7 +7394,7 @@
       {
        "name": "vent_n",
        "default": "4",
-       "comment": "slots per side wall (and grille rows in the lid)"
+       "comment": "slots per side wall"
       },
       {
        "name": "vent_pitch",
@@ -7432,13 +7462,18 @@
       },
       {
        "name": "ear_skin",
-       "default": "1.2",
-       "comment": "wall skin left outside a button/USB clearance channel"
+       "default": "1.4",
+       "comment": "wall skin left outside a button/USB clearance channel."
+      },
+      {
+       "name": "skirt_clear",
+       "default": "0.05",
+       "comment": "skirt-to-cavity clearance per side — snug on purpose:"
       },
       {
        "name": "nub_y0",
-       "default": "5.0",
-       "comment": "nub pair centers (±Y) on the ±X walls — the C6 case's"
+       "default": "3.6",
+       "comment": "nub pair centers (±Y) on the ±X walls — the same"
       }
      ]
     },
@@ -7499,8 +7534,13 @@
       },
       {
        "name": "usb_slide",
-       "default": "usb_w + 0.15",
-       "comment": "insertion notch — a hair looser than"
+       "default": "usb_w + 0.1",
+       "comment": "insertion slot — a hair looser than"
+      },
+      {
+       "name": "z_slot0",
+       "default": "z_usb - usb_h/2",
+       "comment": "the slot starts AT the stadium's"
       },
       {
        "name": "ear_bump",
@@ -7512,12 +7552,50 @@
       },
       {
        "name": "ear_w",
-       "default": "max(btn_body_w, btn_d) + 3.0",
-       "comment": "the ear covers the widest of the"
+       "default": "pad_l + pad_slot + 2.4",
+       "comment": "the ear wraps the paddle recess"
       },
       {
        "name": "chin_w",
        "default": "usb_w + 4"
+      },
+      {
+       "name": "pad_beam",
+       "default": "ear_skin - pad_recess",
+       "comment": "flexing skin thickness"
+      },
+      {
+       "name": "pad_y0",
+       "default": "btn_y - pad_l/2",
+       "comment": "hinge-end edge"
+      },
+      {
+       "name": "pad_rec_y",
+       "default": "pad_l + pad_slot",
+       "comment": "recess span (slot at the"
+      },
+      {
+       "name": "pad_rec_cy",
+       "default": "btn_y + pad_slot/2",
+       "comment": "free end only)"
+      },
+      {
+       "name": "pad_h_eff",
+       "default": "min(pad_h, 2*(bez_h - 1.2 - pad_slot - z_btn))"
+      },
+      {
+       "name": "pad_rec_z",
+       "default": "pad_h_eff + 2*pad_slot"
+      },
+      {
+       "name": "x_skin_in",
+       "default": "xc/2 + btn_reach",
+       "comment": "beam's inner face"
+      },
+      {
+       "name": "free_gap",
+       "default": "2*tol_slide - pad_boss_l",
+       "comment": "boss tip → actuator tip"
       },
       {
        "name": "lip_l",
