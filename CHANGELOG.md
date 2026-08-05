@@ -29,6 +29,36 @@ Two Flasher (desktop app) fixes, one promise made real:
   event — unplugging while parked on the connected card returns to the
   connect step instead of showing a chip that isn't there.
 
+## [2.4.6] - 2026-08-05
+
+### A display hears what the camera sees — no broker, no hub, no setup
+
+A Canary Vision and a Canary Display now speak detection directly over
+Bluetooth LE. Power both on, and the person your camera sees shows up on the
+glass — as `person 87% (ble)` with an amber glow and a chime — with no MQTT
+broker, no Raspberry Pi hub, no WiFi, and no pairing step.
+
+- **Fleet beacon v2.** The 11-byte fleet-link presence beacon gains a 13-byte
+  version 2: the same layout plus a detection **class token** (person /
+  vehicle / animal / package — the ObjectClass vocabulary, deliberately
+  nothing identifying) and a **confidence percentage**. No identity, no
+  timestamp on the wire; the advert is the "now". v1-only senders
+  (canary-sense, the WAP) stay understood unchanged everywhere.
+- **canary-vision sets the alert it always had.** The beacon's `alert` flag
+  existed from day one and nothing ever set it. Now the presence FSM drives
+  it — debounced presence, not per-frame flicker — and a detection edge
+  republishes the advert immediately instead of waiting out the 5 s refresh.
+- **canary-display raises a real attention event.** The scanner (BLE and its
+  ESP-NOW twin) decodes the class + confidence into the event line and
+  timeline with `Sev::Warn`, a per-(witness, class) 60 s edge-dedupe so the
+  continuous advert can't spam the log or re-cancel acks, and tamper keeping
+  precedence. Unsigned like everything on this channel: it draws attention
+  but never touches the `Verified` badge. An unknown Vision still auto-appears
+  as `SCV-XXXX` — discovery was already magical; now it carries the sighting.
+- **Sibling rosters hear it too.** canary-sense / canary-vision roster scans,
+  the modular canary's scan feed, and the WAP's `/api/nearby` all accept the
+  v2 length, so a detection-flagged peer lands in every fleet view.
+
 ## [2.4.5] - 2026-08-03
 
 ### The setup wizard stops crashing — for the reasons 2.4.4 didn't reach

@@ -102,8 +102,11 @@ void handle_advert(const NimBLEAdvertisedDevice* d, int8_t rssi) {
   const std::string m = dev->getManufacturerData();
   const uint8_t* p = reinterpret_cast<const uint8_t*>(m.data());
 
-  // Fleet-link presence beacon (11-byte mfg, type 0x10) — full status.
-  if (m.size() == FLEET_BEACON_MFG_LEN) {
+  // Fleet-link presence beacon (11-byte v1 / 13-byte v2 mfg, type 0x10) —
+  // full status. v2 adds detection class + confidence (canary-vision);
+  // fleet_beacon_parse accepts both, and the flags byte (incl. ALERT) rides
+  // into the roster either way.
+  if (m.size() == FLEET_BEACON_MFG_LEN || m.size() == FLEET_BEACON_MFG_V2_LEN) {
     FleetBeaconFields f;
     if (!fleet_beacon_parse(p, m.size(), &f)) return;
     RosterMsg msg;

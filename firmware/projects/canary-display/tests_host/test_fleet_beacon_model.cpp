@@ -118,6 +118,63 @@ int main() {
     CHECK(e && e->signed_flag == false, "beacon tamper event is unsigned");
   }
 
+  // ── v2 detection alert: class + confidence on the event line ─────────
+  {
+    Model m;
+    BeaconStatus d = mk_status(-1, -1, 0, /*tamper=*/false);
+    d.alert = true;
+    d.detect_class = 1;   // person
+    d.detect_score = 87;
+
+    m.on_beacon("beef", d, true, /*now=*/10000);
+    CHECK(m.events_count() == 1, "first detection beacon pushes an event");
+    const EventRow* e = m.event_at(0);
+    CHECK(e && strcmp(e->name, "person 87% (ble)") == 0,
+          "event named 'person 87% (ble)'");
+    CHECK(e && e->sev == Sev::Warn, "detection severity is Warn");
+    CHECK(e && e->signed_flag == false, "detection event is unsigned");
+    const Witness* w = find(m, "SCV-beef");
+    CHECK(w && w->badge == Badge::Unknown, "badge untouched by a detection");
+    CHECK(m.worst(10000) >= Sev::Warn, "detection raises fleet attention");
+
+    // Continuous advert: same class within 60 s is deduped — even as the
+    // confidence wobbles.
+    d.detect_score = 91;
+    m.on_beacon("beef", d, true, /*now=*/10000 + 30000);
+    CHECK(m.events_count() == 1, "same-class detection within 60 s deduped");
+
+    // A NEW class re-arms immediately (a vehicle after a person is news).
+    d.detect_class = 2;   // vehicle
+    d.detect_score = -1;  // unknown confidence
+    m.on_beacon("beef", d, true, /*now=*/10000 + 31000);
+    CHECK(m.events_count() == 2, "class change re-arms within the window");
+    e = m.event_at(0);
+    CHECK(e && strcmp(e->name, "vehicle (ble)") == 0,
+          "unknown confidence drops the percent");
+
+    // After 60 s the same class fires again.
+    m.on_beacon("beef", d, true, /*now=*/10000 + 31000 + 61000);
+    CHECK(m.events_count() == 3, "same class after 60 s pushes a fresh event");
+
+    // Tamper keeps precedence over a simultaneous detection.
+    BeaconStatus both = mk_status(-1, -1, 0, /*tamper=*/true);
+    both.alert = true;
+    both.detect_class = 1;
+    both.detect_score = 50;
+    Model m2;
+    m2.on_beacon("f00d", both, true, /*now=*/5000);
+    const EventRow* e2 = m2.event_at(0);
+    CHECK(e2 && strcmp(e2->name, "tamper (ble)") == 0,
+          "tamper wins the event line over a detection");
+    CHECK(m2.events_count() == 1, "tamper+detection pushes only the tamper");
+
+    // An idle v2 beacon (alert clear) raises no event at all.
+    Model m3;
+    BeaconStatus idle = mk_status(80, 90, 7, /*tamper=*/false);
+    m3.on_beacon("cafe", idle, true, /*now=*/1000);
+    CHECK(m3.events_count() == 0, "idle beacon pushes no event");
+  }
+
   // ── display peers seat in the roster but never trip the witness-lost
   //    alarm ladder (PR #1300: an unplugged sibling screen is ordinary) ──
   {

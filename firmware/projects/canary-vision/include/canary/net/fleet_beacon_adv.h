@@ -28,4 +28,13 @@ void fleet_beacon_begin(uint32_t now);
 // stack up. Broker-independent — keeps advertising through an MQTT outage.
 void fleet_beacon_tick(uint32_t now);
 
+// Feed the live detection state into the advert (v2 beacon: ALERT flag +
+// class token + confidence 0..100 — a token and a percentage, nothing
+// identifying). Cheap to call every vision tick: a mere score change waits
+// for the ~5 s refresh, but a presence EDGE (active flips, or the class
+// changes while active) republishes immediately so a display alerts without
+// the cadence lag. detect_class is a FLEET_BEACON_DETECT_* token.
+void fleet_beacon_note_detection(bool active, uint8_t detect_class,
+                                 int score_pct, uint32_t now);
+
 } // namespace canary::net

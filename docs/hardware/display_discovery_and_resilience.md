@@ -91,8 +91,25 @@ diagnostics and **never** set the `Verified` trust badge.
    and, within a single scan burst, lists every nearby Canary with live status —
    no connection, no pairing, no broker. When WiFi is *also* down the display
    scans continuously instead of in bursts (no coexistence cost to pay). The
-   wire format is the single source of truth in `canary-wap/.../fleet_beacon.h`
+   wire format is the single source of truth in `common/fleet_link/fleet_beacon.h`
    and `canary-display/.../beacon_parse.h` (kept identical; host round-tripped).
+
+   **Version 2 — live detections on the glass (canary-vision).** A witness
+   with an optical pipeline emits a 13-byte **v2** of the same beacon: the v1
+   layout plus a detection **class token** (person / vehicle / animal /
+   package — the ObjectClass vocabulary and nothing beyond it) and a
+   **confidence percentage**, with the `alert` flag set while its presence
+   FSM holds a live detection (an edge republishes immediately; a confidence
+   wobble rides the ~5 s refresh). A display that hears it raises a real
+   attention event — `person 87% (ble)`, `Sev::Warn`, amber glow + chime —
+   with a per-(witness, class) 60 s edge-dedupe so the continuous advert
+   can't spam the log or re-cancel acks. Same trust posture as everything on
+   this channel: **unsigned**, so it draws attention but never touches the
+   `Verified` badge, and the wire carries no identity and no timestamp — a
+   class token and a percentage, nothing more (Invariants II/III). Parsers on
+   every surface (display BLE + ESP-NOW, sibling rosters, the WAP's
+   `/api/nearby`) accept both versions; v1-only senders stay understood
+   unchanged.
 2. **GATT pull (on-demand rich detail, `FEATURE_FLEET_LINK`).** Tapping a
    Canary on the glass opens a bounded NimBLE **central** connection to that
    device's BLE status GATT service (`5e63a1b0-…`) and reads its fuller

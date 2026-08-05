@@ -43,6 +43,12 @@ uint8_t  s_fp0      = 0;
 uint8_t  s_fp1      = 0;
 uint32_t s_next_ms  = 0;
 
+// Live detection state (fleet_beacon_note_detection). While active, the
+// advert carries the ALERT flag plus class + confidence — the v2 beacon.
+bool     s_det_active = false;
+uint8_t  s_det_class  = FLEET_BEACON_DETECT_NONE;
+int      s_det_score  = -1;
+
 int hex_nibble(char c) {
   if (c >= '0' && c <= '9') return c - '0';
   if (c >= 'a' && c <= 'f') return c - 'a' + 10;
@@ -69,15 +75,18 @@ void capture_fp() {
   s_fp_valid = true;
 }
 
-// Build the 11-byte manufacturer blob from live state and (re)install it as the
-// primary advert. Honest sourcing — no fabricated fields:
-//   flags        degraded (diag level != Normal), on_wifi_sta (STA link up).
-//                tamper / mic_muted / alert: no clean signal at this layer —
-//                left clear rather than guessed.
+// Build the 13-byte v2 manufacturer blob from live state and (re)install it as
+// the primary advert. Honest sourcing — no fabricated fields:
+//   flags        degraded (diag level != Normal), on_wifi_sta (STA link up),
+//                alert (presence FSM holds a live detection — the one witness
+//                type with a clean signal for it). tamper / mic_muted: no
+//                clean signal at this layer — left clear rather than guessed.
 //   battery_pct  0xFF unknown — mains-powered witness, no battery gauge.
 //   health_pct   0xFF unknown — no 0..100 self-test score at this layer.
 //   chain_height witness chain length (low 16 bits ride the wire).
 //   fp2          real fingerprint suffix once captured, else 0x00 sentinel.
+//   detect       class token + confidence percent while the alert flag is up
+//                (NONE / unknown otherwise) — never anything identifying.
 void publish_adv(uint32_t now) {
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
   if (!adv) return;
@@ -91,22 +100,27 @@ void publish_adv(uint32_t now) {
   if (canary::net::wifi_connected()) {
     flags |= FLEET_BEACON_FLAG_ON_WIFI_STA;
   }
+  if (s_det_active) {
+    flags |= FLEET_BEACON_FLAG_ALERT;
+  }
 
   const uint32_t chain_height = canary::witness::chain_length();
 
-  // Payload = bytes [2..10]; battery/health unknown (-1 -> 0xFF via the builder).
-  uint8_t payload[FLEET_BEACON_PAYLOAD_LEN];
-  fleet_beacon_build(payload, flags, /*battery_pct=*/-1, /*health_pct=*/-1,
-                     chain_height, s_fp0, s_fp1);
+  // Payload = bytes [2..12]; battery/health unknown (-1 -> 0xFF via the builder).
+  uint8_t payload[FLEET_BEACON_PAYLOAD_V2_LEN];
+  fleet_beacon_build_v2(payload, flags, /*battery_pct=*/-1, /*health_pct=*/-1,
+                        chain_height, s_fp0, s_fp1,
+                        s_det_active ? s_det_class : FLEET_BEACON_DETECT_NONE,
+                        s_det_active ? s_det_score : -1);
 
-  // Full manufacturer blob a scanner sees = company id (LE) + 9-byte payload.
-  // NimBLE's setManufacturerData takes the bytes INCLUDING the company id (the
-  // same 11-byte blob securacv_ble_status builds); fleet_beacon_parse validates
-  // all 11 on the display side.
-  uint8_t mfg[FLEET_BEACON_MFG_LEN];
+  // Full manufacturer blob a scanner sees = company id (LE) + 11-byte payload.
+  // NimBLE's setManufacturerData takes the bytes INCLUDING the company id;
+  // fleet_beacon_parse / beacon_parse.h validate all 13 on the receiving side
+  // (and still accept the 11-byte v1 blob other witness types emit).
+  uint8_t mfg[FLEET_BEACON_MFG_V2_LEN];
   mfg[0] = (uint8_t)(FLEET_BEACON_COMPANY_ID & 0xFF);
   mfg[1] = (uint8_t)((FLEET_BEACON_COMPANY_ID >> 8) & 0xFF);
-  memcpy(&mfg[2], payload, FLEET_BEACON_PAYLOAD_LEN);
+  memcpy(&mfg[2], payload, FLEET_BEACON_PAYLOAD_V2_LEN);
 
   NimBLEAdvertisementData advData;
   advData.setManufacturerData(std::string((const char*)mfg, sizeof(mfg)));
@@ -159,6 +173,18 @@ void fleet_beacon_tick(uint32_t now) {
   publish_adv(now);
 }
 
+void fleet_beacon_note_detection(bool active, uint8_t detect_class,
+                                 int score_pct, uint32_t now) {
+  // An edge is what a display must hear NOW: presence flipping, or the class
+  // changing mid-presence. A mere confidence wobble rides the next refresh.
+  const bool edge = (active != s_det_active) ||
+                    (active && detect_class != s_det_class);
+  s_det_active = active;
+  s_det_class  = detect_class;
+  s_det_score  = score_pct;
+  if (edge && s_inited) publish_adv(now);
+}
+
 }  // namespace canary::net
 
 #else  // FEATURE_FLEET_BEACON off — no-op stubs (per-board size-guard off switch)
@@ -167,6 +193,7 @@ void fleet_beacon_tick(uint32_t now) {
 namespace canary::net {
 void fleet_beacon_begin(uint32_t) {}
 void fleet_beacon_tick(uint32_t) {}
+void fleet_beacon_note_detection(bool, uint8_t, int, uint32_t) {}
 }  // namespace canary::net
 
 #endif  // FEATURE_FLEET_BEACON

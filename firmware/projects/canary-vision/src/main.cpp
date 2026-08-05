@@ -36,6 +36,7 @@
 #include "canary/net/ota_mgr.h"
 #if defined(FEATURE_FLEET_BEACON) && FEATURE_FLEET_BEACON
 #include "canary/net/fleet_beacon_adv.h"  // advertise-only BLE presence beacon
+#include <fleet_beacon.h>                 // FLEET_BEACON_DETECT_* class tokens
 #endif
 #if defined(FEATURE_FLEET_ROSTER) && FEATURE_FLEET_ROSTER
 #include "canary/net/fleet_roster_scan.h" // RX twin: track the other Canaries
@@ -750,6 +751,20 @@ void loop() {
 
   EventMsg ev{};
   const bool emitted = fsm.tick(vs, now_ms, ev);
+
+#if defined(FEATURE_FLEET_BEACON) && FEATURE_FLEET_BEACON
+  // Mirror the FSM's debounced presence onto the BLE fleet beacon (v2: ALERT
+  // flag + class + confidence) so a canary-display alerts DIRECTLY over BLE —
+  // no broker, no shared WiFi. Debounced presence, not the raw per-frame hit,
+  // so the advert doesn't flap on a single dropped frame. The WE2 pipeline is
+  // person-only today (detect_config person_target); the class token widens
+  // with the pipeline, never past the ObjectClass vocabulary.
+  {
+    const auto snap = fsm.snapshot(now_ms, last_event_name);
+    canary::net::fleet_beacon_note_detection(
+        snap.presence, FLEET_BEACON_DETECT_PERSON, snap.confidence, now_ms);
+  }
+#endif
 
   if (emitted && ev.event_name) {
     set_last_event(ev.event_name);

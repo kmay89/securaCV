@@ -64,6 +64,12 @@ struct BeaconStatus {
   bool     mic_muted = false;
   bool     degraded = false;
   bool     tamper = false;
+  // v2 beacon detection surface (canary-vision): alert = the sender's
+  // presence FSM holds a live detection; class/score say what and how
+  // confidently. A v1 beacon decodes to false / 0 / -1.
+  bool     alert = false;
+  uint8_t  detect_class = 0;  // 0 none / 1 person / 2 vehicle / 3 animal / 4 package
+  int16_t  detect_score = -1; // 0..100 confidence %, -1 = unknown
 };
 
 // Decoded canary-sense radar state row (mqtt_mgr fills this from the retained
@@ -167,6 +173,12 @@ struct Witness {
   bool     ble_degraded = false;
   uint32_t last_beacon_ms = 0;
   bool     seen_via_ble = false;
+  // Beacon detection-alert dedupe (on_beacon): a CONTINUOUS v2 advert keeps
+  // saying "person" for as long as one is present, so the attention edge is
+  // re-armed per (witness, class) per minute — same posture as the chirp/
+  // tamper dedupe. Class 0xFF = never fired.
+  uint32_t ble_alert_ms = 0;
+  uint8_t  ble_alert_class = 0xFF;
 
   // Last event (edge-triggered attention with per-severity decay)
   char     last_event[40] = {0};
@@ -532,6 +544,31 @@ class FleetModel {
       w->event_sev = Sev::Tamper;
       push_event(w->id, name, Sev::Tamper, false, now);
     }
+
+    // Detection alert (v2 beacon, canary-vision): the witness says its
+    // optical pipeline currently sees something — a class token plus a
+    // confidence percentage, never anything identifying. UNSIGNED like the
+    // whole channel, so it draws attention (Sev::Warn — amber glow, chime
+    // tier 2) but never touches the badge. Tamper keeps precedence on the
+    // event line. The advert is CONTINUOUS while presence holds, so the
+    // attention edge re-arms per (witness, class) per minute — the same
+    // spam/ack-cancel posture as the chirp and tamper dedupe above.
+    if (have_status && s.alert && !s.tamper) {
+      if (w->ble_alert_class == s.detect_class &&
+          (int32_t)(now - w->ble_alert_ms) < 60000) {
+        return;
+      }
+      w->ble_alert_ms = now;
+      w->ble_alert_class = s.detect_class;
+
+      char name[32];
+      detection_label(name, sizeof(name), s.detect_class, s.detect_score);
+      copy_str(w->last_event, sizeof(w->last_event), name);
+      w->last_event_ms = now;
+      w->has_event = true;
+      w->event_sev = Sev::Warn;
+      push_event(w->id, name, Sev::Warn, false, now);
+    }
   }
 
   void on_chain(const char* id, uint32_t length, Badge verdict, uint32_t now,
@@ -860,6 +897,38 @@ class FleetModel {
       if (!fp4[i] || s[i] != fp4[i]) return false;
     }
     return true;
+  }
+
+  // Event label for a beacon detection alert: "person 87% (ble)", falling
+  // back to "person (ble)" when the confidence is unknown and "detection
+  // (ble)" for a class token this build hasn't met (degrade, don't crash —
+  // same posture as classify_event). Pure by hand — this header stays free
+  // of <cstdio>.
+  static void detection_label(char* out, size_t cap, uint8_t detect_class,
+                              int score) {
+    const char* cls = "detection";
+    switch (detect_class) {
+      case 1: cls = "person";  break;
+      case 2: cls = "vehicle"; break;
+      case 3: cls = "animal";  break;
+      case 4: cls = "package"; break;
+      default: break;
+    }
+    size_t i = 0;
+    while (cls[i] && i + 1 < cap) { out[i] = cls[i]; i++; }
+    if (score >= 0 && score <= 100 && i + 6 < cap) {  // " 100%" worst case
+      out[i++] = ' ';
+      if (score == 100) { out[i++] = '1'; out[i++] = '0'; out[i++] = '0'; }
+      else {
+        if (score >= 10) out[i++] = (char)('0' + score / 10);
+        out[i++] = (char)('0' + score % 10);
+      }
+      out[i++] = '%';
+    }
+    const char* tail = " (ble)";
+    size_t t = 0;
+    while (tail[t] && i + 1 < cap) { out[i++] = tail[t++]; }
+    out[i] = '\0';
   }
 
   Witness* find(const char* id) {

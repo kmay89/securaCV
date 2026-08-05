@@ -28,7 +28,8 @@ inline bool espnow_decode(const uint8_t* data, int len, char fp4_out[5],
                           canary::fleet::BeaconStatus& status_out,
                           bool& have_status) {
   have_status = false;
-  if (!data || len != (int)BEACON_MFG_LEN) return false;
+  if (!data || len <= 0) return false;
+  if (len != (int)BEACON_MFG_LEN && len != (int)BEACON_MFG_V2_LEN) return false;
   if (!beacon_fp4_from_mfg(data, (size_t)len, fp4_out)) return false;
   have_status = beacon_parse_status(data, (size_t)len, status_out);
   return true;
