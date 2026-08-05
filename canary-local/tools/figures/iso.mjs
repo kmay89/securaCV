@@ -346,6 +346,46 @@ export function planFigure(figure, opts = {}) {
   return { size, ops };
 }
 
+/** Serialize a plan as a COMPACT SVG, for drawing at list-row size.
+ *
+ * Same geometry, three savings that only make sense small:
+ *   · faces sharing a fill collapse into one <path> with several subpaths,
+ *     which is where nearly all the bytes are — a figure is ~44 faces but
+ *     only a handful of distinct tones, and each <path> otherwise repeats
+ *     its own fill/stroke/width attributes
+ *   · the hairline stroke is dropped; at 46 px it is below a pixel and only
+ *     muddies the silhouette
+ *   · coordinates round to 1 decimal, which is ~0.02 px at that size
+ *
+ * This is what rides inside the flasher catalog, where every byte is
+ * embedded in a desktop binary as well as fetched by a browser.
+ */
+export function renderFigureCompact(figure, opts = {}) {
+  const { size, ops } = planFigure(figure, { detail: 'glyph', ...opts });
+  const f1 = (v) => {
+    const r = Math.round(v * 10) / 10;
+    return Number.isInteger(r) ? String(r) : r.toFixed(1);
+  };
+  const d = (pts) => pts.map(([x, y], i) => `${i ? 'L' : 'M'}${f1(x)} ${f1(y)}`).join('') + 'Z';
+  // Preserve paint order: a fill's run is emitted at the position of its
+  // FIRST face. Merging out of order would put a near face behind a far one.
+  const runs = [];
+  const byFill = new Map();
+  for (const op of ops) {
+    const fill = op.kind === 'face' ? op.fill
+      : op.kind === 'shadow' ? 'var(--scv-figure-shadow, rgba(16,18,24,.14))' : null;
+    if (fill === null) { runs.push({ ghost: true, d: d(op.pts) }); continue; }
+    let run = byFill.get(fill);
+    if (!run) { run = { fill, d: '' }; byFill.set(fill, run); runs.push(run); }
+    run.d += d(op.pts);
+  }
+  const body = runs.map((r) => (r.ghost
+    ? `<path d="${r.d}" fill="none" stroke="var(--scv-figure-ghost, #8b90a0)" stroke-width="1.25" stroke-dasharray="3 2.5"/>`
+    : `<path d="${r.d}" fill="${r.fill}"/>`)).join('');
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" `
+    + `role="img" aria-label="${escapeXml(figure.title || figure.id)}">${body}</svg>`;
+}
+
 /** Serialize a plan as a standalone, self-contained SVG document. */
 export function renderFigure(figure, opts = {}) {
   const { size, ops } = planFigure(figure, opts);

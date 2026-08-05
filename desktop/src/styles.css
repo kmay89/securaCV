@@ -255,6 +255,31 @@ kbd {
 .product .p-name { font-weight: 600; }
 .product .p-tag { font-size: 13px; color: var(--text-secondary); display: block; }
 .product .p-meta { font-size: 12px; color: var(--text-muted); margin-top: 3px; display: block; }
+.product .p-note { font-size: 11.5px; color: var(--warn, #a06a12); margin-top: 2px; display: block; }
+/* ── the picker's figure slot ─────────────────────────────────────────────
+ * One fixed slot per row: the board's own isometric figure when the embedded
+ * catalog carries one, a neutral placeholder when it doesn't. Same size
+ * either way, so the list does not reflow as figures land for more of the
+ * fleet. Mirrors canary-local/assets/flash.css — the two flashers share no
+ * UI code, so this pair has to be changed together (AGENTS.md rule 7).
+ * See docs/design/FLEET_FIGURES.md. */
+.product .p-fig {
+  flex: 0 0 auto; width: 46px; height: 46px;
+  display: grid; place-items: center; position: relative;
+  border-radius: 8px; background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+}
+.product .p-fig svg { width: 100%; height: 100%; display: block; }
+/* A wire outline on purpose: it must read as "a board, not drawn yet",
+   never as a product you could match against. */
+.product .p-fig.placeholder svg {
+  width: 78%; height: 78%;
+  fill: none; stroke: var(--text-muted); stroke-width: 2.4; opacity: .75;
+}
+.product .p-fig.placeholder .c { fill: var(--text-muted); stroke: none; opacity: .25; }
+.product .p-fig.placeholder i {
+  position: absolute; bottom: 3px; font-style: normal;
+  font-size: 8px; font-weight: 600; letter-spacing: .03em; color: var(--text-muted);
+}
 .chip-badge {
   display: inline-block; font-size: 11px; font-weight: 700;
   background: var(--canary-soft); color: var(--canary-dark);

@@ -20,6 +20,7 @@ avoidable — once — by making the picture part of the data.
 > |---|---|---|
 > | Web | the SVGs + the ledger | **Yes** — the website's `/figures` catalog |
 > | iPhone · Watch · widgets | `ios/Shared/FleetFigures.swift` | **Yes** — the witness roster and the pairing rows |
+> | Both flashers | `figure` in `canary-local/devices/flash.json` | **Yes** — the firmware picker, in the browser and the desktop app |
 > | Firmware | `firmware/common/core/fleet_figures.h` | Not yet — the lookup is wired and each board names itself, but no screen draws it |
 > | Emulator | the same SVGs | Not yet |
 >
@@ -288,6 +289,43 @@ cover — a gap you can query, not a silent `nullptr`.
 > One candidate that looked right and wasn't: `SECURACV_OTA_PRODUCT`. It's an
 > **update channel**, and it deliberately groups `dash-b` with `dash`. Keying
 > figures on it would have reproduced the exact bug.
+
+**Both flashers — the `figure` block in `flash.json`.** The picker is where a
+wrong picture costs the most: somebody is holding a board and matching it
+against a row. So the rule is stricter here than anywhere else — a figure
+appears only when the catalog can point at *why*, and `gen_flash.py` records
+that reason in `figure.via`:
+
+1. **the pins header the build compiles** — the same load-bearing declaration
+   the firmware lookup keys on. Derived; cannot drift.
+2. **declared in the product table** — for a build that compiles no `boards/`
+   pins header (the WAP's Arduino sketch is the only one today). Checked
+   against the ledger, so a renamed figure fails the build rather than
+   blanking a row.
+
+The coarse PlatformIO `board` is deliberately **not** a fallback:
+`seeed_xiao_esp32s3` alone is shared by the all-rounder Canary, the WAP, a
+Vision host and the Watch Station, so resolving through it would put the wrong
+device on a row. 11 of 15 flash targets resolve today; the other four show the
+placeholder.
+
+**Why the SVG is embedded rather than fetched.** The desktop Flasher bakes
+`flash.json` into its binary at build time (`desktop/src-tauri/build.rs`), so a
+file on disk is not a channel that reaches it. That is what the **picker tier**
+is for: faces sharing a fill merge into one `<path>`, the hairline stroke is
+dropped, and coordinates round to 1 decimal — 52% smaller than the glyph tier
+for the eight figures the flasher needs. Both frontends then draw with no
+network and no file.
+
+**The transition rule.** Every row gets a slot of the same size whether or not
+a figure exists, so the list never reflows as figures land for more of the
+fleet — a placeholder simply becomes a drawing. The placeholder resembles no
+product on purpose: a plausible generic board would be *matchable*, and
+somebody matching their hardware against a picture of different hardware is
+the single failure this system exists to prevent.
+
+The two flashers share no UI code (`AGENTS.md` rule 7), so a test asserts both
+render the slot, both carry the placeholder, and both use the same 46 px box.
 
 **Phone and wrist — `ios/Shared/FleetFigures.swift`.** The same polygons as
 flat data a `Canvas` paints at any size. Not an asset catalog and not an SVG

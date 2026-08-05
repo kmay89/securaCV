@@ -228,12 +228,15 @@ jobs:
           node --test canary-local/tests/catalog_browse.test.js
           node --test canary-local/tests/catalog_funnel.test.js
           node --test canary-local/tests/figures.test.js
-      - name: Fleet figure drift (ledger, SVGs, firmware header, Swift — all generated)
+      - name: Fleet figure drift (ledger, SVGs, picker tier, firmware header, Swift)
         # The figures are a function of the committed CAD: re-export an STL or
         # edit massing.mjs without regenerating and every surface starts drawing
         # a shape the printer no longer makes. --check re-derives into memory and
         # names each file that disagrees. It also refuses to pass on an orphan
         # .svg left behind by a figure that was deleted.
+        # Runs BEFORE the flash-catalog gate below on purpose: gen_flash.py
+        # embeds the picker tier into flash.json, so a stale figure would
+        # otherwise surface as a confusing catalog diff instead of here.
         run: node canary-local/tools/figures/gen_figures.mjs --check
       - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
         run: |
