@@ -1014,7 +1014,7 @@
      "id": "dashboard-display-case",
      "label": "Dashboard display case",
      "set": "dashboard-display-case",
-     "contents": "Waveshare ESP32-S3-Touch-LCD-4.3 (the [display research](../display_research.md) step-up dashboard): face-down bezel frame, vented screw-on back with keyholes + 75 mm M4 pair, free-standing 25° desk cradle. Panel dims are NOMINAL — measure yours",
+     "contents": "Waveshare ESP32-S3-Touch-LCD-4.3 (the [display research](../display_research.md) step-up dashboard): face-down bezel frame, vented screw-on back that clicks onto a wall cradle ([`canary_cradle_lib.scad`](./canary_cradle_lib.scad) — two rigid T-studs carry it, two sprung clips hold the bottom, pull it off for service), free-standing 25° desk cradle. v0.2 retires the old back pattern: a 75 mm M4 pair on one centerline crossed with two keyholes on the other made an X of four holes and two fastener systems, which the dock replaces with one plate and two screws. Panel dims are NOMINAL — measure yours",
      "status": "in-development",
      "parts": [
       {
@@ -1030,6 +1030,11 @@
       {
        "name": "stand",
        "file": "preview/canary_dash_display_stand.stl",
+       "preview_mesh": true
+      },
+      {
+       "name": "cradle",
+       "file": "preview/canary_dash_display_cradle.stl",
        "preview_mesh": true
       }
      ],

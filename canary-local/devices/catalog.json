@@ -356,15 +356,28 @@
    ],
    "class": "primary",
    "fit": "standard",
-   "variant_axes": [],
+   "variant_axes": [
+    {
+     "param": "mount",
+     "values": [
+      "cradle",
+      "none"
+     ],
+     "default": "cradle",
+     "audience": "user",
+     "note": "— \"none\" leaves the back bare for"
+    }
+   ],
    "variants": [
     {
      "id": "dashboard-display-case",
      "name": "Dashboard display case",
-     "for": "Waveshare ESP32-S3-Touch-LCD-4.3 (the [display research](../display_research.md) step-up dashboard): face-down bezel frame, vented screw-on back with keyholes + 75 mm M4 pair, free-standing 25° desk cradle. Panel dims are NOMINAL — measure yours",
+     "for": "Waveshare ESP32-S3-Touch-LCD-4.3 (the [display research](../display_research.md) step-up dashboard): face-down bezel frame, vented screw-on back that clicks onto a wall cradle ([`canary_cradle_lib.scad`](./canary_cradle_lib.scad) — two rigid T-studs carry it, two sprung clips hold the bottom, pull it off for service), free-standing 25° desk cradle. v0.2 retires the old back pattern: a 75 mm M4 pair on one centerline crossed with two keyholes on the other made an X of four holes and two fastener systems, which the dock replaces with one plate and two screws. Panel dims are NOMINAL — measure yours",
      "status": "in-development",
      "device": "canary-display-dash",
-     "selects": {},
+     "selects": {
+      "mount": "cradle"
+     },
      "preview": "preview_dev_dash.png",
      "parts": [
       {
@@ -381,6 +394,11 @@
        "name": "stand",
        "file": "preview/canary_dash_display_stand.stl",
        "preview_mesh": true
+      },
+      {
+       "name": "cradle",
+       "file": "preview/canary_dash_display_cradle.stl",
+       "preview_mesh": true
       }
      ]
     }
@@ -388,7 +406,8 @@
    "render_parts": [
     "frame",
     "back",
-    "stand"
+    "stand",
+    "cradle"
    ],
    "options": [
     {
@@ -400,7 +419,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 21,
+   "engineering_param_count": 22,
    "alternatives": [
     "s3_lcd7"
    ],
@@ -410,7 +429,7 @@
     "released": 0,
     "options": 1,
     "user_options": 1,
-    "variant_axes": 0
+    "variant_axes": 1
    }
   },
   {
