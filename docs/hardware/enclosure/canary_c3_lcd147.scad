@@ -310,7 +310,11 @@ band_clear = 0.10;   // per-face drop-in clearance (pause-and-insert flow);
 // be white through the full wall depth, so the seam has none.
 
 /* [Back face] — the lid's outer face carries ONE of these, never both */
-lid_back = "mark";   // ["mark","keyhole"]
+// "mark"    debosses the Canary wordmark and fills it in the mark filament.
+// "keyhole" cuts the blind keyhole instead and hangs the case USB-down.
+// They cannot share the face — both want its middle — so this picks one and
+// the assert below refuses anything else.
+lid_back = "mark";   // ["mark","keyhole"] back of the lid: brand or wall mount
 kh_head_d = 7.0; kh_shank_d = 4.2; kh_slot_l = 7.0;
 
 /* [Branding] — the wordmark, debossed and filled in the mark filament */
@@ -926,10 +930,17 @@ else if (part == "mark")  lid_mark();
 else if (part == "palette") palette_row();
 else if (part == "exploded") {
     bezel_assembly();
-    translate([0, 0, 16]) {
-        color("#f5c518") lid_assembled();
-        color("#1a1a1a") translate([0, 0, bez_h + back_t]) rotate([180, 0, 0]) lid_mark();
-    }
+    translate([0, 0, 16]) color("#f5c518") lid_assembled();
+    // The wordmark floats ABOVE its deboss rather than sitting in it, and
+    // that is what makes this preview readable. Committed previews render
+    // through CGAL, which merges and repaints composited products — so an
+    // inlay lying flush in its own pocket disappears into the lid and the
+    // branding cannot be inspected at all. Lifted, the letters read as
+    // geometry and the empty deboss reads under them, in a single-color
+    // render, exactly like every other preview in this catalog. An inlay
+    // shown apart from its recess is what "exploded" means anyway.
+    translate([0, 0, 22]) color("#1a1a1a")
+        translate([0, 0, bez_h + back_t]) rotate([180, 0, 0]) lid_mark();
 }
 else {  // "all": both prints side by side, as they come off the plate
     bezel_assembly();
