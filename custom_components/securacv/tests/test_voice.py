@@ -215,22 +215,50 @@ def test_speak_last_event_kernel_fallback_and_none():
 def test_whats_up_reads_naturally_all_good():
     devices = {
         "gate": {
+            "status": "online",
             "last_event": {
                 "event_type": "boundary_crossing_object_large",
                 "received_at": NOW - 7200,
                 "trusted": True,
                 "reason": "ok",
-            }
+            },
         },
-        "porch": {},
+        "porch": {"status": '{"status": "online", "firmware_version": "1.0"}'},
     }
     verify = {k: {"trusted": True, "reason": "ok"} for k in ("gate", "porch")}
     speech = speak_whats_up(fleet_brief([_entry(devices, verify)], NOW))
     assert speech == (
         "Pretty quiet — the last thing witnessed was large object crossed "
         "boundary, about 2 hours ago, from the gate Canary. "
-        "All 2 Canaries are up, every signature verified."
+        "All 2 Canaries are online, every signature verified."
     )
+
+
+def test_whats_up_never_calls_a_stale_device_online():
+    # A discovered, verified device whose retained status says offline must
+    # not be spoken as online — "in the fleet" is the honest word.
+    devices = {"gate": {"status": "online"}, "shed": {"status": "offline"}}
+    verify = {k: {"trusted": True, "reason": "ok"} for k in ("gate", "shed")}
+    speech = speak_whats_up(fleet_brief([_entry(devices, verify)], NOW))
+    assert "are online" not in speech
+    assert "2 Canaries in the fleet, 1 online, 2 verified." in speech
+
+
+def test_whats_up_kernel_outage_is_never_spoken_as_quiet():
+    # Kernel configured but unreachable, nothing cached: silence means
+    # "can't see", not "nothing happened".
+    down = _entry(kernel={"ok": False, "latest_event": None})
+    speech = speak_whats_up(fleet_brief([down], NOW))
+    assert "All quiet" not in speech
+    assert "won't claim it's been quiet" in speech
+    # And the outage is not repeated as a second sentence.
+    assert speech.count("can't reach the witness kernel") == 1
+
+    # A cached kernel event while the kernel is down is labeled stale.
+    stale = _entry(kernel={"ok": False, "latest_event": {"event_type": "TamperDetected"}})
+    speech = speak_whats_up(fleet_brief([stale], NOW))
+    assert "may be stale" in speech
+    assert "Pretty quiet" not in speech
 
 
 def test_whats_up_recent_activity_changes_the_opener():

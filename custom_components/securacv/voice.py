@@ -31,6 +31,7 @@ component's logic.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from .const import event_type_metadata
@@ -38,6 +39,34 @@ from .const import event_type_metadata
 # Verify-dict reasons (async_record_verify) that mean "publishes without a
 # checkable signature" rather than "signature failed".
 _UNSIGNED_REASONS = ("unsigned", "no_pubkey")
+
+# The liveness vocabulary the online binary sensor accepts — mirrored here
+# so speech and the dashboard can never disagree about what "online" means.
+_ONLINE_WORDS = ("online", "1", "true", "connected")
+
+
+def _status_online(raw: Any) -> bool:
+    """True only when a device's retained status payload says it is online.
+
+    Mirrors SecuraCVCanaryOnlineSensor's rule for bare-word payloads, plus
+    the JSON shape (a ``status``/``state`` field with the same words). A
+    payload we can't read means we don't know — and "don't know" is never
+    spoken as online.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return False
+    text = raw.lower().strip()
+    if text in _ONLINE_WORDS:
+        return True
+    if text.startswith("{"):
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return False
+        if isinstance(data, dict):
+            field = str(data.get("status") or data.get("state") or "").lower().strip()
+            return field in _ONLINE_WORDS
+    return False
 
 
 def record_canary_event(
@@ -85,6 +114,7 @@ def fleet_brief(
     deliberately does not.
     """
     device_ids: list[str] = []
+    online: list[str] = []
     verified: list[str] = []
     unsigned: list[str] = []
     mismatched: list[str] = []
@@ -99,6 +129,8 @@ def fleet_brief(
         verify = entry.get("verify") or {}
         for device_id in sorted(devices):
             device_ids.append(device_id)
+            if _status_online(devices[device_id].get("status")):
+                online.append(device_id)
             verdict = verify.get(device_id)
             if not isinstance(verdict, dict):
                 unknown.append(device_id)
@@ -140,6 +172,7 @@ def fleet_brief(
         "now": now,
         "pending_updates": list(pending_updates or []),
         "device_count": len(device_ids),
+        "online": online,
         "verified": verified,
         "unsigned": unsigned,
         "mismatched": mismatched,
@@ -256,6 +289,7 @@ def speak_whats_up(brief: dict[str, Any]) -> str:
         )
 
     parts: list[str] = []
+    kernel_outage_spoken = False
 
     # Anything alarming comes first, even in the casual register.
     if brief["mismatched"]:
@@ -290,27 +324,49 @@ def speak_whats_up(brief: dict[str, Any]) -> str:
     elif kernel_event:
         label = event_type_metadata(kernel_event.get("event_type"))["label"]
         label = label[:1].lower() + label[1:]
-        parts.append(f"Pretty quiet — the kernel log's latest event is {label}.")
+        if brief["kernel_configured"] and not brief["kernel_ok"]:
+            # A cached event from a kernel that is unreachable NOW is stale
+            # by definition — say so instead of presenting it as current.
+            parts.append(
+                f"The last I saw from the kernel log was {label}, though I "
+                "can't reach the kernel right now, so that may be stale."
+            )
+            kernel_outage_spoken = True
+        else:
+            parts.append(f"Pretty quiet — the kernel log's latest event is {label}.")
+    elif brief["kernel_configured"] and not brief["kernel_ok"]:
+        # No events AND the event source is unreachable: silence here means
+        # "can't see", not "nothing happened" — never speak it as quiet.
+        parts.append(
+            "I can't reach the witness kernel right now, so I won't claim "
+            "it's been quiet — worth a look at the hub."
+        )
+        kernel_outage_spoken = True
     else:
         parts.append("All quiet — nothing witnessed since I started listening.")
 
-    # Fleet health, in a breath.
+    # Fleet health, in a breath. "Online" is only ever said for a device
+    # whose retained status actually says so — a cached entry with a stale
+    # or offline status is "in the fleet", never "online".
     if count:
         n_verified = len(brief["verified"])
-        if n_verified == count:
+        n_online = len(brief["online"])
+        if n_online == count and n_verified == count:
             parts.append(
-                "Your one Canary is up, signature verified."
+                "Your one Canary is online, signature verified."
                 if count == 1
-                else f"All {count} Canaries are up, every signature verified."
+                else f"All {count} Canaries are online, every signature verified."
             )
         else:
-            noun = "Canary is" if count == 1 else "Canaries are"
-            health = f"{count} {noun} up"
+            noun = "Canary" if count == 1 else "Canaries"
+            health = f"{count} {noun} in the fleet"
+            if n_online:
+                health += f", {n_online} online"
             if n_verified:
                 health += f", {n_verified} verified"
             parts.append(health + ".")
 
-    if brief["kernel_configured"] and not brief["kernel_ok"]:
+    if brief["kernel_configured"] and not brief["kernel_ok"] and not kernel_outage_spoken:
         parts.append("One more thing — I can't reach the witness kernel right now.")
 
     # Anything waiting on the owner: pending updates, casually.
