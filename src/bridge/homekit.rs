@@ -155,6 +155,23 @@ impl HomeSignal {
         }
     }
 
+    /// Bridge site D's data-first slice (the RFC's §3.5): the same table
+    /// spoken as a Matter sensor device type — where Matter has an honest
+    /// word for the signal. `None` is a finding, not a gap: tamper, active,
+    /// and low-battery are HAP *status characteristics* with no Matter
+    /// device type, and the class-scoped motion signals have no Matter
+    /// dimension at all (they ride the parent motion signal). Kept as data,
+    /// like `hap_characteristic`, so the mapping is reviewable and
+    /// dictionary-gated before any Matter stack exists to speak it.
+    pub fn matter_device_type(self) -> Option<&'static str> {
+        match self {
+            HomeSignal::Motion => Some("occupancy-sensor"),
+            HomeSignal::Occupancy => Some("occupancy-sensor"),
+            HomeSignal::Contact => Some("contact-sensor"),
+            _ => None,
+        }
+    }
+
     /// Behavior over time.
     pub fn shape(self) -> Shape {
         match self {
@@ -557,6 +574,25 @@ mod tests {
 
     fn proj() -> Projection {
         Projection::new(PacingConfig::default()).expect("default config is valid")
+    }
+
+    #[test]
+    fn matter_speaks_only_where_it_has_an_honest_word() {
+        // Bridge site D's data slice: exactly three signals project to a
+        // Matter sensor device type; everything else is None because Matter
+        // has no dimension for it — a mapping that invented one would be
+        // the overclaim the dictionary gate exists to reject.
+        for s in HomeSignal::ALL {
+            match s {
+                HomeSignal::Motion | HomeSignal::Occupancy => {
+                    assert_eq!(s.matter_device_type(), Some("occupancy-sensor"))
+                }
+                HomeSignal::Contact => {
+                    assert_eq!(s.matter_device_type(), Some("contact-sensor"))
+                }
+                _ => assert_eq!(s.matter_device_type(), None, "{:?} has no Matter word", s),
+            }
+        }
     }
 
     // ---- the cover-traffic property (Invariant III's named carve-out) ----

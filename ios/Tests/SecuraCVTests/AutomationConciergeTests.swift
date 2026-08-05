@@ -1,0 +1,86 @@
+// The concierge's contract, tested where it is pure.
+//
+// The sentence the owner approves, the readiness ladder that decides when
+// the concierge may offer itself, and the signal-to-characteristic map —
+// none of it touches HomeKit, so all of it runs host-side. The impure
+// writer (HMEventTrigger authoring) is reachable only downstream of a user
+// tap on a real device, the same lazy-manager rule the bridge lives by.
+
+import XCTest
+@testable import SecuraCV
+
+final class AutomationConciergeTests: XCTestCase {
+
+    private func plan(_ signal: HomeSignal) -> PlannedAutomation {
+        PlannedAutomation(
+            homeID: UUID(), homeName: "Home",
+            accessoryName: "Porch Canary", signal: signal,
+            sceneID: UUID(), sceneName: "Bright House")
+    }
+
+    func testTheSentenceSaysExactlyWhatTheHouseWillDo() {
+        let p = plan(.tamper)
+        XCTAssertEqual(p.sentence, "When Porch Canary reports tamper, run Bright House.")
+        // Every signal produces a readable sentence — no blank rows.
+        for signal in HomeSignal.allCases {
+            XCTAssertFalse(plan(signal).sentence.isEmpty)
+        }
+    }
+
+    func testAuthoredTriggersAreRecognizable() {
+        // The removal list keys on this prefix; a rename orphans every
+        // automation users already wrote into their homes.
+        XCTAssertTrue(plan(.motion).triggerName.hasPrefix("SecuraCV: "))
+    }
+
+    func testTheReadinessLadderReadsTopToBottom() {
+        typealias R = ConciergeReadiness
+        XCTAssertEqual(R.evaluate(isEnabled: false, authorized: true, isAdministrator: true,
+                                  accessoryCount: 1, sceneCount: 1, homeHubPresent: true),
+                       R.integrationOff)
+        XCTAssertEqual(R.evaluate(isEnabled: true, authorized: false, isAdministrator: true,
+                                  accessoryCount: 1, sceneCount: 1, homeHubPresent: true),
+                       R.needsAuthorization)
+        XCTAssertEqual(R.evaluate(isEnabled: true, authorized: true, isAdministrator: false,
+                                  accessoryCount: 1, sceneCount: 1, homeHubPresent: true),
+                       R.notAdministrator,
+                       "writing a trigger needs the admin role — say so, don't fail")
+        XCTAssertEqual(R.evaluate(isEnabled: true, authorized: true, isAdministrator: true,
+                                  accessoryCount: 0, sceneCount: 1, homeHubPresent: true),
+                       R.noAccessories,
+                       "the concierge appears with the accessories, not before")
+        XCTAssertEqual(R.evaluate(isEnabled: true, authorized: true, isAdministrator: true,
+                                  accessoryCount: 1, sceneCount: 0, homeHubPresent: true),
+                       R.noScenes,
+                       "the concierge runs scenes, it doesn't invent them")
+        XCTAssertEqual(R.evaluate(isEnabled: true, authorized: true, isAdministrator: true,
+                                  accessoryCount: 1, sceneCount: 1, homeHubPresent: false),
+                       R.readyWithoutHomeHub,
+                       "no hub means no away automations — one plain warning")
+        XCTAssertEqual(R.evaluate(isEnabled: true, authorized: true, isAdministrator: true,
+                                  accessoryCount: 1, sceneCount: 1, homeHubPresent: true),
+                       R.ready)
+    }
+
+    func testCalmStatesSayNothingProblemStatesOweOneSentence() {
+        XCTAssertNil(ConciergeReadiness.integrationOff.note, "off is a choice, not a problem")
+        XCTAssertNil(ConciergeReadiness.ready.note, "healthy needs no lecture")
+        for problem: ConciergeReadiness in [.needsAuthorization, .notAdministrator,
+                                            .noAccessories, .noScenes, .readyWithoutHomeHub] {
+            XCTAssertNotNil(problem.note)
+        }
+    }
+
+    func testClassScopedSignalsCollapseOntoMotion() {
+        // Same collapse as hapCharacteristic: the class word is consent
+        // metadata, not a different sensor.
+        let motion = HomeSignal.motion.hmCharacteristicTypeID
+        for signal in HomeSignal.allCases where signal.isClassScoped {
+            XCTAssertEqual(signal.hmCharacteristicTypeID, motion)
+        }
+        // And the map is total — every signal resolves to something.
+        for signal in HomeSignal.allCases {
+            XCTAssertFalse(signal.hmCharacteristicTypeID.isEmpty)
+        }
+    }
+}

@@ -234,6 +234,133 @@ final class HomeKitBridge: ObservableObject {
         #endif
     }
 
+    // ── The concierge's impure half (§4.2: the app authors, never runs) ──
+    //
+    // Every method below runs only downstream of an explicit user tap with
+    // isEnabled && authorized — nothing here is reachable from init, body,
+    // or a preview, per the lazy-manager rule at the top of this class.
+
+    /// User-defined scenes in the primary home, as plain values.
+    /// (Apple's builtin arrival/departure action sets are excluded — the
+    /// concierge runs the household's own scenes, it doesn't invent or
+    /// borrow them.)
+    func userScenes() -> [(id: UUID, name: String)] {
+        #if canImport(HomeKit)
+        guard let home = manager?.primaryHome else { return [] }
+        return home.actionSets
+            .filter { $0.actionSetType == HMActionSetTypeUserDefined }
+            .map { ($0.uniqueIdentifier, $0.name) }
+        #else
+        return []
+        #endif
+    }
+
+    /// Accessories in the primary home carrying a characteristic this
+    /// signal projects to — the concrete things an automation can trigger
+    /// on. Names only; the HomeKit objects never leave the bridge.
+    func automationSources(for signal: HomeSignal) -> [String] {
+        #if canImport(HomeKit)
+        guard let home = manager?.primaryHome else { return [] }
+        let wanted = signal.hmCharacteristicTypeID
+        return home.accessories.filter { accessory in
+            accessory.services.contains { service in
+                service.characteristics.contains { $0.characteristicType == wanted }
+            }
+        }
+        .map(\.name)
+        #else
+        return []
+        #endif
+    }
+
+    /// Is the current user an administrator of the primary home? Writing a
+    /// trigger needs it; the readiness ladder says so instead of failing.
+    func isAdministrator() -> Bool {
+        #if canImport(HomeKit)
+        guard let home = manager?.primaryHome else { return false }
+        return home.homeAccessControl(for: home.currentUser).isAdministrator
+        #else
+        return false
+        #endif
+    }
+
+    /// Write the planned automation into the primary home: a real
+    /// HMEventTrigger on our accessory's characteristic, running the scene
+    /// the household already authored. Runs on the home hub from then on,
+    /// app closed — the app is the author, never the runtime.
+    func author(_ plan: PlannedAutomation) async throws {
+        #if canImport(HomeKit)
+        guard let home = manager?.primaryHome else {
+            throw HomeAuthorError.noHome
+        }
+        guard let accessory = home.accessories.first(where: { $0.name == plan.accessoryName }),
+              let characteristic = accessory.services
+                  .flatMap(\.characteristics)
+                  .first(where: { $0.characteristicType == plan.signal.hmCharacteristicTypeID })
+        else {
+            throw HomeAuthorError.accessoryGone
+        }
+        guard let scene = home.actionSets.first(where: { $0.uniqueIdentifier == plan.sceneID })
+        else {
+            throw HomeAuthorError.sceneGone
+        }
+        let event = HMCharacteristicEvent(
+            characteristic: characteristic, triggerValue: NSNumber(value: true))
+        let trigger = HMEventTrigger(name: plan.triggerName, events: [event], predicate: nil)
+        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+            home.addTrigger(trigger) { error in
+                if let error { c.resume(throwing: error) } else { c.resume() }
+            }
+        }
+        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+            trigger.addActionSet(scene) { error in
+                if let error { c.resume(throwing: error) } else { c.resume() }
+            }
+        }
+        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+            trigger.enable(true) { error in
+                if let error { c.resume(throwing: error) } else { c.resume() }
+            }
+        }
+        #else
+        _ = plan
+        throw HomeAuthorError.noHome
+        #endif
+    }
+
+    /// Automations this app authored (recognized by the trigger-name
+    /// prefix), for the review-and-remove list.
+    func authoredAutomations() -> [(id: UUID, name: String)] {
+        #if canImport(HomeKit)
+        guard let home = manager?.primaryHome else { return [] }
+        return home.triggers
+            .filter { $0.name.hasPrefix("SecuraCV: ") }
+            .map { ($0.uniqueIdentifier, $0.name) }
+        #else
+        return []
+        #endif
+    }
+
+    /// Remove one authored automation. Only ours are offered for removal;
+    /// the household's own automations are never touched.
+    func removeAutomation(id: UUID) async throws {
+        #if canImport(HomeKit)
+        guard let home = manager?.primaryHome,
+              let trigger = home.triggers.first(where: { $0.uniqueIdentifier == id }),
+              trigger.name.hasPrefix("SecuraCV: ")
+        else {
+            return
+        }
+        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+            home.removeTrigger(trigger) { error in
+                if let error { c.resume(throwing: error) } else { c.resume() }
+            }
+        }
+        #else
+        _ = id
+        #endif
+    }
+
     #if canImport(HomeKit)
     fileprivate func noteAuthorization(_ status: HMHomeManagerAuthorizationStatus) {
         authorized = status.contains(.authorized)

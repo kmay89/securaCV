@@ -1,23 +1,66 @@
 {
-  "$comment": "THE WITNESS DICTIONARY — single machine-readable source of truth for the vocabularies that are duplicated as constants across Rust, Python, JavaScript, and firmware C++. See docs/strategy/13 G1 and Flight Rule FR-13 (docs/FLIGHT_RULES.md). scripts/lint_dictionary_sync.py parses the real source in each language and fails CI if any copy drifts from this file. This is the aviation FRED / ARINC 647A principle: the decode key is a maintained deliverable with the same integrity discipline as the data. To change a vocabulary, edit it here first, then update every copy the linter names.",
+  "$comment": "THE WITNESS DICTIONARY \u2014 single machine-readable source of truth for the vocabularies that are duplicated as constants across Rust, Python, JavaScript, and firmware C++. See docs/strategy/13 G1 and Flight Rule FR-13 (docs/FLIGHT_RULES.md). scripts/lint_dictionary_sync.py parses the real source in each language and fails CI if any copy drifts from this file. This is the aviation FRED / ARINC 647A principle: the decode key is a maintained deliverable with the same integrity discipline as the data. To change a vocabulary, edit it here first, then update every copy the linter names.",
   "dictionary_version": 1,
   "governance": "spec/event_contract.md is the normative prose; this file is its machine-readable projection for the enumerations the linter can check. Where the two disagree, event_contract.md wins and this file is the bug.",
-
   "event_types": {
     "$comment": "The kernel's semantic event vocabulary. Source of truth: the Rust `EventType` enum (src/lib.rs), which has no serde rename, so the on-wire string is the PascalCase variant name (the Home Assistant side normalizes CamelCase->snake_case on receipt). `id` is the canonical snake_case identifier used by const.py / the JS card / the adapter `as_str()` form. `label`/`icon` are the canonical Home Assistant presentation, mirrored by const.py EVENT_TYPE_METADATA and www/securacv-timeline-card.js.",
     "items": [
-      { "id": "boundary_crossing_object_large", "rust_variant": "BoundaryCrossingObjectLarge", "label": "Large object crossed boundary", "icon": "mdi:car" },
-      { "id": "boundary_crossing_object_small", "rust_variant": "BoundaryCrossingObjectSmall", "label": "Small object crossed boundary", "icon": "mdi:paw" },
-      { "id": "acoustic_impulse_in_zone", "rust_variant": "AcousticImpulseInZone", "label": "Acoustic impulse in zone", "icon": "mdi:waveform" },
-      { "id": "presence_in_restricted_zone", "rust_variant": "PresenceInRestrictedZone", "label": "Presence in restricted zone", "icon": "mdi:account-alert" },
-      { "id": "vehicle_presence_after_hours", "rust_variant": "VehiclePresenceAfterHours", "label": "Vehicle presence after hours", "icon": "mdi:car-clock" },
-      { "id": "contact_state_change", "rust_variant": "ContactStateChange", "label": "Contact state change", "icon": "mdi:door" },
-      { "id": "object_removed_from_zone", "rust_variant": "ObjectRemovedFromZone", "label": "Object removed from zone", "icon": "mdi:package-variant-closed-remove" },
-      { "id": "tamper_detected", "rust_variant": "TamperDetected", "label": "Tamper detected", "icon": "mdi:shield-alert" },
-      { "id": "vehicle_arrival_departure", "rust_variant": "VehicleArrivalDeparture", "label": "Vehicle arrival/departure", "icon": "mdi:car-side" }
+      {
+        "id": "boundary_crossing_object_large",
+        "rust_variant": "BoundaryCrossingObjectLarge",
+        "label": "Large object crossed boundary",
+        "icon": "mdi:car"
+      },
+      {
+        "id": "boundary_crossing_object_small",
+        "rust_variant": "BoundaryCrossingObjectSmall",
+        "label": "Small object crossed boundary",
+        "icon": "mdi:paw"
+      },
+      {
+        "id": "acoustic_impulse_in_zone",
+        "rust_variant": "AcousticImpulseInZone",
+        "label": "Acoustic impulse in zone",
+        "icon": "mdi:waveform"
+      },
+      {
+        "id": "presence_in_restricted_zone",
+        "rust_variant": "PresenceInRestrictedZone",
+        "label": "Presence in restricted zone",
+        "icon": "mdi:account-alert"
+      },
+      {
+        "id": "vehicle_presence_after_hours",
+        "rust_variant": "VehiclePresenceAfterHours",
+        "label": "Vehicle presence after hours",
+        "icon": "mdi:car-clock"
+      },
+      {
+        "id": "contact_state_change",
+        "rust_variant": "ContactStateChange",
+        "label": "Contact state change",
+        "icon": "mdi:door"
+      },
+      {
+        "id": "object_removed_from_zone",
+        "rust_variant": "ObjectRemovedFromZone",
+        "label": "Object removed from zone",
+        "icon": "mdi:package-variant-closed-remove"
+      },
+      {
+        "id": "tamper_detected",
+        "rust_variant": "TamperDetected",
+        "label": "Tamper detected",
+        "icon": "mdi:shield-alert"
+      },
+      {
+        "id": "vehicle_arrival_departure",
+        "rust_variant": "VehicleArrivalDeparture",
+        "label": "Vehicle arrival/departure",
+        "icon": "mdi:car-side"
+      }
     ]
   },
-
   "failure_types": {
     "$comment": "System-trace failure records (docs/failure_semantics.md). Rust-only today: the `FailureType` enum (src/lib.rs), PascalCase wire string, no HA mirror. Enumerated here so the dictionary tracks the source and a future mirror can be checked against it. SensorDisagreement and FirmwareIntegrity are defined but not yet emitted (see doc 13 G7).",
     "rust_variants": [
@@ -31,47 +74,120 @@
       "GapMissingData"
     ]
   },
-
   "attestation_tiers": {
     "$comment": "Provenance of a claim relative to the kernel signature that seals it. Note the modeling asymmetry the linter must respect: the Rust `Attestation` enum (src/lib.rs) has only two variants (adapter, ha-bridged) with explicit serde renames; the device tier is the absent/None case on the Rust wire. The Home Assistant side (const.py, JS card) makes all three explicit strings because it normalizes absent->device on receipt.",
     "items": [
-      { "id": "device", "wire": "device", "rust_variant": null, "on_rust_wire": "absent", "label": "Device-attested", "icon": "mdi:chip" },
-      { "id": "adapter", "wire": "adapter", "rust_variant": "Adapter", "on_rust_wire": "adapter", "label": "Adapter-attested", "icon": "mdi:hub" },
-      { "id": "ha-bridged", "wire": "ha-bridged", "rust_variant": "HaBridged", "on_rust_wire": "ha-bridged", "label": "HA-bridged", "icon": "mdi:home-assistant" }
+      {
+        "id": "device",
+        "wire": "device",
+        "rust_variant": null,
+        "on_rust_wire": "absent",
+        "label": "Device-attested",
+        "icon": "mdi:chip"
+      },
+      {
+        "id": "adapter",
+        "wire": "adapter",
+        "rust_variant": "Adapter",
+        "on_rust_wire": "adapter",
+        "label": "Adapter-attested",
+        "icon": "mdi:hub"
+      },
+      {
+        "id": "ha-bridged",
+        "wire": "ha-bridged",
+        "rust_variant": "HaBridged",
+        "on_rust_wire": "ha-bridged",
+        "label": "HA-bridged",
+        "icon": "mdi:home-assistant"
+      }
     ]
   },
-
   "claim_kinds": {
     "$comment": "The vendor-neutral sensor-adapter vocabulary (Track B). Source of truth: the Rust `ClaimKind` enum + `as_str()` + `claim_kind_to_event_type` (src/adapter/contract.rs). Two string forms coexist: the serde PascalCase wire and the snake_case `as_str()` used for dedup keys. The claim->event map is deliberately NOT a string identity (LargeObjectBoundaryCrossing -> boundary_crossing_object_large), so it is stored here as an explicit pair.",
     "items": [
-      { "rust_variant": "LargeObjectBoundaryCrossing", "snake": "large_object_boundary_crossing", "maps_to_event_type": "boundary_crossing_object_large" },
-      { "rust_variant": "SmallObjectBoundaryCrossing", "snake": "small_object_boundary_crossing", "maps_to_event_type": "boundary_crossing_object_small" },
-      { "rust_variant": "AcousticImpulseInZone", "snake": "acoustic_impulse_in_zone", "maps_to_event_type": "acoustic_impulse_in_zone" },
-      { "rust_variant": "PresenceInRestrictedZone", "snake": "presence_in_restricted_zone", "maps_to_event_type": "presence_in_restricted_zone" },
-      { "rust_variant": "VehiclePresenceAfterHours", "snake": "vehicle_presence_after_hours", "maps_to_event_type": "vehicle_presence_after_hours" },
-      { "rust_variant": "ContactStateChange", "snake": "contact_state_change", "maps_to_event_type": "contact_state_change" },
-      { "rust_variant": "ObjectRemovedFromZone", "snake": "object_removed_from_zone", "maps_to_event_type": "object_removed_from_zone" },
-      { "rust_variant": "TamperDetected", "snake": "tamper_detected", "maps_to_event_type": "tamper_detected" },
-      { "rust_variant": "VehicleArrivalDeparture", "snake": "vehicle_arrival_departure", "maps_to_event_type": "vehicle_arrival_departure" }
+      {
+        "rust_variant": "LargeObjectBoundaryCrossing",
+        "snake": "large_object_boundary_crossing",
+        "maps_to_event_type": "boundary_crossing_object_large"
+      },
+      {
+        "rust_variant": "SmallObjectBoundaryCrossing",
+        "snake": "small_object_boundary_crossing",
+        "maps_to_event_type": "boundary_crossing_object_small"
+      },
+      {
+        "rust_variant": "AcousticImpulseInZone",
+        "snake": "acoustic_impulse_in_zone",
+        "maps_to_event_type": "acoustic_impulse_in_zone"
+      },
+      {
+        "rust_variant": "PresenceInRestrictedZone",
+        "snake": "presence_in_restricted_zone",
+        "maps_to_event_type": "presence_in_restricted_zone"
+      },
+      {
+        "rust_variant": "VehiclePresenceAfterHours",
+        "snake": "vehicle_presence_after_hours",
+        "maps_to_event_type": "vehicle_presence_after_hours"
+      },
+      {
+        "rust_variant": "ContactStateChange",
+        "snake": "contact_state_change",
+        "maps_to_event_type": "contact_state_change"
+      },
+      {
+        "rust_variant": "ObjectRemovedFromZone",
+        "snake": "object_removed_from_zone",
+        "maps_to_event_type": "object_removed_from_zone"
+      },
+      {
+        "rust_variant": "TamperDetected",
+        "snake": "tamper_detected",
+        "maps_to_event_type": "tamper_detected"
+      },
+      {
+        "rust_variant": "VehicleArrivalDeparture",
+        "snake": "vehicle_arrival_departure",
+        "maps_to_event_type": "vehicle_arrival_departure"
+      }
     ]
   },
-
   "modalities": {
     "$comment": "Sensing medium of a claim, for the timeline glyph. Mirrored const.py MODALITY_METADATA <-> www/securacv-timeline-card.js. `unknown`/`other` are the fallbacks; only the presentation modalities carry {label,icon}.",
     "items": [
-      { "id": "camera", "label": "Camera", "icon": "mdi:camera" },
-      { "id": "wifi-csi", "label": "WiFi CSI", "icon": "mdi:wifi" },
-      { "id": "radar", "label": "Radar", "icon": "mdi:radar" },
-      { "id": "contact", "label": "Contact", "icon": "mdi:electric-switch" },
-      { "id": "other", "label": "Other sensor", "icon": "mdi:access-point" }
+      {
+        "id": "camera",
+        "label": "Camera",
+        "icon": "mdi:camera"
+      },
+      {
+        "id": "wifi-csi",
+        "label": "WiFi CSI",
+        "icon": "mdi:wifi"
+      },
+      {
+        "id": "radar",
+        "label": "Radar",
+        "icon": "mdi:radar"
+      },
+      {
+        "id": "contact",
+        "label": "Contact",
+        "icon": "mdi:electric-switch"
+      },
+      {
+        "id": "other",
+        "label": "Other sensor",
+        "icon": "mdi:access-point"
+      }
     ]
   },
-
   "homekit_projection": {
-    "$comment": "The Apple Home / HAP projection — an EGRESS vocabulary (Track C). Mirrored Rust src/bridge/homekit.rs `HomeSignal` (variants, as_str, hap_characteristic) <-> Swift ios/Sources/SecuraCV/Native/HomeKitBridge.swift `HomeSignal`. Every entry is a coarse present-tense boolean and the list is closed on purpose: there is no zone, timestamp, count, confidence or identity field for a bridge to project, because none exists here to project. `default_enabled: false` marks the class-scoped signals — the one sanctioned step past the dumb-PIR bar (the ObjectClass word, never identity) — which stay off until a human turns them on. `shape` tells the pacer whether a signal is momentary (pulse, auto-clears after the hold window), continuous (level), or sticky (latched, operator-cleared). Design of record: docs/design/apple_home_integration.md.",
+    "$comment": "The Apple Home / HAP projection \u2014 an EGRESS vocabulary (Track C). Mirrored Rust src/bridge/homekit.rs `HomeSignal` (variants, as_str, hap_characteristic) <-> Swift ios/Sources/SecuraCV/Native/HomeKitBridge.swift `HomeSignal`. Every entry is a coarse present-tense boolean and the list is closed on purpose: there is no zone, timestamp, count, confidence or identity field for a bridge to project, because none exists here to project. `default_enabled: false` marks the class-scoped signals \u2014 the one sanctioned step past the dumb-PIR bar (the ObjectClass word, never identity) \u2014 which stay off until a human turns them on. `shape` tells the pacer whether a signal is momentary (pulse, auto-clears after the hold window), continuous (level), or sticky (latched, operator-cleared). Design of record: docs/design/apple_home_integration.md. matter_device_type is bridge site D's data-first slice (RFC section 3.5): the same table spoken as Matter sensor device types where one exists, null where Matter has no honest word for the signal (tamper/active/low-battery are HAP status characteristics, and the class-scoped motion signals have no Matter dimension - they ride the parent motion signal). Data only; no Matter stack ships until the HAP lane is stable.",
     "version": 1,
     "pacing": {
-      "$comment": "The metronome that keeps this projection inside Invariant III. Publication happens on a fixed cadence, never on an event, so the finest external time resolution anything downstream can learn is one tick — and the publication rate itself carries no information (the 'explicitly configured for cover traffic' path the invariant names). `tick_ms` is a privacy/latency dial, not a performance constant. Bounds are enforced in Rust (PacingConfig::new) and a config outside them is refused, never clamped.",
+      "$comment": "The metronome that keeps this projection inside Invariant III. Publication happens on a fixed cadence, never on an event, so the finest external time resolution anything downstream can learn is one tick \u2014 and the publication rate itself carries no information (the 'explicitly configured for cover traffic' path the invariant names). `tick_ms` is a privacy/latency dial, not a performance constant. Bounds are enforced in Rust (PacingConfig::new) and a config outside them is refused, never clamped.",
       "default_tick_ms": 1000,
       "min_tick_ms": 200,
       "max_tick_ms": 600000,
@@ -80,46 +196,147 @@
       "cover_traffic": true
     },
     "signals": [
-      { "id": "motion", "rust_variant": "Motion", "hap_characteristic": "motion-detected", "shape": "pulse", "default_enabled": true, "label": "Motion" },
-      { "id": "occupancy", "rust_variant": "Occupancy", "hap_characteristic": "occupancy-detected", "shape": "level", "default_enabled": true, "label": "Occupancy" },
-      { "id": "contact", "rust_variant": "Contact", "hap_characteristic": "contact-sensor-state", "shape": "level", "default_enabled": true, "label": "Contact" },
-      { "id": "tamper", "rust_variant": "Tamper", "hap_characteristic": "status-tampered", "shape": "latched", "default_enabled": true, "label": "Tamper" },
-      { "id": "active", "rust_variant": "Active", "hap_characteristic": "status-active", "shape": "level", "default_enabled": true, "label": "Responding" },
-      { "id": "low_battery", "rust_variant": "LowBattery", "hap_characteristic": "status-lo-batt", "shape": "level", "default_enabled": true, "label": "Low battery" },
-      { "id": "motion_person", "rust_variant": "MotionPerson", "hap_characteristic": "motion-detected", "shape": "pulse", "default_enabled": false, "label": "Motion (person)" },
-      { "id": "motion_vehicle", "rust_variant": "MotionVehicle", "hap_characteristic": "motion-detected", "shape": "pulse", "default_enabled": false, "label": "Motion (vehicle)" },
-      { "id": "motion_animal", "rust_variant": "MotionAnimal", "hap_characteristic": "motion-detected", "shape": "pulse", "default_enabled": false, "label": "Motion (animal)" },
-      { "id": "motion_package", "rust_variant": "MotionPackage", "hap_characteristic": "motion-detected", "shape": "pulse", "default_enabled": false, "label": "Motion (package)" }
+      {
+        "id": "motion",
+        "rust_variant": "Motion",
+        "hap_characteristic": "motion-detected",
+        "shape": "pulse",
+        "default_enabled": true,
+        "label": "Motion",
+        "matter_device_type": "occupancy-sensor"
+      },
+      {
+        "id": "occupancy",
+        "rust_variant": "Occupancy",
+        "hap_characteristic": "occupancy-detected",
+        "shape": "level",
+        "default_enabled": true,
+        "label": "Occupancy",
+        "matter_device_type": "occupancy-sensor"
+      },
+      {
+        "id": "contact",
+        "rust_variant": "Contact",
+        "hap_characteristic": "contact-sensor-state",
+        "shape": "level",
+        "default_enabled": true,
+        "label": "Contact",
+        "matter_device_type": "contact-sensor"
+      },
+      {
+        "id": "tamper",
+        "rust_variant": "Tamper",
+        "hap_characteristic": "status-tampered",
+        "shape": "latched",
+        "default_enabled": true,
+        "label": "Tamper",
+        "matter_device_type": null
+      },
+      {
+        "id": "active",
+        "rust_variant": "Active",
+        "hap_characteristic": "status-active",
+        "shape": "level",
+        "default_enabled": true,
+        "label": "Responding",
+        "matter_device_type": null
+      },
+      {
+        "id": "low_battery",
+        "rust_variant": "LowBattery",
+        "hap_characteristic": "status-lo-batt",
+        "shape": "level",
+        "default_enabled": true,
+        "label": "Low battery",
+        "matter_device_type": null
+      },
+      {
+        "id": "motion_person",
+        "rust_variant": "MotionPerson",
+        "hap_characteristic": "motion-detected",
+        "shape": "pulse",
+        "default_enabled": false,
+        "label": "Motion (person)",
+        "matter_device_type": null
+      },
+      {
+        "id": "motion_vehicle",
+        "rust_variant": "MotionVehicle",
+        "hap_characteristic": "motion-detected",
+        "shape": "pulse",
+        "default_enabled": false,
+        "label": "Motion (vehicle)",
+        "matter_device_type": null
+      },
+      {
+        "id": "motion_animal",
+        "rust_variant": "MotionAnimal",
+        "hap_characteristic": "motion-detected",
+        "shape": "pulse",
+        "default_enabled": false,
+        "label": "Motion (animal)",
+        "matter_device_type": null
+      },
+      {
+        "id": "motion_package",
+        "rust_variant": "MotionPackage",
+        "hap_characteristic": "motion-detected",
+        "shape": "pulse",
+        "default_enabled": false,
+        "label": "Motion (package)",
+        "matter_device_type": null
+      }
     ],
     "event_signals": {
       "$comment": "Which signals an event asserts \u2014 the egress half of the event vocabulary, mirrored Rust src/bridge/homekit.rs `signals_for_event` <-> Python custom_components/securacv/const.py `HOMEKIT_EVENT_SIGNALS`. Deliberately partial: an event with no honest HAP counterpart maps to [] rather than being forced into a sensor that would misdescribe it, and the two empties are empty for different reasons. AcousticImpulseInZone has no HAP acoustic sensor, and publishing a sound as motion would be a false statement about someone's home. ContactStateChange reports that a contact CHANGED, not what it changed to, while HAP's contact characteristic is a state \u2014 deriving one from the other would show a door as open every time it was closed, so the contact signal is driven only by reported state.",
       "map": {
-        "BoundaryCrossingObjectLarge": ["motion"],
-        "BoundaryCrossingObjectSmall": ["motion"],
-        "ObjectRemovedFromZone": ["motion"],
-        "VehiclePresenceAfterHours": ["motion"],
-        "VehicleArrivalDeparture": ["motion"],
-        "PresenceInRestrictedZone": ["occupancy"],
-        "TamperDetected": ["tamper"],
+        "BoundaryCrossingObjectLarge": [
+          "motion"
+        ],
+        "BoundaryCrossingObjectSmall": [
+          "motion"
+        ],
+        "ObjectRemovedFromZone": [
+          "motion"
+        ],
+        "VehiclePresenceAfterHours": [
+          "motion"
+        ],
+        "VehicleArrivalDeparture": [
+          "motion"
+        ],
+        "PresenceInRestrictedZone": [
+          "occupancy"
+        ],
+        "TamperDetected": [
+          "tamper"
+        ],
         "AcousticImpulseInZone": [],
         "ContactStateChange": []
       }
     }
   },
-
   "signature_format": {
-    "$comment": "The device-signature canonical format (Track A). SCHEMA_V, SIG_PREFIX, ALG_NAME are byte-identical across Python (signature.py) and the firmware copies (firmware/common/identity/device_signature.h and the per-project mirrors). This is the contract doc 12 A3 flags as lacking cross-language golden vectors; PR2 will add those. `canonical_kinds` records which signed message kinds each tree carries — `sense` is absent from the canary-wap tree (CSI, not radar) by design.",
+    "$comment": "The device-signature canonical format (Track A). SCHEMA_V, SIG_PREFIX, ALG_NAME are byte-identical across Python (signature.py) and the firmware copies (firmware/common/identity/device_signature.h and the per-project mirrors). This is the contract doc 12 A3 flags as lacking cross-language golden vectors; PR2 will add those. `canonical_kinds` records which signed message kinds each tree carries \u2014 `sense` is absent from the canary-wap tree (CSI, not radar) by design.",
     "schema_v": 1,
     "sig_prefix": "securacv-canary-sig",
     "alg_name": "ed25519",
-    "canonical_kinds": ["chain", "event", "counts", "sense"]
+    "canonical_kinds": [
+      "chain",
+      "event",
+      "counts",
+      "sense"
+    ]
   },
-
   "known_divergences": {
     "$comment": "Vocabularies that are NOT unified today and are deliberately NOT gated by the linter yet, because unifying them needs a design decision, not a rename. Recorded here so they are captured, not lost. Each maps to a discrepancy id from the inventory and a follow-up.",
     "tamper_vocabularies": {
       "note": "Two disjoint 'tamper' vocabularies. Firmware publishes a semantic device-tamper `kind` (enclosure_tamper | temp_drift | camera_tamper) on securacv/<id>/tamper; these all fold to EventType::TamperDetected upstream. The HA integration separately models hardware/survivability tamper *types* (power_loss, enclosure, gpio, watchdog, ...) as its own binary sensors. Inventory D4/D5/D6: firmware `kind` never matches the HA sensor `type`, and the field is named `kind` vs `type`. Unifying these is a product decision tracked separately (relates to doc 11 device-model consolidation).",
-      "firmware_kinds": ["enclosure_tamper", "temp_drift", "camera_tamper"]
+      "firmware_kinds": [
+        "enclosure_tamper",
+        "temp_drift",
+        "camera_tamper"
+      ]
     },
     "mqtt_topic_namespaces": {
       "note": "Three disjoint topic namespaces reflect the three-entity-universe finding (doc 11 section 1.1): the Rust PWK->HA bridge publishes under `witness/...` (zone tree + chain_problem/last_event/digest); firmware canaries and the HA integration use `securacv/<id>/...` (flat suffixes). These are not mirrors and must not be gated as if they were. Consolidation is doc 11 issue #930. Inventory D8/D9.",

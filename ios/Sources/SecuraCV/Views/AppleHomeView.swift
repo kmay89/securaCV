@@ -12,6 +12,7 @@ import SwiftUI
 
 struct AppleHomeView: View {
     @ObservedObject var home: HomeKitBridge
+    @State private var showingConcierge = false
 
     init(home: HomeKitBridge = .shared) {
         self.home = home
@@ -50,6 +51,20 @@ struct AppleHomeView: View {
                     }
                 }
 
+                // §6's rule: the concierge appears with the accessories,
+                // not before — no HomeKit UI advertises an unbuilt lane.
+                if home.authorized && !home.accessoryNames.isEmpty {
+                    Section {
+                        Button {
+                            showingConcierge = true
+                        } label: {
+                            Label("Tell the house", systemImage: "wand.and.stars")
+                        }
+                    } footer: {
+                        Text("Pick a signal, pick one of your scenes, and it becomes a real Home app automation — running on your home hub, this app closed.")
+                    }
+                }
+
                 Section {
                     ForEach(plainSignals, id: \.self) { signal in
                         signalRow(signal)
@@ -73,6 +88,9 @@ struct AppleHomeView: View {
         }
         .navigationTitle("Apple Home")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showingConcierge) {
+            AutomationConciergeSheet(home: home)
+        }
     }
 
     private var plainSignals: [HomeSignal] {

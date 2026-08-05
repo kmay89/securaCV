@@ -47,6 +47,11 @@
 #include "core/feature_sanity.h"
 #include "canary/version.h"
 #include "canary/log.h"
+// Power-event resilience: boot-lineage classification + the durable outage
+// log, feeding the shared host-tested core (firmware/common/power/
+// power_events.h). Unconditional, like the canary base tree — "when did the
+// power go out" isn't gated on a feature. See docs/design/power_events.md.
+#include "canary/power_events_glue.h"
 #include "canary/topics.h"
 #include "canary/runtime_config.h"
 #include "canary/diagnostics.h"
@@ -996,6 +1001,12 @@ void setup() {
   boot_scene_banner(&bi);
   boot_scene_hardware(&bi);
 
+  // Power-event lineage: classify how the last session ended (brownout /
+  // clean reboot / restored outage / fault) and append it to the durable
+  // log. Above the mode latch on purpose — a bench or demo boot still
+  // records that the power went out.
+  cd_pe::on_boot();
+
 #ifdef CD_MODES_COMPILED
   // Non-fleet gears (docs/hardware/display_modes.md): resolve this boot's
   // gear from the NVS latch — the dedicated bench env always boots the
@@ -1357,6 +1368,11 @@ void setup() {
 }
 
 void loop() {
+  /* Persist the power-event liveness heartbeat (bounds the next outage's
+   * lower-bound duration). Above the mode latch so a bench gear keeps its
+   * lineage honest; cheap — skips the write unless the wall clock is set. */
+  cd_pe::heartbeat(millis());
+
 #ifdef CD_MODES_COMPILED
   if (s_active_mode != canary::mode::Mode::Fleet) {
     canary::mode::mode_loop_step(s_active_mode);
