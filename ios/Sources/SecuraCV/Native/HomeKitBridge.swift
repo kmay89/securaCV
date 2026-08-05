@@ -129,14 +129,32 @@ enum HomeKitStanding: Equatable {
 
 @MainActor
 final class HomeKitBridge: ObservableObject {
+    /// One shepherd for the app, the `AwayPush.shared` precedent. Constructing
+    /// it touches no HomeKit API — the `HMHomeManager` is created lazily in
+    /// `requestAccess()`, so launch, tests, and previews never wake HomeKit
+    /// (the CloudKit lesson from RELEASE_LESSONS (ab), applied here first).
+    static let shared = HomeKitBridge()
+    init() {}
+
     @Published private(set) var authorized = false
     @Published var isEnabled = false        // opt-in; off by default
 
     /// Per-signal consent. Class-scoped signals start off — the dumb-PIR bar.
     @Published private(set) var enabledSignals: Set<HomeSignal> = HomeSignal.defaultEnabled
 
+    /// Whether any home this account can see has a connected home hub.
+    /// Read from `HMHomeManager` after authorization; false until known —
+    /// the ladder treats "don't know" as "can't promise automations".
+    @Published private(set) var homeHubPresent = false
+
+    /// Lowercased names of accessories visible in the user's homes, so the
+    /// per-witness standing can say "seen in Apple Home" without pretending
+    /// to more: a name match is an observation, not a verification.
+    @Published private(set) var accessoryNames: Set<String> = []
+
     #if canImport(HomeKit)
-    private let manager = HMHomeManager()
+    private var manager: HMHomeManager?
+    private var delegateShim: HomeManagerShim?
     #endif
 
     /// Turn a signal's projection on or off.
@@ -172,19 +190,79 @@ final class HomeKitBridge: ObservableObject {
 
     /// What we can honestly say about this witness's standing in Apple Home.
     func standing(for w: Witness, presentInHome: Bool, homeHubPresent: Bool) -> HomeKitStanding {
+        Self.standing(isEnabled: isEnabled, authorized: authorized,
+                      isDark: w.link.isDark, presentInHome: presentInHome,
+                      homeHubPresent: homeHubPresent)
+    }
+
+    /// The ladder itself, pure so the whole thing is host-testable without an
+    /// `HMHomeManager` — the `IslandPolicy`/`FocusGate` factoring.
+    static func standing(isEnabled: Bool, authorized: Bool, isDark: Bool,
+                         presentInHome: Bool, homeHubPresent: Bool) -> HomeKitStanding {
         guard isEnabled else { return .off }
         guard authorized else { return .needsAuthorization }
         guard presentInHome else { return .notPaired }
-        if w.link.isDark { return .staleInHome }
+        if isDark { return .staleInHome }
         return homeHubPresent ? .paired : .pairedWithoutHomeHub
     }
 
+    /// Was an accessory with this witness's name observed in a home?
+    /// Case-insensitive, observation-grade — the standing copy says "seen",
+    /// never "verified".
+    func seenInHome(_ w: Witness) -> Bool {
+        let needle = (w.name.isEmpty ? w.id : w.name).lowercased()
+        guard !needle.isEmpty else { return false }
+        return accessoryNames.contains { $0.contains(needle) }
+    }
+
+    /// Ask iOS for Home access. The OS shows its consent prompt on the first
+    /// real HomeKit touch; state lands via the delegate — `authorized` is
+    /// only ever set from what the framework reported, never assumed.
     func requestAccess() {
         #if canImport(HomeKit)
-        // HMHomeManager triggers the authorization prompt on first use; state
-        // arrives via its delegate in the full implementation.
-        _ = manager.homes
-        authorized = true
+        if manager == nil {
+            let shim = HomeManagerShim(bridge: self)
+            let m = HMHomeManager()
+            m.delegate = shim
+            delegateShim = shim
+            manager = m
+        }
+        if let m = manager {
+            noteAuthorization(m.authorizationStatus)
+            noteHomes(m.homes)
+        }
         #endif
     }
+
+    #if canImport(HomeKit)
+    fileprivate func noteAuthorization(_ status: HMHomeManagerAuthorizationStatus) {
+        authorized = status.contains(.authorized)
+    }
+
+    fileprivate func noteHomes(_ homes: [HMHome]) {
+        homeHubPresent = homes.contains { $0.homeHubState == .connected }
+        accessoryNames = Set(homes.flatMap { home in
+            home.accessories.map { $0.name.lowercased() }
+        })
+    }
+    #endif
 }
+
+#if canImport(HomeKit)
+/// `HMHomeManagerDelegate` requires an `NSObject`; the bridge stays a plain
+/// `ObservableObject`, so this shim forwards the two callbacks that matter.
+private final class HomeManagerShim: NSObject, HMHomeManagerDelegate {
+    weak var bridge: HomeKitBridge?
+    init(bridge: HomeKitBridge) { self.bridge = bridge }
+
+    func homeManager(_ manager: HMHomeManager,
+                     didUpdate status: HMHomeManagerAuthorizationStatus) {
+        Task { @MainActor [weak bridge] in bridge?.noteAuthorization(status) }
+    }
+
+    func homeManagerDidUpdateHomes(_ manager: HMHomeManager) {
+        let homes = manager.homes
+        Task { @MainActor [weak bridge] in bridge?.noteHomes(homes) }
+    }
+}
+#endif

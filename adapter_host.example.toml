@@ -71,7 +71,13 @@ mqtt_broker_addr = "127.0.0.1:1883"
 #   tamper_detected, vehicle_arrival_departure
 # Optional per-route gates: min_confidence (float), require_truthy_state (bool),
 # numeric_min (float — payload must carry a numeric reading >= this; replaces the
-# truthy gate for counters/numeric sensor states; the reading is never logged).
+# truthy gate for counters/numeric sensor states; the reading is never logged),
+# state_equals (string — the state must equal this exactly; replaces the
+# truthy/numeric gates, for enum-valued fields where "truthy" means nothing),
+# state_field (string — read the gating state from this JSON field instead of
+# "state"; fails closed when absent, for topics that multiplex several
+# readings in one payload). Several routes may share one topic; the first
+# whose gates pass wins.
 # Optional provenance: attestation = "adapter" (default) or "ha-bridged" for
 # routes fed by an HA mqtt_statestream bridge — stamped into the sealed event
 # and rendered as a provenance chip on the timeline.
@@ -103,6 +109,28 @@ kind = "tamper_detected"
 zone = "canary_1"
 require_truthy_state = true
 min_confidence = 0.5
+
+# Canary WAP acoustic detector (FEATURE_ACOUSTIC_EVENTS): the alarm on the
+# ceiling sounds, the Canary hears the legally mandated cadence, and these
+# routes seal "an alarm was heard" as a witness event. The firmware publishes
+#   {"acoustic_event":"smoke_alarm_t3", ..., "t3_detected":5, "t4_detected":2}
+# on securacv/<device_id>/sensing — one enum field that means "now", beside
+# cumulative counters that stay nonzero forever. Gate on the enum via
+# state_field + state_equals; a truthy gate on a counter would re-claim on
+# every 60 s heartbeat after the first ever detection.
+[[adapter.route]]
+topic = "securacv/canary-1/sensing"
+kind = "acoustic_impulse_in_zone"
+zone = "smoke_alarm_heard"
+state_field = "acoustic_event"
+state_equals = "smoke_alarm_t3"   # NFPA 72 T3 — smoke
+
+[[adapter.route]]
+topic = "securacv/canary-1/sensing"
+kind = "acoustic_impulse_in_zone"
+zone = "co_alarm_heard"
+state_field = "acoustic_event"
+state_equals = "co_alarm_t4"      # UL 2034 T4 — carbon monoxide
 
 # Seeed MR60BHA2 mmWave kit running its STOCK ESPHome firmware (Track B in
 # docs/canary_sense_mr60bha2_design.md). The stock firmware speaks the ESPHome

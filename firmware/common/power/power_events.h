@@ -63,6 +63,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 namespace powerevents {
 
@@ -240,6 +241,48 @@ inline uint32_t outage_bound_s(uint32_t last_alive_epoch, uint32_t now_epoch) {
   if (last_alive_epoch == 0 || now_epoch == 0) return 0;
   if (now_epoch <= last_alive_epoch) return 0;
   return now_epoch - last_alive_epoch;
+}
+
+// ── MQTT tamper egress (the securacv/<id>/tamper payload) ───────────────────
+//
+// The boot classification as the one JSON object every downstream consumer of
+// the tamper topic parses today:
+//   - the HA integration's per-type sensors key on "type" ("power_loss" /
+//     "unexpected_reboot") and render "detail"/"severity" as attributes;
+//   - its aggregate tamper sensor reads "type" and "detail";
+//   - the host mqtt_sensor adapter's tamper route gates on the truthy "state"
+//     and the "confidence" floor, and ignores the rest.
+// Returns false for a benign boot (cold boot, clean reboot, unknown): those
+// publish nothing — silence over noise. Confidence is 1.0 because the reset
+// cause is hardware-reported, not inferred from a sensor reading. A restored
+// outage carries its honest lower-bound duration when one is known.
+inline bool ha_tamper_json(BootPower k, uint32_t outage_s, char* out,
+                           size_t cap) {
+  const char* type = nullptr;
+  switch (k) {
+    case BootPower::OutageRestored:
+    case BootPower::Brownout:
+      type = "power_loss";
+      break;
+    case BootPower::Fault:
+      type = "unexpected_reboot";
+      break;
+    default:
+      return false;
+  }
+  int n;
+  if (k == BootPower::OutageRestored && outage_s > 0) {
+    n = snprintf(out, cap,
+                 "{\"state\":\"on\",\"confidence\":1.00,\"type\":\"%s\","
+                 "\"severity\":\"warning\",\"detail\":\"%s (outage >= %u s)\"}",
+                 type, boot_power_detail(k), (unsigned)outage_s);
+  } else {
+    n = snprintf(out, cap,
+                 "{\"state\":\"on\",\"confidence\":1.00,\"type\":\"%s\","
+                 "\"severity\":\"warning\",\"detail\":\"%s\"}",
+                 type, boot_power_detail(k));
+  }
+  return n > 0 && (size_t)n < cap;
 }
 
 // ── The durable ring log (POD; persisted as raw NVS bytes) ──────────────────

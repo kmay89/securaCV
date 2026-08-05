@@ -15,6 +15,13 @@ via the shipped [alert blueprints](../blueprints/securacv_alerts.yaml). Apple
 Home is an *additional* renderer of the same truth, never the only one — that is
 the degradation table in the RFC (§7), kept on purpose.
 
+> **Not running Home Assistant?** The other lane needs nothing but the hub
+> binary and an Apple TV or HomePod: `witnessd`'s own HAP bridge, with a
+> two-minute setup wizard — see the
+> [Apple Home quickstart](apple-home-quickstart.md). This recipe is the
+> zero-new-code lane for households already on the HA hub; both lanes end
+> with the same sensors in the same Home app.
+
 ## 1) Overview
 
 What Apple Home gets — and all it gets — is the closed, present-tense signal
@@ -143,6 +150,25 @@ legally mandated cadences and stores no audio — and it is *not* a UL-listed
 life-safety device; it is a second messenger for the alarm you already own,
 never a replacement.
 
+**Seal the alarm as evidence (optional):** the push lanes above tell you *now*;
+the adapter host can also make "an alarm was heard" part of the sealed witness
+record. [`adapter_host.example.toml`](../../adapter_host.example.toml) ships
+two routes for the WAP's `sensing` stream, gated on the `acoustic_event` field
+via `state_field` + `state_equals` (never on the cumulative counters beside it,
+which stay nonzero forever after the first detection):
+
+```toml
+[[adapter.route]]
+topic = "securacv/canary-1/sensing"
+kind = "acoustic_impulse_in_zone"
+zone = "smoke_alarm_heard"
+state_field = "acoustic_event"
+state_equals = "smoke_alarm_t3"
+```
+
+One route per device (exact topic match); duplicate the pair with
+`co_alarm_t4` for CO, and swap `canary-1` for each device id.
+
 **Power outage, honestly:** a house that loses power cannot report its own
 death — the hub, the router, and the Apple hub die with it. What works:
 
@@ -169,9 +195,12 @@ death — the hub, the router, and the Apple hub die with it. What works:
               push: { interruption-level: time-sensitive }
   ```
 - **On restore:** the fleet's boot-lineage classifier
-  ([power events](../design/power_events.md)) is built and host-tested; it
-  records the outage as evidence with an honest lower-bound duration. Its
-  boot-path wiring lands hardware-validated, separately.
+  ([power events](../design/power_events.md)) records the outage as evidence
+  with an honest lower-bound duration, and on the canary base tree the
+  classification now reaches Home Assistant as the `Power Loss` tamper
+  sensor turning on — so "the power went out while you were away" is a push
+  you get on power's return, from both lanes. Other firmware trees gain the
+  same wiring hardware-validated, per the design doc's priority order.
 - **Designed:** absence-inference and the powered mesh gateway in the
   [alert relay RFC](../design/alert_relay.md) — the only path that can speak
   *during* the outage — is design-only today, and says so.
@@ -187,6 +216,11 @@ death — the hub, the router, and the Apple hub die with it. What works:
    broker, so it cannot stand in for this step.)
 4. Leave the LAN (cellular), have a housemate press the test button again:
    the push still arrives — that's the home hub doing its job.
+5. Outage drill (canary base builds): unplug a Canary for a minute and plug
+   it back in. On reboot the `Power Loss` tamper sensor turns on and the
+   [alert blueprint](../blueprints/securacv_alerts.yaml)'s power input
+   pushes the classifier's own sentence — with the lower-bound duration
+   when the device had a clock to measure it.
 5. Unplug the bridge briefly: accessories go "No Response" in Home, and HA's
    own availability topics recover on reconnect (the bridge re-asserts
    retained state after backoff — self-healing is already in

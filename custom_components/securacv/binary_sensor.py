@@ -177,8 +177,12 @@ async def _setup_mqtt_binary_sensors(
                 SecuraCVCanarySDReplaceSensor(prefix, device_id, entry)
             )
 
-        # Individual tamper type sensors (created on first tamper message)
-        if topic_type == TOPIC_TAMPER and "tamper_sensors" not in entities_added[device_id]:
+        # Individual tamper type sensors. Created on the first tamper OR
+        # health message: several of these parse health fields (sd_errors,
+        # free_heap, power_loss_detected), and a device's one tamper publish
+        # is non-retained — a hub that boots after the Canary would otherwise
+        # never create the sensors that the periodic health flags feed.
+        if topic_type in (TOPIC_TAMPER, TOPIC_HEALTH) and "tamper_sensors" not in entities_added[device_id]:
             entities_added[device_id].add("tamper_sensors")
             new_entities.extend([
                 SecuraCVCanaryTamperTypeSensor(prefix, device_id, entry, TAMPER_POWER_LOSS, "Power Loss", "mdi:power-plug-off"),
