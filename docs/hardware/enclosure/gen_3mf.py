@@ -5,6 +5,7 @@
     python3 gen_3mf.py coupon     # just the color + fit coupon
     python3 gen_3mf.py frame      # the whole 7" case
     python3 gen_3mf.py stick      # the hallway stick: bezel + band, back + mark
+    python3 gen_3mf.py c3         # the C3 pocket case: bezel + band, yellow lid
 
 Renders the parts it needs with OpenSCAD, then writes a single object whose
 volumes are already registered to each other and already assigned to
@@ -137,6 +138,26 @@ STICK_BEZEL = [("body", "bezel", 1, STICK, {}),
 STICK_BACK = [("body", "fil_body", 1, STICK, {}),
               ("mark", "fil_accent", 2, STICK, {})]
 
+# ── The C3 pocket case (Waveshare ESP32-C3-LCD-1.47) ───────────────────────
+# Same palette convention as the stick — slot 1 black, slot 2 yellow, slot 3
+# white — so an operator who has printed one case loads the other without
+# re-learning the spools. Here the yellow is not an inlay but the whole lid:
+# a single-filament object that shares the plate so the case comes off in one
+# job. Only the bezel changes tool (band fuses in at band_clear = 0, the
+# co-print mode the .scad documents — same doctrine as the stick's band).
+#
+# headers="pillars" is pinned on every volume: the plate prints the case for
+# the board AS WAVESHARE SHIPS IT (brass corner pillars on, headers not
+# soldered). Pinned rather than inherited so the plate cannot silently change
+# meaning if the .scad's default ever moves. Stripped or soldered-header
+# boards: re-run with the define edited — the geometry is one word away, and
+# a 3MF that guessed would fit exactly one of the three boards silently.
+C3 = "canary_c3_lcd147.scad"
+C3_BEZEL = [("body", "bezel", 1, C3, {"headers": '"pillars"'}),
+            ("band", "light", 3, C3, {"headers": '"pillars"',
+                                      "band_clear": "0"})]
+C3_LID = [("lid", "lid", 2, C3, {"headers": '"pillars"'})]
+
 # A "set" is a list of OBJECTS. Each object is (name, volumes, plate center).
 # Volumes within one object are parts of it and stay registered to each other;
 # separate objects are independent and get their own place on the plate.
@@ -178,6 +199,11 @@ SETS = {
     # tower twice for no reason.
     "stick": [("stick bezel", STICK_BEZEL, (100, 150)),
               ("stick back",  STICK_BACK,  (100, 95))],
+    # Both halves of the C3 case on one plate, same argument as the stick:
+    # 25 x 41 mm parts, the pair is light, and a second job would build the
+    # purge tower twice for no reason.
+    "c3": [("c3 bezel", C3_BEZEL, (100, 150)),
+           ("c3 lid",   C3_LID,   (100, 95))],
     # THE TPU FITMENTS, two of each — a spare is worth more than a second job.
     # All six are ONE material, so this plate changes tool exactly never: no
     # purge tower, no tower zone, and every volume on slot 1. That is the whole
@@ -222,7 +248,7 @@ SETS = {
 # can never overwrite each other.
 OUTPUT = {"gauges": "lcd7_gauges", "color": "lcd7_color",
           "coupon": "lcd7_coupon", "qr": "lcd7_qr", "frame": "lcd7_frame",
-          "stick": "stick_case", "tpu": "lcd7_tpu"}
+          "stick": "stick_case", "c3": "c3_case", "tpu": "lcd7_tpu"}
 assert set(OUTPUT) == set(SETS), "every set needs an output name"
 # Volume tuples grew a source and a defines dict when a second case moved in
 # here, and a set written inline (rather than through one of the named lists
@@ -265,6 +291,9 @@ TOWER_ZONES = {
     # purges far more plastic than the part itself weighs, and cramping it is
     # the one way to make a 20 g print fail.
     "stick":  (140.0, 40.0, 250.0, 210.0),
+    # Same layout as the stick's plate, same reasoning: both objects sit left
+    # of x ≈ 115, so the tower gets the whole right half of the bed.
+    "c3":     (140.0, 40.0, 250.0, 210.0),
 }
 
 

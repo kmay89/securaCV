@@ -139,9 +139,14 @@ devstl dev_c6_147_hdr_back.stl  canary_c6_display.scad -D 'model="1.47"' -D 'hea
 # yellow snap lid, and the white light band that replaces Waveshare's acrylic
 # sandwich — three strips (two long walls + the LED's end wall), so the mesh
 # gate expects THREE parts for the band, not one.
-devstl dev_c3_147_bezel.stl  canary_c3_lcd147.scad -D 'part="bezel"'
-devstl dev_c3_147_lid.stl    canary_c3_lcd147.scad -D 'part="lid"'
+# Default build is "pillars" — the board as Waveshare ships it (brass corner
+# pillars on, headers not soldered). "none" is the stripped board, "male" the
+# soldered-headers one. All three builds render; the band is build-agnostic.
+devstl dev_c3_147_bezel.stl  canary_c3_lcd147.scad -D 'headers="pillars"' -D 'part="bezel"'
+devstl dev_c3_147_lid.stl    canary_c3_lcd147.scad -D 'headers="pillars"' -D 'part="lid"'
 devstl dev_c3_147_band.stl   canary_c3_lcd147.scad -D 'part="light"'
+devstl dev_c3_147_bare_bezel.stl canary_c3_lcd147.scad -D 'headers="none"' -D 'part="bezel"'
+devstl dev_c3_147_bare_lid.stl   canary_c3_lcd147.scad -D 'headers="none"' -D 'part="lid"'
 devstl dev_c3_147_hdr_bezel.stl canary_c3_lcd147.scad -D 'headers="male"' -D 'part="bezel"'
 devstl dev_c3_147_hdr_lid.stl   canary_c3_lcd147.scad -D 'headers="male"' -D 'part="lid"'
 # The USB-A stick (hallway nightlight body). Three printed parts — bezel, back
@@ -233,4 +238,4 @@ if [[ "${1:-}" != "--no-png" ]]; then
   (SRC="canary_dock.scad";          png "preview_dev_dock.png")
 fi
 
-echo "Done: released STLs (WAP 10 / Vision 9 / Doorbell 5 / Sense 2) + 57 dev renders + 3 SVG templates + previews."
+echo "Done: released STLs (WAP 10 / Vision 9 / Doorbell 5 / Sense 2) + 59 dev renders + 3 SVG templates + previews."
