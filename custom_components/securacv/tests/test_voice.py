@@ -287,6 +287,8 @@ def test_whats_up_quiet_and_empty_cases():
 
 
 def test_whats_up_leads_with_trouble_and_holds_untrusted_loosely():
+    # A tamper event is alert-class, so it takes the first sentence; the
+    # key-mismatch heads-up follows, softened to "Also, heads up".
     devices = {
         "gate": {
             "last_event": {
@@ -299,10 +301,25 @@ def test_whats_up_leads_with_trouble_and_holds_untrusted_loosely():
     }
     verify = {"gate": {"trusted": False, "reason": "mismatch"}}
     speech = speak_whats_up(fleet_brief([_entry(devices, verify)], NOW))
-    assert speech.startswith("Heads up first: gate is publishing")
+    assert speech.startswith("First thing: tamper detected")
+    assert "Also, heads up: gate is publishing" in speech
     assert "hold it loosely" in speech
     # The reserved word never leaks into an unverified fleet's health line.
     assert "every signature verified" not in speech
+
+    # A non-alert event with a mismatch keeps the mismatch first.
+    quiet_devices = {
+        "gate": {
+            "last_event": {
+                "event_type": "contact_state_change",
+                "received_at": NOW - 60,
+                "trusted": False,
+                "reason": "mismatch",
+            }
+        }
+    }
+    speech = speak_whats_up(fleet_brief([_entry(quiet_devices, verify)], NOW))
+    assert speech.startswith("Heads up first: gate is publishing")
 
 
 def test_whats_up_alert_class_event_leads_even_over_mismatch():

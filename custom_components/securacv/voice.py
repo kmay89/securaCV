@@ -60,6 +60,19 @@ _WEATHER_WORDS = {
 }
 
 
+def _spoken_label(event_type: Any) -> str:
+    """A speakable, lowercase-leading label for an event type.
+
+    Uses the dictionary label when one exists; an event type with no
+    metadata entry (e.g. the acoustic alarm grammars) falls back to its
+    own name with underscores read as spaces — never spoken raw.
+    """
+    label = event_type_metadata(event_type if isinstance(event_type, str) else None)["label"]
+    if label == event_type:
+        label = label.replace("_", " ")
+    return label[:1].lower() + label[1:]
+
+
 def _snake(event_type: Any) -> str:
     """Event type as snake_case, accepting the kernel's CamelCase too."""
     if not isinstance(event_type, str):
@@ -332,8 +345,7 @@ def speak_whats_up(brief: dict[str, Any]) -> str:
     activity: str | None = None
     alert_leads = False
     if canary:
-        label = event_type_metadata(canary.get("event_type"))["label"]
-        label = label[:1].lower() + label[1:]
+        label = _spoken_label(canary.get("event_type"))
         when = ago_phrase(brief["now"] - canary["received_at"])
         recent = (brief["now"] - canary["received_at"]) < 3600
         if _snake(canary.get("event_type")) in _ALERT_EVENT_TYPES:
@@ -372,8 +384,7 @@ def speak_whats_up(brief: dict[str, Any]) -> str:
     elif activity:
         pass
     elif kernel_event:
-        label = event_type_metadata(kernel_event.get("event_type"))["label"]
-        label = label[:1].lower() + label[1:]
+        label = _spoken_label(kernel_event.get("event_type"))
         if brief["kernel_configured"] and not brief["kernel_ok"]:
             # A cached event from a kernel that is unreachable NOW is stale
             # by definition — say so instead of presenting it as current.
