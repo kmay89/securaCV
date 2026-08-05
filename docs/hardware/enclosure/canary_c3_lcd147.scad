@@ -230,7 +230,15 @@ opt_btn = true;
 // beam bends within print layers, never across them.
 pad_l      = 8.2;  // paddle length (Y) — hinge at the USB end, press pad at
                    // the free end. Longer = softer press — TUNE on print
-pad_h      = 5.4;  // paddle height (Z), centered on the actuator
+pad_h      = 5.4;  // paddle height (Z), centered on the actuator — a CAP,
+                   // not a promise: shallow builds derive down from it
+                   // (pad_h_eff), because the stripped board's case is a
+                   // millimeter shallower and a fixed 5.4 ran the recess
+                   // into the rim band there. CI's render of the bare build
+                   // caught it; the local check that "passed" had exported
+                   // to /dev/null, which OpenSCAD rejects before evaluating
+                   // anything — a green that never ran. Verify with real
+                   // output paths.
 pad_slot   = 0.55; // flex slot around the three free sides — prints clean in
                    // a vertical wall at 0.55
 pad_recess = 0.6;  // pad face below the ear's outer face: the squeeze guard,
@@ -389,7 +397,11 @@ pad_beam  = ear_skin - pad_recess;               // flexing skin thickness
 pad_y0    = btn_y - pad_l/2;                     // hinge-end edge
 pad_rec_y = pad_l + pad_slot;                    // recess span (slot at the
 pad_rec_cy = btn_y + pad_slot/2;                 //  free end only)
-pad_rec_z = pad_h + 2*pad_slot;
+// height fits the build: full pad_h where the case is deep enough, derived
+// down where it is not (the stripped build is 1 mm shallower), always
+// leaving the 1.2 rim band above the recess by construction
+pad_h_eff = min(pad_h, 2*(bez_h - 1.2 - pad_slot - z_btn));
+pad_rec_z = pad_h_eff + 2*pad_slot;
 x_skin_in = xc/2 + btn_reach;                    // beam's inner face
 free_gap  = 2*tol_slide - pad_boss_l;            // boss tip → actuator tip
 
@@ -492,8 +504,10 @@ assert(!opt_btn || (free_gap >= 0.08 && free_gap <= 0.3),
            "Tune pad_boss_l against btn_proud."));
 assert(!opt_btn || pad_boss_d <= btn_ch_w - 0.6,
        "the press boss won't clear the actuator channel — shrink pad_boss_d");
-assert(!opt_btn || z_btn + pad_rec_z/2 <= bez_h - 1.2,
-       "the paddle recess runs into the rim band — shrink pad_h or check btn_dz");
+assert(!opt_btn || pad_h_eff >= pad_boss_d + 1.4,
+       str("this build's cavity leaves the paddle only ", pad_h_eff,
+           " mm tall — not enough to wrap the Ø", pad_boss_d, " boss. ",
+           "Shrink pad_boss_d or deepen the build."));
 assert(!opt_btn || z_btn - pad_rec_z/2 >= face_t + 0.8,
        "the paddle recess undercuts the bezel face — shrink pad_h or check btn_dz");
 assert(nub_y0 + snap_w/2 <= yc/2 - r_out, "snap windows run into the corner posts — pull nub_y0 in");
@@ -605,7 +619,7 @@ module light_band() {
 module pad_pocket2d() {
     translate([pad_rec_cy - btn_y, 0]) rrect2d(pad_rec_y, pad_rec_z, 1.2);
 }
-module pad_face2d() { rrect2d(pad_l, pad_h, 1.0); }
+module pad_face2d() { rrect2d(pad_l, pad_h_eff, 1.0); }
 
 module bezel() {
   union() {

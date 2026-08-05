@@ -7305,7 +7305,7 @@
       {
        "name": "pad_h",
        "default": "5.4",
-       "comment": "paddle height (Z), centered on the actuator"
+       "comment": "paddle height (Z), centered on the actuator — a CAP,"
       },
       {
        "name": "pad_slot",
@@ -7580,8 +7580,12 @@
        "comment": "free end only)"
       },
       {
+       "name": "pad_h_eff",
+       "default": "min(pad_h, 2*(bez_h - 1.2 - pad_slot - z_btn))"
+      },
+      {
        "name": "pad_rec_z",
-       "default": "pad_h + 2*pad_slot"
+       "default": "pad_h_eff + 2*pad_slot"
       },
       {
        "name": "x_skin_in",
