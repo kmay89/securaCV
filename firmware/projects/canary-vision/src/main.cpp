@@ -627,6 +627,53 @@ void setup() {
   );
 }
 
+// The optical pipeline: one rate-limited inference, the presence FSM, the
+// witness chain, and the BLE beacon. Deliberately BROKER-INDEPENDENT — see
+// the call site in loop(). Returns true when this pass actually sampled.
+//
+// Every MQTT publish reachable from here is already connection-gated
+// (publish_checked/publish_aim no-op when the client is down), so an off-grid
+// pass does exactly the broker-free work and nothing else: it advances the
+// signed chain — "the witness record exists regardless of connectivity", the
+// rule publish_event_json has always stated — and it refreshes the beacon.
+static bool vision_tick(uint32_t now_ms) {
+  // Under heap pressure the diagnostics ladder stretches the vision cadence
+  // (2x at critical, 5x at emergency) so inference never OOMs the stack.
+  const uint32_t invoke_period_ms =
+      INVOKE_PERIOD_MS * canary::diag::period_scale();
+  if ((now_ms - last_invoke_ms) < invoke_period_ms) return false;
+  last_invoke_ms = now_ms;
+
+  VisionSample vs{};
+  if (!canary::vision::sample(vs)) return false;
+
+  if (g_aim_on) aim_publish(vs, now_ms);
+
+  EventMsg ev{};
+  const bool emitted = fsm.tick(vs, now_ms, ev);
+
+#if defined(FEATURE_FLEET_BEACON) && FEATURE_FLEET_BEACON
+  // Mirror the FSM's debounced presence onto the BLE fleet beacon (v2: ALERT
+  // flag + class + confidence) so a canary-display alerts DIRECTLY over BLE —
+  // no broker, no shared WiFi. Debounced presence, not the raw per-frame hit,
+  // so the advert doesn't flap on a single dropped frame. The WE2 pipeline is
+  // person-only today (detect_config person_target); the class token widens
+  // with the pipeline, never past the ObjectClass vocabulary.
+  {
+    const auto snap = fsm.snapshot(now_ms, last_event_name);
+    canary::net::fleet_beacon_note_detection(
+        snap.presence, FLEET_BEACON_DETECT_PERSON, snap.confidence, now_ms);
+  }
+#endif
+
+  if (emitted && ev.event_name) {
+    set_last_event(ev.event_name);
+    publish_event_json(ev.event_name, ev.reason, now_ms, vs);
+    publish_state_now(now_ms);
+  }
+  return true;
+}
+
 void loop() {
 #if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG
   esp_task_wdt_reset();
@@ -655,6 +702,16 @@ void loop() {
   canary::net::fleet_roster_scan_tick(canary::ms_now(),
                                       canary::net::wifi_connected());
 #endif
+
+  // Optical pipeline BEFORE the broker/WiFi early-returns below — the same
+  // placement, and the same reason, as the beacon and roster ticks above.
+  // Seeing is not a broker-dependent act: a Vision booted off-grid, or one
+  // that loses WiFi or just the broker, must keep running inference, keep
+  // advancing its signed chain, and keep telling nearby displays what it
+  // currently sees. Left below the gate it would freeze — and, worse, the
+  // beacon tick above would go on re-advertising the last detection, so a
+  // display would show a person who had already left. (review catch)
+  const bool sampled = vision_tick(canary::ms_now());
 
   if (!canary::net::mqtt_connected()) {
     if (!canary::net::wifi_connected()) {
@@ -694,7 +751,8 @@ void loop() {
       }
     }
     // Still no broker: keep the loop's cadence (WDT fed, wifi/mdns/diag
-    // supervised) instead of running the publish-dependent pipeline.
+    // supervised, and the optical pipeline above already ran) instead of
+    // running the publish-dependent tail.
     if (!canary::net::mqtt_connected()) {
       delay(50);
       return;
@@ -706,11 +764,11 @@ void loop() {
   const uint32_t now_ms = canary::ms_now();
 
   // Pull-OTA: scheduler + HA command drain + update-entity publishing.
-  // Must run before the vision-rate early return below.
   canary::net::ota_loop(now_ms);
 
-  // Runtime detection settings written from HA. Also before the early
-  // return so slider changes apply at MQTT speed, not vision-tick speed.
+  // Runtime detection settings written from HA. Drained every connected pass,
+  // so slider changes land at MQTT speed and the next vision_tick — which
+  // runs at the top of the following pass — samples under the new config.
   drain_detect_cfg_commands();
 
   // Aim-assist switch: drain the HA command and enforce the auto-off.
@@ -734,41 +792,5 @@ void loop() {
     publish_state_now(now_ms);
   }
 
-  // Under heap pressure the diagnostics ladder stretches the vision cadence
-  // (2x at critical, 5x at emergency) so inference never OOMs the stack.
-  const uint32_t invoke_period_ms =
-      INVOKE_PERIOD_MS * canary::diag::period_scale();
-  if ((now_ms - last_invoke_ms) < invoke_period_ms) {
-    delay(5);
-    return;
-  }
-  last_invoke_ms = now_ms;
-
-  VisionSample vs{};
-  if (!canary::vision::sample(vs)) return;
-
-  if (g_aim_on) aim_publish(vs, now_ms);
-
-  EventMsg ev{};
-  const bool emitted = fsm.tick(vs, now_ms, ev);
-
-#if defined(FEATURE_FLEET_BEACON) && FEATURE_FLEET_BEACON
-  // Mirror the FSM's debounced presence onto the BLE fleet beacon (v2: ALERT
-  // flag + class + confidence) so a canary-display alerts DIRECTLY over BLE —
-  // no broker, no shared WiFi. Debounced presence, not the raw per-frame hit,
-  // so the advert doesn't flap on a single dropped frame. The WE2 pipeline is
-  // person-only today (detect_config person_target); the class token widens
-  // with the pipeline, never past the ObjectClass vocabulary.
-  {
-    const auto snap = fsm.snapshot(now_ms, last_event_name);
-    canary::net::fleet_beacon_note_detection(
-        snap.presence, FLEET_BEACON_DETECT_PERSON, snap.confidence, now_ms);
-  }
-#endif
-
-  if (emitted && ev.event_name) {
-    set_last_event(ev.event_name);
-    publish_event_json(ev.event_name, ev.reason, now_ms, vs);
-    publish_state_now(now_ms);
-  }
+  if (!sampled) delay(5);
 }
