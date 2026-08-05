@@ -20,6 +20,10 @@ if it drifts from the pin maps).
 | `xiao-esp32s3` | ESP32-S3 | verified | canary-vision | Seeed XIAO (plain, non-Sense) — Vision AI host (the "Grove Vision AI V2 Kit" pairing) |
 | `xiao-esp32c3` | ESP32-C3 | verified | canary-vision | Seeed XIAO C3 — Vision AI host (stacks on the module's XIAO socket) |
 | `esp32-c3` | ESP32-C3 | compile-tested | canary-vision | Generic C3 dev board for Vision AI over a Grove cable |
+| `esp32c3-super-mini` | ESP32-C3 | compile-tested | canary-vision | The most-owned sub-$3 board (white-label) — Vision AI host over a Grove cable, same wiring as the generic DevKit entry |
+| `esp32cam-ai-thinker` | ESP32 | compile-tested | canary | AI-Thinker ESP32-CAM — the most-owned camera board in existence; camera PEEK + Wi-Fi CSI + SD, UART-only flashing (env `esp32cam`) |
+| `esp32-wroom-devkit` | ESP32 | compile-tested | canary | Generic WROOM-32 DevKit family (DevKitC/DOIT/NodeMCU-32S/clones) — Wi-Fi CSI presence witness, no camera/mic/SD (env `esp32-wroom`) |
+| `freenove-esp32s3-cam` | ESP32-S3 | compile-tested | canary | Freenove FNK0085, the default Amazon S3 camera kit — S3-EYE camera map, SD slot 1-bit-SDMMC-only so SD stays off (env `freenove-s3`) |
 | `xiao-esp32c6-mr60` | ESP32-C6 | compile-tested | canary-sense | Seeed MR60BHA2 60 GHz mmWave kit (radar witness host) |
 | `xiao-esp32s3-round` | ESP32-S3 | compile-tested | canary-display | XIAO + Round Display — "Canary Watch" glance puck |
 | `waveshare-esp32s3-lcd43` | ESP32-S3 | compile-tested | canary-display | Waveshare 4.3" touch panel — "Canary Dash" |

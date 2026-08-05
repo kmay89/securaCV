@@ -22,6 +22,23 @@ Building your own from parts? See the
 for what to buy (buzzer, status LED, button/tamper/touch, battery, enclosure)
 and how it wires up.
 
+**Already have an ESP32 board in a drawer?** It may well run this firmware —
+the supported-board table in
+[`firmware/boards/README.md`](../firmware/boards/README.md) includes the
+AI-Thinker ESP32-CAM, generic ESP32-WROOM-32 DevKits, and the Freenove
+ESP32-S3 camera kit alongside the XIAO, each with an honest note on what it
+can and can't sense. Two things before you flash a board you didn't buy new
+from us-adjacent channels:
+
+- Read [Unflashed boards — what protects you](unflashed_board_intake.md)
+  first and bring the board up cold (hold BOOT while plugging in). A
+  secondhand board arrives carrying somebody else's flash contents; that
+  page is the honest account of what the flashers can and can't check.
+- If your board **isn't** in the table, that's not a dead end: a new board
+  is a data contribution — pin map plus build config, no core code. The
+  one-PR recipe is [`firmware/PORTING.md`](../firmware/PORTING.md), and a
+  registered board gets CI-built on every PR from then on.
+
 ---
 
 ## 1 · Plug in

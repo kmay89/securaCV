@@ -51,6 +51,72 @@
     "thermal_notes": "C3 at Vision-host duty runs cool; no special measures."
   },
   {
+    "id": "esp32cam-ai-thinker",
+    "name": "AI-Thinker ESP32-CAM",
+    "vendor": "AI-Thinker",
+    "mcu": "ESP32",
+    "flash_mb": 4,
+    "psram_mb": 4,
+    "pio_board": "esp32cam",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": [
+      "canary"
+    ],
+    "notes": "The most-owned camera dev board in existence (~$6, OV2640). Release-level canary build with camera PEEK + Wi-Fi CSI + SPI-mode SD + pull-OTA; no mic, no free pins for GNSS/touch/IR, no classic-ESP32 tsens. Flashing is external-UART only (GPIO0 low at reset) — desktop Flasher / esptool, not the browser flasher. Promote with a hardware test report.",
+    "thermal_notes": "Camera + Wi-Fi bursts on a thumb-sized PCB with no thermal relief; the notorious brown-out reboots are usually the 5 V supply, not heat. No die-temp watchdog on classic ESP32 — derate PEEK cadence in enclosures by design margin, not by telemetry.",
+    "psram_type": "quad"
+  },
+  {
+    "id": "esp32-wroom-devkit",
+    "name": "ESP32-WROOM-32 DevKit (generic)",
+    "vendor": "Espressif (and clones)",
+    "mcu": "ESP32",
+    "flash_mb": 4,
+    "psram_mb": 0,
+    "pio_board": "esp32dev",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": [
+      "canary"
+    ],
+    "notes": "The most common 'an ESP32' that people own (DevKitC / DOIT V1 / NodeMCU-32S / clones). Wi-Fi CSI presence witness with the signed chain and pull-OTA; no camera/mic/SD/PSRAM. GNSS optional on the free UART2. Promote with a hardware test report.",
+    "thermal_notes": "Open-air devkit at CSI-witness duty runs cool; no special measures. No die-temp watchdog on classic ESP32."
+  },
+  {
+    "id": "freenove-esp32s3-cam",
+    "name": "Freenove ESP32-S3-WROOM CAM (FNK0085)",
+    "vendor": "Freenove",
+    "mcu": "ESP32-S3",
+    "flash_mb": 16,
+    "psram_mb": 8,
+    "pio_board": "esp32-s3-devkitc-1",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": [
+      "canary"
+    ],
+    "notes": "The default Amazon 'ESP32-S3 camera kit' a US newcomer receives. Same S3 base as the flagship, camera on the Espressif S3-EYE reference map (entirely different pins — hence its own OTA product). microSD slot is 1-bit SDMMC only (no DAT3/CS routed), so the SPI-mode storage driver can't use it: SD off until an SDMMC path exists. No mic. Promote with a hardware test report.",
+    "thermal_notes": "Same S3 heat sources as the flagship (camera PEEK + Wi-Fi bursts) on a larger PCB with more copper — runs cooler than the XIAO. Die-temp watchdog covers it.",
+    "psram_type": "octal"
+  },
+  {
+    "id": "esp32c3-super-mini",
+    "name": "ESP32-C3 Super Mini",
+    "vendor": "Generic (white-label)",
+    "mcu": "ESP32-C3",
+    "flash_mb": 4,
+    "psram_mb": 0,
+    "pio_board": "esp32-c3-devkitm-1",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": [
+      "canary-vision"
+    ],
+    "notes": "The most-owned sub-$3 board in the hobby (white-label, dozens of storefront names). Vision AI host over a Grove cable on the same GPIO4/5 map as the generic DevKit entry; own OTA product because the onboard LED differs (plain active-low GPIO8 vs the DevKit's WS2812). Clone antenna quality varies. Promote with a hardware test report.",
+    "thermal_notes": "C3 at Vision-host duty runs cool; no special measures."
+  },
+  {
     "id": "esp32-c3",
     "name": "ESP32-C3 DevKitM-1 (generic)",
     "vendor": "Espressif",

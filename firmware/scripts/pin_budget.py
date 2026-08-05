@@ -65,6 +65,24 @@ DOC_PATH = BOARDS_DIR / "PIN_BUDGET.md"
 # ----------------------------------------------------------------------------
 
 MCUS = {
+    "ESP32": {
+        # Classic dual-core ESP32 (WROOM-32 family). Package GPIOs 20, 24 and
+        # 28-31 do not exist, and 37/38 are not bonded out on WROOM/WROVER
+        # modules; 6-11 carry the SPI flash. 34-39 are input-only (no output
+        # driver, no pulls) — the maps themselves document that.
+        "usable": set(range(0, 20)) | {21, 22, 23, 25, 26, 27, 32, 33, 34, 35, 36, 39},
+        "flash_reserved": set(range(6, 12)),
+        # External quad PSRAM on classic modules (WROVER, ESP32-CAM) hangs
+        # off GPIO16/17 (CS + clock) — subtracted in bucketize() when the
+        # board carries PSRAM, same pattern as the S3 octal lines.
+        "psram_reserved": {16, 17},
+        "strapping": {0, 2, 5, 12, 15},
+        "adc": {0, 2, 4, 12, 13, 14, 15, 25, 26, 27} | set(range(32, 40)),
+        "usb": set(),                     # no native USB — UART flashing only
+        "uart0": {1, 3},                  # default console
+        "sleep_wake": {0, 2, 4, 12, 13, 14, 15, 25, 26, 27} | set(range(32, 40)),
+        "periph": {"SPI": 2, "I2C": 2, "UART": 3, "RMT TX": 8, "LEDC": 16},
+    },
     "ESP32-C3": {
         "usable": set(range(0, 11)) | {18, 19, 20, 21},
         "flash_reserved": set(range(11, 18)),
@@ -184,6 +202,12 @@ def bucketize(board, functional, flags):
     if (board["mcu"] == "ESP32-S3" and board.get("psram_mb", 0) > 0
             and board.get("psram_type", "octal") == "octal"):
         usable -= mcu["octal_psram_reserved"]
+    # Classic ESP32 PSRAM is an external die on GPIO16/17 (WROVER, ESP32-CAM)
+    # — never offer those as free copper on a PSRAM-bearing classic board.
+    # (17 isn't even bonded out on the ESP32-CAM; under-offering is the safe
+    # failure.)
+    if board["mcu"] == "ESP32" and board.get("psram_mb", 0) > 0:
+        usable -= mcu["psram_reserved"]
 
     # I2C is hard copper when something onboard rides the bus (touch, an
     # IMU/RTC pair — flagged via HAS_TOUCH/HAS_RTC).

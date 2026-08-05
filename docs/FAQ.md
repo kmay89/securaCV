@@ -212,6 +212,19 @@ is **Canary WAP**. → [the full stack](full_stack_setup.md) ·
 [getting started with Canaries](getting_started_canary.md) ·
 [hardware guides](hardware/README.md)
 
+### Will it run on the ESP32 board I already have?
+
+Quite possibly. The supported-board table
+([`firmware/boards/README.md`](../firmware/boards/README.md)) goes beyond the
+XIAO: the AI-Thinker ESP32-CAM and generic ESP32-WROOM-32 DevKits (classic
+ESP32), the Freenove ESP32-S3 camera kit, and the C3 Super Mini all have
+registered, CI-built ports — each with an honest per-board note on what it
+can and can't sense, and a tier that says whether anyone has bench-validated
+it yet. Flashing a board that's been in a drawer (or came from a marketplace
+seller)? Read [unflashed board intake](unflashed_board_intake.md) first —
+bring it up cold. Board not listed? A port is a pin map plus a build config,
+one PR, no core code: [`firmware/PORTING.md`](../firmware/PORTING.md).
+
 ### I already run Home Assistant. Where do I start?
 
 [Home Assistant setup](homeassistant_setup.md) → [Frigate
