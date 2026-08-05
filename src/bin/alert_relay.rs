@@ -10,10 +10,11 @@
 //! exactly the `curl -d "..." ntfy.sh/<topic>` shape the design doc leads with.
 //! HTTPS by default; `--allow-http` exists for a self-hosted LAN ntfy only.
 
+use std::collections::HashMap;
 use std::sync::mpsc::channel;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, Result};
 use clap::Parser;
 use rumqttc::{Event, Incoming, MqttOptions, QoS};
 use witness_kernel::relay::{evaluate, Debouncer, Poke, SUBSCRIBE_TOPICS};
@@ -85,7 +86,7 @@ fn post_poke(args: &Args, poke: &Poke) -> Result<()> {
         bail!("ntfy URL must be https:// (pass --allow-http for a LAN self-host)");
     }
     // Bounded timeout so a hung ntfy server fails the poke instead of
-    // wedging the relay (FR-4); the next debounce window retries naturally.
+    // wedging the relay (FR-4); a failure lands in the retry queue.
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(30)))
         .build()
@@ -178,25 +179,95 @@ fn main() -> Result<()> {
         std::thread::sleep(Duration::from_secs(3));
     });
 
+    // The topic name is the secret (the design doc's own rule), so logs get
+    // the host only — journald and docker logs must never leak it.
+    let redacted = args
+        .ntfy_url
+        .split('/')
+        .take(3)
+        .collect::<Vec<_>>()
+        .join("/");
     log::info!(
-        "alert relay up: {} topics -> {}",
+        "alert relay up: {} topics -> {}/<redacted>",
         SUBSCRIBE_TOPICS.len(),
-        args.ntfy_url
+        redacted
     );
+
     let started = Instant::now();
     let mut debouncer = Debouncer::default();
+    // Failed pokes wait here, keyed per lane (latest wins), and retry on a
+    // cadence — a one-shot tamper alert must survive ntfy being briefly
+    // down. Bounded by the lane count; entries expire after an hour of
+    // failures rather than growing a forever-queue (FR-4).
+    let mut pending: HashMap<(witness_kernel::relay::PokeClass, String), (Poke, u64)> =
+        HashMap::new();
+    const RETRY_SECS: u64 = 30;
+    const GIVE_UP_SECS: u64 = 3600;
+    let mut last_retry: u64 = 0;
+
     loop {
-        let (topic, payload) = rx.recv().context("MQTT feed channel closed")?;
-        let Some(poke) = evaluate(&topic, &payload) else {
-            continue;
-        };
-        if !debouncer.allow(&poke, started.elapsed().as_secs()) {
-            log::debug!("debounced {} poke for '{}'", poke.class.sev(), poke.device);
-            continue;
+        let now = started.elapsed().as_secs();
+        match rx.recv_timeout(Duration::from_secs(10)) {
+            Ok((topic, payload)) => {
+                if let Some(poke) = evaluate(&topic, &payload) {
+                    if debouncer.ready(&poke, now) {
+                        deliver(&args, poke, now, &mut debouncer, &mut pending);
+                    } else {
+                        log::debug!("debounced {} poke for '{}'", poke.class.sev(), poke.device);
+                    }
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                bail!("MQTT feed channel closed");
+            }
         }
-        match post_poke(&args, &poke) {
-            Ok(()) => log::info!("poked: {} ({})", poke.title, poke.class.sev()),
-            Err(e) => log::warn!("poke failed (will retry after the debounce window): {e}"),
+        // Retry lane: attempt held pokes on the cadence, newest state wins.
+        if now.saturating_sub(last_retry) >= RETRY_SECS && !pending.is_empty() {
+            last_retry = now;
+            let held: Vec<_> = pending.drain().collect();
+            for (key, (poke, first_failed)) in held {
+                if now.saturating_sub(first_failed) > GIVE_UP_SECS {
+                    log::warn!(
+                        "dropping undeliverable {} poke after an hour of retries",
+                        poke.class.sev()
+                    );
+                    continue;
+                }
+                match post_poke(&args, &poke) {
+                    Ok(()) => {
+                        debouncer.record(&poke, now);
+                        log::info!("poked (retried): {} ({})", poke.title, poke.class.sev());
+                    }
+                    Err(e) => {
+                        log::debug!("retry still failing: {e}");
+                        pending.insert(key, (poke, first_failed));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Try to send; on success record the debounce, on failure hold for retry.
+fn deliver(
+    args: &Args,
+    poke: Poke,
+    now: u64,
+    debouncer: &mut Debouncer,
+    pending: &mut HashMap<(witness_kernel::relay::PokeClass, String), (Poke, u64)>,
+) {
+    match post_poke(args, &poke) {
+        Ok(()) => {
+            debouncer.record(&poke, now);
+            log::info!("poked: {} ({})", poke.title, poke.class.sev());
+        }
+        Err(e) => {
+            log::warn!("poke failed, holding for retry: {e}");
+            let key = (poke.class, poke.device.clone());
+            // Keep the earliest failure time if this lane is already held.
+            let first = pending.get(&key).map(|(_, t)| *t).unwrap_or(now);
+            pending.insert(key, (poke, first));
         }
     }
 }

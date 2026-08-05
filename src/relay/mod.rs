@@ -94,6 +94,7 @@ pub struct Poke {
 pub const SUBSCRIBE_TOPICS: &[&str] = &[
     "securacv/+/tamper",
     "securacv/+/status",
+    "securacv/+/availability",
     "securacv/+/sensing",
     "securacv/fleet/escalation",
     "witness/chain_problem",
@@ -161,8 +162,21 @@ pub fn evaluate(topic: &str, payload: &[u8]) -> Option<Poke> {
             })
         }
         "status" => {
+            // The vision/sense family's LWT: JSON with status:"offline".
             let value: serde_json::Value = serde_json::from_str(raw).ok()?;
             if json_field(&value, "status") != Some("offline") {
+                return None;
+            }
+            Some(Poke {
+                class: PokeClass::Offline,
+                title: "Canary went dark",
+                body: format!("Canary {device} stopped answering."),
+                device,
+            })
+        }
+        "availability" => {
+            // The canary base family's LWT: the bare string "offline".
+            if raw.trim() != "offline" {
                 return None;
             }
             Some(Poke {
@@ -206,21 +220,35 @@ pub struct Debouncer {
 
 impl Debouncer {
     /// Should this poke go out now? Records the send when it says yes.
-    pub fn allow(&mut self, poke: &Poke, now_secs: u64) -> bool {
+    /// Is this poke's lane outside its gap? Pure read — a failed delivery
+    /// must not consume the send slot, so callers check here and call
+    /// [`Debouncer::record`] only after the poke actually went out.
+    pub fn ready(&self, poke: &Poke, now_secs: u64) -> bool {
         let gap = self
             .min_gap_secs
             .get(&poke.class)
             .copied()
             .unwrap_or_else(|| poke.class.default_min_gap_secs())
             .max(60);
-        let key = (poke.class, poke.device.clone());
-        match self.last_sent.get(&key) {
-            Some(&last) if now_secs.saturating_sub(last) < gap => false,
-            _ => {
-                self.last_sent.insert(key, now_secs);
-                true
-            }
+        match self.last_sent.get(&(poke.class, poke.device.clone())) {
+            Some(&last) => now_secs.saturating_sub(last) >= gap,
+            None => true,
         }
+    }
+
+    /// Mark this poke's lane as sent now. Call only after successful delivery.
+    pub fn record(&mut self, poke: &Poke, now_secs: u64) {
+        self.last_sent
+            .insert((poke.class, poke.device.clone()), now_secs);
+    }
+
+    /// Check-and-record in one step, for callers whose delivery cannot fail.
+    pub fn allow(&mut self, poke: &Poke, now_secs: u64) -> bool {
+        let ok = self.ready(poke, now_secs);
+        if ok {
+            self.record(poke, now_secs);
+        }
+        ok
     }
 }
 
@@ -307,6 +335,32 @@ mod tests {
                 .class,
             PokeClass::Tamper
         );
+    }
+
+    #[test]
+    fn both_lwt_dialects_poke_offline() {
+        // vision/sense: JSON status. canary base: bare "offline" on
+        // availability. Both families must reach the owner.
+        let json = evaluate(
+            "securacv/porch/status",
+            br#"{"device_id":"porch","status":"offline","ts_ms":0}"#,
+        )
+        .expect("json lwt");
+        assert_eq!(json.class, PokeClass::Offline);
+        let bare = evaluate("securacv/porch/availability", b"offline").expect("bare lwt");
+        assert_eq!(bare.class, PokeClass::Offline);
+        assert!(evaluate("securacv/porch/availability", b"online").is_none());
+    }
+
+    #[test]
+    fn a_failed_delivery_does_not_consume_the_send_slot() {
+        let mut d = Debouncer::default();
+        let poke = evaluate("securacv/porch/availability", b"offline").unwrap();
+        assert!(d.ready(&poke, 1000));
+        // Delivery failed: nothing recorded, the lane stays ready.
+        assert!(d.ready(&poke, 1001), "no record until the poke went out");
+        d.record(&poke, 1001);
+        assert!(!d.ready(&poke, 1002), "recorded send starts the gap");
     }
 
     #[test]
