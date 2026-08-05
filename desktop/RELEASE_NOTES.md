@@ -17,6 +17,28 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.3.11 — 2026-08-04
+
+- **The serial monitor now connects by itself after a flash — no more
+  unplugging and replugging the board.** Three things conspired against it.
+  A freshly flashed board comes back as a *different* USB device (new port
+  path, sometimes a new identity), and the monitor kept waiting for the old
+  one; it now recognizes the board in whatever form it returns, and if two
+  boards are plugged in it says so instead of guessing. The flasher's own
+  end-of-flash reset also doesn't always take on boards wired straight to the
+  chip's USB — the board would sit silently in its bootloader looking dead —
+  so the monitor now reboots the board itself, once, right after a flash, and
+  you watch it start from the very first line. And if the board still says
+  nothing, the console now tells you what's worth trying instead of showing
+  an empty pane.
+- **The monitor explains what it is.** A line under the heading says it
+  plainly: the board's own voice, live over the USB cable — watch it boot,
+  see why something isn't working, press h for the firmware's menu. It's
+  read-only unless you type, and closing it changes nothing on the board.
+- Fixed a subtle hazard where pressing the board's physical RESET while the
+  monitor was attached could land a native-USB board in its bootloader
+  instead of starting your firmware.
+
 ## 0.3.10 — 2026-08-02
 
 - **"Wait for my Pi" now works on Intel Macs.** Flashing a Raspberry Pi over
