@@ -44,6 +44,36 @@ _UNSIGNED_REASONS = ("unsigned", "no_pubkey")
 # so speech and the dashboard can never disagree about what "online" means.
 _ONLINE_WORDS = ("online", "1", "true", "connected")
 
+# Alert-class event types: when the latest event is one of these, the casual
+# answer leads with it — a smoke alarm outranks small talk.
+_ALERT_EVENT_TYPES = frozenset(
+    {"tamper_detected", "acoustic_smoke_alarm", "acoustic_co_alarm"}
+)
+
+# HA weather-entity conditions that need a human spelling; anything not
+# listed falls back to hyphens-to-spaces.
+_WEATHER_WORDS = {
+    "partlycloudy": "partly cloudy",
+    "clear-night": "clear",
+    "lightning-rainy": "stormy",
+    "snowy-rainy": "sleety",
+}
+
+
+def _snake(event_type: Any) -> str:
+    """Event type as snake_case, accepting the kernel's CamelCase too."""
+    if not isinstance(event_type, str):
+        return ""
+    key = event_type.strip()
+    if not key or "_" in key or key.islower():
+        return key.lower()
+    out = ""
+    for i, ch in enumerate(key):
+        if ch.isupper() and i > 0:
+            out += "_"
+        out += ch.lower()
+    return out
+
 
 def _status_online(raw: Any) -> bool:
     """True only when a device's retained status payload says it is online.
@@ -99,6 +129,7 @@ def fleet_brief(
     entries: list[dict[str, Any]],
     now: float,
     pending_updates: list[str] | None = None,
+    weather: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Reduce one or more config entries' runtime state to a fleet brief.
 
@@ -109,9 +140,10 @@ def fleet_brief(
                    {"ok": bool, "latest_event": dict | None}
 
     ``pending_updates`` is an optional list of human names for updates the
-    hub is waiting to install (HA ``update`` entities that are on) — the
-    casual "what's up" answer mentions them; the crisp status answer
-    deliberately does not.
+    hub is waiting to install (HA ``update`` entities that are on), and
+    ``weather`` an optional ``{"condition", "temp"}`` snapshot from the
+    hub's weather entity — the casual "what's up" answer mentions both;
+    the crisp status answer deliberately does not.
     """
     device_ids: list[str] = []
     online: list[str] = []
@@ -171,6 +203,7 @@ def fleet_brief(
     return {
         "now": now,
         "pending_updates": list(pending_updates or []),
+        "weather": dict(weather) if weather else None,
         "device_count": len(device_ids),
         "online": online,
         "verified": verified,
@@ -291,36 +324,53 @@ def speak_whats_up(brief: dict[str, Any]) -> str:
     parts: list[str] = []
     kernel_outage_spoken = False
 
-    # Anything alarming comes first, even in the casual register.
-    if brief["mismatched"]:
-        names = ", ".join(brief["mismatched"])
-        verb = "is" if len(brief["mismatched"]) == 1 else "are"
-        parts.append(
-            f"Heads up first: {names} {verb} publishing with a key that "
-            "doesn't match the pin — there's a notification on the hub "
-            "worth a look."
-        )
-
-    # The latest activity, or an honest quiet.
+    # The latest activity, or an honest quiet. An alert-class event —
+    # tamper, a smoke or CO alarm pattern — outranks everything, even the
+    # key-mismatch heads-up.
     canary = brief.get("canary_latest")
     kernel_event = brief.get("kernel_latest_event")
+    activity: str | None = None
+    alert_leads = False
     if canary:
         label = event_type_metadata(canary.get("event_type"))["label"]
         label = label[:1].lower() + label[1:]
         when = ago_phrase(brief["now"] - canary["received_at"])
         recent = (brief["now"] - canary["received_at"]) < 3600
-        opener = "Some activity lately —" if recent else "Pretty quiet —"
-        sentence = (
-            f"{opener} the last thing witnessed was {label}, {when}, "
+        if _snake(canary.get("event_type")) in _ALERT_EVENT_TYPES:
+            alert_leads = True
+            opener = "First thing:"
+        elif recent:
+            opener = "Some activity lately — the last thing witnessed was"
+        else:
+            opener = "Pretty quiet — the last thing witnessed was"
+        activity = (
+            f"{opener} {label}, {when}, "
             f"from the {canary['device_id']} Canary"
         )
         if canary.get("trusted"):
-            sentence += "."
+            activity += "."
         elif canary.get("reason") == "mismatch":
-            sentence += ", though that one's from the mismatched key, so hold it loosely."
+            activity += ", though that one's from the mismatched key, so hold it loosely."
         else:
-            sentence += ", though it came in without a verified signature."
-        parts.append(sentence)
+            activity += ", though it came in without a verified signature."
+
+    if alert_leads and activity:
+        parts.append(activity)
+
+    if brief["mismatched"]:
+        names = ", ".join(brief["mismatched"])
+        verb = "is" if len(brief["mismatched"]) == 1 else "are"
+        opener = "Also, heads up:" if alert_leads else "Heads up first:"
+        parts.append(
+            f"{opener} {names} {verb} publishing with a key that "
+            "doesn't match the pin — there's a notification on the hub "
+            "worth a look."
+        )
+
+    if activity and not alert_leads:
+        parts.append(activity)
+    elif activity:
+        pass
     elif kernel_event:
         label = event_type_metadata(kernel_event.get("event_type"))["label"]
         label = label[:1].lower() + label[1:]
@@ -368,6 +418,19 @@ def speak_whats_up(brief: dict[str, Any]) -> str:
 
     if brief["kernel_configured"] and not brief["kernel_ok"] and not kernel_outage_spoken:
         parts.append("One more thing — I can't reach the witness kernel right now.")
+
+    # Weather, if the hub knows it — the small talk a person would add.
+    weather = brief.get("weather")
+    if isinstance(weather, dict) and (weather.get("condition") or weather.get("temp") is not None):
+        condition = str(weather.get("condition") or "").lower().strip()
+        condition = _WEATHER_WORDS.get(condition, condition.replace("-", " "))
+        temp = weather.get("temp")
+        if temp is not None and condition:
+            parts.append(f"Outside it's {round(temp)} degrees and {condition}.")
+        elif temp is not None:
+            parts.append(f"Outside it's {round(temp)} degrees.")
+        else:
+            parts.append(f"Outside it looks {condition}.")
 
     # Anything waiting on the owner: pending updates, casually.
     updates = brief.get("pending_updates") or []

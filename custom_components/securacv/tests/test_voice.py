@@ -305,6 +305,60 @@ def test_whats_up_leads_with_trouble_and_holds_untrusted_loosely():
     assert "every signature verified" not in speech
 
 
+def test_whats_up_alert_class_event_leads_even_over_mismatch():
+    # A smoke-alarm pattern is the first sentence, ahead of the key
+    # mismatch heads-up, which softens to "Also, heads up".
+    devices = {
+        "kitchen": {
+            "status": "online",
+            "last_event": {
+                "event_type": "acoustic_smoke_alarm",
+                "received_at": NOW - 300,
+                "trusted": True,
+                "reason": "ok",
+            },
+        },
+        "gate": {"status": "online"},
+    }
+    verify = {
+        "kitchen": {"trusted": True, "reason": "ok"},
+        "gate": {"trusted": False, "reason": "mismatch"},
+    }
+    speech = speak_whats_up(fleet_brief([_entry(devices, verify)], NOW))
+    assert speech.startswith(
+        "First thing: acoustic smoke alarm, within the last ten minutes, "
+        "from the kitchen Canary."
+    )
+    assert "Also, heads up: gate" in speech
+    # The kernel's CamelCase spelling of an alert type leads too.
+    tamper = {
+        "shed": {
+            "last_event": {
+                "event_type": "TamperDetected",
+                "received_at": NOW - 60,
+                "trusted": True,
+                "reason": "ok",
+            }
+        }
+    }
+    assert speak_whats_up(fleet_brief([_entry(tamper)], NOW)).startswith("First thing:")
+
+
+def test_whats_up_weather_close():
+    brief = fleet_brief(
+        [_entry({"gate": {"status": "online"}}, {"gate": {"trusted": True, "reason": "ok"}})],
+        NOW,
+        weather={"condition": "partlycloudy", "temp": 71.6},
+    )
+    speech = speak_whats_up(brief)
+    assert "Outside it's 72 degrees and partly cloudy." in speech
+    # Condition-only and absent-weather cases.
+    just_condition = fleet_brief([_entry({"gate": {}})], NOW, weather={"condition": "rainy"})
+    assert "Outside it looks rainy." in speak_whats_up(just_condition)
+    no_weather = fleet_brief([_entry({"gate": {}})], NOW)
+    assert "Outside" not in speak_whats_up(no_weather)
+
+
 def test_whats_up_mentions_pending_updates_last():
     brief = fleet_brief(
         [_entry({"gate": {}}, {"gate": {"trusted": True, "reason": "ok"}})],

@@ -127,20 +127,47 @@ class LastEventIntentHandler(_BriefIntentHandler):
         return voice.speak_last_event(brief)
 
 
+def _weather(hass: HomeAssistant) -> dict[str, Any] | None:
+    """Condition + temperature from the hub's first live weather entity.
+
+    Defensive like _pending_updates: any surprise means the casual answer
+    simply doesn't mention the weather.
+    """
+    try:
+        for state in hass.states.async_all("weather"):
+            if state.state in ("unknown", "unavailable", ""):
+                continue
+            temp = state.attributes.get("temperature")
+            return {
+                "condition": state.state,
+                "temp": temp if isinstance(temp, (int, float)) else None,
+            }
+    except Exception:  # noqa: BLE001 - never let weather break the answer
+        return None
+    return None
+
+
 class WhatsUpIntentHandler(intent.IntentHandler):
     """The casual one — 'what's up' gets one warm, honest reply.
 
     Unlike the crisp intents, this brief also carries the hub's pending
-    updates, so the answer can mention what's waiting on the owner.
+    updates and its weather entity's snapshot, so the answer can mention
+    what's waiting on the owner and what it's like outside.
     """
 
     intent_type = INTENT_WHATS_UP
-    description = "Conversational fleet catch-up: attention items, latest activity, health, pending updates"
+    description = (
+        "Conversational fleet catch-up: alerts and attention items first, "
+        "latest activity, health, weather, pending updates"
+    )
 
     async def async_handle(self, intent_obj: intent.Intent) -> intent.IntentResponse:
         hass = intent_obj.hass
         brief = voice.fleet_brief(
-            _snapshot(hass), time.time(), pending_updates=_pending_updates(hass)
+            _snapshot(hass),
+            time.time(),
+            pending_updates=_pending_updates(hass),
+            weather=_weather(hass),
         )
         response = intent_obj.create_response()
         response.async_set_speech(voice.speak_whats_up(brief))
