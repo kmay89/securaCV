@@ -2944,7 +2944,11 @@ static void handle_serial_commands() {
 #else
       Serial.println("  Self-test : diagnostics not compiled in");
 #endif
+#if FEATURE_SD_STORAGE
       Serial.printf("  SD card   : %s\n", storage_is_mounted() ? "mounted" : "absent");
+#else
+      Serial.println("  SD card   : storage not compiled in");
+#endif
 #if FEATURE_GNSS
       Serial.printf("  GPS       : %s\n", s_gps.getFix().valid ? "fix" : "no fix");
 #endif
