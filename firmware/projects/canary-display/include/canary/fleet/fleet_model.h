@@ -684,9 +684,12 @@ class FleetModel {
   // the roster (it has its own I2C sensor data and screen state) but its
   // link-loss must never climb the witness-lost alarm ladder — unplugging a
   // nightstand is ordinary, not an emergency. Matched on the device_type
-  // prefix every display flavor reports.
+  // prefix every display flavor reports — plus the nightlight, which
+  // reports what it is ("canary-nightlight") and is every bit a sibling
+  // screen: unplugging a kid's nightlight must never alarm the household.
   static bool is_display_peer(const Witness& w) {
-    return strncmp(w.device_type, "canary-display", 14) == 0;
+    return strncmp(w.device_type, "canary-display", 14) == 0 ||
+           strncmp(w.device_type, "canary-nightlight", 17) == 0;
   }
 
   Sev witness_sev(const Witness& w, uint32_t now) const {

@@ -371,7 +371,16 @@ void handle_fleet() {
   const auto& cfg = canary::cfg::get();
   FleetSelfDevice self{};
   self.name         = (cfg.device_id[0]) ? cfg.device_id : "Canary";
+#ifdef CD_NIGHTLIGHT
+  // The nightlight self-reports as WHAT IT IS ("canary-nightlight", the
+  // same dt its mDNS TXT carries), so the iPhone's LAN self-report path
+  // types it correctly and shows the Nightlight settings card (Codex P2 on
+  // this PR). The other display flavors keep the family string below —
+  // their CD_DEVICE_TYPEs predate the wire and the apps type them off it.
+  self.product      = DEVICE_TYPE;
+#else
   self.product      = "canary-display";
+#endif
   self.online       = 1;   // we are answering this request, so we are up
   self.chain_ok     = 0;   // a display holds no witness chain of its own
   self.chain_height = -1;  // omit chain_height
