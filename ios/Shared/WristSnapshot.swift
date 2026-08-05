@@ -127,6 +127,11 @@ struct WristAlert: Codable, Hashable, Identifiable, Sendable {
     var count: Int
     var deliveryRaw: UInt8
     var handlingRaw: UInt8
+    /// True once the condition cleared — "over" must never look like "still
+    /// happening" on the wrist either. ADDITIVE OPTIONAL: an older phone
+    /// sends nothing and the watch simply doesn't claim a state it wasn't
+    /// told (nil renders as no chip, not as "live").
+    var resolved: Bool?
 
     var severity: Severity { Severity(tolerant: Int(severityRaw)) }
     var delivery: AlertDelivery { AlertDelivery(tolerant: Int(deliveryRaw)) }

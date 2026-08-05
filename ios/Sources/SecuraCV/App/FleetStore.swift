@@ -86,6 +86,14 @@ final class FleetStore: ObservableObject {
         alerts.onMute = { [weak self] id in self?.mute(id) }
         alerts.onAck = { [weak self] id in self?.acknowledgeAlert(for: id) }
 
+        // The news-dedupe ledgers are rebuilt from the persisted history, so
+        // an alarm that outlives a relaunch stays ONE alert: still on the
+        // tab, still open, but never re-posted as if the app had just found
+        // it. (In-memory-only dedupe re-notified every ongoing condition on
+        // every cold start — restart spam, the one leak the per-refresh
+        // guards couldn't see.)
+        (postedAlerts, ackedAlerts) = AlertLedger.foldOpenAlerts(records: alertLog.records)
+
         // Forward every collaborator's change into ours, so any view observing
         // the store updates when discovery, BLE, alerts, heartbeat, or the
         // device list change — no view has to know the internal object graph.
@@ -120,6 +128,10 @@ final class FleetStore: ObservableObject {
             }
         }
         recordDemoBeatIfHarmless()
+        // History hygiene at the door: settled, seen rows past the retention
+        // window leave; the badge tells the truth about what's still unseen.
+        alertLog.retentionSweep()
+        syncBadge()
         startRefreshLoop()
         startSentinel()
         pushLiveActivity()
@@ -651,9 +663,25 @@ final class FleetStore: ObservableObject {
             ackedAlerts[id] = posted
         }
         alertLog.mark(.acknowledged, forWitness: id)
+        syncBadge()
         // An ack changes the story (the bird may return to the stage) —
         // every surface hears about it now, not at the next poll.
         republishGlanceSurfaces()
+    }
+
+    /// The user left the Alerts tab: everything it listed is now "seen".
+    /// Seen is about the badge and the unseen dots, never about handling —
+    /// glancing at a live alarm does not acknowledge it.
+    func markAlertsSeen() {
+        alertLog.markSeen()
+        syncBadge()
+    }
+
+    /// The app badge is the unseen count — "something landed that you have
+    /// not looked at" — kept in one place so every path that changes the
+    /// ledger leaves the icon telling the truth.
+    private func syncBadge() {
+        alerts.setBadge(alertLog.unseenCount)
     }
 
     private func evaluateAlerts() {
@@ -726,9 +754,16 @@ final class FleetStore: ObservableObject {
             }
         }
         lastAwayWake = nil
-        // Calmed witnesses leave both ledgers — their NEXT alert is news.
+        // Calmed witnesses leave both ledgers — their NEXT alert is news —
+        // and the history closes its loop in the same breath: the moment a
+        // condition would be news again is exactly the moment its old record
+        // must stop reading as "still happening".
+        for id in postedAlerts.keys where !live.contains(id) {
+            alertLog.resolve(witnessID: id)
+        }
         postedAlerts = postedAlerts.filter { live.contains($0.key) }
         ackedAlerts = ackedAlerts.filter { live.contains($0.key) }
+        syncBadge()
     }
 
     private func pushLiveActivity() {
