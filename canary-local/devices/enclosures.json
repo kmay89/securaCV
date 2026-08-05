@@ -7299,8 +7299,8 @@
       },
       {
        "name": "btn_up",
-       "default": "11.31",
-       "comment": "button center up from the USB (−Y) PCB edge — the"
+       "default": "7.0",
+       "comment": "button center up from the USB (−Y) PCB edge. The first"
       },
       {
        "name": "btn_dz",
@@ -7345,26 +7345,6 @@
        "name": "band_clear",
        "default": "0.10",
        "comment": "per-face press-in clearance; 0 for a co-printed band"
-      },
-      {
-       "name": "seam_webs",
-       "default": "3",
-       "comment": "hidden ribs per SIDE strip tying face to wall across"
-      },
-      {
-       "name": "seam_webs_top",
-       "default": "2",
-       "comment": "same, for the short top strip"
-      },
-      {
-       "name": "seam_web_w",
-       "default": "3.0",
-       "comment": "rib width along the seam"
-      },
-      {
-       "name": "seam_web_d",
-       "default": "1.2",
-       "comment": "rib depth into the wall, leaving the rest visible white"
       }
      ]
     },
@@ -7457,8 +7437,8 @@
       },
       {
        "name": "nub_y0",
-       "default": "12.4",
-       "comment": "nub pair centers (±Y) on the ±X walls — threading a"
+       "default": "5.0",
+       "comment": "nub pair centers (±Y) on the ±X walls — the C6 case's"
       }
      ]
     },
@@ -7519,7 +7499,7 @@
       },
       {
        "name": "usb_slide",
-       "default": "usb_w + 0.35",
+       "default": "usb_w + 0.15",
        "comment": "insertion notch — a hair looser than"
       },
       {
