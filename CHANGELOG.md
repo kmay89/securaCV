@@ -29,6 +29,46 @@ Two Flasher (desktop app) fixes, one promise made real:
   event — unplugging while parked on the connected card returns to the
   connect step instead of showing a chip that isn't there.
 
+## [2.4.6] - 2026-08-05
+
+### The Canary Nightlight — a kid's bedside clock with a friend living in it
+
+The first firmware for the Waveshare **ESP32-C3-LCD-1.47** (the pocket-case
+board): a new `nightlight` flavor of the display family, made to be flashed,
+joined to WiFi on the glass, and tuned from the iPhone app with zero other
+tools.
+
+- **A 7-segment clock over a lamp** — 12-hour by default, ghost segments by
+  day, still digits at night, and a look-engine lamp wash behind it: the warm
+  Lantern orange it ships with, the full Rainbow sweep, the new **Moonbeam**
+  bright-white scene, and the rest of the ring (BOOT double-press, a tap
+  while lit, or the app walks it).
+- **A companion on your rhythm** — the living canary visits the stage a few
+  seconds at a time: up with you in the morning, a little song at midday,
+  winding down in the evening, asleep beside the clock after bedtime. Visits
+  are staging, never a face — the bird's expression stays the mood engine's,
+  and any real attention takes the stage back instantly.
+- **A lamp that never lies** — the nightlight never renders safety as light:
+  the lamp is decor, the clock is information, and the glance line carries
+  link/clock honesty in words. The lamp burns through quiet hours by default
+  (that is the product), and the attention veto still puts it out the moment
+  anything is wrong.
+- **A heat budget you can't exceed** — backlight duty is hard-capped at 50%
+  in the HAL, at this board's I2C expander PWM register, underneath every
+  settings path. Closed PETG pocket case; a can't, not a won't.
+- **Standalone honesty for the whole bedside family** — a never-configured
+  hub now reads as *standalone*, not link trouble: no permanently worried
+  bird, no lamp refusing to light, on any fleet-less bedside glass.
+- The iPhone app shows it as a **Nightlight** with a native settings card
+  (lamp color from the device's own scene list, strength, night hours,
+  12-hour clock); both flashers carry the product on the release and dev
+  channels; OTA product `securacv-canary-display-nightlight-c3`.
+
+Pin map from Waveshare's own engineering-sample repo + schematic (they
+agree): ST7789T at 180×320/offset-30, CS/RST/backlight behind the EXIO
+expander. Compile-tested; bench-verify colors and panel edges on first boot
+(the board README documents both checks).
+
 ## [2.4.5] - 2026-08-03
 
 ### The setup wizard stops crashing — for the reasons 2.4.4 didn't reach
