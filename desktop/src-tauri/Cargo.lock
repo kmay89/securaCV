@@ -3532,7 +3532,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "securacv-flasher"
-version = "0.3.10"
+version = "0.3.11"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -5026,6 +5026,8 @@ dependencies = [
  "once_cell",
  "rustls",
  "rustls-pki-types",
+ "serde",
+ "serde_json",
  "url",
  "webpki-roots 0.26.11",
 ]
