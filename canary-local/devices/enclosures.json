@@ -7345,26 +7345,6 @@
        "name": "band_clear",
        "default": "0.10",
        "comment": "per-face press-in clearance; 0 for a co-printed band"
-      },
-      {
-       "name": "seam_webs",
-       "default": "3",
-       "comment": "hidden ribs per SIDE strip tying face to wall across"
-      },
-      {
-       "name": "seam_webs_top",
-       "default": "2",
-       "comment": "same, for the short top strip"
-      },
-      {
-       "name": "seam_web_w",
-       "default": "3.0",
-       "comment": "rib width along the seam"
-      },
-      {
-       "name": "seam_web_d",
-       "default": "1.2",
-       "comment": "rib depth into the wall, leaving the rest visible white"
       }
      ]
     },

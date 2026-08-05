@@ -59,9 +59,15 @@
 //     band is WHITE / natural PETG — a light pipe, translucent and
 //     diffusing, not a slot. It runs up both long walls and across the far
 //     short wall: a U of light around the end the LED sits on (the USB end
-//     stays black — there is nothing to light there). The ties across the
-//     seam are hidden inboard ribs (`seam_web_*`), so the white line is
-//     unbroken and each wall's strip presses in as ONE piece.
+//     stays black — there is nothing to light there). The pipe is white
+//     through the FULL wall depth along its whole run. The first print
+//     said why that matters: this file originally tied face to wall with
+//     hidden inboard ribs across the seam, and every rib was a black slat
+//     between the LED and the white — a shadow on the band at each one
+//     (kmay89's print showed the black spots on the band's back). The
+//     ribs are gone; the face ring rides the four corner posts and the
+//     solid USB wall, and each strip's pocket is a blind slot — black at
+//     both ends — so the strip still cannot slide along its run.
 //
 //  5. THREE BOARD BUILDS, ONE FILE (the C6 case's contract, plus one):
 //       headers="pillars" — the board AS WAVESHARE SHIPS IT: the four brass
@@ -197,13 +203,12 @@ light_seam = true;
 seam_dz = 1.0;       // black between the glass front and the band's start
 seam_h  = 2.8;       // the white band's thickness
 band_clear = 0.10;   // per-face press-in clearance; 0 for a co-printed band
-seam_webs     = 3;   // hidden ribs per SIDE strip tying face to wall across
-                     // the seam — inboard of the strip, so the white line
-                     // stays unbroken (the S3 stick's lesson: outer-skin webs
-                     // chop the strip into unpressable dashes)
-seam_webs_top = 2;   // same, for the short top strip
-seam_web_w = 3.0;    // rib width along the seam
-seam_web_d = 1.2;    // rib depth into the wall, leaving the rest visible white
+// NO tie ribs across the seam — not the S3 stick's outer-skin webs (those
+// chop the strip into unpressable dashes) and not this file's first cut,
+// inboard ribs (those put black slats between the LED and the white: the
+// first print's band carried a shadow at every rib). Any tie that crosses
+// the seam sits in the light path on one face or the other; the pipe must
+// be white through the full wall depth, so the seam has none.
 
 /* [Mount] */
 opt_keyhole = true;  // keyhole in the lid — hangs the case USB-down, slot up
@@ -404,9 +409,6 @@ assert(!light_seam || seam_y_in < yc/2,
        "the top band's inner face is outside the cavity wall — same curtain defect");
 assert(!light_seam || side_hi - side_lo >= 8,
        str("the side band run is only ", side_hi - side_lo, " mm — check btn_up/ear_w"));
-assert(!light_seam || seam_web_d >= 0.6 && seam_web_d <= wall - 0.8,
-       str("seam rib depth ", seam_web_d, " must sit between 0.6 (a tie worth ",
-           "having) and ", wall - 0.8, " (leaving 0.8 of visible white)"));
 assert(!light_seam || bez_h - snap_depth - snap_h/2 >= seam_z0 + seam_h + 0.6,
        "the snap window band overlaps the light band — deepen the case");
 assert(!opt_vent || vent_z1 - vent_z0 >= 1.5, "no room for wall vents behind the band — set opt_vent=false");
@@ -467,30 +469,15 @@ module seam_prisms(shrink = 0) {
               seam_h - 2*shrink], center = true);
 }
 
-// the hidden ties: ribs in the inner `seam_web_d` of the wall, behind the
-// strip — load crosses face → rib → wall, and the white line stays unbroken.
-// `grow` swells them so the strip slides over notches instead of binding.
-module seam_web_ribs(grow = 0) {
-    span = side_hi - side_lo;  step = span/(seam_webs + 1);
-    if (seam_webs > 0) for (sx = [-1, 1], i = [1:seam_webs])
-        translate([sx*(xc/2 + seam_web_d/2), side_lo + i*step, seam_z0 + seam_h/2])
-            cube([seam_web_d + 2*grow, seam_web_w + 2*grow, seam_h + 2], center = true);
-    tstep = 2*top_hw/(seam_webs_top + 1);
-    if (seam_webs_top > 0) for (i = [1:seam_webs_top])
-        translate([-top_hw + i*tstep, yc/2 + seam_web_d/2, seam_z0 + seam_h/2])
-            cube([seam_web_w + 2*grow, seam_web_d + 2*grow, seam_h + 2], center = true);
-}
-
-module bezel_light_seam() { difference() { seam_prisms(0); seam_web_ribs(0); } }
+module bezel_light_seam() { seam_prisms(0); }
 
 // the white band: exactly the wall material the seam removed, minus
 // clearance — intersected with the wall stock so each strip is precisely as
-// deep as the wall it fills, ribs subtracted so each wall gets ONE strip.
+// deep as the wall it fills. Full depth, no rib notches: the pipe's back
+// face is the cavity wall, white all the way to the LED's side of it.
 module light_band() {
-    if (light_seam) difference() {
+    if (light_seam)
         intersection() { seam_prisms(band_clear); wall_stock(); }
-        seam_web_ribs(band_clear);
-    }
 }
 
 // ----------------------------------------------------------------------------
