@@ -207,6 +207,16 @@ appear on the Flasher's Witness Wall automatically.
 
 ---
 
+## Step 6 — Give it a voice (optional)
+
+The hub can answer "is the fleet OK?" out loud, with every stage — wake
+word, Whisper speech-to-text, the answer, Piper text-to-speech — running
+locally on the Pi. One command sets it up, and the guide covers the
+microphone hardware worth buying and the honest wake-word trade:
+[**Talking to your fleet**](voice_control.md).
+
+---
+
 ## When it's all up
 
 - **Dashboard:** the SecuraCV panel + the Lovelace cards

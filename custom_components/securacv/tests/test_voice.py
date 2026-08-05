@@ -211,6 +211,25 @@ def test_speak_last_event_kernel_fallback_and_none():
     )
 
 
+def test_sentences_yaml_matches_registered_intents():
+    """docs/voice_sentences_en.yaml must name exactly the intents intent.py
+    registers — otherwise the wizard installs sentences that error, or an
+    intent exists that no sentence can reach. Parsed with regex on purpose:
+    no yaml dependency, and the intent names are rigid identifiers."""
+    import re
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[3]
+    yaml_text = (repo / "docs" / "voice_sentences_en.yaml").read_text()
+    yaml_intents = set(re.findall(r"^  (Securacv\w+):$", yaml_text, re.MULTILINE))
+
+    intent_src = (repo / "custom_components" / "securacv" / "intent.py").read_text()
+    registered = set(re.findall(r'^INTENT_\w+ = "(Securacv\w+)"$', intent_src, re.MULTILINE))
+
+    assert yaml_intents, "no intents found in voice_sentences_en.yaml"
+    assert yaml_intents == registered
+
+
 def test_ago_phrase_is_coarse():
     assert ago_phrase(0) == "within the last ten minutes"
     assert ago_phrase(599) == "within the last ten minutes"
