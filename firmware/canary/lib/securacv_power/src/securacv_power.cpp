@@ -122,7 +122,44 @@ static uint32_t s_runtime_last_ms  = 0;    /* last millis() for runtime tracking
  * ADC PERIPHERAL
  * ────────────────────────────────────────────────────────────────────────── */
 
+/* GPIO -> ADC1 channel. The mapping is per-silicon, not universal: ADC1 has
+ * ten channels on S3/S2 (GPIO1-10), five on C3 (GPIO0-4), and eight on the
+ * classic ESP32 — where they sit on GPIO32-39, in an order that is NOT
+ * ascending. Compiling the S3 table on another target is a hard error
+ * (ADC1_CHANNEL_8/9 simply don't exist there), which is how the classic
+ * ESP32 ports found this.
+ *
+ * `default:` returns channel 0 on every target. That is the "board declared
+ * no usable VBAT pin" path, and it is safe by construction: adc_read_mv()
+ * only trusts a reading inside the divider-detect window, so an unwired or
+ * input-only pin reads as "no divider present" and the library reports
+ * USB-only mode rather than inventing a battery. */
 static adc1_channel_t gpio_to_adc1_channel(uint8_t gpio) {
+#if defined(CONFIG_IDF_TARGET_ESP32)
+  /* Classic ESP32: ADC1 is on the input-only + RTC block, GPIO32-39. */
+  switch (gpio) {
+    case 36: return ADC1_CHANNEL_0;
+    case 37: return ADC1_CHANNEL_1;
+    case 38: return ADC1_CHANNEL_2;
+    case 39: return ADC1_CHANNEL_3;
+    case 32: return ADC1_CHANNEL_4;
+    case 33: return ADC1_CHANNEL_5;
+    case 34: return ADC1_CHANNEL_6;
+    case 35: return ADC1_CHANNEL_7;
+    default: return ADC1_CHANNEL_0;
+  }
+#elif defined(CONFIG_IDF_TARGET_ESP32C3)
+  /* C3: ADC1 channels 0-4 on GPIO0-4 (ADC2 exists but is Wi-Fi-hostile). */
+  switch (gpio) {
+    case 0:  return ADC1_CHANNEL_0;
+    case 1:  return ADC1_CHANNEL_1;
+    case 2:  return ADC1_CHANNEL_2;
+    case 3:  return ADC1_CHANNEL_3;
+    case 4:  return ADC1_CHANNEL_4;
+    default: return ADC1_CHANNEL_0;
+  }
+#else
+  /* S3 / S2: ADC1 channels 0-9 on GPIO1-10. The XIAO's VBAT is GPIO1. */
   switch (gpio) {
     case 1:  return ADC1_CHANNEL_0;
     case 2:  return ADC1_CHANNEL_1;
@@ -136,6 +173,7 @@ static adc1_channel_t gpio_to_adc1_channel(uint8_t gpio) {
     case 10: return ADC1_CHANNEL_9;
     default: return ADC1_CHANNEL_0;
   }
+#endif
 }
 
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)

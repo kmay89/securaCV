@@ -37,6 +37,11 @@ README stays the narrative source for those stories.
 | board | MCU | usable GPIOs | committed | assigned | conditional | free |
 |---|---|---|---|---|---|---|
 | `esp32-c3` | ESP32-C3 | 15 | 2 (13%) | 6 | 5 | 2 |
+| `esp32-wroom-devkit` | ESP32 | 26 | 8 (31%) | 7 | 5 | 6 |
+| `esp32c3-super-mini` | ESP32-C3 | 15 | 2 (13%) | 6 | 5 | 2 |
+| `esp32cam-ai-thinker` | ESP32 | 24 | 21 (88%) | 0 | 3 | 0 |
+| `freenove-esp32s3-cam` | ESP32-S3 | 33 | 21 (64%) | 4 | 5 | 3 |
+| `waveshare-esp32c3-lcd147` | ESP32-C3 | 15 | 6 (40%) | 2 | 4 | 3 |
 | `waveshare-esp32c6-lcd147` | ESP32-C6 | 24 | 10 (42%) | 2 | 4 | 8 |
 | `waveshare-esp32c6-lcd169` | ESP32-C6 | 24 | 7 (29%) | 0 | 7 | 10 |
 | `waveshare-esp32s3-amoled206` | ESP32-S3 | 33 | 21 (64%) | 0 | 5 | 7 |
@@ -88,6 +93,203 @@ Capabilities on: `HAS_BLE`, `HAS_USB_CDC`, `HAS_VISION_AI`, `HAS_WIFI`.
 Capabilities off (room to grow): `HAS_CAMERA`, `HAS_GNSS_UART`, `HAS_MICROPHONE`, `HAS_PSRAM`, `HAS_SD_CARD`, `HAS_TAMPER_INPUT`.
 
 **Thermals:** Open-air devkit at Grove-cable duty; negligible.
+
+### `esp32-wroom-devkit` — ESP32-WROOM-32 DevKit (generic)
+
+ESP32 · flash 4 MB · PSRAM 0 MB · pin map [`pins/pins.h`](esp32-wroom-devkit/pins/pins.h)
+
+**8/26 committed** · 7 assigned · 5 conditional · **6 free** (6 ADC-capable)
+
+| GPIO | bucket | held by / trade | notes |
+|---|---|---|---|
+| 0 | committed | BOOT_BUTTON_PIN | ADC, sleep-wake, strap⚠ |
+| 1 | conditional | UART0 console — free only if you give up the serial log; (declared as UART0_PIN_TX) |  |
+| 2 | committed | LED_BUILTIN | ADC, sleep-wake, strap⚠ |
+| 3 | conditional | UART0 console — free only if you give up the serial log; (declared as UART0_PIN_RX) |  |
+| 4 | **free** | — | ADC, sleep-wake |
+| 5 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing; (declared as SPI_PIN_CS) | strap⚠ |
+| 12 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | ADC, sleep-wake, strap⚠ |
+| 13 | **free** | — | ADC, sleep-wake |
+| 14 | **free** | — | ADC, sleep-wake |
+| 15 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | ADC, sleep-wake, strap⚠ |
+| 16 | committed | GNSS_PIN_RX, UART2_PIN_RX |  |
+| 17 | committed | GNSS_PIN_TX, UART2_PIN_TX |  |
+| 18 | assigned | SPI_PIN_SCK |  |
+| 19 | assigned | SPI_PIN_MISO |  |
+| 21 | assigned | I2C_PIN_SDA |  |
+| 22 | assigned | I2C_PIN_SCL |  |
+| 23 | assigned | SPI_PIN_MOSI |  |
+| 25 | **free** | — | ADC, sleep-wake |
+| 26 | assigned | TAMPER_PIN_DEFAULT | ADC, sleep-wake |
+| 27 | assigned | EXT_LED_PIN_DEFAULT | ADC, sleep-wake |
+| 32 | **free** | — | ADC, sleep-wake |
+| 33 | **free** | — | ADC, sleep-wake |
+| 34 | committed | PIN_INPUT_ONLY_0 | ADC, sleep-wake |
+| 35 | committed | PIN_INPUT_ONLY_1 | ADC, sleep-wake |
+| 36 | committed | PIN_INPUT_ONLY_2 | ADC, sleep-wake |
+| 39 | committed | PIN_INPUT_ONLY_3 | ADC, sleep-wake |
+
+Peripheral demand (declared pin map vs MCU): SPI 1/2 · I2C 1/2 · UART 1/3 · RMT TX 0/8 · LEDC 0/16.
+
+Capabilities on: `HAS_BLE`, `HAS_GNSS_UART`, `HAS_TAMPER_INPUT`, `HAS_WIFI`.
+Capabilities off (room to grow): `HAS_CAMERA`, `HAS_MICROPHONE`, `HAS_PSRAM`, `HAS_SD_CARD`, `HAS_USB_CDC`.
+
+**Thermals:** Open-air devkit at CSI-witness duty runs cool; no special measures. No die-temp watchdog on classic ESP32.
+
+### `esp32c3-super-mini` — ESP32-C3 Super Mini
+
+ESP32-C3 · flash 4 MB · PSRAM 0 MB · pin map [`pins/pins.h`](esp32c3-super-mini/pins/pins.h)
+
+**2/15 committed** · 6 assigned · 5 conditional · **2 free** (2 ADC-capable)
+
+| GPIO | bucket | held by / trade | notes |
+|---|---|---|---|
+| 0 | **free** | — | ADC, sleep-wake |
+| 1 | **free** | — | ADC, sleep-wake |
+| 2 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing; (declared as BUZZER_PIN_DEFAULT) | ADC, sleep-wake, strap⚠ |
+| 3 | assigned | EXT_LED_PIN_DEFAULT | ADC, sleep-wake |
+| 4 | assigned | I2C_PIN_SDA | ADC, sleep-wake |
+| 5 | assigned | I2C_PIN_SCL, SPI_PIN_MOSI | ADC, sleep-wake |
+| 6 | assigned | SPI_PIN_SCK, UART1_PIN_TX |  |
+| 7 | assigned | SPI_PIN_MISO, UART1_PIN_RX |  |
+| 8 | committed | LED_BUILTIN | strap⚠ |
+| 9 | committed | BOOT_BUTTON_PIN | strap⚠ |
+| 10 | assigned | SPI_PIN_CS |  |
+| 18 | conditional | USB-Serial/JTAG — free only if you give up USB; (declared as USB_PIN_DN) |  |
+| 19 | conditional | USB-Serial/JTAG — free only if you give up USB; (declared as USB_PIN_DP) |  |
+| 20 | conditional | UART0 console — free only if you give up the serial log; (declared as UART0_PIN_RX) |  |
+| 21 | conditional | UART0 console — free only if you give up the serial log; (declared as UART0_PIN_TX) |  |
+
+Physically broken out (from `PIN_D*/PIN_A*/PIN_GPIO*` aliases): [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 21] — of the free pins, **[0, 1]** reach a header.
+
+Peripheral demand (declared pin map vs MCU): SPI 1/1 · I2C 1/1 · UART 1/2 · RMT TX 0/2 · LEDC 1/6.
+
+Capabilities on: `HAS_BLE`, `HAS_USB_CDC`, `HAS_VISION_AI`, `HAS_WIFI`.
+Capabilities off (room to grow): `HAS_CAMERA`, `HAS_GNSS_UART`, `HAS_MICROPHONE`, `HAS_PSRAM`, `HAS_SD_CARD`, `HAS_TAMPER_INPUT`.
+
+**Thermals:** C3 at Vision-host duty runs cool; no special measures.
+
+### `esp32cam-ai-thinker` — AI-Thinker ESP32-CAM
+
+ESP32 · flash 4 MB · PSRAM 4 MB · pin map [`pins/pins.h`](esp32cam-ai-thinker/pins/pins.h)
+
+**21/24 committed** · 0 assigned · 3 conditional · **0 free** (0 ADC-capable)
+
+| GPIO | bucket | held by / trade | notes |
+|---|---|---|---|
+| 0 | committed | CAM_PIN_XCLK | ADC, sleep-wake, strap⚠ |
+| 1 | conditional | UART0 console — free only if you give up the serial log; (declared as UART0_PIN_TX) |  |
+| 2 | committed | SD_PIN_MISO | ADC, sleep-wake, strap⚠ |
+| 3 | conditional | UART0 console — free only if you give up the serial log; (declared as UART0_PIN_RX) |  |
+| 4 | committed | FLASH_LED_PIN | ADC, sleep-wake |
+| 5 | committed | CAM_PIN_D0 | strap⚠ |
+| 12 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | ADC, sleep-wake, strap⚠ |
+| 13 | committed | SD_PIN_CS | ADC, sleep-wake |
+| 14 | committed | SD_PIN_SCK | ADC, sleep-wake |
+| 15 | committed | SD_PIN_MOSI | ADC, sleep-wake, strap⚠ |
+| 18 | committed | CAM_PIN_D1 |  |
+| 19 | committed | CAM_PIN_D2 |  |
+| 21 | committed | CAM_PIN_D3 |  |
+| 22 | committed | CAM_PIN_PCLK |  |
+| 23 | committed | CAM_PIN_HREF |  |
+| 25 | committed | CAM_PIN_VSYNC | ADC, sleep-wake |
+| 26 | committed | CAM_PIN_SIOD | ADC, sleep-wake |
+| 27 | committed | CAM_PIN_SIOC | ADC, sleep-wake |
+| 32 | committed | CAM_PIN_PWDN | ADC, sleep-wake |
+| 33 | committed | EXT_LED_PIN_DEFAULT, LED_BUILTIN | ADC, sleep-wake |
+| 34 | committed | CAM_PIN_D6 | ADC, sleep-wake |
+| 35 | committed | CAM_PIN_D7 | ADC, sleep-wake |
+| 36 | committed | CAM_PIN_D4 | ADC, sleep-wake |
+| 39 | committed | CAM_PIN_D5 | ADC, sleep-wake |
+
+Peripheral demand (declared pin map vs MCU): SPI 1/2 · I2C 0/2 · UART 0/3 · RMT TX 0/8 · LEDC 0/16.
+
+Capabilities on: `HAS_BLE`, `HAS_CAMERA`, `HAS_PSRAM`, `HAS_SD_CARD`, `HAS_WIFI`.
+Capabilities off (room to grow): `HAS_GNSS_UART`, `HAS_MICROPHONE`, `HAS_TAMPER_INPUT`, `HAS_USB_CDC`.
+
+**Thermals:** Camera + Wi-Fi bursts on a thumb-sized PCB with no thermal relief; the notorious brown-out reboots are usually the 5 V supply, not heat. No die-temp watchdog on classic ESP32 — derate PEEK cadence in enclosures by design margin, not by telemetry.
+
+### `freenove-esp32s3-cam` — Freenove ESP32-S3-WROOM CAM (FNK0085)
+
+ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](freenove-esp32s3-cam/pins/pins.h)
+
+**21/33 committed** · 4 assigned · 5 conditional · **3 free** (1 ADC-capable)
+
+| GPIO | bucket | held by / trade | notes |
+|---|---|---|---|
+| 0 | committed | BOOT_BUTTON_PIN | sleep-wake, strap⚠ |
+| 1 | assigned | I2C_PIN_SDA | ADC, sleep-wake |
+| 2 | assigned | I2C_PIN_SCL | ADC, sleep-wake |
+| 3 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | ADC, sleep-wake, strap⚠ |
+| 4 | committed | CAM_PIN_SIOD | ADC, sleep-wake |
+| 5 | committed | CAM_PIN_SIOC | ADC, sleep-wake |
+| 6 | committed | CAM_PIN_VSYNC | ADC, sleep-wake |
+| 7 | committed | CAM_PIN_HREF | ADC, sleep-wake |
+| 8 | committed | CAM_PIN_D2 | ADC, sleep-wake |
+| 9 | committed | CAM_PIN_D1 | ADC, sleep-wake |
+| 10 | committed | CAM_PIN_D3 | ADC, sleep-wake |
+| 11 | committed | CAM_PIN_D0 | ADC, sleep-wake |
+| 12 | committed | CAM_PIN_D4 | ADC, sleep-wake |
+| 13 | committed | CAM_PIN_PCLK | ADC, sleep-wake |
+| 14 | **free** | — | ADC, sleep-wake |
+| 15 | committed | CAM_PIN_XCLK | ADC, sleep-wake |
+| 16 | committed | CAM_PIN_D7 | ADC, sleep-wake |
+| 17 | committed | CAM_PIN_D6 | ADC, sleep-wake |
+| 18 | committed | CAM_PIN_D5 | ADC, sleep-wake |
+| 19 | conditional | USB-Serial/JTAG — free only if you give up USB; (declared as USB_PIN_DN) | ADC, sleep-wake |
+| 20 | conditional | USB-Serial/JTAG — free only if you give up USB; (declared as USB_PIN_DP) | ADC, sleep-wake |
+| 21 | assigned | TAMPER_PIN_DEFAULT | sleep-wake |
+| 38 | committed | SDMMC_PIN_CMD |  |
+| 39 | committed | SDMMC_PIN_CLK |  |
+| 40 | committed | SDMMC_PIN_D0 |  |
+| 41 | **free** | — |  |
+| 42 | **free** | — |  |
+| 43 | committed | GNSS_PIN_TX, UART0_PIN_TX |  |
+| 44 | committed | GNSS_PIN_RX, UART0_PIN_RX |  |
+| 45 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | strap⚠ |
+| 46 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | strap⚠ |
+| 47 | assigned | EXT_LED_PIN_DEFAULT |  |
+| 48 | committed | LED_BUILTIN |  |
+
+Peripheral demand (declared pin map vs MCU): SPI 0/2 · I2C 1/2 · UART 0/3 · RMT TX 0/4 · LEDC 0/8.
+
+Capabilities on: `HAS_BLE`, `HAS_CAMERA`, `HAS_GNSS_UART`, `HAS_PSRAM`, `HAS_SD_CARD`, `HAS_TAMPER_INPUT`, `HAS_USB_CDC`, `HAS_WIFI`.
+Capabilities off (room to grow): `HAS_MICROPHONE`.
+
+**Thermals:** Same S3 heat sources as the flagship (camera PEEK + Wi-Fi bursts) on a larger PCB with more copper — runs cooler than the XIAO. Die-temp watchdog covers it.
+
+### `waveshare-esp32c3-lcd147` — Waveshare ESP32-C3-LCD-1.47
+
+ESP32-C3 · flash 4 MB · PSRAM 0 MB · pin map [`pins/pins.h`](waveshare-esp32c3-lcd147/pins/pins.h)
+
+**6/15 committed** · 2 assigned · 4 conditional · **3 free** (2 ADC-capable)
+
+| GPIO | bucket | held by / trade | notes |
+|---|---|---|---|
+| 0 | **free** | — | ADC, sleep-wake |
+| 1 | **free** | — | ADC, sleep-wake |
+| 2 | committed | IMU_INT_PIN | ADC, sleep-wake, strap⚠ |
+| 3 | assigned | I2C_PIN_SCL | ADC, sleep-wake |
+| 4 | assigned | I2C_PIN_SDA | ADC, sleep-wake |
+| 5 | committed | SD_PIN_MOSI, TFT_PIN_MOSI | ADC, sleep-wake |
+| 6 | committed | SD_PIN_MISO, TFT_PIN_MISO |  |
+| 7 | committed | SD_PIN_CLK, TFT_PIN_SCK |  |
+| 8 | committed | TFT_PIN_DC | strap⚠ |
+| 9 | committed | BOOT_BUTTON_PIN | strap⚠ |
+| 10 | **free** | — |  |
+| 18 | conditional | USB-Serial/JTAG — free only if you give up USB |  |
+| 19 | conditional | USB-Serial/JTAG — free only if you give up USB |  |
+| 20 | conditional | UART0 console — free only if you give up the serial log |  |
+| 21 | conditional | UART0 console — free only if you give up the serial log |  |
+
+⚠ 5 pin define(s) are `-1` — not wired OR not yet verified (see the comments in pins.h): `BUZZER_PIN`, `SD_PIN_CS`, `TFT_PIN_BL`, `TFT_PIN_CS`, `TFT_PIN_RST`. Free counts above may shrink as these resolve.
+
+Peripheral demand (declared pin map vs MCU): SPI 1/1 · I2C 1/1 · UART 0/2 · RMT TX 0/2 · LEDC 0/6.
+
+Capabilities on: `HAS_BACKLIGHT_PWM`, `HAS_BLE`, `HAS_DISPLAY`, `HAS_IMU`, `HAS_SD_CARD`, `HAS_USB_CDC`, `HAS_WIFI`.
+Capabilities off (room to grow): `HAS_BATTERY`, `HAS_CAMERA`, `HAS_MICROPHONE`, `HAS_NATIVE_USB`, `HAS_PSRAM`, `HAS_RGBLED`, `HAS_RTC`, `HAS_THREAD_ZIGBEE`, `HAS_TOUCH`.
+
+**Thermals:** Enclosed pocket case (canary_c3_lcd147.scad) with a lamp duty cycle: the nightlight flavor hard-caps backlight duty at 50% in the HAL — a heat budget, not a preference. Thermally trivial below that cap.
 
 ### `waveshare-esp32c6-lcd147` — Waveshare ESP32-C6-LCD-1.47
 

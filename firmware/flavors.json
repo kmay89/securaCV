@@ -5,7 +5,10 @@
     "build_envs": [
       "dev",
       "release",
-      "full"
+      "full",
+      "esp32cam",
+      "esp32-wroom",
+      "freenove-s3"
     ],
     "check_env": "release",
     "pip_extras": "intelhex",
@@ -33,7 +36,8 @@
     "build_envs": [
       "canary-vision-default",
       "canary-vision-xiao-c3",
-      "canary-vision-xiao-s3"
+      "canary-vision-xiao-s3",
+      "canary-vision-c3-super-mini"
     ],
     "check_env": "canary-vision-default",
     "pre_step": "secrets_header",
@@ -65,7 +69,8 @@
       "canary-display-watch-modes",
       "canary-display-nightstand-s3",
       "canary-display-touch169",
-      "canary-display-nightstand-c6"
+      "canary-display-nightstand-c6",
+      "canary-display-nightlight-c3"
     ],
     "check_env": "canary-display-watch",
     "isolated_core_envs": [

@@ -20,6 +20,10 @@ if it drifts from the pin maps).
 | `xiao-esp32s3` | ESP32-S3 | verified | canary-vision | Seeed XIAO (plain, non-Sense) — Vision AI host (the "Grove Vision AI V2 Kit" pairing) |
 | `xiao-esp32c3` | ESP32-C3 | verified | canary-vision | Seeed XIAO C3 — Vision AI host (stacks on the module's XIAO socket) |
 | `esp32-c3` | ESP32-C3 | compile-tested | canary-vision | Generic C3 dev board for Vision AI over a Grove cable |
+| `esp32c3-super-mini` | ESP32-C3 | compile-tested | canary-vision | The most-owned sub-$3 board (white-label) — Vision AI host over a Grove cable, same wiring as the generic DevKit entry |
+| `esp32cam-ai-thinker` | ESP32 | compile-tested | canary | AI-Thinker ESP32-CAM — the most-owned camera board in existence; camera PEEK + Wi-Fi CSI + SD, UART-only flashing (env `esp32cam`) |
+| `esp32-wroom-devkit` | ESP32 | compile-tested | canary | Generic WROOM-32 DevKit family (DevKitC/DOIT/NodeMCU-32S/clones) — Wi-Fi CSI presence witness, no camera/mic/SD (env `esp32-wroom`) |
+| `freenove-esp32s3-cam` | ESP32-S3 | compile-tested | canary | Freenove FNK0085, the default Amazon S3 camera kit — S3-EYE camera map, SD slot 1-bit-SDMMC-only so SD stays off (env `freenove-s3`) |
 | `xiao-esp32c6-mr60` | ESP32-C6 | compile-tested | canary-sense | Seeed MR60BHA2 60 GHz mmWave kit (radar witness host) |
 | `xiao-esp32s3-round` | ESP32-S3 | compile-tested | canary-display | XIAO + Round Display — "Canary Watch" glance puck |
 | `waveshare-esp32s3-lcd43` | ESP32-S3 | compile-tested | canary-display | Waveshare 4.3" touch panel — "Canary Dash" |
@@ -27,6 +31,7 @@ if it drifts from the pin maps).
 | `waveshare-esp32s3-lcd43c` | ESP32-S3 | compile-tested | canary-display | Waveshare 4.3C ("AI voice") — the MIC-BEARING dash: a distinct privacy surface, mic off by default (docs/hardware/display_mic_variant.md) |
 | `xiao-esp32c6-sentinel` | ESP32-C6 | compile-tested | — (Phase 0) | Canary Sentinel Standard/Heavy head — MR60BHA2 radar + PIR + lux + WiFi/BLE; fusion core host-tested, on-device build/bench pending |
 | `xiao-esp32c3-sentinel-lite` | ESP32-C3 | compile-tested | — (Phase 0) | Canary Sentinel Lite — PIR + lux + WiFi/BLE, no radar (honest tier limit); fusion core host-tested, on-device build/bench pending |
+| `waveshare-esp32c3-lcd147` | ESP32-C3 | compile-tested | canary-display | Nightstand Line pocket node ("Canary Nightlight") — ST7789T portrait, vendor-demo geometry 180x320/offset-30, CS/RST/SD-CS/**backlight** all behind the I2C EXIO expander (0x24), QMI8658 IMU, NO WS2812 (the glass is the lamp); `nightlight` flavor on the core-2.x base (env `canary-display-nightlight-c3`), 50%-duty backlight cap in the HAL, bench pending |
 | `waveshare-esp32c6-lcd147` | ESP32-C6 | compile-tested | canary-display | Nightstand Line 1.47" — ST7789 172x320 SPI + 1x WS2812 ambient LED, single-core C6, no PSRAM; `nightstand` flavor on the core-3.x base (env `canary-display-nightstand-c6`), bench pending (docs/hardware/display_nightstand_line.md) |
 | `waveshare-esp32c6-lcd169` | ESP32-C6 | compile-tested | — | Nightstand Line candidate 1.69" (battery/pocket) — ST7789V2 240x280 (20-px row offset), QMI8658 IMU + PCF85063 RTC, battery charging, possible mic ("AI speech" — treat as mic-bearing); PARTIAL pin map, vendor wiki unreachable from CI sandbox, unverified pins are -1 VERIFY |
 | `waveshare-esp32s3-lcd147` | ESP32-S3 | compile-tested | canary-display | Nightstand Line 1.47" (USB-A stick) — same ST7789 172x320 panel, all pins differ, 8 MB PSRAM (can animate); `nightstand` flavor (env `canary-display-nightstand-s3`), bench pending |

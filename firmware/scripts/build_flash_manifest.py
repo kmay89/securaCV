@@ -64,6 +64,7 @@ BUILD = {
     "securacv-canary-display-nightstand-s3": {"toolchain": "pio", "dir": "firmware/projects/canary-display/.pio/build/canary-display-nightstand-s3", "vsuffix": ""},
     "securacv-canary-display-nightstand-c6": {"toolchain": "pio", "dir": "firmware/projects/canary-display/.pio/build/canary-display-nightstand-c6", "vsuffix": ""},
     "securacv-canary-display-touch169":      {"toolchain": "pio", "dir": "firmware/projects/canary-display/.pio/build/canary-display-touch169", "vsuffix": ""},
+    "securacv-canary-display-nightlight-c3": {"toolchain": "pio", "dir": "firmware/projects/canary-display/.pio/build/canary-display-nightlight-c3", "vsuffix": ""},
 }
 
 

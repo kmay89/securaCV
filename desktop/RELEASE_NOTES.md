@@ -19,6 +19,25 @@ and what to expect after updating. Heading grammar is
 
 ## 0.3.11 — 2026-08-05
 
+- **The serial monitor now connects by itself after a flash — no more
+  unplugging and replugging the board.** Three things conspired against it.
+  A freshly flashed board comes back as a *different* USB device (new port
+  path, sometimes a new identity), and the monitor kept waiting for the old
+  one; it now recognizes the board in whatever form it returns, and if two
+  boards are plugged in it says so instead of guessing — in this app and in
+  the browser Lab alike. The flasher's own end-of-flash reset also doesn't
+  always take on boards wired straight to the chip's USB — the board would
+  sit silently in its bootloader looking dead — so the monitor now reboots
+  the board itself, once, right after a flash, and you watch it start from
+  the very first line. And if the board still says nothing, the console now
+  tells you what's worth trying instead of showing an empty pane.
+- **The monitor explains what it is.** A line under the heading says it
+  plainly: the board's own voice, live over the USB cable — watch it boot,
+  see why something isn't working, press h for the firmware's menu. It's
+  read-only unless you type, and closing it changes nothing on the board.
+- Fixed a subtle hazard where pressing the board's physical RESET while the
+  monitor was attached could land a native-USB board in its bootloader
+  instead of starting your firmware.
 - **The live preview now starts right after a module flash — no unplugging.**
   Starting the Vision module's live bench right after "Flash & prove" (or
   right after plugging in) often failed with "The module didn't answer AT",

@@ -533,7 +533,7 @@
   {
    "id": "c3-pocket-display-case",
    "name": "C3 pocket display case",
-   "for": "Waveshare ESP32-C3-LCD-1.47 (portrait; the C6 sibling's exact outline + panel, plus a TF slot and an RGB LED), three board builds: `headers=\"pillars\"` (the board as Waveshare ships it — brass corner pillars on, headers not soldered; the press bosses land on the flat pillar tops and the lid skirt is notched around each pillar), `\"none\"` (stripped, pillars unscrewed — the shallowest case), or `\"male\"` (down-facing headers + pillars — deepest, thin skirt clear of the pin rows). Three PETG spools: black body, yellow snap lid, white light band — the band does the job of Waveshare's clear-acrylic sandwich. Measured off the hardware: 1 mm behind the glass front, 2.8 mm tall — a U of light up both long walls and across the LED's end wall, tied by hidden inboard ribs so each wall presses in ONE unbroken strip, and the slot's inner face is derived from the cavity and asserted (the stick case's no-black-curtain lesson, kept). The glass is located, not clamped: bosses cut to the exact component stack (no preload), and the face touches the panel only on a land over the module border — the innermost 0.5 mm of lip is relieved 0.25 so the window rim never puts a contact line on the glass edge. Full-depth ear/chin insertion channels (BOOT/RST and the USB-C shell all overhang the PCB edges), true-stadium USB-C opening centered on the shell with an outer overmold relief, and a keyed lid: the board's M2 pillar pattern is asymmetric, so offered the wrong way round the skirt lands on the USB shell and refuses to close — the error is physical, not a rattle you discover later. Keyhole hangs it USB-down. microSD swaps with the lid off (the slot mouth faces down-board; no wall window could pass a card)",
+   "for": "Waveshare ESP32-C3-LCD-1.47 (portrait; the C6 sibling's exact outline + panel, plus a TF slot and an RGB LED), three board builds: `headers=\"pillars\"` (the board as Waveshare ships it — brass corner pillars on, headers not soldered; the press bosses span the measured 2.8 mm to land on the flat pillar tops and hold the board against the bezel, and the lid skirt is notched around each pillar), `\"none\"` (stripped, pillars unscrewed — the shallowest case), or `\"male\"` (down-facing headers + pillars — deepest, thin skirt clear of the pin rows). Three PETG spools, and the slots are roles: slot 1 body = YELLOW (bezel and lid both), slot 2 mark = BLACK, slot 3 light = WHITE. The white does the job of Waveshare's clear-acrylic sandwich: measured off the hardware at 1 mm behind the glass front, 2.8 mm tall, and it is ONE continuous U — up both long walls, around both far corners, across the LED's end wall — white through the full wall depth with no ties crossing it. Both earlier cuts are lessons kept: outer-skin webs chop the strip into dashes, inboard ribs put black slats in the light path, and a strip that stops short of the corners goes dark exactly where it turns. The black is the branding: the lid's back carries the \"Canary\" wordmark, debossed and filled at zero clearance so the AMS fuses it. The wordmark alone, not the bird — [`canary_mark_lib.scad`](./canary_mark_lib.scad) states a ~30 mm minimum for the mark's interior detail and this lid is 25.12 mm across. It carries the mark instead of the keyhole (`lid_back`); both want the middle of that face. The glass is located, not clamped: bosses cut to the exact component stack (no preload), and the face touches the panel only on a land over the module border — the innermost 0.5 mm of lip is relieved 0.25 so the window rim never puts a contact line on the glass edge. BOOT/RST are printed-in-place flexure paddles: a press pad cut free by a 0.55 mm slot on three sides, hinged at its USB end, a boss on its back over the actuator — press it with a fingertip, no tool, nothing internal exposed, and the pad sits recessed so a pocket squeeze lands on the ear rim instead. USB-C is a true stadium hugging the shell at ~0.05 mm per side with a chamfered rim for the plug's overmold (the recessed ring it replaced left a 0.4 mm floor over the insertion slot and broke out on the first print). Keyed lid: the board's M2 pillar pattern is asymmetric, so offered the wrong way round the skirt lands on the USB shell and refuses to close — the error is physical, not a rattle you discover later. Asymmetric snap nubs give it a real click. microSD swaps with the lid off (the slot mouth faces down-board; no wall window could pass a card)",
    "status": "in-development",
    "note": "3 filaments, snap lid, keyed, 3 board builds, `gen_3mf.py c3`",
    "device": null,
@@ -7143,7 +7143,7 @@
    ]
   },
   "canary_c3_lcd147.scad": {
-   "title": "Canary — ESP32-C3-LCD-1.47 POCKET CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — ESP32-C3-LCD-1.47 POCKET CASE  ⚠️ IN DEVELOPMENT (v0.2-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -7156,6 +7156,7 @@
         "bezel",
         "lid",
         "light",
+        "mark",
         "all",
         "exploded",
         "palette"
@@ -7213,8 +7214,13 @@
       },
       {
        "name": "brass_h",
-       "default": "5.0",
-       "comment": "factory pillar height above the PCB back — MEASURE"
+       "default": "3.0",
+       "comment": "factory pillar height above the PCB back — MEASURED"
+      },
+      {
+       "name": "stand_gap",
+       "default": "2.8",
+       "comment": "lid inner face → pillar top — MEASURED (kmay89, print"
       }
      ]
     },
@@ -7260,13 +7266,13 @@
       },
       {
        "name": "usb_w",
-       "default": "9.15",
-       "comment": "stadium opening width — shell + 0.2"
+       "default": "9.05",
+       "comment": "stadium opening width — shell + 0.11 total"
       },
       {
        "name": "usb_h",
-       "default": "3.45",
-       "comment": "stadium opening height — shell + 0.2"
+       "default": "3.35",
+       "comment": "stadium opening height — shell + 0.09 total"
       },
       {
        "name": "usb_dx",
@@ -7284,18 +7290,43 @@
        "comment": "shell overhang past the PCB edge — MEASURE"
       },
       {
-       "name": "usb_relief",
-       "default": "0.8",
-       "comment": "outer-face relief around the opening: a stadium recess"
+       "name": "usb_cham",
+       "default": "0.6",
+       "comment": "outer-rim CHAMFER around the stadium — the plug's"
       },
       {
        "name": "opt_btn",
        "default": "true"
       },
       {
-       "name": "btn_d",
-       "default": "6.5",
-       "comment": "access hole Ø — sized for a BARE FINGERTIP, no tool."
+       "name": "pad_l",
+       "default": "8.2",
+       "comment": "paddle length (Y) — hinge at the USB end, press pad at"
+      },
+      {
+       "name": "pad_h",
+       "default": "5.4",
+       "comment": "paddle height (Z), centered on the actuator — a CAP,"
+      },
+      {
+       "name": "pad_slot",
+       "default": "0.55",
+       "comment": "flex slot around the three free sides — prints clean in"
+      },
+      {
+       "name": "pad_recess",
+       "default": "0.6",
+       "comment": "pad face below the ear's outer face: the squeeze guard,"
+      },
+      {
+       "name": "pad_boss_d",
+       "default": "2.6",
+       "comment": "press boss Ø on the pad's back — rides inside the"
+      },
+      {
+       "name": "pad_boss_l",
+       "default": "0.25",
+       "comment": "boss reach: leaves free_gap (asserted) before contact"
       },
       {
        "name": "btn_up",
@@ -7349,13 +7380,42 @@
      ]
     },
     {
-     "name": "Mount",
-     "note": "",
+     "name": "Back face",
+     "note": "the lid's outer face carries ONE of these, never both",
      "params": [
       {
-       "name": "opt_keyhole",
-       "default": "true",
-       "comment": "keyhole in the lid — hangs the case USB-down, slot up"
+       "name": "lid_back",
+       "default": "mark",
+       "enum": [
+        "mark",
+        "keyhole"
+       ],
+       "comment": "back of the lid: brand or wall mount"
+      }
+     ]
+    },
+    {
+     "name": "Branding",
+     "note": "the wordmark, debossed and filled in the mark filament",
+     "params": [
+      {
+       "name": "mark_word",
+       "default": "Canary",
+       "comment": "the DEVICE's name (the company's is securaCV)."
+      },
+      {
+       "name": "mark_word_h",
+       "default": "3.6",
+       "comment": "cap height. The width assert below is the real"
+      },
+      {
+       "name": "mark_depth",
+       "default": "0.6",
+       "comment": "deboss depth; the inlay fills it flush"
+      },
+      {
+       "name": "mark_adv",
+       "default": "0.875"
       },
       {
        "name": "opt_vent",
@@ -7364,7 +7424,7 @@
       {
        "name": "vent_n",
        "default": "4",
-       "comment": "slots per side wall (and grille rows in the lid)"
+       "comment": "slots per side wall"
       },
       {
        "name": "vent_pitch",
@@ -7432,13 +7492,18 @@
       },
       {
        "name": "ear_skin",
-       "default": "1.2",
-       "comment": "wall skin left outside a button/USB clearance channel"
+       "default": "1.4",
+       "comment": "wall skin left outside a button/USB clearance channel."
+      },
+      {
+       "name": "skirt_clear",
+       "default": "0.05",
+       "comment": "skirt-to-cavity clearance per side — snug on purpose:"
       },
       {
        "name": "nub_y0",
-       "default": "5.0",
-       "comment": "nub pair centers (±Y) on the ±X walls — the C6 case's"
+       "default": "3.6",
+       "comment": "nub pair centers (±Y) on the ±X walls — the same"
       }
      ]
     },
@@ -7499,8 +7564,13 @@
       },
       {
        "name": "usb_slide",
-       "default": "usb_w + 0.15",
-       "comment": "insertion notch — a hair looser than"
+       "default": "usb_w + 0.1",
+       "comment": "insertion slot — a hair looser than"
+      },
+      {
+       "name": "z_slot0",
+       "default": "z_usb - usb_h/2",
+       "comment": "the slot starts AT the stadium's"
       },
       {
        "name": "ear_bump",
@@ -7512,12 +7582,50 @@
       },
       {
        "name": "ear_w",
-       "default": "max(btn_body_w, btn_d) + 3.0",
-       "comment": "the ear covers the widest of the"
+       "default": "pad_l + pad_slot + 2.4",
+       "comment": "the ear wraps the paddle recess"
       },
       {
        "name": "chin_w",
        "default": "usb_w + 4"
+      },
+      {
+       "name": "pad_beam",
+       "default": "ear_skin - pad_recess",
+       "comment": "flexing skin thickness"
+      },
+      {
+       "name": "pad_y0",
+       "default": "btn_y - pad_l/2",
+       "comment": "hinge-end edge"
+      },
+      {
+       "name": "pad_rec_y",
+       "default": "pad_l + pad_slot",
+       "comment": "recess span (slot at the"
+      },
+      {
+       "name": "pad_rec_cy",
+       "default": "btn_y + pad_slot/2",
+       "comment": "free end only)"
+      },
+      {
+       "name": "pad_h_eff",
+       "default": "min(pad_h, 2*(bez_h - 1.2 - pad_slot - z_btn))"
+      },
+      {
+       "name": "pad_rec_z",
+       "default": "pad_h_eff + 2*pad_slot"
+      },
+      {
+       "name": "x_skin_in",
+       "default": "xc/2 + btn_reach",
+       "comment": "beam's inner face"
+      },
+      {
+       "name": "free_gap",
+       "default": "2*tol_slide - pad_boss_l",
+       "comment": "boss tip → actuator tip"
       },
       {
        "name": "lip_l",
@@ -7550,6 +7658,10 @@
       {
        "name": "stand_len",
        "default": "stack_eff - (pillars_in ? brass_h : 0)"
+      },
+      {
+       "name": "mark_w",
+       "default": "len(mark_word) * mark_adv * mark_word_h"
       },
       {
        "name": "seam_z0",

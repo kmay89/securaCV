@@ -5,7 +5,7 @@
     python3 gen_3mf.py coupon     # just the color + fit coupon
     python3 gen_3mf.py frame      # the whole 7" case
     python3 gen_3mf.py stick      # the hallway stick: bezel + band, back + mark
-    python3 gen_3mf.py c3         # the C3 pocket case: bezel + band, yellow lid
+    python3 gen_3mf.py c3         # the C3 pocket case: yellow, branded lid
 
 Renders the parts it needs with OpenSCAD, then writes a single object whose
 volumes are already registered to each other and already assigned to
@@ -121,7 +121,17 @@ QR_COUPON = [("body", "coupon_qr_body", 1, LCD7, {})] + (
 # had none. The .scad fix is `qr_draw` (the coupon carries the symbol whether or
 # not the plate does); this is the second lock, so the next way it breaks is
 # caught by the packager rather than by a printed part that will not scan.
-REQUIRE_ALL = {"QR coupon"}
+# "c3 lid" is here for the same reason, one step removed. Its mark volume is
+# TYPE, and type has a dependency nothing else on these plates has: a font.
+# On a machine without DejaVu Sans, text() yields nothing, the volume renders
+# empty, and the drop-and-carry-on rule would package a blank yellow lid and
+# say "the palette puts no ink on this object" — which reads like a palette
+# decision rather than a missing font. The whole point of this plate is a lid
+# with the brand ON it, so an empty mark is a hard error.
+# (A lid_back="keyhole" build genuinely has no mark. That is a different
+# product configuration and wants its own set — it must not be quietly
+# packaged as the branded one.)
+REQUIRE_ALL = {"QR coupon", "c3 lid"}
 
 # ── The hallway stick (Waveshare ESP32-S3-LCD-1.47) ────────────────────────
 # Two objects, three filaments, and the whole reason it is worth packaging:
@@ -139,12 +149,17 @@ STICK_BACK = [("body", "fil_body", 1, STICK, {}),
               ("mark", "fil_accent", 2, STICK, {})]
 
 # ── The C3 pocket case (Waveshare ESP32-C3-LCD-1.47) ───────────────────────
-# Same palette convention as the stick — slot 1 black, slot 2 yellow, slot 3
-# white — so an operator who has printed one case loads the other without
-# re-learning the spools. Here the yellow is not an inlay but the whole lid:
-# a single-filament object that shares the plate so the case comes off in one
-# job. Only the bezel changes tool (band fuses in at band_clear = 0, the
-# co-print mode the .scad documents — same doctrine as the stick's band).
+# Same ROLE convention as the stick — slot 1 body, slot 2 mark, slot 3 light
+# — so an operator who has printed one case loads the other without
+# re-learning the slots. What changed with the yellow colorway is the SPOOLS
+# in those roles, not the roles:
+#     slot 1 BODY  = YELLOW  (bezel and lid both — the case is yellow)
+#     slot 2 MARK  = BLACK   (the "Canary" wordmark on the lid's back)
+#     slot 3 LIGHT = WHITE   (the band)
+# The first three prints ran slot 1 BLACK / slot 2 YELLOW; slots 1 and 2 now
+# swap spools. Both objects are two-color now: the bezel's band fuses in and
+# the lid's wordmark fills its deboss, both at zero clearance — the co-print
+# doctrine the .scad documents for the band, applied to type as well.
 #
 # headers="pillars" is pinned on every volume: the plate prints the case for
 # the board AS WAVESHARE SHIPS IT (brass corner pillars on, headers not
@@ -156,7 +171,8 @@ C3 = "canary_c3_lcd147.scad"
 C3_BEZEL = [("body", "bezel", 1, C3, {"headers": '"pillars"'}),
             ("band", "light", 3, C3, {"headers": '"pillars"',
                                       "band_clear": "0"})]
-C3_LID = [("lid", "lid", 2, C3, {"headers": '"pillars"'})]
+C3_LID = [("lid", "lid", 1, C3, {"headers": '"pillars"'}),
+          ("mark", "mark", 2, C3, {"headers": '"pillars"'})]
 
 # A "set" is a list of OBJECTS. Each object is (name, volumes, plate center).
 # Volumes within one object are parts of it and stay registered to each other;
@@ -520,7 +536,14 @@ def build(setname: str) -> tuple:
         bcfg.append(
             f' <object id="{aid}">\n'
             f'  <metadata key="name" value="{gname}"/>\n'
-            '  <metadata key="extruder" value="1"/>\n'
+            # The OBJECT-level extruder follows the group's FIRST volume, not a
+            # hard-coded 1. Bambu Studio applies the object value to any object
+            # it treats as single-part — which is exactly what the C3 case's
+            # lid is — so a hard-coded 1 silently painted the yellow lid black.
+            # kmay89's print 2 did not get a yellow lid; this line is why.
+            # Multi-volume objects are unaffected either way (their per-part
+            # values below override), so first-volume is always right.
+            f'  <metadata key="extruder" value="{meshes[0][2]}"/>\n'
             + "".join(f'  <part id="{m[0]}" subtype="normal_part">\n'
                       f'   <metadata key="name" value="{m[1]}"/>\n'
                       f'   <metadata key="extruder" value="{m[2]}"/>\n'

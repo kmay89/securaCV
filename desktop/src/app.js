@@ -845,6 +845,37 @@ function refreshManifest() {
 }
 
 // ── step 2: pick a firmware image (chip-guarded) ────────────────────────────
+/* The picker slot — the same rule the in-browser flasher follows, because the
+ * two frontends share no UI code and drift is the standing hazard here
+ * (AGENTS.md rule 7). The board's own isometric figure when the embedded
+ * catalog carries one, a neutral placeholder when it doesn't; the SAME size
+ * either way, so the list never reflows as figures land for more of the fleet.
+ *
+ * The placeholder deliberately resembles no product. Drawing a plausible
+ * generic board would be worse than drawing nothing — somebody matching the
+ * hardware in their hand against a picture of different hardware is the one
+ * failure this system exists to prevent. See docs/design/FLEET_FIGURES.md.
+ *
+ * The SVG is inlined in flash.json, which build.rs bakes into the binary, so
+ * this draws with no file on disk and no network.
+ */
+function figureSlot(p) {
+  const f = p.figure;
+  if (f && f.svg) {
+    const t = f.shared
+      ? `${f.title} — this board is also built as another product`
+      : f.title;
+    return `<span class="p-fig" title="${esc(t)}">${f.svg}</span>`;
+  }
+  return (
+    '<span class="p-fig placeholder" title="No drawing for this board yet">' +
+    '<svg viewBox="0 0 64 64" aria-hidden="true">' +
+    '<rect x="12" y="18" width="40" height="28" rx="3"/>' +
+    '<rect class="c" x="20" y="26" width="24" height="12" rx="1.5"/></svg>' +
+    `<i>${esc((p.chip || "").replace("ESP32-", ""))}</i></span>`
+  );
+}
+
 function renderProducts() {
   const list = $("product-list");
   list.innerHTML = "";
@@ -918,12 +949,17 @@ function renderProducts() {
     row.className = "product" + (isSelected ? " selected" : "");
     row.innerHTML = `
       <input type="radio" name="product" value="${p.id}"${isSelected ? " checked" : ""}>
+      ${figureSlot(p)}
       <span>
         <span class="p-name">${esc(p.name)}<span class="chip-badge">${esc(p.chip)}</span></span>
         <span class="p-tag">${esc(p.tagline || "")}</span>
         <span class="p-meta">${
           ver ? "release " + esc(ver) : "no published release yet"
-        }</span>
+        }</span>${
+          p.figure && p.figure.shared
+            ? '<span class="p-note">This board is also sold as another product — check the name, not just the picture.</span>'
+            : ""
+        }
       </span>`;
     const radio = row.querySelector("input");
     radio.addEventListener("change", () => {
@@ -1125,14 +1161,14 @@ async function onFlash() {
     if (requiresLiveReceipt(product)) {
       setStatus("flash-result", "Firmware write verified. Watching the live boot for its device receipt…" + moduleNext, "ok");
       state.busy = false;
-      await startMonitor();
+      await startMonitor({ postFlash: true });
     } else {
       setStatus("flash-result", "Firmware write verified. Flashing is complete. ✓" + moduleNext, "ok");
       maybeHatch();
       // The serial monitor should just work — start it automatically so the
       // live boot log is right there, no "Start" click. It reconnects on its
       // own across the reboot (native side), so this is safe to fire now.
-      startMonitor();
+      startMonitor({ postFlash: true });
     }
   } catch (e) {
     setStatus("flash-result", String(e), "err");
@@ -2034,7 +2070,7 @@ async function onFlashLocalFile() {
     logEvent("ok", `Local file ${file.name} flashed`);
     state.busy = false;
     // Same as the release path: the boot log should just be there.
-    startMonitor();
+    startMonitor({ postFlash: true });
   } catch (e) {
     setStatus("local-result", String(e), "err");
     logEvent("err", "Local-file flash failed: " + e);
@@ -2194,7 +2230,7 @@ function feedSenseTune(chunk) {
 }
 
 // ── serial monitor + earned receipts ────────────────────────────────────────
-async function startMonitor() {
+async function startMonitor(opts) {
   if (!state.port || state.portKind !== "esp32") {
     setStatus("flash-result", "Connect the ESP32 host port to start its serial monitor.", "err");
     return;
@@ -2210,6 +2246,13 @@ async function startMonitor() {
       vid: state.portInfo && state.portInfo.vid,
       pid: state.portInfo && state.portInfo.pid,
       baud: state.catalog.console_baud || 115200,
+      // Only the flash flows set this. It lets the monitor reboot a
+      // native-USB board ONCE so the boot streams from its first line — and
+      // rescues the board espflash left sitting in its bootloader, which is
+      // what used to demand the unplug/replug ritual. The Start button and
+      // every other caller attach as pure observers: watching a running
+      // board must never restart it.
+      postFlash: !!(opts && opts.postFlash),
     });
     senseTuneHandshake();
   } catch (e) {

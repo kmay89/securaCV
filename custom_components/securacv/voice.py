@@ -31,6 +31,7 @@ component's logic.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from .const import event_type_metadata
@@ -38,6 +39,92 @@ from .const import event_type_metadata
 # Verify-dict reasons (async_record_verify) that mean "publishes without a
 # checkable signature" rather than "signature failed".
 _UNSIGNED_REASONS = ("unsigned", "no_pubkey")
+
+# The liveness vocabulary the online binary sensor accepts — mirrored here
+# so speech and the dashboard can never disagree about what "online" means.
+_ONLINE_WORDS = ("online", "1", "true", "connected")
+
+# Alert-class event types: when the latest event is one of these, the casual
+# answer leads with it — a smoke alarm outranks small talk.
+_ALERT_EVENT_TYPES = frozenset(
+    {"tamper_detected", "acoustic_smoke_alarm", "acoustic_co_alarm"}
+)
+
+# The complete HA weather-entity condition vocabulary, each with a warm,
+# year-round spoken phrase. Optimistic on purpose — weather small talk is
+# allowed to be kind — with one honesty override: "exceptional" is HA's
+# severe/unusual marker, and danger is never spun as charm. A condition
+# not in this table (a custom integration's invention) falls back to
+# hyphens-to-spaces, spoken plainly.
+_WEATHER_SPEECH = {
+    "sunny": "sunny — a good one to step out in",
+    "clear-night": "clear — good stars if you look up",
+    "partlycloudy": "partly cloudy — plenty of bright spells",
+    "cloudy": "cloudy — soft light all day",
+    "windy": "windy — the fresh kind",
+    "windy-variant": "windy — the fresh kind",
+    "fog": "foggy — it usually lifts",
+    "rainy": "rainy — the garden will be glad",
+    "pouring": "pouring — a good day to be cozy inside",
+    "lightning": "a thunderstorm — quite a light show from a window",
+    "lightning-rainy": "stormy — dramatic out there, snug in here",
+    "hail": "hailing — it passes quickly, best let it",
+    "snowy": "snowing — it'll be pretty out there",
+    "snowy-rainy": "sleety — the kind to admire from indoors",
+    "exceptional": "unusual out there — worth checking the forecast before heading out",
+}
+
+
+def _spoken_label(event_type: Any) -> str:
+    """A speakable, lowercase-leading label for an event type.
+
+    Uses the dictionary label when one exists; an event type with no
+    metadata entry (e.g. the acoustic alarm grammars) falls back to its
+    own name with underscores read as spaces — never spoken raw.
+    """
+    label = event_type_metadata(event_type if isinstance(event_type, str) else None)["label"]
+    if label == event_type:
+        label = label.replace("_", " ")
+    return label[:1].lower() + label[1:]
+
+
+def _snake(event_type: Any) -> str:
+    """Event type as snake_case, accepting the kernel's CamelCase too."""
+    if not isinstance(event_type, str):
+        return ""
+    key = event_type.strip()
+    if not key or "_" in key or key.islower():
+        return key.lower()
+    out = ""
+    for i, ch in enumerate(key):
+        if ch.isupper() and i > 0:
+            out += "_"
+        out += ch.lower()
+    return out
+
+
+def _status_online(raw: Any) -> bool:
+    """True only when a device's retained status payload says it is online.
+
+    Mirrors SecuraCVCanaryOnlineSensor's rule for bare-word payloads, plus
+    the JSON shape (a ``status``/``state`` field with the same words). A
+    payload we can't read means we don't know — and "don't know" is never
+    spoken as online.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return False
+    text = raw.lower().strip()
+    if text in _ONLINE_WORDS:
+        return True
+    if text.startswith("{"):
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return False
+        if isinstance(data, dict):
+            field = str(data.get("status") or data.get("state") or "").lower().strip()
+            return field in _ONLINE_WORDS
+    return False
 
 
 def record_canary_event(
@@ -66,7 +153,12 @@ def record_canary_event(
     }
 
 
-def fleet_brief(entries: list[dict[str, Any]], now: float) -> dict[str, Any]:
+def fleet_brief(
+    entries: list[dict[str, Any]],
+    now: float,
+    pending_updates: list[str] | None = None,
+    weather: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Reduce one or more config entries' runtime state to a fleet brief.
 
     Each entry dict carries:
@@ -74,8 +166,15 @@ def fleet_brief(entries: list[dict[str, Any]], now: float) -> dict[str, Any]:
       - "verify":  entry_data["verify"]  (per-device trust verdicts)
       - "kernel":  None when no kernel is configured, else
                    {"ok": bool, "latest_event": dict | None}
+
+    ``pending_updates`` is an optional list of human names for updates the
+    hub is waiting to install (HA ``update`` entities that are on), and
+    ``weather`` an optional ``{"condition", "temp"}`` snapshot from the
+    hub's weather entity — the casual "what's up" answer mentions both;
+    the crisp status answer deliberately does not.
     """
     device_ids: list[str] = []
+    online: list[str] = []
     verified: list[str] = []
     unsigned: list[str] = []
     mismatched: list[str] = []
@@ -90,6 +189,8 @@ def fleet_brief(entries: list[dict[str, Any]], now: float) -> dict[str, Any]:
         verify = entry.get("verify") or {}
         for device_id in sorted(devices):
             device_ids.append(device_id)
+            if _status_online(devices[device_id].get("status")):
+                online.append(device_id)
             verdict = verify.get(device_id)
             if not isinstance(verdict, dict):
                 unknown.append(device_id)
@@ -129,7 +230,10 @@ def fleet_brief(entries: list[dict[str, Any]], now: float) -> dict[str, Any]:
 
     return {
         "now": now,
+        "pending_updates": list(pending_updates or []),
+        "weather": dict(weather) if weather else None,
         "device_count": len(device_ids),
+        "online": online,
         "verified": verified,
         "unsigned": unsigned,
         "mismatched": mismatched,
@@ -224,6 +328,150 @@ def _canary_trust_clause(canary: dict[str, Any]) -> str:
             "treat this event as unverified."
         )
     return " The event was published without a verified signature."
+
+
+def speak_whats_up(brief: dict[str, Any]) -> str:
+    """The casual answer — "Hey Canary, what's up?"
+
+    One warm, honest reply instead of a status readout: whatever needs
+    attention first, then the latest activity (or an honest "all quiet"),
+    then fleet health in a breath, then anything waiting (updates). The
+    same vocabulary discipline as the crisp answers — "verified" keeps its
+    exact meaning, an untrusted event is held loosely out loud — just worn
+    casually. Deterministic on purpose: the phrasing varies with the
+    state of the fleet, never with a dice roll, so it stays testable.
+    """
+    count = brief["device_count"]
+    if count == 0 and not brief["kernel_configured"]:
+        return (
+            "Not much to tell yet — I haven't heard from any Canaries, and "
+            "no witness kernel is set up. Once your fleet is online, ask me "
+            "again."
+        )
+
+    parts: list[str] = []
+    kernel_outage_spoken = False
+
+    # The latest activity, or an honest quiet. An alert-class event —
+    # tamper, a smoke or CO alarm pattern — outranks everything, even the
+    # key-mismatch heads-up.
+    canary = brief.get("canary_latest")
+    kernel_event = brief.get("kernel_latest_event")
+    activity: str | None = None
+    alert_leads = False
+    if canary:
+        label = _spoken_label(canary.get("event_type"))
+        when = ago_phrase(brief["now"] - canary["received_at"])
+        recent = (brief["now"] - canary["received_at"]) < 3600
+        if _snake(canary.get("event_type")) in _ALERT_EVENT_TYPES:
+            alert_leads = True
+            opener = "First thing:"
+        elif recent:
+            opener = "Some activity lately — the last thing witnessed was"
+        else:
+            opener = "Pretty quiet — the last thing witnessed was"
+        activity = (
+            f"{opener} {label}, {when}, "
+            f"from the {canary['device_id']} Canary"
+        )
+        if canary.get("trusted"):
+            activity += "."
+        elif canary.get("reason") == "mismatch":
+            activity += ", though that one's from the mismatched key, so hold it loosely."
+        else:
+            activity += ", though it came in without a verified signature."
+
+    if alert_leads and activity:
+        parts.append(activity)
+
+    if brief["mismatched"]:
+        names = ", ".join(brief["mismatched"])
+        verb = "is" if len(brief["mismatched"]) == 1 else "are"
+        opener = "Also, heads up:" if alert_leads else "Heads up first:"
+        parts.append(
+            f"{opener} {names} {verb} publishing with a key that "
+            "doesn't match the pin — there's a notification on the hub "
+            "worth a look."
+        )
+
+    if activity and not alert_leads:
+        parts.append(activity)
+    elif activity:
+        pass
+    elif kernel_event:
+        label = _spoken_label(kernel_event.get("event_type"))
+        if brief["kernel_configured"] and not brief["kernel_ok"]:
+            # A cached event from a kernel that is unreachable NOW is stale
+            # by definition — say so instead of presenting it as current.
+            parts.append(
+                f"The last I saw from the kernel log was {label}, though I "
+                "can't reach the kernel right now, so that may be stale."
+            )
+            kernel_outage_spoken = True
+        else:
+            parts.append(f"Pretty quiet — the kernel log's latest event is {label}.")
+    elif brief["kernel_configured"] and not brief["kernel_ok"]:
+        # No events AND the event source is unreachable: silence here means
+        # "can't see", not "nothing happened" — never speak it as quiet.
+        parts.append(
+            "I can't reach the witness kernel right now, so I won't claim "
+            "it's been quiet — worth a look at the hub."
+        )
+        kernel_outage_spoken = True
+    else:
+        parts.append("All quiet — nothing witnessed since I started listening.")
+
+    # Fleet health, in a breath. "Online" is only ever said for a device
+    # whose retained status actually says so — a cached entry with a stale
+    # or offline status is "in the fleet", never "online".
+    if count:
+        n_verified = len(brief["verified"])
+        n_online = len(brief["online"])
+        if n_online == count and n_verified == count:
+            parts.append(
+                "Your one Canary is online, signature verified."
+                if count == 1
+                else f"All {count} Canaries are online, every signature verified."
+            )
+        else:
+            noun = "Canary" if count == 1 else "Canaries"
+            health = f"{count} {noun} in the fleet"
+            if n_online:
+                health += f", {n_online} online"
+            if n_verified:
+                health += f", {n_verified} verified"
+            parts.append(health + ".")
+
+    if brief["kernel_configured"] and not brief["kernel_ok"] and not kernel_outage_spoken:
+        parts.append("One more thing — I can't reach the witness kernel right now.")
+
+    # Weather, if the hub knows it — the small talk a person would add.
+    weather = brief.get("weather")
+    if isinstance(weather, dict) and (weather.get("condition") or weather.get("temp") is not None):
+        condition = str(weather.get("condition") or "").lower().strip()
+        condition = _WEATHER_SPEECH.get(condition, condition.replace("-", " "))
+        temp = weather.get("temp")
+        if temp is not None and condition:
+            parts.append(f"Outside it's {round(temp)} degrees and {condition}.")
+        elif temp is not None:
+            parts.append(f"Outside it's {round(temp)} degrees.")
+        else:
+            parts.append(f"Outside it looks {condition}.")
+
+    # Anything waiting on the owner: pending updates, casually.
+    updates = brief.get("pending_updates") or []
+    if updates:
+        if len(updates) == 1:
+            parts.append(f"Also, {updates[0]} has an update waiting when you have a minute.")
+        else:
+            first_two = " and ".join(updates[:2])
+            more = f" and {len(updates) - 2} more" if len(updates) > 2 else ""
+            parts.append(
+                f"Also, {len(updates)} updates are waiting when you have a "
+                f"minute — {first_two}{more}."
+            )
+
+    return " ".join(parts)
 
 
 def speak_last_event(brief: dict[str, Any]) -> str:
