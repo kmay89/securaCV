@@ -66,7 +66,11 @@ def record_canary_event(
     }
 
 
-def fleet_brief(entries: list[dict[str, Any]], now: float) -> dict[str, Any]:
+def fleet_brief(
+    entries: list[dict[str, Any]],
+    now: float,
+    pending_updates: list[str] | None = None,
+) -> dict[str, Any]:
     """Reduce one or more config entries' runtime state to a fleet brief.
 
     Each entry dict carries:
@@ -74,6 +78,11 @@ def fleet_brief(entries: list[dict[str, Any]], now: float) -> dict[str, Any]:
       - "verify":  entry_data["verify"]  (per-device trust verdicts)
       - "kernel":  None when no kernel is configured, else
                    {"ok": bool, "latest_event": dict | None}
+
+    ``pending_updates`` is an optional list of human names for updates the
+    hub is waiting to install (HA ``update`` entities that are on) — the
+    casual "what's up" answer mentions them; the crisp status answer
+    deliberately does not.
     """
     device_ids: list[str] = []
     verified: list[str] = []
@@ -129,6 +138,7 @@ def fleet_brief(entries: list[dict[str, Any]], now: float) -> dict[str, Any]:
 
     return {
         "now": now,
+        "pending_updates": list(pending_updates or []),
         "device_count": len(device_ids),
         "verified": verified,
         "unsigned": unsigned,
@@ -224,6 +234,99 @@ def _canary_trust_clause(canary: dict[str, Any]) -> str:
             "treat this event as unverified."
         )
     return " The event was published without a verified signature."
+
+
+def speak_whats_up(brief: dict[str, Any]) -> str:
+    """The casual answer — "Hey Canary, what's up?"
+
+    One warm, honest reply instead of a status readout: whatever needs
+    attention first, then the latest activity (or an honest "all quiet"),
+    then fleet health in a breath, then anything waiting (updates). The
+    same vocabulary discipline as the crisp answers — "verified" keeps its
+    exact meaning, an untrusted event is held loosely out loud — just worn
+    casually. Deterministic on purpose: the phrasing varies with the
+    state of the fleet, never with a dice roll, so it stays testable.
+    """
+    count = brief["device_count"]
+    if count == 0 and not brief["kernel_configured"]:
+        return (
+            "Not much to tell yet — I haven't heard from any Canaries, and "
+            "no witness kernel is set up. Once your fleet is online, ask me "
+            "again."
+        )
+
+    parts: list[str] = []
+
+    # Anything alarming comes first, even in the casual register.
+    if brief["mismatched"]:
+        names = ", ".join(brief["mismatched"])
+        verb = "is" if len(brief["mismatched"]) == 1 else "are"
+        parts.append(
+            f"Heads up first: {names} {verb} publishing with a key that "
+            "doesn't match the pin — there's a notification on the hub "
+            "worth a look."
+        )
+
+    # The latest activity, or an honest quiet.
+    canary = brief.get("canary_latest")
+    kernel_event = brief.get("kernel_latest_event")
+    if canary:
+        label = event_type_metadata(canary.get("event_type"))["label"]
+        label = label[:1].lower() + label[1:]
+        when = ago_phrase(brief["now"] - canary["received_at"])
+        recent = (brief["now"] - canary["received_at"]) < 3600
+        opener = "Some activity lately —" if recent else "Pretty quiet —"
+        sentence = (
+            f"{opener} the last thing witnessed was {label}, {when}, "
+            f"from the {canary['device_id']} Canary"
+        )
+        if canary.get("trusted"):
+            sentence += "."
+        elif canary.get("reason") == "mismatch":
+            sentence += ", though that one's from the mismatched key, so hold it loosely."
+        else:
+            sentence += ", though it came in without a verified signature."
+        parts.append(sentence)
+    elif kernel_event:
+        label = event_type_metadata(kernel_event.get("event_type"))["label"]
+        label = label[:1].lower() + label[1:]
+        parts.append(f"Pretty quiet — the kernel log's latest event is {label}.")
+    else:
+        parts.append("All quiet — nothing witnessed since I started listening.")
+
+    # Fleet health, in a breath.
+    if count:
+        n_verified = len(brief["verified"])
+        if n_verified == count:
+            parts.append(
+                "Your one Canary is up, signature verified."
+                if count == 1
+                else f"All {count} Canaries are up, every signature verified."
+            )
+        else:
+            noun = "Canary is" if count == 1 else "Canaries are"
+            health = f"{count} {noun} up"
+            if n_verified:
+                health += f", {n_verified} verified"
+            parts.append(health + ".")
+
+    if brief["kernel_configured"] and not brief["kernel_ok"]:
+        parts.append("One more thing — I can't reach the witness kernel right now.")
+
+    # Anything waiting on the owner: pending updates, casually.
+    updates = brief.get("pending_updates") or []
+    if updates:
+        if len(updates) == 1:
+            parts.append(f"Also, {updates[0]} has an update waiting when you have a minute.")
+        else:
+            first_two = " and ".join(updates[:2])
+            more = f" and {len(updates) - 2} more" if len(updates) > 2 else ""
+            parts.append(
+                f"Also, {len(updates)} updates are waiting when you have a "
+                f"minute — {first_two}{more}."
+            )
+
+    return " ".join(parts)
 
 
 def speak_last_event(brief: dict[str, Any]) -> str:

@@ -121,6 +121,7 @@ Press the Assist button — or say the wake word — and ask:
 
 | You say | It answers with |
 |---|---|
+| "What's up?" | The casual catch-up, one honest breath: anything needing attention first, then the latest activity (or "all quiet"), fleet health, and anything waiting on you — like pending hub updates. |
 | "Is the fleet OK?" | Device count, signature-trust summary, kernel reachability — worst news first. |
 | "What was the last witness event?" | The newest event's coarse label, a ten-minute-floor relative time, and its trust status — an unsigned or key-mismatched publish is named out loud, never spoken as the plain truth. |
 

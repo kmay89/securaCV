@@ -129,6 +129,15 @@ intents:
           - "what was the (last|latest) [witness] event"
           - "(any|were there [any]) [witness] events [overnight|today|recently]"
           - "what did the (fleet|canaries) (see|witness) [overnight|today|recently]"
+  SecuracvWhatsUp:
+    data:
+      - sentences:
+          - "(what's|whats) up"
+          - "(what's|whats) (going on|happening|new)"
+          - "anything (happening|going on|new)"
+          - "how (are things|is everything)"
+          - "what did I miss"
+          - "any news"
 SECURACV_SENTENCES
 if [ -f "$SENTENCES_DEST" ] && cmp -s "$TMP_SENTENCES" "$SENTENCES_DEST"; then
   ok "sentences already current ($SENTENCES_DEST)"

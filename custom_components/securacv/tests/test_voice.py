@@ -13,6 +13,7 @@ from ..voice import (
     record_canary_event,
     speak_fleet_status,
     speak_last_event,
+    speak_whats_up,
 )
 
 NOW = 1_000_000.0
@@ -209,6 +210,86 @@ def test_speak_last_event_kernel_fallback_and_none():
         speak_last_event(fleet_brief([], NOW))
         == "No witness events since the hub started listening."
     )
+
+
+def test_whats_up_reads_naturally_all_good():
+    devices = {
+        "gate": {
+            "last_event": {
+                "event_type": "boundary_crossing_object_large",
+                "received_at": NOW - 7200,
+                "trusted": True,
+                "reason": "ok",
+            }
+        },
+        "porch": {},
+    }
+    verify = {k: {"trusted": True, "reason": "ok"} for k in ("gate", "porch")}
+    speech = speak_whats_up(fleet_brief([_entry(devices, verify)], NOW))
+    assert speech == (
+        "Pretty quiet — the last thing witnessed was large object crossed "
+        "boundary, about 2 hours ago, from the gate Canary. "
+        "All 2 Canaries are up, every signature verified."
+    )
+
+
+def test_whats_up_recent_activity_changes_the_opener():
+    devices = {
+        "gate": {
+            "last_event": {
+                "event_type": "contact_state_change",
+                "received_at": NOW - 300,
+                "trusted": True,
+                "reason": "ok",
+            }
+        }
+    }
+    verify = {"gate": {"trusted": True, "reason": "ok"}}
+    speech = speak_whats_up(fleet_brief([_entry(devices, verify)], NOW))
+    assert speech.startswith("Some activity lately —")
+    assert "within the last ten minutes" in speech
+
+
+def test_whats_up_quiet_and_empty_cases():
+    # Devices but no events yet: an honest all-quiet, not an error.
+    speech = speak_whats_up(fleet_brief([_entry({"gate": {}})], NOW))
+    assert "All quiet — nothing witnessed since I started listening." in speech
+    # Nothing configured at all: says so, invites a later ask.
+    assert "haven't heard from any Canaries" in speak_whats_up(fleet_brief([], NOW))
+
+
+def test_whats_up_leads_with_trouble_and_holds_untrusted_loosely():
+    devices = {
+        "gate": {
+            "last_event": {
+                "event_type": "tamper_detected",
+                "received_at": NOW - 60,
+                "trusted": False,
+                "reason": "mismatch",
+            }
+        }
+    }
+    verify = {"gate": {"trusted": False, "reason": "mismatch"}}
+    speech = speak_whats_up(fleet_brief([_entry(devices, verify)], NOW))
+    assert speech.startswith("Heads up first: gate is publishing")
+    assert "hold it loosely" in speech
+    # The reserved word never leaks into an unverified fleet's health line.
+    assert "every signature verified" not in speech
+
+
+def test_whats_up_mentions_pending_updates_last():
+    brief = fleet_brief(
+        [_entry({"gate": {}}, {"gate": {"trusted": True, "reason": "ok"}})],
+        NOW,
+        pending_updates=["Home Assistant Core", "Whisper", "Piper"],
+    )
+    speech = speak_whats_up(brief)
+    assert speech.endswith(
+        "Also, 3 updates are waiting when you have a minute — "
+        "Home Assistant Core and Whisper and 1 more."
+    )
+    one = fleet_brief([_entry({"gate": {}})], NOW, pending_updates=["Whisper"])
+    assert "Whisper has an update waiting" in speak_whats_up(one)
 
 
 def test_sentences_yaml_matches_registered_intents():
