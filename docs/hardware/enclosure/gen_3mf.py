@@ -199,13 +199,23 @@ SETS = {
     # whichever exit you did not use. Spacing is deliberately loose. TPU strings
     # between close parts and a wipe that clips a neighbor drags it off the
     # plate, which on a 14 g print costs more than the bed space does.
+    #
+    # ALL FOUR FITMENTS, and that is the point of naming the set "tpu" rather
+    # than listing the three somebody happened to ask for. The frame cuts a
+    # BOOT/RESET window, so a plate that omits plug_buttons leaves the case
+    # with an open hole and no way to press the buttons through it — and it
+    # does so silently, because nothing downstream knows what the operator
+    # meant to print. A set named for a MATERIAL has to carry everything made
+    # of it; anything less is a checklist that quietly loses an item.
     "tpu": [
-        ("SD cover 1",   [("tpu", "plug_sd",     1, LCD7, {})], (80, 128)),
-        ("SD cover 2",   [("tpu", "plug_sd",     1, LCD7, {})], (112, 128)),
-        ("grommet 1",    [("tpu", "grommet_usb", 1, LCD7, {})], (150, 145)),
-        ("grommet 2",    [("tpu", "grommet_usb", 1, LCD7, {})], (150, 125)),
-        ("port blank 1", [("tpu", "plug_port",   1, LCD7, {})], (150, 105)),
-        ("port blank 2", [("tpu", "plug_port",   1, LCD7, {})], (150, 85)),
+        ("SD cover 1",    [("tpu", "plug_sd",      1, LCD7, {})], (80, 128)),
+        ("SD cover 2",    [("tpu", "plug_sd",      1, LCD7, {})], (112, 128)),
+        ("grommet 1",     [("tpu", "grommet_usb",  1, LCD7, {})], (150, 145)),
+        ("grommet 2",     [("tpu", "grommet_usb",  1, LCD7, {})], (150, 125)),
+        ("port blank 1",  [("tpu", "plug_port",    1, LCD7, {})], (150, 105)),
+        ("port blank 2",  [("tpu", "plug_port",    1, LCD7, {})], (150, 85)),
+        ("button plug 1", [("tpu", "plug_buttons", 1, LCD7, {})], (195, 145)),
+        ("button plug 2", [("tpu", "plug_buttons", 1, LCD7, {})], (195, 118)),
     ],
 }
 # The file each set writes. Named per CASE, not per set, so two cases' plates
