@@ -121,8 +121,19 @@ Press the Assist button — or say the wake word — and ask:
 
 | You say | It answers with |
 |---|---|
+| "What's up?" | The casual catch-up, one honest breath: an alarm or tamper leads if there is one, then anything needing attention, the latest activity (or "all quiet"), fleet health, the weather outside, and anything waiting on you — like pending hub updates. |
 | "Is the fleet OK?" | Device count, signature-trust summary, kernel reachability — worst news first. |
 | "What was the last witness event?" | The newest event's coarse label, a ten-minute-floor relative time, and its trust status — an unsigned or key-mismatched publish is named out loud, never spoken as the plain truth. |
+
+The weather line at the end of "what's up" covers Home Assistant's whole
+condition vocabulary with a warm phrase for every season — optimistic on
+purpose, with one honesty override (severe weather is flagged, never
+charmed):
+
+> *"Outside it's 28 degrees and snowing — it'll be pretty out there."*
+> *"Outside it's 55 degrees and rainy — the garden will be glad."*
+> *"Outside it's 84 degrees and sunny — a good one to step out in."*
+> *"Outside it's 48 degrees and clear — good stars if you look up."*
 
 The answers keep the project's vocabulary discipline out loud:
 **"verified" is spoken only for a device whose Ed25519 signature checked
