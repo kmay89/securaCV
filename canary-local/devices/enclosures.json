@@ -7294,8 +7294,8 @@
       },
       {
        "name": "btn_d",
-       "default": "3.0",
-       "comment": "access hole Ø — a tool tip passes, a pocket corner doesn't"
+       "default": "6.5",
+       "comment": "access hole Ø — sized for a BARE FINGERTIP, no tool."
       },
       {
        "name": "btn_up",
@@ -7344,7 +7344,7 @@
       {
        "name": "band_clear",
        "default": "0.10",
-       "comment": "per-face press-in clearance; 0 for a co-printed band"
+       "comment": "per-face drop-in clearance (pause-and-insert flow);"
       }
      ]
     },
@@ -7512,7 +7512,8 @@
       },
       {
        "name": "ear_w",
-       "default": "btn_ch_w + 4"
+       "default": "max(btn_body_w, btn_d) + 3.0",
+       "comment": "the ear covers the widest of the"
       },
       {
        "name": "chin_w",
@@ -7556,38 +7557,9 @@
        "comment": "glass front is at z = face_t"
       },
       {
-       "name": "seam_x_in",
-       "default": "xc/2 - 1.0",
-       "comment": "opens into the cavity — no curtain"
-      },
-      {
-       "name": "seam_x_out",
-       "default": "xo/2 + ear_bump + 1.0",
-       "comment": "clears the outer face"
-      },
-      {
-       "name": "seam_y_in",
-       "default": "yc/2 - 1.0",
-       "comment": "top strip, same rule"
-      },
-      {
-       "name": "seam_y_out",
-       "default": "yo/2 + 1.0"
-      },
-      {
        "name": "side_lo",
        "default": "btn_y + ear_w/2 + 1.2",
-       "comment": "side strips start above the ears"
-      },
-      {
-       "name": "side_hi",
-       "default": "yc/2 - r_out - 0.8",
-       "comment": "…and stop before the corner posts"
-      },
-      {
-       "name": "top_hw",
-       "default": "xc/2 - r_out - 0.8",
-       "comment": "top strip half-width, same rule"
+       "comment": "the U's legs start above the ears"
       },
       {
        "name": "vent_z0",
