@@ -7156,6 +7156,7 @@
         "bezel",
         "lid",
         "light",
+        "mark",
         "all",
         "exploded",
         "palette"
@@ -7379,13 +7380,41 @@
      ]
     },
     {
-     "name": "Mount",
-     "note": "",
+     "name": "Back face",
+     "note": "the lid's outer face carries ONE of these, never both",
      "params": [
       {
-       "name": "opt_keyhole",
-       "default": "true",
-       "comment": "keyhole in the lid — hangs the case USB-down, slot up"
+       "name": "lid_back",
+       "default": "mark",
+       "enum": [
+        "mark",
+        "keyhole"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Branding",
+     "note": "the wordmark, debossed and filled in the mark filament",
+     "params": [
+      {
+       "name": "mark_word",
+       "default": "Canary",
+       "comment": "the DEVICE's name (the company's is securaCV)."
+      },
+      {
+       "name": "mark_word_h",
+       "default": "3.6",
+       "comment": "cap height. The width assert below is the real"
+      },
+      {
+       "name": "mark_depth",
+       "default": "0.6",
+       "comment": "deboss depth; the inlay fills it flush"
+      },
+      {
+       "name": "mark_adv",
+       "default": "0.875"
       },
       {
        "name": "opt_vent",
@@ -7628,6 +7657,10 @@
       {
        "name": "stand_len",
        "default": "stack_eff - (pillars_in ? brass_h : 0)"
+      },
+      {
+       "name": "mark_w",
+       "default": "len(mark_word) * mark_adv * mark_word_h"
       },
       {
        "name": "seam_z0",

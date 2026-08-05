@@ -127,6 +127,7 @@
     "bezel",
     "lid",
     "light",
+    "mark",
     "exploded",
     "palette"
    ],
@@ -148,14 +149,6 @@
      "default": true
     },
     {
-     "id": "opt_keyhole",
-     "type": "bool",
-     "label": "keyhole in the lid — hangs the case USB-down, slot up",
-     "consequence": "",
-     "audience": "user",
-     "default": true
-    },
-    {
      "id": "opt_vent",
      "type": "bool",
      "label": "opt_vent",
@@ -164,14 +157,14 @@
      "default": true
     }
    ],
-   "engineering_param_count": 91,
+   "engineering_param_count": 97,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 4,
-    "user_options": 4,
+    "options": 3,
+    "user_options": 3,
     "variant_axes": 1
    }
   },

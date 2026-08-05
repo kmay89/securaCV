@@ -100,6 +100,25 @@
 //                        snap skirt goes thin to clear the pin rows.
 //     Every way the board is captured by its edges — nothing screws into it.
 //
+//  ── THE BACK IS THE BRAND, NOT A MOUNT ───────────────────────────────────
+//  The lid's outer face carries the "Canary" WORDMARK, debossed and filled
+//  in black — and it carries it INSTEAD OF the keyhole, which is a real
+//  trade the owner asked for (kmay89): a pocket case that reads as a
+//  product beats one that can hang on a screw. `lid_back = "keyhole"`
+//  brings the mount back and drops the mark; they cannot share the face
+//  (both want its middle), and the assert says so rather than letting them
+//  overlap into nonsense.
+//
+//  THE BIRD IS NOT ON THIS PART, and that is not an omission. The house
+//  mark (canary_mark_lib.scad) has interior detail — a C spiralled into the
+//  wing, a V in the tail — with a stated MINIMUM SIZE of roughly 30 mm.
+//  This lid is 25.12 mm across. The bird would be wider than the part
+//  before it was legible on it, so this face carries the WORDMARK ALONE,
+//  which is exactly what that library's MINIMUM SIZE section prescribes.
+//  The alternative — a second, simplified bird for small parts — is the one
+//  thing that library exists to prevent. Same call the hallway stick's back
+//  plate made, for the same reason.
+//
 //  ── THE LID IS KEYED — it fits ONE way, and that is load-bearing ─────────
 //  The C6 case's lid is 180°-rotation symmetric. This one cannot be: the
 //  board's four M2 pillars are NOT on a symmetric pattern (USB-end pair at
@@ -119,8 +138,16 @@
 //  cannot admit a card is just a hole.
 //
 //  ── PRINTING ─────────────────────────────────────────────────────────────
-//  Three spools, all PETG:  body BLACK, lid YELLOW (the house accent — on
-//  this case the whole lid is the mark), band WHITE/natural.
+//  Three spools, all PETG, and the SLOTS ARE ROLES — the same three roles
+//  the hallway stick uses, so an operator who has printed one loads the
+//  other without re-learning the spools:
+//        slot 1 = BODY      → YELLOW   (bezel AND lid: the case is yellow)
+//        slot 2 = MARK      → BLACK    (the "Canary" wordmark on the back)
+//        slot 3 = LIGHT     → WHITE / natural (the band)
+//  ⚠️ This is the INVERTED palette, and the loading changed with it. The
+//     first three prints ran slot 1 BLACK / slot 2 YELLOW; the case is now
+//     yellow with black branding, so slot 1 and slot 2 SWAP SPOOLS. The
+//     roles did not move — only the colors in them did.
 //  The band is one closed U, and that changes how it is installed:
 //    - Multi-material (the first-class path, what gen_3mf.py c3 packages):
 //      band_clear = 0, bezel + band as ONE object — the U fuses in.
@@ -132,7 +159,9 @@
 //      seam_dz + seam_h), drop the U into the open pocket, resume.
 //      band_clear 0.10 sizes that drop-in.
 //  Bezel prints FACE-DOWN, lid prints OUTER-FACE-DOWN, the U flat on its
-//  bottom face. No supports anywhere.
+//  bottom face. No supports anywhere. The wordmark is a DEBOSS in the lid's
+//  outer face filled by the mark volume, so it prints on the build plate —
+//  first layer, no overhang, crisp letters.
 //
 //  Orientation: +Y = up (portrait), USB-C exits the BOTTOM (−Y) short wall,
 //  +Z = toward the glass. The RGB LED lives at the TOP (+Y) end.
@@ -150,8 +179,10 @@
 //     pcb_t, usb_proud, and the pillar pattern insets.
 // ============================================================================
 
+use <canary_mark_lib.scad>   // the house mark; this part wears the wordmark
+
 /* [What to render] */
-part  = "all";      // ["bezel","lid","light","all","exploded","palette"]
+part  = "all";      // ["bezel","lid","light","mark","all","exploded","palette"]
 // board build: "pillars" = as Waveshare ships it (brass corner pillars on, headers not soldered), "none" = stripped (pillars unscrewed too), "male" = down-facing headers + pillars
 headers = "pillars";   // ["pillars","none","male"]
 
@@ -278,9 +309,26 @@ band_clear = 0.10;   // per-face drop-in clearance (pause-and-insert flow);
 // the seam sits in the light path on one face or the other; the pipe must
 // be white through the full wall depth, so the seam has none.
 
-/* [Mount] */
-opt_keyhole = true;  // keyhole in the lid — hangs the case USB-down, slot up
+/* [Back face] — the lid's outer face carries ONE of these, never both */
+lid_back = "mark";   // ["mark","keyhole"]
 kh_head_d = 7.0; kh_shank_d = 4.2; kh_slot_l = 7.0;
+
+/* [Branding] — the wordmark, debossed and filled in the mark filament */
+mark_word   = "Canary";  // the DEVICE's name (the company's is securaCV).
+                         // The library's mark_wordmark() defaults to the
+                         // company; this part is a Canary, so it says so
+mark_word_h = 3.6;       // cap height. The width assert below is the real
+                         // constraint on this narrow a plate — MEASURE by
+                         // eye on the first print, it is the one number
+                         // here that is a taste call rather than a fit
+mark_depth  = 0.6;       // deboss depth; the inlay fills it flush
+mark_dx = 0; mark_dy = 0;   // nudge on the plate, if the eye wants it
+// Per-character advance as a fraction of cap height — the wordmark's width
+// cannot be MEASURED here (OpenSCAD has no text-metrics primitive), so it is
+// estimated, and deliberately a hair pessimistic. Same constant the hallway
+// stick calibrated against a measured render; the failure it guards is a
+// mark hanging off the edge of the part, which has shipped before.
+mark_adv = 0.875;
 
 /* [Ventilation] — side-wall slots only; the row sits BEHIND the light band
    so the white line stays whole. The lid used to carry a matching grille —
@@ -432,6 +480,10 @@ stand_case = [[ board_w/2 - hole_ix_usb, -(board_l/2 - hole_iy_usb)],
 
 function nub_ys() = [-nub_y0, nub_y0];
 
+// the wordmark's estimated width (see mark_adv) — the assert below is the
+// only thing standing between a taste change and type running off the part
+mark_w = len(mark_word) * mark_adv * mark_word_h;
+
 // ── The light band's volume, derived, never composed ────────────────────────
 // The S3 stick's hard lesson verbatim: a band slot parked by wall arithmetic
 // left a 0.65 mm black curtain between the LED and the white — a light pipe
@@ -526,11 +578,47 @@ assert(!light_seam || bez_h - snap_depth - snap_h/2 >= seam_z0 + seam_h + 0.6,
 assert(!opt_vent || vent_z1 - vent_z0 >= 1.5, "no room for wall vents behind the band — set opt_vent=false");
 assert(!opt_vent || vent_dy + (vent_n-1)*vent_pitch/2 + vent_w/2 <= yc/2 - 0.8,
        "vent row overruns the side wall — fewer slots (vent_n) or tighter pitch");
+// the back face: one thing on it, and it has to fit on it
+assert(lid_back == "mark" || lid_back == "keyhole",
+       str("lid_back is \"", lid_back, "\" — it must be \"mark\" or ",
+           "\"keyhole\". They cannot share the lid's face; both want its ",
+           "middle, and overlapping them would cut the wordmark in half."));
+assert(lid_back != "mark" || mark_w <= xo - 4.0,
+       str("the wordmark is ", mark_w, " mm wide on a ", xo, " mm lid — it ",
+           "would hang off the sides (2 mm margin required). Shrink ",
+           "mark_word_h, or shorten mark_word."));
+assert(lid_back != "mark" || mark_word_h <= yo - 6.0,
+       "the wordmark is taller than the lid — shrink mark_word_h");
+assert(lid_back != "mark" || (mark_depth >= 0.3 && mark_depth <= back_t - 0.8),
+       str("mark_depth ", mark_depth, " must sit between 0.3 (a deboss worth ",
+           "having) and ", back_t - 0.8, " (leaving plate under the letters)"));
 echo(str("Canary C3-LCD-1.47 (headers=", headers, ") v0.2-dev — outer ",
          xo, " x ", yo, " x ", bez_h + back_t, " mm, window ", aa_w, " x ", aa_l,
          " (land X ", land_w_x, " / Y ", land_w_y, "), band ", seam_h,
          " mm white starting ", seam_dz, " mm behind the glass",
          "  (IN DEVELOPMENT — MEASURE)"));
+
+// The wordmark as it must be DRAWN in the lid's own frame.
+//
+// PRE-FLIPPED IN Y, and that is the whole subtlety. The lid is authored in
+// its own frame and reaches the case through
+//     rotate([180, 0, 0])  →  (x, y, z) ↦ (x, −y, −z)
+// so every glyph's Y is inverted on the way to the assembled back face.
+// Type laid out the normal way therefore lands upside down on the surface a
+// person actually reads. Pre-flipping Y here cancels the assembly's flip
+// exactly, and it happens ONCE so the recess, the inlay and the preview all
+// get the same handedness with no caller left to remember.
+//
+// ⚠️ It is a Y mirror, not an X mirror. The X mirror is the intuitive
+// guess — the outer face is the one you view from below in this frame —
+// and it is wrong: it composes with the assembly's Y flip into a clean 180°
+// rotation, which renders as upside-down type that still LOOKS like a
+// legitimate wordmark at a glance. That is exactly what the first cut did.
+// The only check that catches this is rendering the letters in their
+// assembled orientation under a plain top view and READING them.
+module lid_mark2d() {
+    mirror([0, 1, 0]) mark_wordmark(mark_word_h, mark_word);
+}
 
 module rrect2d(x, y, r) { offset(r = r) offset(r = -r) square([x, y], center = true); }
 // stadium: full-round ends, the USB-C shell's own profile
@@ -769,9 +857,15 @@ module lid() {
         }
         // (no grille: print 2's verdict — tiny back holes read as confusion,
         //  not function. The lid is a clean plate; the walls carry the vents.)
+        // the wordmark, debossed into the OUTER face (lid z = 0). The inlay
+        // that fills it is the SAME 2D shape (lid_mark2d), so recess and
+        // fill cannot drift — the band's doctrine, applied to type.
+        if (lid_back == "mark")
+            translate([mark_dx, mark_dy, -0.01])
+                linear_extrude(mark_depth + 0.01) lid_mark2d();
         // keyhole: hangs USB-down. Head hole toward lid +Y (case −Y/USB), the
         // shank slides toward lid −Y (case +Y/up) as the case drops on.
-        if (opt_keyhole) translate([0, 0, -0.1]) linear_extrude(back_t + 0.2) {
+        if (lid_back == "keyhole") translate([0, 0, -0.1]) linear_extrude(back_t + 0.2) {
             translate([0, kh_slot_l/2]) circle(d = kh_head_d);
             hull() {
                 translate([0,  kh_slot_l/2]) circle(d = kh_shank_d);
@@ -779,6 +873,21 @@ module lid() {
             }
         }
     }
+}
+
+// ----------------------------------------------------------------------------
+//  MARK — the wordmark inlay, black. Exactly the volume the lid's deboss
+//  removed: same 2D shape, same depth, no clearance. Zero clearance is the
+//  co-print doctrine this file already applies to the light band — the AMS
+//  fuses filaments that meet, and a shrunk inlay just asks it to bridge a
+//  gap that should not exist. Authored in the LID's frame so the two
+//  volumes are registered by construction and gen_3mf.py can hand them over
+//  without moving either.
+// ----------------------------------------------------------------------------
+module lid_mark() {
+    if (lid_back == "mark")
+        translate([mark_dx, mark_dy, 0])
+            linear_extrude(mark_depth) lid_mark2d();
 }
 
 // ----------------------------------------------------------------------------
@@ -794,25 +903,35 @@ module lid_assembled() {
 // and fit only; part="palette" is the view that answers "what do the three
 // spools look like".
 module bezel_assembly() {
-    color("#1a1a1a") bezel();
+    color("#f5c518") bezel();
     if (light_seam) color("#f2f2f2") light_band();
 }
 
+// the lid as it reads: yellow plate, black letters sitting in their deboss
+module lid_branded() {
+    color("#f5c518") lid();
+    color("#1a1a1a") lid_mark();
+}
+
 module palette_row() {
-    color("#1a1a1a") bezel();
+    color("#f5c518") bezel();
     translate([xo + 8, 0, 0]) color("#f2f2f2") light_band();
-    translate([2*(xo + 8), 0, 0]) color("#f5c518") lid();
+    translate([2*(xo + 8), 0, 0]) lid_branded();
 }
 
 if      (part == "bezel") bezel();
 else if (part == "lid")   lid();
 else if (part == "light") light_band();
+else if (part == "mark")  lid_mark();
 else if (part == "palette") palette_row();
 else if (part == "exploded") {
     bezel_assembly();
-    translate([0, 0, 16]) color("#f5c518") lid_assembled();
+    translate([0, 0, 16]) {
+        color("#f5c518") lid_assembled();
+        color("#1a1a1a") translate([0, 0, bez_h + back_t]) rotate([180, 0, 0]) lid_mark();
+    }
 }
 else {  // "all": both prints side by side, as they come off the plate
     bezel_assembly();
-    translate([xo + 10, 0, 0]) color("#f5c518") lid();
+    translate([xo + 10, 0, 0]) lid_branded();
 }
