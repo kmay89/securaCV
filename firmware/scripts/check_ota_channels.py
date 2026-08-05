@@ -54,6 +54,24 @@ UNPUBLISHED: dict[str, str] = {
     "manifest-canary-display-dash-mic.json":
         "canary-display-dash-mic env (4.3C + ES7210 mic) — PlatformIO-only, no "
         "sketch.yaml profile and no release build target",
+    # Phase 0 reach ports (docs/strategy/30): compile-tested tier, no
+    # hardware validation yet. A release channel is a promise the images
+    # boot; these earn theirs with a Hardware Test Report, same gate that
+    # promotes the board tier. Until then pull-OTA on these boards fails
+    # closed (404 → no update), which is the intended posture.
+    "manifest-canary-esp32cam.json":
+        "esp32cam env (AI-Thinker ESP32-CAM) — compile-tested port, no bench "
+        "validation yet; channel turns on with a Hardware Test Report",
+    "manifest-canary-wroom.json":
+        "esp32-wroom env (WROOM-32 DevKit family) — compile-tested port, no "
+        "bench validation yet; channel turns on with a Hardware Test Report",
+    "manifest-canary-freenove-s3.json":
+        "freenove-s3 env (Freenove FNK0085) — compile-tested port, no bench "
+        "validation yet; channel turns on with a Hardware Test Report",
+    "manifest-canary-vision-c3-super-mini.json":
+        "canary-vision-c3-super-mini env (C3 Super Mini) — compile-tested "
+        "port, no bench validation yet; channel turns on with a Hardware "
+        "Test Report",
 }
 
 
