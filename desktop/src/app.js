@@ -845,6 +845,37 @@ function refreshManifest() {
 }
 
 // ── step 2: pick a firmware image (chip-guarded) ────────────────────────────
+/* The picker slot — the same rule the in-browser flasher follows, because the
+ * two frontends share no UI code and drift is the standing hazard here
+ * (AGENTS.md rule 7). The board's own isometric figure when the embedded
+ * catalog carries one, a neutral placeholder when it doesn't; the SAME size
+ * either way, so the list never reflows as figures land for more of the fleet.
+ *
+ * The placeholder deliberately resembles no product. Drawing a plausible
+ * generic board would be worse than drawing nothing — somebody matching the
+ * hardware in their hand against a picture of different hardware is the one
+ * failure this system exists to prevent. See docs/design/FLEET_FIGURES.md.
+ *
+ * The SVG is inlined in flash.json, which build.rs bakes into the binary, so
+ * this draws with no file on disk and no network.
+ */
+function figureSlot(p) {
+  const f = p.figure;
+  if (f && f.svg) {
+    const t = f.shared
+      ? `${f.title} — this board is also built as another product`
+      : f.title;
+    return `<span class="p-fig" title="${esc(t)}">${f.svg}</span>`;
+  }
+  return (
+    '<span class="p-fig placeholder" title="No drawing for this board yet">' +
+    '<svg viewBox="0 0 64 64" aria-hidden="true">' +
+    '<rect x="12" y="18" width="40" height="28" rx="3"/>' +
+    '<rect class="c" x="20" y="26" width="24" height="12" rx="1.5"/></svg>' +
+    `<i>${esc((p.chip || "").replace("ESP32-", ""))}</i></span>`
+  );
+}
+
 function renderProducts() {
   const list = $("product-list");
   list.innerHTML = "";
@@ -918,12 +949,17 @@ function renderProducts() {
     row.className = "product" + (isSelected ? " selected" : "");
     row.innerHTML = `
       <input type="radio" name="product" value="${p.id}"${isSelected ? " checked" : ""}>
+      ${figureSlot(p)}
       <span>
         <span class="p-name">${esc(p.name)}<span class="chip-badge">${esc(p.chip)}</span></span>
         <span class="p-tag">${esc(p.tagline || "")}</span>
         <span class="p-meta">${
           ver ? "release " + esc(ver) : "no published release yet"
-        }</span>
+        }</span>${
+          p.figure && p.figure.shared
+            ? '<span class="p-note">This board is also sold as another product — check the name, not just the picture.</span>'
+            : ""
+        }
       </span>`;
     const radio = row.querySelector("input");
     radio.addEventListener("change", () => {

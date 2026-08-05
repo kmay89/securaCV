@@ -520,7 +520,14 @@ def build(setname: str) -> tuple:
         bcfg.append(
             f' <object id="{aid}">\n'
             f'  <metadata key="name" value="{gname}"/>\n'
-            '  <metadata key="extruder" value="1"/>\n'
+            # The OBJECT-level extruder follows the group's FIRST volume, not a
+            # hard-coded 1. Bambu Studio applies the object value to any object
+            # it treats as single-part — which is exactly what the C3 case's
+            # lid is — so a hard-coded 1 silently painted the yellow lid black.
+            # kmay89's print 2 did not get a yellow lid; this line is why.
+            # Multi-volume objects are unaffected either way (their per-part
+            # values below override), so first-volume is always right.
+            f'  <metadata key="extruder" value="{meshes[0][2]}"/>\n'
             + "".join(f'  <part id="{m[0]}" subtype="normal_part">\n'
                       f'   <metadata key="name" value="{m[1]}"/>\n'
                       f'   <metadata key="extruder" value="{m[2]}"/>\n'

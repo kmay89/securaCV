@@ -17,6 +17,14 @@
 #include "version.h"
 #include "log.h"
 #include "fleet_selfreport.h"  // shared /api/fleet body builder
+#ifdef CD_NIGHTLIGHT
+// The nightlight's /api/settings extras: the lamp (lantern prefs), the
+// nightlight glue prefs, and the scene catalog served by name.
+#include "lantern.h"
+#include "nightlight_glue.h"
+#include "fleet_instance.h"
+#include "color/look_engine.h"
+#endif
 
 namespace canary {
 // The browser serial monitor's hook (declared in log.h).
@@ -121,6 +129,8 @@ void handle_glass() {
   const size_t C = sizeof(body);
 #if defined(CD_FLAVOR_WATCH)
   const char* flavor = "watch";
+#elif defined(CD_NIGHTLIGHT)
+  const char* flavor = "nightlight";
 #elif defined(CD_FLAVOR_NIGHTSTAND)
   const char* flavor = "nightstand";
 #else
@@ -176,15 +186,40 @@ uint16_t floor_duty_now() {
 
 void handle_settings_get() {
   const auto& gs = canary::glass::settings();
-  char body[256];
-  snprintf(body, sizeof(body),
-           "{\"day_pct\":%u,\"night_screen\":%u,\"red_shift\":%u,"
-           "\"peek_s\":%u,\"night_start_hh\":%u,\"night_end_hh\":%u,"
-           "\"night_step\":%d,\"night_steps\":%d}",
-           gs.day_pct, gs.night_screen, gs.red_shift, gs.peek_s,
-           gs.night_start_hh, gs.night_end_hh,
-           canary::glass::night_duty_step(floor_duty_now(), gs.night_duty),
-           canary::glass::NIGHT_STEPS);
+  char body[704];
+  size_t o = (size_t)snprintf(
+      body, sizeof(body),
+      "{\"day_pct\":%u,\"night_screen\":%u,\"red_shift\":%u,"
+      "\"peek_s\":%u,\"night_start_hh\":%u,\"night_end_hh\":%u,"
+      "\"night_step\":%d,\"night_steps\":%d",
+      gs.day_pct, gs.night_screen, gs.red_shift, gs.peek_s,
+      gs.night_start_hh, gs.night_end_hh,
+      canary::glass::night_duty_step(floor_duty_now(), gs.night_duty),
+      canary::glass::NIGHT_STEPS);
+#ifdef CD_NIGHTLIGHT
+  // The nightlight's own knobs, plus the scene catalog BY NAME — the app
+  // renders the device's own list, so a new scene in the look engine shows
+  // up on the phone with no app update (the device describes, the app
+  // renders). lamp_pct is the drawn lamp strength; the 50% backlight duty
+  // ceiling (CD_BL_MAX_PCT) is enforced in the HAL underneath all of this.
+  {
+    auto& lamp = canary::care::lantern();
+    o += (size_t)snprintf(
+        body + o, sizeof(body) - o,
+        ",\"lamp_scene\":%u,\"lamp_auto\":%u,\"lamp_pct\":%u,"
+        "\"lamp_max_duty_pct\":%d,\"clock_12h\":%u,\"scenes\":[",
+        lamp.scene(), lamp.auto_mode(),
+        (unsigned)(((uint16_t)canary::care::nightlight_lamp_bri() * 100 + 127) / 255),
+        CD_BL_MAX_PCT, canary::care::nightlight_clock_12h() ? 1u : 0u);
+    for (uint8_t i = 0; i < canary::color::kSceneCount && o < sizeof(body); i++) {
+      o += (size_t)snprintf(body + o, sizeof(body) - o, "%s\"%s\"",
+                            i ? "," : "", canary::color::kScenes[i].name);
+    }
+    if (o < sizeof(body))
+      o += (size_t)snprintf(body + o, sizeof(body) - o, "]");
+  }
+#endif
+  if (o < sizeof(body)) snprintf(body + o, sizeof(body) - o, "}");
   s_server->send(200, "application/json", body);
 }
 
@@ -207,6 +242,36 @@ void handle_settings_set() {
   else if (k == "night_end_hh" && v >= 0 && v <= 23) gs.night_end_hh = (uint8_t)v;
   else if (k == "night_step" && v >= 1 && v <= canary::glass::NIGHT_STEPS)
     gs.night_duty = canary::glass::night_step_duty(floor_duty_now(), (int)v);
+#ifdef CD_NIGHTLIGHT
+  // The nightlight's knobs persist through their own stores (lantern prefs
+  // NVS / the nightlight glue) — the glass settings blob is left alone, so
+  // the early-return below must not mark it dirty for these.
+  else if (k == "lamp_scene" && v >= 0 && v < canary::color::kSceneCount) {
+    auto& lamp = canary::care::lantern();
+    lamp.configure((uint8_t)v, lamp.minutes(), lamp.auto_mode());
+    canary::care::lantern_prefs_changed();
+    canary::fleet::the_fleet().mark_dirty();
+    s_server->send(200, "application/json", "{\"ok\":true}");
+    return;
+  } else if (k == "lamp_auto" && (v == 0 || v == 1)) {
+    auto& lamp = canary::care::lantern();
+    lamp.configure(lamp.scene(), lamp.minutes(), (uint8_t)v);
+    canary::care::lantern_prefs_changed();
+    canary::fleet::the_fleet().mark_dirty();
+    s_server->send(200, "application/json", "{\"ok\":true}");
+    return;
+  } else if (k == "lamp_pct" && v >= 10 && v <= 100) {
+    canary::care::nightlight_set_lamp_bri((uint8_t)((v * 255) / 100));
+    canary::fleet::the_fleet().mark_dirty();
+    s_server->send(200, "application/json", "{\"ok\":true}");
+    return;
+  } else if (k == "clock_12h" && (v == 0 || v == 1)) {
+    canary::care::nightlight_set_clock_12h(v == 1);
+    canary::fleet::the_fleet().mark_dirty();
+    s_server->send(200, "application/json", "{\"ok\":true}");
+    return;
+  }
+#endif
   else ok = false;
   if (ok) {
     canary::glass::settings_mut() = gs;
@@ -228,6 +293,8 @@ void handle_device() {
   const size_t C = sizeof(body);
 #if defined(CD_FLAVOR_WATCH)
   const char* flavor = "watch";
+#elif defined(CD_NIGHTLIGHT)
+  const char* flavor = "nightlight";
 #elif defined(CD_FLAVOR_NIGHTSTAND)
   const char* flavor = "nightstand";
 #else
@@ -304,7 +371,16 @@ void handle_fleet() {
   const auto& cfg = canary::cfg::get();
   FleetSelfDevice self{};
   self.name         = (cfg.device_id[0]) ? cfg.device_id : "Canary";
+#ifdef CD_NIGHTLIGHT
+  // The nightlight self-reports as WHAT IT IS ("canary-nightlight", the
+  // same dt its mDNS TXT carries), so the iPhone's LAN self-report path
+  // types it correctly and shows the Nightlight settings card (Codex P2 on
+  // this PR). The other display flavors keep the family string below —
+  // their CD_DEVICE_TYPEs predate the wire and the apps type them off it.
+  self.product      = DEVICE_TYPE;
+#else
   self.product      = "canary-display";
+#endif
   self.online       = 1;   // we are answering this request, so we are up
   self.chain_ok     = 0;   // a display holds no witness chain of its own
   self.chain_height = -1;  // omit chain_height
