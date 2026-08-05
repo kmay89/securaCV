@@ -257,7 +257,9 @@ fn login_works(agent: &ureq::Agent, base: &str, login: &OwnerLogin<'_>) -> Resul
         }),
     )?;
     if status != 200 {
-        return Err(format!("the hub refused to start a sign-in check ({status})"));
+        return Err(format!(
+            "the hub refused to start a sign-in check ({status})"
+        ));
     }
     let flow_id = v
         .get("flow_id")
@@ -406,7 +408,11 @@ pub fn complete_onboarding(
         }
     }
     let Some(token) = access else {
-        out.remaining = pending.iter().filter(|s| *s != STEP_USER).cloned().collect();
+        out.remaining = pending
+            .iter()
+            .filter(|s| *s != STEP_USER)
+            .cloned()
+            .collect();
         out.note = Some(
             "Your login works, but the hub wouldn't issue a token to finish the remaining \
              setup pages — open Home Assistant and click through them (a minute at most)."
@@ -600,7 +606,11 @@ mod tests {
 
     #[test]
     fn user_request_carries_the_typed_login_and_a_url_client_id() {
-        let login = OwnerLogin { name: "Kay", username: "kay", password: "hunter22" };
+        let login = OwnerLogin {
+            name: "Kay",
+            username: "kay",
+            password: "hunter22",
+        };
         let v = user_request("http://h:8123", &login);
         assert_eq!(v["client_id"], "http://h:8123/");
         assert_eq!(v["username"], "kay");
@@ -629,16 +639,16 @@ mod tests {
     /// A tiny scripted HTTP server: each accepted connection consumes the
     /// next (path-substring, status, json-body) entry. Records every request
     /// line + body so tests can assert what was sent.
-    fn serve_script(
-        script: Vec<(&'static str, u16, Value)>,
-    ) -> (String, Arc<Mutex<Vec<String>>>) {
+    fn serve_script(script: Vec<(&'static str, u16, Value)>) -> (String, Arc<Mutex<Vec<String>>>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
         let addr = listener.local_addr().expect("addr");
         let seen = Arc::new(Mutex::new(Vec::new()));
         let seen2 = seen.clone();
         std::thread::spawn(move || {
             for (expect_path, status, body) in script {
-                let Ok((mut sock, _)) = listener.accept() else { return };
+                let Ok((mut sock, _)) = listener.accept() else {
+                    return;
+                };
                 let mut buf = Vec::new();
                 let mut byte = [0u8; 1];
                 while !buf.ends_with(b"\r\n\r\n") {
@@ -650,8 +660,11 @@ mod tests {
                 let head = String::from_utf8_lossy(&buf).to_string();
                 let len: usize = head
                     .lines()
-                    .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:")
-                        .map(|v| v.trim().parse().unwrap_or(0)))
+                    .find_map(|l| {
+                        l.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .map(|v| v.trim().parse().unwrap_or(0))
+                    })
                     .unwrap_or(0);
                 let mut req_body = vec![0u8; len];
                 if len > 0 {
@@ -662,10 +675,10 @@ mod tests {
                     line.contains(expect_path),
                     "expected a request to {expect_path}, got {line}"
                 );
-                seen2.lock().unwrap().push(format!(
-                    "{line}\n{}",
-                    String::from_utf8_lossy(&req_body)
-                ));
+                seen2
+                    .lock()
+                    .unwrap()
+                    .push(format!("{line}\n{}", String::from_utf8_lossy(&req_body)));
                 let payload = body.to_string();
                 let resp = format!(
                     "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\n\
@@ -686,22 +699,42 @@ mod tests {
     #[test]
     fn fresh_hub_gets_the_whole_wizard_finished() {
         let (host, seen) = serve_script(vec![
-            ("/api/onboarding", 200, serde_json::json!([
-                {"step": "user", "done": false},
-                {"step": "core_config", "done": false},
-                {"step": "analytics", "done": false},
-                {"step": "integration", "done": false},
-            ])),
-            ("/api/onboarding/users", 200, serde_json::json!({"auth_code": "code-1"})),
-            ("/auth/token", 200, serde_json::json!({
-                "access_token": "at-1", "refresh_token": "rt-1", "token_type": "Bearer"
-            })),
+            (
+                "/api/onboarding",
+                200,
+                serde_json::json!([
+                    {"step": "user", "done": false},
+                    {"step": "core_config", "done": false},
+                    {"step": "analytics", "done": false},
+                    {"step": "integration", "done": false},
+                ]),
+            ),
+            (
+                "/api/onboarding/users",
+                200,
+                serde_json::json!({"auth_code": "code-1"}),
+            ),
+            (
+                "/auth/token",
+                200,
+                serde_json::json!({
+                    "access_token": "at-1", "refresh_token": "rt-1", "token_type": "Bearer"
+                }),
+            ),
             ("/api/onboarding/core_config", 200, serde_json::json!({})),
             ("/api/onboarding/analytics", 200, serde_json::json!({})),
-            ("/api/onboarding/integration", 200, serde_json::json!({"auth_code": "code-2"})),
+            (
+                "/api/onboarding/integration",
+                200,
+                serde_json::json!({"auth_code": "code-2"}),
+            ),
             ("/auth/token", 200, serde_json::json!({})), // the revoke
         ]);
-        let login = OwnerLogin { name: "Kay", username: "kay", password: "pw-pw-pw" };
+        let login = OwnerLogin {
+            name: "Kay",
+            username: "kay",
+            password: "pw-pw-pw",
+        };
         let out = complete_onboarding(&host, &login, &quiet()).expect("converges");
         assert!(out.ok(), "fresh hub must converge: {out:?}");
         assert!(out.created_user);
@@ -717,18 +750,34 @@ mod tests {
     #[test]
     fn an_already_set_up_hub_only_verifies_the_login() {
         let (host, _) = serve_script(vec![
-            ("/api/onboarding", 200, serde_json::json!([
-                {"step": "user", "done": true},
-                {"step": "core_config", "done": true},
-                {"step": "analytics", "done": true},
-                {"step": "integration", "done": true},
-            ])),
-            ("/auth/login_flow", 200, serde_json::json!({"flow_id": "f1", "type": "form"})),
-            ("/auth/login_flow/f1", 200, serde_json::json!({
-                "type": "create_entry", "result": "code-3"
-            })),
+            (
+                "/api/onboarding",
+                200,
+                serde_json::json!([
+                    {"step": "user", "done": true},
+                    {"step": "core_config", "done": true},
+                    {"step": "analytics", "done": true},
+                    {"step": "integration", "done": true},
+                ]),
+            ),
+            (
+                "/auth/login_flow",
+                200,
+                serde_json::json!({"flow_id": "f1", "type": "form"}),
+            ),
+            (
+                "/auth/login_flow/f1",
+                200,
+                serde_json::json!({
+                    "type": "create_entry", "result": "code-3"
+                }),
+            ),
         ]);
-        let login = OwnerLogin { name: "Kay", username: "kay", password: "pw-pw-pw" };
+        let login = OwnerLogin {
+            name: "Kay",
+            username: "kay",
+            password: "pw-pw-pw",
+        };
         let out = complete_onboarding(&host, &login, &quiet()).expect("reachable");
         assert!(out.ok());
         assert!(!out.created_user);
@@ -740,18 +789,34 @@ mod tests {
         // Set up by hand with different credentials: the run must say so
         // plainly, never claim success, and never mutate anything.
         let (host, _) = serve_script(vec![
-            ("/api/onboarding", 200, serde_json::json!([
-                {"step": "user", "done": true},
-                {"step": "core_config", "done": true},
-                {"step": "analytics", "done": true},
-                {"step": "integration", "done": true},
-            ])),
-            ("/auth/login_flow", 200, serde_json::json!({"flow_id": "f1", "type": "form"})),
-            ("/auth/login_flow/f1", 200, serde_json::json!({
-                "type": "form", "errors": {"base": "invalid_auth"}
-            })),
+            (
+                "/api/onboarding",
+                200,
+                serde_json::json!([
+                    {"step": "user", "done": true},
+                    {"step": "core_config", "done": true},
+                    {"step": "analytics", "done": true},
+                    {"step": "integration", "done": true},
+                ]),
+            ),
+            (
+                "/auth/login_flow",
+                200,
+                serde_json::json!({"flow_id": "f1", "type": "form"}),
+            ),
+            (
+                "/auth/login_flow/f1",
+                200,
+                serde_json::json!({
+                    "type": "form", "errors": {"base": "invalid_auth"}
+                }),
+            ),
         ]);
-        let login = OwnerLogin { name: "Kay", username: "kay", password: "wrong" };
+        let login = OwnerLogin {
+            name: "Kay",
+            username: "kay",
+            password: "wrong",
+        };
         let out = complete_onboarding(&host, &login, &quiet()).expect("reachable");
         assert!(!out.ok());
         assert!(!out.login_verified);
@@ -761,17 +826,33 @@ mod tests {
     #[test]
     fn an_unknown_future_step_is_left_for_the_browser() {
         let (host, _) = serve_script(vec![
-            ("/api/onboarding", 200, serde_json::json!([
-                {"step": "user", "done": false},
-                {"step": "quantum_align", "done": false},
-            ])),
-            ("/api/onboarding/users", 200, serde_json::json!({"auth_code": "code-1"})),
-            ("/auth/token", 200, serde_json::json!({
-                "access_token": "at-1", "refresh_token": "rt-1"
-            })),
+            (
+                "/api/onboarding",
+                200,
+                serde_json::json!([
+                    {"step": "user", "done": false},
+                    {"step": "quantum_align", "done": false},
+                ]),
+            ),
+            (
+                "/api/onboarding/users",
+                200,
+                serde_json::json!({"auth_code": "code-1"}),
+            ),
+            (
+                "/auth/token",
+                200,
+                serde_json::json!({
+                    "access_token": "at-1", "refresh_token": "rt-1"
+                }),
+            ),
             ("/auth/token", 200, serde_json::json!({})), // the revoke
         ]);
-        let login = OwnerLogin { name: "Kay", username: "kay", password: "pw-pw-pw" };
+        let login = OwnerLogin {
+            name: "Kay",
+            username: "kay",
+            password: "pw-pw-pw",
+        };
         let out = complete_onboarding(&host, &login, &quiet()).expect("reachable");
         assert!(!out.ok(), "an unknown step must not be claimed done");
         assert!(out.created_user, "the known part still converges");
@@ -783,7 +864,11 @@ mod tests {
     fn an_unreachable_hub_is_an_err_for_the_retry_loop_not_a_verdict() {
         // Nothing listening: the caller's retry loop owns "not yet" — a
         // refused connection must never masquerade as an onboarding outcome.
-        let login = OwnerLogin { name: "K", username: "k", password: "p" };
+        let login = OwnerLogin {
+            name: "K",
+            username: "k",
+            password: "p",
+        };
         assert!(complete_onboarding("127.0.0.1:1", &login, &quiet()).is_err());
     }
 }

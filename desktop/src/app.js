@@ -3101,7 +3101,33 @@ async function hubMaybeResume() {
   // that hub its self-setup run (quit mid-first-boot with the bundle seeded).
   let up = false;
   try { up = await invoke("hub_probe_hub", { host: rec.host || HUB_HOST }); } catch (_) {}
-  if (up && !rec.provision) { hubClearFlashRecord(); return; }
+  // The password typed at flash time lives only in memory, on purpose — so a
+  // relaunched app can never finish Home Assistant onboarding itself. That
+  // fact must reach the user on EVERY resume path (with or without a pending
+  // self-setup run), or the wizard they meet reads as a broken promise.
+  // hubRunHeadlessSetup appends hub.onboardNote to its finish line, so setting
+  // it here covers the provision paths too.
+  const accountNote = rec.account && !(hub.pendingAccount && hub.pendingAccount.password)
+    ? "This app was closed before it could finish your Home Assistant account, so if the " +
+      "hub asks you to create one, that's why — its wizard takes a minute and wants the " +
+      "same details you typed when flashing."
+    : "";
+  if (accountNote) hub.onboardNote = accountNote;
+  if (up && !rec.provision) {
+    // Nothing to resume — but an account-only flash still deserves the note
+    // above rather than a silent vanish into a surprise wizard.
+    if (accountNote) {
+      const banner = $("hub-resume");
+      banner.classList.remove("hidden");
+      $("hub-resume-dot").className = "dot connected";
+      $("hub-resume-text").textContent = "Your hub from earlier is up. 🐤 " + accountNote;
+      $("hub-resume-open").classList.remove("hidden");
+      $("hub-resume-open").addEventListener("click", () => openExternal("http://" + (rec.host || HUB_HOST)));
+      $("hub-resume-dismiss").addEventListener("click", () => banner.classList.add("hidden"));
+    }
+    hubClearFlashRecord();
+    return;
+  }
   if (up && rec.provision) {
     const banner = $("hub-resume");
     banner.classList.remove("hidden");
@@ -3165,16 +3191,10 @@ async function hubMaybeResume() {
         );
         if (report && report.ok) hubClearFlashRecord();
       } else {
-        // The password typed at flash time lives only in memory, so a
-        // relaunched app can't finish the account itself — say so instead of
-        // letting a surprise wizard read as failure.
+        // accountNote (from the top of hubMaybeResume) is the same honesty the
+        // early already-up path shows: a relaunch lost the password on purpose.
         $("hub-resume-text").textContent =
-          "Your hub from earlier is up. 🐤" +
-          (rec.account
-            ? " This app was closed before it could finish your account, so if the hub asks " +
-              "you to create one, that's why — its wizard takes a minute and wants the same " +
-              "details you typed here."
-            : "");
+          "Your hub from earlier is up. 🐤" + (accountNote ? " " + accountNote : "");
         hubNotify("Your hub is ready", "Open " + (rec.host || HUB_HOST) + " to log in.");
         hubChime();
         hubClearFlashRecord();
