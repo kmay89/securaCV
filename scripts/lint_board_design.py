@@ -32,6 +32,7 @@ So four things are checked, and all of them read the *real* sources:
 Run:  python3 scripts/lint_board_design.py
 CI:   .github/workflows/lint.yml (Repo Lints)
 """
+import csv
 import json
 import re
 import sys
@@ -98,6 +99,55 @@ def lint_board(design_path: Path, failures: list) -> None:
             fail(
                 f"part {part['ref']} ({part['mpn']}) carries an estimated price "
                 "with no `basis` — say where the number came from"
+            )
+
+    # ── 0. Volume quotes are well-formed and actually apply to something ────
+    # A quote is the one price a human types on purpose, and it decides GO/STOP.
+    # A malformed or misaddressed one is the worst kind of defect here: silent.
+    # Type the MPN wrong and the quote binds to nothing, the decision stays
+    # UNRESOLVED forever, and the person who got the quote believes they
+    # answered the question.
+    quoted_mpns = {p["mpn"] for p in design.get("parts", [])}
+    quoted_mpns |= {
+        o["mpn"] for o in design.get("off_board_parts", {}).get("refs", [])
+    }
+    cmp_csv = design.get("compare_to", {}).get("csv")
+    if cmp_csv:
+        csv_path = REPO / "docs/hardware" / cmp_csv
+        if csv_path.exists():
+            with csv_path.open(encoding="utf-8") as fh:
+                for row in csv.DictReader(fh):
+                    mpn = (row.get("MPN") or "").strip()
+                    if mpn:
+                        quoted_mpns.add(mpn)
+
+    for i, q in enumerate(design.get("volume_quotes", {}).get("quotes", [])):
+        where = f"volume_quotes.quotes[{i}]"
+        missing = [k for k in ("mpn", "qty", "unit_usd", "source", "dated") if k not in q]
+        if missing:
+            fail(f"{where} is missing required field(s): {', '.join(missing)}")
+            continue
+        try:
+            if int(q["qty"]) <= 0:
+                fail(f"{where} has qty {q['qty']} — a quote applies at a positive volume")
+        except (TypeError, ValueError):
+            fail(f"{where} has non-integer qty {q['qty']!r}")
+        try:
+            if float(q["unit_usd"]) <= 0:
+                fail(f"{where} has unit_usd {q['unit_usd']} — must be positive")
+        except (TypeError, ValueError):
+            fail(f"{where} has non-numeric unit_usd {q['unit_usd']!r}")
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(q["dated"])):
+            fail(
+                f"{where} has dated {q['dated']!r} — must be YYYY-MM-DD, because "
+                "ties between quotes are broken by recency"
+            )
+        if q["mpn"] not in quoted_mpns:
+            fail(
+                f"{where} quotes MPN {q['mpn']!r}, which appears nowhere in this "
+                f"design's parts or in {cmp_csv}. A quote that binds to nothing "
+                "is silent: the decision stays UNRESOLVED while someone believes "
+                "they answered it. Check the MPN."
             )
 
     # ── 1. Pin map matches the firmware it claims to match ──────────────────

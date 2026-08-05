@@ -149,6 +149,15 @@ jobs:
         # the carrier has quietly stopped being drop-in — and nothing would
         # notice until a populated board came back from the fab.
         run: python3 scripts/lint_board_design.py
+      - name: Board cost model — quote selection and GO/STOP verdict
+        # cost_model.json emits a word a human reads before spending NRE, and
+        # two quiet heuristics stand behind it: which quote applies at the
+        # basis volume, and whether the model may decide at all. Review found
+        # the first (a 100-unit promo could outrank a 1000-unit quote); these
+        # tests found two more — a 10-unit quote reading as GO, and quoting the
+        # published crossover back landing a hair above it. Untested, this is a
+        # guard that reads as covered while deciding money wrong.
+        run: python3 scripts/tests/test_board_design.py
       - name: Board cost models are regenerated
         # cost_model.json/connections.csv are generated from board.json +
         # pricing.json. Committed so the model is reviewable in a diff and
