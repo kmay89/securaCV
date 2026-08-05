@@ -2800,12 +2800,53 @@ function phaseWapBench(port, product) {
   return box;
 }
 
+/* The picker slot: the board's own figure when the catalog carries one, a
+ * neutral placeholder when it doesn't (docs/design/FLEET_FIGURES.md).
+ *
+ * Every row gets a slot of the SAME size either way. That is the whole trick:
+ * the list never reflows as figures land for more of the fleet — a
+ * placeholder simply becomes a drawing. The words stay primary; the figure is
+ * there so you can recognize the board in your hand without parsing a model
+ * number, which is the moment this picker actually gets used.
+ *
+ * The placeholder deliberately does NOT resemble any product. Drawing a
+ * plausible-looking generic board would be worse than drawing nothing: the
+ * one failure this whole system exists to prevent is somebody matching their
+ * hardware against a picture of different hardware.
+ */
+function figureSlot(p) {
+  const slot = el("div", "flash-fig");
+  const f = p.figure;
+  if (f && f.svg) {
+    slot.innerHTML = f.svg;
+    slot.title = f.shared
+      ? `${f.title} — this board is also built as another product`
+      : f.title;
+    return slot;
+  }
+  slot.classList.add("is-placeholder");
+  slot.innerHTML =
+    '<svg viewBox="0 0 64 64" aria-hidden="true">' +
+    '<rect x="12" y="18" width="40" height="28" rx="3"/>' +
+    '<rect class="c" x="20" y="26" width="24" height="12" rx="1.5"/></svg>';
+  slot.append(el("span", null, (p.chip || "").replace("ESP32-", "")));
+  slot.title = "No drawing for this board yet";
+  return slot;
+}
+
 function productRow(p) {
   const row = el("div", "flash-product");
   row.dataset.id = p.id;
+  row.append(figureSlot(p));
   const left = el("div", "flash-product-main");
   left.append(el("div", "flash-product-name", p.name));
   left.append(el("div", "flash-product-tag muted", p.tagline));
+  if (p.figure && p.figure.shared) {
+    // One board, two flashable products. Say it rather than let the drawing
+    // imply this row is the only thing that board becomes.
+    left.append(el("div", "flash-product-note",
+      "This board is also sold as another product — check the name, not just the picture."));
+  }
   const ver = el("div", "flash-product-ver");
   ver.dataset.for = p.id;
   left.append(ver);

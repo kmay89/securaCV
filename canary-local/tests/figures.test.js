@@ -26,6 +26,7 @@ const FIGDIR = join(ROOT, "figures");
 const led = JSON.parse(readFileSync(join(ROOT, "devices/figures.json"), "utf8"));
 const registry = JSON.parse(readFileSync(join(ROOT, "devices/registry.json"), "utf8"));
 const byId = new Map(led.figures.map((f) => [f.id, f]));
+const led2hw = new Map(led.hardware.mapped.map((m) => [m.hardware, m]));
 
 test("the ledger is the documented shape", () => {
   assert.ok(Array.isArray(led.figures) && led.figures.length > 0, "has figures");
@@ -413,6 +414,62 @@ test("the iPhone/Watch bridge only names figures that exist", () => {
     "the witness roster draws the device's figure");
   assert.match(fleetView, /DeviceFigureIcon\(canary\.deviceType/,
     "the discovered-device row draws it too");
+});
+
+test("the flasher picker draws a board only when it can prove which one", () => {
+  // The picker is where a wrong picture costs the most: somebody is holding a
+  // board and matching it against the row. So a figure appears only when the
+  // catalog can point at WHY — either the pins header the build compiles (the
+  // same load-bearing declaration the firmware lookup uses) or an explicit
+  // declaration in the product table, checked against the ledger.
+  const flash = JSON.parse(readFileSync(join(ROOT, "devices/flash.json"), "utf8"));
+  const picker = JSON.parse(readFileSync(join(ROOT, "devices/figures.picker.json"), "utf8"));
+  let drawn = 0;
+  for (const p of flash.products) {
+    const f = p.figure;
+    if (!f) continue;                       // placeholder — always allowed
+    drawn++;
+    const led = byId.get(f.id);
+    assert.ok(led, `${p.id} draws "${f.id}", which is not a figure`);
+    assert.strictEqual(led.role, "device", `${p.id} draws a whole device`);
+    assert.strictEqual(f.title, led.title, `${p.id}'s caption matches the ledger`);
+    assert.ok(f.via, `${p.id} records how its figure was resolved`);
+    assert.strictEqual(f.svg, picker.figures[f.id],
+      `${p.id} carries the generated picker SVG verbatim`);
+    if (f.hardware) {
+      const hw = led2hw.get(f.hardware);
+      assert.ok(hw, `${p.id} names hardware "${f.hardware}" that has no figure`);
+      assert.strictEqual(hw.figure, f.id, `${p.id}'s hardware and figure agree`);
+      assert.strictEqual(!!f.shared, !!hw.shared, `${p.id} carries the shared flag through`);
+    } else {
+      assert.match(f.via, /declared/, `${p.id} has no hardware, so it must say it was declared`);
+    }
+  }
+  assert.ok(drawn > 0, "some rows draw a figure");
+});
+
+test("both flashers render the slot, and neither invents a product", () => {
+  // The two flashers share no UI code (AGENTS.md rule 7), so this is the only
+  // thing standing between them and drift. Both must render the slot, and
+  // both must fall back to the SAME neutral placeholder — a plausible generic
+  // board would be worse than nothing, because it is matchable.
+  const browser = readFileSync(join(ROOT, "assets/flash.js"), "utf8");
+  const desktop = readFileSync(join(REPO, "desktop/src/app.js"), "utf8");
+  for (const [name, src] of [["browser", browser], ["desktop", desktop]]) {
+    assert.match(src, /figureSlot\(/, `the ${name} flasher builds a figure slot`);
+    assert.match(src, /placeholder/, `the ${name} flasher has a placeholder state`);
+    assert.match(src, /is also (built|sold) as another product/,
+      `the ${name} flasher says when one board is two products`);
+  }
+  for (const [name, css] of [
+    ["browser", readFileSync(join(ROOT, "assets/flash.css"), "utf8")],
+    ["desktop", readFileSync(join(REPO, "desktop/src/styles.css"), "utf8")],
+  ]) {
+    // Same fixed size in both, which is what makes the list stop reflowing as
+    // figures arrive.
+    assert.match(css, /width: 46px;\s*\n?\s*height: 46px|width: 46px; height: 46px/,
+      `the ${name} flasher's slot is a fixed 46px`);
+  }
 });
 
 test("the ledger counts what it says it counts", () => {
