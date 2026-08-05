@@ -90,6 +90,91 @@
    }
   },
   {
+   "id": "c3_lcd147",
+   "scad": "canary_c3_lcd147.scad",
+   "title": "Canary — ESP32-C3-LCD-1.47 POCKET CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "universal",
+   "device_compat": [
+    "_universal"
+   ],
+   "class": "primary",
+   "fit": "standard",
+   "variant_axes": [
+    {
+     "param": "headers",
+     "values": [
+      "none",
+      "male"
+     ],
+     "default": "none",
+     "audience": "user"
+    }
+   ],
+   "variants": [
+    {
+     "id": "c3-pocket-display-case",
+     "name": "C3 pocket display case",
+     "for": "Waveshare ESP32-C3-LCD-1.47 (portrait; the C6 sibling's exact outline + panel, plus a TF slot and an RGB LED), both board builds: `headers=\"none\"` (stripped) or `headers=\"male\"` (down-facing headers + brass pillars — deeper case, press bosses land on the flat pillar tops). Three PETG spools: black body, yellow snap lid, white light band — the band does the job of Waveshare's clear-acrylic sandwich. Measured off the hardware: 1 mm behind the glass front, 2.8 mm tall — a U of light up both long walls and across the LED's end wall, tied by hidden inboard ribs so each wall presses in ONE unbroken strip, and the slot's inner face is derived from the cavity and asserted (the stick case's no-black-curtain lesson, kept). The glass is located, not clamped: bosses cut to the exact component stack (no preload), and the face touches the panel only on a land over the module border — the innermost 0.5 mm of lip is relieved 0.25 so the window rim never puts a contact line on the glass edge. Full-depth ear/chin insertion channels (BOOT/RST and the USB-C shell all overhang the PCB edges), true-stadium USB-C opening centered on the shell with an outer overmold relief, and a keyed lid: the board's M2 pillar pattern is asymmetric, so offered the wrong way round the skirt lands on the USB shell and refuses to close — the error is physical, not a rattle you discover later. Keyhole hangs it USB-down. microSD swaps with the lid off (the slot mouth faces down-board; no wall window could pass a card)",
+     "status": "in-development",
+     "device": "_universal",
+     "selects": {},
+     "preview": "preview_dev_c3_147.png",
+     "parts": []
+    }
+   ],
+   "render_parts": [
+    "bezel",
+    "lid",
+    "light",
+    "exploded",
+    "palette"
+   ],
+   "options": [
+    {
+     "id": "opt_btn",
+     "type": "bool",
+     "label": "opt_btn",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "light_seam",
+     "type": "bool",
+     "label": "light_seam",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_keyhole",
+     "type": "bool",
+     "label": "keyhole in the lid — hangs the case USB-down, slot up",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_vent",
+     "type": "bool",
+     "label": "opt_vent",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    }
+   ],
+   "engineering_param_count": 84,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 4,
+    "user_options": 4,
+    "variant_axes": 1
+   }
+  },
+  {
    "id": "c6_display",
    "scad": "canary_c6_display.scad",
    "title": "Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.4-dev)",

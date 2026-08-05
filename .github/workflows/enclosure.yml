@@ -84,9 +84,15 @@ jobs:
           #   chopped the strip into 2.3 mm dashes; moving them to hidden
           #   inboard ribs made each side whole. If this ever reads 8 again,
           #   that regression is back.
+          #   dev_c3_147_band.stl — the C3 pocket case's white light band:
+          #   one strip per long wall plus one across the LED's end wall,
+          #   so exactly 3. Same rib-vs-web doctrine as the stick's band —
+          #   more parts than 3 means the hidden ties have broken through
+          #   the outer skin and diced a strip.
           expect_parts() {
             case "$1" in
               dev_s3_147_band.stl) echo 2 ;;
+              dev_c3_147_band.stl) echo 3 ;;
               *)                   echo 1 ;;
             esac
           }
