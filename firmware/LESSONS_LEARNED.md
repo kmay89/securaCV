@@ -1053,6 +1053,30 @@
   CI on the target that disproves it.
 - **Date learned:** 2026-08
 
+### A feature flag no *built* env sets to 0 is an untested branch
+
+- **What happened:** The `esp32-wroom` port failed to compile:
+  `'storage_is_mounted' was not declared in this scope` in `main.cpp`'s
+  serial `T` (run-all-tests) handler.
+- **Root cause:** `securacv_storage.h` gates its whole API behind
+  `#if FEATURE_SD_STORAGE`, and that call site wasn't guarded. The bug was
+  years old and reachable the whole time — `[env:minimal]` sets
+  `FEATURE_SD_STORAGE=0` — but `minimal` is not in `flavors.json`'s
+  `build_envs`, so CI never compiled it. A board with no SD slot was the
+  first env that both turned the flag off *and* got built.
+- **Fix:** guard the call and print "storage not compiled in" on the
+  else-branch, matching the `FEATURE_DIAGNOSTICS` pattern a few lines up.
+- **The general rule:** a `#if FEATURE_X` header gate is only as good as
+  the envs that exercise `FEATURE_X=0`. If no env in `flavors.json` builds
+  a flag's off-state, its call sites are unverified by construction — which
+  is an argument for the board ports carrying honest, *different* feature
+  postures rather than all-on copies of the flagship.
+- **Regression check:** the classic-ESP32 envs (SD off, camera off, mic
+  off, touch off) now build on every PR, so the common off-states have a
+  compiler watching them. A quick audit script for unguarded calls to
+  gated symbols is in this PR's history if it's ever wanted as a lint.
+- **Date learned:** 2026-08
+
 ---
 
 ## Memory Budget
