@@ -700,7 +700,8 @@ void loop() {
   // like the beacon; also before the early-returns so it keeps tracking peers
   // through an MQTT/WiFi outage (continuous scan when fully off-grid).
   canary::net::fleet_roster_scan_tick(canary::ms_now(),
-                                      canary::net::wifi_connected());
+                                      canary::net::wifi_connected(),
+                                      canary::net::wifi_configured());
 #endif
 
   // Optical pipeline BEFORE the broker/WiFi early-returns below — the same

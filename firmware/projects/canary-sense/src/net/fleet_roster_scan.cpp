@@ -208,7 +208,7 @@ bool ble_up() {
 
 }  // namespace
 
-void fleet_roster_scan_tick(uint32_t now, bool wifi_up) {
+void fleet_roster_scan_tick(uint32_t now, bool wifi_up, bool wifi_provisioned) {
   if (!s_roster_inited) {
     fleet_roster_init(&s_roster);
     s_roster_inited = true;
@@ -238,10 +238,18 @@ void fleet_roster_scan_tick(uint32_t now, bool wifi_up) {
     s_last_expire_ms = now;
   }
 
-  // Fully off-grid (no WiFi to coexist with): scan continuously — the beacon is
-  // the only channel left. On WiFi: short low-duty bursts so BLE and WiFi don't
-  // fight over the shared 2.4 GHz radio.
-  const bool continuous = !wifi_up;
+  // Scan continuously ONLY when there is no join to protect: an unprovisioned
+  // unit has no network to associate with, so the beacon genuinely is the last
+  // channel left and nothing competes for the radio.
+  //
+  // A PROVISIONED unit that is merely offline stays bursty. BLE and WiFi share
+  // one 2.4 GHz radio here, and wifi_loop() is retrying the whole time it is
+  // down — a never-ending passive scan across that window starves the very
+  // association it is waiting for, so a unit that drops off WiFi (or misses
+  // the boot-join timeout once) can never get back on. Low-duty bursts keep
+  // the roster fresh without holding the radio hostage. (field report: an
+  // ESP32-C3 Vision that would not rejoin the WiFi it was flashed with)
+  const bool continuous = !wifi_up && !wifi_provisioned;
   if (s_scanning) return;
   if (!continuous && (int32_t)(now - s_next_burst_ms) < 0) return;
 
@@ -276,7 +284,7 @@ uint32_t fleet_roster_scan_seen() { return s_seen; }
 
 #include <stdint.h>
 namespace canary::net {
-void fleet_roster_scan_tick(uint32_t, bool) {}
+void fleet_roster_scan_tick(uint32_t, bool, bool) {}
 int fleet_roster_scan_peer_count() { return 0; }
 uint32_t fleet_roster_scan_seen() { return 0; }
 }  // namespace canary::net

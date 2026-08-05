@@ -59,6 +59,23 @@ broker, no Raspberry Pi hub, no WiFi, and no pairing step.
   the modular canary's scan feed, and the WAP's `/api/nearby` all accept the
   v2 length, so a detection-flagged peer lands in every fleet view.
 
+### A Canary that drops off WiFi can get back on
+
+Field report from an ESP32-C3 Vision: flashed with good credentials, it would
+not rejoin its network. The fleet roster's BLE scan went **continuous** the
+moment the STA link was down — but BLE and WiFi share one 2.4 GHz radio on the
+C3/C6, and `wifi_loop()` is retrying that entire time, so the scan starved the
+association it was waiting for. Miss the boot-join timeout once and the device
+could stay locked out, each retry landing in a radio the scanner never
+released.
+
+Continuous scanning now requires that there be **no join to protect**: only an
+unprovisioned unit (nothing to associate with, so the beacon really is the last
+channel) scans continuously. A provisioned unit that is merely offline keeps
+its low-duty 3 s / 60 s bursts and leaves the radio free to rejoin. The
+presence beacon itself is unchanged, so broker-free discovery — including the
+new detection alerts above — keeps working exactly as before.
+
 ## [2.4.5] - 2026-08-03
 
 ### The setup wizard stops crashing — for the reasons 2.4.4 didn't reach
