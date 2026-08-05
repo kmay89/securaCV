@@ -38,18 +38,29 @@ jobs:
           MOUSER_API_KEY: ${{ secrets.MOUSER_API_KEY }}
         run: python3 scripts/bom_pricing.py --exceptions-out bom_exceptions.json
 
-      - name: Regenerate the catalog JSONs that ride the snapshot
-        run: python3 canary-local/tools/gen_enclosures.py
+      # EVERY generator that reads the snapshot, not just the first one that
+      # did. gen_board_design.py stamps the board cost model with the pricing
+      # data's own timestamp (pricing_as_of), so a refreshed snapshot leaves
+      # that file stale by construction — and `gen_board_design.py --check` is
+      # a gate in lint.yml. Missing it here meant the nightly job pushed a
+      # commit that turned main red, and every PR opened afterwards inherited
+      # a failure it had nothing to do with. A job that regenerates SOME of
+      # what it invalidates is worse than one that regenerates none, because
+      # the gap only shows up on somebody else's branch.
+      - name: Regenerate everything that rides the snapshot
+        run: |
+          python3 canary-local/tools/gen_enclosures.py
+          python3 scripts/gen_board_design.py
 
       - name: Commit the refreshed snapshot
         run: |
-          if git diff --quiet -- docs/hardware/pricing.json canary-local/devices; then
+          if git diff --quiet -- docs/hardware/pricing.json canary-local/devices boards; then
             echo "snapshot unchanged — nothing to commit"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/hardware/pricing.json canary-local/devices
+          git add docs/hardware/pricing.json canary-local/devices boards
           git commit -m "bom: nightly supply-chain snapshot"
           git push
 
