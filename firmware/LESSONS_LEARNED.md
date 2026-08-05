@@ -1022,6 +1022,39 @@
 
 ---
 
+## Portability
+
+### A GPIO→peripheral-channel table is per-silicon, and only a second target proves it
+
+- **What happened:** The first classic-ESP32 ports (`esp32cam`,
+  `esp32-wroom`) failed to compile in `securacv_power.cpp`:
+  `'ADC1_CHANNEL_8' was not declared in this scope`.
+- **Root cause:** `gpio_to_adc1_channel()` was a flat table written against
+  the XIAO — GPIO1-10 → ADC1_CHANNEL_0-9, which is the ESP32-S3 layout.
+  ADC1 has ten channels on S3/S2, five on C3, and eight on the classic
+  ESP32, where they live on GPIO32-39 in non-ascending order. The table had
+  been correct-by-luck for three years because every board in the tree was
+  S3 or C3, and the C3 boards never enable the battery monitor.
+- **Fix:** the mapping is now `#if defined(CONFIG_IDF_TARGET_*)`-branched,
+  with the S3 table untouched and classic-ESP32 / C3 tables beside it. The
+  `default:` arm stays channel 0 on every target — that's the "board
+  declared no usable VBAT pin" path, and it is safe because a reading
+  outside the divider-detect window already reports USB-only rather than
+  inventing a battery.
+- **The general rule:** anything that maps a GPIO number to a peripheral
+  channel (ADC, touch pad, RTC/LP GPIO, DAC) is silicon-specific data, not
+  portable logic. When adding a target, grep for these tables before
+  trusting a build — and prefer a compile error (which this was) to a
+  silent wrong-channel read, which is what the `default:` arm would have
+  given us if the channel had merely been out of range instead of
+  undeclared.
+- **Regression check:** the classic-ESP32 envs now build on every PR
+  (`flavors.json` → `build-platformio`), so any new S3-shaped table fails
+  CI on the target that disproves it.
+- **Date learned:** 2026-08
+
+---
+
 ## Memory Budget
 
 ### Internal-DRAM statics are the lever for the BLE budget — and nm lies about where they live
