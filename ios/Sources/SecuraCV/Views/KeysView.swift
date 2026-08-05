@@ -46,6 +46,18 @@ struct KeysView: View {
                     Text("Sealed snapshots are encrypted to your key. The Canary holds only the public half — it's structurally unable to open them. Only this phone can, in the Secure Enclave.")
                 }
 
+                Section {
+                    NavigationLink {
+                        AppleHomeView()
+                    } label: {
+                        Label("Apple Home", systemImage: "house")
+                    }
+                } header: {
+                    Text("The house")
+                } footer: {
+                    Text("Publish the fleet's coarse signals into the Home app so automations can answer the witness. Off until you turn it on; the house learns booleans, never footage.")
+                }
+
                 AboutSection()
             }
             .navigationTitle("Keys")

@@ -90,6 +90,91 @@
    }
   },
   {
+   "id": "c3_lcd147",
+   "scad": "canary_c3_lcd147.scad",
+   "title": "Canary — ESP32-C3-LCD-1.47 POCKET CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "family": "universal",
+   "device_compat": [
+    "_universal"
+   ],
+   "class": "primary",
+   "fit": "standard",
+   "variant_axes": [
+    {
+     "param": "headers",
+     "values": [
+      "none",
+      "male"
+     ],
+     "default": "none",
+     "audience": "user"
+    }
+   ],
+   "variants": [
+    {
+     "id": "c3-pocket-display-case",
+     "name": "C3 pocket display case",
+     "for": "Waveshare ESP32-C3-LCD-1.47 (portrait; the C6 sibling's exact outline + panel, plus a TF slot and an RGB LED), both board builds: `headers=\"none\"` (stripped) or `headers=\"male\"` (down-facing headers + brass pillars — deeper case, press bosses land on the flat pillar tops). Three PETG spools: black body, yellow snap lid, white light band — the band does the job of Waveshare's clear-acrylic sandwich. Measured off the hardware: 1 mm behind the glass front, 2.8 mm tall — a U of light up both long walls and across the LED's end wall, tied by hidden inboard ribs so each wall presses in ONE unbroken strip, and the slot's inner face is derived from the cavity and asserted (the stick case's no-black-curtain lesson, kept). The glass is located, not clamped: bosses cut to the exact component stack (no preload), and the face touches the panel only on a land over the module border — the innermost 0.5 mm of lip is relieved 0.25 so the window rim never puts a contact line on the glass edge. Full-depth ear/chin insertion channels (BOOT/RST and the USB-C shell all overhang the PCB edges), true-stadium USB-C opening centered on the shell with an outer overmold relief, and a keyed lid: the board's M2 pillar pattern is asymmetric, so offered the wrong way round the skirt lands on the USB shell and refuses to close — the error is physical, not a rattle you discover later. Keyhole hangs it USB-down. microSD swaps with the lid off (the slot mouth faces down-board; no wall window could pass a card)",
+     "status": "in-development",
+     "device": "_universal",
+     "selects": {},
+     "preview": "preview_dev_c3_147.png",
+     "parts": []
+    }
+   ],
+   "render_parts": [
+    "bezel",
+    "lid",
+    "light",
+    "exploded",
+    "palette"
+   ],
+   "options": [
+    {
+     "id": "opt_btn",
+     "type": "bool",
+     "label": "opt_btn",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "light_seam",
+     "type": "bool",
+     "label": "light_seam",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_keyhole",
+     "type": "bool",
+     "label": "keyhole in the lid — hangs the case USB-down, slot up",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "opt_vent",
+     "type": "bool",
+     "label": "opt_vent",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    }
+   ],
+   "engineering_param_count": 84,
+   "alternatives": [],
+   "remix_of": null,
+   "counts": {
+    "variants": 1,
+    "released": 0,
+    "options": 4,
+    "user_options": 4,
+    "variant_axes": 1
+   }
+  },
+  {
    "id": "c6_display",
    "scad": "canary_c6_display.scad",
    "title": "Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.4-dev)",
@@ -1001,7 +1086,7 @@
     {
      "id": "7-touch-dashboard-case",
      "name": "7″ touch dashboard case",
-     "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on molded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (~52 cm² back grille + bottom-wall intake and top-wall exhaust — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centered USB pass-through plus a matching side exit on the microSD's wall (hang the case portrait with that wall down and the cable leaves out the bottom; the leashed blank fills whichever exit is idle) and three TPU fitments: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive leashed press-through BOOT/RESET plug whose press towers reach the button caps at the board edge, and a peel-open SD cover that stays attached. Optional 20° desk dock for the frame (drop-in slot on tilted seat pads, self-centering keys into the frame's keying slots, landscape and portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centers and `pcb_h` are NOMINAL — measure yours",
+     "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on molded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (bottom-wall intake → top-wall exhaust — print in PETG/ASA, this panel runs hot; the two-part tray adds a ~41 cm² back grille, and the one-piece `frame`'s plate deliberately carries none — see the back-plate section), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centered USB pass-through plus a matching side exit on the microSD's wall (hang the case portrait with that wall down and the cable leaves out the bottom; the leashed blank fills whichever exit is idle) and three TPU fitments: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive leashed press-through BOOT/RESET plug whose press towers reach the button caps at the board edge, and a peel-open SD cover that stays attached. Optional 20° desk dock for the frame (drop-in slot on tilted seat pads, self-centering keys into the frame's keying slots, landscape and portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centers and `pcb_h` are NOMINAL — measure yours",
      "status": "in-development",
      "device": "canary-display-dash",
      "selects": {},
@@ -1032,8 +1117,6 @@
     "dock_probe_p",
     "dock_probe_p2",
     "ring_gauge",
-    "cradle",
-    "cradle_dock",
     "port_teth_hole",
     "port_teth_barb",
     "port_barb_proud",
@@ -1047,7 +1130,7 @@
     "coupon_ink",
     "coupon_accent",
     "coupon_qr_body",
-    "coupon_qr_ink",
+    "coupon_qr_fill",
     "frame_color",
     "fil_overlap",
     "fil_gap"
@@ -1072,18 +1155,18 @@
     {
      "id": "vent_back",
      "type": "bool",
-     "label": "large grille in the back plate",
+     "label": "grille in the TWO-PART TRAY's back (part=\"back\").",
      "consequence": "",
      "audience": "user",
      "default": true
     },
     {
-     "id": "vent_grade",
+     "id": "plate_grille",
      "type": "bool",
-     "label": "false = every egg full size, as before",
+     "label": "large grille in the ONE-PIECE FRAME's back plate.",
      "consequence": "",
      "audience": "user",
-     "default": true
+     "default": false
     },
     {
      "id": "badge_column",
@@ -1118,14 +1201,6 @@
      "default": true
     },
     {
-     "id": "mount_cradle",
-     "type": "bool",
-     "label": "dock on the wall cradle (part=\"cradle\")",
-     "consequence": "",
-     "audience": "user",
-     "default": false
-    },
-    {
      "id": "mount_keyholes",
      "type": "bool",
      "label": "wall-mount keyholes through the back plate, one in",
@@ -1156,6 +1231,14 @@
      "consequence": "",
      "audience": "user",
      "default": true
+    },
+    {
+     "id": "soc_win",
+     "type": "bool",
+     "label": "soc_win",
+     "consequence": "",
+     "audience": "user",
+     "default": false
     },
     {
      "id": "dock_keys",
@@ -1316,10 +1399,10 @@
     {
      "id": "qr_back",
      "type": "bool",
-     "label": "deboss the help QR into the back plate too",
+     "label": "deboss the help QR into the back PLATE",
      "consequence": "",
      "audience": "user",
-     "default": false
+     "default": true
     },
     {
      "id": "stamp_show",
@@ -1343,7 +1426,7 @@
      "default": "none"
     }
    ],
-   "engineering_param_count": 283,
+   "engineering_param_count": 293,
    "alternatives": [
     "dash_display"
    ],

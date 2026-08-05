@@ -138,6 +138,15 @@ devstl dev_c6_147_back.stl   canary_c6_display.scad -D 'model="1.47"' -D 'part="
 # same board sold with factory down-facing pin headers → deeper case
 devstl dev_c6_147_hdr_bezel.stl canary_c6_display.scad -D 'model="1.47"' -D 'headers="male"' -D 'part="bezel"'
 devstl dev_c6_147_hdr_back.stl  canary_c6_display.scad -D 'model="1.47"' -D 'headers="male"' -D 'part="back"'
+# The C3 sibling (same outline + panel, plus TF slot and RGB LED): black body,
+# yellow snap lid, and the white light band that replaces Waveshare's acrylic
+# sandwich — three strips (two long walls + the LED's end wall), so the mesh
+# gate expects THREE parts for the band, not one.
+devstl dev_c3_147_bezel.stl  canary_c3_lcd147.scad -D 'part="bezel"'
+devstl dev_c3_147_lid.stl    canary_c3_lcd147.scad -D 'part="lid"'
+devstl dev_c3_147_band.stl   canary_c3_lcd147.scad -D 'part="light"'
+devstl dev_c3_147_hdr_bezel.stl canary_c3_lcd147.scad -D 'headers="male"' -D 'part="bezel"'
+devstl dev_c3_147_hdr_lid.stl   canary_c3_lcd147.scad -D 'headers="male"' -D 'part="lid"'
 # The USB-A stick (hallway nightlight body). Three printed parts — bezel, back
 # plate, and the white light-band strips that fill the seam. The mesh gate
 # below is what actually proves the snap beams, the seam's hidden ribs and the
@@ -152,14 +161,6 @@ devstl dev_lcd7_back.stl     canary_s3_lcd7.scad -D 'part="back"'
 devstl dev_lcd7_frame.stl    canary_s3_lcd7.scad -D 'part="frame"'
 devstl dev_lcd7_frame_gauge.stl canary_s3_lcd7.scad -D 'part="frame_gauge"'
 devstl dev_lcd7_stand.stl    canary_s3_lcd7.scad -D 'part="stand"'
-# The 7" wall plate. mount_cradle is OFF by default on this case (its dock
-# pads collide with the desk stand's slot — see the flag), so the plate has
-# to be asked for explicitly or it asserts. Rendered anyway: the part exists,
-# so it gets mesh-checked like everything else rather than rotting unbuilt
-# behind a flag.
-devstl dev_lcd7_cradle.stl   canary_s3_lcd7.scad -D 'part="cradle"' \
-                                                 -D 'mount_cradle=true' \
-                                                 -D 'mount_keyholes=false'
 devstl dev_lcd7_stand_gauge.stl canary_s3_lcd7.scad -D 'part="stand_gauge"'
 # corner gauge — the ~16.5 g sanity print that comes before the ~158 g case pair
 devstl dev_lcd7_gauge_bezel.stl canary_s3_lcd7.scad -D 'part="gauge_bezel"'
@@ -226,6 +227,7 @@ if [[ "${1:-}" != "--no-png" ]]; then
   (SRC="canary_vision_pro_mount.scad"; png "preview_dev_visionpro.png" -D 'part="plate"')
   (SRC="canary_wear_clip.scad";     png "preview_dev_wear.png"    -D 'part="all"')
   (SRC="canary_c6_display.scad";    png "preview_dev_c6_147.png"  -D 'model="1.47"' -D 'part="all"')
+  (SRC="canary_c3_lcd147.scad";     png "preview_dev_c3_147.png"  -D 'part="exploded"')
   (SRC="canary_s3_lcd147.scad";     png "preview_dev_s3_147.png"  -D 'part="exploded"')
   (SRC="canary_s3_lcd7.scad";       png "preview_dev_lcd7.png"    -D 'part="all"')
   (SRC="canary_s3_touch169.scad";   png "preview_dev_t169.png"    -D 'part="all"')
@@ -234,4 +236,4 @@ if [[ "${1:-}" != "--no-png" ]]; then
   (SRC="canary_dock.scad";          png "preview_dev_dock.png")
 fi
 
-echo "Done: released STLs (WAP 10 / Vision 9 / Doorbell 5 / Sense 2) + 52 dev renders + 3 SVG templates + previews."
+echo "Done: released STLs (WAP 10 / Vision 9 / Doorbell 5 / Sense 2) + 57 dev renders + 3 SVG templates + previews."

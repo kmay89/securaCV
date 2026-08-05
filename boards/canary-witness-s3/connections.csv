@@ -1,0 +1,84 @@
+net,net_class,signal,gpio,ref,pin,note
+VBUS,power,,,J-USB,VBUS,5 V from USB-C
+VBUS,power,,,D-ESD,VBUS,5 V from USB-C
+VBUS,power,,,U3,VIN,5 V from USB-C
+VBAT,power,,,J-BAT,+,"Single-cell LiPo. The MCP73831 is a charger, NOT a load-sharing / power-path device: its VBAT pin is one battery terminal, so the cell, the charger terminal and the regulator input are electrically ONE node. An earlier revision of this file split them into VBAT and VSYS, which was a contradiction — the same physical pin on two named nets — and would have forced schematic capture to either short them or invent a power-path device that is not in the parts list. See known_tradeoffs/no-load-sharing for what this topology costs."
+VBAT,power,,,U3,VBAT,"Single-cell LiPo. The MCP73831 is a charger, NOT a load-sharing / power-path device: its VBAT pin is one battery terminal, so the cell, the charger terminal and the regulator input are electrically ONE node. An earlier revision of this file split them into VBAT and VSYS, which was a contradiction — the same physical pin on two named nets — and would have forced schematic capture to either short them or invent a power-path device that is not in the parts list. See known_tradeoffs/no-load-sharing for what this topology costs."
+VBAT,power,,,U2,VIN,"Single-cell LiPo. The MCP73831 is a charger, NOT a load-sharing / power-path device: its VBAT pin is one battery terminal, so the cell, the charger terminal and the regulator input are electrically ONE node. An earlier revision of this file split them into VBAT and VSYS, which was a contradiction — the same physical pin on two named nets — and would have forced schematic capture to either short them or invent a power-path device that is not in the parts list. See known_tradeoffs/no-load-sharing for what this topology costs."
+VBAT,power,,,R-DIV,top,"Single-cell LiPo. The MCP73831 is a charger, NOT a load-sharing / power-path device: its VBAT pin is one battery terminal, so the cell, the charger terminal and the regulator input are electrically ONE node. An earlier revision of this file split them into VBAT and VSYS, which was a contradiction — the same physical pin on two named nets — and would have forced schematic capture to either short them or invent a power-path device that is not in the parts list. See known_tradeoffs/no-load-sharing for what this topology costs."
++3V3,power,,,U2,VOUT,
++3V3,power,,,U1,3V3,
++3V3,power,,,MK1,VDD,
++3V3,power,,,J-SD,VDD,
++3V3,power,,,J-CAM,VDD,
+GND,power,,,U1,GND,
+GND,power,,,U2,GND,
+GND,power,,,U3,GND,
+GND,power,,,MK1,GND,
+GND,power,,,J-SD,GND,
+GND,power,,,J-CAM,GND,
+GND,power,,,J-USB,GND,
+GND,power,,,J-BAT,-,
+GND,power,,,D-ESD,GND,
+CAM_XCLK,signal,cam_xclk,10,U1,IO10,
+CAM_XCLK,signal,cam_xclk,10,J-CAM,XCLK,
+CAM_SIOD,signal,cam_siod,40,U1,IO40,
+CAM_SIOD,signal,cam_siod,40,J-CAM,SIOD,
+CAM_SIOC,signal,cam_sioc,39,U1,IO39,
+CAM_SIOC,signal,cam_sioc,39,J-CAM,SIOC,
+CAM_D7,signal,cam_d7,48,U1,IO48,
+CAM_D7,signal,cam_d7,48,J-CAM,D7,
+CAM_D6,signal,cam_d6,11,U1,IO11,
+CAM_D6,signal,cam_d6,11,J-CAM,D6,
+CAM_D5,signal,cam_d5,12,U1,IO12,
+CAM_D5,signal,cam_d5,12,J-CAM,D5,
+CAM_D4,signal,cam_d4,14,U1,IO14,
+CAM_D4,signal,cam_d4,14,J-CAM,D4,
+CAM_D3,signal,cam_d3,16,U1,IO16,
+CAM_D3,signal,cam_d3,16,J-CAM,D3,
+CAM_D2,signal,cam_d2,18,U1,IO18,
+CAM_D2,signal,cam_d2,18,J-CAM,D2,
+CAM_D1,signal,cam_d1,17,U1,IO17,
+CAM_D1,signal,cam_d1,17,J-CAM,D1,
+CAM_D0,signal,cam_d0,15,U1,IO15,
+CAM_D0,signal,cam_d0,15,J-CAM,D0,
+CAM_VSYNC,signal,cam_vsync,38,U1,IO38,
+CAM_VSYNC,signal,cam_vsync,38,J-CAM,VSYNC,
+CAM_HREF,signal,cam_href,47,U1,IO47,
+CAM_HREF,signal,cam_href,47,J-CAM,HREF,
+CAM_PCLK,signal,cam_pclk,13,U1,IO13,
+CAM_PCLK,signal,cam_pclk,13,J-CAM,PCLK,
+SD_SCK,signal,sd_sck,7,U1,IO7,
+SD_SCK,signal,sd_sck,7,J-SD,CLK,
+SD_MISO,signal,sd_miso,8,U1,IO8,
+SD_MISO,signal,sd_miso,8,J-SD,DAT0,
+SD_MOSI,signal,sd_mosi,9,U1,IO9,
+SD_MOSI,signal,sd_mosi,9,J-SD,CMD,
+SD_CS,signal,sd_cs,21,U1,IO21,
+SD_CS,signal,sd_cs,21,J-SD,DAT3,
+MIC_CLK,signal,mic_clk,42,U1,IO42,
+MIC_CLK,signal,mic_clk,42,MK1,CLK,
+MIC_DATA,signal,mic_data,41,U1,IO41,
+MIC_DATA,signal,mic_data,41,MK1,DOUT,
+VBAT_SENSE,signal,vbat_sense,1,U1,IO1,"2:1 divider, ratio 2.0 per power_monitor.h DIVIDER_RATIO"
+VBAT_SENSE,signal,vbat_sense,1,R-DIV,mid,"2:1 divider, ratio 2.0 per power_monitor.h DIVIDER_RATIO"
+CHIRP,signal,chirp,2,U1,IO2,GPIO 2 is an ESP32-S3 strapping pin — the buzzer drive must not hold it at reset. Check the boot-mode level at capture; firmware/boards/PIN_BUDGET.md flags this pin as conditional for exactly this reason.
+CHIRP,signal,chirp,2,J-EXP,CHIRP,GPIO 2 is an ESP32-S3 strapping pin — the buzzer drive must not hold it at reset. Check the boot-mode level at capture; firmware/boards/PIN_BUDGET.md flags this pin as conditional for exactly this reason.
+STATUS_LED,signal,status_led,3,U1,IO3,EXT_LED_PIN_DEFAULT — the only status indicator on this board. Deliberately NOT GPIO 21; see resolved_questions/gpio21-collision.
+STATUS_LED,signal,status_led,3,J-EXP,LED,EXT_LED_PIN_DEFAULT — the only status indicator on this board. Deliberately NOT GPIO 21; see resolved_questions/gpio21-collision.
+TAMPER,signal,tamper,4,U1,IO4,"INPUT_PULLUP, active low per TAMPER_ACTIVE"
+TAMPER,signal,tamper,4,J-EXP,TAMPER,"INPUT_PULLUP, active low per TAMPER_ACTIVE"
+BOOT_N,signal,boot_button,0,U1,IO0,BOOT_BUTTON_ACTIVE is LOW — switch to GND
+BOOT_N,signal,boot_button,0,SW1,BOOT,BOOT_BUTTON_ACTIVE is LOW — switch to GND
+RESET_N,signal,,,U1,EN,Module reset; the EN pin is not a GPIO and so carries no pin_map row
+RESET_N,signal,,,SW1,RST,Module reset; the EN pin is not a GPIO and so carries no pin_map row
+GNSS_TX,signal,gnss_tx,43,U1,IO43,
+GNSS_TX,signal,gnss_tx,43,J-EXP,GNSS_TX,
+GNSS_RX,signal,gnss_rx,44,U1,IO44,
+GNSS_RX,signal,gnss_rx,44,J-EXP,GNSS_RX,
+USB_DP,signal,,,U1,IO20,
+USB_DP,signal,,,J-USB,DP,
+USB_DP,signal,,,D-ESD,IO1,
+USB_DM,signal,,,U1,IO19,
+USB_DM,signal,,,J-USB,DM,
+USB_DM,signal,,,D-ESD,IO2,

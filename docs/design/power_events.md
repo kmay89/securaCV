@@ -174,8 +174,30 @@ keeps witnessing"*).
   `heartbeat()` (the loop liveness persist). It is the copy-me reference for the
   other trees. *(Compiled on CI/hardware; the pure core it calls is the
   host-tested part.)*
-- **Next (per firmware, hardware-validated):** apply the same three-call recipe.
-  Priority: **canary-display 4.3C** (has a PCF85063 RTC for real wall-clock
-  outage times + the scoped on-glass UX) → wap / vision / sense / sentinel.
-  Each is a small, isolated change against the same proven core; the base
-  helper is the template.
+- **Done — Home Assistant egress:** the base tree also publishes the boot
+  classification on `securacv/<id>/tamper` as the payload the integration's
+  per-type sensors parse — `{"type":"power_loss"}` for a restored outage or
+  brownout (with the honest lower-bound duration in `detail` when one is
+  known), `{"type":"unexpected_reboot"}` for a fault reset, nothing for a
+  benign boot. The JSON builder is `powerevents::ha_tamper_json()` in the pure
+  core, host-tested exactly; the publish is non-retained on purpose (a
+  retained copy would re-trigger HA's edge-latching sensors on every HA
+  restart). This closes the "`power_loss` — none found" row in
+  [`homeassistant_setup.md`](../homeassistant_setup.md) for the base tree.
+- **Done — canary-display wiring:**
+  [`power_events_glue.h`](../../firmware/projects/canary-display/include/canary/power_events_glue.h)
+  applies the recipe to the display tree — `on_boot()` and the loop heartbeat
+  both sit **above** the mode latch so a bench/demo boot still records its
+  lineage, and the health publish carries the held
+  `power_loss_detected`/`unexpected_reboot` flags. Two honest differences
+  from the base tree: no witness record (this tree carries no signing
+  kernel — verify-only by design), and `pe_clean` rides `putUChar` (the
+  display's Preferences shim documents that the bool accessors may be
+  absent). The 4.3C's RTC stays off pending its I2C census, so outage
+  durations there read unknown until `FEATURE_RTC` is hardware-validated —
+  the classifier itself needs no clock. *(Compiled on CI; the on-glass
+  "power" line is the hardware-validated follow-up.)*
+- **Next (per firmware, hardware-validated):** wap / vision / sense /
+  sentinel, same recipe; and the 4.3C's RTC + on-glass outage history once
+  the I2C census confirms the PCF85063. Each is a small, isolated change
+  against the same proven core; the base helper is the template.

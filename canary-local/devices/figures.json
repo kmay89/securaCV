@@ -505,6 +505,11 @@
       "status": "in-development"
      },
      {
+      "product": "c3_lcd147",
+      "variant": "c3-pocket-display-case",
+      "status": "in-development"
+     },
+     {
       "product": "dock",
       "variant": "fleet-provisioning-dock",
       "status": "in-development"
@@ -3160,6 +3165,11 @@
      {
       "product": "bench_fixture",
       "variant": "bench-bring-up-fixture",
+      "status": "in-development"
+     },
+     {
+      "product": "c3_lcd147",
+      "variant": "c3-pocket-display-case",
       "status": "in-development"
      },
      {

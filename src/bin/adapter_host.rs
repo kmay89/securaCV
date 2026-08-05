@@ -382,6 +382,14 @@ struct RouteCfg {
     require_truthy_state: bool,
     #[serde(default)]
     numeric_min: Option<f32>,
+    /// Read the gating state from this JSON field instead of `state` (for multiplexed
+    /// topics like a Canary's `sensing` stream). Fails closed when the field is absent.
+    #[serde(default)]
+    state_field: Option<String>,
+    /// The state must equal this string exactly to emit a claim. Replaces the
+    /// truthy/numeric gates — configuring it alongside them is a config error.
+    #[serde(default)]
+    state_equals: Option<String>,
     /// "adapter" (default when omitted) or "ha-bridged" for routes fed by an
     /// HA mqtt_statestream bridge.
     #[serde(default)]
@@ -447,10 +455,18 @@ fn build_routes(routes: &[RouteCfg]) -> Result<Vec<SensorRoute>> {
         .map(|r| {
             let kind = ClaimKind::from_str_opt(&r.kind)
                 .ok_or_else(|| anyhow!("unknown claim kind '{}'", r.kind))?;
+            if r.state_equals.is_some() && (r.require_truthy_state || r.numeric_min.is_some()) {
+                return Err(anyhow!(
+                    "route '{}': state_equals replaces the truthy/numeric gates — configure only one",
+                    r.topic
+                ));
+            }
             let mut route = SensorRoute::new(r.topic.clone(), kind, r.zone.clone());
             route.min_confidence = r.min_confidence;
             route.require_truthy_state = r.require_truthy_state;
             route.numeric_min = r.numeric_min;
+            route.state_field = r.state_field.clone();
+            route.state_equals = r.state_equals.clone();
             route.attestation = match r.attestation.as_deref() {
                 None | Some("adapter") => None, // adapter provenance is the path default
                 Some("ha-bridged") => Some(Attestation::HaBridged),

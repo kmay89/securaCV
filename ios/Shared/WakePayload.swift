@@ -10,6 +10,13 @@
 // content (Invariants I and III). Everything a user reads is composed on their
 // own device from their own data. Keeping the vocabulary and the copy here
 // means a reviewer can check that claim by reading one short file.
+//
+// That claim is about the PAYLOAD, which is what this file governs. The record
+// carrying it also gets a precise creation date from CloudKit that we can
+// neither set nor suppress, and for a wake that date is close to the event
+// time. It never reaches the notification, so nothing here is weakened by it —
+// but the residual is real and is costed in docs/design/cloudkit_backend.md
+// §6.4 rather than left to be discovered.
 
 import Foundation
 

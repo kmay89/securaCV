@@ -385,6 +385,12 @@ def main() -> int:
     rust_haps = rust_match_pairs(
         rust_fn_body(rust_hk, "hap_characteristic", "src/bridge/homekit.rs"),
         r'HomeSignal::(\w+) => "([a-z0-9-]+)"')
+    # Matter device types (bridge site D, data-first): explicit Some(...) arms
+    # only — a signal the dictionary maps to null must NOT appear in the match
+    # body, so it falls to the `_ => None` arm.
+    rust_matter = rust_match_pairs(
+        rust_fn_body(rust_hk, "matter_device_type", "src/bridge/homekit.rs"),
+        r'HomeSignal::(\w+) => Some\("([a-z0-9-]+)"\)')
     swift_hk = read("ios/Sources/SecuraCV/Native/HomeKitBridge.swift")
     swift_haps = swift_computed_property_map(
         swift_hk, "hapCharacteristic", "ios/Sources/SecuraCV/Native/HomeKitBridge.swift")
@@ -397,6 +403,9 @@ def main() -> int:
         if rust_haps.get(rv) != hap:
             err(f"[drift] HomeSignal::{rv}.hap_characteristic(): dictionary "
                 f"{hap!r} vs code {rust_haps.get(rv)!r}")
+        if rust_matter.get(rv) != s.get("matter_device_type"):
+            err(f"[drift] HomeSignal::{rv}.matter_device_type(): dictionary "
+                f"{s.get('matter_device_type')!r} vs code {rust_matter.get(rv)!r}")
         swift_case = snake_to_lower_camel(sid)
         if swift_haps.get(swift_case) != hap:
             err(f"[drift] HomeKitBridge.swift .{swift_case}.hapCharacteristic: "

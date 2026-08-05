@@ -45,6 +45,7 @@ The "not from Bambu Lab, load geometry and color data only" dialog on open is
 expected and harmless — it means the filament assignment was read.
 """
 import struct
+import re
 import subprocess
 import sys
 import zipfile
@@ -69,11 +70,57 @@ COUPON = [("body", "coupon_body", 1, LCD7, {}),
 FRAME = [("body", "fil_body", 1, LCD7, {}),
          ("ink", "fil_ink", 2, LCD7, {}),
          ("accent", "fil_accent", 3, LCD7, {})]
-# The QR plaque is deliberately TWO filaments, not three. The symbol is ink
-# modules on a body-color field, and the accent must never land on a finder
-# pattern — a three-slot version of this would only offer a way to break it.
-QR_COUPON = [("body", "coupon_qr_body", 1, LCD7, {}),
-             ("ink", "coupon_qr_ink", 2, LCD7, {})]
+# The QR plaque is deliberately TWO filaments, not three: the symbol's modules
+# on a body-color field. WHICH filament carries the modules is READ FROM THE
+# SCAD rather than named here — canary_s3_lcd7.scad's ink_groups/accent_groups
+# are the only place that decides, and a hardcoded slot in this file went stale
+# the instant "qr" moved to the accent. The failure was silent and nasty: the
+# scad's coupon part rendered empty, OpenSCAD wrote no file, and this packer
+# shipped a body-only plaque — a scan coupon with no symbol, handed to someone
+# told to scan it before committing a frame.
+#
+# Note this is the ONE volume list that is derived. The others may name a
+# filament that the palette does not currently load: build() renders them,
+# finds an empty object, drops the volume and says so out loud. That is the
+# right behavior for a body/ink/accent triple, where a missing color is a fact
+# about the palette. It is the WRONG behavior here, because dropping the
+# modules leaves a plaque that is still printable, still two-sided, and no
+# longer a scan coupon.
+FIL_SLOT = {"body": 1, "ink": 2, "accent": 3}
+
+
+def group_filament(group: str) -> str:
+    """Which filament a back-plate group takes, per the .scad's own lists."""
+    src = (HERE / LCD7).read_text(encoding="utf-8")
+    for name, fil in (("accent_groups", "accent"), ("ink_groups", "ink")):
+        m = re.search(rf"^{name}\s*=\s*\[([^\]]*)\]", src, re.M)
+        if m and re.search(rf'"{re.escape(group)}"', m.group(1)):
+            return fil
+    return "body"
+
+
+_QR_FIL = group_filament("qr")
+QR_COUPON = [("body", "coupon_qr_body", 1, LCD7, {})] + (
+    [] if _QR_FIL == "body"
+    else [(_QR_FIL, "coupon_qr_fill", FIL_SLOT[_QR_FIL], LCD7, {})])
+
+# Objects whose volumes are ALL required — an empty one is a hard error here,
+# not a dropped volume with a note.
+#
+# The general rule (drop it, say so, carry on) is right for the color coupon:
+# a palette that puts no ink on that object is a real configuration, and the
+# operator just loads one fewer spool. It is exactly wrong for the QR coupon,
+# whose entire job is to be SCANNED. Drop its ink and you package a blank
+# body-colored plaque, print it, and learn nothing — while the run log says
+# "EMPTY: the palette puts no ink on this object", which reads like a palette
+# decision rather than a broken test.
+#
+# That happened: turning the back plate's `qr_back` off also stopped the coupon
+# drawing a symbol, because the coupon intersects the frame's ink and the frame
+# had none. The .scad fix is `qr_draw` (the coupon carries the symbol whether or
+# not the plate does); this is the second lock, so the next way it breaks is
+# caught by the packager rather than by a printed part that will not scan.
+REQUIRE_ALL = {"QR coupon"}
 
 # ── The hallway stick (Waveshare ESP32-S3-LCD-1.47) ────────────────────────
 # Two objects, three filaments, and the whole reason it is worth packaging:
@@ -131,12 +178,51 @@ SETS = {
     # tower twice for no reason.
     "stick": [("stick bezel", STICK_BEZEL, (100, 150)),
               ("stick back",  STICK_BACK,  (100, 95))],
+    # THE TPU FITMENTS, two of each — a spare is worth more than a second job.
+    # All six are ONE material, so this plate changes tool exactly never: no
+    # purge tower, no tower zone, and every volume on slot 1. That is the whole
+    # reason they get their own plate rather than riding along with a rigid
+    # one; a soft part sharing a plate with a color change waits through the
+    # tower and comes off strung.
+    #
+    # ⚠️ THE SLOT IS NOT THE POINT — THE FEED PATH IS. Slot 1 here means "the
+    # first filament of this plate", and what that spool has to be is decided
+    # by durometer, not by this file: 90-95 A must come off an EXTERNAL holder
+    # (it buckles in the AMS's long PTFE path and jams the hub), while Bambu's
+    # stiffer "TPU for AMS" 68 D feeds the AMS fine and is too hard to be a
+    # good leash. Both print this plate; they do not print it equally well.
+    # See bambu_p2s_bringup.md §0, and the leash note at port_tether.
+    #
+    # Layout: the two covers stand side by side on the left (they are the tall
+    # parts, 20 x 48), the four stadium fitments stack down the right in the
+    # order you install them — grommets first, then the blanks that fill
+    # whichever exit you did not use. Spacing is deliberately loose. TPU strings
+    # between close parts and a wipe that clips a neighbor drags it off the
+    # plate, which on a 14 g print costs more than the bed space does.
+    #
+    # ALL FOUR FITMENTS, and that is the point of naming the set "tpu" rather
+    # than listing the three somebody happened to ask for. The frame cuts a
+    # BOOT/RESET window, so a plate that omits plug_buttons leaves the case
+    # with an open hole and no way to press the buttons through it — and it
+    # does so silently, because nothing downstream knows what the operator
+    # meant to print. A set named for a MATERIAL has to carry everything made
+    # of it; anything less is a checklist that quietly loses an item.
+    "tpu": [
+        ("SD cover 1",    [("tpu", "plug_sd",      1, LCD7, {})], (80, 128)),
+        ("SD cover 2",    [("tpu", "plug_sd",      1, LCD7, {})], (112, 128)),
+        ("grommet 1",     [("tpu", "grommet_usb",  1, LCD7, {})], (150, 145)),
+        ("grommet 2",     [("tpu", "grommet_usb",  1, LCD7, {})], (150, 125)),
+        ("port blank 1",  [("tpu", "plug_port",    1, LCD7, {})], (150, 105)),
+        ("port blank 2",  [("tpu", "plug_port",    1, LCD7, {})], (150, 85)),
+        ("button plug 1", [("tpu", "plug_buttons", 1, LCD7, {})], (195, 145)),
+        ("button plug 2", [("tpu", "plug_buttons", 1, LCD7, {})], (195, 118)),
+    ],
 }
 # The file each set writes. Named per CASE, not per set, so two cases' plates
 # can never overwrite each other.
 OUTPUT = {"gauges": "lcd7_gauges", "color": "lcd7_color",
           "coupon": "lcd7_coupon", "qr": "lcd7_qr", "frame": "lcd7_frame",
-          "stick": "stick_case"}
+          "stick": "stick_case", "tpu": "lcd7_tpu"}
 assert set(OUTPUT) == set(SETS), "every set needs an output name"
 # Volume tuples grew a source and a defines dict when a second case moved in
 # here, and a set written inline (rather than through one of the named lists
@@ -281,8 +367,11 @@ def bbox(verts):
     return min(xs), max(xs), min(ys), max(ys)
 
 
-def build(setname: str) -> Path:
-    groups, oid = [], 0
+def build(setname: str) -> tuple:
+    """Returns (path, used_slots) — the slots are what actually SURVIVED the
+    render, not what SETS listed. An empty volume is dropped here, so the
+    table over-reports: for the two-color palette it still names slot 2."""
+    groups, oid, used_slots = [], 0, set()
     for gname, vols, center in SETS[setname]:
         meshes, dropped = [], []
         for _n, part, slot, src, defs in vols:
@@ -290,6 +379,13 @@ def build(setname: str) -> Path:
             stl = render(part, HERE / f"_3mf_{Path(src).stem}_{part}{tag}.stl",
                          src, defs)
             if stl is None:            # this color is not on this object
+                if gname in REQUIRE_ALL:
+                    raise SystemExit(
+                        f"'{gname}': the {_n} volume (part=\"{part}\") rendered "
+                        f"EMPTY, and this object needs all of its volumes — a "
+                        f"QR coupon with no symbol on it is a test that cannot "
+                        f"fail. Check that the symbol is drawn for this part "
+                        f"(see qr_draw in {src}).")
                 dropped.append((_n, slot))
                 continue
             oid += 1
@@ -316,6 +412,7 @@ def build(setname: str) -> Path:
               f"{x1-x0:6.1f} x {y1-y0:5.1f} mm  at ({center[0]}, {center[1]})")
         for m in meshes:
             print(f"      {m[1]:7} {len(m[4]):>6} triangles  filament {m[2]}")
+            used_slots.add(m[2])
         # Loud, never silent: a filament missing from a plate changes what the
         # operator has to load, and a color coupon that quietly stopped
         # rehearsing a color is worse than one that never claimed to.
@@ -441,7 +538,7 @@ def build(setname: str) -> Path:
         z.writestr("3D/3dmodel.model", model)
         z.writestr("Metadata/model_settings.config", bambu)
         z.writestr("Metadata/Slic3r_PE_model.config", prusa)
-    return out
+    return out, sorted(used_slots)
 
 
 def main() -> int:
@@ -451,7 +548,7 @@ def main() -> int:
     if which == "tests":
         for i, part in enumerate(("gauges", "color"), 1):
             print(f"packaging {part}  (plate {i} of 2):")
-            print(f"OK {build(part).name}")
+            print(f"OK {build(part)[0].name}")
         print("\n  Print lcd7_gauges.3mf FIRST: one filament, no tool change,")
         print("  no purge tower. The ring gauge on it is the cheapest thing")
         print("  that can tell you the whole outline is wrong, and nobody")
@@ -462,14 +559,30 @@ def main() -> int:
         print(f"usage: gen_3mf.py [tests | {' | '.join(SETS)}]", file=sys.stderr)
         return 2
     print(f"packaging {which}:")
-    out = build(which)
+    out, slots = build(which)
     print(f"OK {out.name}  {out.stat().st_size / 1e6:.2f} MB")
     print("  open it directly — already positioned and already on their "
           "filaments.")
-    print("  Add the filament SLOTS in Bambu Studio first: with one slot "
-          "loaded there is")
-    print("  nothing for parts 2 and 3 to point at, and it reads as 'the "
-          "parts are missing'.")
+    # Name the slots this plate ACTUALLY uses. "parts 2 and 3" was right only
+    # while every object was three-filament; the two-color palette uses slots
+    # 1 and 3, so a fixed sentence sends the operator to load the wrong spool
+    # into the one slot the plate does not touch.
+    named = (", ".join(str(s) for s in slots[:-1]) + f" and {slots[-1]}"
+             if len(slots) > 1 else str(slots[0]))
+    # ...and only give the load-the-slots warning when there IS more than one.
+    # On a single-material plate the old text read "add filament SLOTS 1 first:
+    # with one slot loaded there is nothing for the other volumes to point at",
+    # which describes a hazard that cannot occur and names slots that do not
+    # exist. Advice that is wrong on a plate is worse than no advice, because
+    # the operator cannot tell which half of the sentence to believe.
+    if len(slots) > 1:
+        print(f"  Add filament SLOTS {named} in Bambu Studio first: with one")
+        print("  slot loaded there is nothing for the other volumes to point")
+        print("  at, and it reads as 'the parts are missing'.")
+    else:
+        print(f"  ONE material, one slot ({named}) — no tool change anywhere on")
+        print("  this plate, so no purge tower and nothing to remap. Whatever")
+        print("  is loaded in that slot is what the whole plate prints in.")
     return 0
 
 

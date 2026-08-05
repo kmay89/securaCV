@@ -1,9 +1,12 @@
 # SecuraCV on Apple TV — the Witness Wall
 
-> Status: **design, greenfield.** No tvOS code exists yet. This is the plan —
-> what it does, why it's the anti-surveillance-wall, and how it self-heals,
-> self-publishes, and self-updates so it "never rots, works for years"
-> (`docs/design/raspberry_pi_hub_flashing.md`).
+> Status: **built and continuously tested.** The app lives in
+> [`tvos/`](../../tvos/) (SwiftUI Wall + a Rust witness core, built and
+> tested on every PR); the App Store upload waits on an Apple Developer
+> account — see [`tvos/README.md`](../../tvos/README.md). This doc remains
+> the design brief — what it does, why it's the anti-surveillance-wall, and
+> how it self-heals, self-publishes, and self-updates so it "never rots,
+> works for years" (`docs/design/raspberry_pi_hub_flashing.md`).
 
 Witnessing without watching — on the biggest screen in the house, or behind
 the bar.

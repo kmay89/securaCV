@@ -127,6 +127,46 @@ inline void witness_incident() {
   witness_create_record(payload, cbor.size(), RECORD_STATE_CHANGE, &rec);
 }
 
+// How long the periodic health payload keeps reflecting this boot's power
+// lineage (power_loss_detected / unexpected_reboot). The one-shot tamper
+// message below is non-retained, and after a whole-house outage the hub
+// reboots slower than the Canary — a late-subscribing Home Assistant would
+// miss it entirely. Health repeats on a cadence, so the flag rides there
+// until the hold lapses; HA's health parse then clears the sensor itself.
+inline constexpr uint32_t kIncidentHoldMs = 3600000u;  // 1 h
+
+// The hold, latched: once it lapses it never re-arms, so the 32-bit millis()
+// wrap at ~49.7 days cannot resurrect an hour of stale power alerts. (The
+// comparison alone would read "young again" every wrap.)
+inline bool hold_active(uint32_t now_ms) {
+  static bool s_expired = false;
+  if (s_expired) return false;
+  if (now_ms >= kIncidentHoldMs) {
+    s_expired = true;
+    return false;
+  }
+  return true;
+}
+
+// True while the periodic health payload should carry power_loss_detected.
+inline bool health_power_flag(uint32_t now_ms) {
+  return powerevents::is_power_incident(g_boot) && hold_active(now_ms);
+}
+
+// True while it should carry unexpected_reboot (a fault-reset lineage).
+inline bool health_fault_flag(uint32_t now_ms) {
+  return g_boot == powerevents::BootPower::Fault && hold_active(now_ms);
+}
+
+// The boot classification as the securacv/<id>/tamper payload the Home
+// Assistant integration's per-type sensors parse ({"type":"power_loss"} /
+// {"type":"unexpected_reboot"}). Returns false for a benign boot — nothing to
+// publish. Called from main.cpp's MQTT drain once the broker is up; the JSON
+// itself is built by the pure core (proven by test_power_events.cpp).
+inline bool ha_tamper_payload(char* out, size_t cap) {
+  return powerevents::ha_tamper_json(g_boot, g_outage_s, out, cap);
+}
+
 // Call every loop: persists the liveness heartbeat on a cadence — and only when
 // the wall clock is actually set, so a board with no clock never writes a
 // meaningless heartbeat. The heartbeat bounds the NEXT outage's lower-bound

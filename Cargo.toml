@@ -125,6 +125,10 @@ pqc-tls = ["rustls", "webpki-roots", "rustls-pki-types"]
 # RFC 3161 trusted timestamping: enables log_anchor's online `request`
 # subcommand (the offline query/import flow needs no feature).
 tsa = ["ureq"]
+# The hub-side alert relay (docs/design/alert_relay.md): metadata-only pokes
+# over ntfy. Zero new crates — ureq (already vetted for tsa/ingest-esp32)
+# carries rustls, so network egress stays opt-in at build time.
+alert-relay = ["ureq"]
 # C2PA Content Credentials sidecar manifests for export bundles
 # (docs/design/c2pa_export.md). Fully offline; keys derived from the device
 # seed with domain separation; trust anchor is the device-local CA.
@@ -140,6 +144,14 @@ path = "src/bin/witnessd.rs"
 name = "hap_bridge"
 path = "src/bin/hap_bridge.rs"
 required-features = ["bridge-homekit-server"]
+
+# The alert relay. Gated so a default build carries no outbound-HTTP path;
+# the poke vocabulary and debounce live in src/relay/ and are unit-tested
+# without a broker or a network.
+[[bin]]
+name = "alert_relay"
+path = "src/bin/alert_relay.rs"
+required-features = ["alert-relay"]
 
 [[bin]]
 name = "log_verify"

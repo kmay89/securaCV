@@ -87,6 +87,33 @@ No. Logs stay local, there is no remote indexing and no telemetry (Invariant
 IV). No account is required to run it. Dependencies that phone home are
 forbidden by policy. → [`AGENTS.md`](../AGENTS.md) dependency policy
 
+The one honest footnote is the iPhone app — see the next question.
+
+### The iPhone app uses iCloud. Doesn't that contradict all of this?
+
+It's a fair thing to ask, so here is the whole of it. Two things need to reach
+you when you aren't standing next to a Canary: **your fleet list** (so your iPad
+knows what your iPhone paired) and **an alert when you're away** (iOS will not
+keep a connection open in your pocket — instant push on iPhone must travel
+through Apple, which is a platform fact, not our choice).
+
+Those two things ride **your own iCloud private database**. Not ours — we have
+no server at all. What goes in is a fleet list with no secrets in it, and a wake
+that carries one coarse word (`tamper` / `integrity` / `offline` / `pattern`)
+and nothing else: no device name, no room, no time of ours, no event content.
+The sentence you actually read is composed on your phone from your own data,
+which is why a locked screen only ever says "Something needs your attention."
+
+What never goes in: footage, frames, anything reversible to them, event content,
+precise times, or any key or token. Those are Invariants I and III, and they are
+not negotiable for convenience.
+
+It's opt-in and reversible — away alerts stay off until you arm an "Anywhere"
+rule, and turning them off deletes the subscription outright. Not signed into
+iCloud at all? The app works locally; iCloud is convenience, never a gate.
+→ [iCloud as the backend we don't have](design/cloudkit_backend.md), which also
+argues the parts that are imperfect rather than only the parts that are good
+
 ### Why are the timestamps deliberately vague?
 
 Events are bucketed into 10-minute windows so the log can prove *that*
@@ -191,19 +218,38 @@ is **Canary WAP**. → [the full stack](full_stack_setup.md) ·
 integration](frigate_integration.md) → [the Verified Timeline
 card](lovelace_timeline.md).
 
+### Can I talk to it? Doesn't voice mean a microphone?
+
+**Yes — locally, and the microphone is never a Canary's.** The hub runs Home
+Assistant's fully local voice stack (Whisper speech-to-text, Piper
+text-to-speech, an optional wake word), so "is the fleet OK?" and "what was
+the last witness event?" are answered on your own Pi with nothing leaving the
+house. Voice input comes from a dedicated satellite — your phone's
+push-to-talk button, or a wake-word box whose stated job is listening — and
+the intents are read-only by construction: no sentence arms, disarms, or
+unseals anything, because a spoken word carries no signature. Transcribing
+what the world says *near* a witness device remains forbidden forever
+(Invariant II). → [the recipe](voice_control.md) ·
+[the design and its contract](research/whisper_local_voice.md)
+
 ### Does it work with Apple Home? What about HomeKit Secure Video?
 
-**Apple Home: designed, not built** — the RFC is
+**Apple Home: yes, two lanes** — the design is
 [the Apple Home design doc](design/apple_home_integration.md). The shape:
-each Canary appears in the Home app as a *sensor* accessory
+the fleet appears in the Home app as *sensor* accessories
 (motion/occupancy/contact/tamper/liveness — by default no more than a dumb
 PIR would report; one opt-in setting can add the coarse object class —
 person, vehicle, animal, package — never identity), so your automations can
-answer the witness — lights on when
-a person crosses the driveway, the whole house responding to tamper. If you
-run the Home Assistant hub, HA's own HomeKit Bridge can project the
-existing securacv sensors into Apple Home today; the worked recipe is the
-RFC's first deliverable.
+answer the witness — lights on when a person crosses the driveway, the whole
+house responding to tamper. Built today: the hub speaks HAP directly
+(bridge site B — the Home app pairs with it, no Home Assistant in the path;
+the two-minute wizard is in the
+[Apple Home quickstart](integrations/apple-home-quickstart.md)), and if you
+run the Home Assistant hub, HA's own HomeKit Bridge projects the securacv
+sensors with zero new code — the worked recipe is
+[apple-home-homekit-bridge.md](integrations/apple-home-homekit-bridge.md).
+Device-native pairing (a Canary in the Home app with no hub at all) and
+Matter are still design, per the RFC's phasing table.
 
 **HomeKit Secure Video: no — and on purpose.** HKSV's core loop uploads the
 raw clip on every motion trigger, which is exactly what Invariant I ("No

@@ -114,7 +114,7 @@ jobs:
         # It also self-tests that its ban pattern never starts matching correct
         # English (characteristic, realistic, colored, …).
         run: python3 scripts/lint_spelling.py
-      - name: CloudKit container — named, never defaulted
+      - name: CloudKit container — named, never defaulted, fully deployed
         # CKContainer.default() reads an entitlement and raises an ObjC
         # CKException when there isn't one. Swift can't catch that, so an
         # unsigned build (CI builds exactly that) aborts on launch — which is
@@ -122,6 +122,12 @@ jobs:
         # iCloud. The gate bans the call and cross-checks the one hardcoded
         # container identifier against both entitlements files, because a
         # name that drifts silently swaps one broken iCloud for another.
+        # It also checks that every CKRecord type the app uses is listed in
+        # ios/scripts/cloudkit_schema.sh: production never auto-creates a
+        # record type, so one nobody deployed makes every read and write
+        # against it fail — silently, because both call sites swallow errors
+        # on purpose. PairedDevice was missing from that table for its whole
+        # life. See docs/design/cloudkit_backend.md.
         run: python3 scripts/lint_cloudkit_container.py
       - name: Agent entrypoints match AGENTS.md
         # Every AI tool reads a different filename (GEMINI.md, QWEN.md,
@@ -137,6 +143,31 @@ jobs:
         run: python3 scripts/lint_common_lib_manifests.py
       - name: BOM CSVs — schema-clean and wired into the generator
         run: python3 scripts/lint_bom.py
+      - name: Board designs — pin map matches firmware, netlist coheres
+        # A carrier board's entire cost case is that the firmware does NOT
+        # change. If a GPIO moves in a board's pins.h and not in board.json,
+        # the carrier has quietly stopped being drop-in — and nothing would
+        # notice until a populated board came back from the fab.
+        run: python3 scripts/lint_board_design.py
+      - name: Board cost model — quote selection and GO/STOP verdict
+        # cost_model.json emits a word a human reads before spending NRE, and
+        # two quiet heuristics stand behind it: which quote applies at the
+        # basis volume, and whether the model may decide at all. Review found
+        # the first (a 100-unit promo could outrank a 1000-unit quote); these
+        # tests found two more — a 10-unit quote reading as GO, and quoting the
+        # published crossover back landing a hair above it. Untested, this is a
+        # guard that reads as covered while deciding money wrong.
+        run: python3 scripts/tests/test_board_design.py
+      - name: Board cost models are regenerated
+        # cost_model.json/connections.csv are generated from board.json +
+        # pricing.json. Committed so the model is reviewable in a diff and
+        # works offline; byte-checked so nobody can hand-edit a saving in.
+        run: python3 scripts/gen_board_design.py --check
+      - name: Hub voice wizard is regenerated
+        # tools/hub_voice_setup.sh embeds docs/voice_sentences_en.yaml
+        # verbatim (via scripts/gen_hub_voice_setup.py), so the wizard can
+        # never install a different sentence grammar than the docs promise.
+        run: python3 scripts/gen_hub_voice_setup.py --check
       - name: BOM pricing engine — contract tests
         run: python3 scripts/tests/test_bom_pricing.py
       - name: verify_pipeline.sh false-pass regression tests
