@@ -595,8 +595,17 @@ function updateNet() {
 }
 
 // ── the live watcher ─────────────────────────────────────────────────────────
+// How many consecutive ticks the tracked port may be missing before we call it
+// unplugged. A USB-CDC board drops off the bus for a moment when it reboots
+// (right after a flash, or on EN/RESET), and the serial monitor rides that out
+// — so the watcher must too, or every reboot would read as an unplug.
+// Re-enumeration is usually 1–3 s; eight gives a slow OS margin while a real
+// unplug still resolves in seconds instead of never.
+const UNPLUG_GRACE_POLLS = 8;
+let missingPolls = 0;
+
 async function pollPorts() {
-  if (state.busy || state.monitoring) return; // don't poke a port another task owns
+  if (state.busy) return; // a flash/rescue owns the port — hands off entirely
 
   let ports;
   try {
@@ -606,6 +615,17 @@ async function pollPorts() {
   }
   const usb = ports.filter((p) => p.kind === "usb");
   syncPortSelect(usb);
+
+  // While the serial monitor owns the port we must not OPEN it (no identify,
+  // no port switching) — but presence is still ours to report. Enumerating
+  // ports is a read-only OS query that touches nothing, and skipping it here
+  // is exactly how the green dot once outlived the board: flash → monitor
+  // auto-starts → unplug the Canary, and the app said "Connected" forever.
+  if (state.monitoring) {
+    trackPresenceWhileMonitoring(usb);
+    return;
+  }
+  missingPolls = 0;
 
   const candidate = pickCandidate(usb);
 
@@ -633,6 +653,38 @@ async function pollPorts() {
     return;
   }
   await identify(candidate);
+}
+
+// The monitor's native side follows the board by port name first, then by
+// VID/PID when the name changes across a reboot (matching_port in
+// serial_monitor.rs). Mirror that here so the status bar and the monitor
+// always agree on whether the board is still with us.
+function trackPresenceWhileMonitoring(usb) {
+  const byName = state.port ? usb.find((p) => p.name === state.port) : null;
+  const info = state.portInfo;
+  const byUsbId = !byName && info
+    ? usb.find((p) => Number(p.vid) === Number(info.vid) && Number(p.pid) === Number(info.pid))
+    : null;
+  const found = byName || byUsbId;
+  if (found) {
+    if (byUsbId) {
+      // Same board, new name after re-enumeration — follow it, like the monitor does.
+      state.port = found.name;
+    }
+    state.portInfo = found;
+    missingPolls = 0;
+    setConn("connected", `Connected · ${state.chip || "Canary"} on ${state.port}`);
+    return;
+  }
+  missingPolls += 1;
+  if (missingPolls < UNPLUG_GRACE_POLLS) {
+    // A rebooting board re-enumerates within a second or two; don't call a
+    // blink an unplug. The monitor is waiting it out on its own thread.
+    setConn("reading", "Board went away — waiting for it to come back…");
+    return;
+  }
+  missingPolls = 0;
+  onDisconnect(); // really gone: stop the monitor, back to the scanning state
 }
 
 function pickCandidate(usb) {
@@ -2828,6 +2880,15 @@ const hub = {
   // The last flash's receipt, so the first-boot watch knows whether this card
   // carries the self-setup bundle it should run when the hub answers.
   lastReceipt: null,
+  // The account typed at flash time, held in MEMORY ONLY so the first-boot
+  // watch can finish Home Assistant's own onboarding the moment the hub
+  // answers. Never persisted — a relaunch loses it on purpose, and the resume
+  // copy says so honestly instead of pretending.
+  pendingAccount: null,
+  // A leftover human-facing note from the onboarding run (e.g. "one setup
+  // page still wants a click"), so the self-setup finish line can carry it
+  // instead of overwriting it with a clean "all done".
+  onboardNote: null,
 };
 
 const HUB_HOST = "homeassistant.local:8123";
@@ -3041,7 +3102,7 @@ function hubInit() {
 // A flash writes a tiny "last flash" record; on the next launch, if it's
 // recent and the hub isn't up yet, we quietly re-offer to watch for it — so a
 // crash, quit, or reboot mid-first-boot never loses the thread.
-function hubRecordFlash(provisionPending, piholeChoice) {
+function hubRecordFlash(provisionPending, piholeChoice, accountPending) {
   try {
     localStorage.setItem(
       HUB_LASTFLASH_KEY,
@@ -3051,6 +3112,10 @@ function hubRecordFlash(provisionPending, piholeChoice) {
         // True when the card carries the self-setup bundle and this app still
         // owes the hub a setup run — survives a quit/relaunch mid-first-boot.
         provision: !!provisionPending,
+        // True when an account was typed at flash time. The PASSWORD is never
+        // persisted, so a relaunched app can't finish onboarding itself — this
+        // flag exists so the resume copy can say that honestly.
+        account: !!accountPending,
         // The Pi-hole decision travels WITH the pending run, not with the
         // remembered-settings blob. "Remember these" may be off, and the
         // checkbox's HTML default is checked — so relying on the live checkbox
@@ -3072,7 +3137,33 @@ async function hubMaybeResume() {
   // that hub its self-setup run (quit mid-first-boot with the bundle seeded).
   let up = false;
   try { up = await invoke("hub_probe_hub", { host: rec.host || HUB_HOST }); } catch (_) {}
-  if (up && !rec.provision) { hubClearFlashRecord(); return; }
+  // The password typed at flash time lives only in memory, on purpose — so a
+  // relaunched app can never finish Home Assistant onboarding itself. That
+  // fact must reach the user on EVERY resume path (with or without a pending
+  // self-setup run), or the wizard they meet reads as a broken promise.
+  // hubRunHeadlessSetup appends hub.onboardNote to its finish line, so setting
+  // it here covers the provision paths too.
+  const accountNote = rec.account && !(hub.pendingAccount && hub.pendingAccount.password)
+    ? "This app was closed before it could finish your Home Assistant account, so if the " +
+      "hub asks you to create one, that's why — its wizard takes a minute and wants the " +
+      "same details you typed when flashing."
+    : "";
+  if (accountNote) hub.onboardNote = accountNote;
+  if (up && !rec.provision) {
+    // Nothing to resume — but an account-only flash still deserves the note
+    // above rather than a silent vanish into a surprise wizard.
+    if (accountNote) {
+      const banner = $("hub-resume");
+      banner.classList.remove("hidden");
+      $("hub-resume-dot").className = "dot connected";
+      $("hub-resume-text").textContent = "Your hub from earlier is up. 🐤 " + accountNote;
+      $("hub-resume-open").classList.remove("hidden");
+      $("hub-resume-open").addEventListener("click", () => openExternal("http://" + (rec.host || HUB_HOST)));
+      $("hub-resume-dismiss").addEventListener("click", () => banner.classList.add("hidden"));
+    }
+    hubClearFlashRecord();
+    return;
+  }
   if (up && rec.provision) {
     const banner = $("hub-resume");
     banner.classList.remove("hidden");
@@ -3136,7 +3227,10 @@ async function hubMaybeResume() {
         );
         if (report && report.ok) hubClearFlashRecord();
       } else {
-        $("hub-resume-text").textContent = "Your hub from earlier is up. 🐤";
+        // accountNote (from the top of hubMaybeResume) is the same honesty the
+        // early already-up path shows: a relaunch lost the password on purpose.
+        $("hub-resume-text").textContent =
+          "Your hub from earlier is up. 🐤" + (accountNote ? " " + accountNote : "");
         hubNotify("Your hub is ready", "Open " + (rec.host || HUB_HOST) + " to log in.");
         hubChime();
         hubClearFlashRecord();
@@ -3306,7 +3400,8 @@ function hubValidateAccount() {
       (/[0-9]/.test(pass) ? 1 : 0) + (/[^a-zA-Z0-9]/.test(pass) ? 1 : 0);
     const strength = pass.length >= 16 || (pass.length >= 12 && variety >= 3)
       ? "strong" : pass.length >= 10 ? "decent" : "okay";
-    msg = `Looks good — password strength: ${strength}. First boot will be a login page.`;
+    msg = `Looks good — password strength: ${strength}. Keep this app open after the flash and ` +
+      "it finishes your account the moment the hub comes online.";
   }
   hub.accountValid = ok;
   hint.textContent = msg;
@@ -3389,7 +3484,8 @@ function hubStartFirstBoot() {
   // including whether this app still owes the hub its self-setup run.
   hubRecordFlash(
     hub.lastReceipt && hub.lastReceipt.provision_seeded,
-    $("hub-provision-pihole").checked
+    $("hub-provision-pihole").checked,
+    hub.pendingAccount
   );
   const panel = $("hub-firstboot");
   panel.classList.remove("hidden");
@@ -3425,18 +3521,34 @@ function hubStartFirstBoot() {
       openBtn.classList.remove("alive-pop");
       void openBtn.offsetWidth;
       openBtn.classList.add("alive-pop");
+      const wantAccount = !!(hub.pendingAccount && hub.pendingAccount.password);
       const wantSetup = hub.lastReceipt && hub.lastReceipt.provision_seeded;
+      // The account comes FIRST: being left at Home Assistant's sign-in or
+      // wizard page is the failure this whole flow exists to prevent, and the
+      // add-on installs below don't depend on it — but the user does.
+      if (wantAccount) {
+        $("hub-fb-text").textContent =
+          "It's alive! Creating your Home Assistant account on the hub…";
+        hubNotify("Your hub is ready", "Finishing your account automatically — no setup wizard for you.");
+        await hubRunOnboarding($("hub-fb-text"));
+      }
       if (wantSetup) {
         // The hub is up and the card carries the self-setup bundle — this is
         // the moment the whole option exists for. Run it now; the record is
         // cleared only once setup actually finished, so a quit mid-run still
         // resumes into "run self-setup" rather than losing the thread.
         $("hub-fb-text").textContent =
-          "It's alive! Finishing setup from this computer — broker, MQTT, Frigate, securaCV…";
-        hubNotify("Your hub is ready", "Finishing setup automatically — no monitor needed.");
+          "Finishing setup from this computer — broker, MQTT, Frigate, securaCV…";
+        if (!wantAccount) {
+          hubNotify("Your hub is ready", "Finishing setup automatically — no monitor needed.");
+        }
         const report = await hubRunHeadlessSetup($("hub-fb-text"), $("hub-fb-setup"));
         if (report && report.ok) hubClearFlashRecord();
         else $("hub-fb-host").classList.remove("hidden");
+      } else if (wantAccount) {
+        // hubRunOnboarding already wrote the outcome into the status line.
+        hubChime();
+        hubClearFlashRecord();
       } else {
         $("hub-fb-text").textContent = "It's alive! Your hub is up. 🐤";
         hubNotify("Your hub is ready", "Open " + HUB_HOST + " to log in.");
@@ -3447,6 +3559,60 @@ function hubStartFirstBoot() {
   };
   hub.fbTimer = setInterval(tick, 5000);
   tick();
+}
+
+// ── finishing Home Assistant's own first-run setup ──────────────────────────
+// The card carries a hashed `.storage` head start, but the promise is kept
+// HERE: once the hub answers, this app drives Home Assistant's own onboarding
+// API to done — create the owner account, finish the wizard's remaining pages,
+// and VERIFY the login opens the hub. It reads the hub's real state first and
+// only does what's missing, so it converges no matter what actually happened
+// on first boot: the seed applied (verify and stop), it didn't (do it all), a
+// previous run died partway, or someone clicked ahead in a browser. Nobody is
+// ever left at a sign-in page holding credentials the hub has never heard of.
+async function hubRunOnboarding(statusEl, hostOverride) {
+  const acct = hub.pendingAccount;
+  if (!acct || !acct.password) return null;
+  // Unlike the ssh path, onboarding wants the web port — the backend adds
+  // :8123 itself when a cleaned host doesn't carry one.
+  const host = hubCleanHost(hostOverride) || HUB_HOST;
+  const attempts = 5;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const report = await invoke("hub_onboard", {
+        host,
+        name: acct.name,
+        username: acct.username,
+        password: acct.password,
+      });
+      // Any report is a definitive answer from the hub — the password's job
+      // is done either way, so drop it from memory now.
+      hub.pendingAccount = null;
+      if (report.ok) {
+        hub.onboardNote = null;
+        statusEl.textContent =
+          "Your Home Assistant account is ready — the login is checked and works. " +
+          "Open http://" + HUB_HOST + " and sign in any time. 🐤";
+      } else {
+        hub.onboardNote = report.note ||
+          "Home Assistant still has a setup step waiting in the browser.";
+        statusEl.textContent = hub.onboardNote;
+      }
+      return report;
+    } catch (e) {
+      // Unreachable / not ready — HA can answer its front page moments before
+      // its API is up. Patience beats an error here.
+      if (attempt === attempts) {
+        hub.onboardNote =
+          "Couldn't finish your Home Assistant account automatically (" + e + "). " +
+          "Nothing is lost: open the hub and its wizard walks you through the same steps.";
+        statusEl.textContent = hub.onboardNote;
+        return null;
+      }
+      await new Promise((r) => setTimeout(r, 6000));
+    }
+  }
+  return null;
 }
 
 // ── self-setup over the hub's service console ───────────────────────────────
@@ -3485,7 +3651,10 @@ async function hubRunHeadlessSetup(statusEl, retryBtn, hostOverride, piholeOverr
         (withPihole
           ? ", plus Pi-hole. To switch Pi-hole on, point your router's DNS at the hub's IP — until then it sits idle."
           : ".") +
-        " Open your hub and the SecuraCV panel is waiting. 🐤";
+        " Open your hub and the SecuraCV panel is waiting. 🐤" +
+        // A clean install must not bury an account that still needs a human —
+        // carry the onboarding run's note over the finish line.
+        (hub.onboardNote ? " One thing about your account: " + hub.onboardNote : "");
       hubNotify(
         "Hub setup finished",
         "Broker, MQTT, Frigate, and securaCV are installed — open " + HUB_HOST + "."
@@ -3791,12 +3960,17 @@ async function hubFlash() {
   setStatus("hub-result", "", "");
   hubSaveSettings();
   try {
+    // Keep the typed account in memory for the first-boot watch: the card gets
+    // a hashed head start, but the PROMISE is kept post-boot, when this app
+    // finishes Home Assistant's own onboarding with these exact credentials.
+    hub.pendingAccount = hubAccountValue();
+    hub.onboardNote = null;
     const receipt = await invoke("hub_flash", {
       boardId: hub.boardId || (hub.plan ? hub.plan.board_id : "rpi5-64"),
       diskPath: target.path,
       confirmed: true,
       wifi: hubWifiValue(),
-      account: hubAccountValue(),
+      account: hub.pendingAccount,
       provision: $("hub-provision").checked,
     });
     hub.done = true;
@@ -3859,8 +4033,10 @@ function hubShowHatch(receipt) {
   $("hub-hatch-body").textContent =
     `${receipt.os_label} is on ${receipt.target_path} — every byte read back and matched ` +
     `(SHA-256 ${receipt.sha256.slice(0, 16)}…).${cacheLine}${wifiLine}${acctLine}${provLine}${ejectLine}`;
-  // If the account was pre-made, the third step is "log in", not "create".
-  const accountMade = receipt.account_seeded;
+  // With an account typed at flash time, the app itself finishes Home
+  // Assistant's onboarding when the hub answers — the step below promises
+  // exactly that, not the card seed (which is only a head start).
+  const accountTyped = !!hub.pendingAccount;
   // The first step depends on HOW we reached the Pi's storage: a card in a
   // reader moves to the Pi; the Pi-over-USB-C path has nothing to move — but
   // it stays a plain USB disk until it's power-cycled onto its own supply.
@@ -3899,8 +4075,10 @@ function hubShowHatch(receipt) {
             "refused for the whole house. Until the router change it sits idle.",
         ]
       : []),
-    accountMade
-      ? `Open http://${HUB_HOST} and log in with the account you just made.`
+    accountTyped
+      ? "Keep this app open through first boot: the moment the hub answers, this app creates " +
+        "your Home Assistant account on it and checks the login actually works — no setup " +
+        `wizard for you. Then open http://${HUB_HOST} and sign in with the details you typed.`
       : `Open http://${HUB_HOST} on any device in your home and create your account.`,
     ...(selfSetup
       ? []

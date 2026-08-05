@@ -17,6 +17,22 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.3.11 — 2026-08-05
+
+- **The live preview now starts right after a module flash — no unplugging.**
+  Starting the Vision module's live bench right after "Flash & prove" (or
+  right after plugging in) often failed with "The module didn't answer AT",
+  and the fix was to unplug and replug the cable. The cause: opening the
+  module's port jiggles the same signal line the flasher uses as the module's
+  reset, so the module was still booting when the app asked its one question —
+  and the app only asked once. It now asks patiently while the module comes
+  up, and if the module stays quiet, the app pulses the reset line itself —
+  the "power-cycle it" advice, automated — before trying again. The error
+  only appears when the module truly isn't answering, and its advice now
+  starts with checking that the cable is in the module's own USB-C port.
+- The browser Lab's bench and its post-flash proof got the same patience, so
+  both flashers behave alike.
+
 ## 0.3.10 — 2026-08-02
 
 - **"Wait for my Pi" now works on Intel Macs.** Flashing a Raspberry Pi over

@@ -546,11 +546,13 @@
             </div>
 
             <details id="hub-account-panel" class="hint">
-              <summary>Skip Home Assistant's setup wizard — pre-make your account
-                <span class="chip-badge">experimental</span></summary>
-              <p class="muted">Type your login now and first visit to the hub is a
-                <strong>login page</strong>, not a setup wizard. Your password is scrambled
-                on this computer and only the scrambled form goes on the card.</p>
+              <summary>Skip Home Assistant's setup wizard — pre-make your account</summary>
+              <p class="muted">Type your login now and this app finishes it for you: keep the app
+                open through first boot, and the moment the hub answers, it creates your account on
+                the hub over Home Assistant's own setup API and <strong>checks the login works</strong> —
+                so your first visit is a sign-in, not a wizard. Your password stays on this computer
+                (a scrambled copy also rides the card as a head start) and goes only to your own hub,
+                on your own network.</p>
               <div class="form-grid">
                 <label>Your name<input id="hub-acct-name" maxlength="128" autocomplete="off"></label>
                 <label>Username<input id="hub-acct-user" maxlength="64" autocomplete="off"></label>

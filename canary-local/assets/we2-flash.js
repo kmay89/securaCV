@@ -159,6 +159,29 @@ function makeAtClient(t) {
   };
 }
 
+// ── wake a maybe-mid-state module ────────────────────────────────────────
+// One VER? probe made a booting or mid-state module look dead — right after a
+// burn (it's rebooting), or right after a replug. Patience instead: probe a
+// few times while it comes up, and if it stays quiet, pulse RTS — the same
+// reset line the flasher drives, i.e. the "power-cycle it" advice, automated —
+// then probe again. Returns the VER? reply, or null if it truly never spoke.
+async function wakeModule(at, t, note) {
+  for (let i = 0; i < 3; i++) {
+    const ver = await at.cmd("VER?", { timeoutMs: 1200 });
+    if (ver && ver.code === 0) return ver;
+  }
+  if (note) note("quiet — resetting the module and waiting for it to boot…");
+  try { await t.setRTS(false); await sleep(100); await t.setRTS(true); }
+  catch { /* no RTS on this adapter — the retries below still count */ }
+  await sleep(1200);
+  t.clear(); // drop the boot banner so the parser starts on clean frames
+  for (let i = 0; i < 3; i++) {
+    const ver = await at.cmd("VER?", { timeoutMs: 1500 });
+    if (ver && ver.code === 0) return ver;
+  }
+  return null;
+}
+
 // ── sha-256 helper ───────────────────────────────────────────────────────
 async function sha256hex(bytes) {
   const d = await crypto.subtle.digest("SHA-256", bytes);
@@ -646,11 +669,11 @@ function phaseModuleBench(ctx, s) {
 
   let bench = null;
   (async () => {
-    const ver = await at.cmd("VER?", { timeoutMs: 2500 });
-    if (!ver || ver.code !== 0) {
-      idLine.textContent = "The module didn’t answer AT — it may have no firmware/model yet, or " +
-        "be mid-state. Power-cycle it and retry; if it keeps refusing, burn the model first " +
-        "(one click back).";
+    const ver = await wakeModule(at, s.t, (line) => { idLine.textContent = line; });
+    if (!ver) {
+      idLine.textContent = "The module didn’t answer AT, even after an automatic reset — check " +
+        "this is the MODULE’s own USB-C port (the CH343), unplug/replug, and retry; if it keeps " +
+        "refusing, burn the model first (one click back).";
       return;
     }
     // What model is on it? Our stored model card answers — honesty decides the
@@ -706,10 +729,12 @@ function phaseModuleDone(ctx, s, job) {
   }));
 
   (async () => {
-    // give the app firmware a beat to come up, then handshake
+    // give the app firmware a beat to come up, then handshake — with the
+    // patient wake (retries, then an RTS pulse): a module still rebooting
+    // from its burn is the normal case here, not a failure.
     await sleep(1200);
-    const ver = await at.cmd("VER?", { timeoutMs: 4000 });
-    if (ver && ver.code === 0) {
+    const ver = await wakeModule(at, s.t, (line) => { proof.textContent = line; });
+    if (ver) {
       // store our model card on-device (what SenseCraft does after a flash),
       // then a one-shot invoke as the "it actually runs" proof
       const info = btoa(JSON.stringify(modelInfoJson({ version: job.version, sha256: job.sha256 })));
@@ -721,8 +746,9 @@ function phaseModuleDone(ctx, s, job) {
         : "The module answers AT but the test inference didn’t reply — power-cycle it once. " +
           "If it keeps refusing: the module may be running non-SSCMA firmware; see the device guide §4.";
     } else {
-      proof.textContent = "No AT answer after reboot — power-cycle the module (unplug/replug) " +
-        "and it should come up with the new model. The burn itself completed and verified.";
+      proof.textContent = "No AT answer after reboot, even after an automatic reset — unplug/" +
+        "replug the module and it should come up with the new model. The burn itself completed " +
+        "and verified.";
     }
   })();
 

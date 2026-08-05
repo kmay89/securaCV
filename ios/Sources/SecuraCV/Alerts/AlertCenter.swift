@@ -162,6 +162,19 @@ final class AlertCenter: NSObject, ObservableObject {
         return strongest.reach == .anywhere
     }
 
+    /// The app-icon badge: how many alert rows the user has never laid eyes
+    /// on. Zero clears it. Best-effort by design — a badge is a hint, and a
+    /// failed write must never become a thrown error in an alert path.
+    /// Deduped, because the sentinel evaluates every few seconds and the
+    /// number rarely changes.
+    private var lastBadge: Int?
+    func setBadge(_ count: Int) {
+        let clamped = max(0, count)
+        guard clamped != lastBadge else { return }
+        lastBadge = clamped
+        center.setBadgeCount(clamped)
+    }
+
     /// Fire a LOCAL notification (used on-LAN alerts). Remote pushes arrive
     /// via APNs and are shaped identically by the NSE.
     func post(title: String, body: String, level: AlertLevel, threadID: String) {
