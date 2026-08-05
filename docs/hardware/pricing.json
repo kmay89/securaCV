@@ -1,6 +1,6 @@
 {
  "generated_by": "scripts/bom_pricing.py",
- "as_of": "2026-08-04T11:33:25Z",
+ "as_of": "2026-08-05T11:28:21Z",
  "note": "Nightly distributor snapshot; provenance marks which rows are distributor-verified vs csv-seed.",
  "sources": {
   "csv": "docs/hardware/bom_*.csv (design intent + indicative seed prices)",
@@ -38,7 +38,7 @@
    "seed_usd": 13.99,
    "unit_usd": 15.9,
    "provenance": "digikey",
-   "stock": 1703,
+   "stock": 1667,
    "lifecycle": "Active",
    "sku": {
     "mouser": "713-102010469",
@@ -62,7 +62,7 @@
    "seed_usd": 18.0,
    "unit_usd": 18.0,
    "provenance": "digikey",
-   "stock": 172,
+   "stock": 171,
    "lifecycle": "Active",
    "sku": {
     "digikey": "1597-104030087-ND"
@@ -109,7 +109,7 @@
    "seed_usd": 7.49,
    "unit_usd": 7.49,
    "provenance": "digikey",
-   "stock": 5887,
+   "stock": 5883,
    "lifecycle": "Active",
    "sku": {
     "digikey": "1597-113991114-ND"
@@ -197,7 +197,7 @@
    "seed_usd": 0.05,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 904622,
+   "stock": 915786,
    "lifecycle": "Active",
    "sku": {
     "mouser": "512-1N4148",
@@ -254,7 +254,7 @@
    "seed_usd": 0.1,
    "unit_usd": 0.16,
    "provenance": "digikey",
-   "stock": 33943,
+   "stock": 31094,
    "lifecycle": "Active",
    "sku": {
     "mouser": "512-2N7002LT1G",
@@ -295,7 +295,7 @@
    "seed_usd": 1.8,
    "unit_usd": 3.76,
    "provenance": "digikey",
-   "stock": 15028,
+   "stock": 16028,
    "lifecycle": "Active",
    "sku": {
     "digikey": "HE573-ND"
@@ -447,7 +447,7 @@
    "seed_usd": 0.12,
    "unit_usd": 0.35,
    "provenance": "digikey",
-   "stock": 39899,
+   "stock": 39872,
    "lifecycle": "Active",
    "sku": {
     "mouser": "653-B3F-1000",
@@ -521,7 +521,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 6873025,
+   "stock": 6871468,
    "lifecycle": "Active",
    "sku": {
     "lcsc": "C49678",
@@ -534,19 +534,19 @@
     },
     {
      "qty": 10,
-     "usd": 0.047
+     "usd": 0.056
     },
     {
      "qty": 50,
-     "usd": 0.0316
+     "usd": 0.0382
     },
     {
      "qty": 100,
-     "usd": 0.0271
+     "usd": 0.0327
     },
     {
      "qty": 500,
-     "usd": 0.01938
+     "usd": 0.02366
     }
    ],
    "url": "https://www.digikey.com/en/products/detail/samsung-electro-mechanics/CL21B104KBCNNNC/3886661",
@@ -562,7 +562,7 @@
    "seed_usd": 0.55,
    "unit_usd": 2.2,
    "provenance": "digikey",
-   "stock": 6282,
+   "stock": 5262,
    "lifecycle": "Active",
    "sku": {
     "mouser": "490-CPT-9019S-SMT-TR",
@@ -1164,7 +1164,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 568331,
+   "stock": 561574,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07100KL",
@@ -1217,7 +1217,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 79521,
+   "stock": 76463,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07100RL",
@@ -1270,7 +1270,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 423356,
+   "stock": 415029,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-071KL",
@@ -1323,7 +1323,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 402210,
+   "stock": 401618,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07330RL",
