@@ -46,8 +46,12 @@ extension WristSnapshot {
                   anxiety: store.canaryAnxiety,
                   trustDays: store.canaryTrustDays,
                   moodLine: store.moodLine,
-                  alerts: Array(store.alertLog.records
-                      .prefix(WristSync.maxAlertRows)
+                  // Cap-aware order: rows that still need a human always
+                  // make the cut; settled history fills what's left
+                  // (AlertHistory.wristRows — a live alarm must never fall
+                  // off the end behind twelve settled rows).
+                  alerts: AlertHistory.wristRows(store.alertLog.records,
+                                                 cap: WristSync.maxAlertRows)
                       .map { r in
                           WristAlert(id: r.id,
                                      witnessID: r.witnessID,
@@ -59,7 +63,8 @@ extension WristSnapshot {
                                      bucket: r.lastBucket,
                                      count: r.count,
                                      deliveryRaw: r.deliveryRaw,
-                                     handlingRaw: r.handlingRaw)
-                      }))
+                                     handlingRaw: r.handlingRaw,
+                                     resolved: !r.isOpen)
+                      })
     }
 }

@@ -63,6 +63,15 @@ struct WristAlertRow: View {
                 Text(row.bucket, format: .relative(presentation: .named))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                if row.resolved == true {
+                    // "Over" must never look like "still happening" — the
+                    // same rule as the phone. nil (an older phone) claims
+                    // nothing either way.
+                    Label("Cleared", systemImage: "checkmark.circle")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.color(.calm))
+                        .labelStyle(.titleAndIcon)
+                }
                 if row.delivery == .notDelivered {
                     Label("Not delivered", systemImage: "bell.slash")
                         .font(.caption2)
