@@ -92,7 +92,7 @@
   {
    "id": "c3_lcd147",
    "scad": "canary_c3_lcd147.scad",
-   "title": "Canary — ESP32-C3-LCD-1.47 POCKET CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — ESP32-C3-LCD-1.47 POCKET CASE  ⚠️ IN DEVELOPMENT (v0.2-dev)",
    "family": "universal",
    "device_compat": [
     "_universal"
@@ -164,7 +164,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 81,
+   "engineering_param_count": 91,
    "alternatives": [],
    "remix_of": null,
    "counts": {

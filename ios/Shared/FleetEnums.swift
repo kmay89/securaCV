@@ -123,6 +123,7 @@ enum DeviceType: String, Codable {
     case vision = "canary-vision"
     case sense = "canary-sense"
     case display = "canary-display"
+    case nightlight = "canary-nightlight"
     case unknown
 
     init(tolerant raw: String?) { self = DeviceType(rawValue: raw ?? "") ?? .unknown }
@@ -133,6 +134,7 @@ enum DeviceType: String, Codable {
         case .vision: return "Camera witness"
         case .sense: return "Radar witness"
         case .display: return "Fleet display"
+        case .nightlight: return "Nightlight"
         case .unknown: return "Canary"
         }
     }
@@ -143,6 +145,7 @@ enum DeviceType: String, Codable {
         case .vision: return "eye"
         case .sense: return "waveform.badge.magnifyingglass"
         case .display: return "square.split.bottomrightquarter"
+        case .nightlight: return "moon.stars.fill"
         case .unknown: return "bird"
         }
     }

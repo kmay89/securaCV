@@ -152,6 +152,12 @@ final class HomeKitBridge: ObservableObject {
     /// to more: a name match is an observation, not a verification.
     @Published private(set) var accessoryNames: Set<String> = []
 
+    /// Lowercased accessory serial numbers — the never-rot identity anchor.
+    /// The hub's HAP bridge sets each Canary accessory's serial to its
+    /// pseudonymous device id, so this set survives every rename on either
+    /// side. Populated from cached characteristic values only.
+    @Published private(set) var accessorySerials: Set<String> = []
+
     #if canImport(HomeKit)
     private var manager: HMHomeManager?
     private var delegateShim: HomeManagerShim?
@@ -210,6 +216,14 @@ final class HomeKitBridge: ObservableObject {
     /// Case-insensitive, observation-grade — the standing copy says "seen",
     /// never "verified".
     func seenInHome(_ w: Witness) -> Bool {
+        // Identity first: the accessory serial IS the device id, set by the
+        // bridge at pairing. This match survives any rename in either app —
+        // no sync button, because nothing depends on names.
+        if !w.id.isEmpty && accessorySerials.contains(w.id.lowercased()) {
+            return true
+        }
+        // Name fallback, observation-grade, for accessories bridged by
+        // paths that don't set the serial (the HA HomeKit Bridge lane).
         let needle = (w.name.isEmpty ? w.id : w.name).lowercased()
         guard !needle.isEmpty else { return false }
         return accessoryNames.contains { $0.contains(needle) }
@@ -224,6 +238,7 @@ final class HomeKitBridge: ObservableObject {
             let shim = HomeManagerShim(bridge: self)
             let m = HMHomeManager()
             m.delegate = shim
+            shim.manager = m
             delegateShim = shim
             manager = m
         }
@@ -322,6 +337,9 @@ final class HomeKitBridge: ObservableObject {
                 if let error { c.resume(throwing: error) } else { c.resume() }
             }
         }
+        // Anchor by identity, not name: the stored UUID keeps this
+        // automation recognizable (and removable) after any rename.
+        Self.rememberAuthored(trigger.uniqueIdentifier)
         #else
         _ = plan
         throw HomeAuthorError.noHome
@@ -330,11 +348,36 @@ final class HomeKitBridge: ObservableObject {
 
     /// Automations this app authored (recognized by the trigger-name
     /// prefix), for the review-and-remove list.
+    /// Durable anchors for automations this app authored. UUIDs, not names:
+    /// a rename in the Home app must not orphan the review-and-remove list.
+    /// The name prefix stays as a fallback for automations authored before
+    /// anchoring existed.
+    static let authoredIDsKey = "authored_automation_ids_v1"
+
+    static func rememberAuthored(_ id: UUID, defaults: UserDefaults = .standard) {
+        var ids = Set(defaults.stringArray(forKey: authoredIDsKey) ?? [])
+        ids.insert(id.uuidString)
+        defaults.set(ids.sorted(), forKey: authoredIDsKey)
+    }
+
+    static func forgetAuthored(_ id: UUID, defaults: UserDefaults = .standard) {
+        var ids = Set(defaults.stringArray(forKey: authoredIDsKey) ?? [])
+        ids.remove(id.uuidString)
+        defaults.set(ids.sorted(), forKey: authoredIDsKey)
+    }
+
+    /// Pure recognition rule, host-tested: ours if anchored by UUID, or if
+    /// it still carries the name prefix (pre-anchor authorship).
+    static func isAuthored(name: String, id: UUID, anchors: Set<String>) -> Bool {
+        anchors.contains(id.uuidString) || name.hasPrefix("SecuraCV: ")
+    }
+
     func authoredAutomations() -> [(id: UUID, name: String)] {
         #if canImport(HomeKit)
         guard let home = manager?.primaryHome else { return [] }
+        let anchors = Set(UserDefaults.standard.stringArray(forKey: Self.authoredIDsKey) ?? [])
         return home.triggers
-            .filter { $0.name.hasPrefix("SecuraCV: ") }
+            .filter { Self.isAuthored(name: $0.name, id: $0.uniqueIdentifier, anchors: anchors) }
             .map { ($0.uniqueIdentifier, $0.name) }
         #else
         return []
@@ -345,9 +388,10 @@ final class HomeKitBridge: ObservableObject {
     /// the household's own automations are never touched.
     func removeAutomation(id: UUID) async throws {
         #if canImport(HomeKit)
+        let anchors = Set(UserDefaults.standard.stringArray(forKey: Self.authoredIDsKey) ?? [])
         guard let home = manager?.primaryHome,
               let trigger = home.triggers.first(where: { $0.uniqueIdentifier == id }),
-              trigger.name.hasPrefix("SecuraCV: ")
+              Self.isAuthored(name: trigger.name, id: id, anchors: anchors)
         else {
             return
         }
@@ -371,16 +415,49 @@ final class HomeKitBridge: ObservableObject {
         accessoryNames = Set(homes.flatMap { home in
             home.accessories.map { $0.name.lowercased() }
         })
+        // The never-rot anchor: the bridge sets each accessory's serial
+        // number to the Canary's pseudonymous device id, so identity
+        // survives any rename on either side. Cached values only — reading
+        // a characteristic's cache touches no network; a nil cache just
+        // means no anchor yet, and the name fallback covers it.
+        var serials: Set<String> = []
+        for home in homes {
+            home.delegate = delegateShim
+            for accessory in home.accessories {
+                accessory.delegate = delegateShim
+                for service in accessory.services
+                where service.serviceType == HMServiceTypeAccessoryInformation {
+                    for characteristic in service.characteristics
+                    where characteristic.characteristicType == HMCharacteristicTypeSerialNumber {
+                        if let serial = characteristic.value as? String, !serial.isEmpty {
+                            serials.insert(serial.lowercased())
+                        }
+                    }
+                }
+            }
+        }
+        accessorySerials = serials
     }
     #endif
 }
 
 #if canImport(HomeKit)
-/// `HMHomeManagerDelegate` requires an `NSObject`; the bridge stays a plain
-/// `ObservableObject`, so this shim forwards the two callbacks that matter.
-private final class HomeManagerShim: NSObject, HMHomeManagerDelegate {
+/// The HomeKit delegate protocols require an `NSObject`; the bridge stays a
+/// plain `ObservableObject`, so this shim forwards every callback that can
+/// change what the two worlds know about each other. Live readback IS the
+/// sync: an accessory added, removed, or renamed in the Home app lands here
+/// seconds later — never at the next "import".
+private final class HomeManagerShim: NSObject, HMHomeManagerDelegate,
+    HMHomeDelegate, HMAccessoryDelegate
+{
     weak var bridge: HomeKitBridge?
+    weak var manager: HMHomeManager?
     init(bridge: HomeKitBridge) { self.bridge = bridge }
+
+    private func renote() {
+        guard let homes = manager?.homes else { return }
+        Task { @MainActor [weak bridge] in bridge?.noteHomes(homes) }
+    }
 
     func homeManager(_ manager: HMHomeManager,
                      didUpdate status: HMHomeManagerAuthorizationStatus) {
@@ -388,8 +465,22 @@ private final class HomeManagerShim: NSObject, HMHomeManagerDelegate {
     }
 
     func homeManagerDidUpdateHomes(_ manager: HMHomeManager) {
-        let homes = manager.homes
-        Task { @MainActor [weak bridge] in bridge?.noteHomes(homes) }
+        renote()
+    }
+
+    // Home-level changes never reach homeManagerDidUpdateHomes — these do.
+    func home(_ home: HMHome, didAdd accessory: HMAccessory) {
+        renote()
+    }
+
+    func home(_ home: HMHome, didRemove accessory: HMAccessory) {
+        renote()
+    }
+
+    // A rename in the Home app: the name set refreshes, and the serial
+    // anchor is untouched — which is the whole point.
+    func accessoryDidUpdateName(_ accessory: HMAccessory) {
+        renote()
     }
 }
 #endif

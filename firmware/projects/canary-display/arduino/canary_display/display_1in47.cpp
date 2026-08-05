@@ -12,6 +12,10 @@
 // exposes the bare panel and flushes arrive via draw16bitRGBBitmap.
 // Backlight is real PWM (LEDC) — same two-profile (day/night) engine as the
 // watch, which is what makes the bedside near-dark floor possible.
+// EXCEPTION: the C3-LCD-1.47 (TFT_USE_EXIO) has no LEDC backlight pin — its
+// CS/RST/backlight ride Waveshare's I2C expander, brightness is an 8-bit
+// register write, and the nightlight's CD_BL_MAX_PCT heat ceiling is
+// enforced right at that register so nothing above it can ever be written.
 //
 // ⚠️ ST7789 OFFSET: the 172-wide glass is a window into the controller's
 //    240-wide RAM, so the panel is constructed with a 34-px column offset
@@ -35,6 +39,16 @@
 #if defined(FEATURE_TOUCH) && FEATURE_TOUCH && \
     defined(HAS_TOUCH) && HAS_TOUCH
 #define CD_1IN47_TOUCH 1
+#include <Wire.h>
+#endif
+
+// The C3-LCD-1.47's EXIO path: LCD CS, LCD RST and the BACKLIGHT PWM all
+// live behind Waveshare's I2C IO expander (pins.h defines TFT_USE_EXIO) —
+// there is no LEDC backlight pin on that board at all. Brightness becomes a
+// one-byte register write; the register protocol below mirrors the vendor
+// demo (github.com/waveshareteam/ESP32-C3-LCD-1.47) exactly.
+#if defined(TFT_USE_EXIO) && TFT_USE_EXIO
+#define CD_1IN47_EXIO 1
 #include <Wire.h>
 #endif
 
@@ -64,6 +78,105 @@ constexpr uint16_t NIGHT_DUTY_MAX = 8191;
 
 bool s_night_profile = false;
 
+#ifdef CD_1IN47_EXIO
+// ── Waveshare EXIO expander (I2C 0x24) ──
+// Register protocol per the vendor demo's io_extension component: one mode
+// register arms the IO byte, the output register carries all eight lines at
+// once (so we cache the byte), and the PWM register takes a plain 0..255
+// duty for the backlight.
+constexpr uint8_t EXIO_REG_MODE   = 0x02;
+constexpr uint8_t EXIO_REG_OUTPUT = 0x03;
+constexpr uint8_t EXIO_REG_PWM    = 0x05;
+// The vendor's power-on output byte: everything high except IO3 (matches
+// IO_OUTPUT_INIT 0xF7 in the demo — CS lines idle high, RST released).
+uint8_t s_exio_out = 0xF7;
+
+bool exio_write_reg(uint8_t reg, uint8_t value) {
+  Wire.beginTransmission(EXIO_I2C_ADDR);
+  Wire.write(reg);
+  Wire.write(value);
+  return Wire.endTransmission() == 0;
+}
+
+bool exio_output(uint8_t io, bool high) {
+  if (high) s_exio_out |= (uint8_t)(1u << io);
+  else      s_exio_out &= (uint8_t)~(1u << io);
+  return exio_write_reg(EXIO_REG_OUTPUT, s_exio_out);
+}
+
+// The one true brightness sink on this board. `duty8` is 0..255; the
+// compile-time CD_BL_MAX_PCT cap (the nightlight's 50% heat budget —
+// enclosed PETG case) is applied HERE, below every settings/UI path, so no
+// stored preference and no API call can exceed it: a can't, not a won't.
+#ifndef CD_BL_MAX_PCT
+#define CD_BL_MAX_PCT 100
+#endif
+void exio_backlight(uint8_t duty8) {
+  // A ceiling, not a scale: dim values pass through exactly (the calibrated
+  // night floor must not halve to zero); only the top clips.
+  constexpr uint8_t kCap = (uint8_t)((255u * CD_BL_MAX_PCT) / 100u);
+  exio_write_reg(EXIO_REG_PWM, duty8 > kCap ? kCap : duty8);
+}
+
+// The vendor ST7789T init table (Vernon_ST7789T), replayed verbatim after
+// the stock begin(): voltage/gamma set, INVON, and the 0x48 MADCTL
+// (MX | BGR) the stock rotation-0 init does not write. Kept as data so a
+// bench correction is a table edit, not a code rewrite.
+struct PanelCmd { uint8_t cmd; const uint8_t* data; uint8_t len; uint16_t delay_ms; };
+constexpr uint8_t P_MADCTL0[] = {0x00};
+constexpr uint8_t P_COLMOD[]  = {0x55};
+constexpr uint8_t P_B0[] = {0x00, 0xE8};
+constexpr uint8_t P_B2[] = {0x0C, 0x0C, 0x00, 0x33, 0x33};
+constexpr uint8_t P_B7[] = {0x75};
+constexpr uint8_t P_BB[] = {0x1A};
+constexpr uint8_t P_C0[] = {0x80};
+constexpr uint8_t P_C2[] = {0x01, 0xFF};
+constexpr uint8_t P_C3[] = {0x13};
+constexpr uint8_t P_C4[] = {0x20};
+constexpr uint8_t P_C6[] = {0x0F};
+constexpr uint8_t P_D0[] = {0xA4, 0xA1};
+constexpr uint8_t P_E0[] = {0xD0, 0x0D, 0x14, 0x0D, 0x0D, 0x09, 0x38,
+                            0x44, 0x4E, 0x3A, 0x17, 0x18, 0x2F, 0x30};
+constexpr uint8_t P_E1[] = {0xD0, 0x09, 0x0F, 0x08, 0x07, 0x14, 0x37,
+                            0x44, 0x4D, 0x38, 0x15, 0x16, 0x2C, 0x2E};
+#ifndef TFT_MADCTL_ROT0
+#define TFT_MADCTL_ROT0 0x48
+#endif
+constexpr uint8_t P_MADCTL1[] = {TFT_MADCTL_ROT0};
+constexpr PanelCmd P_INIT[] = {
+    {0x11, nullptr, 0, 100},                       // SLPOUT
+    {0x36, P_MADCTL0, sizeof(P_MADCTL0), 0},
+    {0x3A, P_COLMOD, sizeof(P_COLMOD), 0},         // RGB565
+    {0xB0, P_B0, sizeof(P_B0), 0},
+    {0xB2, P_B2, sizeof(P_B2), 0},                 // porch
+    {0xB7, P_B7, sizeof(P_B7), 0},
+    {0xBB, P_BB, sizeof(P_BB), 0},                 // VCOM
+    {0xC0, P_C0, sizeof(P_C0), 0},
+    {0xC2, P_C2, sizeof(P_C2), 0},
+    {0xC3, P_C3, sizeof(P_C3), 0},
+    {0xC4, P_C4, sizeof(P_C4), 0},
+    {0xC6, P_C6, sizeof(P_C6), 0},
+    {0xD0, P_D0, sizeof(P_D0), 0},
+    {0xE0, P_E0, sizeof(P_E0), 0},                 // gamma +
+    {0xE1, P_E1, sizeof(P_E1), 0},                 // gamma -
+    {0x21, nullptr, 0, 0},                         // INVON (IPS)
+    {0x29, nullptr, 0, 0},                         // DISPON
+    {0x2C, nullptr, 0, 20},                        // RAMWR settle
+    {0x36, P_MADCTL1, sizeof(P_MADCTL1), 0},       // MX | BGR
+};
+
+void panel_vendor_init() {
+  if (!s_bus) return;
+  for (const auto& c : P_INIT) {
+    s_bus->beginWrite();
+    s_bus->writeCommand(c.cmd);
+    for (uint8_t i = 0; i < c.len; i++) s_bus->write(c.data[i]);
+    s_bus->endWrite();
+    if (c.delay_ms) delay(c.delay_ms);
+  }
+}
+#endif  // CD_1IN47_EXIO
+
 #ifdef CD_1IN47_TOUCH
 // CST816-family registers (same map the watch's CST816S uses; the
 // Touch-1.69's CST816T answers identically for gesture/fingers/coords).
@@ -84,11 +197,15 @@ bool cst816_read(uint8_t reg, uint8_t* buf, size_t len) {
 void ensure_profile(bool night) {
   if (night == s_night_profile) return;
   s_night_profile = night;
+#ifndef CD_1IN47_EXIO
   if (night) {
     cc_ledc_reconfig(TFT_PIN_BL, LEDC_CHANNEL, NIGHT_FREQ_HZ, NIGHT_RES_BITS);
   } else {
     cc_ledc_reconfig(TFT_PIN_BL, LEDC_CHANNEL, DAY_FREQ_HZ, DAY_RES_BITS);
   }
+#endif
+  // EXIO: one fixed-frequency 8-bit PWM inside the expander — there is no
+  // profile to switch; night resolution is handled by mapping in the setters.
 }
 
 }  // namespace
@@ -96,18 +213,43 @@ void ensure_profile(bool night) {
 bool display_init() {
   // Backlight first, held dark until the first frame is flushed — no
   // white-flash at boot on a device that lives on a nightstand.
+#ifdef CD_1IN47_EXIO
+  // Bring up the shared I2C bus (EXIO expander + QMI8658) and take the
+  // expander through the vendor's init dance: all-output mode, CS lines
+  // idle high, backlight held dark until the face is drawn.
+  Wire.begin(I2C_PIN_SDA, I2C_PIN_SCL, I2C_FREQ_FAST);
+  if (!exio_write_reg(EXIO_REG_MODE, 0xFF)) {
+    log_line("DISP", "EXIO expander quiet at 0x24 — running headless.");
+    return false;
+  }
+  exio_write_reg(EXIO_REG_OUTPUT, s_exio_out);
+  exio_backlight(0);
+  // Hardware reset through the expander (the RST line is not a GPIO), then
+  // select the panel: the LCD is the only device we drive on this SPI bus
+  // (the TF slot keeps its own CS high), so CS can simply stay low.
+  exio_output(EXIO_IO_LCD_RST, false);
+  delay(10);
+  exio_output(EXIO_IO_LCD_RST, true);
+  delay(120);
+  exio_output(EXIO_IO_SD_CS, true);
+  exio_output(EXIO_IO_LCD_CS, false);
+#else
   cc_ledc_setup(TFT_PIN_BL, LEDC_CHANNEL, DAY_FREQ_HZ, DAY_RES_BITS);
   cc_ledc_write(TFT_PIN_BL, LEDC_CHANNEL, 0);
+#endif
 
   // 4-wire SPI to the ST7789. MISO is shared with the TF slot on the C6 and
   // not broken out on the S3 (write-only panel either way); passing it is
-  // harmless where -1.
+  // harmless where -1. On the EXIO board CS/RST are expander lines (handled
+  // above), so the bus and panel both get "not defined" for them — the
+  // TFT_PIN_* values there are -1, which IS Arduino_GFX's GFX_NOT_DEFINED.
   s_bus = new Arduino_ESP32SPI(TFT_PIN_DC, TFT_PIN_CS, TFT_PIN_SCK,
                                TFT_PIN_MOSI, TFT_PIN_MISO);
 
-  // 172x320 IPS at rotation 0 with the 34-px column window offset into the
-  // ST7789's 240-wide RAM. col_offset1/col_offset2 both carry the offset so
-  // it lands correctly at rotation 0 and its mirror.
+  // Portrait IPS at rotation 0 with the column window offset into the
+  // ST7789's 240-wide RAM (34 px on the 172-wide glass, 30 px on the C3's
+  // 180-wide one — pins.h owns the numbers). col_offset1/col_offset2 both
+  // carry the offset so it lands correctly at rotation 0 and its mirror.
   s_panel = new Arduino_ST7789(
       s_bus, TFT_PIN_RST, 0 /* rotation */, true /* IPS */,
       TFT_WIDTH, TFT_HEIGHT,
@@ -117,6 +259,12 @@ bool display_init() {
     log_line("DISP", "ST7789 init FAILED — running headless.");
     return false;
   }
+#if defined(CD_1IN47_EXIO) && defined(TFT_PANEL_VENDOR_INIT) && TFT_PANEL_VENDOR_INIT
+  // Replay the vendor's ST7789T table on top of the stock init: gamma and
+  // voltage set, INVON, and the MX|BGR MADCTL. Without this the panel shows
+  // mirrored geometry and swapped red/blue.
+  panel_vendor_init();
+#endif
   s_panel->fillScreen(0x0000);
 
 #ifdef CD_1IN47_TOUCH
@@ -150,7 +298,11 @@ void display_flush() { /* LVGL flushes dirty regions itself */ }
 
 void backlight_set(uint8_t level) {
   ensure_profile(false);
-#if TFT_BL_ACTIVE_HIGH
+#ifdef CD_1IN47_EXIO
+  // Expander PWM: plain 0..255 duty; the CD_BL_MAX_PCT heat cap is applied
+  // inside exio_backlight, under every caller.
+  exio_backlight(level);
+#elif TFT_BL_ACTIVE_HIGH
   cc_ledc_write(TFT_PIN_BL, LEDC_CHANNEL, level);
 #else
   cc_ledc_write(TFT_PIN_BL, LEDC_CHANNEL, 255 - level);
@@ -160,7 +312,14 @@ void backlight_set(uint8_t level) {
 void backlight_night_set(uint16_t duty13) {
   if (duty13 > NIGHT_DUTY_MAX) duty13 = NIGHT_DUTY_MAX;
   ensure_profile(true);
-#if TFT_BL_ACTIVE_HIGH
+#ifdef CD_1IN47_EXIO
+  // The 13-bit night scale compresses onto the expander's 256 steps: >>5,
+  // but never rounded to zero while a glow was asked for — a calibrated
+  // floor of duty13=64 must still emit light, not silently go dark.
+  uint8_t d8 = (uint8_t)(duty13 >> 5);
+  if (d8 == 0 && duty13 > 0) d8 = 1;
+  exio_backlight(d8);
+#elif TFT_BL_ACTIVE_HIGH
   cc_ledc_write(TFT_PIN_BL, LEDC_CHANNEL, duty13);
 #else
   cc_ledc_write(TFT_PIN_BL, LEDC_CHANNEL, NIGHT_DUTY_MAX - duty13);

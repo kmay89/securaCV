@@ -6,7 +6,7 @@
 // tab to ask ("did something reach me, and did I miss it?") had no answer
 // anywhere in the app.
 //
-// Three properties make a record trustworthy rather than decorative:
+// Four properties make a record trustworthy rather than decorative:
 //   1. COARSE TIME, always. `bucket` is a 10-minute bucket, the same shape
 //      WitnessChain uses, because Invariant III forbids precise timestamps on
 //      witness events. A record that knew the second would be a privacy
@@ -17,6 +17,11 @@
 //      exact dishonesty the rules editor used to ship.
 //   3. REPEATS COLLAPSE. A Canary that flaps for an hour is ONE record with a
 //      count, never sixty rows. The list stays readable at 3am.
+//   4. THE LOOP CLOSES. A record knows whether its condition is still live
+//      (`resolvedBucket`) and whether the user has laid eyes on it
+//      (`seenBucket`). "Still happening" and "over" must never look the
+//      same — that distinction is what lets urgency mean something, and it
+//      is what lets old rows age out honestly instead of haunting the list.
 
 import Foundation
 
@@ -74,10 +79,26 @@ struct AlertRecord: Codable, Hashable, Identifiable, Sendable {
     /// you" is useless without the reason.
     var undeliveredReason: String?
     var handlingRaw: UInt8 = AlertHandling.new.rawValue
+    /// Coarse bucket when the condition CLEARED — nil while it's still live.
+    /// Optional so a ledger written before this field decodes unchanged.
+    var resolvedBucket: Date?
+    /// Coarse bucket when the user first laid eyes on this row (opened the
+    /// Alerts tab). Drives the app badge and the unseen dot — it is "did I
+    /// miss something?", which is a different question from acknowledgment.
+    var seenBucket: Date?
 
     var severity: Severity { Severity(tolerant: Int(severityRaw)) }
     var delivery: AlertDelivery { AlertDelivery(tolerant: Int(deliveryRaw)) }
     var handling: AlertHandling { AlertHandling(tolerant: Int(handlingRaw)) }
+
+    /// The condition is live right now.
+    var isOpen: Bool { resolvedBucket == nil }
+    /// The only rows that may ever feel urgent: unhandled AND still
+    /// happening. A condition that cleared on its own moves to history by
+    /// itself — urgency is about the present, never a backlog chore.
+    var needsYou: Bool { handling == .new && isOpen }
+    /// The user has never laid eyes on this row.
+    var isUnseen: Bool { seenBucket == nil }
 
     /// The 10-minute bucket rule, in one place so every producer agrees.
     static func bucket(for date: Date) -> Date {
@@ -95,5 +116,45 @@ struct AlertRecord: Codable, Hashable, Identifiable, Sendable {
         let b = Self.bucket(for: date)
         self.bucket = b
         self.lastBucket = b
+    }
+}
+
+// MARK: - history shape (pure, host-tested)
+
+/// One day of settled history — the Alerts tab renders these as sections so
+/// last week reads as last week, not as an undifferentiated pile under one
+/// "Earlier" heading.
+struct AlertDaySection: Identifiable, Hashable {
+    /// Local start-of-day of every record inside.
+    let day: Date
+    let records: [AlertRecord]
+    var id: Date { day }
+}
+
+/// The list's arithmetic, kept pure so the tests can hold it still. Views
+/// format; this decides order and grouping.
+enum AlertHistory {
+    /// Settled records grouped by local day, newest day first, newest record
+    /// first within a day. (Ordering uses `lastBucket` — the most recent
+    /// occurrence is what "when" means for a collapsed row.)
+    static func daySections(_ records: [AlertRecord],
+                            calendar: Calendar = .current) -> [AlertDaySection] {
+        let byDay = Dictionary(grouping: records) {
+            calendar.startOfDay(for: $0.lastBucket)
+        }
+        return byDay.keys.sorted(by: >).map { day in
+            AlertDaySection(day: day,
+                            records: byDay[day]!.sorted { $0.lastBucket > $1.lastBucket })
+        }
+    }
+
+    /// The wrist's copy, cap-aware: rows that still need a human ALWAYS make
+    /// the cut, settled history fills whatever room is left. A watch that
+    /// shows twelve stale rows while the live alarm fell off the end would be
+    /// the cap working against the product.
+    static func wristRows(_ records: [AlertRecord], cap: Int) -> [AlertRecord] {
+        let urgent = records.filter(\.needsYou)
+        let settled = records.filter { !$0.needsYou }
+        return Array((urgent + settled).prefix(cap))
     }
 }

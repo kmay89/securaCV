@@ -91,6 +91,13 @@ RTC85063_SRC = test_rtc_pcf85063.cpp
 BEDSIDE_BIN = test_bedside_models
 BEDSIDE_SRC = test_bedside_models.cpp
 
+# Nightlight companion visits (canary/care/nightlight.h): the allowed gate
+# (a visit can't begin over an alarm and ends the moment one arrives), the
+# hour->theater mapping, night = still + sparse (Moonwatch only), the
+# clockless fallback, determinism, and the no-severity-words caption rule.
+NIGHTLIGHT_BIN = test_nightlight
+NIGHTLIGHT_SRC = test_nightlight.cpp
+
 # Display settings geometry (canary/glass_settings.h): the 7"/dash orientation
 # helpers (logical dims, the touch un-rotation round-tripped against the
 # forward render rotation) and the rendered brightness scrim (clamp + the
@@ -137,6 +144,9 @@ $(RTC85063_BIN): $(RTC85063_SRC)
 $(BEDSIDE_BIN): $(BEDSIDE_SRC)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(BEDSIDE_SRC)
 
+$(NIGHTLIGHT_BIN): $(NIGHTLIGHT_SRC)
+	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(NIGHTLIGHT_SRC)
+
 $(DISPSET_BIN): $(DISPSET_SRC)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(DISPSET_SRC)
 
@@ -150,7 +160,7 @@ GREET_SRC = test_greeting.cpp
 $(GREET_BIN): $(GREET_SRC)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(GREET_SRC)
 
-run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(DISPSET_BIN) $(GREET_BIN)
+run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(DISPSET_BIN) $(GREET_BIN)
 	./$(BEACON_PARSE_BIN)
 	./$(MODEL_BIN)
 	./$(CARDS_BIN)
@@ -163,8 +173,9 @@ run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARC
 	./$(RTC_BIN)
 	./$(RTC85063_BIN)
 	./$(BEDSIDE_BIN)
+	./$(NIGHTLIGHT_BIN)
 	./$(DISPSET_BIN)
 	./$(GREET_BIN)
 
 clean:
-	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(DISPSET_BIN) $(GREET_BIN)
+	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(DISPSET_BIN) $(GREET_BIN)

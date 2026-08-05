@@ -17,6 +17,41 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.3.11 — 2026-08-05
+
+- **The serial monitor now connects by itself after a flash — no more
+  unplugging and replugging the board.** Three things conspired against it.
+  A freshly flashed board comes back as a *different* USB device (new port
+  path, sometimes a new identity), and the monitor kept waiting for the old
+  one; it now recognizes the board in whatever form it returns, and if two
+  boards are plugged in it says so instead of guessing — in this app and in
+  the browser Lab alike. The flasher's own end-of-flash reset also doesn't
+  always take on boards wired straight to the chip's USB — the board would
+  sit silently in its bootloader looking dead — so the monitor now reboots
+  the board itself, once, right after a flash, and you watch it start from
+  the very first line. And if the board still says nothing, the console now
+  tells you what's worth trying instead of showing an empty pane.
+- **The monitor explains what it is.** A line under the heading says it
+  plainly: the board's own voice, live over the USB cable — watch it boot,
+  see why something isn't working, press h for the firmware's menu. It's
+  read-only unless you type, and closing it changes nothing on the board.
+- Fixed a subtle hazard where pressing the board's physical RESET while the
+  monitor was attached could land a native-USB board in its bootloader
+  instead of starting your firmware.
+- **The live preview now starts right after a module flash — no unplugging.**
+  Starting the Vision module's live bench right after "Flash & prove" (or
+  right after plugging in) often failed with "The module didn't answer AT",
+  and the fix was to unplug and replug the cable. The cause: opening the
+  module's port jiggles the same signal line the flasher uses as the module's
+  reset, so the module was still booting when the app asked its one question —
+  and the app only asked once. It now asks patiently while the module comes
+  up, and if the module stays quiet, the app pulses the reset line itself —
+  the "power-cycle it" advice, automated — before trying again. The error
+  only appears when the module truly isn't answering, and its advice now
+  starts with checking that the cable is in the module's own USB-C port.
+- The browser Lab's bench and its post-flash proof got the same patience, so
+  both flashers behave alike.
+
 ## 0.3.10 — 2026-08-02
 
 - **"Wait for my Pi" now works on Intel Macs.** Flashing a Raspberry Pi over
