@@ -1161,14 +1161,14 @@ async function onFlash() {
     if (requiresLiveReceipt(product)) {
       setStatus("flash-result", "Firmware write verified. Watching the live boot for its device receipt…" + moduleNext, "ok");
       state.busy = false;
-      await startMonitor();
+      await startMonitor({ postFlash: true });
     } else {
       setStatus("flash-result", "Firmware write verified. Flashing is complete. ✓" + moduleNext, "ok");
       maybeHatch();
       // The serial monitor should just work — start it automatically so the
       // live boot log is right there, no "Start" click. It reconnects on its
       // own across the reboot (native side), so this is safe to fire now.
-      startMonitor();
+      startMonitor({ postFlash: true });
     }
   } catch (e) {
     setStatus("flash-result", String(e), "err");
@@ -2070,7 +2070,7 @@ async function onFlashLocalFile() {
     logEvent("ok", `Local file ${file.name} flashed`);
     state.busy = false;
     // Same as the release path: the boot log should just be there.
-    startMonitor();
+    startMonitor({ postFlash: true });
   } catch (e) {
     setStatus("local-result", String(e), "err");
     logEvent("err", "Local-file flash failed: " + e);
@@ -2230,7 +2230,7 @@ function feedSenseTune(chunk) {
 }
 
 // ── serial monitor + earned receipts ────────────────────────────────────────
-async function startMonitor() {
+async function startMonitor(opts) {
   if (!state.port || state.portKind !== "esp32") {
     setStatus("flash-result", "Connect the ESP32 host port to start its serial monitor.", "err");
     return;
@@ -2246,6 +2246,13 @@ async function startMonitor() {
       vid: state.portInfo && state.portInfo.vid,
       pid: state.portInfo && state.portInfo.pid,
       baud: state.catalog.console_baud || 115200,
+      // Only the flash flows set this. It lets the monitor reboot a
+      // native-USB board ONCE so the boot streams from its first line — and
+      // rescues the board espflash left sitting in its bootloader, which is
+      // what used to demand the unplug/replug ritual. The Start button and
+      // every other caller attach as pure observers: watching a running
+      // board must never restart it.
+      postFlash: !!(opts && opts.postFlash),
     });
     senseTuneHandshake();
   } catch (e) {

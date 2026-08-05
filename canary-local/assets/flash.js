@@ -5106,7 +5106,8 @@ function phaseMonitor(port, opts = {}) {
   const mon = {
     alive: true, port: null, reader: null, writer: null,
     manualBaud: false, session: 0, everByted: false,
-    lastPort: null, forced: null, reopenSame: false, waiting: null,
+    lastPort: null, lastVid: null, ambiguityNoted: false,
+    forced: null, reopenSame: false, waiting: null,
   };
   let celebrated = !opts.celebrate;
   let quietTimer = null;
@@ -5142,13 +5143,34 @@ function phaseMonitor(port, opts = {}) {
   }
 
   // Re-find a granted port (no user gesture needed — only requestPort() is
-  // gesture-gated; getPorts()/open() are not). Prefer the same board.
+  // gesture-gated; getPorts()/open() are not).
+  //
+  // Same board or no board — never "a" board. Web Serial grants persist
+  // across sessions, so getPorts() can hold every board this user has EVER
+  // approved on this site; the old `ports[0]` fallback could silently attach
+  // the console to a Canary granted weeks ago (the desktop app had the same
+  // class of bug, found in the same review). The ladder mirrors the native
+  // one as far as Web Serial allows: the same port object wins outright; a
+  // sole same-vendor candidate is the board back under a new identity (a
+  // re-enumeration mints a new object); anything plural is a question only a
+  // human can answer — and the reconnect button, which is a chooser, is
+  // exactly that human answering.
   async function reacquire() {
     try {
       const ports = await navigator.serial.getPorts();
       if (!ports.length) return null;
       if (mon.lastPort && ports.includes(mon.lastPort)) return mon.lastPort;
-      return ports[0];
+      const vendor = mon.lastVid;
+      const candidates = vendor == null ? ports : ports.filter((p) => {
+        try { return p.getInfo().usbVendorId === vendor; } catch { return false; }
+      });
+      if (candidates.length === 1) return candidates[0];
+      if (candidates.length > 1 && !mon.ambiguityNoted) {
+        mon.ambiguityNoted = true;
+        setStatus("More than one granted board could be yours — press “reconnect the " +
+          "board” and pick it, or unplug the others.");
+      }
+      return null;
     } catch { return null; }
   }
 
@@ -5189,6 +5211,10 @@ function phaseMonitor(port, opts = {}) {
     const mySession = ++mon.session;
     await p.open({ baudRate: baud });
     mon.port = mon.lastPort = p;
+    // Remember the board's USB vendor for reacquire(): a re-enumeration mints
+    // a new port object, so the vendor is the one identity that survives.
+    try { mon.lastVid = p.getInfo().usbVendorId ?? null; } catch { mon.lastVid = null; }
+    mon.ambiguityNoted = false;
     try { mon.writer = p.writable.getWriter(); } catch {}
     mon.reader = p.readable.getReader();
     reconnectBtn.classList.add("flash-hidden");
