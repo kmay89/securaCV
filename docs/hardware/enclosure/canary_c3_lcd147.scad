@@ -83,12 +83,15 @@
 //       headers="pillars" — the board AS WAVESHARE SHIPS IT: the four brass
 //                        M2 corner pillars installed, header pins NOT
 //                        soldered (the product photos show exactly this).
-//                        The cavity deepens just enough to swallow the
-//                        pillars, the press bosses land on the flat brass
-//                        pillar TOPS (the best press pads on the board),
-//                        and the lid skirt gets a corner notch around each
-//                        pillar — the USB-end pair sits close enough to the
-//                        edge that the pillars rise into the skirt's band.
+//                        The cavity is brass_h + stand_gap deep below the
+//                        PCB back (both MEASURED on print 2), and the
+//                        press bosses span stand_gap to land on the flat
+//                        brass pillar TOPS — the best press pads on the
+//                        board, lightly holding it against the bezel. The
+//                        lid skirt keeps a corner notch around each pillar
+//                        position (with the measured 3.0 pillars they stop
+//                        just short of the skirt band; the notches cost
+//                        nothing and guard taller pillar batches).
 //       headers="none" — stripped board: no headers AND the pillars
 //                        unscrewed; the case stays shallowest (the
 //                        back-mounted USB shell and TF cage set the depth).
@@ -169,7 +172,19 @@ hdr_inset = 1.6;   // PCB edge → header row centerline. The drawing offers two
                    // readings (1.27 if the 17.78 dim is the column span, 2.00
                    // if that is the edge inset) — MEASURE; the skirt assert
                    // below is what a wrong value trips
-brass_h   = 5.0;   // factory pillar height above the PCB back — MEASURE
+brass_h   = 3.0;   // factory pillar height above the PCB back — MEASURED
+                   // (kmay89, print 2): the lid-inner-to-pillar-top gap is
+                   // 2.8 mm in the printed case, whose cavity sits 5.8 below
+                   // the PCB back — so the pillars stand 3.0, not the 5.0
+                   // this file guessed. The 2.0 mm error is why print 2's
+                   // board floated: the 0.8 mm bosses stopped far short.
+stand_gap = 2.8;   // lid inner face → pillar top — MEASURED (kmay89, print
+                   // 2), and load-bearing twice: it is the press-boss
+                   // height (the stub reaches the pillar and just lightly
+                   // holds the board against the bezel), and with brass_h
+                   // it reproduces the pillars-build cavity depth exactly
+                   // (3.0 + 2.8 = 5.8 — print 2's proven stack, so the
+                   // bezel is unchanged by this fix)
 
 /* [Screen] — active area = the window; the module border sits under the lip */
 aa_l  = 32.35;     // active area, long (Y)
@@ -330,9 +345,10 @@ $fa = 3; $fs = 0.4;
 // notched around them.
 pillars_in = (headers != "none");
 // The pillars build deepens only as far as the pillars demand: brass_h plus
-// a working boss (0.8). The male build swallows header base + pins instead.
+// the measured working gap the boss spans (stand_gap). The male build
+// swallows header base + pins instead.
 stack_eff = (headers == "male")    ? max(back_stack, hdr_drop)
-          : (headers == "pillars") ? max(back_stack, brass_h + 0.8)
+          : (headers == "pillars") ? max(back_stack, brass_h + stand_gap)
           :                          back_stack;
 
 xc = board_w + 2*tol_slide;   yc = board_l + 2*tol_slide;   // board cavity
@@ -389,9 +405,11 @@ skirt_wall = (headers == "male") ? 1.0 : 1.6;
 skirt_dep  = snap_depth + snap_h/2 + 0.4;
 skirt_x = xc - 2*skirt_clear;   skirt_y = yc - 2*skirt_clear;
 
-// press bosses: cut to the EXACT stack (no preload — rule 3). With pillars
-// on the board they land on the flat brass pillar tops; stripped, on the
-// bare PCB corners over the same M2 positions.
+// press bosses: cut to the EXACT stack (no preload — rule 3; "just lightly
+// press" is exact contact, not crush). With pillars on the board they span
+// the measured stand_gap and land on the flat brass pillar tops — print 2
+// proved the old guess left them 2.0 short and the board floating.
+// Stripped, they run to the bare PCB corners over the same M2 positions.
 stand_d   = pillars_in ? 4.6 : 4.2;
 stand_len = stack_eff - (pillars_in ? brass_h : 0);
 // the four positions in CASE frame (USB end = −Y); the lid module flips Y
@@ -686,13 +704,14 @@ module lid() {
                     // button-body reliefs at the real button positions
                     if (opt_btn) for (sx = [1, -1])
                         translate([sx*skirt_x/2, -btn_y]) square([3*skirt_wall, btn_body_w + 2], center = true);
-                    // pillar notches: in the pillars build the cavity is only
-                    // brass_h + 0.8 deep, so the pillars rise INTO the
-                    // skirt's band, and the USB-end pair sits close enough
-                    // to the edge to land in the ring itself. Notch the
-                    // corners around every pillar position; in the deeper
-                    // male build the pillars stop below the skirt and the
-                    // notches are merely harmless.
+                    // pillar notches, one per pillar position. With the
+                    // MEASURED 3.0 pillars the tops stop ~0.2 below the
+                    // skirt band, so the notches are no longer strictly
+                    // needed — they stay because they cost nothing and a
+                    // taller pillar batch (the guessed 5.0 was not absurd)
+                    // would land in the ring exactly where they are. In the
+                    // deeper male build the pillars stop well below the
+                    // skirt and the notches are merely harmless.
                     //
                     // HULLED OUTWARD, not a bare circle. A circle tangent to
                     // the ring leaves a crescent of skirt standing outboard

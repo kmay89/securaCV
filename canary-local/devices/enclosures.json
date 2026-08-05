@@ -7213,8 +7213,13 @@
       },
       {
        "name": "brass_h",
-       "default": "5.0",
-       "comment": "factory pillar height above the PCB back — MEASURE"
+       "default": "3.0",
+       "comment": "factory pillar height above the PCB back — MEASURED"
+      },
+      {
+       "name": "stand_gap",
+       "default": "2.8",
+       "comment": "lid inner face → pillar top — MEASURED (kmay89, print"
       }
      ]
     },
