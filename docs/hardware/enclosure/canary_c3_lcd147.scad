@@ -338,21 +338,24 @@ lid_back = "both";   // ["both","mark","keyhole"] back of the lid: brand, wall m
 // canary_vent_lib's egg2d, the house ovoid, used here in the mounted-
 // upright orientation that library's doctrine asks for: wide base DOWN
 // (the entry), crown UP (where the screw ends up when the case hangs).
-kh_head_d  = 9.5;   // the LARGEST screw head the base admits — the number
-                    // that was 7.0 and too small. Measure the head you
-                    // actually hang on and leave this above it
-kh_shank_d = 4.2;   // the shank the crown grips. tip is DERIVED from this
-                    // (below), so the egg's crown IS the keyhole's slot
-kh_egg_w = 9.6;     // egg width — the widest point, and the head entry
+// These two are NOMINAL SCREW dimensions — measure the screw, write it here.
+// The openings are derived from them further down by adding this catalog's
+// printed-hole clearance, which is the part the first cut of this egg got
+// wrong: it used the nominal numbers RAW (a 9.6 opening for a 9.5 head,
+// 0.05 per side), and on FDM PETG that is a hole that binds — the very
+// failure the egg was drawn to fix, reintroduced one line lower down.
+kh_head_d  = 9.5;   // the LARGEST screw head to hang on — the number that
+                    // was 7.0 and too small for a screw already in a wall
+kh_shank_d = 4.2;   // the shank the crown grips
 kh_egg_l = 15.0;    // egg length along the hang axis; the taper's travel
 kh_cy    = 5.0;     // hanger center, CASE frame (+Y = up when hung). Not
-                    // higher: widening the egg to 9.6 for real screw heads
-                    // pushed its footprint into the FAR press bosses at
-                    // y 16.2, and a through cut there would hole the boss
-                    // that holds the board down. The assert caught it at
-                    // 8.0; 5.0 clears the bosses by 0.8 and still puts the
-                    // crown — where the screw actually ends up — at y 12.5,
-                    // well above the case's middle, so it hangs plumb
+                    // higher: widening the egg for real screw heads pushed
+                    // its footprint into the FAR press bosses at y 16.2,
+                    // and a through cut there would hole the boss that
+                    // holds the board down. The assert caught it at 8.0;
+                    // 5.0 clears the bosses and still puts the crown —
+                    // where the screw actually ends up — at y 12.5, well
+                    // above the case's middle, so it hangs plumb
 
 /* [Branding] — the wordmark, debossed and filled in the mark filament */
 mark_word   = "Canary";  // the DEVICE's name (the company's is securaCV).
@@ -535,11 +538,18 @@ lid_has_mark = (lid_back == "both" || lid_back == "mark");
 lid_has_kh   = (lid_back == "both" || lid_back == "keyhole");
 mark_y = (lid_back == "both") ? mark_cy : 0;
 kh_y   = (lid_back == "both") ? kh_cy   : 0;
-// The egg's tip ratio is DERIVED, not styled: crown width = kh_shank_d, so
-// the egg's crown IS the slot the screw ends up gripped in. Overriding the
+// BOTH openings are a nominal screw dimension PLUS this catalog's
+// printed-hole clearance — the same `2*tol_hole` (0.3 per side) every screw
+// hole in this directory uses, and which this file declared but never spent
+// until the review caught it. A cutter drawn at the nominal size is a hole
+// that binds once the nozzle has had its say.
+kh_egg_w   = kh_head_d  + 2*tol_hole;   // the base: where the head enters
+kh_crown_w = kh_shank_d + 2*tol_hole;   // the crown: where the shank grips
+// The egg's tip ratio is DERIVED, not styled: it is exactly the crown over
+// the base, so the egg's crown IS the keyhole's slot. Overriding the
 // library's brand tip is deliberate and this is the reason (its header asks
 // that an override say why).
-kh_tip = kh_shank_d / kh_egg_w;
+kh_tip = kh_crown_w / kh_egg_w;
 // egg2d spans y ∈ [−w/2, l − w/2]; this is the shift that centers it
 kh_shift = (kh_egg_l - kh_egg_w)/2;
 kh_lo = kh_y - kh_egg_l/2;   kh_hi = kh_y + kh_egg_l/2;
@@ -670,12 +680,10 @@ assert(!lid_has_kh || len([for (p = stand_case)
            kh_egg_w/2, ") overlaps a press boss — the through cut would open ",
            "a hole in the boss that holds the board. Move kh_cy."));
 // the egg has to behave like a keyhole: swallow the head, then refuse it
-assert(!lid_has_kh || kh_egg_w >= kh_head_d,
-       str("the egg is ", kh_egg_w, " wide but must admit a ", kh_head_d,
-           " mm head — widen kh_egg_w (this is the fit that failed on a ",
-           "real wall screw at 7.0)."));
-assert(!lid_has_kh || kh_shank_d < kh_head_d,
-       "a crown wider than the head cannot capture the screw — check kh_shank_d/kh_head_d");
+assert(!lid_has_kh || kh_crown_w < kh_head_d,
+       str("the crown is ", kh_crown_w, " mm across and the head is ",
+           kh_head_d, " — a crown the head fits through captures nothing ",
+           "and the case falls off the wall. Check kh_shank_d/kh_head_d."));
 assert(!lid_has_kh || (kh_tip > 0 && kh_tip < 1),
        str("derived egg tip is ", kh_tip, " — kh_shank_d must sit strictly ",
            "between 0 and kh_egg_w for the crown to be a slot"));

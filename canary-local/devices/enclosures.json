@@ -7396,17 +7396,12 @@
       {
        "name": "kh_head_d",
        "default": "9.5",
-       "comment": "the LARGEST screw head the base admits — the number"
+       "comment": "the LARGEST screw head to hang on — the number that"
       },
       {
        "name": "kh_shank_d",
        "default": "4.2",
-       "comment": "the shank the crown grips. tip is DERIVED from this"
-      },
-      {
-       "name": "kh_egg_w",
-       "default": "9.6",
-       "comment": "egg width — the widest point, and the head entry"
+       "comment": "the shank the crown grips"
       },
       {
        "name": "kh_egg_l",
@@ -7716,8 +7711,18 @@
        "default": "(lid_back == \"both\") ? kh_cy   : 0"
       },
       {
+       "name": "kh_egg_w",
+       "default": "kh_head_d  + 2*tol_hole",
+       "comment": "the base: where the head enters"
+      },
+      {
+       "name": "kh_crown_w",
+       "default": "kh_shank_d + 2*tol_hole",
+       "comment": "the crown: where the shank grips"
+      },
+      {
        "name": "kh_tip",
-       "default": "kh_shank_d / kh_egg_w"
+       "default": "kh_crown_w / kh_egg_w"
       },
       {
        "name": "kh_shift",
