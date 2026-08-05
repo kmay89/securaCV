@@ -255,6 +255,15 @@
     ]
    },
    {
+    "hardware": "esp32c3-super-mini",
+    "builds": [
+     "canary-vision-c3-super-mini"
+    ],
+    "serves": [
+     "canary-vision"
+    ]
+   },
+   {
     "hardware": "waveshare-esp32c3-lcd147",
     "builds": [
      "canary-display-nightlight-c3"
