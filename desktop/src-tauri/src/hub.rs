@@ -563,7 +563,7 @@ pub struct OnboardReport {
 /// hub's actual state first and only does what is missing, so retrying after
 /// any stumble is always safe. Narration streams over `hub:headless-log`;
 /// the password never appears in logs or events. Host rules match
-/// [`hub_probe_hub`]: a bare hostname[:port], never a URL.
+/// [`hub_probe_hub`]: a bare `hostname[:port]`, never a URL.
 #[tauri::command]
 pub async fn hub_onboard(
     app: AppHandle,

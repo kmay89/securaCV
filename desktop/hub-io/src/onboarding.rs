@@ -71,7 +71,7 @@ impl OnboardOutcome {
 }
 
 /// Turn the UI's host string into the base URL every call builds on. Same
-/// character rules the probe applies (a bare hostname[:port], never a URL —
+/// character rules the probe applies (a bare `hostname[:port]`, never a URL —
 /// so this can't be steered at an arbitrary address), plus HA's default port
 /// when none was given.
 pub fn base_url_for_host(host: &str) -> Result<String, String> {
