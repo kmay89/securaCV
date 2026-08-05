@@ -28,6 +28,17 @@ struct DeviceDetailView: View {
                       homeHubPresent: home.homeHubPresent)
     }
 
+    /// Where the nightlight answers HTTP: a paired base URL if one exists,
+    /// else the mDNS host discovery heard it advertise. Nil when neither —
+    /// the section says "not reachable" instead of guessing an address.
+    private var nightlightBaseURL: URL? {
+        if let url = liveWitness.baseURL { return url }
+        if let host = store.discovery.found.first(where: { $0.id == witness.id })?.host {
+            return URL(string: "http://\(host)")
+        }
+        return nil
+    }
+
     private var standingLabel: String {
         switch standing {
         case .off: return "Off"
@@ -88,6 +99,14 @@ struct DeviceDetailView: View {
                         AirPlayRoutePicker().frame(width: 44, height: 44)
                     }
                 }
+            }
+
+            if witness.deviceType == .nightlight {
+                // The nightlight's own knobs — lamp color/strength, the
+                // night schedule, the 12-hour clock — rendered from the
+                // device's own /api/settings (the device describes, the
+                // app renders).
+                NightlightSection(base: nightlightBaseURL)
             }
 
             Section {

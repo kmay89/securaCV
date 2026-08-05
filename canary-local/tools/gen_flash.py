@@ -331,6 +331,26 @@ PRODUCTS = [
         "board": "esp32-c6-devkitc-1",
         "provisioning": "on-glass",
     },
+    {
+        # The pocket C3 board wearing the kid-facing personality: a
+        # 7-segment clock, the canary companion's timed visits, and the
+        # lamp (warm orange / Rainbow / Moonbeam white) — with the
+        # backlight duty hard-capped at 50% in the HAL (closed PETG pocket
+        # case; a heat budget, not a preference). A distinct product
+        # because the OTA engine must never cross-grade it into a fleet
+        # nightstand (different SoC AND a different bedside promise).
+        "id": "securacv-canary-display-nightlight-c3",
+        "family": "display",
+        "board_label": "Waveshare ESP32-C3-LCD-1.47 (pocket)",
+        "pick_label": "Nightlight — the 1.47″ pocket clock + lamp",
+        "name": "Canary Nightlight",
+        "tagline": "A bedside clock with a friend living in it — a soft lamp, a 7-segment clock, and a canary who keeps your kid's rhythm.",
+        "asset_stem": "canary-display-nightlight-c3",
+        "project": "firmware/projects/canary-display",
+        "env": "canary-display-nightlight-c3",
+        "board": "esp32-c3-devkitm-1",
+        "provisioning": "on-glass",
+    },
 ]
 
 # The family layer — how a ten-product line stays un-intimidating (the
@@ -721,6 +741,11 @@ def emulator_twin_ids() -> set:
 # glass with dash7 but its whole point is a DIFFERENT face (the bedside
 # clock, not the wall dashboard), so the dash7 twin would misrepresent it.
 # It gets a link when its own emulator target lands.
+#
+# Same reasoning for canary-display-nightlight-c3: it shares the 1.47"
+# portrait format with the nightstand sticks but wears the nightlight face
+# (7-segment clock + companion + lamp), so the nightstand twin would
+# misrepresent it. No alias until its own emulator flavor lands.
 TWIN_ALIASES = {
     # the modes build is the dash plus its bench/demo/debug gears
     "canary-display-dash-modes": "canary-display-dash",

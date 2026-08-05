@@ -65,7 +65,8 @@
       "canary-display-watch-modes",
       "canary-display-nightstand-s3",
       "canary-display-touch169",
-      "canary-display-nightstand-c6"
+      "canary-display-nightstand-c6",
+      "canary-display-nightlight-c3"
     ],
     "check_env": "canary-display-watch",
     "isolated_core_envs": [

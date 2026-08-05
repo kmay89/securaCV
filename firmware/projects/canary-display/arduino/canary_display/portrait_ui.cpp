@@ -17,8 +17,11 @@
 // the theme choke point (character_set_night) + the backlight floor in
 // main.cpp — this face just draws through col_*/sev_color, which already tell
 // the truth after dark.
+// Not compiled on the Nightlight (CD_NIGHTLIGHT): that build shares this
+// flavor's HAL and modal surfaces but swaps the standing face for
+// nightlight_ui.cpp — the same arrangement dash_ui has with CD_NIGHTSTAND7.
 #include "flavor_config.h"
-#ifdef CD_FLAVOR_NIGHTSTAND
+#if defined(CD_FLAVOR_NIGHTSTAND) && !defined(CD_NIGHTLIGHT)
 
 #include <lvgl.h>
 #include <stdio.h>
