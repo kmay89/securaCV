@@ -44,7 +44,40 @@ wake word (openWakeWord)  ─►  STT (Whisper)  ─►  SecuraCV intent  ─►
    on the satellite/hub        on the hub          on the hub          on the hub
 ```
 
-## Set it up
+## Set it up — one command, then two clicks
+
+The wizard does the repetitive part for you. Open the hub's terminal
+(**Settings → Add-ons → Terminal & SSH**) and run:
+
+```sh
+wget -q https://raw.githubusercontent.com/kmay89/securaCV/main/tools/hub_voice_setup.sh
+bash hub_voice_setup.sh
+```
+
+It installs and starts the three local voice engines (Whisper, Piper,
+openWakeWord), adds the Assist Satellite runtime, installs the fleet
+sentences, and places the "Hey Canary" wake-word model if you have one —
+telling you, line by line, exactly what it did and what it skipped. Every
+step checks before it acts, so **re-running is always safe**, and
+`bash hub_voice_setup.sh verify` reports state without changing anything —
+drop it in a cron if you want the setup to check itself.
+
+Honesty about what a script can't do: the last two steps are choices made
+with your eyes, so the wizard ends by pointing at them —
+
+1. **Settings → Voice assistants → Add assistant** — pick Whisper for
+   speech-to-text, Piper for text-to-speech, and your wake word.
+2. Plug the microphone in and select this assistant for it.
+
+Then say, out loud: *"Is the fleet OK?"*
+
+The wizard is generated from the same sentences file this page links
+([`voice_sentences_en.yaml`](voice_sentences_en.yaml)) and CI byte-checks
+it, so the script and this page cannot tell you two different stories.
+
+<details>
+<summary><strong>By hand — every move the wizard makes, spelled out</strong>
+(the trust here is transparency, so nothing above is magic)</summary>
 
 ### 1. Install the three add-ons
 
@@ -80,7 +113,11 @@ the hub as `/config/custom_sentences/en/securacv.yaml` (create the folders
 if they don't exist — the **File editor** or **Samba** add-on both work),
 then restart Home Assistant.
 
-Now press the Assist button and ask:
+</details>
+
+## How it feels to use
+
+Press the Assist button — or say the wake word — and ask:
 
 | You say | It answers with |
 |---|---|
@@ -93,7 +130,33 @@ against its pinned key.** A device the hub has merely received MQTT from is
 "heard" — the same honest ladder the dashboards use. A key mismatch leads
 the answer, because that is the one thing you'd want interrupted first.
 
-### 4. Optional: a wake word — and what turning it on means
+## Your wake word: "Hey Canary"
+
+The fleet's device is the Canary, and you talk to a thing by saying its
+name — so the brand wake word is **"Hey Canary."** It's a good wake word on
+the merits, not just the branding: four syllables, distinctive phonemes,
+and a word that almost never occurs in ordinary conversation, which is what
+keeps false wakes rare. Saying the name is also the consent gesture made
+audible — nothing is transcribed until you address the device, the same way
+nothing is watched by design everywhere else.
+
+**Honest status: you mint this one yourself, today.** No pre-trained
+"Hey Canary" model exists yet in the community wake-word collection, and
+the openWakeWord add-on ships with well-tested built-ins (e.g. "Okay
+Nabu") that work now. To mint the brand wake word:
+
+1. Train a model with the [openWakeWord training notebook](https://www.home-assistant.io/voice_control/create_wake_word/)
+   (Home Assistant's guide walks the whole Colab) using the phrase
+   "hey canary" — it needs no ML background and produces one file:
+   `hey_canary.tflite`.
+2. Drop that file in `/share/openwakeword/` on the hub — or next to
+   `hub_voice_setup.sh` and re-run it, and the wizard places it for you.
+3. Pick `hey_canary` in your assistant's wake word menu.
+
+Until then, use a built-in and rename nothing — a wake word that works
+beats a brand that doesn't.
+
+### What turning a wake word on means
 
 Push-to-talk needs no fine print: audio is captured only while you hold the
 button. A wake word is different, and this project describes it honestly
@@ -156,6 +219,20 @@ transcripts transient, queries only, and never a Canary.
 | Sentence matches but errors | SecuraCV integration not loaded, or an older version without `intent.py` — update the integration. |
 | Answers are slow | Whisper model too big for the hub — drop a size in the add-on config. |
 | Wake word never fires | openWakeWord not assigned to the satellite, or the satellite has no mic path configured. |
+
+## How this page stays true
+
+A setup guide rots the day it merges unless something holds it to the
+code, so this one is pinned three ways:
+
+- The wizard is **generated** (`scripts/gen_hub_voice_setup.py`) with the
+  sentences file embedded verbatim, and CI byte-checks the committed
+  script — the wizard cannot install a grammar this page doesn't link.
+- A test pins the sentences file to the intents the integration actually
+  registers (`custom_components/securacv/tests/test_voice.py`) — a
+  sentence without a handler, or a handler without a sentence, fails CI.
+- `bash hub_voice_setup.sh verify` re-checks a real hub any time —
+  the printed state, not this prose, is the authority on your setup.
 
 ## Related
 

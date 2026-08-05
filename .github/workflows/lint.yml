@@ -163,6 +163,11 @@ jobs:
         # pricing.json. Committed so the model is reviewable in a diff and
         # works offline; byte-checked so nobody can hand-edit a saving in.
         run: python3 scripts/gen_board_design.py --check
+      - name: Hub voice wizard is regenerated
+        # tools/hub_voice_setup.sh embeds docs/voice_sentences_en.yaml
+        # verbatim (via scripts/gen_hub_voice_setup.py), so the wizard can
+        # never install a different sentence grammar than the docs promise.
+        run: python3 scripts/gen_hub_voice_setup.py --check
       - name: BOM pricing engine — contract tests
         run: python3 scripts/tests/test_bom_pricing.py
       - name: verify_pipeline.sh false-pass regression tests
