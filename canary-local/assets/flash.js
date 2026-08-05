@@ -166,7 +166,29 @@ async function boot() {
   state.devChannel = core.channelFromSearch(location.search) === "dev";
 
   renderVersionStrip();
+  watchForUnplug();
   setPhase(phaseConnect());
+}
+
+// Parity with the desktop Flasher's live watcher (its 1 Hz port poll drops the
+// "Connected" bar when the board is really gone): the browser hands us the
+// same fact as a `disconnect` event. Without this, unplugging while parked on
+// the connected card left "Say hello to your ESP32-S3" up — chip details and
+// all — for a board that no longer exists. Scope is deliberately narrow: the
+// serial-monitor phase manages its own disconnects (it owns the port then and
+// state.session is null), and a mid-operation unplug already surfaces through
+// that operation's own error path, so this only covers the idle,
+// session-holding phases.
+function watchForUnplug() {
+  navigator.serial.addEventListener("disconnect", async (ev) => {
+    if (!state.session || ev.target !== state.session.port) return;
+    if (state.busy || state.connecting) return; // the in-flight step reports its own failure
+    await onDisconnect();
+    const box = phaseConnect();
+    box.prepend(el("p", "muted",
+      "Your Canary was unplugged — plug it back in and reconnect to carry on."));
+    setPhase(box);
+  });
 }
 
 function renderVersionStrip() {
