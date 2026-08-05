@@ -225,6 +225,10 @@ jobs:
     # rather than merely building.
     - name: Test (bridge-homekit-server)
       run: "cargo test --verbose --features bridge-homekit-server bridge::"
+    - name: Clippy (alert-relay)
+      run: cargo clippy --all-targets --features alert-relay -- -D warnings
+    - name: Test (alert-relay)
+      run: "cargo test --verbose --features alert-relay relay::"
 
   ingest-gstreamer:
     name: Ingest (gstreamer rtsp)

@@ -1,6 +1,20 @@
 # The alert relay — remote "pokes" without a cloud (design)
 
-**Status:** design / RFC — no code yet. This scopes *how a Canary tells you something while you're
+**Status:** the flagship ntfy lane is **built** — the `alert_relay` bin behind the
+`alert-relay` Cargo feature, with the poke vocabulary, the fingerprint-free
+subscribe list, and the per-class debounce as a pure, unit-tested core
+(`src/relay/`). Fan-out beyond ntfy, payload encryption, the away-detection
+policy, and the mesh-gateway outage path remain design (§7). Two build-time
+decisions the implementation made, recorded here: the fan-out substrate is an
+in-tree Rust notifier, not an Apprise sidecar (§7 leaned Apprise; zero new
+crates beat a Python runtime on the hub — `ureq` was already vetted for `tsa`),
+and the poke carries **no timestamp field at all** — §1's example `ts` would
+rebuild the event-timing oracle that Invariant III's bucketing removes, so the
+ntfy lane ships without it and the per-sink postures are: ntfy = coarse
+owner-facing sentence, iPhone lane = contentless `{sev}` wake (the stricter
+contract from the iPhone RFC §5).
+
+This scopes *how a Canary tells you something while you're
 away* without breaking the local-first, own-nothing promise. It builds directly on the invariant the
 [iPhone companion RFC](./iphone_companion_app.md) §5 already set: **the only acceptable cloud touch is
 a metadata-only wake relay — a token or a coarse alert string, never footage, never event content.**
