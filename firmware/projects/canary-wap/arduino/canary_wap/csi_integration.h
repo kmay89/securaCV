@@ -22,7 +22,7 @@
 namespace csi_integration {
 
 /**
- * Boot-time initialisation. Must be called AFTER:
+ * Boot-time initialization. Must be called AFTER:
  *   - WiFi AP/STA is up (so esp_wifi_set_csi_rx_cb has a context)
  *   - the HTTP server is started (we register URI handlers on it)
  *
@@ -185,7 +185,7 @@ uint32_t outbound_bytes_today();
  * Common properties:
  *   - 32 random bytes per token (256-bit entropy from esp_fill_random).
  *   - RAM-only — never persisted. A reboot invalidates every outstanding
- *     token, which is the right behaviour for "you have 10 minutes to
+ *     token, which is the right behavior for "you have 10 minutes to
  *     finish onboarding" UX.
  *   - 10-minute expiry from issuance.
  *   - Bounded slot table (4 active tokens at a time). Ninth issuance

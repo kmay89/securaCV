@@ -18,6 +18,14 @@
 #define BOARD_XIAO_ESP32C6_MR60 1
 #endif
 
+// Which physical board this is, in the fleet-figure vocabulary. Named here
+// rather than in the build env because THIS header is what a build compiles
+// against — the load-bearing declaration, so the id cannot drift away from
+// the pins it travels with. canary::figures::my_figure() reads it.
+#ifndef CANARY_FIGURE_HARDWARE
+#define CANARY_FIGURE_HARDWARE "xiao-esp32c6-mr60"
+#endif
+
 // ============================================================================
 // BOARD IDENTIFICATION
 // ============================================================================
@@ -70,7 +78,7 @@
 
 // Boot button.
 //
-// ASSUMPTION: The XIAO ESP32-C6 board does not break out a dedicated, labelled
+// ASSUMPTION: The XIAO ESP32-C6 board does not break out a dedicated, labeled
 // user button the way a DevKit does; the common XIAO/ESP32-C convention (and
 // the strapping pin used for download mode on this part) is GPIO9. We map BOOT
 // to GPIO9 (active LOW, internal pull-up) to match that convention until bench

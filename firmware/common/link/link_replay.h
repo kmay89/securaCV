@@ -47,7 +47,7 @@ struct ReplayWindow {
   // Would this counter be accepted right now? Const — safe to call anywhere.
   bool would_accept(uint64_t ctr) const {
     // Counter 0 is never valid on the wire: senders start at 1, so a
-    // zero-initialised or corrupt record can't masquerade as a live frame.
+    // zero-initialized or corrupt record can't masquerade as a live frame.
     if (ctr == 0) return false;
     if (!primed) return true;
     if (ctr > highest) return true;
@@ -78,7 +78,7 @@ struct ReplayWindow {
       // forget it, and a recorded frame at the old `highest` would then be
       // accepted a second time after ordinary packet loss — a replayable knock.
       // It cannot simply fall out of the shift arithmetic either: shifting a
-      // 64-bit value by 64 is undefined behaviour, which is exactly why the
+      // 64-bit value by 64 is undefined behavior, which is exactly why the
       // tempting `>=` was there in the first place.
       if (jump > LINK_REPLAY_WINDOW) {
         bitmap = 0;  // the whole old window really did fall off the back

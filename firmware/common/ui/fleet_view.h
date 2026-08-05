@@ -11,7 +11,7 @@
  *
  * HONESTY POSTURE. Like the roster and the beacon it consumes, this is UNSIGNED
  * presence: liveness and self-reported status, NEVER a verified trust claim. The
- * card says so out loud, and every attention state that gets a colour also gets
+ * card says so out loud, and every attention state that gets a color also gets
  * a word (WCAG 1.4.1) so it reads the same on a monochrome terminal.
  *
  * PURE render layer, landed ahead of its device wiring — the same pattern as
@@ -101,7 +101,7 @@ inline void fleet_fmt_pct(int pct, char* out, size_t cap) {
   else         snprintf(out, cap, "%d%%", pct > 100 ? 100 : pct);
 }
 
-// Decode the beacon flag bits into short, comma-separated words — never colour
+// Decode the beacon flag bits into short, comma-separated words — never color
 // alone. Writes "ok" when nothing is set. Bounded: always NUL-terminates within
 // `cap`. Order is worst-first (tamper, alert) so a truncated cell still leads
 // with the thing that matters.
@@ -126,8 +126,8 @@ inline void fleet_fmt_flags(uint8_t flags, char* out, size_t cap) {
   out[o < cap ? o : cap - 1] = '\0';
 }
 
-// True if any flag warrants an attention colour. The row is worded regardless;
-// colour is the bonus, never the meaning.
+// True if any flag warrants an attention color. The row is worded regardless;
+// color is the bonus, never the meaning.
 inline bool fleet_flags_alarming(uint8_t flags) {
   return (flags & (FLEET_BEACON_FLAG_TAMPER | FLEET_BEACON_FLAG_ALERT |
                    FLEET_BEACON_FLAG_DEGRADED)) != 0;

@@ -154,6 +154,17 @@ in Secure Enclave, shown once, never written to the cloud. Plus the pinned-key
 trust list (TOFU): what "Verified" means for each device, and a visible,
 auditable "this key changed" alarm.
 
+**⑤ The fifth surface is not a screen: ask, don't open.** The app exports
+four verbs as App Intents — *check the fleet*, *test the alert path*, *quiet
+hour*, *resume alerts* — so Siri, the Shortcuts app, Spotlight, the Action
+button, and Focus/location automations can ask on the user's behalf with
+zero setup. This is how the app earns "daily touchpoint" without becoming a
+daily chore, and how it stays flexible without scope creep: "quiet the fleet
+while I mow" is a Shortcut the user composes, not a setting we ship. The
+spoken answer keeps every honesty rule (an old snapshot states its age,
+sample data is labeled, a quiet hour can never silence tamper) — see
+`ios/README.md` "Ask, don't open" and `ios/Shared/GlanceAnswer.swift`.
+
 Pairing a device is a **guided, physical-presence flow**, reusing the existing
 Trust-on-Pair gate: the app finds the Canary over mDNS/BLE, tells you to
 **short-tap the BOOT button**, and receives the one-shot `{device_id, base_url,
@@ -176,8 +187,13 @@ can use the app for a decade having never typed an email.
 **Layer 1 — Your data syncs through *your* iCloud, not our server.** The "clever
 iCloud job that runs" you were reaching for already exists as a platform: it's
 **CloudKit's private database**. The device list, alert rules, pinned-key trust
-metadata, and event *digests* live in **your** iCloud account. Apple end-to-end
-protects it; **SecuraCV has no server in the loop and cannot read any of it.**
+metadata, and event *digests* live in **your** iCloud account. **SecuraCV has no
+server in the loop and cannot read any of it.** (The finer point, because a
+privacy project pays for imprecision: *standard* CloudKit fields are encrypted
+in transit and at rest with keys Apple holds, not end-to-end — fields opted into
+`CKRecord.encryptedValues` are the end-to-end ones. Which of ours are which, and
+why one of them has no choice, is settled in
+[`cloudkit_backend.md`](cloudkit_backend.md) §6.)
 Your second iPhone or your iPad just… has your fleet, because it's your iCloud.
 That is data ownership implemented as infrastructure, not as a pledge. (Secrets
 are handled more carefully — see below.)

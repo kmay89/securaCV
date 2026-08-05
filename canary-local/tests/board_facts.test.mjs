@@ -31,7 +31,7 @@ const PINS_H = {
 
 // The RGB + sync signals whose vendor GPIO must equal LCD_PIN_<signal> in
 // pins.h. (The LCD table's signal column is clean on all three boards; other
-// sections' labels vary, so the drift-lock centres on this universal core.)
+// sections' labels vary, so the drift-lock centers on this universal core.)
 const LCD_SIGNALS = [
   "R3", "R4", "R5", "R6", "R7", "G2", "G3", "G4", "G5", "G6", "G7",
   "B3", "B4", "B5", "B6", "B7", "DE", "VSYNC", "HSYNC", "PCLK",

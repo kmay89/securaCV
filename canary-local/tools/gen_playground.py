@@ -74,7 +74,7 @@ def main() -> None:
     bit_do0 = need(pins, "ISO_OUT_BIT_DO0")
     bit_do1 = need(pins, "ISO_OUT_BIT_DO1")
 
-    # ── Wire net colours (RGB float triples), reused by the 3D renderer ──
+    # ── Wire net colors (RGB float triples), reused by the 3D renderer ──
     colors = {
         "5v": [0.85, 0.2, 0.16],     # supply + / VIN / DI COM
         "gnd": [0.12, 0.12, 0.14],   # ground
@@ -103,7 +103,7 @@ def main() -> None:
     # named terminal is a claim; the row geometry is staged for legibility.
     row_y = 13.0     # terminal tops, just above the +Y (back) face
     row_z = 30.0     # near the +Z edge of the enclosure
-    x0, dx = -56.25, 7.5   # 16 terminals, centred, 7.5 mm pitch
+    x0, dx = -56.25, 7.5   # 16 terminals, centered, 7.5 mm pitch
     # (id, label, net, group, extra)
     ORDER = [
         ("DI1", "DI1", "di", "iso", {"exio": "EXIO5", "bit": bit_di1,

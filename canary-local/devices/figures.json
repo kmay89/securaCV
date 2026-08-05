@@ -23,9 +23,9 @@
  },
  "counts": {
   "idea": 15,
-  "prototype": 4,
+  "prototype": 6,
   "confirmed": 1,
-  "shipping": 24
+  "shipping": 25
  },
  "device_types": {
   "mapped": [
@@ -53,11 +53,11 @@
   "unmapped": [
    {
     "device_type": "canary-dash",
-    "why": "published by more than one board, and at least one has no figure yet (the figured one is device.canary-display-dash)"
+    "why": "published by boards with different figures (device.canary-display-dash, device.canary-display-dash7)"
    },
    {
     "device_type": "canary-nightstand",
-    "why": "no figure for this hardware yet"
+    "why": "published by more than one board, and at least one has no figure yet (the figured one is device.canary-display-touch169)"
    },
    {
     "device_type": "canary-nightstand7",
@@ -74,6 +74,18 @@
     "flavor": "dash",
     "device_type": "canary-dash",
     "figure": "device.canary-display-dash"
+   },
+   {
+    "family": "canary-display",
+    "flavor": "dash7",
+    "device_type": "canary-dash",
+    "figure": "device.canary-display-dash7"
+   },
+   {
+    "family": "canary-display",
+    "flavor": "touch169",
+    "device_type": "canary-nightstand",
+    "figure": "device.canary-display-touch169"
    },
    {
     "family": "canary-display",
@@ -111,12 +123,185 @@
     "device_type": "canary_wap_mobile",
     "figure": "device.canary-wap"
    }
+  ]
+ },
+ "hardware": {
+  "key": "the boards/<id>/pins header the build compiles against, or board:<platformio id> for envs that carry no pins header of their own",
+  "mapped": [
+   {
+    "hardware": "board:seeed_xiao_esp32s3",
+    "figure": "device.canary-wap",
+    "builds": [
+     "canary-wap-debug",
+     "canary-wap-default",
+     "canary-wap-mobile",
+     "canary-wap-usbdrive"
+    ],
+    "serves": [],
+    "shared": false
+   },
+   {
+    "hardware": "esp32-c3",
+    "figure": "device.canary-vision-devkit",
+    "builds": [
+     "canary-vision-debug",
+     "canary-vision-default"
+    ],
+    "serves": [
+     "canary-vision"
+    ],
+    "shared": false
+   },
+   {
+    "hardware": "waveshare-esp32s3-lcd43",
+    "figure": "device.canary-display-dash",
+    "builds": [
+     "canary-display-dash",
+     "canary-display-dash-ble5"
+    ],
+    "serves": [
+     "canary-dash"
+    ],
+    "shared": false
+   },
+   {
+    "hardware": "waveshare-esp32s3-lcd7",
+    "figure": "device.canary-display-dash7",
+    "builds": [
+     "canary-display-dash7",
+     "canary-display-nightstand7"
+    ],
+    "serves": [
+     "canary-dash",
+     "canary-nightstand7"
+    ],
+    "shared": true
+   },
+   {
+    "hardware": "waveshare-esp32s3-touch-lcd169",
+    "figure": "device.canary-display-touch169",
+    "builds": [
+     "canary-display-touch169"
+    ],
+    "serves": [
+     "canary-nightstand"
+    ],
+    "shared": false
+   },
+   {
+    "hardware": "xiao-esp32c3",
+    "figure": "device.canary-vision",
+    "builds": [
+     "canary-vision-xiao-c3"
+    ],
+    "serves": [
+     "canary-vision"
+    ],
+    "shared": false
+   },
+   {
+    "hardware": "xiao-esp32c6-mr60",
+    "figure": "device.canary-sense",
+    "builds": [
+     "canary-sense-debug",
+     "canary-sense-default",
+     "canary-sense-wellbeing"
+    ],
+    "serves": [
+     "canary-sense"
+    ],
+    "shared": false
+   },
+   {
+    "hardware": "xiao-esp32s3",
+    "figure": "device.canary-vision",
+    "builds": [
+     "canary-vision-xiao-s3"
+    ],
+    "serves": [
+     "canary-vision"
+    ],
+    "shared": false
+   },
+   {
+    "hardware": "xiao-esp32s3-round",
+    "figure": "device.canary-display-watch",
+    "builds": [
+     "canary-display-watch",
+     "canary-display-watch-debug",
+     "canary-display-watch-modes"
+    ],
+    "serves": [
+     "canary-watch"
+    ],
+    "shared": false
+   }
   ],
-  "exact_lookup": {
-   "available": false,
-   "why": "the firmware does not record which physical product a build is for; a config directory and a build env are both shared across boards",
-   "fix": "declare a product id per build env, then key the exact table on it"
-  }
+  "unmapped": [
+   {
+    "hardware": "board:seeed_xiao_esp32c6",
+    "builds": [
+     "canary-sentinel-demo-head",
+     "canary-sentinel-door",
+     "canary-sentinel-hallway",
+     "canary-sentinel-window"
+    ],
+    "serves": [
+     "canary-sentinel"
+    ]
+   },
+   {
+    "hardware": "waveshare-esp32c6-lcd147",
+    "builds": [
+     "canary-display-nightstand-c6"
+    ],
+    "serves": [
+     "canary-nightstand"
+    ]
+   },
+   {
+    "hardware": "waveshare-esp32s3-lcd147",
+    "builds": [
+     "canary-display-nightstand-s3"
+    ],
+    "serves": [
+     "canary-nightstand"
+    ]
+   },
+   {
+    "hardware": "waveshare-esp32s3-lcd43b",
+    "builds": [
+     "canary-display-dash-b",
+     "canary-display-dash-can",
+     "canary-display-dash-espnow",
+     "canary-display-dash-modes",
+     "canary-display-dash-rs485",
+     "canary-display-dash-rtc",
+     "canary-display-dash-sd",
+     "canary-display-dash-vault",
+     "canary-display-playground"
+    ],
+    "serves": [
+     "canary-dash"
+    ]
+   },
+   {
+    "hardware": "waveshare-esp32s3-lcd43c",
+    "builds": [
+     "canary-display-dash-mic"
+    ],
+    "serves": [
+     "canary-dash"
+    ]
+   },
+   {
+    "hardware": "xiao-esp32c3-sentinel-lite",
+    "builds": [
+     "canary-sentinel-lite"
+    ],
+    "serves": []
+   }
+  ]
  },
  "figures": [
   {
@@ -320,6 +505,11 @@
       "status": "in-development"
      },
      {
+      "product": "c3_lcd147",
+      "variant": "c3-pocket-display-case",
+      "status": "in-development"
+     },
+     {
       "product": "dock",
       "variant": "fleet-provisioning-dock",
       "status": "in-development"
@@ -367,6 +557,11 @@
      {
       "product": "relay_solar",
       "variant": "solar-lora-relay-pod",
+      "status": "in-development"
+     },
+     {
+      "product": "s3_lcd147",
+      "variant": "s3-hallway-stick-case",
       "status": "in-development"
      },
      {
@@ -575,6 +770,86 @@
    "rev": "9bb5e13f",
    "svg": "canary-local/figures/device.canary-display-dash.svg",
    "glyph": "canary-local/figures/device.canary-display-dash.glyph.svg"
+  },
+  {
+   "id": "device.canary-display-dash7",
+   "title": "Canary Dash 7",
+   "role": "device",
+   "device": "canary-display-dash7",
+   "family": "canary-display",
+   "supply": [
+    {
+     "vendor": "waveshare",
+     "line": "ESP32 display board"
+    }
+   ],
+   "confidence": "prototype",
+   "evidence": {
+    "registry_kind": "display",
+    "committed_stls": [],
+    "catalog_variants": [],
+    "firmware_configs": [
+     "dash",
+     "dash7",
+     "nightstand",
+     "nightstand7",
+     "touch169",
+     "watch"
+    ]
+   },
+   "dims_source": "sketch",
+   "sketch_note": "the 7\" panel record in canary_s3_lcd7.scad (glass 192.96 x 110.76, active 154.88 x 86.72) plus a 6 mm bezel wall; no committed case STL yet",
+   "envelope_mm": {
+    "w": 204.96,
+    "d": 22,
+    "h": 122.76
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 3,
+   "rev": "cdff74a9",
+   "svg": "canary-local/figures/device.canary-display-dash7.svg",
+   "glyph": "canary-local/figures/device.canary-display-dash7.glyph.svg"
+  },
+  {
+   "id": "device.canary-display-touch169",
+   "title": "Canary Nightstand Touch",
+   "role": "device",
+   "device": "canary-display-touch169",
+   "family": "canary-display",
+   "supply": [
+    {
+     "vendor": "waveshare",
+     "line": "ESP32 display board"
+    }
+   ],
+   "confidence": "prototype",
+   "evidence": {
+    "registry_kind": "display",
+    "committed_stls": [],
+    "catalog_variants": [],
+    "firmware_configs": [
+     "dash",
+     "dash7",
+     "nightstand",
+     "nightstand7",
+     "touch169",
+     "watch"
+    ]
+   },
+   "dims_source": "sketch",
+   "sketch_note": "the 1.69\" panel record in canary_s3_touch169.scad (glass 41.13 x 33.13) plus a 2.5 mm bezel wall; no committed case STL yet",
+   "envelope_mm": {
+    "w": 46.13,
+    "d": 17,
+    "h": 38.13
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 3,
+   "rev": "72fa8cf1",
+   "svg": "canary-local/figures/device.canary-display-touch169.svg",
+   "glyph": "canary-local/figures/device.canary-display-touch169.glyph.svg"
   },
   {
    "id": "device.canary-display-watch",
@@ -1156,6 +1431,99 @@
    "rev": "421d34f1",
    "svg": "canary-local/figures/device.canary-vision.svg",
    "glyph": "canary-local/figures/device.canary-vision.glyph.svg"
+  },
+  {
+   "id": "device.canary-vision-devkit",
+   "title": "Canary Vision (DevKitM host)",
+   "role": "device",
+   "device": "canary-vision",
+   "family": "canary-vision",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "shipping",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [
+     "canary_vision_enclosure_devkit_indoor_back.stl",
+     "canary_vision_enclosure_devkit_indoor_front.stl"
+    ],
+    "catalog_variants": [
+     {
+      "product": "combo",
+      "variant": "combo-witness",
+      "status": "in-development"
+     },
+     {
+      "product": "vision_doorbell",
+      "variant": "vision-doorbell",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-xiao-weather",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-devkit-indoor",
+      "status": "released"
+     },
+     {
+      "product": "vision_enclosure",
+      "variant": "vision-mount-kit",
+      "status": "released"
+     },
+     {
+      "product": "vision_pro_mount",
+      "variant": "vision-pro-mount",
+      "status": "in-development"
+     }
+    ],
+    "firmware_configs": [
+     "default"
+    ]
+   },
+   "dims_source": "stl",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 74.8,
+    "d": 23.35,
+    "h": 96.497
+   },
+   "traced_to": [
+    {
+     "file": "canary_vision_enclosure_devkit_indoor_back.stl",
+     "triangles": 3664,
+     "mm": [
+      74.8,
+      96.497,
+      16
+     ]
+    },
+    {
+     "file": "canary_vision_enclosure_devkit_indoor_front.stl",
+     "triangles": 3108,
+     "mm": [
+      74.8,
+      76,
+      6
+     ]
+    }
+   ],
+   "drift_guard": null,
+   "solids": 4,
+   "rev": "996e322d",
+   "svg": "canary-local/figures/device.canary-vision-devkit.svg",
+   "glyph": "canary-local/figures/device.canary-vision-devkit.glyph.svg"
   },
   {
    "id": "device.canary-vision-doorbell",
@@ -2800,6 +3168,11 @@
       "status": "in-development"
      },
      {
+      "product": "c3_lcd147",
+      "variant": "c3-pocket-display-case",
+      "status": "in-development"
+     },
+     {
       "product": "dock",
       "variant": "fleet-provisioning-dock",
       "status": "in-development"
@@ -2847,6 +3220,11 @@
      {
       "product": "relay_solar",
       "variant": "solar-lora-relay-pod",
+      "status": "in-development"
+     },
+     {
+      "product": "s3_lcd147",
+      "variant": "s3-hallway-stick-case",
       "status": "in-development"
      },
      {

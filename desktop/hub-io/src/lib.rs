@@ -34,6 +34,7 @@
 
 pub mod account;
 pub mod fetch;
+pub mod onboarding;
 pub mod provision;
 pub mod seed;
 pub mod write;
@@ -43,30 +44,30 @@ pub mod xz;
 /// write, read-back). Cloneable and thread-safe; the UI's Stop button flips
 /// it, and every chunk loop calls [`CancelToken::checkpoint`] between chunks.
 ///
-/// Cancelling is always SAFE for the hardware — mid-download/decompress
+/// Canceling is always SAFE for the hardware — mid-download/decompress
 /// nothing has touched the card, and mid-write the card was being erased
 /// anyway; it simply needs a fresh flash. The checkpoint error carries the
-/// [`CANCELLED`] marker so the UI can present a calm "stopped, nothing hurt"
+/// [`CANCELED`] marker so the UI can present a calm "stopped, nothing hurt"
 /// instead of a failure.
 #[derive(Debug, Clone, Default)]
 pub struct CancelToken(std::sync::Arc<std::sync::atomic::AtomicBool>);
 
 /// Prefix of every cancellation error — lets callers distinguish "the
 /// operator said stop" (neutral) from "something went wrong" (an error).
-pub const CANCELLED: &str = "cancelled:";
+pub const CANCELED: &str = "canceled:";
 
 impl CancelToken {
     pub fn cancel(&self) {
         self.0.store(true, std::sync::atomic::Ordering::Relaxed);
     }
-    pub fn is_cancelled(&self) -> bool {
+    pub fn is_canceled(&self) -> bool {
         self.0.load(std::sync::atomic::Ordering::Relaxed)
     }
-    /// `Err` with the [`CANCELLED`] marker once [`cancel`](Self::cancel) has
+    /// `Err` with the [`CANCELED`] marker once [`cancel`](Self::cancel) has
     /// been called — the chunk loops bubble this out between chunks.
     pub fn checkpoint(&self) -> Result<(), String> {
-        if self.is_cancelled() {
-            Err(format!("{CANCELLED} stopped at your request"))
+        if self.is_canceled() {
+            Err(format!("{CANCELED} stopped at your request"))
         } else {
             Ok(())
         }

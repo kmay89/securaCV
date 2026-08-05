@@ -64,7 +64,7 @@ SDA11/SCL10/INT14/RST13), and the table resolved what had been stubbed:
   (touch `0x15`, IMU `0x6B`, RTC `0x51`).
 
 Only the electrical details a pin table can't give — backlight polarity, the
-IMU INT edge, and whether the vendor's own INT1/INT2 labelling for GPIO38 is
+IMU INT edge, and whether the vendor's own INT1/INT2 labeling for GPIO38 is
 right — still want a bench check against the
 [schematic PDF](https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.69/ESP32-S3-Touch-LCD-1.69-Sch.pdf).
 The [pin budget](../PIN_BUDGET.md) counts only what is declared.

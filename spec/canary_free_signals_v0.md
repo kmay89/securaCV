@@ -376,7 +376,7 @@ box **geometry**, coarsened, and never exported at finer resolution.
 | `occupancy_bucket` | Coarse count of people in view | `# boxes ≥ score_min` → `none / one / two / several` | ~10 Hz |
 | `posture` | Coarse body orientation | primary box **aspect ratio** → `upright / ambiguous / horizontal` | ~10 Hz |
 | `proximity` | Coarse distance band | primary box **area fraction** → `far / mid / near` | ~10 Hz |
-| `zone_occupancy_mask` | Which coarse cells are occupied | each box centre → 3×3 voxel grid bit | ~10 Hz |
+| `zone_occupancy_mask` | Which coarse cells are occupied | each box center → 3×3 voxel grid bit | ~10 Hz |
 
 **What this means**:
 

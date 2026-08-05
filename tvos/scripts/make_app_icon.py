@@ -193,7 +193,7 @@ def layer_bird(w: int, h: int) -> Image.Image:
     bird = bird.resize((target_w, target_h), Image.LANCZOS)
 
     tray_top = h * 0.79
-    # Off-centre by a little, so the seed hopper stays visible past the bird —
+    # Off-center by a little, so the seed hopper stays visible past the bird —
     # a feeder the bird completely covers stops reading as a feeder. It also
     # gives the parallax somewhere to travel.
     x = round(w / 2 - target_w / 2 - unit * 0.07)

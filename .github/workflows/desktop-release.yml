@@ -34,7 +34,7 @@ on:
         type: boolean
         default: true
 
-# One release build per ref at a time. A tag build must never be cancelled
+# One release build per ref at a time. A tag build must never be canceled
 # mid-flight (half-uploaded release assets), so we only auto-cancel the
 # cheap manual smoke-test runs.
 concurrency:

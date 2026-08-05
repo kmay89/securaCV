@@ -98,7 +98,7 @@ export function plateSlabBuilder(halfW, halfD) {
 //     1.27 g/cm³ … ×0.84 for ASA"). meshVolume on the committed WAP-compact
 //     pair reproduces the README's "≈ 12 g/pair" mass budget — same method,
 //     so the number is checkable, not asserted (see tests/print_estimate.test.js).
-//   · MODELLED  — print time and energy come from a transparent physical model
+//   · MODELED  — print time and energy come from a transparent physical model
 //     (volumetric flow → time, average duty-cycle power → energy) with every
 //     assumption named below and surfaced in the UI. These carry an honest
 //     ± band; for exact figures, slice in your slicer. This is NOT a slicer
@@ -198,7 +198,7 @@ export function materialForPart(part, shellMaterial = "PETG") {
 }
 
 // The estimate for one part. `geom` = {volume, area, height} in mm/mm²/mm³.
-// Returns measured filament figures + a modelled time/energy with a band.
+// Returns measured filament figures + a modeled time/energy with a band.
 export function estimatePart(geom, opts = {}) {
   const machine = opts.machine || MACHINE;
   const settings = { ...DEFAULT_SETTINGS, ...(opts.settings || {}) };

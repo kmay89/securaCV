@@ -13,5 +13,7 @@
 //!
 //! The design of record is `docs/design/apple_home_integration.md`.
 
+#[cfg(feature = "bridge-homekit-server")]
+pub mod hap;
 #[cfg(feature = "bridge-homekit")]
 pub mod homekit;

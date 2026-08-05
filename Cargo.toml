@@ -53,6 +53,22 @@ webpki-roots = { version = "1.0", optional = true }
 rustls-pki-types = { version = "1.10", optional = true, features = ["std"] }
 rustls-pemfile = { version = "2.1", optional = true }
 subtle = "2.5"
+# HAP (feature `bridge-homekit-server`). Both published HAP server crates
+# failed the FR-14 gate — `hap 0.0.10` does not compile on a current
+# toolchain, and `hap 0.1.0-pre.15` cannot be resolved at all (it links
+# `ifaddrs` twice, via libmdns and get_if_addrs). So the protocol is built on
+# the primitives above plus these three: SRP-6a for pair-setup (the crate
+# implements Apple's non-padded-g variant explicitly), X25519 for
+# pair-verify's ECDH, and a pure-Rust mDNS responder for discovery.
+srp = { version = "0.7.0-rc.3", optional = true }
+# `static_secrets` exposes the byte-seeded secret type, which is what lets a
+# key come from the repo's fallible OS RNG rather than dalek's infallible
+# `CryptoRng`; it also carries `was_contributory()`, the low-order-point check.
+x25519-dalek = { version = "3.0", optional = true, features = ["static_secrets"] }
+mdns-sd = { version = "0.20", optional = true }
+# The setup QR. Zero dependencies of its own (Nayuki's reference generator),
+# which is why it clears the FR-14 gate without argument.
+qrcodegen = { version = "1.8", optional = true }
 tempfile = "3.10"
 
 [lints.rust]
@@ -95,6 +111,11 @@ adapter-ble-presence = []
 # it produces the publications a HAP server would send, on a fixed cadence,
 # so the Invariant III properties are testable without a socket.
 bridge-homekit = []
+# The HAP accessory server (bridge site B): witnessd advertises over mDNS and
+# a controller pairs with it directly, no Home Assistant in the path. Kept
+# separate from the projection core above so that core stays pure and
+# testable without pulling a single crypto or network dependency.
+bridge-homekit-server = ["bridge-homekit", "dep:srp", "dep:x25519-dalek", "dep:mdns-sd", "dep:qrcodegen"]
 adapter-meshtastic = []
 adapter-can-bus = []
 adapter-sandbox = []
@@ -104,6 +125,10 @@ pqc-tls = ["rustls", "webpki-roots", "rustls-pki-types"]
 # RFC 3161 trusted timestamping: enables log_anchor's online `request`
 # subcommand (the offline query/import flow needs no feature).
 tsa = ["ureq"]
+# The hub-side alert relay (docs/design/alert_relay.md): metadata-only pokes
+# over ntfy. Zero new crates — ureq (already vetted for tsa/ingest-esp32)
+# carries rustls, so network egress stays opt-in at build time.
+alert-relay = ["ureq"]
 # C2PA Content Credentials sidecar manifests for export bundles
 # (docs/design/c2pa_export.md). Fully offline; keys derived from the device
 # seed with domain separation; trust anchor is the device-local CA.
@@ -112,6 +137,21 @@ c2pa-export = ["dep:c2pa", "dep:rcgen"]
 [[bin]]
 name = "witnessd"
 path = "src/bin/witnessd.rs"
+
+# The Apple Home bridge. Gated on the feature so a default build neither
+# compiles the HAP stack nor carries its dependencies.
+[[bin]]
+name = "hap_bridge"
+path = "src/bin/hap_bridge.rs"
+required-features = ["bridge-homekit-server"]
+
+# The alert relay. Gated so a default build carries no outbound-HTTP path;
+# the poke vocabulary and debounce live in src/relay/ and are unit-tested
+# without a broker or a network.
+[[bin]]
+name = "alert_relay"
+path = "src/bin/alert_relay.rs"
+required-features = ["alert-relay"]
 
 [[bin]]
 name = "log_verify"

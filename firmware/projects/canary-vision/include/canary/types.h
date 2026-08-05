@@ -33,13 +33,13 @@ struct Voxel {
 enum class Posture : uint8_t { Unknown = 0, Upright, Ambiguous, Horizontal };
 
 // Coarse optical proximity, derived from the person bounding-box area as a
-// fraction of the frame. Ordinal only — never a distance in metres.
+// fraction of the frame. Ordinal only — never a distance in meters.
 enum class Proximity : uint8_t { Unknown = 0, Far, Mid, Near };
 
 struct VisionSample {
   bool person_now=false;
   BBox bbox;   // primary (highest-score) person box — what the aim/live tier shows
-  Voxel voxel; // coarsened 3x3 cell of the primary box's centre
+  Voxel voxel; // coarsened 3x3 cell of the primary box's center
 
   // Derived from ALL qualifying boxes this frame (coarse, non-identifying).
   // These populate the live/telemetry tier only; the signed witness record

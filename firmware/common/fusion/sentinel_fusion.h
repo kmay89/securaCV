@@ -40,7 +40,7 @@
  * witness signs and publishes. Time is injected (`now_ms`) so the engine is
  * fully deterministic and host-testable under g++ -Wall -Wextra -Werror.
  *
- * Privacy: this engine never sees a MAC, a distance in centimetres, a per-
+ * Privacy: this engine never sees a MAC, a distance in centimeters, a per-
  * target track, imagery or vitals. It sees votes. It emits an ordinal level,
  * a 0/1/2+ occupant bucket, a near/mid/far band, a confidence, and which
  * *modality classes* corroborated — never which device, never who.
@@ -115,7 +115,7 @@ enum class Vote : uint8_t {
 
 /**
  * Per-channel evidence weighting, set by the active preset (configs/). All
- * values are data — no behaviour forks by preset, only these numbers do.
+ * values are data — no behavior forks by preset, only these numbers do.
  */
 struct ChannelSpec {
   bool     enabled      = false;  // channel present in this build/tier

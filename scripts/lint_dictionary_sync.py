@@ -136,6 +136,50 @@ def rust_fn_body(text: str, name: str, rel: str) -> str:
     return _balanced_body(text, m.end())
 
 
+def rust_event_signal_map(body: str) -> dict[str, list[str]]:
+    """Parse `signals_for_event`'s match arms into {EventType: [signal ids]}.
+
+    Arms may list several variants (`A | B => &[...]`), so the variant list is
+    parsed rather than assumed to be one name. Signals are returned as the
+    dictionary's snake_case ids, not the Rust variant names, so the comparison
+    is against the vocabulary rather than against Rust spelling.
+    """
+    out: dict[str, list[str]] = {}
+    # Written to be unambiguous rather than merely correct. The obvious
+    # form — `(?:\s*EventType::\w+\s*\|?)+` — nests a quantifier over a
+    # group whose leading and trailing `\s*` can split the same whitespace
+    # many ways, which is polynomial backtracking waiting to happen. Here
+    # every repetition must consume a literal `EventType::` and a literal
+    # `|`, and `\w`/`\s` are disjoint, so there is exactly one way to match.
+    for arm in re.finditer(
+        r"((?:EventType::\w+\s*\|\s*)*EventType::\w+)\s*=>\s*&\[([^\]]*)\]", body
+    ):
+        variants = re.findall(r"EventType::(\w+)", arm.group(1))
+        signals = [_signal_id(v) for v in re.findall(r"HomeSignal::(\w+)", arm.group(2))]
+        for v in variants:
+            out[v] = signals
+    return out
+
+
+def _signal_id(variant: str) -> str:
+    """`MotionPerson` -> `motion_person`."""
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", variant).lower()
+
+
+def py_event_signal_map(text: str) -> dict[str, list[str]]:
+    """Parse `HOMEKIT_EVENT_SIGNALS` out of the Home Assistant const module."""
+    m = re.search(r"HOMEKIT_EVENT_SIGNALS\s*=\s*\{(.*?)\n\}", text, re.S)
+    if not m:
+        err("[missing] HOMEKIT_EVENT_SIGNALS not found in "
+            "custom_components/securacv/const.py")
+        return {}
+    out: dict[str, list[str]] = {}
+    for entry in re.finditer(r'"(\w+)"\s*:\s*\(([^)]*)\)', m.group(1)):
+        signals = re.findall(r'"([a-z0-9_]+)"', entry.group(2))
+        out[entry.group(1)] = signals
+    return out
+
+
 def swift_computed_property_map(text: str, name: str, rel: str) -> dict[str, str]:
     """{caseName: returnedString} for a Swift `var {name}: String { switch … }`.
 
@@ -341,6 +385,12 @@ def main() -> int:
     rust_haps = rust_match_pairs(
         rust_fn_body(rust_hk, "hap_characteristic", "src/bridge/homekit.rs"),
         r'HomeSignal::(\w+) => "([a-z0-9-]+)"')
+    # Matter device types (bridge site D, data-first): explicit Some(...) arms
+    # only — a signal the dictionary maps to null must NOT appear in the match
+    # body, so it falls to the `_ => None` arm.
+    rust_matter = rust_match_pairs(
+        rust_fn_body(rust_hk, "matter_device_type", "src/bridge/homekit.rs"),
+        r'HomeSignal::(\w+) => Some\("([a-z0-9-]+)"\)')
     swift_hk = read("ios/Sources/SecuraCV/Native/HomeKitBridge.swift")
     swift_haps = swift_computed_property_map(
         swift_hk, "hapCharacteristic", "ios/Sources/SecuraCV/Native/HomeKitBridge.swift")
@@ -353,6 +403,9 @@ def main() -> int:
         if rust_haps.get(rv) != hap:
             err(f"[drift] HomeSignal::{rv}.hap_characteristic(): dictionary "
                 f"{hap!r} vs code {rust_haps.get(rv)!r}")
+        if rust_matter.get(rv) != s.get("matter_device_type"):
+            err(f"[drift] HomeSignal::{rv}.matter_device_type(): dictionary "
+                f"{s.get('matter_device_type')!r} vs code {rust_matter.get(rv)!r}")
         swift_case = snake_to_lower_camel(sid)
         if swift_haps.get(swift_case) != hap:
             err(f"[drift] HomeKitBridge.swift .{swift_case}.hapCharacteristic: "
@@ -364,6 +417,37 @@ def main() -> int:
     compare("HomeKitBridge.swift HomeSignal ids vs dictionary",
             hk_ids, swift_enum_raw_values(swift_hk, "HomeSignal",
                                           "ios/Sources/SecuraCV/Native/HomeKitBridge.swift"))
+
+    # --- Which signals an event asserts (Rust core + Python HA mirror) ---
+    # The egress half of the event vocabulary. Checked per event, in both
+    # directions: a missing entry and a wrong entry are different bugs, and
+    # both publish a Canary into someone's home as the wrong kind of sensor.
+    hk_events = hk["event_signals"]["map"]
+
+    rust_events = rust_event_signal_map(
+        rust_fn_body(rust_hk, "signals_for_event", "src/bridge/homekit.rs"))
+    py_const = read("custom_components/securacv/const.py")
+    py_events = py_event_signal_map(py_const)
+
+    compare("signals_for_event (src/bridge/homekit.rs) events vs dictionary",
+            sorted(hk_events), sorted(rust_events))
+    compare("HOMEKIT_EVENT_SIGNALS (custom_components/securacv/const.py) "
+            "events vs dictionary", sorted(hk_events), sorted(py_events))
+
+    for event, signals in hk_events.items():
+        expected = list(signals)
+        if rust_events.get(event) != expected:
+            err(f"[drift] signals_for_event({event}): dictionary {expected} "
+                f"vs Rust {rust_events.get(event)}")
+        if py_events.get(event) != expected:
+            err(f"[drift] HOMEKIT_EVENT_SIGNALS[{event!r}]: dictionary "
+                f"{expected} vs Python {py_events.get(event)}")
+        # Every signal named here must be a real signal, or the mapping
+        # invents vocabulary the projection cannot publish.
+        for named in expected:
+            if named not in hk_ids:
+                err(f"[drift] event_signals[{event!r}] names {named!r}, which "
+                    f"is not a HomeSignal id")
 
     # --- Device-signature format constants (Python + every firmware copy) ---
     sig_py = read("custom_components/securacv/signature.py")

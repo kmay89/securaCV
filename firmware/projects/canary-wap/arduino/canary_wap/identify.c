@@ -1000,25 +1000,25 @@ fail:
 	q->num_grids--;
 }
 
-struct neighbour {
+struct neighbor {
 	int		index;
 	quirc_float_t		distance;
 };
 
-struct neighbour_list {
-	struct neighbour	n[QUIRC_MAX_CAPSTONES];
+struct neighbor_list {
+	struct neighbor	n[QUIRC_MAX_CAPSTONES];
 	int			count;
 };
 
-static void test_neighbours(struct quirc *q, int i,
-			    const struct neighbour_list *hlist,
-			    const struct neighbour_list *vlist)
+static void test_neighbors(struct quirc *q, int i,
+			    const struct neighbor_list *hlist,
+			    const struct neighbor_list *vlist)
 {
 	/* Test each possible grouping */
 	for (int j = 0; j < hlist->count; j++) {
-		const struct neighbour *hn = &hlist->n[j];
+		const struct neighbor *hn = &hlist->n[j];
 		for (int k = 0; k < vlist->count; k++) {
-			const struct neighbour *vn = &vlist->n[k];
+			const struct neighbor *vn = &vlist->n[k];
 			quirc_float_t squareness = fabs((quirc_float_t)1.0 - hn->distance / vn->distance);
 			if (squareness < (quirc_float_t)0.2)
 				record_qr_grid(q, hn->index, i, vn->index);
@@ -1030,13 +1030,13 @@ static void test_grouping(struct quirc *q, unsigned int i)
 {
 	struct quirc_capstone *c1 = &q->capstones[i];
 	int j;
-	struct neighbour_list hlist;
-	struct neighbour_list vlist;
+	struct neighbor_list hlist;
+	struct neighbor_list vlist;
 
 	hlist.count = 0;
 	vlist.count = 0;
 
-	/* Look for potential neighbours by examining the relative gradients
+	/* Look for potential neighbors by examining the relative gradients
 	 * from this capstone to others.
 	 */
 	for (j = 0; j < q->num_capstones; j++) {
@@ -1052,14 +1052,14 @@ static void test_grouping(struct quirc *q, unsigned int i)
 		v = fabs(v - (quirc_float_t)3.5);
 
 		if (u < (quirc_float_t)0.2 * v) {
-			struct neighbour *n = &hlist.n[hlist.count++];
+			struct neighbor *n = &hlist.n[hlist.count++];
 
 			n->index = j;
 			n->distance = v;
 		}
 
 		if (v < (quirc_float_t)0.2 * u) {
-			struct neighbour *n = &vlist.n[vlist.count++];
+			struct neighbor *n = &vlist.n[vlist.count++];
 
 			n->index = j;
 			n->distance = u;
@@ -1069,7 +1069,7 @@ static void test_grouping(struct quirc *q, unsigned int i)
 	if (!(hlist.count && vlist.count))
 		return;
 
-	test_neighbours(q, i, &hlist, &vlist);
+	test_neighbors(q, i, &hlist, &vlist);
 }
 
 static void pixels_setup(struct quirc *q, uint8_t threshold)

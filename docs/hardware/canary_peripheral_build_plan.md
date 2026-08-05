@@ -441,7 +441,7 @@ are not, so do not rely on them alone.
 
 - **RoHS / REACH:** prefer RoHS-compliant, REACH-SVHC-free parts; the
   `RoHS` column in the CSVs flags each line. Mark NRND/EOL parts in `Lifecycle`.
-- **Audible signalling:** `PATTERN_SELFTEST_OK` is designed as a quiet monthly
+- **Audible signaling:** `PATTERN_SELFTEST_OK` is designed as a quiet monthly
   self-test consistent with **NFPA 72 §14** cadence; `PATTERN_BEACON` uses a
   deliberately distinct 1200/1700/2200 Hz sequence chosen to avoid impersonating
   reserved alert tones (**47 CFR §10 / §11**). A firmware build check fails if a

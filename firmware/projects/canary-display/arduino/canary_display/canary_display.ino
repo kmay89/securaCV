@@ -47,6 +47,11 @@
 #include "feature_sanity.h"
 #include "version.h"
 #include "log.h"
+// Power-event resilience: boot-lineage classification + the durable outage
+// log, feeding the shared host-tested core (firmware/common/power/
+// power_events.h). Unconditional, like the canary base tree — "when did the
+// power go out" isn't gated on a feature. See docs/design/power_events.md.
+#include "power_events_glue.h"
 #include "topics.h"
 #include "runtime_config.h"
 #include "diagnostics.h"
@@ -127,12 +132,30 @@ static canary::mode::Mode s_active_mode = canary::mode::Mode::Fleet;
 #ifdef CD_NIGHTSTAND7
 #include "nightstand7_ui.h"
 #endif
+#if defined(CD_FLAVOR_NIGHTSTAND) || defined(CD_NIGHTSTAND7)
+// song_seed() below is called under exactly this pair of flavor guards, and
+// nothing else in this file pulled the header in — so the bedside builds were
+// the only ones that failed, and only in the emulator/wasm job that compiles
+// them. Guard the include with the same condition as the call so the two can
+// never drift apart again.
+#include "look_state.h"
+#endif
 #ifdef CD_FLAVOR_DASH
 #include "portrait7_ui.h"   // the 7"/dash portrait column (rotated)
 #include "lvgl_port.h"      // set_rotation / set_dim
 #endif
 #ifdef CD_FLAVOR_NIGHTSTAND
 #include "portrait_ui.h"
+#endif
+// song_seed() is called under exactly this pair of flavors further down. The
+// Arduino build gets the declaration for free — the sketch preprocessor
+// compiles every .h/.cpp in the sketch folder together — but this file is
+// built as plain C++ by the emulator, where nothing is implicit, so the
+// include has to be real. Without it the wasm build fails with "no member
+// named 'song_seed' in namespace 'canary::ui'" while all four Arduino CLI
+// builds stay green, which is why it survived review.
+#if defined(CD_FLAVOR_NIGHTSTAND) || defined(CD_NIGHTSTAND7)
+#include "look_state.h"
 #endif
 #if defined(FEATURE_LANTERN) && FEATURE_LANTERN
 #include "lantern.h"   // the honest, user-summoned night light
@@ -978,6 +1001,12 @@ void setup() {
   boot_scene_banner(&bi);
   boot_scene_hardware(&bi);
 
+  // Power-event lineage: classify how the last session ended (brownout /
+  // clean reboot / restored outage / fault) and append it to the durable
+  // log. Above the mode latch on purpose — a bench or demo boot still
+  // records that the power went out.
+  cd_pe::on_boot();
+
 #ifdef CD_MODES_COMPILED
   // Non-fleet gears (docs/hardware/display_modes.md): resolve this boot's
   // gear from the NVS latch — the dedicated bench env always boots the
@@ -1339,6 +1368,11 @@ void setup() {
 }
 
 void loop() {
+  /* Persist the power-event liveness heartbeat (bounds the next outage's
+   * lower-bound duration). Above the mode latch so a bench gear keeps its
+   * lineage honest; cheap — skips the write unless the wall clock is set. */
+  cd_pe::heartbeat(millis());
+
 #ifdef CD_MODES_COMPILED
   if (s_active_mode != canary::mode::Mode::Fleet) {
     canary::mode::mode_loop_step(s_active_mode);

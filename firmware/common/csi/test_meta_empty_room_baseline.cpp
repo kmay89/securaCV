@@ -9,7 +9,7 @@
  *      is exposed via meta_empty_room_baseline_get().
  *   3. "baseline_status" event fires with state_name="calibrated"
  *      and bundled_count = number of windows accumulated.
- *   4. cancel() mid-run wipes accumulator + emits "cancelled" event,
+ *   4. cancel() mid-run wipes accumulator + emits "canceled" event,
  *      preserves any prior baseline.
  *   5. Fewer than META_EMPTY_ROOM_MIN_WINDOWS contributing windows →
  *      "failed" event, prior baseline preserved.
@@ -204,7 +204,7 @@ void test_cancel_mid_calibration() {
   csi_event_flush_bundles();
 
   assert(!meta_empty_room_baseline_is_calibrating());
-  assert(any_emitted_with_state("cancelled"));
+  assert(any_emitted_with_state("canceled"));
   /* No baseline saved (we never had one). */
   int8_t mean[CSI_FEATURE_DIM];
   uint16_t n = 0;

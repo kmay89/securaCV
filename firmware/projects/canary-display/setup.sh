@@ -68,6 +68,8 @@ flatten_includes() {
   sed -i -E 's|#include "provision_qr/|#include "|g' "$f"
   sed -i -E 's|#include "fleet_selfreport/|#include "|g' "$f"
   sed -i -E 's|#include "network/|#include "|g' "$f"
+  sed -i -E 's|#include "power/|#include "|g' "$f"
+  sed -i -E 's|#include "story/|#include "|g' "$f"
   # <config.h> is the FLAVOR config (angle brackets skip this dir on purpose);
   # in the flat sketch it lives as flavor_config.h to avoid colliding with the
   # composition header canary/config.h (-> config.h).
@@ -126,6 +128,13 @@ generate_shared() {
     "${FIRMWARE_ROOT}/common/provision_qr/provision_qr.h"
     "${FIRMWARE_ROOT}/common/fleet_selfreport/fleet_selfreport.h"
     "${FIRMWARE_ROOT}/common/network/wifi_join_policy.h"
+    "${FIRMWARE_ROOT}/common/power/power_events.h"
+    # The performance engine + its scripts. splash.cpp plays a scene on EVERY
+    # flavor (the meeting is the same bird on every board), so these are not
+    # nightstand-only the way common/color is — the sketch will not compile
+    # without them.
+    "${FIRMWARE_ROOT}/common/story/story.h"
+    "${FIRMWARE_ROOT}/common/story/story_scripts.h"
   )
   for cf in "${common_files[@]}"; do
     cp "$cf" "${SKETCH_DIR}/$(basename "$cf")"

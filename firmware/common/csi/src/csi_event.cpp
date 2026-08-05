@@ -222,7 +222,7 @@ static int32_t s_clock_offset_minutes = 0;
 
 /* Quiet-hours gating state. Set by csi_event_set_quiet_window(); read at
  * the top of every emit() to decide whether the event should be held back
- * (suppressed in favour of an end-of-window summary) or pass through.
+ * (suppressed in favor of an end-of-window summary) or pass through.
  *
  * Anomaly events bypass the gate entirely — that's the whole point of the
  * night-time category. The summary itself uses module_id "meta.quiet_hours"

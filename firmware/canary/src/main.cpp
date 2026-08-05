@@ -1806,6 +1806,24 @@ void loop() {
   }
 #endif
 
+  // Publish the boot power lineage once per boot: a restored outage, a
+  // brownout, or a fault reset becomes the {"type":"power_loss"} /
+  // {"type":"unexpected_reboot"} tamper payload the HA integration's
+  // per-type sensors parse (and the adapter's tamper route can seal). A
+  // benign boot builds no payload and stays silent. Same re-arm rule as
+  // the sensing tamper drain above.
+  {
+    static bool s_pe_tamper_pending = true;
+    if (s_pe_tamper_pending && mqtt_connected()) {
+      s_pe_tamper_pending = false;
+      char pe_payload[224];
+      if (canary_pe::ha_tamper_payload(pe_payload, sizeof(pe_payload)) &&
+          !mqtt_publish_tamper(pe_payload, /*retained=*/false)) {
+        s_pe_tamper_pending = true;
+      }
+    }
+  }
+
   // Publish health periodically
   if (mqtt_connected() && now - g_last_mqtt_health_ms >= MQTT_HEALTH_INTERVAL_MS) {
     g_last_mqtt_health_ms = now;
@@ -2020,6 +2038,14 @@ static void mqtt_publish_health_update() {
   doc["boot_count"] = device.boot_count;
   doc["firmware_version"] = FIRMWARE_VERSION;
   doc["tamper_detected"] = device.tamper_active;
+
+  /* Power lineage flags, held for kIncidentHoldMs after boot: the tamper
+   * topic's one-shot message is non-retained, so a hub that reboots slower
+   * than the Canary (every whole-house outage) learns about the incident
+   * from here instead. HA's health parse clears the sensors once the hold
+   * lapses and the flags go false. */
+  doc["power_loss_detected"] = canary_pe::health_power_flag(millis());
+  doc["unexpected_reboot"] = canary_pe::health_fault_flag(millis());
 
   /* SD endurance metrics: lifetime write counters (NVS-persisted), wear
    * estimate against the configured TBW rating, and the replacement
@@ -2247,7 +2273,7 @@ static const size_t kConsoleCommandCount =
     sizeof(kConsoleCommands) / sizeof(kConsoleCommands[0]);
 
 // Map the ESP reset cause onto the host-testable testcon::ResetReason so the
-// labelling logic lives in the pure header (and is proven in CI).
+// labeling logic lives in the pure header (and is proven in CI).
 static testcon::ResetReason map_reset_reason(esp_reset_reason_t r) {
   switch (r) {
     case ESP_RST_POWERON:   return testcon::ResetReason::PowerOn;
@@ -2307,7 +2333,7 @@ static void print_boot_welcome() {
 
 // Probe the terminal ONCE before drawing: emit a cursor-position report request
 // (ESC[6n) and see if it answers with ESC[row;colR. An answer ⇒ the terminal
-// speaks ANSI ⇒ we light up colour + Unicode. Silence (a dumb monitor — or our
+// speaks ANSI ⇒ we light up color + Unicode. Silence (a dumb monitor — or our
 // own flasher's garbage-averse parser) ⇒ we stay on the 7-bit ASCII floor, so
 // the banner never turns into escape-code garbage. Bounded to ~200 ms.
 static scene::Caps console_probe() {

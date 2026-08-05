@@ -264,7 +264,7 @@ Raspberry Pi Imager.
     aligned tail satisfy raw-disk alignment. The pure `physical_drive_number`
     path parser is host-tested, and the FFI is cross-`cargo check`ed +
     `clippy -D warnings`ed for `x86_64-pc-windows-gnu` (it type-checks; only
-    runtime behaviour needs a machine). It is **kept disabled** —
+    runtime behavior needs a machine). It is **kept disabled** —
     `hub_io::write::write_backend_available()` returns `false` on Windows, so
     the flasher fails fast *before any download* on an unsupported/unvalidated
     OS rather than dead-ending at the write. Enabling Windows is a one-line flip
@@ -315,7 +315,7 @@ Raspberry Pi Imager.
     Derived from `hub_image.json` (slugs/repositories) + the curated Frigate
     config and drift-gated, so a slug fixed in the catalog can't stay wrong here;
     an add-on that vanishes fails the generator loudly rather than emitting a
-    wrong plan (both behaviours verified).
+    wrong plan (both behaviors verified).
   - *Provisioning executor (landed 2026-07-25):*
     [`canary-local/tools/hub_seed_apply.py`](../../canary-local/tools/hub_seed_apply.py)
     is the piece that *runs* the plan, replacing `install.sh`'s punt (the `ha`
@@ -390,22 +390,35 @@ Raspberry Pi Imager.
     the seeds still need their first validated run on a real Pi (does this HAOS
     build import the root-partition `authorized_keys`, does the console open,
     does `host_provision.sh` complete?). HAOS ignores files it doesn't
-    recognise, so an un-run bundle is harmless and the guide still carries the
+    recognize, so an un-run bundle is harmless and the guide still carries the
     user from `homeassistant.local:8123`.
-  - *Account pre-seed (minting + opt-in seed IMPLEMENTED 2026-07-23; HAOS
-    acceptance OUTSTANDING):* the flasher collects the operator's
-    name/username/password alongside the Wi-Fi (an opt-in, clearly
-    **experimental** panel in the Hub tab), mints Home Assistant's auth store
-    locally (`.storage/auth` + `.storage/auth_provider.homeassistant`,
+  - *Account — the onboarding-API companion (IMPLEMENTED 2026-08-05; this is
+    the promise):* the account story no longer rests on the unvalidated card
+    seed. Once the first-boot watch sees the hub answer, the app calls **Home
+    Assistant's own onboarding REST API** (`hub_io::onboarding`, host-tested
+    against a scripted loopback HA): read `GET /api/onboarding` for the hub's
+    real state, create the owner via `POST /api/onboarding/users` if the slot
+    is open, finish the remaining wizard pages (`core_config`, `analytics`,
+    `integration`) with an ephemeral token that is revoked on the way out, and
+    **verify the typed login opens the hub** via the login flow. It converges
+    from any starting state — seed applied, seed ignored, wizard half-clicked
+    in a browser, a previous run dead partway — so retrying is always safe,
+    and it never claims success it didn't check. The password lives only in
+    the frontend's memory for this (a relaunch loses it, and the resume copy
+    says so honestly); it is sent only to the operator's own hub on their own
+    network.
+  - *Account pre-seed (minting + opt-in seed IMPLEMENTED 2026-07-23; now a
+    HEAD START, not the promise):* the flasher collects the operator's
+    name/username/password alongside the Wi-Fi, mints Home Assistant's auth
+    store locally (`.storage/auth` + `.storage/auth_provider.homeassistant`,
     bcrypt-hashed ON THE OPERATOR'S computer — the password gets the same
     custody as the Wi-Fi secret: onto the card, never logged, never sent), and
     `hub_io::seed::seed_card` writes it under the boot partition's `CONFIG/`
     (Mechanism B) in the SAME mount as the Wi-Fi keyfile. A seed failure is
-    non-fatal — the verified card is never demoted, and the receipt tells the
-    tester whether to expect a login page or the wizard. First contact with
-    `homeassistant.local:8123` should then be a LOGIN page, not a setup
-    wizard. Zero-touch restore mechanisms still to confirm on hardware, in
-    order of preference:
+    non-fatal — the verified card is never demoted. Whether HAOS imports it is
+    still unconfirmed on hardware; if it does, the companion above simply
+    finds onboarding done and verifies the login. Zero-touch restore
+    mechanisms still worth confirming on hardware, in order of preference:
       1. **data-partition injection at flash time** — write the backup (or the
          pre-expanded `.storage` + add-on containers, which also collapses the
          10–20 min first boot toward ~2–3 min) into the image's ext4 data

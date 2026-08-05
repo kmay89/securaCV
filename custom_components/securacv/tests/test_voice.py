@@ -1,0 +1,242 @@
+"""Tests for voice.py — the pure logic behind the Assist intents.
+
+The spoken answers are quotable out of context, so the vocabulary
+discipline is what these tests pin down: "verified" only for a checked
+signature, "heard" for anything looser, worst news first, and coarse
+(ten-minute-floor) time phrasing.
+"""
+from __future__ import annotations
+
+from ..voice import (
+    ago_phrase,
+    fleet_brief,
+    record_canary_event,
+    speak_fleet_status,
+    speak_last_event,
+)
+
+NOW = 1_000_000.0
+
+
+def _entry(devices=None, verify=None, kernel=None):
+    return {"devices": devices or {}, "verify": verify or {}, "kernel": kernel}
+
+
+# ---------------------------------------------------------------- brief
+
+
+def test_empty_brief():
+    brief = fleet_brief([], NOW)
+    assert brief["device_count"] == 0
+    assert not brief["kernel_configured"]
+
+
+def test_brief_counts_trust_buckets():
+    devices = {"a": {}, "b": {}, "c": {}, "d": {}}
+    verify = {
+        "a": {"trusted": True, "reason": "ok"},
+        "b": {"trusted": False, "reason": "mismatch"},
+        "c": {"trusted": False, "reason": "unsigned"},
+        # "d" has no verify record at all -> unknown
+    }
+    brief = fleet_brief([_entry(devices, verify)], NOW)
+    assert brief["device_count"] == 4
+    assert brief["verified"] == ["a"]
+    assert brief["mismatched"] == ["b"]
+    assert brief["unsigned"] == ["c"]
+    assert brief["unknown"] == ["d"]
+
+
+def test_brief_picks_newest_canary_event_across_entries():
+    e1 = _entry({"a": {"last_event": {"event_type": "x", "received_at": 10.0}}})
+    e2 = _entry({"b": {"last_event": {"event_type": "y", "received_at": 20.0}}})
+    brief = fleet_brief([e1, e2], NOW)
+    assert brief["canary_latest"]["device_id"] == "b"
+    assert brief["canary_latest"]["event_type"] == "y"
+
+
+def test_brief_kernel_ok_is_anded_across_entries():
+    ok = _entry(kernel={"ok": True, "latest_event": None})
+    down = _entry(kernel={"ok": False, "latest_event": None})
+    assert fleet_brief([ok], NOW)["kernel_ok"] is True
+    assert fleet_brief([ok, down], NOW)["kernel_ok"] is False
+    assert fleet_brief([], NOW)["kernel_ok"] is None
+
+
+# ------------------------------------------------------- record helper
+
+
+def test_record_canary_event_creates_device_slot():
+    devices: dict = {}
+    record_canary_event(devices, "cv-1", "contact_state_change", 42.0, trusted=True, reason="ok")
+    assert devices["cv-1"]["last_event"] == {
+        "event_type": "contact_state_change",
+        "received_at": 42.0,
+        "trusted": True,
+        "reason": "ok",
+    }
+    # A newer event replaces the old one in place; no verdict -> None, which
+    # must speak as unverified, never as trusted-by-default.
+    record_canary_event(devices, "cv-1", "tamper_detected", 43.0)
+    assert devices["cv-1"]["last_event"]["event_type"] == "tamper_detected"
+    assert devices["cv-1"]["last_event"]["trusted"] is None
+    # Empty device_id is ignored rather than minting a phantom device.
+    record_canary_event(devices, "", "x", 44.0)
+    assert set(devices) == {"cv-1"}
+
+
+# ------------------------------------------------------------- speech
+
+
+def test_speak_nothing_configured():
+    speech = speak_fleet_status(fleet_brief([], NOW))
+    assert "hasn't heard from any Canaries" in speech
+    assert "no witness kernel" in speech
+
+
+def test_speak_all_verified_uses_the_reserved_word():
+    verify = {k: {"trusted": True, "reason": "ok"} for k in ("a", "b", "c")}
+    speech = speak_fleet_status(fleet_brief([_entry({"a": {}, "b": {}, "c": {}}, verify)], NOW))
+    assert "3 Canaries in the fleet" in speech
+    assert "all signature-verified against their pinned keys" in speech
+
+
+def test_speak_mismatch_leads_the_answer():
+    devices = {"a": {}, "b": {}}
+    verify = {
+        "a": {"trusted": True, "reason": "ok"},
+        "b": {"trusted": False, "reason": "mismatch"},
+    }
+    speech = speak_fleet_status(fleet_brief([_entry(devices, verify)], NOW))
+    assert speech.startswith("Key mismatch on b")
+    assert "1 signature-verified" in speech
+
+
+def test_speak_unverified_devices_are_only_heard():
+    # A device with no verify record must never be called verified.
+    speech = speak_fleet_status(fleet_brief([_entry({"a": {}})], NOW))
+    assert "verified" not in speech.split("heard but not yet verified")[0]
+    assert "1 heard but not yet verified" in speech
+
+
+def test_speak_kernel_reachability():
+    up = fleet_brief([_entry(kernel={"ok": True, "latest_event": None})], NOW)
+    down = fleet_brief([_entry(kernel={"ok": False, "latest_event": None})], NOW)
+    assert "kernel is reachable" in speak_fleet_status(up)
+    assert "kernel is not reachable" in speak_fleet_status(down)
+
+
+def test_speak_last_event_uses_friendly_label_and_coarse_time():
+    devices = {
+        "gate": {
+            "last_event": {
+                "event_type": "boundary_crossing_object_large",
+                "received_at": NOW - 120,
+                "trusted": True,
+                "reason": "ok",
+            }
+        }
+    }
+    speech = speak_last_event(fleet_brief([_entry(devices)], NOW))
+    assert speech == (
+        "Large object crossed boundary, within the last ten minutes, "
+        "from Canary gate. The event signature is verified against the "
+        "device's pinned key."
+    )
+
+
+def test_speak_last_event_trust_qualifiers_never_launder():
+    # A key-mismatch publish must be called out, not spoken as the truth.
+    mismatch = {
+        "gate": {
+            "last_event": {
+                "event_type": "tamper_detected",
+                "received_at": NOW - 60,
+                "trusted": False,
+                "reason": "mismatch",
+            }
+        }
+    }
+    speech = speak_last_event(fleet_brief([_entry(mismatch)], NOW))
+    assert "key does not match its pin" in speech
+    assert "treat this event as unverified" in speech
+
+    # No verdict at all (verifier never ran) speaks as unverified too —
+    # never trusted-by-default.
+    unknown = {
+        "gate": {
+            "last_event": {
+                "event_type": "contact_state_change",
+                "received_at": NOW - 60,
+            }
+        }
+    }
+    speech = speak_last_event(fleet_brief([_entry(unknown)], NOW))
+    assert "published without a verified signature" in speech
+    assert "verified against" not in speech
+
+
+def test_speak_last_event_names_both_sources_when_they_differ():
+    devices = {
+        "gate": {
+            "last_event": {
+                "event_type": "boundary_crossing_object_large",
+                "received_at": NOW - 60,
+                "trusted": True,
+                "reason": "ok",
+            }
+        }
+    }
+    kernel = {"ok": True, "latest_event": {"event_type": "TamperDetected"}}
+    speech = speak_last_event(fleet_brief([_entry(devices, kernel=kernel)], NOW))
+    assert "from Canary gate" in speech
+    assert "The kernel log's latest event is Tamper detected." in speech
+
+    # Same label on both sides -> no redundant second sentence.
+    kernel_same = {
+        "ok": True,
+        "latest_event": {"event_type": "BoundaryCrossingObjectLarge"},
+    }
+    speech = speak_last_event(fleet_brief([_entry(devices, kernel=kernel_same)], NOW))
+    assert "kernel log's latest" not in speech
+
+
+def test_speak_last_event_kernel_fallback_and_none():
+    kernel = {"ok": True, "latest_event": {"event_type": "TamperDetected"}}
+    speech = speak_last_event(fleet_brief([_entry(kernel=kernel)], NOW))
+    assert speech == "Tamper detected — the latest event in the kernel log."
+    assert (
+        speak_last_event(fleet_brief([], NOW))
+        == "No witness events since the hub started listening."
+    )
+
+
+def test_sentences_yaml_matches_registered_intents():
+    """docs/voice_sentences_en.yaml must name exactly the intents intent.py
+    registers — otherwise the wizard installs sentences that error, or an
+    intent exists that no sentence can reach. Parsed with regex on purpose:
+    no yaml dependency, and the intent names are rigid identifiers."""
+    import re
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[3]
+    yaml_text = (repo / "docs" / "voice_sentences_en.yaml").read_text()
+    yaml_intents = set(re.findall(r"^  (Securacv\w+):$", yaml_text, re.MULTILINE))
+
+    intent_src = (repo / "custom_components" / "securacv" / "intent.py").read_text()
+    registered = set(re.findall(r'^INTENT_\w+ = "(Securacv\w+)"$', intent_src, re.MULTILINE))
+
+    assert yaml_intents, "no intents found in voice_sentences_en.yaml"
+    assert yaml_intents == registered
+
+
+def test_ago_phrase_is_coarse():
+    assert ago_phrase(0) == "within the last ten minutes"
+    assert ago_phrase(599) == "within the last ten minutes"
+    assert ago_phrase(600) == "about 10 minutes ago"
+    assert ago_phrase(1799) == "about 20 minutes ago"
+    assert ago_phrase(3600) == "about 1 hour ago"
+    assert ago_phrase(7300) == "about 2 hours ago"
+    assert ago_phrase(90000) == "about 1 day ago"
+    # Never a seconds-precision phrase, never negative.
+    assert ago_phrase(-5) == "within the last ten minutes"

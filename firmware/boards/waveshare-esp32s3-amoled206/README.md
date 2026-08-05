@@ -67,7 +67,7 @@ deep, not one.
 
 **The no-haptic finding is stronger than it was.** The vendor README's full
 example index is AXP2101, LVGL v9, ESP-Brookesia, a motion block demo, a mic
-spectrum analyser, a video player, GFX text, the PCF85063 RTC, the QMI8658 IMU,
+spectrum analyzer, a video player, GFX text, the PCF85063 RTC, the QMI8658 IMU,
 AXP2101 ADC telemetry, SD, and ES8311 — **thirteen examples and not one of them
 drives a motor.** No `pin_config.h` haptic pin, and no mention of vibration,
 haptic, DRV2605, LRA or ERM anywhere in the README. This is now a negative

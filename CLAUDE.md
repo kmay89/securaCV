@@ -29,17 +29,46 @@
     syscall (e.g. "no flock/PID lock" in the storage flight-rules) — that
     is a real API name, not the bird word. Do not rename it.
 
-- **US spellings, now and always.** `color`, `center`, `meter`, `behavior`,
-  `analyze`, `gray`, `license`, `labeled`, `canceled`, `optimize`,
-  `recognize`, `catalog` — never the British forms. This binds user-facing
-  copy, device UI strings, docs, comments **and code identifiers**.
-  - ✅ `color`, `center`, `bezel_color`, `frame_color`, `pal_color`
-  - ❌ `colour`, `centre`, `bezel_colour`, `frame_colour`
-  - Exceptions, because they are not ours to respell: SPDX tags and
-    `LICENSE` filenames, third-party API/CSS identifiers, and quoted text
-    from an external source. `analysis`, `parameter` and `diameter` are the
-    same in both — they are not British and need no change.
+- **US spellings, now and always.** Write `color`, `center`, `meter`,
+  `behavior`, `analyze`, `gray`, `license`, `labeled`, `canceled`,
+  `optimize`, `recognize`, `catalog` — never the British forms of those
+  words. Binds user-facing copy, device UI strings, docs, comments **and
+  code identifiers** (`bezel_color`, `frame_color`, `pal_color`).
+  - The banned list is enumerated ONCE, in the regex in
+    [`scripts/lint_spelling.py`](scripts/lint_spelling.py), which fails the
+    build on any of them. **Do not repeat the British forms in prose** —
+    a doc that spells them out is a doc the next sweep rewrites into
+    nonsense. That happened to this bullet, and to AGENTS.md rule 3b, and
+    to both of the website repo's copies. Four times, one cause.
+  - Words that only *look* British to a substring match are correct and
+    must survive: `analysis`, `emphasis`, `parameter`, `diameter`,
+    `characteristic` (the BLE API), `realistic`, `optimistic`,
+    `initialism`, `aria-labelledby`. The linter's `ALLOW` list asserts it.
   - See [`AGENTS.md`](AGENTS.md) rule 3b, the canonical statement.
+
+## Generated files — there are TWENTY, not a handful
+
+Committed generators whose output CI regenerates and byte-diffs. Editing a
+source without re-running the right one leaves a gate to find it, and the
+failure is often nowhere near the edit: a one-word spelling fix in
+`canary-local/tools/hub_seed_apply.py` changed its bytes, which broke a
+**sha256 pin** cross-checked by a Rust unit test in `desktop/hub-io`
+(`test (hub-io)` went red, three layers away from the change).
+
+Don't try to remember the list — derive it:
+
+```sh
+grep -rhoE "python3 [a-zA-Z0-9_/.-]*gen_[a-z_]+\.py|node [a-zA-Z0-9_/.-]*make-[a-z-]+\.mjs" \
+  .github/workflows/*.yml | sort -u
+```
+
+The ones that bite most often: `gen_stamp.py` and `gen_builder_manifest.py`
+(any enclosure `.scad`), `gen_enclosures.py` (catalog JSON),
+`gen_agent_entrypoints.py` (any AGENTS.md edit — six vendor files),
+`gen_hub_provision_bundle.py` (anything it embeds and pins by hash),
+`gen_apple_home_docs.py` (any `homekit_projection` change in the dictionary —
+the Apple Home quickstart's signal table is a privacy promise, so a stale one
+is a false statement rather than merely old).
 
 ## Enclosure CAD
 

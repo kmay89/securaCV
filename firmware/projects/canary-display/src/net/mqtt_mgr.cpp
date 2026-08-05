@@ -18,6 +18,8 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 
+#include "canary/power_events_glue.h"
+
 #include "canary/config.h"
 #include "canary/log.h"
 #include "canary/version.h"
@@ -90,7 +92,7 @@ static bool payload_is(const uint8_t* payload, unsigned int len, const char* tok
 
 // canary-sense coarse-vocabulary decoders (the ONLY words that ever cross the
 // wire about what the radar saw — see the device's privacy chokepoint). An
-// unrecognised word maps to the safe "unknown/0" slot, never a crash.
+// unrecognized word maps to the safe "unknown/0" slot, never a crash.
 static uint8_t str_to_presence(const char* s) {
   if (!s) return 0;
   if (strcmp(s, "present") == 0) return 2;
@@ -534,19 +536,26 @@ void publish_status_retained(const Topics& topics, const char* status) {
 void publish_health_retained(const Topics& topics) {
   // Same field set as the other variants' mains-powered health publish so
   // fleet tooling renders one uniform table. A display has no witness key,
-  // so there is deliberately no public_key field to pin.
-  char msg[256];
+  // so there is deliberately no public_key field to pin. The power lineage
+  // flags are held for an hour after an incident boot so a hub that reboots
+  // slower than this display still latches HA's Power Loss sensor, then
+  // clears it when the flags drop (same contract as the canary base tree).
+  char msg[320];
   const int n = snprintf(msg, sizeof(msg),
            "{"
            "\"battery\":100,"
            "\"battery_present\":false,"
            "\"memory_free\":%lu,"
            "\"uptime\":%lu,"
-           "\"firmware_version\":\"%s\""
+           "\"firmware_version\":\"%s\","
+           "\"power_loss_detected\":%s,"
+           "\"unexpected_reboot\":%s"
            "}",
            (unsigned long)ESP.getFreeHeap(),
            (unsigned long)(canary::ms_now() / 1000UL),
-           CANARY_FW_VERSION);
+           CANARY_FW_VERSION,
+           cd_pe::health_power_flag(millis()) ? "true" : "false",
+           cd_pe::health_fault_flag(millis()) ? "true" : "false");
   if (n <= 0 || (size_t)n >= sizeof(msg)) return;
   publish_checked("HEALTH", topics.health, msg, true);
 }

@@ -21,6 +21,11 @@ import Foundation
 enum DemoFleet {
     static let defaultsKey = "demo_mode_v1"
 
+    /// Every seeded id starts with this (the ground rule above) — the one
+    /// string fleet-wide verbs filter on so sample rows are never counted,
+    /// muted, or reported as if they were paired hardware.
+    static let idPrefix = "demo-"
+
     /// Explicit override: `-SecuraCVDemo` as an Xcode scheme argument, or
     /// `SECURACV_DEMO=1` in the environment (CI, `xcrun simctl launch`).
     static var forcedOn: Bool {

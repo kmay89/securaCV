@@ -73,6 +73,8 @@ vendor/models/*.onnx
 docs/hardware/enclosure/dev_*.stl
 # gen_3mf.py outputs: build artifacts, regenerate with `python3 gen_3mf.py <set>`
 docs/hardware/enclosure/lcd7_*.3mf
+docs/hardware/enclosure/stick_*.3mf
+docs/hardware/enclosure/c3_*.3mf
 docs/hardware/enclosure/_3mf_*.stl
 
 # Local scratch

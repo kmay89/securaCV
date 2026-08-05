@@ -3,19 +3,19 @@
 A SecuraCV capability that every Canary is supposed to share — a wire format, a
 status shape, a beacon layout — must be **impossible to ship on one board and
 forget on another.** Copy-paste across firmwares is how a fleet silently
-fragments: a reviewer approves the change on `canary-wap`, the same behaviour
+fragments: a reviewer approves the change on `canary-wap`, the same behavior
 never lands on `canary-display`, and months later the two answer the same
 request with two different shapes and nothing caught it.
 
-The rule: **a fleet-wide behaviour lives in exactly one place, and each board
+The rule: **a fleet-wide behavior lives in exactly one place, and each board
 carries only the thin glue that feeds it local state.** A change to the
-behaviour is a change to that one file — never a sweep across boards.
+behavior is a change to that one file — never a sweep across boards.
 
 ## The shape of the pattern
 
 1. **One canonical, pure core in `firmware/common/`.** Board-agnostic, no
    Arduino / no heap, so it compiles and is *unit-tested on the host* with
-   `g++`. This is the single source of truth for the behaviour.
+   `g++`. This is the single source of truth for the behavior.
 2. **PlatformIO trees include it directly** via `-I firmware/common` — no copy,
    they build the canonical file.
 3. **Arduino sketches carry a copy that a guard keeps honest.** Either a

@@ -26,7 +26,7 @@ authenticated to the MQTT broker, so no events could have flowed; and the docume
 broker bootstrap crashed before a password could ever be set.
 
 All breakages found are **fixed in the change that accompanies this review** (§5). Parity
-gaps that are design decisions rather than defects are catalogued in §4 with
+gaps that are design decisions rather than defects are cataloged in §4 with
 recommendations, not patches.
 
 | Artifact | Verdict before this review | Verdict after fixes |
@@ -308,7 +308,7 @@ builds are covered by the new CI workflow (§5.7) on this change's own PR.
   "variable is not set" warning); the fixed `command` renders as a single script element.
 - Live auth chain, exactly as the compose service runs it: compose `mosquitto` service
   brought up with the repo `mosquitto.conf` (auth required); anonymous connect refused
-  (`not authorised`), credentialed connect accepted. `witness_api` +
+  (`not authorized`), credentialed connect accepted. `witness_api` +
   `frigate_bridge --db-path …` + `event_mqtt_bridge --daemon --api-token-path …` started
   with the service's exact environment: token file written, both bridges log
   `Connected to MQTT broker (… auth: true)`, `Subscribed to frigate/events (QoS 1)`,

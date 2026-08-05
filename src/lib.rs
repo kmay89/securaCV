@@ -62,6 +62,8 @@ pub mod ingest;
 pub mod inspect;
 pub mod log;
 pub mod module_runtime;
+#[cfg(feature = "alert-relay")]
+pub mod relay;
 pub mod storage;
 pub mod storage_health;
 pub mod thumbnail;

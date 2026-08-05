@@ -154,7 +154,7 @@ def parse_card_bytes() -> tuple[int, int]:
     gate, so the catalog and the code that enforces it are one value.
 
     Reads `const GIB`, `MIN_TARGET_BYTES = N * GIB`, `RECOMMENDED_TARGET_BYTES =
-    N * GIB` from hub_disk.rs. Any shape it doesn't recognise is a hard error —
+    N * GIB` from hub_disk.rs. Any shape it doesn't recognize is a hard error —
     we never guess a size a flasher will act on.
     """
     if not HUB_DISK_RS.exists():

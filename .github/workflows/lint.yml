@@ -12,7 +12,7 @@ permissions:
 
 # Cheap grep-based lints that cross-check firmware headers, spec tables, and
 # flag declarations repo-wide — kept unfiltered on purpose, but stale PR runs
-# are still cancelled when a new head arrives.
+# are still canceled when a new head arrives.
 concurrency:
   group: repo-lints-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -95,6 +95,40 @@ jobs:
         run: python3 tools/test_away_access_check.py
       - name: Docs index — no stragglers, no dead links
         run: python3 scripts/lint_docs_index.py
+      - name: Apple Home docs match the vocabulary they describe
+        # The quickstart tells a user exactly what their Canaries will publish
+        # into their home — which signals, which are OFF by default, how
+        # coarse the metronome is. Those are privacy promises, and a stale one
+        # is not merely out of date: it is a false statement to the person
+        # deciding whether to publish their home into Apple's ecosystem. So
+        # the tables are generated from spec/witness_dictionary.json and this
+        # byte-diffs them. Flip a default in the dictionary without
+        # regenerating and the build stops here.
+        run: python3 scripts/gen_apple_home_docs.py --check
+      - name: US spellings (AGENTS.md rule 3b)
+        # The script's regex is the ONE enumerated list of banned forms in the
+        # repo; rule 3b points at it rather than naming them, because a rule
+        # that spells British words out gets rewritten by the next spelling
+        # sweep into a rule forbidding the correct spellings. That happened to
+        # four separate copies of this rule across two repos in one day.
+        # It also self-tests that its ban pattern never starts matching correct
+        # English (characteristic, realistic, colored, …).
+        run: python3 scripts/lint_spelling.py
+      - name: CloudKit container — named, never defaulted, fully deployed
+        # CKContainer.default() reads an entitlement and raises an ObjC
+        # CKException when there isn't one. Swift can't catch that, so an
+        # unsigned build (CI builds exactly that) aborts on launch — which is
+        # how every iOS test failed for reasons that had nothing to do with
+        # iCloud. The gate bans the call and cross-checks the one hardcoded
+        # container identifier against both entitlements files, because a
+        # name that drifts silently swaps one broken iCloud for another.
+        # It also checks that every CKRecord type the app uses is listed in
+        # ios/scripts/cloudkit_schema.sh: production never auto-creates a
+        # record type, so one nobody deployed makes every read and write
+        # against it fail — silently, because both call sites swallow errors
+        # on purpose. PairedDevice was missing from that table for its whole
+        # life. See docs/design/cloudkit_backend.md.
+        run: python3 scripts/lint_cloudkit_container.py
       - name: Agent entrypoints match AGENTS.md
         # Every AI tool reads a different filename (GEMINI.md, QWEN.md,
         # copilot-instructions.md, .cursor/rules, .clinerules, .windsurfrules).
@@ -109,6 +143,31 @@ jobs:
         run: python3 scripts/lint_common_lib_manifests.py
       - name: BOM CSVs — schema-clean and wired into the generator
         run: python3 scripts/lint_bom.py
+      - name: Board designs — pin map matches firmware, netlist coheres
+        # A carrier board's entire cost case is that the firmware does NOT
+        # change. If a GPIO moves in a board's pins.h and not in board.json,
+        # the carrier has quietly stopped being drop-in — and nothing would
+        # notice until a populated board came back from the fab.
+        run: python3 scripts/lint_board_design.py
+      - name: Board cost model — quote selection and GO/STOP verdict
+        # cost_model.json emits a word a human reads before spending NRE, and
+        # two quiet heuristics stand behind it: which quote applies at the
+        # basis volume, and whether the model may decide at all. Review found
+        # the first (a 100-unit promo could outrank a 1000-unit quote); these
+        # tests found two more — a 10-unit quote reading as GO, and quoting the
+        # published crossover back landing a hair above it. Untested, this is a
+        # guard that reads as covered while deciding money wrong.
+        run: python3 scripts/tests/test_board_design.py
+      - name: Board cost models are regenerated
+        # cost_model.json/connections.csv are generated from board.json +
+        # pricing.json. Committed so the model is reviewable in a diff and
+        # works offline; byte-checked so nobody can hand-edit a saving in.
+        run: python3 scripts/gen_board_design.py --check
+      - name: Hub voice wizard is regenerated
+        # tools/hub_voice_setup.sh embeds docs/voice_sentences_en.yaml
+        # verbatim (via scripts/gen_hub_voice_setup.py), so the wizard can
+        # never install a different sentence grammar than the docs promise.
+        run: python3 scripts/gen_hub_voice_setup.py --check
       - name: BOM pricing engine — contract tests
         run: python3 scripts/tests/test_bom_pricing.py
       - name: verify_pipeline.sh false-pass regression tests

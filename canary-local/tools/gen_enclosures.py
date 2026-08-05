@@ -59,8 +59,16 @@ NON_PRODUCT_SCADS = {
     "canary_s3_lcd7_fitcheck.scad",   # 7" bezel/tray assembly-interference check
     "canary_s3_lcd7_qr.scad",         # generated help-QR bit matrix (gen_qr.py)
     "canary_vent_lib.scad",           # brand vent pattern library — shapes, not a part
+    "canary_cradle_lib.scad",         # the wall dock's INTERFACE — studs, clips and
+                                      # the pockets that swallow them. Each case
+                                      # exports its own part="cradle" sized to its
+                                      # back; the library itself prints nothing.
+    "canary_mark_lib.scad",           # THE BIRD — the shared mark, geometry not a part
     "canary_panel_lib.scad",          # the PANEL REGISTRY — describes the boards a
                                       # case is built AROUND, not a thing you print
+    "canary_mark_lib.scad",           # the HOUSE MARK — the bird as printable
+                                      # geometry for other parts to wear, not a
+                                      # part in its own right
     "canary_s3_lcd7_stamp.scad",      # generated build stamp (gen_stamp.py)
 }
 
@@ -68,7 +76,7 @@ NON_PRODUCT_SCADS = {
 # feature. part → -D part=<...>; coarse curves keep files small.
 RENDER_PRESETS = {
     "canary_watch_station.scad": ["drum", "bezel", "stand"],
-    "canary_dash_display.scad": ["frame", "back", "stand"],
+    "canary_dash_display.scad": ["frame", "back", "stand", "cradle"],
     "canary_combo.scad": ["back", "front"],
 }
 
@@ -96,7 +104,7 @@ PART_NOTES = [
     ("_bezel", "flat ring, prints face-down; seats the display disc"),
     ("station_stand", "tilted cradle prints upright — no supports"),
     ("display_frame", "prints face-down: the A-surface is your textured build plate"),
-    ("display_back", "prints outer-face-down; vents + keyholes need no support"),
+    ("display_back", "prints PADS-UP (inner face on the bed) — the dock pads and their pocket bridges are the last layers, not the first"),
     ("display_stand", "prints flat; fin + rails are additive — no supports"),
     ("doorbell_face", "prints face-down without support (edge rounds off the bed)"),
     ("front", "prints face-down without support"),
@@ -1021,6 +1029,12 @@ VARIANT_SELECTS = {
     "vision-xiao-weather": {"host": "xiao", "preset": "vision_weather"},
     "vision-devkit-indoor": {"host": "devkit", "preset": "vision_indoor"},
     "sense-radome": {"radar": "bha2"},  # the MR60BHA2 radome
+    # The dash ships docked. Without a pinned value this set's `selects` is
+    # empty, and matchVariant() skips empty-select variants on purpose — so a
+    # user who moved the mount selector and put it back on "cradle" would be
+    # told their configuration is custom, with no way back to the committed
+    # variant that it is byte-for-byte.
+    "dashboard-display-case": {"mount": "cradle"},
 }
 
 # Env rating as data (axis: environment) — read from each model's OWN source,

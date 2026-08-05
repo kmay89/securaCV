@@ -3,7 +3,7 @@
  * the durable outage-log ring. Pins the full classification table (so a change
  * to how a boot's power story is named breaks CI, not a review), the correct
  * terminology, the honest lower-bound outage arithmetic, and the ring/counter
- * behaviour the firmware persists.
+ * behavior the firmware persists.
  *
  * Build: see firmware/tests_host/Makefile (POWEREVT_BIN), -I ../common,
  *        -std=c++17 -Wall -Wextra -Werror.
@@ -99,7 +99,7 @@ static void test_software_reset_is_always_intentional() {
   CHECK(classify(sig(ResetKind::Software, false, false)) ==
             BootPower::CleanReboot,
         "software reset is intentional even with no flag and no marker "
-        "(so an OTA/reboot is never mislabelled an outage)");
+        "(so an OTA/reboot is never mislabeled an outage)");
 }
 
 static void test_unknown_reset_stays_honest() {
@@ -159,12 +159,12 @@ static void test_make_event_only_carries_outage_for_an_outage() {
 static void test_log_init_and_validity() {
   Log L;
   log_init(L);
-  CHECK(log_valid(L), "a freshly initialised log is valid");
+  CHECK(log_valid(L), "a freshly initialized log is valid");
   CHECK(L.count == 0 && L.total_outages == 0 && L.longest_outage_s == 0,
         "fresh log is empty with zero counters");
 
-  Log bad{};  // all-zero: magic wrong -> rejected (uninitialised NVS blob)
-  CHECK(!log_valid(bad), "an uninitialised blob is rejected");
+  Log bad{};  // all-zero: magic wrong -> rejected (uninitialized NVS blob)
+  CHECK(!log_valid(bad), "an uninitialized blob is rejected");
   Log hi = L;
   hi.version = kLogVersion + 1;
   CHECK(!log_valid(hi), "a future version is rejected");
@@ -281,6 +281,60 @@ static void test_operator_text_is_total_and_never_says_dead() {
   }
 }
 
+static void test_ha_tamper_json_exact_payloads() {
+  char buf[256];
+  // A restored outage with a known floor carries it, verbatim.
+  CHECK(ha_tamper_json(BootPower::OutageRestored, 120, buf, sizeof(buf)),
+        "outage builds a payload");
+  CHECK(std::string(buf) ==
+            "{\"state\":\"on\",\"confidence\":1.00,\"type\":\"power_loss\","
+            "\"severity\":\"warning\",\"detail\":\"Mains power came back after "
+            "an outage. (outage >= 120 s)\"}",
+        "outage payload is exact");
+  // No clock, no floor: the duration claim is omitted, never invented.
+  CHECK(ha_tamper_json(BootPower::OutageRestored, 0, buf, sizeof(buf)),
+        "outage without a known floor still publishes");
+  CHECK(std::string(buf).find("outage >=") == std::string::npos,
+        "unknown duration is omitted, not fabricated");
+  // Brownout and fault map to the HA tamper types the integration parses.
+  CHECK(ha_tamper_json(BootPower::Brownout, 0, buf, sizeof(buf)),
+        "brownout builds a payload");
+  CHECK(std::string(buf).find("\"type\":\"power_loss\"") != std::string::npos,
+        "brownout is a power_loss tamper");
+  CHECK(ha_tamper_json(BootPower::Fault, 0, buf, sizeof(buf)),
+        "fault builds a payload");
+  CHECK(std::string(buf).find("\"type\":\"unexpected_reboot\"") != std::string::npos,
+        "fault is an unexpected_reboot tamper");
+  // The adapter route's gates need the truthy state and the confidence.
+  CHECK(std::string(buf).find("\"state\":\"on\"") != std::string::npos,
+        "payload passes the adapter's truthy gate");
+  CHECK(std::string(buf).find("\"confidence\":1.00") != std::string::npos,
+        "payload passes the adapter's confidence floor");
+}
+
+static void test_ha_tamper_json_stays_quiet_on_benign_boots() {
+  char buf[256];
+  // Every ordinary lineage publishes nothing — an unplug/replug during setup
+  // is the OutageRestored case and DOES publish; a first boot does not.
+  CHECK(!ha_tamper_json(BootPower::ColdBoot, 0, buf, sizeof(buf)),
+        "cold boot publishes nothing");
+  CHECK(!ha_tamper_json(BootPower::CleanReboot, 0, buf, sizeof(buf)),
+        "clean reboot publishes nothing");
+  CHECK(!ha_tamper_json(BootPower::Unknown, 0, buf, sizeof(buf)),
+        "unknown lineage publishes nothing");
+}
+
+static void test_ha_tamper_json_refuses_truncation() {
+  // A truncated JSON payload is worse than none: it fails to parse everywhere
+  // and looks like corruption. The builder must say no, not emit half.
+  char tiny[24];
+  CHECK(!ha_tamper_json(BootPower::Brownout, 0, tiny, sizeof(tiny)),
+        "too-small buffer returns false");
+  char nothing[1];
+  CHECK(!ha_tamper_json(BootPower::OutageRestored, 3600, nothing, sizeof(nothing)),
+        "one-byte buffer returns false");
+}
+
 int main() {
   test_a_brownout_names_the_power_supply();
   test_a_power_fault_warns_the_first_time();
@@ -298,6 +352,9 @@ int main() {
   test_log_init_and_validity();
   test_ring_counts_wraps_and_reads_newest_first();
   test_counters_track_the_right_axes();
+  test_ha_tamper_json_exact_payloads();
+  test_ha_tamper_json_stays_quiet_on_benign_boots();
+  test_ha_tamper_json_refuses_truncation();
 
   std::printf("ALL POWER-EVENTS TESTS PASSED (%d checks)\n", g_checks);
   return 0;

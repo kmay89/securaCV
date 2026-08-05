@@ -112,7 +112,7 @@ our firmware pin map should follow.
 ## Mechanical (BOX variants)
 
 The cased 4.3B/4.3C ("BOX") outline is 116.30 × 79.00 × 18.00 mm, with two M4
-mounting holes on 75.00 × 39.00 mm centres and the screw-terminal strip on a
+mounting holes on 75.00 × 39.00 mm centers and the screw-terminal strip on a
 3.50 mm pitch. Side ports (top to bottom): TF card, USB-C, BOOT, RESET. Finer
 geometry — bezel radius, exact lip profile — isn't published as dimensions;
 where a build needs it, measure the unit or pull the vendor's mechanical

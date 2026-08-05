@@ -49,7 +49,13 @@ from pathlib import Path
 
 # ── The one human string. Bump it when you change the geometry. ──────────
 # CalVer: YYYY.MM + a letter that revs within the month.
-STAMP_REV = "2026.09t"
+# (.09y through .10d are all spent — six revisions of this plate landed while
+#  this branch was open. .10c moved the palette; .10d recomposed the plate; this
+#  one takes the holes back out of it (no vent eggs, no radio window) and locks
+#  the lockup to the mark. Each is a different DESIGN, so each takes its own
+#  letter rather than reusing one already debossed into a part that is not this
+#  one — that is the whole of what REV is for.)
+STAMP_REV = "2026.10e"
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "canary_s3_lcd7_stamp.scad"
@@ -64,6 +70,7 @@ SOURCES = [
                                # you could change what board the case is cut for
                                # and the stamp would still claim the old design.
     "canary_vent_lib.scad",
+    "canary_mark_lib.scad",   # THE BIRD — a mark change IS a geometry change
     "canary_s3_lcd7_qr.scad",
 ]
 

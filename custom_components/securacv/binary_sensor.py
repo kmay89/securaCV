@@ -28,8 +28,10 @@ from .const import (
     CONF_MQTT_PREFIX,
     CONF_ENABLE_MQTT,
     TOPIC_STATUS,
+    TOPIC_EVENTS,
     TOPIC_CHAIN,
     TOPIC_HEALTH,
+    TOPIC_STATE,
     TOPIC_TAMPER,
     TOPIC_TRANSPORT,
     TOPIC_MESH,
@@ -57,7 +59,11 @@ from .const import (
     TRANSPORT_CHIRP,
     # Thresholds
     CRITICAL_MEMORY_THRESHOLD_BYTES,
+    # Apple Home projection (see the HomeKit Bridge recipe in docs/integrations)
+    HOMEKIT_MOTION_HOLD_SECONDS,
+    homekit_signals_for_event,
 )
+from homeassistant.helpers.event import async_call_later
 from .health_metrics import (
     canary_sd_replace_recommended,
     replacement_recommended,
@@ -171,8 +177,12 @@ async def _setup_mqtt_binary_sensors(
                 SecuraCVCanarySDReplaceSensor(prefix, device_id, entry)
             )
 
-        # Individual tamper type sensors (created on first tamper message)
-        if topic_type == TOPIC_TAMPER and "tamper_sensors" not in entities_added[device_id]:
+        # Individual tamper type sensors. Created on the first tamper OR
+        # health message: several of these parse health fields (sd_errors,
+        # free_heap, power_loss_detected), and a device's one tamper publish
+        # is non-retained — a hub that boots after the Canary would otherwise
+        # never create the sensors that the periodic health flags feed.
+        if topic_type in (TOPIC_TAMPER, TOPIC_HEALTH) and "tamper_sensors" not in entities_added[device_id]:
             entities_added[device_id].add("tamper_sensors")
             new_entities.extend([
                 SecuraCVCanaryTamperTypeSensor(prefix, device_id, entry, TAMPER_POWER_LOSS, "Power Loss", "mdi:power-plug-off"),
@@ -199,6 +209,17 @@ async def _setup_mqtt_binary_sensors(
                 SecuraCVCanaryTransportSensor(prefix, device_id, entry, TRANSPORT_CHIRP, "Chirp Network", "mdi:bird"),
             ])
 
+        # Motion + occupancy. These exist so the HomeKit Bridge (and any
+        # other consumer) sees the standard device classes rather than a
+        # template built by hand in someone's YAML — see
+        # docs/integrations/apple-home-homekit-bridge.md.
+        if topic_type == TOPIC_EVENTS and "presence_sensors" not in entities_added[device_id]:
+            entities_added[device_id].add("presence_sensors")
+            new_entities.extend([
+                SecuraCVCanaryMotionSensor(prefix, device_id, entry),
+                SecuraCVCanaryOccupancySensor(prefix, device_id, entry),
+            ])
+
         # Mesh network connected sensor
         if topic_type == TOPIC_MESH and "mesh_connected" not in entities_added[device_id]:
             entities_added[device_id].add("mesh_connected")
@@ -217,7 +238,7 @@ async def _setup_mqtt_binary_sensors(
             async_add_entities(new_entities)
 
     # Subscribe for discovery on all relevant topics
-    for topic_suffix in [TOPIC_STATUS, TOPIC_CHAIN, TOPIC_HEALTH, TOPIC_TAMPER, TOPIC_TRANSPORT, TOPIC_MESH, TOPIC_CHIRP]:
+    for topic_suffix in [TOPIC_STATUS, TOPIC_CHAIN, TOPIC_HEALTH, TOPIC_TAMPER, TOPIC_TRANSPORT, TOPIC_MESH, TOPIC_CHIRP, TOPIC_EVENTS]:
         await mqtt.async_subscribe(
             hass,
             f"{prefix}/+/{topic_suffix}",
@@ -657,6 +678,139 @@ class SecuraCVCanaryTransportSensor(SecuraCVCanaryBinarySensorBase):
             self.async_write_ha_state()
         except (json.JSONDecodeError, TypeError):
             pass
+
+
+class SecuraCVCanaryProjectedSensorBase(SecuraCVCanaryBinarySensorBase):
+    """A sensor driven by the Apple Home projection's event vocabulary.
+
+    Which events assert which signal is NOT decided here. It comes from
+    `HOMEKIT_EVENT_SIGNALS`, which mirrors `signals_for_event` in
+    src/bridge/homekit.rs; both are generated from
+    `homekit_projection.event_signals` in spec/witness_dictionary.json and
+    gated by scripts/lint_dictionary_sync.py. Hand-writing the mapping in a
+    third place is exactly the drift that linter exists to catch.
+
+    The signal auto-clears after a hold window, the way a real motion sensor
+    does. Without it a single event would latch the sensor on forever and
+    every automation written against it would fire once and never reset.
+    """
+
+    _signal: str = ""
+
+    def __init__(self, prefix: str, device_id: str, entry: ConfigEntry,
+                 name_suffix: str, key: str) -> None:
+        super().__init__(prefix, device_id, entry, name_suffix, key)
+        self._attr_is_on = False
+        self._cancel_clear = None
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to the events topic."""
+        await mqtt.async_subscribe(
+            self.hass,
+            f"{self._prefix}/{self._device_id}/{TOPIC_EVENTS}",
+            self._handle_event,
+        )
+
+    @callback
+    def _handle_event(self, msg: mqtt.ReceiveMessage) -> None:
+        """Assert this signal if the event maps to it."""
+        try:
+            data = json.loads(msg.payload)
+            if not isinstance(data, dict):
+                return
+        except (json.JSONDecodeError, TypeError):
+            return
+        event_type = data.get("event_type", data.get("type", data.get("event", "")))
+        if self._signal not in homekit_signals_for_event(str(event_type)):
+            return
+        self._assert()
+
+    @callback
+    def _assert(self) -> None:
+        """Turn on, and (re)arm the auto-clear."""
+        self._attr_is_on = True
+        if self._cancel_clear is not None:
+            self._cancel_clear()
+        self._cancel_clear = async_call_later(
+            self.hass, HOMEKIT_MOTION_HOLD_SECONDS, self._clear
+        )
+        self.async_write_ha_state()
+
+    @callback
+    def _clear(self, _now) -> None:
+        """The hold window expired."""
+        self._cancel_clear = None
+        self._attr_is_on = False
+        self.async_write_ha_state()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Cancel a pending clear so it cannot fire into a dead entity."""
+        if self._cancel_clear is not None:
+            self._cancel_clear()
+            self._cancel_clear = None
+
+
+class SecuraCVCanaryMotionSensor(SecuraCVCanaryProjectedSensorBase):
+    """Motion, as a standard HA motion sensor.
+
+    `device_class: motion` is the point: it is what makes Home Assistant's
+    HomeKit Bridge expose this as a HomeKit motion sensor, and what lets any
+    other consumer treat a Canary like a sensor it already understands.
+    """
+
+    _attr_device_class = BinarySensorDeviceClass.MOTION
+    _attr_icon = "mdi:motion-sensor"
+    _signal = "motion"
+
+    def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
+        super().__init__(prefix, device_id, entry, "Motion", "motion")
+
+
+class SecuraCVCanaryOccupancySensor(SecuraCVCanaryProjectedSensorBase):
+    """Occupancy — a presence being sensed, not an identity being known.
+
+    Driven by the events vocabulary like its sibling, and additionally by the
+    retained `state` snapshot, which is where the firmware actually publishes
+    presence (canary-sense's topics.h builds `securacv/<id>/state` and its own
+    HA discovery reads `value_json.presence`). A snapshot without the field
+    leaves the sensor alone rather than asserting "nobody is there".
+    """
+
+    _attr_device_class = BinarySensorDeviceClass.OCCUPANCY
+    _attr_icon = "mdi:account-question"
+    _signal = "occupancy"
+
+    def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
+        super().__init__(prefix, device_id, entry, "Occupancy", "occupancy")
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to events and to the retained state snapshot."""
+        await super().async_added_to_hass()
+        await mqtt.async_subscribe(
+            self.hass,
+            f"{self._prefix}/{self._device_id}/{TOPIC_STATE}",
+            self._handle_state,
+        )
+
+    @callback
+    def _handle_state(self, msg: mqtt.ReceiveMessage) -> None:
+        """Track reported presence, which is a state rather than an event."""
+        try:
+            data = json.loads(msg.payload)
+            if not isinstance(data, dict) or "presence" not in data:
+                return
+        except (json.JSONDecodeError, TypeError):
+            return
+        present = data["presence"]
+        if isinstance(present, str):
+            present = present.strip().lower() in ("1", "on", "true", "yes", "detected")
+        # Reported state persists until the witness says otherwise, so this
+        # path deliberately does NOT arm the hold-window auto-clear.
+        if self._cancel_clear is not None:
+            self._cancel_clear()
+            self._cancel_clear = None
+        self._attr_is_on = bool(present)
+        self.async_write_ha_state()
 
 
 class SecuraCVCanaryMeshConnectedSensor(SecuraCVCanaryBinarySensorBase):

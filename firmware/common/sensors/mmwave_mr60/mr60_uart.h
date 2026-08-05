@@ -56,11 +56,11 @@
  * than treating it as corruption (a strict improvement over the reference,
  * which rejects unknown types at the header stage).
  *
- * Bench-verification notes (judgement calls made from the published protocol,
+ * Bench-verification notes (judgment calls made from the published protocol,
  * to confirm against real hardware in Phase 2):
- *   [BENCH] DISTANCE float32 is assumed to be in METRES and scaled ×100 to the
- *           centimetre integer the presence FSM consumes. If the module already
- *           reports centimetres, drop the scale in decode_distance_().
+ *   [BENCH] DISTANCE float32 is assumed to be in METERS and scaled ×100 to the
+ *           centimeter integer the presence FSM consumes. If the module already
+ *           reports centimeters, drop the scale in decode_distance_().
  *   [BENCH] BREATH/HEART float32 are assumed to be already in BPM and rounded
  *           to the nearest integer for the vitals FSM's plausibility bands.
  *   [BENCH] A single UART frame carries ONE scalar. The MR60 sends presence,
@@ -117,7 +117,7 @@ enum class FrameKind : uint8_t {
     None = 0,       // no complete frame this call
     Presence,       // has_target + target_count + distance
     Vitals,         // breath_rate + heart_rate (only meaningful when VITALS)
-    Unknown,        // well-formed framing, unrecognised type id
+    Unknown,        // well-formed framing, unrecognized type id
 };
 
 // One decoded radar record. POD; safe to copy by value.
@@ -132,7 +132,7 @@ struct Frame {
     FrameKind kind         = FrameKind::None;
     bool      has_target   = false;   // binary presence flag
     uint8_t   target_count = 0;       // raw count (caller buckets to 0/1/2+)
-    uint16_t  distance_cm  = 0;       // distance-to-target, centimetres
+    uint16_t  distance_cm  = 0;       // distance-to-target, centimeters
     uint16_t  breath_rate  = 0;       // breaths per minute (vitals)
     uint16_t  heart_rate   = 0;       // beats per minute (vitals)
 };
@@ -174,7 +174,7 @@ public:
     uint32_t error_count() const { return crc_error_count_; }
     // Same value, named for the health log's CRC-error metric.
     uint32_t crc_error_count() const { return crc_error_count_; }
-    // Well-framed records whose type id was not recognised (skipped, not an
+    // Well-framed records whose type id was not recognized (skipped, not an
     // error) — a "radar firmware speaks a dialect we don't decode" signal.
     uint32_t unknown_count() const { return unknown_count_; }
     // Decoded frames dropped because the output queue was full (burst overrun).
@@ -195,7 +195,7 @@ private:
 
     // Decode the complete frame in buf_ (payload of `payload_len` bytes) into
     // the aggregate and queue a snapshot. Returns false + counts `unknown` if
-    // the type id is unrecognised.
+    // the type id is unrecognized.
     bool decode_and_queue_(size_t payload_len);
 
     // Queue a snapshot of the current aggregate with the given kind.

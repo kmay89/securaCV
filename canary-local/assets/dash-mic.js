@@ -540,7 +540,7 @@ function viz() {
   const floorMark = el("div", "mic-meter-floor"); floorMark.title = "the room's tracked noise floor";
   const onMark = el("div", "mic-meter-on"); onMark.title = "a beep must clear this to count as loud";
   meter.append(floorMark, onMark);
-  v.append(labeled("Loudness — with the self-calibrating floor (grey) and trip line (white)", meter));
+  v.append(labeled("Loudness — with the self-calibrating floor (gray) and trip line (white)", meter));
 
   // The rolling loud/quiet strip.
   const strip = el("div", "mic-strip"); strip.id = "mic-strip";

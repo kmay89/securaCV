@@ -36,6 +36,17 @@ struct MuteLedger {
         save(t)
     }
 
+    /// Ids whose mute is still in force — the Resume Alerts verb's honest
+    /// count ("nothing was muted" must be distinguishable from "cleared 5").
+    func activeMutes(now: Date = Date()) -> [String] {
+        table.filter { $0.value > now }.map(\.key)
+    }
+
+    /// Back to full volume in one verb (Resume Alerts, from Siri/Shortcuts).
+    func clearAll() {
+        save([:])
+    }
+
     /// Stamp active mutes onto freshly folded rows and prune expired entries
     /// (a ledger that only grows is a slow leak).
     func apply(to witnesses: inout [Witness], now: Date = Date()) {

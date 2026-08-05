@@ -1,7 +1,7 @@
 //! Pure decision logic for the native **rescue bench** — the triage tools that
 //! turn the flasher from a one-shot writer into something that can save a board,
 //! put a copy back, wipe it clean, and flash a local file. It mirrors the
-//! browser Lab's rescue behaviour (canary-local: `validateBackupFile`, the
+//! browser Lab's rescue behavior (canary-local: `validateBackupFile`, the
 //! backup naming, the image-magic hints) so the two surfaces agree.
 //!
 //! Kept dependency-free (std only) so it unit-tests WITHOUT the desktop stack

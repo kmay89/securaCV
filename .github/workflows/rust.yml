@@ -40,7 +40,7 @@ env:
 
 # Supersede stale runs: a new push to a PR branch cancels the in-flight run
 # for the previous head, so review-fix pushes don't queue duplicate full
-# builds. Pushes to main are never cancelled (full signal per main commit).
+# builds. Pushes to main are never canceled (full signal per main commit).
 concurrency:
   group: rust-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -216,6 +216,19 @@ jobs:
       # Quoted: the trailing `::` in the test filter would otherwise read as
       # a YAML mapping value and make this workflow unparseable.
       run: "cargo test --verbose --features bridge-homekit bridge::"
+    - name: Clippy (bridge-homekit-server)
+      run: cargo clippy --all-targets --features bridge-homekit-server -- -D warnings
+    # The server lane carries the pairing crypto and the encrypted session, so
+    # its tests are the ones that would rot most quietly: a transcript bug
+    # still compiles. The end-to-end test drives the accessory with an
+    # independently written controller, which is what makes it worth running
+    # rather than merely building.
+    - name: Test (bridge-homekit-server)
+      run: "cargo test --verbose --features bridge-homekit-server bridge::"
+    - name: Clippy (alert-relay)
+      run: cargo clippy --all-targets --features alert-relay -- -D warnings
+    - name: Test (alert-relay)
+      run: "cargo test --verbose --features alert-relay relay::"
 
   ingest-gstreamer:
     name: Ingest (gstreamer rtsp)

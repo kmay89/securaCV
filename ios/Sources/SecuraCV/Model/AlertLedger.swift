@@ -11,6 +11,18 @@
 // fingerprint, which is exactly the key FleetStore already uses to decide
 // whether something is news, so the tab and the notifications agree by
 // construction rather than by coincidence.
+//
+// Freshness is the other half (the doctrine:
+// docs/design/alerts_event_history.md — alerts are perishable, history is
+// durable, and neither may impersonate the other):
+//   * A record is OPEN while its condition is live and RESOLVED once the
+//     fleet's truth says it cleared — FleetStore closes the loop at the same
+//     moment it decides the next occurrence would be news again.
+//   * Settled history the user has seen ages out after `retention`. What has
+//     never been seen is never silently deleted by time — "we discarded the
+//     thing you missed" is the one failure this ledger exists to prevent —
+//     so unseen rows are bounded only by the cap.
+//   * Nothing here re-notifies. The ledger is memory; AlertCenter is voice.
 
 import Foundation
 
@@ -22,6 +34,12 @@ final class AlertLedger: ObservableObject {
     /// Enough to cover "what happened while I was away for a week" without
     /// letting a pathological fleet grow the file without bound.
     static let cap = 200
+    /// How long settled, seen history stays before the sweep lets it go.
+    /// A month covers "what happened while we traveled"; past that a row is
+    /// an archive nobody asked for. (Ring keeps 180 days but sells the
+    /// storage; Nest free keeps 3 hours and sells the rest. Local-first
+    /// means the number can simply be the honest one.)
+    static let retention: TimeInterval = 30 * 86_400
     static let storeKey = "alert_ledger_v1"
 
     private let defaults: UserDefaults
@@ -44,8 +62,11 @@ final class AlertLedger: ObservableObject {
             records[i].count += 1
             records[i].lastBucket = AlertRecord.bucket(for: now)
             // A repeat is news again: it re-enters the list at the top, and a
-            // condition the user acknowledged that came BACK is not "handled".
+            // condition the user acknowledged that came BACK is not "handled",
+            // not "over", and not "seen" — the whole lifecycle reopens.
             records[i].handlingRaw = AlertHandling.new.rawValue
+            records[i].resolvedBucket = nil
+            records[i].seenBucket = nil
             let moved = records.remove(at: i)
             records.insert(moved, at: 0)
             save()
@@ -84,9 +105,64 @@ final class AlertLedger: ObservableObject {
         if touched { save() }
     }
 
-    func clear() {
-        records = []
-        save()
+    /// The condition behind every open record for this witness has cleared —
+    /// FleetStore calls this at the same moment the witness leaves its
+    /// news-dedupe ledgers, so "would notify again" and "shown as over" are
+    /// one decision, never two drifting ones. Handling is untouched: a
+    /// condition that cleared on its own was still never acknowledged, and
+    /// the row keeps saying so.
+    func resolve(witnessID: String, now: Date = Date()) {
+        var touched = false
+        for i in records.indices where records[i].witnessID == witnessID
+            && records[i].resolvedBucket == nil {
+            records[i].resolvedBucket = AlertRecord.bucket(for: now)
+            touched = true
+        }
+        if touched { save() }
+    }
+
+    /// The user laid eyes on the list (they left the Alerts tab). Every row
+    /// present is now "seen" — the badge and the unseen dots clear together.
+    func markSeen(now: Date = Date()) {
+        var touched = false
+        for i in records.indices where records[i].seenBucket == nil {
+            records[i].seenBucket = AlertRecord.bucket(for: now)
+            touched = true
+        }
+        if touched { save() }
+    }
+
+    /// One row, gone — the user's swipe. Removal is theirs to do; the sweep
+    /// below only ever takes what they have already seen and settled.
+    func remove(id: String) {
+        let before = records.count
+        records.removeAll { $0.id == id }
+        if records.count != before { save() }
+    }
+
+    /// The freshness rule, applied: settled history the user has seen ages
+    /// out after `retention`. Rows still open, and rows never seen, are
+    /// exempt — time may not delete a live condition or a missed one.
+    func retentionSweep(now: Date = Date()) {
+        let cutoff = now.addingTimeInterval(-Self.retention)
+        let before = records.count
+        records.removeAll { record in
+            guard let resolved = record.resolvedBucket,
+                  record.seenBucket != nil else { return false }
+            return max(record.lastBucket, resolved) < cutoff
+        }
+        if records.count != before { save() }
+    }
+
+    /// The user's "Clear history": settled rows only. Rows that still need a
+    /// human survive — an ongoing alarm can be acked or muted, never made to
+    /// vanish from the one list whose job is showing it. (A cleared live row
+    /// would also stay gone: the news-dedupe still holds its fingerprint, so
+    /// nothing would re-create it until the condition changed.)
+    func clearSettled() {
+        let before = records.count
+        records.removeAll { !$0.needsYou }
+        if records.count != before { save() }
     }
 
     // MARK: - reading
@@ -94,9 +170,37 @@ final class AlertLedger: ObservableObject {
     /// The one number the tab's header needs: things still wanting a human.
     var unhandledCount: Int { records.filter { $0.handling == .new }.count }
 
+    /// What the app badge counts: rows the user has never laid eyes on.
+    var unseenCount: Int { records.filter(\.isUnseen).count }
+
     /// True when nothing has ever needed them — the calm empty state, which
     /// is the state we WANT people to live in and should feel earned.
     var isQuiet: Bool { records.isEmpty }
+
+    /// Rebuild FleetStore's news-dedupe state from the persisted history, so
+    /// an alarm that outlives an app relaunch does not re-notify as if it
+    /// were fresh news. (Before this fold, every relaunch re-posted every
+    /// ongoing condition — the exact spam the dedupe ledgers exist to stop,
+    /// reintroduced through the one door they didn't cover.) The record id
+    /// is "witnessID|fingerprint" by construction, so the fingerprint is
+    /// recoverable; newest record per witness wins, matching the live rule.
+    static func foldOpenAlerts(records: [AlertRecord])
+        -> (posted: [String: String], acked: [String: String]) {
+        var posted: [String: String] = [:]
+        var acked: [String: String] = [:]
+        // Newest-first, so `posted[w] == nil` keeps the newest per witness.
+        for record in records where record.isOpen {
+            let fingerprint = String(record.id.dropFirst(record.witnessID.count + 1))
+            guard !fingerprint.isEmpty else { continue }
+            if posted[record.witnessID] == nil {
+                posted[record.witnessID] = fingerprint
+            }
+            if record.handling == .acknowledged, acked[record.witnessID] == nil {
+                acked[record.witnessID] = fingerprint
+            }
+        }
+        return (posted, acked)
+    }
 
     // MARK: - persistence
 

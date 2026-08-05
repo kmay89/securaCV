@@ -86,6 +86,14 @@ final class FleetStore: ObservableObject {
         alerts.onMute = { [weak self] id in self?.mute(id) }
         alerts.onAck = { [weak self] id in self?.acknowledgeAlert(for: id) }
 
+        // The news-dedupe ledgers are rebuilt from the persisted history, so
+        // an alarm that outlives a relaunch stays ONE alert: still on the
+        // tab, still open, but never re-posted as if the app had just found
+        // it. (In-memory-only dedupe re-notified every ongoing condition on
+        // every cold start — restart spam, the one leak the per-refresh
+        // guards couldn't see.)
+        (postedAlerts, ackedAlerts) = AlertLedger.foldOpenAlerts(records: alertLog.records)
+
         // Forward every collaborator's change into ours, so any view observing
         // the store updates when discovery, BLE, alerts, heartbeat, or the
         // device list change — no view has to know the internal object graph.
@@ -120,6 +128,10 @@ final class FleetStore: ObservableObject {
             }
         }
         recordDemoBeatIfHarmless()
+        // History hygiene at the door: settled, seen rows past the retention
+        // window leave; the badge tells the truth about what's still unseen.
+        alertLog.retentionSweep()
+        syncBadge()
         startRefreshLoop()
         startSentinel()
         pushLiveActivity()
@@ -499,6 +511,27 @@ final class FleetStore: ObservableObject {
         applyMutesAndRepublish()
     }
 
+    /// The Quiet Hour verb (Siri / Shortcuts / the Action button): every
+    /// real witness muted at once. Demo rows are skipped — sample data must
+    /// never inflate the honest count — and tamper still punches through per
+    /// row (Witness.effectiveSeverity owns that guarantee; this path cannot
+    /// weaken it). Returns how many were quieted, for the spoken dialog.
+    @discardableResult
+    func quietFleet(for duration: TimeInterval = 3600) -> Int {
+        let ids = witnesses.map(\.id).filter { !$0.hasPrefix(DemoFleet.idPrefix) }
+        for id in ids { mute(id, for: duration) }
+        return ids.count
+    }
+
+    /// The symmetric verb: clear every active mute, so a quiet hour is never
+    /// a trap someone forgets they set. Returns how many mutes it ended.
+    @discardableResult
+    func resumeFleet() -> Int {
+        let ids = muteLedger.activeMutes()
+        for id in ids { unmute(id) }
+        return ids.count
+    }
+
     private func applyMutesAndRepublish() {
         var rows = witnesses
         for i in rows.indices {
@@ -630,9 +663,32 @@ final class FleetStore: ObservableObject {
             ackedAlerts[id] = posted
         }
         alertLog.mark(.acknowledged, forWitness: id)
+        syncBadge()
         // An ack changes the story (the bird may return to the stage) —
         // every surface hears about it now, not at the next poll.
         republishGlanceSurfaces()
+    }
+
+    /// The user left the Alerts tab: everything it listed is now "seen".
+    /// Seen is about the badge and the unseen dots, never about handling —
+    /// glancing at a live alarm does not acknowledge it.
+    func markAlertsSeen() {
+        alertLog.markSeen()
+        syncBadge()
+    }
+
+    /// "Clear history" — settled rows only (the ledger keeps anything that
+    /// still needs a human), and the badge is retold the truth immediately.
+    func clearAlertHistory() {
+        alertLog.clearSettled()
+        syncBadge()
+    }
+
+    /// The app badge is the unseen count — "something landed that you have
+    /// not looked at" — kept in one place so every path that changes the
+    /// ledger leaves the icon telling the truth.
+    private func syncBadge() {
+        alerts.setBadge(alertLog.unseenCount)
     }
 
     private func evaluateAlerts() {
@@ -648,6 +704,14 @@ final class FleetStore: ObservableObject {
             let fingerprint = alertFingerprint(w)
             guard postedAlerts[w.id] != fingerprint else { continue }   // already told
             guard ackedAlerts[w.id] != fingerprint else { continue }    // user said "seen it"
+            if postedAlerts[w.id] != nil {
+                // The condition CHANGED without a calm gap (dark became
+                // tamper): the old record's story is over even though the
+                // witness never left the live set — close it, or it sits
+                // "Ongoing" forever, exempt from retention. The new
+                // condition gets its own record just below.
+                alertLog.resolve(witnessID: w.id)
+            }
             postedAlerts[w.id] = fingerprint
 
             // The ledger key must carry the witness: `alertFingerprint` is
@@ -705,16 +769,34 @@ final class FleetStore: ObservableObject {
             }
         }
         lastAwayWake = nil
-        // Calmed witnesses leave both ledgers — their NEXT alert is news.
+        // Calmed witnesses leave both ledgers — their NEXT alert is news —
+        // and the history closes its loop in the same breath: the moment a
+        // condition would be news again is exactly the moment its old record
+        // must stop reading as "still happening".
+        for id in postedAlerts.keys where !live.contains(id) {
+            alertLog.resolve(witnessID: id)
+        }
         postedAlerts = postedAlerts.filter { live.contains($0.key) }
         ackedAlerts = ackedAlerts.filter { live.contains($0.key) }
+        syncBadge()
     }
 
     private func pushLiveActivity() {
         let ago: Int? = heartbeat.lastVerified.map { Int(Date().timeIntervalSince($0)) }
         let state = FleetActivityAttributes.State(fleet: witnesses, lastVerifiedAgo: ago)
-        LiveActivityController.shared.start(fleetName: fleetName, state: state)
-        Task { await LiveActivityController.shared.update(state) }
+        // The island is an episode, not wallpaper (IslandPolicy): it exists
+        // only while something is live — a condition at warn or above, the
+        // dead-man's-switch talking, or a path test the user just started —
+        // and leaves the stage (with a short all-clear linger) when the
+        // episode resolves. A quiet fleet on an ordinary day puts nothing in
+        // the status bar; the widgets are the always-there glance.
+        if IslandPolicy.shouldShow(worstSeverity: worstSeverity,
+                                   heartbeat: heartbeat.wristState) {
+            LiveActivityController.shared.start(fleetName: fleetName, state: state)
+            Task { await LiveActivityController.shared.update(state) }
+        } else {
+            Task { await LiveActivityController.shared.endEpisode(with: state) }
+        }
     }
 
     // MARK: - test alert (the "provably alive" button)

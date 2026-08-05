@@ -92,7 +92,7 @@ bool mqtt_publish_health(const char* json_payload);
 bool mqtt_publish_chain(const char* json_payload);
 
 // Tamper: tamper events (QoS 0, retained, immediate)
-bool mqtt_publish_tamper(const char* json_payload);
+bool mqtt_publish_tamper(const char* json_payload, bool retained = true);
 
 // Transport: transport status (QoS 0, on change)
 bool mqtt_publish_transport(const char* json_payload);

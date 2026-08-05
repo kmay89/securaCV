@@ -2,7 +2,7 @@
 //
 // Proves the "which board am I holding?" panel is drawn honestly from the
 // catalogs: every flashable product resolves (via boards.json.device_board)
-// to a board with a labelled pinout, each pin classifies into a vendor-legend
+// to a board with a labeled pinout, each pin classifies into a vendor-legend
 // class, and products with an enclosure surface the product they become. Pure
 // logic + a tiny DOM shim for the builder — no browser needed.
 
@@ -78,7 +78,7 @@ test("boardForProduct: mapped products resolve; unmapped skip gracefully (no thr
   }
 });
 
-test("the display products carry a labelled pinout to match in-hand", async () => {
+test("the display products carry a labeled pinout to match in-hand", async () => {
   const { boardForProduct } = await mod();
   for (const id of ["securacv-canary-display-watch", "securacv-canary-display-dash"]) {
     const b = boardForProduct(boards, id);
@@ -94,16 +94,16 @@ test("enclosureForProduct: display + camera products surface the product they be
   assert.strictEqual(watch.device, "canary-display-watch");
 });
 
-test("buildIdentityPanel: renders the white card with colour-coded pin rows", async () => {
+test("buildIdentityPanel: renders the white card with color-coded pin rows", async () => {
   const { buildIdentityPanel } = await mod();
   const watch = flash.products.find((p) => p.id === "securacv-canary-display-watch");
   const doc = fakeDoc();
   const panel = buildIdentityPanel(doc, watch, boards, enclosures);
   assert.ok(panel, "panel built for the display watch");
-  // the labelled card exists with a heading
+  // the labeled card exists with a heading
   assert.strictEqual(byClass(panel, "flash-identity-card").length, 1);
   assert.ok(walk(panel).some((n) => n.tag === "h3" && n.textContent));
-  // one colour-coded class tag per pinout entry, each with a background colour
+  // one color-coded class tag per pinout entry, each with a background color
   const board = boards.boards[(boards.device_board["canary-display-watch"] || [])
     .find((bid) => (boards.boards[bid] || {}).pinout)];
   const rows = byClass(panel, "flash-identity-cls");

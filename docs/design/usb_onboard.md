@@ -143,7 +143,7 @@ path (the same enumeration change the WAP evidence-drive build already documents
 
 ## Keeping the demo honest (anti-rot)
 
-The website's `/plugin` emulator illustrates this exact behaviour, so the two
+The website's `/plugin` emulator illustrates this exact behavior, so the two
 must not drift. The shared "contract" — the `?r=onboard` reason tag and the
 START-HERE filenames — lives in one place, `usb_onboard_logic.h`
 (`kOnboardReason`, `kStartHereHtml`, `kStartHereWinUrl`, `kStartHereMacWebloc`),

@@ -1,6 +1,20 @@
 # The alert relay — remote "pokes" without a cloud (design)
 
-**Status:** design / RFC — no code yet. This scopes *how a Canary tells you something while you're
+**Status:** the flagship ntfy lane is **built** — the `alert_relay` bin behind the
+`alert-relay` Cargo feature, with the poke vocabulary, the fingerprint-free
+subscribe list, and the per-class debounce as a pure, unit-tested core
+(`src/relay/`). Fan-out beyond ntfy, payload encryption, the away-detection
+policy, and the mesh-gateway outage path remain design (§7). Two build-time
+decisions the implementation made, recorded here: the fan-out substrate is an
+in-tree Rust notifier, not an Apprise sidecar (§7 leaned Apprise; zero new
+crates beat a Python runtime on the hub — `ureq` was already vetted for `tsa`),
+and the poke carries **no timestamp field at all** — §1's example `ts` would
+rebuild the event-timing oracle that Invariant III's bucketing removes, so the
+ntfy lane ships without it and the per-sink postures are: ntfy = coarse
+owner-facing sentence, iPhone lane = contentless `{sev}` wake (the stricter
+contract from the iPhone RFC §5).
+
+This scopes *how a Canary tells you something while you're
 away* without breaking the local-first, own-nothing promise. It builds directly on the invariant the
 [iPhone companion RFC](./iphone_companion_app.md) §5 already set: **the only acceptable cloud touch is
 a metadata-only wake relay — a token or a coarse alert string, never footage, never event content.**
@@ -134,7 +148,7 @@ power or house internet.
   chirp is a **best-effort bonus on top**, never the thing you trust (we already found the Meshtastic
   OFF-transition unreliable, meshtastic/firmware#8977, and a supercap last-gasp timing-critical).
 - **Carry the poke out over the mesh to an independently-powered gateway.** A battery/solar mesh
-  gateway (or a neighbour's node, or a small cellular-backed hub) that has power *and* connectivity
+  gateway (or a neighbor's node, or a small cellular-backed hub) that has power *and* connectivity
   when the house doesn't is what actually delivers the alert. The gateway runs the §3 relay.
 - **Normal times stay simple:** device → hub → relay over the LAN. The mesh path is the *fallback the
   outage forces*, not the everyday path.

@@ -129,14 +129,32 @@ enum HomeKitStanding: Equatable {
 
 @MainActor
 final class HomeKitBridge: ObservableObject {
+    /// One shepherd for the app, the `AwayPush.shared` precedent. Constructing
+    /// it touches no HomeKit API — the `HMHomeManager` is created lazily in
+    /// `requestAccess()`, so launch, tests, and previews never wake HomeKit
+    /// (the CloudKit lesson from RELEASE_LESSONS (ab), applied here first).
+    static let shared = HomeKitBridge()
+    init() {}
+
     @Published private(set) var authorized = false
     @Published var isEnabled = false        // opt-in; off by default
 
     /// Per-signal consent. Class-scoped signals start off — the dumb-PIR bar.
     @Published private(set) var enabledSignals: Set<HomeSignal> = HomeSignal.defaultEnabled
 
+    /// Whether any home this account can see has a connected home hub.
+    /// Read from `HMHomeManager` after authorization; false until known —
+    /// the ladder treats "don't know" as "can't promise automations".
+    @Published private(set) var homeHubPresent = false
+
+    /// Lowercased names of accessories visible in the user's homes, so the
+    /// per-witness standing can say "seen in Apple Home" without pretending
+    /// to more: a name match is an observation, not a verification.
+    @Published private(set) var accessoryNames: Set<String> = []
+
     #if canImport(HomeKit)
-    private let manager = HMHomeManager()
+    private var manager: HMHomeManager?
+    private var delegateShim: HomeManagerShim?
     #endif
 
     /// Turn a signal's projection on or off.
@@ -172,19 +190,206 @@ final class HomeKitBridge: ObservableObject {
 
     /// What we can honestly say about this witness's standing in Apple Home.
     func standing(for w: Witness, presentInHome: Bool, homeHubPresent: Bool) -> HomeKitStanding {
+        Self.standing(isEnabled: isEnabled, authorized: authorized,
+                      isDark: w.link.isDark, presentInHome: presentInHome,
+                      homeHubPresent: homeHubPresent)
+    }
+
+    /// The ladder itself, pure so the whole thing is host-testable without an
+    /// `HMHomeManager` — the `IslandPolicy`/`FocusGate` factoring.
+    static func standing(isEnabled: Bool, authorized: Bool, isDark: Bool,
+                         presentInHome: Bool, homeHubPresent: Bool) -> HomeKitStanding {
         guard isEnabled else { return .off }
         guard authorized else { return .needsAuthorization }
         guard presentInHome else { return .notPaired }
-        if w.link.isDark { return .staleInHome }
+        if isDark { return .staleInHome }
         return homeHubPresent ? .paired : .pairedWithoutHomeHub
     }
 
+    /// Was an accessory with this witness's name observed in a home?
+    /// Case-insensitive, observation-grade — the standing copy says "seen",
+    /// never "verified".
+    func seenInHome(_ w: Witness) -> Bool {
+        let needle = (w.name.isEmpty ? w.id : w.name).lowercased()
+        guard !needle.isEmpty else { return false }
+        return accessoryNames.contains { $0.contains(needle) }
+    }
+
+    /// Ask iOS for Home access. The OS shows its consent prompt on the first
+    /// real HomeKit touch; state lands via the delegate — `authorized` is
+    /// only ever set from what the framework reported, never assumed.
     func requestAccess() {
         #if canImport(HomeKit)
-        // HMHomeManager triggers the authorization prompt on first use; state
-        // arrives via its delegate in the full implementation.
-        _ = manager.homes
-        authorized = true
+        if manager == nil {
+            let shim = HomeManagerShim(bridge: self)
+            let m = HMHomeManager()
+            m.delegate = shim
+            delegateShim = shim
+            manager = m
+        }
+        if let m = manager {
+            noteAuthorization(m.authorizationStatus)
+            noteHomes(m.homes)
+        }
         #endif
     }
+
+    // ── The concierge's impure half (§4.2: the app authors, never runs) ──
+    //
+    // Every method below runs only downstream of an explicit user tap with
+    // isEnabled && authorized — nothing here is reachable from init, body,
+    // or a preview, per the lazy-manager rule at the top of this class.
+
+    /// User-defined scenes in the primary home, as plain values.
+    /// (Apple's builtin arrival/departure action sets are excluded — the
+    /// concierge runs the household's own scenes, it doesn't invent or
+    /// borrow them.)
+    func userScenes() -> [(id: UUID, name: String)] {
+        #if canImport(HomeKit)
+        guard let home = manager?.primaryHome else { return [] }
+        return home.actionSets
+            .filter { $0.actionSetType == HMActionSetTypeUserDefined }
+            .map { ($0.uniqueIdentifier, $0.name) }
+        #else
+        return []
+        #endif
+    }
+
+    /// Accessories in the primary home carrying a characteristic this
+    /// signal projects to — the concrete things an automation can trigger
+    /// on. Names only; the HomeKit objects never leave the bridge.
+    func automationSources(for signal: HomeSignal) -> [String] {
+        #if canImport(HomeKit)
+        guard let home = manager?.primaryHome else { return [] }
+        let wanted = signal.hmCharacteristicTypeID
+        return home.accessories.filter { accessory in
+            accessory.services.contains { service in
+                service.characteristics.contains { $0.characteristicType == wanted }
+            }
+        }
+        .map(\.name)
+        #else
+        return []
+        #endif
+    }
+
+    /// Is the current user an administrator of the primary home? Writing a
+    /// trigger needs it; the readiness ladder says so instead of failing.
+    func isAdministrator() -> Bool {
+        #if canImport(HomeKit)
+        guard let home = manager?.primaryHome else { return false }
+        return home.homeAccessControl(for: home.currentUser).isAdministrator
+        #else
+        return false
+        #endif
+    }
+
+    /// Write the planned automation into the primary home: a real
+    /// HMEventTrigger on our accessory's characteristic, running the scene
+    /// the household already authored. Runs on the home hub from then on,
+    /// app closed — the app is the author, never the runtime.
+    func author(_ plan: PlannedAutomation) async throws {
+        #if canImport(HomeKit)
+        guard let home = manager?.primaryHome else {
+            throw HomeAuthorError.noHome
+        }
+        guard let accessory = home.accessories.first(where: { $0.name == plan.accessoryName }),
+              let characteristic = accessory.services
+                  .flatMap(\.characteristics)
+                  .first(where: { $0.characteristicType == plan.signal.hmCharacteristicTypeID })
+        else {
+            throw HomeAuthorError.accessoryGone
+        }
+        guard let scene = home.actionSets.first(where: { $0.uniqueIdentifier == plan.sceneID })
+        else {
+            throw HomeAuthorError.sceneGone
+        }
+        let event = HMCharacteristicEvent(
+            characteristic: characteristic, triggerValue: NSNumber(value: true))
+        let trigger = HMEventTrigger(name: plan.triggerName, events: [event], predicate: nil)
+        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+            home.addTrigger(trigger) { error in
+                if let error { c.resume(throwing: error) } else { c.resume() }
+            }
+        }
+        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+            trigger.addActionSet(scene) { error in
+                if let error { c.resume(throwing: error) } else { c.resume() }
+            }
+        }
+        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+            trigger.enable(true) { error in
+                if let error { c.resume(throwing: error) } else { c.resume() }
+            }
+        }
+        #else
+        _ = plan
+        throw HomeAuthorError.noHome
+        #endif
+    }
+
+    /// Automations this app authored (recognized by the trigger-name
+    /// prefix), for the review-and-remove list.
+    func authoredAutomations() -> [(id: UUID, name: String)] {
+        #if canImport(HomeKit)
+        guard let home = manager?.primaryHome else { return [] }
+        return home.triggers
+            .filter { $0.name.hasPrefix("SecuraCV: ") }
+            .map { ($0.uniqueIdentifier, $0.name) }
+        #else
+        return []
+        #endif
+    }
+
+    /// Remove one authored automation. Only ours are offered for removal;
+    /// the household's own automations are never touched.
+    func removeAutomation(id: UUID) async throws {
+        #if canImport(HomeKit)
+        guard let home = manager?.primaryHome,
+              let trigger = home.triggers.first(where: { $0.uniqueIdentifier == id }),
+              trigger.name.hasPrefix("SecuraCV: ")
+        else {
+            return
+        }
+        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+            home.removeTrigger(trigger) { error in
+                if let error { c.resume(throwing: error) } else { c.resume() }
+            }
+        }
+        #else
+        _ = id
+        #endif
+    }
+
+    #if canImport(HomeKit)
+    fileprivate func noteAuthorization(_ status: HMHomeManagerAuthorizationStatus) {
+        authorized = status.contains(.authorized)
+    }
+
+    fileprivate func noteHomes(_ homes: [HMHome]) {
+        homeHubPresent = homes.contains { $0.homeHubState == .connected }
+        accessoryNames = Set(homes.flatMap { home in
+            home.accessories.map { $0.name.lowercased() }
+        })
+    }
+    #endif
 }
+
+#if canImport(HomeKit)
+/// `HMHomeManagerDelegate` requires an `NSObject`; the bridge stays a plain
+/// `ObservableObject`, so this shim forwards the two callbacks that matter.
+private final class HomeManagerShim: NSObject, HMHomeManagerDelegate {
+    weak var bridge: HomeKitBridge?
+    init(bridge: HomeKitBridge) { self.bridge = bridge }
+
+    func homeManager(_ manager: HMHomeManager,
+                     didUpdate status: HMHomeManagerAuthorizationStatus) {
+        Task { @MainActor [weak bridge] in bridge?.noteAuthorization(status) }
+    }
+
+    func homeManagerDidUpdateHomes(_ manager: HMHomeManager) {
+        let homes = manager.homes
+        Task { @MainActor [weak bridge] in bridge?.noteHomes(homes) }
+    }
+}
+#endif

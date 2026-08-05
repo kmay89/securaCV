@@ -10,7 +10,7 @@
 
 ## Why a registry
 
-SecuraCV gates behaviour with flags at four different layers. Each layer was
+SecuraCV gates behavior with flags at four different layers. Each layer was
 internally consistent, but nothing tied them together — there was no one place
 that said *what flags exist, what they default to, and when they get removed*.
 This file is that place. It does **not** duplicate the per-layer detail (e.g. the
@@ -22,18 +22,18 @@ firmware parity matrix); it indexes it and points at the authoritative source.
 |---|---|---|---|
 | **Rust compile-time** | Optional native deps / backends that shouldn't be in every build (codecs, ONNX, PQC, adapters) | Cargo `[features]` + `#[cfg(feature=…)]` / `required-features` | [`Cargo.toml`](../Cargo.toml) `[features]` |
 | **Firmware compile-time** | Per-board capability selection on memory-constrained ESP32 targets | `FEATURE_*` C macros / `build_flags` | [`firmware/FEATURES.md`](../firmware/FEATURES.md) (parity matrix) |
-| **Runtime config** | Operator-tunable behaviour that must change without rebuilding (backend choice, thresholds, retention, detection toggles) | TOML + `WITNESS_*` env (kernel) and JSON device-state (canary-vision) | [`config.example.toml`](../config.example.toml), [`canary-vision/device-api/lib/device-state.js`](../canary-vision/device-api/lib/device-state.js) |
+| **Runtime config** | Operator-tunable behavior that must change without rebuilding (backend choice, thresholds, retention, detection toggles) | TOML + `WITNESS_*` env (kernel) and JSON device-state (canary-vision) | [`config.example.toml`](../config.example.toml), [`canary-vision/device-api/lib/device-state.js`](../canary-vision/device-api/lib/device-state.js) |
 | **Capability gating** | Hiding declared-but-unbuilt surface so the product never advertises what no device can do | `ALL_* ` vs `FUTURE_*` lists | [`custom_components/securacv/const.py`](../custom_components/securacv/const.py) |
 
 **Decision rule:** if a flag selects *which code is compiled* → compile-time
-(Cargo/firmware). If it tunes *running behaviour* → runtime config. If it hides
+(Cargo/firmware). If it tunes *running behavior* → runtime config. If it hides
 *an unfinished feature from users* → capability gate (and it stays gated until
 wired end-to-end — see the convention below). Don't reach for a runtime config
 key to do a compile-time job, or vice-versa.
 
 ## Conventions (normative)
 
-1. **Default off for unfinished work.** A flag guarding incomplete behaviour
+1. **Default off for unfinished work.** A flag guarding incomplete behavior
    ships **off by default**. Merging behind an off flag is fine; advertising it
    is not.
 2. **Never advertise unbuilt features.** Declared-but-unimplemented capabilities
@@ -84,11 +84,13 @@ Source of truth: `Cargo.toml:55-71`. Default build enables **none** of these
 | `adapter-meshtastic` | off | stable | Meshtastic LoRa-mesh detection-sensor adapter | keep |
 | `adapter-can-bus` | off | exp | Passive-only vehicle CAN bus adapter (arrival/departure claims via Linux SocketCAN) | promote to stable once bench-validated against a real vehicle (docs/hardware/canary_vehicle_can.md) |
 | `adapter-sandbox` | off | stable | Sandbox/test adapter | keep |
-| `bridge-homekit` | off | exp | Apple Home egress projection core: the closed coarse-boolean vocabulary plus the pacer that publishes on a fixed cadence rather than on events (`src/bridge/homekit.rs`, docs/design/apple_home_integration.md). Pure Rust — no HAP server or socket yet | promote to stable when a HAP lane actually ships and open decision #6 (one accessory per Canary vs per signal) is settled |
+| `bridge-homekit` | off | exp | Apple Home egress projection core: the closed coarse-boolean vocabulary plus the pacer that publishes on a fixed cadence rather than on events (`src/bridge/homekit.rs`, docs/design/apple_home_integration.md). Pure Rust — no HAP server or socket | promote to stable once the server lane below has paired against real Apple controllers |
+| `bridge-homekit-server` | off | exp | The HAP accessory server (bridge site B): mDNS discovery, Pair Setup/Pair Verify, the encrypted session and the accessory database, driven by the pacer above (`src/bridge/hap/`). Implies `bridge-homekit`; adds `srp`, `x25519-dalek`, `mdns-sd` — both published `hap` crates failed the FR-14 gate (one does not compile, the other cannot be resolved) | promote to stable once it has paired against real Apple controllers and open decision #2 (commercial licensing) is answered |
 | `pqc-signatures` | off | exp | ML-DSA post-quantum signatures | promote once PQC signing is a supported deployment mode |
 | `pqc-vault` | off | exp | ML-KEM post-quantum vault sealing | promote once PQC vault is supported |
 | `pqc-tls` | off | exp | PQC-capable TLS stack | promote once PQC transport is supported |
 | `tsa` | off | stable | Online RFC 3161 TSA client for `log_anchor request` (ureq + 30s timeout). The offline query/import anchoring flow needs no feature | keep (network egress stays opt-in at build time by design — see docs/timestamping.md) |
+| `alert-relay` | off | exp | The hub-side metadata-only alert relay (`alert_relay` bin): coarse pokes over ntfy, fingerprint-free topic list, per-class debounce (docs/design/alert_relay.md). Zero new crates — rides the already-vetted ureq | promote to stable once the away-detection policy (alert_relay.md §7) is specced and the lane has run on a real hub |
 | `c2pa-export` | off | exp | C2PA Content Credentials sidecar sign/verify for export bundles (`export_events --c2pa`, `export_verify --c2pa-manifest`); fully offline, no HTTP backend compiled in (docs/design/c2pa_export.md) | promote to stable once the sidecar format survives a release cycle of third-party verifier use |
 
 > The full set of CI-built feature combinations is in `.github/workflows/rust.yml`

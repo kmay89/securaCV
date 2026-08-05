@@ -1712,6 +1712,7 @@ pub fn run() {
             hub::hub_flash_cancel,
             hub::hub_preflight,
             hub::hub_probe_hub,
+            hub::hub_onboard,
             hub::hub_headless_setup,
             hub::hub_headless_available,
             hub::hub_pi_boot_start,

@@ -51,13 +51,13 @@ def _set_color(geom, rgb):
 
 def _drop_below_y(scene, y_mm):
     """Strip any solid whose highest point sits below y_mm (raw tessellated
-    millimetres, +Y up). This catches a vendor demo stand/mount that
+    millimeters, +Y up). This catches a vendor demo stand/mount that
     `merge_primitives` fuses into unnamed material buckets — the name-based
     `drop` can't see those (the merge promotes a SolidWorks feature name over
     the part name), but the printed stand sits entirely under the board, with a
     clean air gap above it, so a Y-plane cut removes it and nothing else. The
     board's own components all live above the cut. World Y = node transform ×
-    vertices × 1000 (the GLB is in metres; the page's glb.js scales the same)."""
+    vertices × 1000 (the GLB is in meters; the page's glb.js scales the same)."""
     for name in list(scene.geometry):
         nodes = scene.graph.geometry_nodes.get(name, [])
         T = scene.graph.get(nodes[0])[0] if nodes else np.eye(4)
@@ -67,12 +67,12 @@ def _drop_below_y(scene, y_mm):
 
 
 def bake_round_display(scene):
-    """SolidWorks STEP export carried no per-solid colours through the
+    """SolidWorks STEP export carried no per-solid colors through the
     tessellator, so assign by geometry: the Ø43 discs/ring are the black
-    PCB + bezel, the 28–40 mm discs are the grey glass, everything else is a
-    dark component. The shape is the vendor's exact model; only colour is ours."""
+    PCB + bezel, the 28–40 mm discs are the gray glass, everything else is a
+    dark component. The shape is the vendor's exact model; only color is ours."""
     for geom in scene.geometry.values():
-        diam = sorted(geom.extents)[2]  # largest extent = board diameter (metres)
+        diam = sorted(geom.extents)[2]  # largest extent = board diameter (meters)
         if diam > 0.040:
             _set_color(geom, (0.09, 0.09, 0.11))   # PCB face + bezel ring
         elif diam > 0.028:
@@ -81,9 +81,9 @@ def bake_round_display(scene):
             _set_color(geom, (0.14, 0.14, 0.16))   # connectors, socket, parts
 
 
-def _pi_colour(name):
-    """Colour a Raspberry Pi 5 solid from the vendor's own name (its STEP carried
-    no colours). The model is exact; only the colour is ours, keyed off the
+def _pi_color(name):
+    """Color a Raspberry Pi 5 solid from the vendor's own name (its STEP carried
+    no colors). The model is exact; only the color is ours, keyed off the
     part label so the assignment is honest, not eyeballed geometry."""
     n = name.lower()
     if "plate_raspberry" in n or n.startswith("plate"):
@@ -98,9 +98,9 @@ def _pi_colour(name):
 
 
 def bake_raspberry_pi(scene):
-    """The Pi 5 STEP carries no per-solid colours and tessellates to ~12k named
-    solids. Colour each by its vendor name (_pi_colour), then concatenate solids
-    that share a colour into ONE mesh per colour, so the committed GLB is a
+    """The Pi 5 STEP carries no per-solid colors and tessellates to ~12k named
+    solids. Color each by its vendor name (_pi_color), then concatenate solids
+    that share a color into ONE mesh per color, so the committed GLB is a
     handful of parts (like every other board) instead of 12k draw calls. Returns
     a fresh scene; transforms are baked into the vertices so the flattened mesh
     exports identically to how glb.js re-reads it."""
@@ -110,11 +110,11 @@ def bake_raspberry_pi(scene):
         nodes = scene.graph.geometry_nodes.get(name, [])
         if nodes:
             g.apply_transform(scene.graph.get(nodes[0])[0])
-        buckets.setdefault(_pi_colour(name), []).append(g)
+        buckets.setdefault(_pi_color(name), []).append(g)
     out = trimesh.Scene()
-    for colour, geoms in buckets.items():
+    for color, geoms in buckets.items():
         m = trimesh.util.concatenate(geoms)
-        _set_color(m, colour)
+        _set_color(m, color)
         out.add_geometry(m)
     return out
 
@@ -137,7 +137,7 @@ def bake_raspberry_pi(scene):
 # rear (the pin side), and orbiting reveals the screen.
 WS43B_W, WS43B_HT, WS43B_TH = 118.0, 79.0, 25.0   # width, height, thickness (mm)
 WS43B_PITCH = 3.81                                # terminal pitch (silk-exact)
-WS43B_TZ = -WS43B_HT / 2 + 11.0                   # terminal band centre, Z (rear, near bottom)
+WS43B_TZ = -WS43B_HT / 2 + 11.0                   # terminal band center, Z (rear, near bottom)
 
 # The 16 terminals in rear-silk order along +X (VIN end → DI1 end), transcribed
 # from firmware/boards/waveshare-esp32s3-lcd43b/README.md ("top to bottom, per
@@ -155,7 +155,7 @@ WS43B_TERMS = [
 
 
 def _ws43b_term_x(i):
-    """X (mm) of terminal i, centred on the block."""
+    """X (mm) of terminal i, centered on the block."""
     return (i - (len(WS43B_TERMS) - 1) / 2.0) * WS43B_PITCH
 
 
@@ -168,7 +168,7 @@ def ws43b_anchors():
 
 
 def _ws43b_rrect(w, h, r, n=7):
-    """Centred rounded-rectangle polygon (w×h, corner radius r) in the X–Z plane."""
+    """Centered rounded-rectangle polygon (w×h, corner radius r) in the X–Z plane."""
     hw, hh, pts = w / 2 - r, h / 2 - r, []
     for cx, cz, a0 in [(hw, hh, 0), (-hw, hh, 90), (-hw, -hh, 180), (hw, -hh, 270)]:
         for k in range(n + 1):
@@ -205,14 +205,14 @@ def build_waveshare_4_3b():
     LEDG, LEDA, LEDR = (0.28, 0.72, 0.34), (0.86, 0.62, 0.18), (0.82, 0.24, 0.22)
     buckets = {}
 
-    def add(m, colour): buckets.setdefault(colour, []).append(m)
-    def box(ext, c, colour):
-        b = trimesh.creation.box(extents=ext); b.apply_translation(c); add(b, colour)
-    def cyl(r, h, c, colour, axis="y", n=24):
+    def add(m, color): buckets.setdefault(color, []).append(m)
+    def box(ext, c, color):
+        b = trimesh.creation.box(extents=ext); b.apply_translation(c); add(b, color)
+    def cyl(r, h, c, color, axis="y", n=24):
         m = trimesh.creation.cylinder(radius=r, height=h, sections=n)
         if axis == "y":   m.apply_transform(rotation_matrix(np.pi / 2, [1, 0, 0]))
         elif axis == "x": m.apply_transform(rotation_matrix(np.pi / 2, [0, 1, 0]))
-        m.apply_translation(c); add(m, colour)
+        m.apply_translation(c); add(m, color)
 
     # ── case body: rounded prism, screen pocket + I/O holes cut with manifold ──
     body = _ws43b_prism_y(_ws43b_rrect(W, HT, 4.0), 0.0, TH)
@@ -220,7 +220,7 @@ def build_waveshare_4_3b():
     cham.apply_transform(rotation_matrix(np.radians(45), [1, 0, 0]))
     cham.apply_translation([0, TH + 2.0, HT / 2 + 2.0])
     body = body.difference(cham, engine="manifold")
-    GW, GH, GZ = 105.0, 58.0, 0.0                                # 4.3" glass, centred on the front
+    GW, GH, GZ = 105.0, 58.0, 0.0                                # 4.3" glass, centered on the front
     pocket = _ws43b_prism_y(_ws43b_rrect(GW + 3, GH + 3, 3.0, 5), TH - 2.0, TH + 1)
     pocket.apply_translation([0, 0, GZ]); body = body.difference(pocket, engine="manifold")
     holes = [([6, 13.0, 4.2], [W/2 - 1, TH/2, 15]),              # TF slot (+X edge)
@@ -272,10 +272,10 @@ def build_waveshare_4_3b():
     lbl.apply_translation([0, 0, 6.0]); add(lbl, STICKER)
 
     out = trimesh.Scene()
-    for colour, geoms in buckets.items():
+    for color, geoms in buckets.items():
         m = trimesh.util.concatenate(geoms)
-        m.apply_scale(0.001)   # authored in mm; GLB is metres (glb.js scales ×1000)
-        _set_color(m, colour)
+        m.apply_scale(0.001)   # authored in mm; GLB is meters (glb.js scales ×1000)
+        _set_color(m, color)
         out.add_geometry(m)
     return out
 
@@ -382,7 +382,7 @@ def main():
         "note": ("Vendor board CAD (boards/vendor/*.step) tessellated to a committed "
                  "GLB by cascadio; geometry facts recomputed from the committed mesh by "
                  "the page's own loader (tools/glb_facts.mjs → assets/glb.js). See "
-                 "boards/vendor/README.md for provenance and licence."),
+                 "boards/vendor/README.md for provenance and license."),
         "device_board": dev_index,
         "boards": boards,
     }

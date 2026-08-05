@@ -89,7 +89,7 @@ the Lab.
 
 **Coarse timestamps** — Event times are bucketed (10-minute windows) on
 purpose, so the log can prove *that* something happened without becoming a
-minute-by-minute behavioural diary. Precision is treated as a privacy cost, not
+minute-by-minute behavioral diary. Precision is treated as a privacy cost, not
 a feature.
 → [timestamping](timestamping.md)
 
@@ -200,7 +200,7 @@ truth is [`firmware/build_matrix.json`](../firmware/build_matrix.json).
 | **The Pocket Canary** | Phase-0 virtual pet: Tamagotchi's charm without its guilt loop. It cannot die, has no bell, has no random reward, and stops paying growth once the day's care is done. See **the Weather / the Bond**. |
 | **The Weather / the Bond** | The two channels the Pocket Canary keeps separate. **The Weather** is real fleet health and owns the bird's *posture* (it is diagnostic and never faked). **The Bond** is the child's own care history and owns the bird's *growth* (it is openly a game). Real household hygiene feeds the Bond as a bonus — and there is deliberately no penalty direction, because a child must never be made to feel responsible for a red fleet. |
 
-**Board tier** — Every board is labelled `verified` (proven on real hardware)
+**Board tier** — Every board is labeled `verified` (proven on real hardware)
 or `compile-tested` (builds in CI, not yet bench-proven). The distinction is
 published rather than blurred; see [`firmware/boards/boards.json`](../firmware/boards/boards.json)
 and [what still has to be true](BRAND.md) in the brand doc.
@@ -218,7 +218,7 @@ refuses to run on a device without flash encryption.
 → [`spec/canary_mesh_network_v0.md`](../spec/canary_mesh_network_v0.md),
 [BLE mesh + Opera tandem](BLE_MESH_OPERA_TANDEM.md)
 
-**Chirp** — The community witness channel: neighbours corroborating an event,
+**Chirp** — The community witness channel: neighbors corroborating an event,
 with ephemeral session keys (never persisted — that's the privacy firewall
 between Chirp and Opera) and confirmation counted as unique signing pubkeys.
 → [`spec/chirp_channel_v0.md`](../spec/chirp_channel_v0.md)

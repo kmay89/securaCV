@@ -50,7 +50,7 @@ const LAYER_MM = 0.2; // README §Suggested print settings
 const PART_COLORS = [
   [0.36, 0.62, 0.64],   // teal (the enclosure previews' own palette)
   [0.85, 0.72, 0.25],   // canary brass
-  [0.62, 0.64, 0.68],   // grey
+  [0.62, 0.64, 0.68],   // gray
   [0.75, 0.44, 0.28],   // clay
   [0.5, 0.56, 0.42],    // olive
 ];
@@ -61,7 +61,7 @@ const FILAMENTS = [
   { id: "multi", label: "per-part palette", css: null },
   { id: "black", label: "black", css: "#17171a" },
   { id: "white", label: "white", css: "#e9e6df" },
-  { id: "grey", label: "grey", css: "#8e9296" },
+  { id: "gray", label: "gray", css: "#8e9296" },
   { id: "canary", label: "canary yellow", css: "#ffd44f" },
   { id: "orange", label: "orange", css: "#f08c2e" },
   { id: "red", label: "red", css: "#c63633" },
@@ -382,7 +382,7 @@ export function buildEnclosureLab(encData, deviceId, buildData, catalogData) {
   const catBySet = catalogVariantIndex(catalogData);
   const { mine, universal } = enclosuresFor(encData, deviceId);
   if (!mine.length && !universal.length) {
-    wrap.append(el("p", "muted", "No enclosures catalogued for this device yet."));
+    wrap.append(el("p", "muted", "No enclosures cataloged for this device yet."));
     return wrap;
   }
 
@@ -692,7 +692,7 @@ export function buildEnclosureLab(encData, deviceId, buildData, catalogData) {
     cb.addEventListener("change", () => { scene.overhangOn = cb.checked; });
 
     // ── watch it print: animate the real layer clip over scaled clock time ──
-    // Map the modelled print time onto a watchable clip (~16–42 s) and show
+    // Map the modeled print time onto a watchable clip (~16–42 s) and show
     // the speed-up honestly. The geometry revealed each frame is the true
     // cross-section; only the clock is compressed.
     const watchS = Math.min(42, Math.max(16, est.total.timeS / 120));
@@ -731,7 +731,7 @@ export function buildEnclosureLab(encData, deviceId, buildData, catalogData) {
 
     setLayer(layers);
 
-    // ── estimate card: measured filament, modelled time/energy, real spend ──
+    // ── estimate card: measured filament, modeled time/energy, real spend ──
     const card = el("div", "print-card print-estimate");
     card.append(el("h4", null, `Print estimate · ${MACHINE.name}`));
 
@@ -878,7 +878,7 @@ export function buildEnclosureLab(encData, deviceId, buildData, catalogData) {
       build.append(line);
     } else {
       build.append(el("p", "muted",
-        "Electronics BOM isn't catalogued for this device yet — showing the printed-enclosure cost only."));
+        "Electronics BOM isn't cataloged for this device yet — showing the printed-enclosure cost only."));
     }
 
     // fleet scaling — one printer, back to back
@@ -924,16 +924,16 @@ export function buildEnclosureLab(encData, deviceId, buildData, catalogData) {
     econ.target = "_blank";
     econ.rel = "noopener";
     foot.append(
-      document.createTextNode("Parts are firm (the repo's priced BOM); buying modules in bulk barely drops them — why, and when a custom PCB or mould starts to pay off, is in "),
+      document.createTextNode("Parts are firm (the repo's priced BOM); buying modules in bulk barely drops them — why, and when a custom PCB or mold starts to pay off, is in "),
       econ, document.createTextNode("."));
     build.append(foot);
     card.append(build);
 
-    // provenance — the whole point: say what's measured vs modelled.
+    // provenance — the whole point: say what's measured vs modeled.
     card.append(el("p", "muted est-prov",
       "Measured: filament mass, length and cost come from these STLs' own solid " +
       "volume × the catalog's documented density — the same method behind the " +
-      "README mass budget, so the grams are checkable, not guessed. Modelled: " +
+      "README mass budget, so the grams are checkable, not guessed. Modeled: " +
       "print time and energy are a transparent physical model for your rig " +
       "(volumetric flow → time; average duty-cycle power → energy), carrying " +
       "the ± band shown. For a true toolpath time, hit ⚡ slice for exact time — " +

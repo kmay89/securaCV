@@ -38,7 +38,7 @@ on:
 permissions:
   contents: read
 
-# Superseded PR runs are cancelled; main is never cancelled (repo convention —
+# Superseded PR runs are canceled; main is never canceled (repo convention —
 # full signal per main commit).
 concurrency:
   group: tvos-ci-${{ github.ref }}

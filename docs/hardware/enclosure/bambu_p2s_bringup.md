@@ -289,6 +289,55 @@ the 7" model, not the printer.
 
 ---
 
+## 6b · Print #2½ — the hallway stick (your first AMS job)
+
+> ⚠️ **Status: in development.** No committed STL, same convention as every
+> in-development design.
+
+Do this one before the 7" frame if you have the AMS loaded. It is the cheapest
+three-filament print in the catalog — both halves of the
+[S3 hallway stick](./canary_s3_lcd147.scad) on one plate, about **20 g** — and
+it rehearses everything the frame will ask of you: an inlay registered inside
+a recess, a tool change on a small part, and a purge tower that outweighs the
+job.
+
+```sh
+python3 gen_3mf.py stick     # writes stick_case.3mf
+```
+
+Load the slots **before** you open the file. With one slot loaded there is
+nothing for parts 2 and 3 to point at, and it reads as "the parts are
+missing":
+
+| slot | filament |
+|---|---|
+| 1 | Black PETG |
+| 2 | Signal Yellow PETG (RAL 1003) |
+| 3 | **Unfilled** white PETG — natural/translucent |
+
+Slot 3 is the one to get right, and it is not a color choice. Those two strips
+down the long walls are the light pipe that carries the WS2812 out of the gap
+between the LCD module and the PCB. Carbon-filled, glitter or "matte white"
+filament is opaque: the case will look correct and the seam will be dead.
+
+Open `stick_case.3mf` directly — both objects are already positioned, already
+registered, and already on their filaments. Slice as-is. Expect the purge
+tower to dwarf the parts; that is normal for a 20 g three-filament plate and
+the plate leaves it the whole right half of the bed on purpose.
+
+**What it proves.** Press the bezel and the back together: they should click
+positively and come apart only under a deliberate thumb flick at the far end.
+Look down the side in the light — the white band should read as one unbroken
+line from snap to snap, with three faint shadows where the internal ribs sit
+behind it. If the band is a row of dashes rather than a line, you are printing
+an older revision of the `.scad`.
+
+**No AMS?** Print `part="bezel"` and `part="back"` in black, then
+`part="fil_light"` alone in white and press the two strips in — that is what
+the default `band_clear = 0.10` is for.
+
+---
+
 ## 7 · Print #3 — the 7" dashboard
 
 > ⚠️ **Status: in development — FIRST REAL PRINT DONE (2026-08).** That print
@@ -469,10 +518,13 @@ durability/finish features landed:
   wipe the zone with IPA first. The zone's finish is the build plate's
   finish — a smooth sheet gives the best bond, but the foam bonds through
   light texture too. No screws, no drill: the renter's wall mount.
-  **The trade, stated plainly:** the rails' keepouts cost the back grille
-  6 of its columns — 66 slots, ≈ 14 cm² of its ≈ 40 cm² at stock dims (the
-  render echo computes the exact numbers for your config from the same
-  predicate that cuts the slots). The convection path proper — bottom-wall
+  **The trade, stated plainly:** on a build with the back grille switched on
+  (`plate_grille`), the rails' keepouts cost it several columns — the render
+  echo computes the exact count and area for your config from the same
+  predicate that cuts the slots. At stock dims the plate carries no grille at
+  all, so today the rails cost it nothing; what they do cost is the plate's
+  composition, since a rail moat crosses the field the badge and the help
+  symbol sit on. The convection path proper — bottom-wall
   intake → top-wall exhaust — is untouched, and there is no better spot:
   the SD zone, boss pockets and keyhole pads own every other clear column.
   Screw-mount builds should set `adh_rails=false` and reclaim every slot.
@@ -543,11 +595,12 @@ external spool), the whole two-tone story runs itself, no pauses:
   single-color print is fine as-is: the 1.2 mm floors read dark by shadow.
 
   This rule is specific to the z-band fallback, where the modules have no
-  filament of their own and must inherit the body. **The three-part AMS path
-  below is different** — there the modules get their own filament, and the
-  shipped default (`qr_style = "bare"`) prints them WHITE ON BLACK, which is
-  inverted from the spec on purpose, for looks. See the README's three-color
-  section. Either way: **scan the part before you print nine more.**
+  filament of their own and must inherit the body. **The AMS path below is
+  different** — there the modules get their own filament, and on the shipped
+  palette (`qr_style = "bare"`, `accent_groups` carrying `"qr"`) that is
+  YELLOW ON BLACK: light modules on a dark field, inverted from the spec on
+  purpose, for looks. See the README's palette section. Either way: **scan the
+  part before you print nine more.**
 
 ```sh
 # ~6 g, print FIRST after any radius doubt: four corner sockets bracketing
@@ -629,9 +682,16 @@ the released set's largest part at 120.5 mm. Two consequences:
   are the other half of the deal.
 
 **Keep the vents clear** when you mount it. The convection path is real and
-directional: **intake along the bottom wall, exhaust along the top wall**, back
-grille radiating in between. Mounting it flat against a wall with the top slots
-blocked converts a ventilated case into an oven.
+directional: **intake along the bottom wall, exhaust along the top wall**.
+Mounting it flat against a wall with the top slots blocked converts a
+ventilated case into an oven — and that matters more on the one-piece `frame`
+than it used to, because its back plate is now a composed face with no grille,
+no vent eggs and no radio window: the only openings in it are the card window
+and the four keyholes. Nothing in this repo measures the requirement. If a
+built case runs warm the recovery is **two** knobs, not one: `plate_grille =
+true` alone restores the field with the badge's column still reserved (~5 cm²),
+and `badge_column = false` alongside it is the whole field (~21 cm²). The
+render echoes both figures so neither has to be quoted from memory.
 
 ### 7b″ · The ring gauge — five grams, and it gates the 110 g print
 
@@ -665,7 +725,7 @@ It debosses its own dimensions, so a loose ring on a bench is never a mystery.
 One part answers two questions at **20.9 cm³ — a fifth of a frame** (body 20.56, ink 0.31, accent 0.02):
 
 ```sh
-for f in body ink accent; do
+for f in body accent; do   # add 'ink' if you have put a group back on it
   openscad --export-format binstl -o lcd7_coupon_$f.stl \
            -D "part=\"coupon_$f\"" canary_s3_lcd7.scad
 done
@@ -756,51 +816,108 @@ If it does not scan, raise `qr_back_cell` before anything else; the symbol is
 21×21, so every 0.1 mm of cell is 2.1 mm of field, and the asserts will tell
 you when it stops fitting its keepout.
 
-### 7c′ · The three-color case (AMS)
+### 7c′ · The two-color case (AMS)
 
-The one-piece frame can print as a **white case with a black bezel, black
-lettering and one yellow word**. It is a genuine three-filament print, but it is
-laid out so the AMS barely works: color changes are confined to two thin bands
-and the ~110 layers in between never change tools.
+The one-piece frame prints as a **black case with everything the back plate
+says — the mark, the lockup and the help QR's modules — in yellow**. It is a
+two-filament print (it used to be three; a white QR beside a yellow mark made
+the plate a three-way argument), and it is laid out so the AMS barely works:
+color changes are confined to two thin bands and the ~105 layers in between
+never change tools.
+
+> **⚠️ If your case came into Bambu Studio in ONE color, this is the step you
+> want.** There are only two ways that happens, and both are easy to hit:
+> exporting `part="frame"` (that mesh is the whole case as a single solid — it
+> has no color information in it, and it is *correct* for the single-extruder
+> recipe in §7b′), or exporting the filament parts and opening them with
+> **File → Open**, which loads them as independent OBJECTS. Studio then
+> auto-arranges objects across the plate, which is right for objects and fatal
+> for parts of one thing. The parts are only meaningful in the SAME coordinate
+> frame: the mark sits in a recess cut into the body, so moving one a
+> millimeter puts the bird beside its own hole rather than in it.
+
+**Run the packager. Do not hand-assemble it.**
 
 ```sh
-openscad --export-format binstl -o lcd7_fil_body.stl   -D 'part="fil_body"'   canary_s3_lcd7.scad
-openscad --export-format binstl -o lcd7_fil_ink.stl    -D 'part="fil_ink"'    canary_s3_lcd7.scad
-openscad --export-format binstl -o lcd7_fil_accent.stl -D 'part="fil_accent"' canary_s3_lcd7.scad
+python3 gen_3mf.py frame      # writes lcd7_frame.3mf
 ```
 
-In Bambu Studio:
+That writes ONE 3MF: one object, its volumes already registered to each other
+and already assigned to filament slots. Open it directly — **File → Open**, no
+importing of parts, no re-centering. The packager prints what it packed; read
+that line rather than trusting this one, because the slot map is derived from
+`ink_groups` / `accent_groups` in the case file and follows them.
 
-1. Load `lcd7_fil_body.stl`.
-2. Right-click it → **Add part → Load**, and add the ink and accent STLs.
-3. Assign a filament to each part.
-4. Slice.
+1. **Add the filament slots in Bambu Studio first.** With one slot loaded there
+   is nothing for the other volumes to point at, and it looks like the parts
+   are missing.
+2. Load them **by SLOT NUMBER** — the 3MF assigns slots, not colors, so a spool
+   in the wrong slot prints a different case:
 
-**Do not re-center, rotate, or drop-to-bed the added parts.** All three are
-exported in the same coordinate frame as `part="frame"`, so they arrive already
-registered to each other. Moving one moves the lettering out of its own recess.
+   | slot | filament | what it prints |
+   |---|---|---|
+   | 1 | `pal_body` — **Black** | the case, the bezel ring, the vent mouths |
+   | 2 | — | **unused on this palette.** `ink_groups` is empty, so the packager reports the ink volume as EMPTY and packs nothing onto slot 2 |
+   | 3 | `pal_accent` — **Signal Yellow** (RAL 1003) | everything the plate says: the mark, the lockup (SECURACV / CANARY / ERRERlabs), and the help QR's modules |
+
+   Slot 2 keeps its number rather than being closed up, so a three-filament
+   build is still `ink_groups = ["qr"]` and nothing else — and so a plate
+   sliced from an older 3MF cannot land the accent on the wrong tool.
+
+3. Open `lcd7_frame.3mf` and slice.
+
+The **"not from Bambu Lab, load geometry and color data only"** dialog on open
+is expected and is the good outcome — it means the filament assignment was
+read. If you never see that dialog, you opened an STL.
+
+**Rehearse the colors on the coupon first** (§7c): `gen_3mf.py color` writes a
+plate with the color coupon and the QR plaque on it, and it is a few grams
+against the frame's ~160.
+
+<details><summary>Exporting the STLs by hand (only if you are not using the packager)</summary>
+
+```sh
+for f in body ink accent; do
+  openscad --export-format binstl -o lcd7_fil_$f.stl -D "part=\"fil_$f\"" canary_s3_lcd7.scad
+done
+```
+
+Then in Studio: load `lcd7_fil_body.stl`, right-click it → **Add part → Load**,
+and add the other two — **Add part**, never File → Open. **Do not re-center,
+rotate, or drop-to-bed the added parts.** All three are exported in the same
+coordinate frame as `part="frame"`, so they arrive already registered.
+
+This is the path the packager exists to replace: an instruction that must be
+obeyed for the output to be correct is a design defect, not a documentation
+problem. It got the first real attempt wrong.
+
+</details>
 
 | Band (print z) | What is there | Filaments in play |
 |---|---|---|
 | 0 – 1.2 | back skin, every deboss floor | body + ink + accent |
-| 1.2 – 22.9 | the shell — nothing but wall | body only |
-| 22.9 – 23.5 | front bezel ring + edge chamfer | ink only |
+| 1.2 – 22.7 | the shell — nothing but wall | body only |
+| 22.7 – 23.3 | front bezel ring + edge chamfer | body only, unless `bezel_color` says otherwise |
 
-That middle band is the whole point: it is 21.7 mm of a 23.5 mm part with **zero**
+That middle band is the whole point: it is 21.5 mm of a 23.3 mm part with **zero**
 tool changes, so the purge tower stays short. The bezel is the full ring rather
 than "top and bottom bands" for the same reason — the front rim is a uniform
 2 mm all the way round, so bands would not be a visible distinction, they would
 just add a tool change to every one of those last layers.
 
+The render echoes the exact bands and the exact group→filament assignment for
+*your* config — read that, not this table, if you have changed anything.
+
 **Why this needs the AMS at all.** The single-extruder recipe (§7b′, color
-swaps at fixed heights) cannot produce a white case with a scannable QR. The
-QR's modules are the deboss *floors*, and on a z-swap they print in whichever
-filament is running at floor height — so a white body puts **white modules on a
-dark field**, which no reader will decode. There is no swap height that fixes
-it; the field and the modules are at different heights, but the wrong way
-round. Giving the modules their own filament is what makes the combination
-possible. For the same reason, **the finder patterns must stay black** —
-yellow-on-white has nowhere near enough contrast.
+swaps at fixed heights) cannot produce a case with a QR whose modules differ
+from its field at all. The QR's modules are the deboss *floors*, and on a
+z-swap every deboss floor prints in whichever filament is running at floor
+height — so the modules and the plate around them come out the SAME color, and
+there is no swap height that fixes it, because the field and the modules are at
+different heights but the wrong way round. Giving the modules their own
+filament is what makes the symbol possible. For the same reason, **the modules
+must stay in the ink filament** — yellow against either body color has nowhere
+near enough contrast to decode.
 
 **The AMS carries the case's three rigid filaments and nothing else.** The TPU
 fitments still come off the external spool (§0), and they print on their own

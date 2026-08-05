@@ -81,7 +81,7 @@ lv_obj_t* s_glance = nullptr;      // count + link honesty
 // its own two-stop gradient to the next band's color: piecewise-linear across
 // the stack, so it still reads as one smooth field, but with enough
 // independent stops that the plumage engine (color/plumage.h) can move a
-// glow through it. That travelling glow is the whole point — a phrase of
+// glow through it. That traveling glow is the whole point — a phrase of
 // light climbing the pane.
 //
 // LANTERN_BANDS is a budget, not a resolution: 14 bands on a 320-tall glass

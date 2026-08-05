@@ -153,7 +153,7 @@ export const DRILLS = [
   {
     id: "vitals_lock", kind: "guided", timeoutMs: 90000, wellbeingOnly: true,
     title: "Breathing locks on",
-    ask: "sit alone, still, a couple of metres away — and settle",
+    ask: "sit alone, still, a couple of meters away — and settle",
     prove: "the vitals lock confirms and live breath/heart numbers appear (one person only)",
     on(ev) {
       if (ev.kind === "bpm" && ev.breath > 0) return "pass";
@@ -266,7 +266,7 @@ export function calibPlan(nearSamples, midSamples) {
   let near = clamp(round10(nearMed), bounds.near, "near");
   let mid = clamp(round10(midMed), bounds.mid, "mid");
   if (mid <= near) {
-    // The bands must nest: hold mid at least half a metre past near.
+    // The bands must nest: hold mid at least half a meter past near.
     mid = clamp(near + 50, bounds.mid, "mid");
     if (mid <= near) {
       near = Math.max(bounds.near[0], mid - 50);

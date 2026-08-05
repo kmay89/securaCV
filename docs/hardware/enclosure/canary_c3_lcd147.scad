@@ -1,0 +1,682 @@
+// ============================================================================
+//  Canary — ESP32-C3-LCD-1.47 POCKET CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)
+//
+//  A three-color PETG case for the Waveshare ESP32-C3-LCD-1.47: BLACK body,
+//  YELLOW snap-on lid, and a WHITE light band that puts the onboard RGB LED's
+//  glow where the board itself puts it. Waveshare ship this board as a "clear
+//  acrylic sandwich" — the LED washes the acrylic and the light leaves at the
+//  edges. This case replaces the sandwich, so the band is not a decoration:
+//  it is the acrylic's job, done in white PETG.
+//
+//  ⚠️ NOT the C6 case, and NOT the S3 stick, though it borrows from both.
+//     canary_c6_display.scad covers the ESP32-C6-LCD-1.47 — the SAME PCB
+//     outline and the SAME 1.47" panel, which is why that file's fit-tested
+//     numbers (USB stadium, button channels, ear/chin bulges) are the
+//     starting point here. What the C3 board adds: a microSD (TF) slot on
+//     the back, an RGB LED at the far end, and this case's three-filament
+//     look. What it lacks: the C6 file's 180°-flippable lid — see THE LID IS
+//     KEYED below. Do not merge the files; boards drift apart, files that
+//     serve them must be free to.
+//
+//  ── THE FIVE THINGS THIS CASE IS FOR ─────────────────────────────────────
+//
+//  1. THE BOARD GOES IN WITHOUT A FIGHT. The BOOT/RST buttons and the USB-C
+//     shell all overhang the PCB edges (the C6 case's first print proved a
+//     board like this cannot reach its seat past plain walls). The side
+//     walls carry full-depth clearance channels ("ears") the button
+//     overhangs slide down, the USB wall carries the same ("chin"), and the
+//     access holes drill through the remaining skin. Insertion is a straight
+//     drop, glass-first.
+//
+//  2. THE PLUG SEATS ALL THE WAY. The USB-C opening is a true stadium
+//     (full-round ends, like the connector) hugging the shell at the C6
+//     case's fit-tested clearance — not a sloppy rectangle. The opening
+//     centers on the SHELL (back-mounted, resting on the PCB back face), so
+//     tightening the opening can never shift it off the port. The outer face
+//     is relieved (`usb_relief`) so a plug's overmold meets a lead-in, not a
+//     wall edge — and the wall is thin enough (wall + chin ≈ 3.3 mm) that
+//     any compliant plug bottoms out on the shell, never on the case.
+//
+//  3. THE GLASS IS LOCATED, NOT CLAMPED. The panel's front face IS glass,
+//     and glass fails from stress at its edges. Three rules here:
+//       - the lid's press bosses are cut to the EXACT component stack, so
+//         the board is positioned forward, not preloaded into the face;
+//       - the bezel face touches the panel only on a LAND over the module's
+//         outer border — the innermost `glass_relief_w` of the lip is
+//         relieved 0.25 mm, so the window's rim never contacts the glass
+//         (a contact line at a cut edge is exactly the stress raiser this
+//         panel must not see);
+//       - the face is thin (`face_t` 1.2) and the window is the active area
+//         with rounded corners — the smallest bezel that still retains the
+//         module, which is the "minimize this" half of the requirement.
+//
+//  4. THE LIGHT BAND SITS WHERE THE LIGHT IS. Measured on the hardware
+//     (kmay89): from the front face of the display, 1.0 mm of black, then
+//     2.8 mm of white, then black to the back. `seam_dz`/`seam_h` are those
+//     two numbers verbatim, referenced to the glass front plane — so the
+//     band lands on the LCD/PCB edge gap the LED actually fills, and its far
+//     edge reaches (nearly) the PCB front face where the light lives. The
+//     band is WHITE / natural PETG — a light pipe, translucent and
+//     diffusing, not a slot. It is ONE piece: up both long walls, around
+//     both far corners, across the far short wall — a continuous U of
+//     light around the end the LED sits on (the USB end stays black —
+//     there is nothing to light there). Two print-taught rules shape it:
+//       - white through the FULL wall depth along the whole run. The
+//         first cut tied face to wall with hidden inboard ribs across the
+//         seam, and every rib was a black slat between the LED and the
+//         white — a shadow on the band at each one (kmay89's print).
+//       - white around the CORNERS. The next cut stopped each strip short
+//         of the corner posts, and the slicer view showed the U broken
+//         into three dashes with black bends — the pipe went dark exactly
+//         where it turns. The seam now wraps the corners, so the U is one
+//         volume and the glow is continuous.
+//     The face ring above the seam rides the solid USB wall and its two
+//     corner posts; the band's leg ends stop at black wall above the ears,
+//     so the U still cannot slide along its run.
+//
+//  5. THREE BOARD BUILDS, ONE FILE (the C6 case's contract, plus one):
+//       headers="pillars" — the board AS WAVESHARE SHIPS IT: the four brass
+//                        M2 corner pillars installed, header pins NOT
+//                        soldered (the product photos show exactly this).
+//                        The cavity deepens just enough to swallow the
+//                        pillars, the press bosses land on the flat brass
+//                        pillar TOPS (the best press pads on the board),
+//                        and the lid skirt gets a corner notch around each
+//                        pillar — the USB-end pair sits close enough to the
+//                        edge that the pillars rise into the skirt's band.
+//       headers="none" — stripped board: no headers AND the pillars
+//                        unscrewed; the case stays shallowest (the
+//                        back-mounted USB shell and TF cage set the depth).
+//       headers="male" — headers soldered pointing DOWN plus the pillars.
+//                        The cavity deepens to swallow base + pins, and the
+//                        snap skirt goes thin to clear the pin rows.
+//     Every way the board is captured by its edges — nothing screws into it.
+//
+//  ── THE LID IS KEYED — it fits ONE way, and that is load-bearing ─────────
+//  The C6 case's lid is 180°-rotation symmetric. This one cannot be: the
+//  board's four M2 pillars are NOT on a symmetric pattern (USB-end pair at
+//  ±8.89 / 2.40 in from the end, far pair at ±6.64 / 1.97 in — read off the
+//  Waveshare drawing), and the press bosses must land on them. So the skirt's
+//  USB relief exists at one end only: offered the wrong way round, the solid
+//  skirt segment lands on the USB shell and the lid simply will not close —
+//  the error is physical, immediate, and harmless. The keyhole hangs the
+//  case USB-down (the water-shedding way), slot pointing up.
+//
+//  ── microSD ──────────────────────────────────────────────────────────────
+//  The TF slot sits on the back under the USB connector, and the card
+//  inserts PARALLEL to the board with its mouth facing down-board — there is
+//  no orientation of a wall window that a card could pass through. So the
+//  card story is the lid: four nubs, off in a second, slot right there. No
+//  window is cut for it, and that is the considered choice — a hole that
+//  cannot admit a card is just a hole.
+//
+//  ── PRINTING ─────────────────────────────────────────────────────────────
+//  Three spools, all PETG:  body BLACK, lid YELLOW (the house accent — on
+//  this case the whole lid is the mark), band WHITE/natural.
+//  The band is one closed U, and that changes how it is installed:
+//    - Multi-material (the first-class path, what gen_3mf.py c3 packages):
+//      band_clear = 0, bezel + band as ONE object — the U fuses in.
+//    - Single spool: a closed U CANNOT press in from outside — the legs
+//      and the top approach in conflicting directions, so the old
+//      press-in flow died with the three-strip band. Instead: print the
+//      U flat on its bottom face (it is seam_h tall), PAUSE the
+//      face-down bezel print at the top of the seam (z = face_t +
+//      seam_dz + seam_h), drop the U into the open pocket, resume.
+//      band_clear 0.10 sizes that drop-in.
+//  Bezel prints FACE-DOWN, lid prints OUTER-FACE-DOWN, the U flat on its
+//  bottom face. No supports anywhere.
+//
+//  Orientation: +Y = up (portrait), USB-C exits the BOTTOM (−Y) short wall,
+//  +Z = toward the glass. The RGB LED lives at the TOP (+Y) end.
+//
+//  ⚠️ DEV STATUS: dimensioned from the Waveshare outline drawing plus the
+//     C6 sibling case's two fit prints (same PCB outline, same panel — its
+//     stadium/button/ear numbers transfer). Every number tagged MEASURE is
+//     one to check with calipers before a long print. The one that DID
+//     bite: btn_up. The drawing's 11.31 was read as button center from the
+//     USB edge; the first assembly (photo, kmay89) showed the ears landing
+//     4.4 mm up-board of the buttons — 11.31 is measured from the BOARD
+//     CENTER (18.185 − 11.31 = 6.875 ≈ the C6's fit-tested 7.0). Fixed,
+//     and the USB slide channel snugged in the same round. Still open:
+//     hdr_inset (drawing candidates are 1.27 and 2.00 — measure which),
+//     pcb_t, usb_proud, and the pillar pattern insets.
+// ============================================================================
+
+/* [What to render] */
+part  = "all";      // ["bezel","lid","light","all","exploded","palette"]
+// board build: "pillars" = as Waveshare ships it (brass corner pillars on, headers not soldered), "none" = stripped (pillars unscrewed too), "male" = down-facing headers + pillars
+headers = "pillars";   // ["pillars","none","male"]
+
+/* [Board] — ESP32-C3-LCD-1.47, from the Waveshare drawing (mm) */
+board_l = 36.37;   // PCB long axis (Y, portrait height)
+board_w = 20.32;   // PCB short axis (X)
+pcb_t   = 1.6;     // PCB thickness — MEASURE (drawing does not call it out)
+lcd_rise   = 3.65; // glass front above the PCB front face (same 1.47" module as the C6)
+back_stack = 4.8;  // back clearance below the PCB, stripped board: the BACK-
+                   // mounted USB shell (≈3.3) is the tallest thing (the TF
+                   // cage is shorter), plus a printable bridge — MEASURE
+
+/* [Headers] — the "male" build only. Rows run along the two long (±X)
+   edges, pins point down toward the lid, brass M2 pillars on the corners. */
+hdr_drop  = 8.8;   // cavity depth below the PCB back swallowing base + pins
+                   // (the C6 case fit-tested 8.8 on this outline) — MEASURE
+hdr_inset = 1.6;   // PCB edge → header row centerline. The drawing offers two
+                   // readings (1.27 if the 17.78 dim is the column span, 2.00
+                   // if that is the edge inset) — MEASURE; the skirt assert
+                   // below is what a wrong value trips
+brass_h   = 5.0;   // factory pillar height above the PCB back — MEASURE
+
+/* [Screen] — active area = the window; the module border sits under the lip */
+aa_l  = 32.35;     // active area, long (Y)
+aa_w  = 17.39;     // active area, short (X)
+lcm_l = 36.28;     // LCD module outline, long
+lcm_w = 19.39;     // LCD module outline, short
+
+/* [Glass protection] — rule 3: locate, don't clamp */
+glass_relief   = 0.25;  // face stand-off over the innermost lip band, so the
+                        // window rim never touches the glass
+glass_relief_w = 0.5;   // width of that relieved band, from the window edge out
+
+/* [USB-C] — bottom (−Y) short wall, mounted on the BACK of the PCB. The
+   opening is a stadium hugging the receptacle shell (nominal 8.94 × 3.26);
+   numbers are the C6 case's fit-tested set for this same outline. */
+usb_w  = 9.15;     // stadium opening width — shell + 0.2
+usb_h  = 3.45;     // stadium opening height — shell + 0.2
+usb_dx = 0.0;      // sideways offset of the connector center — MEASURE
+usb_dz = 0.0;      // depth offset from shell-on-back-face nominal — MEASURE
+usb_proud  = 1.9;  // shell overhang past the PCB edge — MEASURE
+usb_relief = 0.8;  // outer-face relief around the opening: a stadium recess
+                   // that gives a plug's overmold a lead-in instead of an edge
+
+/* [Buttons] — BOOT/RST on the two side (±X) walls, mounted on the BACK of
+   the PCB with side-facing actuators, flanking the TF cage. */
+opt_btn = true;
+btn_d   = 6.5;     // access hole Ø — sized for a BARE FINGERTIP, no tool.
+                   // The press/no-press line is the RECESS, not the hole: the
+                   // actuator tip sits ear_skin + 0.4 (≈1.6 mm) below the
+                   // ear's outer face, plus ~0.25 mm of switch travel. A
+                   // deliberate pad press bulges ~2 mm into a Ø6.5 opening
+                   // and reaches the click; a flat finger gripping the case
+                   // spans the hole and bulges well under 1 mm, so handling
+                   // pressure stops short. Was Ø3.0 (tool-tip only) — the
+                   // buttons must be pressable by hand (kmay89), and the
+                   // recess is what keeps a press deliberate.
+btn_up  = 7.0;     // button center up from the USB (−Y) PCB edge. The first
+                   // assembly (photo, kmay89) caught the drawing's 11.31 as a
+                   // CENTER-referenced dim, not edge-referenced: the board's
+                   // ears hit plain wall 4.4 mm up-board of the buttons.
+                   // 18.185 − 11.31 = 6.875 ≈ the C6 case's fit-tested 7.0 on
+                   // this same outline, and the photo's header-pitch ruler
+                   // agrees (≈6.9). Fit-confirmed by that print — not MEASURE
+                   // anymore.
+btn_dz  = 1.0;     // actuator center behind the PCB back face — MEASURE
+btn_proud  = 1.8;  // black actuator overhang past the PCB edge — MEASURE
+btn_ch_w   = 3.4;  // actuator channel width — hugs the nub, nothing more
+btn_body_w = 5.2;  // shallow relief width for the switch's metal body — MEASURE
+btn_body_p = 0.4;  // metal body overhang past the PCB edge — MEASURE
+
+/* [Light band] — the white PETG that does the acrylic sandwich's job.
+   Measured on the hardware (kmay89), stated as the side elevation you look
+   at: from the display's front face, 1.0 mm of black, then 2.8 mm of white,
+   then black to the back. Both numbers are referenced to the GLASS FRONT
+   plane (z = face_t), so the band tracks the panel, not the case. */
+light_seam = true;
+seam_dz = 1.0;       // black between the glass front and the band's start
+seam_h  = 2.8;       // the white band's thickness
+band_clear = 0.10;   // per-face drop-in clearance (pause-and-insert flow);
+                     // 0 for a co-printed band
+// NO tie ribs across the seam — not the S3 stick's outer-skin webs (those
+// chop the strip into unpressable dashes) and not this file's first cut,
+// inboard ribs (those put black slats between the LED and the white: the
+// first print's band carried a shadow at every rib). Any tie that crosses
+// the seam sits in the light path on one face or the other; the pipe must
+// be white through the full wall depth, so the seam has none.
+
+/* [Mount] */
+opt_keyhole = true;  // keyhole in the lid — hangs the case USB-down, slot up
+kh_head_d = 7.0; kh_shank_d = 4.2; kh_slot_l = 7.0;
+
+/* [Ventilation] — side slots + a lid grille; the row sits BEHIND the light
+   band so the white line stays whole. */
+opt_vent = true;
+vent_n = 4;          // slots per side wall (and grille rows in the lid)
+vent_pitch = 5.0;
+vent_w = 1.4;
+
+/* [Board pillars] — the four M2 positions, off the Waveshare drawing. NOT a
+   symmetric pattern: the USB-end pair sits wide, the far pair inboard. The
+   lid's press bosses land here, which is why the lid is keyed. */
+hole_ix_usb = 2.00;  // USB-end pair: inset from the ±X edges — the drawing's
+                     // 2.00. The rejected reading was 1.27 (17.78 as a hole
+                     // span rather than the header column span, which is
+                     // exactly 7 x 2.54): that would hang a Ø3.5 pillar 0.3
+                     // past the PCB edge and into the bezel wall, and the
+                     // product photos show no pillar overhang. The pillar
+                     // clearance asserts below are what a wrong value trips
+                     // — MEASURE
+hole_iy_usb = 2.40;  //               inset from the USB (−Y) edge
+hole_ix_far = 3.52;  // far pair: inset from the ±X edges — MEASURE
+hole_iy_far = 1.97;  //           inset from the far (+Y) edge
+brass_d = 3.5;       // pillar body Ø (round brass M2 standoff) — MEASURE
+
+/* [Print tolerances] — tune with canary_fit_coupon.scad */
+tol_slide = 0.20; tol_press = 0.10; tol_hole = 0.30;
+
+/* [Shell] */
+wall   = 2.2;    // side wall thickness
+face_t = 1.2;    // bezel face over the glass border — thin on purpose (rule 3)
+back_t = 2.0;    // lid plate
+r_out  = 3.0;    // outer corner radius
+lid_edge = 0.8;  // bezel face edge chamfer
+ear_skin = 1.2;  // wall skin left outside a button/USB clearance channel
+
+/* [Snap fit] — lid skirt into the bezel walls. Shallow in both builds (the
+   edge zone behind the PCB is busy), THIN in the headers build to stay
+   outboard of the pin rows. */
+snap_w = 3.2; snap_h = 1.6; snap_depth = 1.4; snap_proud = 0.5;
+nub_y0 = 5.0;    // nub pair centers (±Y) on the ±X walls — the C6 case's
+                 // number, and the same THREE-way squeeze it threads:
+                 // clear of the button ears (which sit LOW on this board —
+                 // btn_up 7.0 put them right where the first cut's nubs
+                 // were at 12.4), inboard of the corner posts, and short
+                 // of the USB-end brass pillars, whose flanks rise right
+                 // behind the wall at y ±(board_l/2 − hole_iy_usb). The
+                 // asserts below hold all three sides; the earlier
+                 // assembled-fit check that caught a 0.03 mm³ nub-to-
+                 // pillar graze (snap_w 4.0 / nub_y0 13.0) still gates.
+
+/* [Quality] */
+$fa = 3; $fs = 0.4;
+
+// ----------------------------------------------------------------------------
+//  Derived.  X = short axis, Y = long axis (portrait), Z = toward the glass.
+// ----------------------------------------------------------------------------
+// pillars_in: the brass corner pillars are on the board (as-shipped and
+// headers builds alike) — the bosses land on their tops and the skirt is
+// notched around them.
+pillars_in = (headers != "none");
+// The pillars build deepens only as far as the pillars demand: brass_h plus
+// a working boss (0.8). The male build swallows header base + pins instead.
+stack_eff = (headers == "male")    ? max(back_stack, hdr_drop)
+          : (headers == "pillars") ? max(back_stack, brass_h + 0.8)
+          :                          back_stack;
+
+xc = board_w + 2*tol_slide;   yc = board_l + 2*tol_slide;   // board cavity
+xo = xc + 2*wall;             yo = yc + 2*wall;             // outer shell
+cav_d = lcd_rise + pcb_t + stack_eff;            // glass ledge → lid inner
+bez_h = face_t + cav_d;                          // bezel wall height
+r_in  = max(0.6, r_out - wall);
+
+z_pcb_front = face_t + lcd_rise;
+z_pcb_back  = z_pcb_front + pcb_t;
+// the opening centers on the SHELL (nominal 3.26, resting on the PCB back),
+// not on the opening height — tightening usb_h never shifts it off the port
+z_usb = z_pcb_back + 3.26/2 + usb_dz;
+z_btn = z_pcb_back + btn_dz;
+
+btn_y     = -board_l/2 + btn_up;         // button center (Y)
+btn_reach = btn_proud + tol_slide;
+btn_body_reach = btn_body_p + tol_slide;
+usb_reach = usb_proud + tol_slide;
+usb_slide = usb_w + 0.15;                // insertion notch — a hair looser than
+                                         // the visible stadium. Was +0.35; the
+                                         // first assembly showed a visible
+                                         // ≈0.3 mm daylight per side around
+                                         // the shell, so the channel now hugs
+                                         // it (≈0.18/side over the 8.94 shell)
+                                         // — still a free drop, no daylight
+ear_bump  = max(0, btn_reach + ear_skin - wall);
+chin_bump = max(0, usb_reach + ear_skin - wall);
+ear_w  = max(btn_body_w, btn_d) + 3.0;   // the ear covers the widest of the
+                                         // switch-body relief and the finger
+                                         // hole, 1.5 mm of wall each side
+chin_w = usb_w + 4;
+
+// window lip: (module − active area)/2 per side; the LAND is what is left of
+// it outside the relieved band — that ring is the panel's only contact
+lip_l = (lcm_l - aa_l)/2;
+lip_w = (lcm_w - aa_w)/2;
+land_w_x = lip_w - glass_relief_w;
+land_w_y = lip_l - glass_relief_w;
+
+// snap skirt (see [Snap fit])
+skirt_wall = (headers == "male") ? 1.0 : 1.6;
+skirt_dep  = snap_depth + snap_h/2 + 0.4;
+skirt_x = xc - 2*tol_press;   skirt_y = yc - 2*tol_press;
+
+// press bosses: cut to the EXACT stack (no preload — rule 3). With pillars
+// on the board they land on the flat brass pillar tops; stripped, on the
+// bare PCB corners over the same M2 positions.
+stand_d   = pillars_in ? 4.6 : 4.2;
+stand_len = stack_eff - (pillars_in ? brass_h : 0);
+// the four positions in CASE frame (USB end = −Y); the lid module flips Y
+stand_case = [[ board_w/2 - hole_ix_usb, -(board_l/2 - hole_iy_usb)],
+              [-(board_w/2 - hole_ix_usb), -(board_l/2 - hole_iy_usb)],
+              [ board_w/2 - hole_ix_far,  board_l/2 - hole_iy_far ],
+              [-(board_w/2 - hole_ix_far), board_l/2 - hole_iy_far ]];
+
+function nub_ys() = [-nub_y0, nub_y0];
+
+// ── The light band's volume, derived, never composed ────────────────────────
+// The S3 stick's hard lesson verbatim: a band slot parked by wall arithmetic
+// left a 0.65 mm black curtain between the LED and the white — a light pipe
+// with no light in it, invisible in every render. So the U is built from the
+// SAME outline and cavity the bezel uses, overreaching 1 mm past the outer
+// face and 1 mm into the cavity — a curtain is impossible by construction.
+seam_z0 = face_t + seam_dz;                // glass front is at z = face_t
+side_lo = btn_y + ear_w/2 + 1.2;           // the U's legs start above the ears
+
+// wall vents: behind the band, in front of the snap window band
+vent_z0 = seam_z0 + seam_h + 0.8;
+vent_z1 = bez_h - (snap_depth + snap_h/2) - 0.8;
+vent_dy = opt_btn ? (btn_y + ear_w/2) + (vent_n-1)*vent_pitch/2 + vent_w/2 + 1.2 : 0;
+
+// ── Asserts — the gates, not the documentation ──────────────────────────────
+assert(aa_l < lcm_l && aa_w < lcm_w, "active area must be inside the module outline");
+assert(lip_w >= 0.8, "short-side lip < 0.8 mm won't retain the glass — check aa_w/lcm_w");
+assert(land_w_x >= 0.4 && land_w_y >= 0.4,
+       str("glass land is ", land_w_x, " / ", land_w_y, " mm — too narrow to ",
+           "carry the panel. Shrink glass_relief_w; the relief must never eat ",
+           "the land that locates the glass."));
+assert(lcm_l <= yc && lcm_w <= xc, "LCD module larger than the board cavity — check dims");
+assert(z_usb - usb_h/2 >= face_t - 0.01, "USB opening cuts into the bezel face — check usb_h/usb_dz");
+assert(z_usb + usb_h/2 <= bez_h - 0.8,
+       "no printable bridge left between the USB opening and the rear rim — raise back_stack/hdr_drop or lower usb_dz");
+assert(z_usb + usb_h/2 + usb_relief <= bez_h - 0.5,
+       str("the USB relief recess (top at ", z_usb + usb_h/2 + usb_relief,
+           ") breaks out through the rim (", bez_h, ") — trim usb_relief"));
+assert(z_usb - usb_h/2 - usb_relief >= face_t - 0.01,
+       "the USB relief recess undercuts the bezel face — trim usb_relief");
+assert(z_btn + btn_d/2 <= bez_h, "button hole overruns the cavity depth — check btn_dz/back_stack");
+assert(skirt_dep <= stack_eff + 0.01, "skirt_dep > component clearance — the skirt would drive into the PCB");
+assert(skirt_dep >= snap_depth + snap_h/2, "skirt too short to carry the snap nub");
+assert(stand_len >= 0.6, "press bosses shorter than 0.6 — brass_h nearly fills the cavity; check hdr_drop/brass_h");
+assert(headers != "male" || hdr_drop >= brass_h + 0.5,
+       "corner pillars taller than the cavity below the PCB — check brass_h/hdr_drop");
+assert(!pillars_in || brass_h > 0.5,
+       "a pillars build with brass_h ~0 makes no sense — measure the pillars or set headers=\"none\"");
+// The pillars are real cylinders standing on the board, and two case features
+// live right beside them. Both of these fired for real during the assembled-
+// fit checks — they are not hypothetical.
+assert(!pillars_in || board_w/2 - hole_ix_usb + brass_d/2 <= xc/2 - 0.15,
+       str("a Ø", brass_d, " pillar at hole_ix_usb=", hole_ix_usb,
+           " reaches x=", board_w/2 - hole_ix_usb + brass_d/2,
+           ", into the bezel wall at ", xc/2, " — re-measure hole_ix_usb ",
+           "and brass_d (the 1.27 reading of the drawing does this)"));
+assert(!pillars_in || nub_y0 + snap_w/2 - 0.95 <=
+       (board_l/2 - hole_iy_usb) - brass_d/2 - 0.4,
+       str("a snap nub reaches y=", nub_y0 + snap_w/2 - 0.95,
+           ", into the USB-end pillar's flank at y=",
+           (board_l/2 - hole_iy_usb) - brass_d/2,
+           " — pull nub_y0 in or slim snap_w"));
+assert(headers != "male" || hdr_drop > back_stack, "headers=male but hdr_drop is shallower than the stripped-board clearance");
+assert(headers != "male" || tol_slide + hdr_inset - 0.35 >= tol_press + skirt_wall + 0.25,
+       "skirt would sit in the header pin row — thin skirt_wall or re-measure hdr_inset");
+assert(!opt_btn || min([for (y = nub_ys()) abs(y - btn_y)]) >= max(btn_ch_w, btn_body_w, btn_d)/2 + snap_w/2 + 1.0,
+       "a snap window overlaps the button clearance cutouts or the finger hole — shift nub_y0/btn_up");
+assert(!opt_btn || ear_w >= btn_d + 1.2 + 1.2,
+       str("the chamfered finger hole (rim Ø", btn_d + 1.2, ") leaves less than ",
+           "0.6 mm of ear on each side — widen ear_w or shrink btn_d"));
+assert(!opt_btn || btn_y - ear_w/2 >= -(yo/2 - r_out) + 0.4,
+       "the ear bulge runs into the USB-end outer corner — check btn_up/ear_w");
+assert(nub_y0 + snap_w/2 <= yc/2 - r_out, "snap windows run into the corner posts — pull nub_y0 in");
+// the band: placed on the panel, open to the cavity, whole enough to matter
+assert(!light_seam || seam_dz >= 0,
+       "the light band starts in FRONT of the glass — it would undercut the face");
+assert(!light_seam || seam_dz + seam_h <= lcd_rise + 0.25,
+       str("the light band spans ", seam_dz, " .. ", seam_dz + seam_h,
+           " mm behind the glass, past the PCB front at ", lcd_rise,
+           " — it would collide with the board"));
+assert(!light_seam || yc/2 - r_out - side_lo >= 8,
+       str("the U's leg run before the corner is only ", yc/2 - r_out - side_lo,
+           " mm — check btn_up/ear_w"));
+assert(!light_seam || bez_h - snap_depth - snap_h/2 >= seam_z0 + seam_h + 0.6,
+       "the snap window band overlaps the light band — deepen the case");
+assert(!opt_vent || vent_z1 - vent_z0 >= 1.5, "no room for wall vents behind the band — set opt_vent=false");
+assert(!opt_vent || vent_dy + (vent_n-1)*vent_pitch/2 + vent_w/2 <= yc/2 - 0.8,
+       "vent row overruns the side wall — fewer slots (vent_n) or tighter pitch");
+echo(str("Canary C3-LCD-1.47 (headers=", headers, ") v0.1-dev — outer ",
+         xo, " x ", yo, " x ", bez_h + back_t, " mm, window ", aa_w, " x ", aa_l,
+         " (land X ", land_w_x, " / Y ", land_w_y, "), band ", seam_h,
+         " mm white starting ", seam_dz, " mm behind the glass",
+         "  (IN DEVELOPMENT — MEASURE)"));
+
+module rrect2d(x, y, r) { offset(r = r) offset(r = -r) square([x, y], center = true); }
+// stadium: full-round ends, the USB-C shell's own profile
+module stadium2d(w, h) { rrect2d(w, h, h/2 - 0.05); }
+
+// bezel outline: body + ear/chin bulges (the bulges belong to the bezel; the
+// lid plate keeps the plain outline)
+module shell_outline2d() {
+    rrect2d(xo, yo, r_out);
+    if (opt_btn && ear_bump > 0) for (sx = [1, -1])
+        translate([sx*(xo/2 + ear_bump/2 - 1.2), btn_y])
+            rrect2d(ear_bump + 2.4, ear_w, 1.0);
+    if (chin_bump > 0)
+        translate([usb_dx, -(yo/2 + chin_bump/2 - 1.2)])
+            rrect2d(chin_w, chin_bump + 2.4, 1.0);
+}
+
+// board cavity + full-depth overhang channels (rule 1)
+module cavity2d() {
+    rrect2d(xc, yc, r_in);
+    if (opt_btn) for (sx = [1, -1]) {
+        translate([sx*xc/2, btn_y]) square([2*btn_reach, btn_ch_w], center = true);       // actuator
+        translate([sx*xc/2, btn_y]) square([2*btn_body_reach, btn_body_w], center = true); // metal body
+    }
+    translate([usb_dx, -yc/2]) square([usb_slide, 2*usb_reach], center = true);
+}
+
+// the wall material as stock — what the band is allowed to occupy. Built
+// from the same outline and cavity the bezel uses, so band and slot can
+// never drift apart.
+module wall_stock() {
+    difference() {
+        linear_extrude(bez_h) shell_outline2d();
+        translate([0, 0, face_t]) linear_extrude(cav_d + 0.2) cavity2d();
+    }
+}
+
+// the seam volume: ONE U — up both long walls, around both far corners,
+// across the far short wall. A ring slab (outline grown 1 mm minus cavity
+// shrunk 1 mm — the overreach on both faces) masked to y ≥ side_lo, so the
+// legs, the corner bends, and the top run are a single connected volume.
+// `shrink` insets the mating faces (seam top/bottom, the two leg ends) so
+// one geometry serves as the CUT (0) and the BAND that fills it
+// (band_clear); the radial faces come from wall_stock exactly.
+module seam_solid(shrink = 0) {
+    translate([0, 0, seam_z0 + shrink])
+        linear_extrude(seam_h - 2*shrink)
+            intersection() {
+                difference() {
+                    offset(delta =  1.0) shell_outline2d();
+                    offset(delta = -1.0) cavity2d();
+                }
+                translate([0, (side_lo + shrink + yo)/2])
+                    square([xo + 2*ear_bump + 4, yo - (side_lo + shrink)], center = true);
+            }
+}
+
+module bezel_light_seam() { seam_solid(0); }
+
+// the white band: exactly the wall material the seam removed, minus
+// clearance — intersected with the wall stock so the U is precisely as
+// deep as the wall it fills, corners included. Full depth, no notches:
+// the pipe's back face is the cavity wall, white all the way to the LED's
+// side of it, and white all the way around the bends.
+module light_band() {
+    if (light_seam)
+        intersection() { seam_solid(band_clear); wall_stock(); }
+}
+
+// ----------------------------------------------------------------------------
+//  BEZEL — black body, prints face-down (z0 = outer face)
+// ----------------------------------------------------------------------------
+module bezel() {
+    difference() {
+        linear_extrude(bez_h) shell_outline2d();
+        // active-area window through the face
+        translate([0, 0, -0.1]) linear_extrude(face_t + 0.2) rrect2d(aa_w, aa_l, 1.5);
+        // face edge chamfer
+        if (lid_edge > 0)
+            translate([0, 0, -0.01]) linear_extrude(lid_edge + 0.01)
+                difference() {
+                    offset(delta = 0.1) shell_outline2d();
+                    offset(delta = -lid_edge) shell_outline2d();
+                }
+        // glass relief: stand the face off the innermost lip band, so the
+        // window's rim never touches the panel (rule 3)
+        translate([0, 0, face_t - glass_relief]) linear_extrude(glass_relief + 0.02)
+            rrect2d(aa_w + 2*glass_relief_w, aa_l + 2*glass_relief_w, 1.5 + glass_relief_w);
+        // board cavity + overhang channels
+        translate([0, 0, face_t]) linear_extrude(cav_d + 0.2) cavity2d();
+        // USB-C stadium through the bottom wall + chin
+        translate([usb_dx, -yo/2, z_usb]) rotate([90, 0, 0])
+            linear_extrude(2*(wall + chin_bump + 1), center = true) stadium2d(usb_w, usb_h);
+        // …and the outer relief recess around it (the plug's lead-in)
+        translate([usb_dx, -(yo/2 + chin_bump) + usb_relief/2 - 0.01, z_usb]) rotate([90, 0, 0])
+            linear_extrude(usb_relief + 0.02, center = true)
+                stadium2d(usb_w + 2*usb_relief, usb_h + 2*usb_relief);
+        // BOOT / RST finger holes through the ear skin, entry chamfered so
+        // the fingertip funnels in instead of meeting a square rim
+        if (opt_btn) for (sx = [1, -1]) {
+            translate([sx*xo/2, btn_y, z_btn])
+                rotate([0, 90, 0]) cylinder(d = btn_d, h = 2*(wall + ear_bump + 1), center = true);
+            translate([sx*(xo/2 + ear_bump - 0.6), btn_y, z_btn])
+                rotate([0, sx*90, 0]) cylinder(d1 = btn_d, d2 = btn_d + 1.2, h = 0.61);
+        }
+        // heat-escape slots, BEHIND the light band
+        if (opt_vent) for (sx = [1, -1], i = [0:vent_n-1])
+            translate([sx*xo/2, vent_dy - (vent_n-1)*vent_pitch/2 + i*vent_pitch, (vent_z0 + vent_z1)/2])
+                cube([wall*3, vent_w, vent_z1 - vent_z0], center = true);
+        // snap windows in the side walls
+        for (sx = [1, -1], yc0 = nub_ys())
+            translate([sx*xo/2, yc0, bez_h - snap_depth])
+                cube([wall*3, snap_w, snap_h], center = true);
+        // the light seam
+        if (light_seam) bezel_light_seam();
+    }
+}
+
+// ----------------------------------------------------------------------------
+//  LID — yellow, prints outer-face-down (z0 = outer back face).
+//  Authored in its own frame; the assembled mapping is
+//      case = translate([0,0,bez_h+back_t]) · rotate([180,0,0]) · lid
+//  i.e. case (x, y) = lid (x, −y). KEYED — see the header: the skirt's USB
+//  relief exists at one end only, so the wrong orientation cannot close.
+// ----------------------------------------------------------------------------
+module lid() {
+    difference() {
+        union() {
+            linear_extrude(back_t) rrect2d(xo, yo, r_out);                 // plate
+            translate([0, 0, back_t - 0.01]) linear_extrude(skirt_dep)     // skirt
+                difference() {
+                    rrect2d(skirt_x, skirt_y, r_in);
+                    rrect2d(skirt_x - 2*skirt_wall, skirt_y - 2*skirt_wall, max(0.4, r_in - skirt_wall));
+                    // USB relief — ONE end only (lid +Y = case −Y): the key.
+                    // usb_w + 4, not + 2: the extra millimeter per side makes
+                    // this cut MEET the pillar notches beside it. At + 2 a
+                    // 0.05 mm whisker of skirt survived between the relief's
+                    // edge and the notch circle's reach — one triangle wide,
+                    // full skirt height, found by slicing the STL, not by
+                    // admesh (it was watertight and connected).
+                    translate([usb_dx, skirt_y/2]) square([usb_w + 4, 3*skirt_wall], center = true);
+                    // button-body reliefs at the real button positions
+                    if (opt_btn) for (sx = [1, -1])
+                        translate([sx*skirt_x/2, -btn_y]) square([3*skirt_wall, btn_body_w + 2], center = true);
+                    // pillar notches: in the pillars build the cavity is only
+                    // brass_h + 0.8 deep, so the pillars rise INTO the
+                    // skirt's band, and the USB-end pair sits close enough
+                    // to the edge to land in the ring itself. Notch the
+                    // corners around every pillar position; in the deeper
+                    // male build the pillars stop below the skirt and the
+                    // notches are merely harmless.
+                    //
+                    // HULLED OUTWARD, not a bare circle. A circle tangent to
+                    // the ring leaves a crescent of skirt standing outboard
+                    // of it — a ~0.3 mm blade, full skirt height, at every
+                    // corner. Watertight, one part, invisible in admesh, and
+                    // it printed as four fragile wisps in the preview. The
+                    // hull sweeps the notch radially out past the ring so
+                    // the corner cut runs clean through.
+                    if (pillars_in) for (p = stand_case)
+                        let (n = norm([p[0], p[1]]), s = 1 + 6/n)
+                        hull() {
+                            translate([p[0], -p[1]]) circle(d = stand_d + 2.2);
+                            translate([p[0]*s, -p[1]*s]) circle(d = stand_d + 2.2);
+                        }
+                }
+            // press bosses over the four M2 pillar positions (lid y = −case y).
+            // TRIMMED to the cavity footprint: the USB-end pillar pair sits
+            // only hole_ix_usb (1.27) off the board edge, so a full round
+            // boss there would bury itself 0.6 mm into the bezel wall — the
+            // assembled-fit intersection check is what caught it. The flat
+            // costs nothing: the trimmed face still covers the pillar top.
+            intersection() {
+                union() for (p = stand_case)
+                    translate([p[0], -p[1], back_t - 0.01])
+                        cylinder(d = stand_d, h = stand_len + 0.01);
+                linear_extrude(back_t + stand_len + 0.1)
+                    rrect2d(xc - 2*tol_press, yc - 2*tol_press, r_in);
+            }
+            // snap nubs on the ±X skirt faces, chamfered both ways
+            for (sx = [1, -1], yc0 = nub_ys())
+                translate([sx*(skirt_x/2 - 0.3), yc0, back_t + snap_depth]) hull() {
+                    for (dy = [-snap_w/2 + 1.0, snap_w/2 - 1.0])
+                        translate([0, dy, 0]) cube([0.6, 0.1, snap_h - 0.4], center = true);
+                    translate([sx*(snap_proud + 0.3), 0, 0]) cube([0.1, 0.1, 0.6], center = true);
+                }
+        }
+        // grille over the component zone, skipping anything near a boss foot
+        if (opt_vent) for (i = [0:vent_n-1], sx = [1, -1])
+            let (gy = -(vent_n-1)*vent_pitch/2 + i*vent_pitch)
+            if (min([for (p = stand_case) norm([sx*4.2 - p[0], gy + p[1]])]) > stand_d/2 + 1.6)
+                translate([sx*4.2, gy, back_t/2])
+                    cube([2.0, vent_w, back_t + 0.4], center = true);
+        // keyhole: hangs USB-down. Head hole toward lid +Y (case −Y/USB), the
+        // shank slides toward lid −Y (case +Y/up) as the case drops on.
+        if (opt_keyhole) translate([0, 0, -0.1]) linear_extrude(back_t + 0.2) {
+            translate([0, kh_slot_l/2]) circle(d = kh_head_d);
+            hull() {
+                translate([0,  kh_slot_l/2]) circle(d = kh_shank_d);
+                translate([0, -kh_slot_l/2]) circle(d = kh_shank_d);
+            }
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------
+//  RENDER
+// ----------------------------------------------------------------------------
+module lid_assembled() {
+    translate([0, 0, bez_h + back_t]) rotate([180, 0, 0]) lid();
+}
+
+// ⚠️ Do not judge the palette from "all"/"exploded" — the band sits exactly
+// in the pocket it was cut from, and OpenCSG merges and repaints composited
+// products (the same caveat as the S3 stick and the 7" frame). Silhouette
+// and fit only; part="palette" is the view that answers "what do the three
+// spools look like".
+module bezel_assembly() {
+    color("#1a1a1a") bezel();
+    if (light_seam) color("#f2f2f2") light_band();
+}
+
+module palette_row() {
+    color("#1a1a1a") bezel();
+    translate([xo + 8, 0, 0]) color("#f2f2f2") light_band();
+    translate([2*(xo + 8), 0, 0]) color("#f5c518") lid();
+}
+
+if      (part == "bezel") bezel();
+else if (part == "lid")   lid();
+else if (part == "light") light_band();
+else if (part == "palette") palette_row();
+else if (part == "exploded") {
+    bezel_assembly();
+    translate([0, 0, 16]) color("#f5c518") lid_assembled();
+}
+else {  // "all": both prints side by side, as they come off the plate
+    bezel_assembly();
+    translate([xo + 10, 0, 0]) color("#f5c518") lid();
+}

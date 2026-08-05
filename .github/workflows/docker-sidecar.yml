@@ -35,7 +35,7 @@ permissions:
   contents: read
   packages: write
 
-# Cancel superseded PR runs only. Main/tag runs publish to GHCR; cancelling
+# Cancel superseded PR runs only. Main/tag runs publish to GHCR; canceling
 # one mid-push could leave :latest and :<version> pointing at different
 # builds, so those queue instead.
 concurrency:

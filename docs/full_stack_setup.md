@@ -77,8 +77,10 @@ Put the card in the Pi, connect power (and ethernet if you're not using Wi-Fi).
 - **First boot takes 10–20 minutes.** It's installing itself. The blinking light
   is normal; walk away. The Flasher watches for it and tells you when it's up.
 - Then open **`http://homeassistant.local:8123`**.
-- Create your owner account. (If you used the experimental account pre-seed, you
-  get a **login page** instead of the setup wizard.)
+- Create your owner account — unless you typed one in the Flasher: keep the
+  Flasher open and it creates that account on the hub the moment it comes
+  online (over Home Assistant's own setup API), checks the login works, and
+  tells you. Your first visit is then a **sign-in**, not a setup wizard.
 
 **Working looks like:** the Home Assistant dashboard in your browser.
 
@@ -204,6 +206,16 @@ ESP32 devices that witness locally and report to the same hub. Flash one over
 USB-C with the same Flasher ("Flash a Canary"), then follow
 [`getting_started_canary.md`](getting_started_canary.md). Freshly-flashed devices
 appear on the Flasher's Witness Wall automatically.
+
+---
+
+## Step 6 — Give it a voice (optional)
+
+The hub can answer "is the fleet OK?" out loud, with every stage — wake
+word, Whisper speech-to-text, the answer, Piper text-to-speech — running
+locally on the Pi. One command sets it up, and the guide covers the
+microphone hardware worth buying and the honest wake-word trade:
+[**Talking to your fleet**](voice_control.md).
 
 ---
 
