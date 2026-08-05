@@ -178,12 +178,51 @@ SETS = {
     # tower twice for no reason.
     "stick": [("stick bezel", STICK_BEZEL, (100, 150)),
               ("stick back",  STICK_BACK,  (100, 95))],
+    # THE TPU FITMENTS, two of each — a spare is worth more than a second job.
+    # All six are ONE material, so this plate changes tool exactly never: no
+    # purge tower, no tower zone, and every volume on slot 1. That is the whole
+    # reason they get their own plate rather than riding along with a rigid
+    # one; a soft part sharing a plate with a color change waits through the
+    # tower and comes off strung.
+    #
+    # ⚠️ THE SLOT IS NOT THE POINT — THE FEED PATH IS. Slot 1 here means "the
+    # first filament of this plate", and what that spool has to be is decided
+    # by durometer, not by this file: 90-95 A must come off an EXTERNAL holder
+    # (it buckles in the AMS's long PTFE path and jams the hub), while Bambu's
+    # stiffer "TPU for AMS" 68 D feeds the AMS fine and is too hard to be a
+    # good leash. Both print this plate; they do not print it equally well.
+    # See bambu_p2s_bringup.md §0, and the leash note at port_tether.
+    #
+    # Layout: the two covers stand side by side on the left (they are the tall
+    # parts, 20 x 48), the four stadium fitments stack down the right in the
+    # order you install them — grommets first, then the blanks that fill
+    # whichever exit you did not use. Spacing is deliberately loose. TPU strings
+    # between close parts and a wipe that clips a neighbor drags it off the
+    # plate, which on a 14 g print costs more than the bed space does.
+    #
+    # ALL FOUR FITMENTS, and that is the point of naming the set "tpu" rather
+    # than listing the three somebody happened to ask for. The frame cuts a
+    # BOOT/RESET window, so a plate that omits plug_buttons leaves the case
+    # with an open hole and no way to press the buttons through it — and it
+    # does so silently, because nothing downstream knows what the operator
+    # meant to print. A set named for a MATERIAL has to carry everything made
+    # of it; anything less is a checklist that quietly loses an item.
+    "tpu": [
+        ("SD cover 1",    [("tpu", "plug_sd",      1, LCD7, {})], (80, 128)),
+        ("SD cover 2",    [("tpu", "plug_sd",      1, LCD7, {})], (112, 128)),
+        ("grommet 1",     [("tpu", "grommet_usb",  1, LCD7, {})], (150, 145)),
+        ("grommet 2",     [("tpu", "grommet_usb",  1, LCD7, {})], (150, 125)),
+        ("port blank 1",  [("tpu", "plug_port",    1, LCD7, {})], (150, 105)),
+        ("port blank 2",  [("tpu", "plug_port",    1, LCD7, {})], (150, 85)),
+        ("button plug 1", [("tpu", "plug_buttons", 1, LCD7, {})], (195, 145)),
+        ("button plug 2", [("tpu", "plug_buttons", 1, LCD7, {})], (195, 118)),
+    ],
 }
 # The file each set writes. Named per CASE, not per set, so two cases' plates
 # can never overwrite each other.
 OUTPUT = {"gauges": "lcd7_gauges", "color": "lcd7_color",
           "coupon": "lcd7_coupon", "qr": "lcd7_qr", "frame": "lcd7_frame",
-          "stick": "stick_case"}
+          "stick": "stick_case", "tpu": "lcd7_tpu"}
 assert set(OUTPUT) == set(SETS), "every set needs an output name"
 # Volume tuples grew a source and a defines dict when a second case moved in
 # here, and a set written inline (rather than through one of the named lists
@@ -530,9 +569,20 @@ def main() -> int:
     # into the one slot the plate does not touch.
     named = (", ".join(str(s) for s in slots[:-1]) + f" and {slots[-1]}"
              if len(slots) > 1 else str(slots[0]))
-    print(f"  Add filament SLOTS {named} in Bambu Studio first: with one slot")
-    print("  loaded there is nothing for the other volumes to point at, and it")
-    print("  reads as 'the parts are missing'.")
+    # ...and only give the load-the-slots warning when there IS more than one.
+    # On a single-material plate the old text read "add filament SLOTS 1 first:
+    # with one slot loaded there is nothing for the other volumes to point at",
+    # which describes a hazard that cannot occur and names slots that do not
+    # exist. Advice that is wrong on a plate is worse than no advice, because
+    # the operator cannot tell which half of the sentence to believe.
+    if len(slots) > 1:
+        print(f"  Add filament SLOTS {named} in Bambu Studio first: with one")
+        print("  slot loaded there is nothing for the other volumes to point")
+        print("  at, and it reads as 'the parts are missing'.")
+    else:
+        print(f"  ONE material, one slot ({named}) — no tool change anywhere on")
+        print("  this plate, so no purge tower and nothing to remap. Whatever")
+        print("  is loaded in that slot is what the whole plate prints in.")
     return 0
 
 

@@ -218,6 +218,20 @@ is **Canary WAP**. → [the full stack](full_stack_setup.md) ·
 integration](frigate_integration.md) → [the Verified Timeline
 card](lovelace_timeline.md).
 
+### Can I talk to it? Doesn't voice mean a microphone?
+
+**Yes — locally, and the microphone is never a Canary's.** The hub runs Home
+Assistant's fully local voice stack (Whisper speech-to-text, Piper
+text-to-speech, an optional wake word), so "is the fleet OK?" and "what was
+the last witness event?" are answered on your own Pi with nothing leaving the
+house. Voice input comes from a dedicated satellite — your phone's
+push-to-talk button, or a wake-word box whose stated job is listening — and
+the intents are read-only by construction: no sentence arms, disarms, or
+unseals anything, because a spoken word carries no signature. Transcribing
+what the world says *near* a witness device remains forbidden forever
+(Invariant II). → [the recipe](voice_control.md) ·
+[the design and its contract](research/whisper_local_voice.md)
+
 ### Does it work with Apple Home? What about HomeKit Secure Video?
 
 **Apple Home: yes, two lanes** — the design is
