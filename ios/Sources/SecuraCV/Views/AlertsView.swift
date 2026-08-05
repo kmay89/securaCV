@@ -11,9 +11,14 @@
 // The shape, top to bottom:
 //   * The heartbeat card stays the hero — proof the path works BEFORE the
 //     emergency is the most valuable thing this screen can show.
-//   * "Needs you" — anything unhandled, which is the only part that should
-//     ever feel urgent.
-//   * "Earlier" — the settled history, calm and countable.
+//   * "Needs you" — unhandled AND still happening, the only rows that may
+//     ever feel urgent. A condition that cleared on its own files itself
+//     into history; urgency is about the present, never a backlog chore.
+//   * History, one section per day — so last Tuesday reads as last Tuesday,
+//     not as an undifferentiated "Earlier". Rows the user never saw wear a
+//     dot (and the app badge counts them) until the tab has been visited;
+//     settled rows can be swiped away, and seen-and-settled history ages out
+//     on its own after a month (AlertLedger.retention).
 //   * When nothing has ever happened, the canary holds the empty state and
 //     says so. A quiet fleet is the product working, and it should read like
 //     an achievement rather than a blank screen.
@@ -23,12 +28,20 @@ import SwiftUI
 struct AlertsView: View {
     @EnvironmentObject var store: FleetStore
     @State private var showingRules = false
+    @State private var confirmingClear = false
 
-    private var unhandled: [AlertRecord] {
-        store.alertLog.records.filter { $0.handling == .new }
+    private var urgent: [AlertRecord] {
+        store.alertLog.records.filter(\.needsYou)
     }
-    private var settled: [AlertRecord] {
-        store.alertLog.records.filter { $0.handling != .new }
+    private var history: [AlertDaySection] {
+        AlertHistory.daySections(store.alertLog.records.filter { !$0.needsYou })
+    }
+
+    private static func dayTitle(_ day: Date) -> String {
+        let cal = Calendar.current
+        if cal.isDateInToday(day) { return "Earlier today" }
+        if cal.isDateInYesterday(day) { return "Yesterday" }
+        return day.formatted(.dateTime.weekday(.wide).month().day())
     }
 
     var body: some View {
@@ -47,17 +60,17 @@ struct AlertsView: View {
                     }
                 }
 
-                if !unhandled.isEmpty {
+                if !urgent.isEmpty {
                     Section("Needs you") {
-                        ForEach(unhandled) { record in
+                        ForEach(urgent) { record in
                             AlertRecordRow(record: record)
                         }
                     }
                 }
 
-                if !settled.isEmpty {
-                    Section("Earlier") {
-                        ForEach(settled) { record in
+                ForEach(history) { section in
+                    Section(Self.dayTitle(section.day)) {
+                        ForEach(section.records) { record in
                             AlertRecordRow(record: record)
                         }
                     }
@@ -68,10 +81,37 @@ struct AlertsView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Tell me when…") { showingRules = true }
                 }
+                if !store.alertLog.isQuiet {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            Button("Clear history…", role: .destructive) {
+                                confirmingClear = true
+                            }
+                        } label: {
+                            Label("More", systemImage: "ellipsis.circle")
+                        }
+                    }
+                }
+            }
+            .confirmationDialog("Clear alert history?",
+                                isPresented: $confirmingClear,
+                                titleVisibility: .visible) {
+                Button("Clear history", role: .destructive) {
+                    store.clearAlertHistory()
+                }
+            } message: {
+                // Honest about what it is and isn't: this is the phone's
+                // notebook, not the fleet's sealed witness chain — and it
+                // clears history, never a live alarm.
+                Text("Removes this phone's settled alert history. Anything that still needs you stays, and the fleet's signed witness logs stay on your devices, untouched.")
             }
             .sheet(isPresented: $showingRules) {
                 AlertRulesSheet(center: store.alerts)
             }
+            // Leaving the tab is "I've looked": the badge and the unseen
+            // dots clear together. On the way out, not on the way in, so
+            // rows don't reshuffle under the reader's thumb.
+            .onDisappear { store.markAlertsSeen() }
         }
     }
 }
@@ -89,6 +129,13 @@ struct AlertRecordRow: View {
                     .foregroundStyle(Theme.color(record.severity.role))
                     .accessibilityHidden(true)
                 Text(record.name).font(.body.weight(.medium))
+                if record.isUnseen {
+                    // "You haven't looked at this yet" — the same count the
+                    // app badge carries. Cleared by visiting, not by acking:
+                    // seen and handled are different questions.
+                    Circle().fill(Theme.color(.warn)).frame(width: 7, height: 7)
+                        .accessibilityLabel("New")
+                }
                 Spacer(minLength: Theme.s)
                 if record.count > 1 {
                     // The collapse, made visible: a flapping Canary is one
@@ -107,6 +154,18 @@ struct AlertRecordRow: View {
                 Text(record.lastBucket, format: .relative(presentation: .named))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                // Still happening, or over? The one fact that decides how
+                // this row should make the reader feel.
+                if record.isOpen {
+                    Label("Ongoing", systemImage: "waveform.path.ecg")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.color(record.severity.role))
+                        .labelStyle(.titleAndIcon)
+                } else {
+                    Label("Cleared", systemImage: "checkmark.circle")
+                        .font(.caption2).foregroundStyle(Theme.color(.calm))
+                        .labelStyle(.titleAndIcon)
+                }
                 ReachChip(delivery: record.delivery, reason: record.undeliveredReason)
                 if record.handling == .acknowledged {
                     Label("Acknowledged", systemImage: "checkmark")
@@ -121,16 +180,27 @@ struct AlertRecordRow: View {
         }
         .padding(.vertical, 2)
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
-            Button {
-                store.acknowledgeAlert(for: record.witnessID)
-            } label: { Label("Acknowledge", systemImage: "checkmark") }
-                .tint(Theme.color(.calm))
+            if record.needsYou {
+                Button {
+                    store.acknowledgeAlert(for: record.witnessID)
+                } label: { Label("Acknowledge", systemImage: "checkmark") }
+                    .tint(Theme.color(.calm))
+            }
         }
         .swipeActions(edge: .trailing) {
-            Button {
-                store.mute(record.witnessID)
-            } label: { Label("Mute 1 hour", systemImage: "bell.slash") }
-                .tint(Theme.color(.warn))
+            if record.needsYou {
+                Button {
+                    store.mute(record.witnessID)
+                } label: { Label("Mute 1 hour", systemImage: "bell.slash") }
+                    .tint(Theme.color(.warn))
+            } else {
+                // Settled rows are the user's to discard. Live ones are not:
+                // a condition that's still happening can be acked or muted,
+                // never made to look like it didn't happen.
+                Button(role: .destructive) {
+                    store.alertLog.remove(id: record.id)
+                } label: { Label("Remove", systemImage: "trash") }
+            }
         }
     }
 }

@@ -277,6 +277,7 @@
             <section id="serial-monitor" class="monitor hidden">
               <div class="row monitor-head">
                 <h3>Serial monitor</h3>
+                <span class="muted monitor-what" title="What is this?">the board’s own voice</span>
                 <button id="monitor-start" class="btn btn-small">Start</button>
                 <button id="monitor-stop" class="btn btn-small" disabled>Stop</button>
                 <button id="monitor-pause" class="btn btn-small" disabled>Pause</button>
@@ -284,6 +285,12 @@
                 <button id="monitor-manifest" class="btn btn-small" disabled>Print receipt (j)</button>
                 <button id="monitor-expand" class="btn btn-small" aria-pressed="false">Expand</button>
               </div>
+              <p class="muted monitor-lede">Every line the firmware prints, live over the same
+                USB cable — watch it boot, see why something isn’t working, and talk back
+                (press <kbd>h</kbd> for the firmware’s own menu). After a flash it starts by
+                itself, reboots the board so you see the boot from the first line, and
+                reconnects on its own across resets and replugs. Read-only unless you type;
+                closing it changes nothing on the board.</p>
               <p id="monitor-status" class="muted">Not connected.</p>
 
               <!-- Radar tuning suite (Sense boards): every runtime knob, live
@@ -546,11 +553,13 @@
             </div>
 
             <details id="hub-account-panel" class="hint">
-              <summary>Skip Home Assistant's setup wizard — pre-make your account
-                <span class="chip-badge">experimental</span></summary>
-              <p class="muted">Type your login now and first visit to the hub is a
-                <strong>login page</strong>, not a setup wizard. Your password is scrambled
-                on this computer and only the scrambled form goes on the card.</p>
+              <summary>Skip Home Assistant's setup wizard — pre-make your account</summary>
+              <p class="muted">Type your login now and this app finishes it for you: keep the app
+                open through first boot, and the moment the hub answers, it creates your account on
+                the hub over Home Assistant's own setup API and <strong>checks the login works</strong> —
+                so your first visit is a sign-in, not a wizard. Your password stays on this computer
+                (a scrambled copy also rides the card as a head start) and goes only to your own hub,
+                on your own network.</p>
               <div class="form-grid">
                 <label>Your name<input id="hub-acct-name" maxlength="128" autocomplete="off"></label>
                 <label>Username<input id="hub-acct-user" maxlength="64" autocomplete="off"></label>

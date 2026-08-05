@@ -10,7 +10,7 @@ import XCTest
 final class FleetFigureTests: XCTestCase {
 
     func testEveryFigureIDResolves() {
-        for type in [DeviceType.wap, .vision, .sense, .display, .unknown] {
+        for type in [DeviceType.wap, .vision, .sense, .display, .nightlight, .unknown] {
             guard let id = type.figureID else { continue }
             XCTAssertNotNil(FleetFigure.all[id],
                             "\(type.rawValue) names figure \(id), which is not in the generated set")
@@ -29,6 +29,11 @@ final class FleetFigureTests: XCTestCase {
         XCTAssertNil(DeviceType.unknown.figureID)
         XCTAssertNil(DeviceType.display.figure)
         XCTAssertNil(DeviceType.unknown.figure)
+        // The nightlight's figure (the C3 pocket case) arrives through the
+        // fleet-figures pipeline; until the generated map carries it, nil
+        // keeps the SF moon honest rather than borrowing a sibling's shape.
+        XCTAssertNil(DeviceType.nightlight.figureID)
+        XCTAssertNil(DeviceType.nightlight.figure)
     }
 
     func testUnambiguousTypesDoDrawTheirOwnDevice() {

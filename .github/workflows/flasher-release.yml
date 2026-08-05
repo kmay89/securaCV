@@ -445,7 +445,7 @@ jobs:
           else
             echo "::warning::canary-display-nightstand7 build failed — absent from the browser flasher this rebuild"
           fi
-          for E in canary-display-nightstand-s3 canary-display-touch169; do
+          for E in canary-display-nightstand-s3 canary-display-touch169 canary-display-nightlight-c3; do
             if pio run -e "$E"; then
               rm -rf "${STAGE:?}/$E"
               cp -R ".pio/build/$E" "$STAGE/$E"

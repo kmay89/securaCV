@@ -121,6 +121,16 @@ enum DemoFleet {
         nightstand.firmware = "2.4.0"
         nightstand.rssiDBM = -49
 
+        // The nightlight — the C3 pocket clock/lamp/companion. Same
+        // display-class trust posture as the nightstand: it watches nothing,
+        // holds no witness key, mints no chain.
+        var nightlight = Witness(id: "demo-nightlight-c3a1", deviceType: .nightlight, name: "Nightlight")
+        nightlight.room = "Kids' room"
+        nightlight.link = .online
+        nightlight.lastSeen = now
+        nightlight.firmware = "2.4.0"
+        nightlight.rssiDBM = -55
+
         var mailbox = Witness(id: "demo-wap-e412", deviceType: .wap, name: "Mailbox")
         mailbox.fingerprint = "e412 9b55 60fe a2d7"
         mailbox.link = .online
@@ -128,7 +138,7 @@ enum DemoFleet {
         mailbox.seenViaBLE = true
         mailbox.batteryPct = 64
 
-        return [frontDoor, garage, nursery, driveway, nightstand, mailbox]
+        return [frontDoor, garage, nursery, driveway, nightstand, nightlight, mailbox]
     }
 
     static func timeline(now: Date = Date()) -> [TimelineEvent] {

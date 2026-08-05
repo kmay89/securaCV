@@ -19,7 +19,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 
-import { renderFigure, planFigure, envelopeOf, cornersOf } from './iso.mjs';
+import { renderFigure, renderFigureCompact, planFigure, envelopeOf, cornersOf } from './iso.mjs';
 import { stlBounds } from './stlbox.mjs';
 import { FIGURES, conceptFigure } from './massing.mjs';
 
@@ -30,6 +30,11 @@ const OUT_JSON = join(ROOT, 'canary-local/devices/figures.json');
 const OUT_SVG = join(ROOT, 'canary-local/figures');
 const OUT_H = join(ROOT, 'firmware/common/core/fleet_figures.h');
 const OUT_SWIFT = join(ROOT, 'ios/Shared/FleetFigures.swift');
+// The picker tier: one compact SVG per figure, small enough to be EMBEDDED
+// in the flasher catalog — which the desktop app bakes into its binary at
+// build time (desktop/src-tauri/build.rs), so a file on disk is not a
+// channel that reaches it. gen_flash.py inlines the ones it needs.
+const OUT_PICKER = join(ROOT, 'canary-local/devices/figures.picker.json');
 
 const CHECK = process.argv.includes('--check');
 
@@ -307,6 +312,7 @@ function buildOne(fig) {
 
   return {
     id: fig.id,
+    picker: renderFigureCompact({ ...fig, solids }, { size: 64, pad: 3, ghost }),
     title: fig.title,
     role: fig.role,
     device: fig.of,
@@ -659,9 +665,20 @@ const ledger = {
     })),
     unmapped: hardwareGaps,
   },
-  figures: built.map(({ plan, ...rest }) => rest),
+  figures: built.map(({ plan, picker, ...rest }) => rest),
 };
 emit(OUT_JSON, `${JSON.stringify(ledger, null, 1)}\n`);
+
+// One compact SVG per figure, keyed by id — the only tier small enough to
+// travel inside another catalog.
+emit(OUT_PICKER, `${JSON.stringify({
+  $generated_by: 'canary-local/tools/figures/gen_figures.mjs',
+  $doc: 'Compact per-figure SVG for list-row rendering (46 px). Faces sharing a '
+    + 'fill are merged into one path and the hairline stroke is dropped, which is '
+    + 'where the bytes are. Embedded into flash.json by gen_flash.py.',
+  projector_rev: PROJECTOR_REV,
+  figures: Object.fromEntries(built.map((f) => [f.id, f.picker])),
+}, null, 1)}\n`);
 
 
 emit(OUT_H, `#pragma once

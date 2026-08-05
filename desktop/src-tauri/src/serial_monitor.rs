@@ -55,24 +55,104 @@ fn wants_dtr(vid: Option<u16>) -> bool {
     vid == Some(ESPRESSIF_USB_VID)
 }
 
-/// The port to talk to, and its USB vendor ID when we can see one.
-fn matching_port(preferred: &str, vid: Option<u16>, pid: Option<u16>) -> Option<(String, Option<u16>)> {
-    let ports = serialport::available_ports().ok()?;
-    if let Some(found) = ports.iter().find(|port| port.port_name == preferred) {
-        let seen = match &found.port_type {
-            SerialPortType::UsbPort(info) => Some(info.vid),
-            _ => None,
-        };
-        return Some((preferred.to_string(), seen));
+/// The outcome of looking for the board among the ports present right now.
+#[derive(Debug, PartialEq)]
+enum PortChoice {
+    /// This one. Carries the port path and its USB vendor ID when visible.
+    Found(String, Option<u16>),
+    /// The board isn't here (yet) — keep waiting; it may be mid-re-enumeration.
+    Absent,
+    /// More than one port could plausibly be the board and nothing breaks the
+    /// tie. Guessing here means attaching the console to somebody else's
+    /// Canary on a two-board bench, so the caller says so instead.
+    Ambiguous,
+}
+
+/// Pick the board's port from what the OS reports — pure, so the reconnect
+/// rules live in tests rather than in a story about what probably happens.
+///
+/// The rules encode what a flash does to a native-USB board. After espflash's
+/// reset the whole USB device drops off the bus and re-enumerates: the path
+/// can change (macOS renumbers `usbmodem` freely), and the PID can change
+/// too, because the ROM bootloader (0x303A:0x1001) and the application are
+/// different USB devices wearing the same vendor ID. A monitor that demands
+/// the exact identity it saw before the flash therefore waits forever for a
+/// device that no longer exists — which is precisely the "it never connects
+/// until I replug it" ritual. So:
+///
+///   * the exact path we were on wins outright — nothing re-enumerated;
+///   * an Espressif-tracked board otherwise matches only as the SOLE
+///     Espressif-VID port present. Not "the port wearing the remembered
+///     VID:PID": an identity names a product, not a device, and after a flash
+///     our board may be wearing any Espressif identity — so with two such
+///     ports the one carrying the old identity may well be the OTHER board;
+///   * a bridge-tracked board matches its exact VID:PID, but only when
+///     unique — the bridge's identity is stable across the ESP's resets, and
+///     duplicated the moment a second board of the same model is attached;
+///   * anything plural → Ambiguous, said out loud, never a guess.
+fn choose_port(
+    preferred: &str,
+    want_vid: Option<u16>,
+    want_pid: Option<u16>,
+    ports: &[(String, Option<u16>, Option<u16>)],
+) -> PortChoice {
+    if let Some((name, vid, _)) = ports.iter().find(|(name, _, _)| name == preferred) {
+        return PortChoice::Found(name.clone(), *vid);
     }
-    ports.into_iter().find_map(|port| match port.port_type {
-        SerialPortType::UsbPort(info)
-            if vid.is_some() && info.vid == vid.unwrap() && pid == Some(info.pid) =>
-        {
-            Some((port.port_name, Some(info.vid)))
+    // Past the exact path, everything is identity — and a USB identity names a
+    // PRODUCT, not a device. Two boards of the same model are
+    // indistinguishable by VID:PID, and a just-flashed native-USB board can
+    // come back wearing ANY Espressif identity (bootloader or app). So an
+    // identity match is only evidence when it is the ONLY candidate: for an
+    // Espressif-tracked board, the only trustworthy facts are "the exact path
+    // survived" and "there is exactly one Espressif device here". Letting a
+    // unique-looking VID:PID match win while a second Espressif port sat on
+    // the bus was the review finding: the OTHER board could be the one
+    // wearing the remembered identity, and the first connection carries the
+    // one-shot post-flash reset — a coin-flip that reboots and certifies
+    // somebody else's Canary.
+    if want_vid == Some(ESPRESSIF_USB_VID) {
+        let espressif: Vec<_> = ports
+            .iter()
+            .filter(|(_, vid, _)| *vid == Some(ESPRESSIF_USB_VID))
+            .collect();
+        match espressif.as_slice() {
+            [] => PortChoice::Absent,
+            [(name, vid, _)] => PortChoice::Found(name.clone(), *vid),
+            _ => PortChoice::Ambiguous,
         }
-        _ => None,
-    })
+    } else if want_vid.is_some() {
+        // A bridge board: its identity is stable (the bridge chip never
+        // re-enumerates when the ESP behind it resets), so an exact VID:PID
+        // match is meaningful — but still only when unique, because two
+        // boards on the same bridge chip share it.
+        let matches: Vec<_> = ports
+            .iter()
+            .filter(|(_, vid, pid)| *vid == want_vid && *pid == want_pid)
+            .collect();
+        match matches.as_slice() {
+            [] => PortChoice::Absent,
+            [(name, vid, _)] => PortChoice::Found(name.clone(), *vid),
+            _ => PortChoice::Ambiguous,
+        }
+    } else {
+        PortChoice::Absent
+    }
+}
+
+/// The OS half of [`choose_port`]: snapshot what's plugged in and choose.
+fn matching_port(preferred: &str, vid: Option<u16>, pid: Option<u16>) -> PortChoice {
+    let Ok(ports) = serialport::available_ports() else {
+        return PortChoice::Absent;
+    };
+    let ports: Vec<(String, Option<u16>, Option<u16>)> = ports
+        .into_iter()
+        .map(|p| match p.port_type {
+            SerialPortType::UsbPort(info) => (p.port_name, Some(info.vid), Some(info.pid)),
+            _ => (p.port_name, None, None),
+        })
+        .collect();
+    choose_port(preferred, vid, pid, &ports)
 }
 
 fn receipt_ready(manifest: &Value, vision: Option<&Value>) -> bool {
@@ -146,11 +226,24 @@ fn connect(
     baud: u32,
     cancel: &Arc<AtomicBool>,
     first: bool,
-) -> Option<(String, Box<dyn serialport::SerialPort>)> {
+) -> Option<(String, Option<u16>, Box<dyn serialport::SerialPort>)> {
     let mut announced = false;
     let mut open_hint_shown = false;
+    let mut ambiguity_noted = false;
+    // If the board hasn't reappeared by this deadline, escalate from the calm
+    // "waiting…" to instructions. The wait is normal for the first few seconds
+    // (a native-USB board takes a moment to re-enumerate after a reset); past
+    // ~8s it almost never resolves by itself — the usual cause is espflash's
+    // post-flash reset not taking on a board wired straight to the chip's own
+    // USB, which leaves it sitting in the ROM bootloader or wedged, and only a
+    // button press or a replug moves it. Say that ONCE, when it has become
+    // true, not up front where it would teach a ritual that usually isn't
+    // needed.
+    let escalate_at = Instant::now() + Duration::from_secs(8);
+    let mut escalated = false;
     while !cancel.load(Ordering::Relaxed) {
-        if let Some((name, seen_vid)) = matching_port(preferred_port, vid, pid) {
+        match matching_port(preferred_port, vid, pid) {
+            PortChoice::Found(name, seen_vid) => {
             // DTR only where it is required AND harmless — see wants_dtr. On a
             // native-USB board the chip discards its output until a host raises
             // DTR, which is why this console was blank while `screen` worked.
@@ -165,7 +258,26 @@ fn connect(
                 builder = builder.dtr_on_open(true);
             }
             match builder.open() {
-                Ok(port) => return Some((name, port)),
+                Ok(mut port) => {
+                    // On a native-USB port, follow the DTR assert with RTS so the
+                    // steady state is BOTH lines high. This is not cosmetic. The
+                    // USB-Serial-JTAG peripheral emulates the classic two-
+                    // transistor auto-reset circuit on these two lines, and that
+                    // circuit's truth table releases both chip lines only when
+                    // DTR and RTS AGREE. DTR high alone (the state #1431 left)
+                    // virtually holds the BOOT strap low — harmless while the
+                    // chip runs, but the moment someone presses the physical
+                    // RESET the chip samples that strap and wakes in DOWNLOAD
+                    // MODE instead of the app. Our own silence advice says
+                    // "press the reset button", so without this line the tool
+                    // would be recommending the exact action that strands the
+                    // board. (Bridge boards never reach here — wants_dtr is
+                    // false for them and both lines stay untouched.)
+                    if wants_dtr(seen_vid) {
+                        let _ = port.write_request_to_send(true);
+                    }
+                    return Some((name, seen_vid, port));
+                }
                 Err(error) => {
                     // The retry loop is right for a port that's about to
                     // re-enumerate, but on Linux two failures deserve words
@@ -182,22 +294,95 @@ fn connect(
                     std::thread::sleep(Duration::from_millis(350));
                 }
             }
-        } else {
-            if !announced {
-                announced = true;
-                let _ = app.emit(
-                    "serial:status",
-                    if first {
-                        "Waiting for the board's serial port…".to_string()
-                    } else {
-                        "Board went away (reboot?) — waiting for it to come back…".to_string()
-                    },
-                );
             }
-            std::thread::sleep(Duration::from_millis(350));
+            PortChoice::Ambiguous => {
+                // Two or more Espressif boards and no exact match: attaching to
+                // whichever enumerated first would put someone else's Canary in
+                // the console with no visible sign anything is wrong. Refuse,
+                // and say why — this only clears when a human unplugs one.
+                if !ambiguity_noted {
+                    ambiguity_noted = true;
+                    let _ = app.emit(
+                        "serial:status",
+                        "More than one Espressif board is plugged in and I can't tell which \
+                         one to watch. Unplug the other board (or replug the one you want) \
+                         and I'll connect to it."
+                            .to_string(),
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(350));
+            }
+            PortChoice::Absent => {
+                if !announced {
+                    announced = true;
+                    let _ = app.emit(
+                        "serial:status",
+                        if first {
+                            "Waiting for the board's serial port…".to_string()
+                        } else {
+                            "Board went away (reboot?) — waiting for it to come back…".to_string()
+                        },
+                    );
+                }
+                if !escalated && Instant::now() >= escalate_at {
+                    escalated = true;
+                    let _ = app.emit(
+                        "serial:status",
+                        "Still waiting for the board to come back. On boards wired straight \
+                         to the chip's own USB, the flasher's automatic reset doesn't always \
+                         take — press the board's RESET button, or unplug the cable and plug \
+                         it back in. I'll connect the moment it reappears."
+                            .to_string(),
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(350));
+            }
         }
     }
     None
+}
+
+/// Reboot a native-USB board into its application, from the console's steady
+/// line state (DTR and RTS both asserted).
+///
+/// This exists because espflash's own post-flash reset is best-effort on a
+/// board wired straight to the chip's USB: when it doesn't take, the board is
+/// left sitting in its ROM bootloader — which enumerates a perfectly healthy
+/// serial port that will never print a byte. The console then connects to
+/// that silence, and the only escape was the unplug/replug ritual. Resetting
+/// deliberately, once, right after the flash, replaces the ritual with
+/// "watch it boot".
+///
+/// The sequence walks the emulated two-transistor circuit (EN = !(RTS&!DTR),
+/// IO0 = !(DTR&!RTS)) from (1,1) — everything released — through reset with
+/// the BOOT strap high, back to released:
+///
+///   (1,1) → DTR low   ⇒ (0,1): EN pulled low, chip held in reset, IO0 high
+///           hold      ⇒ the pulse is long enough to be unmissable
+///   (0,1) → RTS low   ⇒ (0,0): EN released — the chip boots, samples IO0
+///           high, and starts the APPLICATION, never the bootloader
+///           hold      ⇒ let it out of reset before touching lines again
+///   (0,0) → both high ⇒ back to the steady attached state the CDC gating
+///           wants
+///
+/// On a board whose application speaks TinyUSB CDC instead, these line
+/// changes reach the Arduino core's own line-state handler, which implements
+/// the same reset semantics on purpose (it is how esptool resets those boards
+/// without any buttons). Either way the device usually re-enumerates —
+/// the caller's reconnect loop is the continuation of this function.
+///
+/// UNVERIFIED ON HARDWARE, stated plainly: the truth table is from the chip's
+/// documented emulation of the classic circuit, and the sequence mirrors
+/// esptool's hard-reset strategy, but no board has been in front of this
+/// code. If it does nothing, nothing is lost — the escalation message still
+/// teaches the button — and it can never fire on a bridge board at all.
+fn reset_into_app(port: &mut dyn serialport::SerialPort) {
+    let _ = port.write_data_terminal_ready(false);
+    std::thread::sleep(Duration::from_millis(200));
+    let _ = port.write_request_to_send(false);
+    std::thread::sleep(Duration::from_millis(200));
+    let _ = port.write_data_terminal_ready(true);
+    let _ = port.write_request_to_send(true);
 }
 
 fn monitor_thread(
@@ -206,6 +391,7 @@ fn monitor_thread(
     vid: Option<u16>,
     pid: Option<u16>,
     baud: u32,
+    post_flash: bool,
     cancel: Arc<AtomicBool>,
     receive: mpsc::Receiver<Vec<u8>>,
 ) {
@@ -214,17 +400,47 @@ fn monitor_thread(
     let mut manifest = None;
     let mut vision = None;
     let mut first = true;
+    // The post-flash reset happens at most ONCE per monitor. Without the
+    // latch, the cycle would be: reset → device re-enumerates → reconnect →
+    // reset → … forever, with the board never getting past its bootloader
+    // messages. One deliberate reset, then the monitor is an observer again.
+    let mut reset_pending = post_flash;
 
     // Outer loop: keep a live connection to the board across reboots and
     // cable blips. A read/write error (e.g. "Broken pipe" when the ESP32-S3's
     // USB-CDC port drops on reboot) is NOT the end of the monitor — we drop back
     // here and reopen, so the console "just works" without the user restarting.
     while !cancel.load(Ordering::Relaxed) {
-        let Some((name, mut port)) = connect(&app, &preferred_port, vid, pid, baud, &cancel, first)
+        let Some((name, seen_vid, mut port)) =
+            connect(&app, &preferred_port, vid, pid, baud, &cancel, first)
         else {
             break; // canceled while waiting
         };
         first = false;
+        // Right after a flash, make the "did it take?" question moot: reboot
+        // the board ourselves and show its boot from the first line — the same
+        // behavior the browser flasher has always had. Scoped to native-USB
+        // Espressif ports, where espflash's own reset is the unreliable one
+        // and where these lines cannot reach a physical reset circuit by
+        // accident; a bridge board keeps espflash's reliable EN-line reset
+        // and is never touched here.
+        if reset_pending {
+            // The latch clears on the FIRST connection no matter what kind of
+            // port it turned out to be. A bridge board doesn't need us (its
+            // espflash reset ran over a real EN line) — and a pending reset
+            // that survived past this connection could fire on some entirely
+            // different board plugged in later, which is exactly the class of
+            // surprise a monitor must never produce.
+            reset_pending = false;
+            if wants_dtr(seen_vid) {
+                let _ = app.emit(
+                    "serial:status",
+                    "Rebooting the board so you can watch it start from the first line…"
+                        .to_string(),
+                );
+                reset_into_app(port.as_mut());
+            }
+        }
         let _ = app.emit(
             "serial:status",
             format!("Serial monitor connected to {name} at {baud} baud."),
@@ -272,6 +488,16 @@ fn monitor_thread(
             // ignored, taking the message that mattered with it.
             if !heard_anything && !silence_noted && Instant::now() >= silence_deadline {
                 silence_noted = true;
+                // On a native-USB port there is one more silent-and-healthy
+                // state worth naming: the ROM bootloader. It enumerates a
+                // perfectly ordinary port and never prints, and it is where a
+                // board lands when a flash's automatic reset doesn't take.
+                let bootloader_hint = if wants_dtr(seen_vid) {
+                    " If it was just flashed, it may still be sitting in its \
+                     bootloader waiting for a real reset."
+                } else {
+                    ""
+                };
                 let _ = app.emit(
                     "serial:status",
                     format!(
@@ -280,7 +506,7 @@ fn monitor_thread(
                          be printing (press EN/RESET to watch it boot), it may be running \
                          firmware built without a serial console, or another program — a \
                          second copy of this app, screen, or PlatformIO — may be holding \
-                         the port. Try the reset button first."
+                         the port.{bootloader_hint} Try the reset button first."
                     ),
                 );
             }
@@ -340,6 +566,11 @@ pub fn start_serial_monitor(
     vid: Option<u16>,
     pid: Option<u16>,
     baud: u32,
+    // True only when the flash flow starts the monitor: permits ONE deliberate
+    // reboot of a native-USB board so its boot streams from the first line
+    // (and a board espflash left stranded in its bootloader gets un-stuck).
+    // Every other caller attaches as a pure observer.
+    post_flash: Option<bool>,
 ) -> Result<(), String> {
     if !(1_200..=2_000_000).contains(&baud) {
         return Err("unsupported serial-monitor baud rate".into());
@@ -358,7 +589,7 @@ pub fn start_serial_monitor(
         send,
     });
     std::thread::spawn(move || {
-        monitor_thread(app, port, vid, pid, baud, cancel, receive);
+        monitor_thread(app, port, vid, pid, baud, post_flash.unwrap_or(false), cancel, receive);
     });
     Ok(())
 }
@@ -415,6 +646,142 @@ mod tests {
             &manifest,
             Some(&serde_json::json!({"i2c_ready":true,"module_id":7}))
         ));
+    }
+
+    // ── finding the board again after a flash ───────────────────────────
+    //
+    // A flash re-enumerates a native-USB board: new path, possibly a new PID
+    // (ROM bootloader and application are different USB devices wearing the
+    // same vendor ID). These pin the reconnect ladder — the old behavior of
+    // demanding the exact pre-flash identity is what made the monitor wait
+    // forever while the user performed the unplug/replug ritual.
+
+    fn port(name: &str, vid: u16, pid: u16) -> (String, Option<u16>, Option<u16>) {
+        (name.to_string(), Some(vid), Some(pid))
+    }
+
+    #[test]
+    fn the_exact_path_wins_when_it_still_exists() {
+        let ports = vec![port("/dev/cu.usbmodem101", 0x303A, 0x1001)];
+        assert_eq!(
+            choose_port("/dev/cu.usbmodem101", Some(0x303A), Some(0x1001), &ports),
+            PortChoice::Found("/dev/cu.usbmodem101".into(), Some(0x303A))
+        );
+    }
+
+    #[test]
+    fn a_moved_path_is_found_again_by_exact_identity() {
+        // macOS renumbered usbmodem after the reboot; same device identity.
+        let ports = vec![port("/dev/cu.usbmodem102", 0x303A, 0x1001)];
+        assert_eq!(
+            choose_port("/dev/cu.usbmodem101", Some(0x303A), Some(0x1001), &ports),
+            PortChoice::Found("/dev/cu.usbmodem102".into(), Some(0x303A))
+        );
+    }
+
+    #[test]
+    fn a_changed_pid_still_finds_the_sole_espressif_board() {
+        // THE post-flash case: we remembered the bootloader (0x1001), the app
+        // came back as its own CDC identity. One Espressif port present — it
+        // can only be ours.
+        let ports = vec![
+            port("/dev/cu.usbmodem103", 0x303A, 0x0002),
+            port("/dev/ttyUSB0", 0x10C4, 0xEA60), // someone's CP210x, ignored
+        ];
+        assert_eq!(
+            choose_port("/dev/cu.usbmodem101", Some(0x303A), Some(0x1001), &ports),
+            PortChoice::Found("/dev/cu.usbmodem103".into(), Some(0x303A))
+        );
+    }
+
+    #[test]
+    fn two_espressif_boards_and_no_exact_match_is_a_refusal_not_a_guess() {
+        // Attaching to whichever enumerated first would put someone else's
+        // Canary in the console with no visible sign anything was wrong.
+        let ports = vec![
+            port("/dev/cu.usbmodem103", 0x303A, 0x0002),
+            port("/dev/cu.usbmodem104", 0x303A, 0x1001),
+        ];
+        assert_eq!(
+            choose_port("/dev/cu.usbmodem101", Some(0x303A), Some(0x9999), &ports),
+            PortChoice::Ambiguous
+        );
+    }
+
+    #[test]
+    fn a_remembered_identity_does_not_break_a_two_espressif_tie() {
+        // The first version of this test asserted the OPPOSITE — that the
+        // remembered VID:PID breaks the tie — and review overturned it. A USB
+        // identity names a product, not a device: after a flash our board can
+        // come back wearing any Espressif identity, so the port that still
+        // wears the remembered one may well be the OTHER board. With the
+        // one-shot post-flash reset riding the first connection, guessing
+        // here reboots and certifies somebody else's Canary. Refuse.
+        let ports = vec![
+            port("/dev/cu.usbmodem103", 0x303A, 0x0002),
+            port("/dev/cu.usbmodem104", 0x303A, 0x1001),
+        ];
+        assert_eq!(
+            choose_port("/dev/cu.usbmodem101", Some(0x303A), Some(0x1001), &ports),
+            PortChoice::Ambiguous
+        );
+    }
+
+    #[test]
+    fn identical_twin_boards_are_ambiguous() {
+        // The common real bench: two of the same product, byte-identical
+        // identities. Any pick is a coin flip, and a silent coin flip is the
+        // worst outcome a monitor can produce.
+        let ports = vec![
+            port("/dev/cu.usbmodem103", 0x303A, 0x1001),
+            port("/dev/cu.usbmodem104", 0x303A, 0x1001),
+        ];
+        assert_eq!(
+            choose_port("/dev/cu.usbmodem101", Some(0x303A), Some(0x1001), &ports),
+            PortChoice::Ambiguous
+        );
+    }
+
+    #[test]
+    fn a_bridge_board_matches_by_identity_only_when_unique() {
+        // A bridge chip's identity is stable across the ESP's resets, so a
+        // unique match is meaningful — and a duplicated one still is not.
+        let one = vec![
+            port("/dev/ttyUSB0", 0x10C4, 0xEA60),
+            port("/dev/cu.usbmodem103", 0x303A, 0x1001), // unrelated native board
+        ];
+        assert_eq!(
+            choose_port("/dev/ttyUSB9", Some(0x10C4), Some(0xEA60), &one),
+            PortChoice::Found("/dev/ttyUSB0".into(), Some(0x10C4))
+        );
+        let two = vec![
+            port("/dev/ttyUSB0", 0x10C4, 0xEA60),
+            port("/dev/ttyUSB1", 0x10C4, 0xEA60),
+        ];
+        assert_eq!(
+            choose_port("/dev/ttyUSB9", Some(0x10C4), Some(0xEA60), &two),
+            PortChoice::Ambiguous
+        );
+    }
+
+    #[test]
+    fn the_espressif_fallback_never_applies_to_bridge_boards() {
+        // We remembered a CP210x; a random Espressif device appearing is NOT
+        // evidence our board came back — a bridge board's identity never
+        // changes across a flash, so anything else is a different device.
+        let ports = vec![port("/dev/cu.usbmodem103", 0x303A, 0x1001)];
+        assert_eq!(
+            choose_port("/dev/ttyUSB0", Some(0x10C4), Some(0xEA60), &ports),
+            PortChoice::Absent
+        );
+    }
+
+    #[test]
+    fn nothing_plugged_in_is_absent_and_keeps_waiting() {
+        assert_eq!(
+            choose_port("/dev/cu.usbmodem101", Some(0x303A), Some(0x1001), &[]),
+            PortChoice::Absent
+        );
     }
 
     // ── DTR is a per-board decision, not a global one ───────────────────

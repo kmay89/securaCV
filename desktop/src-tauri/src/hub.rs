@@ -133,11 +133,14 @@ pub struct HubWifi {
     hidden: bool,
 }
 
-/// The Home Assistant owner account, collected next to the Wi-Fi. Opt-in and
-/// EXPERIMENTAL (the zero-touch restore mechanism is still under hardware
-/// validation): when present, the flasher mints HA's `.storage` locally and
-/// seeds it onto the boot partition so first visit is a login page. The
-/// password is hashed on this computer and never logged or emitted.
+/// The Home Assistant owner account, collected next to the Wi-Fi. Opt-in.
+/// Two mechanisms carry it, and the second is the promise: the flasher mints
+/// HA's `.storage` locally and seeds it onto the boot partition as a head
+/// start (best-effort — whether HAOS imports it is still under hardware
+/// validation), and once the hub answers, [`hub_onboard`] finishes first-run
+/// setup over HA's own onboarding API — which works regardless of what the
+/// seed did. The password is hashed on this computer for the seed, kept only
+/// in the frontend's memory for the companion, and never logged or emitted.
 #[derive(Deserialize)]
 pub struct HubAccount {
     name: String,
@@ -537,6 +540,58 @@ pub async fn hub_probe_hub(host: String) -> Result<bool, String> {
     // Any HTTP response at all — 200, a redirect, even a 401 — means HA is up
     // and serving. Only a transport failure (refused/timeout) means "not yet".
     Ok(client.get(&url).send().await.is_ok())
+}
+
+/// What the onboarding companion reports back to the UI.
+#[derive(Serialize)]
+pub struct OnboardReport {
+    /// Fully converged: nothing pending and the typed login provably works.
+    ok: bool,
+    /// This run created the owner account itself (vs. found it existing).
+    created_user: bool,
+    /// The typed credentials are proven to open this hub.
+    login_verified: bool,
+    /// Setup pages Home Assistant still wants a human click on.
+    remaining: Vec<String>,
+    /// Calm advice when a human still has something to do.
+    note: Option<String>,
+}
+
+/// Finish Home Assistant's own first-run setup over its supported onboarding
+/// API — the step that turns "the hub is up" into "your account exists and
+/// your login works", with no wizard left on screen. Idempotent: it reads the
+/// hub's actual state first and only does what is missing, so retrying after
+/// any stumble is always safe. Narration streams over `hub:headless-log`;
+/// the password never appears in logs or events. Host rules match
+/// [`hub_probe_hub`]: a bare `hostname[:port]`, never a URL.
+#[tauri::command]
+pub async fn hub_onboard(
+    app: AppHandle,
+    host: String,
+    name: String,
+    username: String,
+    password: String,
+) -> Result<OnboardReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let log = |line: String| {
+            let _ = app.emit("hub:headless-log", line);
+        };
+        let login = hub_io::onboarding::OwnerLogin {
+            name: &name,
+            username: &username,
+            password: &password,
+        };
+        let out = hub_io::onboarding::complete_onboarding(&host, &login, &log)?;
+        Ok(OnboardReport {
+            ok: out.ok(),
+            created_user: out.created_user,
+            login_verified: out.login_verified,
+            remaining: out.remaining,
+            note: out.note,
+        })
+    })
+    .await
+    .map_err(|e| format!("onboarding worker failed: {e}"))?
 }
 
 /// Stop the running flash. Safe at every stage: before the write nothing has
@@ -970,16 +1025,17 @@ fn hub_flash_blocking(
     if want_account && !account_seeded {
         account_note = Some({
             format!(
-                "The card is perfect and (if set) your Wi-Fi is on it — only the experimental \
-                 account pre-seed didn't apply, so first boot will show Home Assistant's normal \
-                 setup wizard. ({})",
+                "The card is perfect and (if set) your Wi-Fi is on it — the on-card account \
+                 head start didn't apply, but that costs nothing: keep this app open and it \
+                 finishes creating your account the moment the hub comes online. ({})",
                 account_note.as_deref().unwrap_or("unknown reason")
             )
         });
     } else if want_account && account_seeded {
         account_note = Some(
-            "Experimental: we wrote your account onto the card. On first boot, tell us whether \
-             homeassistant.local:8123 showed a login page (success) or the setup wizard."
+            "Your account: keep this app open through first boot — the moment the hub answers, \
+             this app finishes creating it and verifies your login, so your first visit is a \
+             sign-in that just works."
                 .to_string(),
         );
     }

@@ -77,8 +77,10 @@ Put the card in the Pi, connect power (and ethernet if you're not using Wi-Fi).
 - **First boot takes 10–20 minutes.** It's installing itself. The blinking light
   is normal; walk away. The Flasher watches for it and tells you when it's up.
 - Then open **`http://homeassistant.local:8123`**.
-- Create your owner account. (If you used the experimental account pre-seed, you
-  get a **login page** instead of the setup wizard.)
+- Create your owner account — unless you typed one in the Flasher: keep the
+  Flasher open and it creates that account on the hub the moment it comes
+  online (over Home Assistant's own setup API), checks the login works, and
+  tells you. Your first visit is then a **sign-in**, not a setup wizard.
 
 **Working looks like:** the Home Assistant dashboard in your browser.
 

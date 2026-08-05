@@ -17,7 +17,7 @@
 
 use base64::Engine as _;
 use serde_json::{json, Value};
-use serialport::SerialPort;
+use serialport::{ClearBuffer, SerialPort};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -142,6 +142,45 @@ struct Pending {
     deadline: Instant,
 }
 
+/// Wake the module and return its `VER?` reply, or Ok(None) if it never spoke.
+///
+/// Opening the CH343 port wiggles the modem lines — the very RTS line the
+/// flasher drives as the module's reset — so the module is usually mid-boot
+/// when the bench's first bytes leave the host. A single probe here made a
+/// freshly flashed, provably working module look dead. So: hold reset
+/// released explicitly (open() leaves the line wherever the OS put it),
+/// probe a few times while a booting module comes up, and if it stays quiet,
+/// pulse reset once ourselves — the "power-cycle it" advice, automated —
+/// and probe again before giving up.
+fn wake_module(
+    port: &mut Box<dyn SerialPort>,
+    emit: &impl Fn(Value),
+) -> Result<Option<Value>, String> {
+    let _ = port.write_request_to_send(true); // release reset if open() left it held
+    for _ in 0..3 {
+        if let Some(reply) = do_cmd(port, "VER?", Duration::from_millis(1200))? {
+            return Ok(Some(reply));
+        }
+    }
+    emit(json!({
+        "kind": "log",
+        "line": "quiet — resetting the module and waiting for it to boot…"
+    }));
+    port.write_request_to_send(false)
+        .map_err(|e| format!("could not assert module reset: {e}"))?;
+    std::thread::sleep(Duration::from_millis(100));
+    port.write_request_to_send(true)
+        .map_err(|e| format!("could not release module reset: {e}"))?;
+    std::thread::sleep(Duration::from_millis(1200));
+    let _ = port.clear(ClearBuffer::Input);
+    for _ in 0..3 {
+        if let Some(reply) = do_cmd(port, "VER?", Duration::from_millis(1500))? {
+            return Ok(Some(reply));
+        }
+    }
+    Ok(None)
+}
+
 fn bench_thread(
     app: AppHandle,
     port_name: String,
@@ -168,7 +207,7 @@ fn bench_thread(
     // Identity first, so the preview starts honest: SSCMA build + what model
     // the module carries (its card decides whether labels may read "person").
     emit(json!({ "kind": "log", "line": "→ asking the module what it carries…" }));
-    let ver = match do_cmd(&mut port, "VER?", Duration::from_millis(2500)) {
+    let ver = match wake_module(&mut port, &emit) {
         Ok(v) => v,
         Err(e) => {
             emit(json!({ "kind": "error", "message": e }));
@@ -178,7 +217,7 @@ fn bench_thread(
     if ver.is_none() {
         emit(json!({
             "kind": "error",
-            "message": "The module didn't answer AT — it may have no firmware/model yet, or be mid-state. Power-cycle it (unplug/replug) and try again; if it keeps refusing, flash the model first."
+            "message": "The module didn't answer AT, even after an automatic reset. Check the cable is in the MODULE's own USB-C port (the CH343, \"USB Single Serial\"), unplug/replug, and try again; if it keeps refusing, flash the model first."
         }));
         return;
     }
