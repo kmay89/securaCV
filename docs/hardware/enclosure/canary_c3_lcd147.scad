@@ -57,17 +57,22 @@
 //     band lands on the LCD/PCB edge gap the LED actually fills, and its far
 //     edge reaches (nearly) the PCB front face where the light lives. The
 //     band is WHITE / natural PETG — a light pipe, translucent and
-//     diffusing, not a slot. It runs up both long walls and across the far
-//     short wall: a U of light around the end the LED sits on (the USB end
-//     stays black — there is nothing to light there). The pipe is white
-//     through the FULL wall depth along its whole run. The first print
-//     said why that matters: this file originally tied face to wall with
-//     hidden inboard ribs across the seam, and every rib was a black slat
-//     between the LED and the white — a shadow on the band at each one
-//     (kmay89's print showed the black spots on the band's back). The
-//     ribs are gone; the face ring rides the four corner posts and the
-//     solid USB wall, and each strip's pocket is a blind slot — black at
-//     both ends — so the strip still cannot slide along its run.
+//     diffusing, not a slot. It is ONE piece: up both long walls, around
+//     both far corners, across the far short wall — a continuous U of
+//     light around the end the LED sits on (the USB end stays black —
+//     there is nothing to light there). Two print-taught rules shape it:
+//       - white through the FULL wall depth along the whole run. The
+//         first cut tied face to wall with hidden inboard ribs across the
+//         seam, and every rib was a black slat between the LED and the
+//         white — a shadow on the band at each one (kmay89's print).
+//       - white around the CORNERS. The next cut stopped each strip short
+//         of the corner posts, and the slicer view showed the U broken
+//         into three dashes with black bends — the pipe went dark exactly
+//         where it turns. The seam now wraps the corners, so the U is one
+//         volume and the glow is continuous.
+//     The face ring above the seam rides the solid USB wall and its two
+//     corner posts; the band's leg ends stop at black wall above the ears,
+//     so the U still cannot slide along its run.
 //
 //  5. THREE BOARD BUILDS, ONE FILE (the C6 case's contract, plus one):
 //       headers="pillars" — the board AS WAVESHARE SHIPS IT: the four brass
@@ -108,11 +113,18 @@
 //  ── PRINTING ─────────────────────────────────────────────────────────────
 //  Three spools, all PETG:  body BLACK, lid YELLOW (the house accent — on
 //  this case the whole lid is the mark), band WHITE/natural.
-//  The band strips press in from outside (default `band_clear` 0.10). On a
-//  multi-material machine, set band_clear = 0 and load part="bezel" +
-//  part="light" as ONE object (do not re-center) so the band fuses in.
-//  Bezel prints FACE-DOWN, lid prints OUTER-FACE-DOWN, strips print flat on
-//  their outer face. No supports anywhere.
+//  The band is one closed U, and that changes how it is installed:
+//    - Multi-material (the first-class path, what gen_3mf.py c3 packages):
+//      band_clear = 0, bezel + band as ONE object — the U fuses in.
+//    - Single spool: a closed U CANNOT press in from outside — the legs
+//      and the top approach in conflicting directions, so the old
+//      press-in flow died with the three-strip band. Instead: print the
+//      U flat on its bottom face (it is seam_h tall), PAUSE the
+//      face-down bezel print at the top of the seam (z = face_t +
+//      seam_dz + seam_h), drop the U into the open pocket, resume.
+//      band_clear 0.10 sizes that drop-in.
+//  Bezel prints FACE-DOWN, lid prints OUTER-FACE-DOWN, the U flat on its
+//  bottom face. No supports anywhere.
 //
 //  Orientation: +Y = up (portrait), USB-C exits the BOTTOM (−Y) short wall,
 //  +Z = toward the glass. The RGB LED lives at the TOP (+Y) end.
@@ -202,7 +214,8 @@ btn_body_p = 0.4;  // metal body overhang past the PCB edge — MEASURE
 light_seam = true;
 seam_dz = 1.0;       // black between the glass front and the band's start
 seam_h  = 2.8;       // the white band's thickness
-band_clear = 0.10;   // per-face press-in clearance; 0 for a co-printed band
+band_clear = 0.10;   // per-face drop-in clearance (pause-and-insert flow);
+                     // 0 for a co-printed band
 // NO tie ribs across the seam — not the S3 stick's outer-skin webs (those
 // chop the strip into unpressable dashes) and not this file's first cut,
 // inboard ribs (those put black slats between the LED and the white: the
@@ -336,16 +349,11 @@ function nub_ys() = [-nub_y0, nub_y0];
 // ── The light band's volume, derived, never composed ────────────────────────
 // The S3 stick's hard lesson verbatim: a band slot parked by wall arithmetic
 // left a 0.65 mm black curtain between the LED and the white — a light pipe
-// with no light in it, invisible in every render. So the spans come from the
-// cavity and outer faces and are asserted.
-seam_z0    = face_t + seam_dz;             // glass front is at z = face_t
-seam_x_in  = xc/2 - 1.0;                   // opens into the cavity — no curtain
-seam_x_out = xo/2 + ear_bump + 1.0;        // clears the outer face
-seam_y_in  = yc/2 - 1.0;                   // top strip, same rule
-seam_y_out = yo/2 + 1.0;
-side_lo    = btn_y + ear_w/2 + 1.2;        // side strips start above the ears
-side_hi    = yc/2 - r_out - 0.8;           // …and stop before the corner posts
-top_hw     = xc/2 - r_out - 0.8;           // top strip half-width, same rule
+// with no light in it, invisible in every render. So the U is built from the
+// SAME outline and cavity the bezel uses, overreaching 1 mm past the outer
+// face and 1 mm into the cavity — a curtain is impossible by construction.
+seam_z0 = face_t + seam_dz;                // glass front is at z = face_t
+side_lo = btn_y + ear_w/2 + 1.2;           // the U's legs start above the ears
 
 // wall vents: behind the band, in front of the snap window band
 vent_z0 = seam_z0 + seam_h + 0.8;
@@ -403,12 +411,9 @@ assert(!light_seam || seam_dz + seam_h <= lcd_rise + 0.25,
        str("the light band spans ", seam_dz, " .. ", seam_dz + seam_h,
            " mm behind the glass, past the PCB front at ", lcd_rise,
            " — it would collide with the board"));
-assert(!light_seam || seam_x_in < xc/2,
-       "the side band's inner face is outside the cavity wall — a white inlay that never sees the LED");
-assert(!light_seam || seam_y_in < yc/2,
-       "the top band's inner face is outside the cavity wall — same curtain defect");
-assert(!light_seam || side_hi - side_lo >= 8,
-       str("the side band run is only ", side_hi - side_lo, " mm — check btn_up/ear_w"));
+assert(!light_seam || yc/2 - r_out - side_lo >= 8,
+       str("the U's leg run before the corner is only ", yc/2 - r_out - side_lo,
+           " mm — check btn_up/ear_w"));
 assert(!light_seam || bez_h - snap_depth - snap_h/2 >= seam_z0 + seam_h + 0.6,
        "the snap window band overlaps the light band — deepen the case");
 assert(!opt_vent || vent_z1 - vent_z0 >= 1.5, "no room for wall vents behind the band — set opt_vent=false");
@@ -456,28 +461,36 @@ module wall_stock() {
     }
 }
 
-// the seam volume: two side strips + the top strip. `shrink` insets the
-// visible faces so one geometry serves as the CUT (0) and the BAND that
-// fills it (band_clear).
-module seam_prisms(shrink = 0) {
-    for (sx = [-1, 1])
-        translate([sx*(seam_x_in + seam_x_out)/2, (side_lo + side_hi)/2, seam_z0 + seam_h/2])
-            cube([seam_x_out - seam_x_in, (side_hi - side_lo) - 2*shrink,
-                  seam_h - 2*shrink], center = true);
-    translate([0, (seam_y_in + seam_y_out)/2, seam_z0 + seam_h/2])
-        cube([2*top_hw - 2*shrink, seam_y_out - seam_y_in,
-              seam_h - 2*shrink], center = true);
+// the seam volume: ONE U — up both long walls, around both far corners,
+// across the far short wall. A ring slab (outline grown 1 mm minus cavity
+// shrunk 1 mm — the overreach on both faces) masked to y ≥ side_lo, so the
+// legs, the corner bends, and the top run are a single connected volume.
+// `shrink` insets the mating faces (seam top/bottom, the two leg ends) so
+// one geometry serves as the CUT (0) and the BAND that fills it
+// (band_clear); the radial faces come from wall_stock exactly.
+module seam_solid(shrink = 0) {
+    translate([0, 0, seam_z0 + shrink])
+        linear_extrude(seam_h - 2*shrink)
+            intersection() {
+                difference() {
+                    offset(delta =  1.0) shell_outline2d();
+                    offset(delta = -1.0) cavity2d();
+                }
+                translate([0, (side_lo + shrink + yo)/2])
+                    square([xo + 2*ear_bump + 4, yo - (side_lo + shrink)], center = true);
+            }
 }
 
-module bezel_light_seam() { seam_prisms(0); }
+module bezel_light_seam() { seam_solid(0); }
 
 // the white band: exactly the wall material the seam removed, minus
-// clearance — intersected with the wall stock so each strip is precisely as
-// deep as the wall it fills. Full depth, no rib notches: the pipe's back
-// face is the cavity wall, white all the way to the LED's side of it.
+// clearance — intersected with the wall stock so the U is precisely as
+// deep as the wall it fills, corners included. Full depth, no notches:
+// the pipe's back face is the cavity wall, white all the way to the LED's
+// side of it, and white all the way around the bends.
 module light_band() {
     if (light_seam)
-        intersection() { seam_prisms(band_clear); wall_stock(); }
+        intersection() { seam_solid(band_clear); wall_stock(); }
 }
 
 // ----------------------------------------------------------------------------
