@@ -108,6 +108,45 @@ any platform.
 
 ## Entries
 
+### 2026-08-06 — A shared library's host tests were linkable all along; the first project to `#include` it linked three `main()`s into the firmware
+
+- **Symptom:** `PlatformIO Build (canary-display)` failed at the very end, in
+  `ld`, with `multiple definition of 'main'` — three times over, naming
+  `test_fleet_beacon.cpp`, `test_fleet_beacon_udp.cpp` and
+  `test_fleet_roster.cpp`. Every one of those files is a **host test**, and none
+  of them has any business being in an ESP32 image. Nothing about the change
+  that triggered it went near a test or a build file.
+- **Cause:** `firmware/common/fleet_link/library.json` declares
+  `srcFilter: ["+<*.cpp>"]` over a **flat** directory — headers, sources and
+  `test_*.cpp` all side by side — so the manifest says "compile the tests."
+  That had been true since the library landed and had never once mattered,
+  because no project's `#include` graph reached `fleet_link` through the LDF:
+  the firmwares that use the beacon include `<fleet_beacon.h>` via a plain `-I`,
+  which resolves the *header* without ever making PlatformIO treat the directory
+  as a library. The moment one display source did
+  `#include "fleet_link/fleet_beacon_udp.h"`, `lib_ldf_mode = deep+` discovered
+  the library, honored the manifest, and swept all three tests in.
+- **Fix:** `srcFilter: ["+<*.cpp>", "-<test_*.cpp>"]`. `common/csi` gets the
+  same protection for free by keeping real sources under `srcDir: "src"` while
+  its tests sit at the top level — a flat library has to say it explicitly.
+  **Two things to carry forward:** (1) a header resolving through `-I` is *not*
+  evidence that the directory is being treated as a library; those are two
+  different mechanisms, and a manifest can sit wrong and harmless for months
+  until the first `#include` that crosses into it. This is the mirror image of
+  the `common/color` lesson (there, `-I` made headers resolve while nothing
+  compiled the `.cpp`; here, the `-I` path hid a manifest that compiles too
+  much). (2) The failure lands at **link**, in the last job step, minutes in,
+  and names files the change never touched — budget for that when a build dies
+  somewhere that looks unrelated to the diff.
+  **Still open, deliberately not fixed in that change:** `firmware/common/power`
+  has **no manifest at all**, so PlatformIO's default sweep compiles
+  `test_power_logic.cpp` into every display image — a host test's `main()` in
+  shipped firmware. It links today only because it happens to be the *sole*
+  `main()`. Giving that directory a manifest is the obvious fix and wants its
+  own change and its own build: `common/color` failed to link twice after
+  exactly that kind of manifest edit (see CLAUDE.md), so it is not a one-liner
+  to ride along with unrelated work.
+
 ### 2026-08-02 — Cutting the firmware train invalidated every committed emulator artifact, and one of them failed as a UI timeout
 
 - **Symptom:** bumping the release train from 2.4.2 to 2.4.3 — a version-only
