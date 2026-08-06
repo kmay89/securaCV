@@ -158,6 +158,25 @@ def _status_online(raw: Any) -> bool:
     return False
 
 
+def _friendly_name(raw: Any) -> str | None:
+    """The device_name a Canary advertises in its status payload.
+
+    People say "the gate Canary", not "cv-a1b2c3" — and the friendly name
+    is the only place that word exists on the MQTT side, so the matcher
+    has to see it or the documented flow simply never resolves.
+    """
+    if not isinstance(raw, str) or not raw.strip().startswith("{"):
+        return None
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    name = data.get("device_name") or data.get("name") or data.get("friendly_name")
+    return str(name).strip() or None if name else None
+
+
 def record_canary_event(
     devices: dict[str, Any],
     device_id: str,
@@ -243,6 +262,7 @@ def fleet_brief(
                 unknown.append(device_id)
             detail[device_id] = {
                 "online": is_online,
+                "name": _friendly_name(devices[device_id].get("status")),
                 "trusted": verdict.get("trusted") if isinstance(verdict, dict) else None,
                 "reason": verdict.get("reason") if isinstance(verdict, dict) else None,
                 "last_event": devices[device_id].get("last_event"),
@@ -280,6 +300,7 @@ def fleet_brief(
         "night": is_night(local_hour),
         "device_count": len(device_ids),
         "device_ids": device_ids,
+        "device_names": {d: v["name"] for d, v in detail.items() if v.get("name")},
         "device_detail": detail,
         "online": online,
         "verified": verified,
@@ -378,6 +399,19 @@ def _canary_trust_clause(canary: dict[str, Any]) -> str:
     return " The event was published without a verified signature."
 
 
+def _night_trust_clause(canary: dict[str, Any]) -> str:
+    """The event's own verdict, kept even in the shortest register.
+
+    Brevity is law 2; laundering an unverified publish is never a
+    permitted way to be brief.
+    """
+    if canary.get("trusted"):
+        return ""
+    if canary.get("reason") == "mismatch":
+        return " That one's under the mismatched key, so hold it loosely."
+    return " That one came in unverified."
+
+
 def _speak_whats_up_night(brief: dict[str, Any]) -> str:
     """The 2 a.m. answer: can I go back to sleep, yes or no.
 
@@ -386,6 +420,24 @@ def _speak_whats_up_night(brief: dict[str, Any]) -> str:
     — is dropped, because at 2 a.m. it is noise between the question and
     the only thing being asked (docs/design/voice_moments.md, moment 1).
     """
+    canary = brief.get("canary_latest")
+    recent = False
+    if canary is not None:
+        recent = (brief["now"] - canary["received_at"]) < 3600
+
+    # An alarm outranks everything, at 2 a.m. most of all. This check
+    # comes before the key-mismatch summary because that summary ends in
+    # "nothing else is out of place", which would be a false all-clear
+    # spoken over a smoke alarm.
+    if canary and _snake(canary.get("event_type")) in _ALERT_EVENT_TYPES:
+        label = _spoken_label(canary.get("event_type"))
+        when = ago_phrase(brief["now"] - canary["received_at"])
+        return (
+            f"{label[:1].upper() + label[1:]}, {when}, from the "
+            f"{_spoken_name(canary['device_id'])} Canary."
+            + _night_trust_clause(canary)
+        )
+
     if brief["mismatched"]:
         names = _join_names([_spoken_name(d) for d in brief["mismatched"]])
         return (
@@ -393,13 +445,14 @@ def _speak_whats_up_night(brief: dict[str, Any]) -> str:
             "match its pin. Nothing else is out of place."
         )
 
-    canary = brief.get("canary_latest")
-    if canary and (brief["now"] - canary["received_at"]) < 3600:
+    if recent and canary is not None:
         label = _spoken_label(canary.get("event_type"))
         when = ago_phrase(brief["now"] - canary["received_at"])
         return (
             f"One thing in the last hour: {label}, {when}, from the "
-            f"{_spoken_name(canary['device_id'])} Canary. Nothing else."
+            f"{_spoken_name(canary['device_id'])} Canary."
+            + _night_trust_clause(canary)
+            + " Nothing else."
         )
 
     if brief["kernel_configured"] and not brief["kernel_ok"]:
@@ -611,7 +664,11 @@ def _normalize(text: str) -> str:
     return "".join(ch for ch in str(text).lower() if ch.isalnum())
 
 
-def match_device(device_ids: list[str], spoken: str) -> str | None:
+def match_device(
+    device_ids: list[str],
+    spoken: str,
+    names: dict[str, str] | None = None,
+) -> str | None:
     """Best device_id for a spoken name, or None.
 
     Speech-to-text will not reproduce an id exactly: "cv-1" comes back as
@@ -625,18 +682,30 @@ def match_device(device_ids: list[str], spoken: str) -> str | None:
     # Strip the words people wrap a name in.
     words = [w for w in str(spoken).lower().split() if w not in ("the", "canary", "canaries", "one")]
     cleaned = " ".join(words) or str(spoken).lower()
+
+    # Every string this device answers to: its id and its advertised
+    # friendly name. Matching runs over both, so a serial-like id with a
+    # friendly name of "Gate" still resolves from "the gate Canary".
+    aliases: dict[str, list[str]] = {}
     for device_id in device_ids:
-        if device_id.lower() == cleaned:
+        forms = [device_id]
+        friendly = (names or {}).get(device_id)
+        if friendly:
+            forms.append(friendly)
+        aliases[device_id] = forms
+
+    for device_id, forms in aliases.items():
+        if any(f.lower() == cleaned for f in forms):
             return device_id
     target = _normalize(cleaned)
     if not target:
         return None
-    exact = [d for d in device_ids if _normalize(d) == target]
+    exact = [d for d, forms in aliases.items() if any(_normalize(f) == target for f in forms)]
     if len(exact) == 1:
         return exact[0]
     partial = [
-        d for d in device_ids
-        if target and (target in _normalize(d) or _normalize(d) in target)
+        d for d, forms in aliases.items()
+        if any(target in _normalize(f) or _normalize(f) in target for f in forms)
     ]
     if len(partial) == 1:
         return partial[0]
@@ -649,7 +718,7 @@ def speak_device_check(brief: dict[str, Any], spoken_name: str) -> str:
     if not device_ids:
         return "I haven't heard from any Canaries yet, so I can't tell you about that one."
 
-    device_id = match_device(device_ids, spoken_name)
+    device_id = match_device(device_ids, spoken_name, brief.get("device_names"))
     if device_id is None:
         known = ", ".join(_spoken_name(d) for d in device_ids[:4])
         more = " and others" if len(device_ids) > 4 else ""
@@ -658,7 +727,7 @@ def speak_device_check(brief: dict[str, Any], spoken_name: str) -> str:
         )
 
     info = (brief.get("device_detail") or {}).get(device_id) or {}
-    name = _spoken_name(device_id)
+    name = info.get("name") or _spoken_name(device_id)
     parts = [f"The {name} Canary is {'online' if info.get('online') else 'not reporting as online right now'}"]
     if info.get("trusted"):
         parts.append("and its signature checks out against the pinned key.")

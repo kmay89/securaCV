@@ -310,13 +310,23 @@ class HelpIntentHandler(intent.IntentHandler):
 # design doc's status table, and is deliberately not claimed here.
 
 
-def _watch_bucket(hass: HomeAssistant) -> list[dict[str, Any]]:
-    """The list of live watches, created on first use."""
+# Every collection is bounded. Expired watches are evicted rather than
+# merely filtered out of speech, and a cap keeps repeated (or false-wake)
+# start commands from growing the list without limit.
+MAX_WATCHES = 20
+
+
+def _watch_bucket(hass: HomeAssistant, now: float | None = None) -> list[dict[str, Any]]:
+    """The live watches, purged of anything already expired."""
     domain_data = hass.data.setdefault(DOMAIN, {})
     bucket = domain_data.get("watches")
     if not isinstance(bucket, list):
         bucket = []
         domain_data["watches"] = bucket
+    if now is not None:
+        alive = [w for w in bucket if now < w.get("ends_at", 0.0)]
+        if len(alive) != len(bucket):
+            bucket[:] = alive
     return bucket
 
 
@@ -353,7 +363,13 @@ class StartWatchIntentHandler(intent.IntentHandler):
             return response
 
         now = time.time()
-        bucket = _watch_bucket(hass)
+        bucket = _watch_bucket(hass, now)
+        if len(bucket) >= MAX_WATCHES:
+            response.async_set_speech(
+                f"I'm already running {len(bucket)} watches, which is as many "
+                "as I'll keep. End one on the dashboard and ask me again."
+            )
+            return response
         days = watches.parse_duration_days(duration_text)
         concern = watches.concern_from_text(subject_text)
         label = subject_text
@@ -398,7 +414,8 @@ class ListWatchesIntentHandler(intent.IntentHandler):
 
     async def async_handle(self, intent_obj: intent.Intent) -> intent.IntentResponse:
         response = intent_obj.create_response()
+        now = time.time()
         response.async_set_speech(
-            watches.speak_roster(_watch_bucket(intent_obj.hass), time.time())
+            watches.speak_roster(_watch_bucket(intent_obj.hass, now), now)
         )
         return response

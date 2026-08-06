@@ -757,3 +757,67 @@ def test_law_three_caps_names_inside_a_sentence():
     speech = speak_offline_check(fleet_brief([_entry(devices)], NOW))
     assert "and 6 others" in speech
     assert speech.count(",") <= 4
+
+
+def test_night_register_never_suppresses_an_alarm():
+    # A smoke alarm must outrank the key-mismatch summary, whose closing
+    # "nothing else is out of place" would otherwise be a false all-clear
+    # spoken over an alarm at 2 a.m.
+    devices = {
+        "kitchen": {
+            "status": "online",
+            "last_event": {
+                "event_type": "acoustic_smoke_alarm",
+                "received_at": NOW - 300,
+                "trusted": True,
+                "reason": "ok",
+            },
+        },
+        "gate": {"status": "online"},
+    }
+    verify = {
+        "kitchen": {"trusted": True, "reason": "ok"},
+        "gate": {"trusted": False, "reason": "mismatch"},
+    }
+    speech = speak_whats_up(fleet_brief([_entry(devices, verify)], NOW, local_hour=2))
+    assert speech.startswith("Acoustic smoke alarm")
+    assert "Nothing else is out of place" not in speech
+
+
+def test_night_register_keeps_the_trust_qualifier():
+    devices = {
+        "gate": {
+            "status": "online",
+            "last_event": {
+                "event_type": "contact_state_change",
+                "received_at": NOW - 300,
+                "trusted": False,
+                "reason": "unsigned",
+            },
+        }
+    }
+    verify = {"gate": {"trusted": True, "reason": "ok"}}
+    speech = speak_whats_up(fleet_brief([_entry(devices, verify)], NOW, local_hour=3))
+    assert "came in unverified" in speech
+    # Brevity is never a permit to launder a mismatched publish either.
+    devices["gate"]["last_event"]["reason"] = "mismatch"
+    speech = speak_whats_up(fleet_brief([_entry(devices, verify)], NOW, local_hour=3))
+    assert "hold it loosely" in speech
+
+
+def test_match_device_uses_the_friendly_name_people_say():
+    # A serial-like id with an advertised device_name must resolve from
+    # the word a person actually says.
+    devices = {
+        "cv-a1b2c3": {"status": '{"status": "online", "device_name": "Gate"}'},
+        "cv-d4e5f6": {"status": '{"status": "online", "device_name": "Back Door"}'},
+    }
+    brief = fleet_brief([_entry(devices)], NOW)
+    assert brief["device_names"]["cv-a1b2c3"] == "Gate"
+
+    assert match_device(brief["device_ids"], "the gate canary", brief["device_names"]) == "cv-a1b2c3"
+    assert match_device(brief["device_ids"], "back door", brief["device_names"]) == "cv-d4e5f6"
+    # The raw id still works for anyone who says it.
+    assert match_device(brief["device_ids"], "cv-a1b2c3", brief["device_names"]) == "cv-a1b2c3"
+    # And the device check speaks the friendly name back.
+    assert speak_device_check(brief, "the gate canary").startswith("The Gate Canary is online")
