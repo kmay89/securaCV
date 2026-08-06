@@ -725,12 +725,23 @@ assert(!pillars_in || board_w/2 - hole_ix_usb + brass_d/2 <= xc/2 - 0.15,
            " reaches x=", board_w/2 - hole_ix_usb + brass_d/2,
            ", into the bezel wall at ", xc/2, " — re-measure hole_ix_usb ",
            "and brass_d (the 1.27 reading of the drawing does this)"));
-assert(!pillars_in || nub_y0 + snap_w/2 - 0.95 <=
+// ⚠️ This one measures the RIDGE (nub_w), not the window (snap_w) — it is the
+// only one of the three that does, because it is the only one asking about a
+// feature on the LID. The other two ask whether the hole in the bezel wall
+// clears the paddle recess and the corner posts; this asks whether the lid's
+// ridge clears the brass pillars, and those are different sizes now.
+// It used to read `snap_w/2 - 0.95`, a hand-tuned correction that reproduced
+// the ridge's 0.65 half-width back when snap_w was 3.2 and sized both. The
+// moment snap_w became the window alone, that correction went to -0.15 — the
+// gate believed the ridge reached INBOARD of its own center and understated it
+// by 0.8 mm. Exactly the defect this commit set out to fix, re-introduced one
+// assert away from it, and caught in review. Derive it, never correct it.
+assert(!pillars_in || nub_y0 + nub_w/2 <=
        (board_l/2 - hole_iy_usb) - brass_d/2 - 0.4,
-       str("a snap nub reaches y=", nub_y0 + snap_w/2 - 0.95,
+       str("a snap nub reaches y=", nub_y0 + nub_w/2,
            ", into the USB-end pillar's flank at y=",
            (board_l/2 - hole_iy_usb) - brass_d/2,
-           " — pull nub_y0 in or slim snap_w"));
+           " — pull nub_y0 in or slim nub_w"));
 assert(headers != "male" || hdr_drop > back_stack, "headers=male but hdr_drop is shallower than the stripped-board clearance");
 assert(headers != "male" || tol_slide + hdr_inset - 0.35 >= skirt_clear + skirt_wall + 0.25,
        "skirt would sit in the header pin row — thin skirt_wall or re-measure hdr_inset");
