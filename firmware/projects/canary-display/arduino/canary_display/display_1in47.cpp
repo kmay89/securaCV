@@ -51,6 +51,9 @@
 #define CD_1IN47_EXIO 1
 #include <Wire.h>
 #endif
+#ifdef CD_NIGHTLIGHT
+#include <Wire.h>   // the QMI8658 rides the same shared bus
+#endif
 
 #include "display.h"
 #include "core_compat.h"
@@ -325,6 +328,105 @@ void backlight_night_set(uint16_t duty13) {
   cc_ledc_write(TFT_PIN_BL, LEDC_CHANNEL, NIGHT_DUTY_MAX - duty13);
 #endif
 }
+
+#ifdef CD_NIGHTLIGHT
+// ── Hardware rotation ─────────────────────────────────────────────────────
+// The stock Arduino_ST7789::setRotation gives us everything geometric for
+// free — logical width/height swap, the 30-px window offset migrating to
+// the row axis in landscape (our offsets are symmetric, so its COL1/COL2
+// ROW1/ROW2 shuffle is exact), and the address-window cache reset. What it
+// gets wrong for THIS glass is only the MADCTL byte: its table assumes a
+// stock panel (RGB order, unmirrored at rotation 0), while the vendor
+// personality is MX|BGR at rotation 0.
+//
+// Composing "stock rotation matrix, then this panel's extra X mirror" in
+// MADCTL terms toggles the MX bit (MX always names the controller's column
+// axis, with or without MV), plus BGR always:
+//
+//   stock: r0=0x00        r1=MX|MV=0x60   r2=MX|MY=0xC0   r3=MY|MV=0xA0
+//   ours:  r0=MX|BGR=0x48 r1=MV|BGR=0x28  r2=MY|BGR=0x88  r3=MX|MY|MV|BGR=0xE8
+//
+// Consistency proof: the r0 entry reproduces the vendor init's own MADCTL
+// byte (TFT_MADCTL_ROT0) exactly. Bench-verify the two landscapes on first
+// rotation — if they come up mirrored, the fix is swapping the r1/r3 bytes
+// here, nothing structural.
+void display_set_rotation(uint8_t rot) {
+  if (!s_panel || !s_bus) return;
+  rot &= 3;
+  s_panel->setRotation(rot);
+  static const uint8_t kMadctl[4] = {0x48, 0x28, 0x88, 0xE8};
+  s_bus->beginWrite();
+  s_bus->writeCommand(0x36);
+  s_bus->write(kMadctl[rot]);
+  s_bus->endWrite();
+}
+
+// ── QMI8658 IMU (shared I2C bus with the EXIO expander) ─────────────────
+// Accel-only, low-power 21 Hz, +-4 g — a lamp asking "which way is down".
+// Register protocol per the vendor demo's QMI8658 component; the address
+// strap differs between board revisions, so init probes both.
+namespace {
+constexpr uint8_t QMI_WHO_AM_I  = 0x00;   // answers 0x05
+constexpr uint8_t QMI_CTRL1     = 0x02;   // 0x40 = auto-increment addresses
+constexpr uint8_t QMI_CTRL2     = 0x03;   // accel: aFS[6:4] | aODR[3:0]
+constexpr uint8_t QMI_CTRL7     = 0x08;   // sensor enables: bit0 = accel
+constexpr uint8_t QMI_AX_L      = 0x35;   // 6-byte XYZ burst starts here
+uint8_t s_imu_addr = 0;                   // 0 = no IMU answered
+
+bool imu_write(uint8_t reg, uint8_t val) {
+  Wire.beginTransmission(s_imu_addr);
+  Wire.write(reg);
+  Wire.write(val);
+  return Wire.endTransmission() == 0;
+}
+
+bool imu_read(uint8_t reg, uint8_t* buf, size_t len) {
+  Wire.beginTransmission(s_imu_addr);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom((int)s_imu_addr, (int)len) != (int)len) return false;
+  for (size_t i = 0; i < len; i++) buf[i] = (uint8_t)Wire.read();
+  return true;
+}
+}  // namespace
+
+bool imu_init() {
+  // Wire is already up (display_init's EXIO path begins the shared bus).
+  const uint8_t addrs[2] = {IMU_I2C_ADDR, (uint8_t)(IMU_I2C_ADDR ^ 0x01)};
+  for (uint8_t a : addrs) {
+    s_imu_addr = a;
+    uint8_t who = 0;
+    if (imu_read(QMI_WHO_AM_I, &who, 1) && who == 0x05) {
+      // ±4 g (aFS=001) + low-power 21 Hz (aODR=1101); accel only. If the
+      // bench finds LP mode shy on a board revision, 0x14 (normal 128 Hz)
+      // is the one-byte fallback.
+      const bool ok = imu_write(QMI_CTRL1, 0x40) &&
+                      imu_write(QMI_CTRL2, 0x1D) &&
+                      imu_write(QMI_CTRL7, 0x01);
+      if (ok) {
+        log_line("IMU", "QMI8658 up — auto-orient armed.");
+        return true;
+      }
+    }
+  }
+  s_imu_addr = 0;
+  log_line("IMU", "QMI8658 quiet — auto-orient off, everything else fine.");
+  return false;
+}
+
+bool imu_read_accel(int32_t* ax, int32_t* ay, int32_t* az) {
+  if (!s_imu_addr) return false;
+  uint8_t b[6];
+  if (!imu_read(QMI_AX_L, b, sizeof(b))) return false;
+  const int16_t x = (int16_t)((b[1] << 8) | b[0]);
+  const int16_t y = (int16_t)((b[3] << 8) | b[2]);
+  const int16_t z = (int16_t)((b[5] << 8) | b[4]);
+  if (ax) *ax = x;
+  if (ay) *ay = y;
+  if (az) *az = z;
+  return true;
+}
+#endif  // CD_NIGHTLIGHT
 
 #ifdef CD_1IN47_TOUCH
 TouchSample touch_read() {

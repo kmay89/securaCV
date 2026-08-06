@@ -63,4 +63,16 @@ final class AwayReachTests: XCTestCase {
                 "only darkness is unknowable from away; everything else speaks")
         }
     }
+
+    func testOnWiFiIsNotClaimedFromAcrossTown() {
+        // The delivery label is a claim about WHERE the phone was, and it was
+        // only ever true because `awayFromHome` was hardcoded false. An away
+        // phone still posts locally for what it can genuinely observe, and
+        // stamping that "On Wi-Fi" would be a false statement on the one tab
+        // whose job is answering "did this actually reach me?" honestly.
+        XCTAssertEqual(AlertDelivery.onLAN.label, "On Wi-Fi")
+        XCTAssertEqual(AlertDelivery.away.label, "Away")
+        XCTAssertTrue(AlertDelivery.away.rawValue > AlertDelivery.onLAN.rawValue,
+                      "the ledger only moves delivery up, so away must outrank on-LAN")
+    }
 }

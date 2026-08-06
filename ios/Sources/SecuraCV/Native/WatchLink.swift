@@ -138,7 +138,11 @@ extension WatchLink: WCSessionDelegate {
                 self.replyWithCurrentSnapshot(replyHandler)
             case WristSync.commandMute:
                 if let id = message[WristSync.muteIDKey] as? String, !id.isEmpty {
-                    self.store?.mute(id)
+                    // Unspecified or unreadable → an hour, the length this
+                    // command has always meant. A duration we can't parse
+                    // must never become a longer silence than asked for.
+                    let raw = message[WristSync.muteDurationKey] as? String ?? ""
+                    self.store?.mute(id, duration: MuteDuration(rawValue: raw) ?? .oneHour)
                 }
                 // Answer with the post-mute snapshot so the wrist row updates
                 // in the same breath as the tap.

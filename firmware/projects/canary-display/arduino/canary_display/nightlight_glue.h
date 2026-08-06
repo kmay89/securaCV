@@ -8,12 +8,34 @@
 
 namespace canary::care {
 
-// Load prefs from NVS (seeds below on first boot) and seed the visits
-// cadence. `seed` is the same FNV-1a device-id hash main.cpp feeds the
-// ambient-life layer: distinct across devices, reproducible within one.
-void nightlight_begin(uint32_t seed);
+// Load prefs from NVS (seeds below on first boot). Called EARLY in setup —
+// the persisted orientation must be known before the first face builds.
+// The visits cadence is seeded separately (nightlight_visits().seed) from
+// the same FNV-1a device-id hash the ambient-life layer uses.
+void nightlight_begin();
 
 NightlightVisits& nightlight_visits();
+
+// ── Orientation (the auto-orient wave) ───────────────────────────────────
+// The RENDERED rotation, 0..3 quarter turns CW (io/orientation.h Orient
+// numbering = Arduino_GFX's). Persisted; main.cpp owns applying it to the
+// panel + LVGL + face.
+uint8_t nightlight_rotation();
+void nightlight_set_rotation(uint8_t rot);
+
+// Auto-orient: the IMU follows real movement (gravity-settled — see
+// io/orientation.h). A MANUAL orientation choice — triple-press or the
+// app — turns this off, the way touching a climate dial leaves AUTO;
+// the app's toggle turns it back on.
+bool nightlight_auto_rotate();
+void nightlight_set_auto_rotate(bool on);
+
+// Cross-context orientation request (the web settings handler runs inside
+// glass_web_tick and must not rebuild the face itself): stash a rotation,
+// main.cpp's loop takes it and walks the single apply path. Returns -1
+// when nothing is pending.
+void nightlight_request_rotation(uint8_t rot);
+int nightlight_take_rotation_request();
 
 // 12-hour clock (the shipped default — a bedside kid's clock says 8:15,
 // not 20:15). The app and the settings surface own it at runtime.

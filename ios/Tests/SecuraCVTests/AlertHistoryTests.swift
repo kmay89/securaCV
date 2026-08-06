@@ -144,7 +144,7 @@ final class AlertHistoryTests: XCTestCase {
     // MARK: - per-rule reach governs what may leave the house
 
     func testOnlyTheMatchingRulesReachDecidesWhetherAWakeIsPublished() {
-        let center = AlertCenter()
+        let center = isolatedCenter()
         // Everyday activity may travel; the serious rules are Wi-Fi only.
         center.rules = [
             .init(id: "dark", title: "A Canary went dark", minSeverity: .alert,
@@ -162,7 +162,7 @@ final class AlertHistoryTests: XCTestCase {
     }
 
     func testReachUsesTheStrongestMatchingRuleJustLikeLevelDoes() {
-        let center = AlertCenter()
+        let center = isolatedCenter()
         center.rules = [
             .init(id: "activity", title: "Everyday activity", minSeverity: .notice,
                   reach: .onWiFiOnly),
@@ -175,7 +175,7 @@ final class AlertHistoryTests: XCTestCase {
     }
 
     func testADisabledRuleGrantsNoReach() {
-        let center = AlertCenter()
+        let center = isolatedCenter()
         center.rules = [
             .init(id: "dark", title: "A Canary went dark", minSeverity: .alert,
                   reach: .anywhere, enabled: false),
@@ -435,4 +435,12 @@ final class AlertHistoryTests: XCTestCase {
         XCTAssertEqual(wrist.first?.witnessID, "live",
                        "the one row that still needs a human always makes the cut")
     }
+}
+
+/// A center with its own defaults suite: AlertCenter persists what the user
+/// arms, so tests that assign rules must not leave them for the next test.
+@MainActor
+private func isolatedCenter() -> AlertCenter {
+    let suite = "test-alert-center-\(UUID().uuidString)"
+    return AlertCenter(defaults: UserDefaults(suiteName: suite) ?? .standard)
 }
