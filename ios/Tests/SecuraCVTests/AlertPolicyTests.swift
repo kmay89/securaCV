@@ -164,19 +164,35 @@ final class AlertPolicyTests: XCTestCase {
 
     func testNoAdviceWithoutEnoughEvidence() {
         var stats = AlertActionStats()
-        for _ in 0..<(AlertTuning.minimumSample - 1) { stats.recordDismissed(.notice) }
+        for _ in 0..<(AlertTuning.minimumSample - 1) { stats.recordDismissed(.alert) }
         XCTAssertNil(AlertTuning.advice(stats: stats, rules: rules(), declined: []),
                      "a handful of dismissals on a quiet week is not evidence")
     }
 
     func testAdviceWhenAClassIsAlmostAlwaysDismissed() throws {
         var stats = AlertActionStats()
-        for _ in 0..<19 { stats.recordDismissed(.notice) }
-        stats.recordActed(.notice)
+        for _ in 0..<19 { stats.recordDismissed(.alert) }
+        stats.recordActed(.alert)
         let advice = try XCTUnwrap(AlertTuning.advice(stats: stats, rules: rules(), declined: []))
-        XCTAssertEqual(advice.ruleID, "activity")
         XCTAssertEqual(advice.dismissed, 19)
         XCTAssertEqual(advice.total, 20)
+    }
+
+    func testTheOfferNamesEveryRuleThatWouldKeepPushingTheClass() throws {
+        var stats = AlertActionStats()
+        for _ in 0..<20 { stats.recordDismissed(.alert) }
+        let advice = try XCTUnwrap(AlertTuning.advice(stats: stats, rules: rules(), declined: []))
+        XCTAssertEqual(Set(advice.ruleIDs), ["integrity", "dark"],
+                       "the shipped rules OVERLAP on an alarm — switching off one would leave the "
+                       + "other pushing exactly what the button promised to stop")
+        XCTAssertFalse(advice.ruleIDs.contains("tamper"), "a more serious class is not this offer's to touch")
+    }
+
+    func testAClassThatNeverPushesIsNeverOfferedForDemotion() {
+        var stats = AlertActionStats()
+        for _ in 0..<20 { stats.recordDismissed(.notice) }
+        XCTAssertNil(AlertTuning.advice(stats: stats, rules: rules(), declined: []),
+                     "everyday activity is pull-only; offering to stop pushing it would be theater")
     }
 
     func testAClassTheUserActsOnIsNeverOfferedForDemotion() {
@@ -186,19 +202,21 @@ final class AlertPolicyTests: XCTestCase {
         XCTAssertNil(AlertTuning.advice(stats: stats, rules: rules(), declined: []))
     }
 
-    func testDecliningIsRemembered() {
+    func testDecliningIsRemembered() throws {
         var stats = AlertActionStats()
-        for _ in 0..<20 { stats.recordDismissed(.notice) }
-        XCTAssertNotNil(AlertTuning.advice(stats: stats, rules: rules(), declined: []))
-        XCTAssertNil(AlertTuning.advice(stats: stats, rules: rules(), declined: ["activity"]),
+        for _ in 0..<20 { stats.recordDismissed(.alert) }
+        let advice = try XCTUnwrap(AlertTuning.advice(stats: stats, rules: rules(), declined: []))
+        XCTAssertNil(AlertTuning.advice(stats: stats, rules: rules(), declined: [advice.id]),
                      "‘keep them’ must not become its own nag")
+        XCTAssertEqual(advice.id, "sev-\(Severity.alert.rawValue)",
+                       "declining is an answer about a CLASS, so it has to outlive any one rule")
     }
 
-    func testARuleAlreadyOffIsNeverOffered() {
+    func testRulesAlreadyOffAreNeverOffered() {
         var stats = AlertActionStats()
-        for _ in 0..<20 { stats.recordDismissed(.notice) }
+        for _ in 0..<20 { stats.recordDismissed(.alert) }
         var off = AlertRule.defaults
-        for i in off.indices where off[i].id == "activity" { off[i].enabled = false }
+        for i in off.indices where off[i].minSeverity == .alert { off[i].enabled = false }
         XCTAssertNil(AlertTuning.advice(stats: stats, rules: off, declined: []),
                      "advising someone to turn off something already off is how ‘smart’ loses trust")
     }
@@ -214,8 +232,8 @@ final class AlertPolicyTests: XCTestCase {
         ledger.recordActed(.notice)
         XCTAssertEqual(AlertTuningLedger(defaults: defaults).stats.total(.notice), 3)
 
-        ledger.decline(ruleID: "activity")
-        XCTAssertTrue(AlertTuningLedger(defaults: defaults).declined.contains("activity"))
+        ledger.decline(key: "sev-3")
+        XCTAssertTrue(AlertTuningLedger(defaults: defaults).declined.contains("sev-3"))
 
         ledger.forget(.notice)
         XCTAssertEqual(AlertTuningLedger(defaults: defaults).stats.total(.notice), 0,

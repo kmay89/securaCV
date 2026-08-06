@@ -98,7 +98,11 @@ enum WristBeatSource: UInt8, Codable, Sendable {
     /// A Canary answered. The fleet is up; the notification path is untested.
     case fleetCheckIn = 1
 
-    init(tolerant raw: Int) { self = WristBeatSource(rawValue: UInt8(clamping: raw)) ?? .pathVerified }
+    /// Unknown (newer) sources decode to the WEAKER claim, never the stronger
+    /// one. Every other tolerant decoder in this file clamps toward the safe
+    /// reading; here "safe" means the sentence that promises less, because a
+    /// source this build has never heard of proves nothing about delivery.
+    init(tolerant raw: Int) { self = WristBeatSource(rawValue: UInt8(clamping: raw)) ?? .fleetCheckIn }
 }
 
 /// The heartbeat's human wording, in ONE place. The phone's provably-alive

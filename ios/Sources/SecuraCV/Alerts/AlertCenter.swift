@@ -61,6 +61,16 @@ struct AlertRule: Codable, Hashable, Identifiable {
             .max(by: { $0.minSeverity < $1.minSeverity })
     }
 
+    /// Every armed rule that could make this severity PUSH — the whole set,
+    /// because the rules overlap: an alarm is covered by both "Signature /
+    /// chain broke" and "A Canary went dark", and silencing the class means
+    /// silencing all of them. Rules below `.alert` are excluded because they
+    /// never push at all (digest events are pulled — `level(for:)` returns
+    /// nil), so they are not something anyone can be offered to turn off.
+    static func pushing(for severity: Severity, in rules: [AlertRule]) -> [AlertRule] {
+        rules.filter { $0.enabled && severity >= $0.minSeverity && $0.minSeverity >= .alert }
+    }
+
     /// Fold what the user chose back onto the shipped rules. Only the two
     /// fields the user owns (armed, and how far) are taken from storage; the
     /// title and the severity it watches for stay with the app, so improving

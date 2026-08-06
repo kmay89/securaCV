@@ -20,7 +20,7 @@ final class AlertFreshnessTests: XCTestCase {
         return (AlertLedger(defaults: defaults), defaults, suite)
     }
 
-    private func record(_ id: String = "canary-a3f7|3|Gone dark",
+    private func record(id: String = "canary-a3f7|3|Gone dark",
                         witness: String = "canary-a3f7",
                         name: String = "Front Porch",
                         headline: String = "Gone dark",

@@ -235,7 +235,7 @@ struct AlertRecordRow: View {
         .confirmationDialog("Quiet \(record.name) for how long?",
                             isPresented: $choosingSnooze,
                             titleVisibility: .visible) {
-            SnoozeButtons(witnessID: record.witnessID)
+            SnoozeButtons(store: store, witnessID: record.witnessID)
         } message: {
             Text("Tamper and a failed signature still get through, however long you choose.")
         }
@@ -254,7 +254,11 @@ struct AlertRecordRow: View {
 /// phone's rows, the detail screen and the wrist can never drift on what
 /// "until tonight" means.
 struct SnoozeButtons: View {
-    @EnvironmentObject var store: FleetStore
+    /// Handed in rather than read from the environment: a confirmation
+    /// dialog's actions are presented in their own context, and environment
+    /// objects have never propagated into it reliably — the failure mode is a
+    /// crash on tap, in the one flow that exists to calm things down.
+    let store: FleetStore
     let witnessID: String
 
     var body: some View {

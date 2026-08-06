@@ -75,11 +75,6 @@ final class FleetStore: ObservableObject {
     /// widgets — reload their timelines only when the truth changed.
     private var lastGlanceFingerprint: Data?
 
-    // True while the heartbeat's lastVerified came from demo seeding rather
-    // than a real end-to-end confirmation — so it can be revoked the moment
-    // it might mask something real.
-    private var heartbeatIsDemoFed = false
-
     var worstSeverity: Severity { witnesses.map(\.effectiveSeverity).max() ?? .ok }
     var allQuiet: Bool { worstSeverity == .ok }
 
@@ -202,20 +197,18 @@ final class FleetStore: ObservableObject {
     private func recordDemoBeatIfHarmless() {
         guard demoMode else { return }
         if devices.devices.isEmpty {
-            heartbeat.recordBeat()
-            heartbeatIsDemoFed = true
+            heartbeat.recordDemoBeat()
         } else {
             revokeDemoBeat()
         }
     }
 
     /// Back to "Not yet verified" — but only if the beat was demo-fed; a real
-    /// confirmation is never discarded.
+    /// confirmation is never discarded. The flag lives on the heartbeat (and
+    /// is never persisted) so this stays true across a relaunch: a demo beat
+    /// that outlived the app would be a stage prop nothing could revoke.
     private func revokeDemoBeat() {
-        if heartbeatIsDemoFed {
-            heartbeat.reset()
-            heartbeatIsDemoFed = false
-        }
+        if heartbeat.isDemoFed { heartbeat.reset() }
     }
 
     func onScenePhase(active: Bool) {
@@ -782,17 +775,20 @@ final class FleetStore: ObservableObject {
     /// forgets the evidence, so a rule re-armed later is judged on what
     /// happens next rather than on the history that got it turned off.
     func applyTuning(_ advice: AlertTuning.Advice) {
-        if let i = alerts.rules.firstIndex(where: { $0.id == advice.ruleID }) {
+        // EVERY rule that covers the class, or the button lies: the shipped
+        // rules overlap by severity, so disabling one would leave the next
+        // one pushing the exact alerts the user just asked to stop.
+        for i in alerts.rules.indices where advice.ruleIDs.contains(alerts.rules[i].id) {
             alerts.rules[i].enabled = false
         }
         tuning.forget(advice.severity)
         objectWillChange.send()
     }
 
-    /// "No, keep pushing them." Remembered per rule, so the offer is made
+    /// "No, keep pushing them." Remembered per CLASS, so the offer is made
     /// once and never becomes its own nag.
     func declineTuning(_ advice: AlertTuning.Advice) {
-        tuning.decline(ruleID: advice.ruleID)
+        tuning.decline(key: advice.id)
         objectWillChange.send()
     }
 
@@ -901,8 +897,19 @@ final class FleetStore: ObservableObject {
             // Gate on the rule that actually matches this witness, so a
             // condition whose rule says "On Wi-Fi only" never leaves the
             // house just because some unrelated rule wants away reach.
+            //
+            // Quiet hours gate the wake too, and that is NOT the same call we
+            // make for Focus. Focus is enforced by iOS on the device that
+            // receives the notification, so publishing and letting the far
+            // end decide is correct. Quiet hours are OURS: the notification
+            // extension that turns a wake into a banner compiles one shared
+            // file and has never heard of this setting, so a wake published
+            // now would buzz the user's iPad at 3am no matter what they set.
+            // The only place that decision can be honored is here, before it
+            // leaves. (Critical is exempt by construction — QuietHours cannot
+            // hold it — so a tamper wake still goes out.)
             if allowedByWitness, alerts.reachesAnywhere(severity: w.effectiveSeverity),
-               lastAwayWake == nil {
+               !alerts.quietHoursSuppresses(w.effectiveSeverity), lastAwayWake == nil {
                 AwayPush.shared.publishWake(WakeClass(witness: w))
             }
         }

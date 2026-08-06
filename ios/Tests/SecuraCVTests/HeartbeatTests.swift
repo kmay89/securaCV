@@ -47,6 +47,34 @@ final class HeartbeatTests: XCTestCase {
         XCTAssertNil(Heartbeat(defaults: defaults).lastVerified)
     }
 
+    // MARK: - a stage prop never outlives the stage
+
+    func testADemoBeatIsNeverWrittenToDisk() throws {
+        let (defaults, suite) = try freshDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let demo = Heartbeat(defaults: defaults)
+        demo.recordDemoBeat(now: t0)
+        XCTAssertTrue(demo.isDemoFed)
+        XCTAssertTrue(demo.state.isHealthy, "the demo still looks alive on the screen it's demoing")
+
+        XCTAssertNil(Heartbeat(defaults: defaults).lastVerified,
+                     "a persisted demo beat couldn't be revoked after a relaunch — it would go on "
+                     + "claiming a verified path over a REAL fleet, masking the dead-man's-switch")
+    }
+
+    func testARealSignalOutranksTheProp() throws {
+        let (defaults, suite) = try freshDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let beat = Heartbeat(defaults: defaults)
+        beat.recordDemoBeat(now: t0)
+        beat.recordBeat(source: .fleetCheckIn, now: t0.addingTimeInterval(120))
+        XCTAssertFalse(beat.isDemoFed)
+        XCTAssertEqual(Heartbeat(defaults: defaults).lastBeat, t0.addingTimeInterval(120),
+                       "and the real one does reach disk")
+    }
+
     // MARK: - the honesty split
 
     func testAFleetCheckInNeverClaimsAVerifiedDelivery() throws {
@@ -101,6 +129,30 @@ final class HeartbeatTests: XCTestCase {
         guard case .dark = beat.state else {
             return XCTFail("a fleet that stops answering while we're listening IS the alarm: \(beat.state)")
         }
+    }
+
+    func testADeliveredAlertDoesNotRestartTheFleetsSilence() throws {
+        let (defaults, suite) = try freshDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let beat = Heartbeat(defaults: defaults)
+        beat.expectsBeats = true
+        beat.noteListening(now: t0)
+        beat.recordBeat(source: .fleetCheckIn, now: t0)
+
+        // The fleet goes quiet, and 20 minutes later we successfully deliver
+        // the alert ABOUT it. That delivery proves the path works; it says
+        // nothing about the Canary, and must not reset the switch that is
+        // firing because of it.
+        beat.recordBeat(source: .pathVerified, now: t0.addingTimeInterval(1200))
+        guard case .dark = beat.state else {
+            return XCTFail("the alert about a dark fleet cannot make the fleet look alive: \(beat.state)")
+        }
+    }
+
+    func testAnUnknownFutureBeatSourceMakesTheWeakerClaim() {
+        XCTAssertEqual(WristBeatSource(tolerant: 99), .fleetCheckIn,
+                       "a source this build has never heard of proves nothing about delivery")
     }
 
     func testNothingPairedMeansNoDeadMansSwitch() throws {

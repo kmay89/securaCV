@@ -13,10 +13,16 @@
 //     copy says exactly that (HeartbeatCopy) rather than borrowing the word
 //     "verified" for something that wasn't.
 //
-// It is ALSO the dead-man's-switch: if the beats stop past the dark window,
-// the SILENCE is itself the alarm (docs §5b). Two guards keep that from
-// crying wolf, because a false dead-man's-switch is how a real one gets
-// ignored:
+// It is ALSO the dead-man's-switch: if the FLEET's beats stop past the dark
+// window, the SILENCE is itself the alarm (docs §5b). Three guards keep that
+// honest — two against crying wolf (a false dead-man's-switch is how a real
+// one gets ignored) and one against the opposite, staying green through a
+// real outage:
+//   0. ONLY THE FLEET'S SILENCE COUNTS. The dark verdict reads
+//      `lastFleetCheckIn`, never `lastVerified` — otherwise the notification
+//      *about* a Canary going dark would refresh the timer that was supposed
+//      to be running out, and the switch would sit green while the fleet was
+//      gone.
 //   1. SILENCE ONLY COUNTS WHILE WE WERE LISTENING. The app hears nothing in
 //      the background by design (the radios are stopped), so time spent
 //      backgrounded is not evidence of anything. `noteListening()` restarts
@@ -49,9 +55,18 @@ final class Heartbeat: ObservableObject {
     /// Last end-to-end proof that an alert can reach this phone.
     @Published private(set) var lastVerified: Date?
     /// Last signal of any kind — a verification, or the fleet checking in.
+    /// This is what the card DISPLAYS.
     @Published private(set) var lastBeat: Date?
     /// What that last signal was, so the card can't overstate it.
     @Published private(set) var lastBeatSource: WristBeatSource?
+    /// Last time the FLEET answered — and the only input to the dark verdict.
+    /// Kept apart from `lastBeat` on purpose: the dead-man's-switch asks "has
+    /// the fleet gone silent?", and a notification we managed to deliver is
+    /// not an answer to that question. Sharing one timestamp meant the alert
+    /// *about* a Canary going dark refreshed the very timer that was supposed
+    /// to be running out — the switch would sit green while the fleet was
+    /// gone, which is the one failure it exists to prevent.
+    @Published private(set) var lastFleetCheckIn: Date?
 
     /// Beats are expected on this cadence; miss `missTolerance` in a row → dark.
     var beatInterval: TimeInterval = 300      // 5 min
@@ -96,6 +111,27 @@ final class Heartbeat: ObservableObject {
         }
     }
 
+    /// True while the only thing holding this alive is demo seeding. Kept in
+    /// MEMORY and never written to disk, which is the whole trick: a demo
+    /// beat that survived a relaunch could not be revoked (the flag that
+    /// knows to revoke it wouldn't survive), so a stage prop would go on
+    /// claiming a verified path over a real fleet — masking the very
+    /// dead-man's-switch it was standing in for.
+    @Published private(set) var isDemoFed = false
+
+    /// The demo's stage prop: alive-looking, never persisted, and dropped by
+    /// the first real signal or the first real device.
+    func recordDemoBeat(now: Date = Date()) {
+        lastBeat = now
+        lastBeatSource = .pathVerified
+        lastVerified = now
+        // The prop stands in for the fleet too, so the demo's card doesn't
+        // accuse a fleet that isn't there of going dark.
+        lastFleetCheckIn = now
+        isDemoFed = true
+        tick(now: now)
+    }
+
     /// A signal arrived. `.pathVerified` is the strong claim (a delivery iOS
     /// accepted); `.fleetCheckIn` is the weak one (a Canary answered).
     func recordBeat(source: WristBeatSource = .pathVerified, now: Date = Date()) {
@@ -109,6 +145,10 @@ final class Heartbeat: ObservableObject {
         lastBeat = now
         lastBeatSource = source
         if source == .pathVerified { lastVerified = now }
+        // Only the fleet answering feeds the dead-man's-switch.
+        if source == .fleetCheckIn { lastFleetCheckIn = now }
+        // A real signal outranks the prop, and only real signals reach disk.
+        isDemoFed = false
         persist()
         tick(now: now)
     }
@@ -119,6 +159,8 @@ final class Heartbeat: ObservableObject {
         lastVerified = nil
         lastBeat = nil
         lastBeatSource = nil
+        lastFleetCheckIn = nil
+        isDemoFed = false
         state = .unknown
         persist()
     }
@@ -136,12 +178,16 @@ final class Heartbeat: ObservableObject {
         if case .testing = state { return }
         guard let last = lastBeat else { state = .unknown; return }
         let ago = Int(now.timeIntervalSince(last))
-        // Silence is only evidence from the later of "when we last heard
-        // something" and "when we started listening again".
-        let heardFrom = max(last, listeningSince ?? last)
+        // The dark verdict is about the FLEET's silence, so it is measured
+        // from the fleet's last answer — never from a notification we
+        // delivered — and only from the point we could hear at all.
+        let listening = listeningSince ?? last
+        let heardFrom = max(lastFleetCheckIn ?? listening, listening)
         let window = beatInterval * Double(missTolerance)
         if expectsBeats, now.timeIntervalSince(heardFrom) > window {
-            state = .dark(sinceSeconds: ago)
+            // Report the silence in the fleet's own terms.
+            let silentFor = lastFleetCheckIn.map { Int(now.timeIntervalSince($0)) } ?? ago
+            state = .dark(sinceSeconds: silentFor)
         } else {
             state = .alive(secondsAgo: ago)
         }
