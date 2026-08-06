@@ -154,6 +154,24 @@ final class AlertCenter: NSObject, ObservableObject {
     /// Focus is deliberately NOT consulted here: Focus is a property of the
     /// device doing the quieting, and the device publishing a wake is not the
     /// one that will receive it. The receiving device applies its own.
+    /// Is this condition one an away device cannot honestly claim?
+    ///
+    /// A phone that has left home cannot distinguish "the Canary died" from
+    /// "I can no longer reach the Canary" — both arrive as silence. Reporting
+    /// the second as the first is the storm every owner gets on the drive to
+    /// work, and the fastest way to teach someone to ignore this app.
+    ///
+    /// Tamper is exempt because it is the opposite kind of fact: the device
+    /// itself said so before going quiet, so the claim survives the distance.
+    /// Whatever stayed home — an Apple TV standing watch — is the authority
+    /// on darkness and publishes that wake from where it is answerable.
+    ///
+    /// Pure and static so the rule is reviewable in one place and tested
+    /// without a fleet, the `IslandPolicy`/`FocusGate` factoring.
+    static func unknowableFromAway(awayFromHome: Bool, isDark: Bool, tamper: Bool) -> Bool {
+        awayFromHome && isDark && !tamper
+    }
+
     func reachesAnywhere(severity: Severity) -> Bool {
         let matching = rules.filter { $0.enabled && severity >= $0.minSeverity }
         guard let strongest = matching.max(by: { $0.minSeverity < $1.minSeverity }) else {

@@ -691,7 +691,28 @@ final class FleetStore: ObservableObject {
         alerts.setBadge(alertLog.unseenCount)
     }
 
+    /// Is this iPhone home right now?
+    ///
+    /// Answered by the fleet's own reachability rather than by asking iOS
+    /// about the network: a device that is hearing a Canary *is* on the home
+    /// network, and no SSID read, location permission, or geofence is needed
+    /// to know it. That is the same inference the wake publisher has always
+    /// relied on — this just stops the rest of the alert path pretending the
+    /// answer is always "home".
+    ///
+    /// `.online` specifically, not merely "not dark": a stale witness means
+    /// we heard from it a while ago, which is exactly the state a phone
+    /// passes through on its way out the door.
+    private var seesFleet: Bool {
+        witnesses.contains { $0.link == .online }
+    }
+
     private func evaluateAlerts() {
+        // Whether this device is away decides two things below: which rules
+        // may speak at all (a rule armed "on Wi-Fi only" must not fire from
+        // across town), and whether darkness is reportable by this device.
+        let awayFromHome = !seesFleet
+
         // Two deliveries, one decision. On the LAN we post locally; if this
         // device can see the fleet it is HOME, so it is also the one that
         // publishes the content-free wake that reaches the user's other
@@ -704,6 +725,25 @@ final class FleetStore: ObservableObject {
             let fingerprint = alertFingerprint(w)
             guard postedAlerts[w.id] != fingerprint else { continue }   // already told
             guard ackedAlerts[w.id] != fingerprint else { continue }    // user said "seen it"
+
+            // A phone that has left home cannot tell a Canary that DIED from
+            // one it simply can no longer reach — both arrive as silence.
+            // Reporting the second as the first is the notification storm
+            // every owner gets on the drive to work, and it is the fastest
+            // way to teach someone to ignore this app. So an away phone stays
+            // quiet about darkness alone, and keeps speaking for everything
+            // it can still genuinely observe (tamper the device itself
+            // reported, a failed signature). Nothing is marked as told, so
+            // the condition is reported properly on arriving home.
+            //
+            // The authority on darkness is whatever stayed home: an Apple TV
+            // showing the Wall with "stand watch" on (ResidentWatch), which
+            // publishes the offline wake from the LAN where the question can
+            // actually be answered.
+            if AlertCenter.unknowableFromAway(
+                awayFromHome: awayFromHome, isDark: w.link.isDark, tamper: w.tamper) {
+                continue
+            }
             if postedAlerts[w.id] != nil {
                 // The condition CHANGED without a calm gap (dark became
                 // tamper): the old record's story is over even though the
@@ -722,7 +762,7 @@ final class FleetStore: ObservableObject {
             let record = alertLog.note(id: "\(w.id)|\(fingerprint)", witnessID: w.id,
                                        name: w.displayName, severity: w.effectiveSeverity,
                                        headline: w.statusLine)
-            if let level = alerts.level(for: w.effectiveSeverity, awayFromHome: false) {
+            if let level = alerts.level(for: w.effectiveSeverity, awayFromHome: awayFromHome) {
                 // CONFIRM, never assume. `level` says a rule wants to tell
                 // them; it says nothing about whether iOS will actually show
                 // it. postConfirmed checks authorization and awaits the
