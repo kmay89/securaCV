@@ -248,6 +248,37 @@ final class AlertCenter: NSObject, ObservableObject {
     /// Focus is deliberately NOT consulted here: Focus is a property of the
     /// device doing the quieting, and the device publishing a wake is not the
     /// one that will receive it. The receiving device applies its own.
+    /// Is this condition one an away device cannot honestly claim?
+    ///
+    /// A phone that has left home cannot distinguish "the Canary died" from
+    /// "I can no longer reach the Canary" — both arrive as silence. Reporting
+    /// the second as the first is the storm every owner gets on the drive to
+    /// work, and the fastest way to teach someone to ignore this app.
+    ///
+    /// Tamper is exempt because it is the opposite kind of fact: the device
+    /// itself said so before going quiet, so the claim survives the distance.
+    /// Whatever stayed home — an Apple TV standing watch — is the authority
+    /// on darkness and publishes that wake from where it is answerable.
+    ///
+    /// It takes a `HomePresence`, not a Bool, and that distinction is the
+    /// whole safety of this function. The first version asked "away?" and got
+    /// its answer from the fleet's own silence — which meant it could only
+    /// ever fire when NOTHING was answering, i.e. the single-Canary death and
+    /// the whole-house power cut. Suppression now requires positive evidence
+    /// of being elsewhere; `.unknown` reports, because a notification nobody
+    /// needed costs incomparably less than silence during a fire.
+    ///
+    /// Pure and static so the rule is reviewable in one place and tested
+    /// without a fleet, the `IslandPolicy`/`FocusGate` factoring.
+    ///
+    /// `nonisolated` because that claim has to be true in the type system too:
+    /// AlertCenter is `@MainActor`, which silently made this rule
+    /// main-actor-isolated and forced every caller — tests included — onto the
+    /// main actor to ask a question that touches no state at all.
+    nonisolated static func unknowableFromAway(presence: HomePresence, isDark: Bool, tamper: Bool) -> Bool {
+        presence.maySuppressDarkness && isDark && !tamper
+    }
+
     func reachesAnywhere(severity: Severity) -> Bool {
         guard let strongest = AlertRule.strongest(for: severity, in: rules) else { return false }
         return strongest.reach == .anywhere

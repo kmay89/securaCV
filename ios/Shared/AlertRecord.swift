@@ -29,7 +29,10 @@ import Foundation
 enum AlertDelivery: UInt8, Codable, Hashable, Sendable {
     case notDelivered = 0   // it crossed a rule but could not reach them
     case onLAN = 1          // local notification, phone was home on Wi-Fi
-    case away = 2           // the wake path reached them off-network
+    // It reached them while they were off the home network — either the wake
+    // path did it, or an away phone posted locally for something it could
+    // still genuinely observe. Both are "Away"; neither is "On Wi-Fi".
+    case away = 2
 
     init(tolerant raw: Int) { self = AlertDelivery(rawValue: UInt8(clamping: raw)) ?? .notDelivered }
 

@@ -99,6 +99,14 @@ final class FleetStore: ObservableObject {
         // guards couldn't see.)
         (postedAlerts, ackedAlerts) = AlertLedger.foldOpenAlerts(records: alertLog.records)
 
+        // Started unconditionally, and it is NOT discovery: NWPathMonitor
+        // reports this phone's own link type and nothing about the network it
+        // is on — no scanning, no SSID, no permission, nothing to consent to.
+        // It runs from launch because `sawFleetOnThisNetwork` is a claim about
+        // the current attachment, and starting it late would begin every
+        // session unable to tell a blackout from a guest network.
+        NetworkVantage.shared.start()
+
         // Forward every collaborator's change into ours, so any view observing
         // the store updates when discovery, BLE, alerts, heartbeat, or the
         // device list change — no view has to know the internal object graph.
@@ -799,7 +807,54 @@ final class FleetStore: ObservableObject {
         alerts.setBadge(alertLog.unseenCount)
     }
 
+    /// Is this iPhone home right now?
+    ///
+    /// Answered by the fleet's own reachability rather than by asking iOS
+    /// about the network: a device that is hearing a Canary *is* on the home
+    /// network, and no SSID read, location permission, or geofence is needed
+    /// to know it. That is the same inference the wake publisher has always
+    /// relied on — this just stops the rest of the alert path pretending the
+    /// answer is always "home".
+    ///
+    /// `.online` specifically, not merely "not dark": a stale witness means
+    /// we heard from it a while ago, which is exactly the state a phone
+    /// passes through on its way out the door.
+    private var seesFleet: Bool {
+        witnesses.contains { $0.link == .online }
+    }
+
+    /// Where this phone is, as well as it can honestly tell.
+    ///
+    /// `seesFleet` alone is NOT that answer, and the difference is not
+    /// academic: darkness is the only thing that makes `seesFleet` false, so
+    /// an away-guard fed by it fires precisely when every Canary has gone
+    /// quiet — the one-Canary household whose Canary just died, and the power
+    /// cut that took the whole house. HomePresence adds the two
+    /// permission-free facts that tell those apart from a drive to work.
+    private var presence: HomePresence {
+        let seeing = seesFleet
+        // Latch the vantage while we can still prove it: a Canary answering
+        // now is what makes this network's later silence newsworthy.
+        if seeing { NetworkVantage.shared.noteFleetSeen() }
+        return HomePresence.evaluate(
+            seesFleet: seeing,
+            onWiFi: NetworkVantage.shared.onWiFi,
+            sawFleetOnThisNetwork: NetworkVantage.shared.sawFleetOnThisNetwork)
+    }
+
     private func evaluateAlerts() {
+        // Whether this device is away decides two things below: which rules
+        // may speak at all (a rule armed "on Wi-Fi only" must not fire from
+        // across town), and whether darkness is reportable by this device.
+        //
+        // The two questions take DIFFERENT answers out of the same presence,
+        // and conflating them was the bug. Suppressing a report demands proof
+        // we are elsewhere (`.away` only). Deciding an "on Wi-Fi only" rule
+        // may speak is the mirror image — it demands proof we are home — so
+        // `.unknown` counts as away there and as home nowhere.
+        let here = presence
+        let awayFromHome = here != .home
+
         // Two deliveries, one decision. On the LAN we post locally; if this
         // device can see the fleet it is HOME, so it is also the one that
         // publishes the content-free wake that reaches the user's other
@@ -814,7 +869,27 @@ final class FleetStore: ObservableObject {
             // A top-tier alarm nobody answered is the one exception, and it
             // gets exactly one more chance to be heard (EscalationPolicy).
             if postedAlerts[w.id] == fingerprint || ackedAlerts[w.id] == fingerprint {
-                escalateIfUnanswered(w, recordID: "\(w.id)|\(fingerprint)")
+                escalateIfUnanswered(w, recordID: "\(w.id)|\(fingerprint)",
+                                     awayFromHome: awayFromHome)
+                continue
+            }
+
+            // A phone that has left home cannot tell a Canary that DIED from
+            // one it simply can no longer reach — both arrive as silence.
+            // Reporting the second as the first is the notification storm
+            // every owner gets on the drive to work, and it is the fastest
+            // way to teach someone to ignore this app. So an away phone stays
+            // quiet about darkness alone, and keeps speaking for everything
+            // it can still genuinely observe (tamper the device itself
+            // reported, a failed signature). Nothing is marked as told, so
+            // the condition is reported properly on arriving home.
+            //
+            // The authority on darkness is whatever stayed home: an Apple TV
+            // showing the Wall with "stand watch" on (ResidentWatch), which
+            // publishes the offline wake from the LAN where the question can
+            // actually be answered.
+            if AlertCenter.unknowableFromAway(
+                presence: here, isDark: w.link.isDark, tamper: w.tamper) {
                 continue
             }
             if postedAlerts[w.id] != nil {
@@ -841,7 +916,8 @@ final class FleetStore: ObservableObject {
             // history shows what happened and says whose choice quieted it.
             let floor = witnessPrefs.floor(for: w.id)
             let allowedByWitness = w.effectiveSeverity >= floor.minSeverity
-            if allowedByWitness, let level = alerts.level(for: w.effectiveSeverity, awayFromHome: false) {
+            if allowedByWitness,
+               let level = alerts.level(for: w.effectiveSeverity, awayFromHome: awayFromHome) {
                 // CONFIRM, never assume. `level` says a rule wants to tell
                 // them; it says nothing about whether iOS will actually show
                 // it. postConfirmed checks authorization and awaits the
@@ -852,7 +928,14 @@ final class FleetStore: ObservableObject {
                 // same kind of overstatement the PR set out to remove.
                 let recordID = record.id
                 let body = "\(w.displayName): \(w.statusLine)"
-                let arrivedAway = lastAwayWake != nil
+                // "On Wi-Fi" is a claim about where the phone was, and it only
+                // stayed true while `awayFromHome` was hardcoded false. Now
+                // that it is derived, a phone across town still posts locally
+                // for everything it can genuinely observe (tamper, a failed
+                // signature) — and labeling that "On Wi-Fi" would be a false
+                // statement on the one tab whose entire job is answering
+                // "did this actually reach me?" honestly.
+                let deliveredAway = lastAwayWake != nil || awayFromHome
                 Task { [weak self] in
                     guard let self else { return }
                     do {
@@ -860,7 +943,7 @@ final class FleetStore: ObservableObject {
                                                             level: level, threadID: w.id)
                         // A wake that already reached the pocket outranks a
                         // local post; the ledger only moves delivery up.
-                        self.alertLog.markDelivery(arrivedAway ? .away : .onLAN, for: recordID)
+                        self.alertLog.markDelivery(deliveredAway ? .away : .onLAN, for: recordID)
                         // A REAL alert that iOS accepted proves the same
                         // thing the Test Alert proves, and it proves it on the
                         // day it mattered — so it counts as a verification of
@@ -935,7 +1018,15 @@ final class FleetStore: ObservableObject {
     /// (docs/design/alert_relay.md R1). What this can reach today is the
     /// user's OWN other devices, which is worth reaching: the phone that
     /// missed the first alert may be the one on the kitchen counter.
-    private func escalateIfUnanswered(_ w: Witness, recordID: String) {
+    /// Re-raise a top-tier alarm nobody answered.
+    ///
+    /// Deliberately runs even from an away phone, and deliberately runs
+    /// *before* the away-darkness guard: it never makes a new observation —
+    /// it only re-raises a record this device already posted from home — and
+    /// "nobody answered" is most likely to be true precisely when the owner
+    /// is out. `awayFromHome` is passed so the ledger says where it landed.
+    private func escalateIfUnanswered(_ w: Witness, recordID: String,
+                                      awayFromHome: Bool) {
         guard let record = alertLog.record(id: recordID), record.isOpen else { return }
         guard EscalationPolicy.shouldEscalate(severity: w.displaySeverity,
                                               integrityFailed: w.badge == .failed,
@@ -959,7 +1050,7 @@ final class FleetStore: ObservableObject {
                 // top tier is that this one may pierce a silent phone.
                 try await self.alerts.postConfirmed(title: self.fleetName, body: body,
                                                     level: .critical, threadID: w.id)
-                self.alertLog.markDelivery(.onLAN, for: recordID)
+                self.alertLog.markDelivery(awayFromHome ? .away : .onLAN, for: recordID)
                 self.heartbeat.recordBeat(source: .pathVerified)
             } catch {
                 self.alertLog.markDelivery(.notDelivered, for: recordID,
@@ -1005,13 +1096,22 @@ final class FleetStore: ObservableObject {
         let alerts = alerts
         await heartbeat.runTestAlert {
             // On-LAN self-test: post a local time-sensitive notification so
-            // the user SEES the whole path light up — and CONFIRM the system
-            // accepted it. Notifications off → this throws → the heartbeat
-            // honestly records a FAILED path instead of a hollow "verified"
-            // (the away path swaps this closure for device→relay→APNs).
-            try await alerts.postConfirmed(title: fleet,
-                                           body: "Test alert — your fleet can reach you.",
-                                           level: .important, threadID: "selftest")
+            // the user SEES this half of the path light up — and CONFIRM the
+            // system accepted it. Notifications off → this throws → the
+            // heartbeat honestly records a FAILED path instead of a hollow
+            // "verified".
+            //
+            // The copy says exactly what this proved and no more. It travels
+            // no network, so it cannot speak for the away path: that drill is
+            // `alert_relay --send-test` on the hub, which sends a real poke
+            // over the real topic to the phone in your pocket. Claiming
+            // "your fleet can reach you" from a notification the phone posted
+            // to itself is the kind of comfortable lie this project exists to
+            // not tell.
+            try await alerts.postConfirmed(
+                title: fleet,
+                body: "Notifications work on this iPhone. (Away alerts are a separate test — run it from the hub.)",
+                level: .important, threadID: "selftest")
         }
         pushLiveActivity()
         // Forced: the wrist is waiting on this exact push to leave its
