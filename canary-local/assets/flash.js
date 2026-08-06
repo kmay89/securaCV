@@ -3851,7 +3851,7 @@ async function startFlash(opts) {
     // settings region in the same pass as the firmware. If we can't locate
     // that region, the install continues — never block a flash on a
     // convenience.
-    let wifiFile = null, wifiSsid = null, seededDials = null, seededReflex = null, bakedDeviceId = "";
+    let wifiFile = null, wifiSsid = null, seededDials = null, seededReflex = null, bakedDeviceId = "", bakedApiToken = null;
     if ((opts.wifi || opts.mqtt || opts.detect || opts.reflex) && !opts.isBackup) {
       try {
         const { entries } = core.parsePartitionTable(
@@ -3864,10 +3864,19 @@ async function startFlash(opts) {
         const rInts = opts.reflex ? core.reflexValuesToNvs(opts.reflex, reflexes) : { u32: {} };
         // Broker + device id (usb-secrets) → the same NVS keys the native app writes.
         const prov = opts.mqtt ? core.mqttProvisioningToNvs(opts.mqtt) : { strings: {}, u16: {} };
+        // Blob-scheme boards (canary/wap) load their local-API bearer token
+        // from NVS before deriving one — so mint it HERE and seed it, and the
+        // owner leaves with the credential in hand instead of digging it out
+        // of the device's settings page later. Same seed the native app
+        // writes (provisioning.rs); shown once on the done card below.
+        const apiToken = opts.product && opts.product.wifi_nvs === "blob" && opts.wifi
+          ? core.mintApiToken(crypto.getRandomValues(new Uint8Array(96)))
+          : null;
+        const tokenNvs = apiToken ? core.apiTokenToNvs(apiToken) : { blobs: {} };
         const nvsImg = core.buildNvsSeedImage(
           { wifi: opts.wifi || null,
             wifiScheme: (opts.product && opts.product.wifi_nvs) || "blob",
-            strings: prov.strings, u16: prov.u16,
+            strings: prov.strings, u16: prov.u16, blobs: tokenNvs.blobs,
             u8: dInts.u8, u32: { ...dInts.u32, ...rInts.u32 } }, nvs.size);
         wifiFile = { data: core.bytesToBinaryString(nvsImg), address: nvs.offset };
         wifiSsid = opts.wifi ? opts.wifi.ssid : null;
@@ -3876,6 +3885,7 @@ async function startFlash(opts) {
         // Only a device id that was actually written to NVS may appear as the
         // certificate's Ring ID (this line is reached only on a successful bake).
         bakedDeviceId = prov.strings.dev_id || "";
+        bakedApiToken = apiToken;
       } catch (e) {
         box.stage("Couldn’t bake the settings (" + String(e.message || e) +
           ") — continuing; everything is still tunable after boot");
@@ -3938,7 +3948,8 @@ async function startFlash(opts) {
     }
     setPhase(phaseDone({ ...opts, backupName, backupFailed, diff, settings,
       shaHex, shaSigned, sigVerified, sigChecked, bytesWritten: bytes.length,
-      wifiSsid, seededDials, seededReflex, provDeviceId: bakedDeviceId, wifi: null }));
+      wifiSsid, seededDials, seededReflex, provDeviceId: bakedDeviceId,
+      apiToken: bakedApiToken, wifi: null }));
   } catch (e) {
     state.busy = false;
     // Self-heal write-time failures too: a flaky cable can sync at 921600 but
@@ -4109,6 +4120,36 @@ function phaseDone(opts) {
       ` Your WiFi is baked in — the Canary should join “${opts.wifiSsid}” on its very first boot. ` +
       `No setup network needed (it still appears if the join fails, as the fallback).`));
     box.append(w);
+  }
+  if (opts.apiToken) {
+    // Shown ONCE, here — deliberately not remembered by this page (the
+    // Nursery roster keeps public facts only). The native Flasher stores the
+    // same credential in the OS keychain so its fleet book can use it.
+    const t = el("div", "flash-report-sec flash-token");
+    t.append(el("h3", null, "This board's local API key — shown once"));
+    const p = el("p", "muted",
+      "Minted fresh for this board and written into its settings with the WiFi. " +
+      "It unlocks the Canary's own local API (status, settings, over-the-air updates) — " +
+      "the device's settings page shows it again later, and a reflash mints a new one. " +
+      "Copy it now if you'll want it:");
+    t.append(p);
+    const row = el("div", "flash-token-row");
+    const codeEl = el("code", "flash-token-code", opts.apiToken);
+    row.append(codeEl);
+    const copyBtn = el("button", "ghost small", "Copy");
+    copyBtn.type = "button";
+    copyBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(opts.apiToken);
+        copyBtn.textContent = "Copied ✓";
+      } catch {
+        copyBtn.textContent = "Select + copy it by hand";
+      }
+      setTimeout(() => { copyBtn.textContent = "Copy"; }, 2500);
+    });
+    row.append(copyBtn);
+    t.append(row);
+    box.append(t);
   }
   if (opts.seededDials) {
     const d = opts.seededDials;

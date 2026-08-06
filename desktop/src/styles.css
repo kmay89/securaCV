@@ -876,3 +876,34 @@ kbd {
   color: var(--text);
 }
 @media (max-width: 620px) { .bench-slider { grid-template-columns: 1fr 1fr 44px; } }
+
+/* ── the fleet book (Fleet tab, above the Witness Wall) ─────────────────── */
+.fleet-book { padding: 4px 10px 14px; }
+.fb-head { display: flex; align-items: baseline; gap: 12px; margin: 6px 0 10px; }
+.fb-head h2 { font-size: 17px; margin: 0; }
+.fb-empty { max-width: 60ch; }
+.fb-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 12px 14px; margin: 8px 0;
+}
+.fb-row.fb-stranger { border-style: dashed; }
+.fb-main { flex: 1 1 260px; min-width: 0; }
+.fb-name { font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fb-sub { color: var(--text-secondary); font-size: 12.5px; margin-top: 2px; word-break: break-word; }
+.fb-seen { color: var(--text-muted); font-size: 12px; margin-top: 4px; display: flex; align-items: center; gap: 6px; }
+.fb-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.fb-dot.on { background: var(--success); box-shadow: 0 0 6px var(--success); }
+.fb-dot.off { background: var(--border-strong); }
+.fb-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fb-badge {
+  font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--border-strong); color: var(--text-secondary);
+}
+.fb-badge.ok { color: var(--success); border-color: var(--success); }
+.fb-badge.warn { color: var(--caution); border-color: var(--caution); }
+.fb-note { flex-basis: 100%; margin: 2px 0 0; font-size: 12.5px; color: var(--text-secondary); }
+
+/* the setup-profile consent row under the provisioning form */
+.prov-profile { margin-top: 10px; align-items: baseline; }
+.prov-profile .muted { font-size: 12px; }

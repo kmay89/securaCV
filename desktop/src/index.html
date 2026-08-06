@@ -220,6 +220,16 @@
                 <label class="broker-only">MQTT username<input id="mqtt-user" maxlength="32" autocomplete="off"></label>
                 <label class="broker-only">MQTT password<span class="pw-row"><input id="mqtt-pass" class="pw-masked" maxlength="64" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"><button type="button" class="btn btn-ghost pw-toggle" data-pw="mqtt-pass" aria-label="Show the password">Show</button></span></label>
               </div>
+              <!-- The setup profile: type it once, every later flash fills
+                   itself in. Passwords go to the OS secret store when there is
+                   one (the note names it); everything else lives in the same
+                   local prefs the app already keeps. -->
+              <div class="row prov-profile">
+                <label class="check"><input type="checkbox" id="prov-remember" checked>
+                  Remember for next flash</label>
+                <span id="prov-remember-note" class="muted"></span>
+              </div>
+              <p id="prov-autofill-note" class="muted hidden" role="status"></p>
             </section>
             <div class="row" id="host-flash-controls">
               <button id="flash-btn" class="btn btn-primary" disabled>Flash my Canary</button>
@@ -560,6 +570,7 @@
               <label class="check"><input type="checkbox" id="hub-hidden-net"> Hidden network</label>
               <label class="check"><input type="checkbox" id="hub-ethernet"> I'll plug in ethernet instead</label>
               <label class="check"><input type="checkbox" id="hub-remember" checked> Remember these for next time</label>
+              <span id="hub-remember-note" class="muted"></span>
             </div>
 
             <details id="hub-account-panel" class="hint">
@@ -681,9 +692,13 @@
           <div id="atlas-body"></div>
         </section>
 
-        <!-- ══════════ YOUR FLEET VIEW (the Witness Wall + native LAN discovery) ══════════ -->
+        <!-- ══════════ YOUR FLEET VIEW (the book + the Witness Wall) ══════════ -->
         <section id="fleet-view" class="view hidden" data-pane="fleet">
           <div id="fleet-scan-status" class="fleet-scan-status" role="status" aria-live="polite">Scanning your network for Canaries…</div>
+          <!-- The fleet book: every Canary this app flashed, found live on the
+               network by a real mDNS browse, with per-device status and the
+               one-click over-the-air update. Rendered by fleetBook (app.js). -->
+          <div id="fleet-book" class="fleet-book"></div>
           <iframe id="witness-frame" class="witness-frame" src="witness/witness.html" title="Your Fleet — the Witness Wall"></iframe>
         </section>
 

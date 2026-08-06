@@ -1136,3 +1136,11 @@ button.flash-map-key:hover { color: var(--text); }
   padding-left: 8px;
 }
 .flash-product-tier.is-first .flash-tier-label { color: var(--warn, #a06a12); }
+
+/* ── the local-API key, shown once on the done card ───────────────────── */
+.flash-token-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.flash-token-code {
+  background: #08080a; border: 1px solid var(--edge); border-radius: 8px; padding: 8px 12px;
+  font: 13px/1.4 "SF Mono", ui-monospace, Menlo, Consolas, monospace; color: #b9c7b9;
+  user-select: all; word-break: break-all;
+}
