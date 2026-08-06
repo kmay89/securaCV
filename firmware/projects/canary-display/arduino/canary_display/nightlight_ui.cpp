@@ -1,21 +1,22 @@
-// src/ui/nightlight_ui.cpp — the Canary Nightlight face (C3 1.47" portrait),
+// src/ui/nightlight_ui.cpp — the Canary Nightlight face (C3 1.47" glass),
 // LVGL. See include/canary/ui/nightlight_ui.h for the layer contract.
 //
-// Layout, top to bottom on the 180x320 glass (geometry-parametric via
-// pins.h, like every portrait face):
-//   - the GLANCE LINE: the honest channel — link trouble, an unsynced
-//     clock, a fleet condition. Hidden only when there is nothing to say.
-//   - the CLOCK: HH:MM in drawn seven-segment digits (the same rounded
-//     mk_seg grammar the Nightstand 7 uses, scaled to a pocket glass).
-//     Ghost segments by day, digits-only at night, a breathing colon.
-//   - the CAPTION: the companion's few words during a visit.
-//   - the COMPANION: the living canary (canary_mark — its face belongs to
-//     the mood engine), perched low; a visit lifts it to center stage for
-//     a few seconds, then hands the clock back.
-//   - the LAMP, behind everything: a banded look-engine field (the same
-//     piecewise-gradient stack the nightstand's lantern draws), carrying
-//     the chosen scene — warm Lantern orange, Rainbow, Moonbeam white —
-//     at lamp strength when lit, as a soft ambient wash otherwise.
+// The face lays itself out in the LOGICAL canvas (ui/lvgl_port.cpp) at
+// create time, so one composition serves all four orientations: the panel
+// rotates in hardware (hal display_set_rotation), LVGL adopts the new
+// shape, and main.cpp rebuilds this face into it.
+//
+// PORTRAIT (180x320-ish), top to bottom:
+//   glance line / 7-segment clock / date / caption / the companion low
+// LANDSCAPE (320x180-ish), left to right:
+//   the clock owns the left ~two-thirds (date under it), the companion
+//   perches in the right column with the caption beneath — a wide bedside
+//   instrument rather than a squeezed portrait.
+//
+// The TUMBLE: on an orientation commit the companion drops in from the
+// edge that WAS up (bounce path — real physics, honest direction), wearing
+// its own Startle reaction (the device really was handled; that is exactly
+// what Startle means), while the clock breathes back in behind it.
 #include "flavor_config.h"
 #ifdef CD_NIGHTLIGHT
 
@@ -23,6 +24,7 @@
 #include <stdio.h>
 
 #include "nightlight_ui.h"
+#include "lvgl_port.h"
 #include "theme.h"
 #include "canary_mark.h"
 #include "character.h"
@@ -42,15 +44,16 @@ using canary::fleet::Sev;
 namespace {
 
 #include "pins.h"
-constexpr int SCR_W = TFT_WIDTH;
-constexpr int SCR_H = TFT_HEIGHT;
-constexpr int V(int y320) { return (y320 * SCR_H) / 320; }
+
+// ── Runtime geometry (set in create() from the logical canvas) ──────────
+int s_w = TFT_WIDTH;
+int s_h = TFT_HEIGHT;
+bool s_land = false;               // landscape composition?
+int V(int y320) { return (y320 * s_h) / 320; }
 
 // ── The lamp field ──
-// Same band budget as the nightstand's lantern: 14 bands tile a 320-tall
-// glass at ~23 px each — past the point where a band edge shows through a
-// gradient, and cheap enough for the PSRAM-less C3 (colors change, nothing
-// reflows).
+// Same band budget as the nightstand's lantern: ~23 px per band on the
+// long axis, cheap on the PSRAM-less C3 (colors change, nothing reflows).
 constexpr int NL_BANDS = 14;
 lv_obj_t* s_band[NL_BANDS] = {nullptr};
 
@@ -62,14 +65,8 @@ constexpr uint8_t DIGIT_MAP[10] = {
     0b0111111, 0b0000110, 0b1011011, 0b1001111, 0b1100110,
     0b1101101, 0b1111101, 0b0000111, 0b1111111, 0b1101111,
 };
-// Digit geometry, solved from the glass width: [m][D][g][D][colon][D][g][D][m].
-constexpr int C_MARGIN = 6;
-constexpr int C_GAP    = 4;
-constexpr int C_COLON  = 16;
-constexpr int DIG_W = (SCR_W - 2 * C_MARGIN - C_COLON - 2 * C_GAP) / 4;
-constexpr int DIG_H = V(64);
-constexpr int DIG_T = DIG_W / 5 < 6 ? 6 : DIG_W / 5;
-constexpr int CLOCK_Y = V(56);
+// Digit geometry, solved at create() from the zone the clock owns.
+int s_dig_w = 30, s_dig_h = 64, s_dig_t = 7;
 
 lv_obj_t* s_clock = nullptr;          // one container so one opa dims it all
 SegDigit s_digit[4];
@@ -79,8 +76,10 @@ lv_obj_t* s_date = nullptr;
 lv_obj_t* s_glance = nullptr;         // the honest line (top)
 lv_obj_t* s_caption = nullptr;        // the companion's few words
 lv_obj_t* s_bird = nullptr;
+int s_bird_px = 96;                   // bird size this composition chose
 
 uint32_t s_caption_bright_until = 0;  // ambient-life check-in window
+uint32_t s_tumble_until = 0;          // caption shows the tumble word
 VisitKind s_staged = VisitKind::None; // the visit currently on stage
 
 lv_obj_t* mk_label(lv_obj_t* parent, const lv_font_t* f, lv_color_t c) {
@@ -124,8 +123,7 @@ lv_obj_t* mk_digit(lv_obj_t* parent, SegDigit* d, int x, int y, int w, int h,
 }
 
 // value 0-9, or -1 = blank. Ghost segments keep the instrument's resting
-// shape by day and vanish at night (a dark room wants digits, not
-// scaffolding) — the Nightstand 7's rule, kept.
+// shape by day and vanish at night — the Nightstand 7's rule, kept.
 void set_digit(SegDigit* d, int value, lv_color_t color, bool night) {
   const uint8_t map = (value >= 0 && value <= 9) ? DIGIT_MAP[value] : 0;
   for (int i = 0; i < 7; i++) {
@@ -137,31 +135,66 @@ void set_digit(SegDigit* d, int value, lv_color_t color, bool night) {
   }
 }
 
-// The bird's two stage marks: its perch (low, beside the night) and center
-// stage (a visit). Moved with a translate so the align anchor never changes.
-constexpr int BIRD_LIFT = -1 * ((SCR_H * 66) / 320);
+// Build HH:MM into `parent` starting at (x0, y0) with the solved geometry.
+void build_clock_digits(lv_obj_t* parent, int x0, int gap, int colon_w) {
+  int x = x0;
+  for (int i = 0; i < 4; i++) {
+    mk_digit(parent, &s_digit[i], x, 2, s_dig_w, s_dig_h, s_dig_t);
+    x += s_dig_w;
+    if (i == 1) {
+      for (int c = 0; c < 2; c++) {
+        s_colon[c] = mk_seg(parent, x + (colon_w - s_dig_t) / 2,
+                            2 + (c == 0 ? s_dig_h / 3 - s_dig_t / 2
+                                        : 2 * s_dig_h / 3 - s_dig_t / 2),
+                            s_dig_t, s_dig_t);
+      }
+      x += colon_w;
+    } else if (i != 3) {
+      x += gap;
+    }
+  }
+}
+
+// The bird's stage lift for visits (portrait only lifts; the landscape
+// perch is already center stage).
+int bird_lift() { return s_land ? 0 : -((s_h * 66) / 320); }
 
 void stage_bird(bool up) {
   if (!s_bird) return;
-  lv_obj_set_style_translate_y(s_bird, up ? BIRD_LIFT : 0, 0);
+  lv_obj_set_style_translate_y(s_bird, up ? bird_lift() : 0, 0);
+}
+
+// ── Tumble plumbing ──────────────────────────────────────────────────────
+void anim_ty_cb(void* var, int32_t v) {
+  lv_obj_set_style_translate_y((lv_obj_t*)var, (lv_coord_t)v, 0);
+}
+void anim_tx_cb(void* var, int32_t v) {
+  lv_obj_set_style_translate_x((lv_obj_t*)var, (lv_coord_t)v, 0);
+}
+void anim_opa_cb(void* var, int32_t v) {
+  lv_obj_set_style_opa((lv_obj_t*)var, (lv_opa_t)v, 0);
 }
 
 }  // namespace
 
 void nightlight_ui_create() {
+  // Adopt the logical canvas the port is currently shaped to.
+  s_w = lvgl_port_width();
+  s_h = lvgl_port_height();
+  if (s_w <= 0 || s_h <= 0) { s_w = TFT_WIDTH; s_h = TFT_HEIGHT; }
+  s_land = s_w > s_h;
+
   lv_obj_t* scr = lv_scr_act();
   lv_obj_set_style_bg_color(scr, col_bg(), 0);
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
   lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
   // ── The lamp field, created first so everything draws over it ──
-  // Bands tile the glass exactly, each running its own two-stop gradient to
-  // the next band's color (the nightstand lantern's seamless-stack rule).
   for (int i = 0; i < NL_BANDS; i++) {
-    const int y0 = (SCR_H * i) / NL_BANDS;
-    const int y1 = (SCR_H * (i + 1)) / NL_BANDS;
+    const int y0 = (s_h * i) / NL_BANDS;
+    const int y1 = (s_h * (i + 1)) / NL_BANDS;
     lv_obj_t* b = lv_obj_create(scr);
-    lv_obj_set_size(b, SCR_W, y1 - y0);
+    lv_obj_set_size(b, s_w, y1 - y0);
     lv_obj_set_pos(b, 0, y0);
     lv_obj_set_style_radius(b, 0, 0);
     lv_obj_set_style_border_width(b, 0, 0);
@@ -172,53 +205,136 @@ void nightlight_ui_create() {
     s_band[i] = b;
   }
 
-  // ── The glance line (the honest channel) ──
+  // ── The glance line (the honest channel; both compositions: top) ──
   s_glance = mk_label(scr, font_caption(), col_muted());
   lv_obj_set_style_text_align(s_glance, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_align(s_glance, LV_ALIGN_TOP_MID, 0, V(10));
+  lv_obj_align(s_glance, LV_ALIGN_TOP_MID, 0, s_land ? 6 : V(10));
   lv_label_set_text(s_glance, "");
 
-  // ── The clock ──
-  s_clock = lv_obj_create(scr);
-  lv_obj_set_size(s_clock, SCR_W, DIG_H + 4);
-  lv_obj_set_pos(s_clock, 0, CLOCK_Y);
-  lv_obj_set_style_bg_opa(s_clock, LV_OPA_0, 0);
-  lv_obj_set_style_border_width(s_clock, 0, 0);
-  lv_obj_set_style_pad_all(s_clock, 0, 0);
-  lv_obj_clear_flag(s_clock, LV_OBJ_FLAG_SCROLLABLE);
+  if (!s_land) {
+    // ── PORTRAIT ──
+    const int margin = 6, gap = 4, colon_w = 16;
+    s_dig_w = (s_w - 2 * margin - colon_w - 2 * gap) / 4;
+    s_dig_h = V(64);
+    s_dig_t = s_dig_w / 5 < 6 ? 6 : s_dig_w / 5;
+    const int clock_y = V(56);
 
-  int x = C_MARGIN;
-  for (int i = 0; i < 4; i++) {
-    mk_digit(s_clock, &s_digit[i], x, 2, DIG_W, DIG_H, DIG_T);
-    x += DIG_W;
-    if (i == 1) {
-      for (int c = 0; c < 2; c++) {
-        s_colon[c] = mk_seg(s_clock, x + (C_COLON - DIG_T) / 2,
-                            2 + (c == 0 ? DIG_H / 3 - DIG_T / 2
-                                        : 2 * DIG_H / 3 - DIG_T / 2),
-                            DIG_T, DIG_T);
-      }
-      x += C_COLON;
-    } else if (i != 3) {
-      x += C_GAP;
-    }
+    s_clock = lv_obj_create(scr);
+    lv_obj_set_size(s_clock, s_w, s_dig_h + 4);
+    lv_obj_set_pos(s_clock, 0, clock_y);
+    lv_obj_set_style_bg_opa(s_clock, LV_OPA_0, 0);
+    lv_obj_set_style_border_width(s_clock, 0, 0);
+    lv_obj_set_style_pad_all(s_clock, 0, 0);
+    lv_obj_clear_flag(s_clock, LV_OBJ_FLAG_SCROLLABLE);
+    build_clock_digits(s_clock, margin, gap, colon_w);
+
+    s_date = mk_label(scr, font_caption(), col_muted());
+    lv_obj_set_style_text_align(s_date, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(s_date, LV_ALIGN_TOP_MID, 0, clock_y + s_dig_h + V(14));
+
+    s_caption = mk_label(scr, font_body(), col_muted());
+    lv_obj_set_style_text_align(s_caption, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(s_caption, LV_ALIGN_TOP_MID, 0, V(178));
+
+    s_bird_px = V(96);
+    s_bird = canary_mark_create(scr, s_bird_px);
+    if (s_bird) lv_obj_align(s_bird, LV_ALIGN_BOTTOM_MID, 0, V(-22));
+  } else {
+    // ── LANDSCAPE ──
+    // The clock owns the left zone; the companion takes the right column.
+    const int bird_col = (s_w * 30) / 100;          // right ~30%
+    const int zone_w = s_w - bird_col;
+    const int margin = 8, gap = 5, colon_w = 18;
+    s_dig_w = (zone_w - 2 * margin - colon_w - 2 * gap) / 4;
+    s_dig_h = (s_h * 52) / 100;                     // ~52% of the height
+    s_dig_t = s_dig_w / 5 < 7 ? 7 : s_dig_w / 5;
+    const int clock_y = (s_h - s_dig_h) / 2 - s_h / 20;
+
+    s_clock = lv_obj_create(scr);
+    lv_obj_set_size(s_clock, zone_w, s_dig_h + 4);
+    lv_obj_set_pos(s_clock, 0, clock_y);
+    lv_obj_set_style_bg_opa(s_clock, LV_OPA_0, 0);
+    lv_obj_set_style_border_width(s_clock, 0, 0);
+    lv_obj_set_style_pad_all(s_clock, 0, 0);
+    lv_obj_clear_flag(s_clock, LV_OBJ_FLAG_SCROLLABLE);
+    build_clock_digits(s_clock, margin, gap, colon_w);
+
+    s_date = mk_label(scr, font_caption(), col_muted());
+    lv_obj_set_style_text_align(s_date, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_pos(s_date, 0, clock_y + s_dig_h + 10);
+    lv_obj_set_width(s_date, zone_w);
+
+    s_bird_px = (s_h * 52) / 100;
+    s_bird = canary_mark_create(scr, s_bird_px);
+    if (s_bird)
+      lv_obj_align(s_bird, LV_ALIGN_RIGHT_MID, -(bird_col - s_bird_px) / 2,
+                   -(s_h / 12));
+
+    s_caption = mk_label(scr, font_body(), col_muted());
+    lv_obj_set_style_text_align(s_caption, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(s_caption, bird_col + 24);
+    lv_obj_align(s_caption, LV_ALIGN_BOTTOM_RIGHT, -(bird_col - s_bird_px) / 2 + 8,
+                 -8);
   }
 
-  s_date = mk_label(scr, font_caption(), col_muted());
-  lv_obj_set_style_text_align(s_date, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_align(s_date, LV_ALIGN_TOP_MID, 0, CLOCK_Y + DIG_H + V(14));
-  lv_label_set_text(s_date, "");
-
-  // ── The companion's words ──
-  s_caption = mk_label(scr, font_body(), col_muted());
-  lv_obj_set_style_text_align(s_caption, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_align(s_caption, LV_ALIGN_TOP_MID, 0, V(178));
-  lv_label_set_text(s_caption, "");
-
-  // ── The companion ──
-  s_bird = canary_mark_create(scr, V(96));
-  if (s_bird) lv_obj_align(s_bird, LV_ALIGN_BOTTOM_MID, 0, V(-22));
   s_staged = VisitKind::None;
+  s_tumble_until = 0;
+}
+
+void nightlight_ui_tumble(uint8_t delta_cw, uint32_t now) {
+  if (!s_bird) return;
+  // The world turned delta_cw quarter turns clockwise, so the OLD "up"
+  // now points: 1 -> screen left, 2 -> screen bottom... but a fall always
+  // arrives from wherever up used to be, and after the panel re-addresses,
+  // "the old up" in NEW screen coords is: 1 quarter CW -> the right edge,
+  // 2 -> below, 3 -> the left edge. Enter from there, land on the perch.
+  int from_x = 0, from_y = 0;
+  const int fling = (s_w > s_h ? s_w : s_h) / 2;
+  switch (delta_cw & 3) {
+    case 1: from_x = fling; break;          // came over the right edge
+    case 2: from_y = -fling; break;         // fell from above
+    case 3: from_x = -fling; break;         // came over the left edge
+    default: from_y = -fling; break;
+  }
+
+  // The companion FEELS the handling — Startle is exactly the honest
+  // reaction (the mark rations it; asleep birds refuse it, so a night
+  // flip stays still, which is also right).
+  canary_mark_react(CanaryReact::Startle);
+
+  // Drop in with a bounce; both axes so diagonal entries read naturally.
+  lv_anim_t a;
+  if (from_y != 0) {
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_bird);
+    lv_anim_set_exec_cb(&a, anim_ty_cb);
+    lv_anim_set_values(&a, from_y, 0);
+    lv_anim_set_time(&a, 700);
+    lv_anim_set_path_cb(&a, lv_anim_path_bounce);
+    lv_anim_start(&a);
+  }
+  if (from_x != 0) {
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_bird);
+    lv_anim_set_exec_cb(&a, anim_tx_cb);
+    lv_anim_set_values(&a, from_x, 0);
+    lv_anim_set_time(&a, 700);
+    lv_anim_set_path_cb(&a, lv_anim_path_bounce);
+    lv_anim_start(&a);
+  }
+
+  // The clock breathes back in behind the landing.
+  if (s_clock) {
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_clock);
+    lv_anim_set_exec_cb(&a, anim_opa_cb);
+    lv_anim_set_values(&a, LV_OPA_20, LV_OPA_COVER);
+    lv_anim_set_time(&a, 900);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_start(&a);
+  }
+
+  s_tumble_until = now + 1400;   // the caption's one word of glee
 }
 
 void nightlight_ui_update(const Fleet& fleet, uint32_t now,
@@ -239,8 +355,6 @@ void nightlight_ui_update(const Fleet& fleet, uint32_t now,
     auto& lamp = canary::care::lantern();
     const bool lit = lamp.active(now, night, attention);
 
-    // The lamp's voice: only ever ticked while genuinely lit (the beacon-
-    // less C3 has no second reader, but the shared-song discipline holds).
     auto& sng = canary::ui::song();
     sng.tick(now, night, /*gated=*/!lit);
 
@@ -248,24 +362,15 @@ void nightlight_ui_update(const Fleet& fleet, uint32_t now,
     lampp.brightness = canary::care::nightlight_lamp_bri();
     if (lit) {
       lampp.scene_idx = lamp.scene();
-      lampp.night = false;   // the lamp burns at its own strength; dimming
-                             // belongs to the backlight's night floor
+      lampp.night = false;
     } else {
-      // Unlit: the same scene as a soft ambient wash behind the clock —
-      // roughly a third of the lamp's strength, so day reads as a tinted
-      // glass, not a lit lamp.
       lampp.night = night;
       lampp.brightness = (uint8_t)(((uint16_t)lampp.brightness * 85) / 255);
     }
 
-    // A night Moonwatch visit swells the field gently — the one visit that
-    // moves light instead of the bird.
     uint8_t depth = 0;
     if (st.visit.kind == VisitKind::Moonwatch && lit) depth = 96;
 
-    // plumage_bands hands Warn+ straight to the look engine's semantic
-    // override, so an attention field is the true amber/red — the honest
-    // paths are the same code they always were.
     canary::color::Rgb ws[NL_BANDS + 1];
     canary::color::plumage_bands(now, lampp, (canary::color::Sev)(uint8_t)worst,
                                  /*safe_dark=*/false, sng, depth, ws,
@@ -300,9 +405,6 @@ void nightlight_ui_update(const Fleet& fleet, uint32_t now,
     set_digit(&s_digit[2], d2, c, night);
     set_digit(&s_digit[3], d3, c, night);
 
-    // The colon breathes by day (alive), holds steady at night (a dark
-    // room wants stillness). While the clock is unsynced it pulses slowly —
-    // the face's "thinking" tell, matched by the glance line's words.
     lv_opa_t colon_opa = LV_OPA_COVER;
     if (!st.time_valid) {
       colon_opa = ((now / 1000) & 1) ? LV_OPA_40 : LV_OPA_10;
@@ -315,11 +417,12 @@ void nightlight_ui_update(const Fleet& fleet, uint32_t now,
       lv_obj_set_style_bg_opa(s_colon[i], colon_opa, 0);
     }
 
-    // A visit dims the clock to a supporting role; the stage comes back
-    // with the digits.
     const bool visiting = st.visit.kind != VisitKind::None &&
                           st.visit.kind != VisitKind::Moonwatch;
-    lv_obj_set_style_opa(s_clock, visiting ? LV_OPA_40 : LV_OPA_COVER, 0);
+    const bool tumbling = (int32_t)(now - s_tumble_until) < 0;
+    if (!tumbling) {  // the tumble's own opa animation owns it briefly
+      lv_obj_set_style_opa(s_clock, visiting ? LV_OPA_40 : LV_OPA_COVER, 0);
+    }
     if (s_date) lv_obj_set_style_opa(s_date, visiting ? LV_OPA_40 : LV_OPA_COVER, 0);
   }
 
@@ -328,16 +431,17 @@ void nightlight_ui_update(const Fleet& fleet, uint32_t now,
     const VisitKind k = st.visit.kind;
     if (k != s_staged) {
       s_staged = k;
-      // Moonwatch never moves the bird (asleep is asleep); every other
-      // visit lifts it to center stage.
       stage_bird(k != VisitKind::None && k != VisitKind::Moonwatch);
     }
+    const bool tumbling = (int32_t)(now - s_tumble_until) < 0;
     const bool bright = (int32_t)(now - s_caption_bright_until) < 0;
-    if (k != VisitKind::None) {
+    if (tumbling) {
+      lv_label_set_text(s_caption, "wheee!");
+      lv_obj_set_style_text_color(s_caption, col_text(), 0);
+    } else if (k != VisitKind::None) {
       lv_label_set_text(s_caption, canary::care::visit_caption(k));
       lv_obj_set_style_text_color(s_caption, col_text(), 0);
     } else if (bright) {
-      // Ambient-life check-in: the caption line carries the quiet hello.
       lv_label_set_text(s_caption, "here with you");
       lv_obj_set_style_text_color(s_caption, col_muted(), 0);
     } else {

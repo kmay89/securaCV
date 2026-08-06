@@ -21,7 +21,7 @@ final class FocusGateTests: XCTestCase {
 
     @MainActor
     func testFocusQuietsImportantButNeverCritical() {
-        let center = AlertCenter()
+        let center = isolatedCenter()
         // Ensure a clean shared gate, and restore it whatever happens —
         // level(for:) reads the shared suite by design (the Focus intent may
         // run in another process).
@@ -38,4 +38,12 @@ final class FocusGateTests: XCTestCase {
         XCTAssertEqual(center.level(for: .tamper, awayFromHome: false), .critical,
                        "Focus never silences the smoke alarm")
     }
+}
+
+/// A center with its own defaults suite: AlertCenter persists what the user
+/// arms, so tests that assign rules must not leave them for the next test.
+@MainActor
+private func isolatedCenter() -> AlertCenter {
+    let suite = "test-alert-center-\(UUID().uuidString)"
+    return AlertCenter(defaults: UserDefaults(suiteName: suite) ?? .standard)
 }

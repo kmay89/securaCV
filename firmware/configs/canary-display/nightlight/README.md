@@ -36,6 +36,20 @@ One board wears this flavor:
    enforced at the EXIO PWM register underneath every settings path — a
    heat budget for the closed PETG pocket case. A can't, not a won't.
 
+## It turns with the room
+
+Stand it on any of its four edges and the clock rights itself — the
+QMI8658 feeds a **gravity-settled** model (`include/canary/io/orientation.h`,
+host-tested) that commits a flip only when the device has come to rest in
+a new orientation: shakes, carries, flat lay-downs and diagonal holds
+carry no opinion, and a post-flip cooldown absorbs wobbling hands. On a
+commit the panel rotates in hardware (one MADCTL write —
+`display_set_rotation`'s table composes the vendor personality), the face
+recomposes (landscape gets the wide clock with the companion perched
+beside it), and the canary **tumbles in from the edge that was up**.
+Triple-press = manual quarter turn (parks auto, like a hand on a climate
+dial); the app's "Turn with the room" toggle re-arms it.
+
 ## The lamp's looks
 
 The scene ring is the shared look engine (`firmware/common/color`): the

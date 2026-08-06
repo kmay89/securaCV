@@ -1,11 +1,15 @@
 # Alert freshness & event history — the lifecycle that keeps the list alive (design)
 
-Status: **core built, roadmap scoped.** The alert lifecycle this doc specifies
-(open → resolved, seen/unseen, honest aging, relaunch continuity) shipped with
-this doc in `ios/` — see §5 for exactly what is code and where. The rest (§6)
-is design with named dependencies, most of them already owned by
-[`apple_watch_and_notifications.md`](apple_watch_and_notifications.md) phases
-N0/R1 and [`alert_relay.md`](alert_relay.md).
+Status: **built end to end.** The lifecycle (open → resolved, seen/unseen,
+honest aging, relaunch continuity) shipped first; the seven surfaces that
+turn it into something a user experiences — the all-clear, chosen snooze
+durations, "while you were away", heartbeat ingestion, escalation,
+local actioned-rate tuning, and per-witness rules with quiet hours — shipped
+in the change that rewrote §6 into a code map. See §5 for what is code and
+where. What is left is exactly one thing, and it is somebody else's leg:
+reaching a SECOND PERSON, which needs the relay
+([`alert_relay.md`](alert_relay.md) R1). Everything reachable from this phone
+is done.
 
 This doc answers one product question: **how does the Alerts surface stay
 useful for years — showing what needs you and what you missed, never a museum
@@ -146,45 +150,97 @@ loop:
 | Wrist parity: cap-aware needs-you-first rows (`AlertHistory.wristRows` — a live alarm never falls off the 12-row cap behind settled history), additive-optional `resolved` flag, "Cleared" chip on the watch | `WristSnapshot+App.swift`, `Shared/WristSnapshot.swift`, `SecuraCVWatch/Views/AlertsListView.swift` |
 | Lifecycle tests (resolution, reopen, sweep exemptions, fold, day grouping, wrist cap) | `ios/Tests/SecuraCVTests/AlertHistoryTests.swift` |
 
-## 6. Roadmap (design, with owners)
+## 5b. The freshness surfaces (the §6 roadmap, now code)
 
-Ordered by leverage-per-risk; each names its industry precedent and its
-dependency.
+| Piece | Where |
+|---|---|
+| **All-clear as a ledger event.** Resolutions of the last day become Today entries ("Front Porch — Gone dark, now clear"), derived from the ledger at every fold so they can't drift from the tab, and digest-tier by construction — there is no code path from here to a notification. Wears the *unverified* badge: it is the phone's own observation, never one of the fleet's signed records. | `AlertFreshness.allClearEvents` → `FleetStore.refreshOnce()` |
+| **Snooze with chosen durations.** 1 hour / until tonight / until morning, on the phone rows, the device screen, and the wrist. The menu is time-aware (`offered(at:)`) so "until tonight" at 10pm — which would mean *tomorrow* night — is never offered; the type has no untimed case, so an endless mute is unrepresentable rather than merely discouraged. Rows and the device screen say when the quiet ends. | `ios/Shared/AlertSnooze.swift`, `FleetStore.mute(_:duration:)`, `AlertRecord.mutedUntil`, `WristSync.muteDurationKey` |
+| **"While you were away."** Unseen rows ARE the diff since the user last looked, so the tab leads with one honest sentence — "3 things happened while you were away — 1 still needs you" — instead of leaving recovery to scrolling. Computed on entry, gone on exit. | `AlertFreshness.awaySummary` → `AlertsView` |
+| **Heartbeat ingestion.** A Canary answering feeds the beat, and so does any real alert iOS accepted. `lastVerified`/`lastBeat` persist, so a cold start no longer throws away a verification the user earned. | `Heartbeat`, `FleetBeat.heard`, `FleetStore.refreshOnce()` |
+| **Escalation, top tier only.** One extra buzz for an unanswered tamper/integrity alarm, never below that tier, at most once per occurrence (the stamp is in the ledger, so "once" outlives a relaunch), and never at all once acknowledged. | `EscalationPolicy`, `FleetStore.escalateIfUnanswered`, `AlertRecord.escalatedBucket` |
+| **Actioned-rate self-tuning, locally.** Two integers per severity on this phone count acks against mutes/dismissals; at ~90% dismissed over a real sample the rules sheet OFFERS a demotion. It never applies one, "keep them" is remembered per class, and taking the offer forgets the evidence so a re-armed rule is judged on what happens next. The offer names — and switches off — **every** rule that covers the class, because the shipped rules overlap on an alarm and turning off one would leave the next one pushing exactly what the button promised to stop. Tamper is never offered at any dismissal rate: the smoke alarm is not tunable. | `AlertTuning`, `AlertRule.pushing(for:in:)`, `AlertRulesSheet` |
+| **Per-witness rules + quiet hours.** A floor per Canary (everything armed / only serious / only tamper) and a wall-clock quiet window. Both narrow; neither silences: `WitnessPushFloor` has no "never" rung and `QuietHours.silences` cannot return true for `.critical`. A held alert says which of the two held it. | `WitnessAlertPrefs`, `QuietHours`, `AlertCenter.level(for:awayFromHome:now:)` |
+| Rule persistence (what the user arms now survives relaunch, folded onto the shipped rules so improved wording still reaches everyone) | `AlertRule.merge(stored:into:)`, `AlertCenter.init(defaults:)` |
+| Policy tests (escalation rationing and the bucket-debt wait, quiet-hours midnight wrap and the critical exemption, floor ladder, tuning thresholds, rule merge) | `AlertPolicyTests.swift` |
+| Freshness + heartbeat tests (all-clear derivation, away line, mute/escalation stamps, reopen clearing both, old ledgers decode, listening window, coalescing) | `AlertFreshnessTests.swift`, `HeartbeatTests.swift`, `AlertSnoozeTests.swift` |
 
-1. **All-clear as a ledger event.** When an open record resolves, the row
-   already flips to "Cleared"; add the *transition* to the Today timeline
-   ("Front Porch back online") as a digest-tier entry — never a push. The
-   status-page lesson: silence must not be the only "it's fine" signal.
-   No dependency; next slice of this doc.
-2. **Snooze with chosen durations.** Mute is fixed at 1 hour on every path
-   today. Offer 1 h / until tonight / until morning, per witness and
-   fleet-wide, always expiring, never an untimed off (untimed mute is how
-   cameras become decorative — Ring's moon button got this right). Tamper
-   punch-through preserved by construction (`Witness.effectiveSeverity`).
-3. **"While you were away" reconciliation.** On foreground, diff the ledger
-   against the last-seen stamp and lead the tab with one line — "3 things
-   happened, 1 still needs you." The industry's recovery story is "hope the
-   user scrolls"; ours can be explicit because the ledger is durable state
-   and notifications are only its projection (the PagerDuty model).
-4. **Heartbeat ingestion.** `Heartbeat.recordBeat()` still has no device
-   signal feeding it — the dead-man's-switch can only go green from a manual
-   test, and resets to unknown on relaunch. Wire the fleet's liveness into
-   beats, persist `lastVerified`, and the "provably alive" card becomes true
-   continuously. (Owned by `apple_watch_and_notifications.md` N0 + the
-   relay-terminus question in `iphone_companion_app.md` §10.7.)
-5. **Escalation, top tier only.** An unacked tamper/integrity alarm re-alerts
-   once after a short window, then reaches the second household member —
-   never applied below the top tier; rationing escalation is what keeps it
-   meaning something (PagerDuty; `iphone_companion_app.md` §5b rule 5).
-   Depends on the relay (R1) for the second-person leg.
-6. **Actioned-rate self-tuning, locally.** Count per-class ack/dismiss rates
-   on the phone; when a class is dismissed ~95% of the time, *offer* its
-   demotion to digest ("you dismiss almost all of these — stop pushing
-   them?"). No vendor ships this; for us it is a UserDefaults counter and
-   one sheet, and the data never leaves the device (Invariant IV).
-7. **Per-witness rules + quiet hours.** `AlertRule` is global-by-severity
-   today; the doctrine doc already promises per-witness reach and
-   quiet hours (Digest/Important only — Critical is the smoke alarm).
+### The one honesty problem this raised
+
+Feeding fleet liveness into the heartbeat nearly made the card lie. "Delivery
+verified" is a claim about **notifications reaching this phone**; a Canary
+answering on the LAN proves the *fleet* is up and proves nothing about APNs.
+So a beat carries its source (`WristBeatSource`), and the copy splits with it:
+a check-in says "your fleet checked in", only an accepted delivery says
+"delivery verified". The wrist gets the same split over an additive-optional
+field, so the watch can never overstate what the phone told it.
+
+The dead-man's-switch grew three guards. Two protect against crying wolf — a
+false "your fleet went dark" is how a real one gets ignored — and one against
+the opposite failure, staying green through a real outage:
+
+0. **Only the fleet's silence counts.** The dark verdict reads
+   `lastFleetCheckIn`, never `lastVerified`. Sharing one timestamp meant the
+   notification *about* a Canary going dark refreshed the very timer that was
+   supposed to be running out: the switch would have sat green while the
+   fleet was gone. Found in review, and the reason the two clocks are now
+   separate fields rather than one.
+1. **Silence only counts while we were listening.** The app stops its radios
+   in the background by design, so backgrounded time is not evidence.
+   `noteListening()` restarts the window at every foreground.
+2. **Silence only counts if something was expected.** With nothing paired
+   there is no beat to miss, so the card says "not yet verified" instead of
+   alarming about a fleet the user hasn't bought yet.
+
+Two more honesty rules fell out of the same review, both worth stating because
+they generalize:
+
+- **A tolerant decoder degrades to the WEAKER claim.** `WristBeatSource`
+  decodes an unknown future value as a fleet check-in, not a verified
+  delivery — everywhere else in this codebase a tolerant enum clamps toward
+  the *safe* reading, and for a claim about the user's safety net "safe"
+  means promising less.
+- **A live failure outlives a stale success.** Persisting verifications gave
+  the card something old to fall back on, which meant "Test failed:
+  notifications are off" was overwritten by "Delivery verified 3 days ago" on
+  the very next refresh. A failed verdict now stands until the path actually
+  works again — and a Canary checking in does not clear it, because it
+  doesn't fix what broke.
+- **Quiet hours are enforced where they are known.** Focus can be published
+  through, because iOS enforces it on the receiving device; quiet hours
+  cannot, because the notification extension that turns a wake into a banner
+  has never heard of the setting. So the wake is held here, before it leaves
+  — otherwise "quiet hours" would silence this phone and buzz the user's iPad
+  at 3am.
+
+And because the fleet answers every 20 seconds, beats coalesce (one a minute)
+and the wire's copy is floored to 5 minutes — otherwise every refresh would
+wake the widgets and the watch to say the same thing. Flooring can only make
+a beat look *older* than it is, which is the honest direction for a liveness
+claim to round.
+
+## 6. What is left, and why it isn't here
+
+One item, and it is a transport problem rather than a design one:
+
+1. **The second person.** Escalation today re-alerts the user's own devices —
+   the phone on the kitchen counter is worth reaching, and it is the leg we
+   have. Reaching a *different household member* needs a relay that can
+   address someone else's devices ([`alert_relay.md`](alert_relay.md) R1);
+   the iCloud wake path we use is per-account by construction. The policy
+   side is already written and rationed (`EscalationPolicy`), so R1 landing
+   means wiring a second recipient into `escalateIfUnanswered`, not
+   redesigning escalation.
+
+Two smaller things deliberately left as they are:
+
+- **Notification actions stay "Acknowledge" and "Mute 1 hour".** Durations
+  live in the app, not on the lock screen: "until morning" tapped at 9am is a
+  22-hour silence, and a notification action can't show what it would cost
+  the way a menu can.
+- **The wrist's swipe-to-mute is still one hour.** The duration menu is on
+  the witness screen where there is room to read it; a swipe on a 40mm screen
+  should do the safest thing, and an hour is the safest thing.
 
 Deliberately **not** adopted, with reasons: familiar-face suppression (Nest's
 best anti-fatigue feature is an identity substrate — Invariant II forbids the
@@ -194,11 +250,18 @@ the dictionary, deterministic and CI-locked).
 
 ## 7. Invariant notes
 
-- Every lifecycle timestamp is a coarse 10-minute bucket (III). Resolution
-  and seen stamps included — nothing here learns a second.
-- The ledger, the counters, and any future actioned-rate data live on the
-  phone (IV). Nothing in this design adds a wire format; the wrist's
-  `resolved` flag rides the existing additive-optional snapshot contract.
+- Every lifecycle timestamp is a coarse 10-minute bucket (III). Resolution,
+  seen, mute-expiry and escalation stamps included — nothing here learns a
+  second. (Heartbeat times are the documented exception the wrist contract
+  already carries: link-health times keep operational precision, and the
+  wire's copy is floored to 5 minutes anyway.)
+- The ledger, the mute ledger, the per-witness floors and the actioned-rate
+  counters all live on the phone (IV). The tuning counters are the only new
+  behavioral data in the app and they are two integers per severity — no
+  model, no upload, no profile, and nothing that records what an alert was
+  about. Nothing in this design adds a wire format: the wrist's `resolved`
+  flag, `lastBeatAt`/`beatSourceRaw`, and the mute-duration key all ride the
+  existing additive-optional contract.
 - Clearing history removes the phone's notebook only; the sealed witness
   chain on the devices is untouched, and the UI says so in the confirmation
   dialog (rule 4: never oversell, never let a delete look bigger than it is).
