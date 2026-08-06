@@ -60,10 +60,19 @@ public struct FleetFigure: Sendable {
   public let faces: [Face]
 
   /// The figure for a witness's published device type, or nil when we have
-  /// none — draw the generic marker then, never a guessed product.
+  /// none — draw the generic marker then, never a guessed product. The input
+  /// is canonicalized the same way the firmware's mDNS advert canonicalizes
+  /// its own DEVICE_TYPE (lowercase; underscores and spaces to hyphens), so
+  /// "canary_wap" from a config and "canary-wap" from the wire both resolve.
   public static func forDeviceType(_ deviceType: String) -> FleetFigure? {
-    guard let id = deviceTypeToFigure[deviceType] else { return nil }
+    guard let id = deviceTypeToFigure[canonicalDeviceType(deviceType)] else { return nil }
     return all[id]
+  }
+
+  /// The wire-canonical form of a published device type — the one spelling
+  /// `deviceTypeToFigure` is keyed on.
+  public static func canonicalDeviceType(_ raw: String) -> String {
+    String(raw.lowercased().map { $0 == "_" || $0 == " " ? "-" : $0 })
   }
 
   public static let all: [String: FleetFigure] = [
@@ -634,6 +643,65 @@ public struct FleetFigure: Sendable {
     FleetFigure.Face(kind: .ghost, hex: "", pts: "112,49.61 111.2,49.53 9.66,108.16 10.46,108.24"),
     FleetFigure.Face(kind: .ghost, hex: "", pts: "111.2,49.53 110.51,49.75 8.97,108.37 9.66,108.16"),
     FleetFigure.Face(kind: .ghost, hex: "", pts: "143.14,206.02 144,206.39 144.8,206.47 145.49,206.25 146.02,205.77 146.35,205.03 146.46,204.1 146.46,190.46 146.35,189.4 146.02,188.28 145.49,187.19 144.8,186.18 144,185.33 143.14,184.7 11.32,108.6 10.46,108.24 9.66,108.16 8.97,108.37 8.45,108.86 8.11,109.59 8,110.52 8,124.16 8.11,125.22 8.45,126.34 8.97,127.44 9.66,128.45 10.46,129.29 11.32,129.92")
+  ]),
+  "device.canary-nightlight": FleetFigure(
+    id: "device.canary-nightlight", title: "Canary Nightlight", rev: "27f621f7",
+    confidence: .prototype, size: 256, faces: [
+    FleetFigure.Face(kind: .shadow, hex: "#00000024", pts: "186.37,207.52 191.51,211.39 194.74,215.89 195.85,220.73 194.74,225.56 191.51,230.06 186.37,233.93 171.47,242.53 164.78,245.5 156.98,247.36 148.61,248 140.24,247.36 132.44,245.5 125.74,242.53 69.11,209.84 63.97,205.97 60.74,201.47 59.64,196.64 60.74,191.8 63.97,187.3 69.11,183.43 84.01,174.83 90.71,171.86 98.51,170 106.88,169.36 115.25,170 123.05,171.86 129.75,174.83"),
+    FleetFigure.Face(kind: .face, hex: "#a5a39f", pts: "74.64,176.91 74.64,23.49 64.88,29.12 64.88,182.55"),
+    FleetFigure.Face(kind: .face, hex: "#cccac5", pts: "74.64,23.49 72.55,22.28 62.79,27.92 64.88,29.12"),
+    FleetFigure.Face(kind: .face, hex: "#61615e", pts: "62.79,181.34 64.88,182.55 64.88,29.12 62.79,27.92"),
+    FleetFigure.Face(kind: .face, hex: "#654c00", pts: "193.3,214.31 194.96,212.77 149.82,238.83 148.16,240.37"),
+    FleetFigure.Face(kind: .face, hex: "#7b5c00", pts: "194.96,212.77 196,210.46 150.86,236.52 149.82,238.83"),
+    FleetFigure.Face(kind: .face, hex: "#9c7500", pts: "196,210.46 196.36,207.54 151.22,233.6 150.86,236.52"),
+    FleetFigure.Face(kind: .face, hex: "#ab8000", pts: "196.36,207.54 196.36,65.99 151.22,92.05 151.22,233.6"),
+    FleetFigure.Face(kind: .face, hex: "#b88a00", pts: "196.36,65.99 196,62.66 150.86,88.72 151.22,92.05"),
+    FleetFigure.Face(kind: .face, hex: "#cf9c00", pts: "196,62.66 194.96,59.14 149.82,85.2 150.86,88.72"),
+    FleetFigure.Face(kind: .face, hex: "#dfa700", pts: "194.96,59.14 193.3,55.68 148.16,81.74 149.82,85.2"),
+    FleetFigure.Face(kind: .face, hex: "#e7ad00", pts: "193.3,55.68 191.13,52.51 145.99,78.58 148.16,81.74"),
+    FleetFigure.Face(kind: .face, hex: "#e5ac00", pts: "191.13,52.51 188.61,49.85 143.47,75.91 145.99,78.58"),
+    FleetFigure.Face(kind: .face, hex: "#dba400", pts: "188.61,49.85 185.9,47.88 140.76,73.94 143.47,75.91"),
+    FleetFigure.Face(kind: .face, hex: "#d39e00", pts: "185.9,47.88 119.26,9.4 74.12,35.46 140.76,73.94"),
+    FleetFigure.Face(kind: .face, hex: "#c99700", pts: "119.26,9.4 116.55,8.25 71.41,34.31 74.12,35.46"),
+    FleetFigure.Face(kind: .face, hex: "#b08400", pts: "116.55,8.25 114.03,8 68.89,34.06 71.41,34.31"),
+    FleetFigure.Face(kind: .face, hex: "#926d00", pts: "114.03,8 111.86,8.67 66.72,34.73 68.89,34.06"),
+    FleetFigure.Face(kind: .face, hex: "#654c00", pts: "140.76,239.64 143.47,240.79 145.99,241.04 148.16,240.37 149.82,238.83 150.86,236.52 151.22,233.6 151.22,92.05 150.86,88.72 149.82,85.2 148.16,81.74 145.99,78.58 143.47,75.91 140.76,73.94 74.12,35.46 71.41,34.31 68.89,34.06 66.72,34.73 65.06,36.27 64.02,38.58 63.66,41.5 63.66,183.05 64.02,186.38 65.06,189.9 66.72,193.36 68.89,196.53 71.41,199.19 74.12,201.16"),
+    FleetFigure.Face(kind: .face, hex: "#0b0d12", pts: "139.72,222.1 140.55,221.33 137.41,223.14 136.58,223.91"),
+    FleetFigure.Face(kind: .face, hex: "#0e1016", pts: "140.55,221.33 141.07,220.17 137.94,221.98 137.41,223.14"),
+    FleetFigure.Face(kind: .face, hex: "#11141b", pts: "141.07,220.17 141.25,218.71 138.11,220.52 137.94,221.98"),
+    FleetFigure.Face(kind: .face, hex: "#13161e", pts: "141.25,218.71 141.25,92.33 138.11,94.14 138.11,220.52"),
+    FleetFigure.Face(kind: .face, hex: "#151820", pts: "141.25,92.33 141.07,90.67 137.94,92.48 138.11,94.14"),
+    FleetFigure.Face(kind: .face, hex: "#171b24", pts: "141.07,90.67 140.55,88.91 137.41,90.72 137.94,92.48"),
+    FleetFigure.Face(kind: .face, hex: "#191d27", pts: "140.55,88.91 139.72,87.18 136.58,88.99 137.41,90.72"),
+    FleetFigure.Face(kind: .face, hex: "#1a1e28", pts: "139.72,87.18 138.64,85.6 135.5,87.41 136.58,88.99"),
+    FleetFigure.Face(kind: .face, hex: "#1a1e28", pts: "138.64,85.6 137.38,84.26 134.24,86.08 135.5,87.41"),
+    FleetFigure.Face(kind: .face, hex: "#191c26", pts: "137.38,84.26 136.02,83.28 132.89,85.09 134.24,86.08"),
+    FleetFigure.Face(kind: .face, hex: "#181b25", pts: "136.02,83.28 78.86,50.27 75.72,52.08 132.89,85.09"),
+    FleetFigure.Face(kind: .face, hex: "#171a23", pts: "78.86,50.27 77.51,49.7 74.37,51.51 75.72,52.08"),
+    FleetFigure.Face(kind: .face, hex: "#14171f", pts: "77.51,49.7 76.24,49.57 73.11,51.38 74.37,51.51"),
+    FleetFigure.Face(kind: .face, hex: "#10131a", pts: "76.24,49.57 75.16,49.91 72.02,51.72 73.11,51.38"),
+    FleetFigure.Face(kind: .face, hex: "#0b0d12", pts: "132.89,223.54 134.24,224.12 135.5,224.24 136.58,223.91 137.41,223.14 137.94,221.98 138.11,220.52 138.11,94.14 137.94,92.48 137.41,90.72 136.58,88.99 135.5,87.41 134.24,86.08 132.89,85.09 75.72,52.08 74.37,51.51 73.11,51.38 72.02,51.72 71.19,52.49 70.67,53.64 70.49,55.1 70.49,181.48 70.67,183.15 71.19,184.91 72.02,186.64 73.11,188.22 74.37,189.55 75.72,190.54"),
+    FleetFigure.Face(kind: .face, hex: "#1a2f47", pts: "133.61,218.76 134.16,218.24 132.77,219.05 132.21,219.56"),
+    FleetFigure.Face(kind: .face, hex: "#1f3956", pts: "134.16,218.24 134.51,217.47 133.12,218.28 132.77,219.05"),
+    FleetFigure.Face(kind: .face, hex: "#28486d", pts: "134.51,217.47 134.63,216.5 133.23,217.3 133.12,218.28"),
+    FleetFigure.Face(kind: .face, hex: "#2b4f77", pts: "134.63,216.5 134.63,94.14 133.23,94.95 133.23,217.3"),
+    FleetFigure.Face(kind: .face, hex: "#2f5581", pts: "134.63,94.14 134.51,93.03 133.12,93.84 133.23,94.95"),
+    FleetFigure.Face(kind: .face, hex: "#356091", pts: "134.51,93.03 134.16,91.86 132.77,92.67 133.12,93.84"),
+    FleetFigure.Face(kind: .face, hex: "#39679c", pts: "134.16,91.86 133.61,90.71 132.21,91.51 132.77,92.67"),
+    FleetFigure.Face(kind: .face, hex: "#3b6ba1", pts: "133.61,90.71 132.89,89.65 131.49,90.46 132.21,91.51"),
+    FleetFigure.Face(kind: .face, hex: "#3a6aa0", pts: "132.89,89.65 132.04,88.76 130.65,89.57 131.49,90.46"),
+    FleetFigure.Face(kind: .face, hex: "#386599", pts: "132.04,88.76 131.14,88.11 129.75,88.91 130.65,89.57"),
+    FleetFigure.Face(kind: .face, hex: "#366294", pts: "131.14,88.11 77.46,57.12 76.07,57.92 129.75,88.91"),
+    FleetFigure.Face(kind: .face, hex: "#335d8d", pts: "77.46,57.12 76.56,56.73 75.17,57.54 76.07,57.92"),
+    FleetFigure.Face(kind: .face, hex: "#2d517b", pts: "76.56,56.73 75.72,56.65 74.33,57.45 75.17,57.54"),
+    FleetFigure.Face(kind: .face, hex: "#254366", pts: "75.72,56.65 75,56.87 73.61,57.68 74.33,57.45"),
+    FleetFigure.Face(kind: .face, hex: "#1a2f47", pts: "129.75,219.32 130.65,219.7 131.49,219.78 132.21,219.56 132.77,219.05 133.12,218.28 133.23,217.3 133.23,94.95 133.12,93.84 132.77,92.67 132.21,91.51 131.49,90.46 130.65,89.57 129.75,88.91 76.07,57.92 75.17,57.54 74.33,57.45 73.61,57.68 73.05,58.19 72.7,58.96 72.58,59.93 72.58,182.29 72.7,183.4 73.05,184.57 73.61,185.72 74.33,186.78 75.17,187.67 76.07,188.33"),
+    FleetFigure.Face(kind: .face, hex: "#a5a39f", pts: "163.94,228.47 163.94,75.05 154.18,80.68 154.18,234.11"),
+    FleetFigure.Face(kind: .face, hex: "#cccac5", pts: "163.94,75.05 161.85,73.84 152.09,79.47 154.18,80.68"),
+    FleetFigure.Face(kind: .face, hex: "#61615e", pts: "152.09,232.9 154.18,234.11 154.18,80.68 152.09,79.47"),
+    FleetFigure.Face(kind: .face, hex: "#a5a39f", pts: "163.94,75.05 163.94,72.63 154.18,78.27 154.18,80.68"),
+    FleetFigure.Face(kind: .face, hex: "#cccac5", pts: "163.94,72.63 72.55,19.87 62.79,25.5 154.18,78.27"),
+    FleetFigure.Face(kind: .face, hex: "#61615e", pts: "62.79,27.92 154.18,80.68 154.18,78.27 62.79,25.5")
   ]),
   "device.canary-paw": FleetFigure(
     id: "device.canary-paw", title: "Canary Paw", rev: "89526725",
@@ -1609,12 +1677,15 @@ public struct FleetFigure: Sendable {
   ]),
   ]
 
+  /// Wire-canonical device type -> figure id. Keys are pre-canonicalized;
+  /// resolve through `forDeviceType`, which canonicalizes its input.
   public static let deviceTypeToFigure: [String: String] = [
+    "canary-nightlight": "device.canary-nightlight",
     "canary-sense": "device.canary-sense",
     "canary-vision": "device.canary-vision",
+    "canary-wap": "device.canary-wap",
+    "canary-wap-mobile": "device.canary-wap",
     "canary-watch": "device.canary-display-watch",
-    "canary_wap": "device.canary-wap",
-    "canary_wap_mobile": "device.canary-wap",
   ]
 }
 

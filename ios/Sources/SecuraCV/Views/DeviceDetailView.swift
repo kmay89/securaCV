@@ -61,6 +61,13 @@ struct DeviceDetailView: View {
 
     var body: some View {
         List {
+            // The device itself, before any numbers about it: the turntable
+            // hero (or the honest no-picture card) — see DeviceFigureCard.
+            Section {
+                DeviceFigureCard(witness: liveWitness)
+            }
+            .listRowBackground(Color.clear)
+
             Section("Trust") {
                 LabeledContent("Signature") {
                     Label(witness.badge.label, systemImage: witness.badge.sfSymbol)

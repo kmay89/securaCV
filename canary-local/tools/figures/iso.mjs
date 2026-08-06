@@ -55,6 +55,11 @@ const LIGHT = (() => {
 const AMBIENT = 0.42;
 const DIFFUSE = 0.58;
 
+// The rig as data, for the generator to carry into other surfaces' copies
+// (the Swift massing file) — so a port shades with these exact numbers
+// instead of re-deriving them and drifting by an ulp.
+export const LIGHT_RIG = { light: LIGHT, ambient: AMBIENT, diffuse: DIFFUSE };
+
 export function shade(nx, ny, nz) {
   const d = nx * LIGHT[0] + ny * LIGHT[1] + nz * LIGHT[2];
   return AMBIENT + DIFFUSE * Math.max(0, Math.min(1, d));

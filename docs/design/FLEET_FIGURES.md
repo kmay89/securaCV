@@ -13,13 +13,13 @@ shape is real, it is paid by every user on every screen, and it is
 avoidable — once — by making the picture part of the data.
 
 > **Status.** The system is real and CI-gated: the generator, the ledger, the
-> 47 committed figures, and each surface's generated binding are in the tree.
+> 48 committed figures, and each surface's generated binding are in the tree.
 > What consumes them today:
 >
 > | Surface | Binding | Drawn in a UI? |
 > |---|---|---|
 > | Web | the SVGs + the ledger | **Yes** — the website's `/figures` catalog |
-> | iPhone · Watch · widgets | `ios/Shared/FleetFigures.swift` | **Yes** — the witness roster and the pairing rows |
+> | iPhone · Watch · widgets | `ios/Shared/FleetFigures.swift` + `FleetSolids.swift` | **Yes** — the witness roster, the pairing rows, the hive cells, and the device detail's turntable hero (§7b) |
 > | Both flashers | `figure` in `canary-local/devices/flash.json` | **Yes** — the firmware picker, in the browser and the desktop app |
 > | Firmware | `firmware/common/core/fleet_figures.h` | Not yet — the lookup is wired and each board names itself, but no screen draws it |
 > | Emulator | the same SVGs | Not yet |
@@ -333,24 +333,44 @@ parser. Shared by `SecuraCV`, `SecuraCVWatch` and both widget bundles, so
 none of them can drift from each other or from the web.
 
 Beside it sits `FleetFigureBridge.swift` — hand-written, and the only piece of
-judgment on the Apple side: which `DeviceType` maps to which figure, and
-`DeviceFigureIcon`, which draws the figure at whatever size a row gives it and
-falls back to the type's SF Symbol when it can't honestly draw the thing
-itself. `.display` is deliberately nil: that enum case covers four different
-products, so a figure there would be a coin flip. Same rule as the firmware
-table, kept by a test named after it.
+judgment on the Apple side: `FleetFigure.resolve`, the two-precision mirror of
+the firmware's two lookups. The **raw published device type** resolves first,
+through the generated map (keyed wire-canonical, the way `canonical_dt`
+spells it on mDNS) — so a witness that says `canary-watch` gets the round
+drum even though the coarse enum collapses it to `.unknown`, and new types
+resolve with **no app change** the moment the pipeline maps them. The coarse
+`DeviceType` default catches the rest, and `DeviceFigureIcon` falls back to
+the type's SF Symbol when neither pins one product. `.display` is
+deliberately nil: that enum case covers four different products, so a figure
+there would be a coin flip. Same rule as the firmware table, kept by a test
+named after it.
 
 ```swift
-DeviceFigureIcon(witness.deviceType, size: 30)
+DeviceFigureIcon(witness.deviceType, published: witness.publishedType, size: 30)
 ```
 
-The witness roster and the pairing rows draw it today.
+The witness roster, the pairing rows, and the hive cells draw it today.
 
-```swift
-if let fig = FleetFigure.forDeviceType(witness.deviceType) {
-  FleetFigureView(fig).frame(width: 28, height: 28)
-}
-```
+### 7b. The turntable: `FleetSolids.swift` + the Swift projector
+
+The device detail view gets the figure as a **hero you can pick up and turn**
+— drag to spin the part on its vertical axis, double-tap to set it back down.
+That needs more than pre-projected polygons, so the generator emits a third
+Swift artifact, `ios/Shared/FleetSolids.swift`: the massing itself (the same
+mm solids, resolved), the material palette, and the light rig as data.
+`FleetIsoProjector.swift` — hand-written — is a port of `iso.mjs` generalized
+by the one parameter the original deliberately lacks: yaw.
+
+The port cannot rot, by construction rather than by review:
+`FleetIsoProjectorTests` re-projects every figure's massing at the canonical
+yaw and requires the committed `FleetFigures` polygons — same ops, same paint
+order, same fills, points to the hundredth. Change the projector on the JS
+side and the CI byte gate regenerates both generated files; the parity test
+then fails the build until the port follows. The turntable renders ideas as
+dashed ghosts at **every** angle (the honesty invariant rides the data's
+`ghost` flag, not the view), and a device the pipeline cannot draw gets the
+honest no-picture card, which retires by itself when the generated map learns
+the device's published type.
 
 **The revision.** Each figure's `rev` is a content hash of everything that
 decides the picture — its solids and the projector revision. Bump the
