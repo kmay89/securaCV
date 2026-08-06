@@ -169,7 +169,8 @@ class NearbyScanCallbacks : public NimBLEScanCallbacks {
             const uint8_t* mfgBytes = reinterpret_cast<const uint8_t*>(mfg.data());
             const size_t mfgLen = mfg.size();
 
-            if (mfgLen == FLEET_BEACON_MFG_LEN) {
+            if (mfgLen == FLEET_BEACON_MFG_LEN ||
+                mfgLen == FLEET_BEACON_MFG_V2_LEN) {
                 hasBeaconData = parseBeaconData(mfgBytes, mfgLen, &tempCanary);
                 if (hasBeaconData) isCanary = true;
             } else if (mfgLen >= (size_t)(CHIRP_PAYLOAD_SIZE + 2)) {

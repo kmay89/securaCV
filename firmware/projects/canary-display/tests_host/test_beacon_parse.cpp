@@ -96,9 +96,57 @@ int main() {
     CHECK(!beacon_fp4_from_mfg(m, 11, fp4), "reject wrong type byte");
     m[2] = 0x10;
 
-    m[3] = 0x02;  // wrong schema version
-    CHECK(!beacon_fp4_from_mfg(m, 11, fp4), "reject wrong schema version");
-    CHECK(!beacon_parse_status(m, 11, s), "status: reject wrong schema version");
+    m[3] = 0x02;  // v2 version at v1 length — length/version must agree
+    CHECK(!beacon_fp4_from_mfg(m, 11, fp4), "reject v2 version at v1 length");
+    CHECK(!beacon_parse_status(m, 11, s), "status: reject v2 version at v1 length");
+  }
+
+  // ── v2 blob: alert flag + detection class + confidence ───────────────
+  {
+    uint8_t m[13];
+    make_good(m, canary::net::BEACON_FLAG_ALERT, 0xFF, 90, 0x01, 0x00,
+              0xAB, 0xCD);
+    m[3] = canary::net::BEACON_VERSION_2;
+    m[11] = canary::net::BEACON_DETECT_PERSON;
+    m[12] = 87;
+
+    char fp4[5] = {0};
+    CHECK(beacon_fp4_from_mfg(m, 13, fp4), "v2: fp4 accepts a 13-byte blob");
+    CHECK(strcmp(fp4, "abcd") == 0, "v2: fp4 encodes the same fp bytes");
+
+    BeaconStatus s;
+    CHECK(beacon_parse_status(m, 13, s), "v2: status accepts a 13-byte blob");
+    CHECK(s.alert, "v2: alert flag decodes");
+    CHECK(!s.tamper && !s.mic_muted && !s.degraded,
+          "v2: alert alone sets no other condition");
+    CHECK(s.detect_class == canary::net::BEACON_DETECT_PERSON,
+          "v2: detect class = person");
+    CHECK(s.detect_score == 87, "v2: detect score = 87");
+    CHECK(!s.battery_present && s.health_present && s.health == 90,
+          "v2: battery/health decode as in v1");
+
+    // Unknown score sentinel -> -1; idle class -> NONE.
+    m[11] = canary::net::BEACON_DETECT_NONE;
+    m[12] = canary::net::BEACON_SCORE_UNKNOWN;
+    CHECK(beacon_parse_status(m, 13, s), "v2: idle blob accepted");
+    CHECK(s.detect_class == canary::net::BEACON_DETECT_NONE &&
+          s.detect_score == -1,
+          "v2: idle decodes to NONE/-1");
+
+    // A v1 blob leaves the detection surface at its absent values, and the
+    // alert bit still decodes (a v1 sender may set it someday).
+    uint8_t m1[11];
+    make_good(m1, canary::net::BEACON_FLAG_ALERT, 50, 50, 0, 0, 0x11, 0x22);
+    CHECK(beacon_parse_status(m1, 11, s), "v1 blob still accepted");
+    CHECK(s.alert, "v1: alert flag decodes");
+    CHECK(s.detect_class == canary::net::BEACON_DETECT_NONE &&
+          s.detect_score == -1,
+          "v1: detection surface stays NONE/-1");
+
+    // Length/version agreement in the other direction.
+    m[3] = canary::net::BEACON_VERSION;  // v1 version at v2 length
+    CHECK(!beacon_parse_status(m, 13, s), "reject v1 version at v2 length");
+    CHECK(!beacon_fp4_from_mfg(m, 13, fp4), "fp4: reject v1 version at v2 length");
   }
 
   printf(g_failures == 0 ? "\nALL PASS\n" : "\n%d FAILURE(S)\n", g_failures);

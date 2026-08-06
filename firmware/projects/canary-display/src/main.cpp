@@ -84,6 +84,9 @@
 #if defined(FEATURE_ESPNOW) && FEATURE_ESPNOW
 #include "canary/net/espnow_peer.h"  // router-independent peer presence (rx-only)
 #endif
+#if defined(FEATURE_FLEET_UDP) && FEATURE_FLEET_UDP
+#include "canary/net/fleet_udp.h"  // presence beacons across the LAN (rx-only)
+#endif
 #if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK
 #include "canary/net/fleet_link.h"
 #endif
@@ -1319,6 +1322,14 @@ void setup() {
   canary::net::espnow_begin();
 #endif
 
+#if defined(FEATURE_FLEET_UDP) && FEATURE_FLEET_UDP
+  // The band that reaches across a house: presence beacons carried over the
+  // home WiFi, still with no broker in the path. Receive-only, like every
+  // other band here. Safe before an address exists — the loop joins the group
+  // once there is one, and rejoins if it ever changes.
+  canary::net::fleet_udp_begin(millis());
+#endif
+
   // The display's own web page — live mirror, help, master settings.
   // Started AFTER provisioning (the portal owned :80 during setup) and
   // independent of the panel: a display with broken glass still mirrors.
@@ -1609,6 +1620,14 @@ void loop() {
   // Drain any peer presence beacons the ESP-NOW listener captured into the
   // fleet model (unsigned observation, same footing as the BLE beacon).
   canary::net::espnow_loop(now);
+#endif
+
+#if defined(FEATURE_FLEET_UDP) && FEATURE_FLEET_UDP
+  // Drain presence beacons that crossed the LAN. Runs ALWAYS, not just when
+  // the broker is down — same reasoning as mDNS discovery below: a healthy hub
+  // reports only the Canaries configured to talk to it, so gating this on a
+  // dead broker would let a working hub hide devices this display can hear.
+  canary::net::fleet_udp_loop(now);
 #endif
 
 #if defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
