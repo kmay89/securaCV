@@ -306,7 +306,22 @@ pad_recess = 0.6;  // pad face below the ear's outer face: the squeeze guard,
                    // (0.8). Deeper recess = thinner beam = softer press
 pad_boss_d = 2.6;  // press boss Ø on the pad's back — rides inside the
                    // actuator channel, lands square on the switch nub
-pad_boss_l = 0.25; // boss reach: leaves free_gap (asserted) before contact
+// Boss reach, and the number print 3 proved wrong. It was 0.25, chosen to
+// leave a positive gap before contact — and 0.25 mm is BELOW ONE 0.4 mm
+// EXTRUSION, so the slicer had nothing to lay: the boss rounded back into the
+// beam and the paddles pressed on air (kmay89). The same floor the wordmark
+// answers to, on the other side of the same part; a feature thinner than the
+// nozzle is not a small feature, it is an absent one.
+// It also has to cross the board's X FLOAT, which the old gap arithmetic did
+// not model at all. See pad_press_* in Derived: the board is free to slide
+// tol_slide either way inside its cavity, so a gap budgeted from a CENTERED
+// board is off by ±0.2 on each side — one button tightens, the other opens
+// to 0.35, and 0.35 mm of dead travel is most of what this paddle has.
+// 0.55 clears the nozzle (1.4 beads) and reaches across the float: worst case
+// a 0.05 gap, best case 0.35 of interference, which the beam absorbs — it is
+// ~3x softer than the switch's own spring, so interference bows the paddle
+// rather than depressing the switch. Asserted three ways below.
+pad_boss_l = 0.55;
 btn_up  = 7.0;     // button center up from the USB (−Y) PCB edge. The first
                    // assembly (photo, kmay89) caught the drawing's 11.31 as a
                    // CENTER-referenced dim, not edge-referenced: the board's
@@ -405,10 +420,39 @@ mark_cy = -11.0;         // wordmark center, CASE frame (+Y = up when hung),
 /* [Ventilation] — side-wall slots only; the row sits BEHIND the light band
    so the white line stays whole. The lid used to carry a matching grille —
    print 2's verdict (kmay89) was that tiny holes in the back read as
-   confusion, not function, so the lid is now a clean plate: keyhole only. */
+   confusion, not function, so the lid is now a clean plate: keyhole only.
+
+   ── IT IS A CHIMNEY, AND IT HAS TO BE ONE ────────────────────────────────
+   This case HANGS, and the hanger decides which way: the egg takes the screw
+   USB-down, so +Y is UP on the wall. That makes the vent row a chimney whether
+   it was designed as one or not — warm air off the C3 module leaves the board,
+   rises, and looks for the highest opening it can find.
+
+   The row used to be four slots on a 5.0 pitch, spanning y −4.4 .. +12.0, and
+   measured against the hung orientation that is a row in the MIDDLE of the
+   wall. Above the top slot sat 6.4 mm of cavity with no opening at all — the
+   exact volume the hot air rises into, capped. Convection needs a low way in
+   and a HIGH way out, and the high way out was the part that was missing;
+   what the four slots gave was cross-flow across the board's middle, which is
+   the one place convection does not need help.
+
+   Six slots on a 4.0 pitch instead: same lower end (the ears set that, and it
+   is where the cool air comes in), carried up to y +17.0, which is as far as
+   the outer corner radius allows and 1.4 mm short of the cavity's top. The
+   dead pocket goes from 6.4 mm to 1.4 mm, and free area goes from 38.6 to
+   57.9 mm2 — but the area is the smaller half of it. The point is that the
+   TOP of the column is now open, so the air that rises has somewhere to go.
+
+   The low intake stays the USB stadium, which is the correct inlet by
+   position (it is the lowest opening on the hung case) and stays open around
+   a plugged cable. It is deliberately NOT a second row of holes low in the
+   side walls: below the ears there are 1.6 mm of wall left before the cavity
+   ends, which is not a slot, it is a crack. Nothing goes in the −Y wall
+   either — that face sits on the desk when the case is not hung, and an
+   intake you can blind by putting the thing down is worse than none. */
 opt_vent = true;
-vent_n = 4;          // slots per side wall
-vent_pitch = 5.0;
+vent_n = 6;          // slots per side wall — 12 in all, a column not a band
+vent_pitch = 4.0;    // tightened from 5.0 so six fit under the corner radius
 vent_w = 1.4;
 
 /* [Board pillars] — the four M2 positions, off the Waveshare drawing. NOT a
@@ -450,7 +494,30 @@ ear_skin = 1.4;  // wall skin left outside a button/USB clearance channel.
    positive click, firm retention), engagement is deeper (snap_proud 0.7),
    and the skirt runs at its own snug clearance (skirt_clear) instead of
    the general press tolerance. */
-snap_w = 3.2; snap_h = 1.6; snap_depth = 1.4; snap_proud = 0.7;
+snap_h = 1.6; snap_depth = 1.4; snap_proud = 0.7;
+// ⚠️ THE WINDOW IS DERIVED FROM THE RIDGE, and it was not before — that is
+// the lid-slide print 3 found (kmay89: "the clips slide a little once
+// connected"). `snap_w` was ONE number used for two different things: it
+// placed the ridge's ends AND sized the window. But the ridge is a hull whose
+// end plates draw 1.0 mm in from that number on each side, so a snap_w of 3.2
+// drew a 1.30 mm ridge and cut a 3.20 mm window — 1.9 mm of slack, ±0.95 mm
+// of free travel in Y.
+// Normally the skirt would hide that, since it seats in the cavity at 0.05.
+// It cannot here: the skirt's USB-end wall is the KEY, cut away by the USB
+// relief, so in that one direction the skirt locates nothing and the ridge in
+// its oversized window is the only stop the lid has. The two defects compose,
+// and that is why it shows.
+// So the ridge's drawn width is the parameter now, and the window follows it.
+// One number cannot size two features that are not the same size.
+nub_w = 1.3;         // the ridge's DRAWN width in Y — tuned by feel, and the
+                     // click is right, so this is unchanged in substance:
+                     // 1.3 is exactly what the old arithmetic was drawing
+snap_play = 0.15;    // window clearance per side. Not tighter: a printed
+                     // window comes out a hair small and the lid still has
+                     // to enter. The ridge's outer face slopes away toward
+                     // both ends (its peak point sits at mid-Y), so it cams
+                     // itself into the window rather than needing to arrive
+                     // aligned
 skirt_clear = 0.05;  // skirt-to-cavity clearance per side — snug on purpose:
                      // the skirt IS the seat, the snap only keeps it there
 nub_y0 = 3.6;    // nub pair centers (±Y) on the ±X walls — the same
@@ -523,7 +590,30 @@ pad_rec_cy = btn_y + pad_slot/2;                 //  free end only)
 pad_h_eff = min(pad_h, 2*(bez_h - 1.2 - pad_slot - z_btn));
 pad_rec_z = pad_h_eff + 2*pad_slot;
 x_skin_in = xc/2 + btn_reach;                    // beam's inner face
-free_gap  = 2*tol_slide - pad_boss_l;            // boss tip → actuator tip
+// ── What the boss actually has to cross ────────────────────────────────────
+// Note first what CANNOT go wrong here: btn_proud cancels. The beam sits at
+// xc/2 + btn_proud + tol_slide and the actuator tip at board_w/2 + btn_proud,
+// so the term appears on both sides and drops out. Mis-measuring how far the
+// switch stands proud makes the ear bulge wrong, never the gap — which is
+// worth stating because btn_proud is a MEASURE item and the obvious suspect.
+//
+// What DOES go wrong is the board's freedom. It is held by its edges in a
+// cavity cut tol_slide wider per side, so it can sit anywhere across 2*tol_
+// slide of X. The old arithmetic modeled it CENTERED and stopped there:
+// one gap, 0.15, quietly assumed for both buttons at once. It is not one gap.
+// Whatever the board does for one side it does in reverse for the other, so
+// the pair is always nominal ± pad_float, and the design has to hold at BOTH
+// ends of that. Positive = the boss stands into the actuator (interference,
+// taken up by the beam), negative = a gap the paddle must close before the
+// switch even begins to move.
+pad_float     = tol_slide;                       // board's X slide, each way
+pad_press_nom = pad_boss_l - 2*tol_slide;        // centered board
+pad_press_min = pad_press_nom - pad_float;       // board floated AWAY
+pad_press_max = pad_press_nom + pad_float;       // board floated TOWARD
+// The squeeze guard is what interference spends: the pad bows out by the
+// interference, so the recess that keeps a gripping finger off the pad is
+// this much shallower than pad_recess in the worst case.
+pad_recess_eff = pad_recess - pad_press_max;
 
 // window lip: (module − active area)/2 per side; the LAND is what is left of
 // it outside the relieved band — that ring is the panel's only contact
@@ -536,6 +626,8 @@ land_w_y = lip_l - glass_relief_w;
 skirt_wall = (headers == "male") ? 1.0 : 1.6;
 skirt_dep  = snap_depth + snap_h/2 + 0.4;
 skirt_x = xc - 2*skirt_clear;   skirt_y = yc - 2*skirt_clear;
+// the snap WINDOW, derived from the ridge that has to sit in it — never typed
+snap_w = nub_w + 2*snap_play;
 
 // press bosses: cut to the EXACT stack (no preload — rule 3; "just lightly
 // press" is exact contact, not crush). With pillars on the board they span
@@ -633,12 +725,23 @@ assert(!pillars_in || board_w/2 - hole_ix_usb + brass_d/2 <= xc/2 - 0.15,
            " reaches x=", board_w/2 - hole_ix_usb + brass_d/2,
            ", into the bezel wall at ", xc/2, " — re-measure hole_ix_usb ",
            "and brass_d (the 1.27 reading of the drawing does this)"));
-assert(!pillars_in || nub_y0 + snap_w/2 - 0.95 <=
+// ⚠️ This one measures the RIDGE (nub_w), not the window (snap_w) — it is the
+// only one of the three that does, because it is the only one asking about a
+// feature on the LID. The other two ask whether the hole in the bezel wall
+// clears the paddle recess and the corner posts; this asks whether the lid's
+// ridge clears the brass pillars, and those are different sizes now.
+// It used to read `snap_w/2 - 0.95`, a hand-tuned correction that reproduced
+// the ridge's 0.65 half-width back when snap_w was 3.2 and sized both. The
+// moment snap_w became the window alone, that correction went to -0.15 — the
+// gate believed the ridge reached INBOARD of its own center and understated it
+// by 0.8 mm. Exactly the defect this commit set out to fix, re-introduced one
+// assert away from it, and caught in review. Derive it, never correct it.
+assert(!pillars_in || nub_y0 + nub_w/2 <=
        (board_l/2 - hole_iy_usb) - brass_d/2 - 0.4,
-       str("a snap nub reaches y=", nub_y0 + snap_w/2 - 0.95,
+       str("a snap nub reaches y=", nub_y0 + nub_w/2,
            ", into the USB-end pillar's flank at y=",
            (board_l/2 - hole_iy_usb) - brass_d/2,
-           " — pull nub_y0 in or slim snap_w"));
+           " — pull nub_y0 in or slim nub_w"));
 assert(headers != "male" || hdr_drop > back_stack, "headers=male but hdr_drop is shallower than the stripped-board clearance");
 assert(headers != "male" || tol_slide + hdr_inset - 0.35 >= skirt_clear + skirt_wall + 0.25,
        "skirt would sit in the header pin row — thin skirt_wall or re-measure hdr_inset");
@@ -650,10 +753,25 @@ assert(!opt_btn || btn_y - ear_w/2 >= -(yo/2 - r_out) + 0.4,
 assert(!opt_btn || (pad_beam >= 0.6 && pad_beam <= 1.0),
        str("paddle beam is ", pad_beam, " mm — under 0.6 won't survive handling, ",
            "over 1.0 won't flex to the click. Tune ear_skin/pad_recess."));
-assert(!opt_btn || (free_gap >= 0.08 && free_gap <= 0.3),
-       str("boss free gap is ", free_gap, " mm — under 0.08 preloads the switch ",
-           "(a case that holds its own button down), over 0.3 wastes travel. ",
-           "Tune pad_boss_l against btn_proud."));
+// The boss, gated three ways — it has to PRINT, it has to REACH across the
+// board's float on both sides at once, and it must not eat the squeeze guard.
+// The old single gate asked only that a positive gap exist on a centered
+// board, which is the one case that never happens on both sides together.
+assert(!opt_btn || pad_boss_l >= 0.4,
+       str("the press boss stands ", pad_boss_l, " mm off the beam — under ",
+           "one 0.4 mm extrusion, so the slicer has nothing to lay and the ",
+           "boss rounds back into the wall. This is the 0.25 that printed as ",
+           "nothing and left the paddles pressing on air. Raise pad_boss_l."));
+assert(!opt_btn || pad_press_min >= -0.1,
+       str("with the board floated away the boss still stands ",
+           -pad_press_min, " mm short of the actuator — that is dead travel ",
+           "before the switch begins to move, on a paddle that has little to ",
+           "spare. Raise pad_boss_l, or tighten tol_slide to shrink the float."));
+assert(!opt_btn || pad_recess_eff >= 0.2,
+       str("at worst-case interference the pad bows out to within ",
+           pad_recess_eff, " mm of the ear face — the recess IS the squeeze ",
+           "guard, and under 0.2 a gripping finger starts landing on the pad ",
+           "instead of the rim. Lower pad_boss_l or deepen pad_recess."));
 assert(!opt_btn || pad_boss_d <= btn_ch_w - 0.6,
        "the press boss won't clear the actuator channel — shrink pad_boss_d");
 assert(!opt_btn || pad_h_eff >= pad_boss_d + 1.4,
@@ -1001,7 +1119,9 @@ module lid() {
             // window, and a catch face that resists working loose.
             for (sx = [1, -1], yc0 = nub_ys())
                 translate([sx*(skirt_x/2 - 0.3), yc0, back_t + snap_depth]) hull() {
-                    for (dy = [-snap_w/2 + 1.0, snap_w/2 - 1.0])
+                    // the ridge spans nub_w in Y — the SAME number the window
+                    // is sized from, so the two cannot drift apart again
+                    for (dy = [-nub_w/2 + 0.05, nub_w/2 - 0.05])
                         translate([0, dy, 0]) cube([0.6, 0.1, snap_h - 0.4], center = true);
                     translate([sx*(snap_proud + 0.3), 0, -(snap_h/2 - 0.5)])
                         cube([0.1, 0.1, 0.2], center = true);

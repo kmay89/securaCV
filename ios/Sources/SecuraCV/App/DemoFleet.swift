@@ -57,6 +57,7 @@ enum DemoFleet {
 
     static func witnesses(now: Date = Date()) -> [Witness] {
         var frontDoor = Witness(id: "demo-wap-a3f7", deviceType: .wap, name: "Front Door")
+        frontDoor.publishedType = "canary-wap"       // what the mDNS advert says
         frontDoor.room = "Porch"
         frontDoor.fingerprint = "a3f7 91c2 0d44 be21"
         frontDoor.link = .online
@@ -111,6 +112,10 @@ enum DemoFleet {
         // The nightstand display — the fleet's across-the-room face, whose
         // behind-glass beacon boots canary yellow since the 2.3.2 train.
         var nightstand = Witness(id: "demo-display-9f31", deviceType: .display, name: "Nightstand")
+        // "canary-nightstand" is published by two different panels, so the
+        // figure map deliberately omits it — this row demos the honest
+        // fallback (the symbol), exactly as a real nightstand would today.
+        nightstand.publishedType = "canary-nightstand"
         nightstand.room = "Bedroom"
         // A display WATCHES the fleet; it holds no witness key and never
         // mints its own chain (canary_display config.h) — so no fingerprint,
@@ -125,6 +130,7 @@ enum DemoFleet {
         // display-class trust posture as the nightstand: it watches nothing,
         // holds no witness key, mints no chain.
         var nightlight = Witness(id: "demo-nightlight-c3a1", deviceType: .nightlight, name: "Nightlight")
+        nightlight.publishedType = "canary-nightlight"
         nightlight.room = "Kids' room"
         nightlight.link = .online
         nightlight.lastSeen = now

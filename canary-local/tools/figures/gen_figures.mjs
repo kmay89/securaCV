@@ -9,6 +9,8 @@
 //   canary-local/figures/<id>.glyph.svg    the small-size figure
 //   firmware/common/core/fleet_figures.h   what a device says it is
 //   ios/Shared/FleetFigures.swift          what the phone and wrist draw
+//   ios/Shared/FleetSolids.swift           the mm massing behind each figure,
+//                                          for the phone's turntable viewer
 //
 // `--check` regenerates into memory and fails if anything on disk differs.
 // That is the CI gate: edit massing.mjs or re-export an STL without running
@@ -19,7 +21,9 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 
-import { renderFigure, renderFigureCompact, planFigure, envelopeOf, cornersOf } from './iso.mjs';
+import {
+  renderFigure, renderFigureCompact, planFigure, envelopeOf, cornersOf, MATERIALS, LIGHT_RIG,
+} from './iso.mjs';
 import { stlBounds } from './stlbox.mjs';
 import { FIGURES, conceptFigure } from './massing.mjs';
 
@@ -30,6 +34,7 @@ const OUT_JSON = join(ROOT, 'canary-local/devices/figures.json');
 const OUT_SVG = join(ROOT, 'canary-local/figures');
 const OUT_H = join(ROOT, 'firmware/common/core/fleet_figures.h');
 const OUT_SWIFT = join(ROOT, 'ios/Shared/FleetFigures.swift');
+const OUT_SOLIDS = join(ROOT, 'ios/Shared/FleetSolids.swift');
 // The picker tier: one compact SVG per figure, small enough to be EMBEDDED
 // in the flasher catalog — which the desktop app bakes into its binary at
 // build time (desktop/src-tauri/build.rs), so a file on disk is not a
@@ -69,7 +74,13 @@ const LADDER = ['idea', 'prototype', 'confirmed', 'shipping'];
 
 function firmwareConfigs(deviceId) {
   // firmware/configs/<family>/<flavor>/config.h — the flavors that exist.
-  const family = deviceId.startsWith('canary-display') ? 'canary-display' : deviceId;
+  // The registry's own family is the honest key where one exists (the
+  // Nightlight is family canary-display without the name prefix); the
+  // prefix collapse stays as the fallback for ids not in the registry.
+  const dev = registry.devices.find((d) => d.id === deviceId);
+  const family = (dev?.family && existsSync(join(ROOT, 'firmware/configs', dev.family)))
+    ? dev.family
+    : deviceId.startsWith('canary-display') ? 'canary-display' : deviceId;
   const dir = join(ROOT, 'firmware/configs', family);
   if (!existsSync(dir)) return [];
   return readdirSync(dir, { withFileTypes: true })
@@ -330,6 +341,11 @@ function buildOne(fig) {
     svg: `canary-local/figures/${fig.id}.svg`,
     glyph: `canary-local/figures/${fig.id}.glyph.svg`,
     plan: planFigure({ ...fig, solids }, { size: 256, ghost }),
+    // The resolved massing and its ghost verdict, for the Swift solids file —
+    // stripped from the ledger like `plan`, which already carries the drawn
+    // consequence of these same numbers.
+    massing: solids,
+    ghost,
   };
 }
 
@@ -459,6 +475,11 @@ const HARDWARE_FIGURE = {
   'xiao-esp32c3': 'device.canary-vision',
   'xiao-esp32s3': 'device.canary-vision',
   'esp32-c3': 'device.canary-vision-devkit',
+  // The C3 1.47" pocket board is one product — the Nightlight in its pocket
+  // case (canary_c3_lcd147.scad). Its S3 and C6 siblings stay unmapped: the
+  // S3 stick is a bare USB-A stick with no case record, and the C6 board is
+  // not a device in registry.json.
+  'waveshare-esp32c3-lcd147': 'device.canary-nightlight',
 };
 
 /* Hardware we can name but cannot yet draw. Listed so the gap is data, with
@@ -487,6 +508,7 @@ const CONFIG_FIGURE = {
   'canary-display/dash': 'device.canary-display-dash',
   'canary-display/dash7': 'device.canary-display-dash7',
   'canary-display/touch169': 'device.canary-display-touch169',
+  'canary-display/nightlight': 'device.canary-nightlight',
 };
 
 const configRows = deviceTypes
@@ -665,7 +687,7 @@ const ledger = {
     })),
     unmapped: hardwareGaps,
   },
-  figures: built.map(({ plan, picker, ...rest }) => rest),
+  figures: built.map(({ plan, picker, massing, ghost, ...rest }) => rest),
 };
 emit(OUT_JSON, `${JSON.stringify(ledger, null, 1)}\n`);
 
@@ -799,6 +821,24 @@ inline const HardwareRef* my_figure() {
 
 /* ── Swift: what the phone and the wrist draw ───────────────────────── */
 
+// The firmware's mDNS advert canonicalizes DEVICE_TYPE before it goes on the
+// wire (canonical_dt: lowercase, underscores and spaces to hyphens), so the
+// phone sees "canary-wap" where a config says "canary_wap". The Swift map is
+// keyed on the canonical form and the lookup canonicalizes its input, so
+// both spellings land on one row. A collision between two device types'
+// canonical forms would silently merge them, so it is a hard error.
+const canonicalType = (s) => s.toLowerCase().replace(/[_ ]/g, '-');
+const swiftTypeRows = new Map();
+for (const r of uniqueRows) {
+  const key = canonicalType(r.device_type);
+  const prev = swiftTypeRows.get(key);
+  if (prev && prev !== r.fig.id) {
+    throw new Error(`figures: device types collide at canonical "${key}" `
+      + `(${prev} vs ${r.fig.id}) — the Swift map cannot carry both.`);
+  }
+  swiftTypeRows.set(key, r.fig.id);
+}
+
 const swiftFigures = built.map((f) => {
   const ops = f.plan.ops.map((op) => {
     const pts = op.pts.map(([x, y]) => `${r2(x)},${r2(y)}`).join(' ');
@@ -874,18 +914,29 @@ public struct FleetFigure: Sendable {
   public let faces: [Face]
 
   /// The figure for a witness's published device type, or nil when we have
-  /// none — draw the generic marker then, never a guessed product.
+  /// none — draw the generic marker then, never a guessed product. The input
+  /// is canonicalized the same way the firmware's mDNS advert canonicalizes
+  /// its own DEVICE_TYPE (lowercase; underscores and spaces to hyphens), so
+  /// "canary_wap" from a config and "canary-wap" from the wire both resolve.
   public static func forDeviceType(_ deviceType: String) -> FleetFigure? {
-    guard let id = deviceTypeToFigure[deviceType] else { return nil }
+    guard let id = deviceTypeToFigure[canonicalDeviceType(deviceType)] else { return nil }
     return all[id]
+  }
+
+  /// The wire-canonical form of a published device type — the one spelling
+  /// \`deviceTypeToFigure\` is keyed on.
+  public static func canonicalDeviceType(_ raw: String) -> String {
+    String(raw.lowercased().map { $0 == "_" || $0 == " " ? "-" : $0 })
   }
 
   public static let all: [String: FleetFigure] = [
 ${swiftFigures.join('\n')}
   ]
 
+  /// Wire-canonical device type -> figure id. Keys are pre-canonicalized;
+  /// resolve through \`forDeviceType\`, which canonicalizes its input.
   public static let deviceTypeToFigure: [String: String] = [
-${uniqueRows.map((r) => `    "${r.device_type}": "${r.fig.id}",`).join('\n')}
+${[...swiftTypeRows.entries()].sort().map(([t, id]) => `    "${t}": "${id}",`).join('\n')}
   ]
 }
 
@@ -917,6 +968,114 @@ public struct FleetFigureView: View {
     }
     .accessibilityLabel(figure.title)
   }
+}
+`);
+
+/* ── Swift: the massing behind each figure, for the turntable viewer ──
+ *
+ * FleetFigures.swift carries the DRAWN consequence of the massing — flat
+ * polygons from the one canonical camera. This file carries the massing
+ * itself (the same mm solids, resolved), so the phone can turn a figure on
+ * its vertical axis with a Swift port of the projector. The port cannot
+ * drift: FleetIsoProjectorTests re-projects these solids at the canonical
+ * yaw and requires the committed FleetFigures faces, so an iso.mjs change
+ * that regenerates one file drags the other — and the test — with it. */
+
+const swiftNum = (n) => JSON.stringify(n); // shortest round-trip repr, stable
+
+const swiftSolids = built.map((f) => {
+  const rows = f.massing.map((s) => {
+    const axis = s.kind === 'box' ? (s.face === 'y' ? 'y' : 'z') : (s.axis ?? 'z');
+    const at = `[${s.at.map(swiftNum).join(', ')}]`;
+    const size = s.kind === 'box' ? `[${s.size.map(swiftNum).join(', ')}]` : '[]';
+    const r = swiftNum(s.kind === 'box' ? (s.r ?? 0) : s.r);
+    const h = swiftNum(s.kind === 'box' ? 0 : s.h);
+    const full = (s.detail ?? 'glyph') === 'full';
+    return `      FleetSolid(kind: .${s.kind}, material: "${s.m}", axis: "${axis}", `
+      + `at: ${at}, size: ${size}, r: ${r}, h: ${h}, fullDetailOnly: ${full}),`;
+  });
+  return `  "${f.id}": FleetMassing(
+    id: "${f.id}", rev: "${f.rev}", ghost: ${f.ghost},
+    envelope: [${[f.envelope_mm.w, f.envelope_mm.d, f.envelope_mm.h].map(swiftNum).join(', ')}],
+    solids: [
+${rows.join('\n')}
+  ]),`;
+});
+
+emit(OUT_SOLIDS, `// GENERATED by canary-local/tools/figures/gen_figures.mjs — do not edit.
+// Spec: docs/design/FLEET_FIGURES.md
+//
+// The MASSING behind each fleet figure: the same mm solids iso.mjs projects
+// into FleetFigures.swift, carried across so the phone can turn a figure on
+// its vertical axis (FleetIsoProjector.swift) instead of being pinned to the
+// one committed camera. Thumbnails keep drawing the committed faces — the
+// canonical camera is the fleet's shared picture — and the turntable is
+// pinned to them: FleetIsoProjectorTests re-projects these solids at the
+// canonical yaw and requires the committed polygons, to the hundredth.
+//
+// Same vocabulary as iso.mjs: a solid is a closed outline extruded along an
+// axis. \`axis\` "z" stands the outline up in plan; "y" faces it toward the
+// viewer (a screen, a lens, a wall plate). \`at\` is the min corner for a
+// box and the base-cap center for a cyl/disc, in mm, +X right / +Y front /
+// +Z up.
+
+import Foundation
+
+public struct FleetSolid: Sendable {
+  public enum Kind: String, Sendable { case box, cyl, disc }
+  public let kind: Kind
+  public let material: String
+  public let axis: String
+  public let at: [Double]
+  public let size: [Double]   // box: [w, d, h]; cyl/disc: empty (see r, h)
+  public let r: Double        // box: corner radius; cyl/disc: radius
+  public let h: Double        // cyl/disc: extrusion length (boxes carry size)
+  public let fullDetailOnly: Bool  // dropped from glyph-size renders
+
+  public init(kind: Kind, material: String, axis: String, at: [Double],
+              size: [Double], r: Double, h: Double, fullDetailOnly: Bool) {
+    self.kind = kind
+    self.material = material
+    self.axis = axis
+    self.at = at
+    self.size = size
+    self.r = r
+    self.h = h
+    self.fullDetailOnly = fullDetailOnly
+  }
+}
+
+public struct FleetMassing: Sendable {
+  public let id: String
+  public let rev: String      // the same content hash the figure carries
+  public let ghost: Bool      // an idea renders as a dashed wireframe, always
+  public let envelope: [Double]  // [w, d, h] mm, computed from the solids
+  public let solids: [FleetSolid]
+
+  public init(id: String, rev: String, ghost: Bool, envelope: [Double], solids: [FleetSolid]) {
+    self.id = id
+    self.rev = rev
+    self.ghost = ghost
+    self.envelope = envelope
+    self.solids = solids
+  }
+
+  /// The named material palette, base sRGB 0–255 — the physical object's
+  /// colors, deliberately not the UI theme's (a case is off-white in dark
+  /// mode too). Same values as iso.mjs MATERIALS.
+  public static let materials: [String: [Double]] = [
+${Object.entries(MATERIALS).map(([k, m]) => `    "${k}": [${m.base.join(', ')}],`).join('\n')}
+  ]
+
+  /// The one light rig, normalized, with its ambient/diffuse split — carried
+  /// as data so a Swift render shades with these exact numbers.
+  public static let light: [Double] = [${LIGHT_RIG.light.map(swiftNum).join(', ')}]
+  public static let ambient: Double = ${swiftNum(LIGHT_RIG.ambient)}
+  public static let diffuse: Double = ${swiftNum(LIGHT_RIG.diffuse)}
+
+  public static let all: [String: FleetMassing] = [
+${swiftSolids.join('\n')}
+  ]
 }
 `);
 
@@ -954,4 +1113,5 @@ if (CHECK) {
   console.log(`  svg     ${built.length * 2} files in canary-local/figures/`);
   console.log(`  firmware ${OUT_H.replace(`${ROOT}/`, '')} (${uniqueRows.length} device types)`);
   console.log(`  swift   ${OUT_SWIFT.replace(`${ROOT}/`, '')}`);
+  console.log(`  solids  ${OUT_SOLIDS.replace(`${ROOT}/`, '')}`);
 }

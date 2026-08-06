@@ -10,6 +10,15 @@ import Foundation
 struct Witness: Identifiable, Codable, Hashable, Sendable {
     var id: String                       // stable device_id, e.g. "canary-a3f7"
     var deviceType: DeviceType = .unknown
+    /// The device type EXACTLY as the witness published it (`/api/fleet`
+    /// "product", mDNS TXT `dt`) — kept beside the decoded enum because the
+    /// enum is deliberately coarse: it collapses the whole display line to
+    /// one case and folds types it has never heard of into `.unknown`. The
+    /// raw string is what the figure lookup resolves at full precision
+    /// (`FleetFigure.resolve`), so a "canary-watch" draws the round drum the
+    /// moment the generated map carries it, with no app change. Nil when no
+    /// transport told us.
+    var publishedType: String?
     var name: String = ""                // user-assigned display name
     var room: String = ""
     var fingerprint: String = ""         // 16-hex pubkey fp; first 4 = chirp id
