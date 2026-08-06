@@ -34,7 +34,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import intent
 
-from . import voice
+from . import voice, watches
 from .const import DOMAIN
 
 INTENT_FLEET_STATUS = "SecuracvFleetStatus"
@@ -46,6 +46,8 @@ INTENT_ROSTER = "SecuracvRoster"
 INTENT_GOODNIGHT = "SecuracvGoodnight"
 INTENT_PRIVACY = "SecuracvPrivacy"
 INTENT_HELP = "SecuracvHelp"
+INTENT_START_WATCH = "SecuracvStartWatch"
+INTENT_LIST_WATCHES = "SecuracvListWatches"
 
 
 async def async_setup_intents(hass: HomeAssistant) -> None:
@@ -59,6 +61,8 @@ async def async_setup_intents(hass: HomeAssistant) -> None:
     intent.async_register(hass, GoodnightIntentHandler())
     intent.async_register(hass, PrivacyIntentHandler())
     intent.async_register(hass, HelpIntentHandler())
+    intent.async_register(hass, StartWatchIntentHandler())
+    intent.async_register(hass, ListWatchesIntentHandler())
 
 
 def _pending_updates(hass: HomeAssistant) -> list[str]:
@@ -277,4 +281,112 @@ class HelpIntentHandler(intent.IntentHandler):
     async def async_handle(self, intent_obj: intent.Intent) -> intent.IntentResponse:
         response = intent_obj.create_response()
         response.async_set_speech(voice.speak_help())
+        return response
+
+
+# ── Watches ─────────────────────────────────────────────────────────────
+# Design: docs/design/watches.md. Voice may START a watch but not end one
+# early: starting only ever ADDS attention (a stray sentence from a
+# television costs you a fortnight of being told slightly too much, and
+# the watch expires on its own), while ending removes it — the silencing
+# direction, which stays on authenticated surfaces for the same reason
+# voice cannot mute an Alert. The rule underneath: voice may make you
+# better informed, never less.
+#
+# Storage note: watches live in hass.data for now, so they do not yet
+# survive a Home Assistant restart. Persistence is the next step in the
+# design doc's status table, and is deliberately not claimed here.
+
+
+def _watch_bucket(hass: HomeAssistant) -> list[dict[str, Any]]:
+    """The list of live watches, created on first use."""
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    bucket = domain_data.get("watches")
+    if not isinstance(bucket, list):
+        bucket = []
+        domain_data["watches"] = bucket
+    return bucket
+
+
+def _slot_text(intent_obj: intent.Intent, name: str) -> str:
+    slots = getattr(intent_obj, "slots", None)
+    if not isinstance(slots, dict):
+        return ""
+    slot = slots.get(name) or {}
+    if isinstance(slot, dict):
+        return str(slot.get("value") or "")
+    return str(slot)
+
+
+class StartWatchIntentHandler(intent.IntentHandler):
+    """'Keep an eye on the litter box for two weeks.'"""
+
+    intent_type = INTENT_START_WATCH
+    description = (
+        "Start a bounded, self-expiring watch on something the fleet already "
+        "senses. Adds attention only; it cannot arm, disarm, or unseal anything"
+    )
+
+    async def async_handle(self, intent_obj: intent.Intent) -> intent.IntentResponse:
+        hass = intent_obj.hass
+        subject_text = _slot_text(intent_obj, "watch_subject").strip()
+        duration_text = _slot_text(intent_obj, "watch_duration")
+        response = intent_obj.create_response()
+
+        if not subject_text:
+            response.async_set_speech(
+                "Tell me what to keep an eye on, and for how long — "
+                "something like: watch the litter box for two weeks."
+            )
+            return response
+
+        now = time.time()
+        bucket = _watch_bucket(hass)
+        days = watches.parse_duration_days(duration_text)
+        concern = watches.concern_from_text(subject_text)
+        label = subject_text
+        for filler in ("the ", "my "):
+            if label.startswith(filler):
+                label = label[len(filler):]
+        label = "the " + label
+
+        # Bind to a Canary if the words name one; otherwise the watch is
+        # created against the spoken subject and the answer says plainly
+        # that nothing is feeding it yet — never a silent no-op.
+        brief = voice.fleet_brief(_snapshot(hass), now)
+        device_id = voice.match_device(brief.get("device_ids") or [], subject_text)
+        subject = (
+            {"kind": "event", "ref": device_id}
+            if device_id
+            else {"kind": "unbound", "ref": subject_text}
+        )
+
+        watch = watches.make_watch(
+            f"w{len(bucket) + 1}-{int(now)}", label, subject, now,
+            days=days, concern=concern,
+        )
+        bucket.append(watch)
+
+        speech = watches.speak_started(watch)
+        if not device_id:
+            speech += (
+                " One thing to be straight about: nothing in the fleet is "
+                "reporting that yet, so I have nothing to watch until "
+                "something does."
+            )
+        response.async_set_speech(speech)
+        return response
+
+
+class ListWatchesIntentHandler(intent.IntentHandler):
+    """'What am I watching?'"""
+
+    intent_type = INTENT_LIST_WATCHES
+    description = "List the watches currently running and how long each has left"
+
+    async def async_handle(self, intent_obj: intent.Intent) -> intent.IntentResponse:
+        response = intent_obj.create_response()
+        response.async_set_speech(
+            watches.speak_roster(_watch_bucket(intent_obj.hass), time.time())
+        )
         return response

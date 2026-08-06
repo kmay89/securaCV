@@ -137,6 +137,21 @@ naturally say already works; each row below lists one phrasing of many.
 | "What Canaries do I have?" · "How many Canaries?" | The roster, said plainly: *"3 Canaries: Gate, porch, and shed — 2 of them online right now."* |
 | "How's the gate Canary?" · "Check on the front door" | That one device: online state, whether its signature verifies, and the last thing it witnessed. Names are matched tolerantly — speech-to-text won't spell `front-door` back — and an ambiguous name is asked about rather than guessed. |
 
+**Watches** — bounded attention that expires by itself
+([the design](design/watches.md)):
+
+| You say | It answers with |
+|---|---|
+| "Keep an eye on the litter box for two weeks" | It starts a watch, repeats it back so a misheard sentence is caught now rather than in two weeks, and says it will learn what normal looks like first: *"Watching the litter box for 14 days — I'll tell you if anything changes… It ends by itself, and I'll say so."* If nothing in the fleet reports that subject yet, it says so plainly rather than silently doing nothing. |
+| "What am I watching?" | The roster with time left: *"2 watches: the litter box, 9 more days; the soil, 3 more days — still getting a feel for normal."* |
+
+Voice can **start** a watch but not end one early. Starting only ever adds
+attention — the worst a stray sentence from a television can do is tell you
+slightly too much for a fortnight, and it expires on its own. Ending
+*removes* attention, which is the silencing direction, so it stays on an
+authenticated surface for the same reason voice can't mute an Alert. The
+rule underneath: **voice may make you better informed, never less.**
+
 **The rituals** — said at a moment, not to run a query:
 
 | You say | It answers with |

@@ -21,6 +21,10 @@ lists:
   # matches tolerantly (speech-to-text will not spell "cv-1" back).
   canary_name:
     wildcard: true
+  watch_subject:
+    wildcard: true
+  watch_duration:
+    wildcard: true
 intents:
   # ── The catch-up: the one most people will use most days ────────────
   SecuracvWhatsUp:
@@ -121,3 +125,26 @@ intents:
           - "(help|help me)"
           - "how do I (use|talk to) you"
           - "what (do you|can you) (know|tell me)"
+
+  # ── Watches: bounded attention that expires by itself ────────────────
+  # Starting one is allowed by voice because it only ADDS attention.
+  # Ending one early is deliberately NOT here — that removes attention,
+  # which stays on an authenticated surface. See docs/design/watches.md.
+  SecuracvStartWatch:
+    data:
+      - sentences:
+          - "(keep an eye on|watch|keep watch on) {watch_subject} for {watch_duration}"
+          - "(keep an eye on|watch) {watch_subject} for the next {watch_duration}"
+          - "tell me if {watch_subject} for {watch_duration}"
+          - "(start|set up) a watch on {watch_subject} for {watch_duration}"
+          - "(keep an eye on|watch) {watch_subject}"
+          - "(start|set up) a watch on {watch_subject}"
+
+  SecuracvListWatches:
+    data:
+      - sentences:
+          - "what am I watching"
+          - "(what|which) watches (are running|do I have|are on)"
+          - "(list|show me) (my|the) watches"
+          - "(am I|are you) watching anything"
+          - "what are you keeping an eye on"
