@@ -50,6 +50,24 @@ enum class Link : uint8_t {
   Offline,     // broker said so (retained LWT "offline")
 };
 
+// Which band carried a presence beacon here. The SAME beacon bytes reach this
+// model over three transports (see firmware/common/fleet_link/), and a witness
+// is identified by its fingerprint suffix — never by the radio it arrived on —
+// so hearing one Canary on two bands adds coverage, not a second device and
+// not a second event. This tag exists only so the event line can name the band
+// honestly; every dedupe decision below is deliberately independent of it.
+enum class Via : uint8_t {
+  Ble  = 0,   // BLE advert — no WiFi at all, radio range
+  Mesh = 1,   // ESP-NOW — no router at all, radio range
+  Wifi = 2,   // LAN multicast — no broker, reaches across the house
+};
+constexpr int VIA_COUNT = 3;
+
+// How long a band is still credited with carrying a witness after its last
+// datagram. Three missed 5 s refreshes: long enough to ride out a lost frame,
+// short enough that a band which genuinely went away stops being claimed.
+constexpr uint32_t VIA_FRESH_MS = 16000;
+
 // Decoded fleet-link presence beacon status (canary/net/beacon_parse.h fills
 // this from the 11-byte manufacturer blob). Pure values, no wire types — so
 // the model stays dependency-free and host-testable. battery_pct/health carry
@@ -172,13 +190,48 @@ struct Witness {
   bool     ble_mic_muted = false;
   bool     ble_degraded = false;
   uint32_t last_beacon_ms = 0;
-  bool     seen_via_ble = false;
+  bool     seen_via_ble = false;   // heard directly on ANY band (no broker)
+  // Per-band last-heard stamps, indexed by Via. This is the whole "which bands
+  // are carrying this witness right now" state: a band is credited when a
+  // datagram lands and simply ages out of VIA_FRESH_MS when it stops, so a
+  // radio that dies needs no teardown signal and a radio that comes back needs
+  // no re-registration. That is the self-healing — nothing to reset by hand.
+  uint32_t via_ms[VIA_COUNT] = {0, 0, 0};
+
+  // Is this band carrying the witness right now? Answered from the stamp
+  // alone, so a band recovers by simply being heard again — there is no
+  // "connected" flag anywhere that could be left set by a radio that died.
+  bool carried_by(Via via, uint32_t now) const {
+    const int i = (int)via;
+    if (i < 0 || i >= VIA_COUNT) return false;
+    return via_ms[i] != 0 && (int32_t)(now - via_ms[i]) < (int32_t)VIA_FRESH_MS;
+  }
+
+  // How many bands are carrying it — 0 means every direct path has gone quiet
+  // (the witness may still be reachable through the broker, which is a
+  // different question and a different surface).
+  int carrier_count(uint32_t now) const {
+    int n = 0;
+    for (int i = 0; i < VIA_COUNT; i++) {
+      if (carried_by((Via)i, now)) n++;
+    }
+    return n;
+  }
   // Beacon detection-alert dedupe (on_beacon): a CONTINUOUS v2 advert keeps
   // saying "person" for as long as one is present, so the attention edge is
   // re-armed per (witness, class) per minute — same posture as the chirp/
-  // tamper dedupe. Class 0xFF = never fired.
+  // tamper dedupe. Class 0xFF = never fired. Keyed on (witness, class) and
+  // NOT on the band, so the same sighting arriving over BLE and WiFi within
+  // the window is one attention event, not two.
   uint32_t ble_alert_ms = 0;
   uint8_t  ble_alert_class = 0xFF;
+  // Tamper edge-dedupe, as a timestamp rather than a label comparison. It used
+  // to re-fire by matching last_event against "tamper (ble)"; once the label
+  // names the band that carried it, an identical tamper heard on a second band
+  // writes a different string and would have fired a second time. The stamp is
+  // band-independent, so it can't.
+  uint32_t tamper_event_ms = 0;
+  bool     tamper_event_seen = false;
 
   // Last event (edge-triggered attention with per-severity decay)
   char     last_event[40] = {0};
@@ -491,7 +544,7 @@ class FleetModel {
   // fields are stored; tamper rides the same 60 s edge-dedupe as a chirp so a
   // CONTINUOUS beacon can't spam the log or re-cancel acks.
   void on_beacon(const char fp4[5], const BeaconStatus& s, bool have_status,
-                 uint32_t now) {
+                 uint32_t now, Via via = Via::Ble) {
     Witness* w = nullptr;
     for (int i = 0; i < MAX_DEVICES; i++) {
       if (slots_[i].used && fp_suffix_match(slots_[i].fp, fp4)) { w = &slots_[i]; break; }
@@ -504,8 +557,17 @@ class FleetModel {
       w = upsert(pseudo);
       if (!w) return;
     }
+    // Identity is the fingerprint suffix, so the lookup above already collapsed
+    // every band onto one witness. A second transport carrying the same Canary
+    // lands HERE, in the same slot — it refreshes liveness and credits its own
+    // band, and that is the entire cost of adding a radio.
     w->last_seen_ms = now;
     w->last_beacon_ms = now;
+    const int via_idx = (int)via;
+    if (via_idx >= 0 && via_idx < VIA_COUNT) {
+      if (!w->via_ms[via_idx]) dirty_ = true;   // a band newly carrying it
+      w->via_ms[via_idx] = now;
+    }
     if (!w->seen_via_ble) dirty_ = true;
     w->seen_via_ble = true;
     if (w->link != Link::Online) dirty_ = true;
@@ -531,13 +593,19 @@ class FleetModel {
       dirty_ = true;
     }
 
-    // Tamper: edge-dedupe identical to on_chirp ("tamper (ble)", Sev::Tamper).
+    // Tamper: 60 s edge-dedupe, Sev::Tamper. The window is keyed on a
+    // band-independent stamp — NOT on comparing last_event to a literal, the
+    // way this read before the label started naming the band. Two bands
+    // carrying one tamper are one alarm.
     if (have_status && s.tamper) {
-      const char* name = "tamper (ble)";
-      if (str_eq(w->last_event, name) &&
-          (int32_t)(now - w->last_event_ms) < 60000) {
+      if (w->tamper_event_seen &&
+          (int32_t)(now - w->tamper_event_ms) < 60000) {
         return;
       }
+      w->tamper_event_seen = true;
+      w->tamper_event_ms = now;
+      char name[32];
+      via_label(name, sizeof(name), "tamper", via);
       copy_str(w->last_event, sizeof(w->last_event), name);
       w->last_event_ms = now;
       w->has_event = true;
@@ -562,7 +630,7 @@ class FleetModel {
       w->ble_alert_class = s.detect_class;
 
       char name[32];
-      detection_label(name, sizeof(name), s.detect_class, s.detect_score);
+      detection_label(name, sizeof(name), s.detect_class, s.detect_score, via);
       copy_str(w->last_event, sizeof(w->last_event), name);
       w->last_event_ms = now;
       w->has_event = true;
@@ -902,13 +970,35 @@ class FleetModel {
     return true;
   }
 
-  // Event label for a beacon detection alert: "person 87% (ble)", falling
-  // back to "person (ble)" when the confidence is unknown and "detection
-  // (ble)" for a class token this build hasn't met (degrade, don't crash —
-  // same posture as classify_event). Pure by hand — this header stays free
-  // of <cstdio>.
+  // Suffix naming the band that actually carried an event. Honesty, not
+  // decoration: "(wifi)" on the glass means a broker-free datagram crossed the
+  // LAN, and it must never appear because a BLE advert was relabeled.
+  static const char* via_suffix(Via via) {
+    switch (via) {
+      case Via::Wifi: return " (wifi)";
+      case Via::Mesh: return " (mesh)";
+      case Via::Ble:  return " (ble)";
+    }
+    return " (ble)";
+  }
+
+  // "<stem> (band)" — the shared tail for every beacon-sourced event label.
+  static void via_label(char* out, size_t cap, const char* stem, Via via) {
+    size_t i = 0;
+    while (stem[i] && i + 1 < cap) { out[i] = stem[i]; i++; }
+    const char* tail = via_suffix(via);
+    size_t t = 0;
+    while (tail[t] && i + 1 < cap) { out[i++] = tail[t++]; }
+    out[i] = '\0';
+  }
+
+  // Event label for a beacon detection alert: "person 87% (ble)" / "person 87%
+  // (wifi)" for the same sighting on a different band, falling back to
+  // "person (ble)" when the confidence is unknown and "detection (ble)" for a
+  // class token this build hasn't met (degrade, don't crash — same posture as
+  // classify_event). Pure by hand — this header stays free of <cstdio>.
   static void detection_label(char* out, size_t cap, uint8_t detect_class,
-                              int score) {
+                              int score, Via via = Via::Ble) {
     const char* cls = "detection";
     switch (detect_class) {
       case 1: cls = "person";  break;
@@ -928,7 +1018,7 @@ class FleetModel {
       }
       out[i++] = '%';
     }
-    const char* tail = " (ble)";
+    const char* tail = via_suffix(via);
     size_t t = 0;
     while (tail[t] && i + 1 < cap) { out[i++] = tail[t++]; }
     out[i] = '\0';

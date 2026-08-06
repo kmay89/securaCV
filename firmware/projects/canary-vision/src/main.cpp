@@ -34,9 +34,15 @@
 #include "canary/net/mdns_mgr.h"
 #include "canary/net/mqtt_mgr.h"
 #include "canary/net/ota_mgr.h"
+// What the beacon SAYS — always compiled, never behind a band's flag, so
+// turning one carrier off for flash budget can't silence the others.
+#include "canary/net/fleet_beacon_payload.h"
+#include <fleet_beacon.h>                     // FLEET_BEACON_DETECT_* class tokens
 #if defined(FEATURE_FLEET_BEACON) && FEATURE_FLEET_BEACON
-#include "canary/net/fleet_beacon_adv.h"  // advertise-only BLE presence beacon
-#include <fleet_beacon.h>                 // FLEET_BEACON_DETECT_* class tokens
+#include "canary/net/fleet_beacon_adv.h"      // carrier: BLE advert
+#endif
+#if defined(FEATURE_FLEET_UDP) && FEATURE_FLEET_UDP
+#include "canary/net/fleet_udp.h"             // carrier: LAN multicast
 #endif
 #if defined(FEATURE_FLEET_ROSTER) && FEATURE_FLEET_ROSTER
 #include "canary/net/fleet_roster_scan.h" // RX twin: track the other Canaries
@@ -546,6 +552,13 @@ void setup() {
   canary::net::fleet_beacon_begin(canary::ms_now());
 #endif
 
+#if defined(FEATURE_FLEET_UDP) && FEATURE_FLEET_UDP
+  // The LAN band for the same beacon. Nothing here needs WiFi to be up yet —
+  // the socket is opened by the first tick that finds an address, and reopened
+  // if that address ever changes, so first join and rejoin are one code path.
+  canary::net::fleet_udp_begin(canary::ms_now());
+#endif
+
   // Bounded boot attempt: if the broker is down at boot the device still
   // finishes setup — the loop's backoff supervisor brings the link (and
   // every retained surface, discovery included) up when the broker returns.
@@ -652,19 +665,21 @@ static bool vision_tick(uint32_t now_ms) {
   EventMsg ev{};
   const bool emitted = fsm.tick(vs, now_ms, ev);
 
-#if defined(FEATURE_FLEET_BEACON) && FEATURE_FLEET_BEACON
-  // Mirror the FSM's debounced presence onto the BLE fleet beacon (v2: ALERT
-  // flag + class + confidence) so a canary-display alerts DIRECTLY over BLE —
-  // no broker, no shared WiFi. Debounced presence, not the raw per-frame hit,
-  // so the advert doesn't flap on a single dropped frame. The WE2 pipeline is
-  // person-only today (detect_config person_target); the class token widens
-  // with the pipeline, never past the ObjectClass vocabulary.
+  // Mirror the FSM's debounced presence onto the fleet beacon (v2: ALERT flag
+  // + class + confidence) so a canary-display alerts DIRECTLY — no broker, no
+  // hub. Debounced presence, not the raw per-frame hit, so the beacon doesn't
+  // flap on a single dropped frame. The WE2 pipeline is person-only today
+  // (detect_config person_target); the class token widens with the pipeline,
+  // never past the ObjectClass vocabulary.
+  //
+  // Ungated on purpose: this sets what the beacon SAYS, and every carrier
+  // reads it. Gating it on any one band would mean turning off BLE for flash
+  // budget also silenced the detection on the LAN.
   {
     const auto snap = fsm.snapshot(now_ms, last_event_name);
     canary::net::fleet_beacon_note_detection(
         snap.presence, FLEET_BEACON_DETECT_PERSON, snap.confidence, now_ms);
   }
-#endif
 
   if (emitted && ev.event_name) {
     set_last_event(ev.event_name);
@@ -692,6 +707,15 @@ void loop() {
   // ~5 s). Placed before the broker/WiFi early-returns below so it keeps
   // advertising through an MQTT outage — that broker-free reach is the point.
   canary::net::fleet_beacon_tick(canary::ms_now());
+#endif
+
+#if defined(FEATURE_FLEET_UDP) && FEATURE_FLEET_UDP
+  // The same beacon on the LAN band. Also before the broker early-returns: an
+  // MQTT outage is exactly when this matters, and the carrier's own STA check
+  // is what decides whether it can send — it never blocks or retries in line,
+  // so a down link costs this call nothing (the C3 lesson: a fleet transport
+  // must never be the reason a rejoin stalls).
+  canary::net::fleet_udp_tick(canary::ms_now());
 #endif
 
 #if defined(FEATURE_FLEET_ROSTER) && FEATURE_FLEET_ROSTER

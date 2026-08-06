@@ -231,7 +231,7 @@ void chirp_scan_loop(uint32_t now_ms, bool broker_down, bool wifi_up) {
     s_seen++;
     if (msg.kind == ChirpMsg::Kind::Beacon) {
       canary::fleet::the_fleet().on_beacon(msg.fp4, msg.payload, msg.have_status,
-                                           now_ms);
+                                           now_ms, canary::fleet::Via::Ble);
     } else {
       canary::fleet::the_fleet().on_chirp(msg.fp4, msg.type, now_ms);
     }

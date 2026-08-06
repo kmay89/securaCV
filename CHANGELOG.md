@@ -57,6 +57,48 @@ broker, no Raspberry Pi hub, no WiFi, and no pairing step.
   the modular canary's scan feed, and the WAP's `/api/nearby` all accept the
   v2 length, so a detection-flagged peer lands in every fleet view.
 
+### The same beacon, now over WiFi — still no broker, and now across a house
+
+Bluetooth reaches as far as Bluetooth reaches. A Vision in the driveway and a
+Display upstairs were both sitting on the home WiFi and still could not hear
+each other without an MQTT broker in the middle. Now the presence beacon rides
+that WiFi too, as a UDP multicast datagram — **no broker, no hub, no pairing,
+no configuration**. A datagram addressed to a group needs nothing discovered or
+logged into: a Vision joined to WiFi starts sending, a Display on the same WiFi
+starts hearing.
+
+- **One beacon, three bands, no duplication.** The datagram body is the *same*
+  manufacturer blob the BLE advert carries — no UDP framing — so BLE, ESP-NOW
+  and LAN multicast all decode through one parser into one ingest. On the
+  sending side the bytes are built once and every carrier transmits that buffer
+  verbatim, so the bands physically cannot drift into dialects and a new field
+  reaches all of them the day it lands.
+- **A band adds coverage, never a duplicate.** A witness is keyed on its
+  fingerprint suffix, never on the radio that carried it, and every dedupe
+  window is band-independent. One Canary heard on BLE *and* WiFi is one device
+  and one alert. That included fixing a real latent bug: the tamper dedupe
+  compared the event *label*, so the moment labels named their band the same
+  tamper would have alarmed once per radio.
+- **It heals because there is nothing to reset.** Sockets follow the STA
+  address and are reopened when it changes; the link going down drops them. A
+  router reboot, a new DHCP lease, a move to another AP all recover on their
+  own, and a band that goes quiet simply ages out of "currently carrying" and
+  re-credits itself by being heard again — no flag anywhere can outlive the
+  interface it described.
+- **TTL 1, set rather than inherited.** A presence beacon must not be routable
+  off the local subnet; that is a privacy property, so it is asserted in the
+  host test rather than left to a stack default. Nothing rides this wire that
+  the BLE advert doesn't already broadcast in the clear — flags, coarse
+  percentages, a chain height, two fingerprint bytes, and a class token plus
+  confidence. No identity, no image, no audio, and unlike a broker there is no
+  third party that receives, stores or forwards any of it.
+- **The glass names the band honestly.** `person 87% (wifi)` when it crossed
+  the LAN, `(ble)` over Bluetooth, `(mesh)` over ESP-NOW — which also fixes
+  ESP-NOW frames having always reported themselves as `(ble)`.
+
+Both bands are on by default (`FEATURE_FLEET_UDP`), and either can be vetoed
+per board by a size guard without touching a call site.
+
 ### A Canary that drops off WiFi can get back on
 
 Field report from an ESP32-C3 Vision: flashed with good credentials, it would
