@@ -1,13 +1,19 @@
 #pragma once
 #include <stdint.h>
 
-// Fleet-link BLE presence beacon — advertise-only (NimBLE).
+// Fleet-link presence beacon — the BLE carrier (advertise-only, NimBLE).
 //
-// Broadcasts the canonical 11-byte fleet-link presence beacon
+// Broadcasts the canonical fleet-link presence beacon
 // (firmware/common/fleet_link/fleet_beacon.h) as BLE manufacturer data so a
 // canary-display finds this witness DIRECTLY over BLE — no MQTT broker and no
 // shared WiFi. Advertise-only: no GATT server, no scan, no service UUIDs
 // (these devices have none to preserve, so the beacon is the whole advert).
+//
+// This is one of two carriers for the same payload; the other is
+// canary/net/fleet_udp.h, which reaches across a house over the WiFi
+// the devices are already joined to. What the beacon SAYS lives in
+// canary/net/fleet_beacon_payload.h — including fleet_beacon_note_detection(),
+// which used to live here — so the bands cannot drift.
 //
 // The whole implementation is gated by FEATURE_FLEET_BEACON (canary/config.h,
 // default 1). When the flag is 0 these become no-ops, so CI's OTA-slot size
