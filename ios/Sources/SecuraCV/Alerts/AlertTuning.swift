@@ -140,9 +140,9 @@ enum AlertTuning {
         }
 
         var question: String {
-            ruleTitles.count > 1
-                ? "Stop pushing these? Both rules that cover them switch off. They'll still be recorded, and still show up here — they just won't interrupt you."
-                : "Stop pushing these? They'll still be recorded, and still show up here — they just won't interrupt you."
+            let tail = "They'll still be recorded, and still show up here — they just won't interrupt you."
+            guard ruleTitles.count > 1 else { return "Stop pushing these? \(tail)" }
+            return "Stop pushing these? All \(ruleTitles.count) rules that cover them switch off. \(tail)"
         }
     }
 
@@ -158,6 +158,12 @@ enum AlertTuning {
         // pushing tamper while a lesser class is the thing they actually
         // dismiss all day.
         for severity in Severity.allCases.sorted(by: <) {
+            // The smoke alarm is not tunable. Tamper is never offered for
+            // demotion however often it gets dismissed — and silencing it
+            // would take the classes below with it anyway (every rule that
+            // covers an alarm also covers a tamper), which is more than
+            // anyone asked for.
+            guard severity < .tamper else { break }
             let total = stats.total(severity)
             guard total >= minimumSample else { continue }
             let dismissed = stats.dismissedCount(severity)

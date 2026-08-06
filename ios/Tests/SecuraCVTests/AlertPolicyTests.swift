@@ -197,9 +197,16 @@ final class AlertPolicyTests: XCTestCase {
 
     func testAClassTheUserActsOnIsNeverOfferedForDemotion() {
         var stats = AlertActionStats()
-        for _ in 0..<10 { stats.recordDismissed(.tamper) }
-        for _ in 0..<10 { stats.recordActed(.tamper) }
+        for _ in 0..<10 { stats.recordDismissed(.alert) }
+        for _ in 0..<10 { stats.recordActed(.alert) }
         XCTAssertNil(AlertTuning.advice(stats: stats, rules: rules(), declined: []))
+    }
+
+    func testTheSmokeAlarmIsNotTunable() {
+        var stats = AlertActionStats()
+        for _ in 0..<40 { stats.recordDismissed(.tamper) }
+        XCTAssertNil(AlertTuning.advice(stats: stats, rules: rules(), declined: []),
+                     "however often tamper gets dismissed, the app never offers to stop pushing it")
     }
 
     func testDecliningIsRemembered() throws {
