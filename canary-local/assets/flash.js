@@ -683,8 +683,13 @@ function accessCards() {
   const out = [];
   for (const p of products) {
     const a = p.access;
-    if (!a || seen.has(p.family)) continue;
-    seen.add(p.family);
+    // Dedup on the ACCESS entry, not the family. Two products in one family
+    // can need opposite instructions — the ESP32-CAM (no USB port at all) and
+    // the WROOM DevKit (pick the CP2102/CH340, not an "ESP32") are both
+    // `canary` — and keying on family silently dropped whichever came second.
+    const key = a && (a.key || p.family);
+    if (!a || seen.has(key)) continue;
+    seen.add(key);
     const d = el("details", "flash-access");
     d.dataset.family = p.family;
     d.append(el("summary", null, `${p.name.replace(/ · .*$/, "")} — ${a.headline}`));
@@ -729,11 +734,11 @@ function coldStartCard() {
   const card = el("section", "flash-coldstart");
   card.append(el("h3", null, "🛡 New board from a shop or marketplace? Do this first"));
   card.append(el("p", null,
-    "It arrives running somebody else's firmware, and these chips have native " +
-    "USB — so that firmware can introduce itself to your computer as anything " +
-    "it likes, including a keyboard, the moment you plug it in. No web page can " +
-    "step in front of that; your operating system finishes with the device " +
-    "before this page even learns it exists."));
+    "It arrives running somebody else's firmware. On a board with native USB " +
+    "(the S3 and C-series Canaries) that firmware can introduce itself to your " +
+    "computer as anything it likes, including a keyboard, the moment you plug " +
+    "it in. No web page can step in front of that; your operating system " +
+    "finishes with the device before this page even learns it exists."));
   card.append(el("p", null,
     "One move stops it, and it's the chip's own silicon doing the stopping:"));
 
@@ -744,9 +749,28 @@ function coldStartCard() {
   li2.append(document.createTextNode("Press and hold "), kbd("BOOT"),
     document.createTextNode(" (marked B)."));
   const li3 = el("li");
-  li3.append(document.createTextNode("Still holding it, plug the USB-C cable in. Then let go."));
+  li3.append(document.createTextNode("Still holding it, plug the cable in. Then let go."));
   ol.append(li1, li2, li3);
   card.append(ol);
+  // The classic-ESP32 reach ports break both halves of the paragraph above:
+  // no native USB (so the keyboard trick is not available to their resident
+  // firmware at all — a UART bridge can only ever be a serial port), and on
+  // the ESP32-CAM no BOOT button and no USB connector to hold it against.
+  // The mask-ROM guarantee is identical, so the card keeps its promise and
+  // states the different gesture rather than implying a button that isn't
+  // there. Word-for-word the same paragraph as the desktop Flasher's static
+  // card (desktop/src/index.html) — the parity gate holds them together.
+  card.append(el("p", "fineprint",
+    "No BOOT button, or no USB port at all? A classic ESP32 — an ESP32-CAM, a " +
+    "plain WROOM DevKit — reaches your computer through a separate " +
+    "USB-to-serial chip rather than its own USB, so its firmware can only ever " +
+    "appear as a serial port and cannot pretend to be a keyboard. Bringing it " +
+    "up cold is still how you stop the resident firmware running: " +
+    // Kept whole, not split across a concatenation: desktop_parity.test.js
+    // matches this phrase in BOTH sources to prove neither frontend lost it.
+    "jumper IO0 to GND before you apply power" +
+    ", instead of holding BOOT. Most DevKits do even that for you. " +
+    "Per-board wiring is on the board's own card below."));
   card.append(el("p", "fineprint",
     "The chip comes up in its mask-ROM download mode and the firmware it shipped " +
     "with never runs a single instruction. That's not a promise this page is " +
@@ -2846,6 +2870,16 @@ function productRow(p) {
     // imply this row is the only thing that board becomes.
     left.append(el("div", "flash-product-note",
       "This board is also sold as another product — check the name, not just the picture."));
+  }
+  // Support tier, derived from the board registry (flash.json `tier`). The
+  // "never booted" case gets the loud treatment: this is the last screen
+  // before someone writes an unproven image to hardware they own, and the
+  // claim has to arrive before the button, not in a doc they didn't open.
+  if (p.tier) {
+    const t = el("div", p.tier.first ? "flash-product-tier is-first" : "flash-product-tier");
+    t.append(el("span", "flash-tier-label", p.tier.label));
+    t.append(el("span", "muted", p.tier.line));
+    left.append(t);
   }
   const ver = el("div", "flash-product-ver");
   ver.dataset.for = p.id;

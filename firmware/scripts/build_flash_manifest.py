@@ -44,6 +44,16 @@ MAKE_FACTORY = REPO_ROOT / "firmware/scripts/make_factory.py"
 BUILD = {
     "securacv-canary":                 {"toolchain": "pio", "dir": "firmware/canary/.pio/build/release_ha", "vsuffix": ""},
     "securacv-canary-wap":             {"toolchain": "arduino", "dir": "/tmp/wap-build", "sketch": "canary_wap", "vsuffix": "-wap"},
+    # The Phase 0 reach ports (docs/strategy/30). USB-flashable from here on;
+    # their signed OTA channels stay closed until a Hardware Test Report
+    # promotes the board off compile-tested (check_ota_channels.py UNPUBLISHED).
+    # Those are separate artifacts — manifest-flash.json is the factory image
+    # a person installs deliberately, manifest-canary-*.json is the update a
+    # device takes on its own — so reach and self-update move independently.
+    "securacv-canary-esp32cam":        {"toolchain": "pio", "dir": "firmware/canary/.pio/build/esp32cam", "vsuffix": ""},
+    "securacv-canary-wroom":           {"toolchain": "pio", "dir": "firmware/canary/.pio/build/esp32-wroom", "vsuffix": ""},
+    "securacv-canary-freenove-s3":     {"toolchain": "pio", "dir": "firmware/canary/.pio/build/freenove-s3", "vsuffix": ""},
+    "securacv-canary-vision-c3-super-mini": {"toolchain": "pio", "dir": "firmware/projects/canary-vision/.pio/build/canary-vision-c3-super-mini", "vsuffix": ""},
     "securacv-canary-vision":          {"toolchain": "pio", "dir": "firmware/projects/canary-vision/.pio/build/canary-vision-default", "vsuffix": ""},
     "securacv-canary-vision-xiao-c3":  {"toolchain": "pio", "dir": "firmware/projects/canary-vision/.pio/build/canary-vision-xiao-c3", "vsuffix": ""},
     "securacv-canary-vision-xiao-s3":  {"toolchain": "pio", "dir": "firmware/projects/canary-vision/.pio/build/canary-vision-xiao-s3", "vsuffix": ""},

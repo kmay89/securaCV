@@ -210,6 +210,31 @@ jobs:
         working-directory: firmware/canary
         run: pio run -e release_ha
 
+      - name: Build canary reach-port board envs (PlatformIO, non-blocking)
+        working-directory: firmware/canary
+        # The Phase 0 reach ports (docs/strategy/30) — boards people already
+        # own: the AI-Thinker ESP32-CAM, the WROOM-32 DevKit family, and the
+        # Freenove S3 camera kit. Same envs firmware.yml compiles on every
+        # push; built here so the BROWSER FLASHER has factory images to
+        # install (build_flash_manifest.py picks them out of .pio/build).
+        #
+        # Deliberately NOT signed into per-product OTA manifests below: these
+        # boards are compile-tested, nobody has booted one, and a self-update
+        # channel asserts more than we know. USB install is a deliberate act
+        # by someone who read the "never booted" label the flasher shows;
+        # OTA is silent. They graduate together, on a Hardware Test Report.
+        #
+        # Non-blocking, like the display envs: a failed env drops that board
+        # from the flasher instead of sinking the signed release around it.
+        run: |
+          for E in esp32cam esp32-wroom freenove-s3; do
+            if pio run -e "$E"; then
+              echo "✓ $E"
+            else
+              echo "::warning::reach-port env $E failed to build — it will be absent from this release's flasher catalog"
+            fi
+          done
+
       - name: Build canary-vision (release)
         working-directory: firmware/projects/canary-vision
         run: |
@@ -231,6 +256,14 @@ jobs:
           #define MQTT_PASS nullptr
           HEADER
           pio run -e canary-vision-default -e canary-vision-xiao-c3 -e canary-vision-xiao-s3
+          # The C3 Super Mini reach port — flasher-only, same rationale as the
+          # canary reach ports above (no OTA manifest until it is benched), and
+          # non-blocking so it can never sink the signed release.
+          if pio run -e canary-vision-c3-super-mini; then
+            echo "✓ canary-vision-c3-super-mini"
+          else
+            echo "::warning::canary-vision-c3-super-mini failed to build — absent from this release's flasher catalog"
+          fi
 
       - name: Build canary-sense (release)
         working-directory: firmware/projects/canary-sense

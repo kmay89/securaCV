@@ -711,6 +711,12 @@
           "board": "esp32-c3-devkitm-1"
         },
         {
+          "id": "securacv-canary-vision-c3-super-mini",
+          "name": "Canary Vision \u00b7 C3 Super Mini",
+          "chip": "ESP32-C3",
+          "board": "esp32-c3-devkitm-1"
+        },
+        {
           "id": "securacv-canary-vision-xiao-c3",
           "name": "Canary Vision \u00b7 XIAO C3",
           "chip": "ESP32-C3",

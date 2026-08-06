@@ -58,11 +58,20 @@ test("flash.json: live-receipt capability follows the firmware command", () => {
     .filter((p) => p.serial_receipt)
     .map((p) => p.id)
     .sort();
+  // Derived from the firmware sources, not declared: every build of the
+  // canary / canary-vision projects wires the self-manifest builder to the
+  // public `j` command, so the Phase 0 reach ports inherit it by being those
+  // projects. Pinned as a list so a product GAINING or LOSING the receipt is
+  // a visible diff rather than a silent capability change.
   assert.deepStrictEqual(receiptIds, [
     "securacv-canary",
+    "securacv-canary-esp32cam",
+    "securacv-canary-freenove-s3",
     "securacv-canary-vision",
+    "securacv-canary-vision-c3-super-mini",
     "securacv-canary-vision-xiao-c3",
     "securacv-canary-vision-xiao-s3",
+    "securacv-canary-wroom",
   ]);
   for (const p of catalog.products) {
     assert.strictEqual(typeof p.serial_receipt, "boolean", `${p.id}: capability missing`);

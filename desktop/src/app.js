@@ -959,6 +959,16 @@ function renderProducts() {
           p.figure && p.figure.shared
             ? '<span class="p-note">This board is also sold as another product — check the name, not just the picture.</span>'
             : ""
+        }${
+          // Support tier from flash.json (derived from the board registry).
+          // Same words as the browser flasher on purpose — half the users are
+          // here, and a diagnostic that lives in only one of the two frontends
+          // is a diagnostic half the users never get.
+          p.tier
+            ? `<span class="p-tier${p.tier.first ? " is-first" : ""}">` +
+              `<span class="p-tier-label">${esc(p.tier.label)}</span>` +
+              `<span>${esc(p.tier.line)}</span></span>`
+            : ""
         }
       </span>`;
     const radio = row.querySelector("input");
@@ -988,8 +998,12 @@ function renderAccessNotes() {
   const seen = new Set();
   for (const p of (state.catalog && state.catalog.products) || []) {
     const a = p.access;
-    if (!a || seen.has(p.family)) continue;
-    seen.add(p.family);
+    // Dedup on the access entry, not the family — same reason as the browser
+    // flasher's accessCards(): the ESP32-CAM and the WROOM DevKit share the
+    // `canary` family and need opposite instructions.
+    const key = a && (a.key || p.family);
+    if (!a || seen.has(key)) continue;
+    seen.add(key);
     const d = document.createElement("details");
     d.className = "hint";
     d.dataset.family = p.family;

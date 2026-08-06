@@ -1185,10 +1185,28 @@ export function smartPick(catalog, opts = {}) {
   if (mb) {
     const sized = byChip.filter((p) => p.flash_mb === mb);
     if (sized.length && sized.length < byChip.length) {
+      // Deliberately NOT tier-ordered. Sorting a proven board to the front
+      // here looks like caution and isn't: these candidates are different
+      // BOARDS, and the products differ in pins, so preferring a `verified`
+      // entry would hand a generic C3 DevKit owner the XIAO image — right
+      // tier, wrong pins. An unproven image built for the board in hand
+      // beats a proven one built for a different board. The tier is stated
+      // on every card instead, where it informs the choice without making it.
       const p = sized[0];
-      return { product: p, kind: "board",
-        why: `Your board reads as an ${label} with ${mb} MB flash — that ` +
-             `looks like a ${p.board_label}. Recommended: ${p.name}.` };
+      // Chip + flash size narrows the field; it does not always NAME the
+      // board. When the survivors span more than one family, several
+      // different products fit the silicon equally well, and "that looks
+      // like a <board>" would be a guess wearing the clothes of a
+      // measurement. Say which it is.
+      const families = new Set(sized.map((x) => x.family));
+      const why = families.size > 1
+        ? `Your board reads as an ${label} with ${mb} MB flash. More than ` +
+          `one board matches that exactly, so this is a starting point, not ` +
+          `an identification: ${p.name} is first in the list below — check ` +
+          `the others if yours is a different board.`
+        : `Your board reads as an ${label} with ${mb} MB flash — that ` +
+          `looks like a ${p.board_label}. Recommended: ${p.name}.`;
+      return { product: p, kind: "board", why };
     }
   }
   const p = recommendedProduct(catalog, chip);

@@ -143,17 +143,27 @@
                  Mirrors the browser flasher's coldStartCard() (canary-local). -->
             <section class="coldstart" id="coldstart">
               <h3>🛡 New board from a shop or marketplace? Do this first</h3>
-              <p>It arrives running somebody else's firmware, and these chips have
-                native USB — so that firmware can introduce itself to your computer
-                as anything it likes, including a keyboard, the moment you plug it
-                in. No app can step in front of that; your operating system finishes
-                with the device before this one even hears about it.</p>
+              <p>It arrives running somebody else's firmware. On a board with
+                native USB (the S3 and C-series Canaries) that firmware can
+                introduce itself to your computer as anything it likes, including
+                a keyboard, the moment you plug it in. No app can step in front of
+                that; your operating system finishes with the device before this
+                one even hears about it.</p>
               <p>One move stops it, and it's the chip's own silicon doing the stopping:</p>
               <ol>
                 <li>Unplug the board, if it's plugged in.</li>
                 <li>Press and hold <kbd>BOOT</kbd> (marked B).</li>
-                <li>Still holding it, plug the USB-C cable in. Then let go.</li>
+                <li>Still holding it, plug the cable in. Then let go.</li>
               </ol>
+              <p class="fineprint">No BOOT button, or no USB port at all? A classic
+                ESP32 — an ESP32-CAM, a plain WROOM DevKit — reaches your computer
+                through a separate USB-to-serial chip rather than its own USB, so
+                its firmware can only ever appear as a serial port and cannot
+                pretend to be a keyboard. Bringing it up cold is still how you stop
+                the resident firmware running:
+                jumper IO0 to GND before you apply power,
+                instead of holding BOOT. Most DevKits do even that for you.
+                Per-board wiring is on the board's own card below.</p>
               <p class="fineprint">The chip comes up in its mask-ROM download mode and
                 the firmware it shipped with never runs a single instruction. That's
                 not a promise this app is making — it's unerasable ROM, the same
