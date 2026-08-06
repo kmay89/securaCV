@@ -1766,3 +1766,38 @@ very first run that did named the faulting frame in one line
 after two rounds of reasoning had gotten it wrong. Collecting the evidence is
 cheaper than being clever, and it belongs in every job that can crash a
 process: Flasher, Lab, tvOS, and the iPhone / iPad / Mac targets.
+
+### 2026-08-05 — The emsdk dist rebuild raced an ordinary push and silently threw its own work away
+
+- **Symptom:** "Rebuild emulator dist (pinned emsdk)" ran green through every
+  build step — `OK: canary-wap-audio (real Canary WAP acoustic core 2.4.6-wap
+  @ 7365d1c)` — then failed at the very last step with
+  `! [rejected] HEAD -> <branch> (fetch first)`. The rebuilt artifacts were
+  committed on the runner (`10 files changed`) and then discarded with the
+  workspace. The branch still carried the *older* dist, and nothing on the PR
+  said so: the only red was a job named `rebuild`, long after the bytes it
+  produced had ceased to exist.
+- **Cause:** the workflow checks out the branch at dispatch time and pushes
+  with no rebase and no retry. Dispatching it and then continuing to push to
+  the same branch — a normal thing to do while a 5-minute emsdk build runs —
+  guarantees a non-fast-forward. The build cost is paid in full and the result
+  is dropped on the floor.
+- **Fix (operator, until the workflow retries):** treat the dispatch as taking
+  a lock on the branch. Push everything you have **first**, dispatch **second**,
+  and don't push again until it lands. If it does get rejected, just
+  re-dispatch after your push settles — the build is deterministic, so the
+  second run reproduces the same bytes. Re-dispatching is also free when
+  nothing changed: the workflow's `git status --porcelain` guard exits 0 with
+  "nothing to push."
+- **Then remember the second half:** when it *does* push, it pushes as
+  `GITHUB_TOKEN`, so by GitHub's recursion guard the new head lands with
+  **zero checks** — `total_count: 0`, state `pending`, forever. That is not a
+  stuck queue and not a CI outage; it needs one ordinary push (or a manual
+  re-run) before it can go green. Both halves of this bit in one sitting.
+- **Applies to:** any workflow that commits and pushes generated artifacts back
+  to the branch under test — the dist rebuild today, and by the same shape any
+  future "regenerate and commit" button. Two properties make it safe to run
+  unattended: rebase-and-retry on rejection, so a race costs a retry rather
+  than the whole build; and a loud failure when the push is dropped, because a
+  silently-stale generated artifact is exactly the drift the byte-diff gates
+  exist to catch.
