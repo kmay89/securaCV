@@ -250,6 +250,18 @@ void discovery_scan_witnesses(uint32_t, bool) {}
 void chirp_scan_loop(uint32_t, bool, bool) {}
 uint32_t chirp_scan_count() { return 0; }
 
+// ── fleet_udp contract (presence beacons over LAN multicast) ────────────
+// On silicon this joins a multicast group on the STA interface and hears
+// presence beacons from across the house with no broker in the path. The
+// emulator has no network stack at all — and must not acquire one: Invariant
+// IV is that nothing leaves the machine, so an in-browser display that could
+// actually join a group would be a hole, not a feature. Honest no-ops, and
+// fleet_udp_ready() answers false rather than pretending a band is up.
+void fleet_udp_begin(uint32_t) {}
+void fleet_udp_loop(uint32_t) {}
+bool fleet_udp_ready() { return false; }
+uint32_t fleet_udp_seen() { return 0; }
+
 // ── fleet_link contract (direct BLE GATT pull, FEATURE_FLEET_LINK) ───────
 // On silicon this opens a NimBLE central to a nearby WAP's status service.
 // The emulator has no radio, so these are honest no-ops.

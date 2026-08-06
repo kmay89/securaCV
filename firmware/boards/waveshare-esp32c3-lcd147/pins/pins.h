@@ -47,6 +47,14 @@
 #define BOARD_WAVESHARE_ESP32C3_LCD147 1
 #endif
 
+// Which physical board this is, in the fleet-figure vocabulary. Named here
+// rather than in the build env because THIS header is what a build compiles
+// against — the load-bearing declaration, so the id cannot drift away from
+// the pins it travels with. canary::figures::my_figure() reads it.
+#ifndef CANARY_FIGURE_HARDWARE
+#define CANARY_FIGURE_HARDWARE "waveshare-esp32c3-lcd147"
+#endif
+
 // ============================================================================
 // BOARD IDENTIFICATION
 // ============================================================================

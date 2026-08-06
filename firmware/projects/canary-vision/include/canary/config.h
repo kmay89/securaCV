@@ -23,6 +23,22 @@
 #define FEATURE_FLEET_BEACON 1
 #endif
 
+// -------------------- Fleet-link presence beacon (LAN multicast) ----------
+// The same beacon, carried over the home WiFi this device is already joined to
+// (src/net/fleet_udp.cpp). Still no broker, no hub, no pairing — a
+// multicast datagram is addressed to a group, not to a host, so there is
+// nothing to discover or log into. This is the band that reaches ACROSS a
+// house: BLE and ESP-NOW stop at direct radio range.
+//
+// It carries bytes built by src/net/fleet_beacon_payload.cpp — the same ones
+// the BLE carrier advertises — so enabling or disabling either band never
+// changes what the beacon says, only how far it goes. Default ON; guarded so
+// CI can flip it OFF per board with -DFEATURE_FLEET_UDP=0 if the OTA-slot size
+// guard vetoes it. The module + its call sites compile out when 0.
+#ifndef FEATURE_FLEET_UDP
+#define FEATURE_FLEET_UDP 1
+#endif
+
 // -------------------- Fleet-link roster scanner (BLE) --------------------
 // The RX twin of the beacon (src/net/fleet_roster_scan.cpp): a low-duty passive
 // BLE scan that hears the OTHER Canaries' presence beacons + chirps and keeps a

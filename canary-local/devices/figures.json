@@ -23,12 +23,16 @@
  },
  "counts": {
   "idea": 15,
-  "prototype": 6,
+  "prototype": 7,
   "confirmed": 1,
   "shipping": 25
  },
  "device_types": {
   "mapped": [
+   {
+    "device_type": "canary-nightlight",
+    "figure": "device.canary-nightlight"
+   },
    {
     "device_type": "canary-sense",
     "figure": "device.canary-sense"
@@ -56,10 +60,6 @@
     "why": "published by boards with different figures (device.canary-display-dash, device.canary-display-dash7)"
    },
    {
-    "device_type": "canary-nightlight",
-    "why": "no figure for this hardware yet"
-   },
-   {
     "device_type": "canary-nightstand",
     "why": "published by more than one board, and at least one has no figure yet (the figured one is device.canary-display-touch169)"
    },
@@ -84,6 +84,12 @@
     "flavor": "dash7",
     "device_type": "canary-dash",
     "figure": "device.canary-display-dash7"
+   },
+   {
+    "family": "canary-display",
+    "flavor": "nightlight",
+    "device_type": "canary-nightlight",
+    "figure": "device.canary-nightlight"
    },
    {
     "family": "canary-display",
@@ -153,6 +159,17 @@
     ],
     "serves": [
      "canary-vision"
+    ],
+    "shared": false
+   },
+   {
+    "hardware": "waveshare-esp32c3-lcd147",
+    "figure": "device.canary-nightlight",
+    "builds": [
+     "canary-display-nightlight-c3"
+    ],
+    "serves": [
+     "canary-nightlight"
     ],
     "shared": false
    },
@@ -261,15 +278,6 @@
     ],
     "serves": [
      "canary-vision"
-    ]
-   },
-   {
-    "hardware": "waveshare-esp32c3-lcd147",
-    "builds": [
-     "canary-display-nightlight-c3"
-    ],
-    "serves": [
-     "canary-nightlight"
     ]
    },
    {
@@ -1130,6 +1138,47 @@
    "rev": "4632de04",
    "svg": "canary-local/figures/device.canary-litter.svg",
    "glyph": "canary-local/figures/device.canary-litter.glyph.svg"
+  },
+  {
+   "id": "device.canary-nightlight",
+   "title": "Canary Nightlight",
+   "role": "device",
+   "device": "canary-nightlight",
+   "family": "canary-display",
+   "supply": [
+    {
+     "vendor": "waveshare",
+     "line": "ESP32 display board"
+    }
+   ],
+   "confidence": "prototype",
+   "evidence": {
+    "registry_kind": "display",
+    "committed_stls": [],
+    "catalog_variants": [],
+    "firmware_configs": [
+     "dash",
+     "dash7",
+     "nightlight",
+     "nightstand",
+     "nightstand7",
+     "touch169",
+     "watch"
+    ]
+   },
+   "dims_source": "sketch",
+   "sketch_note": "the C3-LCD-1.47 pocket case in canary_c3_lcd147.scad: shell 25.12 x 41.17 (board cavity + 2.2 mm walls), 14.25 mm deep as shipped (the pillars build: face + glass rise + PCB + brass pillars and their gap + the lid plate); no committed case STL yet",
+   "envelope_mm": {
+    "w": 26.22,
+    "d": 14.25,
+    "h": 41.72
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 6,
+   "rev": "27f621f7",
+   "svg": "canary-local/figures/device.canary-nightlight.svg",
+   "glyph": "canary-local/figures/device.canary-nightlight.glyph.svg"
   },
   {
    "id": "device.canary-paw",

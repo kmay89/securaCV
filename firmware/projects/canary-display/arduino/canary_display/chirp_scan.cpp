@@ -108,10 +108,11 @@ void handle_advert(const NimBLEAdvertisedDevice* d) {
     return;
   }
 
-  // Fleet-link presence beacon (11-byte mfg, type 0x10) — the direct,
-  // broker-free channel. beacon_parse.h validates size/company/type/version;
-  // a mismatch (or a chirp-sized blob above) is silently ignored.
-  if (m.size() == BEACON_MFG_LEN) {
+  // Fleet-link presence beacon (11-byte v1 / 13-byte v2 mfg, type 0x10) —
+  // the direct, broker-free channel. beacon_parse.h validates size/company/
+  // type/version; a mismatch (or a chirp-sized blob above) is silently
+  // ignored. v2 adds the detection class + confidence bytes (canary-vision).
+  if (m.size() == BEACON_MFG_LEN || m.size() == BEACON_MFG_V2_LEN) {
     ChirpMsg msg;
     msg.kind = ChirpMsg::Kind::Beacon;
     if (!beacon_fp4_from_mfg(p, m.size(), msg.fp4)) return;
@@ -230,7 +231,7 @@ void chirp_scan_loop(uint32_t now_ms, bool broker_down, bool wifi_up) {
     s_seen++;
     if (msg.kind == ChirpMsg::Kind::Beacon) {
       canary::fleet::the_fleet().on_beacon(msg.fp4, msg.payload, msg.have_status,
-                                           now_ms);
+                                           now_ms, canary::fleet::Via::Ble);
     } else {
       canary::fleet::the_fleet().on_chirp(msg.fp4, msg.type, now_ms);
     }

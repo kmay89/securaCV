@@ -29,6 +29,92 @@ Two Flasher (desktop app) fixes, one promise made real:
   event — unplugging while parked on the connected card returns to the
   connect step instead of showing a chip that isn't there.
 
+### A display hears what the camera sees — no broker, no hub, no setup
+
+A Canary Vision and a Canary Display now speak detection directly over
+Bluetooth LE. Power both on, and the person your camera sees shows up on the
+glass — as `person 87% (ble)` with an amber glow and a chime — with no MQTT
+broker, no Raspberry Pi hub, no WiFi, and no pairing step.
+
+- **Fleet beacon v2.** The 11-byte fleet-link presence beacon gains a 13-byte
+  version 2: the same layout plus a detection **class token** (person /
+  vehicle / animal / package — the ObjectClass vocabulary, deliberately
+  nothing identifying) and a **confidence percentage**. No identity, no
+  timestamp on the wire; the advert is the "now". v1-only senders
+  (canary-sense, the WAP) stay understood unchanged everywhere.
+- **canary-vision sets the alert it always had.** The beacon's `alert` flag
+  existed from day one and nothing ever set it. Now the presence FSM drives
+  it — debounced presence, not per-frame flicker — and a detection edge
+  republishes the advert immediately instead of waiting out the 5 s refresh.
+- **canary-display raises a real attention event.** The scanner (BLE and its
+  ESP-NOW twin) decodes the class + confidence into the event line and
+  timeline with `Sev::Warn`, a per-(witness, class) 60 s edge-dedupe so the
+  continuous advert can't spam the log or re-cancel acks, and tamper keeping
+  precedence. Unsigned like everything on this channel: it draws attention
+  but never touches the `Verified` badge. An unknown Vision still auto-appears
+  as `SCV-XXXX` — discovery was already magical; now it carries the sighting.
+- **Sibling rosters hear it too.** canary-sense / canary-vision roster scans,
+  the modular canary's scan feed, and the WAP's `/api/nearby` all accept the
+  v2 length, so a detection-flagged peer lands in every fleet view.
+
+### The same beacon, now over WiFi — still no broker, and now across a house
+
+Bluetooth reaches as far as Bluetooth reaches. A Vision in the driveway and a
+Display upstairs were both sitting on the home WiFi and still could not hear
+each other without an MQTT broker in the middle. Now the presence beacon rides
+that WiFi too, as a UDP multicast datagram — **no broker, no hub, no pairing,
+no configuration**. A datagram addressed to a group needs nothing discovered or
+logged into: a Vision joined to WiFi starts sending, a Display on the same WiFi
+starts hearing.
+
+- **One beacon, three bands, no duplication.** The datagram body is the *same*
+  manufacturer blob the BLE advert carries — no UDP framing — so BLE, ESP-NOW
+  and LAN multicast all decode through one parser into one ingest. On the
+  sending side the bytes are built once and every carrier transmits that buffer
+  verbatim, so the bands physically cannot drift into dialects and a new field
+  reaches all of them the day it lands.
+- **A band adds coverage, never a duplicate.** A witness is keyed on its
+  fingerprint suffix, never on the radio that carried it, and every dedupe
+  window is band-independent. One Canary heard on BLE *and* WiFi is one device
+  and one alert. That included fixing a real latent bug: the tamper dedupe
+  compared the event *label*, so the moment labels named their band the same
+  tamper would have alarmed once per radio.
+- **It heals because there is nothing to reset.** Sockets follow the STA
+  address and are reopened when it changes; the link going down drops them. A
+  router reboot, a new DHCP lease, a move to another AP all recover on their
+  own, and a band that goes quiet simply ages out of "currently carrying" and
+  re-credits itself by being heard again — no flag anywhere can outlive the
+  interface it described.
+- **TTL 1, set rather than inherited.** A presence beacon must not be routable
+  off the local subnet; that is a privacy property, so it is asserted in the
+  host test rather than left to a stack default. Nothing rides this wire that
+  the BLE advert doesn't already broadcast in the clear — flags, coarse
+  percentages, a chain height, two fingerprint bytes, and a class token plus
+  confidence. No identity, no image, no audio, and unlike a broker there is no
+  third party that receives, stores or forwards any of it.
+- **The glass names the band honestly.** `person 87% (wifi)` when it crossed
+  the LAN, `(ble)` over Bluetooth, `(mesh)` over ESP-NOW — which also fixes
+  ESP-NOW frames having always reported themselves as `(ble)`.
+
+Both bands are on by default (`FEATURE_FLEET_UDP`), and either can be vetoed
+per board by a size guard without touching a call site.
+
+### A Canary that drops off WiFi can get back on
+
+Field report from an ESP32-C3 Vision: flashed with good credentials, it would
+not rejoin its network. The fleet roster's BLE scan went **continuous** the
+moment the STA link was down — but BLE and WiFi share one 2.4 GHz radio on the
+C3/C6, and `wifi_loop()` is retrying that entire time, so the scan starved the
+association it was waiting for. Miss the boot-join timeout once and the device
+could stay locked out, each retry landing in a radio the scanner never
+released.
+
+Continuous scanning now requires that there be **no join to protect**: only an
+unprovisioned unit (nothing to associate with, so the beacon really is the last
+channel) scans continuously. A provisioned unit that is merely offline keeps
+its low-duty 3 s / 60 s bursts and leaves the radio free to rejoin. The
+presence beacon itself is unchanged, so broker-free discovery — including the
+new detection alerts above — keeps working exactly as before.
 ## [2.4.6] - 2026-08-05
 
 ### The Canary Nightlight — a kid's bedside clock with a friend living in it

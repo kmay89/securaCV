@@ -91,8 +91,25 @@ diagnostics and **never** set the `Verified` trust badge.
    and, within a single scan burst, lists every nearby Canary with live status —
    no connection, no pairing, no broker. When WiFi is *also* down the display
    scans continuously instead of in bursts (no coexistence cost to pay). The
-   wire format is the single source of truth in `canary-wap/.../fleet_beacon.h`
+   wire format is the single source of truth in `common/fleet_link/fleet_beacon.h`
    and `canary-display/.../beacon_parse.h` (kept identical; host round-tripped).
+
+   **Version 2 — live detections on the glass (canary-vision).** A witness
+   with an optical pipeline emits a 13-byte **v2** of the same beacon: the v1
+   layout plus a detection **class token** (person / vehicle / animal /
+   package — the ObjectClass vocabulary and nothing beyond it) and a
+   **confidence percentage**, with the `alert` flag set while its presence
+   FSM holds a live detection (an edge republishes immediately; a confidence
+   wobble rides the ~5 s refresh). A display that hears it raises a real
+   attention event — `person 87% (ble)`, `Sev::Warn`, amber glow + chime —
+   with a per-(witness, class) 60 s edge-dedupe so the continuous advert
+   can't spam the log or re-cancel acks. Same trust posture as everything on
+   this channel: **unsigned**, so it draws attention but never touches the
+   `Verified` badge, and the wire carries no identity and no timestamp — a
+   class token and a percentage, nothing more (Invariants II/III). Parsers on
+   every surface (display BLE + ESP-NOW, sibling rosters, the WAP's
+   `/api/nearby`) accept both versions; v1-only senders stay understood
+   unchanged.
 2. **GATT pull (on-demand rich detail, `FEATURE_FLEET_LINK`).** Tapping a
    Canary on the glass opens a bounded NimBLE **central** connection to that
    device's BLE status GATT service (`5e63a1b0-…`) and reads its fuller
@@ -123,9 +140,60 @@ richer source when present), self-rate-limits (~20 s; the mDNS query blocks
 seen+named liveness only, **never the `Verified` badge** (same trust posture as
 the broker gossip). Gated by `FEATURE_MDNS_DISCOVERY`.
 
-Net: plug every Canary into the home WiFi and a display finds them all, three
+### 3.2b The presence beacon itself, on the LAN — the band that crosses a house
+
+mDNS enumeration answers *who exists*. It does not carry **what a Canary is
+seeing right now**: that lives in the fleet-link presence beacon (§3.1), and
+until now the beacon only travelled as far as a radio could carry it. A Vision
+in the driveway and a Display upstairs are both on the home WiFi and still
+could not hear each other without a broker in the middle.
+
+So the beacon now also rides that WiFi, as a UDP multicast datagram — still **no
+broker, no hub, no pairing, no configuration**. A multicast datagram is addressed
+to a group rather than to a host, so there is nothing to discover, log into, or
+keep running: a Vision that is joined to WiFi starts sending, a Display joined
+to the same WiFi starts hearing, and that is the entire setup.
+
+- **The datagram body IS the beacon, verbatim** — the same manufacturer blob
+  the BLE advert carries, company-id bytes and all. There is no UDP-specific
+  framing. The receiver hands the body to the same parser the BLE and ESP-NOW
+  paths use, so all three bands resolve to one witness through one host-tested
+  contract (`firmware/common/fleet_link/fleet_beacon_udp.h`), and no band can
+  quietly learn a dialect of the beacon.
+- **One sender-side builder.** The bytes are built once
+  (`fleet_beacon_payload.cpp`) and every carrier transmits that buffer as-is, so
+  BLE and LAN cannot drift; a field added to the beacon reaches every band the
+  day it is added.
+- **Bands add coverage, never duplicates.** A witness is identified by its
+  fingerprint suffix, never by the radio that carried it, and every dedupe
+  window in the fleet model is band-independent. Hearing one Canary on BLE
+  *and* WiFi is one device and one alert — asserted in
+  `test_fleet_beacon_model.cpp`, not assumed.
+- **It heals by having nothing to reset.** The socket is opened on the current
+  STA address and reopened whenever that address changes; losing the link drops
+  it. A router reboot, a DHCP renewal, a move to another AP — all recover with
+  no flag anywhere that could outlive the interface it described. On the
+  display side a band simply ages out of "currently carrying" after ~16 s of
+  silence and re-credits itself by being heard again.
+- **TTL 1, always.** A presence beacon must not be routable off the local
+  subnet. That is a privacy property rather than a tuning knob, so the socket
+  *sets* it rather than inheriting a stack default, and the host test fails the
+  build if it ever reads otherwise. Nothing on this wire is anything the BLE
+  advert doesn't already broadcast in the clear to everyone in radio range —
+  flags, coarse percentages, a chain height, two fingerprint bytes, and (v2) a
+  class token plus a confidence percentage. No identity, no image, no audio.
+- **The glass names the band.** A sighting that crossed the LAN reads
+  `person 87% (wifi)`; over BLE it reads `(ble)`, over ESP-NOW `(mesh)`. ESP-NOW
+  frames used to be reported as `(ble)`, which they never were — fixed here.
+
+Gated by `FEATURE_FLEET_UDP` (default on, both firmwares), so a board's OTA-slot
+size guard can veto the band without touching a call site.
+
+Net: plug every Canary into the home WiFi and a display finds them all, four
 ways in order of richness — **MQTT** (with a broker) → **direct mDNS on the LAN**
-(this, no broker) → **direct BLE** (§3.1, no WiFi at all).
+(§3.2, no broker, who exists) → **the beacon over LAN multicast** (§3.2b, no
+broker, what is happening, across the house) → **direct BLE** (§3.1, no WiFi at
+all).
 
 ## 3.3 Every Canary keeps a fleet roster — mutual "last chirp" awareness
 
