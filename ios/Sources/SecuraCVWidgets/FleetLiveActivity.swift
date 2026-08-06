@@ -61,7 +61,10 @@ struct FleetLiveActivity: Widget {
         }
     }
 
-    private func agoText(_ s: Int) -> String { s < 90 ? "just now" : "\(s / 60)m ago" }
+    /// One formatter for how long ago, shared with every other heartbeat
+    /// surface — a persisted verification can now be days old, and "4320m
+    /// ago" is not a thing anyone reads.
+    private func agoText(_ s: Int) -> String { HeartbeatCopy.ago(s) }
 }
 
 struct LockScreenFleetView: View {

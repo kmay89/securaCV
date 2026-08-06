@@ -44,9 +44,22 @@ struct AlertsView: View {
         return day.formatted(.dateTime.weekday(.wide).month().day())
     }
 
+    /// Computed once on entry, deliberately: the tab stamps everything seen
+    /// when it closes, so re-reading it live would make the line vanish
+    /// under the reader. It is a "here's what you missed", not a live gauge.
+    @State private var awayLine: String?
+
     var body: some View {
         NavigationStack {
             List {
+                if let awayLine {
+                    Section {
+                        AwaySummaryRow(text: awayLine)
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                    }
+                }
+
                 Section {
                     HeartbeatCard().listRowInsets(EdgeInsets())
                         .listRowBackground(Color.clear)
@@ -106,12 +119,17 @@ struct AlertsView: View {
                 Text("Removes this phone's settled alert history. Anything that still needs you stays, and the fleet's signed witness logs stay on your devices, untouched.")
             }
             .sheet(isPresented: $showingRules) {
-                AlertRulesSheet(center: store.alerts)
+                AlertRulesSheet(center: store.alerts).environmentObject(store)
             }
+            // What you missed, answered before you have to scroll for it.
+            .onAppear { awayLine = AlertFreshness.awaySummary(store.alertLog.records) }
             // Leaving the tab is "I've looked": the badge and the unseen
             // dots clear together. On the way out, not on the way in, so
             // rows don't reshuffle under the reader's thumb.
-            .onDisappear { store.markAlertsSeen() }
+            .onDisappear {
+                store.markAlertsSeen()
+                awayLine = nil
+            }
         }
     }
 }
@@ -121,6 +139,10 @@ struct AlertsView: View {
 struct AlertRecordRow: View {
     @EnvironmentObject var store: FleetStore
     let record: AlertRecord
+    /// A swipe action can't open a menu, so the duration choice arrives as a
+    /// dialog — the mute still gets its "how long?", which is the whole point
+    /// of having durations at all.
+    @State private var choosingSnooze = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.xs) {
@@ -172,8 +194,16 @@ struct AlertRecordRow: View {
                         .font(.caption2).foregroundStyle(Theme.color(.calm))
                         .labelStyle(.titleAndIcon)
                 } else if record.handling == .muted {
-                    Label("Muted", systemImage: "bell.slash")
+                    // A mute with a visible end. "Muted" alone is how a
+                    // silence becomes one nobody remembers setting.
+                    Label(mutedLabel, systemImage: "bell.slash")
                         .font(.caption2).foregroundStyle(.secondary)
+                        .labelStyle(.titleAndIcon)
+                }
+                if record.wasEscalated {
+                    // Rationed to the top tier, so it stays worth reading.
+                    Label("Escalated", systemImage: "bell.and.waves.left.and.right")
+                        .font(.caption2).foregroundStyle(Theme.color(.tamper))
                         .labelStyle(.titleAndIcon)
                 }
             }
@@ -190,18 +220,68 @@ struct AlertRecordRow: View {
         .swipeActions(edge: .trailing) {
             if record.needsYou {
                 Button {
-                    store.mute(record.witnessID)
-                } label: { Label("Mute 1 hour", systemImage: "bell.slash") }
+                    choosingSnooze = true
+                } label: { Label("Mute", systemImage: "bell.slash") }
                     .tint(Theme.color(.warn))
             } else {
                 // Settled rows are the user's to discard. Live ones are not:
                 // a condition that's still happening can be acked or muted,
                 // never made to look like it didn't happen.
                 Button(role: .destructive) {
-                    store.alertLog.remove(id: record.id)
+                    store.dismissAlert(id: record.id)
                 } label: { Label("Remove", systemImage: "trash") }
             }
         }
+        .confirmationDialog("Quiet \(record.name) for how long?",
+                            isPresented: $choosingSnooze,
+                            titleVisibility: .visible) {
+            SnoozeButtons(witnessID: record.witnessID)
+        } message: {
+            Text("Tamper and a failed signature still get through, however long you choose.")
+        }
+    }
+
+    /// "Muted until 9:00 PM" when we know the end, plain "Muted" for a row
+    /// written before mutes carried one.
+    private var mutedLabel: String {
+        guard let until = record.mutedUntil, until > Date() else { return "Muted" }
+        return "Muted until \(until.formatted(date: .omitted, time: .shortened))"
+    }
+}
+
+/// The three durations, offered wherever a mute is chosen — and only the ones
+/// that make sense at this hour (MuteDuration.offered). One list, so the
+/// phone's rows, the detail screen and the wrist can never drift on what
+/// "until tonight" means.
+struct SnoozeButtons: View {
+    @EnvironmentObject var store: FleetStore
+    let witnessID: String
+
+    var body: some View {
+        ForEach(MuteDuration.offered(at: Date())) { duration in
+            Button(duration.title) { store.mute(witnessID, duration: duration) }
+        }
+    }
+}
+
+/// "Here's what you missed" — the recovery surface the industry leaves to
+/// scrolling. Shown on entry, gone once the tab has been seen.
+struct AwaySummaryRow: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: Theme.s) {
+            Image(systemName: "clock.arrow.circlepath")
+                .foregroundStyle(Theme.color(.info))
+                .accessibilityHidden(true)
+            Text(text).font(.subheadline)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, Theme.m)
+        .padding(.vertical, Theme.s)
+        .background(.ultraThinMaterial,
+                    in: RoundedRectangle(cornerRadius: Theme.corner, style: .continuous))
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -249,6 +329,7 @@ struct QuietStateCard: View {
 // MARK: - "Tell me when…" (the rules, in plain words)
 
 struct AlertRulesSheet: View {
+    @EnvironmentObject var store: FleetStore
     @ObservedObject var center: AlertCenter
     @ObservedObject private var away = AwayPush.shared
     @Environment(\.dismiss) private var dismiss
@@ -256,6 +337,30 @@ struct AlertRulesSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                // The app noticing it's being annoying, and asking. Never
+                // acting on its own — the counters are evidence, not a
+                // mandate (AlertTuning).
+                if let advice = store.tuningAdvice {
+                    Section {
+                        VStack(alignment: .leading, spacing: Theme.s) {
+                            Text(advice.sentence).font(.subheadline)
+                            Text(advice.question)
+                                .font(.footnote).foregroundStyle(.secondary)
+                            HStack {
+                                Button("Stop pushing these") { store.applyTuning(advice) }
+                                    .buttonStyle(.borderedProminent)
+                                Button("Keep them") { store.declineTuning(advice) }
+                                    .buttonStyle(.bordered)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    } header: {
+                        Text("Noticed")
+                    } footer: {
+                        Text("Counted on this phone only — how often you act on each kind of alert, never what they were about. Nothing about this leaves your device.")
+                    }
+                }
+
                 Section {
                     ForEach($center.rules) { $rule in
                         AlertRuleRow(rule: $rule, awayReach: away.reach)
@@ -264,6 +369,33 @@ struct AlertRulesSheet: View {
                     Text("Tell me when")
                 } footer: {
                     Text("We push only what you arm here, and only what matters — like a smoke alarm, silent until it isn't. Everyday activity stays in Today, never a buzz.")
+                }
+
+                Section {
+                    Toggle("Quiet hours", isOn: $center.quietHours.enabled)
+                    if center.quietHours.enabled {
+                        DatePicker("From", selection: quietStart,
+                                   displayedComponents: .hourAndMinute)
+                        DatePicker("Until", selection: quietEnd,
+                                   displayedComponents: .hourAndMinute)
+                    }
+                } header: {
+                    Text("Quiet hours")
+                } footer: {
+                    Text("Everyday alerts wait in the app during these hours. Tamper and panic still come through — a smoke alarm that honors quiet hours isn't one.")
+                }
+
+                if store.narrowedWitnessCount > 0 {
+                    Section {
+                        Label(store.narrowedWitnessCount == 1
+                              ? "1 Canary is set to tell you less than your rules would."
+                              : "\(store.narrowedWitnessCount) Canaries are set to tell you less than your rules would.",
+                              systemImage: "slider.horizontal.3")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } footer: {
+                        Text("Set per Canary on its own screen. A choice made months ago should never be an invisible reason an alert didn't arrive.")
+                    }
                 }
 
                 Section {
@@ -293,6 +425,18 @@ struct AlertRulesSheet: View {
             }
             .task { if !away.reach.isReady { await away.enable() } }
         }
+    }
+
+    /// The pickers speak Dates; the setting stores wall-clock hour+minute, so
+    /// a quiet hour is 10pm wherever the user is rather than a frozen instant.
+    private var quietStart: Binding<Date> {
+        Binding(get: { center.quietHours.startDate() },
+                set: { center.quietHours.setStart($0) })
+    }
+
+    private var quietEnd: Binding<Date> {
+        Binding(get: { center.quietHours.endDate() },
+                set: { center.quietHours.setEnd($0) })
     }
 }
 

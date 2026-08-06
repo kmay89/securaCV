@@ -86,6 +86,15 @@ struct AlertRecord: Codable, Hashable, Identifiable, Sendable {
     /// Alerts tab). Drives the app badge and the unseen dot — it is "did I
     /// miss something?", which is a different question from acknowledgment.
     var seenBucket: Date?
+    /// When the mute the user chose for this condition runs out. Set beside
+    /// `.muted` handling so the row can say WHEN the alerts come back rather
+    /// than just that they stopped — a mute with no visible end is the shape
+    /// of a silence people forget they set.
+    var mutedUntil: Date?
+    /// Coarse bucket when this alert was ESCALATED — re-alerted because it
+    /// went unacknowledged. Top tier only (EscalationPolicy); nil for
+    /// everything else, which is what keeps escalation meaning something.
+    var escalatedBucket: Date?
 
     var severity: Severity { Severity(tolerant: Int(severityRaw)) }
     var delivery: AlertDelivery { AlertDelivery(tolerant: Int(deliveryRaw)) }
@@ -99,6 +108,8 @@ struct AlertRecord: Codable, Hashable, Identifiable, Sendable {
     var needsYou: Bool { handling == .new && isOpen }
     /// The user has never laid eyes on this row.
     var isUnseen: Bool { seenBucket == nil }
+    /// This one was re-alerted for going unanswered.
+    var wasEscalated: Bool { escalatedBucket != nil }
 
     /// The 10-minute bucket rule, in one place so every producer agrees.
     static func bucket(for date: Date) -> Date {

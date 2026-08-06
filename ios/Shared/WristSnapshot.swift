@@ -88,18 +88,51 @@ enum WristHeartbeatState: UInt8, Codable, Sendable {
     }
 }
 
+/// What the last heartbeat actually proved. Two very different claims, and
+/// the copy below refuses to let the weaker one borrow the stronger one's
+/// words: a Canary answering on the LAN is not evidence that a notification
+/// would reach a phone across town.
+enum WristBeatSource: UInt8, Codable, Sendable {
+    /// An alert reached this phone and iOS accepted it — the strong claim.
+    case pathVerified = 0
+    /// A Canary answered. The fleet is up; the notification path is untested.
+    case fleetCheckIn = 1
+
+    init(tolerant raw: Int) { self = WristBeatSource(rawValue: UInt8(clamping: raw)) ?? .pathVerified }
+}
+
 /// The heartbeat's human wording, in ONE place. The phone's provably-alive
 /// card and the watch's Heartbeat screen both call this — two surfaces, one
 /// sentence, no drift.
 enum HeartbeatCopy {
+    /// How long ago, in units a person uses. Minutes stop being readable
+    /// somewhere around "verified 4320 min ago" — which is what a persisted
+    /// verification from three days back would otherwise say.
+    static func ago(_ seconds: Int) -> String {
+        if seconds < 90 { return "just now" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes) min ago" }
+        let hours = minutes / 60
+        if hours < 24 { return hours == 1 ? "an hour ago" : "\(hours) hours ago" }
+        let days = hours / 24
+        return days == 1 ? "yesterday" : "\(days) days ago"
+    }
+
     static func summary(state: WristHeartbeatState,
                         secondsSinceVerified: Int?,
-                        failureReason: String? = nil) -> String {
+                        failureReason: String? = nil,
+                        source: WristBeatSource? = nil) -> String {
         switch state {
         case .unknown: return "Not yet verified"
         case .alive:
-            guard let s = secondsSinceVerified else { return "Delivery verified" }
-            return s < 90 ? "Delivery verified just now" : "Delivery verified \(s / 60) min ago"
+            guard let s = secondsSinceVerified else {
+                return source == .fleetCheckIn ? "Your fleet checked in" : "Delivery verified"
+            }
+            // The honesty split: only a delivery iOS accepted may say
+            // "verified". A Canary answering says what it is.
+            return source == .fleetCheckIn
+                ? "Your fleet checked in \(ago(s))"
+                : "Delivery verified \(ago(s))"
         case .testing: return "Testing the whole path…"
         case .dark:
             let s = secondsSinceVerified ?? 0
@@ -193,7 +226,19 @@ struct WristSnapshot: Codable, Hashable, Sendable {
     /// a glance, not an archive.
     var alerts: [WristAlert]?
 
+    /// The last heartbeat of any kind, and what it proved. ADDITIVE
+    /// OPTIONALS: a phone too old to send them leaves the wrist reading
+    /// `lastVerifiedAt` exactly as it did before, which is still true — it
+    /// simply can't tell a fleet check-in from a verified delivery, so it
+    /// says the conservative thing.
+    var lastBeatAt: Date?
+    var beatSourceRaw: UInt8?
+
     var severity: Severity { Severity(tolerant: Int(severityRaw)) }
+    /// nil when the sending phone predates the distinction.
+    var beatSource: WristBeatSource? {
+        beatSourceRaw.map { WristBeatSource(tolerant: Int($0)) }
+    }
     var heartbeat: WristHeartbeatState { WristHeartbeatState(tolerant: Int(heartbeatRaw)) }
 
     /// The character's face, with an honest fallback for a phone too old to
@@ -212,10 +257,15 @@ struct WristSnapshot: Codable, Hashable, Sendable {
     /// The same sentence the phone's provably-alive card shows, rendered from
     /// this snapshot's facts at the wrist's own clock.
     func heartbeatSummary(now: Date = Date()) -> String {
-        let ago = lastVerifiedAt.map { max(0, Int(now.timeIntervalSince($0))) }
+        // The freshest signal the sender had: its last beat when it sends one,
+        // its last verification otherwise (an older phone, or one that has
+        // only ever been verified).
+        let anchor = lastBeatAt ?? lastVerifiedAt
+        let ago = anchor.map { max(0, Int(now.timeIntervalSince($0))) }
         return HeartbeatCopy.summary(state: heartbeat,
                                      secondsSinceVerified: ago,
-                                     failureReason: heartbeatFailureReason)
+                                     failureReason: heartbeatFailureReason,
+                                     source: beatSource)
     }
 
     /// Adoption rule for the receiving side. Either monotonic signal wins:
@@ -242,11 +292,18 @@ enum WristSync {
     static let messageCommandKey = "cmd"
     static let commandRefresh = "refresh"
     static let commandTestAlertPath = "testAlertPath"
-    /// Mute one witness for an hour (payload: `muteIDKey` = witness id).
-    /// The PHONE owns mute semantics (its ledger, its punch-through rules);
-    /// the wrist only asks, and the reply snapshot shows the result.
+    /// Mute one witness (payload: `muteIDKey` = witness id, and optionally
+    /// `muteDurationKey` = a MuteDuration raw value). The PHONE owns mute
+    /// semantics (its ledger, its punch-through rules); the wrist only asks,
+    /// and the reply snapshot shows the result.
+    ///
+    /// The duration key is ADDITIVE-OPTIONAL like every other late arrival on
+    /// this wire: a watch too old to send one still means "an hour", which is
+    /// what it has always meant, and an unreadable value means the same. The
+    /// phone never widens a mute it couldn't parse.
     static let commandMute = "mute"
     static let muteIDKey = "id"
+    static let muteDurationKey = "for"
 
     /// Row cap for the snapshot — applicationContext has a small transfer
     /// budget and a wrist list past this is unreadable anyway. The cap is

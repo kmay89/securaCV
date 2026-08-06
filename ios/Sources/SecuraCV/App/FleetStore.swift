@@ -50,6 +50,16 @@ final class FleetStore: ObservableObject {
     /// from device truth, so mute must outlive them).
     private let muteLedger = MuteLedger()
 
+    /// Per-witness reach ("this one only when it's serious") — durable for
+    /// the same reason mutes are: the rows it applies to are rebuilt every
+    /// refresh.
+    private let witnessPrefs = WitnessAlertPrefs()
+
+    /// The local, never-uploaded answer counters behind the "you dismiss
+    /// almost all of these" offer (Invariant IV — two integers per severity,
+    /// on this phone, forever).
+    private let tuning = AlertTuningLedger()
+
     // The living canary — the display firmware's mood engine, mirrored
     // (Shared/CanaryMood.swift), fed the fleet's truth every refresh. The
     // published face/posture drive the character on every surface; the mood
@@ -128,6 +138,11 @@ final class FleetStore: ObservableObject {
             }
         }
         recordDemoBeatIfHarmless()
+        // The dead-man's-switch may only count silence it could have heard:
+        // the app hears nothing in the background by design, so the window
+        // restarts here rather than accusing the fleet of going dark while
+        // the phone was asleep in a pocket.
+        heartbeat.noteListening()
         // History hygiene at the door: settled, seen rows past the retention
         // window leave; the badge tells the truth about what's still unseen.
         alertLog.retentionSweep()
@@ -207,7 +222,9 @@ final class FleetStore: ObservableObject {
         if active {
             startRadiosIfConsented()
             startSentinel()
-            heartbeat.tick()
+            // Listening again — see onAppear. Backgrounded time is not
+            // evidence of a silent fleet.
+            heartbeat.noteListening()
             Task { await refreshOnce() }
         } else {
             discovery.stop()
@@ -341,7 +358,22 @@ final class FleetStore: ObservableObject {
         }
 
         witnesses = next.sorted { $0.effectiveSeverity > $1.effectiveSeverity }
+        // The all-clear earns a line. A condition ending is news the same way
+        // it starting was — silence must never be the only "it's fine" signal
+        // (status-page doctrine). Derived from the ledger every fold, so it
+        // can't drift from what the Alerts tab says, and digest-tier by
+        // construction: there is no path from here to a notification.
+        events.append(contentsOf: AlertFreshness.allClearEvents(alertLog.records))
         timeline = events.sorted { $0.timeBucket > $1.timeBucket }
+        // The fleet's own liveness feeds the heartbeat: a Canary answering is
+        // a real check-in (and says exactly that — never "delivery
+        // verified", which only an accepted notification earns). With nothing
+        // paired there is no beat to miss, so the dead-man's-switch stays
+        // quiet instead of alarming about a fleet the user hasn't got.
+        heartbeat.expectsBeats = !devices.devices.isEmpty
+        if FleetBeat.heard(in: witnesses, demoPrefix: DemoFleet.idPrefix) {
+            heartbeat.recordBeat(source: .fleetCheckIn)
+        }
         // Re-evaluate the dead-man's-switch EVERY cycle, not just on scene
         // changes: the island and the wrist serialize its state, and a phone
         // that stays foregrounded past the dark window must never keep
@@ -501,8 +533,26 @@ final class FleetStore: ObservableObject {
     /// the wrist. Caps nagging at Notice; tamper and a failed signature
     /// still punch through (Witness.effectiveSeverity owns that guarantee).
     func mute(_ id: String, for duration: TimeInterval = 3600) {
-        muteLedger.set(until: Date().addingTimeInterval(duration), for: id)
-        alertLog.mark(.muted, forWitness: id)
+        quiet(id, until: Date().addingTimeInterval(duration))
+    }
+
+    /// The named durations (1 hour / until tonight / until morning) — the
+    /// same three on the phone, the wrist, and anywhere else that grows a
+    /// mute button. Every one of them ends; MuteDuration has no untimed case
+    /// to choose, which is the guarantee rather than a habit.
+    func mute(_ id: String, duration: MuteDuration, now: Date = Date()) {
+        quiet(id, until: duration.expiry(from: now))
+    }
+
+    private func quiet(_ id: String, until: Date) {
+        // "Stop telling me about this" is an answer, and the local counters
+        // hear it as one — a class the user mutes over and over is a class
+        // the app should offer to stop pushing (AlertTuning).
+        for record in alertLog.liveRecords(forWitness: id) {
+            tuning.recordDismissed(record.severity)
+        }
+        muteLedger.set(until: until, for: id)
+        alertLog.mark(.muted, forWitness: id, until: until)
         applyMutesAndRepublish()
     }
 
@@ -662,6 +712,11 @@ final class FleetStore: ObservableObject {
         } else if let posted = postedAlerts[id] {
             ackedAlerts[id] = posted
         }
+        // An ack is the counters' "this mattered" — the other half of the
+        // evidence behind the demotion offer.
+        for record in alertLog.liveRecords(forWitness: id) {
+            tuning.recordActed(record.severity)
+        }
         alertLog.mark(.acknowledged, forWitness: id)
         syncBadge()
         // An ack changes the story (the bird may return to the stage) —
@@ -684,6 +739,63 @@ final class FleetStore: ObservableObject {
         syncBadge()
     }
 
+    /// The user swiped a settled row away. That is an answer too ("I didn't
+    /// need to be told this"), so it counts before the row goes.
+    func dismissAlert(id: String) {
+        if let record = alertLog.record(id: id) {
+            tuning.recordDismissed(record.severity)
+        }
+        alertLog.remove(id: id)
+        syncBadge()
+    }
+
+    // MARK: - per-witness reach
+
+    func pushFloor(for id: String) -> WitnessPushFloor {
+        witnessPrefs.floor(for: id)
+    }
+
+    /// Narrow (never silence) what one Canary may interrupt for. Republished
+    /// immediately so the detail screen reflects the choice in the same
+    /// breath as the tap.
+    func setPushFloor(_ floor: WitnessPushFloor, for id: String) {
+        witnessPrefs.set(floor, for: id)
+        objectWillChange.send()
+    }
+
+    /// How many Canaries the user has narrowed — the rules sheet says so, so
+    /// a per-device choice made months ago can never become an invisible
+    /// reason alerts aren't arriving.
+    var narrowedWitnessCount: Int { witnessPrefs.narrowedIDs().count }
+
+    // MARK: - the app noticing it's being annoying
+
+    /// The one demotion worth offering right now, if any. Recomputed on read:
+    /// it is two dictionary lookups over counters that only move when the
+    /// user answers something.
+    var tuningAdvice: AlertTuning.Advice? {
+        AlertTuning.advice(stats: tuning.stats, rules: alerts.rules, declined: tuning.declined)
+    }
+
+    /// "Yes, stop pushing these." Turns the rule off — the events still land
+    /// in Today and in the history, they simply stop interrupting — and
+    /// forgets the evidence, so a rule re-armed later is judged on what
+    /// happens next rather than on the history that got it turned off.
+    func applyTuning(_ advice: AlertTuning.Advice) {
+        if let i = alerts.rules.firstIndex(where: { $0.id == advice.ruleID }) {
+            alerts.rules[i].enabled = false
+        }
+        tuning.forget(advice.severity)
+        objectWillChange.send()
+    }
+
+    /// "No, keep pushing them." Remembered per rule, so the offer is made
+    /// once and never becomes its own nag.
+    func declineTuning(_ advice: AlertTuning.Advice) {
+        tuning.decline(ruleID: advice.ruleID)
+        objectWillChange.send()
+    }
+
     /// The app badge is the unseen count — "something landed that you have
     /// not looked at" — kept in one place so every path that changes the
     /// ledger leaves the icon telling the truth.
@@ -702,8 +814,13 @@ final class FleetStore: ObservableObject {
         for w in witnesses where w.effectiveSeverity >= .alert {
             live.insert(w.id)
             let fingerprint = alertFingerprint(w)
-            guard postedAlerts[w.id] != fingerprint else { continue }   // already told
-            guard ackedAlerts[w.id] != fingerprint else { continue }    // user said "seen it"
+            // Already told, or the user said "seen it" — nothing new to post.
+            // A top-tier alarm nobody answered is the one exception, and it
+            // gets exactly one more chance to be heard (EscalationPolicy).
+            if postedAlerts[w.id] == fingerprint || ackedAlerts[w.id] == fingerprint {
+                escalateIfUnanswered(w, recordID: "\(w.id)|\(fingerprint)")
+                continue
+            }
             if postedAlerts[w.id] != nil {
                 // The condition CHANGED without a calm gap (dark became
                 // tamper): the old record's story is over even though the
@@ -722,7 +839,13 @@ final class FleetStore: ObservableObject {
             let record = alertLog.note(id: "\(w.id)|\(fingerprint)", witnessID: w.id,
                                        name: w.displayName, severity: w.effectiveSeverity,
                                        headline: w.statusLine)
-            if let level = alerts.level(for: w.effectiveSeverity, awayFromHome: false) {
+            // The user's per-witness choice, applied before anything is
+            // posted: a Canary narrowed to "serious only" doesn't push its
+            // everyday news — but the record above still exists, so the
+            // history shows what happened and says whose choice quieted it.
+            let floor = witnessPrefs.floor(for: w.id)
+            let allowedByWitness = w.effectiveSeverity >= floor.minSeverity
+            if allowedByWitness, let level = alerts.level(for: w.effectiveSeverity, awayFromHome: false) {
                 // CONFIRM, never assume. `level` says a rule wants to tell
                 // them; it says nothing about whether iOS will actually show
                 // it. postConfirmed checks authorization and awaits the
@@ -742,6 +865,11 @@ final class FleetStore: ObservableObject {
                         // A wake that already reached the pocket outranks a
                         // local post; the ledger only moves delivery up.
                         self.alertLog.markDelivery(arrivedAway ? .away : .onLAN, for: recordID)
+                        // A REAL alert that iOS accepted proves the same
+                        // thing the Test Alert proves, and it proves it on the
+                        // day it mattered — so it counts as a verification of
+                        // the path, not merely as a delivery.
+                        self.heartbeat.recordBeat(source: .pathVerified)
                     } catch {
                         self.alertLog.markDelivery(.notDelivered, for: recordID,
                                                    reason: Self.deliveryFailure(error))
@@ -750,6 +878,15 @@ final class FleetStore: ObservableObject {
             } else if !alerts.hasArmedRule(for: w.effectiveSeverity) {
                 alertLog.markDelivery(.notDelivered, for: record.id,
                                       reason: "No armed rule covers this.")
+            } else if !allowedByWitness {
+                // Their own words back: this Canary was narrowed on purpose.
+                alertLog.markDelivery(.notDelivered, for: record.id,
+                                      reason: floor.undeliveredReason)
+            } else if alerts.quietHoursSuppresses(w.effectiveSeverity) {
+                // Before Focus, because blaming iOS for a window WE hold
+                // would send the user to fix the wrong setting.
+                alertLog.markDelivery(.notDelivered, for: record.id,
+                                      reason: QuietHours.undeliveredReason)
             } else if FocusGate.criticalOnly() {
                 // Order matters: blaming Focus for something no rule was
                 // watching would send the user to fix the wrong setting.
@@ -764,7 +901,8 @@ final class FleetStore: ObservableObject {
             // Gate on the rule that actually matches this witness, so a
             // condition whose rule says "On Wi-Fi only" never leaves the
             // house just because some unrelated rule wants away reach.
-            if alerts.reachesAnywhere(severity: w.effectiveSeverity), lastAwayWake == nil {
+            if allowedByWitness, alerts.reachesAnywhere(severity: w.effectiveSeverity),
+               lastAwayWake == nil {
                 AwayPush.shared.publishWake(WakeClass(witness: w))
             }
         }
@@ -779,6 +917,51 @@ final class FleetStore: ObservableObject {
         postedAlerts = postedAlerts.filter { live.contains($0.key) }
         ackedAlerts = ackedAlerts.filter { live.contains($0.key) }
         syncBadge()
+    }
+
+    /// One more buzz for a top-tier alarm nobody answered — and only ever
+    /// one (`EscalationPolicy` rations it; the ledger's stamp enforces the
+    /// "once" across relaunches, because the stamp is persisted and the
+    /// in-memory ledgers are not).
+    ///
+    /// The second-household-member leg belongs to the relay
+    /// (docs/design/alert_relay.md R1). What this can reach today is the
+    /// user's OWN other devices, which is worth reaching: the phone that
+    /// missed the first alert may be the one on the kitchen counter.
+    private func escalateIfUnanswered(_ w: Witness, recordID: String) {
+        guard let record = alertLog.record(id: recordID), record.isOpen else { return }
+        guard EscalationPolicy.shouldEscalate(severity: w.displaySeverity,
+                                              integrityFailed: w.badge == .failed,
+                                              firstPosted: record.lastBucket,
+                                              now: Date(),
+                                              acknowledged: record.handling != .new,
+                                              alreadyEscalated: record.wasEscalated) else { return }
+        // Nothing armed for this severity means we never posted the first
+        // one; a second would be worse than silence. The user's per-witness
+        // narrowing binds here for the same reason.
+        guard alerts.hasArmedRule(for: w.effectiveSeverity),
+              w.effectiveSeverity >= witnessPrefs.floor(for: w.id).minSeverity else { return }
+        // Stamped BEFORE the await: at-most-once must not depend on how the
+        // delivery goes, or a refused post would re-escalate every cycle.
+        alertLog.markEscalated(id: recordID)
+        let body = EscalationPolicy.body(name: w.displayName, statusLine: w.statusLine)
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                // Critical: the whole point of rationing escalation to the
+                // top tier is that this one may pierce a silent phone.
+                try await self.alerts.postConfirmed(title: self.fleetName, body: body,
+                                                    level: .critical, threadID: w.id)
+                self.alertLog.markDelivery(.onLAN, for: recordID)
+                self.heartbeat.recordBeat(source: .pathVerified)
+            } catch {
+                self.alertLog.markDelivery(.notDelivered, for: recordID,
+                                           reason: Self.deliveryFailure(error))
+            }
+        }
+        if alerts.reachesAnywhere(severity: w.effectiveSeverity) {
+            AwayPush.shared.publishWake(WakeClass(witness: w))
+        }
     }
 
     private func pushLiveActivity() {
