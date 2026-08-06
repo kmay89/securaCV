@@ -77,6 +77,15 @@ struct Args {
     /// Tailscale name — never a cloud page). Omitted when unset.
     #[arg(long, env = "RELAY_LINK_HOME")]
     link_home: Option<String>,
+
+    /// Send one test poke and exit — the drill.
+    ///
+    /// It travels the identical path a real alert does: this binary, this
+    /// config, this ntfy topic, your phone. That is the point. A test that
+    /// stops short of the network proves the button is connected to itself
+    /// and nothing else, which is the failure mode this flag exists to end.
+    #[arg(long)]
+    send_test: bool,
 }
 
 fn post_poke(args: &Args, poke: &Poke) -> Result<()> {
@@ -114,6 +123,18 @@ fn post_poke(args: &Args, poke: &Poke) -> Result<()> {
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args = Args::parse();
+
+    // The drill runs before any broker setup: what it proves is that THIS
+    // config can reach the owner, and a broker that happens to be down must
+    // not stop someone answering "will I be told?".
+    if args.send_test {
+        let poke = Poke::drill();
+        post_poke(&args, &poke)?;
+        println!("Test poke sent. If it does not arrive on your phone within a");
+        println!("few seconds, the fault is between this hub and ntfy — not in");
+        println!("your Canaries, which this drill deliberately did not involve.");
+        return Ok(());
+    }
 
     let endpoint = parse_mqtt_endpoint(&args.mqtt_broker_addr, args.mqtt_use_tls)?;
     if !args.allow_remote_mqtt {

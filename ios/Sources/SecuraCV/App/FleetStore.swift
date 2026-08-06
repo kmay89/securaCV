@@ -855,13 +855,22 @@ final class FleetStore: ObservableObject {
         let alerts = alerts
         await heartbeat.runTestAlert {
             // On-LAN self-test: post a local time-sensitive notification so
-            // the user SEES the whole path light up — and CONFIRM the system
-            // accepted it. Notifications off → this throws → the heartbeat
-            // honestly records a FAILED path instead of a hollow "verified"
-            // (the away path swaps this closure for device→relay→APNs).
-            try await alerts.postConfirmed(title: fleet,
-                                           body: "Test alert — your fleet can reach you.",
-                                           level: .important, threadID: "selftest")
+            // the user SEES this half of the path light up — and CONFIRM the
+            // system accepted it. Notifications off → this throws → the
+            // heartbeat honestly records a FAILED path instead of a hollow
+            // "verified".
+            //
+            // The copy says exactly what this proved and no more. It travels
+            // no network, so it cannot speak for the away path: that drill is
+            // `alert_relay --send-test` on the hub, which sends a real poke
+            // over the real topic to the phone in your pocket. Claiming
+            // "your fleet can reach you" from a notification the phone posted
+            // to itself is the kind of comfortable lie this project exists to
+            // not tell.
+            try await alerts.postConfirmed(
+                title: fleet,
+                body: "Notifications work on this iPhone. (Away alerts are a separate test — run it from the hub.)",
+                level: .important, threadID: "selftest")
         }
         pushLiveActivity()
         // Forced: the wrist is waiting on this exact push to leave its
