@@ -8,6 +8,19 @@
   <link rel="stylesheet" href="assets/canary-local.css" />
 </head>
 <body>
+<!-- These pages are served from a different origin than securacv.com. This
+     bar keeps the visitor oriented instead of dropping them off the site;
+     see the website repo's RESTRUCTURE-MANIFEST.md, Phase 6. -->
+<nav class="scv-bar" aria-label="Back to SecuraCV">
+  <a class="scv-home" href="https://securacv.com/">SecuraCV</a>
+  <span class="scv-sep" aria-hidden="true">/</span>
+  <a href="https://securacv.com/lab">the Lab</a>
+  <span class="scv-sep" aria-hidden="true">&middot;</span>
+  <a href="https://securacv.com/glossary">Glossary</a>
+  <span class="scv-sep" aria-hidden="true">&middot;</span>
+  <a href="https://securacv.com/canary">Help</a>
+  <span class="scv-where">canary.local &mdash; runs in your browser, nothing uploaded</span>
+</nav>
   <header id="hero" class="br-hero">
     <div class="mark" aria-hidden="true">
       <svg viewBox="0 0 64 64" width="44" height="44">

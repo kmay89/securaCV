@@ -2049,3 +2049,23 @@ button.ghost.small.bench-ff { font-size: 12px; }
 .hub-wiz-net { margin: 14px 0 0; font-size: 12px; color: var(--muted, #8a8a8a); }
 .hub-wiz-net a { color: var(--canary-deep, #e3b33c); }
 @media (max-width: 520px) { .hub-wiz-value-label { flex-basis: 100%; } }
+
+/* ── "still on SecuraCV" bar ─────────────────────────────────────────────
+   These pages are published from a different origin than securacv.com, so
+   a visitor who follows a Lab station here used to be dropped off the site
+   with no way back. This is the smallest honest fix: one quiet strip, on
+   every page, that names where they are and links home. Quiet Glass palette,
+   no new tokens. */
+.scv-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 16px;
+  background: var(--surface); border-bottom: 1px solid var(--edge);
+  font: 500 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--muted);
+}
+.scv-bar a { color: var(--text); text-decoration: none; font-weight: 600; }
+.scv-bar a:hover { color: var(--canary); text-decoration: underline; }
+.scv-bar .scv-home { color: var(--canary); }
+.scv-bar .scv-sep { color: var(--faint); }
+.scv-bar .scv-where { margin-left: auto; color: var(--faint); font-weight: 500; }
+@media (max-width: 560px) { .scv-bar .scv-where { display: none; } }
