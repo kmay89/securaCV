@@ -52,6 +52,14 @@ struct AlertsView: View {
                         .listRowBackground(Color.clear)
                 }
 
+                // The heartbeat proves *a* path works. This answers the
+                // bigger question standing right behind it — how many paths
+                // there are, and which ones are down — because the person
+                // who thinks to ask it is standing on this screen.
+                Section {
+                    CoverageRow()
+                }
+
                 if store.alertLog.isQuiet {
                     Section {
                         QuietStateCard(trustDays: store.canaryTrustDays)
