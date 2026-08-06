@@ -98,6 +98,12 @@ BEDSIDE_SRC = test_bedside_models.cpp
 NIGHTLIGHT_BIN = test_nightlight
 NIGHTLIGHT_SRC = test_nightlight.cpp
 
+# Gravity-settled orientation (canary/io/orientation.h): settled-only
+# commits (shakes/carries have no opinion), flat/diagonal keep the last
+# orientation, dwell + cooldown, all four orientations.
+ORIENT_BIN = test_orientation
+ORIENT_SRC = test_orientation.cpp
+
 # Display settings geometry (canary/glass_settings.h): the 7"/dash orientation
 # helpers (logical dims, the touch un-rotation round-tripped against the
 # forward render rotation) and the rendered brightness scrim (clamp + the
@@ -147,6 +153,9 @@ $(BEDSIDE_BIN): $(BEDSIDE_SRC)
 $(NIGHTLIGHT_BIN): $(NIGHTLIGHT_SRC)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(NIGHTLIGHT_SRC)
 
+$(ORIENT_BIN): $(ORIENT_SRC)
+	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(ORIENT_SRC)
+
 $(DISPSET_BIN): $(DISPSET_SRC)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(DISPSET_SRC)
 
@@ -160,7 +169,7 @@ GREET_SRC = test_greeting.cpp
 $(GREET_BIN): $(GREET_SRC)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(GREET_SRC)
 
-run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(DISPSET_BIN) $(GREET_BIN)
+run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(GREET_BIN)
 	./$(BEACON_PARSE_BIN)
 	./$(MODEL_BIN)
 	./$(CARDS_BIN)
@@ -174,8 +183,9 @@ run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARC
 	./$(RTC85063_BIN)
 	./$(BEDSIDE_BIN)
 	./$(NIGHTLIGHT_BIN)
+	./$(ORIENT_BIN)
 	./$(DISPSET_BIN)
 	./$(GREET_BIN)
 
 clean:
-	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(DISPSET_BIN) $(GREET_BIN)
+	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(GREET_BIN)

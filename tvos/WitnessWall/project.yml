@@ -60,10 +60,18 @@ targets:
       # scripts/make_app_icon.py (tvOS icons are layered image stacks — ~20
       # files); tvos.yml regenerates and fails if it drifts.
       - path: Support/Assets.xcassets
+      # Shared with the iPhone app, compiled rather than copied, so the away
+      # path cannot grow two dialects. WakePayload is the wake vocabulary
+      # (one class word, nothing else); CloudContainer is the ONE way to
+      # reach CloudKit without the uncatchable trap an unentitled process
+      # takes in CKContainer.default(). Both are Foundation-only.
+      - path: ../../ios/Shared/WakePayload.swift
+      - path: ../../ios/Sources/SecuraCV/Cloud/CloudContainer.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.securacv.witnesswall
         INFOPLIST_FILE: Support/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Support/WitnessWall.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: "App Icon & Top Shelf Image"
         OTHER_LDFLAGS: "$(inherited) -lsecuracv_witness_core"
 

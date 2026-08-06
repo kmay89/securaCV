@@ -21,12 +21,16 @@
 //! The severity vocabulary is the four coarse classes the iPhone lane already
 //! ships (`ios/Shared/WakePayload.swift` decodes the flat `{"sev": ...}`
 //! envelope): `tamper`, `integrity`, `offline`, `pattern`. Same words here so
-//! a future self-hosted push lane speaks one dialect.
+//! a future self-hosted push lane speaks one dialect. A fifth, `drill`, is
+//! lane-local: it exists so the owner can prove this path reaches them, and
+//! it is deliberately absent from the iPhone lane's vocabulary until someone
+//! adds it there on purpose.
 
 use std::collections::HashMap;
 
-/// The four coarse severity classes — the whole vocabulary that may leave
-/// the LAN. Matches the shipped iOS wake vocabulary; do not widen casually.
+/// The coarse severity classes — the whole vocabulary that may leave the LAN.
+/// The first four match the shipped iOS wake vocabulary; do not widen
+/// casually. `Drill` is the owner's own test and is lane-local (see below).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PokeClass {
     /// A witness reports interference with itself. Top of the ladder.
@@ -37,6 +41,19 @@ pub enum PokeClass {
     Offline,
     /// A life-safety or anomaly pattern was heard/seen (smoke, CO).
     Pattern,
+    /// A drill: the owner asked whether this lane can actually reach them.
+    ///
+    /// Its own class rather than a borrowed one, because a test that arrives
+    /// wearing an alarm's clothes is worse than no test — it either scares
+    /// someone or teaches them that alarms are usually drills. It travels the
+    /// identical path a real poke does (same relay, same broker credentials,
+    /// same ntfy topic), which is the entire point: nothing is proven by a
+    /// message that took a shortcut.
+    ///
+    /// Lane-local for now. The iPhone lane's `WakeClass` (ios/Shared) is a
+    /// separate four-word vocabulary and does not carry this; if the relay
+    /// ever feeds that lane, the word has to be added there deliberately.
+    Drill,
 }
 
 impl PokeClass {
@@ -47,6 +64,7 @@ impl PokeClass {
             PokeClass::Integrity => "integrity",
             PokeClass::Offline => "offline",
             PokeClass::Pattern => "pattern",
+            PokeClass::Drill => "drill",
         }
     }
 
@@ -57,6 +75,8 @@ impl PokeClass {
             PokeClass::Pattern | PokeClass::Tamper => 5,
             PokeClass::Integrity => 4,
             PokeClass::Offline => 3,
+            // A drill must never page like an alarm.
+            PokeClass::Drill => 3,
         }
     }
 
@@ -70,6 +90,9 @@ impl PokeClass {
             PokeClass::Tamper => 900,  // 15 min
             PokeClass::Offline => 1800, // 30 min — WiFi blips are weather
             PokeClass::Integrity => 3600, // 1 h — one page per broken chain is plenty
+            // The owner is standing there holding the button; rate-limiting a
+            // deliberate test is user-hostile. The 60 s floor still applies.
+            PokeClass::Drill => 0,
         }
     }
 }
@@ -86,6 +109,23 @@ pub struct Poke {
     pub body: String,
     /// Which device this concerns, for debouncing. Empty for hub-level lanes.
     pub device: String,
+}
+
+impl Poke {
+    /// The drill. Same struct, same sender, same topic, same everything —
+    /// only the words differ, and they say plainly that nothing is wrong.
+    ///
+    /// This is the smoke-detector test button: pressing it must sound the
+    /// actual horn, not a recording of one. A "test" that stops short of the
+    /// network proves only that the button is connected to itself.
+    pub fn drill() -> Poke {
+        Poke {
+            class: PokeClass::Drill,
+            title: "SecuraCV test",
+            body: "This is a test. Your hub can reach you here — nothing is wrong.".to_string(),
+            device: String::new(),
+        }
+    }
 }
 
 /// The complete subscribe list. `health` and `chain` are absent on purpose —
@@ -361,6 +401,34 @@ mod tests {
         assert!(d.ready(&poke, 1001), "no record until the poke went out");
         d.record(&poke, 1001);
         assert!(!d.ready(&poke, 1002), "recorded send starts the gap");
+    }
+
+    #[test]
+    fn the_drill_never_wears_an_alarms_clothes() {
+        let drill = Poke::drill();
+        assert_eq!(drill.class, PokeClass::Drill);
+        // Priority matters more than wording here: ntfy's 5 is the one that
+        // breaks through a silenced phone, and a test that does that is a
+        // test people disable.
+        assert_eq!(drill.class.ntfy_priority(), 3);
+        assert!(drill.class.ntfy_priority() < PokeClass::Tamper.ntfy_priority());
+        assert!(drill.body.to_lowercase().contains("test"));
+        assert!(
+            drill.body.to_lowercase().contains("nothing is wrong"),
+            "someone reading this on a lock screen must not reach for their keys"
+        );
+    }
+
+    #[test]
+    fn a_deliberate_drill_is_not_rate_limited_into_uselessness() {
+        // The owner is standing there pressing the button; making them wait
+        // 15 minutes to press it twice is how a feature gets called broken.
+        // The 60 s floor still applies — this is not an unbounded sender.
+        let mut d = Debouncer::default();
+        let drill = Poke::drill();
+        assert!(d.allow(&drill, 1000));
+        assert!(!d.allow(&drill, 1030), "the 60 s floor still holds");
+        assert!(d.allow(&drill, 1060));
     }
 
     #[test]

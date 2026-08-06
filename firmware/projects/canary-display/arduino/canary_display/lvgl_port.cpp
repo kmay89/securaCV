@@ -195,6 +195,26 @@ uint8_t lvgl_port_rotation() { return s_rot; }
 int16_t lvgl_port_width() { return s_logical_w; }
 int16_t lvgl_port_height() { return s_logical_h; }
 
+#if defined(CD_NIGHTLIGHT) && LVGL_VERSION_MAJOR < 9
+// The nightlight rotates in HARDWARE (hal display_set_rotation writes the
+// panel's MADCTL), so unlike the dash path above there is nothing for LVGL
+// to rotate — the driver just adopts the new logical shape and the face
+// rebuilds into it. v8's lv_disp_drv_update refreshes the resolution on
+// the live display without re-registering it.
+void lvgl_port_set_panel_rotation(uint8_t rot) {
+  rot &= 3;
+  s_rot = rot;
+  const bool turned = (rot & 1) != 0;
+  s_logical_w = turned ? SCR_H : SCR_W;
+  s_logical_h = turned ? SCR_W : SCR_H;
+  s_disp_drv.hor_res = s_logical_w;
+  s_disp_drv.ver_res = s_logical_h;
+  lv_disp_t* d = lv_disp_get_default();
+  if (d) lv_disp_drv_update(d, &s_disp_drv);
+  if (s_scrim) lv_obj_set_size(s_scrim, 960, 960);
+}
+#endif  // CD_NIGHTLIGHT && v8
+
 // ── Rendered brightness scrim ────────────────────────────────────────────
 
 void lvgl_port_set_dim(uint8_t opa) {

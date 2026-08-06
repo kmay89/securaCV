@@ -34,7 +34,7 @@ final class ModelTests: XCTestCase {
 
     @MainActor
     func testDigestEventNeverPushes() {
-        let center = AlertCenter()
+        let center = isolatedCenter()
         // A notice-level event with default rules must not produce a push level.
         XCTAssertNil(center.level(for: .notice, awayFromHome: false),
                      "everyday activity is pull-only; it must never push")
@@ -42,7 +42,7 @@ final class ModelTests: XCTestCase {
 
     @MainActor
     func testOnWiFiOnlyRuleIsSilentAwayFromHome() {
-        let center = AlertCenter()
+        let center = isolatedCenter()
         center.rules = [.init(id: "activity", title: "Activity", minSeverity: .notice, reach: .onWiFiOnly)]
         XCTAssertNil(center.level(for: .alert, awayFromHome: true),
                      "an on-Wi-Fi-only rule must stay silent when away")
@@ -50,7 +50,7 @@ final class ModelTests: XCTestCase {
 
     @MainActor
     func testTamperIsCriticalWhenArmedAnywhere() {
-        let center = AlertCenter()
+        let center = isolatedCenter()
         XCTAssertEqual(center.level(for: .tamper, awayFromHome: true), .some(.critical))
     }
 
@@ -59,4 +59,12 @@ final class ModelTests: XCTestCase {
         XCTAssertTrue(Severity.alert < .tamper)
         XCTAssertEqual([Severity.warn, .tamper, .ok].max(), .tamper)
     }
+}
+
+/// A center with its own defaults suite: AlertCenter persists what the user
+/// arms, so tests that assign rules must not leave them for the next test.
+@MainActor
+private func isolatedCenter() -> AlertCenter {
+    let suite = "test-alert-center-\(UUID().uuidString)"
+    return AlertCenter(defaults: UserDefaults(suiteName: suite) ?? .standard)
 }

@@ -49,6 +49,14 @@ void nightlight_ui_create();
 void nightlight_ui_update(const canary::fleet::Fleet& fleet, uint32_t now,
                           const NightlightState& st);
 
+// The tumble: play the re-orientation entrance on a freshly rebuilt face —
+// the companion drops in from the edge that WAS up, bounces on its perch,
+// and the clock breathes back in behind it. `delta_cw` is how many quarter
+// turns clockwise the world just made (1..3); the entry direction derives
+// from it so the motion always reads as the real turn the device felt.
+// Call right after nightlight_ui_create() on an orientation commit.
+void nightlight_ui_tumble(uint8_t delta_cw, uint32_t now);
+
 // Symmetry with the other faces (main.cpp calls ui_ack_hold uniformly);
 // no touch panel on this board, so it is a no-op today.
 void nightlight_ui_ack_hold(bool active);

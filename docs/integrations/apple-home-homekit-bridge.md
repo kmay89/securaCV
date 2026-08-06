@@ -216,6 +216,19 @@ death — the hub, the router, and the Apple hub die with it. What works:
    broker, so it cannot stand in for this step.)
 4. Leave the LAN (cellular), have a housemate press the test button again:
    the push still arrives — that's the home hub doing its job.
+   And prove the ecosystem-neutral lane the same way, without needing a
+   housemate or a real alarm:
+
+   ```sh
+   alert_relay --send-test --ntfy-url https://ntfy.sh/<your-topic>
+   ```
+
+   That sends one clearly-labeled drill down the identical path a real alert
+   takes — same binary, same topic, your phone. It says "nothing is wrong"
+   and arrives at a nudge, never at alarm priority. Nothing else in this
+   stack can answer *"will I actually be told?"*: the app's own Test button
+   posts a notification the phone made for itself, which proves iOS
+   notifications work and nothing about the network.
 5. Outage drill (canary base builds): unplug a Canary for a minute and plug
    it back in. On reboot the `Power Loss` tamper sensor turns on and the
    [alert blueprint](../blueprints/securacv_alerts.yaml)'s power input

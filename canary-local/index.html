@@ -22,6 +22,24 @@
     })();
   </script>
   <style>
+/* ── "still on SecuraCV" bar ─────────────────────────────────────────────
+   This page declares no custom properties, so the bar carries its own
+   literals rather than falling back to the dark Quiet Glass palette on a
+   light page. Values match the page's own #fafaf9 / #52525b. */
+.scv-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 16px;
+  background: #ffffff; border-bottom: 1px solid #e6e6e3;
+  font: 500 13px/1.4 -apple-system, BlinkMacSystemFont, system-ui, "Inter", sans-serif;
+  color: #6b6b73;
+}
+.scv-bar a { color: #0b0b0c; text-decoration: none; font-weight: 600; }
+.scv-bar a:hover { color: #2563eb; text-decoration: underline; }
+.scv-bar .scv-home { color: #2563eb; }
+.scv-bar .scv-sep { color: #9a9aa2; }
+.scv-bar .scv-where { margin-left: auto; color: #6b6b73; font-weight: 500; }
+@media (max-width: 560px) { .scv-bar .scv-where { display: none; } }
+
     body{font-family:-apple-system,BlinkMacSystemFont,system-ui,"Inter",sans-serif;margin:0;
       display:grid;place-items:center;min-height:100vh;background:#fafaf9;color:#52525b;letter-spacing:-.01em;}
     a{color:#2563eb;font-weight:600;text-decoration:none;}
@@ -29,6 +47,19 @@
   </style>
 </head>
 <body>
+<!-- These pages are served from a different origin than securacv.com. This
+     bar keeps the visitor oriented instead of dropping them off the site;
+     see the website repo's RESTRUCTURE-MANIFEST.md, Phase 6. -->
+<nav class="scv-bar" aria-label="Back to SecuraCV">
+  <a class="scv-home" href="https://securacv.com/">SecuraCV</a>
+  <span class="scv-sep" aria-hidden="true">/</span>
+  <a href="https://securacv.com/lab">the Lab</a>
+  <span class="scv-sep" aria-hidden="true">&middot;</span>
+  <a href="https://securacv.com/glossary">Glossary</a>
+  <span class="scv-sep" aria-hidden="true">&middot;</span>
+  <a href="https://securacv.com/canary">Help</a>
+  <span class="scv-where">canary.local &mdash; runs in your browser, nothing uploaded</span>
+</nav>
   <p>Opening <a href="lab.html">the Lab</a>… &nbsp;·&nbsp; <a href="fleet.html">Meet the fleet</a></p>
 </body>
 </html>

@@ -51,6 +51,45 @@ struct AlertRule: Codable, Hashable, Identifiable {
         rules.contains { $0.enabled && $0.reach == .anywhere }
     }
 
+    /// The one rule that decides an event's fate: of everything armed that
+    /// covers this severity, the one watching for the most serious thing.
+    /// Named once because four callers ask it (the level, the away reach,
+    /// the tuning advice, and the rules sheet) and a fifth copy of this
+    /// `max(by:)` is how they would start to disagree.
+    static func strongest(for severity: Severity, in rules: [AlertRule]) -> AlertRule? {
+        rules.filter { $0.enabled && severity >= $0.minSeverity }
+            .max(by: { $0.minSeverity < $1.minSeverity })
+    }
+
+    /// Every armed rule that could make this severity PUSH — the whole set,
+    /// because the rules overlap: an alarm is covered by both "Signature /
+    /// chain broke" and "A Canary went dark", and silencing the class means
+    /// silencing all of them. Rules below `.alert` are excluded because they
+    /// never push at all (digest events are pulled — `level(for:)` returns
+    /// nil), so they are not something anyone can be offered to turn off.
+    static func pushing(for severity: Severity, in rules: [AlertRule]) -> [AlertRule] {
+        rules.filter { $0.enabled && severity >= $0.minSeverity && $0.minSeverity >= .alert }
+    }
+
+    /// Fold what the user chose back onto the shipped rules. Only the two
+    /// fields the user owns (armed, and how far) are taken from storage; the
+    /// title and the severity it watches for stay with the app, so improving
+    /// a rule's wording — or adding a rule in a later version — reaches
+    /// everyone instead of being frozen by whatever their phone saved first.
+    /// A stored rule whose id no longer exists is dropped with it.
+    static func merge(stored: [AlertRule], into shipped: [AlertRule] = AlertRule.defaults) -> [AlertRule] {
+        let byID = Dictionary(stored.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        return shipped.map { rule in
+            guard let saved = byID[rule.id] else { return rule }
+            var merged = rule
+            merged.enabled = saved.enabled
+            merged.reach = saved.reach
+            return merged
+        }
+    }
+
+    static let storeKey = "alert_rules_v1"
+
     static let defaults: [AlertRule] = [
         .init(id: "tamper", title: "Tamper or panic", minSeverity: .tamper, reach: .anywhere),
         .init(id: "integrity", title: "Signature / chain broke", minSeverity: .alert, reach: .anywhere),
@@ -61,8 +100,20 @@ struct AlertRule: Codable, Hashable, Identifiable {
 
 @MainActor
 final class AlertCenter: NSObject, ObservableObject {
-    @Published var rules: [AlertRule] = AlertRule.defaults
+    /// What the user armed — persisted, because a rule that forgets itself on
+    /// relaunch is worse than no rule: the app would keep pushing something
+    /// the user explicitly turned off, and they'd have no way to tell.
+    @Published var rules: [AlertRule] = AlertRule.defaults {
+        didSet { save(rules) }
+    }
+    /// The window in which everyday alerts wait until morning. Critical never
+    /// waits (QuietHours.silences enforces it).
+    @Published var quietHours = QuietHours() {
+        didSet { save(quietHours) }
+    }
     @Published private(set) var authorized = false
+
+    private let defaults: UserDefaults
 
     /// True once Apple grants the Critical Alert entitlement AND the user
     /// allows it. Handed to AlertLevel.interruption(critical:) to decide
@@ -85,8 +136,20 @@ final class AlertCenter: NSObject, ObservableObject {
 
     private let center = UNUserNotificationCenter.current()
 
-    override init() {
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         super.init()
+        // What the user armed, folded onto what this version ships (see
+        // AlertRule.merge). Assigned only when something was stored, so a
+        // first launch doesn't write a copy of the defaults it just read.
+        if let data = defaults.data(forKey: AlertRule.storeKey),
+           let stored = try? JSONDecoder().decode([AlertRule].self, from: data) {
+            rules = AlertRule.merge(stored: stored)
+        }
+        if let data = defaults.data(forKey: QuietHours.storeKey),
+           let stored = try? JSONDecoder().decode(QuietHours.self, from: data) {
+            quietHours = stored
+        }
         // Delegate + categories must exist before the first delivery, not
         // after the first tap — set them the moment the brain is built.
         center.delegate = self
@@ -98,6 +161,16 @@ final class AlertCenter: NSObject, ObservableObject {
                                               actions: [ack, mute],
                                               intentIdentifiers: [])
         center.setNotificationCategories([category])
+    }
+
+    private func save(_ rules: [AlertRule]) {
+        guard let data = try? JSONEncoder().encode(rules) else { return }
+        defaults.set(data, forKey: AlertRule.storeKey)
+    }
+
+    private func save(_ hours: QuietHours) {
+        guard let data = try? JSONEncoder().encode(hours) else { return }
+        defaults.set(data, forKey: QuietHours.storeKey)
     }
 
     func requestAuthorization() async {
@@ -123,19 +196,40 @@ final class AlertCenter: NSObject, ObservableObject {
     /// the user's Focus (FocusGate — set from iOS's own Focus settings via
     /// FleetFocusFilter). Returns nil when the event is pull-only (must NOT
     /// push) — the abuse guard.
-    func level(for severity: Severity, awayFromHome: Bool) -> AlertLevel? {
-        let matching = rules.filter { $0.enabled && severity >= $0.minSeverity }
-        guard let strongest = matching.max(by: { $0.minSeverity < $1.minSeverity }) else { return nil }
+    func level(for severity: Severity, awayFromHome: Bool, now: Date = Date()) -> AlertLevel? {
+        guard let strongest = AlertRule.strongest(for: severity, in: rules) else { return nil }
         if awayFromHome && strongest.reach == .onWiFiOnly { return nil }   // reach honesty
+        let armed: AlertLevel
         switch strongest.minSeverity {
-        case .tamper: return .critical
+        case .tamper: armed = .critical
         case .alert:
             // The user's Focus said "only life-safety" — honor it. Critical
             // still passes: Focus quiets the everyday, never the smoke alarm.
-            return FocusGate.criticalOnly() ? nil : .important
+            if FocusGate.criticalOnly() { return nil }
+            armed = .important
         default: return nil          // digest events are pulled, never pushed —
                                      // nil IS the abuse guard this method promises
         }
+        // Quiet hours are the same shape of promise as Focus, set by us
+        // instead of by iOS — and with the same exemption, enforced by the
+        // type: `silences` can never hold a critical.
+        if quietHours.silences(armed, at: now) { return nil }
+        return armed
+    }
+
+    /// Is quiet hours what stopped this one? Asked by the history so a held
+    /// alert reads "your quiet hours are on" instead of the wrong reason —
+    /// sending someone to fix a Focus setting that was never involved is
+    /// worse than saying nothing.
+    func quietHoursSuppresses(_ severity: Severity, now: Date = Date()) -> Bool {
+        guard let strongest = AlertRule.strongest(for: severity, in: rules) else { return false }
+        let armed: AlertLevel
+        switch strongest.minSeverity {
+        case .tamper: armed = .critical
+        case .alert: armed = .important
+        default: return false
+        }
+        return quietHours.silences(armed, at: now)
     }
 
     /// Is anything the user armed watching for this severity at all? Lets the
@@ -154,11 +248,39 @@ final class AlertCenter: NSObject, ObservableObject {
     /// Focus is deliberately NOT consulted here: Focus is a property of the
     /// device doing the quieting, and the device publishing a wake is not the
     /// one that will receive it. The receiving device applies its own.
+    /// Is this condition one an away device cannot honestly claim?
+    ///
+    /// A phone that has left home cannot distinguish "the Canary died" from
+    /// "I can no longer reach the Canary" — both arrive as silence. Reporting
+    /// the second as the first is the storm every owner gets on the drive to
+    /// work, and the fastest way to teach someone to ignore this app.
+    ///
+    /// Tamper is exempt because it is the opposite kind of fact: the device
+    /// itself said so before going quiet, so the claim survives the distance.
+    /// Whatever stayed home — an Apple TV standing watch — is the authority
+    /// on darkness and publishes that wake from where it is answerable.
+    ///
+    /// It takes a `HomePresence`, not a Bool, and that distinction is the
+    /// whole safety of this function. The first version asked "away?" and got
+    /// its answer from the fleet's own silence — which meant it could only
+    /// ever fire when NOTHING was answering, i.e. the single-Canary death and
+    /// the whole-house power cut. Suppression now requires positive evidence
+    /// of being elsewhere; `.unknown` reports, because a notification nobody
+    /// needed costs incomparably less than silence during a fire.
+    ///
+    /// Pure and static so the rule is reviewable in one place and tested
+    /// without a fleet, the `IslandPolicy`/`FocusGate` factoring.
+    ///
+    /// `nonisolated` because that claim has to be true in the type system too:
+    /// AlertCenter is `@MainActor`, which silently made this rule
+    /// main-actor-isolated and forced every caller — tests included — onto the
+    /// main actor to ask a question that touches no state at all.
+    nonisolated static func unknowableFromAway(presence: HomePresence, isDark: Bool, tamper: Bool) -> Bool {
+        presence.maySuppressDarkness && isDark && !tamper
+    }
+
     func reachesAnywhere(severity: Severity) -> Bool {
-        let matching = rules.filter { $0.enabled && severity >= $0.minSeverity }
-        guard let strongest = matching.max(by: { $0.minSeverity < $1.minSeverity }) else {
-            return false
-        }
+        guard let strongest = AlertRule.strongest(for: severity, in: rules) else { return false }
         return strongest.reach == .anywhere
     }
 

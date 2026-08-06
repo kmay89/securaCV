@@ -67,6 +67,8 @@ final class AlertLedger: ObservableObject {
             records[i].handlingRaw = AlertHandling.new.rawValue
             records[i].resolvedBucket = nil
             records[i].seenBucket = nil
+            records[i].mutedUntil = nil
+            records[i].escalatedBucket = nil
             let moved = records.remove(at: i)
             records.insert(moved, at: 0)
             save()
@@ -94,15 +96,44 @@ final class AlertLedger: ObservableObject {
 
     /// Ack / mute, however it arrived — the notification action, the phone
     /// screen, or the watch. Applies to every live record for that witness,
-    /// because "I've seen it" is about the device, not one row.
-    func mark(_ handling: AlertHandling, forWitness witnessID: String) {
+    /// because "I've seen it" is about the device, not one row. `until`
+    /// carries the chosen mute's end, so the row can show when the alerts
+    /// come back instead of leaving a silence with no visible edge.
+    func mark(_ handling: AlertHandling, forWitness witnessID: String, until: Date? = nil) {
         var touched = false
         for i in records.indices where records[i].witnessID == witnessID
             && records[i].handling == .new {
             records[i].handlingRaw = handling.rawValue
+            if handling == .muted, let until {
+                records[i].mutedUntil = AlertRecord.bucket(for: until)
+            }
             touched = true
         }
         if touched { save() }
+    }
+
+    /// This condition was re-alerted for going unanswered. Stamped once —
+    /// `EscalationPolicy` reads it back to guarantee at most one escalation
+    /// per occurrence, and the stamp survives a relaunch because the whole
+    /// ledger does.
+    func markEscalated(id: String, now: Date = Date()) {
+        guard let i = records.firstIndex(where: { $0.id == id }),
+              records[i].escalatedBucket == nil else { return }
+        records[i].escalatedBucket = AlertRecord.bucket(for: now)
+        save()
+    }
+
+    /// One record by its collapse key — the escalation pass needs to read a
+    /// condition's own history (when it first landed, whether it was already
+    /// escalated) rather than keeping a second, drift-prone copy in memory.
+    func record(id: String) -> AlertRecord? {
+        records.first { $0.id == id }
+    }
+
+    /// Every live record for a witness — the tuning counters ask "what kinds
+    /// of alert did this ack/dismiss actually answer?"
+    func liveRecords(forWitness witnessID: String) -> [AlertRecord] {
+        records.filter { $0.witnessID == witnessID && $0.handling == .new }
     }
 
     /// The condition behind every open record for this witness has cleared —

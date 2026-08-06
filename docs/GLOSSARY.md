@@ -116,6 +116,15 @@ proves itself" and for the fleet self-report API.
 → [self-\* roadmap](design/self_star_roadmap.md),
 [parity by architecture](FLEET_PARITY.md)
 
+**Watch (a)** — A **bounded period of attention** on something the fleet
+already senses: it expires by itself, learns what normal looks like rather
+than asking you for a threshold, and is created in one sentence ("keep an
+eye on the litter box for two weeks"). Lowercase and with an article — *a
+watch*, *the litter box watch* — to keep it distinct from **The Night
+Watch**, which is the bedside clock product below. A watch changes what you
+are *told*, never what is *kept*, and cannot reach backward (Invariant VI).
+→ [watches (design)](design/watches.md)
+
 **Fleet** — **The word for a group of Canaries.** Not "flock" — that word is
 off-limits in all copy, identifiers, and comments (a company called Flock
 soured it); the only exception is the Unix `flock(2)` syscall. Rule:

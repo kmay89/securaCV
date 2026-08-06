@@ -65,6 +65,11 @@ extension WristSnapshot {
                                      deliveryRaw: r.deliveryRaw,
                                      handlingRaw: r.handlingRaw,
                                      resolved: !r.isOpen)
-                      })
+                      },
+                  // What the last beat actually proved, so the wrist's
+                  // heartbeat screen says "your fleet checked in" where the
+                  // phone would — the honesty split travels with the data.
+                  lastBeatAt: store.heartbeat.wireLastBeat,
+                  beatSourceRaw: store.heartbeat.lastBeatSource?.rawValue)
     }
 }
