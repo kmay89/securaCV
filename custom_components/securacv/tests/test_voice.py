@@ -10,9 +10,16 @@ from __future__ import annotations
 from ..voice import (
     ago_phrase,
     fleet_brief,
+    match_device,
     record_canary_event,
+    speak_device_check,
     speak_fleet_status,
+    speak_goodnight,
+    speak_help,
     speak_last_event,
+    speak_offline_check,
+    speak_privacy,
+    speak_roster,
     speak_whats_up,
 )
 
@@ -468,3 +475,133 @@ def test_ago_phrase_is_coarse():
     assert ago_phrase(90000) == "about 1 day ago"
     # Never a seconds-precision phrase, never negative.
     assert ago_phrase(-5) == "within the last ten minutes"
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# The conversational intents
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_match_device_is_tolerant_but_never_guesses():
+    ids = ["gate", "front-door", "cv-1"]
+    # Exact, and with the words people wrap around a name.
+    assert match_device(ids, "gate") == "gate"
+    assert match_device(ids, "the gate canary") == "gate"
+    # Speech-to-text drops the hyphen.
+    assert match_device(ids, "front door") == "front-door"
+    assert match_device(ids, "the front door canary") == "front-door"
+    # Nothing plausible -> None, so the answer can say so.
+    assert match_device(ids, "basement") is None
+    assert match_device(ids, "") is None
+    assert match_device([], "gate") is None
+    # Ambiguity is not resolved by guessing.
+    assert match_device(["porch-north", "porch-south"], "porch") is None
+
+
+def test_speak_device_check_reports_one_device():
+    devices = {
+        "gate": {
+            "status": "online",
+            "last_event": {
+                "event_type": "contact_state_change",
+                "received_at": NOW - 1800,
+                "trusted": True,
+                "reason": "ok",
+            },
+        },
+        "shed": {"status": "offline"},
+    }
+    verify = {
+        "gate": {"trusted": True, "reason": "ok"},
+        "shed": {"trusted": True, "reason": "ok"},
+    }
+    brief = fleet_brief([_entry(devices, verify)], NOW)
+
+    speech = speak_device_check(brief, "the gate canary")
+    assert speech.startswith("The gate Canary is online")
+    assert "signature checks out against the pinned key" in speech
+    assert "contact state change, about 30 minutes ago" in speech
+
+    # Offline and eventless reads honestly, never as "online".
+    shed = speak_device_check(brief, "shed")
+    assert "not reporting as online right now" in shed
+    assert "hasn't witnessed anything" in shed
+
+    # An unknown name offers what it does know instead of failing.
+    unknown = speak_device_check(brief, "basement")
+    assert "don't have a Canary by that name" in unknown
+    assert "gate" in unknown and "shed" in unknown
+
+    # No fleet at all.
+    assert "haven't heard from any Canaries yet" in speak_device_check(
+        fleet_brief([], NOW), "gate"
+    )
+
+
+def test_speak_offline_check_answers_the_yes_or_no():
+    all_up = {"gate": {"status": "online"}, "shed": {"status": "online"}}
+    speech = speak_offline_check(fleet_brief([_entry(all_up)], NOW))
+    assert speech == "Everything's online — all 2 Canaries are reporting in."
+
+    mixed = {"gate": {"status": "online"}, "shed": {"status": "offline"}}
+    speech = speak_offline_check(fleet_brief([_entry(mixed)], NOW))
+    assert speech.startswith("Shed isn't reporting as online right now.")
+    assert "1 of 2 still is." in speech
+
+    two_down = {"a": {"status": "offline"}, "b": {"status": "offline"}, "c": {"status": "online"}}
+    speech = speak_offline_check(fleet_brief([_entry(two_down)], NOW))
+    assert speech.startswith("A and b aren't reporting")
+
+    assert "no Canaries in the fleet yet" in speak_offline_check(fleet_brief([], NOW))
+
+
+def test_speak_roster_lists_the_fleet():
+    devices = {"gate": {"status": "online"}, "shed": {"status": "online"}, "porch": {}}
+    speech = speak_roster(fleet_brief([_entry(devices)], NOW))
+    assert speech == "3 Canaries: Gate, porch, and shed — 2 of them online right now."
+
+    one = speak_roster(fleet_brief([_entry({"gate": {"status": "online"}})], NOW))
+    assert one == "One Canary: Gate — all online."
+
+    assert "No Canaries have checked in yet" in speak_roster(fleet_brief([], NOW))
+
+
+def test_speak_goodnight_is_forward_looking():
+    devices = {"gate": {"status": "online"}, "shed": {"status": "online"}}
+    verify = {k: {"trusted": True, "reason": "ok"} for k in devices}
+    speech = speak_goodnight(fleet_brief([_entry(devices, verify)], NOW))
+    assert speech.startswith("Goodnight.")
+    assert "All 2 Canaries are online and watching." in speech
+    assert "It's been quiet." in speech
+    assert speech.endswith("Sleep well.")
+
+    # Trouble is raised before bed, not hidden by the ritual.
+    down = {"gate": {"status": "online"}, "shed": {"status": "offline"}}
+    speech = speak_goodnight(fleet_brief([_entry(down)], NOW))
+    assert "1 of 2 Canaries are watching — Shed isn't reporting in." in speech
+
+    # Updates are explicitly deferred rather than nagged about.
+    withupd = fleet_brief([_entry(devices, verify)], NOW, pending_updates=["Whisper"])
+    assert "1 update can wait until morning." in speak_goodnight(withupd)
+
+    # Nothing configured: still a kind answer, no false comfort.
+    assert "Nothing's set up to keep watch yet" in speak_goodnight(fleet_brief([], NOW))
+
+
+def test_speak_privacy_is_honest_about_the_wake_word_residue():
+    speech = speak_privacy()
+    # It admits the false-wake window rather than claiming purity...
+    assert "false-wakes me" in speech
+    assert "thrown away" in speech
+    # ...and states the structural Canary fact.
+    assert "no faces" in speech
+    assert "code that was never written" in speech
+    # It never claims to be always-off or to have a setting that isn't real.
+    assert "turned off" not in speech
+
+
+def test_speak_help_names_the_limit():
+    speech = speak_help()
+    for phrase in ("what's up", "is anything offline", "are you listening", "goodnight"):
+        assert phrase in speech
+    # The refusal is part of the help, not a footnote.
+    assert "can't arm, disarm, unlock, or open anything" in speech

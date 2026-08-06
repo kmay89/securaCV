@@ -1,13 +1,21 @@
 """Assist intents — read-only voice answers about the fleet.
 
 Home Assistant's ``intent`` component discovers this platform and calls
-``async_setup_intents``. The two handlers registered here answer the local
-voice pipeline (docs/voice_control.md):
+``async_setup_intents``. The handlers registered here answer the local
+voice pipeline (docs/voice_control.md), and are grouped by how people
+actually ask:
 
-  - SecuracvFleetStatus: "is the fleet OK?"
-  - SecuracvLastEvent:   "what was the last witness event?"
+  - the catch-up:   SecuracvWhatsUp        "what's up", "what did I miss"
+  - the crisp ones: SecuracvFleetStatus    "is the fleet OK?"
+                    SecuracvLastEvent      "what was the last event?"
+                    SecuracvOfflineCheck   "is anything offline?"
+                    SecuracvRoster         "what Canaries do I have?"
+                    SecuracvDeviceCheck    "how's the gate Canary?"
+  - the rituals:    SecuracvGoodnight      "goodnight"
+  - about itself:   SecuracvPrivacy        "are you listening to me?"
+                    SecuracvHelp           "what can I ask you?"
 
-Both are queries. There are deliberately no action intents: voice may ask
+All are queries. There are deliberately no action intents: voice may ask
 about the fleet but cannot arm, disarm, mute, or otherwise change the
 security posture — a spoken word carries no signature, so those paths stay
 on authenticated surfaces (AGENTS.md rule 1; the voice contract in
@@ -32,6 +40,12 @@ from .const import DOMAIN
 INTENT_FLEET_STATUS = "SecuracvFleetStatus"
 INTENT_LAST_EVENT = "SecuracvLastEvent"
 INTENT_WHATS_UP = "SecuracvWhatsUp"
+INTENT_DEVICE_CHECK = "SecuracvDeviceCheck"
+INTENT_OFFLINE_CHECK = "SecuracvOfflineCheck"
+INTENT_ROSTER = "SecuracvRoster"
+INTENT_GOODNIGHT = "SecuracvGoodnight"
+INTENT_PRIVACY = "SecuracvPrivacy"
+INTENT_HELP = "SecuracvHelp"
 
 
 async def async_setup_intents(hass: HomeAssistant) -> None:
@@ -39,6 +53,12 @@ async def async_setup_intents(hass: HomeAssistant) -> None:
     intent.async_register(hass, FleetStatusIntentHandler())
     intent.async_register(hass, LastEventIntentHandler())
     intent.async_register(hass, WhatsUpIntentHandler())
+    intent.async_register(hass, DeviceCheckIntentHandler())
+    intent.async_register(hass, OfflineCheckIntentHandler())
+    intent.async_register(hass, RosterIntentHandler())
+    intent.async_register(hass, GoodnightIntentHandler())
+    intent.async_register(hass, PrivacyIntentHandler())
+    intent.async_register(hass, HelpIntentHandler())
 
 
 def _pending_updates(hass: HomeAssistant) -> list[str]:
@@ -171,4 +191,90 @@ class WhatsUpIntentHandler(intent.IntentHandler):
         )
         response = intent_obj.create_response()
         response.async_set_speech(voice.speak_whats_up(brief))
+        return response
+
+
+class DeviceCheckIntentHandler(intent.IntentHandler):
+    """'How's the gate Canary?' — one device, matched tolerantly by name."""
+
+    intent_type = INTENT_DEVICE_CHECK
+    description = "Report one Canary's online state, signature trust, and last event"
+
+    async def async_handle(self, intent_obj: intent.Intent) -> intent.IntentResponse:
+        spoken = ""
+        slots = getattr(intent_obj, "slots", None)
+        if isinstance(slots, dict):
+            slot = slots.get("canary_name") or {}
+            if isinstance(slot, dict):
+                spoken = str(slot.get("value") or "")
+            else:
+                spoken = str(slot)
+        brief = voice.fleet_brief(_snapshot(intent_obj.hass), time.time())
+        response = intent_obj.create_response()
+        response.async_set_speech(voice.speak_device_check(brief, spoken))
+        return response
+
+
+class OfflineCheckIntentHandler(_BriefIntentHandler):
+    """'Is anything offline?' — the question with a yes-or-no shape."""
+
+    intent_type = INTENT_OFFLINE_CHECK
+    description = "Say which Canaries are not reporting as online, or that all are"
+
+    def _speak(self, brief: dict[str, Any]) -> str:
+        return voice.speak_offline_check(brief)
+
+
+class RosterIntentHandler(_BriefIntentHandler):
+    """'What Canaries do I have?' — the inventory, conversationally."""
+
+    intent_type = INTENT_ROSTER
+    description = "List the Canaries in the fleet and how many are online"
+
+    def _speak(self, brief: dict[str, Any]) -> str:
+        return voice.speak_roster(brief)
+
+
+class GoodnightIntentHandler(intent.IntentHandler):
+    """'Goodnight' — who is on watch tonight, and anything that would stop it."""
+
+    intent_type = INTENT_GOODNIGHT
+    description = "Bedtime check: who is watching tonight, plus anything pending"
+
+    async def async_handle(self, intent_obj: intent.Intent) -> intent.IntentResponse:
+        hass = intent_obj.hass
+        brief = voice.fleet_brief(
+            _snapshot(hass), time.time(), pending_updates=_pending_updates(hass)
+        )
+        response = intent_obj.create_response()
+        response.async_set_speech(voice.speak_goodnight(brief))
+        return response
+
+
+class PrivacyIntentHandler(intent.IntentHandler):
+    """'Are you listening to me?' — the honest answer, out loud.
+
+    Deliberately answers from the contract rather than from runtime state:
+    what it says is true of every configuration this project ships, so it
+    cannot be made to say something reassuring that a setting has changed.
+    """
+
+    intent_type = INTENT_PRIVACY
+    description = "Explain honestly what is and is not listening, recording, or watching"
+
+    async def async_handle(self, intent_obj: intent.Intent) -> intent.IntentResponse:
+        response = intent_obj.create_response()
+        response.async_set_speech(voice.speak_privacy())
+        return response
+
+
+class HelpIntentHandler(intent.IntentHandler):
+    """'What can I ask you?' — discoverability, and the honest limit."""
+
+    intent_type = INTENT_HELP
+    description = "List what the fleet voice can answer, and what it cannot do"
+
+    async def async_handle(self, intent_obj: intent.Intent) -> intent.IntentResponse:
+        response = intent_obj.create_response()
+        response.async_set_speech(voice.speak_help())
         return response

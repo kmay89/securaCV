@@ -108,36 +108,125 @@ cat > "$TMP_SENTENCES" <<'SECURACV_SENTENCES'
 #
 # Copy this file to /config/custom_sentences/en/securacv.yaml on the hub,
 # then reload Home Assistant (or restart the conversation integration).
-# Setup recipe and the voice contract: docs/voice_control.md.
+# The wizard (tools/hub_voice_setup.sh) does it for you. Setup recipe and
+# the voice contract: docs/voice_control.md.
 #
-# Both intents are read-only queries handled by the SecuraCV integration
-# (custom_components/securacv/intent.py). There are deliberately no
-# sentences that arm, disarm, mute, or unseal anything — a spoken word
-# carries no signature, so those actions stay on authenticated surfaces.
+# Every intent here is a read-only query handled by the SecuraCV
+# integration (custom_components/securacv/intent.py). There are
+# deliberately no sentences that arm, disarm, mute, or unseal anything — a
+# spoken word carries no signature, so those actions stay on
+# authenticated surfaces.
+#
+# On phrasing: these cover how people actually ask, not one canonical
+# form each. Bracketed words are optional, parentheses are alternatives.
+# The rule of thumb when adding one — say the sentence out loud first; if
+# it feels like filling in a form, it belongs to some other product.
 language: "en"
+lists:
+  # Free text so any device_id or room word reaches the handler, which
+  # matches tolerantly (speech-to-text will not spell "cv-1" back).
+  canary_name:
+    wildcard: true
 intents:
-  SecuracvFleetStatus:
-    data:
-      - sentences:
-          - "is the fleet (OK|okay|alright|all right)"
-          - "how is (the|my) fleet [doing]"
-          - "(fleet|canary) status"
-          - "are (the|my) canaries (OK|okay)"
-  SecuracvLastEvent:
-    data:
-      - sentences:
-          - "what was the (last|latest) [witness] event"
-          - "(any|were there [any]) [witness] events [overnight|today|recently]"
-          - "what did the (fleet|canaries) (see|witness) [overnight|today|recently]"
+  # ── The catch-up: the one most people will use most days ────────────
   SecuracvWhatsUp:
     data:
       - sentences:
-          - "(what's|whats) up"
-          - "(what's|whats) (going on|happening|new)"
-          - "anything (happening|going on|new)"
-          - "how (are things|is everything)"
+          - "(what's|whats|what is) up"
+          - "(what's|whats|what is) (going on|happening|new|the news)"
+          - "anything (happening|going on|new|to report)"
+          - "how (are things|is everything|are we|is it going)"
           - "what did I miss"
           - "any news"
+          - "(catch me up|fill me in|give me the rundown)"
+          - "(good morning|morning)"
+          - "did anything happen [while I was (out|away|gone|asleep)]"
+          - "anything happen (overnight|last night|today|while I was (out|away|gone))"
+          - "(everything|anything) (OK|okay|alright|all right|good|fine)"
+          - "is (everything|anything) wrong"
+          - "should I (be worried|worry [about anything])"
+          - "(all|everything) (good|quiet)"
+
+  # ── The crisp ones: a specific question, a specific answer ───────────
+  SecuracvFleetStatus:
+    data:
+      - sentences:
+          - "is the fleet (OK|okay|alright|all right|healthy)"
+          - "how is (the|my) fleet [doing]"
+          - "(fleet|canary|system) status"
+          - "are (the|my) canaries (OK|okay|alright|all right)"
+          - "(check|how are) (the|my) canaries"
+          - "is (everything|it all) verified"
+          - "(can I|do you) trust the (log|chain|record)"
+
+  SecuracvLastEvent:
+    data:
+      - sentences:
+          - "what was the (last|latest|most recent) [witness] event"
+          - "(any|were there [any]) [witness] events [overnight|last night|today|recently|lately]"
+          - "what did the (fleet|canaries) (see|witness|notice) [overnight|last night|today|recently|lately]"
+          - "(when|what) was the last (thing|time) (something|anything) happened"
+          - "(tell me|what's) the last thing (you|it) (saw|witnessed|noticed)"
+          - "has anything happened [recently|lately|today]"
+
+  SecuracvOfflineCheck:
+    data:
+      - sentences:
+          - "is anything (offline|off line|down|missing|not reporting)"
+          - "(is|are) (everything|all the canaries|they all) online"
+          - "(any|are any) canaries (offline|off line|down|missing)"
+          - "(which|what) canar(y|ies) (is|are) (offline|off line|down)"
+          - "is anything not (reporting|checking in|working)"
+
+  SecuracvRoster:
+    data:
+      - sentences:
+          - "(what|which) canaries do I have"
+          - "how many canaries [do I have|are there]"
+          - "(list|name) (my|the) canaries"
+          - "what's in (the|my) fleet"
+          - "(who|what) is (in the fleet|watching|out there)"
+
+  SecuracvDeviceCheck:
+    data:
+      - sentences:
+          - "how('s| is) the {canary_name} [canary] [doing]"
+          - "is the {canary_name} [canary] (OK|okay|online|alright|all right|up)"
+          - "(check|check on) the {canary_name} [canary]"
+          - "(what's|whats|what is) [the] {canary_name} [canary] (doing|up to|status)"
+          - "(tell me about|status of) the {canary_name} [canary]"
+          - "when did you last hear from the {canary_name} [canary]"
+
+  # ── The rituals: said at a moment, not to run a query ────────────────
+  SecuracvGoodnight:
+    data:
+      - sentences:
+          - "(good night|goodnight|night night)"
+          - "(I'm|im|I am) (going to bed|off to bed|turning in)"
+          - "(are we|is everything) set for (the night|tonight|bed)"
+          - "(who's|whos|who is) (watching|on watch) tonight"
+
+  # ── About itself: the questions a guest asks, answered honestly ──────
+  SecuracvPrivacy:
+    data:
+      - sentences:
+          - "are you (listening|listening to me|listening right now|always listening)"
+          - "are you (recording|recording me|recording right now)"
+          - "are you (watching|watching me|spying [on me])"
+          - "(do|are) you (record|save|keep|store) (audio|what I say|my voice|conversations)"
+          - "(is|are) (this|you|the canary|the canaries) (a|a hidden) (microphone|camera)"
+          - "what do you (know|hear|see) [about me]"
+          - "(where|does) (does )?(my|the) (audio|voice|data) go"
+          - "can (anyone|someone|you) (hear|listen to) (us|me)"
+
+  SecuracvHelp:
+    data:
+      - sentences:
+          - "what can (I|you) (ask|say|do) [you]"
+          - "what (are|can) (your|the) (commands|questions)"
+          - "(help|help me)"
+          - "how do I (use|talk to) you"
+          - "what (do you|can you) (know|tell me)"
 SECURACV_SENTENCES
 if [ -f "$SENTENCES_DEST" ] && cmp -s "$TMP_SENTENCES" "$SENTENCES_DEST"; then
   ok "sentences already current ($SENTENCES_DEST)"
