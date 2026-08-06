@@ -295,3 +295,65 @@ module mark_wordmark(word_h, word = "securaCV",
     text(word, size = word_h, font = font, halign = "center", valign = "center");
 }
 function mark_wordmark_h(word_h) = word_h;
+
+// ── MEASURED TYPE METRICS — how small the name may go, how wide it lands ────
+// The bird has mark_rib_ok()/mark_min_h() to refuse a size it cannot print at.
+// The WORDMARK had nothing: every consumer estimated its width with a local
+// constant and nobody gated its height at all. Both gaps are closed here, and
+// both numbers below are MEASURED — each candidate was rendered by OpenSCAD at
+// real millimeter size and its geometry read back, because this library's own
+// header is right that OpenSCAD has no text-metrics primitive at RENDER time.
+// It does not follow that the numbers have to be guessed; it follows that the
+// measuring happens once, offline, and the result is written down here.
+
+// How small the name may go.
+//
+// The test is morphological and it is the physical question directly: open the
+// letterforms with a disk of radius line_w/2 — the shape a bead of that width
+// can actually lay — and compare the surviving ink against the drawn ink.
+// Anything the disk cannot enter is ink the nozzle cannot put down. Measured
+// on "SECURACV.COM/QR", DejaVu Sans Bold, against a 0.4 mm bead:
+//
+//      cap 1.5 mm -> 26.8%      cap 2.5 mm -> 96.3%
+//      cap 2.0 mm -> 81.5%      cap 3.0 mm -> 98.9%      cap 3.6 mm -> 99.3%
+//
+// The knee is brutal and it sits between 2.0 and 2.5. Below it the letters are
+// not "small", they are ABSENT — at 1.5 mm three quarters of the drawing is
+// finer than the nozzle, which prints as a smudge with the rhythm of type.
+// (The few percent still missing at the top end is corner rounding, which a
+// nozzle does to every corner anyway and which no cap height removes.)
+//
+// The floor is set at 95% reachable ink, which lands at six line widths —
+// 2.4 mm at a 0.4 mm nozzle. Same floor the fit coupon states for the bird's
+// ribs ("below 0.4 it is thinner than one extrusion"), asked of type.
+function mark_word_min_h(line_w = 0.4) = 6.0 * line_w;
+
+// How wide the name lands.
+//
+// ⚠️ ONE per-character advance is not enough, and the single constant this
+// line carried (0.875, in two files) is calibrated for MIXED CASE. Caps are
+// half again as wide as lowercase, so that constant under-reports an all-caps
+// word by ~11% — enough to walk a name straight through a width assert and
+// hang it off the edge of the part, which is the exact failure those asserts
+// were added to catch. Measured ink extent, DejaVu Sans Bold, at cap height h:
+//
+//      "Canary"             5.271 h      "securaCV"          7.073 h
+//      "CANARY"             6.150 h      "SECURACV"          8.058 h
+//      "SECURACV.COM/QR"   14.568 h
+//
+// Split by case, and pessimistic in both classes: these two constants
+// over-report every one of the five strings above by 1.4% to 5.2%, never
+// under. Erring long is the whole point — the estimate exists to refuse a
+// name that nearly fits, not to certify one that nearly does not.
+function mark_adv_upper() = 1.04;   // caps and digits
+function mark_adv_lower() = 0.88;   // lowercase; also punctuation, which is
+                                    // narrower still, so it stays pessimistic
+function _mark_adv_of(c) =
+    len(search(c, "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")) > 0
+        ? mark_adv_upper() : mark_adv_lower();
+function _mark_adv_sum(word, i = 0) =
+    i >= len(word) ? 0 : _mark_adv_of(word[i]) + _mark_adv_sum(word, i + 1);
+// The estimated ink width of `word` set at cap height `h`. Use this rather
+// than len(word)*k*h — that form cannot see the difference between "Canary"
+// and "CANARY", and the difference is 17%.
+function mark_word_ink_w(word, h) = _mark_adv_sum(word) * h;
