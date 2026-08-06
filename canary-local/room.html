@@ -6,8 +6,44 @@
 <meta name="description" content="The Canary Lab — a little workshop you can walk. Tap a station to open its bench.">
 </head>
 <body>
+<!-- These pages are served from a different origin than securacv.com. This
+     bar keeps the visitor oriented instead of dropping them off the site;
+     see the website repo's RESTRUCTURE-MANIFEST.md, Phase 6. -->
+<nav class="scv-bar" aria-label="Back to SecuraCV">
+  <a class="scv-home" target="_top" href="https://securacv.com/">SecuraCV</a>
+  <span class="scv-sep" aria-hidden="true">/</span>
+  <a target="_top" href="https://securacv.com/lab">the Lab</a>
+  <span class="scv-sep" aria-hidden="true">&middot;</span>
+  <a target="_top" href="https://securacv.com/glossary">Glossary</a>
+  <span class="scv-sep" aria-hidden="true">&middot;</span>
+  <a target="_top" href="https://securacv.com/canary">Help</a>
+  <span class="scv-where">canary.local &mdash; runs in your browser, nothing uploaded</span>
+</nav>
 <title>ERRERLabs Canary Lab — a workshop you can walk</title>
 <style>
+/* ── "still on SecuraCV" bar ─────────────────────────────────────────────
+   Mapped to THIS page's palette. It must not borrow dark-theme fallbacks:
+   room.html is light (--surface #fffdf8) and has no --text/--canary, so a
+   shared rule resolved its links to near-white on off-white. */
+.scv-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 16px;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  font: 500 13px/1.4 var(--sans); color: var(--ink-3);
+}
+.scv-bar a { color: var(--ink); text-decoration: none; font-weight: 600; }
+.scv-bar a:hover { color: var(--s4); text-decoration: underline; }
+/* --s4 is only 3.3:1 on this page's dark surface — the same weakness the
+   page's own a{color:var(--s4)} has. Not adding a new instance of it: the
+   wordmark leads on weight, in a token that is 15:1 in both themes. */
+.scv-bar .scv-home { color: var(--ink); font-weight: 700; }
+.scv-bar .scv-sep { color: var(--ink-3); }
+.scv-bar .scv-where { margin-left: auto; color: var(--ink-3); font-weight: 500; }
+/* Embedded as the Lab overview's iframe, the host page already shows this
+   bar — a second one inside the illustration is noise. */
+.scv-embedded .scv-bar { display: none; }
+@media (max-width: 560px) { .scv-bar .scv-where { display: none; } }
+
   :root {
     --bg:#f3ecdd; --surface:#fffdf8; --surface-2:#f6efe1;
     --border:#e2d8c4; --border-strong:#cabfa6;
@@ -1106,6 +1142,12 @@
     if (slug){ e.preventDefault(); parent.postMessage({source:'canary-room', slug:slug}, '*'); }
   }, true);
 })();
+</script>
+<script>
+  /* Embedded as the Lab overview's iframe: the host page already carries the
+     bar, so hide this one. The target="_top" on its links is the belt to this
+     braces — without it a click would load securacv.com inside the iframe. */
+  if (window.self !== window.top) document.documentElement.classList.add('scv-embedded');
 </script>
 </body>
 </html>
