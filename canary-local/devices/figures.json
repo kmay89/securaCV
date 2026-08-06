@@ -1167,16 +1167,16 @@
     ]
    },
    "dims_source": "sketch",
-   "sketch_note": "the C3-LCD-1.47 pocket case in canary_c3_lcd147.scad (outer shell 25.12 x 41.17 from the board cavity + 2.2 mm walls; depth estimated from the face + cavity + lid stack); no committed case STL yet",
+   "sketch_note": "the C3-LCD-1.47 pocket case in canary_c3_lcd147.scad: shell 25.12 x 41.17 (board cavity + 2.2 mm walls), 14.25 mm deep as shipped (the pillars build: face + glass rise + PCB + brass pillars and their gap + the lid plate); no committed case STL yet",
    "envelope_mm": {
     "w": 26.22,
-    "d": 18.55,
+    "d": 14.25,
     "h": 41.72
    },
    "traced_to": [],
    "drift_guard": null,
-   "solids": 7,
-   "rev": "2cb7d41c",
+   "solids": 6,
+   "rev": "27f621f7",
    "svg": "canary-local/figures/device.canary-nightlight.svg",
    "glyph": "canary-local/figures/device.canary-nightlight.glyph.svg"
   },

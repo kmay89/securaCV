@@ -460,32 +460,34 @@ export const FIGURES = [
     id: 'device.canary-nightlight',
     title: 'Canary Nightlight',
     role: 'device', of: 'canary-nightlight',
-    // The C3-LCD-1.47 pocket case (canary_c3_lcd147.scad): a dark PETG body
-    // with the portrait glass high on its face, a white light band wrapping
-    // the glass end — up both long walls, around the top — and the yellow
-    // snap-on lid closing the back. The case is still in development (its
-    // dev_*.stl export is gitignored on purpose), so the wall is the sketch
-    // part; the plan numbers are the SCAD's own derived outer box.
-    sketch: { w: 25.12, d: 17.2, h: 41.17 },
-    sketchNote: 'the C3-LCD-1.47 pocket case in canary_c3_lcd147.scad (outer shell '
-      + '25.12 x 41.17 from the board cavity + 2.2 mm walls; depth estimated from '
-      + 'the face + cavity + lid stack); no committed case STL yet',
+    // The C3-LCD-1.47 pocket case (canary_c3_lcd147.scad): one YELLOW case —
+    // the print contract is slot 1 = BODY, bezel AND lid, with black reserved
+    // for the wordmark on the back, which this camera never sees — with the
+    // portrait glass high on its face and a white light band wrapping the
+    // glass end, up both long walls and around the top. The case is still in
+    // development (its dev_*.stl export is gitignored on purpose), so the
+    // wall is the sketch part; the plan numbers are the SCAD's own derived
+    // outer box, at the depth of the AS-SHIPPED pillars build.
+    sketch: { w: 25.12, d: 14.25, h: 41.17 },
+    sketchNote: 'the C3-LCD-1.47 pocket case in canary_c3_lcd147.scad: shell '
+      + '25.12 x 41.17 (board cavity + 2.2 mm walls), 14.25 mm deep as shipped '
+      + '(the pillars build: face + glass rise + PCB + brass pillars and their '
+      + 'gap + the lid plate); no committed case STL yet',
     build: (E) => {
-      const lid = 2.2;          // the yellow snap-on lid closes the back
       const bandT = 2.8;        // seam_h — the white U's thickness
-      const bandY = E.d - 3.9;  // just behind the glass face, where the light lives
+      const bandY = E.d - 4.4;  // just behind the glass face, where the light lives
       const proud = 0.55;       // the band stands clear of the walls it wraps
       return [
-        { kind: 'box', m: 'accent', face: 'y', at: [0, 0, 0], size: [E.w, lid, E.h], r: 3 },
-        { kind: 'box', m: 'dark', face: 'y', at: [0, lid - EPS, 0], size: [E.w, E.d - lid + EPS, E.h], r: 3 },
+        { kind: 'box', m: 'accent', face: 'y', at: [0, 0, 0], size: [E.w, E.d - 1.3, E.h], r: 3 },
         // ONE U, massed as three proud sticks (left, right, across the top) so
-        // no white face ever ties with a dark one. The USB end stays dark.
+        // no white face ever ties with a yellow one. The USB end stays plain.
         { kind: 'box', m: 'shell', face: 'y', at: [-proud, bandY, 3], size: [proud + EPS, bandT, E.h - 3 - EPS] },
         { kind: 'box', m: 'shell', face: 'y', at: [E.w - EPS, bandY, 3], size: [proud + EPS, bandT, E.h - 3 - EPS] },
         { kind: 'box', m: 'shell', face: 'y', at: [-proud, bandY, E.h - EPS], size: [E.w + 2 * proud, bandT, proud + EPS] },
-        // the 1.47" portrait window, high on the front — the clock face
-        { kind: 'box', m: 'glass', face: 'y', at: [(E.w - 19.4) / 2, E.d + EPS, E.h - 37.4], size: [19.4, 0.9, 34.4], r: 1.5 },
-        { kind: 'box', m: 'lit', face: 'y', at: [(E.w - 17.4) / 2, E.d + EPS + 0.9, E.h - 36.4], size: [17.4, 0.4, 32.4], r: 1 },
+        // the 1.47" portrait window, high on the front — the clock face,
+        // seated in the depth the way the other displays' glass is
+        { kind: 'box', m: 'glass', face: 'y', at: [(E.w - 19.4) / 2, E.d - 1.3, E.h - 37.4], size: [19.4, 0.9, 34.4], r: 1.5 },
+        { kind: 'box', m: 'lit', face: 'y', at: [(E.w - 17.4) / 2, E.d - 0.4, E.h - 36.4], size: [17.4, 0.4, 32.4], r: 1 },
       ];
     },
   },
