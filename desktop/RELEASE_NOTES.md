@@ -17,6 +17,19 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.3.12 — 2026-08-05
+
+- **The Canary Nightlight is in the picker.** The pocket ESP32-C3-LCD-1.47
+  board's kid-facing firmware — a 7-segment bedside clock over a soft lamp
+  (warm orange, Rainbow, Moonbeam white), with the living canary keeping the
+  household's rhythm — flashes right from the app: pick it, plug in the
+  board, done. The lamp never encodes "safe," and the panel caps its own
+  backlight power at 50% in firmware (a heat budget for the closed pocket
+  case) — the app's Nightlight card says so too.
+- **The catalog now rides the 2.4.6 firmware train.** The stable channel
+  pins the release that actually carries the Nightlight images; the dev
+  channel toggle keeps reading the rolling prerelease as before.
+
 ## 0.3.11 — 2026-08-05
 
 - **The serial monitor now connects by itself after a flash — no more
