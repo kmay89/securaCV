@@ -25,6 +25,12 @@ on its perch, and settles, while the clock breathes back in behind it.
   toggle brings it back.
 - The orientation persists across reboots, and the app's Nightlight card
   gains the toggle + picker.
+- **Honest status:** the board's IMU mounting is unpublished, so the
+  accelerometer axis map ships as a documented best guess pending a
+  bench check on real glass (`pins.h` `IMU_AXES_SWAP_XY` /
+  `IMU_X_SIGN` / `IMU_Y_SIGN` — one line each if it turns the wrong
+  way). The model, the gates, and the manual triple-press/app path are
+  host-tested and hold regardless of the map.
 
 ### The hub finishes its own sign-in, and the Flasher stops lying about USB
 

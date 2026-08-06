@@ -480,6 +480,12 @@ static bool s_imu_ok = false;
 // that was up. delta derives here so every caller's tumble is honest.
 static void nightlight_apply_orientation(uint8_t rot, uint32_t now) {
   rot &= 3;
+  // Whoever asked, the model adopts what the glass will show — BEFORE the
+  // no-change return, because "nothing to redraw" can still mean "the
+  // model remembers a different up." A hand-turned display whose model
+  // kept the old physical reading would compare gravity against itself
+  // and never right the glass once "turn with the room" re-arms.
+  s_orient.sync(static_cast<canary::io::Orient>(rot));
   const uint8_t prev = canary::ui::lvgl_port_rotation();
   if (rot == prev) return;
   const uint8_t delta = (uint8_t)((rot - prev) & 3);

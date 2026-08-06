@@ -51,6 +51,7 @@ class OrientationModel {
   // compile-time facts, not preferences — they are what "settled" means.
   static constexpr uint32_t DWELL_MS    = 1200;  // candidate must hold this long
   static constexpr uint32_t COOLDOWN_MS = 1500;  // after a commit, rest first
+  static constexpr uint32_t MAX_GAP_MS  = 400;   // dwell evidence must be sampled
 
   void begin(int32_t one_g, Orient initial) {
     g_ = one_g < 1 ? 1 : one_g;
@@ -58,13 +59,37 @@ class OrientationModel {
     candidate_ = initial;
     candidate_since_ms_ = 0;
     cooldown_until_ms_ = 0;
+    last_step_ms_ = 0;
   }
 
   Orient current() const { return current_; }
 
+  // The glue rotated the display by HAND (triple-press, app picker). Adopt
+  // that rotation as the model's reference, so a re-armed auto-orient
+  // compares gravity against what the GLASS shows — not against a stale
+  // memory of where gravity last pointed. Without this, a unit standing
+  // upright but manually turned sideways reads "gravity == current, nothing
+  // to do" forever once "turn with the room" comes back. Any pending
+  // candidate is dropped; the next flip needs fresh settled evidence.
+  void sync(Orient shown) {
+    current_ = shown;
+    candidate_ = shown;
+    candidate_since_ms_ = 0;
+  }
+
   // Feed one screen-mapped sample. Returns true exactly when a new
   // orientation COMMITS (the tumble moment); current() then reports it.
   bool step(int32_t ax, int32_t ay, int32_t az, uint32_t now_ms) {
+    // Dwell is CONTINUOUS settled evidence, so it only accrues while the
+    // sampler is actually running. If the feed stalls past MAX_GAP_MS —
+    // a modal surface parking the poll, a blocking reconnect, an I2C
+    // outage — the unsampled time proves nothing: drop the candidate and
+    // let this sample start a fresh dwell instead of banking the gap.
+    if (candidate_since_ms_ != 0 && now_ms - last_step_ms_ > MAX_GAP_MS) {
+      candidate_since_ms_ = 0;
+    }
+    last_step_ms_ = now_ms;
+
     if ((int32_t)(now_ms - cooldown_until_ms_) < 0) {
       candidate_since_ms_ = 0;  // motion during cooldown restarts patience
       return false;
@@ -128,6 +153,7 @@ class OrientationModel {
   Orient candidate_ = Orient::R0;
   uint32_t candidate_since_ms_ = 0;
   uint32_t cooldown_until_ms_ = 0;
+  uint32_t last_step_ms_ = 0;
 };
 
 }  // namespace canary::io

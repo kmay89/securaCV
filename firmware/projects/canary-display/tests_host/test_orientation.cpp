@@ -146,6 +146,46 @@ static void test_gravity_mapping_sanity() {
   CHECK(m.current() == Orient::R0, "reads as upright");
 }
 
+static void test_sync_lets_a_hand_turned_glass_right_itself() {
+  printf("sync(): a manual turn re-baselines the model...\n");
+  OrientationModel m;
+  m.begin(G, Orient::R0);
+  uint32_t t = 10000;
+
+  // The unit stands UPRIGHT the whole time. A triple-press turns the
+  // glass to R90 and parks auto; the glue syncs the model to the glass.
+  // Re-armed, gravity (upright) now DISAGREES with the reference — the
+  // display must right itself. Without sync, gravity would agree with
+  // the model's stale R0 and the glass would stay sideways forever.
+  m.sync(Orient::R90);
+  CHECK(m.current() == Orient::R90, "model adopts the shown rotation");
+  CHECK(feed(m, 0, G, 0, t, 3000), "upright gravity rights a hand-turned glass");
+  CHECK(m.current() == Orient::R0, "back upright");
+
+  // And a sync TO where gravity already points stays quiet.
+  m.sync(Orient::R0);
+  CHECK(!feed(m, 0, G, 0, t, 3000), "sync to the true up commits nothing");
+}
+
+static void test_gap_in_samples_is_not_dwell() {
+  printf("a sampling gap earns no dwell credit...\n");
+  OrientationModel m;
+  m.begin(G, Orient::R0);
+  uint32_t t = 10000;
+
+  // One settled R180 sample opens a candidate...
+  CHECK(!m.step(0, -G, 0, t), "single sample cannot commit");
+  // ...then the feed stalls (modal surface, blocking reconnect, I2C
+  // outage) far past the dwell window. The next matching sample must NOT
+  // cash in the unsampled time as evidence.
+  t += 10000;
+  CHECK(!m.step(0, -G, 0, t), "sample after a long gap starts over");
+  CHECK(m.current() == Orient::R0, "no commit off two samples and a gap");
+  // Continuous evidence from here commits normally.
+  CHECK(feed(m, 0, -G, 0, t, 3000), "fresh continuous dwell still commits");
+  CHECK(m.current() == Orient::R180, "and lands the flip");
+}
+
 int main() {
   printf("test_orientation (gravity-settled auto-rotate)\n");
   test_four_orientations();
@@ -154,6 +194,8 @@ int main() {
   test_diagonal_has_no_opinion();
   test_dwell_and_cooldown();
   test_gravity_mapping_sanity();
+  test_sync_lets_a_hand_turned_glass_right_itself();
+  test_gap_in_samples_is_not_dwell();
   if (g_fail) {
     printf("%d FAILURE(S)\n", g_fail);
     return 1;
