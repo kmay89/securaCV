@@ -1327,7 +1327,7 @@ void setup() {
   // home WiFi, still with no broker in the path. Receive-only, like every
   // other band here. Safe before an address exists — the loop joins the group
   // once there is one, and rejoins if it ever changes.
-  canary::net::fleet_udp_begin(now);
+  canary::net::fleet_udp_begin(millis());
 #endif
 
   // The display's own web page — live mirror, help, master settings.

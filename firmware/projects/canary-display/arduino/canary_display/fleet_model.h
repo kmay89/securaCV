@@ -983,12 +983,26 @@ class FleetModel {
   }
 
   // "<stem> (band)" — the shared tail for every beacon-sourced event label.
+  //
+  // Each copy measures its source first and then bounds the loop by BOTH that
+  // length and the destination capacity. Testing `src[i] && i + 1 < cap` reads
+  // src[i] before the capacity check has any bearing on the source, so with a
+  // short literal and a roomy buffer the index can range past the literal —
+  // which is exactly what cppcheck flags (arrayIndexOutOfBoundsCond). The
+  // NUL always arrives first in practice, so this is a latent read rather than
+  // a live bug, but "provably in range" beats "terminates for a reason the
+  // analyzer can't see". Same `while (s[n]) n++;` idiom as fp_suffix_match.
   static void via_label(char* out, size_t cap, const char* stem, Via via) {
-    size_t i = 0;
-    while (stem[i] && i + 1 < cap) { out[i] = stem[i]; i++; }
+    if (!out || cap == 0) return;
+    size_t stem_len = 0;
+    while (stem[stem_len]) stem_len++;
     const char* tail = via_suffix(via);
-    size_t t = 0;
-    while (tail[t] && i + 1 < cap) { out[i++] = tail[t++]; }
+    size_t tail_len = 0;
+    while (tail[tail_len]) tail_len++;
+
+    size_t i = 0;
+    for (size_t s = 0; s < stem_len && i + 1 < cap; s++) out[i++] = stem[s];
+    for (size_t t = 0; t < tail_len && i + 1 < cap; t++) out[i++] = tail[t];
     out[i] = '\0';
   }
 
@@ -1007,8 +1021,10 @@ class FleetModel {
       case 4: cls = "package"; break;
       default: break;
     }
+    size_t cls_len = 0;
+    while (cls[cls_len]) cls_len++;
     size_t i = 0;
-    while (cls[i] && i + 1 < cap) { out[i] = cls[i]; i++; }
+    for (size_t c = 0; c < cls_len && i + 1 < cap; c++) out[i++] = cls[c];
     if (score >= 0 && score <= 100 && i + 6 < cap) {  // " 100%" worst case
       out[i++] = ' ';
       if (score == 100) { out[i++] = '1'; out[i++] = '0'; out[i++] = '0'; }
@@ -1018,9 +1034,11 @@ class FleetModel {
       }
       out[i++] = '%';
     }
+    // Same bounded-copy shape as via_label above, for the same reason.
     const char* tail = via_suffix(via);
-    size_t t = 0;
-    while (tail[t] && i + 1 < cap) { out[i++] = tail[t++]; }
+    size_t tail_len = 0;
+    while (tail[tail_len]) tail_len++;
+    for (size_t t = 0; t < tail_len && i + 1 < cap; t++) out[i++] = tail[t];
     out[i] = '\0';
   }
 
