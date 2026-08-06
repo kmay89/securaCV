@@ -169,8 +169,17 @@ const secretStore = {
         if (prefs.secrets && key in prefs.secrets) { delete prefs.secrets[key]; }
         this.track(key, true);
         return true;
-      } catch (_) { /* locked / declined — fall through to the honest fallback */ }
+      } catch (e) {
+        // The OS store exists but refused (locked, permission declined).
+        // Never quietly downgrade to the prefs file — the consent note
+        // beside the checkbox promised the OS store, so a silent weaker
+        // fallback would make that copy a lie. Store nowhere, say so.
+        logEvent("err", "Couldn't save to " + this.where() + ": " + e);
+        return false;
+      }
     }
+    // No OS store on this platform — the prefs file IS the advertised
+    // destination here (the consent note names it).
     prefs.secrets = prefs.secrets || {};
     prefs.secrets[key] = value;
     this.track(key, true);
@@ -188,15 +197,33 @@ const secretStore = {
   },
   async delete(key) {
     await this.init();
-    try { await invoke("secret_delete", { key }); } catch (_) {}
+    let ok = true;
+    if (this.backend !== "none") {
+      try { await invoke("secret_delete", { key }); }
+      catch (e) {
+        // Deletion refused (store locked). Keep the key TRACKED — forgetting
+        // it here would make the next "Reset the app's memory" report success
+        // while the credential still sits in the OS store.
+        ok = false;
+        logEvent("err", "Couldn't remove from " + this.where() + ": " + e);
+      }
+    }
     if (prefs.secrets && key in prefs.secrets) delete prefs.secrets[key];
-    this.track(key, false);
+    if (ok) this.track(key, false);
+    else savePrefs();
+    return ok;
   },
+  // Returns how many entries could NOT be removed, so the caller can report
+  // an incomplete sweep instead of a false clean bill.
   async wipeAll() {
-    for (const k of [...(prefs.secretKeys || [])]) await this.delete(k);
-    prefs.secretKeys = [];
+    let failed = 0;
+    for (const k of [...(prefs.secretKeys || [])]) {
+      if (!(await this.delete(k))) failed++;
+    }
     prefs.secrets = {};
+    if (!failed) prefs.secretKeys = [];
     savePrefs();
+    return failed;
   },
 };
 
@@ -305,13 +332,26 @@ async function profileAutofill() {
 // A flash that succeeded IS the consent moment the checkbox announced:
 // remember exactly what was written, so the next board is a plug-in and a
 // click. Passwords by SSID / broker, so two homes don't overwrite each other.
+// A refused save (Keychain locked) is surfaced right under the form — the
+// flash itself is unaffected, but "remembered" must never be assumed.
 function profileSaveFromFlash(p) {
   try {
     if (!$("prov-remember").checked || !p) return;
-    if (p.wifiSsid) secretStore.set(secretStore.key("wifi", p.wifiSsid), p.wifiPass || "");
+    const saves = [];
+    if (p.wifiSsid) saves.push(secretStore.set(secretStore.key("wifi", p.wifiSsid), p.wifiPass || ""));
     if (p.mqttHost && p.mqttPass) {
-      secretStore.set(secretStore.key("mqtt", p.mqttHost, p.mqttUser || ""), p.mqttPass);
+      saves.push(secretStore.set(secretStore.key("mqtt", p.mqttHost, p.mqttUser || ""), p.mqttPass));
     }
+    Promise.all(saves).then((results) => {
+      if (results.every(Boolean)) return;
+      const note = $("prov-autofill-note");
+      if (note) {
+        note.textContent =
+          `⚠ Couldn't save the password${results.length > 1 ? "s" : ""} to ${secretStore.where()}` +
+          " (locked, or permission declined) — this flash is unaffected, but you'll retype next time.";
+        note.classList.remove("hidden");
+      }
+    }).catch(() => {});
   } catch (_) {}
 }
 
@@ -750,8 +790,12 @@ const fleetBook = {
   baseFor(entry) {
     const s = entry.deviceId && this.sightings[entry.deviceId];
     if (!s) return null;
-    const host = s.ip || s.host;
+    let host = s.ip || s.host;
     if (!host) return null;
+    // An IPv6 literal (the IPv6-only-LAN case) must ride in brackets or the
+    // URL is malformed — with or without a port. The Rust base guard already
+    // unwraps brackets before its private-host check.
+    if (host.includes(":") && !host.startsWith("[")) host = "[" + host + "]";
     return "http://" + host + (s.port && s.port !== 80 && s.port > 1 ? ":" + s.port : "");
   },
   tokenKey(entry) {
@@ -779,8 +823,14 @@ const fleetBook = {
     }
   },
 
-  // The one-click OTA: ask the board to check, then to install, then narrate
-  // its own status until it reboots into the new build (or says what failed).
+  // The one-click OTA: start the board's own check-and-install pipeline,
+  // then narrate its status until it reboots into the new build (or says
+  // what failed). NOTE the firmware contract: POST /api/ota/install runs
+  // securacv_ota_check_and_install() — check INCLUDED — as one async task,
+  // and a separate /api/ota/check first would make the install 409
+  // (ota_busy), so there is deliberately no pre-check call here. A 409 on
+  // install itself means some other run (the daily auto-check) holds the
+  // engine — retry briefly instead of giving up.
   async otaUpdate(entry) {
     const key = entry.key;
     if (this.opBusy[key]) return;
@@ -789,32 +839,65 @@ const fleetBook = {
       const token = await secretStore.get(this.tokenKey(entry));
       const base = this.baseFor(entry);
       if (!token || !base) { this.note(key, token ? "It isn't answering right now." : this.noTokenNote()); return; }
-      this.note(key, "Asking the board to check for its update…");
-      const chk = await invoke("fleet_device_call", { base, token, action: "ota-check" });
-      if (chk.httpStatus === 401) { this.note(key, this.staleTokenNote()); return; }
-      if (chk.httpStatus === 404) { this.note(key, "This build doesn't carry the update engine — reflash over USB instead."); return; }
       this.note(key, "Starting the update — the board downloads and verifies it itself (signed, with automatic rollback)…");
-      // The install call can outlive its own socket (the board reboots) —
-      // treat transport loss as "watch the status", not failure.
-      await invoke("fleet_device_call", { base, token, action: "ota-install" }).catch(() => {});
+      let started = false;
+      let lostSocket = false;
+      for (let attempt = 0; attempt < 4 && !started; attempt++) {
+        if (attempt) await new Promise((r) => setTimeout(r, 5000));
+        let inst = null;
+        try { inst = await invoke("fleet_device_call", { base, token, action: "ota-install" }); }
+        catch (_) {
+          // The install call can outlive its own socket (the board can get
+          // to rebooting) — treat transport loss as "watch the status".
+          lostSocket = true;
+          started = true;
+          break;
+        }
+        if (inst.httpStatus === 401) { this.note(key, this.staleTokenNote()); return; }
+        if (inst.httpStatus === 404) { this.note(key, "This build doesn't carry the update engine — reflash over USB instead."); return; }
+        if (inst.httpStatus === 409) { this.note(key, "The board's update engine is busy — waiting for it to free up…"); continue; }
+        if (inst.httpStatus >= 400) { this.note(key, "The board refused to start the update (HTTP " + inst.httpStatus + "). Try again in a minute."); return; }
+        started = true;
+      }
+      if (!started) { this.note(key, "The board's update engine stayed busy — it may be mid-check on its own. Try again in a minute."); return; }
+      const startFw = entry.fw || "";
       const t0 = Date.now();
       let lastText = "";
+      let sawActivity = lostSocket;
       while (Date.now() - t0 < 5 * 60 * 1000) {
         await new Promise((r) => setTimeout(r, 3000));
         let st = null;
         try { st = await invoke("fleet_device_call", { base, token, action: "ota-status" }); }
-        catch (_) { this.note(key, lastText || "Rebooting into the new build…"); continue; }
+        catch (_) { sawActivity = true; this.note(key, "Rebooting into the new build…"); continue; }
         const b = (st && st.body) || {};
-        const stateName = String(b.state || "");
+        const stateName = String(b.state || "").toUpperCase();
         if (b.error && b.error !== "NONE" && b.error_text) { this.note(key, "The board reports: " + b.error_text); return; }
-        if (stateName.includes("DOWNLOAD")) lastText = `Downloading — ${b.progress || 0}%`;
-        else if (b.state_text) lastText = b.state_text;
-        if (stateName.includes("IDLE") && !b.update_available && lastText) {
-          this.note(key, `✓ Up to date — now on v${b.installed_version || entry.fw || "?"}.`);
-          if (b.installed_version) { entry.fw = b.installed_version; savePrefs(); }
+        if (stateName && !stateName.includes("IDLE")) {
+          sawActivity = true;
+          lastText = stateName.includes("DOWNLOAD")
+            ? `Downloading — ${b.progress || 0}%`
+            : (b.state_text || "Working…");
+          this.note(key, lastText);
+          continue;
+        }
+        // IDLE — the task finished (or never had anything to do). Judge by
+        // what actually changed, not by which poll we happened to land on.
+        if (b.installed_version && b.installed_version !== startFw) {
+          entry.fw = b.installed_version;
+          savePrefs();
+          this.note(key, `✓ Updated — now on v${b.installed_version}.`);
           return;
         }
-        this.note(key, lastText || "Working…");
+        if (b.update_available === false) {
+          if (b.installed_version) { entry.fw = b.installed_version; savePrefs(); }
+          this.note(key, `✓ Already up to date — v${b.installed_version || startFw || "?"}.`);
+          return;
+        }
+        if (sawActivity) {
+          this.note(key, "The run finished but the board still reports the old version — its own settings page has the details. Safe to try again.");
+          return;
+        }
+        this.note(key, lastText || "Waiting for the board to start…");
       }
       this.note(key, "Still working — the board finishes on its own; check back in a minute.");
     } catch (e) {
@@ -1693,7 +1776,14 @@ async function onFlash() {
       lastBookKey = entry ? entry.key : null;
       state.lastProvisionedId = provisioning ? provisioning.deviceId : "";
       if (apiToken && entry) {
-        secretStore.set(secretStore.key("canary", entry.mac || entry.deviceId, "token"), apiToken);
+        // If the drawer refuses (Keychain locked), the book must not claim a
+        // key it doesn't hold — the row falls back to the no-token note.
+        secretStore
+          .set(secretStore.key("canary", entry.mac || entry.deviceId, "token"), apiToken)
+          .then((ok) => {
+            if (!ok) { entry.hasToken = false; savePrefs(); fleetBook.renderSoon(); }
+          })
+          .catch(() => {});
       }
     } catch (_) { /* the book must never break a flash */ }
     clearSecretFields();
@@ -3190,10 +3280,19 @@ function renderAbout() {
     savePrefs();
     // Sweep the secret drawer too — every key this app ever wrote, gone from
     // the OS store (and the prefs fallback), not just from the tracked list.
-    try { await secretStore.wipeAll(); } catch (_) {}
+    // An incomplete sweep is reported as exactly that, never as a clean
+    // reset: the leftover keys stay tracked so running reset again retries.
+    let leftBehind = 0;
+    try { leftBehind = await secretStore.wipeAll(); } catch (_) {}
     fleetBook.renderSoon();
     updateResumeState();
-    logEvent("info", "Memory reset");
+    logEvent(
+      leftBehind ? "err" : "info",
+      leftBehind
+        ? `Memory reset — but ${leftBehind} entr${leftBehind === 1 ? "y" : "ies"} in ` +
+          `${secretStore.where()} couldn't be removed (store locked?). Reset again to retry.`
+        : "Memory reset"
+    );
     renderAbout();
   });
 }

@@ -101,3 +101,21 @@ Security posture of the bridge (`fleet.rs`, unit-tested):
   token; its row says exactly that and what one reflash fixes.
 - `POST /api/ota/config` is deliberately **not** exposed from the app — the
   manifest URL and auto-update policy stay the device owner's settings.
+- **mDNS is unauthenticated by nature.** A hostile device already admitted
+  to your network can announce a known Canary's `device_id` and, when you
+  click Identify or Update, receive that board's bearer token at its own
+  address. Nothing the client can check today changes that: the TXT record,
+  hostname, and IP are all attacker-chosen, and pinning any of them (or a
+  TXT-advertised fingerprint) would authenticate nothing. This is the local
+  API's existing trust model — the wap's pairing-QR flow hands the same
+  `{base_url, token}` to any client on the LAN, and the token travels in
+  cleartext HTTP headers to the real board anyway — so the fleet book
+  inherits, rather than widens, "LAN admission is the boundary." What a
+  stolen token yields is bounded: Bearer-gated reads (status, diagnostics,
+  chain heads) and a signed-only, anti-rollback update trigger — never
+  firmware the pinned release key didn't sign, and never a raw frame. The
+  structural fix is firmware-side authenticated discovery — an
+  unauthenticated challenge endpoint the device answers by signing a nonce
+  with its Ed25519 identity key, verified against the `pubkey_fp` the book
+  already stores from the serial receipt — and belongs in a firmware PR,
+  tracked as follow-up.
