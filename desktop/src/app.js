@@ -998,8 +998,12 @@ function renderAccessNotes() {
   const seen = new Set();
   for (const p of (state.catalog && state.catalog.products) || []) {
     const a = p.access;
-    if (!a || seen.has(p.family)) continue;
-    seen.add(p.family);
+    // Dedup on the access entry, not the family — same reason as the browser
+    // flasher's accessCards(): the ESP32-CAM and the WROOM DevKit share the
+    // `canary` family and need opposite instructions.
+    const key = a && (a.key || p.family);
+    if (!a || seen.has(key)) continue;
+    seen.add(key);
     const d = document.createElement("details");
     d.className = "hint";
     d.dataset.family = p.family;

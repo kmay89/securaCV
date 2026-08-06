@@ -1761,14 +1761,23 @@ BOARDS_REGISTRY = REPO / "firmware/boards/boards.json"
 # registry (firmware/HARDWARE.md) defines the tiers; this is the same fact
 # said to a person instead of to CI. `first` marks the tier where the user
 # would be the first human to boot this image — the flasher leads with that.
+# NOTE ON THE WORD "VERIFIED": the registry's tier KEYS stay `verified` /
+# `community` (firmware/HARDWARE.md defines them, and boards.json is machine
+# state). The user-facing LABELS below deliberately do not use that word.
+# AGENTS.md rule 4 reserves "verified" for an Ed25519 signature checked
+# against a pinned key — and this copy sits inches from the flasher's real
+# signature check, which is exactly where conflating "a human booted it" with
+# "the bytes are cryptographically authentic" would do damage. Bench work is
+# called bench work.
 TIER_COPY = {
     "verified": {
-        "label": "Verified on hardware",
-        "line": "A maintainer has run this board on the bench and signed off.",
+        "label": "Bench-tested by a maintainer",
+        "line": "A maintainer has run this board on the bench and signed off "
+                "on how it behaves.",
         "first": False,
     },
     "community": {
-        "label": "Community-verified",
+        "label": "Bench-tested by the community",
         "line": "Someone outside the project ran this on real hardware and "
                 "filed the test report linked from the board's page.",
         "first": False,
@@ -2062,10 +2071,16 @@ def main() -> None:
         # Absent for every family that just plugs in. A product-id key wins
         # over its family's: the classic-ESP32 boards share the `canary`
         # family with the XIAO, which needs no ceremony.
+        # `key` is what the frontends deduplicate on when they render the
+        # access cards once each. Family-keyed notes collapse across their
+        # family (one card for all of Sense); product-keyed notes must NOT —
+        # the ESP32-CAM and the WROOM DevKit are both `canary` family and
+        # need opposite instructions, and dedup-by-family silently dropped
+        # the second one.
         if p["id"] in BOARD_ACCESS:
-            entry["access"] = BOARD_ACCESS[p["id"]]
+            entry["access"] = {**BOARD_ACCESS[p["id"]], "key": p["id"]}
         elif p["family"] in BOARD_ACCESS:
-            entry["access"] = BOARD_ACCESS[p["family"]]
+            entry["access"] = {**BOARD_ACCESS[p["family"]], "key": p["family"]}
         # Support tier, DERIVED from the board registry — never typed here.
         # The flasher is where a claim meets a person with a board in hand,
         # so "CI builds this; nobody has booted it" has to travel with the

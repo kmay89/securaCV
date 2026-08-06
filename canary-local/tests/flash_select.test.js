@@ -131,6 +131,42 @@ test("silicon narrows but does not name: S3 + 16 MB says so out loud",
     assert.doesNotMatch(pick.why, /looks like a/);
   });
 
+test("tier copy never borrows the word reserved for signature checks", () => {
+  // AGENTS.md rule 4: "Verified" means an Ed25519 signature checked against a
+  // pinned key — nothing looser. This copy renders inches from the flasher's
+  // real signature check, so a bench result must never wear that word.
+  for (const p of catalog.products) {
+    const said = `${p.tier.label} ${p.tier.line}`;
+    assert.doesNotMatch(said, /verif/i,
+      `${p.id}: tier copy says "${said}" — bench work is called bench work`);
+  }
+});
+
+test("per-product access notes survive dedup — both classic boards are shown", () => {
+  // Regression: both frontends render the access cards once each, keyed on
+  // `access.key`. When that key was the FAMILY, the ESP32-CAM and the WROOM
+  // DevKit collided (both `canary`) and whichever sorted second — the WROOM's
+  // "pick the CP2102, not an ESP32" note — was silently dropped.
+  const withAccess = catalog.products.filter((p) => p.access);
+  const keys = withAccess.map((p) => p.access.key);
+  for (const p of withAccess) {
+    assert.ok(p.access.key, `${p.id}: access entry carries no dedup key`);
+  }
+  const rendered = new Set(keys);
+  for (const id of ["securacv-canary-esp32cam", "securacv-canary-wroom"]) {
+    const p = catalog.products.find((x) => x.id === id);
+    assert.ok(rendered.has(p.access.key), `${id}: access note deduped away`);
+  }
+  assert.notStrictEqual(
+    catalog.products.find((x) => x.id === "securacv-canary-esp32cam").access.key,
+    catalog.products.find((x) => x.id === "securacv-canary-wroom").access.key,
+    "two boards needing opposite instructions must not share a dedup key");
+  // Family-keyed notes still collapse: Sense's two products share one card.
+  const sense = withAccess.filter((p) => p.family === "sense");
+  assert.ok(sense.length > 1 && new Set(sense.map((p) => p.access.key)).size === 1,
+    "family-level notes should still render once for the family");
+});
+
 test("every product states a support tier, and the reach ports state the loud one",
   async () => {
     // The tier is what makes offering an unproven image honest, so it is the

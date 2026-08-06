@@ -354,13 +354,26 @@ test("cold-start guidance ships on both flashers", () => {
   // The gesture itself, spelled out where the user reads it before plugging in.
   assert.match(browser, /coldStartCard\s*\(/,
     "browser flasher lost the cold-start card (hold BOOT before plugging in)");
-  assert.match(browser, /Still holding it, plug the USB-C cable in/,
+  // "the cable", not "the USB-C cable": the classic-ESP32 reach ports are
+  // micro-USB (WROOM DevKit) or have no connector at all (ESP32-CAM).
+  assert.match(browser, /Still holding it, plug the cable in/,
     "browser flasher's cold-start card no longer states the gesture");
   assert.match(html, /id="coldstart"/,
     "desktop flasher is missing the cold-start card — half the users lose the " +
     "one instruction that has to happen before the cable goes in");
-  assert.match(html, /Still holding it, plug the USB-C cable in/,
+  assert.match(html, /Still holding it, plug the cable in/,
     "desktop flasher's cold-start card no longer states the gesture");
+
+  // The bridge-board escape hatch. A board with no BOOT button (or no USB
+  // port) cannot follow the gesture above, and its threat model is different
+  // besides — a UART bridge can only ever be a serial port. Both frontends
+  // must say so, or half the users are told to hold a button that isn't there.
+  for (const [what, src] of [["browser", browser], ["desktop", html]]) {
+    assert.match(src, /jumper IO0 to GND before you apply power/,
+      `${what} flasher omits the no-BOOT-button gesture for classic ESP32 boards`);
+    assert.match(src, /cannot\s+pretend to be a keyboard/,
+      `${what} flasher overstates the bridge-board threat`);
+  }
 
   // Both must say plainly that an app cannot intercept USB enumeration —
   // this is the claim we must never let drift into "our app shields you".

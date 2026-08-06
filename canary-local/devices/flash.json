@@ -105,8 +105,8 @@
       "tier": {
         "tier": "verified",
         "board_id": "xiao-esp32s3-sense",
-        "label": "Verified on hardware",
-        "line": "A maintainer has run this board on the bench and signed off.",
+        "label": "Bench-tested by a maintainer",
+        "line": "A maintainer has run this board on the bench and signed off on how it behaves.",
         "first": false,
         "evidence": "docs/hardware/v1_bench_validation_runbook.md"
       }
@@ -162,7 +162,8 @@
           "Flash. When it finishes, REMOVE the IO0 jumper and tap RESET again — leave it on and the board just re-enters download mode instead of running the firmware."
         ],
         "enclosure_note": "The ESP32-CAM-MB backplane (the shield the board clips into, often sold with it) does all of the above with a USB port and its own buttons. If you have one, use it — no wiring, no jumper.",
-        "doc": "https://github.com/kmay89/securaCV/blob/main/firmware/boards/esp32cam-ai-thinker/README.md"
+        "doc": "https://github.com/kmay89/securaCV/blob/main/firmware/boards/esp32cam-ai-thinker/README.md",
+        "key": "securacv-canary-esp32cam"
       },
       "tier": {
         "tier": "compile-tested",
@@ -222,7 +223,8 @@
           "Flash. The adapter drives the boot pins for you — no buttons."
         ],
         "enclosure_note": "",
-        "doc": "https://github.com/kmay89/securaCV/blob/main/firmware/boards/esp32-wroom-devkit/README.md"
+        "doc": "https://github.com/kmay89/securaCV/blob/main/firmware/boards/esp32-wroom-devkit/README.md",
+        "key": "securacv-canary-wroom"
       },
       "tier": {
         "tier": "compile-tested",
@@ -320,8 +322,8 @@
       "tier": {
         "tier": "verified",
         "board_id": "xiao-esp32s3-sense",
-        "label": "Verified on hardware",
-        "line": "A maintainer has run this board on the bench and signed off.",
+        "label": "Bench-tested by a maintainer",
+        "line": "A maintainer has run this board on the bench and signed off on how it behaves.",
         "first": false,
         "evidence": "docs/hardware/v1_bench_validation_runbook.md"
       },
@@ -688,8 +690,8 @@
       "tier": {
         "tier": "verified",
         "board_id": "xiao-esp32c3",
-        "label": "Verified on hardware",
-        "line": "A maintainer has run this board on the bench and signed off.",
+        "label": "Bench-tested by a maintainer",
+        "line": "A maintainer has run this board on the bench and signed off on how it behaves.",
         "first": false,
         "evidence": "docs/hardware/canary_vision_getting_started.md"
       },
@@ -849,8 +851,8 @@
       "tier": {
         "tier": "verified",
         "board_id": "xiao-esp32s3",
-        "label": "Verified on hardware",
-        "line": "A maintainer has run this board on the bench and signed off.",
+        "label": "Bench-tested by a maintainer",
+        "line": "A maintainer has run this board on the bench and signed off on how it behaves.",
         "first": false,
         "evidence": "docs/hardware/canary_vision_getting_started.md"
       },
@@ -1019,7 +1021,8 @@
         ],
         "enclosure_note": "Printed the SecuraCV radome? The XIAO's USB-C comes out through the bottom wall — nothing to open. (A sealed build adds a shallow weather recess around that opening, not a cover.)",
         "reassembly": "If you did open it: keep the radar's front window clear when you close it — no foil labels, no metal, nothing added in front of the antenna. 60 GHz has to pass through that face.",
-        "doc": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_sense_ports_and_access.md"
+        "doc": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_sense_ports_and_access.md",
+        "key": "sense"
       },
       "tier": {
         "tier": "compile-tested",
@@ -1245,7 +1248,8 @@
         ],
         "enclosure_note": "Printed the SecuraCV radome? The XIAO's USB-C comes out through the bottom wall — nothing to open. (A sealed build adds a shallow weather recess around that opening, not a cover.)",
         "reassembly": "If you did open it: keep the radar's front window clear when you close it — no foil labels, no metal, nothing added in front of the antenna. 60 GHz has to pass through that face.",
-        "doc": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_sense_ports_and_access.md"
+        "doc": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_sense_ports_and_access.md",
+        "key": "sense"
       },
       "tier": {
         "tier": "compile-tested",
