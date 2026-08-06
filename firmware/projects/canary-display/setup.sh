@@ -70,6 +70,7 @@ flatten_includes() {
   sed -i -E 's|#include "network/|#include "|g' "$f"
   sed -i -E 's|#include "power/|#include "|g' "$f"
   sed -i -E 's|#include "story/|#include "|g' "$f"
+  sed -i -E 's|#include "fleet_link/|#include "|g' "$f"
   # <config.h> is the FLAVOR config (angle brackets skip this dir on purpose);
   # in the flat sketch it lives as flavor_config.h to avoid colliding with the
   # composition header canary/config.h (-> config.h).
@@ -129,6 +130,12 @@ generate_shared() {
     "${FIRMWARE_ROOT}/common/fleet_selfreport/fleet_selfreport.h"
     "${FIRMWARE_ROOT}/common/network/wifi_join_policy.h"
     "${FIRMWARE_ROOT}/common/power/power_events.h"
+    # The LAN-multicast band's wire contract (group/port/TTL). fleet_beacon.h
+    # comes with it because the transport header includes it — the constants
+    # and the beacon they carry are one contract, and staging half of it would
+    # not compile.
+    "${FIRMWARE_ROOT}/common/fleet_link/fleet_beacon.h"
+    "${FIRMWARE_ROOT}/common/fleet_link/fleet_beacon_udp.h"
     # The performance engine + its scripts. splash.cpp plays a scene on EVERY
     # flavor (the meeting is the same bird on every board), so these are not
     # nightstand-only the way common/color is — the sketch will not compile

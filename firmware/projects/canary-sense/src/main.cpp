@@ -919,7 +919,11 @@ void loop() {
   // witness's own fleet roster (last-heartbeat + status). Broker-independent
   // like the beacon; also before the broker early-return so it keeps tracking
   // peers through an MQTT/WiFi outage (continuous scan when fully off-grid).
-  canary::net::fleet_roster_scan_tick(now, canary::net::wifi_connected());
+  // wifi_provisioned = true: canary-sense has no unprovisioned mode — it always
+  // carries NVS credentials and wifi_loop() retries the join for as long as it
+  // takes, so the scan must never hold the shared radio through that window.
+  canary::net::fleet_roster_scan_tick(now, canary::net::wifi_connected(),
+                                      /*wifi_provisioned=*/true);
 #endif
 
   // Bounded, backoff-scheduled broker supervision: while the broker is

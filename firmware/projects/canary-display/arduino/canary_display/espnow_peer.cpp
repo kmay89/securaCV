@@ -110,7 +110,10 @@ void espnow_loop(uint32_t now) {
     if (!have) break;
     // Unsigned observation, same footing as the BLE beacon — the fleet model
     // does the semantic 60 s dedupe, so a chatty broadcast medium is fine.
-    canary::fleet::the_fleet().on_beacon(m.fp4, m.payload, m.have_status, now);
+    // Tagged Mesh so the event line names the band that actually carried it;
+    // these frames used to be reported as "(ble)", which they never were.
+    canary::fleet::the_fleet().on_beacon(m.fp4, m.payload, m.have_status, now,
+                                         canary::fleet::Via::Mesh);
   }
 }
 
