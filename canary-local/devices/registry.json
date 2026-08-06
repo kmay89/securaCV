@@ -399,6 +399,37 @@
       }
     },
     {
+      "id": "canary-nightlight",
+      "family": "canary-display",
+      "kind": "display",
+      "name": "Canary Nightlight",
+      "tagline": "The pocket clock-lamp — a canary companion at a kid's bedside, watching nothing.",
+      "board": "Waveshare ESP32-C3-LCD-1.47 (pocket board)",
+      "glass": {
+        "w": 180,
+        "h": 320,
+        "round": false,
+        "panel": "ST7789T 1.47\" IPS",
+        "touch": null
+      },
+      "senses": [],
+      "shows": [
+        "7-segment clock",
+        "lamp wash",
+        "living canary",
+        "honest night"
+      ],
+      "network": {
+        "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
+        "web": "first-boot portal + on-LAN /api/settings (the iPhone app's knobs)",
+        "mqtt": "fleet subscriber + own heartbeat"
+      },
+      "docs": [
+        "docs/hardware/display_nightstand_line.md"
+      ],
+      "status": "in development — rides the nightstand flavor's HAL (CD_NIGHTLIGHT face); pocket case in the catalog, no committed STL yet"
+    },
+    {
       "id": "canary-vision",
       "family": "canary-vision",
       "kind": "witness",

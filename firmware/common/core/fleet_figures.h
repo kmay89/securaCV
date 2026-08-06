@@ -59,6 +59,7 @@ struct HardwareRef {
 // Device types that resolve to exactly one figure. Types published by more
 // than one board are absent ON PURPOSE — see the note above.
 inline constexpr FigureRef kFigures[] = {
+  { "canary-nightlight", "device.canary-nightlight", "2cb7d41c", "prototype" },
   { "canary-sense", "device.canary-sense", "112abb6d", "shipping" },
   { "canary-vision", "device.canary-vision", "421d34f1", "shipping" },
   { "canary-watch", "device.canary-display-watch", "64d11931", "prototype" },
@@ -72,6 +73,7 @@ inline constexpr size_t kFigureCount = sizeof(kFigures) / sizeof(kFigures[0]);
 inline constexpr HardwareRef kHardware[] = {
   { "board:seeed_xiao_esp32s3", "device.canary-wap", "5fab1e20", "shipping", false },  // 4 builds
   { "esp32-c3", "device.canary-vision-devkit", "996e322d", "shipping", false },  // 2 builds
+  { "waveshare-esp32c3-lcd147", "device.canary-nightlight", "2cb7d41c", "prototype", false },  // 1 build
   { "waveshare-esp32s3-lcd43", "device.canary-display-dash", "9bb5e13f", "prototype", false },  // 2 builds
   { "waveshare-esp32s3-lcd7", "device.canary-display-dash7", "cdff74a9", "prototype", true },  // 2 builds — shared by canary-dash + canary-nightstand7
   { "waveshare-esp32s3-touch-lcd169", "device.canary-display-touch169", "72fa8cf1", "prototype", false },  // 1 build

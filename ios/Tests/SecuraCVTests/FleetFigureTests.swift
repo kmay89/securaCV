@@ -29,17 +29,40 @@ final class FleetFigureTests: XCTestCase {
         XCTAssertNil(DeviceType.unknown.figureID)
         XCTAssertNil(DeviceType.display.figure)
         XCTAssertNil(DeviceType.unknown.figure)
-        // The nightlight's figure (the C3 pocket case) arrives through the
-        // fleet-figures pipeline; until the generated map carries it, nil
-        // keeps the SF moon honest rather than borrowing a sibling's shape.
-        XCTAssertNil(DeviceType.nightlight.figureID)
-        XCTAssertNil(DeviceType.nightlight.figure)
     }
 
     func testUnambiguousTypesDoDrawTheirOwnDevice() {
         XCTAssertEqual(DeviceType.wap.figure?.id, "device.canary-wap")
         XCTAssertEqual(DeviceType.vision.figure?.id, "device.canary-vision")
         XCTAssertEqual(DeviceType.sense.figure?.id, "device.canary-sense")
+        // One case, one product: the C3 pocket case entered the pipeline, so
+        // the nightlight's moon symbol retired honestly.
+        XCTAssertEqual(DeviceType.nightlight.figure?.id, "device.canary-nightlight")
+    }
+
+    /// The two-precision ladder (mirror of the firmware's two lookups): the
+    /// raw published type resolves exactly through the generated map, the
+    /// coarse enum default catches the rest, and ambiguity stays nil.
+    func testResolveListensToThePublishedTypeFirst() {
+        // The enum collapses "canary-watch" to .unknown, but the wire string
+        // pins one product — the round drum.
+        XCTAssertEqual(FleetFigure.resolve(deviceType: .unknown,
+                                           published: "canary-watch")?.id,
+                       "device.canary-display-watch")
+        // Config spelling and wire spelling land on one row (canonical_dt).
+        XCTAssertEqual(FleetFigure.resolve(deviceType: .unknown,
+                                           published: "canary_wap")?.id,
+                       "device.canary-wap")
+        // "canary-nightstand" is published by two different panels, so the
+        // map omits it and .display stays nil: no figure, no guess.
+        XCTAssertNil(FleetFigure.resolve(deviceType: .display,
+                                         published: "canary-nightstand"))
+        // A published string the map has never heard of falls back to the
+        // enum's own default rather than dropping to nothing.
+        XCTAssertEqual(FleetFigure.resolve(deviceType: .sense,
+                                           published: "canary-sense-v99")?.id,
+                       "device.canary-sense")
+        XCTAssertNil(FleetFigure.resolve(deviceType: .unknown, published: nil))
     }
 
     /// An idea must never render as something you can buy. The generator emits
@@ -100,6 +123,10 @@ final class FleetFigureTests: XCTestCase {
             XCTAssertNotNil(FleetFigure.all[figureID],
                             "\(deviceType) points at missing figure \(figureID)")
             XCTAssertEqual(FleetFigure.forDeviceType(deviceType)?.id, figureID)
+            // The map is keyed on the wire-canonical spelling (what mDNS
+            // `dt` carries), so a key must already be its own canonical form.
+            XCTAssertEqual(FleetFigure.canonicalDeviceType(deviceType), deviceType,
+                           "\(deviceType) is not wire-canonical")
         }
         XCTAssertNil(FleetFigure.forDeviceType("not-a-real-device-type"))
     }
