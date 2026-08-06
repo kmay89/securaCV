@@ -129,6 +129,24 @@
 //  thing that library exists to prevent. Same call the hallway stick's back
 //  plate made, for the same reason.
 //
+//  AND THE URL IS NOT ON THIS PART EITHER, for the same arithmetic one step
+//  further on. Putting "SECURACV.COM/QR" under the wordmark was offered and
+//  it does not survive contact with a nozzle: the plate allows 21.1 mm of
+//  type, and that string draws 35.0 mm at mark_word_min_h() — the cap height
+//  where a 0.4 mm bead still reaches the letterforms at all — and 43.7 mm at
+//  the size that prints as cleanly as "Canary" does. It is not close, and it
+//  does not become close by trimming the string: even "SECURACV" alone wants
+//  24.2 mm. What this plate holds is SEVEN characters set as well as the
+//  wordmark is, or eight if you spend the whole floor. "Canary" is six.
+//  A URL is fifteen, and no kerning recovers that.
+//  Shrinking it to fit is the move that looks like it works and is the one
+//  that fails: at the 1.5 mm cap height where the string finally fits the
+//  width, a 0.4 mm bead reaches 26.8% of the drawing. The render is perfect.
+//  The part comes off the plate with a gray smear under the wordmark.
+//  The line's answer to "put the link on the product" is the 7" desk dock,
+//  whose deck is big enough for the real QR (canary_s3_lcd7_qr.scad, the same
+//  SECURACV.COM/QR, at 1.3 mm modules). A 25 mm lid is not that surface.
+//
 //  ── THE LID IS KEYED — it fits ONE way, and that is load-bearing ─────────
 //  The C6 case's lid is 180°-rotation symmetric. This one cannot be: the
 //  board's four M2 pillars are NOT on a symmetric pattern (USB-end pair at
@@ -361,21 +379,28 @@ kh_cy    = 5.0;     // hanger center, CASE frame (+Y = up when hung). Not
 mark_word   = "Canary";  // the DEVICE's name (the company's is securaCV).
                          // The library's mark_wordmark() defaults to the
                          // company; this part is a Canary, so it says so
-mark_word_h = 3.6;       // cap height. The width assert below is the real
-                         // constraint on this narrow a plate — MEASURE by
-                         // eye on the first print, it is the one number
-                         // here that is a taste call rather than a fit
+mark_word_h = 3.6;       // cap height — a FIT number, not a taste one, and
+                         // hemmed in from both sides on a plate this narrow.
+                         // Above: mark_word_ink_w() must keep the word off
+                         // the edges (3.6 draws 19.0 mm of the 21.1 allowed).
+                         // Below: mark_word_min_h() is the point where a
+                         // 0.4 mm bead stops reaching the letterforms —
+                         // 2.4 mm, so 3.6 has half again the height it
+                         // strictly needs. Both are asserted further down;
+                         // neither used to be, and the low one is the one
+                         // that would have failed silently
 mark_depth  = 0.6;       // deboss depth; the inlay fills it flush
 mark_dx = 0;             // sideways nudge (same in both frames)
 mark_cy = -11.0;         // wordmark center, CASE frame (+Y = up when hung),
                          // so it reads BELOW the hanger. Both single-feature
                          // modes ignore this and center instead
-// Per-character advance as a fraction of cap height — the wordmark's width
-// cannot be MEASURED here (OpenSCAD has no text-metrics primitive), so it is
-// estimated, and deliberately a hair pessimistic. Same constant the hallway
-// stick calibrated against a measured render; the failure it guards is a
-// mark hanging off the edge of the part, which has shipped before.
-mark_adv = 0.875;
+// (The per-character advance constant that used to live here is gone: the
+//  width now comes from the library's mark_word_ink_w(), which sums the
+//  MEASURED advance of each glyph rather than averaging. The local 0.875 was
+//  calibrated on "Canary" and was right for it — and wrong by 11% for a word
+//  in caps, which is precisely the word this face was next asked to carry,
+//  and wrong by 43% for one built from wide glyphs. An average cannot guard
+//  a worst case. See MEASURED TYPE METRICS in canary_mark_lib.scad.)
 
 /* [Ventilation] — side-wall slots only; the row sits BEHIND the light band
    so the white line stays whole. The lid used to carry a matching grille —
@@ -527,9 +552,9 @@ stand_case = [[ board_w/2 - hole_ix_usb, -(board_l/2 - hole_iy_usb)],
 
 function nub_ys() = [-nub_y0, nub_y0];
 
-// the wordmark's estimated width (see mark_adv) — the assert below is the
-// only thing standing between a taste change and type running off the part
-mark_w = len(mark_word) * mark_adv * mark_word_h;
+// the wordmark's estimated width — the assert below is the only thing
+// standing between a taste change and type running off the part
+mark_w = mark_word_ink_w(mark_word, mark_word_h);
 
 // ── The back face's two features, placed in CASE coordinates ───────────────
 // Only "both" honors the offsets; a single feature centers itself, so
@@ -693,6 +718,19 @@ assert(!lid_has_mark || mark_w <= xo - 4.0,
            "mark_word_h, or shorten mark_word."));
 assert(!lid_has_mark || mark_word_h <= yo - 6.0,
        "the wordmark is taller than the lid — shrink mark_word_h");
+// The gate the other direction, which this file did not have. Every assert
+// above asks whether the type FITS; none asked whether it PRINTS, and those
+// two want opposite things on a 25 mm plate. Shrinking a word until it fits
+// is the obvious move and it has a floor: below mark_word_min_h() a 0.4 mm
+// bead can no longer reach the letterforms and the deboss fills with a
+// smudge that has the rhythm of type. Nothing in a render shows this — the
+// preview draws a perfect tiny wordmark at any size you like.
+assert(!lid_has_mark || mark_word_h >= mark_word_min_h(),
+       str("the wordmark is set at ", mark_word_h, " mm cap height, under ",
+           "the ", mark_word_min_h(), " mm where a 0.4 mm bead still reaches ",
+           "the letterforms — it would print as a smudge, not as a word. ",
+           "Raise mark_word_h; if it no longer fits the width at that size, ",
+           "the word is too long for this part, not too big."));
 assert(!lid_has_mark || (mark_depth >= 0.3 && mark_depth <= back_t - 0.8),
        str("mark_depth ", mark_depth, " must sit between 0.3 (a deboss worth ",
            "having) and ", back_t - 0.8, " (leaving plate under the letters)"));

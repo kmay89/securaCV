@@ -7427,7 +7427,7 @@
       {
        "name": "mark_word_h",
        "default": "3.6",
-       "comment": "cap height. The width assert below is the real"
+       "comment": "cap height — a FIT number, not a taste one, and"
       },
       {
        "name": "mark_depth",
@@ -7443,10 +7443,6 @@
        "name": "mark_cy",
        "default": "-11.0",
        "comment": "wordmark center, CASE frame (+Y = up when hung),"
-      },
-      {
-       "name": "mark_adv",
-       "default": "0.875"
       },
       {
        "name": "opt_vent",
@@ -7692,7 +7688,7 @@
       },
       {
        "name": "mark_w",
-       "default": "len(mark_word) * mark_adv * mark_word_h"
+       "default": "mark_word_ink_w(mark_word, mark_word_h)"
       },
       {
        "name": "lid_has_mark",
