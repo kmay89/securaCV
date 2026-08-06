@@ -521,6 +521,38 @@ def test_speak_device_check_reports_one_device():
     assert "signature checks out against the pinned key" in speech
     assert "contact state change, about 30 minutes ago" in speech
 
+
+def test_device_check_never_launders_an_old_untrusted_event():
+    # The device verifies NOW, but the cached event was published without
+    # a verified signature. The event must carry its own verdict, or the
+    # device-level "checks out" clause would launder it.
+    devices = {
+        "gate": {
+            "status": "online",
+            "last_event": {
+                "event_type": "contact_state_change",
+                "received_at": NOW - 600,
+                "trusted": False,
+                "reason": "unsigned",
+            },
+        }
+    }
+    verify = {"gate": {"trusted": True, "reason": "ok"}}
+    speech = speak_device_check(fleet_brief([_entry(devices, verify)], NOW), "gate")
+    assert "signature checks out against the pinned key" in speech
+    assert "that one arrived without a verified signature" in speech
+
+    # A mismatched event says so in the event clause too.
+    devices["gate"]["last_event"]["reason"] = "mismatch"
+    speech = speak_device_check(fleet_brief([_entry(devices, verify)], NOW), "gate")
+    assert "under the mismatched key" in speech
+
+
+def test_speak_device_check_offline_unknown_and_empty():
+    devices = {"gate": {"status": "online"}, "shed": {"status": "offline"}}
+    verify = {k: {"trusted": True, "reason": "ok"} for k in devices}
+    brief = fleet_brief([_entry(devices, verify)], NOW)
+
     # Offline and eventless reads honestly, never as "online".
     shed = speak_device_check(brief, "shed")
     assert "not reporting as online right now" in shed
@@ -587,6 +619,28 @@ def test_speak_goodnight_is_forward_looking():
     assert "Nothing's set up to keep watch yet" in speak_goodnight(fleet_brief([], NOW))
 
 
+def test_goodnight_never_claims_quiet_it_cannot_see():
+    devices = {"gate": {"status": "online"}}
+    verify = {"gate": {"trusted": True, "reason": "ok"}}
+
+    # An unreachable kernel must not be followed by "It's been quiet."
+    blind = _entry(devices, verify, kernel={"ok": False, "latest_event": None})
+    speech = speak_goodnight(fleet_brief([blind], NOW))
+    assert "can't reach the witness kernel" in speech
+    assert "It's been quiet." not in speech
+
+    # A kernel-only event is reported, not silently swallowed as quiet.
+    kernel_only = _entry(
+        devices, verify, kernel={"ok": True, "latest_event": {"event_type": "TamperDetected"}}
+    )
+    speech = speak_goodnight(fleet_brief([kernel_only], NOW))
+    assert "the latest in the kernel log is tamper detected" in speech
+    assert "It's been quiet." not in speech
+
+    # With no kernel configured and nothing cached, quiet is honest.
+    assert "It's been quiet." in speak_goodnight(fleet_brief([_entry(devices, verify)], NOW))
+
+
 def test_speak_privacy_is_honest_about_the_wake_word_residue():
     speech = speak_privacy()
     # It admits the false-wake window rather than claiming purity...
@@ -597,6 +651,19 @@ def test_speak_privacy_is_honest_about_the_wake_word_residue():
     assert "code that was never written" in speech
     # It never claims to be always-off or to have a setting that isn't real.
     assert "turned off" not in speech
+
+
+def test_speak_privacy_never_asserts_one_listening_mode():
+    speech = speak_privacy()
+    # Push-to-talk is the blessed default and does NOT listen for a name,
+    # so a flat "I listen for my name" would be false in the recommended
+    # setup. Both modes must be described, neither asserted as active.
+    assert "pressing the button" in speech
+    assert "only while you're holding it" in speech
+    assert "If you turned on a wake word" in speech
+    assert "I listen for my name and nothing else" not in speech
+    # The mode-independent promises still stand unconditionally.
+    assert "Either way, I don't record you" in speech
 
 
 def test_speak_help_names_the_limit():

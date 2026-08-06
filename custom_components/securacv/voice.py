@@ -598,7 +598,16 @@ def speak_device_check(brief: dict[str, Any], spoken_name: str) -> str:
     if isinstance(last, dict) and isinstance(last.get("received_at"), (int, float)):
         label = _spoken_label(last.get("event_type"))
         when = ago_phrase(brief["now"] - float(last["received_at"]))
-        speech += f" The last thing it witnessed was {label}, {when}."
+        speech += f" The last thing it witnessed was {label}, {when}"
+        # The EVENT's own verdict, not the device's current one — a device
+        # that verifies today may have published this event unsigned, and
+        # the device-level clause above must not launder it.
+        if last.get("trusted"):
+            speech += "."
+        elif last.get("reason") == "mismatch":
+            speech += " — though that one came in under the mismatched key, so hold it loosely."
+        else:
+            speech += " — though that one arrived without a verified signature."
     else:
         speech += " It hasn't witnessed anything since I started listening."
     return speech
@@ -693,10 +702,24 @@ def speak_goodnight(brief: dict[str, Any]) -> str:
     if brief["kernel_configured"] and not brief["kernel_ok"]:
         parts.append("I can't reach the witness kernel at the moment, either.")
 
+    # "It's been quiet" is a claim about every source, so it may only be
+    # spoken when every configured source is reachable AND empty. A blind
+    # kernel or a kernel-only event both forbid it.
     canary = brief.get("canary_latest")
+    kernel_event = brief.get("kernel_latest_event")
+    kernel_blind = bool(brief["kernel_configured"]) and not brief["kernel_ok"]
     if canary and (brief["now"] - canary["received_at"]) < 3600:
         label = _spoken_label(canary.get("event_type"))
         parts.append(f"Last hour's only note: {label}, from the {_spoken_name(canary['device_id'])} Canary.")
+    elif kernel_blind:
+        # The outage was already named above; adding "it's been quiet"
+        # there would contradict it in the same breath.
+        pass
+    elif kernel_event:
+        parts.append(
+            f"Nothing new from the Canaries; the latest in the kernel log is "
+            f"{_spoken_label(kernel_event.get('event_type'))}."
+        )
     elif count:
         parts.append("It's been quiet.")
 
@@ -712,20 +735,34 @@ def speak_goodnight(brief: dict[str, Any]) -> str:
 def speak_privacy() -> str:
     """"Are you listening to me?" — the honest answer, said out loud.
 
-    The most important sentence this system speaks, so it is written to be
-    quotable and exactly true: it describes the wake-word residue rather
-    than claiming a purity the design doesn't have (docs/voice_control.md,
-    "What turning a wake word on means"), and it states the Canary side as
-    the structural fact it is.
+    The most important sentence this system speaks, so every clause has to
+    survive being quoted. Two disciplines govern it:
+
+    1. It does NOT assert which listening mode is active. Push-to-talk —
+       the blessed default — does not listen for a name at all, and a
+       wake word may be any phrase the owner trained, so a flat "I listen
+       for my name" would be a false privacy guarantee in the very setup
+       this project recommends. Both modes are described conditionally,
+       and both descriptions are true wherever they apply.
+    2. It admits the wake-word residue (docs/voice_control.md, "What
+       turning a wake word on means") rather than claiming a purity the
+       design doesn't have.
+
+    Composed from the contract, never from runtime state, so no setting
+    can make it say something kinder than the truth.
     """
     return (
-        "Only when you ask. I listen for my name and nothing else — I don't "
-        "record you, and nothing I hear is stored or sent anywhere; once I've "
-        "answered, it's gone. If something false-wakes me, a television say, "
-        "the few seconds after it are read here on this hub and thrown away. "
-        "As for the Canaries around the house: they report what happened, never "
-        "who — no faces, no plate numbers, no footage leaving home. That isn't "
-        "a setting I have. It's code that was never written."
+        "That depends on how you set me up, and both answers are short. If you "
+        "talk to me by pressing the button, I hear you only while you're "
+        "holding it — the rest of the time there's nothing running. If you "
+        "turned on a wake word, I'm listening for that one phrase and nothing "
+        "else; and if something false-wakes me, a television say, the few "
+        "seconds after it are read here on this hub and thrown away. Either "
+        "way, I don't record you, and nothing I hear is stored or sent "
+        "anywhere — once I've answered, it's gone. As for the Canaries around "
+        "the house: they report what happened, never who — no faces, no plate "
+        "numbers, no footage leaving home. That isn't a setting I have. It's "
+        "code that was never written."
     )
 
 

@@ -158,16 +158,23 @@ can't answer it out loud has a gap where its thesis should be. So it
 answers — and the answer is written to be *exactly* true rather than
 reassuring, including the part most assistants would leave out:
 
-> *"Only when you ask. I listen for my name and nothing else — I don't
-> record you, and nothing I hear is stored or sent anywhere; once I've
-> answered, it's gone. If something false-wakes me, a television say, the
-> few seconds after it are read here on this hub and thrown away. As for
-> the Canaries around the house: they report what happened, never who —
-> no faces, no plate numbers, no footage leaving home. That isn't a
-> setting I have. It's code that was never written."*
+> *"That depends on how you set me up, and both answers are short. If you
+> talk to me by pressing the button, I hear you only while you're holding
+> it — the rest of the time there's nothing running. If you turned on a
+> wake word, I'm listening for that one phrase and nothing else; and if
+> something false-wakes me, a television say, the few seconds after it are
+> read here on this hub and thrown away. Either way, I don't record you,
+> and nothing I hear is stored or sent anywhere — once I've answered, it's
+> gone. As for the Canaries around the house: they report what happened,
+> never who — no faces, no plate numbers, no footage leaving home. That
+> isn't a setting I have. It's code that was never written."*
 
-It's composed from the contract, not from runtime state, so no
-configuration change can make it say something kinder than the truth.
+Two deliberate choices in that wording. It **never asserts which mode is
+active** — push-to-talk is the blessed default and doesn't listen for a
+name at all, so a flat "I only wake to my name" would be a false
+guarantee in exactly the setup this page recommends. And it's composed
+from the contract, not from runtime state, so no configuration change can
+make it say something kinder than the truth.
 
 The weather line at the end of "what's up" covers Home Assistant's whole
 condition vocabulary with a warm phrase for every season — optimistic on
