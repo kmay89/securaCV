@@ -1789,11 +1789,28 @@ process: Flasher, Lab, tvOS, and the iPhone / iPad / Mac targets.
   second run reproduces the same bytes. Re-dispatching is also free when
   nothing changed: the workflow's `git status --porcelain` guard exits 0 with
   "nothing to push."
-- **Then remember the second half:** when it *does* push, it pushes as
-  `GITHUB_TOKEN`, so by GitHub's recursion guard the new head lands with
-  **zero checks** — `total_count: 0`, state `pending`, forever. That is not a
-  stuck queue and not a CI outage; it needs one ordinary push (or a manual
-  re-run) before it can go green. Both halves of this bit in one sitting.
+- **Then remember the second half, which is worse than it first looks:** when
+  it *does* push, it pushes as `GITHUB_TOKEN`, and the bot commit does not
+  merely land with zero checks — it can put the **whole PR's** workflow runs
+  behind a manual **`action_required`** approval gate. Measured on #1479: the
+  bot's push produced one `Firmware Build` run with
+  `conclusion: action_required`, and the **next four ordinary pushes created no
+  runs at all** — not firmware, not CodeQL, not the secret scan, not the lint
+  jobs, every one of which has a broad trigger. `get_check_runs` answers
+  `total_count: 0` and the combined status stays `pending` indefinitely.
+  - **This does not clear itself, and pushing again does not clear it.** An
+    ordinary push is the documented remedy for the plain recursion guard; it
+    is *not* the remedy for the approval gate, and assuming it is costs a
+    round of confused pushes. A human with write access must click **Approve
+    and run** on the pending run in the Actions tab (API:
+    `POST /repos/{owner}/{repo}/actions/runs/{run_id}/approve`, which is not
+    in the GitHub MCP toolset — so an agent cannot self-serve this).
+  - **Read `total_count: 0` as "gated", not "queued".** A pending state with
+    zero runs looks exactly like CI being slow, so the natural response is to
+    wait — and waiting is the one thing that never resolves it. If a
+    `workflow_dispatch` you trigger yourself runs fine while PR-triggered runs
+    stay empty, that asymmetry is the tell: Actions is healthy and the PR is
+    gated.
 - **Applies to:** any workflow that commits and pushes generated artifacts back
   to the branch under test — the dist rebuild today, and by the same shape any
   future "regenerate and commit" button. Two properties make it safe to run
