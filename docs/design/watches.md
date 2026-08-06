@@ -1,10 +1,15 @@
 # Watches — attention that expires on purpose
 
-> **Status: designed · pure engine built and host-tested · hub wiring is
-> the next step.** The decision core (`custom_components/securacv/watches.py`)
-> is pure and covered by `tests/test_watches.py`; what remains is binding a
-> watch to live sensor updates and the notification lane. Marked honestly
-> here rather than in a roadmap nobody reads.
+> **Status: built for event-kind watches · numeric subjects and
+> persistence are next.** The decision core
+> (`custom_components/securacv/watches.py`) is pure and covered by
+> `tests/test_watches.py`, and `watch_runtime.py` wires it live: witness
+> events feed observations, a five-minute tick evaluates and delivers,
+> and expiry announces itself as a persistent notification. **Not yet
+> real:** numeric subjects (a soil-moisture sensor is accepted but
+> nothing feeds it), and watches do not survive a hub restart. A watch
+> whose subject nothing reports says so when you start it rather than
+> pretending.
 
 ## The problem, stated properly
 
@@ -201,8 +206,9 @@ reasons to build them well:
 | Model, baseline, deviation, expiry, phrasing | `custom_components/securacv/watches.py` | **built, host-tested** |
 | Duration parsing ("two weeks", "until October") | same | **built, host-tested** |
 | Voice: start a watch, list watches | `intent.py` + sentences | **built** |
+| Feeding event-kind watches + tick + delivery | `watch_runtime.py` | **built** |
+| Numeric subjects (an HA sensor like soil moisture) | integration glue | next |
 | Persistence across restarts | HA `Store` | next |
-| Binding a watch to live sensor updates + notification lane | integration glue | next |
 | Recipes in the UI, end-of-watch summary card | Lovelace | after that |
 
 ## Related
