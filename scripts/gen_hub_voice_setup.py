@@ -55,15 +55,31 @@ warn() {{ printf ' [warn] %s\\n' "$*"; FAILS=$((FAILS+1)); }}
 
 have_ha() {{ command -v ha >/dev/null 2>&1; }}
 
+# Home Assistant renamed add-ons to "apps", and the CLI noun moved with
+# it (`ha apps ...`). Older installs still only answer to `ha addons`.
+# Detect once, then use whichever this hub actually has — a script that
+# hard-codes either one breaks on half the world's hubs.
+ADDON_NOUN=""
+detect_noun() {{
+  if [ -n "$ADDON_NOUN" ]; then return 0; fi
+  if ha apps list >/dev/null 2>&1 || ha apps --help >/dev/null 2>&1; then
+    ADDON_NOUN=apps
+  else
+    ADDON_NOUN=addons
+  fi
+}}
+
+ha_addon() {{ detect_noun; ha "$ADDON_NOUN" "$@"; }}
+
 # `ha addons info` also answers for store-only (not-installed) add-ons, so
 # success alone proves nothing. An installed add-on reports a non-null
 # "version" string; a store-only one reports "version": null.
 addon_installed() {{
-  ha addons info "$1" --raw-json 2>/dev/null | grep -Eq '"version": *"'
+  ha_addon info "$1" --raw-json 2>/dev/null | grep -Eq '"version": *"'
 }}
 
 addon_started() {{
-  ha addons info "$1" --raw-json 2>/dev/null | grep -Eq '"state": *"started"'
+  ha_addon info "$1" --raw-json 2>/dev/null | grep -Eq '"state": *"started"'
 }}
 
 ensure_addon() {{
@@ -71,8 +87,8 @@ ensure_addon() {{
   if ! addon_installed "$slug"; then
     if [ "$MODE" = verify ]; then warn "$label is not installed"; return; fi
     say "   installing $label..."
-    if ! ha addons install "$slug" >/dev/null; then
-      warn "$label ($slug) failed to install — open the Add-on Store and install it by name"
+    if ! ha_addon install "$slug" >/dev/null; then
+      warn "$label ($slug) failed to install — open Settings -> Apps (older hubs: Add-ons) and install it by name"
       return
     fi
   fi
@@ -80,10 +96,10 @@ ensure_addon() {{
     ok "$label is installed and running"
   else
     if [ "$MODE" = verify ]; then warn "$label is installed but not running"; return; fi
-    if ha addons start "$slug" >/dev/null 2>&1; then
+    if ha_addon start "$slug" >/dev/null 2>&1; then
       ok "$label started"
     else
-      warn "$label installed but would not start — check its log in the Add-on Store"
+      warn "$label installed but would not start — check its log under Settings -> Apps"
     fi
   fi
 }}
@@ -102,6 +118,9 @@ if ! have_ha; then
   say "in the Terminal & SSH add-on (Settings -> Add-ons -> Terminal & SSH)."
   exit 1
 fi
+
+detect_noun
+say "   (this hub's CLI calls them '$ADDON_NOUN')"
 
 head_ "1. The three local voice engines"
 ensure_addon core_whisper      "Whisper (speech-to-text)"
@@ -157,10 +176,13 @@ fi
 head_ "Done. Two clicks remain (they need your eyes, not a script):"
 say "   1. Settings -> Voice assistants -> Add assistant:"
 say "      speech-to-text Whisper, text-to-speech Piper, and your wake word."
-say "   2. Plug the microphone in (USB) and pick this assistant for it."
+say "   2. A USB microphone is NOT usable by Assist on its own — install"
+say "      the Assist Satellite app and point it at your mic and speaker."
 say ""
-say "Then try, out loud:"
-say "   'Is the fleet OK?'    'What was the last witness event?'"
+say "Hello world, in this order — each step proves the one before it:"
+say "   a. Type 'what's up' into the Assist box (no mic needed at all)."
+say "   b. Press the mic button in that box and say it."
+say "   c. Say it to the room, once the satellite has your USB devices."
 say ""
 say "What this never does: no sentence can arm, disarm, or unseal anything,"
 say "no audio or transcript is kept, and nothing leaves this hub."
