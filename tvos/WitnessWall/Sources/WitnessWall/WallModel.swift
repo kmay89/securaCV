@@ -86,6 +86,11 @@ final class WallModel {
     /// loops fighting over `state`.
     func start() {
         pollTask?.cancel()
+        // The Wall coming back on screen is the resident coming back on duty,
+        // and an iCloud account can be signed out while tvOS had us suspended.
+        // Re-ask rather than trusting an answer from a previous session — a
+        // stale "ready" is the false assurance this watch exists to avoid.
+        Task { [resident] in await resident.refreshAccount() }
         guard !hubAddress.isEmpty else {
             state = .searching
             pollTask = Task { [weak self] in

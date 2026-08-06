@@ -84,6 +84,7 @@ struct Coverage: Equatable {
         awayReachExplanation: String,
         homeKitEnabled: Bool,
         homeKitHubPresent: Bool,
+        homeKitAutomationCount: Int,
         residentKnown: Bool
     ) -> Coverage {
         var lanes: [CoverageLane] = []
@@ -106,12 +107,31 @@ struct Coverage: Equatable {
         ))
 
         // 2. Away, through the household's own iCloud.
+        //
+        // A delivery path has two ends, and `awayReachReady` only proves one
+        // of them: the CloudKit subscription that RECEIVES a wake was saved.
+        // Something at home still has to SEND it, and this model says two
+        // lanes down that we cannot see whether anything does. Counting a
+        // proven receiver as a working path was inflating the headline in
+        // precisely the away-with-no-resident case this screen exists to
+        // expose — the one where the user is out and nobody is home to speak.
+        //
+        // So the lane is only as strong as its weakest end, and it inherits
+        // the notification floor too: a wake that arrives at a phone with
+        // notifications denied is a record in a database, not an alert.
         lanes.append(CoverageLane(
             id: "away",
             name: "Away, through your iCloud",
-            standing: awayReachReady
-                ? .covered
-                : .broken(awayReachExplanation),
+            standing: {
+                if !notificationsAuthorized {
+                    return .broken("Notifications are off for SecuraCV, so an away alert would arrive silently.")
+                }
+                if !awayReachReady { return .broken(awayReachExplanation) }
+                if !residentKnown {
+                    return .unobservable("Your phone can receive an away alert. Whether anything at home will send one depends on the Apple TV below — we can't check that from here.")
+                }
+                return .covered
+            }(),
             carries: "A coarse word — tamper, integrity, offline, pattern — that opens the app."
         ))
 
@@ -127,8 +147,17 @@ struct Coverage: Equatable {
             carries: "A Canary going dark or a chain failing, while you are out."
         ))
 
-        // 4. Apple Home. The app can see the projection's own standing, but
-        // whether the household wrote an automation is Apple's to know.
+        // 4. Apple Home. Publishing to Home is not the same as being TOLD by
+        // Home: an accessory nobody wrote an automation against changes its
+        // characteristic quietly forever. Enabled + a hub was the setup being
+        // complete, not the path working, and calling that "covered" was the
+        // same overclaim in a different costume.
+        //
+        // We can see part of it honestly. The automations the concierge wrote
+        // are anchored by UUID (HomeAutomationAuthor), so "at least one of
+        // ours exists" is an observation, not a guess. A household's own
+        // hand-written automation is genuinely invisible to us — which is
+        // `.unobservable`, and says so with what to do about it.
         lanes.append(CoverageLane(
             id: "applehome",
             name: "Apple Home",
@@ -138,6 +167,9 @@ struct Coverage: Equatable {
                 }
                 if !homeKitHubPresent {
                     return .broken("No home hub. Apple needs a HomePod or Apple TV to run automations or reach you away.")
+                }
+                if homeKitAutomationCount == 0 {
+                    return .unobservable("Publishing, but no automation of ours is set up — so Apple Home would change a value and tell nobody. Add one in Keys → Apple Home. (If you wrote your own, we can't see it.)")
                 }
                 return .covered
             }(),

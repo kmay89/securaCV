@@ -21,6 +21,7 @@ final class CoverageTests: XCTestCase {
         awayReachExplanation: String = "iCloud is not signed in.",
         homeKitEnabled: Bool = true,
         homeKitHubPresent: Bool = true,
+        homeKitAutomationCount: Int = 1,
         residentKnown: Bool = false
     ) -> Coverage {
         Coverage.evaluate(
@@ -30,6 +31,7 @@ final class CoverageTests: XCTestCase {
             awayReachExplanation: awayReachExplanation,
             homeKitEnabled: homeKitEnabled,
             homeKitHubPresent: homeKitHubPresent,
+            homeKitAutomationCount: homeKitAutomationCount,
             residentKnown: residentKnown)
     }
 
@@ -64,6 +66,51 @@ final class CoverageTests: XCTestCase {
         XCTAssertEqual(c.workingCount, 1)
         XCTAssertEqual(c.headline, "One way to reach you")
         XCTAssertTrue(c.summary.contains("nothing is behind it"))
+    }
+
+    // MARK: - a path needs both ends
+
+    func testAwayIsNotCountedOnAProvenReceiverAlone() {
+        // `awayReachReady` proves the CloudKit subscription that RECEIVES a
+        // wake exists. Something at home still has to SEND one, and this
+        // model says outright that it cannot see whether anything does.
+        // Counting the receiver as a working path inflated the headline in
+        // exactly the away-with-nobody-home case the screen exists to expose.
+        let c = fresh(awayReachReady: true, residentKnown: false)
+        guard case .unobservable = lane(c, "away").standing else {
+            return XCTFail("half a path is not a path")
+        }
+    }
+
+    func testAwayCountsOnceBothEndsAreKnown() {
+        let c = fresh(awayReachReady: true, residentKnown: true)
+        XCTAssertTrue(lane(c, "away").standing.isCovered)
+    }
+
+    func testAwayInheritsTheNotificationFloor() {
+        // A wake that arrives at a phone with notifications denied is a row
+        // in a database, not an alert.
+        let c = fresh(notificationsAuthorized: false, awayReachReady: true, residentKnown: true)
+        guard case .broken = lane(c, "away").standing else {
+            return XCTFail("no notifications means no away alert either")
+        }
+    }
+
+    func testAppleHomeWithoutAnAutomationTellsNobody() {
+        // Publishing to Home is not being told BY Home: an accessory nobody
+        // wrote an automation against changes its characteristic quietly
+        // forever. Enabled + a hub is the setup being complete, not the path
+        // working.
+        let c = fresh(homeKitAutomationCount: 0)
+        guard case .unobservable(let why) = lane(c, "applehome").standing else {
+            return XCTFail("no automation means Apple Home would tell nobody")
+        }
+        XCTAssertTrue(why.contains("Apple Home"), "must say where to add one")
+    }
+
+    func testAppleHomeCountsWhenAnAutomationOfOursExists() {
+        // Ours are UUID-anchored, so this is an observation and not a guess.
+        XCTAssertTrue(lane(fresh(homeKitAutomationCount: 2), "applehome").standing.isCovered)
     }
 
     func testNotificationsOffBreaksTheLocalLane() {
@@ -139,11 +186,18 @@ final class CoverageTests: XCTestCase {
     }
 
     func testUnobservableLanesNeverInflateTheCount() {
-        // Two of five lanes are unobservable from a phone, so a fully
-        // healthy phone tops out at three. If this ever reads five, the
-        // model started counting things it cannot see.
-        XCTAssertEqual(fresh().workingCount, 3)
-        XCTAssertEqual(fresh().headline, "3 ways to reach you")
+        // A phone with everything IT can control set correctly still tops out
+        // at two, because three of the five lanes depend on something this
+        // device cannot observe — the Apple TV, the hub's relay, and (through
+        // the resident) the away path's sending end. If this number ever
+        // climbs without those facts arriving, the model started counting
+        // things it cannot see, which is the whole failure this screen exists
+        // to end.
+        XCTAssertEqual(fresh().workingCount, 2)
+        XCTAssertEqual(fresh().headline, "2 ways to reach you")
+
+        // And with the resident known, the away lane's other end is proven.
+        XCTAssertEqual(fresh(residentKnown: true).workingCount, 4)
     }
 
     func testEveryLaneSaysWhatItCarries() {
@@ -171,23 +225,42 @@ final class CoverageTests: XCTestCase {
     }
 
     func testEvaluateIsTotalAcrossEveryInput() {
-        // Pure and total is the claim in the header; this walks all 64
+        // Pure and total is the claim in the header; this walks all 128
         // combinations and asserts the model never drops or duplicates a
-        // lane on any of them.
-        for bits in 0..<64 {
+        // lane on any of them — and never counts a lane it cannot observe.
+        for bits in 0..<128 {
+            let notificationsAuthorized = bits & 1 != 0
+            let residentKnown = bits & 32 != 0
             let c = Coverage.evaluate(
-                notificationsAuthorized: bits & 1 != 0,
+                notificationsAuthorized: notificationsAuthorized,
                 anyRuleArmed: bits & 2 != 0,
                 awayReachReady: bits & 4 != 0,
                 awayReachExplanation: "…",
                 homeKitEnabled: bits & 8 != 0,
                 homeKitHubPresent: bits & 16 != 0,
-                residentKnown: bits & 32 != 0)
+                homeKitAutomationCount: (bits & 64 != 0) ? 1 : 0,
+                residentKnown: residentKnown)
             XCTAssertEqual(c.lanes.count, 5)
             XCTAssertEqual(Set(c.lanes.map(\.id)).count, 5)
             XCTAssertFalse(c.headline.isEmpty)
             XCTAssertFalse(c.summary.isEmpty)
             XCTAssertTrue((0...5).contains(c.workingCount))
+
+            // The relay is never observable from a phone, on any input.
+            XCTAssertFalse(lane(c, "relay").standing.isCovered)
+            // Notifications are the floor under every lane that lands on this
+            // device: with them off, neither the local nor the away lane may
+            // ever read as working.
+            if !notificationsAuthorized {
+                XCTAssertFalse(lane(c, "local").standing.isCovered)
+                XCTAssertFalse(lane(c, "away").standing.isCovered)
+            }
+            // The away path needs a sender. Without a known resident it may
+            // never count, however healthy this phone's own half is.
+            if !residentKnown {
+                XCTAssertFalse(lane(c, "away").standing.isCovered)
+                XCTAssertFalse(lane(c, "resident").standing.isCovered)
+            }
         }
     }
 }

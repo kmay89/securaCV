@@ -22,6 +22,10 @@ enum CoverageSource {
             awayReachExplanation: AwayPush.shared.reach.explanation,
             homeKitEnabled: HomeKitBridge.shared.isEnabled,
             homeKitHubPresent: HomeKitBridge.shared.homeHubPresent,
+            // Ours are anchored by UUID, so this is an observation. A
+            // household's hand-written automation is not visible to us, and
+            // the lane's copy says so rather than assuming either way.
+            homeKitAutomationCount: HomeKitBridge.shared.authoredAutomations().count,
             // The phone cannot see another device's setting. Saying "we can't
             // check this from here" is the honest rung, and the model has one.
             residentKnown: false

@@ -99,6 +99,14 @@ final class FleetStore: ObservableObject {
         // guards couldn't see.)
         (postedAlerts, ackedAlerts) = AlertLedger.foldOpenAlerts(records: alertLog.records)
 
+        // Started unconditionally, and it is NOT discovery: NWPathMonitor
+        // reports this phone's own link type and nothing about the network it
+        // is on — no scanning, no SSID, no permission, nothing to consent to.
+        // It runs from launch because `sawFleetOnThisNetwork` is a claim about
+        // the current attachment, and starting it late would begin every
+        // session unable to tell a blackout from a guest network.
+        NetworkVantage.shared.start()
+
         // Forward every collaborator's change into ours, so any view observing
         // the store updates when discovery, BLE, alerts, heartbeat, or the
         // device list change — no view has to know the internal object graph.
@@ -815,11 +823,37 @@ final class FleetStore: ObservableObject {
         witnesses.contains { $0.link == .online }
     }
 
+    /// Where this phone is, as well as it can honestly tell.
+    ///
+    /// `seesFleet` alone is NOT that answer, and the difference is not
+    /// academic: darkness is the only thing that makes `seesFleet` false, so
+    /// an away-guard fed by it fires precisely when every Canary has gone
+    /// quiet — the one-Canary household whose Canary just died, and the power
+    /// cut that took the whole house. HomePresence adds the two
+    /// permission-free facts that tell those apart from a drive to work.
+    private var presence: HomePresence {
+        let seeing = seesFleet
+        // Latch the vantage while we can still prove it: a Canary answering
+        // now is what makes this network's later silence newsworthy.
+        if seeing { NetworkVantage.shared.noteFleetSeen() }
+        return HomePresence.evaluate(
+            seesFleet: seeing,
+            onWiFi: NetworkVantage.shared.onWiFi,
+            sawFleetOnThisNetwork: NetworkVantage.shared.sawFleetOnThisNetwork)
+    }
+
     private func evaluateAlerts() {
         // Whether this device is away decides two things below: which rules
         // may speak at all (a rule armed "on Wi-Fi only" must not fire from
         // across town), and whether darkness is reportable by this device.
-        let awayFromHome = !seesFleet
+        //
+        // The two questions take DIFFERENT answers out of the same presence,
+        // and conflating them was the bug. Suppressing a report demands proof
+        // we are elsewhere (`.away` only). Deciding an "on Wi-Fi only" rule
+        // may speak is the mirror image — it demands proof we are home — so
+        // `.unknown` counts as away there and as home nowhere.
+        let here = presence
+        let awayFromHome = here != .home
 
         // Two deliveries, one decision. On the LAN we post locally; if this
         // device can see the fleet it is HOME, so it is also the one that
@@ -855,7 +889,7 @@ final class FleetStore: ObservableObject {
             // publishes the offline wake from the LAN where the question can
             // actually be answered.
             if AlertCenter.unknowableFromAway(
-                awayFromHome: awayFromHome, isDark: w.link.isDark, tamper: w.tamper) {
+                presence: here, isDark: w.link.isDark, tamper: w.tamper) {
                 continue
             }
             if postedAlerts[w.id] != nil {

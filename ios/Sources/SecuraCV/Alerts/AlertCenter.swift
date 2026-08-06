@@ -260,10 +260,23 @@ final class AlertCenter: NSObject, ObservableObject {
     /// Whatever stayed home — an Apple TV standing watch — is the authority
     /// on darkness and publishes that wake from where it is answerable.
     ///
+    /// It takes a `HomePresence`, not a Bool, and that distinction is the
+    /// whole safety of this function. The first version asked "away?" and got
+    /// its answer from the fleet's own silence — which meant it could only
+    /// ever fire when NOTHING was answering, i.e. the single-Canary death and
+    /// the whole-house power cut. Suppression now requires positive evidence
+    /// of being elsewhere; `.unknown` reports, because a notification nobody
+    /// needed costs incomparably less than silence during a fire.
+    ///
     /// Pure and static so the rule is reviewable in one place and tested
     /// without a fleet, the `IslandPolicy`/`FocusGate` factoring.
-    static func unknowableFromAway(awayFromHome: Bool, isDark: Bool, tamper: Bool) -> Bool {
-        awayFromHome && isDark && !tamper
+    ///
+    /// `nonisolated` because that claim has to be true in the type system too:
+    /// AlertCenter is `@MainActor`, which silently made this rule
+    /// main-actor-isolated and forced every caller — tests included — onto the
+    /// main actor to ask a question that touches no state at all.
+    nonisolated static func unknowableFromAway(presence: HomePresence, isDark: Bool, tamper: Bool) -> Bool {
+        presence.maySuppressDarkness && isDark && !tamper
     }
 
     func reachesAnywhere(severity: Severity) -> Bool {

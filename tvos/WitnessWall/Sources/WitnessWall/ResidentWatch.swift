@@ -38,10 +38,21 @@ enum ResidentStanding: Equatable, Sendable {
     case off
     /// Asked, but this build cannot reach iCloud at all (unsigned/simulator).
     case unavailable
+    /// Asked, and the build is fine, but this Apple TV is not signed into an
+    /// iCloud account that can carry a wake. A separate rung from
+    /// `.unavailable` because it is the household's to fix, not the build's.
+    case signedOut
+    /// Asked, and we have not yet heard back from iCloud about the account.
+    /// Its own rung so the watch never *starts* by claiming to work.
+    case checking
     /// Watching, and able to post a wake if the fleet goes wrong.
     case watching
     /// Watching, and it has posted at least one wake this session.
     case reported
+    /// Watching, but the last wake did not get through. The most important
+    /// rung on this list: it is the only one that reports a promise broken
+    /// at the moment it mattered.
+    case wakeFailed
 
     var line: String {
         switch self {
@@ -49,10 +60,27 @@ enum ResidentStanding: Equatable, Sendable {
             return "Not standing watch. Turn it on to cover the household while everyone is out."
         case .unavailable:
             return "Standing watch needs iCloud on this Apple TV — sign in to use it."
+        case .signedOut:
+            return "Not standing watch: this Apple TV isn't signed into iCloud, so a wake has nowhere to go. Sign in under Settings → Users & Accounts."
+        case .checking:
+            return "Checking with iCloud…"
         case .watching:
             return "Standing watch — while the Wall is on screen, this Apple TV will tell your phones if a Canary goes dark or a chain stops verifying."
         case .reported:
             return "Standing watch — a wake has gone out this session."
+        case .wakeFailed:
+            return "Standing watch, but the last wake couldn't be sent to iCloud. It will be retried; check this Apple TV's network and iCloud sign-in."
+        }
+    }
+
+    /// Would a household reading this line believe they are covered?
+    ///
+    /// Exists so the claim is testable in one place: every rung has to answer
+    /// it, so a rung added later cannot quietly default to reassuring.
+    var claimsCoverage: Bool {
+        switch self {
+        case .watching, .reported: return true
+        case .off, .unavailable, .signedOut, .checking, .wakeFailed: return false
         }
     }
 }
@@ -109,6 +137,23 @@ final class ResidentWatch {
     private var lastSent: [WakeClass: Date] = [:]
     private let defaults: UserDefaults
 
+    /// What iCloud said about the account on this Apple TV.
+    ///
+    /// `cloudUsable` answers "may this BUILD construct a container?" and that
+    /// is all it ever answered — on any signed build it is `true` whether or
+    /// not anyone is signed in. Standing watch on that alone told a signed-out
+    /// household they were covered while every save failed in silence, which
+    /// is the exact failure this whole feature was written to end.
+    enum AccountState: Equatable { case unchecked, checking, ready, signedOut }
+    private(set) var account: AccountState = .unchecked
+
+    /// Wakes that were earned but did not reach iCloud.
+    ///
+    /// They have to be held HERE, not left to be re-derived: `observe` stores
+    /// every snapshot as the new baseline, so the still-dark Canary produces
+    /// no second transition and a dropped wake would never be earned again.
+    private var pending: Set<WakeClass> = []
+
     /// Opt-in, off until a human turns it on — the same law the phone's away
     /// path and the Apple Home projection live under.
     private static let enabledKey = "SecuraCVResidentWatch"
@@ -137,8 +182,13 @@ final class ResidentWatch {
         if !on {
             lastSnapshot = nil
             lastSent.removeAll()
+            pending.removeAll()
+            account = .unchecked
         }
         refreshStanding()
+        // Turning it on is a promise; asking iCloud whether we can keep it is
+        // the first thing that promise owes.
+        if on { Task { await refreshAccount() } }
     }
 
     private func refreshStanding() {
@@ -150,7 +200,41 @@ final class ResidentWatch {
             standing = .unavailable
             return
         }
+        // The account gate comes BEFORE any claim of watching. Ordered so the
+        // reassuring rungs are the last ones reachable, never the default.
+        switch account {
+        case .unchecked, .checking: standing = .checking
+        case .signedOut: standing = .signedOut
+        case .ready: break
+        }
+        guard account == .ready else { return }
+        if !pending.isEmpty {
+            standing = .wakeFailed
+            return
+        }
         standing = lastSent.isEmpty ? .watching : .reported
+    }
+
+    /// Ask iCloud whether this Apple TV has an account that can carry a wake.
+    ///
+    /// Called when the watch is turned on and whenever the Wall comes back to
+    /// the foreground — an account can be signed out from under us, and a
+    /// resident that learned "ready" once and never asked again is the same
+    /// stale claim in slower motion.
+    func refreshAccount() async {
+        guard isEnabled, Self.cloudUsable else { return }
+        account = .checking
+        refreshStanding()
+        #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
+        let status = try? await CloudContainer.shared.accountStatus()
+        account = (status == .available) ? .ready : .signedOut
+        #else
+        account = .signedOut
+        #endif
+        refreshStanding()
+        // An account that just came back is the moment to retry what was
+        // dropped while it was gone.
+        if account == .ready, !pending.isEmpty { flushPending() }
     }
 
     /// Whether this BUILD can construct a CloudKit container without dying.
@@ -176,24 +260,77 @@ final class ResidentWatch {
     func observe(_ snapshot: FleetSnapshot, now: Date = Date()) {
         defer { lastSnapshot = snapshot }
         guard isEnabled, Self.cloudUsable else { return }
+        // Anything dropped earlier goes first: the transition that earned it
+        // will not happen twice, so this is its only remaining chance.
+        if !pending.isEmpty { flushPending() }
         let earned = ResidentRules.wakes(previous: lastSnapshot, current: snapshot)
         for wake in earned.sorted(by: { $0.rawValue < $1.rawValue }) {
             guard ResidentRules.allowed(lastSent: lastSent[wake], now: now) else { continue }
-            lastSent[wake] = now
-            publish(wake)
+            send(wake, now: now)
         }
         refreshStanding()
+    }
+
+    /// Try one wake, and let the ANSWER decide what we claim.
+    ///
+    /// The rate-limit stamp lands only on a save iCloud accepted. Stamping it
+    /// first — as this did — spent the 15-minute budget on a wake that never
+    /// left, so a failure was punished with silence for a quarter of an hour
+    /// on top of the failure itself.
+    private func send(_ wake: WakeClass, now: Date) {
+        Task { [weak self] in
+            guard let self else { return }
+            let ok = await self.publish(wake)
+            if ok {
+                self.lastSent[wake] = now
+                self.pending.remove(wake)
+            } else {
+                // Held for the next observation rather than dropped. The
+                // Canary is still dark; the news is still true.
+                self.pending.insert(wake)
+            }
+            self.refreshStanding()
+        }
+    }
+
+    /// Retry everything that was held back, in a stable order.
+    private func flushPending() {
+        let now = Date()
+        let queued = pending.sorted(by: { $0.rawValue < $1.rawValue })
+        Task { [weak self] in
+            guard let self else { return }
+            for wake in queued where self.pending.contains(wake) {
+                guard await self.publish(wake) else { continue }
+                self.pending.remove(wake)
+                self.lastSent[wake] = now
+            }
+            self.refreshStanding()
+        }
     }
 
     /// The wake itself: one class word, into the household's own iCloud.
     /// Byte-identical in shape to the phone's publisher (`AwayPush`), because
     /// the receiving half — the notification service extension — decodes one
     /// contract and must not learn a second.
-    private func publish(_ wake: WakeClass) {
+    ///
+    /// Returns whether iCloud ACCEPTED the save. That return value is the
+    /// point: discarding CloudKit's error — as the first version did with
+    /// `{ _, _ in }` — made a quota, network, schema, or signed-out failure
+    /// indistinguishable from delivery, and the UI went on saying a wake had
+    /// gone out. `async` rather than a completion handler so the result cannot
+    /// be ignored by accident a second time.
+    private func publish(_ wake: WakeClass) async -> Bool {
         #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
         let record = CKRecord(recordType: Self.wakeRecordType)
         record[WakePayload.classKey] = wake.rawValue as CKRecordValue
-        CloudContainer.shared.privateCloudDatabase.save(record) { _, _ in }
+        do {
+            _ = try await CloudContainer.shared.privateCloudDatabase.save(record)
+            return true
+        } catch {
+            return false
+        }
+        #else
+        return false
         #endif
     }
 

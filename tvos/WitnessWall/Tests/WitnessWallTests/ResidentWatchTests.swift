@@ -124,15 +124,55 @@ final class ResidentWatchTests: XCTestCase {
         let watch = ResidentWatch(defaults: defaults)
         watch.setEnabled(true)
         if ResidentWatch.cloudUsable {
-            XCTAssertEqual(watch.standing, .watching)
+            // Turning it on starts an ACCOUNT CHECK — it does not start a
+            // claim. `.watching` is unreachable until iCloud answers.
+            XCTAssertEqual(watch.standing, .checking)
         } else {
             XCTAssertEqual(watch.standing, .unavailable)
             XCTAssertTrue(watch.standing.line.contains("iCloud"))
         }
+        XCTAssertFalse(watch.standing.claimsCoverage,
+                       "nothing may claim coverage before iCloud has answered")
+    }
+
+    @MainActor
+    func testEnablingNeverImmediatelyClaimsCoverage() {
+        // The bug this pins: `cloudUsable` is a compile-time fact about the
+        // BUILD, and on any signed build it is true whether or not the Apple
+        // TV is signed into iCloud. Standing watch on that alone told a
+        // signed-out household they were covered while every save failed
+        // silently — a false assurance in the one place we sell assurance.
+        let suite = "resident-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let watch = ResidentWatch(defaults: defaults)
+        watch.setEnabled(true)
+        XCTAssertFalse(watch.standing.claimsCoverage)
+    }
+
+    func testSignedOutAndFailedWakeNeverReadAsCovered() {
+        // The two rungs that exist to be believed. If either ever starts
+        // claiming coverage, the screen is lying at exactly the moment it
+        // matters most.
+        XCTAssertFalse(ResidentStanding.signedOut.claimsCoverage)
+        XCTAssertFalse(ResidentStanding.wakeFailed.claimsCoverage)
+        XCTAssertFalse(ResidentStanding.checking.claimsCoverage)
+        XCTAssertTrue(ResidentStanding.watching.claimsCoverage)
+        XCTAssertTrue(ResidentStanding.reported.claimsCoverage)
+    }
+
+    func testSignedOutSaysWhereToFixIt() {
+        // A rung that names the problem without naming the remedy sends the
+        // household hunting through tvOS Settings.
+        XCTAssertTrue(ResidentStanding.signedOut.line.contains("iCloud"))
+        XCTAssertTrue(ResidentStanding.signedOut.line.contains("Users & Accounts"))
+        XCTAssertTrue(ResidentStanding.wakeFailed.line.contains("retried"),
+                      "a dropped wake must promise the retry it actually does")
     }
 
     func testEveryStandingSaysSomething() {
-        for standing: ResidentStanding in [.off, .unavailable, .watching, .reported] {
+        for standing: ResidentStanding in [.off, .unavailable, .signedOut,
+                                           .checking, .watching, .reported, .wakeFailed] {
             XCTAssertFalse(standing.line.isEmpty, "a blank line reads as a broken screen")
         }
     }
