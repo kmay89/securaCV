@@ -6,7 +6,7 @@
 
 [package]
 name = "securacv-flasher"
-version = "0.3.12"
+version = "0.4.0"
 description = "SecuraCV Canary Flasher — the Lab as a native desktop app"
 authors = ["Errer Labs"]
 license = "Apache-2.0"
@@ -50,6 +50,19 @@ serialport = "4"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 tauri-plugin-notification = "2"
 libc = "0.2.189"
+# The fleet book's LAN discovery: a real browse of `_securacv._tcp` (pure
+# Rust, std sockets) — the OS resolver alone can find `.local` HOSTNAMES but
+# cannot enumerate a service, and vision/sense announce mDNS-only.
+mdns-sd = "0.13"
+
+# The secret drawer behind setup profiles and per-device API tokens: the OS
+# credential store, platform-gated so the Linux CI check compiles with no new
+# system libraries (secret_store.rs answers "none" there and the frontend
+# falls back to its prefs file, saying so out loud).
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
 
 [features]
 # By default Tauri uses a custom protocol on Windows/Linux; nothing to gate

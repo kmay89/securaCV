@@ -150,17 +150,72 @@ test("provisioning NVS: the browser writes the same key-set as native build_nvs"
   assert.match(flashCoreSrc, /writeInt\("setup_ok"/,
     "flash-core.js buildNvsSeedImage lost the blob-scheme setup_ok latch — a seeded " +
     "canary/wap would boot into SETUP MODE despite joining");
-  const { mqttProvisioningToNvs } = await import("../assets/flash-core.js");
+  const { mqttProvisioningToNvs, apiTokenToNvs } = await import("../assets/flash-core.js");
   const { strings, u16 } = mqttProvisioningToNvs({
     deviceId: "d", mqttHost: "h", mqttPort: 1, mqttUser: "u", mqttPass: "p",
   });
+  // The API-token blobs ride the same seed (blob-scheme boards); their keys
+  // are part of the contract the two flashers share.
+  const { blobs } = apiTokenToNvs("cv_" + "a".repeat(32));
   const browserKeys = new Set(["wifi_ssid", "wifi_pass", "wifi_en", "setup_ok",
-    ...Object.keys(strings), ...Object.keys(u16)]);
+    ...Object.keys(strings), ...Object.keys(u16), ...Object.keys(blobs)]);
 
   assert.deepStrictEqual([...browserKeys].sort(), [...nativeKeys].sort(),
     "browser vs native provisioning NVS key-sets diverged — reconcile " +
-    "flash-core.js:mqttProvisioningToNvs/buildNvsSeedImage with " +
+    "flash-core.js:mqttProvisioningToNvs/buildNvsSeedImage/apiTokenToNvs with " +
     "desktop/src-tauri/src/provisioning.rs:build_nvs");
+});
+
+test("device API token: both flashers mint the same credential shape and seed the same keys", async () => {
+  // The credential that makes the desktop fleet book (and any future browser
+  // surface) able to talk to a board it flashed: "cv_" + 32 base62 chars,
+  // minted with the firmware's own unbiased rejection sampling (reject bytes
+  // >= 248, since 248 = 62 * 4 — securacv_crypto.cpp format_api_token_string)
+  // and seeded as a BLOB under BOTH firmware key names ("api_token" for the
+  // PIO canary, "api_tkn" for the wap). Both loaders check NVS before
+  // deriving, so the seeded credential simply becomes the device's.
+  const { mintApiToken, apiTokenToNvs, apiTokenShapeOk } = await import("../assets/flash-core.js");
+
+  // The browser's mint: deterministic under crafted bytes, unbiased tail
+  // rejected, exactly 32 chars after the prefix.
+  const bytes = new Uint8Array(40);
+  bytes.fill(255, 0, 8); // the biased tail — every one must be rejected
+  for (let i = 8; i < 40; i++) bytes[i] = i - 8; // 0..31 → alphabet[0..31]
+  const tok = mintApiToken(bytes);
+  assert.match(tok, /^cv_[0-9A-Za-z]{32}$/);
+  assert.strictEqual(tok, "cv_0123456789ABCDEFGHIJKLMNOPQRSTUV");
+  assert.ok(apiTokenShapeOk(tok));
+  assert.ok(!apiTokenShapeOk("cv_short") && !apiTokenShapeOk("xx_" + "a".repeat(32)));
+
+  // Both variant keys, as blobs, same bytes.
+  const { blobs } = apiTokenToNvs(tok);
+  assert.deepStrictEqual(Object.keys(blobs).sort(), ["api_tkn", "api_token"]);
+  assert.ok(blobs.api_token instanceof Uint8Array && blobs.api_token.length === 35);
+
+  // Native writes the SAME two blob keys and validates the same shape.
+  const provRs = read(join(ROOT, "desktop/src-tauri/src/provisioning.rs"));
+  assert.match(provRs, /writer\.blob\(\s*"api_token"/,
+    "provisioning.rs no longer seeds the PIO canary's api_token blob");
+  assert.match(provRs, /writer\.blob\(\s*"api_tkn"/,
+    "provisioning.rs no longer seeds the wap's api_tkn blob");
+  assert.match(provRs, /fn api_token_shape_ok/,
+    "provisioning.rs lost the token-shape gate — a malformed seed would be silently ignored by the firmware");
+
+  // Both frontends mint with the same rejection constant — a biased token
+  // generator is the kind of drift nobody notices until it matters.
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const flashCoreSrc = read(join(CANARY, "assets/flash-core.js"));
+  for (const [label, src] of [["desktop app.js", appJs], ["browser flash-core.js", flashCoreSrc]]) {
+    assert.ok(/>=\s*248/.test(src),
+      `${label} lost the unbiased base62 rejection (>= 248) in its token mint`);
+  }
+  // The desktop mints at flash time and keeps the credential in the secret
+  // drawer; the browser seeds it and shows it once on the done card.
+  assert.match(appJs, /apiToken\s*=/, "desktop app.js no longer mints the device API token");
+  assert.match(appJs, /secret_set/, "desktop app.js never stores secrets in the OS drawer");
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  assert.match(flashJs, /mintApiToken/, "browser flasher no longer mints the device API token");
+  assert.match(flashJs, /apiTokenToNvs/, "browser flasher no longer seeds the device API token");
 });
 
 test("dev channel: BOTH flashers give the user a control, not just a constant", () => {
