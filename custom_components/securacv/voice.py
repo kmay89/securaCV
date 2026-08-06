@@ -51,6 +51,30 @@ _UNSIGNED_REASONS = ("unsigned", "no_pubkey")
 # so speech and the dashboard can never disagree about what "online" means.
 _ONLINE_WORDS = ("online", "1", "true", "connected")
 
+# The waking-hours window, matching the display firmware's audible
+# self-test. Outside it, the casual answer switches to the night register:
+# shorter, calmer, no small talk (docs/design/voice_moments.md, law 2).
+NIGHT_FROM = 22
+NIGHT_UNTIL = 6
+
+# Past this many names, speech summarizes instead of enumerating — a
+# twelve-item list read aloud is noise, not information (law 3).
+MAX_SPOKEN_NAMES = 4
+
+
+def is_night(local_hour: int | None) -> bool:
+    """True inside the night window. An unknown hour reads as daytime,
+    because the shortened answer is the surprising one and should never
+    be given by accident."""
+    if local_hour is None:
+        return False
+    try:
+        hour = int(local_hour) % 24
+    except (TypeError, ValueError):
+        return False
+    return hour >= NIGHT_FROM or hour < NIGHT_UNTIL
+
+
 # Alert-class event types: when the latest event is one of these, the casual
 # answer leads with it — a smoke alarm outranks small talk.
 _ALERT_EVENT_TYPES = frozenset(
@@ -165,6 +189,7 @@ def fleet_brief(
     now: float,
     pending_updates: list[str] | None = None,
     weather: dict[str, Any] | None = None,
+    local_hour: int | None = None,
 ) -> dict[str, Any]:
     """Reduce one or more config entries' runtime state to a fleet brief.
 
@@ -179,6 +204,11 @@ def fleet_brief(
     ``weather`` an optional ``{"condition", "temp"}`` snapshot from the
     hub's weather entity — the casual "what's up" answer mentions both;
     the crisp status answer deliberately does not.
+
+    ``local_hour`` (0-23) decides the night register: inside the night
+    window the casual answer is shortened and stripped of small talk,
+    because the 2 a.m. question is "can I go back to sleep?" and nothing
+    else (docs/design/voice_moments.md, law 2).
     """
     device_ids: list[str] = []
     online: list[str] = []
@@ -247,6 +277,7 @@ def fleet_brief(
         "now": now,
         "pending_updates": list(pending_updates or []),
         "weather": dict(weather) if weather else None,
+        "night": is_night(local_hour),
         "device_count": len(device_ids),
         "device_ids": device_ids,
         "device_detail": detail,
@@ -347,6 +378,48 @@ def _canary_trust_clause(canary: dict[str, Any]) -> str:
     return " The event was published without a verified signature."
 
 
+def _speak_whats_up_night(brief: dict[str, Any]) -> str:
+    """The 2 a.m. answer: can I go back to sleep, yes or no.
+
+    Same facts, different shape. Trouble still leads, but everything that
+    is small talk in daylight — the weather, a pending update, the roster
+    — is dropped, because at 2 a.m. it is noise between the question and
+    the only thing being asked (docs/design/voice_moments.md, moment 1).
+    """
+    if brief["mismatched"]:
+        names = _join_names([_spoken_name(d) for d in brief["mismatched"]])
+        return (
+            f"Worth knowing: {names} is publishing under a key that doesn't "
+            "match its pin. Nothing else is out of place."
+        )
+
+    canary = brief.get("canary_latest")
+    if canary and (brief["now"] - canary["received_at"]) < 3600:
+        label = _spoken_label(canary.get("event_type"))
+        when = ago_phrase(brief["now"] - canary["received_at"])
+        return (
+            f"One thing in the last hour: {label}, {when}, from the "
+            f"{_spoken_name(canary['device_id'])} Canary. Nothing else."
+        )
+
+    if brief["kernel_configured"] and not brief["kernel_ok"]:
+        return (
+            "The Canaries are quiet, but I can't reach the witness kernel "
+            "right now, so I won't tell you all is well."
+        )
+
+    count = brief["device_count"]
+    if count and len(brief.get("online") or []) == count:
+        return "All quiet. Everything's online. Go back to sleep."
+    if count:
+        missing = [d for d in (brief.get("device_ids") or []) if d not in set(brief.get("online") or [])]
+        return (
+            f"Quiet, though {_join_names([_spoken_name(d) for d in missing])} "
+            "isn't reporting in. Nothing witnessed."
+        )
+    return "All quiet — nothing witnessed since I started listening."
+
+
 def speak_whats_up(brief: dict[str, Any]) -> str:
     """The casual answer — "Hey Canary, what's up?"
 
@@ -365,6 +438,9 @@ def speak_whats_up(brief: dict[str, Any]) -> str:
             "no witness kernel is set up. Once your fleet is online, ask me "
             "again."
         )
+
+    if brief.get("night"):
+        return _speak_whats_up_night(brief)
 
     parts: list[str] = []
     kernel_outage_spoken = False
@@ -636,9 +712,18 @@ def speak_offline_check(brief: dict[str, Any]) -> str:
 
 
 def _join_names(names: list[str]) -> str:
-    """Human list: 'a', 'a and b', 'a, b, and c'. Capitalized for a lead."""
+    """Human list: 'a', 'a and b', 'a, b, and c'. Capitalized for a lead.
+
+    Past MAX_SPOKEN_NAMES it stops enumerating and counts the rest —
+    speech is serial, so a twelve-item list read aloud is noise (law 3).
+    """
     if not names:
         return ""
+    if len(names) > MAX_SPOKEN_NAMES:
+        shown = names[: MAX_SPOKEN_NAMES - 1]
+        rest = len(names) - len(shown)
+        joined = ", ".join(shown) + f", and {rest} others"
+        return joined[:1].upper() + joined[1:]
     if len(names) == 1:
         joined = names[0]
     elif len(names) == 2:
@@ -654,8 +739,20 @@ def speak_roster(brief: dict[str, Any]) -> str:
     count = len(device_ids)
     if count == 0:
         return "No Canaries have checked in yet. Once one does, it'll show up here."
-    names = _join_names([_spoken_name(d) for d in device_ids])
     n_online = len(brief.get("online") or [])
+    if count > MAX_SPOKEN_NAMES:
+        # Too many to say. Summarize, and name the surface that does lists
+        # properly rather than reading a dozen names into the air.
+        state = (
+            "all online"
+            if n_online == count
+            else f"{n_online} of them online right now"
+        )
+        return (
+            f"{count} Canaries, {state}. That's more than I'd read out — "
+            "the dashboard has them all."
+        )
+    names = _join_names([_spoken_name(d) for d in device_ids])
     lead = "One Canary:" if count == 1 else f"{count} Canaries:"
     tail = (
         "all online."

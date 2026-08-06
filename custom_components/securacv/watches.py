@@ -396,6 +396,15 @@ def speak_roster(watches: list[dict[str, Any]], now: float) -> str:
     live = [w for w in watches if w.get("state") != STATE_ENDED and now < w.get("ends_at", 0.0)]
     if not live:
         return "Nothing right now. Ask me to keep an eye on something and I'll start a watch."
+    if len(live) > 3:
+        # Speech is serial: past a handful, summarize (voice_moments.md law 3).
+        soonest = min(live, key=lambda w: w.get("ends_at", 0.0))
+        left = days_left(soonest, now)
+        when = "ends today" if left == 0 else f"in {left} day{'' if left == 1 else 's'}"
+        return (
+            f"{len(live)} watches running. The next to finish is "
+            f"{soonest['label']}, {when}. The dashboard has the rest."
+        )
     bits = []
     for watch in live:
         left = days_left(watch, now)

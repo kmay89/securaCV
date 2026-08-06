@@ -672,3 +672,88 @@ def test_speak_help_names_the_limit():
         assert phrase in speech
     # The refusal is part of the help, not a footnote.
     assert "can't arm, disarm, unlock, or open anything" in speech
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# The design laws (docs/design/voice_moments.md)
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _busy_night_brief(hour, **kw):
+    devices = {"gate": {"status": "online"}, "shed": {"status": "online"}}
+    verify = {k: {"trusted": True, "reason": "ok"} for k in devices}
+    return fleet_brief(
+        [_entry(devices, verify)], NOW,
+        weather={"condition": "rainy", "temp": 50},
+        pending_updates=["Whisper", "Piper"],
+        local_hour=hour,
+        **kw,
+    )
+
+
+def test_night_register_drops_the_small_talk():
+    # Law 2: at 2 a.m. the question is "can I go back to sleep?" — the
+    # weather and a pending-update nag are noise between it and the answer.
+    night = speak_whats_up(_busy_night_brief(2))
+    assert night == "All quiet. Everything's online. Go back to sleep."
+    assert "Outside" not in night
+    assert "update" not in night
+
+    # The same fleet in daylight still gets the full catch-up.
+    day = speak_whats_up(_busy_night_brief(14))
+    assert "Outside it's 50 degrees" in day
+    assert "updates are waiting" in day
+
+
+def test_night_register_window_edges_and_unknown_hour():
+    from ..voice import is_night
+
+    assert is_night(22) is True and is_night(2) is True and is_night(5) is True
+    assert is_night(6) is False and is_night(21) is False and is_night(14) is False
+    # An unknown or unparseable hour reads as daytime: the shortened
+    # answer is the surprising one, never given by accident.
+    assert is_night(None) is False
+    assert is_night("half past") is False
+
+
+def test_night_register_still_leads_with_trouble():
+    devices = {"gate": {"status": "online"}}
+    verify = {"gate": {"trusted": False, "reason": "mismatch"}}
+    speech = speak_whats_up(fleet_brief([_entry(devices, verify)], NOW, local_hour=3))
+    assert speech.startswith("Worth knowing: Gate is publishing")
+
+    # And never claims all-well when it cannot see the kernel.
+    blind = _entry({"gate": {"status": "online"}}, {"gate": {"trusted": True, "reason": "ok"}},
+                   kernel={"ok": False, "latest_event": None})
+    speech = speak_whats_up(fleet_brief([blind], NOW, local_hour=3))
+    assert "won't tell you all is well" in speech
+    assert "Go back to sleep" not in speech
+
+
+def test_night_answers_are_short():
+    # One breath. Not a rule of taste — speech is serial and vanishes.
+    for hour in (23, 2, 5):
+        speech = speak_whats_up(_busy_night_brief(hour))
+        assert len(speech.split()) <= 25, speech
+
+
+def test_law_three_never_reads_out_a_long_list():
+    devices = {f"cv{i}": {"status": "online"} for i in range(12)}
+    verify = {k: {"trusted": True, "reason": "ok"} for k in devices}
+    brief = fleet_brief([_entry(devices, verify)], NOW)
+
+    speech = speak_roster(brief)
+    assert speech == (
+        "12 Canaries, all online. That's more than I'd read out — "
+        "the dashboard has them all."
+    )
+    # A handful is still enumerated, because that reads fine aloud.
+    few = fleet_brief([_entry({"gate": {"status": "online"}, "shed": {}})], NOW)
+    assert "Gate and shed" in speak_roster(few)
+
+
+def test_law_three_caps_names_inside_a_sentence():
+    devices = {f"cv{i}": {} for i in range(9)}
+    speech = speak_offline_check(fleet_brief([_entry(devices)], NOW))
+    assert "and 6 others" in speech
+    assert speech.count(",") <= 4

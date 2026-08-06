@@ -33,6 +33,7 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import intent
+from homeassistant.util import dt as dt_util
 
 from . import voice, watches
 from .const import DOMAIN
@@ -171,6 +172,16 @@ def _weather(hass: HomeAssistant) -> dict[str, Any] | None:
     return None
 
 
+def _local_hour(hass: HomeAssistant) -> int | None:
+    """The hub's local hour, for the night register. None on any surprise,
+    which reads as daytime — the shortened night answer should never be
+    given by accident."""
+    try:
+        return dt_util.now().hour
+    except Exception:  # noqa: BLE001 - never let a clock break the answer
+        return None
+
+
 class WhatsUpIntentHandler(intent.IntentHandler):
     """The casual one — 'what's up' gets one warm, honest reply.
 
@@ -192,6 +203,7 @@ class WhatsUpIntentHandler(intent.IntentHandler):
             time.time(),
             pending_updates=_pending_updates(hass),
             weather=_weather(hass),
+            local_hour=_local_hour(hass),
         )
         response = intent_obj.create_response()
         response.async_set_speech(voice.speak_whats_up(brief))

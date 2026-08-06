@@ -306,3 +306,18 @@ def test_speak_fired_names_the_watch():
     assert "Something to flag" in speak_fired(
         watch, {"reason": "stopped", "detail": "nothing for 2 days"}
     )
+
+
+def test_watch_roster_summarizes_past_a_handful():
+    # Law 3 (docs/design/voice_moments.md): speech is serial, so a long
+    # list of watches is summarized and handed to the screen.
+    many = [
+        make_watch(f"w{i}", f"watch {i}", SUBJECT, NOW, days=10 + i)
+        for i in range(5)
+    ]
+    speech = speak_roster(many, NOW + DAY)
+    assert speech.startswith("5 watches running.")
+    assert "The next to finish is watch 0, in 9 days." in speech
+    assert "The dashboard has the rest." in speech
+    # Three still read out in full.
+    assert speak_roster(many[:3], NOW + DAY).startswith("3 watches:")
