@@ -108,6 +108,45 @@ any platform.
 
 ## Entries
 
+### 2026-08-06 — A shared library's host tests were linkable all along; the first project to `#include` it linked three `main()`s into the firmware
+
+- **Symptom:** `PlatformIO Build (canary-display)` failed at the very end, in
+  `ld`, with `multiple definition of 'main'` — three times over, naming
+  `test_fleet_beacon.cpp`, `test_fleet_beacon_udp.cpp` and
+  `test_fleet_roster.cpp`. Every one of those files is a **host test**, and none
+  of them has any business being in an ESP32 image. Nothing about the change
+  that triggered it went near a test or a build file.
+- **Cause:** `firmware/common/fleet_link/library.json` declares
+  `srcFilter: ["+<*.cpp>"]` over a **flat** directory — headers, sources and
+  `test_*.cpp` all side by side — so the manifest says "compile the tests."
+  That had been true since the library landed and had never once mattered,
+  because no project's `#include` graph reached `fleet_link` through the LDF:
+  the firmwares that use the beacon include `<fleet_beacon.h>` via a plain `-I`,
+  which resolves the *header* without ever making PlatformIO treat the directory
+  as a library. The moment one display source did
+  `#include "fleet_link/fleet_beacon_udp.h"`, `lib_ldf_mode = deep+` discovered
+  the library, honored the manifest, and swept all three tests in.
+- **Fix:** `srcFilter: ["+<*.cpp>", "-<test_*.cpp>"]`. `common/csi` gets the
+  same protection for free by keeping real sources under `srcDir: "src"` while
+  its tests sit at the top level — a flat library has to say it explicitly.
+  **Two things to carry forward:** (1) a header resolving through `-I` is *not*
+  evidence that the directory is being treated as a library; those are two
+  different mechanisms, and a manifest can sit wrong and harmless for months
+  until the first `#include` that crosses into it. This is the mirror image of
+  the `common/color` lesson (there, `-I` made headers resolve while nothing
+  compiled the `.cpp`; here, the `-I` path hid a manifest that compiles too
+  much). (2) The failure lands at **link**, in the last job step, minutes in,
+  and names files the change never touched — budget for that when a build dies
+  somewhere that looks unrelated to the diff.
+  **Still open, deliberately not fixed in that change:** `firmware/common/power`
+  has **no manifest at all**, so PlatformIO's default sweep compiles
+  `test_power_logic.cpp` into every display image — a host test's `main()` in
+  shipped firmware. It links today only because it happens to be the *sole*
+  `main()`. Giving that directory a manifest is the obvious fix and wants its
+  own change and its own build: `common/color` failed to link twice after
+  exactly that kind of manifest edit (see CLAUDE.md), so it is not a one-liner
+  to ride along with unrelated work.
+
 ### 2026-08-02 — Cutting the firmware train invalidated every committed emulator artifact, and one of them failed as a UI timeout
 
 - **Symptom:** bumping the release train from 2.4.2 to 2.4.3 — a version-only
@@ -1766,3 +1805,55 @@ very first run that did named the faulting frame in one line
 after two rounds of reasoning had gotten it wrong. Collecting the evidence is
 cheaper than being clever, and it belongs in every job that can crash a
 process: Flasher, Lab, tvOS, and the iPhone / iPad / Mac targets.
+
+### 2026-08-05 — The emsdk dist rebuild raced an ordinary push and silently threw its own work away
+
+- **Symptom:** "Rebuild emulator dist (pinned emsdk)" ran green through every
+  build step — `OK: canary-wap-audio (real Canary WAP acoustic core 2.4.6-wap
+  @ 7365d1c)` — then failed at the very last step with
+  `! [rejected] HEAD -> <branch> (fetch first)`. The rebuilt artifacts were
+  committed on the runner (`10 files changed`) and then discarded with the
+  workspace. The branch still carried the *older* dist, and nothing on the PR
+  said so: the only red was a job named `rebuild`, long after the bytes it
+  produced had ceased to exist.
+- **Cause:** the workflow checks out the branch at dispatch time and pushes
+  with no rebase and no retry. Dispatching it and then continuing to push to
+  the same branch — a normal thing to do while a 5-minute emsdk build runs —
+  guarantees a non-fast-forward. The build cost is paid in full and the result
+  is dropped on the floor.
+- **Fix (operator, until the workflow retries):** treat the dispatch as taking
+  a lock on the branch. Push everything you have **first**, dispatch **second**,
+  and don't push again until it lands. If it does get rejected, just
+  re-dispatch after your push settles — the build is deterministic, so the
+  second run reproduces the same bytes. Re-dispatching is also free when
+  nothing changed: the workflow's `git status --porcelain` guard exits 0 with
+  "nothing to push."
+- **Then remember the second half, which is worse than it first looks:** when
+  it *does* push, it pushes as `GITHUB_TOKEN`, and the bot commit does not
+  merely land with zero checks — it can put the **whole PR's** workflow runs
+  behind a manual **`action_required`** approval gate. Measured on #1479: the
+  bot's push produced one `Firmware Build` run with
+  `conclusion: action_required`, and the **next four ordinary pushes created no
+  runs at all** — not firmware, not CodeQL, not the secret scan, not the lint
+  jobs, every one of which has a broad trigger. `get_check_runs` answers
+  `total_count: 0` and the combined status stays `pending` indefinitely.
+  - **This does not clear itself, and pushing again does not clear it.** An
+    ordinary push is the documented remedy for the plain recursion guard; it
+    is *not* the remedy for the approval gate, and assuming it is costs a
+    round of confused pushes. A human with write access must click **Approve
+    and run** on the pending run in the Actions tab (API:
+    `POST /repos/{owner}/{repo}/actions/runs/{run_id}/approve`, which is not
+    in the GitHub MCP toolset — so an agent cannot self-serve this).
+  - **Read `total_count: 0` as "gated", not "queued".** A pending state with
+    zero runs looks exactly like CI being slow, so the natural response is to
+    wait — and waiting is the one thing that never resolves it. If a
+    `workflow_dispatch` you trigger yourself runs fine while PR-triggered runs
+    stay empty, that asymmetry is the tell: Actions is healthy and the PR is
+    gated.
+- **Applies to:** any workflow that commits and pushes generated artifacts back
+  to the branch under test — the dist rebuild today, and by the same shape any
+  future "regenerate and commit" button. Two properties make it safe to run
+  unattended: rebase-and-retry on rejection, so a race costs a retry rather
+  than the whole build; and a loud failure when the push is dropped, because a
+  silently-stale generated artifact is exactly the drift the byte-diff gates
+  exist to catch.

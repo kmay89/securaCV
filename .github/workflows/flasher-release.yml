@@ -221,6 +221,24 @@ jobs:
         working-directory: firmware/canary
         run: pio run -e release_ha
 
+      - name: Build canary reach-port board envs (PlatformIO, non-blocking)
+        working-directory: firmware/canary
+        # The Phase 0 reach ports (docs/strategy/30). This workflow is the
+        # MANUAL flasher path (dev channel / rebuild an existing tag), and it
+        # feeds the same build_flash_manifest.py as firmware-release.yml — so
+        # an env built there and not here means these boards silently vanish
+        # from the flasher on exactly the channel an operator reaches for when
+        # something needs re-cutting. Non-blocking, as everywhere else: a
+        # failed env drops that board, never the whole flasher release.
+        run: |
+          for E in esp32cam esp32-wroom freenove-s3; do
+            if pio run -e "$E"; then
+              echo "✓ $E"
+            else
+              echo "::warning::reach-port env $E failed to build — absent from this flasher build"
+            fi
+          done
+
       - name: Build canary-vision (release)
         working-directory: firmware/projects/canary-vision
         run: |
@@ -239,6 +257,13 @@ jobs:
           #define MQTT_PASS nullptr
           HEADER
           pio run -e canary-vision-default -e canary-vision-xiao-c3 -e canary-vision-xiao-s3
+          # The C3 Super Mini reach port — non-blocking, same reasoning as the
+          # canary reach ports above.
+          if pio run -e canary-vision-c3-super-mini; then
+            echo "✓ canary-vision-c3-super-mini"
+          else
+            echo "::warning::canary-vision-c3-super-mini failed to build — absent from this flasher build"
+          fi
 
       - name: Build canary-sense (release)
         working-directory: firmware/projects/canary-sense

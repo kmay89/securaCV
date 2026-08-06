@@ -17,6 +17,54 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.4.0 — 2026-08-06
+
+- **Type your home's setup once — every later flash fills itself in.** The
+  Canary form and the hub form now share one setup profile: with the
+  "Remember" box ticked (it is, by default), your Wi-Fi and broker passwords
+  are kept in your Mac's Keychain (Windows: Credential Manager) and every
+  other field in the app's local memory, so a reflash — or the next board —
+  is plug in, pick firmware, flash. The consent note under the form names
+  exactly where each value goes, and "Reset the app's memory" on the About
+  page sweeps the Keychain entries too.
+- **The hub can finish its own setup even after you quit the app.** The
+  Home Assistant login you type at flash time now survives a relaunch (in
+  the same Keychain, only with "Remember these" ticked) — so the app that
+  reopens mid-first-boot still creates your account and checks the login
+  works, instead of apologizing that the password died with the window.
+- **Your Fleet grew a book.** Every Canary you flash is recorded — its
+  name, certificate, firmware, and identity — and the Fleet tab now finds
+  the real devices on your network by their own mDNS announcements: who's
+  online, who hasn't been seen, and who's running behind the app's firmware
+  train. Devices someone else flashed show up too, one click to add.
+- **One-click over-the-air updates, end to end.** Flashing a canary/wap
+  board now mints that board's local-API key, seeds it into the board's own
+  settings, and keeps it in your Keychain — so when the book shows "update
+  available", one click asks the board to update ITSELF: the device
+  downloads the signed release, verifies it against its pinned key, and
+  A/B-swaps with automatic rollback. The app never pushes bytes — it rings
+  a bell only your computer holds the key to. (The browser flasher seeds
+  the same key and shows it once on its done card, so both flashers
+  provision identical boards.)
+- **No more twin names.** After a successful flash the Canary-name field
+  clears and the next board gets a fresh suggestion — two boards can no
+  longer inherit the same identity (and the same MQTT topics) from a
+  remembered field. The name you gave lives on in the fleet book and on
+  the certificate.
+
+## 0.3.12 — 2026-08-05
+
+- **The Canary Nightlight is in the picker.** The pocket ESP32-C3-LCD-1.47
+  board's kid-facing firmware — a 7-segment bedside clock over a soft lamp
+  (warm orange, Rainbow, Moonbeam white), with the living canary keeping the
+  household's rhythm — flashes right from the app: pick it, plug in the
+  board, done. The lamp never encodes "safe," and the panel caps its own
+  backlight power at 50% in firmware (a heat budget for the closed pocket
+  case) — the app's Nightlight card says so too.
+- **The catalog now rides the 2.4.6 firmware train.** The stable channel
+  pins the release that actually carries the Nightlight images; the dev
+  channel toggle keeps reading the rolling prerelease as before.
+
 ## 0.3.11 — 2026-08-05
 
 - **The serial monitor now connects by itself after a flash — no more

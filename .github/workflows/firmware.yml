@@ -1522,6 +1522,22 @@ jobs:
           /tmp/canonical_fleet_beacon | tee /tmp/canonical_fleet_beacon.log
           grep -q "ALL PASS" /tmp/canonical_fleet_beacon.log
 
+      - name: Build + run canonical fleet-beacon LAN-multicast transport test
+        # The third band the beacon travels on (firmware/common/fleet_link/
+        # fleet_beacon_udp.h): group/port/TTL contract plus the receive-side
+        # accept predicate. Asserts that a datagram body and a BLE advert are
+        # the SAME bytes parsed the SAME way — the property that lets three
+        # transports share one witness with no per-band dialect — and that TTL
+        # stays 1, which is a privacy promise rather than a tuning knob.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/common/fleet_link \
+              firmware/common/fleet_link/test_fleet_beacon_udp.cpp \
+              -o /tmp/canonical_fleet_beacon_udp
+          /tmp/canonical_fleet_beacon_udp | tee /tmp/canonical_fleet_beacon_udp.log
+          grep -q "All fleet_beacon_udp checks passed" /tmp/canonical_fleet_beacon_udp.log
+
       - name: Build + run canonical fleet-roster host test
         # The device-side roster (firmware/common/fleet_link/fleet_roster.h) — a
         # Canary's own view of the OTHER Canaries it hears. Single-source header,

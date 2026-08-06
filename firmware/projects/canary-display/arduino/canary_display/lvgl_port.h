@@ -24,6 +24,14 @@ uint8_t lvgl_port_rotation();
 int16_t lvgl_port_width();
 int16_t lvgl_port_height();
 
+#ifdef CD_NIGHTLIGHT
+// The nightlight's HARDWARE rotation: the panel re-addresses its own RAM
+// (hal display_set_rotation does the MADCTL), so LVGL renders nothing
+// rotated — it only needs the logical canvas swapped to the new shape.
+// Call after display_set_rotation, then rebuild the face.
+void lvgl_port_set_panel_rotation(uint8_t rot);
+#endif
+
 // ── Rendered brightness (binary-backlight glass) ─────────────────────────
 // A full-glass black scrim on the top layer: opa 0 = clear, 255 = black.
 // The sustained daytime dimming the CH422G backlight can't do in hardware

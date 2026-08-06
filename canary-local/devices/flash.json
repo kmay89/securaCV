@@ -1,14 +1,19 @@
 {
   "$generated_by": "canary-local/tools/gen_flash.py — do not edit by hand",
   "$doc": "Browser flasher catalog. Live binaries come from manifest_url (the signed release); this file supplies the chip guard and the human copy, and is honest even before a release exists.",
-  "fw_train": "2.4.5",
+  "fw_train": "2.4.6",
   "repo": "kmay89/securaCV",
-  "release_download": "https://github.com/kmay89/securaCV/releases/download/fw-v2.4.5",
-  "manifest_url": "https://github.com/kmay89/securaCV/releases/download/fw-v2.4.5/manifest-flash.json",
+  "release_download": "https://github.com/kmay89/securaCV/releases/download/fw-v2.4.6",
+  "manifest_url": "https://github.com/kmay89/securaCV/releases/download/fw-v2.4.6/manifest-flash.json",
   "release_pubkey": "ae123a5c220c5499e579dc449e66392d83d5ad70d100747574eb7b2bac49b244",
   "flash_baud": 921600,
   "console_baud": 115200,
   "chips": {
+    "ESP32": {
+      "label": "ESP32 (classic)",
+      "native_usb": false,
+      "download_mode": "Most DevKits do this for you — the adapter's DTR/RTS lines drive it and you never touch a button. If yours doesn't (or there's no bridge on the board), hold IO0 to GND, tap RESET, then release IO0."
+    },
     "ESP32-C3": {
       "label": "ESP32-C3",
       "native_usb": true,
@@ -30,7 +35,7 @@
       "id": "canary",
       "name": "Canary",
       "pitch": "The all-rounder witness — full sensing plus the Home Assistant bridge.",
-      "pick": null
+      "pick": "Which board is in your hand?"
     },
     {
       "id": "wap",
@@ -95,6 +100,185 @@
           "label": "🧪 the emulated twin — its Home Assistant life",
           "how": "The Hub lab: the exact entities, cards and automations this Canary raises, simulated from the same generated data."
         }
+      },
+      "pick_label": "Seeed XIAO ESP32-S3 Sense — the one we build",
+      "tier": {
+        "tier": "verified",
+        "board_id": "xiao-esp32s3-sense",
+        "label": "Bench-tested by a maintainer",
+        "line": "A maintainer has run this board on the bench and signed off on how it behaves.",
+        "first": false,
+        "evidence": "docs/hardware/v1_bench_validation_runbook.md"
+      }
+    },
+    {
+      "id": "securacv-canary-esp32cam",
+      "name": "Canary · ESP32-CAM",
+      "tagline": "The witness on the most-owned camera board there is — camera and Wi-Fi sensing, no mic.",
+      "family": "canary",
+      "board_label": "AI-Thinker ESP32-CAM",
+      "chip": "ESP32",
+      "flash_mb": 4,
+      "board": "esp32cam",
+      "asset_stem": "canary-esp32cam",
+      "provisioning": "ap",
+      "provisioning_note": "When it boots it hands you a WiFi network of its own — join it and a setup page opens automatically. Nothing to type here; no secrets ever touch the browser.",
+      "wifi_nvs": "blob",
+      "broker_nvs": false,
+      "hatch": {
+        "kicker": "Canary hatched",
+        "title": "Your Canary is on its perch.",
+        "body": "The magical first proof is local and physical: join its setup network, open the dashboard, then make one harmless signal it can witness.",
+        "steps": [
+          "Join the SecuraCV-XXXX Wi-Fi network it creates and open canary.local.",
+          "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
+          "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test."
+        ]
+      },
+      "serial_receipt": true,
+      "role": "canary",
+      "prove": {
+        "real": {
+          "kind": "monitor",
+          "label": "Watch it boot & prove itself →",
+          "how": "The live monitor: boot log, the signed self-manifest (j), health score and temperature — from the board's own mouth."
+        },
+        "emulated": {
+          "href": "homeassistant.html",
+          "label": "🧪 the emulated twin — its Home Assistant life",
+          "how": "The Hub lab: the exact entities, cards and automations this Canary raises, simulated from the same generated data."
+        }
+      },
+      "pick_label": "ESP32-CAM — the $6 board with a camera on it",
+      "access": {
+        "headline": "No USB port — this board needs a serial adapter",
+        "flash_port": "a USB-to-serial (UART) adapter you connect to the board's U0T / U0R pins — 3.3 V logic",
+        "other_port": "the 5V / GND header pins",
+        "other_effect": "Those power the board but carry no data. There is no port on an ESP32-CAM that a computer can talk to on its own — the adapter is not optional.",
+        "steps": [
+          "Wire the adapter: its TX to the board's U0R, its RX to U0T, GND to GND, and 5V to 5V. (TX↔RX crossed — the commonest mistake is wiring them straight through.)",
+          "Connect IO0 to GND with a jumper. This is what puts the chip in download mode; the ESP32-CAM has no BOOT button to do it for you.",
+          "Plug the adapter into your computer, then tap RESET on the board.",
+          "Flash. When it finishes, REMOVE the IO0 jumper and tap RESET again — leave it on and the board just re-enters download mode instead of running the firmware."
+        ],
+        "enclosure_note": "The ESP32-CAM-MB backplane (the shield the board clips into, often sold with it) does all of the above with a USB port and its own buttons. If you have one, use it — no wiring, no jumper.",
+        "doc": "https://github.com/kmay89/securaCV/blob/main/firmware/boards/esp32cam-ai-thinker/README.md",
+        "key": "securacv-canary-esp32cam"
+      },
+      "tier": {
+        "tier": "compile-tested",
+        "board_id": "esp32cam-ai-thinker",
+        "label": "Compile-tested — never booted",
+        "line": "CI builds this image for your board on every change, but nobody has run it on real hardware yet. It may not work, and if it does you'd be the first to know it. Nothing here can brick the board — the ROM bootloader is unerasable — so the worst case is that it doesn't come up and you re-flash something else.",
+        "first": true
+      }
+    },
+    {
+      "id": "securacv-canary-wroom",
+      "name": "Canary · ESP32 DevKit",
+      "tagline": "Turns the ESP32 in your drawer into a presence witness — it feels the room through Wi-Fi, with no camera at all.",
+      "family": "canary",
+      "board_label": "ESP32-WROOM-32 DevKit",
+      "chip": "ESP32",
+      "flash_mb": 4,
+      "board": "esp32dev",
+      "asset_stem": "canary-wroom",
+      "provisioning": "ap",
+      "provisioning_note": "When it boots it hands you a WiFi network of its own — join it and a setup page opens automatically. Nothing to type here; no secrets ever touch the browser.",
+      "wifi_nvs": "blob",
+      "broker_nvs": false,
+      "hatch": {
+        "kicker": "Canary hatched",
+        "title": "Your Canary is on its perch.",
+        "body": "The magical first proof is local and physical: join its setup network, open the dashboard, then make one harmless signal it can witness.",
+        "steps": [
+          "Join the SecuraCV-XXXX Wi-Fi network it creates and open canary.local.",
+          "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
+          "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test."
+        ]
+      },
+      "serial_receipt": true,
+      "role": "canary",
+      "prove": {
+        "real": {
+          "kind": "monitor",
+          "label": "Watch it boot & prove itself →",
+          "how": "The live monitor: boot log, the signed self-manifest (j), health score and temperature — from the board's own mouth."
+        },
+        "emulated": {
+          "href": "homeassistant.html",
+          "label": "🧪 the emulated twin — its Home Assistant life",
+          "how": "The Hub lab: the exact entities, cards and automations this Canary raises, simulated from the same generated data."
+        }
+      },
+      "pick_label": "A plain ESP32 DevKit — no camera on it",
+      "access": {
+        "headline": "Pick the serial adapter, not an “ESP32”",
+        "flash_port": "the board's own micro-USB or USB-C port",
+        "other_port": "—",
+        "other_effect": "",
+        "steps": [
+          "Plug the board in with a USB DATA cable. (Charge-only cables are the other classic stall — they power the board and carry nothing.)",
+          "In the browser's device chooser, pick the entry named after the bridge chip — CP2102, CH340, or similar. It will not say “ESP32”: the classic ESP32 has no USB of its own, so what your computer sees is the little adapter chip beside it.",
+          "Flash. The adapter drives the boot pins for you — no buttons."
+        ],
+        "enclosure_note": "",
+        "doc": "https://github.com/kmay89/securaCV/blob/main/firmware/boards/esp32-wroom-devkit/README.md",
+        "key": "securacv-canary-wroom"
+      },
+      "tier": {
+        "tier": "compile-tested",
+        "board_id": "esp32-wroom-devkit",
+        "label": "Compile-tested — never booted",
+        "line": "CI builds this image for your board on every change, but nobody has run it on real hardware yet. It may not work, and if it does you'd be the first to know it. Nothing here can brick the board — the ROM bootloader is unerasable — so the worst case is that it doesn't come up and you re-flash something else.",
+        "first": true
+      }
+    },
+    {
+      "id": "securacv-canary-freenove-s3",
+      "name": "Canary · Freenove S3",
+      "tagline": "The witness on the S3 camera kit most people are shipped — camera and Wi-Fi sensing, no SD yet.",
+      "family": "canary",
+      "board_label": "Freenove ESP32-S3-WROOM CAM",
+      "chip": "ESP32-S3",
+      "flash_mb": 16,
+      "board": "esp32-s3-devkitc-1",
+      "asset_stem": "canary-freenove-s3",
+      "provisioning": "ap",
+      "provisioning_note": "When it boots it hands you a WiFi network of its own — join it and a setup page opens automatically. Nothing to type here; no secrets ever touch the browser.",
+      "wifi_nvs": "blob",
+      "broker_nvs": false,
+      "hatch": {
+        "kicker": "Canary hatched",
+        "title": "Your Canary is on its perch.",
+        "body": "The magical first proof is local and physical: join its setup network, open the dashboard, then make one harmless signal it can witness.",
+        "steps": [
+          "Join the SecuraCV-XXXX Wi-Fi network it creates and open canary.local.",
+          "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
+          "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test."
+        ]
+      },
+      "serial_receipt": true,
+      "role": "canary",
+      "prove": {
+        "real": {
+          "kind": "monitor",
+          "label": "Watch it boot & prove itself →",
+          "how": "The live monitor: boot log, the signed self-manifest (j), health score and temperature — from the board's own mouth."
+        },
+        "emulated": {
+          "href": "homeassistant.html",
+          "label": "🧪 the emulated twin — its Home Assistant life",
+          "how": "The Hub lab: the exact entities, cards and automations this Canary raises, simulated from the same generated data."
+        }
+      },
+      "pick_label": "Freenove ESP32-S3 camera kit — the big black board",
+      "tier": {
+        "tier": "compile-tested",
+        "board_id": "freenove-esp32s3-cam",
+        "label": "Compile-tested — never booted",
+        "line": "CI builds this image for your board on every change, but nobody has run it on real hardware yet. It may not work, and if it does you'd be the first to know it. Nothing here can brick the board — the ROM bootloader is unerasable — so the worst case is that it doesn't come up and you re-flash something else.",
+        "first": true
       }
     },
     {
@@ -134,6 +318,14 @@
           "label": "🧪 the emulated twin — the guided WAP walkthrough",
           "how": "The WAP lab: the same sensing pipeline and first-boot story, simulated from the firmware's own facts."
         }
+      },
+      "tier": {
+        "tier": "verified",
+        "board_id": "xiao-esp32s3-sense",
+        "label": "Bench-tested by a maintainer",
+        "line": "A maintainer has run this board on the bench and signed off on how it behaves.",
+        "first": false,
+        "evidence": "docs/hardware/v1_bench_validation_runbook.md"
       },
       "figure": {
         "id": "device.canary-wap",
@@ -183,6 +375,13 @@
         }
       },
       "pick_label": "ESP32-C3 DevKitM-1",
+      "tier": {
+        "tier": "compile-tested",
+        "board_id": "esp32-c3",
+        "label": "Compile-tested — never booted",
+        "line": "CI builds this image for your board on every change, but nobody has run it on real hardware yet. It may not work, and if it does you'd be the first to know it. Nothing here can brick the board — the ROM bootloader is unerasable — so the worst case is that it doesn't come up and you re-flash something else.",
+        "first": true
+      },
       "detect": {
         "note": "These are the SAME four numbers Home Assistant tunes live later (cfg/*/set → NVS). Baking a preset here just means the Canary is already dialed for its room on first boot — nothing is locked in.",
         "nvs": {
@@ -298,6 +497,158 @@
       }
     },
     {
+      "id": "securacv-canary-vision-c3-super-mini",
+      "name": "Canary Vision · C3 Super Mini",
+      "tagline": "The Vision witness on the cheapest board in the hobby.",
+      "family": "vision",
+      "board_label": "ESP32-C3 Super Mini",
+      "chip": "ESP32-C3",
+      "flash_mb": 4,
+      "board": "esp32-c3-devkitm-1",
+      "asset_stem": "canary-vision-c3-super-mini",
+      "provisioning": "usb-secrets",
+      "provisioning_note": "Fill in WiFi during the install and it’s written straight into the chip’s settings region — the signed generic release then joins YOUR network on first boot, no custom build needed. (Leave it empty and the firmware falls back to its compiled defaults, exactly as before.)",
+      "wifi_nvs": "string",
+      "broker_nvs": true,
+      "hatch": {
+        "kicker": "Vision Canary hatched",
+        "title": "Your Vision Canary is waking up.",
+        "body": "Give it one visible, privacy-safe thing to notice immediately: presence only, no faces and no saved frames.",
+        "steps": [
+          "If you have not flashed the Grove Vision AI V2 module yet, move the USB-C cable to the module port and flash the pinned model.",
+          "Put the board where it can see a doorway, then walk through once.",
+          "Open Home Assistant and watch the presence entity flip to detected, then clear."
+        ]
+      },
+      "serial_receipt": true,
+      "role": "vision",
+      "prove": {
+        "real": {
+          "kind": "bench-camera",
+          "label": "👁 See through it — the camera bench →",
+          "how": "The module bench (the camera's OWN USB-C port): live frames, boxes, the confidence meter and the two on-module dials."
+        },
+        "emulated": {
+          "href": "vision.html",
+          "label": "🧪 the emulated twin — firmware-backed detection",
+          "how": "The Vision lab: the real detection math compiled for the browser, running on a staged scene."
+        }
+      },
+      "pick_label": "C3 Super Mini (the thumbnail-sized one)",
+      "tier": {
+        "tier": "compile-tested",
+        "board_id": "esp32c3-super-mini",
+        "label": "Compile-tested — never booted",
+        "line": "CI builds this image for your board on every change, but nobody has run it on real hardware yet. It may not work, and if it does you'd be the first to know it. Nothing here can brick the board — the ROM bootloader is unerasable — so the worst case is that it doesn't come up and you re-flash something else.",
+        "first": true
+      },
+      "detect": {
+        "note": "These are the SAME four numbers Home Assistant tunes live later (cfg/*/set → NVS). Baking a preset here just means the Canary is already dialed for its room on first boot — nothing is locked in.",
+        "nvs": {
+          "namespace": "securacv",
+          "keys": {
+            "target": "det_target",
+            "score": "det_score",
+            "lost_ms": "det_lost",
+            "dwell_ms": "det_dwell"
+          }
+        },
+        "defaults": {
+          "target": 0,
+          "score": 70,
+          "lost_ms": 1500,
+          "dwell_ms": 10000
+        },
+        "bounds": {
+          "score": [
+            0,
+            100
+          ],
+          "target": [
+            0,
+            255
+          ],
+          "lost_ms": [
+            250,
+            60000
+          ],
+          "dwell_ms": [
+            1000,
+            600000
+          ]
+        },
+        "presets": [
+          {
+            "id": "ships",
+            "icon": "🐤",
+            "title": "As it ships",
+            "blurb": "The firmware’s own defaults — balanced for a first bring-up. Pick nothing and this is what you get.",
+            "values": {
+              "target": 0,
+              "score": 70,
+              "lost_ms": 1500,
+              "dwell_ms": 10000
+            }
+          },
+          {
+            "id": "entry",
+            "icon": "🚪",
+            "title": "Entryway / front door",
+            "blurb": "Presence at the door is the event; nobody dwells in a doorway. Fast lost timeout, short dwell — the voxel column tells you in/out of the frame.",
+            "values": {
+              "score": 75,
+              "lost_ms": 1000,
+              "dwell_ms": 5000
+            }
+          },
+          {
+            "id": "living",
+            "icon": "🛋️",
+            "title": "Living room / shared space",
+            "blurb": "Occupancy is the question, not motion. Longer lost timeout rides through stillness (reading, TV); dwelling becomes the useful signal.",
+            "values": {
+              "score": 70,
+              "lost_ms": 4000,
+              "dwell_ms": 30000
+            }
+          },
+          {
+            "id": "hall",
+            "icon": "🚶",
+            "title": "Hallway / corridor",
+            "blurb": "People transit fast — a low dwell would never latch anyway. Default score, snappy lost timeout, dwell long so a lingerer stands out.",
+            "values": {
+              "score": 70,
+              "lost_ms": 1000,
+              "dwell_ms": 60000
+            }
+          },
+          {
+            "id": "workshop",
+            "icon": "🧰",
+            "title": "Garage / workshop",
+            "blurb": "Harsh light and clutter: raise the score floor to shrug off shadows and shapes; dwell marks a real work session.",
+            "values": {
+              "score": 80,
+              "lost_ms": 3000,
+              "dwell_ms": 60000
+            }
+          },
+          {
+            "id": "office",
+            "icon": "💻",
+            "title": "Home office",
+            "blurb": "A monitor is in frame by definition — raise the threshold, trust dwell. Screen-people flicker below it; you at the desk persist above it.",
+            "values": {
+              "score": 85,
+              "lost_ms": 5000,
+              "dwell_ms": 15000
+            }
+          }
+        ]
+      }
+    },
+    {
       "id": "securacv-canary-vision-xiao-c3",
       "name": "Canary Vision · XIAO C3",
       "tagline": "The Vision witness on a Seeed XIAO ESP32-C3.",
@@ -336,6 +687,14 @@
         }
       },
       "pick_label": "XIAO ESP32-C3",
+      "tier": {
+        "tier": "verified",
+        "board_id": "xiao-esp32c3",
+        "label": "Bench-tested by a maintainer",
+        "line": "A maintainer has run this board on the bench and signed off on how it behaves.",
+        "first": false,
+        "evidence": "docs/hardware/canary_vision_getting_started.md"
+      },
       "detect": {
         "note": "These are the SAME four numbers Home Assistant tunes live later (cfg/*/set → NVS). Baking a preset here just means the Canary is already dialed for its room on first boot — nothing is locked in.",
         "nvs": {
@@ -489,6 +848,14 @@
         }
       },
       "pick_label": "XIAO ESP32-S3",
+      "tier": {
+        "tier": "verified",
+        "board_id": "xiao-esp32s3",
+        "label": "Bench-tested by a maintainer",
+        "line": "A maintainer has run this board on the bench and signed off on how it behaves.",
+        "first": false,
+        "evidence": "docs/hardware/canary_vision_getting_started.md"
+      },
       "detect": {
         "note": "These are the SAME four numbers Home Assistant tunes live later (cfg/*/set → NVS). Baking a preset here just means the Canary is already dialed for its room on first boot — nothing is locked in.",
         "nvs": {
@@ -654,7 +1021,15 @@
         ],
         "enclosure_note": "Printed the SecuraCV radome? The XIAO's USB-C comes out through the bottom wall — nothing to open. (A sealed build adds a shallow weather recess around that opening, not a cover.)",
         "reassembly": "If you did open it: keep the radar's front window clear when you close it — no foil labels, no metal, nothing added in front of the antenna. 60 GHz has to pass through that face.",
-        "doc": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_sense_ports_and_access.md"
+        "doc": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_sense_ports_and_access.md",
+        "key": "sense"
+      },
+      "tier": {
+        "tier": "compile-tested",
+        "board_id": "xiao-esp32c6-mr60",
+        "label": "Compile-tested — never booted",
+        "line": "CI builds this image for your board on every change, but nobody has run it on real hardware yet. It may not work, and if it does you'd be the first to know it. Nothing here can brick the board — the ROM bootloader is unerasable — so the worst case is that it doesn't come up and you re-flash something else.",
+        "first": true
       },
       "reflexes": {
         "applies": "runtime",
@@ -873,7 +1248,15 @@
         ],
         "enclosure_note": "Printed the SecuraCV radome? The XIAO's USB-C comes out through the bottom wall — nothing to open. (A sealed build adds a shallow weather recess around that opening, not a cover.)",
         "reassembly": "If you did open it: keep the radar's front window clear when you close it — no foil labels, no metal, nothing added in front of the antenna. 60 GHz has to pass through that face.",
-        "doc": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_sense_ports_and_access.md"
+        "doc": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_sense_ports_and_access.md",
+        "key": "sense"
+      },
+      "tier": {
+        "tier": "compile-tested",
+        "board_id": "xiao-esp32c6-mr60",
+        "label": "Compile-tested — never booted",
+        "line": "CI builds this image for your board on every change, but nobody has run it on real hardware yet. It may not work, and if it does you'd be the first to know it. Nothing here can brick the board — the ROM bootloader is unerasable — so the worst case is that it doesn't come up and you re-flash something else.",
+        "first": true
       },
       "reflexes": {
         "applies": "runtime",
@@ -1232,6 +1615,13 @@
         }
       },
       "pick_label": "Watch Station — the round puck",
+      "tier": {
+        "tier": "compile-tested",
+        "board_id": "xiao-esp32s3-round",
+        "label": "Compile-tested — never booted",
+        "line": "CI builds this image for your board on every change, but nobody has run it on real hardware yet. It may not work, and if it does you'd be the first to know it. Nothing here can brick the board — the ROM bootloader is unerasable — so the worst case is that it doesn't come up and you re-flash something else.",
+        "first": true
+      },
       "figure": {
         "id": "device.canary-display-watch",
         "title": "Canary Watch Station",
@@ -1280,6 +1670,13 @@
         }
       },
       "pick_label": "Dash — the plain 4.3 wall panel",
+      "tier": {
+        "tier": "compile-tested",
+        "board_id": "waveshare-esp32s3-lcd43",
+        "label": "Compile-tested — never booted",
+        "line": "CI builds this image for your board on every change, but nobody has run it on real hardware yet. It may not work, and if it does you'd be the first to know it. Nothing here can brick the board — the ROM bootloader is unerasable — so the worst case is that it doesn't come up and you re-flash something else.",
+        "first": true
+      },
       "figure": {
         "id": "device.canary-display-dash",
         "title": "Canary Dash",
@@ -1327,7 +1724,14 @@
           "how": "This board has no WASM build of its own yet, so the twin runs the sibling that shares its glass and its face. The pixels and the behavior are right; the build id on screen is the sibling's."
         }
       },
-      "pick_label": "Dash · Modes — the 4.3B multi-tool"
+      "pick_label": "Dash · Modes — the 4.3B multi-tool",
+      "tier": {
+        "tier": "compile-tested",
+        "board_id": "waveshare-esp32s3-lcd43b",
+        "label": "Compile-tested — never booted",
+        "line": "CI builds this image for your board on every change, but nobody has run it on real hardware yet. It may not work, and if it does you'd be the first to know it. Nothing here can brick the board — the ROM bootloader is unerasable — so the worst case is that it doesn't come up and you re-flash something else.",
+        "first": true
+      }
     },
     {
       "id": "securacv-canary-display-dash7",
@@ -1368,6 +1772,13 @@
         }
       },
       "pick_label": "Dash 7 — the 7″ big glass",
+      "tier": {
+        "tier": "compile-tested",
+        "board_id": "waveshare-esp32s3-lcd7",
+        "label": "Compile-tested — never booted",
+        "line": "CI builds this image for your board on every change, but nobody has run it on real hardware yet. It may not work, and if it does you'd be the first to know it. Nothing here can brick the board — the ROM bootloader is unerasable — so the worst case is that it doesn't come up and you re-flash something else.",
+        "first": true
+      },
       "figure": {
         "id": "device.canary-display-dash7",
         "title": "Canary Dash 7",
@@ -1411,6 +1822,13 @@
         }
       },
       "pick_label": "Nightstand 7 — the 7″ bedside glass",
+      "tier": {
+        "tier": "compile-tested",
+        "board_id": "waveshare-esp32s3-lcd7",
+        "label": "Compile-tested — never booted",
+        "line": "CI builds this image for your board on every change, but nobody has run it on real hardware yet. It may not work, and if it does you'd be the first to know it. Nothing here can brick the board — the ROM bootloader is unerasable — so the worst case is that it doesn't come up and you re-flash something else.",
+        "first": true
+      },
       "figure": {
         "id": "device.canary-display-dash7",
         "title": "Canary Dash 7",
@@ -1458,7 +1876,14 @@
           "how": "The fleet page boots the REAL display firmware compiled to WASM — the pixels here are the pixels the glass shows. The listening 4.3C variant gets its own does/doesn't mic bench at dash-mic.html — same decision core, drift-locked."
         }
       },
-      "pick_label": "Nightstand — the 1.47″ USB-A stick"
+      "pick_label": "Nightstand — the 1.47″ USB-A stick",
+      "tier": {
+        "tier": "compile-tested",
+        "board_id": "waveshare-esp32s3-lcd147",
+        "label": "Compile-tested — never booted",
+        "line": "CI builds this image for your board on every change, but nobody has run it on real hardware yet. It may not work, and if it does you'd be the first to know it. Nothing here can brick the board — the ROM bootloader is unerasable — so the worst case is that it doesn't come up and you re-flash something else.",
+        "first": true
+      }
     },
     {
       "id": "securacv-canary-display-touch169",
@@ -1499,6 +1924,13 @@
         }
       },
       "pick_label": "Nightstand Touch — the 1.69″ touch + battery board",
+      "tier": {
+        "tier": "compile-tested",
+        "board_id": "waveshare-esp32s3-touch-lcd169",
+        "label": "Compile-tested — never booted",
+        "line": "CI builds this image for your board on every change, but nobody has run it on real hardware yet. It may not work, and if it does you'd be the first to know it. Nothing here can brick the board — the ROM bootloader is unerasable — so the worst case is that it doesn't come up and you re-flash something else.",
+        "first": true
+      },
       "figure": {
         "id": "device.canary-display-touch169",
         "title": "Canary Nightstand Touch",
@@ -1546,7 +1978,14 @@
           "how": "This board has no WASM build of its own yet, so the twin runs the sibling that shares its glass and its face. The pixels and the behavior are right; the build id on screen is the sibling's."
         }
       },
-      "pick_label": "Nightstand C6 — the 1.47″ pin-header board"
+      "pick_label": "Nightstand C6 — the 1.47″ pin-header board",
+      "tier": {
+        "tier": "compile-tested",
+        "board_id": "waveshare-esp32c6-lcd147",
+        "label": "Compile-tested — never booted",
+        "line": "CI builds this image for your board on every change, but nobody has run it on real hardware yet. It may not work, and if it does you'd be the first to know it. Nothing here can brick the board — the ROM bootloader is unerasable — so the worst case is that it doesn't come up and you re-flash something else.",
+        "first": true
+      }
     },
     {
       "id": "securacv-canary-display-nightlight-c3",
@@ -1581,7 +2020,22 @@
           "how": "The proof is the screen itself: splash, then the face, then the on-glass wizard. Touch works."
         }
       },
-      "pick_label": "Nightlight — the 1.47″ pocket clock + lamp"
+      "pick_label": "Nightlight — the 1.47″ pocket clock + lamp",
+      "tier": {
+        "tier": "compile-tested",
+        "board_id": "waveshare-esp32c3-lcd147",
+        "label": "Compile-tested — never booted",
+        "line": "CI builds this image for your board on every change, but nobody has run it on real hardware yet. It may not work, and if it does you'd be the first to know it. Nothing here can brick the board — the ROM bootloader is unerasable — so the worst case is that it doesn't come up and you re-flash something else.",
+        "first": true
+      },
+      "figure": {
+        "id": "device.canary-nightlight",
+        "title": "Canary Nightlight",
+        "hardware": "waveshare-esp32c3-lcd147",
+        "via": "the pins header this build compiles",
+        "shared": false,
+        "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\" role=\"img\" aria-label=\"Canary Nightlight\"><path d=\"M18.3 45L18.3 6.9L15.9 8.3L15.9 46.4ZM40.6 57.9L40.6 19.7L38.1 21.1L38.1 59.3ZM40.6 19.7L40.6 19.1L38.1 20.5L38.1 21.1Z\" fill=\"#a5a39f\"/><path d=\"M18.3 6.9L17.8 6.6L15.4 8L15.9 8.3ZM40.6 19.7L40 19.4L37.6 20.8L38.1 21.1ZM40.6 19.1L17.8 6L15.4 7.4L38.1 20.5Z\" fill=\"#cccac5\"/><path d=\"M15.4 46.1L15.9 46.4L15.9 8.3L15.4 8ZM37.6 59L38.1 59.3L38.1 21.1L37.6 20.8ZM15.4 8L38.1 21.1L38.1 20.5L15.4 7.4Z\" fill=\"#61615e\"/><path d=\"M47.9 54.3L48.3 54L37 60.5L36.6 60.8ZM34.8 60.7L35.5 60.9L36.1 61L36.6 60.8L37 60.5L37.3 59.9L37.4 59.1L37.4 23.9L37.3 23.1L37 22.2L36.6 21.4L36.1 20.6L35.5 19.9L34.8 19.4L18.2 9.8L17.5 9.5L16.9 9.5L16.4 9.7L15.9 10L15.7 10.6L15.6 11.3L15.6 46.6L15.7 47.4L15.9 48.3L16.4 49.1L16.9 49.9L17.5 50.6L18.2 51.1Z\" fill=\"#654c00\"/><path d=\"M48.3 54L48.5 53.4L37.3 59.9L37 60.5Z\" fill=\"#7b5c00\"/><path d=\"M48.5 53.4L48.6 52.7L37.4 59.1L37.3 59.9Z\" fill=\"#9c7500\"/><path d=\"M48.6 52.7L48.6 17.4L37.4 23.9L37.4 59.1Z\" fill=\"#ab8000\"/><path d=\"M48.6 17.4L48.5 16.6L37.3 23.1L37.4 23.9Z\" fill=\"#b88a00\"/><path d=\"M48.5 16.6L48.3 15.7L37 22.2L37.3 23.1Z\" fill=\"#cf9c00\"/><path d=\"M48.3 15.7L47.9 14.9L36.6 21.4L37 22.2Z\" fill=\"#dfa700\"/><path d=\"M47.9 14.9L47.3 14.1L36.1 20.6L36.6 21.4Z\" fill=\"#e7ad00\"/><path d=\"M47.3 14.1L46.7 13.4L35.5 19.9L36.1 20.6Z\" fill=\"#e5ac00\"/><path d=\"M46.7 13.4L46 12.9L34.8 19.4L35.5 19.9Z\" fill=\"#dba400\"/><path d=\"M46 12.9L29.4 3.3L18.2 9.8L34.8 19.4Z\" fill=\"#d39e00\"/><path d=\"M29.4 3.3L28.8 3.1L17.5 9.5L18.2 9.8Z\" fill=\"#c99700\"/><path d=\"M28.8 3.1L28.1 3L16.9 9.5L17.5 9.5Z\" fill=\"#b08400\"/><path d=\"M28.1 3L27.6 3.2L16.4 9.7L16.9 9.5Z\" fill=\"#926d00\"/><path d=\"M34.5 56.3L34.7 56.1L34 56.5L33.7 56.7ZM32.8 56.6L33.2 56.8L33.5 56.8L33.7 56.7L34 56.5L34.1 56.3L34.1 55.9L34.1 24.4L34.1 24L34 23.6L33.7 23.2L33.5 22.8L33.2 22.4L32.8 22.2L18.6 14L18.3 13.8L17.9 13.8L17.7 13.9L17.5 14.1L17.3 14.4L17.3 14.7L17.3 46.2L17.3 46.6L17.5 47L17.7 47.5L17.9 47.9L18.3 48.2L18.6 48.4Z\" fill=\"#0b0d12\"/><path d=\"M34.7 56.1L34.9 55.8L34.1 56.3L34 56.5Z\" fill=\"#0e1016\"/><path d=\"M34.9 55.8L34.9 55.4L34.1 55.9L34.1 56.3Z\" fill=\"#11141b\"/><path d=\"M34.9 55.4L34.9 24L34.1 24.4L34.1 55.9Z\" fill=\"#13161e\"/><path d=\"M34.9 24L34.9 23.6L34.1 24L34.1 24.4Z\" fill=\"#151820\"/><path d=\"M34.9 23.6L34.7 23.1L34 23.6L34.1 24Z\" fill=\"#171b24\"/><path d=\"M34.7 23.1L34.5 22.7L33.7 23.2L34 23.6Z\" fill=\"#191d27\"/><path d=\"M34.5 22.7L34.3 22.3L33.5 22.8L33.7 23.2ZM34.3 22.3L33.9 22L33.2 22.4L33.5 22.8Z\" fill=\"#1a1e28\"/><path d=\"M33.9 22L33.6 21.7L32.8 22.2L33.2 22.4Z\" fill=\"#191c26\"/><path d=\"M33.6 21.7L19.4 13.5L18.6 14L32.8 22.2Z\" fill=\"#181b25\"/><path d=\"M19.4 13.5L19 13.4L18.3 13.8L18.6 14Z\" fill=\"#171a23\"/><path d=\"M19 13.4L18.7 13.3L17.9 13.8L18.3 13.8Z\" fill=\"#14171f\"/><path d=\"M18.7 13.3L18.5 13.4L17.7 13.9L17.9 13.8Z\" fill=\"#10131a\"/><path d=\"M33 55.5L33.1 55.3L32.8 55.5L32.7 55.7ZM32 55.6L32.3 55.7L32.5 55.7L32.7 55.7L32.8 55.5L32.9 55.3L32.9 55.1L32.9 24.6L32.9 24.4L32.8 24.1L32.7 23.8L32.5 23.5L32.3 23.3L32 23.1L18.7 15.4L18.5 15.3L18.3 15.3L18.1 15.4L17.9 15.5L17.8 15.7L17.8 15.9L17.8 46.4L17.8 46.7L17.9 46.9L18.1 47.2L18.3 47.5L18.5 47.7L18.7 47.9Z\" fill=\"#1a2f47\"/><path d=\"M33.1 55.3L33.2 55.1L32.9 55.3L32.8 55.5Z\" fill=\"#1f3956\"/><path d=\"M33.2 55.1L33.3 54.9L32.9 55.1L32.9 55.3Z\" fill=\"#28486d\"/><path d=\"M33.3 54.9L33.3 24.4L32.9 24.6L32.9 55.1Z\" fill=\"#2b4f77\"/><path d=\"M33.3 24.4L33.2 24.2L32.9 24.4L32.9 24.6Z\" fill=\"#2f5581\"/><path d=\"M33.2 24.2L33.1 23.9L32.8 24.1L32.9 24.4Z\" fill=\"#356091\"/><path d=\"M33.1 23.9L33 23.6L32.7 23.8L32.8 24.1Z\" fill=\"#39679c\"/><path d=\"M33 23.6L32.8 23.3L32.5 23.5L32.7 23.8Z\" fill=\"#3b6ba1\"/><path d=\"M32.8 23.3L32.6 23.1L32.3 23.3L32.5 23.5Z\" fill=\"#3a6aa0\"/><path d=\"M32.6 23.1L32.4 22.9L32 23.1L32.3 23.3Z\" fill=\"#386599\"/><path d=\"M32.4 22.9L19 15.2L18.7 15.4L32 23.1Z\" fill=\"#366294\"/><path d=\"M19 15.2L18.8 15.1L18.5 15.3L18.7 15.4Z\" fill=\"#335d8d\"/><path d=\"M18.8 15.1L18.6 15.1L18.3 15.3L18.5 15.3Z\" fill=\"#2d517b\"/><path d=\"M18.6 15.1L18.4 15.2L18.1 15.4L18.3 15.3Z\" fill=\"#254366\"/></svg>"
+      }
     }
   ],
   "displays": [
@@ -1606,7 +2060,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-watch.js",
         "factory": "createCanaryEmuWatch",
-        "fw_version": "2.4.5",
+        "fw_version": "2.4.6",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -1633,7 +2087,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-dash.js",
         "factory": "createCanaryEmuDash",
-        "fw_version": "2.4.5",
+        "fw_version": "2.4.6",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -1660,7 +2114,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-nightstand.js",
         "factory": "createCanaryEmuNightstand",
-        "fw_version": "2.4.5",
+        "fw_version": "2.4.6",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -1687,7 +2141,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-touch169.js",
         "factory": "createCanaryEmuTouch169",
-        "fw_version": "2.4.5",
+        "fw_version": "2.4.6",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -1714,7 +2168,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-dash.js",
         "factory": "createCanaryEmuDash",
-        "fw_version": "2.4.5",
+        "fw_version": "2.4.6",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -2082,7 +2536,7 @@
     "usb_pid": "0x55d3",
     "baud": 921600,
     "model_addr": "0x400000",
-    "manifest_url": "https://github.com/kmay89/securaCV/releases/download/fw-v2.4.5/manifest-vision-model.json",
+    "manifest_url": "https://github.com/kmay89/securaCV/releases/download/fw-v2.4.6/manifest-vision-model.json",
     "model": {
       "name": "Person Detection",
       "arch": "Swift-YOLO (tiny) · 192×192×3 RGB · compiled for the Ethos-U55",

@@ -24,11 +24,22 @@ namespace canary::net {
 
 // Drain whatever the last scan captured into the roster, age stale peers out,
 // and manage the passive scan itself. Cheap to call every loop() pass; rate-
-// limited internally (a short burst on a slow cadence). Pass the live STA link
-// state: while WiFi is up the scan stays bursty (BLE/WiFi share the 2.4 GHz
-// radio); fully off-grid it scans continuously (nothing to coexist with).
-// Lazily brings NimBLE up on first use and degrades to a no-op if it can't.
-void fleet_roster_scan_tick(uint32_t now, bool wifi_up);
+// limited internally (a short burst on a slow cadence). Lazily brings NimBLE
+// up on first use and degrades to a no-op if it can't.
+//
+// Both radio-state flags matter, and the SECOND one is load-bearing:
+//   wifi_up          the STA link is associated right now.
+//   wifi_provisioned this unit has real credentials, so wifi_loop() will go on
+//                    retrying the join for as long as it takes.
+//
+// Continuous scanning is only correct when there is no join to protect. A
+// provisioned unit that is merely between attempts stays BURSTY: BLE and WiFi
+// share one 2.4 GHz radio on the C3/C6, and a never-ending passive scan
+// during the retry window starves the very association it is waiting for —
+// a device that drops off WiFi then can't get back on. Only an unprovisioned
+// unit (nothing to join, the beacon genuinely is the last channel) scans
+// continuously.
+void fleet_roster_scan_tick(uint32_t now, bool wifi_up, bool wifi_provisioned);
 
 // Live peer count (Canaries heard within the roster expiry window). 0 until the
 // first sighting. Cheap — for a serial/status readout of "N in the fleet".

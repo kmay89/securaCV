@@ -60,6 +60,22 @@
 // — both are -D command-line flags, so they resolve in every TU — and the latch
 // is Preferences("securacv").{get,put}Bool("devmode", ...).
 
+// -------------------- Fleet-link band: LAN multicast --------------------
+// Listen for presence beacons on the home WiFi this display is already joined
+// to (src/net/fleet_udp.cpp). Still no broker and no hub — a multicast
+// datagram is addressed to a group, not to a host — and this is the only band
+// that reaches past direct radio range: BLE (chirp_scan) and ESP-NOW
+// (espnow_peer) both stop at whatever the radio can hear.
+//
+// Every band decodes through the same parser and lands in the same
+// FleetModel::on_beacon, and a witness is keyed on its fingerprint suffix, so
+// enabling this alongside BLE adds coverage rather than duplicate devices or
+// duplicate alerts. Default ON; flip OFF per board with -DFEATURE_FLEET_UDP=0
+// if a size guard vetoes it — the module and its call sites compile out.
+#ifndef FEATURE_FLEET_UDP
+#define FEATURE_FLEET_UDP 1
+#endif
+
 // -------------------- Identity --------------------
 static constexpr const char* DEVICE_TYPE   = CD_DEVICE_TYPE;
 static constexpr const char* DEVICE_ID     = CD_DEVICE_ID;  // first-boot seed only

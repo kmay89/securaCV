@@ -683,8 +683,13 @@ function accessCards() {
   const out = [];
   for (const p of products) {
     const a = p.access;
-    if (!a || seen.has(p.family)) continue;
-    seen.add(p.family);
+    // Dedup on the ACCESS entry, not the family. Two products in one family
+    // can need opposite instructions — the ESP32-CAM (no USB port at all) and
+    // the WROOM DevKit (pick the CP2102/CH340, not an "ESP32") are both
+    // `canary` — and keying on family silently dropped whichever came second.
+    const key = a && (a.key || p.family);
+    if (!a || seen.has(key)) continue;
+    seen.add(key);
     const d = el("details", "flash-access");
     d.dataset.family = p.family;
     d.append(el("summary", null, `${p.name.replace(/ · .*$/, "")} — ${a.headline}`));
@@ -729,11 +734,11 @@ function coldStartCard() {
   const card = el("section", "flash-coldstart");
   card.append(el("h3", null, "🛡 New board from a shop or marketplace? Do this first"));
   card.append(el("p", null,
-    "It arrives running somebody else's firmware, and these chips have native " +
-    "USB — so that firmware can introduce itself to your computer as anything " +
-    "it likes, including a keyboard, the moment you plug it in. No web page can " +
-    "step in front of that; your operating system finishes with the device " +
-    "before this page even learns it exists."));
+    "It arrives running somebody else's firmware. On a board with native USB " +
+    "(the S3 and C-series Canaries) that firmware can introduce itself to your " +
+    "computer as anything it likes, including a keyboard, the moment you plug " +
+    "it in. No web page can step in front of that; your operating system " +
+    "finishes with the device before this page even learns it exists."));
   card.append(el("p", null,
     "One move stops it, and it's the chip's own silicon doing the stopping:"));
 
@@ -744,9 +749,28 @@ function coldStartCard() {
   li2.append(document.createTextNode("Press and hold "), kbd("BOOT"),
     document.createTextNode(" (marked B)."));
   const li3 = el("li");
-  li3.append(document.createTextNode("Still holding it, plug the USB-C cable in. Then let go."));
+  li3.append(document.createTextNode("Still holding it, plug the cable in. Then let go."));
   ol.append(li1, li2, li3);
   card.append(ol);
+  // The classic-ESP32 reach ports break both halves of the paragraph above:
+  // no native USB (so the keyboard trick is not available to their resident
+  // firmware at all — a UART bridge can only ever be a serial port), and on
+  // the ESP32-CAM no BOOT button and no USB connector to hold it against.
+  // The mask-ROM guarantee is identical, so the card keeps its promise and
+  // states the different gesture rather than implying a button that isn't
+  // there. Word-for-word the same paragraph as the desktop Flasher's static
+  // card (desktop/src/index.html) — the parity gate holds them together.
+  card.append(el("p", "fineprint",
+    "No BOOT button, or no USB port at all? A classic ESP32 — an ESP32-CAM, a " +
+    "plain WROOM DevKit — reaches your computer through a separate " +
+    "USB-to-serial chip rather than its own USB, so its firmware can only ever " +
+    "appear as a serial port and cannot pretend to be a keyboard. Bringing it " +
+    "up cold is still how you stop the resident firmware running: " +
+    // Kept whole, not split across a concatenation: desktop_parity.test.js
+    // matches this phrase in BOTH sources to prove neither frontend lost it.
+    "jumper IO0 to GND before you apply power" +
+    ", instead of holding BOOT. Most DevKits do even that for you. " +
+    "Per-board wiring is on the board's own card below."));
   card.append(el("p", "fineprint",
     "The chip comes up in its mask-ROM download mode and the firmware it shipped " +
     "with never runs a single instruction. That's not a promise this page is " +
@@ -2847,6 +2871,16 @@ function productRow(p) {
     left.append(el("div", "flash-product-note",
       "This board is also sold as another product — check the name, not just the picture."));
   }
+  // Support tier, derived from the board registry (flash.json `tier`). The
+  // "never booted" case gets the loud treatment: this is the last screen
+  // before someone writes an unproven image to hardware they own, and the
+  // claim has to arrive before the button, not in a doc they didn't open.
+  if (p.tier) {
+    const t = el("div", p.tier.first ? "flash-product-tier is-first" : "flash-product-tier");
+    t.append(el("span", "flash-tier-label", p.tier.label));
+    t.append(el("span", "muted", p.tier.line));
+    left.append(t);
+  }
   const ver = el("div", "flash-product-ver");
   ver.dataset.for = p.id;
   left.append(ver);
@@ -3817,7 +3851,7 @@ async function startFlash(opts) {
     // settings region in the same pass as the firmware. If we can't locate
     // that region, the install continues — never block a flash on a
     // convenience.
-    let wifiFile = null, wifiSsid = null, seededDials = null, seededReflex = null, bakedDeviceId = "";
+    let wifiFile = null, wifiSsid = null, seededDials = null, seededReflex = null, bakedDeviceId = "", bakedApiToken = null;
     if ((opts.wifi || opts.mqtt || opts.detect || opts.reflex) && !opts.isBackup) {
       try {
         const { entries } = core.parsePartitionTable(
@@ -3830,10 +3864,19 @@ async function startFlash(opts) {
         const rInts = opts.reflex ? core.reflexValuesToNvs(opts.reflex, reflexes) : { u32: {} };
         // Broker + device id (usb-secrets) → the same NVS keys the native app writes.
         const prov = opts.mqtt ? core.mqttProvisioningToNvs(opts.mqtt) : { strings: {}, u16: {} };
+        // Blob-scheme boards (canary/wap) load their local-API bearer token
+        // from NVS before deriving one — so mint it HERE and seed it, and the
+        // owner leaves with the credential in hand instead of digging it out
+        // of the device's settings page later. Same seed the native app
+        // writes (provisioning.rs); shown once on the done card below.
+        const apiToken = opts.product && opts.product.wifi_nvs === "blob" && opts.wifi
+          ? core.mintApiToken(crypto.getRandomValues(new Uint8Array(96)))
+          : null;
+        const tokenNvs = apiToken ? core.apiTokenToNvs(apiToken) : { blobs: {} };
         const nvsImg = core.buildNvsSeedImage(
           { wifi: opts.wifi || null,
             wifiScheme: (opts.product && opts.product.wifi_nvs) || "blob",
-            strings: prov.strings, u16: prov.u16,
+            strings: prov.strings, u16: prov.u16, blobs: tokenNvs.blobs,
             u8: dInts.u8, u32: { ...dInts.u32, ...rInts.u32 } }, nvs.size);
         wifiFile = { data: core.bytesToBinaryString(nvsImg), address: nvs.offset };
         wifiSsid = opts.wifi ? opts.wifi.ssid : null;
@@ -3842,6 +3885,7 @@ async function startFlash(opts) {
         // Only a device id that was actually written to NVS may appear as the
         // certificate's Ring ID (this line is reached only on a successful bake).
         bakedDeviceId = prov.strings.dev_id || "";
+        bakedApiToken = apiToken;
       } catch (e) {
         box.stage("Couldn’t bake the settings (" + String(e.message || e) +
           ") — continuing; everything is still tunable after boot");
@@ -3904,7 +3948,8 @@ async function startFlash(opts) {
     }
     setPhase(phaseDone({ ...opts, backupName, backupFailed, diff, settings,
       shaHex, shaSigned, sigVerified, sigChecked, bytesWritten: bytes.length,
-      wifiSsid, seededDials, seededReflex, provDeviceId: bakedDeviceId, wifi: null }));
+      wifiSsid, seededDials, seededReflex, provDeviceId: bakedDeviceId,
+      apiToken: bakedApiToken, wifi: null }));
   } catch (e) {
     state.busy = false;
     // Self-heal write-time failures too: a flaky cable can sync at 921600 but
@@ -4075,6 +4120,36 @@ function phaseDone(opts) {
       ` Your WiFi is baked in — the Canary should join “${opts.wifiSsid}” on its very first boot. ` +
       `No setup network needed (it still appears if the join fails, as the fallback).`));
     box.append(w);
+  }
+  if (opts.apiToken) {
+    // Shown ONCE, here — deliberately not remembered by this page (the
+    // Nursery roster keeps public facts only). The native Flasher stores the
+    // same credential in the OS keychain so its fleet book can use it.
+    const t = el("div", "flash-report-sec flash-token");
+    t.append(el("h3", null, "This board's local API key — shown once"));
+    const p = el("p", "muted",
+      "Minted fresh for this board and written into its settings with the WiFi. " +
+      "It unlocks the Canary's own local API (status, settings, over-the-air updates) — " +
+      "the device's settings page shows it again later, and a reflash mints a new one. " +
+      "Copy it now if you'll want it:");
+    t.append(p);
+    const row = el("div", "flash-token-row");
+    const codeEl = el("code", "flash-token-code", opts.apiToken);
+    row.append(codeEl);
+    const copyBtn = el("button", "ghost small", "Copy");
+    copyBtn.type = "button";
+    copyBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(opts.apiToken);
+        copyBtn.textContent = "Copied ✓";
+      } catch {
+        copyBtn.textContent = "Select + copy it by hand";
+      }
+      setTimeout(() => { copyBtn.textContent = "Copy"; }, 2500);
+    });
+    row.append(copyBtn);
+    t.append(row);
+    box.append(t);
   }
   if (opts.seededDials) {
     const d = opts.seededDials;

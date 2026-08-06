@@ -10,8 +10,8 @@
     "model": "Canary Vision (Grove Vision AI V2)",
     "board_short": "Grove Vision AI V2",
     "board_id": "seeed_grove_vision_ai_v2",
-    "fw_version": "2.4.5",
-    "fw_train": "2.4.5",
+    "fw_version": "2.4.6",
+    "fw_train": "2.4.6",
     "ota_product": "securacv-canary-vision",
     "senses": [
       "camera (on-module inference)"
@@ -303,7 +303,7 @@
       "              ,_,          Waking up...",
       "             (o.o)",
       "             /| |\\         SecuraCV Canary Vision",
-      "              d b          v2.4.5",
+      "              d b          v2.4.6",
       "",
       "    This is your privacy witness device.",
       "    It creates tamper-proof records of what it",
@@ -707,6 +707,12 @@
         {
           "id": "securacv-canary-vision",
           "name": "Canary Vision",
+          "chip": "ESP32-C3",
+          "board": "esp32-c3-devkitm-1"
+        },
+        {
+          "id": "securacv-canary-vision-c3-super-mini",
+          "name": "Canary Vision \u00b7 C3 Super Mini",
           "chip": "ESP32-C3",
           "board": "esp32-c3-devkitm-1"
         },

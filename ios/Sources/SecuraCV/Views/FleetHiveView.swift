@@ -73,9 +73,21 @@ struct HiveCell: View {
                 .strokeBorder(Theme.color(role).opacity(isQuiet ? 0.35 : 0.95),
                               lineWidth: isQuiet ? 2.5 : 3.5)
             VStack(spacing: 3) {
-                Image(systemName: witness.deviceType.sfSymbol)
-                    .font(.title3)
-                    .foregroundStyle(isQuiet ? .secondary : Theme.color(role))
+                // The device itself where the pipeline can draw it honestly —
+                // a 96 pt cell is the roster's best canvas for "which thing is
+                // this?" — with the severity-tinted symbol as the fallback.
+                // Severity still reads from the ring and never from the figure:
+                // the figure's colors are the object's, not the theme's.
+                if let figure = FleetFigure.resolve(deviceType: witness.deviceType,
+                                                    published: witness.publishedType) {
+                    FleetFigureView(figure)
+                        .frame(width: 34, height: 34)
+                        .accessibilityLabel(figure.title)
+                } else {
+                    Image(systemName: witness.deviceType.sfSymbol)
+                        .font(.title3)
+                        .foregroundStyle(isQuiet ? .secondary : Theme.color(role))
+                }
                 Text(witness.displayName)
                     .font(.caption2)
                     .lineLimit(1)

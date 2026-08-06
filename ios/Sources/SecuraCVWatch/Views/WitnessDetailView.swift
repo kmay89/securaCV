@@ -72,14 +72,19 @@ struct WitnessDetailView: View {
                     Label("Muted", systemImage: "bell.slash.fill")
                         .foregroundStyle(.secondary)
                 } else if store.isPhoneReachable {
-                    Button {
-                        store.mute(id: live.id)
-                    } label: {
-                        Label("Mute for 1 hour", systemImage: "bell.slash")
+                    // The same three lengths the phone offers, filtered by
+                    // the same rule (MuteDuration.offered) — one definition
+                    // of "until tonight" for both wrists and pockets.
+                    ForEach(MuteDuration.offered(at: Date())) { duration in
+                        Button {
+                            store.mute(id: live.id, duration: duration)
+                        } label: {
+                            Label(duration.title, systemImage: duration.sfSymbol)
+                        }
                     }
                 }
             } footer: {
-                Text("Muting quiets the nagging, never the truth — tamper and a failed signature still punch through. Unmute from your iPhone.")
+                Text("Muting quiets the nagging, never the truth — tamper and a failed signature still punch through. Every mute ends on its own; unmute early from your iPhone.")
             }
         }
         .navigationTitle(live.name)

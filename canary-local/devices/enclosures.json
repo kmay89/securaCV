@@ -533,7 +533,7 @@
   {
    "id": "c3-pocket-display-case",
    "name": "C3 pocket display case",
-   "for": "Waveshare ESP32-C3-LCD-1.47 (portrait; the C6 sibling's exact outline + panel, plus a TF slot and an RGB LED), three board builds: `headers=\"pillars\"` (the board as Waveshare ships it — brass corner pillars on, headers not soldered; the press bosses land on the flat pillar tops and the lid skirt is notched around each pillar), `\"none\"` (stripped, pillars unscrewed — the shallowest case), or `\"male\"` (down-facing headers + pillars — deepest, thin skirt clear of the pin rows). Three PETG spools: black body, yellow snap lid, white light band — the band does the job of Waveshare's clear-acrylic sandwich. Measured off the hardware: 1 mm behind the glass front, 2.8 mm tall — a U of light up both long walls and across the LED's end wall, tied by hidden inboard ribs so each wall presses in ONE unbroken strip, and the slot's inner face is derived from the cavity and asserted (the stick case's no-black-curtain lesson, kept). The glass is located, not clamped: bosses cut to the exact component stack (no preload), and the face touches the panel only on a land over the module border — the innermost 0.5 mm of lip is relieved 0.25 so the window rim never puts a contact line on the glass edge. Full-depth ear/chin insertion channels (BOOT/RST and the USB-C shell all overhang the PCB edges), true-stadium USB-C opening centered on the shell with an outer overmold relief, and a keyed lid: the board's M2 pillar pattern is asymmetric, so offered the wrong way round the skirt lands on the USB shell and refuses to close — the error is physical, not a rattle you discover later. Keyhole hangs it USB-down. microSD swaps with the lid off (the slot mouth faces down-board; no wall window could pass a card)",
+   "for": "Waveshare ESP32-C3-LCD-1.47 (portrait; the C6 sibling's exact outline + panel, plus a TF slot and an RGB LED), three board builds: `headers=\"pillars\"` (the board as Waveshare ships it — brass corner pillars on, headers not soldered; the press bosses span the measured 2.8 mm to land on the flat pillar tops and hold the board against the bezel, and the lid skirt is notched around each pillar), `\"none\"` (stripped, pillars unscrewed — the shallowest case), or `\"male\"` (down-facing headers + pillars — deepest, thin skirt clear of the pin rows). Three PETG spools, and the slots are roles: slot 1 body = YELLOW (bezel and lid both), slot 2 mark = BLACK, slot 3 light = WHITE. The white does the job of Waveshare's clear-acrylic sandwich: measured off the hardware at 1 mm behind the glass front, 2.8 mm tall, and it is ONE continuous U — up both long walls, around both far corners, across the LED's end wall — white through the full wall depth with no ties crossing it. Both earlier cuts are lessons kept: outer-skin webs chop the strip into dashes, inboard ribs put black slats in the light path, and a strip that stops short of the corners goes dark exactly where it turns. The black is the branding: the lid's back carries the \"Canary\" wordmark, debossed and filled at zero clearance so the AMS fuses it. The wordmark alone, not the bird — [`canary_mark_lib.scad`](./canary_mark_lib.scad) states a ~30 mm minimum for the mark's interior detail and this lid is 25.12 mm across. It carries the mark and the wall hanger (`lid_back`): the plate is 41 mm tall and the wordmark takes four of them, so the hanger sits high and the word reads below it. The hanger is an egg — [`canary_vent_lib.scad`](./canary_vent_lib.scad)'s house ovoid, mounted upright (wide base down, crown up). A round keyhole admits exactly one head size and a real wall screw did not fit the old Ø7 one; an egg tapers continuously, so one opening takes a range of heads — offer the head into the base, let the case drop, and the flank carries the screw to the crown, which is sized to the shank and will not give the head back. The through cut is asserted clear of the press bosses and the skirt's snap band. The glass is located, not clamped: bosses cut to the exact component stack (no preload), and the face touches the panel only on a land over the module border — the innermost 0.5 mm of lip is relieved 0.25 so the window rim never puts a contact line on the glass edge. BOOT/RST are printed-in-place flexure paddles: a press pad cut free by a 0.55 mm slot on three sides, hinged at its USB end, a boss on its back over the actuator — press it with a fingertip, no tool, nothing internal exposed, and the pad sits recessed so a pocket squeeze lands on the ear rim instead. USB-C is a true stadium hugging the shell at ~0.05 mm per side with a chamfered rim for the plug's overmold (the recessed ring it replaced left a 0.4 mm floor over the insertion slot and broke out on the first print). Keyed lid: the board's M2 pillar pattern is asymmetric, so offered the wrong way round the skirt lands on the USB shell and refuses to close — the error is physical, not a rattle you discover later. Asymmetric snap nubs give it a real click. microSD swaps with the lid off (the slot mouth faces down-board; no wall window could pass a card)",
    "status": "in-development",
    "note": "3 filaments, snap lid, keyed, 3 board builds, `gen_3mf.py c3`",
    "device": null,
@@ -7156,6 +7156,7 @@
         "bezel",
         "lid",
         "light",
+        "mark",
         "all",
         "exploded",
         "palette"
@@ -7324,8 +7325,7 @@
       },
       {
        "name": "pad_boss_l",
-       "default": "0.25",
-       "comment": "boss reach: leaves free_gap (asserted) before contact"
+       "default": "0.55"
       },
       {
        "name": "btn_up",
@@ -7379,13 +7379,69 @@
      ]
     },
     {
-     "name": "Mount",
-     "note": "",
+     "name": "Back face",
+     "note": "what the lid's outer face carries",
      "params": [
       {
-       "name": "opt_keyhole",
-       "default": "true",
-       "comment": "keyhole in the lid — hangs the case USB-down, slot up"
+       "name": "lid_back",
+       "default": "both",
+       "enum": [
+        "both",
+        "mark",
+        "keyhole"
+       ],
+       "comment": "back of the lid: brand, wall mount, or both"
+      },
+      {
+       "name": "kh_head_d",
+       "default": "9.5",
+       "comment": "the LARGEST screw head to hang on — the number that"
+      },
+      {
+       "name": "kh_shank_d",
+       "default": "4.2",
+       "comment": "the shank the crown grips"
+      },
+      {
+       "name": "kh_egg_l",
+       "default": "15.0",
+       "comment": "egg length along the hang axis; the taper's travel"
+      },
+      {
+       "name": "kh_cy",
+       "default": "5.0",
+       "comment": "hanger center, CASE frame (+Y = up when hung). Not"
+      }
+     ]
+    },
+    {
+     "name": "Branding",
+     "note": "the wordmark, debossed and filled in the mark filament",
+     "params": [
+      {
+       "name": "mark_word",
+       "default": "Canary",
+       "comment": "the DEVICE's name (the company's is securaCV)."
+      },
+      {
+       "name": "mark_word_h",
+       "default": "3.6",
+       "comment": "cap height — a FIT number, not a taste one, and"
+      },
+      {
+       "name": "mark_depth",
+       "default": "0.6",
+       "comment": "deboss depth; the inlay fills it flush"
+      },
+      {
+       "name": "mark_dx",
+       "default": "0",
+       "comment": "sideways nudge (same in both frames)"
+      },
+      {
+       "name": "mark_cy",
+       "default": "-11.0",
+       "comment": "wordmark center, CASE frame (+Y = up when hung),"
       },
       {
        "name": "opt_vent",
@@ -7393,12 +7449,13 @@
       },
       {
        "name": "vent_n",
-       "default": "4",
-       "comment": "slots per side wall"
+       "default": "6",
+       "comment": "slots per side wall — 12 in all, a column not a band"
       },
       {
        "name": "vent_pitch",
-       "default": "5.0"
+       "default": "4.0",
+       "comment": "tightened from 5.0 so six fit under the corner radius"
       },
       {
        "name": "vent_w",
@@ -7464,6 +7521,16 @@
        "name": "ear_skin",
        "default": "1.4",
        "comment": "wall skin left outside a button/USB clearance channel."
+      },
+      {
+       "name": "nub_w",
+       "default": "1.3",
+       "comment": "the ridge's DRAWN width in Y — tuned by feel, and the"
+      },
+      {
+       "name": "snap_play",
+       "default": "0.15",
+       "comment": "window clearance per side. Not tighter: a printed"
       },
       {
        "name": "skirt_clear",
@@ -7593,9 +7660,28 @@
        "comment": "beam's inner face"
       },
       {
-       "name": "free_gap",
-       "default": "2*tol_slide - pad_boss_l",
-       "comment": "boss tip → actuator tip"
+       "name": "pad_float",
+       "default": "tol_slide",
+       "comment": "board's X slide, each way"
+      },
+      {
+       "name": "pad_press_nom",
+       "default": "pad_boss_l - 2*tol_slide",
+       "comment": "centered board"
+      },
+      {
+       "name": "pad_press_min",
+       "default": "pad_press_nom - pad_float",
+       "comment": "board floated AWAY"
+      },
+      {
+       "name": "pad_press_max",
+       "default": "pad_press_nom + pad_float",
+       "comment": "board floated TOWARD"
+      },
+      {
+       "name": "pad_recess_eff",
+       "default": "pad_recess - pad_press_max"
       },
       {
        "name": "lip_l",
@@ -7622,12 +7708,62 @@
        "default": "snap_depth + snap_h/2 + 0.4"
       },
       {
+       "name": "snap_w",
+       "default": "nub_w + 2*snap_play"
+      },
+      {
        "name": "stand_d",
        "default": "pillars_in ? 4.6 : 4.2"
       },
       {
        "name": "stand_len",
        "default": "stack_eff - (pillars_in ? brass_h : 0)"
+      },
+      {
+       "name": "mark_w",
+       "default": "mark_word_ink_w(mark_word, mark_word_h)"
+      },
+      {
+       "name": "lid_has_mark",
+       "default": "(lid_back == \"both\" || lid_back == \"mark\")"
+      },
+      {
+       "name": "lid_has_kh",
+       "default": "(lid_back == \"both\" || lid_back == \"keyhole\")"
+      },
+      {
+       "name": "mark_y",
+       "default": "(lid_back == \"both\") ? mark_cy : 0"
+      },
+      {
+       "name": "kh_y",
+       "default": "(lid_back == \"both\") ? kh_cy   : 0"
+      },
+      {
+       "name": "kh_egg_w",
+       "default": "kh_head_d  + 2*tol_hole",
+       "comment": "the base: where the head enters"
+      },
+      {
+       "name": "kh_crown_w",
+       "default": "kh_shank_d + 2*tol_hole",
+       "comment": "the crown: where the shank grips"
+      },
+      {
+       "name": "kh_tip",
+       "default": "kh_crown_w / kh_egg_w"
+      },
+      {
+       "name": "kh_shift",
+       "default": "(kh_egg_l - kh_egg_w)/2"
+      },
+      {
+       "name": "skirt_free_y",
+       "default": "skirt_y/2 - skirt_wall"
+      },
+      {
+       "name": "skirt_free_x",
+       "default": "skirt_x/2 - skirt_wall"
       },
       {
        "name": "seam_z0",

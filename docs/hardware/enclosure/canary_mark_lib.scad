@@ -295,3 +295,90 @@ module mark_wordmark(word_h, word = "securaCV",
     text(word, size = word_h, font = font, halign = "center", valign = "center");
 }
 function mark_wordmark_h(word_h) = word_h;
+
+// ── MEASURED TYPE METRICS — how small the name may go, how wide it lands ────
+// The bird has mark_rib_ok()/mark_min_h() to refuse a size it cannot print at.
+// The WORDMARK had nothing: every consumer estimated its width with a local
+// constant and nobody gated its height at all. Both gaps are closed here, and
+// both numbers below are MEASURED — each candidate was rendered by OpenSCAD at
+// real millimeter size and its geometry read back, because this library's own
+// header is right that OpenSCAD has no text-metrics primitive at RENDER time.
+// It does not follow that the numbers have to be guessed; it follows that the
+// measuring happens once, offline, and the result is written down here.
+
+// How small the name may go.
+//
+// The test is morphological and it is the physical question directly: open the
+// letterforms with a disk of radius line_w/2 — the shape a bead of that width
+// can actually lay — and compare the surviving ink against the drawn ink.
+// Anything the disk cannot enter is ink the nozzle cannot put down. Measured
+// on "SECURACV.COM/QR", DejaVu Sans Bold, against a 0.4 mm bead:
+//
+//      cap 1.5 mm -> 26.8%      cap 2.5 mm -> 96.3%
+//      cap 2.0 mm -> 81.5%      cap 3.0 mm -> 98.9%      cap 3.6 mm -> 99.3%
+//
+// The knee is brutal and it sits between 2.0 and 2.5. Below it the letters are
+// not "small", they are ABSENT — at 1.5 mm three quarters of the drawing is
+// finer than the nozzle, which prints as a smudge with the rhythm of type.
+// (The few percent still missing at the top end is corner rounding, which a
+// nozzle does to every corner anyway and which no cap height removes.)
+//
+// The floor is set at 95% reachable ink, which lands at six line widths —
+// 2.4 mm at a 0.4 mm nozzle. Same floor the fit coupon states for the bird's
+// ribs ("below 0.4 it is thinner than one extrusion"), asked of type.
+function mark_word_min_h(line_w = 0.4) = 6.0 * line_w;
+
+// How wide the name lands.
+//
+// ⚠️ AN AVERAGE ADVANCE BOUNDS NOTHING. The single constant this line carried
+// (0.875, in two files) is calibrated for mixed case, and a first cut at
+// fixing it split the difference into two — one for caps, one for lowercase.
+// Both are averages, and an average is exactly the wrong tool for a guard:
+// "WWWWW" at 3.6 mm draws 26.8 mm and a caps average calls it 18.7, so the
+// assert whose whole job is to keep type on the part waves it through and the
+// word hangs 2.8 mm off each edge. Averages describe a typical word; a gate
+// has to hold for the worst one. (Caught in review on this very change —
+// thank you. The lowercase half had the same hole: "m" is 1.41, not 0.88.)
+//
+// So the table below is not an estimate of the average, it is the MEASURED
+// ADVANCE OF EVERY PRINTABLE GLYPH — ASCII 32..126, DejaVu Sans Bold, as a
+// fraction of cap height. Each was obtained the only way OpenSCAD allows:
+// render "cc", render "c", and take the difference, which is the pen movement
+// between the two copies. (Space carries no ink and went through a carrier
+// pair instead.) Nothing here is inferred from anything else.
+//
+// Summing advances OVER-reports on purpose: the true ink extent of a string
+// is the sum of its advances less the outer sidebearings, and kerned pairs
+// only ever pull tighter. Checked against eight measured strings — "Canary",
+// "CANARY", "securaCV", "SECURACV", "SECURACV.COM/QR", and the pathological
+// "WWWWW"/"MMMMMM"/"wwwwww" — it bounds every one, by 0.3% to 2.8%, never
+// under. Erring long is the point: the guard exists to refuse a name that
+// nearly fits, not to certify one that nearly does not.
+MARK_ADV = [
+    0.4722, 0.6186, 0.7067, 1.1365, 0.9437, 1.3590, 1.1828, 0.4153,   //  !"#$%&'
+    0.6199, 0.6199, 0.7093, 1.1365, 0.5152, 0.5629, 0.5152, 0.4954,   // ()*+,-./
+    0.9437, 0.9437, 0.9437, 0.9437, 0.9437, 0.9437, 0.9437, 0.9437,   // 01234567
+    0.9437, 0.9437, 0.5424, 0.5424, 1.1365, 1.1365, 1.1365, 0.7868,   // 89:;<=>?
+    1.3563, 1.0497, 1.0338, 0.9954, 1.1259, 0.9265, 0.9265, 1.1133,   // @ABCDEFG
+    1.1351, 0.5047, 0.5047, 1.0510, 0.8643, 1.3497, 1.1351, 1.1530,   // HIJKLMNO
+    0.9941, 1.1530, 1.0444, 0.9159, 0.9563, 1.1014, 1.0497, 1.4961,   // PQRSTUVW
+    1.0457, 0.9821, 0.9835, 0.6199, 0.4954, 0.6199, 1.1365, 0.6782,   // XYZ[\]^_
+    0.6782, 0.9153, 0.9709, 0.8040, 0.9709, 0.9199, 0.5208, 0.9709,   // `abcdefg
+    0.9656, 0.4649, 0.4649, 0.9020, 0.4649, 1.4133, 0.9656, 0.9318,   // hijklmno
+    0.9709, 0.9709, 0.6689, 0.8073, 0.6484, 0.9656, 0.8841, 1.2530,   // pqrstuvw
+    0.8749, 0.8841, 0.7894, 0.9656, 0.4954, 0.9656, 1.1365            // xyz{|}~
+];
+// The widest glyph in the table ("W"). Anything the table cannot identify —
+// a character outside printable ASCII, which this font may not even carry —
+// is charged this rather than skipped, so an unknown glyph can only ever make
+// the guard stricter. A word that silently costs nothing is how type walks
+// off a part.
+function mark_adv_max() = 1.4961;
+function _mark_adv_of(c) = let (i = ord(c) - 32)
+    (i >= 0 && i < len(MARK_ADV)) ? MARK_ADV[i] : mark_adv_max();
+function _mark_adv_sum(word, i = 0) =
+    i >= len(word) ? 0 : _mark_adv_of(word[i]) + _mark_adv_sum(word, i + 1);
+// The bounded ink width of `word` set at cap height `h`. Use this rather than
+// len(word)*k*h — that form cannot tell "Canary" from "CANARY" (17% apart)
+// and cannot tell either from "WWWWW" (43% apart).
+function mark_word_ink_w(word, h) = _mark_adv_sum(word) * h;

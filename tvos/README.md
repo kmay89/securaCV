@@ -5,6 +5,16 @@ record** — not a video wall. The what-and-why lives in
 [`../docs/tvos/README.md`](../docs/tvos/README.md); the self-heal / self-publish /
 self-update design is in [`../docs/tvos/AUTOPIPELINE.md`](../docs/tvos/AUTOPIPELINE.md).
 
+> **The Apple TV also stands watch.** Beyond drawing the verified record, the
+> Wall can be the household's *resident*: turn on "Stand watch" and this Apple
+> TV posts the coarse away wake — into your own iCloud, one class word, no
+> device name or time — when a Canary goes dark or a chain stops verifying.
+> That closes the hole in the away path, because the phone that left the house
+> is the one device that can no longer notice anything. Opt-in, off until you
+> ask, and honest about its limit: tvOS pauses an app that is not on screen,
+> so the watch runs while the Wall is the app on the TV. See
+> [`ResidentWatch.swift`](WitnessWall/Sources/WitnessWall/ResidentWatch.swift).
+>
 > **Status: built and continuously tested; the App Store upload is waiting on
 > an Apple Developer account.** The app and its verification core are real and
 > are exercised on every PR by

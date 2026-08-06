@@ -106,8 +106,59 @@ int main() {
     mfg[2] = 0x01;  // a chirp type, not the beacon type
     CHECK(!fleet_beacon_parse(mfg, FLEET_BEACON_MFG_LEN, &f), "reject wrong type byte");
     mfg[2] = 0x10;
-    mfg[3] = 0x02;  // wrong schema version
-    CHECK(!fleet_beacon_parse(mfg, FLEET_BEACON_MFG_LEN, &f), "reject wrong schema version");
+    mfg[3] = 0x02;  // v2 version on a v1-length blob — length/version must agree
+    CHECK(!fleet_beacon_parse(mfg, FLEET_BEACON_MFG_LEN, &f), "reject v2 version at v1 length");
+  }
+
+  // ── v2: detection class + confidence ride two trailing bytes ─────────
+  {
+    uint8_t p[FLEET_BEACON_PAYLOAD_V2_LEN];
+    const uint8_t flags = FLEET_BEACON_FLAG_ALERT | FLEET_BEACON_FLAG_ON_WIFI_STA;
+    size_t n = fleet_beacon_build_v2(p, flags, /*battery=*/-1, /*health=*/90,
+                                     /*chain=*/0x0101, /*fp0=*/0xAA, /*fp1=*/0xBB,
+                                     FLEET_BEACON_DETECT_PERSON, /*score=*/87);
+    CHECK(n == 11,   "v2 builder returns 11 payload bytes");
+    CHECK(p[0] == 0x10, "v2 keeps the 0x10 type byte");
+    CHECK(p[1] == 0x02, "v2 schema version is 0x02");
+    CHECK(p[9] == FLEET_BEACON_DETECT_PERSON, "v2 detect class byte");
+    CHECK(p[10] == 87, "v2 detect score byte");
+
+    uint8_t mfg[FLEET_BEACON_MFG_V2_LEN];
+    mfg[0] = FLEET_BEACON_COMPANY_ID & 0xFF;
+    mfg[1] = (FLEET_BEACON_COMPANY_ID >> 8) & 0xFF;
+    for (size_t i = 0; i < FLEET_BEACON_PAYLOAD_V2_LEN; i++) mfg[2 + i] = p[i];
+
+    FleetBeaconFields f{};
+    CHECK(fleet_beacon_parse(mfg, sizeof(mfg), &f), "parse accepts a v2 blob");
+    CHECK(f.flags == flags,           "v2 parsed flags match (alert set)");
+    CHECK(f.battery_pct == -1,        "v2 parsed battery unknown");
+    CHECK(f.health_pct == 90,         "v2 parsed health matches");
+    CHECK(f.chain_lo16 == 0x0101,     "v2 parsed chain matches");
+    CHECK(f.fp_b0 == 0xAA && f.fp_b1 == 0xBB, "v2 parsed fp bytes match");
+    CHECK(f.detect_class == FLEET_BEACON_DETECT_PERSON, "v2 parsed detect class");
+    CHECK(f.detect_score == 87,       "v2 parsed detect score");
+
+    // Out-of-range score maps to the unknown sentinel -> -1.
+    fleet_beacon_build_v2(p, 0, -1, -1, 0, 0, 0, FLEET_BEACON_DETECT_NONE, 150);
+    CHECK(p[10] == FLEET_BEACON_SCORE_UNKNOWN, "score >100 -> 0xFF unknown");
+    for (size_t i = 0; i < FLEET_BEACON_PAYLOAD_V2_LEN; i++) mfg[2 + i] = p[i];
+    CHECK(fleet_beacon_parse(mfg, sizeof(mfg), &f), "parse accepts idle v2 blob");
+    CHECK(f.detect_class == FLEET_BEACON_DETECT_NONE, "idle v2 class is NONE");
+    CHECK(f.detect_score == -1,       "0xFF score decodes to -1 unknown");
+
+    // A v1 blob decodes with the detect fields at their absent values.
+    uint8_t p1[FLEET_BEACON_PAYLOAD_LEN];
+    fleet_beacon_build(p1, 0, 50, 50, 0, 0x12, 0x34);
+    uint8_t mfg1[FLEET_BEACON_MFG_LEN];
+    mfg1[0] = 0xFF; mfg1[1] = 0xFF;
+    for (size_t i = 0; i < FLEET_BEACON_PAYLOAD_LEN; i++) mfg1[2 + i] = p1[i];
+    CHECK(fleet_beacon_parse(mfg1, sizeof(mfg1), &f), "v1 blob still parses");
+    CHECK(f.detect_class == FLEET_BEACON_DETECT_NONE && f.detect_score == -1,
+          "v1 blob yields NONE/-1 detect fields");
+
+    // Length/version agreement holds in the other direction too.
+    mfg[3] = FLEET_BEACON_VERSION;  // v1 version on a v2-length blob
+    CHECK(!fleet_beacon_parse(mfg, sizeof(mfg), &f), "reject v1 version at v2 length");
   }
 
   printf(g_failures == 0 ? "\nALL PASS\n" : "\n%d FAILURE(S)\n", g_failures);

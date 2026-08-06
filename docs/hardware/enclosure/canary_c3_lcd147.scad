@@ -100,6 +100,53 @@
 //                        snap skirt goes thin to clear the pin rows.
 //     Every way the board is captured by its edges — nothing screws into it.
 //
+//  ── THE BACK IS THE BRAND *AND* THE MOUNT ────────────────────────────────
+//  It carries both, because it turned out there was room: the plate is
+//  41 mm tall and the wordmark takes four of them. The hanger sits high,
+//  the "Canary" wordmark reads below it, and `lid_back` still offers
+//  either one alone. What keeps them honest is not taste but asserts —
+//  they must clear each other by 2 mm, and the hanger (the only cut that
+//  goes THROUGH) must additionally clear the press bosses and stay out of
+//  the skirt's snap band, which it would otherwise notch.
+//
+//  THE HANGER IS AN EGG. Not decoration: the old Ø7 head circle admitted
+//  exactly one screw size, and a screw already in a wall did not fit it
+//  (kmay89). An egg tapers continuously from base to crown, so ONE opening
+//  serves a RANGE of heads — offer the head in at whatever width clears it,
+//  let the case drop, and the flank carries the screw up to the crown,
+//  which is sized to the shank and will not give the head back. The shape
+//  is canary_vent_lib's egg2d — the house ovoid, one drawing for the line —
+//  used in the mounted-upright orientation that library's doctrine asks
+//  for: wide base DOWN (the entry, at the USB end), crown UP.
+//
+//  THE BIRD IS NOT ON THIS PART, and that is not an omission. The house
+//  mark (canary_mark_lib.scad) has interior detail — a C spiralled into the
+//  wing, a V in the tail — with a stated MINIMUM SIZE of roughly 30 mm.
+//  This lid is 25.12 mm across. The bird would be wider than the part
+//  before it was legible on it, so this face carries the WORDMARK ALONE,
+//  which is exactly what that library's MINIMUM SIZE section prescribes.
+//  The alternative — a second, simplified bird for small parts — is the one
+//  thing that library exists to prevent. Same call the hallway stick's back
+//  plate made, for the same reason.
+//
+//  AND THE URL IS NOT ON THIS PART EITHER, for the same arithmetic one step
+//  further on. Putting "SECURACV.COM/QR" under the wordmark was offered and
+//  it does not survive contact with a nozzle: the plate allows 21.1 mm of
+//  type, and that string draws 35.0 mm at mark_word_min_h() — the cap height
+//  where a 0.4 mm bead still reaches the letterforms at all — and 43.7 mm at
+//  the size that prints as cleanly as "Canary" does. It is not close, and it
+//  does not become close by trimming the string: even "SECURACV" alone wants
+//  24.2 mm. What this plate holds is SEVEN characters set as well as the
+//  wordmark is, or eight if you spend the whole floor. "Canary" is six.
+//  A URL is fifteen, and no kerning recovers that.
+//  Shrinking it to fit is the move that looks like it works and is the one
+//  that fails: at the 1.5 mm cap height where the string finally fits the
+//  width, a 0.4 mm bead reaches 26.8% of the drawing. The render is perfect.
+//  The part comes off the plate with a gray smear under the wordmark.
+//  The line's answer to "put the link on the product" is the 7" desk dock,
+//  whose deck is big enough for the real QR (canary_s3_lcd7_qr.scad, the same
+//  SECURACV.COM/QR, at 1.3 mm modules). A 25 mm lid is not that surface.
+//
 //  ── THE LID IS KEYED — it fits ONE way, and that is load-bearing ─────────
 //  The C6 case's lid is 180°-rotation symmetric. This one cannot be: the
 //  board's four M2 pillars are NOT on a symmetric pattern (USB-end pair at
@@ -119,8 +166,16 @@
 //  cannot admit a card is just a hole.
 //
 //  ── PRINTING ─────────────────────────────────────────────────────────────
-//  Three spools, all PETG:  body BLACK, lid YELLOW (the house accent — on
-//  this case the whole lid is the mark), band WHITE/natural.
+//  Three spools, all PETG, and the SLOTS ARE ROLES — the same three roles
+//  the hallway stick uses, so an operator who has printed one loads the
+//  other without re-learning the spools:
+//        slot 1 = BODY      → YELLOW   (bezel AND lid: the case is yellow)
+//        slot 2 = MARK      → BLACK    (the "Canary" wordmark on the back)
+//        slot 3 = LIGHT     → WHITE / natural (the band)
+//  ⚠️ This is the INVERTED palette, and the loading changed with it. The
+//     first three prints ran slot 1 BLACK / slot 2 YELLOW; the case is now
+//     yellow with black branding, so slot 1 and slot 2 SWAP SPOOLS. The
+//     roles did not move — only the colors in them did.
 //  The band is one closed U, and that changes how it is installed:
 //    - Multi-material (the first-class path, what gen_3mf.py c3 packages):
 //      band_clear = 0, bezel + band as ONE object — the U fuses in.
@@ -132,7 +187,9 @@
 //      seam_dz + seam_h), drop the U into the open pocket, resume.
 //      band_clear 0.10 sizes that drop-in.
 //  Bezel prints FACE-DOWN, lid prints OUTER-FACE-DOWN, the U flat on its
-//  bottom face. No supports anywhere.
+//  bottom face. No supports anywhere. The wordmark is a DEBOSS in the lid's
+//  outer face filled by the mark volume, so it prints on the build plate —
+//  first layer, no overhang, crisp letters.
 //
 //  Orientation: +Y = up (portrait), USB-C exits the BOTTOM (−Y) short wall,
 //  +Z = toward the glass. The RGB LED lives at the TOP (+Y) end.
@@ -150,8 +207,11 @@
 //     pcb_t, usb_proud, and the pillar pattern insets.
 // ============================================================================
 
+use <canary_mark_lib.scad>   // the house mark; this part wears the wordmark
+use <canary_vent_lib.scad>   // the house egg — here it is the hanger, not a vent
+
 /* [What to render] */
-part  = "all";      // ["bezel","lid","light","all","exploded","palette"]
+part  = "all";      // ["bezel","lid","light","mark","all","exploded","palette"]
 // board build: "pillars" = as Waveshare ships it (brass corner pillars on, headers not soldered), "none" = stripped (pillars unscrewed too), "male" = down-facing headers + pillars
 headers = "pillars";   // ["pillars","none","male"]
 
@@ -246,7 +306,22 @@ pad_recess = 0.6;  // pad face below the ear's outer face: the squeeze guard,
                    // (0.8). Deeper recess = thinner beam = softer press
 pad_boss_d = 2.6;  // press boss Ø on the pad's back — rides inside the
                    // actuator channel, lands square on the switch nub
-pad_boss_l = 0.25; // boss reach: leaves free_gap (asserted) before contact
+// Boss reach, and the number print 3 proved wrong. It was 0.25, chosen to
+// leave a positive gap before contact — and 0.25 mm is BELOW ONE 0.4 mm
+// EXTRUSION, so the slicer had nothing to lay: the boss rounded back into the
+// beam and the paddles pressed on air (kmay89). The same floor the wordmark
+// answers to, on the other side of the same part; a feature thinner than the
+// nozzle is not a small feature, it is an absent one.
+// It also has to cross the board's X FLOAT, which the old gap arithmetic did
+// not model at all. See pad_press_* in Derived: the board is free to slide
+// tol_slide either way inside its cavity, so a gap budgeted from a CENTERED
+// board is off by ±0.2 on each side — one button tightens, the other opens
+// to 0.35, and 0.35 mm of dead travel is most of what this paddle has.
+// 0.55 clears the nozzle (1.4 beads) and reaches across the float: worst case
+// a 0.05 gap, best case 0.35 of interference, which the beam absorbs — it is
+// ~3x softer than the switch's own spring, so interference bows the paddle
+// rather than depressing the switch. Asserted three ways below.
+pad_boss_l = 0.55;
 btn_up  = 7.0;     // button center up from the USB (−Y) PCB edge. The first
                    // assembly (photo, kmay89) caught the drawing's 11.31 as a
                    // CENTER-referenced dim, not edge-referenced: the board's
@@ -278,17 +353,106 @@ band_clear = 0.10;   // per-face drop-in clearance (pause-and-insert flow);
 // the seam sits in the light path on one face or the other; the pipe must
 // be white through the full wall depth, so the seam has none.
 
-/* [Mount] */
-opt_keyhole = true;  // keyhole in the lid — hangs the case USB-down, slot up
-kh_head_d = 7.0; kh_shank_d = 4.2; kh_slot_l = 7.0;
+/* [Back face] — what the lid's outer face carries */
+// "both"    the hanger high on the back, the wordmark below it. There is
+//           room: the plate is 41 mm tall and the wordmark takes 4 of it.
+//           The two are placed by kh_cy / mark_cy and the asserts keep them
+//           apart, off the press bosses, and out of the skirt band.
+// "mark"    wordmark alone, centered.
+// "keyhole" hanger alone, centered.
+lid_back = "both";   // ["both","mark","keyhole"] back of the lid: brand, wall mount, or both
+//
+// THE HANGER IS AN EGG, and that is not decoration — it is the fix for a
+// real failure. The old keyhole was a Ø7 head circle hulled into a slot,
+// and a screw already in a wall did not fit it (kmay89). A round hole
+// admits exactly ONE head size; the egg's flank tapers continuously from
+// the base to the crown, so ONE opening takes a range of heads — enter at
+// whatever width clears, drop, and the taper grips the shank. The shape is
+// canary_vent_lib's egg2d, the house ovoid, used here in the mounted-
+// upright orientation that library's doctrine asks for: wide base DOWN
+// (the entry), crown UP (where the screw ends up when the case hangs).
+// These two are NOMINAL SCREW dimensions — measure the screw, write it here.
+// The openings are derived from them further down by adding this catalog's
+// printed-hole clearance, which is the part the first cut of this egg got
+// wrong: it used the nominal numbers RAW (a 9.6 opening for a 9.5 head,
+// 0.05 per side), and on FDM PETG that is a hole that binds — the very
+// failure the egg was drawn to fix, reintroduced one line lower down.
+kh_head_d  = 9.5;   // the LARGEST screw head to hang on — the number that
+                    // was 7.0 and too small for a screw already in a wall
+kh_shank_d = 4.2;   // the shank the crown grips
+kh_egg_l = 15.0;    // egg length along the hang axis; the taper's travel
+kh_cy    = 5.0;     // hanger center, CASE frame (+Y = up when hung). Not
+                    // higher: widening the egg for real screw heads pushed
+                    // its footprint into the FAR press bosses at y 16.2,
+                    // and a through cut there would hole the boss that
+                    // holds the board down. The assert caught it at 8.0;
+                    // 5.0 clears the bosses and still puts the crown —
+                    // where the screw actually ends up — at y 12.5, well
+                    // above the case's middle, so it hangs plumb
+
+/* [Branding] — the wordmark, debossed and filled in the mark filament */
+mark_word   = "Canary";  // the DEVICE's name (the company's is securaCV).
+                         // The library's mark_wordmark() defaults to the
+                         // company; this part is a Canary, so it says so
+mark_word_h = 3.6;       // cap height — a FIT number, not a taste one, and
+                         // hemmed in from both sides on a plate this narrow.
+                         // Above: mark_word_ink_w() must keep the word off
+                         // the edges (3.6 draws 19.0 mm of the 21.1 allowed).
+                         // Below: mark_word_min_h() is the point where a
+                         // 0.4 mm bead stops reaching the letterforms —
+                         // 2.4 mm, so 3.6 has half again the height it
+                         // strictly needs. Both are asserted further down;
+                         // neither used to be, and the low one is the one
+                         // that would have failed silently
+mark_depth  = 0.6;       // deboss depth; the inlay fills it flush
+mark_dx = 0;             // sideways nudge (same in both frames)
+mark_cy = -11.0;         // wordmark center, CASE frame (+Y = up when hung),
+                         // so it reads BELOW the hanger. Both single-feature
+                         // modes ignore this and center instead
+// (The per-character advance constant that used to live here is gone: the
+//  width now comes from the library's mark_word_ink_w(), which sums the
+//  MEASURED advance of each glyph rather than averaging. The local 0.875 was
+//  calibrated on "Canary" and was right for it — and wrong by 11% for a word
+//  in caps, which is precisely the word this face was next asked to carry,
+//  and wrong by 43% for one built from wide glyphs. An average cannot guard
+//  a worst case. See MEASURED TYPE METRICS in canary_mark_lib.scad.)
 
 /* [Ventilation] — side-wall slots only; the row sits BEHIND the light band
    so the white line stays whole. The lid used to carry a matching grille —
    print 2's verdict (kmay89) was that tiny holes in the back read as
-   confusion, not function, so the lid is now a clean plate: keyhole only. */
+   confusion, not function, so the lid is now a clean plate: keyhole only.
+
+   ── IT IS A CHIMNEY, AND IT HAS TO BE ONE ────────────────────────────────
+   This case HANGS, and the hanger decides which way: the egg takes the screw
+   USB-down, so +Y is UP on the wall. That makes the vent row a chimney whether
+   it was designed as one or not — warm air off the C3 module leaves the board,
+   rises, and looks for the highest opening it can find.
+
+   The row used to be four slots on a 5.0 pitch, spanning y −4.4 .. +12.0, and
+   measured against the hung orientation that is a row in the MIDDLE of the
+   wall. Above the top slot sat 6.4 mm of cavity with no opening at all — the
+   exact volume the hot air rises into, capped. Convection needs a low way in
+   and a HIGH way out, and the high way out was the part that was missing;
+   what the four slots gave was cross-flow across the board's middle, which is
+   the one place convection does not need help.
+
+   Six slots on a 4.0 pitch instead: same lower end (the ears set that, and it
+   is where the cool air comes in), carried up to y +17.0, which is as far as
+   the outer corner radius allows and 1.4 mm short of the cavity's top. The
+   dead pocket goes from 6.4 mm to 1.4 mm, and free area goes from 38.6 to
+   57.9 mm2 — but the area is the smaller half of it. The point is that the
+   TOP of the column is now open, so the air that rises has somewhere to go.
+
+   The low intake stays the USB stadium, which is the correct inlet by
+   position (it is the lowest opening on the hung case) and stays open around
+   a plugged cable. It is deliberately NOT a second row of holes low in the
+   side walls: below the ears there are 1.6 mm of wall left before the cavity
+   ends, which is not a slot, it is a crack. Nothing goes in the −Y wall
+   either — that face sits on the desk when the case is not hung, and an
+   intake you can blind by putting the thing down is worse than none. */
 opt_vent = true;
-vent_n = 4;          // slots per side wall
-vent_pitch = 5.0;
+vent_n = 6;          // slots per side wall — 12 in all, a column not a band
+vent_pitch = 4.0;    // tightened from 5.0 so six fit under the corner radius
 vent_w = 1.4;
 
 /* [Board pillars] — the four M2 positions, off the Waveshare drawing. NOT a
@@ -330,7 +494,30 @@ ear_skin = 1.4;  // wall skin left outside a button/USB clearance channel.
    positive click, firm retention), engagement is deeper (snap_proud 0.7),
    and the skirt runs at its own snug clearance (skirt_clear) instead of
    the general press tolerance. */
-snap_w = 3.2; snap_h = 1.6; snap_depth = 1.4; snap_proud = 0.7;
+snap_h = 1.6; snap_depth = 1.4; snap_proud = 0.7;
+// ⚠️ THE WINDOW IS DERIVED FROM THE RIDGE, and it was not before — that is
+// the lid-slide print 3 found (kmay89: "the clips slide a little once
+// connected"). `snap_w` was ONE number used for two different things: it
+// placed the ridge's ends AND sized the window. But the ridge is a hull whose
+// end plates draw 1.0 mm in from that number on each side, so a snap_w of 3.2
+// drew a 1.30 mm ridge and cut a 3.20 mm window — 1.9 mm of slack, ±0.95 mm
+// of free travel in Y.
+// Normally the skirt would hide that, since it seats in the cavity at 0.05.
+// It cannot here: the skirt's USB-end wall is the KEY, cut away by the USB
+// relief, so in that one direction the skirt locates nothing and the ridge in
+// its oversized window is the only stop the lid has. The two defects compose,
+// and that is why it shows.
+// So the ridge's drawn width is the parameter now, and the window follows it.
+// One number cannot size two features that are not the same size.
+nub_w = 1.3;         // the ridge's DRAWN width in Y — tuned by feel, and the
+                     // click is right, so this is unchanged in substance:
+                     // 1.3 is exactly what the old arithmetic was drawing
+snap_play = 0.15;    // window clearance per side. Not tighter: a printed
+                     // window comes out a hair small and the lid still has
+                     // to enter. The ridge's outer face slopes away toward
+                     // both ends (its peak point sits at mid-Y), so it cams
+                     // itself into the window rather than needing to arrive
+                     // aligned
 skirt_clear = 0.05;  // skirt-to-cavity clearance per side — snug on purpose:
                      // the skirt IS the seat, the snap only keeps it there
 nub_y0 = 3.6;    // nub pair centers (±Y) on the ±X walls — the same
@@ -403,7 +590,30 @@ pad_rec_cy = btn_y + pad_slot/2;                 //  free end only)
 pad_h_eff = min(pad_h, 2*(bez_h - 1.2 - pad_slot - z_btn));
 pad_rec_z = pad_h_eff + 2*pad_slot;
 x_skin_in = xc/2 + btn_reach;                    // beam's inner face
-free_gap  = 2*tol_slide - pad_boss_l;            // boss tip → actuator tip
+// ── What the boss actually has to cross ────────────────────────────────────
+// Note first what CANNOT go wrong here: btn_proud cancels. The beam sits at
+// xc/2 + btn_proud + tol_slide and the actuator tip at board_w/2 + btn_proud,
+// so the term appears on both sides and drops out. Mis-measuring how far the
+// switch stands proud makes the ear bulge wrong, never the gap — which is
+// worth stating because btn_proud is a MEASURE item and the obvious suspect.
+//
+// What DOES go wrong is the board's freedom. It is held by its edges in a
+// cavity cut tol_slide wider per side, so it can sit anywhere across 2*tol_
+// slide of X. The old arithmetic modeled it CENTERED and stopped there:
+// one gap, 0.15, quietly assumed for both buttons at once. It is not one gap.
+// Whatever the board does for one side it does in reverse for the other, so
+// the pair is always nominal ± pad_float, and the design has to hold at BOTH
+// ends of that. Positive = the boss stands into the actuator (interference,
+// taken up by the beam), negative = a gap the paddle must close before the
+// switch even begins to move.
+pad_float     = tol_slide;                       // board's X slide, each way
+pad_press_nom = pad_boss_l - 2*tol_slide;        // centered board
+pad_press_min = pad_press_nom - pad_float;       // board floated AWAY
+pad_press_max = pad_press_nom + pad_float;       // board floated TOWARD
+// The squeeze guard is what interference spends: the pad bows out by the
+// interference, so the recess that keeps a gripping finger off the pad is
+// this much shallower than pad_recess in the worst case.
+pad_recess_eff = pad_recess - pad_press_max;
 
 // window lip: (module − active area)/2 per side; the LAND is what is left of
 // it outside the relieved band — that ring is the panel's only contact
@@ -416,6 +626,8 @@ land_w_y = lip_l - glass_relief_w;
 skirt_wall = (headers == "male") ? 1.0 : 1.6;
 skirt_dep  = snap_depth + snap_h/2 + 0.4;
 skirt_x = xc - 2*skirt_clear;   skirt_y = yc - 2*skirt_clear;
+// the snap WINDOW, derived from the ridge that has to sit in it — never typed
+snap_w = nub_w + 2*snap_play;
 
 // press bosses: cut to the EXACT stack (no preload — rule 3; "just lightly
 // press" is exact contact, not crush). With pillars on the board they span
@@ -431,6 +643,38 @@ stand_case = [[ board_w/2 - hole_ix_usb, -(board_l/2 - hole_iy_usb)],
               [-(board_w/2 - hole_ix_far), board_l/2 - hole_iy_far ]];
 
 function nub_ys() = [-nub_y0, nub_y0];
+
+// the wordmark's estimated width — the assert below is the only thing
+// standing between a taste change and type running off the part
+mark_w = mark_word_ink_w(mark_word, mark_word_h);
+
+// ── The back face's two features, placed in CASE coordinates ───────────────
+// Only "both" honors the offsets; a single feature centers itself, so
+// switching modes never leaves the one thing on the plate sitting off-center.
+lid_has_mark = (lid_back == "both" || lid_back == "mark");
+lid_has_kh   = (lid_back == "both" || lid_back == "keyhole");
+mark_y = (lid_back == "both") ? mark_cy : 0;
+kh_y   = (lid_back == "both") ? kh_cy   : 0;
+// BOTH openings are a nominal screw dimension PLUS this catalog's
+// printed-hole clearance — the same `2*tol_hole` (0.3 per side) every screw
+// hole in this directory uses, and which this file declared but never spent
+// until the review caught it. A cutter drawn at the nominal size is a hole
+// that binds once the nozzle has had its say.
+kh_egg_w   = kh_head_d  + 2*tol_hole;   // the base: where the head enters
+kh_crown_w = kh_shank_d + 2*tol_hole;   // the crown: where the shank grips
+// The egg's tip ratio is DERIVED, not styled: it is exactly the crown over
+// the base, so the egg's crown IS the keyhole's slot. Overriding the
+// library's brand tip is deliberate and this is the reason (its header asks
+// that an override say why).
+kh_tip = kh_crown_w / kh_egg_w;
+// egg2d spans y ∈ [−w/2, l − w/2]; this is the shift that centers it
+kh_shift = (kh_egg_l - kh_egg_w)/2;
+kh_lo = kh_y - kh_egg_l/2;   kh_hi = kh_y + kh_egg_l/2;
+// the wordmark's visual band — cap height plus a descender's worth
+mark_lo = mark_y - mark_word_h*0.75;   mark_hi = mark_y + mark_word_h*0.75;
+// the skirt ring stands inside these; a THROUGH cut may not reach it
+skirt_free_y = skirt_y/2 - skirt_wall;
+skirt_free_x = skirt_x/2 - skirt_wall;
 
 // ── The light band's volume, derived, never composed ────────────────────────
 // The S3 stick's hard lesson verbatim: a band slot parked by wall arithmetic
@@ -481,12 +725,23 @@ assert(!pillars_in || board_w/2 - hole_ix_usb + brass_d/2 <= xc/2 - 0.15,
            " reaches x=", board_w/2 - hole_ix_usb + brass_d/2,
            ", into the bezel wall at ", xc/2, " — re-measure hole_ix_usb ",
            "and brass_d (the 1.27 reading of the drawing does this)"));
-assert(!pillars_in || nub_y0 + snap_w/2 - 0.95 <=
+// ⚠️ This one measures the RIDGE (nub_w), not the window (snap_w) — it is the
+// only one of the three that does, because it is the only one asking about a
+// feature on the LID. The other two ask whether the hole in the bezel wall
+// clears the paddle recess and the corner posts; this asks whether the lid's
+// ridge clears the brass pillars, and those are different sizes now.
+// It used to read `snap_w/2 - 0.95`, a hand-tuned correction that reproduced
+// the ridge's 0.65 half-width back when snap_w was 3.2 and sized both. The
+// moment snap_w became the window alone, that correction went to -0.15 — the
+// gate believed the ridge reached INBOARD of its own center and understated it
+// by 0.8 mm. Exactly the defect this commit set out to fix, re-introduced one
+// assert away from it, and caught in review. Derive it, never correct it.
+assert(!pillars_in || nub_y0 + nub_w/2 <=
        (board_l/2 - hole_iy_usb) - brass_d/2 - 0.4,
-       str("a snap nub reaches y=", nub_y0 + snap_w/2 - 0.95,
+       str("a snap nub reaches y=", nub_y0 + nub_w/2,
            ", into the USB-end pillar's flank at y=",
            (board_l/2 - hole_iy_usb) - brass_d/2,
-           " — pull nub_y0 in or slim snap_w"));
+           " — pull nub_y0 in or slim nub_w"));
 assert(headers != "male" || hdr_drop > back_stack, "headers=male but hdr_drop is shallower than the stripped-board clearance");
 assert(headers != "male" || tol_slide + hdr_inset - 0.35 >= skirt_clear + skirt_wall + 0.25,
        "skirt would sit in the header pin row — thin skirt_wall or re-measure hdr_inset");
@@ -498,10 +753,25 @@ assert(!opt_btn || btn_y - ear_w/2 >= -(yo/2 - r_out) + 0.4,
 assert(!opt_btn || (pad_beam >= 0.6 && pad_beam <= 1.0),
        str("paddle beam is ", pad_beam, " mm — under 0.6 won't survive handling, ",
            "over 1.0 won't flex to the click. Tune ear_skin/pad_recess."));
-assert(!opt_btn || (free_gap >= 0.08 && free_gap <= 0.3),
-       str("boss free gap is ", free_gap, " mm — under 0.08 preloads the switch ",
-           "(a case that holds its own button down), over 0.3 wastes travel. ",
-           "Tune pad_boss_l against btn_proud."));
+// The boss, gated three ways — it has to PRINT, it has to REACH across the
+// board's float on both sides at once, and it must not eat the squeeze guard.
+// The old single gate asked only that a positive gap exist on a centered
+// board, which is the one case that never happens on both sides together.
+assert(!opt_btn || pad_boss_l >= 0.4,
+       str("the press boss stands ", pad_boss_l, " mm off the beam — under ",
+           "one 0.4 mm extrusion, so the slicer has nothing to lay and the ",
+           "boss rounds back into the wall. This is the 0.25 that printed as ",
+           "nothing and left the paddles pressing on air. Raise pad_boss_l."));
+assert(!opt_btn || pad_press_min >= -0.1,
+       str("with the board floated away the boss still stands ",
+           -pad_press_min, " mm short of the actuator — that is dead travel ",
+           "before the switch begins to move, on a paddle that has little to ",
+           "spare. Raise pad_boss_l, or tighten tol_slide to shrink the float."));
+assert(!opt_btn || pad_recess_eff >= 0.2,
+       str("at worst-case interference the pad bows out to within ",
+           pad_recess_eff, " mm of the ear face — the recess IS the squeeze ",
+           "guard, and under 0.2 a gripping finger starts landing on the pad ",
+           "instead of the rim. Lower pad_boss_l or deepen pad_recess."));
 assert(!opt_btn || pad_boss_d <= btn_ch_w - 0.6,
        "the press boss won't clear the actuator channel — shrink pad_boss_d");
 assert(!opt_btn || pad_h_eff >= pad_boss_d + 1.4,
@@ -526,11 +796,99 @@ assert(!light_seam || bez_h - snap_depth - snap_h/2 >= seam_z0 + seam_h + 0.6,
 assert(!opt_vent || vent_z1 - vent_z0 >= 1.5, "no room for wall vents behind the band — set opt_vent=false");
 assert(!opt_vent || vent_dy + (vent_n-1)*vent_pitch/2 + vent_w/2 <= yc/2 - 0.8,
        "vent row overruns the side wall — fewer slots (vent_n) or tighter pitch");
+// ── The back face: two features, and everything they can run into ─────────
+assert(lid_back == "both" || lid_back == "mark" || lid_back == "keyhole",
+       str("lid_back is \"", lid_back, "\" — it must be \"both\", \"mark\" ",
+           "or \"keyhole\"."));
+// the two of them, against each other
+assert(lid_back != "both" || kh_lo - mark_hi >= 2.0,
+       str("the hanger (down to y=", kh_lo, ") and the wordmark (up to y=",
+           mark_hi, ") are closer than 2 mm — separate kh_cy and mark_cy, ",
+           "or shrink kh_egg_l/mark_word_h."));
+// the hanger is a THROUGH cut, so unlike the deboss it can hit real structure
+assert(!lid_has_kh || kh_hi <= skirt_free_y - 0.8,
+       str("the hanger reaches y=", kh_hi, ", into the lid skirt's band at ",
+           skirt_free_y, " — it would cut a notch out of the snap wall. ",
+           "Lower kh_cy or shorten kh_egg_l."));
+assert(!lid_has_kh || -kh_lo <= skirt_free_y - 0.8,
+       "the hanger reaches the far skirt band — raise kh_cy or shorten kh_egg_l");
+assert(!lid_has_kh || kh_egg_w/2 <= skirt_free_x - 0.8,
+       str("the hanger is ", kh_egg_w, " wide and the skirt walls stand at ±",
+           skirt_free_x, " — narrow kh_egg_w."));
+assert(!lid_has_kh || len([for (p = stand_case)
+           if (abs(p[0]) - stand_d/2 - 0.6 < kh_egg_w/2
+               && p[1] + stand_d/2 + 0.6 > kh_lo
+               && p[1] - stand_d/2 - 0.6 < kh_hi) 1]) == 0,
+       str("the hanger's footprint (y ", kh_lo, "..", kh_hi, ", x ±",
+           kh_egg_w/2, ") overlaps a press boss — the through cut would open ",
+           "a hole in the boss that holds the board. Move kh_cy."));
+// the egg has to behave like a keyhole: swallow the head, then refuse it
+assert(!lid_has_kh || kh_crown_w < kh_head_d,
+       str("the crown is ", kh_crown_w, " mm across and the head is ",
+           kh_head_d, " — a crown the head fits through captures nothing ",
+           "and the case falls off the wall. Check kh_shank_d/kh_head_d."));
+assert(!lid_has_kh || (kh_tip > 0 && kh_tip < 1),
+       str("derived egg tip is ", kh_tip, " — kh_shank_d must sit strictly ",
+           "between 0 and kh_egg_w for the crown to be a slot"));
+assert(!lid_has_mark || mark_w <= xo - 4.0,
+       str("the wordmark is ", mark_w, " mm wide on a ", xo, " mm lid — it ",
+           "would hang off the sides (2 mm margin required). Shrink ",
+           "mark_word_h, or shorten mark_word."));
+assert(!lid_has_mark || mark_word_h <= yo - 6.0,
+       "the wordmark is taller than the lid — shrink mark_word_h");
+// The gate the other direction, which this file did not have. Every assert
+// above asks whether the type FITS; none asked whether it PRINTS, and those
+// two want opposite things on a 25 mm plate. Shrinking a word until it fits
+// is the obvious move and it has a floor: below mark_word_min_h() a 0.4 mm
+// bead can no longer reach the letterforms and the deboss fills with a
+// smudge that has the rhythm of type. Nothing in a render shows this — the
+// preview draws a perfect tiny wordmark at any size you like.
+assert(!lid_has_mark || mark_word_h >= mark_word_min_h(),
+       str("the wordmark is set at ", mark_word_h, " mm cap height, under ",
+           "the ", mark_word_min_h(), " mm where a 0.4 mm bead still reaches ",
+           "the letterforms — it would print as a smudge, not as a word. ",
+           "Raise mark_word_h; if it no longer fits the width at that size, ",
+           "the word is too long for this part, not too big."));
+assert(!lid_has_mark || (mark_depth >= 0.3 && mark_depth <= back_t - 0.8),
+       str("mark_depth ", mark_depth, " must sit between 0.3 (a deboss worth ",
+           "having) and ", back_t - 0.8, " (leaving plate under the letters)"));
 echo(str("Canary C3-LCD-1.47 (headers=", headers, ") v0.2-dev — outer ",
          xo, " x ", yo, " x ", bez_h + back_t, " mm, window ", aa_w, " x ", aa_l,
          " (land X ", land_w_x, " / Y ", land_w_y, "), band ", seam_h,
          " mm white starting ", seam_dz, " mm behind the glass",
          "  (IN DEVELOPMENT — MEASURE)"));
+
+// The wordmark as it must be DRAWN in the lid's own frame.
+//
+// PRE-FLIPPED IN Y, and that is the whole subtlety. The lid is authored in
+// its own frame and reaches the case through
+//     rotate([180, 0, 0])  →  (x, y, z) ↦ (x, −y, −z)
+// so every glyph's Y is inverted on the way to the assembled back face.
+// Type laid out the normal way therefore lands upside down on the surface a
+// person actually reads. Pre-flipping Y here cancels the assembly's flip
+// exactly, and it happens ONCE so the recess, the inlay and the preview all
+// get the same handedness with no caller left to remember.
+//
+// ⚠️ It is a Y mirror, not an X mirror. The X mirror is the intuitive
+// guess — the outer face is the one you view from below in this frame —
+// and it is wrong: it composes with the assembly's Y flip into a clean 180°
+// rotation, which renders as upside-down type that still LOOKS like a
+// legitimate wordmark at a glance. That is exactly what the first cut did.
+// The only check that catches this is rendering the letters in their
+// assembled orientation under a plain top view and READING them.
+module lid_mark2d() {
+    mirror([0, 1, 0]) mark_wordmark(mark_word_h, mark_word);
+}
+
+// The hanger, in the lid's frame — the house egg, centered on the origin and
+// pre-flipped by the same rule as the wordmark, so after the assembly's Y
+// inversion its CROWN points up on the hung case and its wide BASE is the
+// low entry. egg2d draws crown-up spanning y ∈ [−w/2, l − w/2]; kh_shift
+// re-centers that span so kh_cy means what it says.
+module kh_egg2d() {
+    mirror([0, 1, 0])
+        translate([0, -kh_shift]) egg2d(kh_egg_l, kh_egg_w, kh_tip);
+}
 
 module rrect2d(x, y, r) { offset(r = r) offset(r = -r) square([x, y], center = true); }
 // stadium: full-round ends, the USB-C shell's own profile
@@ -761,7 +1119,9 @@ module lid() {
             // window, and a catch face that resists working loose.
             for (sx = [1, -1], yc0 = nub_ys())
                 translate([sx*(skirt_x/2 - 0.3), yc0, back_t + snap_depth]) hull() {
-                    for (dy = [-snap_w/2 + 1.0, snap_w/2 - 1.0])
+                    // the ridge spans nub_w in Y — the SAME number the window
+                    // is sized from, so the two cannot drift apart again
+                    for (dy = [-nub_w/2 + 0.05, nub_w/2 - 0.05])
                         translate([0, dy, 0]) cube([0.6, 0.1, snap_h - 0.4], center = true);
                     translate([sx*(snap_proud + 0.3), 0, -(snap_h/2 - 0.5)])
                         cube([0.1, 0.1, 0.2], center = true);
@@ -769,16 +1129,33 @@ module lid() {
         }
         // (no grille: print 2's verdict — tiny back holes read as confusion,
         //  not function. The lid is a clean plate; the walls carry the vents.)
-        // keyhole: hangs USB-down. Head hole toward lid +Y (case −Y/USB), the
-        // shank slides toward lid −Y (case +Y/up) as the case drops on.
-        if (opt_keyhole) translate([0, 0, -0.1]) linear_extrude(back_t + 0.2) {
-            translate([0, kh_slot_l/2]) circle(d = kh_head_d);
-            hull() {
-                translate([0,  kh_slot_l/2]) circle(d = kh_shank_d);
-                translate([0, -kh_slot_l/2]) circle(d = kh_shank_d);
-            }
-        }
+        // the wordmark, debossed into the OUTER face (lid z = 0). The inlay
+        // that fills it is the SAME 2D shape (lid_mark2d), so recess and
+        // fill cannot drift — the band's doctrine, applied to type.
+        if (lid_has_mark)
+            translate([mark_dx, -mark_y, -0.01])
+                linear_extrude(mark_depth + 0.01) lid_mark2d();
+        // the egg hanger, cut clean through: offer the screw head into the
+        // wide base, let the case drop, and the flank taper carries it up to
+        // the crown where the shank is gripped and the head cannot return.
+        if (lid_has_kh)
+            translate([0, -kh_y, -0.1]) linear_extrude(back_t + 0.2) kh_egg2d();
     }
+}
+
+// ----------------------------------------------------------------------------
+//  MARK — the wordmark inlay, black. Exactly the volume the lid's deboss
+//  removed: same 2D shape, same depth, no clearance. Zero clearance is the
+//  co-print doctrine this file already applies to the light band — the AMS
+//  fuses filaments that meet, and a shrunk inlay just asks it to bridge a
+//  gap that should not exist. Authored in the LID's frame so the two
+//  volumes are registered by construction and gen_3mf.py can hand them over
+//  without moving either.
+// ----------------------------------------------------------------------------
+module lid_mark() {
+    if (lid_has_mark)
+        translate([mark_dx, -mark_y, 0])
+            linear_extrude(mark_depth) lid_mark2d();
 }
 
 // ----------------------------------------------------------------------------
@@ -794,25 +1171,42 @@ module lid_assembled() {
 // and fit only; part="palette" is the view that answers "what do the three
 // spools look like".
 module bezel_assembly() {
-    color("#1a1a1a") bezel();
+    color("#f5c518") bezel();
     if (light_seam) color("#f2f2f2") light_band();
 }
 
+// the lid as it reads: yellow plate, black letters sitting in their deboss
+module lid_branded() {
+    color("#f5c518") lid();
+    color("#1a1a1a") lid_mark();
+}
+
 module palette_row() {
-    color("#1a1a1a") bezel();
+    color("#f5c518") bezel();
     translate([xo + 8, 0, 0]) color("#f2f2f2") light_band();
-    translate([2*(xo + 8), 0, 0]) color("#f5c518") lid();
+    translate([2*(xo + 8), 0, 0]) lid_branded();
 }
 
 if      (part == "bezel") bezel();
 else if (part == "lid")   lid();
 else if (part == "light") light_band();
+else if (part == "mark")  lid_mark();
 else if (part == "palette") palette_row();
 else if (part == "exploded") {
     bezel_assembly();
     translate([0, 0, 16]) color("#f5c518") lid_assembled();
+    // The wordmark floats ABOVE its deboss rather than sitting in it, and
+    // that is what makes this preview readable. Committed previews render
+    // through CGAL, which merges and repaints composited products — so an
+    // inlay lying flush in its own pocket disappears into the lid and the
+    // branding cannot be inspected at all. Lifted, the letters read as
+    // geometry and the empty deboss reads under them, in a single-color
+    // render, exactly like every other preview in this catalog. An inlay
+    // shown apart from its recess is what "exploded" means anyway.
+    translate([0, 0, 22]) color("#1a1a1a")
+        translate([0, 0, bez_h + back_t]) rotate([180, 0, 0]) lid_mark();
 }
 else {  // "all": both prints side by side, as they come off the plate
     bezel_assembly();
-    translate([xo + 10, 0, 0]) color("#f5c518") lid();
+    translate([xo + 10, 0, 0]) lid_branded();
 }

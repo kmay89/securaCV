@@ -58,11 +58,20 @@ test("flash.json: live-receipt capability follows the firmware command", () => {
     .filter((p) => p.serial_receipt)
     .map((p) => p.id)
     .sort();
+  // Derived from the firmware sources, not declared: every build of the
+  // canary / canary-vision projects wires the self-manifest builder to the
+  // public `j` command, so the Phase 0 reach ports inherit it by being those
+  // projects. Pinned as a list so a product GAINING or LOSING the receipt is
+  // a visible diff rather than a silent capability change.
   assert.deepStrictEqual(receiptIds, [
     "securacv-canary",
+    "securacv-canary-esp32cam",
+    "securacv-canary-freenove-s3",
     "securacv-canary-vision",
+    "securacv-canary-vision-c3-super-mini",
     "securacv-canary-vision-xiao-c3",
     "securacv-canary-vision-xiao-s3",
+    "securacv-canary-wroom",
   ]);
   for (const p of catalog.products) {
     assert.strictEqual(typeof p.serial_receipt, "boolean", `${p.id}: capability missing`);
@@ -779,6 +788,31 @@ test("buildNvsWifiImage round-trips through the NVS parser with valid CRCs", asy
   // Open network (no password) is allowed.
   const open = buildNvsWifiImage("cafe", "", 0x5000);
   assert.ok(parseNvs(open).find((i) => i.key === "wifi_pass"));
+});
+
+test("api token blobs ride the seed and round-trip through the NVS parser", async () => {
+  const { buildNvsSeedImage, apiTokenToNvs, mintApiToken, parseNvs } = await core();
+  // A deterministic mint (crafted bytes) — the parity suite pins the
+  // algorithm; here we prove the seed carries it as the firmware reads it.
+  const bytes = new Uint8Array(64);
+  for (let i = 0; i < 64; i++) bytes[i] = i;
+  const token = mintApiToken(bytes);
+  assert.match(token, /^cv_[0-9A-Za-z]{32}$/);
+  const { blobs } = apiTokenToNvs(token);
+  const img = buildNvsSeedImage(
+    { wifi: { ssid: "MyHomeWifi", pass: "correct horse" }, blobs }, 0x5000);
+  const items = parseNvs(img, ["api_token", "api_tkn"]);
+  for (const key of ["api_token", "api_tkn"]) {
+    const item = items.find((i) => i.namespace === "securacv" && i.key === key);
+    assert.ok(item && item.bytes, `${key} must be a readable blob in the seed`);
+    assert.strictEqual(Buffer.from(item.bytes).toString(), token,
+      `${key} must hold the exact credential (no NUL, no truncation)`);
+  }
+  // Bad shapes are refused before a byte is laid out.
+  assert.throws(() => apiTokenToNvs("cv_short"));
+  assert.throws(() => apiTokenToNvs("xx_" + "a".repeat(32)));
+  // A biased byte (>= 248) is never used: feed only tail bytes and starve it.
+  assert.throws(() => mintApiToken(new Uint8Array(64).fill(255)));
 });
 
 test("mqttProvisioningToNvs: maps the optional broker/identity fields to native's NVS keys", async () => {

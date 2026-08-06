@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+### The Nightlight turns with the room
+
+Stand the Canary Nightlight on any of its four edges and the clock rights
+itself — and the canary **tumbles in from the edge that was up**, bounces
+on its perch, and settles, while the clock breathes back in behind it.
+
+- **Real movement only.** The QMI8658 feeds a gravity-settled model
+  (host-tested): a flip commits only when the device has come to REST in
+  a new orientation — a shake, a carry, a bump, a flat lay-down, or a
+  diagonal hold carries no opinion, and a cooldown means a wobbling hand
+  can never double-flip it. Turning the lamp feels immediate because the
+  commit lands the moment it settles.
+- **All four orientations.** Portrait, upside down, and both landscapes —
+  the panel rotates in hardware (one MADCTL write; the ST7789's centered
+  window makes the geometry exact), and the face recomposes: landscape
+  gets a wide clock with the companion perched beside it.
+- **A hand on the dial parks AUTO.** Triple-press the BOOT button to turn
+  the face by hand (the opt-in third gesture — the lantern's double-press
+  timing is unchanged on every other flavor), or pick an orientation in
+  the app; either quiets the IMU until the app's "Turn with the room"
+  toggle brings it back.
+- The orientation persists across reboots, and the app's Nightlight card
+  gains the toggle + picker.
+- **Honest status:** the board's IMU mounting is unpublished, so the
+  accelerometer axis map ships as a documented best guess pending a
+  bench check on real glass (`pins.h` `IMU_AXES_SWAP_XY` /
+  `IMU_X_SIGN` / `IMU_Y_SIGN` — one line each if it turns the wrong
+  way). The model, the gates, and the manual triple-press/app path are
+  host-tested and hold regardless of the map.
+
 ### The hub finishes its own sign-in, and the Flasher stops lying about USB
 
 Two Flasher (desktop app) fixes, one promise made real:
@@ -28,6 +58,132 @@ Two Flasher (desktop app) fixes, one promise made real:
   in-browser flasher gets the same honesty via Web Serial's `disconnect`
   event — unplugging while parked on the connected card returns to the
   connect step instead of showing a chip that isn't there.
+
+### A display hears what the camera sees — no broker, no hub, no setup
+
+A Canary Vision and a Canary Display now speak detection directly over
+Bluetooth LE. Power both on, and the person your camera sees shows up on the
+glass — as `person 87% (ble)` with an amber glow and a chime — with no MQTT
+broker, no Raspberry Pi hub, no WiFi, and no pairing step.
+
+- **Fleet beacon v2.** The 11-byte fleet-link presence beacon gains a 13-byte
+  version 2: the same layout plus a detection **class token** (person /
+  vehicle / animal / package — the ObjectClass vocabulary, deliberately
+  nothing identifying) and a **confidence percentage**. No identity, no
+  timestamp on the wire; the advert is the "now". v1-only senders
+  (canary-sense, the WAP) stay understood unchanged everywhere.
+- **canary-vision sets the alert it always had.** The beacon's `alert` flag
+  existed from day one and nothing ever set it. Now the presence FSM drives
+  it — debounced presence, not per-frame flicker — and a detection edge
+  republishes the advert immediately instead of waiting out the 5 s refresh.
+- **canary-display raises a real attention event.** The scanner (BLE and its
+  ESP-NOW twin) decodes the class + confidence into the event line and
+  timeline with `Sev::Warn`, a per-(witness, class) 60 s edge-dedupe so the
+  continuous advert can't spam the log or re-cancel acks, and tamper keeping
+  precedence. Unsigned like everything on this channel: it draws attention
+  but never touches the `Verified` badge. An unknown Vision still auto-appears
+  as `SCV-XXXX` — discovery was already magical; now it carries the sighting.
+- **Sibling rosters hear it too.** canary-sense / canary-vision roster scans,
+  the modular canary's scan feed, and the WAP's `/api/nearby` all accept the
+  v2 length, so a detection-flagged peer lands in every fleet view.
+
+### The same beacon, now over WiFi — still no broker, and now across a house
+
+Bluetooth reaches as far as Bluetooth reaches. A Vision in the driveway and a
+Display upstairs were both sitting on the home WiFi and still could not hear
+each other without an MQTT broker in the middle. Now the presence beacon rides
+that WiFi too, as a UDP multicast datagram — **no broker, no hub, no pairing,
+no configuration**. A datagram addressed to a group needs nothing discovered or
+logged into: a Vision joined to WiFi starts sending, a Display on the same WiFi
+starts hearing.
+
+- **One beacon, three bands, no duplication.** The datagram body is the *same*
+  manufacturer blob the BLE advert carries — no UDP framing — so BLE, ESP-NOW
+  and LAN multicast all decode through one parser into one ingest. On the
+  sending side the bytes are built once and every carrier transmits that buffer
+  verbatim, so the bands physically cannot drift into dialects and a new field
+  reaches all of them the day it lands.
+- **A band adds coverage, never a duplicate.** A witness is keyed on its
+  fingerprint suffix, never on the radio that carried it, and every dedupe
+  window is band-independent. One Canary heard on BLE *and* WiFi is one device
+  and one alert. That included fixing a real latent bug: the tamper dedupe
+  compared the event *label*, so the moment labels named their band the same
+  tamper would have alarmed once per radio.
+- **It heals because there is nothing to reset.** Sockets follow the STA
+  address and are reopened when it changes; the link going down drops them. A
+  router reboot, a new DHCP lease, a move to another AP all recover on their
+  own, and a band that goes quiet simply ages out of "currently carrying" and
+  re-credits itself by being heard again — no flag anywhere can outlive the
+  interface it described.
+- **TTL 1, set rather than inherited.** A presence beacon must not be routable
+  off the local subnet; that is a privacy property, so it is asserted in the
+  host test rather than left to a stack default. Nothing rides this wire that
+  the BLE advert doesn't already broadcast in the clear — flags, coarse
+  percentages, a chain height, two fingerprint bytes, and a class token plus
+  confidence. No identity, no image, no audio, and unlike a broker there is no
+  third party that receives, stores or forwards any of it.
+- **The glass names the band honestly.** `person 87% (wifi)` when it crossed
+  the LAN, `(ble)` over Bluetooth, `(mesh)` over ESP-NOW — which also fixes
+  ESP-NOW frames having always reported themselves as `(ble)`.
+
+Both bands are on by default (`FEATURE_FLEET_UDP`), and either can be vetoed
+per board by a size guard without touching a call site.
+
+### A Canary that drops off WiFi can get back on
+
+Field report from an ESP32-C3 Vision: flashed with good credentials, it would
+not rejoin its network. The fleet roster's BLE scan went **continuous** the
+moment the STA link was down — but BLE and WiFi share one 2.4 GHz radio on the
+C3/C6, and `wifi_loop()` is retrying that entire time, so the scan starved the
+association it was waiting for. Miss the boot-join timeout once and the device
+could stay locked out, each retry landing in a radio the scanner never
+released.
+
+Continuous scanning now requires that there be **no join to protect**: only an
+unprovisioned unit (nothing to associate with, so the beacon really is the last
+channel) scans continuously. A provisioned unit that is merely offline keeps
+its low-duty 3 s / 60 s bursts and leaves the radio free to rejoin. The
+presence beacon itself is unchanged, so broker-free discovery — including the
+new detection alerts above — keeps working exactly as before.
+## [2.4.6] - 2026-08-05
+
+### The Canary Nightlight — a kid's bedside clock with a friend living in it
+
+The first firmware for the Waveshare **ESP32-C3-LCD-1.47** (the pocket-case
+board): a new `nightlight` flavor of the display family, made to be flashed,
+joined to WiFi on the glass, and tuned from the iPhone app with zero other
+tools.
+
+- **A 7-segment clock over a lamp** — 12-hour by default, ghost segments by
+  day, still digits at night, and a look-engine lamp wash behind it: the warm
+  Lantern orange it ships with, the full Rainbow sweep, the new **Moonbeam**
+  bright-white scene, and the rest of the ring (BOOT double-press, a tap
+  while lit, or the app walks it).
+- **A companion on your rhythm** — the living canary visits the stage a few
+  seconds at a time: up with you in the morning, a little song at midday,
+  winding down in the evening, asleep beside the clock after bedtime. Visits
+  are staging, never a face — the bird's expression stays the mood engine's,
+  and any real attention takes the stage back instantly.
+- **A lamp that never lies** — the nightlight never renders safety as light:
+  the lamp is decor, the clock is information, and the glance line carries
+  link/clock honesty in words. The lamp burns through quiet hours by default
+  (that is the product), and the attention veto still puts it out the moment
+  anything is wrong.
+- **A heat budget you can't exceed** — backlight duty is hard-capped at 50%
+  in the HAL, at this board's I2C expander PWM register, underneath every
+  settings path. Closed PETG pocket case; a can't, not a won't.
+- **Standalone honesty for the whole bedside family** — a never-configured
+  hub now reads as *standalone*, not link trouble: no permanently worried
+  bird, no lamp refusing to light, on any fleet-less bedside glass.
+- The iPhone app shows it as a **Nightlight** with a native settings card
+  (lamp color from the device's own scene list, strength, night hours,
+  12-hour clock); both flashers carry the product on the release and dev
+  channels; OTA product `securacv-canary-display-nightlight-c3`.
+
+Pin map from Waveshare's own engineering-sample repo + schematic (they
+agree): ST7789T at 180×320/offset-30, CS/RST/backlight behind the EXIO
+expander. Compile-tested; bench-verify colors and panel edges on first boot
+(the board README documents both checks).
 
 ## [2.4.5] - 2026-08-03
 

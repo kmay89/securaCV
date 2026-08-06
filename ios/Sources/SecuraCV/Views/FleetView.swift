@@ -196,10 +196,11 @@ struct WitnessRow: View {
         HStack(spacing: Theme.m) {
             SeverityPip(severity: witness.effectiveSeverity)
             // What this witness IS, drawn from the same isometric camera every
-            // other surface uses (docs/design/FLEET_FIGURES.md). Falls back to
-            // the type's symbol when the published type doesn't pin down one
-            // product — see DeviceType.figureID.
-            DeviceFigureIcon(witness.deviceType, size: 30)
+            // other surface uses (docs/design/FLEET_FIGURES.md). The raw
+            // published type resolves first (a "canary-watch" gets the round
+            // drum even though the enum collapses it to .unknown); the symbol
+            // is the honest fallback — see FleetFigure.resolve.
+            DeviceFigureIcon(witness.deviceType, published: witness.publishedType, size: 30)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(witness.displayName).font(.body)
@@ -230,7 +231,7 @@ struct DiscoveredRow: View {
     let canary: DiscoveredCanary
     var body: some View {
         HStack(spacing: Theme.m) {
-            DeviceFigureIcon(canary.deviceType, size: 30)
+            DeviceFigureIcon(canary.deviceType, published: canary.publishedType, size: 30)
             VStack(alignment: .leading, spacing: 2) {
                 Text(canary.name).font(.body)
                 Text("\(canary.deviceType.role) · tap to pair").font(.caption).foregroundStyle(.secondary)

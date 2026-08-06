@@ -80,6 +80,12 @@ BOARD_CHIP = {
     "waveshare_esp32s3_lcd43": "ESP32-S3",  # the Dash's 4.3B host (generic S3 FQBN)
     "esp32-s3-devkitc-1": "ESP32-S3",  # dash7 + nightstand-s3 envs (generic devkit profile)
     "esp32-c6-devkitc-1": "ESP32-C6",  # nightstand-c6 env (generic devkit profile)
+    # Classic dual-core ESP32 — the Phase 0 reach ports (docs/strategy/30).
+    # esptool reports both as plain "ESP32"; the chip guard therefore cannot
+    # tell an ESP32-CAM from a WROOM DevKit, which is exactly why the family
+    # picker asks (their pick_labels name the visible difference: a camera).
+    "esp32cam": "ESP32",
+    "esp32dev": "ESP32",
 }
 
 # Flash silicon per board, in MB — the second half of board identification
@@ -97,11 +103,16 @@ BOARD_FLASH_MB = {
     "waveshare_esp32s3_lcd43": 16,  # dash profiles: FlashSize=16M / huge_app
     "esp32-s3-devkitc-1": 16,  # both Waveshare boards on this id carry the 16 MB part (envs pin flash_size = 16MB)
     "esp32-c6-devkitc-1": 4,   # Waveshare C6-LCD-1.47's 4 MB part (env pins flash_size = 4MB)
+    "esp32cam": 4,   # AI-Thinker module: 4 MB flash + 4 MB quad PSRAM
+    "esp32dev": 4,   # WROOM-32 family: 4 MB, no PSRAM (WROVER is a different board)
 }
 
-# Per-chip human copy. Every Canary board is native-USB (the ESP32 chip's own
-# USB, no CH340/CP210x bridge) so the download-mode gesture is uniform; we
-# keep it per-chip anyway so a future bridge board can differ.
+# Per-chip human copy. Every Canary board through the C-series is native-USB
+# (the ESP32 chip's own USB, no CH340/CP210x bridge) so the download-mode
+# gesture is uniform there. The classic ESP32 is the "future bridge board"
+# this was kept per-chip for: it has no USB peripheral at all, so a serial
+# adapter is always in the path and the gesture depends on the board's wiring
+# rather than the silicon (per-product BOARD_ACCESS carries that part).
 CHIP_INFO = {
     "ESP32-S3": {
         "label": "ESP32-S3",
@@ -118,6 +129,20 @@ CHIP_INFO = {
         "native_usb": True,
         "download_mode": "Hold the BOOT (B) button, tap RESET (R), then let go of BOOT.",
     },
+    "ESP32": {
+        # The original dual-core ESP32 has NO USB peripheral. Every one of
+        # these boards reaches your computer through a UART bridge — soldered
+        # on (DevKit family) or a separate adapter you wire yourself
+        # (ESP32-CAM). The port you pick in the browser is that bridge, never
+        # the chip, so the device name you see is the bridge's (CP2102 /
+        # CH340), not "ESP32" — which reads as "wrong device" if unwarned.
+        "label": "ESP32 (classic)",
+        "native_usb": False,
+        "download_mode": "Most DevKits do this for you — the adapter's DTR/RTS "
+                         "lines drive it and you never touch a button. If yours "
+                         "doesn't (or there's no bridge on the board), hold IO0 "
+                         "to GND, tap RESET, then release IO0.",
+    },
 }
 
 # The published, flashable product line. Mirrors the release assets in
@@ -130,8 +155,12 @@ CHIP_INFO = {
 PRODUCTS = [
     {
         "id": "securacv-canary",
+        # The canary project compiles no boards/<id>/pins include, so the
+        # registry row is declared here — and checked against it in board_tier().
+        "board_id": "xiao-esp32s3-sense",
         "family": "canary",
         "board_label": "Seeed XIAO ESP32-S3",
+        "pick_label": "Seeed XIAO ESP32-S3 Sense — the one we build",
         "name": "Canary",
         "tagline": "The all-rounder witness — full sensing plus the Home Assistant bridge.",
         "asset_stem": "canary",
@@ -140,12 +169,69 @@ PRODUCTS = [
         "board": "seeed_xiao_esp32s3",
         "provisioning": "ap",
     },
+    # ── The Phase 0 reach ports (docs/strategy/30) ────────────────────────
+    # Boards people already own, rather than boards we chose. All three enter
+    # at compile-tested: CI builds them on every PR, nobody has booted one.
+    # That tier is DERIVED from firmware/boards/boards.json below and shown
+    # on the card — the flasher is where the claim meets a real person, so it
+    # is the one place the honesty cannot be optional.
+    {
+        "id": "securacv-canary-esp32cam",
+        # The canary project compiles no boards/<id>/pins include, so the
+        # registry row is declared here — and checked against it in board_tier().
+        "board_id": "esp32cam-ai-thinker",
+        "family": "canary",
+        "board_label": "AI-Thinker ESP32-CAM",
+        "pick_label": "ESP32-CAM — the $6 board with a camera on it",
+        "name": "Canary · ESP32-CAM",
+        "tagline": "The witness on the most-owned camera board there is — camera and Wi-Fi sensing, no mic.",
+        "asset_stem": "canary-esp32cam",
+        "project": "firmware/canary",
+        "env": "esp32cam",
+        "board": "esp32cam",
+        "provisioning": "ap",
+    },
+    {
+        "id": "securacv-canary-wroom",
+        # The canary project compiles no boards/<id>/pins include, so the
+        # registry row is declared here — and checked against it in board_tier().
+        "board_id": "esp32-wroom-devkit",
+        "family": "canary",
+        "board_label": "ESP32-WROOM-32 DevKit",
+        "pick_label": "A plain ESP32 DevKit — no camera on it",
+        "name": "Canary · ESP32 DevKit",
+        "tagline": "Turns the ESP32 in your drawer into a presence witness — it feels the room through Wi-Fi, with no camera at all.",
+        "asset_stem": "canary-wroom",
+        "project": "firmware/canary",
+        "env": "esp32-wroom",
+        "board": "esp32dev",
+        "provisioning": "ap",
+    },
+    {
+        "id": "securacv-canary-freenove-s3",
+        # The canary project compiles no boards/<id>/pins include, so the
+        # registry row is declared here — and checked against it in board_tier().
+        "board_id": "freenove-esp32s3-cam",
+        "family": "canary",
+        "board_label": "Freenove ESP32-S3-WROOM CAM",
+        "pick_label": "Freenove ESP32-S3 camera kit — the big black board",
+        "name": "Canary · Freenove S3",
+        "tagline": "The witness on the S3 camera kit most people are shipped — camera and Wi-Fi sensing, no SD yet.",
+        "asset_stem": "canary-freenove-s3",
+        "project": "firmware/canary",
+        "env": "freenove-s3",
+        "board": "esp32-s3-devkitc-1",
+        "provisioning": "ap",
+    },
     {
         "id": "securacv-canary-wap",
         # The WAP's Arduino sketch compiles no boards/<id>/pins header, so
         # there is nothing to derive the figure from. Declared instead —
         # checked against the ledger, and the one product here that is.
         "figure": "device.canary-wap",
+        # Same reason as the figure above: an Arduino profile build has no
+        # boards/<id>/pins include to derive the registry row from.
+        "board_id": "xiao-esp32s3-sense",
         "family": "wap",
         "board_label": "Seeed XIAO ESP32-S3",
         "name": "Canary WAP",
@@ -166,6 +252,19 @@ PRODUCTS = [
         "asset_stem": "canary-vision",
         "project": "firmware/projects/canary-vision",
         "env": "canary-vision-default",
+        "board": "esp32-c3-devkitm-1",
+        "provisioning": "usb-secrets",
+    },
+    {
+        "id": "securacv-canary-vision-c3-super-mini",
+        "family": "vision",
+        "board_label": "ESP32-C3 Super Mini",
+        "pick_label": "C3 Super Mini (the thumbnail-sized one)",
+        "name": "Canary Vision · C3 Super Mini",
+        "tagline": "The Vision witness on the cheapest board in the hobby.",
+        "asset_stem": "canary-vision-c3-super-mini",
+        "project": "firmware/projects/canary-vision",
+        "env": "canary-vision-c3-super-mini",
         "board": "esp32-c3-devkitm-1",
         "provisioning": "usb-secrets",
     },
@@ -249,6 +348,8 @@ PRODUCTS = [
     },
     {
         "id": "securacv-canary-display-dash-modes",
+        # Arduino profile build (profile:modes) — declared, checked below.
+        "board_id": "waveshare-esp32s3-lcd43b",
         "family": "display",
         "board_label": "Waveshare 4.3B panel module",
         "pick_label": "Dash · Modes — the 4.3B multi-tool",
@@ -370,7 +471,12 @@ FAMILIES = [
         "id": "canary",
         "name": "Canary",
         "pitch": "The all-rounder witness — full sensing plus the Home Assistant bridge.",
-        "pick": None,
+        # Four boards now answer this: the XIAO we build, and the three
+        # already-in-a-drawer boards from the Phase 0 reach ports. The
+        # question names what's VISIBLE (a camera, the silkscreen) rather
+        # than the chip, because the chip guard has already narrowed it and
+        # a classic ESP32 can't be told from its neighbor electrically.
+        "pick": "Which board is in your hand?",
     },
     {
         "id": "wap",
@@ -415,6 +521,61 @@ FAMILIES = [
 # is wrong. Both flashers render this BEFORE the connect step, because it is
 # the one instruction that has to arrive before the cable does.
 BOARD_ACCESS = {
+    # Keyed by FAMILY or by PRODUCT id — product wins, because the classic
+    # ESP32 boards sit in the same family as the XIAO (which needs no
+    # ceremony at all) and would otherwise inherit or impose instructions
+    # that are wrong for the other.
+    "securacv-canary-esp32cam": {
+        # The one board here with no USB connector of any kind. This is not a
+        # quirk to soften: a user who plugs "the cable" into an ESP32-CAM
+        # finds no cable fits, and the honest answer is that flashing it
+        # needs a part they may not own.
+        "headline": "No USB port — this board needs a serial adapter",
+        "flash_port": "a USB-to-serial (UART) adapter you connect to the "
+                      "board's U0T / U0R pins — 3.3 V logic",
+        "other_port": "the 5V / GND header pins",
+        "other_effect": "Those power the board but carry no data. There is no "
+                        "port on an ESP32-CAM that a computer can talk to on "
+                        "its own — the adapter is not optional.",
+        "steps": [
+            "Wire the adapter: its TX to the board's U0R, its RX to U0T, GND "
+            "to GND, and 5V to 5V. (TX↔RX crossed — the commonest mistake is "
+            "wiring them straight through.)",
+            "Connect IO0 to GND with a jumper. This is what puts the chip in "
+            "download mode; the ESP32-CAM has no BOOT button to do it for you.",
+            "Plug the adapter into your computer, then tap RESET on the board.",
+            "Flash. When it finishes, REMOVE the IO0 jumper and tap RESET "
+            "again — leave it on and the board just re-enters download mode "
+            "instead of running the firmware.",
+        ],
+        "enclosure_note": "The ESP32-CAM-MB backplane (the shield the board "
+                          "clips into, often sold with it) does all of the "
+                          "above with a USB port and its own buttons. If you "
+                          "have one, use it — no wiring, no jumper.",
+        "doc": "https://github.com/kmay89/securaCV/blob/main/firmware/boards/"
+               "esp32cam-ai-thinker/README.md",
+    },
+    "securacv-canary-wroom": {
+        # This one flashes normally — the note exists because the device the
+        # browser offers is named after the bridge chip, not the board, and
+        # "I don't see my ESP32" is the predictable stall.
+        "headline": "Pick the serial adapter, not an “ESP32”",
+        "flash_port": "the board's own micro-USB or USB-C port",
+        "other_port": "—",
+        "other_effect": "",
+        "steps": [
+            "Plug the board in with a USB DATA cable. (Charge-only cables are "
+            "the other classic stall — they power the board and carry nothing.)",
+            "In the browser's device chooser, pick the entry named after the "
+            "bridge chip — CP2102, CH340, or similar. It will not say “ESP32”: "
+            "the classic ESP32 has no USB of its own, so what your computer "
+            "sees is the little adapter chip beside it.",
+            "Flash. The adapter drives the boot pins for you — no buttons.",
+        ],
+        "enclosure_note": "",
+        "doc": "https://github.com/kmay89/securaCV/blob/main/firmware/boards/"
+               "esp32-wroom-devkit/README.md",
+    },
     "sense": {
         # The 60 GHz radar kit is a carrier board with the XIAO seated in its
         # socket. Flashing always talks to the XIAO's own chip.
@@ -1594,6 +1755,78 @@ def figure_hardware_for(project: str, env: str) -> str | None:
     return None
 
 
+BOARDS_REGISTRY = REPO / "firmware/boards/boards.json"
+
+# What each registry tier means to someone about to press Install. The
+# registry (firmware/HARDWARE.md) defines the tiers; this is the same fact
+# said to a person instead of to CI. `first` marks the tier where the user
+# would be the first human to boot this image — the flasher leads with that.
+# NOTE ON THE WORD "VERIFIED": the registry's tier KEYS stay `verified` /
+# `community` (firmware/HARDWARE.md defines them, and boards.json is machine
+# state). The user-facing LABELS below deliberately do not use that word.
+# AGENTS.md rule 4 reserves "verified" for an Ed25519 signature checked
+# against a pinned key — and this copy sits inches from the flasher's real
+# signature check, which is exactly where conflating "a human booted it" with
+# "the bytes are cryptographically authentic" would do damage. Bench work is
+# called bench work.
+TIER_COPY = {
+    "verified": {
+        "label": "Bench-tested by a maintainer",
+        "line": "A maintainer has run this board on the bench and signed off "
+                "on how it behaves.",
+        "first": False,
+    },
+    "community": {
+        "label": "Bench-tested by the community",
+        "line": "Someone outside the project ran this on real hardware and "
+                "filed the test report linked from the board's page.",
+        "first": False,
+    },
+    "compile-tested": {
+        "label": "Compile-tested — never booted",
+        "line": "CI builds this image for your board on every change, but "
+                "nobody has run it on real hardware yet. It may not work, and "
+                "if it does you'd be the first to know it. Nothing here can "
+                "brick the board — the ROM bootloader is unerasable — so the "
+                "worst case is that it doesn't come up and you re-flash "
+                "something else.",
+        "first": True,
+    },
+}
+
+
+def board_tier(p: dict) -> dict | None:
+    """This build's support tier, read from firmware/boards/boards.json.
+
+    Keyed on the board the env actually compiles against (the same pins-header
+    derivation the figures use), so a tier can never drift from the pin map it
+    describes: promoting a board in the registry moves the flasher card on the
+    next generator run, and nothing else has to be remembered.
+
+    The `canary` project carries its pins in build flags rather than a
+    boards/<id>/pins include, so its envs have nothing to derive from; those
+    products declare `board_id` instead — declared, but checked against the
+    registry below, the same deal the WAP's `figure` gets. A product with
+    neither gets None and the card says nothing at all, which is honest: it
+    claims neither way.
+    """
+    bid = p.get("board_id") or figure_hardware_for(p["project"], p["env"])
+    if not bid:
+        return None
+    for b in json.loads(read(BOARDS_REGISTRY)):
+        if b.get("id") != bid:
+            continue
+        copy = TIER_COPY.get(b.get("tier"))
+        if not copy:
+            die(f"board '{bid}' has tier '{b.get('tier')}' with no TIER_COPY entry")
+        out = {"tier": b["tier"], "board_id": bid, **copy}
+        if b.get("tier_evidence"):
+            out["evidence"] = b["tier_evidence"]
+        return out
+    die(f"{p['id']}: board '{bid}' is not in firmware/boards/boards.json — "
+        f"register it (firmware/PORTING.md) or fix the declared board_id")
+
+
 def figure_block(p: dict) -> dict | None:
     """The picker figure for one flash target, or None for the placeholder.
 
@@ -1835,9 +2068,26 @@ def main() -> None:
         if p.get("pick_label"):
             entry["pick_label"] = p["pick_label"]
         # How you physically reach this board's flashing port (BOARD_ACCESS).
-        # Absent for every family that just plugs in.
-        if p["family"] in BOARD_ACCESS:
-            entry["access"] = BOARD_ACCESS[p["family"]]
+        # Absent for every family that just plugs in. A product-id key wins
+        # over its family's: the classic-ESP32 boards share the `canary`
+        # family with the XIAO, which needs no ceremony.
+        # `key` is what the frontends deduplicate on when they render the
+        # access cards once each. Family-keyed notes collapse across their
+        # family (one card for all of Sense); product-keyed notes must NOT —
+        # the ESP32-CAM and the WROOM DevKit are both `canary` family and
+        # need opposite instructions, and dedup-by-family silently dropped
+        # the second one.
+        if p["id"] in BOARD_ACCESS:
+            entry["access"] = {**BOARD_ACCESS[p["id"]], "key": p["id"]}
+        elif p["family"] in BOARD_ACCESS:
+            entry["access"] = {**BOARD_ACCESS[p["family"]], "key": p["family"]}
+        # Support tier, DERIVED from the board registry — never typed here.
+        # The flasher is where a claim meets a person with a board in hand,
+        # so "CI builds this; nobody has booted it" has to travel with the
+        # install button or it isn't really being said.
+        tier = board_tier(p)
+        if tier:
+            entry["tier"] = tier
         # The dials that genuinely apply to this product — Vision's four NVS
         # numbers are flash-bakeable; Sense's reflexes are compile-time and
         # say so. Nothing here is decorative.

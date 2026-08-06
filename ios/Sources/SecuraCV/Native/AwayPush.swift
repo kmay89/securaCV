@@ -25,10 +25,20 @@
 //
 // WHO writes the wake: a device that is home and can see the fleet. iOS will
 // not run a socket in your pocket across town, so something on the LAN has to
-// notice and post the wake — the phone on Wi-Fi, or better an always-on
-// SecuraCV (Apple TV / Mac / a docked iPad). This mirrors how HomeKit needs a
-// home hub, and it is the honest limit: with nothing home, away alerts cannot
-// happen, and `reach` says exactly that rather than pretending.
+// notice and post the wake. Two publishers exist, and they write the SAME
+// record into the same private database:
+//
+//   * this phone, while it is home and looking at the fleet, and
+//   * an Apple TV showing the Witness Wall, if the household turned on
+//     "stand watch" (tvos/…/ResidentWatch.swift). That one matters more,
+//     because the phone that left the house is exactly the device that can no
+//     longer notice anything — it is the resident this design always assumed
+//     and, until it shipped, did not have.
+//
+// This mirrors how HomeKit needs a home hub, and the limit is still honest:
+// with nothing home, away alerts cannot happen, and `reach` says exactly that
+// rather than pretending. The Apple TV's own limit — tvOS pauses an app that
+// is not on screen — is stated on the Wall, where the promise is made.
 
 import Foundation
 #if canImport(CloudKit)

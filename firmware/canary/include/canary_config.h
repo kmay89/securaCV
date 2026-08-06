@@ -164,7 +164,7 @@
 // ════════════════════════════════════════════════════════════════
 
 #define DEVICE_TYPE           "canary"
-#define FIRMWARE_VERSION      "2.4.5"
+#define FIRMWARE_VERSION      "2.4.6"
 
 // Optional build-time provenance for the 'f' fingerprint command. CI/PlatformIO
 // can inject the short commit with -DFIRMWARE_GIT_HASH=\"abc1234\"; when it
@@ -249,23 +249,58 @@
 // CAMERA CONFIG (XIAO ESP32S3 Sense OV2640)
 // ════════════════════════════════════════════════════════════════
 
+// Defaults are the XIAO ESP32-S3 Sense; board-specialized envs (e.g. the
+// AI-Thinker ESP32-CAM / Freenove S3 CAM ports) override the whole set via
+// -DCAM_PIN_* build flags, same pattern as the SD/GPS/MIC pins above.
 #if FEATURE_CAMERA_PEEK
-  #define CAM_PIN_PWDN    -1
-  #define CAM_PIN_RESET   -1
-  #define CAM_PIN_XCLK    10
-  #define CAM_PIN_SIOD    40
-  #define CAM_PIN_SIOC    39
-  #define CAM_PIN_D7      48
-  #define CAM_PIN_D6      11
-  #define CAM_PIN_D5      12
-  #define CAM_PIN_D4      14
-  #define CAM_PIN_D3      16
-  #define CAM_PIN_D2      18
-  #define CAM_PIN_D1      17
-  #define CAM_PIN_D0      15
-  #define CAM_PIN_VSYNC   38
-  #define CAM_PIN_HREF    47
-  #define CAM_PIN_PCLK    13
+  #ifndef CAM_PIN_PWDN
+    #define CAM_PIN_PWDN    -1
+  #endif
+  #ifndef CAM_PIN_RESET
+    #define CAM_PIN_RESET   -1
+  #endif
+  #ifndef CAM_PIN_XCLK
+    #define CAM_PIN_XCLK    10
+  #endif
+  #ifndef CAM_PIN_SIOD
+    #define CAM_PIN_SIOD    40
+  #endif
+  #ifndef CAM_PIN_SIOC
+    #define CAM_PIN_SIOC    39
+  #endif
+  #ifndef CAM_PIN_D7
+    #define CAM_PIN_D7      48
+  #endif
+  #ifndef CAM_PIN_D6
+    #define CAM_PIN_D6      11
+  #endif
+  #ifndef CAM_PIN_D5
+    #define CAM_PIN_D5      12
+  #endif
+  #ifndef CAM_PIN_D4
+    #define CAM_PIN_D4      14
+  #endif
+  #ifndef CAM_PIN_D3
+    #define CAM_PIN_D3      16
+  #endif
+  #ifndef CAM_PIN_D2
+    #define CAM_PIN_D2      18
+  #endif
+  #ifndef CAM_PIN_D1
+    #define CAM_PIN_D1      17
+  #endif
+  #ifndef CAM_PIN_D0
+    #define CAM_PIN_D0      15
+  #endif
+  #ifndef CAM_PIN_VSYNC
+    #define CAM_PIN_VSYNC   38
+  #endif
+  #ifndef CAM_PIN_HREF
+    #define CAM_PIN_HREF    47
+  #endif
+  #ifndef CAM_PIN_PCLK
+    #define CAM_PIN_PCLK    13
+  #endif
 #endif
 
 // ════════════════════════════════════════════════════════════════

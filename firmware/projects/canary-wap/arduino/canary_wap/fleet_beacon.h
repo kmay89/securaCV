@@ -23,6 +23,23 @@
  *                        bytes the chirp carries at [15-16] and the "SCV-XXXX"
  *                        name derives from)
  *
+ * VERSION 2 (13 bytes) is version 1 plus two trailing bytes, emitted by
+ * witnesses with an optical pipeline (canary-vision) so a display can show
+ * WHAT is currently seen — a class token and a confidence percentage, and
+ * deliberately nothing more (Invariant II: no identity substrate — the
+ * vocabulary is the ObjectClass enum, never a face or a plate; there is no
+ * timestamp on the wire, the advert IS the "now"):
+ *
+ *   [3]    0x02          schema version 2
+ *   [11]   detect_class  0x00 none, 0x01 person, 0x02 vehicle, 0x03 animal,
+ *                        0x04 package
+ *   [12]   detect_score  detection confidence 0..100 (%), 0xFF = unknown
+ *
+ * flags bit4 (alert_active) is SET while the sender's presence FSM holds a
+ * live detection; [11..12] then say what and how confidently. Parsers accept
+ * BOTH versions — a v1-only sender (canary-sense, the WAP) stays understood
+ * unchanged, and a v1-era parser simply never sees detections.
+ *
  * This header is PURE: it pulls in no NimBLE/Arduino symbols, so a plain g++
  * host test can round-trip the builder byte-for-byte (tests_host/
  * test_fleet_beacon.cpp). Any Arduino-only convenience is guarded out below.
@@ -44,11 +61,16 @@
 // Manufacturer-data type byte ([2]) — distinct from chirp types 0x01..0x05.
 #define FLEET_BEACON_TYPE         0x10
 #define FLEET_BEACON_VERSION      0x01
+#define FLEET_BEACON_VERSION_2    0x02
 
 // Payload written AFTER the company id (bytes [2..10] above) = 9 bytes.
 #define FLEET_BEACON_PAYLOAD_LEN  9
 // Full blob as the scanner sees it, including the 2 company bytes.
 #define FLEET_BEACON_MFG_LEN      11
+
+// Version-2 payload ([2..12]) = 11 bytes; full v2 blob = 13.
+#define FLEET_BEACON_PAYLOAD_V2_LEN 11
+#define FLEET_BEACON_MFG_V2_LEN     13
 
 // Flag bits for byte [4].
 #define FLEET_BEACON_FLAG_TAMPER      0x01  // bit0
@@ -59,6 +81,18 @@
 
 // Sentinel for an unknown/absent battery or health percentage.
 #define FLEET_BEACON_UNKNOWN_PCT      0xFF
+
+// Detection class tokens for v2 byte [11] — the ObjectClass vocabulary and
+// nothing beyond it (Invariant II: adding a face or plate class here is a
+// rejected PR, not a config flag).
+#define FLEET_BEACON_DETECT_NONE      0x00
+#define FLEET_BEACON_DETECT_PERSON    0x01
+#define FLEET_BEACON_DETECT_VEHICLE   0x02
+#define FLEET_BEACON_DETECT_ANIMAL    0x03
+#define FLEET_BEACON_DETECT_PACKAGE   0x04
+
+// Sentinel for an unknown detection confidence (v2 byte [12]).
+#define FLEET_BEACON_SCORE_UNKNOWN    0xFF
 
 // ════════════════════════════════════════════════════════════════
 // PURE BUILDER
@@ -99,12 +133,36 @@ static inline size_t fleet_beacon_build(uint8_t out[FLEET_BEACON_PAYLOAD_LEN],
     return FLEET_BEACON_PAYLOAD_LEN;
 }
 
+// Write the 11 version-2 payload bytes ([2..12] of the on-air blob): the v1
+// layout with version 0x02 plus detect_class + detect_score. detect_score_pct
+// outside 0..100 maps to the 0xFF unknown sentinel (same convention as
+// battery/health). Returns FLEET_BEACON_PAYLOAD_V2_LEN.
+static inline size_t fleet_beacon_build_v2(uint8_t out[FLEET_BEACON_PAYLOAD_V2_LEN],
+                                           uint8_t flags,
+                                           int battery_pct,
+                                           int health_pct,
+                                           uint32_t chain_height,
+                                           uint8_t fp_b0,
+                                           uint8_t fp_b1,
+                                           uint8_t detect_class,
+                                           int detect_score_pct) {
+    fleet_beacon_build(out, flags, battery_pct, health_pct, chain_height,
+                       fp_b0, fp_b1);
+    out[1]  = FLEET_BEACON_VERSION_2;
+    out[9]  = detect_class;
+    out[10] = (detect_score_pct < 0 || detect_score_pct > 100)
+                  ? FLEET_BEACON_SCORE_UNKNOWN
+                  : (uint8_t)detect_score_pct;
+    return FLEET_BEACON_PAYLOAD_V2_LEN;
+}
+
 // ════════════════════════════════════════════════════════════════
 // PURE PARSER (symmetry with the display side; host round-trips)
 // ════════════════════════════════════════════════════════════════
 
 // Parsed beacon fields. battery_pct/health_pct are -1 when the wire carried
-// the 0xFF unknown sentinel.
+// the 0xFF unknown sentinel. detect_class/detect_score come only from a v2
+// blob: a v1 beacon parses with DETECT_NONE / -1.
 struct FleetBeaconFields {
     uint8_t  flags;
     int      battery_pct;   // -1 = unknown
@@ -112,24 +170,38 @@ struct FleetBeaconFields {
     uint16_t chain_lo16;
     uint8_t  fp_b0;
     uint8_t  fp_b1;
+    uint8_t  detect_class;  // FLEET_BEACON_DETECT_* (NONE on a v1 blob)
+    int      detect_score;  // 0..100, -1 = unknown / v1 blob
 };
 
 // Parse the FULL manufacturer-data blob (including the 2 company bytes) as the
-// scanner delivers it. Validates length (11), company id (0xFFFF LE), type
-// (0x10) and version (0x01). Returns false on any mismatch.
+// scanner delivers it. Accepts BOTH versions: 11 bytes with version 0x01, or
+// 13 bytes with version 0x02 — length and version must agree. Validates
+// company id (0xFFFF LE) and type (0x10). Returns false on any mismatch.
 static inline bool fleet_beacon_parse(const uint8_t* mfg, size_t n,
                                       FleetBeaconFields* out) {
     if (!mfg || !out) return false;
-    if (n != FLEET_BEACON_MFG_LEN) return false;
+    if (n != FLEET_BEACON_MFG_LEN && n != FLEET_BEACON_MFG_V2_LEN) return false;
     if (mfg[0] != 0xFF || mfg[1] != 0xFF) return false;   // company id
     if (mfg[2] != FLEET_BEACON_TYPE) return false;
-    if (mfg[3] != FLEET_BEACON_VERSION) return false;
+    const uint8_t want_version = (n == FLEET_BEACON_MFG_V2_LEN)
+                                     ? FLEET_BEACON_VERSION_2
+                                     : FLEET_BEACON_VERSION;
+    if (mfg[3] != want_version) return false;
     out->flags       = mfg[4];
     out->battery_pct = (mfg[5] == FLEET_BEACON_UNKNOWN_PCT) ? -1 : (int)mfg[5];
     out->health_pct  = (mfg[6] == FLEET_BEACON_UNKNOWN_PCT) ? -1 : (int)mfg[6];
     out->chain_lo16  = (uint16_t)(mfg[7] | ((uint16_t)mfg[8] << 8));
     out->fp_b0       = mfg[9];
     out->fp_b1       = mfg[10];
+    if (n == FLEET_BEACON_MFG_V2_LEN) {
+        out->detect_class = mfg[11];
+        out->detect_score = (mfg[12] == FLEET_BEACON_SCORE_UNKNOWN)
+                                ? -1 : (int)mfg[12];
+    } else {
+        out->detect_class = FLEET_BEACON_DETECT_NONE;
+        out->detect_score = -1;
+    }
     return true;
 }
 

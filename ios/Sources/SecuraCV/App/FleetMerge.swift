@@ -126,6 +126,10 @@ enum FleetMerge {
     static func fold(_ row: FleetSelfDevice, into w: inout Witness, heardAt: Date = Date()) {
         if w.name.isEmpty { w.name = row.name }
         if w.deviceType == .unknown { w.deviceType = row.deviceType }
+        // The raw product string, kept beside the coarse enum: it is what the
+        // figure lookup resolves at full precision, and a row that already
+        // has one keeps it (fill gaps, never replace).
+        if w.publishedType == nil, !row.product.isEmpty { w.publishedType = row.product }
 
         if row.online {
             w.link = .online

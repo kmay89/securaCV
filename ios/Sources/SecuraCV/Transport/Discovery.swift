@@ -14,6 +14,7 @@ struct DiscoveredCanary: Identifiable, Hashable, Sendable {
     var id: String              // device_id from TXT, or the service name
     var name: String
     var deviceType: DeviceType
+    var publishedType: String   // the TXT `dt` verbatim — the enum is coarser
     var host: String?           // mDNS hostname, preferred over IP
     var firmware: String
     var model: String
@@ -68,6 +69,7 @@ final class Discovery: ObservableObject {
                 id: txt["device_id"] ?? name,
                 name: txt["name"] ?? name,
                 deviceType: DeviceType(tolerant: txt["dt"]),
+                publishedType: txt["dt"] ?? "",
                 host: txt["host"],
                 firmware: txt["fw"] ?? "",
                 model: txt["model"] ?? ""

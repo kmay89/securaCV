@@ -81,9 +81,36 @@ static void test_noise_rejected() {
         "wrong beacon type rejected");
 }
 
+// A v2 (13-byte) frame decodes with the detection surface — the ESP-NOW twin
+// hears the same alert a BLE scan would.
+static void test_v2_payload_decodes() {
+  uint8_t p[13];
+  make_good(p, canary::net::BEACON_FLAG_ALERT, 0xFF, 90, 0x01, 0x00,
+            0xAB, 0xCD);
+  p[3] = canary::net::BEACON_VERSION_2;
+  p[11] = canary::net::BEACON_DETECT_PERSON;
+  p[12] = 87;
+
+  char fp4[5] = {0};
+  canary::fleet::BeaconStatus s;
+  bool have = false;
+  CHECK(espnow_decode(p, 13, fp4, s, have), "v2 frame decodes");
+  CHECK(have, "v2 frame carries status");
+  CHECK(std::strcmp(fp4, "abcd") == 0, "v2 fp4 matches");
+  CHECK(s.alert && s.detect_class == canary::net::BEACON_DETECT_PERSON &&
+        s.detect_score == 87,
+        "v2 detection surface decodes (person 87)");
+
+  p[3] = canary::net::BEACON_VERSION;  // v1 version at v2 length
+  CHECK(!espnow_decode(p, 13, fp4, s, have),
+        "v1 version at v2 length rejected");
+  CHECK(!espnow_decode(p, 12, fp4, s, have), "12-byte frame rejected");
+}
+
 int main() {
   test_good_payload_decodes();
   test_noise_rejected();
+  test_v2_payload_decodes();
 
   if (g_fail == 0) {
     std::printf("ALL ESPNOW TESTS PASSED\n");
