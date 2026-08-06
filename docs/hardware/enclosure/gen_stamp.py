@@ -55,7 +55,17 @@ from pathlib import Path
 #  the lockup to the mark. Each is a different DESIGN, so each takes its own
 #  letter rather than reusing one already debossed into a part that is not this
 #  one — that is the whole of what REV is for.)
-STAMP_REV = "2026.10e"
+#  .10f is the honest odd one out, and it is worth saying why rather than
+#  leaving the next reader to wonder: this plate's geometry did NOT move. The
+#  mark library grew measured TYPE METRICS (mark_word_min_h/mark_word_ink_w) —
+#  pure arithmetic, consumed only by asserts on another case, drawing nothing.
+#  But mark_lib is hashed here because a MARK change is a geometry change, and
+#  the digest cannot tell an added function from a moved wall. That coupling is
+#  deliberate and worth its false positives: the alternative is a digest with
+#  holes in it. So SRC moves because the sources really did move, REV follows
+#  because the two are not allowed to disagree, and the 7" plate printed under
+#  .10f is dimensionally identical to the one printed under .10e.
+STAMP_REV = "2026.10f"
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "canary_s3_lcd7_stamp.scad"
