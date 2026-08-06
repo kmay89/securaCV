@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+### The Nightlight turns with the room
+
+Stand the Canary Nightlight on any of its four edges and the clock rights
+itself — and the canary **tumbles in from the edge that was up**, bounces
+on its perch, and settles, while the clock breathes back in behind it.
+
+- **Real movement only.** The QMI8658 feeds a gravity-settled model
+  (host-tested): a flip commits only when the device has come to REST in
+  a new orientation — a shake, a carry, a bump, a flat lay-down, or a
+  diagonal hold carries no opinion, and a cooldown means a wobbling hand
+  can never double-flip it. Turning the lamp feels immediate because the
+  commit lands the moment it settles.
+- **All four orientations.** Portrait, upside down, and both landscapes —
+  the panel rotates in hardware (one MADCTL write; the ST7789's centered
+  window makes the geometry exact), and the face recomposes: landscape
+  gets a wide clock with the companion perched beside it.
+- **A hand on the dial parks AUTO.** Triple-press the BOOT button to turn
+  the face by hand (the opt-in third gesture — the lantern's double-press
+  timing is unchanged on every other flavor), or pick an orientation in
+  the app; either quiets the IMU until the app's "Turn with the room"
+  toggle brings it back.
+- The orientation persists across reboots, and the app's Nightlight card
+  gains the toggle + picker.
+- **Honest status:** the board's IMU mounting is unpublished, so the
+  accelerometer axis map ships as a documented best guess pending a
+  bench check on real glass (`pins.h` `IMU_AXES_SWAP_XY` /
+  `IMU_X_SIGN` / `IMU_Y_SIGN` — one line each if it turns the wrong
+  way). The model, the gates, and the manual triple-press/app path are
+  host-tested and hold regardless of the map.
+
 ### The hub finishes its own sign-in, and the Flasher stops lying about USB
 
 Two Flasher (desktop app) fixes, one promise made real:

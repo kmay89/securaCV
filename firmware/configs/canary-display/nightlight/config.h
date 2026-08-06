@@ -104,6 +104,14 @@
 #define FEATURE_LANTERN             1   // the lamp — see the header note: on
                                         // this flavor it runs through quiet
                                         // hours by default (the product)
+#define FEATURE_AUTO_ORIENT         1   // the QMI8658 follows real movement:
+                                        // stand it on any edge and the clock
+                                        // rights itself — commits only from
+                                        // SETTLED gravity (io/orientation.h),
+                                        // so a carry or a shake never flips
+                                        // it. Triple-press = manual override
+                                        // (turns auto off, like touching a
+                                        // climate dial leaves AUTO).
 
 // Features NOT used by this device — a display witnesses nothing itself.
 #define FEATURE_VISION_AI           0

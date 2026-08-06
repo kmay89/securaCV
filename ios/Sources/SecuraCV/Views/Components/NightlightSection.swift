@@ -51,6 +51,28 @@ struct NightlightSection: View {
                     Toggle("12-hour clock",
                            isOn: boolBinding(\.clock12h, "clock_12h", at: base))
 
+                    // The IMU follows real movement: stand it on any edge
+                    // and the clock rights itself (and the canary tumbles).
+                    // Picking an orientation by hand parks auto — same as
+                    // the device's triple-press — and this toggle brings
+                    // it back.
+                    Toggle("Turn with the room",
+                           isOn: boolBinding(\.autoRotate, "auto_rotate", at: base))
+                    if !s.autoRotate {
+                        Picker("Orientation", selection: Binding(
+                            get: { settings?.orientation ?? 0 },
+                            set: { v in
+                                settings?.orientation = v
+                                Task { try? await NightlightAPI.set("orientation", v, at: base) }
+                            }
+                        )) {
+                            Text("Upright").tag(0)
+                            Text("On its left side").tag(1)
+                            Text("Upside down").tag(2)
+                            Text("On its right side").tag(3)
+                        }
+                    }
+
                     Picker("Night starts",
                            selection: intBinding(\.nightStartHH, "night_start_hh", at: base)) {
                         ForEach(0..<24, id: \.self) { h in

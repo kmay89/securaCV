@@ -207,10 +207,13 @@ void handle_settings_get() {
     o += (size_t)snprintf(
         body + o, sizeof(body) - o,
         ",\"lamp_scene\":%u,\"lamp_auto\":%u,\"lamp_pct\":%u,"
-        "\"lamp_max_duty_pct\":%d,\"clock_12h\":%u,\"scenes\":[",
+        "\"lamp_max_duty_pct\":%d,\"clock_12h\":%u,"
+        "\"orientation\":%u,\"auto_rotate\":%u,\"scenes\":[",
         lamp.scene(), lamp.auto_mode(),
         (unsigned)(((uint16_t)canary::care::nightlight_lamp_bri() * 100 + 127) / 255),
-        CD_BL_MAX_PCT, canary::care::nightlight_clock_12h() ? 1u : 0u);
+        CD_BL_MAX_PCT, canary::care::nightlight_clock_12h() ? 1u : 0u,
+        canary::care::nightlight_rotation(),
+        canary::care::nightlight_auto_rotate() ? 1u : 0u);
     for (uint8_t i = 0; i < canary::color::kSceneCount && o < sizeof(body); i++) {
       o += (size_t)snprintf(body + o, sizeof(body) - o, "%s\"%s\"",
                             i ? "," : "", canary::color::kScenes[i].name);
@@ -268,6 +271,19 @@ void handle_settings_set() {
   } else if (k == "clock_12h" && (v == 0 || v == 1)) {
     canary::care::nightlight_set_clock_12h(v == 1);
     canary::fleet::the_fleet().mark_dirty();
+    s_server->send(200, "application/json", "{\"ok\":true}");
+    return;
+  } else if (k == "orientation" && v >= 0 && v <= 3) {
+    // A hand on the dial parks AUTO (the toggle brings it back). The
+    // rotation itself is a mailbox: main.cpp's loop applies it on the
+    // single path (panel + LVGL + rebuild + tumble) — a web handler must
+    // never rebuild the face from inside a request.
+    canary::care::nightlight_set_auto_rotate(false);
+    canary::care::nightlight_request_rotation((uint8_t)v);
+    s_server->send(200, "application/json", "{\"ok\":true}");
+    return;
+  } else if (k == "auto_rotate" && (v == 0 || v == 1)) {
+    canary::care::nightlight_set_auto_rotate(v == 1);
     s_server->send(200, "application/json", "{\"ok\":true}");
     return;
   }
