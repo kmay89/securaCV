@@ -330,30 +330,55 @@ function mark_word_min_h(line_w = 0.4) = 6.0 * line_w;
 
 // How wide the name lands.
 //
-// ⚠️ ONE per-character advance is not enough, and the single constant this
-// line carried (0.875, in two files) is calibrated for MIXED CASE. Caps are
-// half again as wide as lowercase, so that constant under-reports an all-caps
-// word by ~11% — enough to walk a name straight through a width assert and
-// hang it off the edge of the part, which is the exact failure those asserts
-// were added to catch. Measured ink extent, DejaVu Sans Bold, at cap height h:
+// ⚠️ AN AVERAGE ADVANCE BOUNDS NOTHING. The single constant this line carried
+// (0.875, in two files) is calibrated for mixed case, and a first cut at
+// fixing it split the difference into two — one for caps, one for lowercase.
+// Both are averages, and an average is exactly the wrong tool for a guard:
+// "WWWWW" at 3.6 mm draws 26.8 mm and a caps average calls it 18.7, so the
+// assert whose whole job is to keep type on the part waves it through and the
+// word hangs 2.8 mm off each edge. Averages describe a typical word; a gate
+// has to hold for the worst one. (Caught in review on this very change —
+// thank you. The lowercase half had the same hole: "m" is 1.41, not 0.88.)
 //
-//      "Canary"             5.271 h      "securaCV"          7.073 h
-//      "CANARY"             6.150 h      "SECURACV"          8.058 h
-//      "SECURACV.COM/QR"   14.568 h
+// So the table below is not an estimate of the average, it is the MEASURED
+// ADVANCE OF EVERY PRINTABLE GLYPH — ASCII 32..126, DejaVu Sans Bold, as a
+// fraction of cap height. Each was obtained the only way OpenSCAD allows:
+// render "cc", render "c", and take the difference, which is the pen movement
+// between the two copies. (Space carries no ink and went through a carrier
+// pair instead.) Nothing here is inferred from anything else.
 //
-// Split by case, and pessimistic in both classes: these two constants
-// over-report every one of the five strings above by 1.4% to 5.2%, never
-// under. Erring long is the whole point — the estimate exists to refuse a
-// name that nearly fits, not to certify one that nearly does not.
-function mark_adv_upper() = 1.04;   // caps and digits
-function mark_adv_lower() = 0.88;   // lowercase; also punctuation, which is
-                                    // narrower still, so it stays pessimistic
-function _mark_adv_of(c) =
-    len(search(c, "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")) > 0
-        ? mark_adv_upper() : mark_adv_lower();
+// Summing advances OVER-reports on purpose: the true ink extent of a string
+// is the sum of its advances less the outer sidebearings, and kerned pairs
+// only ever pull tighter. Checked against eight measured strings — "Canary",
+// "CANARY", "securaCV", "SECURACV", "SECURACV.COM/QR", and the pathological
+// "WWWWW"/"MMMMMM"/"wwwwww" — it bounds every one, by 0.3% to 2.8%, never
+// under. Erring long is the point: the guard exists to refuse a name that
+// nearly fits, not to certify one that nearly does not.
+MARK_ADV = [
+    0.4722, 0.6186, 0.7067, 1.1365, 0.9437, 1.3590, 1.1828, 0.4153,   //  !"#$%&'
+    0.6199, 0.6199, 0.7093, 1.1365, 0.5152, 0.5629, 0.5152, 0.4954,   // ()*+,-./
+    0.9437, 0.9437, 0.9437, 0.9437, 0.9437, 0.9437, 0.9437, 0.9437,   // 01234567
+    0.9437, 0.9437, 0.5424, 0.5424, 1.1365, 1.1365, 1.1365, 0.7868,   // 89:;<=>?
+    1.3563, 1.0497, 1.0338, 0.9954, 1.1259, 0.9265, 0.9265, 1.1133,   // @ABCDEFG
+    1.1351, 0.5047, 0.5047, 1.0510, 0.8643, 1.3497, 1.1351, 1.1530,   // HIJKLMNO
+    0.9941, 1.1530, 1.0444, 0.9159, 0.9563, 1.1014, 1.0497, 1.4961,   // PQRSTUVW
+    1.0457, 0.9821, 0.9835, 0.6199, 0.4954, 0.6199, 1.1365, 0.6782,   // XYZ[\]^_
+    0.6782, 0.9153, 0.9709, 0.8040, 0.9709, 0.9199, 0.5208, 0.9709,   // `abcdefg
+    0.9656, 0.4649, 0.4649, 0.9020, 0.4649, 1.4133, 0.9656, 0.9318,   // hijklmno
+    0.9709, 0.9709, 0.6689, 0.8073, 0.6484, 0.9656, 0.8841, 1.2530,   // pqrstuvw
+    0.8749, 0.8841, 0.7894, 0.9656, 0.4954, 0.9656, 1.1365            // xyz{|}~
+];
+// The widest glyph in the table ("W"). Anything the table cannot identify —
+// a character outside printable ASCII, which this font may not even carry —
+// is charged this rather than skipped, so an unknown glyph can only ever make
+// the guard stricter. A word that silently costs nothing is how type walks
+// off a part.
+function mark_adv_max() = 1.4961;
+function _mark_adv_of(c) = let (i = ord(c) - 32)
+    (i >= 0 && i < len(MARK_ADV)) ? MARK_ADV[i] : mark_adv_max();
 function _mark_adv_sum(word, i = 0) =
     i >= len(word) ? 0 : _mark_adv_of(word[i]) + _mark_adv_sum(word, i + 1);
-// The estimated ink width of `word` set at cap height `h`. Use this rather
-// than len(word)*k*h — that form cannot see the difference between "Canary"
-// and "CANARY", and the difference is 17%.
+// The bounded ink width of `word` set at cap height `h`. Use this rather than
+// len(word)*k*h — that form cannot tell "Canary" from "CANARY" (17% apart)
+// and cannot tell either from "WWWWW" (43% apart).
 function mark_word_ink_w(word, h) = _mark_adv_sum(word) * h;

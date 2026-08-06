@@ -395,11 +395,12 @@ mark_cy = -11.0;         // wordmark center, CASE frame (+Y = up when hung),
                          // so it reads BELOW the hanger. Both single-feature
                          // modes ignore this and center instead
 // (The per-character advance constant that used to live here is gone: the
-//  width estimate now comes from the library's mark_word_ink_w(), which is
-//  case-aware. The local 0.875 was calibrated on "Canary" and was right for
-//  it — and would have been wrong by 11% for any word in caps, which is
-//  precisely the word this face was next asked to carry. See the MEASURED
-//  TYPE METRICS section of canary_mark_lib.scad.)
+//  width now comes from the library's mark_word_ink_w(), which sums the
+//  MEASURED advance of each glyph rather than averaging. The local 0.875 was
+//  calibrated on "Canary" and was right for it — and wrong by 11% for a word
+//  in caps, which is precisely the word this face was next asked to carry,
+//  and wrong by 43% for one built from wide glyphs. An average cannot guard
+//  a worst case. See MEASURED TYPE METRICS in canary_mark_lib.scad.)
 
 /* [Ventilation] — side-wall slots only; the row sits BEHIND the light band
    so the white line stays whole. The lid used to carry a matching grille —
