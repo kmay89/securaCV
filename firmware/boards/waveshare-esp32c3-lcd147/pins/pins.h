@@ -111,7 +111,17 @@
 
 #define IMU_QMI8658             1
 #define IMU_I2C_ADDR            0x6A  // SA0-high address; 0x6B if strapped low
+                                      // (the driver probes both straps)
 #define IMU_INT_PIN             2
+
+// IMU chip axes -> the glass's NATIVE-PORTRAIT frame (+x right, +y down
+// the glass at rotation 0), for the auto-orient model (io/orientation.h).
+// The chip's mounting on this PCB is not published; identity is the seed
+// guess. ⚠️ VERIFY on the bench: if auto-orient turns the wrong way or
+// sideways, fix the swap/sign HERE — one line each, nothing structural.
+#define IMU_AXES_SWAP_XY        0     // 1 = chip X runs along the glass Y
+#define IMU_X_SIGN              1     // -1 to mirror
+#define IMU_Y_SIGN              1     // -1 to mirror
 
 // ============================================================================
 // microSD — shared SPI bus, CS via EXIO (event cache; unused in v0.1)

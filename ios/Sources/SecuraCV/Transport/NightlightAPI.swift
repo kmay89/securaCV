@@ -20,6 +20,8 @@ struct NightlightSettings: Sendable {
     var clock12h: Bool = true
     var nightStartHH: Int = 20
     var nightEndHH: Int = 7
+    var orientation: Int = 0        // 0/1/2/3 quarter turns clockwise
+    var autoRotate: Bool = true     // the IMU follows real movement
     var scenes: [String] = []
 }
 
@@ -44,6 +46,8 @@ enum NightlightAPI {
         if let v = obj["clock_12h"] as? Int { s.clock12h = v == 1 }
         if let v = obj["night_start_hh"] as? Int { s.nightStartHH = v }
         if let v = obj["night_end_hh"] as? Int { s.nightEndHH = v }
+        if let v = obj["orientation"] as? Int { s.orientation = v }
+        if let v = obj["auto_rotate"] as? Int { s.autoRotate = v == 1 }
         if let v = obj["scenes"] as? [String] { s.scenes = v }
         return s
     }

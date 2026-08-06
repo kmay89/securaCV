@@ -12,3 +12,4 @@ test_mic_logic
 test_voice_score
 test_voice_clearance
 dump_voice_score
+test_orientation

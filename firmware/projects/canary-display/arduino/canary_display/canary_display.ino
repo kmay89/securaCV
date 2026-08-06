@@ -152,6 +152,7 @@ static canary::mode::Mode s_active_mode = canary::mode::Mode::Fleet;
 // swaps the face — the same arrangement the Nightstand 7 has with the dash.
 #include "nightlight_ui.h"
 #include "nightlight_glue.h"
+#include "orientation.h"   // gravity-settled auto-orient
 #endif
 // song_seed() is called under exactly this pair of flavors further down. The
 // Arduino build gets the declaration for free — the sketch preprocessor
@@ -459,6 +460,37 @@ static void apply_brightness(uint32_t now, bool night) {
   if (wl > (int)level) level = (uint8_t)wl;
   canary::hal::backlight_set(level);
 }
+
+// ----------------------------------------------------------------------------
+// Auto-orient (the nightlight)
+// ----------------------------------------------------------------------------
+
+#ifdef CD_NIGHTLIGHT
+static canary::io::OrientationModel s_orient;
+static uint32_t s_imu_last_ms = 0;
+static bool s_imu_ok = false;
+
+// The ONE apply path, whoever asked (the IMU's settled commit, a
+// triple-press, the app's picker via the request mailbox): rotate the
+// panel in hardware, reshape LVGL's logical canvas, persist, rebuild the
+// face into the new shape, and let the companion tumble in from the edge
+// that was up. delta derives here so every caller's tumble is honest.
+static void nightlight_apply_orientation(uint8_t rot, uint32_t now) {
+  rot &= 3;
+  const uint8_t prev = canary::ui::lvgl_port_rotation();
+  if (rot == prev) return;
+  const uint8_t delta = (uint8_t)((rot - prev) & 3);
+  canary::hal::display_set_rotation(rot);
+  canary::ui::lvgl_port_set_panel_rotation(rot);
+  canary::care::nightlight_set_rotation(rot);
+  if (g_display_ok) {
+    lv_obj_clean(lv_scr_act());
+    canary::ui::nightlight_ui_create();
+    canary::ui::nightlight_ui_tumble(delta, now);
+  }
+  canary::fleet::the_fleet().mark_dirty();
+}
+#endif  // CD_NIGHTLIGHT
 
 // ----------------------------------------------------------------------------
 // Touch: tap = wake/page, long-press = acknowledge
@@ -1198,10 +1230,35 @@ void setup() {
                                     // survive a power blip and still fire
 #endif
 
+#ifdef CD_NIGHTLIGHT
+  // The nightlight prefs come up BEFORE the glass: the persisted
+  // orientation must shape the very first face (and the splash under it).
+  canary::care::nightlight_begin();
+#endif
+
   // Glass before the network too — a display that boots into a visible
   // "listening" state beats a black disc while WiFi retries.
   g_display_ok = canary::hal::display_init();
   if (g_display_ok) g_display_ok = canary::ui::lvgl_port_init();
+
+#ifdef CD_NIGHTLIGHT
+  // Wear the saved orientation from the very first frame, then arm the
+  // IMU. The model thinks in the DEVICE frame (native-portrait axes), so
+  // the rendered rotation never feeds back into what it measures.
+  if (g_display_ok) {
+    const uint8_t rot0 = canary::care::nightlight_rotation();
+    if (rot0) {
+      canary::hal::display_set_rotation(rot0);
+      canary::ui::lvgl_port_set_panel_rotation(rot0);
+    }
+  }
+#if defined(FEATURE_AUTO_ORIENT) && FEATURE_AUTO_ORIENT && \
+    defined(HAS_IMU) && HAS_IMU
+  s_imu_ok = canary::hal::imu_init();
+  s_orient.begin(canary::hal::IMU_ONE_G,
+                 (canary::io::Orient)canary::care::nightlight_rotation());
+#endif
+#endif  // CD_NIGHTLIGHT
 
 #ifdef CD_FLAVOR_DASH
   // Wear the saved orientation from the very first frame — before the splash
@@ -1364,9 +1421,9 @@ void setup() {
     canary::ui::song_seed(h, millis());
 #endif
 #ifdef CD_NIGHTLIGHT
-    // The companion's visit cadence too — plus the nightlight prefs
-    // (12-hour clock, lamp strength) from NVS.
-    canary::care::nightlight_begin(h);
+    // The companion's visit cadence rides the same identity hash (the
+    // prefs themselves loaded early, before the glass came up).
+    canary::care::nightlight_visits().seed(h);
 #endif
   }
 
@@ -1713,13 +1770,57 @@ void loop() {
   }
 #endif
 
+#ifdef CD_NIGHTLIGHT
+  // Orientation, both asks: the app's picker (a mailbox — the web handler
+  // must not rebuild the face from inside a request) and the IMU's
+  // settled-gravity commits. Modal surfaces park auto-orient: a wizard
+  // mid-flow must never have the glass turned under it.
+  {
+    const int req = canary::care::nightlight_take_rotation_request();
+    if (req >= 0) nightlight_apply_orientation((uint8_t)req, now);
+  }
+#if defined(FEATURE_AUTO_ORIENT) && FEATURE_AUTO_ORIENT && \
+    defined(HAS_IMU) && HAS_IMU
+  if (s_imu_ok && canary::care::nightlight_auto_rotate() &&
+      (int32_t)(now - s_imu_last_ms) >= 100) {
+    s_imu_last_ms = now;
+    int32_t ax = 0, ay = 0, az = 0;
+    if (canary::hal::imu_read_accel(&ax, &ay, &az) &&
+        !canary::ui::settings_ui_active() &&
+        !canary::ui::commission_ui_active()) {
+      // Chip axes -> native-portrait screen axes (pins.h owns the map;
+      // bench-verify note lives there).
+      int32_t sx = ax, sy = ay;
+#if defined(IMU_AXES_SWAP_XY) && IMU_AXES_SWAP_XY
+      sx = ay;
+      sy = ax;
+#endif
+      sx *= IMU_X_SIGN;
+      sy *= IMU_Y_SIGN;
+      if (s_orient.step(sx, sy, az, now)) {
+        nightlight_apply_orientation((uint8_t)s_orient.current(), now);
+      }
+    }
+  }
+#endif
+#endif  // CD_NIGHTLIGHT
+
 #if defined(BOOT_BUTTON_PIN) && (BOOT_BUTTON_PIN >= 0)
   // BOOT-button grammar (display_nightstand_line.md §7 — the input surface
   // the touch-less 1.47" boards never had). Short = wake/peek, Double =
   // summon or dismiss the lantern, Long = acknowledge. The classifier is
-  // pure and host-tested; this is only the wiring.
+  // pure and host-tested; this is only the wiring. The nightlight arms the
+  // opt-in Triple (turn the face by hand) — see boot_button.h for what
+  // that trades.
   {
     static canary::io::ButtonClassifier s_btn;
+#ifdef CD_NIGHTLIGHT
+    static bool s_btn_armed = false;
+    if (!s_btn_armed) {
+      s_btn.enable_triple(true);
+      s_btn_armed = true;
+    }
+#endif
     const bool pressed = digitalRead(BOOT_BUTTON_PIN) == BOOT_BUTTON_ACTIVE;
     switch (s_btn.step(pressed, now)) {
       case canary::io::ButtonEvent::Short: {
@@ -1747,6 +1848,18 @@ void loop() {
           canary::net::publish_fleet_ack((uint32_t)bepoch);
 #endif
         boot_line("[input] long-press (BOOT) -> acknowledge");
+        break;
+      }
+      case canary::io::ButtonEvent::Triple: {
+#ifdef CD_NIGHTLIGHT
+        // Manual orientation: one quarter turn per triple-press, and the
+        // IMU lets go — a hand on the dial parks AUTO (the app's toggle
+        // brings it back), or the model would just turn it right back.
+        canary::care::nightlight_set_auto_rotate(false);
+        nightlight_apply_orientation(
+            (uint8_t)((canary::ui::lvgl_port_rotation() + 1) & 3), now);
+        boot_line("[input] triple-press -> turn the face");
+#endif
         break;
       }
       case canary::io::ButtonEvent::None:
