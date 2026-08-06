@@ -100,14 +100,24 @@
 //                        snap skirt goes thin to clear the pin rows.
 //     Every way the board is captured by its edges — nothing screws into it.
 //
-//  ── THE BACK IS THE BRAND, NOT A MOUNT ───────────────────────────────────
-//  The lid's outer face carries the "Canary" WORDMARK, debossed and filled
-//  in black — and it carries it INSTEAD OF the keyhole, which is a real
-//  trade the owner asked for (kmay89): a pocket case that reads as a
-//  product beats one that can hang on a screw. `lid_back = "keyhole"`
-//  brings the mount back and drops the mark; they cannot share the face
-//  (both want its middle), and the assert says so rather than letting them
-//  overlap into nonsense.
+//  ── THE BACK IS THE BRAND *AND* THE MOUNT ────────────────────────────────
+//  It carries both, because it turned out there was room: the plate is
+//  41 mm tall and the wordmark takes four of them. The hanger sits high,
+//  the "Canary" wordmark reads below it, and `lid_back` still offers
+//  either one alone. What keeps them honest is not taste but asserts —
+//  they must clear each other by 2 mm, and the hanger (the only cut that
+//  goes THROUGH) must additionally clear the press bosses and stay out of
+//  the skirt's snap band, which it would otherwise notch.
+//
+//  THE HANGER IS AN EGG. Not decoration: the old Ø7 head circle admitted
+//  exactly one screw size, and a screw already in a wall did not fit it
+//  (kmay89). An egg tapers continuously from base to crown, so ONE opening
+//  serves a RANGE of heads — offer the head in at whatever width clears it,
+//  let the case drop, and the flank carries the screw up to the crown,
+//  which is sized to the shank and will not give the head back. The shape
+//  is canary_vent_lib's egg2d — the house ovoid, one drawing for the line —
+//  used in the mounted-upright orientation that library's doctrine asks
+//  for: wide base DOWN (the entry, at the USB end), crown UP.
 //
 //  THE BIRD IS NOT ON THIS PART, and that is not an omission. The house
 //  mark (canary_mark_lib.scad) has interior detail — a C spiralled into the
@@ -180,6 +190,7 @@
 // ============================================================================
 
 use <canary_mark_lib.scad>   // the house mark; this part wears the wordmark
+use <canary_vent_lib.scad>   // the house egg — here it is the hanger, not a vent
 
 /* [What to render] */
 part  = "all";      // ["bezel","lid","light","mark","all","exploded","palette"]
@@ -309,13 +320,42 @@ band_clear = 0.10;   // per-face drop-in clearance (pause-and-insert flow);
 // the seam sits in the light path on one face or the other; the pipe must
 // be white through the full wall depth, so the seam has none.
 
-/* [Back face] — the lid's outer face carries ONE of these, never both */
-// "mark"    debosses the Canary wordmark and fills it in the mark filament.
-// "keyhole" cuts the blind keyhole instead and hangs the case USB-down.
-// They cannot share the face — both want its middle — so this picks one and
-// the assert below refuses anything else.
-lid_back = "mark";   // ["mark","keyhole"] back of the lid: brand or wall mount
-kh_head_d = 7.0; kh_shank_d = 4.2; kh_slot_l = 7.0;
+/* [Back face] — what the lid's outer face carries */
+// "both"    the hanger high on the back, the wordmark below it. There is
+//           room: the plate is 41 mm tall and the wordmark takes 4 of it.
+//           The two are placed by kh_cy / mark_cy and the asserts keep them
+//           apart, off the press bosses, and out of the skirt band.
+// "mark"    wordmark alone, centered.
+// "keyhole" hanger alone, centered.
+lid_back = "both";   // ["both","mark","keyhole"] back of the lid: brand, wall mount, or both
+//
+// THE HANGER IS AN EGG, and that is not decoration — it is the fix for a
+// real failure. The old keyhole was a Ø7 head circle hulled into a slot,
+// and a screw already in a wall did not fit it (kmay89). A round hole
+// admits exactly ONE head size; the egg's flank tapers continuously from
+// the base to the crown, so ONE opening takes a range of heads — enter at
+// whatever width clears, drop, and the taper grips the shank. The shape is
+// canary_vent_lib's egg2d, the house ovoid, used here in the mounted-
+// upright orientation that library's doctrine asks for: wide base DOWN
+// (the entry), crown UP (where the screw ends up when the case hangs).
+// These two are NOMINAL SCREW dimensions — measure the screw, write it here.
+// The openings are derived from them further down by adding this catalog's
+// printed-hole clearance, which is the part the first cut of this egg got
+// wrong: it used the nominal numbers RAW (a 9.6 opening for a 9.5 head,
+// 0.05 per side), and on FDM PETG that is a hole that binds — the very
+// failure the egg was drawn to fix, reintroduced one line lower down.
+kh_head_d  = 9.5;   // the LARGEST screw head to hang on — the number that
+                    // was 7.0 and too small for a screw already in a wall
+kh_shank_d = 4.2;   // the shank the crown grips
+kh_egg_l = 15.0;    // egg length along the hang axis; the taper's travel
+kh_cy    = 5.0;     // hanger center, CASE frame (+Y = up when hung). Not
+                    // higher: widening the egg for real screw heads pushed
+                    // its footprint into the FAR press bosses at y 16.2,
+                    // and a through cut there would hole the boss that
+                    // holds the board down. The assert caught it at 8.0;
+                    // 5.0 clears the bosses and still puts the crown —
+                    // where the screw actually ends up — at y 12.5, well
+                    // above the case's middle, so it hangs plumb
 
 /* [Branding] — the wordmark, debossed and filled in the mark filament */
 mark_word   = "Canary";  // the DEVICE's name (the company's is securaCV).
@@ -326,7 +366,10 @@ mark_word_h = 3.6;       // cap height. The width assert below is the real
                          // eye on the first print, it is the one number
                          // here that is a taste call rather than a fit
 mark_depth  = 0.6;       // deboss depth; the inlay fills it flush
-mark_dx = 0; mark_dy = 0;   // nudge on the plate, if the eye wants it
+mark_dx = 0;             // sideways nudge (same in both frames)
+mark_cy = -11.0;         // wordmark center, CASE frame (+Y = up when hung),
+                         // so it reads BELOW the hanger. Both single-feature
+                         // modes ignore this and center instead
 // Per-character advance as a fraction of cap height — the wordmark's width
 // cannot be MEASURED here (OpenSCAD has no text-metrics primitive), so it is
 // estimated, and deliberately a hair pessimistic. Same constant the hallway
@@ -488,6 +531,34 @@ function nub_ys() = [-nub_y0, nub_y0];
 // only thing standing between a taste change and type running off the part
 mark_w = len(mark_word) * mark_adv * mark_word_h;
 
+// ── The back face's two features, placed in CASE coordinates ───────────────
+// Only "both" honors the offsets; a single feature centers itself, so
+// switching modes never leaves the one thing on the plate sitting off-center.
+lid_has_mark = (lid_back == "both" || lid_back == "mark");
+lid_has_kh   = (lid_back == "both" || lid_back == "keyhole");
+mark_y = (lid_back == "both") ? mark_cy : 0;
+kh_y   = (lid_back == "both") ? kh_cy   : 0;
+// BOTH openings are a nominal screw dimension PLUS this catalog's
+// printed-hole clearance — the same `2*tol_hole` (0.3 per side) every screw
+// hole in this directory uses, and which this file declared but never spent
+// until the review caught it. A cutter drawn at the nominal size is a hole
+// that binds once the nozzle has had its say.
+kh_egg_w   = kh_head_d  + 2*tol_hole;   // the base: where the head enters
+kh_crown_w = kh_shank_d + 2*tol_hole;   // the crown: where the shank grips
+// The egg's tip ratio is DERIVED, not styled: it is exactly the crown over
+// the base, so the egg's crown IS the keyhole's slot. Overriding the
+// library's brand tip is deliberate and this is the reason (its header asks
+// that an override say why).
+kh_tip = kh_crown_w / kh_egg_w;
+// egg2d spans y ∈ [−w/2, l − w/2]; this is the shift that centers it
+kh_shift = (kh_egg_l - kh_egg_w)/2;
+kh_lo = kh_y - kh_egg_l/2;   kh_hi = kh_y + kh_egg_l/2;
+// the wordmark's visual band — cap height plus a descender's worth
+mark_lo = mark_y - mark_word_h*0.75;   mark_hi = mark_y + mark_word_h*0.75;
+// the skirt ring stands inside these; a THROUGH cut may not reach it
+skirt_free_y = skirt_y/2 - skirt_wall;
+skirt_free_x = skirt_x/2 - skirt_wall;
+
 // ── The light band's volume, derived, never composed ────────────────────────
 // The S3 stick's hard lesson verbatim: a band slot parked by wall arithmetic
 // left a 0.65 mm black curtain between the LED and the white — a light pipe
@@ -582,18 +653,47 @@ assert(!light_seam || bez_h - snap_depth - snap_h/2 >= seam_z0 + seam_h + 0.6,
 assert(!opt_vent || vent_z1 - vent_z0 >= 1.5, "no room for wall vents behind the band — set opt_vent=false");
 assert(!opt_vent || vent_dy + (vent_n-1)*vent_pitch/2 + vent_w/2 <= yc/2 - 0.8,
        "vent row overruns the side wall — fewer slots (vent_n) or tighter pitch");
-// the back face: one thing on it, and it has to fit on it
-assert(lid_back == "mark" || lid_back == "keyhole",
-       str("lid_back is \"", lid_back, "\" — it must be \"mark\" or ",
-           "\"keyhole\". They cannot share the lid's face; both want its ",
-           "middle, and overlapping them would cut the wordmark in half."));
-assert(lid_back != "mark" || mark_w <= xo - 4.0,
+// ── The back face: two features, and everything they can run into ─────────
+assert(lid_back == "both" || lid_back == "mark" || lid_back == "keyhole",
+       str("lid_back is \"", lid_back, "\" — it must be \"both\", \"mark\" ",
+           "or \"keyhole\"."));
+// the two of them, against each other
+assert(lid_back != "both" || kh_lo - mark_hi >= 2.0,
+       str("the hanger (down to y=", kh_lo, ") and the wordmark (up to y=",
+           mark_hi, ") are closer than 2 mm — separate kh_cy and mark_cy, ",
+           "or shrink kh_egg_l/mark_word_h."));
+// the hanger is a THROUGH cut, so unlike the deboss it can hit real structure
+assert(!lid_has_kh || kh_hi <= skirt_free_y - 0.8,
+       str("the hanger reaches y=", kh_hi, ", into the lid skirt's band at ",
+           skirt_free_y, " — it would cut a notch out of the snap wall. ",
+           "Lower kh_cy or shorten kh_egg_l."));
+assert(!lid_has_kh || -kh_lo <= skirt_free_y - 0.8,
+       "the hanger reaches the far skirt band — raise kh_cy or shorten kh_egg_l");
+assert(!lid_has_kh || kh_egg_w/2 <= skirt_free_x - 0.8,
+       str("the hanger is ", kh_egg_w, " wide and the skirt walls stand at ±",
+           skirt_free_x, " — narrow kh_egg_w."));
+assert(!lid_has_kh || len([for (p = stand_case)
+           if (abs(p[0]) - stand_d/2 - 0.6 < kh_egg_w/2
+               && p[1] + stand_d/2 + 0.6 > kh_lo
+               && p[1] - stand_d/2 - 0.6 < kh_hi) 1]) == 0,
+       str("the hanger's footprint (y ", kh_lo, "..", kh_hi, ", x ±",
+           kh_egg_w/2, ") overlaps a press boss — the through cut would open ",
+           "a hole in the boss that holds the board. Move kh_cy."));
+// the egg has to behave like a keyhole: swallow the head, then refuse it
+assert(!lid_has_kh || kh_crown_w < kh_head_d,
+       str("the crown is ", kh_crown_w, " mm across and the head is ",
+           kh_head_d, " — a crown the head fits through captures nothing ",
+           "and the case falls off the wall. Check kh_shank_d/kh_head_d."));
+assert(!lid_has_kh || (kh_tip > 0 && kh_tip < 1),
+       str("derived egg tip is ", kh_tip, " — kh_shank_d must sit strictly ",
+           "between 0 and kh_egg_w for the crown to be a slot"));
+assert(!lid_has_mark || mark_w <= xo - 4.0,
        str("the wordmark is ", mark_w, " mm wide on a ", xo, " mm lid — it ",
            "would hang off the sides (2 mm margin required). Shrink ",
            "mark_word_h, or shorten mark_word."));
-assert(lid_back != "mark" || mark_word_h <= yo - 6.0,
+assert(!lid_has_mark || mark_word_h <= yo - 6.0,
        "the wordmark is taller than the lid — shrink mark_word_h");
-assert(lid_back != "mark" || (mark_depth >= 0.3 && mark_depth <= back_t - 0.8),
+assert(!lid_has_mark || (mark_depth >= 0.3 && mark_depth <= back_t - 0.8),
        str("mark_depth ", mark_depth, " must sit between 0.3 (a deboss worth ",
            "having) and ", back_t - 0.8, " (leaving plate under the letters)"));
 echo(str("Canary C3-LCD-1.47 (headers=", headers, ") v0.2-dev — outer ",
@@ -622,6 +722,16 @@ echo(str("Canary C3-LCD-1.47 (headers=", headers, ") v0.2-dev — outer ",
 // assembled orientation under a plain top view and READING them.
 module lid_mark2d() {
     mirror([0, 1, 0]) mark_wordmark(mark_word_h, mark_word);
+}
+
+// The hanger, in the lid's frame — the house egg, centered on the origin and
+// pre-flipped by the same rule as the wordmark, so after the assembly's Y
+// inversion its CROWN points up on the hung case and its wide BASE is the
+// low entry. egg2d draws crown-up spanning y ∈ [−w/2, l − w/2]; kh_shift
+// re-centers that span so kh_cy means what it says.
+module kh_egg2d() {
+    mirror([0, 1, 0])
+        translate([0, -kh_shift]) egg2d(kh_egg_l, kh_egg_w, kh_tip);
 }
 
 module rrect2d(x, y, r) { offset(r = r) offset(r = -r) square([x, y], center = true); }
@@ -864,18 +974,14 @@ module lid() {
         // the wordmark, debossed into the OUTER face (lid z = 0). The inlay
         // that fills it is the SAME 2D shape (lid_mark2d), so recess and
         // fill cannot drift — the band's doctrine, applied to type.
-        if (lid_back == "mark")
-            translate([mark_dx, mark_dy, -0.01])
+        if (lid_has_mark)
+            translate([mark_dx, -mark_y, -0.01])
                 linear_extrude(mark_depth + 0.01) lid_mark2d();
-        // keyhole: hangs USB-down. Head hole toward lid +Y (case −Y/USB), the
-        // shank slides toward lid −Y (case +Y/up) as the case drops on.
-        if (lid_back == "keyhole") translate([0, 0, -0.1]) linear_extrude(back_t + 0.2) {
-            translate([0, kh_slot_l/2]) circle(d = kh_head_d);
-            hull() {
-                translate([0,  kh_slot_l/2]) circle(d = kh_shank_d);
-                translate([0, -kh_slot_l/2]) circle(d = kh_shank_d);
-            }
-        }
+        // the egg hanger, cut clean through: offer the screw head into the
+        // wide base, let the case drop, and the flank taper carries it up to
+        // the crown where the shank is gripped and the head cannot return.
+        if (lid_has_kh)
+            translate([0, -kh_y, -0.1]) linear_extrude(back_t + 0.2) kh_egg2d();
     }
 }
 
@@ -889,8 +995,8 @@ module lid() {
 //  without moving either.
 // ----------------------------------------------------------------------------
 module lid_mark() {
-    if (lid_back == "mark")
-        translate([mark_dx, mark_dy, 0])
+    if (lid_has_mark)
+        translate([mark_dx, -mark_y, 0])
             linear_extrude(mark_depth) lid_mark2d();
 }
 
