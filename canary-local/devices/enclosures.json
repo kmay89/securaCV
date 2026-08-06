@@ -7326,7 +7326,7 @@
       },
       {
        "name": "pad_boss_l",
-       "default": "0.70"
+       "default": "0.65"
       },
       {
        "name": "pad_dot_d",
@@ -7347,6 +7347,16 @@
        "name": "btn_up",
        "default": "7.0",
        "comment": "button center up from the USB (−Y) PCB edge. The first"
+      },
+      {
+       "name": "btn_travel",
+       "default": "0.25",
+       "comment": "total actuator travel to the bottom, mm — MEASURE"
+      },
+      {
+       "name": "btn_force",
+       "default": "1.6",
+       "comment": "force at the actuation point, N — MEASURE"
       },
       {
        "name": "btn_dz",
@@ -7719,6 +7729,25 @@
       {
        "name": "pad_arm",
        "default": "pad_l - pad_dot_in"
+      },
+      {
+       "name": "petg_e",
+       "default": "2000",
+       "comment": "MPa, datasheet PETG — see the caveat above"
+      },
+      {
+       "name": "pad_k",
+       "default": "3*petg_e*(pad_h_eff*pow(pad_beam, 3)/12)/pow(pad_arm, 3)",
+       "comment": "N/mm"
+      },
+      {
+       "name": "btn_k",
+       "default": "btn_force/btn_travel",
+       "comment": "N/mm"
+      },
+      {
+       "name": "pad_switch_take",
+       "default": "pad_press_max * pad_k/(pad_k + btn_k)"
       },
       {
        "name": "lip_l",

@@ -348,10 +348,15 @@ pad_slot   = 0.55; // flex slot around the three free sides — prints clean in
 // switch has the snap, the beam has none, and every gram the beam takes is a
 // gram that dilutes the click into a ramp. At a 0.8 beam this plate was
 // stiffer than the switch it was pushing.
-// Stiffness runs as beam³/arm³, so the beam is where the leverage is: 0.8 ->
-// 0.6 alone is 0.42x, and walking the press dot 0.5 mm further from the hinge
-// takes it to 0.34x. THREE TIMES softer at the fingertip, with the switch's
-// own force curve untouched underneath it.
+// Stiffness runs as beam³/arm³, so the beam is where the leverage is: thinning
+// it and walking the press dot further from the hinge both help, and both are
+// done here.
+// ⚠️ How much they help is CALCULATED, not measured — beam theory at a
+// datasheet PETG modulus, which for a printed part is an estimate and not a
+// benchmark (brief, rule 4: no performance claim without one). The ratio says
+// which way to move and roughly how far; it does not certify a feel. The
+// print is what settles that, and the numbers here are what get corrected
+// when it does.
 // The beam is thinned by deepening the RECESS, not by thinning ear_skin —
 // ear_skin is shared with the USB chamfer, which is fit-tested and which the
 // thin-floor breakout of print 2 was about. Nothing over there needs to move
@@ -387,14 +392,21 @@ pad_boss_d = 2.6;  // press boss Ø on the pad's back — rides inside the
 // "barely reaching the button". Barely is the wrong target — the boss should
 // be ON the actuator at every position the board can take, so the switch
 // starts moving the instant the pad does and there is no dead travel to press
-// through first. 0.70 puts the whole float in contact: +0.10 of interference
-// at worst, +0.50 at best.
+// through first. 0.65 puts the whole float in contact: +0.05 of interference
+// at worst, +0.45 at best.
+// It was briefly 0.70. Review asked what limits the switch's displacement,
+// and the honest answer was nothing — so pad_switch_take and its gate exist
+// now, and 0.70 sat at 52% of the switch's travel against a 60% ceiling built
+// on MEASURE defaults that are a guess at the part. Eight points of margin is
+// not enough when the failure is a held RST and a board that never boots.
+// 0.65 is 47%, still in contact across the whole float, and still ahead of
+// the 0.55 that has not been printed yet.
 // Interference is safe here and gets safer as the paddle softens, which is
 // the happy direction: the beam and the switch spring share it in inverse
 // proportion to their stiffness, so at the new 1.8 N/mm beam against a ~9 N/mm
-// switch, even the worst-case 0.50 bows the paddle 0.40 and compresses the
-// switch only 0.10 — half its travel, short of actuation.
-pad_boss_l = 0.70;
+// switch, the worst-case 0.45 compresses the switch about 0.12 — under half
+// its travel. That split is computed, not measured; see pad_k's caveat.
+pad_boss_l = 0.65;
 /* [Press dot] — the pip on the pad face. It is now the BUTTON, not a label.
    ⚠️ THE DOT STANDS PROUD, and that is a deliberate reversal. Every version
    of this paddle until now kept the whole press surface BELOW the ear face —
@@ -424,6 +436,20 @@ btn_up  = 7.0;     // button center up from the USB (−Y) PCB edge. The first
                    // this same outline, and the photo's header-pitch ruler
                    // agrees (≈6.9). Fit-confirmed by that print — not MEASURE
                    // anymore.
+/* [Switch] — the tact switch's OWN force curve, which the paddle answers to.
+   These two exist because a review asked the right question: the boss stands
+   INTO the actuator at rest, that interference has to go somewhere, and
+   nothing in this file said how much of it the switch takes. The answer
+   depends entirely on numbers that were never written down.
+   It matters more than the usual MEASURE item, because the failure is not
+   cosmetic. Too much interference does not make a stiff button — it holds
+   BOOT or RST down, and a held RST is a board that never starts. That is a
+   worse outcome than the heavy press this whole change set is fixing, so it
+   gets a gate rather than a comment.
+   Defaults are a typical SMD side-actuated tact switch. If the real part is
+   softer or shorter-travel than this, the gate below is what notices. */
+btn_travel = 0.25; // total actuator travel to the bottom, mm — MEASURE
+btn_force  = 1.6;  // force at the actuation point, N — MEASURE
 btn_dz  = 1.0;     // actuator center behind the PCB back face — MEASURE
 btn_proud  = 1.8;  // black actuator overhang past the PCB edge — MEASURE
 btn_ch_w   = 3.4;  // actuator channel width — hugs the nub, nothing more
@@ -751,6 +777,28 @@ pad_recess_eff = pad_recess - pad_press_max;
 pad_dot_h = pad_recess + pad_dot_proud;
 // the press point's lever arm, hinge to dot — the number the stiffness cubes
 pad_arm = pad_l - pad_dot_in;
+// ── Where the interference goes, and why it is allowed to exist ────────────
+// The boss stands into the actuator at rest. Two springs share that overlap —
+// the paddle bending outward and the switch compressing inward — and they
+// split it in INVERSE proportion to their stiffness, so the softer the beam,
+// the less of it the switch takes. That is the happy direction, and it is why
+// softening the press and preloading the boss are not opposing changes.
+//
+// ⚠️ COMPUTED, NOT MEASURED, and rule 4 of the brief says to say so. pad_k is
+// Euler-Bernoulli on a rectangular cantilever at a 2.0 GPa PETG modulus — a
+// datasheet figure for a material whose printed stiffness depends on
+// orientation, infill and layer bond. It is the right shape of answer and it
+// is not a benchmark. Treat every ratio derived from it as an estimate that
+// says which way to move, not as a number to trust to two digits.
+petg_e = 2000;   // MPa, datasheet PETG — see the caveat above
+pad_k = 3*petg_e*(pad_h_eff*pow(pad_beam, 3)/12)/pow(pad_arm, 3);   // N/mm
+btn_k = btn_force/btn_travel;                                        // N/mm
+// how far the SWITCH is pushed at the worst interference the float allows.
+// Worst is pessimistic on purpose: the two paddles face each other across the
+// board and their preloads CENTER it, so a board free to slide settles near
+// nominal. This models the case where something else — the plugged cable, a
+// pillar in its notch, plain friction — holds it hard against one wall.
+pad_switch_take = pad_press_max * pad_k/(pad_k + btn_k);
 
 // window lip: (module − active area)/2 per side; the LAND is what is left of
 // it outside the relieved band — that ring is the panel's only contact
@@ -932,6 +980,20 @@ assert(!opt_btn || pad_press_min >= -0.1,
            -pad_press_min, " mm short of the actuator — that is dead travel ",
            "before the switch begins to move, on a paddle that has little to ",
            "spare. Raise pad_boss_l, or tighten tol_slide to shrink the float."));
+// THE ONE THAT MATTERS MOST ON THIS FACE. Every other button gate here is
+// about feel; this one is about whether the device starts. A boss that drives
+// the switch past its actuation point holds BOOT or RST down forever, and a
+// held RST is a board stuck in reset — dead, with no symptom except that it
+// never boots, and nothing on the outside to suggest the case is the cause.
+// 60% of travel is the ceiling: enough margin that a switch a little softer
+// or shorter than the MEASURE defaults still cannot be held closed.
+assert(!opt_btn || pad_switch_take <= 0.6*btn_travel,
+       str("worst-case interference pushes the switch ", pad_switch_take,
+           " mm — past 60% of its ", btn_travel, " mm travel, close enough to ",
+           "actuation that a tolerance stack can hold BOOT/RST DOWN and stop ",
+           "the board booting. Shorten pad_boss_l, soften the paddle, or ",
+           "re-MEASURE btn_force/btn_travel — the defaults are a guess at the ",
+           "part, and this gate is only as good as they are."));
 assert(!opt_btn || pad_recess_eff >= 0.2,
        str("at worst-case interference the pad bows out to within ",
            pad_recess_eff, " mm of the ear face — the recess IS the squeeze ",
