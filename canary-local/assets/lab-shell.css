@@ -187,19 +187,19 @@ button{font:inherit;color:inherit;cursor:pointer;}
 @media (prefers-reduced-motion:reduce){*{transition:none !important;}}
 
 /* ── "still on SecuraCV" bar ─────────────────────────────────────────────
-   Same strip as canary-local.css. Fallback literals so it renders correctly
-   on pages that carry their own palette. See the website repo's
-   RESTRUCTURE-MANIFEST.md, Phase 6. */
+   Mapped to lab-shell's own tokens, which flip with its dark theme. Earlier
+   this borrowed --edge/--faint/--canary fallbacks from the Quiet Glass
+   palette; those tokens do not exist here, so the fallbacks were dark
+   literals sitting on a light surface. */
 .scv-bar {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   padding: 8px 16px;
-  background: var(--surface, #141414); border-bottom: 1px solid var(--edge, #262626);
-  font: 500 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  color: var(--muted, #8a8a8a);
+  background: var(--surface); border-bottom: 1px solid var(--sep);
+  font: 500 13px/1.4 var(--sans); color: var(--text-2);
 }
-.scv-bar a { color: var(--text, #ededed); text-decoration: none; font-weight: 600; }
-.scv-bar a:hover { color: var(--canary, #ffd44f); text-decoration: underline; }
-.scv-bar .scv-home { color: var(--canary, #ffd44f); }
-.scv-bar .scv-sep { color: var(--faint, #4a4a4a); }
-.scv-bar .scv-where { margin-left: auto; color: var(--faint, #4a4a4a); font-weight: 500; }
+.scv-bar a { color: var(--text); text-decoration: none; font-weight: 600; }
+.scv-bar a:hover { color: var(--brand); text-decoration: underline; }
+.scv-bar .scv-home { color: var(--brand); }
+.scv-bar .scv-sep { color: var(--muted); }
+.scv-bar .scv-where { margin-left: auto; color: var(--muted); font-weight: 500; }
 @media (max-width: 560px) { .scv-bar .scv-where { display: none; } }

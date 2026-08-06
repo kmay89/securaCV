@@ -23,21 +23,21 @@
   </script>
   <style>
 /* ── "still on SecuraCV" bar ─────────────────────────────────────────────
-   Same strip as canary-local.css. Fallback literals so it renders correctly
-   on pages that carry their own palette. See the website repo's
-   RESTRUCTURE-MANIFEST.md, Phase 6. */
+   This page declares no custom properties, so the bar carries its own
+   literals rather than falling back to the dark Quiet Glass palette on a
+   light page. Values match the page's own #fafaf9 / #52525b. */
 .scv-bar {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   padding: 8px 16px;
-  background: var(--surface, #141414); border-bottom: 1px solid var(--edge, #262626);
-  font: 500 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  color: var(--muted, #8a8a8a);
+  background: #ffffff; border-bottom: 1px solid #e6e6e3;
+  font: 500 13px/1.4 -apple-system, BlinkMacSystemFont, system-ui, "Inter", sans-serif;
+  color: #6b6b73;
 }
-.scv-bar a { color: var(--text, #ededed); text-decoration: none; font-weight: 600; }
-.scv-bar a:hover { color: var(--canary, #ffd44f); text-decoration: underline; }
-.scv-bar .scv-home { color: var(--canary, #ffd44f); }
-.scv-bar .scv-sep { color: var(--faint, #4a4a4a); }
-.scv-bar .scv-where { margin-left: auto; color: var(--faint, #4a4a4a); font-weight: 500; }
+.scv-bar a { color: #0b0b0c; text-decoration: none; font-weight: 600; }
+.scv-bar a:hover { color: #2563eb; text-decoration: underline; }
+.scv-bar .scv-home { color: #2563eb; }
+.scv-bar .scv-sep { color: #9a9aa2; }
+.scv-bar .scv-where { margin-left: auto; color: #6b6b73; font-weight: 500; }
 @media (max-width: 560px) { .scv-bar .scv-where { display: none; } }
 
     body{font-family:-apple-system,BlinkMacSystemFont,system-ui,"Inter",sans-serif;margin:0;
