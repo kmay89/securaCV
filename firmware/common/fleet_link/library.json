@@ -1,8 +1,18 @@
 {
     "name": "fleet_beacon",
     "version": "1.0.0",
+    "comment": [
+        "test_*.cpp are HOST tests (each has its own main()) and must never be",
+        "linked into firmware. This directory is flat — headers and tests side by",
+        "side — so the exclusion is explicit here, where common/csi gets the same",
+        "effect for free by keeping sources under srcDir 'src'.",
+        "Without it, any project whose LDF discovers this library compiles all",
+        "three tests and the link dies on 'multiple definition of main'. That is",
+        "not hypothetical: it is what happened the moment canary-display first",
+        "included fleet_link/fleet_beacon_udp.h for the LAN-multicast band."
+    ],
     "build": {
-        "srcFilter": ["+<*.cpp>"],
+        "srcFilter": ["+<*.cpp>", "-<test_*.cpp>"],
         "includeDir": "..",
         "srcDir": "."
     }
