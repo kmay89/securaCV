@@ -74,6 +74,10 @@ IDENT_RE = re.compile(r'static\s+let\s+identifier\s*=\s*"([^"]+)"')
 ENTITLEMENTS = [
     "ios/Support/SecuraCV.entitlements",
     "ios/Support/SecuraCV.dev.entitlements",
+    # The Apple TV standing watch for the household: it PUBLISHES away wakes
+    # into the same private database the phone reads (ResidentWatch), so it
+    # claims the same container and is checked by the same gate.
+    "tvos/WitnessWall/Support/WitnessWall.entitlements",
 ]
 ENTITLEMENT_KEY = "com.apple.developer.icloud-container-identifiers"
 

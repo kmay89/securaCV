@@ -145,8 +145,15 @@ jobs:
       - name: Build & test on the simulator
         working-directory: tvos/WitnessWall
         run: |
+          # CODE_SIGNING_ALLOWED=NO and SECURACV_NO_CLOUDKIT are ONE decision,
+          # made here so they cannot disagree: an unsigned build carries no
+          # entitlements, and constructing a CKContainer without them traps in
+          # a way Swift cannot catch (RELEASE_LESSONS (ab) — it cost four days
+          # on the iPhone app, where every test "failed" for reasons that had
+          # nothing to do with iCloud). ResidentWatch reads the same flag.
           xcodebuild test \
             -project WitnessWall.xcodeproj \
             -scheme WitnessWall \
             -destination 'platform=tvOS Simulator,OS=latest,name=Apple TV' \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_ALLOWED=NO \
+            SWIFT_ACTIVE_COMPILATION_CONDITIONS='$(inherited) SECURACV_NO_CLOUDKIT'

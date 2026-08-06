@@ -39,6 +39,10 @@ final class WallModel {
     /// Address the person entered, persisted so a power cut heals itself.
     private(set) var hubAddress: String = ""
 
+    /// The household's resident: this Apple TV, standing watch for the phones
+    /// that left. Opt-in and off until someone turns it on.
+    let resident: ResidentWatch
+
     let coreVersion = WitnessCore.version
 
     private let transport: FleetTransport
@@ -65,6 +69,7 @@ final class WallModel {
         self.defaults = defaults
         self.pollInterval = pollInterval
         self.hubAddress = defaults.string(forKey: Self.hubKey) ?? ""
+        self.resident = ResidentWatch(defaults: defaults)
     }
 
     // No `deinit` canceling the poll task, for two reasons. It cannot compile
@@ -173,6 +178,11 @@ final class WallModel {
             let body = try await transport.fetchFleet(from: address)
             let snapshot = try WitnessCore.parseFleet(json: body)
             state = .live(snapshot, asOf: Date())
+            // The resident sees every snapshot the Wall does. It publishes a
+            // wake only on a transition, only when a human turned it on, and
+            // only for what this endpoint can honestly show (dark Canary,
+            // troubled chain) — see ResidentWatch.
+            resident.observe(snapshot)
             backoff.reset()
         } catch {
             degrade(reason: error.localizedDescription)
