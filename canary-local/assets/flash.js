@@ -2847,6 +2847,16 @@ function productRow(p) {
     left.append(el("div", "flash-product-note",
       "This board is also sold as another product — check the name, not just the picture."));
   }
+  // Support tier, derived from the board registry (flash.json `tier`). The
+  // "never booted" case gets the loud treatment: this is the last screen
+  // before someone writes an unproven image to hardware they own, and the
+  // claim has to arrive before the button, not in a doc they didn't open.
+  if (p.tier) {
+    const t = el("div", p.tier.first ? "flash-product-tier is-first" : "flash-product-tier");
+    t.append(el("span", "flash-tier-label", p.tier.label));
+    t.append(el("span", "muted", p.tier.line));
+    left.append(t);
+  }
   const ver = el("div", "flash-product-ver");
   ver.dataset.for = p.id;
   left.append(ver);

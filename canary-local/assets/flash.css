@@ -1120,3 +1120,19 @@ button.flash-map-key:hover { color: var(--text); }
   color: var(--muted, #8b90a0);
 }
 .flash-product-note { font-size: 11.5px; color: var(--warn, #a06a12); margin-top: 2px; }
+
+/* Support tier (flash.json `tier`, derived from firmware/boards/boards.json).
+   The settled tiers stay quiet — one muted line. The "never booted" tier gets
+   a rule and the warn color, because it is the only one that changes what the
+   user is agreeing to when they press Install. */
+.flash-product-tier { font-size: 11.5px; margin-top: 4px; line-height: 1.45; }
+.flash-product-tier .flash-tier-label {
+  font-weight: 600;
+  margin-right: 6px;
+  color: var(--muted, #8b90a0);
+}
+.flash-product-tier.is-first {
+  border-left: 2px solid var(--warn, #a06a12);
+  padding-left: 8px;
+}
+.flash-product-tier.is-first .flash-tier-label { color: var(--warn, #a06a12); }

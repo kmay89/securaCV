@@ -122,9 +122,17 @@ def main():
     for p in matrix.get("products", []):
         if p["board"] not in board_ids:
             err(f"product {p['id']}: board '{p['board']}' not in boards.json")
-        # product id should be a real flavor
-        if p["id"] not in flavor_names:
-            err(f"product {p['id']}: not a flavor in flavors.json")
+        # Every product must resolve to a real flavor. Most ARE one (id ==
+        # flavor). A board-specialized product — one env of a flavor, built
+        # for a board with a different feature posture, e.g. the classic-ESP32
+        # reach ports — says so with `flavor` instead of inventing a flavor
+        # that firmware/flavors.json would have to grow for no build reason.
+        flavor_of = p.get("flavor", p["id"])
+        if flavor_of not in flavor_names:
+            err(f"product {p['id']}: flavor '{flavor_of}' is not in flavors.json")
+        if p.get("flavor") and not p.get("build", {}).get("env"):
+            err(f"product {p['id']}: declares flavor '{p['flavor']}' but no "
+                "build.env — a board-specialized product must name the env it is")
         if p["id"] == "canary":
             canary = p
         if p.get("hasLevels"):
@@ -139,6 +147,29 @@ def main():
                     if banned in b.get("features", []):
                         err(f"product {p['id']} (flow={p['flow']}) must not list "
                             f"'{banned}' — it's a serial/vision board with no BLE radio in use")
+
+    # ── 2a-bis. a product must not advertise a feature its OWN env turns off ──
+    # The matrix exists to answer "which build includes which feature", so a
+    # tile claiming a feature the env compiles out is the exact lie it is for.
+    # Checks only flags the env sets EXPLICITLY to 0 (no `extends` resolution),
+    # which is sound in one direction: no false positives, and it catches the
+    # real mistake — copying a feature list from the flagship onto a board
+    # whose posture is deliberately smaller.
+    for p in matrix.get("products", []):
+        env_name = p.get("build", {}).get("env")
+        if not env_name or p.get("hasLevels"):
+            continue
+        body = sections.get(f"env:{env_name}")
+        if body is None:
+            continue  # env lives in another project's ini; not ours to read
+        # build_unflags lists `-DFEATURE_X=1` to REMOVE an inherited flag; only
+        # the build_flags half states what this env compiles.
+        flags_body = body.split("build_flags", 1)[1] if "build_flags" in body else ""
+        for feat in p["build"].get("features", []):
+            flag = catalog.get(feat, {}).get("flag")
+            if flag and flag_set(flags_body, flag) == 0:
+                err(f"product {p['id']}: lists '{feat}' but [env:{env_name}] "
+                    f"sets -D{flag}=0 — the build does not have it")
 
     # ── 2b. flasher deep-link can't rot: every product must resolve to a real
     #        flasher catalog product (both files live in this repo). ───────────

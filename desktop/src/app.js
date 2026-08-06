@@ -959,6 +959,16 @@ function renderProducts() {
           p.figure && p.figure.shared
             ? '<span class="p-note">This board is also sold as another product — check the name, not just the picture.</span>'
             : ""
+        }${
+          // Support tier from flash.json (derived from the board registry).
+          // Same words as the browser flasher on purpose — half the users are
+          // here, and a diagnostic that lives in only one of the two frontends
+          // is a diagnostic half the users never get.
+          p.tier
+            ? `<span class="p-tier${p.tier.first ? " is-first" : ""}">` +
+              `<span class="p-tier-label">${esc(p.tier.label)}</span>` +
+              `<span>${esc(p.tier.line)}</span></span>`
+            : ""
         }
       </span>`;
     const radio = row.querySelector("input");
