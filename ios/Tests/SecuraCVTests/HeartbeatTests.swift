@@ -47,6 +47,59 @@ final class HeartbeatTests: XCTestCase {
         XCTAssertNil(Heartbeat(defaults: defaults).lastVerified)
     }
 
+    // MARK: - the test alert's own state machine
+
+    func testAPassingTestAlertLeavesTheTestingState() async throws {
+        let (defaults, suite) = try freshDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let beat = Heartbeat(defaults: defaults)
+        await beat.runTestAlert { }
+        XCTAssertTrue(beat.state.isHealthy,
+                      "the hero moment of this card is the green check — it must not sit on ‘Testing…’")
+        XCTAssertNotNil(beat.lastVerified)
+    }
+
+    func testAFailingTestAlertSaysWhy() async throws {
+        let (defaults, suite) = try freshDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        struct Refused: LocalizedError {
+            var errorDescription: String? { "notifications are off for SecuraCV" }
+        }
+        let beat = Heartbeat(defaults: defaults)
+        await beat.runTestAlert { throw Refused() }
+        guard case .failed(let why) = beat.state else {
+            return XCTFail("a refused delivery is a FAILED path, never a quiet no-op: \(beat.state)")
+        }
+        XCTAssertEqual(why, "notifications are off for SecuraCV")
+        XCTAssertNil(beat.lastVerified, "and it earns no verification")
+    }
+
+    func testAFailedTestIsNotPaperedOverByAnOldVerification() async throws {
+        let (defaults, suite) = try freshDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        struct Refused: LocalizedError {
+            var errorDescription: String? { "notifications are off for SecuraCV" }
+        }
+        let beat = Heartbeat(defaults: defaults)
+        beat.recordBeat(source: .pathVerified, now: t0)      // verified days ago
+        await beat.runTestAlert { throw Refused() }
+
+        // The 20-second refresh, and the fleet answering — neither fixes what
+        // just broke, so neither may replace the failure with a stale success.
+        beat.tick(now: t0.addingTimeInterval(600))
+        beat.recordBeat(source: .fleetCheckIn, now: t0.addingTimeInterval(660))
+        guard case .failed = beat.state else {
+            return XCTFail("a live failure must outlast a persisted old success: \(beat.state)")
+        }
+
+        // Only the path working again clears it.
+        beat.recordBeat(source: .pathVerified, now: t0.addingTimeInterval(720))
+        XCTAssertTrue(beat.state.isHealthy)
+    }
+
     // MARK: - a stage prop never outlives the stage
 
     func testADemoBeatIsNeverWrittenToDisk() throws {

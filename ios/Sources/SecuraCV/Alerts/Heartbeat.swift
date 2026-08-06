@@ -129,6 +129,7 @@ final class Heartbeat: ObservableObject {
         // accuse a fleet that isn't there of going dark.
         lastFleetCheckIn = now
         isDemoFed = true
+        clearTestVerdict()
         tick(now: now)
     }
 
@@ -150,7 +151,23 @@ final class Heartbeat: ObservableObject {
         // A real signal outranks the prop, and only real signals reach disk.
         isDemoFed = false
         persist()
+        // A verified delivery is the ANSWER to a test — in flight or already
+        // failed — so it clears that verdict before we re-evaluate. `tick`
+        // deliberately leaves both alone, and without this the successful
+        // Test Alert (the hero moment of this whole card) would sit on
+        // "Testing the whole path…" forever.
+        //
+        // A fleet check-in clears NEITHER: it is not the test's answer, and
+        // it does not fix whatever made the test fail.
+        if source == .pathVerified { clearTestVerdict() }
         tick(now: now)
+    }
+
+    private func clearTestVerdict() {
+        switch state {
+        case .testing, .failed: state = .alive(secondsAgo: 0)
+        default: break
+        }
     }
 
     /// Forget everything (e.g. leaving demo mode) — back to "Not yet
@@ -176,6 +193,14 @@ final class Heartbeat: ObservableObject {
     func tick(now: Date = Date()) {
         // A test in flight owns the card until it answers.
         if case .testing = state { return }
+        // So does a FAILED one, until the path actually works again. This
+        // matters more now that verifications persist: without it, "Test
+        // failed: notifications are off for SecuraCV" would be overwritten by
+        // the next 20-second refresh with "Delivery verified 3 days ago" —
+        // a stale success papering over a live failure the user just saw.
+        // Only a fresh `.pathVerified` beat clears it (see `recordBeat`); a
+        // Canary checking in does not, because it doesn't fix what broke.
+        if case .failed = state { return }
         guard let last = lastBeat else { state = .unknown; return }
         let ago = Int(now.timeIntervalSince(last))
         // The dark verdict is about the FLEET's silence, so it is measured

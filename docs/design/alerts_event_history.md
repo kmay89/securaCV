@@ -200,6 +200,12 @@ they generalize:
   delivery — everywhere else in this codebase a tolerant enum clamps toward
   the *safe* reading, and for a claim about the user's safety net "safe"
   means promising less.
+- **A live failure outlives a stale success.** Persisting verifications gave
+  the card something old to fall back on, which meant "Test failed:
+  notifications are off" was overwritten by "Delivery verified 3 days ago" on
+  the very next refresh. A failed verdict now stands until the path actually
+  works again — and a Canary checking in does not clear it, because it
+  doesn't fix what broke.
 - **Quiet hours are enforced where they are known.** Focus can be published
   through, because iOS enforces it on the receiving device; quiet hours
   cannot, because the notification extension that turns a wake into a banner
