@@ -13,17 +13,36 @@ final class AwayReachTests: XCTestCase {
 
     @MainActor
     func testOnWiFiOnlyActuallySuppressesWhenAway() {
+        // `.alert`, deliberately, and NOT `.notice`: a notice-floor rule
+        // returns nil from `level` on every path, because digest events are
+        // pulled and never pushed. Written against `.notice` this test would
+        // pass its away assertion for entirely the wrong reason and stop
+        // exercising the reach branch it exists for — a test that guards
+        // nothing while reading as though it does.
         let center = AlertCenter()
         center.rules = [
             AlertRule(id: "home-only", title: "Everyday activity",
-                      minSeverity: .notice, reach: .onWiFiOnly, enabled: true)
+                      minSeverity: .alert, reach: .onWiFiOnly, enabled: true)
         ]
         XCTAssertNotNil(
-            center.level(for: .notice, awayFromHome: false),
+            center.level(for: .alert, awayFromHome: false),
             "at home, an on-Wi-Fi rule speaks")
         XCTAssertNil(
-            center.level(for: .notice, awayFromHome: true),
+            center.level(for: .alert, awayFromHome: true),
             "away, it must stay quiet — this is the branch that never ran")
+    }
+
+    @MainActor
+    func testANoticeFloorRuleNeverPushesAtAll() {
+        // Pins the policy the test above has to route around, so the reason
+        // it uses `.alert` stays discoverable instead of looking arbitrary.
+        let center = AlertCenter()
+        center.rules = [
+            AlertRule(id: "digest", title: "Everyday activity",
+                      minSeverity: .notice, reach: .anywhere, enabled: true)
+        ]
+        XCTAssertNil(center.level(for: .notice, awayFromHome: false))
+        XCTAssertNil(center.level(for: .notice, awayFromHome: true))
     }
 
     @MainActor
