@@ -577,7 +577,19 @@ lid_back = "both";   // ["both","mark","keyhole"] back of the lid: brand, wall m
 kh_head_d  = 9.5;   // the LARGEST screw head to hang on — the number that
                     // was 7.0 and too small for a screw already in a wall
 kh_shank_d = 4.2;   // the shank the crown grips
-kh_egg_l = 15.0;    // egg length along the hang axis; the taper's travel
+// A CUTER EGG, and the only knob that could give one. Everything else about
+// this shape is load-bearing: the base is the screw head plus clearance, the
+// crown is the shank plus clearance, and kh_tip is DERIVED from those two, so
+// the profile's waist and its point are both spoken for by the screw. What is
+// NOT spoken for is how long the thing is — and at 15.0 on a 10.1 base the
+// aspect was 1.49, which is a teardrop. A hen's egg runs about 1.30 to 1.40.
+// 13.5 puts it at 1.34: plumper, rounder, unmistakably an egg rather than a
+// drop of water, with the same mouth and the same grip.
+// What it spends is drop travel — the slide from "head enters" to "shank in
+// the crown" goes 4.9 -> 3.4 mm. That is still several times the thread pitch
+// of anything you would hang this on, and the range of HEAD sizes the flank
+// accepts is set by the taper's width, which has not moved.
+kh_egg_l = 13.5;    // egg length along the hang axis; the taper's travel
 kh_cy    = 5.0;     // hanger center, CASE frame (+Y = up when hung). Not
                     // higher: widening the egg for real screw heads pushed
                     // its footprint into the FAR press bosses at y 16.2,
@@ -635,27 +647,21 @@ loc_clear = 0.08;    // per-side clearance AT THE RIB — MEASURE on first fit
 loc_rib_l = 5.0;     // rib length in Y
 loc_rib_ys = [-2.0, 12.0];   // clear of the ears, the pillars and the corners
 
-/* [Egg outline] — two concentric rings around the hanger, inlaid flush.
-   WHITE hugs the opening and BLACK sits outside it, in that order and for
-   two different reasons. The white is the drawing: an egg cut through a
-   yellow plate reads as a hole shaped like an egg, and a white shell around
-   the opening is what makes the eye see the EGG instead. The black outside
-   it is the shadow — it gives the shell an edge to sit against, so the
-   thing reads as raised rather than as a light patch.
-
-   Both are the SAME deboss depth as the wordmark and both fill flush, so
-   the back of this lid is one plane in three colors and needs no new spool:
-   yellow is the plate (slot 1), black is already the wordmark (slot 2), and
-   white is already the light band (slot 3). Three filaments were loaded for
-   this print before this feature existed.
-
-   Widths answer to the nozzle, same as the type does. Each ring is drawn as
-   a closed loop of constant width, so its width IS its narrowest feature —
-   there is no thin place to hunt for, which is exactly why a ring is the
-   right shape to put at this size. 0.8 is two beads at a 0.4 nozzle. */
+/* [Egg outline] — ONE white ring around the hanger, inlaid flush.
+   It was white against the opening with a black ring outside it, the black
+   there to read as a shadow and give the shell an edge. On the part it read
+   as distraction instead (kmay89) — a hard dark line pulling the eye to the
+   hole rather than letting the egg sit on the plate. So the black is gone and
+   its width went to the white: one 1.6 mm shell instead of 0.8 + 0.8, which
+   is the same total outline and a quieter one.
+   Same deboss depth as the wordmark, filled flush, on the light filament that
+   is already loaded for the band. The lid is still three filaments — yellow
+   plate, black wordmark, white shell — and the shell still costs no color
+   change that was not already happening.
+   A ring's width IS its narrowest feature, which is why a ring survives at a
+   size where type would not. 1.6 is four beads at a 0.4 nozzle. */
 egg_ring = true;
-egg_ring_w1 = 0.8;   // WHITE, against the opening — the shell
-egg_ring_w2 = 0.8;   // BLACK, outside the white — the depth
+egg_ring_w = 1.6;    // the white shell, hugging the opening
 
 /* [Branding] — the wordmark, debossed and filled in the mark filament */
 mark_word   = "Canary";  // the DEVICE's name (the company's is securaCV).
@@ -968,7 +974,7 @@ kh_lo = kh_y - kh_egg_l/2;   kh_hi = kh_y + kh_egg_l/2;
 // the outline grows the hanger's FOOTPRINT — everything that used to clear
 // the bare egg has to clear the rings too, so the reach is derived once here
 // and every gate below reads it rather than re-adding the widths.
-egg_ring_out = egg_ring ? egg_ring_w1 + egg_ring_w2 : 0;
+egg_ring_out = egg_ring ? egg_ring_w : 0;
 kh_out_lo = kh_lo - egg_ring_out;   kh_out_hi = kh_hi + egg_ring_out;
 kh_out_w  = kh_egg_w + 2*egg_ring_out;
 // the wordmark's visual band — cap height plus a descender's worth
@@ -1243,11 +1249,11 @@ assert(lid_back != "both" || kh_out_lo - mark_hi >= 2.0,
            "kh_egg_l/mark_word_h/the egg_ring widths."));
 // the outline is a DEBOSS, so unlike the through cut it cannot hole anything
 // structural — it only has to stay on the plate and stay printable.
-assert(!lid_has_kh || !egg_ring || (egg_ring_w1 >= 0.4 && egg_ring_w2 >= 0.4),
-       str("egg outline rings are ", egg_ring_w1, " / ", egg_ring_w2,
-           " mm wide — under one 0.4 mm extrusion the slicer has nothing to ",
-           "lay and the ring prints as a smudge or not at all. Same floor the ",
-           "wordmark and the press boss answer to."));
+assert(!lid_has_kh || !egg_ring || egg_ring_w >= 0.4,
+       str("the egg's shell is ", egg_ring_w, " mm wide — under one 0.4 mm ",
+           "extrusion the slicer has nothing to lay and the ring prints as a ",
+           "smudge or not at all. Same floor the wordmark and the press boss ",
+           "answer to."));
 assert(!lid_has_kh || kh_out_w/2 <= xo/2 - 2.0,
        str("the hanger's outline is ", kh_out_w, " mm across on a ", xo,
            " mm lid — it would run off the sides (2 mm margin). Narrow ",
@@ -1346,13 +1352,7 @@ module kh_egg2d() {
 // what makes these constant-width by construction rather than by arithmetic —
 // the reason a ring survives at a size where type would not.
 module kh_ring_white2d() {
-    difference() { offset(r = egg_ring_w1) kh_egg2d(); kh_egg2d(); }
-}
-module kh_ring_black2d() {
-    difference() {
-        offset(r = egg_ring_w1 + egg_ring_w2) kh_egg2d();
-        offset(r = egg_ring_w1) kh_egg2d();
-    }
+    difference() { offset(r = egg_ring_w) kh_egg2d(); kh_egg2d(); }
 }
 
 module rrect2d(x, y, r) { offset(r = r) offset(r = -r) square([x, y], center = true); }
@@ -1658,10 +1658,7 @@ module lid() {
         // and fill cannot drift; the band's doctrine, applied to a ring.
         if (lid_has_kh && egg_ring)
             translate([0, -kh_y, -0.01])
-                linear_extrude(mark_depth + 0.01) {
-                    kh_ring_white2d();
-                    kh_ring_black2d();
-                }
+                linear_extrude(mark_depth + 0.01) kh_ring_white2d();
         // the egg hanger, cut clean through: offer the screw head into the
         // wide base, let the case drop, and the flank taper carries it up to
         // the crown where the shank is gripped and the head cannot return.
@@ -1685,11 +1682,6 @@ module lid_mark() {
     if (lid_has_mark)
         translate([mark_dx, -mark_y, 0])
             linear_extrude(mark_depth) lid_mark2d();
-    // the egg's OUTER ring rides the same filament as the wordmark, so the
-    // black on this face is one volume on one spool — no third color change
-    // per layer just to draw a shadow.
-    if (lid_has_kh && egg_ring)
-        translate([0, -kh_y, 0]) linear_extrude(mark_depth) kh_ring_black2d();
 }
 
 // ----------------------------------------------------------------------------

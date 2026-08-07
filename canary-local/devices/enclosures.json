@@ -7454,7 +7454,7 @@
       },
       {
        "name": "kh_egg_l",
-       "default": "15.0",
+       "default": "13.5",
        "comment": "egg length along the hang axis; the taper's travel"
       },
       {
@@ -7510,14 +7510,9 @@
        "default": "true"
       },
       {
-       "name": "egg_ring_w1",
-       "default": "0.8",
-       "comment": "WHITE, against the opening — the shell"
-      },
-      {
-       "name": "egg_ring_w2",
-       "default": "0.8",
-       "comment": "BLACK, outside the white — the depth"
+       "name": "egg_ring_w",
+       "default": "1.6",
+       "comment": "the white shell, hugging the opening"
       }
      ]
     },
@@ -7893,7 +7888,7 @@
       },
       {
        "name": "egg_ring_out",
-       "default": "egg_ring ? egg_ring_w1 + egg_ring_w2 : 0"
+       "default": "egg_ring ? egg_ring_w : 0"
       },
       {
        "name": "kh_out_w",
