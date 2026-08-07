@@ -414,6 +414,12 @@
 #define NVS_KEY_CHAIN     "chain"
 #define NVS_KEY_TAMPER    "tamper"
 #define NVS_KEY_LOGSEQ    "logseq"
+// The day this device's key was born, and whether that day may be called a
+// birthday — written exactly once, never overwritten. See
+// firmware/common/identity/birth_day.h for why a device that can restate its
+// own birth day is a device that launders its age.
+#define NVS_KEY_BORN      "born_day"
+#define NVS_KEY_BORN_EX   "born_exact"
 #define NVS_KEY_WIFI_SSID "wifi_ssid"
 #define NVS_KEY_WIFI_PASS "wifi_pass"
 #define NVS_KEY_WIFI_EN   "wifi_en"

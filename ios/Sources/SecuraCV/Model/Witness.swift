@@ -33,6 +33,26 @@ struct Witness: Identifiable, Codable, Hashable, Sendable {
     var chainLength: UInt32 = 0
     var firmware: String = ""
 
+    /// The day this Canary's KEY was born, in days since the Unix epoch, as the
+    /// device itself reports it (`/api/fleet` `born_day`). Nil until the device
+    /// has met a believable clock, or for a device with no key of its own.
+    /// This is deliberately NOT the pairing date: pairing is a fact about this
+    /// phone, and two people looking at the same Canary would see two different
+    /// answers. See firmware/common/identity/birth_day.h.
+    var bornDay: Int?
+    /// False means `bornDay` is when the device was first DATED, not born —
+    /// the app says so rather than promoting a shelf into a birthday.
+    var bornExact: Bool = false
+
+    /// The birth day as a date, at UTC midnight. Nil when the device has never
+    /// reported one. Rendered day-only everywhere: a birth day carries no time
+    /// of day by construction, and inventing one would be the first decorative
+    /// thing on a screen whose job is being checkable.
+    var bornOn: Date? {
+        guard let bornDay, bornDay > 0 else { return nil }
+        return Date(timeIntervalSince1970: TimeInterval(bornDay) * 86_400)
+    }
+
     // Last event (edge-triggered)
     var lastEvent: String = ""
     var lastEventAt: Date?

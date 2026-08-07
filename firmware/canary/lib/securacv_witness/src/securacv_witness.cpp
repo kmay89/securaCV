@@ -9,6 +9,9 @@
 #include "securacv_crypto.h"
 #include "securacv_auth.h"
 #include "canary_config.h"
+// The birth-day decision itself — board-agnostic, host-tested
+// (firmware/tests_host/test_birth_day.cpp). This file owns only the NVS.
+#include "identity/birth_day.h"
 
 #if FEATURE_DIAGNOSTICS
 #include "securacv_diagnostics.h"
@@ -162,7 +165,17 @@ bool witness_provision_device() {
       return false;
     }
     Serial.println("[OK] New keypair generated and stored");
+    // This boot made the key, so this boot is the only one that can honestly
+    // say how old it is when a clock finally arrives.
+    g_device.key_is_new = true;
+    g_device.key_born_ms = millis();
   }
+
+  // What we already know about when this key was born. Loaded before anything
+  // can offer a clock, so the "already recorded" rule is in force from the
+  // first opportunity to stamp.
+  g_device.born_day = nvs_load_u32(NVS_KEY_BORN, 0);
+  g_device.born_exact = nvs_load_u32(NVS_KEY_BORN_EX, 0) != 0;
 
   // Derive public key + fingerprint
   Ed25519::derivePublicKey(g_device.pubkey, g_device.privkey);
@@ -222,6 +235,35 @@ static void update_chain(const uint8_t payload_hash[32], uint32_t tb, WitnessRec
 
   compute_chain_hash(rec->prev_hash, payload_hash, rec->seq, tb, rec->chain_hash);
   memcpy(g_device.chain_head, rec->chain_hash, 32);
+}
+
+bool witness_note_wall_clock(uint32_t unix_s) {
+  birth::Stamp stored;
+  stored.day = g_device.born_day;
+  stored.exact = g_device.born_exact;
+
+  birth::Observation now;
+  now.unix_s = unix_s;
+  now.key_age_known = g_device.key_is_new;
+  now.key_age_s = g_device.key_is_new
+                      ? (millis() - g_device.key_born_ms) / 1000u
+                      : 0u;
+
+  birth::Stamp fresh;
+  if (!birth::consider(stored, now, &fresh)) return false;
+
+  // Order matters: the day is what `recorded()` tests, so writing it last
+  // means a power cut between the two writes leaves no half-stamped birth —
+  // the next boot simply tries again.
+  nvs_store_u32(NVS_KEY_BORN_EX, fresh.exact ? 1 : 0);
+  nvs_store_u32(NVS_KEY_BORN, fresh.day);
+  g_device.born_day = fresh.day;
+  g_device.born_exact = fresh.exact;
+
+  Serial.printf("[BIRTH] key %s day %lu (UTC)\n",
+                fresh.exact ? "born on" : "first dated",
+                (unsigned long)fresh.day);
+  return true;
 }
 
 void witness_persist_chain_state() {
