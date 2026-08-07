@@ -6,9 +6,19 @@
    Loaded by the module as a real same-origin stylesheet: flash.html's CSP
    (style-src 'self') forbids injected <style> blocks. */
 
+/* The bar's own height, published so the sticky panels underneath it can
+   offset by it. It is declared HERE, and this file is only loaded once
+   lab-nav.js has actually rebuilt the bar — so `var(--scv-bar-h, 0px)` at
+   every use site falls back to 0 on a page without the live bar (no-JS, or
+   the manifest failed to load), which is exactly the pre-existing layout.
+   Pinned rather than measured because the bar never wraps (nowrap below) and
+   every cell is ellipsized, so its height is constant at every width. */
+:root { --scv-bar-h: 41px; }
+
 .scv-bar-lab {
   position: sticky; top: 0; z-index: 60;
   flex-wrap: nowrap;
+  height: var(--scv-bar-h);
 }
 .scv-bar-lab .scv-back { font-weight: 700; white-space: nowrap; }
 /* The crumbs are the user's place — they never shrink. Long names wear a

@@ -165,6 +165,47 @@ test("every manifest page's <main> declares its measure (or is allowlisted)", ()
   }
 });
 
+// ---- sticky stacking ------------------------------------------------------
+
+// The Lab bar is sticky at top:0 and stacks above the page, so any OTHER
+// sticky panel on a bench must clear it or it slides underneath and loses its
+// top edge (this hit the catalog filters, the Vision port diagram and the
+// House fleet panel at once). The bar publishes its height as --scv-bar-h;
+// every other sticky panel offsets by it, with a 0px fallback so a page
+// without the live bar keeps its original position.
+test("every sticky panel on a bench clears the Lab bar", () => {
+  // lab-shell.css is the shell's own chrome (sidebar, phone topbar) on
+  // lab.html, where lab-nav deliberately does not rebuild the bar.
+  const sheets = readdirSync(join(CANARY, "assets"))
+    .filter((f) => f.endsWith(".css") && f !== "lab-shell.css" && f !== "lab-nav.css");
+
+  for (const f of sheets) {
+    const css = read(join(CANARY, "assets", f));
+    for (const m of css.matchAll(/([^{}]+)\{([^{}]*position:\s*sticky[^{}]*)\}/g)) {
+      const body = m[2];
+      const top = body.match(/(?:^|[;\s])top:\s*([^;]+)/);
+      if (!top) continue;                       // no top offset: nothing to clear
+      const value = top[1].trim();
+      if (/^0(px)?$/.test(value)) continue;     // pinned to the very top on purpose
+      assert.ok(
+        value.includes("--scv-bar-h"),
+        `assets/${f}: sticky rule "${m[1].trim()}" uses top:${value}, which sits ` +
+        `under the Lab bar (sticky at top:0, height --scv-bar-h). Use ` +
+        `top: calc(var(--scv-bar-h, 0px) + ${value}) so it clears the bar and ` +
+        `still falls back to ${value} on a page without the live bar.`
+      );
+    }
+  }
+});
+
+test("the bar publishes the height those panels offset by", () => {
+  const navCss = read(join(CANARY, "assets/lab-nav.css"));
+  assert.match(navCss, /--scv-bar-h:\s*\d+px/,
+    "assets/lab-nav.css must declare --scv-bar-h — the sticky panels offset by it");
+  assert.match(navCss, /\.scv-bar-lab\s*\{[^}]*height:\s*var\(--scv-bar-h\)/,
+    "the bar must actually BE --scv-bar-h tall, or the offset it publishes is a lie");
+});
+
 // ---- copy parity ----------------------------------------------------------
 
 test("bar tagline: browser copy in the bar, device copy in the module", () => {
