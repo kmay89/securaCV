@@ -4475,9 +4475,63 @@ function pickFreshBase(first, avoid) {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-function mintCertificate(product, avoidBase) {
+// A device with a KEY names itself. Derived from its fingerprint with the
+// SAME algorithm the browser Lab and the iPhone app run
+// (canary-local/tools/hatchery/derive.mjs, ios/Shared/BirthCertificate.swift),
+// so one bird has one name on every surface with nothing stored or synced.
+// Inlined rather than imported because this bundle can't reach canary-local;
+// tests/desktop_parity.test.js fails the build if it drifts from the module.
+function hatchFnv1a(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i) & 0xff;
+    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  }
+  return h >>> 0;
+}
+function hatchSeededRng(seedText) {
+  let s = hatchFnv1a(String(seedText)) || 0x9e3779b9;
+  return () => {
+    s ^= (s << 13) >>> 0; s >>>= 0;
+    s ^= s >>> 17;
+    s ^= (s << 5) >>> 0; s >>>= 0;
+    return (s >>> 0) / 0x100000000;
+  };
+}
+function deriveCertificate(h, fingerprint, product, deviceId) {
+  const fp = String(fingerprint || "").trim().toLowerCase();
+  if (!h || !Array.isArray(h.first) || !h.first.length || !fp) return null;
+  const rng = hatchSeededRng(fp);
+  const pick = (a) => a[Math.floor(rng() * a.length)];
+  const base = pick(h.first);
+  const withTitle = Array.isArray(h.titles) && h.titles.length &&
+    rng() < (typeof h.title_chance === "number" ? h.title_chance : 0.6);
+  const house = (Array.isArray(h.house) && h.house.length) ? pick(h.house) : "";
+  const ordinals = Array.isArray(h.ordinals) ? h.ordinals : [];
+  const nth = ordinals.length > 1 ? 1 + Math.floor(rng() * (ordinals.length - 1)) : 1;
+  const ordinal = ordinals[nth] || ("the " + nth + "th");
+  const title = withTitle ? pick(h.titles) + " " : "";
+  const motto = (Array.isArray(h.mottoes) && h.mottoes.length) ? pick(h.mottoes) : "";
+  return {
+    base,
+    name: title + base + (house ? " " + house : ""),
+    species: (product && product.name) || "Canary",
+    lineage: ordinal + " of its name" + (house ? ", " + house.replace(/^the /, "") : ""),
+    ringId: String(deviceId || "").trim() || fp.toUpperCase(),
+    motto,
+    craft: (h.certificate && h.certificate.craft) || "",
+    derived: true,
+  };
+}
+
+function mintCertificate(product, avoidBase, fingerprint) {
   const h = state.hatch;
   if (!h || !Array.isArray(h.first) || !h.first.length) return null;
+  // The derived path wins whenever we know the device's identity; the roll
+  // below is only for a blank chip that has no key yet.
+  const derived = deriveCertificate(h, fingerprint || state.deviceFingerprint,
+                                    product, state.deviceId);
+  if (derived) { derived.ts = Date.now(); return derived; }
   const pick = (a) => a[Math.floor(Math.random() * a.length)];
   const base = pickFreshBase(h.first, avoidBase);
   usedBases.add(base);

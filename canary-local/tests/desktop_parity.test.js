@@ -1460,3 +1460,33 @@ test("witness wall: both apps discover the LAN fleet the same way, one emulator,
   assert.strictEqual(a, b,
     "vendored tv-emulator.js drifted between the Flasher and the Lab — run scripts/vendor_witness_emulator.sh");
 });
+
+// ── The derived birth certificate: one bird, one name, three surfaces ─────
+//
+// The Mac app can't import canary-local, so it inlines the derivation. That is
+// exactly the shape of drift this file exists to catch: an algorithm copied by
+// hand goes wrong quietly, and the failure is a Canary that answers to one
+// name in the Flasher and another on the phone. So run the native app's OWN
+// inlined functions against the canonical module and demand identical output.
+test("the native flasher derives the same certificate as the module", async () => {
+  const src = read(join(ROOT, "desktop", "src", "app.js"));
+  const hatch = JSON.parse(read(join(CANARY, "devices", "hatch.json")));
+  const { deriveCertificate } = await import(
+    pathToFileURL(join(CANARY, "tools", "hatchery", "derive.mjs")).href);
+
+  // Lift the three inlined functions out of the bundle and evaluate them.
+  const block = src.match(
+    /function hatchFnv1a[\s\S]*?\nfunction deriveCertificate\([\s\S]*?\n}\n/);
+  assert.ok(block, "desktop/src/app.js no longer carries the inlined derivation");
+  const native = new Function(`${block[0]}; return deriveCertificate;`)();
+
+  for (const fp of ["0000000000000000", "a3f7c1d2e4b58690", "deadbeefcafef00d",
+                    "1234567890abcdef", "0f1e2d3c4b5a6978"]) {
+    const mine = native(hatch, fp, { name: "Canary Vision" }, "");
+    const theirs = deriveCertificate(hatch, { fingerprint: fp, product: { name: "Canary Vision" } });
+    assert.equal(mine.name, theirs.name, `native/module name drift for ${fp}`);
+    assert.equal(mine.lineage, theirs.lineage, `native/module lineage drift for ${fp}`);
+    assert.equal(mine.motto, theirs.motto, `native/module motto drift for ${fp}`);
+    assert.equal(mine.ringId, theirs.ringId, `native/module ring id drift for ${fp}`);
+  }
+});

@@ -68,6 +68,14 @@ struct DeviceDetailView: View {
             }
             .listRowBackground(Color.clear)
 
+            // Who it is, directly under what it looks like — the two halves
+            // of one answer, and neither was typed by a human: the figure is
+            // resolved from what the device published, the name is derived
+            // from its key.
+            Section {
+                BirthCertificateCard(witness: liveWitness, pairedAt: pairedAt)
+            }
+
             Section("Trust") {
                 LabeledContent("Signature") {
                     Label(witness.badge.label, systemImage: witness.badge.sfSymbol)
@@ -167,6 +175,13 @@ struct DeviceDetailView: View {
         }
         .navigationTitle(witness.displayName)
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    /// When this phone paired it. Nil for a Canary we can see but have not
+    /// paired — it has no relationship with us to date, and the certificate
+    /// card says "paired" only when there is a pairing to name.
+    private var pairedAt: Date? {
+        store.devices.devices.first { $0.id == witness.id }?.pairedAt
     }
 
     /// Says when the quiet ends, because every mute here does end.
