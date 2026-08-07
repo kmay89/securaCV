@@ -13,6 +13,7 @@ struct DeviceDetailView: View {
     @EnvironmentObject var store: FleetStore
     @State private var verifying = false
     @State private var verdict: ChainVerdict?
+    @State private var showingGlassSettings = false
 
     /// The pushed `witness` value goes stale the moment the store updates
     /// (e.g. right after Mute) — render mute state from the live row.
@@ -131,6 +132,26 @@ struct DeviceDetailView: View {
                 // device's own /api/settings (the device describes, the
                 // app renders).
                 NightlightSection(base: nightlightBaseURL)
+            }
+
+            // EVERY display serves /api/settings and /api/set, not just the
+            // nightlight — the screen brightness, the night window, the red
+            // shift and the peek length were all being served to nobody on a
+            // Watch Station or a Dash. One screen renders whatever the glass
+            // reports, so this needs no per-product branch.
+            if witness.deviceType.servesGlassSettings, let base = nightlightBaseURL {
+                Section {
+                    Button {
+                        showingGlassSettings = true
+                    } label: {
+                        Label("Display settings", systemImage: "slider.horizontal.3")
+                    }
+                } footer: {
+                    Text("Brightness, the night window, how long it lights when you glance at it — and the lamp's color, if it has one. Read from the device, written back to it.")
+                }
+                .sheet(isPresented: $showingGlassSettings) {
+                    GlassSettingsSheet(witness: liveWitness, base: base)
+                }
             }
 
             Section {

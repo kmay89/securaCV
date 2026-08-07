@@ -53,4 +53,9 @@ LampFrame& lamp_frame();
 void look_set_scene(uint8_t idx);   // clamped to the scene count
 void look_cycle_scene();            // next scene, wrapping
 
+// The owner turned the color wheel. `hue` is 0..359; anything negative hands
+// the glass back to `scene_idx`. Picking a catalog scene clears it, so the
+// two controls can never both claim to be the current look.
+void look_set_custom_hue(int16_t hue);
+
 }  // namespace canary::ui

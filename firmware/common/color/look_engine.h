@@ -43,7 +43,31 @@ struct LookParams {
   int8_t  warmth = 0;                // -100..100
   bool    gamma_on = true;
   bool    night = false;
+  // An arbitrary hue the owner picked (0..359), or <0 to use `scene_idx`.
+  //
+  // The catalog is nine curated looks; a color WHEEL is a different promise —
+  // "the color I chose" — and snapping that to the nearest scene would make
+  // the app more precise than the glass, which is the wrong way round. So a
+  // chosen hue becomes a scene synthesized around it (custom_scene below),
+  // and everything downstream treats it exactly like a catalog scene.
+  //
+  // It buys no exemption from the one inviolable rule: a look dresses the
+  // CALM. At Warn and above the semantic override still wins, so no hue a
+  // user picks can dress an alarm in a friendly color.
+  int16_t custom_hue = -1;
 };
+
+// The scene a chosen hue becomes: four stops around that hue with a little
+// saturation and value drift, so a custom color still breathes like a look
+// instead of sitting flat. Pure, so both the engine and the tests build it
+// the same way.
+Scene custom_scene(int16_t hue);
+
+// THE look these params describe — a catalog scene, or the owner's own color.
+// Every renderer must go through this rather than indexing kScenes directly,
+// or a surface that forgets will quietly paint the old scene over a chosen
+// color (which is exactly what the plumage overlay did before this existed).
+Scene current_look(const LookParams& p);
 
 // The scene catalog (defined in look_engine.cpp).
 extern const Scene kScenes[];

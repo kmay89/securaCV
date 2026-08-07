@@ -70,6 +70,35 @@ The ones that bite most often: `gen_stamp.py` and `gen_builder_manifest.py`
 the Apple Home quickstart's signal table is a privacy promise, so a stale one
 is a false statement rather than merely old).
 
+**The recipe above does not find the twenty-first, and it can't:** the WASM
+emulator's `canary-local/emulator/dist/*.js` is generated and committed like
+the rest, but its generator is a compiler and its *inputs are firmware
+sources*. There is no `gen_*.py` or `make-*.mjs` to grep for. So an ordinary
+C++ edit can leave `dist/` stale, and `canary-local.yml`'s "Dist drift check"
+fails on a file you never opened.
+
+Which edits move it is not obvious either — it depends on what
+`canary-local/emulator/build.sh` actually compiles, which is `src/main.cpp`,
+the LVGL faces and `care/`/`fleet/`/`trust`, **not** the `net/` layer:
+
+- editing `common/color/look_engine.cpp` → `dist/` changes (the color engine
+  is in the render path);
+- editing `common/fleet_selfreport/fleet_selfreport.h` → `dist/` does **not**
+  change, even though `net/glass_web.cpp` includes it, because that file is
+  never compiled into the emulator.
+
+Fixing it needs emsdk **6.0.3** exactly, which most working environments can't
+install. Don't fight that — use **Actions → "Rebuild emulator dist (pinned
+emsdk)"**, dispatched on your branch: it rebuilds where the toolchain lives and
+pushes the bytes back. Two things to know before you rely on it:
+
+1. **It pushes to the branch it was dispatched on.** Dispatch it on `main` and
+   it commits to `main`; prefer a feature branch.
+2. **Its push does not retrigger CI** (default `GITHUB_TOKEN`), so the PR
+   keeps showing the old failure until you make one ordinary push. Re-running
+   the failed job does *not* work — a re-run checks out the original commit,
+   which still has the stale `dist/`.
+
 ## Enclosure CAD
 
 - **Always send rendering previews.** Any change to an enclosure `.scad`

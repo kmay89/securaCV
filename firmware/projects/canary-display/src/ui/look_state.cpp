@@ -26,6 +26,13 @@ LampFrame& lamp_frame() { return s_lamp; }
 void look_set_scene(uint8_t idx) {
   if (canary::color::kSceneCount)
     s_look.scene_idx = (uint8_t)(idx % canary::color::kSceneCount);
+  // Choosing a catalog scene puts the wheel away — one look is on at a time,
+  // and the settings screen should never show two answers to "what color?".
+  s_look.custom_hue = -1;
+}
+
+void look_set_custom_hue(int16_t hue) {
+  s_look.custom_hue = hue < 0 ? -1 : (int16_t)(hue % 360);
 }
 
 void look_cycle_scene() {

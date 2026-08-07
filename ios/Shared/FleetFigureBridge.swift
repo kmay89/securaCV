@@ -10,6 +10,20 @@
 import SwiftUI
 
 extension DeviceType {
+    /// Does this kind of device serve `/api/settings` + `/api/set`?
+    ///
+    /// Every DISPLAY does (glass_web.cpp is shared by the whole display
+    /// line), which is the point: the app used to offer these controls only
+    /// on the nightlight, so a Watch Station's brightness and night window
+    /// were served to nobody. A witness that isn't glass has no screen to
+    /// configure, and offering the screen would be a tap that 404s.
+    var servesGlassSettings: Bool {
+        switch self {
+        case .display, .nightlight: return true
+        case .wap, .vision, .sense, .unknown: return false
+        }
+    }
+
     /// The figure of this kind of device, or nil when the type does not pin
     /// down one physical product.
     ///

@@ -309,7 +309,11 @@ namespace {
 // introduce a color the scene does not own — which is what keeps it from ever
 // reading as a semantic (state) color.
 Rgb note_light(const LookParams& p, uint8_t pitch, uint32_t swell) {
-  const Scene& sc = kScenes[p.scene_idx % kSceneCount];
+  // The owner's color if they picked one — otherwise the catalog scene.
+  // Sampling kScenes directly here added the OLD scene's color on top of a
+  // chosen hue during a note, so a picked color visibly drifted whenever the
+  // lamp sang.
+  const Scene sc = current_look(p);
   Hsv h = palette_sample(sc.stops, sc.n_stops, pitch);
   h.v = (uint8_t)((uint32_t)h.v * swell / 255u);
   return finish(hsv_to_rgb(h.h, h.s, h.v), p.warmth, p.gamma_on);
