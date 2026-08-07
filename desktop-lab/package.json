@@ -1,7 +1,7 @@
 {
   "name": "securacv-lab-desktop",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "SecuraCV Lab — native Tauri shell (desktop + mobile) around the local-first canary-local Lab.",
   "scripts": {
     "tauri": "tauri",

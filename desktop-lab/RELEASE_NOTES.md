@@ -16,6 +16,24 @@ version, newest first. Same contract as the Flasher's
 
 Heading grammar is `## <version> — <YYYY-MM-DD>`.
 
+## 0.2.1 — 2026-08-07
+
+- **Every bench now carries the Lab's navigation.** The bar at the top of
+  every page shows where you are on the build line (stage › bench), walks
+  you to the previous or next bench, and always offers "‹ The Lab" back to
+  the shell — you can no longer open a bench and lose your way home. It is
+  rendered from the same manifest as the sidebar, so the two can't disagree.
+- **Links to the website now open in your browser.** Before, following
+  SecuraCV, Glossary, Help, or a GitHub link replaced the app's window with
+  the website — and with no Back button, the only way out was restarting
+  the app. External links now open in your default browser and the Lab
+  stays where you were.
+- **Five benches stopped running edge-to-edge.** Get started, The Vault,
+  The Vision, The Operator's Bench, and First boot laid their text against
+  the window edge and let card grids clip offscreen; they now share the
+  same centered measure as the rest of the Lab. The sitemap is also
+  readable in dark mode.
+
 ## 0.2.0 — 2026-07-28
 
 - **The Lab now keeps itself fresh.** It checks for a newer version when

@@ -136,7 +136,7 @@
 /* the fleet panel */
 .house-panel { border: 1px solid var(--edge); border-radius: var(--radius);
   background: linear-gradient(180deg, var(--surface-2) 0%, #101012 100%);
-  padding: 16px 16px 18px; position: sticky; top: 16px; }
+  padding: 16px 16px 18px; position: sticky; top: calc(var(--scv-bar-h, 0px) + 16px); }
 .fleet-head h2 { margin: 0; font-size: 20px; }
 .fleet-count { color: var(--canary); font-weight: 600; margin: 4px 0 0;
   font-size: 14px; }

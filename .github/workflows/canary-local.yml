@@ -210,6 +210,7 @@ jobs:
           node --test canary-local/tests/hatchery.test.js
           node --test canary-local/tests/wifi_memory.test.js
           node --test canary-local/tests/lab_bundle.test.js
+          node --test canary-local/tests/lab_nav.test.js
           node --test canary-local/tests/playground.test.js
           node --test canary-local/tests/mode.test.js
           node --test canary-local/tests/mic.test.js
