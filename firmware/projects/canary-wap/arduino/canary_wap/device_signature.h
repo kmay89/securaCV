@@ -92,10 +92,27 @@ constexpr size_t SIG_HEX_CAP = 129;
  *
  *   securacv-canary-sig|v1|whoami|<device_id>|<nonce_hex>
  *
- * This is what lets a fleet surface (the desktop Flasher's fleet book)
- * prove that the mDNS answer it is about to hand a bearer token to
- * actually holds this device's key, instead of trusting an announcement
- * anyone on the LAN can forge. The nonce is the CALLER's freshness — the
+ * What this DOES prove: a device holding this key was reachable and
+ * signed the caller's fresh challenge. That defeats an impersonator who
+ * cannot reach the genuine device — a stale announcement for a Canary
+ * that has left the network, or a peer on a segment that cannot talk to
+ * it.
+ *
+ * What it does NOT prove, and must not be claimed to: that the socket
+ * answering the caller is the one holding the key. A hostile peer on the
+ * same LAN can spoof the mDNS record, take the caller's nonce, replay it
+ * to the genuine device's (unauthenticated, by design) endpoint, and
+ * relay the signature back. Verification then succeeds against an
+ * attacker-controlled socket. A signature over a nonce is not channel
+ * binding, and over plain HTTP nothing here binds the proof to the
+ * connection that later carries a bearer token — so a caller MUST NOT
+ * treat a valid proof as permission to hand credentials to whoever
+ * returned it. Closing that needs the token exchange itself to be
+ * authenticated to this key (a session key signed by it, or a channel
+ * keyed to it); this endpoint is a building block for that, not the
+ * whole of it.
+ *
+ * The nonce is the CALLER's freshness — the
  * HTTP handler validates it as 16-64 lowercase hex chars before this is
  * reached, so the canonical stays deterministic and this key never signs
  * arbitrary attacker bytes (the domain prefix + kind field separate it

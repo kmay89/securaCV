@@ -408,10 +408,16 @@ size_t render_enroll_json(char* out, size_t cap) {
 esp_err_t handle_enroll_json(httpd_req_t* req) {
   /* Optional ?nonce=<16-64 lowercase hex>: the identity card gains a
    * PROOF — an Ed25519 signature over the whoami canonical binding this
-   * device's key to the caller's fresh nonce. This is what turns "an
-   * mDNS answer claimed to be canary_X" into "canary_X answered": the
-   * card's static fields are copyable by anyone on the LAN, the
-   * signature is not. Unauthenticated on purpose, like the card itself
+   * device's key to the caller's fresh nonce. It turns "the card's static
+   * fields, which anyone on the LAN can copy" into "a device holding this
+   * key answered a challenge it could not have precomputed".
+   *
+   * It is NOT channel binding, and the caller must not treat it as such:
+   * a peer on the same LAN can spoof the announcement, relay the nonce to
+   * this endpoint, and pass the signature on as its own. See the header
+   * for the full limitation — it is the reason this is a building block
+   * rather than the whole answer. Unauthenticated on purpose, like the
+   * card itself
    * — the proof only ever discloses PUBLIC identity, and the strict
    * nonce gate (whoami_nonce_ok) plus the fixed canonical prefix mean
    * the key never signs attacker-shaped bytes. */
