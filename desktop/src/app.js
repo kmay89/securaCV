@@ -128,6 +128,233 @@ function rosterAdd(entry) {
   savePrefs();
 }
 
+// ── the secret drawer ────────────────────────────────────────────────────────
+// Where the setup profile's passwords and each Canary's API token live: the
+// OS credential store when this platform has one (macOS Keychain, Windows
+// Credential Manager), else this app's own prefs file — and the consent copy
+// names which, instead of pretending. Keys are namespaced and URI-encoded
+// (an SSID can hold spaces/emoji); prefs.secretKeys tracks every key ever
+// written so "Reset the app's memory" can sweep the OS store too.
+const secretStore = {
+  backend: "none",
+  _ready: null,
+  // Idempotent; every accessor awaits it, so a get() fired from early init
+  // (hubRestoreSettings runs at DOMContentLoaded) can't race the backend
+  // answer and wrongly fall back to the prefs file.
+  init() {
+    this._ready = this._ready || (async () => {
+      try { this.backend = await invoke("secret_backend"); } catch (_) { this.backend = "none"; }
+    })();
+    return this._ready;
+  },
+  where() {
+    return this.backend === "keychain" ? "your Mac's Keychain"
+      : this.backend === "credential-manager" ? "Windows Credential Manager"
+      : "this app's local settings";
+  },
+  key(...parts) { return parts.map((p) => encodeURIComponent(String(p))).join(":"); },
+  track(key, on) {
+    prefs.secretKeys = prefs.secretKeys || [];
+    const i = prefs.secretKeys.indexOf(key);
+    if (on && i < 0) prefs.secretKeys.push(key);
+    if (!on && i >= 0) prefs.secretKeys.splice(i, 1);
+    savePrefs();
+  },
+  async set(key, value) {
+    await this.init();
+    if (!value) return this.delete(key);
+    if (this.backend !== "none") {
+      try {
+        await invoke("secret_set", { key, value });
+        if (prefs.secrets && key in prefs.secrets) { delete prefs.secrets[key]; }
+        this.track(key, true);
+        return true;
+      } catch (e) {
+        // The OS store exists but refused (locked, permission declined).
+        // Never quietly downgrade to the prefs file — the consent note
+        // beside the checkbox promised the OS store, so a silent weaker
+        // fallback would make that copy a lie. Store nowhere, say so.
+        logEvent("err", "Couldn't save to " + this.where() + ": " + e);
+        return false;
+      }
+    }
+    // No OS store on this platform — the prefs file IS the advertised
+    // destination here (the consent note names it).
+    prefs.secrets = prefs.secrets || {};
+    prefs.secrets[key] = value;
+    this.track(key, true);
+    return true;
+  },
+  async get(key) {
+    await this.init();
+    if (this.backend !== "none") {
+      try {
+        const v = await invoke("secret_get", { key });
+        if (v != null) return v;
+      } catch (_) {}
+    }
+    return (prefs.secrets && prefs.secrets[key]) || null;
+  },
+  async delete(key) {
+    await this.init();
+    let ok = true;
+    if (this.backend !== "none") {
+      try { await invoke("secret_delete", { key }); }
+      catch (e) {
+        // Deletion refused (store locked). Keep the key TRACKED — forgetting
+        // it here would make the next "Reset the app's memory" report success
+        // while the credential still sits in the OS store.
+        ok = false;
+        logEvent("err", "Couldn't remove from " + this.where() + ": " + e);
+      }
+    }
+    if (prefs.secrets && key in prefs.secrets) delete prefs.secrets[key];
+    if (ok) this.track(key, false);
+    else savePrefs();
+    return ok;
+  },
+  // Returns how many entries could NOT be removed, so the caller can report
+  // an incomplete sweep instead of a false clean bill.
+  async wipeAll() {
+    let failed = 0;
+    for (const k of [...(prefs.secretKeys || [])]) {
+      if (!(await this.delete(k))) failed++;
+    }
+    prefs.secrets = {};
+    if (!failed) prefs.secretKeys = [];
+    savePrefs();
+    return failed;
+  },
+};
+
+// The device's local-API bearer credential, minted HERE so the fleet book
+// knows it without a pairing dance. Same alphabet + unbiased rejection
+// sampling as the firmware's own format_api_token_string and the browser
+// flasher's mintApiToken (flash-core.js): reject bytes >= 248 (248 = 62*4),
+// modulo below that is exactly uniform.
+const TOKEN_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+function mintApiToken() {
+  for (;;) {
+    const bytes = crypto.getRandomValues(new Uint8Array(96));
+    let out = "";
+    for (const b of bytes) {
+      if (b >= 248) continue; // unbiased base62
+      out += TOKEN_ALPHABET[b % 62];
+      if (out.length === 32) return "cv_" + out;
+    }
+    // 96 bytes practically never yields fewer than 32 keepers — loop for form.
+  }
+}
+
+// ── the fleet book ───────────────────────────────────────────────────────────
+// A durable record of every Canary this app flashed: who they are, what they
+// run, when they were last seen on the network. Keyed by MAC when the chip
+// reported one (stable across renames), else the device id. Live status and
+// OTA ride on top of this in the Fleet tab (fleetBook controller below).
+function bookAll() { return prefs.book || (prefs.book = {}); }
+function bookKey(mac, deviceId) { return (mac && String(mac).toLowerCase()) || (deviceId ? "id:" + deviceId : null); }
+function bookUpsert(patch) {
+  const key = bookKey(patch.mac, patch.deviceId);
+  if (!key) return null;
+  const book = bookAll();
+  const entry = book[key] || { key, addedAt: Date.now() };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v !== undefined && v !== null && v !== "") entry[k] = v;
+  }
+  entry.key = key;
+  book[key] = entry;
+  savePrefs();
+  fleetBook.renderSoon();
+  return entry;
+}
+function bookRemove(key) {
+  const book = bookAll();
+  const entry = book[key];
+  delete book[key];
+  savePrefs();
+  if (entry) secretStore.delete(secretStore.key("canary", entry.mac || entry.deviceId, "token"));
+  fleetBook.renderSoon();
+}
+// The most recent flash's book entry, so late arrivals (serial receipt,
+// certificate name) know which row to enrich without re-deriving identity.
+let lastBookKey = null;
+
+// ── the setup profile: type it once, every later flash fills itself in ──────
+// The non-secret fields already persist live (PROV_FIELDS above). These three
+// close the loop on the secrets: the consent note names where they go, a
+// successful flash saves them, and opening the form gets them back.
+function profileNoteRefresh() {
+  const note = $("prov-remember-note");
+  if (!note) return;
+  note.textContent = $("prov-remember").checked
+    ? `Wi-Fi and broker passwords go to ${secretStore.where()}; names, hosts and ports stay in this app. A reflash fills every field back in.`
+    : "Nothing is saved — you'll retype the passwords next time.";
+  const hubNote = $("hub-remember-note");
+  if (hubNote) {
+    hubNote.textContent = $("hub-remember").checked
+      ? `Passwords go to ${secretStore.where()} — a relaunch can pick up right where you left off.`
+      : "";
+  }
+}
+
+// Fill the password fields from the profile — never over something typed,
+// and say so out loud when it happens (a silent prefill of a secret reads
+// as a leak). Best-effort: any failure just means typing it again.
+async function profileAutofill() {
+  try {
+    if (!$("prov-remember").checked) return;
+    const filled = [];
+    const ssid = $("wifi-ssid").value.trim();
+    if (ssid && !$("wifi-pass").value) {
+      const pw = await secretStore.get(secretStore.key("wifi", ssid));
+      if (pw && !$("wifi-pass").value && $("wifi-ssid").value.trim() === ssid) {
+        $("wifi-pass").value = pw;
+        filled.push(`Wi-Fi password for “${ssid}”`);
+      }
+    }
+    const host = $("mqtt-host").value.trim();
+    if (host && !$("mqtt-pass").value) {
+      const user = $("mqtt-user").value.trim();
+      const pw = await secretStore.get(secretStore.key("mqtt", host, user));
+      if (pw && !$("mqtt-pass").value && $("mqtt-host").value.trim() === host) {
+        $("mqtt-pass").value = pw;
+        filled.push("broker password");
+      }
+    }
+    const note = $("prov-autofill-note");
+    if (note && filled.length) {
+      note.textContent = `✓ Filled from your setup profile (${secretStore.where()}): ${filled.join(" and ")}.`;
+      note.classList.remove("hidden");
+    }
+  } catch (_) { /* autofill is a nicety, never a blocker */ }
+}
+
+// A flash that succeeded IS the consent moment the checkbox announced:
+// remember exactly what was written, so the next board is a plug-in and a
+// click. Passwords by SSID / broker, so two homes don't overwrite each other.
+// A refused save (Keychain locked) is surfaced right under the form — the
+// flash itself is unaffected, but "remembered" must never be assumed.
+function profileSaveFromFlash(p) {
+  try {
+    if (!$("prov-remember").checked || !p) return;
+    const saves = [];
+    if (p.wifiSsid) saves.push(secretStore.set(secretStore.key("wifi", p.wifiSsid), p.wifiPass || ""));
+    if (p.mqttHost && p.mqttPass) {
+      saves.push(secretStore.set(secretStore.key("mqtt", p.mqttHost, p.mqttUser || ""), p.mqttPass));
+    }
+    Promise.all(saves).then((results) => {
+      if (results.every(Boolean)) return;
+      const note = $("prov-autofill-note");
+      if (note) {
+        note.textContent =
+          `⚠ Couldn't save the password${results.length > 1 ? "s" : ""} to ${secretStore.where()}` +
+          " (locked, or permission declined) — this flash is unaffected, but you'll retype next time.";
+        note.classList.remove("hidden");
+      }
+    }).catch(() => {});
+  } catch (_) {}
+}
+
 // A short, local event log — so a failure is visible and recoverable, never
 // silent. Powers the health story on the About page.
 function logEvent(kind, msg) {
@@ -192,6 +419,15 @@ async function boot() {
   loadAppInfo();          // build number, rev, build date, firmware train
   restoreProv();          // remember the non-secret fields from last time
   restoreSession();       // land back where you left off
+  // Which secret store this platform offers decides the consent wording —
+  // ask first, then word the profile notes from the real answer.
+  secretStore.init().then(profileNoteRefresh);
+  $("prov-remember").addEventListener("change", profileNoteRefresh);
+  $("hub-remember").addEventListener("change", profileNoteRefresh);
+  // A changed network name means a possibly-known password — offer it.
+  $("wifi-ssid").addEventListener("change", profileAutofill);
+  $("mqtt-host").addEventListener("change", profileAutofill);
+  $("mqtt-user").addEventListener("change", profileAutofill);
 
   document.querySelectorAll("[data-open]").forEach((a) =>
     a.addEventListener("click", (ev) => {
@@ -308,6 +544,19 @@ async function boot() {
     state.vision.hostBoot = ev.payload;
     renderReceipts();
     maybeHatch();
+    // The boot receipt carries the device's REAL identity (device_id,
+    // pubkey fingerprint, firmware) — enrich the fleet book's row with it.
+    try {
+      const m = ev.payload && ev.payload.manifest;
+      const entry = m && lastBookKey && bookAll()[lastBookKey];
+      if (entry) {
+        if (m.device_id) entry.deviceId = m.device_id;
+        if (m.pubkey_fp) entry.pubkeyFp = m.pubkey_fp;
+        if (m.firmware) entry.fw = m.firmware;
+        savePrefs();
+        fleetBook.renderSoon();
+      }
+    } catch (_) { /* the book must never break a flash */ }
   });
   await listen("serial:vision", (ev) => {
     const host = state.vision.hostFlash;
@@ -443,7 +692,345 @@ const witnessDiscovery = {
     } catch (_) { /* discovery is best-effort — never affects flashing */ }
   },
 };
-function discoverAndPopulate(product) { witnessDiscovery.burst(product); }
+function discoverAndPopulate(product) { witnessDiscovery.burst(product); fleetBook.burst(); }
+
+// ── the fleet book controller ────────────────────────────────────────────────
+// The management half of the Fleet tab (the Witness Wall below it stays the
+// ambient half): every Canary this app flashed, merged live with a real mDNS
+// browse of `_securacv._tcp` (fleet_scan, Rust), each row with status and —
+// where the flasher seeded the board's API token — one-click identify and
+// over-the-air update. The update is the DEVICE's own signed pull pipeline
+// (POST /api/ota/install): it downloads, verifies Ed25519 + SHA-256 against
+// its pinned key, and A/B-swaps with rollback. This app only rings the bell.
+// Every path is wrapped: the book can NEVER affect flashing.
+const fleetBook = {
+  timer: null,
+  scanning: false,
+  burstUntil: 0,
+  inFlight: false,
+  sightings: {},     // deviceId → sighting from the last browse
+  lastScanAt: 0,
+  hubUp: null,       // last hub_probe_hub answer (null = never asked)
+  opBusy: {},        // book key → an identify/update is running
+  opNote: {},        // book key → live status line under the row
+  renderQueued: false,
+
+  renderSoon() {
+    if (this.renderQueued) return;
+    this.renderQueued = true;
+    requestAnimationFrame(() => { this.renderQueued = false; try { this.render(); } catch (_) {} });
+  },
+
+  async tick() {
+    if (this.inFlight) return this.schedule();
+    this.inFlight = true;
+    try {
+      const found = await invoke("fleet_scan", { timeoutMs: 2500 });
+      this.sightings = {};
+      for (const s of found || []) {
+        if (s && s.deviceId) this.sightings[s.deviceId] = s;
+      }
+      this.lastScanAt = Date.now();
+      // Fold what the network says back into the book: a row's firmware and
+      // address follow the DEVICE (it may have updated itself), and last-seen
+      // becomes a real timestamp instead of a guess.
+      const book = bookAll();
+      for (const entry of Object.values(book)) {
+        const s = entry.deviceId && this.sightings[entry.deviceId];
+        if (!s) continue;
+        entry.lastSeenAt = Date.now();
+        if (s.fw) entry.fw = s.fw;
+        if (s.ip) entry.ip = s.ip;
+        if (s.host) entry.host = s.host;
+        if (s.port) entry.port = s.port;
+        if (s.deviceType) entry.deviceType = s.deviceType;
+        if (s.role) entry.role = s.role;
+      }
+      savePrefs();
+      // The hub row, if the book has one, gets its own reachability probe.
+      if (book["id:hub"]) {
+        try { this.hubUp = await invoke("hub_probe_hub", { host: HUB_HOST }); }
+        catch (_) { this.hubUp = false; }
+        if (this.hubUp) { book["id:hub"].lastSeenAt = Date.now(); savePrefs(); }
+      }
+    } catch (_) { /* no mDNS on this network, or an older backend — the book still renders */ }
+    this.inFlight = false;
+    this.renderSoon();
+    this.schedule();
+  },
+  schedule() {
+    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    const bursting = Date.now() < this.burstUntil;
+    if (!this.scanning && !bursting) return;
+    this.timer = setTimeout(() => this.tick().catch(() => {}), bursting ? 4000 : 10000);
+  },
+  start() {
+    try { this.scanning = true; this.renderSoon(); this.tick().catch(() => {}); } catch (_) {}
+  },
+  stop() {
+    try {
+      this.scanning = false;
+      if (Date.now() >= this.burstUntil && this.timer) { clearTimeout(this.timer); this.timer = null; }
+    } catch (_) {}
+  },
+  burst() {
+    try { this.burstUntil = Date.now() + 45000; this.tick().catch(() => {}); } catch (_) {}
+  },
+
+  online(entry) {
+    return !!(entry.deviceId && this.sightings[entry.deviceId]) ||
+      (entry.key === "id:hub" && this.hubUp === true);
+  },
+  // vision/sense advertise port 1 as a formality — they run no HTTP server,
+  // so their rows are presence-and-version only (their OTA rides MQTT).
+  httpCapable(entry) {
+    const s = entry.deviceId && this.sightings[entry.deviceId];
+    return !!(s && s.port > 1 && (s.ip || s.host));
+  },
+  baseFor(entry) {
+    const s = entry.deviceId && this.sightings[entry.deviceId];
+    if (!s) return null;
+    let host = s.ip || s.host;
+    if (!host) return null;
+    // An IPv6 literal (the IPv6-only-LAN case) must ride in brackets or the
+    // URL is malformed — with or without a port. The Rust base guard already
+    // unwraps brackets before its private-host check.
+    if (host.includes(":") && !host.startsWith("[")) host = "[" + host + "]";
+    return "http://" + host + (s.port && s.port !== 80 && s.port > 1 ? ":" + s.port : "");
+  },
+  tokenKey(entry) {
+    return secretStore.key("canary", entry.mac || entry.deviceId, "token");
+  },
+
+  async identify(entry) {
+    const key = entry.key;
+    if (this.opBusy[key]) return;
+    this.opBusy[key] = true;
+    this.note(key, "Asking it to speak up…");
+    try {
+      const token = await secretStore.get(this.tokenKey(entry));
+      const base = this.baseFor(entry);
+      if (!token || !base) { this.note(key, token ? "It isn't answering right now." : this.noTokenNote()); return; }
+      const r = await invoke("fleet_device_call", { base, token, action: "identify" });
+      if (r.httpStatus === 401) this.note(key, this.staleTokenNote());
+      else if (r.httpStatus === 404) this.note(key, "This firmware doesn't have an identify signal yet.");
+      else this.note(key, "✓ Watch for the blink.");
+    } catch (e) {
+      this.note(key, "Couldn't reach it: " + e);
+    } finally {
+      this.opBusy[key] = false;
+      this.renderSoon();
+    }
+  },
+
+  // The one-click OTA: start the board's own check-and-install pipeline,
+  // then narrate its status until it reboots into the new build (or says
+  // what failed). NOTE the firmware contract: POST /api/ota/install runs
+  // securacv_ota_check_and_install() — check INCLUDED — as one async task,
+  // and a separate /api/ota/check first would make the install 409
+  // (ota_busy), so there is deliberately no pre-check call here. A 409 on
+  // install itself means some other run (the daily auto-check) holds the
+  // engine — retry briefly instead of giving up.
+  async otaUpdate(entry) {
+    const key = entry.key;
+    if (this.opBusy[key]) return;
+    this.opBusy[key] = true;
+    try {
+      const token = await secretStore.get(this.tokenKey(entry));
+      const base = this.baseFor(entry);
+      if (!token || !base) { this.note(key, token ? "It isn't answering right now." : this.noTokenNote()); return; }
+      this.note(key, "Starting the update — the board downloads and verifies it itself (signed, with automatic rollback)…");
+      let started = false;
+      let lostSocket = false;
+      for (let attempt = 0; attempt < 4 && !started; attempt++) {
+        if (attempt) await new Promise((r) => setTimeout(r, 5000));
+        let inst = null;
+        try { inst = await invoke("fleet_device_call", { base, token, action: "ota-install" }); }
+        catch (_) {
+          // The install call can outlive its own socket (the board can get
+          // to rebooting) — treat transport loss as "watch the status".
+          lostSocket = true;
+          started = true;
+          break;
+        }
+        if (inst.httpStatus === 401) { this.note(key, this.staleTokenNote()); return; }
+        if (inst.httpStatus === 404) { this.note(key, "This build doesn't carry the update engine — reflash over USB instead."); return; }
+        if (inst.httpStatus === 409) { this.note(key, "The board's update engine is busy — waiting for it to free up…"); continue; }
+        if (inst.httpStatus >= 400) { this.note(key, "The board refused to start the update (HTTP " + inst.httpStatus + "). Try again in a minute."); return; }
+        started = true;
+      }
+      if (!started) { this.note(key, "The board's update engine stayed busy — it may be mid-check on its own. Try again in a minute."); return; }
+      const startFw = entry.fw || "";
+      const t0 = Date.now();
+      let lastText = "";
+      let sawActivity = lostSocket;
+      while (Date.now() - t0 < 5 * 60 * 1000) {
+        await new Promise((r) => setTimeout(r, 3000));
+        let st = null;
+        try { st = await invoke("fleet_device_call", { base, token, action: "ota-status" }); }
+        catch (_) { sawActivity = true; this.note(key, "Rebooting into the new build…"); continue; }
+        const b = (st && st.body) || {};
+        const stateName = String(b.state || "").toUpperCase();
+        if (b.error && b.error !== "NONE" && b.error_text) { this.note(key, "The board reports: " + b.error_text); return; }
+        if (stateName && !stateName.includes("IDLE")) {
+          sawActivity = true;
+          lastText = stateName.includes("DOWNLOAD")
+            ? `Downloading — ${b.progress || 0}%`
+            : (b.state_text || "Working…");
+          this.note(key, lastText);
+          continue;
+        }
+        // IDLE — the task finished (or never had anything to do). Judge by
+        // what actually changed, not by which poll we happened to land on.
+        if (b.installed_version && b.installed_version !== startFw) {
+          entry.fw = b.installed_version;
+          savePrefs();
+          this.note(key, `✓ Updated — now on v${b.installed_version}.`);
+          return;
+        }
+        if (b.update_available === false) {
+          if (b.installed_version) { entry.fw = b.installed_version; savePrefs(); }
+          this.note(key, `✓ Already up to date — v${b.installed_version || startFw || "?"}.`);
+          return;
+        }
+        if (sawActivity) {
+          this.note(key, "The run finished but the board still reports the old version — its own settings page has the details. Safe to try again.");
+          return;
+        }
+        this.note(key, lastText || "Waiting for the board to start…");
+      }
+      this.note(key, "Still working — the board finishes on its own; check back in a minute.");
+    } catch (e) {
+      this.note(key, "Couldn't start the update: " + e);
+    } finally {
+      this.opBusy[key] = false;
+      this.renderSoon();
+    }
+  },
+
+  noTokenNote() {
+    return "No stored key for this board — reflash it once with this app (any version) and the key is minted and kept automatically.";
+  },
+  staleTokenNote() {
+    return "The board refused the stored key — it was probably reflashed elsewhere. One reflash here mints a fresh one.";
+  },
+  note(key, text) {
+    this.opNote[key] = text;
+    const el = document.querySelector(`[data-book-note="${CSS.escape(key)}"]`);
+    if (el) { el.textContent = text; el.classList.remove("hidden"); }
+    else this.renderSoon();
+  },
+
+  render() {
+    const host = $("fleet-book");
+    if (!host) return;
+    const book = Object.values(bookAll())
+      .sort((a, b) => (b.flashedAt || b.addedAt || 0) - (a.flashedAt || a.addedAt || 0));
+    const train = state.catalog && state.catalog.fw_train;
+    const known = new Set(book.map((e) => e.deviceId).filter(Boolean));
+    const strangers = Object.values(this.sightings).filter((s) => !known.has(s.deviceId));
+
+    const rows = book.map((e) => {
+      const online = this.online(e);
+      const behind = train && e.fw && fwBehind(e.fw, train);
+      const isHub = e.key === "id:hub";
+      const name = e.ringName || e.deviceId || e.productLabel || "Canary";
+      const sub = [
+        e.productLabel || e.product || "",
+        e.deviceId && e.ringName ? e.deviceId : "",
+        e.fw ? "fw " + e.fw : "",
+        e.ip || "",
+      ].filter(Boolean).join(" · ");
+      const seen = online
+        ? `<span class="fb-dot on"></span> on your network`
+        : e.lastSeenAt
+          ? `<span class="fb-dot off"></span> last seen ${relativeTime(e.lastSeenAt)}`
+          : `<span class="fb-dot off"></span> not seen on the network yet`;
+      const canTalk = online && this.httpCapable(e) && e.hasToken;
+      const busy = !!this.opBusy[e.key];
+      const buttons = isHub
+        ? `<button class="btn btn-ghost btn-small" data-book-open="${esc(e.key)}">Open</button>`
+        : [
+            canTalk ? `<button class="btn btn-ghost btn-small" data-book-identify="${esc(e.key)}" ${busy ? "disabled" : ""}>Identify</button>` : "",
+            canTalk && behind ? `<button class="btn btn-primary btn-small" data-book-update="${esc(e.key)}" ${busy ? "disabled" : ""}>Update over the air</button>` : "",
+            `<button class="link-btn" data-book-remove="${esc(e.key)}">Remove</button>`,
+          ].filter(Boolean).join("");
+      const badge = isHub
+        ? (this.hubUp ? `<span class="fb-badge ok">hub · up</span>` : "")
+        : behind
+          ? `<span class="fb-badge warn">update available → ${esc(train)}</span>`
+          : e.fw && train && !fwBehind(e.fw, train)
+            ? `<span class="fb-badge ok">up to date</span>`
+            : "";
+      const note = this.opNote[e.key]
+        ? `<p class="fb-note" data-book-note="${esc(e.key)}">${esc(this.opNote[e.key])}</p>`
+        : `<p class="fb-note hidden" data-book-note="${esc(e.key)}"></p>`;
+      return `<div class="fb-row">
+        <div class="fb-main">
+          <div class="fb-name">${esc(name)} ${badge}</div>
+          <div class="fb-sub">${esc(sub)}</div>
+          <div class="fb-seen">${seen}</div>
+        </div>
+        <div class="fb-actions">${buttons}</div>
+        ${note}
+      </div>`;
+    });
+
+    const strangerRows = strangers.map((s) => `
+      <div class="fb-row fb-stranger">
+        <div class="fb-main">
+          <div class="fb-name">${esc(s.name || s.deviceId)}</div>
+          <div class="fb-sub">${esc([s.model || s.deviceType || "Canary", s.fw ? "fw " + s.fw : "", s.ip || ""].filter(Boolean).join(" · "))}</div>
+          <div class="fb-seen"><span class="fb-dot on"></span> on your network — not in your book</div>
+        </div>
+        <div class="fb-actions"><button class="btn btn-ghost btn-small" data-book-adopt="${esc(s.deviceId)}">Add to book</button></div>
+      </div>`);
+
+    const empty = !rows.length && !strangerRows.length;
+    host.innerHTML = `
+      <div class="fb-head">
+        <h2>Your fleet book</h2>
+        <span class="muted">${book.length ? `${book.length} device${book.length === 1 ? "" : "s"} · ` : ""}${
+          this.lastScanAt ? "network checked " + relativeTime(this.lastScanAt) : "checking your network…"}</span>
+      </div>
+      ${empty ? `<p class="muted fb-empty">Every Canary you flash lands here automatically — with its name,
+        firmware, live network status, and (for boards this app flashed) a one-click over-the-air update.
+        Flash your first one under “Flash a Canary”.</p>` : rows.join("") + strangerRows.join("")}`;
+
+    host.querySelectorAll("[data-book-identify]").forEach((b) =>
+      b.addEventListener("click", () => { const e = bookAll()[b.dataset.bookIdentify]; if (e) this.identify(e); }));
+    host.querySelectorAll("[data-book-update]").forEach((b) =>
+      b.addEventListener("click", () => { const e = bookAll()[b.dataset.bookUpdate]; if (e) this.otaUpdate(e); }));
+    host.querySelectorAll("[data-book-remove]").forEach((b) =>
+      b.addEventListener("click", () => bookRemove(b.dataset.bookRemove)));
+    host.querySelectorAll("[data-book-open]").forEach((b) =>
+      b.addEventListener("click", () => openExternal("http://" + HUB_HOST)));
+    host.querySelectorAll("[data-book-adopt]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const s = this.sightings[b.dataset.bookAdopt];
+        if (!s) return;
+        bookUpsert({
+          deviceId: s.deviceId, productLabel: s.model || "", fw: s.fw || "",
+          ip: s.ip || "", host: s.host || "", port: s.port || 0,
+          deviceType: s.deviceType || "", role: s.role || "",
+          lastSeenAt: Date.now(),
+        });
+      }));
+  },
+};
+
+// Dotted-version compare for "is this board behind the app's firmware train".
+// Anything non-numeric compares as NOT behind — never nag on a dev build.
+function fwBehind(fw, train) {
+  const pa = String(fw).split(".").map((n) => parseInt(n, 10));
+  const pb = String(train).split(".").map((n) => parseInt(n, 10));
+  if (!pa.length || !pb.length || pa.some(Number.isNaN) || pb.some(Number.isNaN)) return false;
+  for (let i = 0; i < 3; i++) {
+    const a = pa[i] || 0, b = pb[i] || 0;
+    if (a !== b) return a < b;
+  }
+  return false;
+}
 // The wall announces witness:ready when its iframe boots; re-sync anything the
 // host already knows (a host post fired before boot would have been dropped).
 window.addEventListener("message", (e) => {
@@ -517,8 +1104,10 @@ function navigate(view) {
     const b = $("badge-fleet");
     if (b) b.classList.add("hidden");
     witnessDiscovery.start();   // scan the LAN while the tab is open
+    fleetBook.start();          // …and browse mDNS for the book's live status
   } else {
     witnessDiscovery.stop();    // (a live post-flash burst keeps running)
+    fleetBook.stop();
   }
 
   prefs.view = view;
@@ -959,6 +1548,16 @@ function renderProducts() {
           p.figure && p.figure.shared
             ? '<span class="p-note">This board is also sold as another product — check the name, not just the picture.</span>'
             : ""
+        }${
+          // Support tier from flash.json (derived from the board registry).
+          // Same words as the browser flasher on purpose — half the users are
+          // here, and a diagnostic that lives in only one of the two frontends
+          // is a diagnostic half the users never get.
+          p.tier
+            ? `<span class="p-tier${p.tier.first ? " is-first" : ""}">` +
+              `<span class="p-tier-label">${esc(p.tier.label)}</span>` +
+              `<span>${esc(p.tier.line)}</span></span>`
+            : ""
         }
       </span>`;
     const radio = row.querySelector("input");
@@ -988,8 +1587,12 @@ function renderAccessNotes() {
   const seen = new Set();
   for (const p of (state.catalog && state.catalog.products) || []) {
     const a = p.access;
-    if (!a || seen.has(p.family)) continue;
-    seen.add(p.family);
+    // Dedup on the access entry, not the family — same reason as the browser
+    // flasher's accessCards(): the ESP32-CAM and the WROOM DevKit share the
+    // `canary` family and need opposite instructions.
+    const key = a && (a.key || p.family);
+    if (!a || seen.has(key)) continue;
+    seen.add(key);
     const d = document.createElement("details");
     d.className = "hint";
     d.dataset.family = p.family;
@@ -1043,10 +1646,11 @@ function onProductChosen(p, ver) {
   });
   $("wifi-ssid").required = usbSecrets;
   $("provision-note").textContent = usbSecrets
-    ? "The verified release image is generic. These values are written directly into this board's settings partition, never logged and never saved by the app."
+    ? "The verified release image is generic. These values are written directly into this board's settings partition and never logged."
     : broker
-    ? "Optional, and worth doing: bake in your network AND your hub's broker, and this board comes up already talking to Home Assistant. Skip either and its on-screen setup still works. Written straight into this board's settings partition, never logged and never saved by the app."
+    ? "Optional, and worth doing: bake in your network AND your hub's broker, and this board comes up already talking to Home Assistant. Skip either and its on-screen setup still works. Written straight into this board's settings partition, never logged."
     : "Optional: bake your network in and the Canary joins it on first boot — skip it and the board's own setup path (phone portal or on-screen) still works.";
+  profileNoteRefresh();
   // Offer the network this computer is on — the common case — so joining is
   // one Tab and a password away (which Keychain/password managers can fill).
   if (!$("wifi-ssid").value) {
@@ -1069,7 +1673,10 @@ function onProductChosen(p, ver) {
   // The broker default is the broker CAPABILITY's default, not usb-secrets':
   // a display gets homeassistant.local suggested too (the browser flasher
   // suggests the same), and clearing it means "skip — nothing is written".
+  // No hub yet? Leave it: a hub built later answers at exactly this name, so
+  // Canaries flashed today find it by themselves the day it exists.
   if (usbSecrets || broker) $("mqtt-host").value ||= "homeassistant.local";
+  profileAutofill();
   const btn = $("flash-btn");
   btn.disabled = !ver;
   $("flash-target").textContent = ver
@@ -1109,6 +1716,12 @@ async function onFlash() {
   if (provisioning === false) return;
   if (product.provisioning === "usb-secrets" && !provisioning) return;
   persistProv();
+  // Blob-scheme firmwares (canary/wap) load their local-API bearer token from
+  // NVS before deriving one — so mint it HERE, seed it with the Wi-Fi, and the
+  // fleet book holds this board's credential from birth (no pairing dance).
+  const apiToken =
+    provisioning && provisioning.wifiSsid && product.wifi_nvs === "blob" ? mintApiToken() : "";
+  if (provisioning) provisioning.apiToken = apiToken;
   const btn = $("flash-btn");
   const con = $("console");
   con.textContent = "";
@@ -1145,10 +1758,44 @@ async function onFlash() {
     });
     state.vision.hostFlash = receipt;
     state.vision.hostBoot = null;
+    // The flash succeeded — that's the consent moment the "Remember" box
+    // announced: save the profile, record the board in the fleet book, and
+    // put its API credential in the secret drawer.
+    profileSaveFromFlash(provisioning);
+    try {
+      const entry = bookUpsert({
+        mac: (state.mac || "").toLowerCase(),
+        deviceId: provisioning ? provisioning.deviceId : "",
+        product: product.id,
+        productLabel: product.name,
+        chip: state.chip || "",
+        fw: receipt.version,
+        flashedAt: Date.now(),
+        hasToken: !!apiToken,
+      });
+      lastBookKey = entry ? entry.key : null;
+      state.lastProvisionedId = provisioning ? provisioning.deviceId : "";
+      if (apiToken && entry) {
+        // If the drawer refuses (Keychain locked), the book must not claim a
+        // key it doesn't hold — the row falls back to the no-token note.
+        secretStore
+          .set(secretStore.key("canary", entry.mac || entry.deviceId, "token"), apiToken)
+          .then((ok) => {
+            if (!ok) { entry.hasToken = false; savePrefs(); fleetBook.renderSoon(); }
+          })
+          .catch(() => {});
+      }
+    } catch (_) { /* the book must never break a flash */ }
     clearSecretFields();
     renderReceipts();
     announceToWitness(product);   // instant, so the wall reacts right away
     discoverAndPopulate(product); // then replace with the REAL fleet off the LAN
+    // A device id names ONE board: clear the field so the next board gets a
+    // fresh suggestion instead of a twin (same id = same MQTT topics), which
+    // is exactly the collision the fleet book exists to prevent. The id just
+    // written lives on in the book row and on the certificate.
+    $("device-id").value = "";
+    persistProv();
     // The Vision is a TWO-board Canary: the ESP32 host just flashed here, and
     // the Grove Vision AI V2 camera module loads its model through its OWN
     // USB-C port. Say the next move out loud, or the demo dies half-done with
@@ -2619,6 +3266,7 @@ function renderAbout() {
       <p class="muted">A local record of what this app did — so a failure is visible and recoverable, never silent. Kept on this computer only.</p>
       <div class="log-list">${logHtml}</div>
       <div class="row"><button class="btn btn-ghost btn-small" id="about-reset">Reset the app's memory</button></div>
+      <p class="fineprint muted">Reset also forgets the setup profile's saved passwords (from ${esc(secretStore.where())}), every stored device API key, and the fleet book.</p>
     </section>`;
 
   const check = $("about-check");
@@ -2626,11 +3274,25 @@ function renderAbout() {
   const upd = $("about-update");
   if (upd) upd.addEventListener("click", onInstallUpdate);
   const reset = $("about-reset");
-  if (reset) reset.addEventListener("click", () => {
+  if (reset) reset.addEventListener("click", async () => {
     prefs.roster = []; prefs.log = []; prefs.prov = {}; prefs.hubSsid = "";
+    prefs.book = {};
     savePrefs();
+    // Sweep the secret drawer too — every key this app ever wrote, gone from
+    // the OS store (and the prefs fallback), not just from the tracked list.
+    // An incomplete sweep is reported as exactly that, never as a clean
+    // reset: the leftover keys stay tracked so running reset again retries.
+    let leftBehind = 0;
+    try { leftBehind = await secretStore.wipeAll(); } catch (_) {}
+    fleetBook.renderSoon();
     updateResumeState();
-    logEvent("info", "Memory reset");
+    logEvent(
+      leftBehind ? "err" : "info",
+      leftBehind
+        ? `Memory reset — but ${leftBehind} entr${leftBehind === 1 ? "y" : "ies"} in ` +
+          `${secretStore.where()} couldn't be removed (store locked?). Reset again to retry.`
+        : "Memory reset"
+    );
     renderAbout();
   });
 }
@@ -2675,6 +3337,12 @@ function showHatchCard(product) {
     rosterAdd({ kind: "canary", name: cert ? cert.name : (product && product.name) || "Canary", chip: state.chip || "" });
     logEvent("ok", `${cert ? cert.name : (product && product.name) || "Canary"} hatched`);
     updateResumeState();
+    // The certificate's name is how the owner KNOWS this bird — carry it
+    // onto the fleet book row so the Fleet tab speaks the same name.
+    try {
+      const entry = cert && lastBookKey && bookAll()[lastBookKey];
+      if (entry) { entry.ringName = cert.name; savePrefs(); fleetBook.renderSoon(); }
+    } catch (_) {}
   }
 }
 
@@ -2713,7 +3381,10 @@ function mintCertificate(product, avoidBase) {
   const ordinal = ordinals[nth] || ("the " + nth + "th");
   // Ring ID = the real functional device-id if this board was provisioned,
   // else a generated ring code — either way it identifies the actual bird.
-  const provisionedId = $("device-id") ? $("device-id").value.trim() : "";
+  // Read the id captured AT flash time: the field itself is cleared after a
+  // success so the next board can't inherit a twin id.
+  const provisionedId = state.lastProvisionedId
+    || ($("device-id") ? $("device-id").value.trim() : "");
   const ringId = provisionedId || genRing(h.ring_prefix || "CNRY");
 
   return {
@@ -3119,9 +3790,10 @@ function hubRecordFlash(provisionPending, piholeChoice, accountPending) {
         // True when the card carries the self-setup bundle and this app still
         // owes the hub a setup run — survives a quit/relaunch mid-first-boot.
         provision: !!provisionPending,
-        // True when an account was typed at flash time. The PASSWORD is never
-        // persisted, so a relaunched app can't finish onboarding itself — this
-        // flag exists so the resume copy can say that honestly.
+        // True when an account was typed at flash time. The password itself
+        // is never in THIS record — with "Remember these" on it lives in the
+        // OS secret drawer, and hubMaybeResume restores it from there; with
+        // it off, the resume copy says honestly that the wizard awaits.
         account: !!accountPending,
         // The Pi-hole decision travels WITH the pending run, not with the
         // remembered-settings blob. "Remember these" may be off, and the
@@ -3144,12 +3816,18 @@ async function hubMaybeResume() {
   // that hub its self-setup run (quit mid-first-boot with the bundle seeded).
   let up = false;
   try { up = await invoke("hub_probe_hub", { host: rec.host || HUB_HOST }); } catch (_) {}
-  // The password typed at flash time lives only in memory, on purpose — so a
-  // relaunched app can never finish Home Assistant onboarding itself. That
-  // fact must reach the user on EVERY resume path (with or without a pending
-  // self-setup run), or the wizard they meet reads as a broken promise.
-  // hubRunHeadlessSetup appends hub.onboardNote to its finish line, so setting
-  // it here covers the provision paths too.
+  // With "Remember these" on, the login typed at flash time survived in the
+  // OS secret drawer — restore it, and this relaunched app can still finish
+  // Home Assistant onboarding itself, keeping the original promise across a
+  // quit. The honest "you'll meet the wizard" note below now covers only the
+  // cases where the password truly is gone (remember off, drawer refused).
+  if (rec.account && !(hub.pendingAccount && hub.pendingAccount.password)) {
+    try {
+      const rawAcct = await secretStore.get(secretStore.key("hub", "account"));
+      const acct = rawAcct ? JSON.parse(rawAcct) : null;
+      if (acct && acct.password) hub.pendingAccount = acct;
+    } catch (_) {}
+  }
   const accountNote = rec.account && !(hub.pendingAccount && hub.pendingAccount.password)
     ? "This app was closed before it could finish your Home Assistant account, so if the " +
       "hub asks you to create one, that's why — its wizard takes a minute and wants the " +
@@ -3157,6 +3835,21 @@ async function hubMaybeResume() {
     : "";
   if (accountNote) hub.onboardNote = accountNote;
   if (up && !rec.provision) {
+    if (hub.pendingAccount && hub.pendingAccount.password) {
+      // The hub is up and the login survived the relaunch — finish the
+      // account now, exactly as the live first-boot watch would have.
+      const banner = $("hub-resume");
+      banner.classList.remove("hidden");
+      $("hub-resume-dot").className = "dot connected";
+      $("hub-resume-text").textContent =
+        "Your hub from earlier is up — creating your Home Assistant account…";
+      $("hub-resume-open").classList.remove("hidden");
+      $("hub-resume-open").addEventListener("click", () => openExternal("http://" + (rec.host || HUB_HOST)));
+      $("hub-resume-dismiss").addEventListener("click", () => banner.classList.add("hidden"));
+      await hubRunOnboarding($("hub-resume-text"), rec.host);
+      hubClearFlashRecord();
+      return;
+    }
     // Nothing to resume — but an account-only flash still deserves the note
     // above rather than a silent vanish into a surprise wizard.
     if (accountNote) {
@@ -3187,6 +3880,11 @@ async function hubMaybeResume() {
       $("hub-resume-setup").classList.add("hidden");
       hubRunHeadlessSetup($("hub-resume-text"), $("hub-resume-setup"), undefined, rec.pihole);
     });
+    // Account first, same order as the live first-boot watch: being left at
+    // a sign-in page is the failure this flow exists to prevent.
+    if (hub.pendingAccount && hub.pendingAccount.password) {
+      await hubRunOnboarding($("hub-resume-text"), rec.host);
+    }
     const report = await hubRunHeadlessSetup(
       $("hub-resume-text"), $("hub-resume-setup"), undefined, rec.pihole
     );
@@ -3221,6 +3919,14 @@ async function hubMaybeResume() {
       stopCount();
       $("hub-resume-dot").className = "dot connected";
       $("hub-resume-open").classList.remove("hidden");
+      // Account first on either path — the login that survived the relaunch
+      // in the secret drawer finishes now, before any add-on installs.
+      const ranOnboarding = !!(hub.pendingAccount && hub.pendingAccount.password);
+      if (ranOnboarding) {
+        $("hub-resume-text").textContent =
+          "Your hub from earlier is up — creating your Home Assistant account…";
+        await hubRunOnboarding($("hub-resume-text"), rec.host);
+      }
       if (rec.provision) {
         // The relaunched app still owes this hub its self-setup run.
         $("hub-resume-text").textContent =
@@ -3235,9 +3941,13 @@ async function hubMaybeResume() {
         if (report && report.ok) hubClearFlashRecord();
       } else {
         // accountNote (from the top of hubMaybeResume) is the same honesty the
-        // early already-up path shows: a relaunch lost the password on purpose.
-        $("hub-resume-text").textContent =
-          "Your hub from earlier is up. 🐤" + (accountNote ? " " + accountNote : "");
+        // early already-up path shows: without the secret drawer, a relaunch
+        // still loses the password — say so instead of a surprise wizard. When
+        // onboarding just ran, its own outcome line stays on screen.
+        if (!ranOnboarding) {
+          $("hub-resume-text").textContent =
+            "Your hub from earlier is up. 🐤" + (accountNote ? " " + accountNote : "");
+        }
         hubNotify("Your hub is ready", "Open " + (rec.host || HUB_HOST) + " to log in.");
         hubChime();
         hubClearFlashRecord();
@@ -3414,7 +4124,13 @@ function hubValidateAccount() {
   hint.textContent = msg;
 }
 
-// ── remember non-secret settings (never passwords) ──────────────────────────
+// ── remember settings (passwords in the OS secret drawer, the rest here) ────
+// Non-secrets stay in localStorage as always. With "Remember" ticked, the
+// two passwords now ALSO survive — in the OS credential store via
+// secretStore (the note beside the checkbox names it): the Wi-Fi key under
+// the same `wifi:<ssid>` entry the Canary form shares (one home, one
+// profile), and the Home Assistant login under `hub:account`, which is what
+// lets a relaunched app still finish onboarding (hubMaybeResume).
 function hubSaveSettings() {
   try {
     if (!$("hub-remember").checked) {
@@ -3435,6 +4151,14 @@ function hubSaveSettings() {
         pihole: $("hub-provision-pihole").checked,
       })
     );
+    const ssid = $("hub-ssid").value.trim();
+    if (ssid && $("hub-pass").value) {
+      secretStore.set(secretStore.key("wifi", ssid), $("hub-pass").value);
+    }
+    const acct = hub.accountRequested && hub.accountValid ? hubAccountValue() : null;
+    if (acct) {
+      secretStore.set(secretStore.key("hub", "account"), JSON.stringify(acct));
+    }
   } catch (_) {}
 }
 
@@ -3453,6 +4177,28 @@ function hubRestoreSettings() {
     // Restored account fields must re-validate, or the panel reads as
     // "untouched" and the account is silently skipped despite showing values.
     hubValidateAccount();
+    // The passwords come back from the secret drawer — never over anything
+    // typed, and both passes re-validate so arming stays truthful.
+    if (s.ssid && !$("hub-pass").value) {
+      secretStore.get(secretStore.key("wifi", s.ssid)).then((pw) => {
+        if (pw && !$("hub-pass").value && $("hub-ssid").value.trim() === s.ssid) {
+          $("hub-pass").value = pw;
+          hubArm();
+        }
+      }).catch(() => {});
+    }
+    if (s.acctUser && !$("hub-acct-pass").value) {
+      secretStore.get(secretStore.key("hub", "account")).then((rawAcct) => {
+        if (!rawAcct || $("hub-acct-pass").value) return;
+        const acct = JSON.parse(rawAcct);
+        if (acct && acct.username === s.acctUser && acct.password) {
+          $("hub-acct-pass").value = acct.password;
+          $("hub-acct-pass2").value = acct.password;
+          hubValidateAccount();
+          hubArm();
+        }
+      }).catch(() => {});
+    }
   } catch (_) {}
 }
 
@@ -3984,6 +4730,16 @@ async function hubFlash() {
     hub.lastReceipt = receipt;
     setStatus("hub-result", "Done — written, read back, and verified.", "ok");
     logEvent("ok", "Home Assistant hub written to " + target.model);
+    // The hub belongs in the fleet book too — it's the meeting point every
+    // Canary's broker field defaults to, and its row answers "is it up?".
+    try {
+      bookUpsert({
+        deviceId: "hub",
+        productLabel: "Home Assistant hub",
+        role: "hub",
+        flashedAt: Date.now(),
+      });
+    } catch (_) {}
     hubShowHatch(receipt);
     hubNotify(
       "Your card is ready",

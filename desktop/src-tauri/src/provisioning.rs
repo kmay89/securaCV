@@ -28,6 +28,14 @@ pub struct Provisioning {
     // bool — canary/wap). Defaults to "string" for old callers.
     #[serde(default)]
     pub wifi_nvs: String,
+    // The device's local-API bearer credential ("cv_" + 32 base62 chars),
+    // minted by the flasher so the fleet book can talk to the board later.
+    // Both auth loaders check NVS BEFORE deriving their own token
+    // (securacv_auth.cpp auth_load_or_derive; canary_wap.ino nvs_load_token),
+    // so a seeded credential simply becomes the device's credential. Empty =
+    // don't seed; the firmware derives one from its own key as always.
+    #[serde(default)]
+    pub api_token: String,
 }
 
 // Identity, broker, and network are INDEPENDENT capabilities (PR #1351's
@@ -123,7 +131,23 @@ fn validate(config: &Provisioning) -> Result<(), String> {
             return Err("MQTT port must be between 1 and 65535".into());
         }
     }
+    if !config.api_token.is_empty() && !api_token_shape_ok(&config.api_token) {
+        return Err("device API token must be \"cv_\" + 32 base62 characters".into());
+    }
     Ok(())
+}
+
+/// The exact credential shape both firmware loaders accept: "cv_" + 32 base62
+/// chars (auth_load_or_derive requires the prefix and >= 35 bytes; the wap's
+/// nvs_load_token the same). Anything else would seed a token the device
+/// ignores — worse than not seeding, because the flasher would keep a copy it
+/// believes in.
+fn api_token_shape_ok(token: &str) -> bool {
+    token.len() == 35
+        && token.starts_with("cv_")
+        && token.as_bytes()[3..]
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric())
 }
 
 struct NvsWriter {
@@ -316,6 +340,15 @@ fn build_nvs(config: &Provisioning, partition_size: usize) -> Result<Vec<u8>, St
             writer.string("mqtt_pass", &config.mqtt_pass)?;
         }
     }
+    if !config.api_token.is_empty() {
+        // Both loaders read the token with Preferences getBytes — a BLOB, not
+        // a string — under their own key: "api_token" (canary_config.h
+        // NVS_KEY_TOKEN, the PIO canary) and "api_tkn" (canary_wap.ino
+        // NVS_KEY_API_TKN). Seed both; each firmware reads its own and the
+        // other 40-byte entry sits unread in the same namespace.
+        writer.blob("api_token", config.api_token.as_bytes())?;
+        writer.blob("api_tkn", config.api_token.as_bytes())?;
+    }
     Ok(writer.finish(partition_size))
 }
 
@@ -344,8 +377,12 @@ mod tests {
             mqtt_user: "canary".into(),
             mqtt_pass: "broker-secret".into(),
             wifi_nvs: String::new(),
+            api_token: String::new(),
         }
     }
+
+    // A well-formed bearer credential for the token tests below.
+    const TOKEN: &str = "cv_0123456789abcdefghijKLMNOPqrstuv";
 
     // The blob scheme (canary/wap firmwares: getBytes + wifi_en) — the seed
     // must carry BLOB_DATA + BLOB_IDX entries and the enable bool, and a
@@ -504,6 +541,71 @@ mod tests {
         };
         assert!(has_key("wifi_ssid") && has_key("wifi_pass"));
         assert!(!has_key("dev_id") && !has_key("mqtt_host") && !has_key("mqtt_port"));
+    }
+
+    // The API token is seeded as a BLOB under BOTH firmware key names — the
+    // PIO canary reads "api_token", the wap reads "api_tkn", and each uses
+    // Preferences getBytes, so a string twin would read back empty.
+    #[test]
+    fn api_token_seeds_both_variant_keys_as_blobs() {
+        let cfg = Provisioning {
+            api_token: TOKEN.into(),
+            ..config()
+        };
+        let image = build_nvs(&cfg, 0x4000).expect("token seed builds");
+        let page = &image[..4096];
+        let has_item = |kind: u8, key: &str| {
+            (0..126).any(|i| {
+                let o = 64 + i * 32;
+                page[o + 1] == kind
+                    && &page[o + 8..o + 8 + key.len()] == key.as_bytes()
+                    && matches!(page[o + 8 + key.len()], 0 | 0xff)
+            })
+        };
+        assert!(has_item(0x42, "api_token") && has_item(0x48, "api_token"));
+        assert!(has_item(0x42, "api_tkn") && has_item(0x48, "api_tkn"));
+        assert!(
+            !has_item(0x21, "api_token"),
+            "no string twin beside the blob"
+        );
+        // The credential bytes themselves are in the page, prefix intact.
+        assert!(page.windows(TOKEN.len()).any(|w| w == TOKEN.as_bytes()));
+    }
+
+    // Empty means absent — an unseeded board keeps deriving its own token
+    // from its device key, exactly as before this field existed.
+    #[test]
+    fn no_api_token_writes_no_token_keys() {
+        let image = build_nvs(&config(), 0x4000).expect("tokenless seed builds");
+        let page = &image[..4096];
+        let has_key = |key: &str| {
+            (0..126).any(|i| {
+                let o = 64 + i * 32;
+                &page[o + 8..o + 8 + key.len()] == key.as_bytes()
+                    && matches!(page[o + 8 + key.len()], 0 | 0xff)
+            })
+        };
+        assert!(!has_key("api_token") && !has_key("api_tkn"));
+    }
+
+    // A malformed token is refused before the patch — seeding a credential
+    // the firmware's loader would reject leaves the flasher holding a copy
+    // of a token the device never adopts.
+    #[test]
+    fn malformed_api_token_is_refused() {
+        for bad in [
+            "cv_short",
+            "xx_0123456789abcdefghijKLMNOPqrstuv",
+            "cv_0123456789abcdefghijKLMNOPqrst!v",
+            "cv_0123456789abcdefghijKLMNOPqrstuvw",
+        ] {
+            let cfg = Provisioning {
+                api_token: bad.into(),
+                ..config()
+            };
+            assert!(build_nvs(&cfg, 0x4000).is_err(), "accepted {bad:?}");
+        }
+        assert!(api_token_shape_ok(TOKEN));
     }
 
     fn factory() -> Vec<u8> {

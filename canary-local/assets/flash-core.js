@@ -828,6 +828,7 @@ export function buildNvsSeedImage(opts, partitionSize) {
   const u16s = (opts && opts.u16) || {};
   const u32s = (opts && opts.u32) || {};
   const strs = (opts && opts.strings) || {}; // string entries (dev_id, mqtt_*)
+  const blobs = (opts && opts.blobs) || {}; // blob entries (api_token/api_tkn)
   const enc = new TextEncoder();
   let ssidB = null, passB = null;
   if (wifi) {
@@ -846,6 +847,10 @@ export function buildNvsSeedImage(opts, partitionSize) {
   for (const v of Object.values(u16s)) if (v > 0xffff) throw new Error("u16 value out of range");
   for (const v of Object.values(u32s)) if (v > 0xffffffff) throw new Error("u32 value out of range");
   for (const k of Object.keys(strs)) if (!k || k.length > 15) throw new Error(`NVS key "${k}" must be 1-15 chars`);
+  for (const [k, v] of Object.entries(blobs)) {
+    if (!k || k.length > 15) throw new Error(`NVS key "${k}" must be 1-15 chars`);
+    if (!(v instanceof Uint8Array)) throw new Error(`NVS blob "${k}" must be a Uint8Array`);
+  }
   if (!(partitionSize >= NVS_PAGE)) throw new Error("nvs partition too small");
 
   const img = new Uint8Array(partitionSize).fill(0xff);
@@ -944,6 +949,9 @@ export function buildNvsSeedImage(opts, partitionSize) {
   // String entries (dev_id, mqtt_*) — type 0x21, byte-identical to the native
   // app's provisioning.rs writer.string(); NVS is key-indexed so order is free.
   for (const [k, v] of Object.entries(strs)) writeString(k, enc.encode(String(v)));
+  // Blob entries beyond Wi-Fi (the device API token) — the firmware reads
+  // these with Preferences getBytes, so a string twin would read back empty.
+  for (const [k, v] of Object.entries(blobs)) writeBlob(k, v);
   for (const [k, v] of Object.entries(u8s)) writeInt(k, 0x01, 1, v);
   for (const [k, v] of Object.entries(u16s)) writeInt(k, 0x02, 2, v); // Preferences putUShort
   for (const [k, v] of Object.entries(u32s)) writeInt(k, 0x04, 4, v);
@@ -998,6 +1006,50 @@ export function mqttProvisioningToNvs(p = {}) {
     if (pass) strings.mqtt_pass = pass;
   }
   return { strings, u16 };
+}
+
+// ── the device's local-API bearer credential ────────────────────────────────
+// Both blob-scheme firmwares (canary/wap) check NVS for their bearer token
+// BEFORE deriving one from the device key (securacv_auth.cpp
+// auth_load_or_derive; canary_wap.ino nvs_load_token) — so the flasher can
+// mint the credential itself, seed it at flash time, and KNOW it, which is
+// what lets a fleet surface talk to the board later without a pairing dance.
+// Same alphabet and unbiased rejection sampling as the firmware's own
+// format_api_token_string (securacv_crypto.cpp): reject bytes >= 248, since
+// 248 = 62 * 4 — modulo below that is exactly uniform.
+const TOKEN_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+const TOKEN_CHARS = 32;
+
+// Pure: the caller supplies the randomness (crypto.getRandomValues), so this
+// is host-testable and the parity test can pin the algorithm. 64+ bytes in
+// practice never falls short (rejection rate is 8/256); throwing beats
+// silently shortening a credential.
+export function mintApiToken(randomBytes) {
+  if (!(randomBytes instanceof Uint8Array) || randomBytes.length < TOKEN_CHARS)
+    throw new Error("mintApiToken needs a Uint8Array of random bytes");
+  let out = "";
+  for (const b of randomBytes) {
+    if (b >= 248) continue; // unbiased base62: reject the uneven tail
+    out += TOKEN_ALPHABET[b % 62];
+    if (out.length === TOKEN_CHARS) return "cv_" + out;
+  }
+  throw new Error("not enough randomness for a full token — pass more bytes");
+}
+
+// The exact shape both firmware loaders accept: "cv_" + 32 base62 chars.
+export function apiTokenShapeOk(token) {
+  return typeof token === "string" && /^cv_[0-9A-Za-z]{32}$/.test(token);
+}
+
+// The token's NVS entries, mirroring native provisioning.rs: a BLOB under
+// BOTH variant key names — "api_token" (PIO canary, canary_config.h
+// NVS_KEY_TOKEN) and "api_tkn" (canary_wap.ino NVS_KEY_API_TKN). Each
+// firmware reads its own; the other 40-byte entry sits unread beside it.
+export function apiTokenToNvs(token) {
+  if (!apiTokenShapeOk(token))
+    throw new Error('device API token must be "cv_" + 32 base62 characters');
+  const bytes = new TextEncoder().encode(token);
+  return { blobs: { api_token: bytes, api_tkn: bytes } };
 }
 
 // The standard WiFi-QR payload (WPA assumed unless the password is empty).
@@ -1185,10 +1237,28 @@ export function smartPick(catalog, opts = {}) {
   if (mb) {
     const sized = byChip.filter((p) => p.flash_mb === mb);
     if (sized.length && sized.length < byChip.length) {
+      // Deliberately NOT tier-ordered. Sorting a proven board to the front
+      // here looks like caution and isn't: these candidates are different
+      // BOARDS, and the products differ in pins, so preferring a `verified`
+      // entry would hand a generic C3 DevKit owner the XIAO image — right
+      // tier, wrong pins. An unproven image built for the board in hand
+      // beats a proven one built for a different board. The tier is stated
+      // on every card instead, where it informs the choice without making it.
       const p = sized[0];
-      return { product: p, kind: "board",
-        why: `Your board reads as an ${label} with ${mb} MB flash — that ` +
-             `looks like a ${p.board_label}. Recommended: ${p.name}.` };
+      // Chip + flash size narrows the field; it does not always NAME the
+      // board. When the survivors span more than one family, several
+      // different products fit the silicon equally well, and "that looks
+      // like a <board>" would be a guess wearing the clothes of a
+      // measurement. Say which it is.
+      const families = new Set(sized.map((x) => x.family));
+      const why = families.size > 1
+        ? `Your board reads as an ${label} with ${mb} MB flash. More than ` +
+          `one board matches that exactly, so this is a starting point, not ` +
+          `an identification: ${p.name} is first in the list below — check ` +
+          `the others if yours is a different board.`
+        : `Your board reads as an ${label} with ${mb} MB flash — that ` +
+          `looks like a ${p.board_label}. Recommended: ${p.name}.`;
+      return { product: p, kind: "board", why };
     }
   }
   const p = recommendedProduct(catalog, chip);

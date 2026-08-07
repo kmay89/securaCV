@@ -119,6 +119,7 @@ struct WallView: View {
             }
 
             Spacer()
+            residentRow
             footer
         }
         .padding(72)
@@ -211,6 +212,29 @@ struct WallView: View {
                 .frame(maxWidth: 900)
         }
         .padding(80)
+    }
+
+    /// The resident's own row: one switch, one honest sentence. It lives on
+    /// the Wall rather than in a settings screen because the promise it makes
+    /// is about THIS Apple TV in THIS room, and the limit it carries — tvOS
+    /// suspends an app that is not on screen — is only true while you are
+    /// looking at it.
+    private var residentRow: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button(model.resident.isEnabled ? "Stop standing watch" : "Stand watch for the household") {
+                model.resident.setEnabled(!model.resident.isEnabled)
+            }
+            Text(model.resident.standing.line)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: 1100, alignment: .leading)
+            if model.resident.isEnabled {
+                Text("While this Apple TV shows the Wall, it watches for you. Switch to another app and the watch pauses — that is Apple's rule for tvOS, not a setting here.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: 1100, alignment: .leading)
+            }
+        }
     }
 
     private var footer: some View {

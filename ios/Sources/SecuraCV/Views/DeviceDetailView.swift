@@ -126,20 +126,55 @@ struct DeviceDetailView: View {
             }
 
             Section {
-                Button(liveWitness.isMuted ? "Unmute" : "Mute for 1 hour") {
-                    if liveWitness.isMuted {
-                        store.unmute(witness.id)
-                    } else {
-                        store.mute(witness.id)
+                // What this one Canary may interrupt for. Narrowing only —
+                // there is deliberately no "never" (WitnessPushFloor): a
+                // permanent per-device silence is the failure mode this
+                // product can't ship. Unpairing is the honest way to hear
+                // nothing, and it looks like what it is.
+                Picker("Tell me about this one",
+                       selection: Binding(get: { store.pushFloor(for: witness.id) },
+                                          set: { store.setPushFloor($0, for: witness.id) })) {
+                    ForEach(WitnessPushFloor.allCases) { floor in
+                        Text(floor.title).tag(floor)
                     }
                 }
-                .tint(Theme.color(.warn))
             } footer: {
-                Text("A muted Canary stops nagging but stays visible — tamper and a failed signature still punch through.")
+                Text(store.pushFloor(for: witness.id).explanation)
+            }
+
+            Section {
+                if liveWitness.isMuted {
+                    Button("Unmute") { store.unmute(witness.id) }
+                        .tint(Theme.color(.warn))
+                } else {
+                    // Three real choices instead of one fixed hour — a mute
+                    // whose length matches the reason for it is a mute people
+                    // end up not needing to extend.
+                    Menu {
+                        ForEach(MuteDuration.offered(at: Date())) { duration in
+                            Button {
+                                store.mute(witness.id, duration: duration)
+                            } label: { Label(duration.title, systemImage: duration.sfSymbol) }
+                        }
+                    } label: {
+                        Text("Mute…")
+                    }
+                    .tint(Theme.color(.warn))
+                }
+            } footer: {
+                Text(mutedFooter)
             }
         }
         .navigationTitle(witness.displayName)
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    /// Says when the quiet ends, because every mute here does end.
+    private var mutedFooter: String {
+        if let until = liveWitness.mutedUntil, liveWitness.isMuted {
+            return "Quiet until \(until.formatted(date: .omitted, time: .shortened)). Tamper and a failed signature still punch through."
+        }
+        return "A muted Canary stops nagging but stays visible — tamper and a failed signature still punch through. Every mute ends on its own."
     }
 
     private func verifyNow() async -> ChainVerdict {

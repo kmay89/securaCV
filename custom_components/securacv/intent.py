@@ -1,13 +1,21 @@
 """Assist intents — read-only voice answers about the fleet.
 
 Home Assistant's ``intent`` component discovers this platform and calls
-``async_setup_intents``. The two handlers registered here answer the local
-voice pipeline (docs/voice_control.md):
+``async_setup_intents``. The handlers registered here answer the local
+voice pipeline (docs/voice_control.md), and are grouped by how people
+actually ask:
 
-  - SecuracvFleetStatus: "is the fleet OK?"
-  - SecuracvLastEvent:   "what was the last witness event?"
+  - the catch-up:   SecuracvWhatsUp        "what's up", "what did I miss"
+  - the crisp ones: SecuracvFleetStatus    "is the fleet OK?"
+                    SecuracvLastEvent      "what was the last event?"
+                    SecuracvOfflineCheck   "is anything offline?"
+                    SecuracvRoster         "what Canaries do I have?"
+                    SecuracvDeviceCheck    "how's the gate Canary?"
+  - the rituals:    SecuracvGoodnight      "goodnight"
+  - about itself:   SecuracvPrivacy        "are you listening to me?"
+                    SecuracvHelp           "what can I ask you?"
 
-Both are queries. There are deliberately no action intents: voice may ask
+All are queries. There are deliberately no action intents: voice may ask
 about the fleet but cannot arm, disarm, mute, or otherwise change the
 security posture — a spoken word carries no signature, so those paths stay
 on authenticated surfaces (AGENTS.md rule 1; the voice contract in
@@ -25,13 +33,22 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import intent
+from homeassistant.util import dt as dt_util
 
-from . import voice
+from . import voice, watches
 from .const import DOMAIN
 
 INTENT_FLEET_STATUS = "SecuracvFleetStatus"
 INTENT_LAST_EVENT = "SecuracvLastEvent"
 INTENT_WHATS_UP = "SecuracvWhatsUp"
+INTENT_DEVICE_CHECK = "SecuracvDeviceCheck"
+INTENT_OFFLINE_CHECK = "SecuracvOfflineCheck"
+INTENT_ROSTER = "SecuracvRoster"
+INTENT_GOODNIGHT = "SecuracvGoodnight"
+INTENT_PRIVACY = "SecuracvPrivacy"
+INTENT_HELP = "SecuracvHelp"
+INTENT_START_WATCH = "SecuracvStartWatch"
+INTENT_LIST_WATCHES = "SecuracvListWatches"
 
 
 async def async_setup_intents(hass: HomeAssistant) -> None:
@@ -39,6 +56,14 @@ async def async_setup_intents(hass: HomeAssistant) -> None:
     intent.async_register(hass, FleetStatusIntentHandler())
     intent.async_register(hass, LastEventIntentHandler())
     intent.async_register(hass, WhatsUpIntentHandler())
+    intent.async_register(hass, DeviceCheckIntentHandler())
+    intent.async_register(hass, OfflineCheckIntentHandler())
+    intent.async_register(hass, RosterIntentHandler())
+    intent.async_register(hass, GoodnightIntentHandler())
+    intent.async_register(hass, PrivacyIntentHandler())
+    intent.async_register(hass, HelpIntentHandler())
+    intent.async_register(hass, StartWatchIntentHandler())
+    intent.async_register(hass, ListWatchesIntentHandler())
 
 
 def _pending_updates(hass: HomeAssistant) -> list[str]:
@@ -147,6 +172,16 @@ def _weather(hass: HomeAssistant) -> dict[str, Any] | None:
     return None
 
 
+def _local_hour(hass: HomeAssistant) -> int | None:
+    """The hub's local hour, for the night register. None on any surprise,
+    which reads as daytime — the shortened night answer should never be
+    given by accident."""
+    try:
+        return dt_util.now().hour
+    except Exception:  # noqa: BLE001 - never let a clock break the answer
+        return None
+
+
 class WhatsUpIntentHandler(intent.IntentHandler):
     """The casual one — 'what's up' gets one warm, honest reply.
 
@@ -168,7 +203,219 @@ class WhatsUpIntentHandler(intent.IntentHandler):
             time.time(),
             pending_updates=_pending_updates(hass),
             weather=_weather(hass),
+            local_hour=_local_hour(hass),
         )
         response = intent_obj.create_response()
         response.async_set_speech(voice.speak_whats_up(brief))
+        return response
+
+
+class DeviceCheckIntentHandler(intent.IntentHandler):
+    """'How's the gate Canary?' — one device, matched tolerantly by name."""
+
+    intent_type = INTENT_DEVICE_CHECK
+    description = "Report one Canary's online state, signature trust, and last event"
+
+    async def async_handle(self, intent_obj: intent.Intent) -> intent.IntentResponse:
+        spoken = ""
+        slots = getattr(intent_obj, "slots", None)
+        if isinstance(slots, dict):
+            slot = slots.get("canary_name") or {}
+            if isinstance(slot, dict):
+                spoken = str(slot.get("value") or "")
+            else:
+                spoken = str(slot)
+        brief = voice.fleet_brief(_snapshot(intent_obj.hass), time.time())
+        response = intent_obj.create_response()
+        response.async_set_speech(voice.speak_device_check(brief, spoken))
+        return response
+
+
+class OfflineCheckIntentHandler(_BriefIntentHandler):
+    """'Is anything offline?' — the question with a yes-or-no shape."""
+
+    intent_type = INTENT_OFFLINE_CHECK
+    description = "Say which Canaries are not reporting as online, or that all are"
+
+    def _speak(self, brief: dict[str, Any]) -> str:
+        return voice.speak_offline_check(brief)
+
+
+class RosterIntentHandler(_BriefIntentHandler):
+    """'What Canaries do I have?' — the inventory, conversationally."""
+
+    intent_type = INTENT_ROSTER
+    description = "List the Canaries in the fleet and how many are online"
+
+    def _speak(self, brief: dict[str, Any]) -> str:
+        return voice.speak_roster(brief)
+
+
+class GoodnightIntentHandler(intent.IntentHandler):
+    """'Goodnight' — who is on watch tonight, and anything that would stop it."""
+
+    intent_type = INTENT_GOODNIGHT
+    description = "Bedtime check: who is watching tonight, plus anything pending"
+
+    async def async_handle(self, intent_obj: intent.Intent) -> intent.IntentResponse:
+        hass = intent_obj.hass
+        brief = voice.fleet_brief(
+            _snapshot(hass), time.time(), pending_updates=_pending_updates(hass)
+        )
+        response = intent_obj.create_response()
+        response.async_set_speech(voice.speak_goodnight(brief))
+        return response
+
+
+class PrivacyIntentHandler(intent.IntentHandler):
+    """'Are you listening to me?' — the honest answer, out loud.
+
+    Deliberately answers from the contract rather than from runtime state:
+    what it says is true of every configuration this project ships, so it
+    cannot be made to say something reassuring that a setting has changed.
+    """
+
+    intent_type = INTENT_PRIVACY
+    description = "Explain honestly what is and is not listening, recording, or watching"
+
+    async def async_handle(self, intent_obj: intent.Intent) -> intent.IntentResponse:
+        response = intent_obj.create_response()
+        response.async_set_speech(voice.speak_privacy())
+        return response
+
+
+class HelpIntentHandler(intent.IntentHandler):
+    """'What can I ask you?' — discoverability, and the honest limit."""
+
+    intent_type = INTENT_HELP
+    description = "List what the fleet voice can answer, and what it cannot do"
+
+    async def async_handle(self, intent_obj: intent.Intent) -> intent.IntentResponse:
+        response = intent_obj.create_response()
+        response.async_set_speech(voice.speak_help())
+        return response
+
+
+# ── Watches ─────────────────────────────────────────────────────────────
+# Design: docs/design/watches.md. Voice may START a watch but not end one
+# early: starting only ever ADDS attention (a stray sentence from a
+# television costs you a fortnight of being told slightly too much, and
+# the watch expires on its own), while ending removes it — the silencing
+# direction, which stays on authenticated surfaces for the same reason
+# voice cannot mute an Alert. The rule underneath: voice may make you
+# better informed, never less.
+#
+# Storage note: watches live in hass.data for now, so they do not yet
+# survive a Home Assistant restart. Persistence is the next step in the
+# design doc's status table, and is deliberately not claimed here.
+
+
+# Every collection is bounded. Expired watches are evicted rather than
+# merely filtered out of speech, and a cap keeps repeated (or false-wake)
+# start commands from growing the list without limit.
+MAX_WATCHES = 20
+
+
+def _watch_bucket(hass: HomeAssistant, now: float | None = None) -> list[dict[str, Any]]:
+    """The live watches, purged of anything already expired."""
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    bucket = domain_data.get("watches")
+    if not isinstance(bucket, list):
+        bucket = []
+        domain_data["watches"] = bucket
+    if now is not None:
+        alive = [w for w in bucket if now < w.get("ends_at", 0.0)]
+        if len(alive) != len(bucket):
+            bucket[:] = alive
+    return bucket
+
+
+def _slot_text(intent_obj: intent.Intent, name: str) -> str:
+    slots = getattr(intent_obj, "slots", None)
+    if not isinstance(slots, dict):
+        return ""
+    slot = slots.get(name) or {}
+    if isinstance(slot, dict):
+        return str(slot.get("value") or "")
+    return str(slot)
+
+
+class StartWatchIntentHandler(intent.IntentHandler):
+    """'Keep an eye on the litter box for two weeks.'"""
+
+    intent_type = INTENT_START_WATCH
+    description = (
+        "Start a bounded, self-expiring watch on something the fleet already "
+        "senses. Adds attention only; it cannot arm, disarm, or unseal anything"
+    )
+
+    async def async_handle(self, intent_obj: intent.Intent) -> intent.IntentResponse:
+        hass = intent_obj.hass
+        subject_text = _slot_text(intent_obj, "watch_subject").strip()
+        duration_text = _slot_text(intent_obj, "watch_duration")
+        response = intent_obj.create_response()
+
+        if not subject_text:
+            response.async_set_speech(
+                "Tell me what to keep an eye on, and for how long — "
+                "something like: watch the litter box for two weeks."
+            )
+            return response
+
+        now = time.time()
+        bucket = _watch_bucket(hass, now)
+        if len(bucket) >= MAX_WATCHES:
+            response.async_set_speech(
+                f"I'm already running {len(bucket)} watches, which is as many "
+                "as I'll keep. End one on the dashboard and ask me again."
+            )
+            return response
+        days = watches.parse_duration_days(duration_text)
+        concern = watches.concern_from_text(subject_text)
+        label = subject_text
+        for filler in ("the ", "my "):
+            if label.startswith(filler):
+                label = label[len(filler):]
+        label = "the " + label
+
+        # Bind to a Canary if the words name one; otherwise the watch is
+        # created against the spoken subject and the answer says plainly
+        # that nothing is feeding it yet — never a silent no-op.
+        brief = voice.fleet_brief(_snapshot(hass), now)
+        device_id = voice.match_device(brief.get("device_ids") or [], subject_text)
+        subject = (
+            {"kind": "event", "ref": device_id}
+            if device_id
+            else {"kind": "unbound", "ref": subject_text}
+        )
+
+        watch = watches.make_watch(
+            f"w{len(bucket) + 1}-{int(now)}", label, subject, now,
+            days=days, concern=concern,
+        )
+        bucket.append(watch)
+
+        speech = watches.speak_started(watch)
+        if not device_id:
+            speech += (
+                " One thing to be straight about: nothing in the fleet is "
+                "reporting that yet, so I have nothing to watch until "
+                "something does."
+            )
+        response.async_set_speech(speech)
+        return response
+
+
+class ListWatchesIntentHandler(intent.IntentHandler):
+    """'What am I watching?'"""
+
+    intent_type = INTENT_LIST_WATCHES
+    description = "List the watches currently running and how long each has left"
+
+    async def async_handle(self, intent_obj: intent.Intent) -> intent.IntentResponse:
+        response = intent_obj.create_response()
+        now = time.time()
+        response.async_set_speech(
+            watches.speak_roster(_watch_bucket(intent_obj.hass, now), now)
+        )
         return response

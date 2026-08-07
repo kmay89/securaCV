@@ -1,20 +1,56 @@
 {
   "_comment": "SINGLE SOURCE OF TRUTH for 'which firmware build includes which feature'. Derived from firmware/canary/platformio.ini (per-env -DFEATURE_* lines) + firmware/canary/include/canary_config.h (the #ifndef defaults) + firmware/flavors.json (which products/envs ship) + firmware/boards/boards.json (board tiers). Pinned by scripts/lint_build_matrix.py (CI) so it can't drift from the real feature flags, and mirrored into the securacv_website onboarding-spec.json (`builds`) so the /checkup firmware-type selector matches what each build actually does. IMPORTANT: only the `canary` (ESP32-S3) product carries dev/release/full LEVELS; the other products are single-level board-specialized builds. FEATURES.md is a human narrative that reports the SUPERSET capability and can lag — trust platformio.ini per level, not the dashboard ticks.",
   "featureCatalog": {
-    "selftest":  { "label": "Boot self-test",           "flag": "FEATURE_DIAGNOSTICS",     "note": "10-probe self-test; always compiled in." },
-    "peek":      { "label": "Camera PEEK",               "flag": "FEATURE_CAMERA_PEEK",     "note": "On-demand frame capture." },
-    "mic":       { "label": "Mic self-test",             "flag": "FEATURE_ACOUSTIC_EVENTS", "note": "Beep + level meter." },
-    "csi":       { "label": "Motion & breathing (CSI)",  "flag": "FEATURE_CSI",             "note": "Wi-Fi CSI presence / micro-motion." },
-    "gps":       { "label": "GPS fix",                    "flag": "FEATURE_GNSS",            "note": "Coarsened position + sat count." },
-    "thermal":   { "label": "Thermal / die temp",        "flag": "FEATURE_DIAGNOSTICS",     "note": "Die temperature + passive watchdog." },
-    "battery":   { "label": "Battery",                   "flag": "FEATURE_POWER_MONITOR",   "note": "State of charge + charge state." },
-    "mesh":      { "label": "Fleet mesh",                "flag": "FEATURE_MESH_NETWORK",    "note": "Peers + identify pulse. Full build only." },
-    "bluetooth": { "label": "Bluetooth (BLE GATT)",      "flag": "FEATURE_BLE_STATUS",      "note": "NimBLE status service. Full build only — doesn't fit the dev/release OTA slots." }
+    "selftest": {
+      "label": "Boot self-test",
+      "flag": "FEATURE_DIAGNOSTICS",
+      "note": "10-probe self-test; always compiled in."
+    },
+    "peek": {
+      "label": "Camera PEEK",
+      "flag": "FEATURE_CAMERA_PEEK",
+      "note": "On-demand frame capture."
+    },
+    "mic": {
+      "label": "Mic self-test",
+      "flag": "FEATURE_ACOUSTIC_EVENTS",
+      "note": "Beep + level meter."
+    },
+    "csi": {
+      "label": "Motion & breathing (CSI)",
+      "flag": "FEATURE_CSI",
+      "note": "Wi-Fi CSI presence / micro-motion."
+    },
+    "gps": {
+      "label": "GPS fix",
+      "flag": "FEATURE_GNSS",
+      "note": "Coarsened position + sat count."
+    },
+    "thermal": {
+      "label": "Thermal / die temp",
+      "flag": "FEATURE_DIAGNOSTICS",
+      "note": "Die temperature + passive watchdog."
+    },
+    "battery": {
+      "label": "Battery",
+      "flag": "FEATURE_POWER_MONITOR",
+      "note": "State of charge + charge state."
+    },
+    "mesh": {
+      "label": "Fleet mesh",
+      "flag": "FEATURE_MESH_NETWORK",
+      "note": "Peers + identify pulse. Full build only."
+    },
+    "bluetooth": {
+      "label": "Bluetooth (BLE GATT)",
+      "flag": "FEATURE_BLE_STATUS",
+      "note": "NimBLE status service. Full build only — doesn't fit the dev/release OTA slots."
+    }
   },
   "levels": {
-    "dev":     "Debug channel: -Og, verbose logs, all sensing on, BLE off. Official esp32 core (2.x), partitions_ota.csv (1.9 MB A/B slots). GitHub prerelease channel.",
+    "dev": "Debug channel: -Og, verbose logs, all sensing on, BLE off. Official esp32 core (2.x), partitions_ota.csv (1.9 MB A/B slots). GitHub prerelease channel.",
     "release": "Shipping channel: -Os, quiet logs, sensing on, BLE off. Official core (2.x), partitions_ota.csv. This is the image release devices pull (built as release_ha, adds Home Assistant MQTT).",
-    "full":    "Superset / WAP-parity: everything on incl. BLE + mesh + RF/chirp. Requires pioarduino core-3.x + default_8MB.csv (2×3.2 MB) — NimBLE 2.x needs core 3.x and overflows the smaller OTA slots, which is why BLE is full-only."
+    "full": "Superset / WAP-parity: everything on incl. BLE + mesh + RF/chirp. Requires pioarduino core-3.x + default_8MB.csv (2×3.2 MB) — NimBLE 2.x needs core 3.x and overflows the smaller OTA slots, which is why BLE is full-only."
   },
   "products": [
     {
@@ -31,19 +67,110 @@
         "dev": {
           "env": "dev",
           "partition": "partitions_ota.csv",
-          "features": ["selftest", "peek", "mic", "csi", "gps", "thermal", "battery"]
+          "features": [
+            "selftest",
+            "peek",
+            "mic",
+            "csi",
+            "gps",
+            "thermal",
+            "battery"
+          ]
         },
         "release": {
           "env": "release_ha",
           "partition": "partitions_ota.csv",
-          "features": ["selftest", "peek", "mic", "csi", "gps", "thermal", "battery"]
+          "features": [
+            "selftest",
+            "peek",
+            "mic",
+            "csi",
+            "gps",
+            "thermal",
+            "battery"
+          ]
         },
         "full": {
           "env": "full",
           "partition": "default_8MB.csv",
-          "features": ["selftest", "peek", "mic", "csi", "gps", "thermal", "battery", "mesh", "bluetooth"]
+          "features": [
+            "selftest",
+            "peek",
+            "mic",
+            "csi",
+            "gps",
+            "thermal",
+            "battery",
+            "mesh",
+            "bluetooth"
+          ]
         }
       }
+    },
+    {
+      "id": "canary-esp32cam",
+      "flavor": "canary",
+      "name": "Canary · ESP32-CAM",
+      "board": "esp32cam-ai-thinker",
+      "mcu": "ESP32 (classic dual-core)",
+      "tier": "compile-tested",
+      "flow": "onboard",
+      "hasLevels": false,
+      "build": {
+        "env": "esp32cam",
+        "partition": "partitions_ota.csv",
+        "features": [
+          "selftest",
+          "peek",
+          "csi",
+          "battery"
+        ]
+      },
+      "note": "Reach port (docs/strategy/30): the most-owned camera board there is. Keeps camera PEEK + Wi-Fi CSI + SD; no mic (none onboard, no free pins), no GPS, and no die-temp gauge — classic ESP32 has no supported tsens path, so the thermal tile would be a false reading rather than a missing one. USB-flashable only: no OTA channel until a Hardware Test Report promotes the board."
+    },
+    {
+      "id": "canary-wroom",
+      "flavor": "canary",
+      "name": "Canary · ESP32 DevKit",
+      "board": "esp32-wroom-devkit",
+      "mcu": "ESP32 (classic dual-core)",
+      "tier": "compile-tested",
+      "flow": "onboard",
+      "hasLevels": false,
+      "build": {
+        "env": "esp32-wroom",
+        "partition": "partitions_ota.csv",
+        "features": [
+          "selftest",
+          "csi",
+          "gps",
+          "battery"
+        ]
+      },
+      "note": "Reach port (docs/strategy/30): the plain ESP32 in the drawer. A Wi-Fi CSI presence witness with the signed chain — no camera, no mic, no SD slot (the witness log lives in flash), no die-temp gauge. GPS is available on the free UART2 with an external module. USB-flashable only until benched."
+    },
+    {
+      "id": "canary-freenove-s3",
+      "flavor": "canary",
+      "name": "Canary · Freenove S3",
+      "board": "freenove-esp32s3-cam",
+      "mcu": "ESP32-S3",
+      "tier": "compile-tested",
+      "flow": "onboard",
+      "hasLevels": false,
+      "build": {
+        "env": "freenove-s3",
+        "partition": "partitions_ota.csv",
+        "features": [
+          "selftest",
+          "peek",
+          "csi",
+          "gps",
+          "thermal",
+          "battery"
+        ]
+      },
+      "note": "Reach port (docs/strategy/30): the S3 camera kit most people are shipped. Camera on the Espressif S3-EYE map. No mic; SD is off because the slot is wired 1-bit SDMMC (no DAT3/CS routed) and the storage driver is SPI-mode — the witness log lives in flash. USB-flashable only until benched."
     },
     {
       "id": "canary-wap",
@@ -59,7 +186,17 @@
         "env": "canary-wap-default",
         "partition": "default_8MB.csv",
         "profile": "full",
-        "features": ["selftest", "peek", "mic", "csi", "gps", "thermal", "battery", "mesh", "bluetooth"]
+        "features": [
+          "selftest",
+          "peek",
+          "mic",
+          "csi",
+          "gps",
+          "thermal",
+          "battery",
+          "mesh",
+          "bluetooth"
+        ]
       }
     },
     {
@@ -75,7 +212,9 @@
       "build": {
         "env": "canary-vision-xiao-c3",
         "partition": "default.csv",
-        "features": ["selftest"]
+        "features": [
+          "selftest"
+        ]
       },
       "note": "Camera lives on the Himax co-processor (loaded via SenseCraft), not the ESP host — the canary camera/SD/CSI feature tiles don't apply. USB-Serial console only."
     },
@@ -92,15 +231,27 @@
       "build": {
         "env": "canary-sense-default",
         "partition": "min_spiffs.csv",
-        "features": ["selftest", "battery", "thermal"]
+        "features": [
+          "selftest",
+          "battery",
+          "thermal"
+        ]
       },
       "note": "60 GHz radar presence board. No camera / SD / CSI / BLE. USB-Serial console only; end-to-end bench validation pending."
     }
   ],
   "recommended": {
     "_comment": "What the /checkup page and the flasher pick BY DEFAULT so the user doesn't have to. `default` is the pick when nothing is known (no board plugged in): the verified S3 all-rounder on the shipping channel. `forChip` is the pick once the flasher detects the silicon in hand. The board×level matrix stays available as a developer/education option. Pinned by lint_build_matrix.py.",
-    "default": { "product": "canary", "level": "release" },
-    "forChip": { "ESP32-S3": "canary", "ESP32-C3": "canary-vision", "ESP32-C6": "canary-sense" },
+    "default": {
+      "product": "canary",
+      "level": "release"
+    },
+    "forChip": {
+      "ESP32-S3": "canary",
+      "ESP32-C3": "canary-vision",
+      "ESP32-C6": "canary-sense",
+      "ESP32": "canary-esp32cam"
+    },
     "why": "The all-rounder witness — full sensing plus the Home Assistant bridge — on the verified S3, shipping channel. If you're not sure, this is the one."
   },
   "downloadBase": "https://github.com/kmay89/securaCV/releases/latest",

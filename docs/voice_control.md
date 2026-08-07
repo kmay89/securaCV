@@ -115,15 +115,103 @@ then restart Home Assistant.
 
 </details>
 
+## What this is for — and what it isn't
+
+This voice is **not** a general assistant, and trying to be one would lose:
+whatever else is in that room already does timers, music, and trivia
+better. It earns its place in the handful of moments where a screen is the
+wrong answer — above all **the 2 a.m. one**, where the alternative is
+sitting up, finding your phone, and reading a dashboard before you learn
+whether you can go back to sleep.
+
+Two consequences you'll notice immediately, both enforced in code:
+
+- **At night it answers differently.** Between 22:00 and 06:00 the same
+  question gets a shorter, calmer answer with the small talk stripped —
+  no weather, no update nags. *"All quiet. Everything's online. Go back
+  to sleep."*
+- **It won't read you a list.** Past a handful of names it summarizes and
+  points at the dashboard, because a twelve-item list spoken aloud is
+  noise.
+
+The full scope — the five moments, the things deliberately not built, and
+the design laws — is in [the moments doc](design/voice_moments.md).
+
 ## How it feels to use
 
-Press the Assist button — or say the wake word — and ask:
+Press the Assist button — or say the wake word — and just ask. The
+sentences are written for how people actually talk, so most of what you'd
+naturally say already works; each row below lists one phrasing of many.
+
+**The catch-up** — the one most people use most days:
 
 | You say | It answers with |
 |---|---|
-| "What's up?" | The casual catch-up, one honest breath: an alarm or tamper leads if there is one, then anything needing attention, the latest activity (or "all quiet"), fleet health, the weather outside, and anything waiting on you — like pending hub updates. |
-| "Is the fleet OK?" | Device count, signature-trust summary, kernel reachability — worst news first. |
-| "What was the last witness event?" | The newest event's coarse label, a ten-minute-floor relative time, and its trust status — an unsigned or key-mismatched publish is named out loud, never spoken as the plain truth. |
+| "What's up?" · "What did I miss?" · "Did anything happen while I was out?" · "Good morning" · "Everything OK?" | One honest breath: an alarm or tamper leads if there is one, then anything needing attention, the latest activity (or "all quiet"), fleet health, the weather outside, and anything waiting on you — like pending hub updates. |
+
+**The specific questions:**
+
+| You say | It answers with |
+|---|---|
+| "Is the fleet OK?" · "Can I trust the log?" | Device count, signature-trust summary, kernel reachability — worst news first. |
+| "What was the last event?" · "Has anything happened lately?" | The newest event's coarse label, a ten-minute-floor relative time, and its trust status — an unsigned or key-mismatched publish is named out loud, never spoken as the plain truth. |
+| "Is anything offline?" · "Are they all online?" | The yes-or-no, then which ones: *"Shed isn't reporting as online right now. 1 of 2 still is."* |
+| "What Canaries do I have?" · "How many Canaries?" | The roster, said plainly: *"3 Canaries: Gate, porch, and shed — 2 of them online right now."* |
+| "How's the gate Canary?" · "Check on the front door" | That one device: online state, whether its signature verifies, and the last thing it witnessed. Names are matched tolerantly — speech-to-text won't spell `front-door` back — and an ambiguous name is asked about rather than guessed. |
+
+**Watches** — bounded attention that expires by itself
+([the design](design/watches.md)):
+
+| You say | It answers with |
+|---|---|
+| "Keep an eye on the litter box for two weeks" | It starts a watch, repeats it back so a misheard sentence is caught now rather than in two weeks, and says it will learn what normal looks like first: *"Watching the litter box for 14 days — I'll tell you if anything changes… It ends by itself, and I'll say so."* If nothing in the fleet reports that subject yet, it says so plainly rather than silently doing nothing. |
+| "What am I watching?" | The roster with time left: *"2 watches: the litter box, 9 more days; the soil, 3 more days — still getting a feel for normal."* |
+
+Voice can **start** a watch but not end one early. Starting only ever adds
+attention — the worst a stray sentence from a television can do is tell you
+slightly too much for a fortnight, and it expires on its own. Ending
+*removes* attention, which is the silencing direction, so it stays on an
+authenticated surface for the same reason voice can't mute an Alert. The
+rule underneath: **voice may make you better informed, never less.**
+
+**The rituals** — said at a moment, not to run a query:
+
+| You say | It answers with |
+|---|---|
+| "Goodnight" · "Who's watching tonight?" | The bedtime check, which looks *forward*: who is on watch, anything that would stop them, whether the last hour was quiet, and updates explicitly deferred — *"1 update can wait until morning. Sleep well."* |
+
+**About itself** — the questions a guest asks, and the reason this project
+can answer them well:
+
+| You say | It answers with |
+|---|---|
+| "Are you listening to me?" · "Are you recording?" · "What do you know about me?" | The honest answer, in full — see below. |
+| "What can I ask you?" · "Help" | The menu, ending with the limit: it can't arm, disarm, unlock, or open anything. |
+
+### "Are you listening to me?"
+
+Someone will ask this in your living room, and a privacy product that
+can't answer it out loud has a gap where its thesis should be. So it
+answers — and the answer is written to be *exactly* true rather than
+reassuring, including the part most assistants would leave out:
+
+> *"That depends on how you set me up, and both answers are short. If you
+> talk to me by pressing the button, I hear you only while you're holding
+> it — the rest of the time there's nothing running. If you turned on a
+> wake word, I'm listening for that one phrase and nothing else; and if
+> something false-wakes me, a television say, the few seconds after it are
+> read here on this hub and thrown away. Either way, I don't record you,
+> and nothing I hear is stored or sent anywhere — once I've answered, it's
+> gone. As for the Canaries around the house: they report what happened,
+> never who — no faces, no plate numbers, no footage leaving home. That
+> isn't a setting I have. It's code that was never written."*
+
+Two deliberate choices in that wording. It **never asserts which mode is
+active** — push-to-talk is the blessed default and doesn't listen for a
+name at all, so a flat "I only wake to my name" would be a false
+guarantee in exactly the setup this page recommends. And it's composed
+from the contract, not from runtime state, so no configuration change can
+make it say something kinder than the truth.
 
 The weather line at the end of "what's up" covers Home Assistant's whole
 condition vocabulary with a warm phrase for every season — optimistic on

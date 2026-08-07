@@ -31,15 +31,31 @@ warn() { printf ' [warn] %s\n' "$*"; FAILS=$((FAILS+1)); }
 
 have_ha() { command -v ha >/dev/null 2>&1; }
 
+# Home Assistant renamed add-ons to "apps", and the CLI noun moved with
+# it (`ha apps ...`). Older installs still only answer to `ha addons`.
+# Detect once, then use whichever this hub actually has — a script that
+# hard-codes either one breaks on half the world's hubs.
+ADDON_NOUN=""
+detect_noun() {
+  if [ -n "$ADDON_NOUN" ]; then return 0; fi
+  if ha apps list >/dev/null 2>&1 || ha apps --help >/dev/null 2>&1; then
+    ADDON_NOUN=apps
+  else
+    ADDON_NOUN=addons
+  fi
+}
+
+ha_addon() { detect_noun; ha "$ADDON_NOUN" "$@"; }
+
 # `ha addons info` also answers for store-only (not-installed) add-ons, so
 # success alone proves nothing. An installed add-on reports a non-null
 # "version" string; a store-only one reports "version": null.
 addon_installed() {
-  ha addons info "$1" --raw-json 2>/dev/null | grep -Eq '"version": *"'
+  ha_addon info "$1" --raw-json 2>/dev/null | grep -Eq '"version": *"'
 }
 
 addon_started() {
-  ha addons info "$1" --raw-json 2>/dev/null | grep -Eq '"state": *"started"'
+  ha_addon info "$1" --raw-json 2>/dev/null | grep -Eq '"state": *"started"'
 }
 
 ensure_addon() {
@@ -47,8 +63,8 @@ ensure_addon() {
   if ! addon_installed "$slug"; then
     if [ "$MODE" = verify ]; then warn "$label is not installed"; return; fi
     say "   installing $label..."
-    if ! ha addons install "$slug" >/dev/null; then
-      warn "$label ($slug) failed to install — open the Add-on Store and install it by name"
+    if ! ha_addon install "$slug" >/dev/null; then
+      warn "$label ($slug) failed to install — open Settings -> Apps (older hubs: Add-ons) and install it by name"
       return
     fi
   fi
@@ -56,10 +72,10 @@ ensure_addon() {
     ok "$label is installed and running"
   else
     if [ "$MODE" = verify ]; then warn "$label is installed but not running"; return; fi
-    if ha addons start "$slug" >/dev/null 2>&1; then
+    if ha_addon start "$slug" >/dev/null 2>&1; then
       ok "$label started"
     else
-      warn "$label installed but would not start — check its log in the Add-on Store"
+      warn "$label installed but would not start — check its log under Settings -> Apps"
     fi
   fi
 }
@@ -78,6 +94,9 @@ if ! have_ha; then
   say "in the Terminal & SSH add-on (Settings -> Add-ons -> Terminal & SSH)."
   exit 1
 fi
+
+detect_noun
+say "   (this hub's CLI calls them '$ADDON_NOUN')"
 
 head_ "1. The three local voice engines"
 ensure_addon core_whisper      "Whisper (speech-to-text)"
@@ -108,36 +127,152 @@ cat > "$TMP_SENTENCES" <<'SECURACV_SENTENCES'
 #
 # Copy this file to /config/custom_sentences/en/securacv.yaml on the hub,
 # then reload Home Assistant (or restart the conversation integration).
-# Setup recipe and the voice contract: docs/voice_control.md.
+# The wizard (tools/hub_voice_setup.sh) does it for you. Setup recipe and
+# the voice contract: docs/voice_control.md.
 #
-# Both intents are read-only queries handled by the SecuraCV integration
-# (custom_components/securacv/intent.py). There are deliberately no
-# sentences that arm, disarm, mute, or unseal anything — a spoken word
-# carries no signature, so those actions stay on authenticated surfaces.
+# Every intent here is a read-only query handled by the SecuraCV
+# integration (custom_components/securacv/intent.py). There are
+# deliberately no sentences that arm, disarm, mute, or unseal anything — a
+# spoken word carries no signature, so those actions stay on
+# authenticated surfaces.
+#
+# On phrasing: these cover how people actually ask, not one canonical
+# form each. Bracketed words are optional, parentheses are alternatives.
+# The rule of thumb when adding one — say the sentence out loud first; if
+# it feels like filling in a form, it belongs to some other product.
 language: "en"
+lists:
+  # Free text so any device_id or room word reaches the handler, which
+  # matches tolerantly (speech-to-text will not spell "cv-1" back).
+  canary_name:
+    wildcard: true
+  watch_subject:
+    wildcard: true
+  watch_duration:
+    wildcard: true
 intents:
-  SecuracvFleetStatus:
-    data:
-      - sentences:
-          - "is the fleet (OK|okay|alright|all right)"
-          - "how is (the|my) fleet [doing]"
-          - "(fleet|canary) status"
-          - "are (the|my) canaries (OK|okay)"
-  SecuracvLastEvent:
-    data:
-      - sentences:
-          - "what was the (last|latest) [witness] event"
-          - "(any|were there [any]) [witness] events [overnight|today|recently]"
-          - "what did the (fleet|canaries) (see|witness) [overnight|today|recently]"
+  # ── The catch-up: the one most people will use most days ────────────
   SecuracvWhatsUp:
     data:
       - sentences:
-          - "(what's|whats) up"
-          - "(what's|whats) (going on|happening|new)"
-          - "anything (happening|going on|new)"
-          - "how (are things|is everything)"
+          - "(what's|whats|what is) up"
+          - "(what's|whats|what is) (going on|happening|new|the news)"
+          - "anything (happening|going on|new|to report)"
+          - "how (are things|is everything|are we|is it going)"
           - "what did I miss"
           - "any news"
+          - "(catch me up|fill me in|give me the rundown)"
+          - "(good morning|morning)"
+          - "did anything happen [while I was (out|away|gone|asleep)]"
+          - "anything happen (overnight|last night|today|while I was (out|away|gone))"
+          - "(everything|anything) (OK|okay|alright|all right|good|fine)"
+          - "is (everything|anything) wrong"
+          - "should I (be worried|worry [about anything])"
+          - "(all|everything) (good|quiet)"
+
+  # ── The crisp ones: a specific question, a specific answer ───────────
+  SecuracvFleetStatus:
+    data:
+      - sentences:
+          - "is the fleet (OK|okay|alright|all right|healthy)"
+          - "how is (the|my) fleet [doing]"
+          - "(fleet|canary|system) status"
+          - "are (the|my) canaries (OK|okay|alright|all right)"
+          - "(check|how are) (the|my) canaries"
+          - "is (everything|it all) verified"
+          - "(can I|do you) trust the (log|chain|record)"
+
+  SecuracvLastEvent:
+    data:
+      - sentences:
+          - "what was the (last|latest|most recent) [witness] event"
+          - "(any|were there [any]) [witness] events [overnight|last night|today|recently|lately]"
+          - "what did the (fleet|canaries) (see|witness|notice) [overnight|last night|today|recently|lately]"
+          - "(when|what) was the last (thing|time) (something|anything) happened"
+          - "(tell me|what's) the last thing (you|it) (saw|witnessed|noticed)"
+          - "has anything happened [recently|lately|today]"
+
+  SecuracvOfflineCheck:
+    data:
+      - sentences:
+          - "is anything (offline|off line|down|missing|not reporting)"
+          - "(is|are) (everything|all the canaries|they all) online"
+          - "(any|are any) canaries (offline|off line|down|missing)"
+          - "(which|what) canar(y|ies) (is|are) (offline|off line|down)"
+          - "is anything not (reporting|checking in|working)"
+
+  SecuracvRoster:
+    data:
+      - sentences:
+          - "(what|which) canaries do I have"
+          - "how many canaries [do I have|are there]"
+          - "(list|name) (my|the) canaries"
+          - "what's in (the|my) fleet"
+          - "(who|what) is (in the fleet|watching|out there)"
+
+  SecuracvDeviceCheck:
+    data:
+      - sentences:
+          - "how('s| is) the {canary_name} [canary] [doing]"
+          - "is the {canary_name} [canary] (OK|okay|online|alright|all right|up)"
+          - "(check|check on) the {canary_name} [canary]"
+          - "(what's|whats|what is) [the] {canary_name} [canary] (doing|up to|status)"
+          - "(tell me about|status of) the {canary_name} [canary]"
+          - "when did you last hear from the {canary_name} [canary]"
+
+  # ── The rituals: said at a moment, not to run a query ────────────────
+  SecuracvGoodnight:
+    data:
+      - sentences:
+          - "(good night|goodnight|night night)"
+          - "(I'm|im|I am) (going to bed|off to bed|turning in)"
+          - "(are we|is everything) set for (the night|tonight|bed)"
+          - "(who's|whos|who is) (watching|on watch) tonight"
+
+  # ── About itself: the questions a guest asks, answered honestly ──────
+  SecuracvPrivacy:
+    data:
+      - sentences:
+          - "are you (listening|listening to me|listening right now|always listening)"
+          - "are you (recording|recording me|recording right now)"
+          - "are you (watching|watching me|spying [on me])"
+          - "(do|are) you (record|save|keep|store) (audio|what I say|my voice|conversations)"
+          - "(is|are) (this|you|the canary|the canaries) (a|a hidden) (microphone|camera)"
+          - "what do you (know|hear|see) [about me]"
+          - "(where|does) (does )?(my|the) (audio|voice|data) go"
+          - "can (anyone|someone|you) (hear|listen to) (us|me)"
+
+  SecuracvHelp:
+    data:
+      - sentences:
+          - "what can (I|you) (ask|say|do) [you]"
+          - "what (are|can) (your|the) (commands|questions)"
+          - "(help|help me)"
+          - "how do I (use|talk to) you"
+          - "what (do you|can you) (know|tell me)"
+
+  # ── Watches: bounded attention that expires by itself ────────────────
+  # Starting one is allowed by voice because it only ADDS attention.
+  # Ending one early is deliberately NOT here — that removes attention,
+  # which stays on an authenticated surface. See docs/design/watches.md.
+  SecuracvStartWatch:
+    data:
+      - sentences:
+          - "(keep an eye on|watch|keep watch on) {watch_subject} for {watch_duration}"
+          - "(keep an eye on|watch) {watch_subject} for the next {watch_duration}"
+          - "tell me if {watch_subject} for {watch_duration}"
+          - "(start|set up) a watch on {watch_subject} for {watch_duration}"
+          - "(keep an eye on|watch) {watch_subject}"
+          - "(start|set up) a watch on {watch_subject}"
+
+  SecuracvListWatches:
+    data:
+      - sentences:
+          - "what am I watching"
+          - "(what|which) watches (are running|do I have|are on)"
+          - "(list|show me) (my|the) watches"
+          - "(am I|are you) watching anything"
+          - "what are you keeping an eye on"
 SECURACV_SENTENCES
 if [ -f "$SENTENCES_DEST" ] && cmp -s "$TMP_SENTENCES" "$SENTENCES_DEST"; then
   ok "sentences already current ($SENTENCES_DEST)"
@@ -167,10 +302,13 @@ fi
 head_ "Done. Two clicks remain (they need your eyes, not a script):"
 say "   1. Settings -> Voice assistants -> Add assistant:"
 say "      speech-to-text Whisper, text-to-speech Piper, and your wake word."
-say "   2. Plug the microphone in (USB) and pick this assistant for it."
+say "   2. A USB microphone is NOT usable by Assist on its own — install"
+say "      the Assist Satellite app and point it at your mic and speaker."
 say ""
-say "Then try, out loud:"
-say "   'Is the fleet OK?'    'What was the last witness event?'"
+say "Hello world, in this order — each step proves the one before it:"
+say "   a. Type 'what's up' into the Assist box (no mic needed at all)."
+say "   b. Press the mic button in that box and say it."
+say "   c. Say it to the room, once the satellite has your USB devices."
 say ""
 say "What this never does: no sentence can arm, disarm, or unseal anything,"
 say "no audio or transcript is kept, and nothing leaves this hub."

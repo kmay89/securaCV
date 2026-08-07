@@ -275,6 +275,70 @@ static void test_button_long() {
         "release after a Long emits nothing");
 }
 
+static void test_button_triple_mode() {
+  printf("button triple (opt-in) ...\n");
+  // Three taps inside the windows = Triple, fired on the third PRESS.
+  ButtonClassifier b;
+  b.enable_triple(true);
+  uint32_t t = 1000;
+  hold(b, false, t, 200);
+  hold(b, true, t, 120);                        // press 1
+  hold(b, false, t, 100);
+  CHECK(hold(b, true, t, 120) == ButtonEvent::None,
+        "second press is held back while a Triple is still possible");
+  hold(b, false, t, 100);
+  CHECK(hold(b, true, t, 120) == ButtonEvent::Triple,
+        "third press inside the window is Triple");
+  CHECK(hold(b, false, t, 600) == ButtonEvent::None,
+        "release after a Triple emits nothing");
+
+  // Two taps then silence: the held-back Double matures at window close —
+  // one window later than stock, but it still fires.
+  ButtonClassifier c;
+  c.enable_triple(true);
+  uint32_t u = 1000;
+  hold(c, false, u, 200);
+  hold(c, true, u, 120);
+  hold(c, false, u, 100);
+  hold(c, true, u, 120);                        // press 2, held back
+  CHECK(hold(c, false, u, 600) == ButtonEvent::Double,
+        "two taps mature into Double after the triple window");
+
+  // Two taps then HOLD: the Double must arrive while the finger is still
+  // down (a lamp lights under the press), and the hold never acknowledges.
+  ButtonClassifier d;
+  d.enable_triple(true);
+  uint32_t v = 1000;
+  hold(d, false, v, 200);
+  hold(d, true, v, 120);
+  hold(d, false, v, 100);
+  CHECK(hold(d, true, v, 600) == ButtonEvent::Double,
+        "a held second press still matures into Double");
+  CHECK(hold(d, true, v, 1500) == ButtonEvent::None,
+        "holding through it does not acknowledge");
+
+  // With triple NOT armed, the grammar is the shipped one: Double fires
+  // on the second press edge, immediately.
+  ButtonClassifier e;
+  uint32_t w = 1000;
+  hold(e, false, w, 200);
+  hold(e, true, w, 120);
+  hold(e, false, w, 100);
+  // 120 ms window: enough for the 30 ms debounce, far under the 350 ms
+  // gap — so a fire here proves the press-edge immediacy, not maturation.
+  CHECK(hold(e, true, w, 120) == ButtonEvent::Double,
+        "stock mode keeps the immediate Double");
+
+  // Short and Long are unchanged in triple mode.
+  ButtonClassifier f;
+  f.enable_triple(true);
+  uint32_t x = 1000;
+  hold(f, false, x, 200);
+  hold(f, true, x, 120);
+  CHECK(hold(f, false, x, 500) == ButtonEvent::Short, "lone tap still Short");
+  CHECK(hold(f, true, x, 1200) == ButtonEvent::Long, "held press still Long");
+}
+
 static void test_button_debounce() {
   printf("button debounce...\n");
   ButtonClassifier b;
@@ -454,6 +518,7 @@ int main() {
   test_button_short();
   test_button_double();
   test_button_long();
+  test_button_triple_mode();
   test_button_debounce();
   if (g_fail) { printf("\n%d CHECK(s) FAILED\n", g_fail); return 1; }
   printf("\nAll bedside-model checks passed.\n");

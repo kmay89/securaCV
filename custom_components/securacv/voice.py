@@ -4,10 +4,17 @@ This module is the host-testable half of the hub's local voice support
 (``intent.py`` is the thin Home Assistant-facing half). It turns the
 integration's runtime state — the per-entry ``devices`` and ``verify``
 dicts plus the kernel coordinator's latest data — into short, honest
-spoken answers for the two read-only intents:
+spoken answers for the read-only intents:
 
   - "is the fleet OK?"        -> speak_fleet_status()
   - "what was the last event" -> speak_last_event()
+  - "what's up?"              -> speak_whats_up()
+  - "how's the gate Canary?"  -> speak_device_check()
+  - "is anything offline?"    -> speak_offline_check()
+  - "what Canaries do I have" -> speak_roster()
+  - "goodnight"               -> speak_goodnight()
+  - "are you listening?"      -> speak_privacy()
+  - "what can I ask you?"     -> speak_help()
 
 Vocabulary discipline (docs/GLOSSARY.md) is load-bearing here, because a
 spoken sentence is quoted out of context by design:
@@ -43,6 +50,30 @@ _UNSIGNED_REASONS = ("unsigned", "no_pubkey")
 # The liveness vocabulary the online binary sensor accepts — mirrored here
 # so speech and the dashboard can never disagree about what "online" means.
 _ONLINE_WORDS = ("online", "1", "true", "connected")
+
+# The waking-hours window, matching the display firmware's audible
+# self-test. Outside it, the casual answer switches to the night register:
+# shorter, calmer, no small talk (docs/design/voice_moments.md, law 2).
+NIGHT_FROM = 22
+NIGHT_UNTIL = 6
+
+# Past this many names, speech summarizes instead of enumerating — a
+# twelve-item list read aloud is noise, not information (law 3).
+MAX_SPOKEN_NAMES = 4
+
+
+def is_night(local_hour: int | None) -> bool:
+    """True inside the night window. An unknown hour reads as daytime,
+    because the shortened answer is the surprising one and should never
+    be given by accident."""
+    if local_hour is None:
+        return False
+    try:
+        hour = int(local_hour) % 24
+    except (TypeError, ValueError):
+        return False
+    return hour >= NIGHT_FROM or hour < NIGHT_UNTIL
+
 
 # Alert-class event types: when the latest event is one of these, the casual
 # answer leads with it — a smoke alarm outranks small talk.
@@ -127,6 +158,25 @@ def _status_online(raw: Any) -> bool:
     return False
 
 
+def _friendly_name(raw: Any) -> str | None:
+    """The device_name a Canary advertises in its status payload.
+
+    People say "the gate Canary", not "cv-a1b2c3" — and the friendly name
+    is the only place that word exists on the MQTT side, so the matcher
+    has to see it or the documented flow simply never resolves.
+    """
+    if not isinstance(raw, str) or not raw.strip().startswith("{"):
+        return None
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    name = data.get("device_name") or data.get("name") or data.get("friendly_name")
+    return str(name).strip() or None if name else None
+
+
 def record_canary_event(
     devices: dict[str, Any],
     device_id: str,
@@ -158,6 +208,7 @@ def fleet_brief(
     now: float,
     pending_updates: list[str] | None = None,
     weather: dict[str, Any] | None = None,
+    local_hour: int | None = None,
 ) -> dict[str, Any]:
     """Reduce one or more config entries' runtime state to a fleet brief.
 
@@ -172,6 +223,11 @@ def fleet_brief(
     ``weather`` an optional ``{"condition", "temp"}`` snapshot from the
     hub's weather entity — the casual "what's up" answer mentions both;
     the crisp status answer deliberately does not.
+
+    ``local_hour`` (0-23) decides the night register: inside the night
+    window the casual answer is shortened and stripped of small talk,
+    because the 2 a.m. question is "can I go back to sleep?" and nothing
+    else (docs/design/voice_moments.md, law 2).
     """
     device_ids: list[str] = []
     online: list[str] = []
@@ -179,6 +235,7 @@ def fleet_brief(
     unsigned: list[str] = []
     mismatched: list[str] = []
     unknown: list[str] = []
+    detail: dict[str, dict[str, Any]] = {}
     canary_latest: dict[str, Any] | None = None
     kernel_configured = False
     kernel_ok: bool | None = None
@@ -189,7 +246,8 @@ def fleet_brief(
         verify = entry.get("verify") or {}
         for device_id in sorted(devices):
             device_ids.append(device_id)
-            if _status_online(devices[device_id].get("status")):
+            is_online = _status_online(devices[device_id].get("status"))
+            if is_online:
                 online.append(device_id)
             verdict = verify.get(device_id)
             if not isinstance(verdict, dict):
@@ -202,6 +260,13 @@ def fleet_brief(
                 unsigned.append(device_id)
             else:
                 unknown.append(device_id)
+            detail[device_id] = {
+                "online": is_online,
+                "name": _friendly_name(devices[device_id].get("status")),
+                "trusted": verdict.get("trusted") if isinstance(verdict, dict) else None,
+                "reason": verdict.get("reason") if isinstance(verdict, dict) else None,
+                "last_event": devices[device_id].get("last_event"),
+            }
             last = devices[device_id].get("last_event")
             if isinstance(last, dict) and isinstance(
                 last.get("received_at"), (int, float)
@@ -232,7 +297,11 @@ def fleet_brief(
         "now": now,
         "pending_updates": list(pending_updates or []),
         "weather": dict(weather) if weather else None,
+        "night": is_night(local_hour),
         "device_count": len(device_ids),
+        "device_ids": device_ids,
+        "device_names": {d: v["name"] for d, v in detail.items() if v.get("name")},
+        "device_detail": detail,
         "online": online,
         "verified": verified,
         "unsigned": unsigned,
@@ -330,6 +399,80 @@ def _canary_trust_clause(canary: dict[str, Any]) -> str:
     return " The event was published without a verified signature."
 
 
+def _night_trust_clause(canary: dict[str, Any]) -> str:
+    """The event's own verdict, kept even in the shortest register.
+
+    Brevity is law 2; laundering an unverified publish is never a
+    permitted way to be brief.
+    """
+    if canary.get("trusted"):
+        return ""
+    if canary.get("reason") == "mismatch":
+        return " That one's under the mismatched key, so hold it loosely."
+    return " That one came in unverified."
+
+
+def _speak_whats_up_night(brief: dict[str, Any]) -> str:
+    """The 2 a.m. answer: can I go back to sleep, yes or no.
+
+    Same facts, different shape. Trouble still leads, but everything that
+    is small talk in daylight — the weather, a pending update, the roster
+    — is dropped, because at 2 a.m. it is noise between the question and
+    the only thing being asked (docs/design/voice_moments.md, moment 1).
+    """
+    canary = brief.get("canary_latest")
+    recent = False
+    if canary is not None:
+        recent = (brief["now"] - canary["received_at"]) < 3600
+
+    # An alarm outranks everything, at 2 a.m. most of all. This check
+    # comes before the key-mismatch summary because that summary ends in
+    # "nothing else is out of place", which would be a false all-clear
+    # spoken over a smoke alarm.
+    if canary and _snake(canary.get("event_type")) in _ALERT_EVENT_TYPES:
+        label = _spoken_label(canary.get("event_type"))
+        when = ago_phrase(brief["now"] - canary["received_at"])
+        return (
+            f"{label[:1].upper() + label[1:]}, {when}, from the "
+            f"{_spoken_name(canary['device_id'])} Canary."
+            + _night_trust_clause(canary)
+        )
+
+    if brief["mismatched"]:
+        names = _join_names([_spoken_name(d) for d in brief["mismatched"]])
+        return (
+            f"Worth knowing: {names} is publishing under a key that doesn't "
+            "match its pin. Nothing else is out of place."
+        )
+
+    if recent and canary is not None:
+        label = _spoken_label(canary.get("event_type"))
+        when = ago_phrase(brief["now"] - canary["received_at"])
+        return (
+            f"One thing in the last hour: {label}, {when}, from the "
+            f"{_spoken_name(canary['device_id'])} Canary."
+            + _night_trust_clause(canary)
+            + " Nothing else."
+        )
+
+    if brief["kernel_configured"] and not brief["kernel_ok"]:
+        return (
+            "The Canaries are quiet, but I can't reach the witness kernel "
+            "right now, so I won't tell you all is well."
+        )
+
+    count = brief["device_count"]
+    if count and len(brief.get("online") or []) == count:
+        return "All quiet. Everything's online. Go back to sleep."
+    if count:
+        missing = [d for d in (brief.get("device_ids") or []) if d not in set(brief.get("online") or [])]
+        return (
+            f"Quiet, though {_join_names([_spoken_name(d) for d in missing])} "
+            "isn't reporting in. Nothing witnessed."
+        )
+    return "All quiet — nothing witnessed since I started listening."
+
+
 def speak_whats_up(brief: dict[str, Any]) -> str:
     """The casual answer — "Hey Canary, what's up?"
 
@@ -348,6 +491,9 @@ def speak_whats_up(brief: dict[str, Any]) -> str:
             "no witness kernel is set up. Once your fleet is online, ask me "
             "again."
         )
+
+    if brief.get("night"):
+        return _speak_whats_up_night(brief)
 
     parts: list[str] = []
     kernel_outage_spoken = False
@@ -501,3 +647,299 @@ def speak_last_event(brief: dict[str, Any]) -> str:
         return f"{label} — the latest event in the kernel log."
 
     return "No witness events since the hub started listening."
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# The conversational intents — how people actually ask
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _spoken_name(device_id: str) -> str:
+    """A device_id said out loud: underscores and hyphens read as spaces."""
+    return device_id.replace("_", " ").replace("-", " ").strip() or device_id
+
+
+def _normalize(text: str) -> str:
+    """Lowercase, alphanumerics only — for tolerant name matching."""
+    return "".join(ch for ch in str(text).lower() if ch.isalnum())
+
+
+def match_device(
+    device_ids: list[str],
+    spoken: str,
+    names: dict[str, str] | None = None,
+) -> str | None:
+    """Best device_id for a spoken name, or None.
+
+    Speech-to-text will not reproduce an id exactly: "cv-1" comes back as
+    "cv one", "the gate Canary" as "gate canary". So matching is tolerant
+    and ordered — exact, then normalized-exact, then either containing the
+    other — and returns None rather than guessing between two equally good
+    candidates, so the answer can ask which one instead of picking wrong.
+    """
+    if not spoken or not device_ids:
+        return None
+    # Strip the words people wrap a name in.
+    words = [w for w in str(spoken).lower().split() if w not in ("the", "canary", "canaries", "one")]
+    cleaned = " ".join(words) or str(spoken).lower()
+
+    # Every string this device answers to: its id and its advertised
+    # friendly name. Matching runs over both, so a serial-like id with a
+    # friendly name of "Gate" still resolves from "the gate Canary".
+    aliases: dict[str, list[str]] = {}
+    for device_id in device_ids:
+        forms = [device_id]
+        friendly = (names or {}).get(device_id)
+        if friendly:
+            forms.append(friendly)
+        aliases[device_id] = forms
+
+    for device_id, forms in aliases.items():
+        if any(f.lower() == cleaned for f in forms):
+            return device_id
+    target = _normalize(cleaned)
+    if not target:
+        return None
+    exact = [d for d, forms in aliases.items() if any(_normalize(f) == target for f in forms)]
+    if len(exact) == 1:
+        return exact[0]
+    partial = [
+        d for d, forms in aliases.items()
+        if any(target in _normalize(f) or _normalize(f) in target for f in forms)
+    ]
+    if len(partial) == 1:
+        return partial[0]
+    return None
+
+
+def speak_device_check(brief: dict[str, Any], spoken_name: str) -> str:
+    """"How's the gate Canary?" — one device, plainly."""
+    device_ids = brief.get("device_ids") or []
+    if not device_ids:
+        return "I haven't heard from any Canaries yet, so I can't tell you about that one."
+
+    device_id = match_device(device_ids, spoken_name, brief.get("device_names"))
+    if device_id is None:
+        known = ", ".join(_spoken_name(d) for d in device_ids[:4])
+        more = " and others" if len(device_ids) > 4 else ""
+        return (
+            f"I don't have a Canary by that name. I know {known}{more}."
+        )
+
+    info = (brief.get("device_detail") or {}).get(device_id) or {}
+    name = info.get("name") or _spoken_name(device_id)
+    parts = [f"The {name} Canary is {'online' if info.get('online') else 'not reporting as online right now'}"]
+    if info.get("trusted"):
+        parts.append("and its signature checks out against the pinned key.")
+    elif info.get("reason") == "mismatch":
+        parts.append("and — worth knowing — its key doesn't match the pin.")
+    elif info.get("reason") in _UNSIGNED_REASONS:
+        parts.append("though it publishes without a verified signature.")
+    else:
+        parts.append("though I haven't verified a signature from it yet.")
+
+    speech = " ".join(parts)
+    last = info.get("last_event")
+    if isinstance(last, dict) and isinstance(last.get("received_at"), (int, float)):
+        label = _spoken_label(last.get("event_type"))
+        when = ago_phrase(brief["now"] - float(last["received_at"]))
+        speech += f" The last thing it witnessed was {label}, {when}"
+        # The EVENT's own verdict, not the device's current one — a device
+        # that verifies today may have published this event unsigned, and
+        # the device-level clause above must not launder it.
+        if last.get("trusted"):
+            speech += "."
+        elif last.get("reason") == "mismatch":
+            speech += " — though that one came in under the mismatched key, so hold it loosely."
+        else:
+            speech += " — though that one arrived without a verified signature."
+    else:
+        speech += " It hasn't witnessed anything since I started listening."
+    return speech
+
+
+def speak_offline_check(brief: dict[str, Any]) -> str:
+    """"Is anything offline?" — the question with a yes-or-no shape."""
+    count = brief["device_count"]
+    if count == 0:
+        return "There are no Canaries in the fleet yet, so nothing to be offline."
+
+    online = set(brief.get("online") or [])
+    missing = [d for d in (brief.get("device_ids") or []) if d not in online]
+    if not missing:
+        return (
+            "Everything's online — your one Canary is reporting in."
+            if count == 1
+            else f"Everything's online — all {count} Canaries are reporting in."
+        )
+    names = _join_names([_spoken_name(d) for d in missing])
+    verb = "isn't" if len(missing) == 1 else "aren't"
+    return (
+        f"{names} {verb} reporting as online right now. "
+        f"{len(online)} of {count} still {'is' if len(online) == 1 else 'are'}."
+    )
+
+
+def _join_names(names: list[str]) -> str:
+    """Human list: 'a', 'a and b', 'a, b, and c'. Capitalized for a lead.
+
+    Past MAX_SPOKEN_NAMES it stops enumerating and counts the rest —
+    speech is serial, so a twelve-item list read aloud is noise (law 3).
+    """
+    if not names:
+        return ""
+    if len(names) > MAX_SPOKEN_NAMES:
+        shown = names[: MAX_SPOKEN_NAMES - 1]
+        rest = len(names) - len(shown)
+        joined = ", ".join(shown) + f", and {rest} others"
+        return joined[:1].upper() + joined[1:]
+    if len(names) == 1:
+        joined = names[0]
+    elif len(names) == 2:
+        joined = f"{names[0]} and {names[1]}"
+    else:
+        joined = ", ".join(names[:-1]) + f", and {names[-1]}"
+    return joined[:1].upper() + joined[1:]
+
+
+def speak_roster(brief: dict[str, Any]) -> str:
+    """"What Canaries do I have?" — the inventory, said conversationally."""
+    device_ids = brief.get("device_ids") or []
+    count = len(device_ids)
+    if count == 0:
+        return "No Canaries have checked in yet. Once one does, it'll show up here."
+    n_online = len(brief.get("online") or [])
+    if count > MAX_SPOKEN_NAMES:
+        # Too many to say. Summarize, and name the surface that does lists
+        # properly rather than reading a dozen names into the air.
+        state = (
+            "all online"
+            if n_online == count
+            else f"{n_online} of them online right now"
+        )
+        return (
+            f"{count} Canaries, {state}. That's more than I'd read out — "
+            "the dashboard has them all."
+        )
+    names = _join_names([_spoken_name(d) for d in device_ids])
+    lead = "One Canary:" if count == 1 else f"{count} Canaries:"
+    tail = (
+        "all online."
+        if n_online == count
+        else f"{n_online} of them online right now."
+    )
+    return f"{lead} {names} — {tail}"
+
+
+def speak_goodnight(brief: dict[str, Any]) -> str:
+    """"Goodnight" — the bedtime check: who's watching, and anything pending.
+
+    Forward-looking where the other answers look back: the useful thing at
+    bedtime is what will be watching while you sleep, and whether anything
+    would stop it.
+    """
+    count = brief["device_count"]
+    if count == 0 and not brief["kernel_configured"]:
+        return "Goodnight. Nothing's set up to keep watch yet, so I'll just say sleep well."
+
+    parts = ["Goodnight."]
+    online = brief.get("online") or []
+    n_online = len(online)
+    if brief["mismatched"]:
+        parts.append(
+            f"Before you turn in — {_join_names([_spoken_name(d) for d in brief['mismatched']])} "
+            "is publishing with a key that doesn't match its pin, worth a look tomorrow."
+        )
+    if count:
+        if n_online == count:
+            parts.append(
+                "Your Canary is online and watching."
+                if count == 1
+                else f"All {count} Canaries are online and watching."
+            )
+        elif n_online:
+            missing = [d for d in (brief.get("device_ids") or []) if d not in set(online)]
+            parts.append(
+                f"{n_online} of {count} Canaries are watching — "
+                f"{_join_names([_spoken_name(d) for d in missing])} isn't reporting in."
+            )
+        else:
+            parts.append("Worth knowing: none of your Canaries are reporting in right now.")
+    if brief["kernel_configured"] and not brief["kernel_ok"]:
+        parts.append("I can't reach the witness kernel at the moment, either.")
+
+    # "It's been quiet" is a claim about every source, so it may only be
+    # spoken when every configured source is reachable AND empty. A blind
+    # kernel or a kernel-only event both forbid it.
+    canary = brief.get("canary_latest")
+    kernel_event = brief.get("kernel_latest_event")
+    kernel_blind = bool(brief["kernel_configured"]) and not brief["kernel_ok"]
+    if canary and (brief["now"] - canary["received_at"]) < 3600:
+        label = _spoken_label(canary.get("event_type"))
+        parts.append(f"Last hour's only note: {label}, from the {_spoken_name(canary['device_id'])} Canary.")
+    elif kernel_blind:
+        # The outage was already named above; adding "it's been quiet"
+        # there would contradict it in the same breath.
+        pass
+    elif kernel_event:
+        parts.append(
+            f"Nothing new from the Canaries; the latest in the kernel log is "
+            f"{_spoken_label(kernel_event.get('event_type'))}."
+        )
+    elif count:
+        parts.append("It's been quiet.")
+
+    updates = brief.get("pending_updates") or []
+    if updates:
+        parts.append(
+            f"{len(updates)} update{'' if len(updates) == 1 else 's'} can wait until morning."
+        )
+    parts.append("Sleep well.")
+    return " ".join(parts)
+
+
+def speak_privacy() -> str:
+    """"Are you listening to me?" — the honest answer, said out loud.
+
+    The most important sentence this system speaks, so every clause has to
+    survive being quoted. Two disciplines govern it:
+
+    1. It does NOT assert which listening mode is active. Push-to-talk —
+       the blessed default — does not listen for a name at all, and a
+       wake word may be any phrase the owner trained, so a flat "I listen
+       for my name" would be a false privacy guarantee in the very setup
+       this project recommends. Both modes are described conditionally,
+       and both descriptions are true wherever they apply.
+    2. It admits the wake-word residue (docs/voice_control.md, "What
+       turning a wake word on means") rather than claiming a purity the
+       design doesn't have.
+
+    Composed from the contract, never from runtime state, so no setting
+    can make it say something kinder than the truth.
+    """
+    return (
+        "That depends on how you set me up, and both answers are short. If you "
+        "talk to me by pressing the button, I hear you only while you're "
+        "holding it — the rest of the time there's nothing running. If you "
+        "turned on a wake word, I'm listening for that one phrase and nothing "
+        "else; and if something false-wakes me, a television say, the few "
+        "seconds after it are read here on this hub and thrown away. Either "
+        "way, I don't record you, and nothing I hear is stored or sent "
+        "anywhere — once I've answered, it's gone. As for the Canaries around "
+        "the house: they report what happened, never who — no faces, no plate "
+        "numbers, no footage leaving home. That isn't a setting I have. It's "
+        "code that was never written."
+    )
+
+
+def speak_help() -> str:
+    """"What can I ask you?" — discoverability, and the honest limit."""
+    return (
+        "Ask me what's up for the short version of everything. Or get specific: "
+        "is the fleet OK, what was the last event, is anything offline, how's a "
+        "particular Canary doing, what Canaries do I have — and if you're ever "
+        "wondering, are you listening. Say goodnight and I'll tell you who's on "
+        "watch. One thing I can't do: I only answer questions. I can't arm, "
+        "disarm, unlock, or open anything, because a spoken word carries no "
+        "signature."
+    )

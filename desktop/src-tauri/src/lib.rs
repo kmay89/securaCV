@@ -19,6 +19,7 @@
 //! Everything the user watches scroll by during a flash is `espflash`'s own
 //! output, relayed verbatim over the `flash:log` event.
 
+mod fleet;
 mod health;
 mod hub;
 mod launch_guard;
@@ -26,6 +27,7 @@ mod port_hint;
 mod provisioning;
 mod release;
 mod rescue;
+mod secret_store;
 mod serial_monitor;
 mod sscma;
 mod we2;
@@ -1723,6 +1725,12 @@ pub fn run() {
             we2_bench::we2_bench_start,
             we2_bench::we2_bench_cmd,
             we2_bench::we2_bench_stop,
+            fleet::fleet_scan,
+            fleet::fleet_device_call,
+            secret_store::secret_backend,
+            secret_store::secret_set,
+            secret_store::secret_get,
+            secret_store::secret_delete,
             backup_flash,
             write_local_image,
             erase_chip,

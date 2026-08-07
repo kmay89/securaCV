@@ -60,14 +60,21 @@ test("every product carries the board facts detection narrows on", () => {
 
 // ── board narrowing (chip + measured flash size) ────────────────────────────
 
-test("S3 + 16 MB names the Waveshare display boards exactly", async () => {
+test("S3 + 16 MB narrows to the 16 MB boards — no longer a single family", async () => {
+  // The Freenove reach port (docs/strategy/30) is also an S3 with 16 MB, so
+  // this measurement stopped being an identification the moment it landed.
+  // The set is asserted exactly so a future board silently joining it is a
+  // visible change, not a quiet loss of precision.
   const c = await core();
   const set = c.productsForBoard(catalog, "ESP32-S3", 16 * MB);
   assert.deepStrictEqual(set.map((p) => p.id),
-    ["securacv-canary-display-dash", "securacv-canary-display-dash-modes",
+    ["securacv-canary-freenove-s3",
+     "securacv-canary-display-dash", "securacv-canary-display-dash-modes",
      "securacv-canary-display-dash7", "securacv-canary-display-nightstand7",
      "securacv-canary-display-nightstand-s3",
      "securacv-canary-display-touch169"]);
+  assert.ok(new Set(set.map((p) => p.family)).size > 1,
+    "spans families — smartPick must not claim to have named the board");
 });
 
 test("S3 + 8 MB is the XIAO class; unknown or odd sizes never empty the set",
@@ -109,16 +116,70 @@ test("what the board already runs outranks the silicon guess", async () => {
   assert.match(pick.why, /already runs/);
 });
 
-test("silicon speaks: S3 + 16 MB recommends the Dash with the evidence stated",
+test("silicon narrows but does not name: S3 + 16 MB says so out loud",
   async () => {
     const c = await core();
     const pick = c.smartPick(catalog, {
       chip: "ESP32-S3", chipLabel: "ESP32-S3", flashBytes: 16 * MB,
     });
     assert.strictEqual(pick.kind, "board");
-    assert.strictEqual(pick.product.id, "securacv-canary-display-dash");
     assert.match(pick.why, /16 MB/);
-    assert.match(pick.why, /Waveshare/);
+    // Several boards fit S3 + 16 MB, so the copy must offer a starting point
+    // rather than assert "that looks like a <board>" — the whole point of the
+    // ambiguity branch in smartPick.
+    assert.match(pick.why, /more than one board matches/i);
+    assert.doesNotMatch(pick.why, /looks like a/);
+  });
+
+test("tier copy never borrows the word reserved for signature checks", () => {
+  // AGENTS.md rule 4: "Verified" means an Ed25519 signature checked against a
+  // pinned key — nothing looser. This copy renders inches from the flasher's
+  // real signature check, so a bench result must never wear that word.
+  for (const p of catalog.products) {
+    const said = `${p.tier.label} ${p.tier.line}`;
+    assert.doesNotMatch(said, /verif/i,
+      `${p.id}: tier copy says "${said}" — bench work is called bench work`);
+  }
+});
+
+test("per-product access notes survive dedup — both classic boards are shown", () => {
+  // Regression: both frontends render the access cards once each, keyed on
+  // `access.key`. When that key was the FAMILY, the ESP32-CAM and the WROOM
+  // DevKit collided (both `canary`) and whichever sorted second — the WROOM's
+  // "pick the CP2102, not an ESP32" note — was silently dropped.
+  const withAccess = catalog.products.filter((p) => p.access);
+  const keys = withAccess.map((p) => p.access.key);
+  for (const p of withAccess) {
+    assert.ok(p.access.key, `${p.id}: access entry carries no dedup key`);
+  }
+  const rendered = new Set(keys);
+  for (const id of ["securacv-canary-esp32cam", "securacv-canary-wroom"]) {
+    const p = catalog.products.find((x) => x.id === id);
+    assert.ok(rendered.has(p.access.key), `${id}: access note deduped away`);
+  }
+  assert.notStrictEqual(
+    catalog.products.find((x) => x.id === "securacv-canary-esp32cam").access.key,
+    catalog.products.find((x) => x.id === "securacv-canary-wroom").access.key,
+    "two boards needing opposite instructions must not share a dedup key");
+  // Family-keyed notes still collapse: Sense's two products share one card.
+  const sense = withAccess.filter((p) => p.family === "sense");
+  assert.ok(sense.length > 1 && new Set(sense.map((p) => p.access.key)).size === 1,
+    "family-level notes should still render once for the family");
+});
+
+test("every product states a support tier, and the reach ports state the loud one",
+  async () => {
+    // The tier is what makes offering an unproven image honest, so it is the
+    // catalog's job to always carry one — not the page's job to remember.
+    for (const p of catalog.products) {
+      assert.ok(p.tier && p.tier.label && p.tier.line, `${p.id}: no tier`);
+      assert.strictEqual(typeof p.tier.first, "boolean", `${p.id}: tier.first`);
+    }
+    const cam = catalog.products.find((p) => p.id === "securacv-canary-esp32cam");
+    assert.ok(cam.tier.first, "a compile-tested port must read as never-booted");
+    assert.match(cam.tier.line, /nobody has run it on real hardware/i);
+    const flagship = catalog.products.find((p) => p.id === "securacv-canary");
+    assert.strictEqual(flagship.tier.first, false, "the benched flagship is not 'first'");
   });
 
 test("S3 + 8 MB stays with the authored flagship (the XIAO class leads with Canary)",

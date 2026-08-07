@@ -38,6 +38,26 @@ void backlight_set(uint8_t level);
 // Duty range 0..8191 (canary::glass::NIGHT_DUTY_MAX).
 void backlight_night_set(uint16_t duty13);
 
+#ifdef CD_NIGHTLIGHT
+// ── Hardware rotation (the nightlight's auto-orient) ────────────────────
+// Turn the PANEL's scan one of four quarter turns (Arduino_GFX rotation
+// numbering). Unlike the dash's software rotation, this is a MADCTL
+// register write — the ST7789 re-addresses its own RAM, LVGL just needs
+// its logical canvas swapped (lvgl_port_set_panel_rotation). The MADCTL
+// table composes the vendor personality (MX|BGR at rotation 0) with the
+// stock rotation matrix; derivation lives at the implementation.
+void display_set_rotation(uint8_t rot);
+
+// ── IMU (QMI8658, shared I2C bus) ────────────────────────────────────────
+// Accel-only, low-power, low-ODR — a lamp asking "which way is down",
+// not a motion tracker. Raw LSB out; IMU_ONE_G is the scale's LSB-per-g
+// (feeds OrientationModel::begin). False = no IMU answered (auto-orient
+// quietly disabled; everything else unaffected).
+constexpr int32_t IMU_ONE_G = 8192;   // +-4 g full scale
+bool imu_init();
+bool imu_read_accel(int32_t* ax, int32_t* ay, int32_t* az);
+#endif  // CD_NIGHTLIGHT
+
 // ── SD slot (dash TF card) ──────────────────────────────────────────────
 // Release the slot's DAT3/CS line — on the dash it rides the CH422G latch —
 // so an inserted card negotiates SD mode for the SDMMC 1-bit deep archive
