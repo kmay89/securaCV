@@ -7158,6 +7158,7 @@
         "light",
         "mark",
         "shell",
+        "coupon",
         "all",
         "exploded",
         "palette"
@@ -7306,7 +7307,7 @@
       },
       {
        "name": "pad_h",
-       "default": "5.4",
+       "default": "4.2",
        "comment": "paddle height (Z), centered on the actuator — a CAP,"
       },
       {
@@ -7337,6 +7338,16 @@
        "name": "pad_dot_proud",
        "default": "0.35",
        "comment": "how far the dot's top stands ABOVE the ear face."
+      },
+      {
+       "name": "dot_round_side",
+       "default": "1",
+       "comment": "+1 or -1: the ear that gets the ROUND pip — MEASURE"
+      },
+      {
+       "name": "pad_dot_bar",
+       "default": "3.2",
+       "comment": "the other ear's bar length (Y), hulled from the same"
       },
       {
        "name": "pad_dot_in",
@@ -7389,17 +7400,22 @@
       },
       {
        "name": "seam_dz",
-       "default": "1.0",
+       "default": "0.0",
        "comment": "black between the glass front and the band's start"
       },
       {
        "name": "seam_h",
-       "default": "3.8"
+       "default": "3.4"
       },
       {
        "name": "band_clear",
-       "default": "0.10",
-       "comment": "per-face drop-in clearance (pause-and-insert flow);"
+       "default": "0",
+       "comment": "per-face drop-in clearance. ZERO by default now: the"
+      },
+      {
+       "name": "band_ring",
+       "default": "true",
+       "comment": "true = closed ring (co-print only), false = the U"
       }
      ]
     },
@@ -7436,6 +7452,49 @@
        "name": "kh_cy",
        "default": "5.0",
        "comment": "hanger center, CASE frame (+Y = up when hung). Not"
+      },
+      {
+       "name": "coupon_y",
+       "default": "18.0",
+       "comment": "how much of the USB end to keep"
+      },
+      {
+       "name": "pry_notch",
+       "default": "true"
+      },
+      {
+       "name": "pry_w",
+       "default": "9.0",
+       "comment": "scallop width along the rim"
+      },
+      {
+       "name": "pry_d",
+       "default": "1.4",
+       "comment": "how far into the 2.2 wall — leaves 0.8 of rim standing"
+      },
+      {
+       "name": "pry_h",
+       "default": "1.7",
+       "comment": "how far down from the rim; the lid plate is 2.0 thick,"
+      },
+      {
+       "name": "loc_rib",
+       "default": "true"
+      },
+      {
+       "name": "loc_clear",
+       "default": "0.08",
+       "comment": "per-side clearance AT THE RIB — MEASURE on first fit"
+      },
+      {
+       "name": "loc_rib_l",
+       "default": "5.0",
+       "comment": "rib length in Y"
+      },
+      {
+       "name": "loc_rib_ys",
+       "default": "[-2.0, 12.0]",
+       "comment": "clear of the ears, the pillars and the corners"
       },
       {
        "name": "egg_ring",
@@ -7869,6 +7928,14 @@
       {
        "name": "vent_z0",
        "default": "seam_z0 + seam_h_eff + 0.8"
+      },
+      {
+       "name": "loc_rib_z0",
+       "default": "seam_z0 + seam_h_eff + 0.25"
+      },
+      {
+       "name": "loc_rib_z1",
+       "default": "vent_z0 - 0.05"
       },
       {
        "name": "vent_dy",
