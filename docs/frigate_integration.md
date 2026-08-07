@@ -12,7 +12,7 @@ Tested against the Frigate 0.14–0.17 MQTT schema:
 | `<prefix>/reviews` | Frigate 0.14+ | Opt-in (`enable_reviews`). Real before/after schema with `severity` |
 
 The topic prefix follows Frigate's `mqtt.topic_prefix` (default `frigate`) —
-set `frigate.topic_prefix` (add-on) or `FRIGATE_TOPIC_PREFIX` (Docker
+set `frigate.topic_prefix` (app) or `FRIGATE_TOPIC_PREFIX` (Docker
 sidecar) if you changed it. The camera+label-per-bucket dedup means
 enabling reviews on top of events never double-logs a detection.
 
@@ -29,21 +29,21 @@ enabling reviews on top of events never double-logs a detection.
 
 ## Quick Start (Home Assistant)
 
-### 1. Install the Add-on
+### 1. Install the App
 
-1. Go to **Settings → Add-ons → Add-on Store**
+1. Go to **Settings → Apps → App Store**
 2. Add repository: `https://github.com/kmay89/securaCV`
 3. Install "Privacy Witness Kernel"
 
 ### 2. Configure for Frigate
 
-Open the add-on Web UI and click through the setup wizard — that's the
+Open the app Web UI and click through the setup wizard — that's the
 whole configuration for most installs:
 
 - The **device key is generated automatically** (and persisted to
   `/config/.securacv/device_key`; back it up — HA backups include it).
 - The **MQTT broker is auto-discovered** from the Supervisor when you run
-  the Mosquitto add-on: host, port, and credentials, nothing to type.
+  the Mosquitto app: host, port, and credentials, nothing to type.
 - **HA sensors are on by default** (`mqtt_publish.enabled: true`).
 
 Manual YAML is only needed for an external broker or non-default Frigate
@@ -57,7 +57,7 @@ mode: "frigate"
 device_key_seed: ""
 
 # Frigate MQTT settings. Empty host/credentials = auto-discover from the
-# Supervisor MQTT service (Mosquitto add-on).
+# Supervisor MQTT service (Mosquitto app).
 frigate:
   mqtt_host: ""                 # set only for an external broker
   mqtt_port: 1883
@@ -80,9 +80,9 @@ retention_days: 30
 verify_interval_hours: 24
 ```
 
-### 3. Start the Add-on
+### 3. Start the App
 
-That's it! The add-on will:
+That's it! The app will:
 1. Subscribe to Frigate's MQTT events (and reviews, if enabled)
 2. Strip identity data (object IDs, coordinates, thumbnails)
 3. Coarsen timestamps to 10-minute buckets
@@ -94,7 +94,7 @@ That's it! The add-on will:
      automatically every `verify_interval_hours`)
    - `button.pwk_verify_now` — one-click verification from any dashboard
 
-The add-on Web UI doubles as a status panel after setup: chain-integrity
+The app Web UI doubles as a status panel after setup: chain-integrity
 badge, 24h digest, a Verify Now button, and a **dashboard generator** that
 emits Lovelace YAML for your actual zones. For the morning summary on your
 phone, import the
@@ -214,7 +214,7 @@ The frigate_bridge is classified as an **external tool** per `kernel/architectur
 
 ## Configuration Reference
 
-### Add-on Options (frigate mode)
+### App Options (frigate mode)
 
 | Option | Default | Description |
 |--------|---------|-------------|
@@ -327,9 +327,9 @@ Here's how to configure Frigate + PWK for maximum privacy:
 
 ### Frigate Config
 
-> **Where this file lives:** the Frigate **Home Assistant add-on** (0.16+) reads
+> **Where this file lives:** the Frigate **Home Assistant app** (0.16+) reads
 > `/addon_configs/ccab4aaf_frigate/config.yml` (editable from the Frigate Web UI's
-> configuration editor or a file editor add-on) — *not* `/config/frigate.yml`, which
+> configuration editor or a file editor app) — *not* `/config/frigate.yml`, which
 > SecuraCV only uses as a generated template. In a **Docker** deployment it's whatever
 > config file you mount into the Frigate container.
 
@@ -358,7 +358,7 @@ snapshots:
   enabled: false
 ```
 
-### PWK Add-on Config
+### PWK App Config
 
 ```yaml
 mode: "frigate"
@@ -394,8 +394,8 @@ retention_days: 90  # Keep events for 90 days
    ```
    You should see events when objects are detected.
 
-3. **Check add-on logs**:
-   Go to **Settings → Add-ons → Privacy Witness Kernel → Logs**
+3. **Check app logs**:
+   Go to **Settings → Apps → Privacy Witness Kernel → Logs**
 
 ### "MQTT broker must be loopback"
 

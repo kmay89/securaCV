@@ -3,7 +3,7 @@ set -euo pipefail
 # SecuraCV Easy Install
 # Installs Frigate + Mosquitto + SecuraCV on Home Assistant OS in one command.
 #
-# Usage (from HA Terminal/SSH add-on):
+# Usage (from HA Terminal/SSH app):
 #   curl -fsSL https://raw.githubusercontent.com/kmay89/securaCV/main/scripts/install.sh | bash
 #
 # Or with explicit branch:
@@ -29,13 +29,13 @@ LOVELACE_DIR="${HA_CONFIG_DIR}/lovelace"
 
 MOSQUITTO_SLUG="core_mosquitto"
 FRIGATE_REPO="https://github.com/blakeblackshear/frigate-hass-addons"
-# Supervisor add-on slugs are "<repo-hash>_<addon-slug>" where repo-hash is
+# Supervisor app slugs are "<repo-hash>_<addon-slug>" where repo-hash is
 # sha1(lowercased repo URL)[:8] — ccab4aaf for blakeblackshear's repo,
 # d0491a67 for this one.
 FRIGATE_SLUG="ccab4aaf_frigate"
-# The Frigate add-on (0.16+) reads its config from its own add-on config
-# directory, NOT /config/frigate.yml. Visible from the Terminal/SSH add-on
-# at /addon_configs once the Frigate add-on is installed.
+# The Frigate app (0.16+) reads its config from its own app config
+# directory, NOT /config/frigate.yml. Visible from the Terminal/SSH app
+# at /addon_configs once the Frigate app is installed.
 FRIGATE_ADDON_CONFIG_DIR="/addon_configs/${FRIGATE_SLUG}"
 SECURACV_ADDON_REPO="https://github.com/kmay89/securaCV"
 SECURACV_ADDON_SLUG="d0491a67_privacy_witness_kernel"
@@ -69,7 +69,7 @@ check_prerequisites() {
 
   # Must have the ha CLI (present on HA OS)
   if ! command -v ha >/dev/null 2>&1; then
-    die "The 'ha' CLI is not available. Run this script from the Home Assistant Terminal or SSH add-on."
+    die "The 'ha' CLI is not available. Run this script from the Home Assistant Terminal or SSH app."
   fi
   log_ok "ha CLI found"
 
@@ -106,7 +106,7 @@ check_prerequisites() {
 }
 
 # ---------------------------------------------------------------------------
-# Wait for an add-on to reach a specific state
+# Wait for an app to reach a specific state
 # ---------------------------------------------------------------------------
 addon_wait_state() {
   local slug="$1"
@@ -141,7 +141,7 @@ install_mosquitto() {
   fi
 
   if [ "$state" = "not_installed" ]; then
-    log_info "Installing Mosquitto add-on…"
+    log_info "Installing Mosquitto app…"
     ha addons install "$MOSQUITTO_SLUG" || die "Failed to install Mosquitto"
     log_ok "Mosquitto installed"
   fi
@@ -160,7 +160,7 @@ install_mosquitto() {
 # Step 2: Frigate NVR
 # ---------------------------------------------------------------------------
 install_frigate() {
-  log_step "Installing Frigate NVR add-on"
+  log_step "Installing Frigate NVR app"
 
   local state
   state=$(ha addons info "$FRIGATE_SLUG" 2>/dev/null | grep -E '^state:' | awk '{print $2}' || echo "not_installed")
@@ -170,13 +170,13 @@ install_frigate() {
     return 0
   fi
 
-  # The ha CLI has no command to add an add-on repository, so if the Frigate
+  # The ha CLI has no command to add an app repository, so if the Frigate
   # repo isn't registered yet the install below fails and we fall back to
   # manual instructions.
   log_info "Installing Frigate (this may take a few minutes)…"
   ha addons install "$FRIGATE_SLUG" || {
-    log_warn "Automated Frigate install failed — its add-on repository is probably not added yet."
-    log_warn "Add it: Settings → Add-ons → Add-on Store → ⋮ → Repositories → ${FRIGATE_REPO}"
+    log_warn "Automated Frigate install failed — its app repository is probably not added yet."
+    log_warn "Add it: Settings → Apps → App Store → ⋮ → Repositories → ${FRIGATE_REPO}"
     log_warn "then install Frigate from the store (or re-run this script)."
     log_warn "SecuraCV setup will continue — complete Frigate setup before first run."
     return 0
@@ -224,41 +224,41 @@ install_integration() {
 }
 
 # ---------------------------------------------------------------------------
-# Step 4: SecuraCV Privacy Witness Kernel add-on
+# Step 4: SecuraCV Privacy Witness Kernel app
 # ---------------------------------------------------------------------------
 install_addon() {
-  log_step "Installing SecuraCV Privacy Witness Kernel add-on"
+  log_step "Installing SecuraCV Privacy Witness Kernel app"
 
   local state
   state=$(ha addons info "$SECURACV_ADDON_SLUG" 2>/dev/null | grep -E '^state:' | awk '{print $2}' || echo "not_installed")
 
   if [ "$state" != "not_installed" ] && [ -n "$state" ]; then
-    log_ok "SecuraCV add-on already installed (state: ${state}) — skipping"
+    log_ok "SecuraCV app already installed (state: ${state}) — skipping"
     return 0
   fi
 
-  # As with Frigate, the ha CLI cannot add add-on repositories; if the
+  # As with Frigate, the ha CLI cannot add app repositories; if the
   # SecuraCV repo isn't registered yet the install fails with manual steps.
-  log_info "Installing Privacy Witness Kernel add-on…"
+  log_info "Installing Privacy Witness Kernel app…"
   ha addons install "$SECURACV_ADDON_SLUG" || {
-    log_warn "Automated add-on install failed — the SecuraCV add-on repository is probably not added yet."
-    log_warn "Add it: Settings → Add-ons → Add-on Store → ⋮ → Repositories → ${SECURACV_ADDON_REPO}"
+    log_warn "Automated app install failed — the SecuraCV app repository is probably not added yet."
+    log_warn "Add it: Settings → Apps → App Store → ⋮ → Repositories → ${SECURACV_ADDON_REPO}"
     log_warn "then install 'Privacy Witness Kernel' from the store (or re-run this script)."
     return 0
   }
-  log_ok "Privacy Witness Kernel add-on installed"
+  log_ok "Privacy Witness Kernel app installed"
 
-  log_info "Starting Privacy Witness Kernel add-on…"
+  log_info "Starting Privacy Witness Kernel app…"
   ha addons start "$SECURACV_ADDON_SLUG" || {
-    log_warn "Could not start add-on automatically."
-    log_warn "Start manually: Settings → Add-ons → Privacy Witness Kernel → Start"
+    log_warn "Could not start app automatically."
+    log_warn "Start manually: Settings → Apps → Privacy Witness Kernel → Start"
     return 0
   }
 
   if addon_wait_state "$SECURACV_ADDON_SLUG" "started" 60; then
     log_ok "Privacy Witness Kernel running (setup wizard is now available)"
   else
-    log_warn "Add-on did not start within 60 s — check logs if needed"
+    log_warn "App did not start within 60 s — check logs if needed"
   fi
 }
 
@@ -326,7 +326,7 @@ deploy_configs() {
 
 mqtt:
   enabled: true
-  host: core-mosquitto      # Mosquitto add-on hostname
+  host: core-mosquitto      # Mosquitto app hostname
   port: 1883
   # username: your-mqtt-user    # Uncomment if you set Mosquitto credentials
   # password: your-mqtt-pass
@@ -368,9 +368,9 @@ EOF
     log_ok "Frigate config template already exists — not overwriting"
   fi
 
-  # The Frigate add-on does NOT read /config/frigate.yml — it reads
-  # config.yml inside its own add-on config directory. If that directory is
-  # visible (Frigate add-on installed and /addon_configs mapped into this
+  # The Frigate app does NOT read /config/frigate.yml — it reads
+  # config.yml inside its own app config directory. If that directory is
+  # visible (Frigate app installed and /addon_configs mapped into this
   # shell), seed it with the same template so Frigate picks it up directly.
   if [ -d "$FRIGATE_ADDON_CONFIG_DIR" ]; then
     if [ ! -f "${FRIGATE_ADDON_CONFIG_DIR}/config.yml" ] && [ ! -f "${FRIGATE_ADDON_CONFIG_DIR}/config.yaml" ]; then
@@ -469,16 +469,16 @@ print_next_steps() {
   printf "     Frigate reads:  ${FRIGATE_ADDON_CONFIG_DIR}/config.yml\n"
   printf "     (template also at ${HA_CONFIG_DIR}/frigate.yml — same contents)\n"
   printf "     Replace the placeholder RTSP URLs with your cameras'.\n"
-  printf "     Then start Frigate: Settings → Add-ons → Frigate → Start\n\n"
+  printf "     Then start Frigate: Settings → Apps → Frigate → Start\n\n"
 
   printf "  2. ${BOLD}Add the SecuraCV integration${NC}\n"
   printf "     Open: http://${ha_ip}:8123\n"
   printf "     Go to: Settings → Devices & Services → Add Integration → SecuraCV\n\n"
 
   printf "  3. ${BOLD}Run the setup wizard${NC}\n"
-  printf "     Start the Privacy Witness Kernel add-on:\n"
-  printf "     Settings → Add-ons → Privacy Witness Kernel → Start\n"
-  printf "     Then open the wizard: Settings → Add-ons → Privacy Witness Kernel → Open Web UI\n\n"
+  printf "     Start the Privacy Witness Kernel app:\n"
+  printf "     Settings → Apps → Privacy Witness Kernel → Start\n"
+  printf "     Then open the wizard: Settings → Apps → Privacy Witness Kernel → Open Web UI\n\n"
 
   printf "  4. ${BOLD}Restart Home Assistant${NC}\n"
   printf "     Settings → System → Restart\n"
