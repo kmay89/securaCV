@@ -2,6 +2,8 @@
    a source-list sidebar on big screens, a six-stage bottom tab bar on phones.
    No build step; pure ES module. Progress is remembered on-device only. */
 
+import { SETTINGS_AVAILABLE, probeSettings, settingsView } from "./lab-settings.js";
+
 const MANIFEST_URL = "build-line.json";
 const SITE_ORIGIN = "https://securacv.com";
 const PKEY = "scv-lab-progress";
@@ -83,6 +85,7 @@ function navigate(id, push = true) {
   const view =
     id === "start" ? "start" :
     id === "all" ? "all" :
+    id === "settings" ? "settings" :
     BY_SLUG.has(id) ? "bench" : "overview";
   const entry = view === "bench" ? BY_SLUG.get(id) : null;
   if (entry) markVisited(entry.stage.id);
@@ -154,6 +157,10 @@ function renderSidebar(view, entry) {
       h("div", { class: "side-sec" }, "Reference"),
       navItem("all", view === "all", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 6h16M4 12h16M4 18h16"/></svg>', "All benches, by stage"),
       navLink("site-map.html", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M9 18l6-12M4 6h5v5H4zM15 13h5v5h-5z"/></svg>', "Complete site map"),
+      // App only: the browser Lab has no updater and no update journal, so it
+      // gets no Settings entry rather than one that answers "—" to everything.
+      SETTINGS_AVAILABLE ? h("div", { class: "side-sec" }, "This app") : null,
+      SETTINGS_AVAILABLE ? navItem("settings", view === "settings", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 008 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H2a2 2 0 110-4h.09A1.65 1.65 0 004.6 8a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 3.6V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9v.09a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>', "Updates & about") : null,
     ),
   );
   const old = document.querySelector(".side");
@@ -178,7 +185,8 @@ function onSearch(e) {
 /* ---- topbar (phone) ---- */
 function renderTopbar(view, entry) {
   let bar = document.querySelector(".topbar");
-  const title = view === "bench" ? entry.bench.noun : view === "start" ? "Get started" : view === "all" ? "All benches" : "The Lab";
+  const title = view === "bench" ? entry.bench.noun : view === "start" ? "Get started"
+    : view === "all" ? "All benches" : view === "settings" ? "Updates & about" : "The Lab";
   const content = [
     h("button", { class: "back", hidden: view === "overview", onclick: () => navigate("overview") },
       h("span", { html: "‹" }), " Lab"),
@@ -211,6 +219,7 @@ function renderContent(view, entry) {
   if (view === "overview") c.replaceChildren(overviewView());
   else if (view === "start") c.replaceChildren(startView());
   else if (view === "all") c.replaceChildren(allView());
+  else if (view === "settings") c.replaceChildren(settingsView());
   else c.replaceChildren(benchView(entry));
 }
 
@@ -323,7 +332,12 @@ async function boot() {
     return;
   }
   flatten();
-  VALID_IDS = ["overview", "start", "all", ...ROUTE.map((e) => e.bench.slug)];
+  // Ask the native shell whether this build self-updates BEFORE the first
+  // render, so the sidebar and the route allowlist are built against the real
+  // answer rather than a stale default. Resolves false on the website and on
+  // iOS/iPadOS (App Store updates), true only on the desktop app.
+  await probeSettings();
+  VALID_IDS = ["overview", "start", "all", ...(SETTINGS_AVAILABLE ? ["settings"] : []), ...ROUTE.map((e) => e.bench.slug)];
   root.removeAttribute("data-loading");
   const shell = h("div", { class: "shell" }, h("div", { class: "main" }));
   root.replaceChildren(shell);

@@ -19,6 +19,26 @@ fn app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// What build is actually running — the same DTO the Flasher's About panel
+/// reads (`desktop/src-tauri/src/lib.rs:app_info`), so the two apps answer
+/// "which version am I on?" identically. Stamped at compile time by build.rs;
+/// `build_rev` is "source" when built outside a git checkout.
+#[derive(serde::Serialize)]
+struct AppInfo {
+    version: String,
+    build_rev: String,
+    build_epoch: u64,
+}
+
+#[tauri::command]
+fn app_info() -> AppInfo {
+    AppInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        build_rev: env!("SECURACV_BUILD_REV").to_string(),
+        build_epoch: env!("SECURACV_BUILD_EPOCH").parse::<u64>().unwrap_or(0),
+    }
+}
+
 // --- roadmap seam (Phase 2): native device capabilities -----------------
 // Reliable serial flashing and LAN discovery are why a native app earns its
 // keep. When we add the `serialport` crate, this becomes the real thing:
@@ -90,14 +110,18 @@ pub fn run() {
         .manage(std::sync::Mutex::new(self_update::UpdateGate::default()))
         .invoke_handler(tauri::generate_handler![
             app_version,
+            app_info,
             native_capabilities,
             witness_discover,
             self_update::check_update,
-            self_update::install_update
+            self_update::install_update,
+            self_update::read_update_journal,
+            self_update::update_journal_path
         ]);
     #[cfg(not(desktop))]
     let builder = builder.invoke_handler(tauri::generate_handler![
         app_version,
+        app_info,
         native_capabilities,
         witness_discover
     ]);

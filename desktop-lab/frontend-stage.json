@@ -23,6 +23,7 @@
   "sentinels": [
     "canary-local/lab.html",
     "canary-local/assets/lab-nav.js",
+    "canary-local/assets/lab-settings.js",
     "canary-local/workshop.html",
     "canary-local/assets/workshop.js",
     "canary-local/devices/workshop.json",
