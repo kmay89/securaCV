@@ -79,28 +79,24 @@
 //     corner posts; the band's leg ends stop at black wall above the ears,
 //     so the U still cannot slide along its run.
 //
-//     WHY IT IS A U AND NOT A RING, in numbers — this gets asked, and the
-//     answer is a hard conflict rather than a preference. Closing the ring
-//     means carrying the band down past the BUTTON EARS to the USB wall, and
-//     the paddle recess owns z 4.20 .. 10.70 there. The band starts at
-//     z 2.2, so a ring needs its far face at or under 4.20: seam_h <= 2.0.
-//     That is THINNER than the 2.8 it already was, and far under the 3.8 it
-//     is now. The two wishes — a thicker band and a closed ring — pull
-//     against each other through the same millimeters, and the paddle wins,
-//     because a band running through the ears would put a material seam
-//     across a living hinge. There are only three ways out, all of them
-//     trades, none of them free:
-//       - move the band FORWARD (seam_dz 1.0 -> 0). Buys 1 mm of headroom,
-//         so a ring closes at seam_h 2.8 — today's thickness, not a thicker
-//         one — and it breaks fidelity to the measured 1.0 mm black gap.
-//       - shrink the paddle (pad_h 5.4 -> 4.2, the floor the boss-wrap
-//         assert allows). Lifts the recess to z 4.80 and a forward band can
-//         then reach seam_h 3.4. Costs a shorter press pad on a mechanism
-//         that has not been fit-tested since it was repaired.
-//       - accept the U, which is what ships. The LED lives at the +Y end;
-//         the U already wraps it and both legs, and the run the ring would
-//         add is the USB end — the far corner from the light, which would
-//         read as the dim part of a line that is otherwise even.
+//     IT IS A RING NOW, and the trade that bought it is worth stating. The
+//     ring has to pass the BUTTON EARS, where the paddle recess owns the wall
+//     from z 4.80 up. Two numbers moved to fit under it: seam_dz 1.0 -> 0
+//     (the band starts at the glass instead of a millimeter behind it) and
+//     pad_h 5.4 -> 4.2 (a shorter pad lifts the recess). What that bought:
+//       - 3.4 mm of white, up from the 2.8 this file shipped, and ALL of it
+//         inside the light gap — the old 3.8 mm band had only 2.65 in the
+//         light and the rest in the PCB's shadow. Brighter AND thicker.
+//       - the USB end lit, which is the point: the charge LED lives down
+//         there and the run that used to be black now carries it.
+//       - MORE vent area, not less — 41 mm2 to 65 — because the band moved
+//         forward and gave the wall behind it back to the slots.
+//     What it cost: the measured 1.0 mm black gap in front of the band, 1.2 mm
+//     of press-pad height, and the single-spool build. That last one is real —
+//     see band_ring: a ring through the full wall depth leaves the bezel in
+//     TWO pieces joined only by the band, which co-printed is a bulk-strength
+//     bond across ~290 mm2 and loose is a face plate that falls off. band_ring
+//     = false puts the U back for anyone who needs one spool.
 //
 //  5. THREE BOARD BUILDS, ONE FILE (the C6 case's contract, plus one):
 //       headers="pillars" — the board AS WAVESHARE SHIPS IT: the four brass
@@ -205,15 +201,15 @@
 //     yellow with black branding, so slot 1 and slot 2 SWAP SPOOLS. The
 //     roles did not move — only the colors in them did.
 //  The band is one closed U, and that changes how it is installed:
-//    - Multi-material (the first-class path, what gen_3mf.py c3 packages):
-//      band_clear = 0, bezel + band as ONE object — the U fuses in.
-//    - Single spool: a closed U CANNOT press in from outside — the legs
-//      and the top approach in conflicting directions, so the old
-//      press-in flow died with the three-strip band. Instead: print the
-//      U flat on its bottom face (it is seam_h tall), PAUSE the
-//      face-down bezel print at the top of the seam (z = face_t +
-//      seam_dz + seam_h), drop the U into the open pocket, resume.
-//      band_clear 0.10 sizes that drop-in.
+//    - Multi-material — now the ONLY path, not merely the first-class one.
+//      band_clear = 0, bezel + band as ONE object. The ring fuses in, and it
+//      is also what holds the face plate to the walls (see band_ring).
+//    - Single spool: only with band_ring = false. The U drops into an open
+//      pocket — print it flat on its bottom face, PAUSE the face-down bezel
+//      at z = face_t + seam_dz + seam_h, drop it in, resume; band_clear 0.10
+//      sizes that. A closed RING has nowhere to drop into, because with the
+//      ring on there is no single bezel to drop it into: the face plate and
+//      the walls are separate until the white joins them.
 //  Bezel prints FACE-DOWN, lid prints OUTER-FACE-DOWN, the U flat on its
 //  bottom face. No supports anywhere. The wordmark is a DEBOSS in the lid's
 //  outer face filled by the mark volume, so it prints on the build plate —
@@ -239,7 +235,7 @@ use <canary_mark_lib.scad>   // the house mark; this part wears the wordmark
 use <canary_vent_lib.scad>   // the house egg — here it is the hanger, not a vent
 
 /* [What to render] */
-part  = "all";      // ["bezel","lid","light","mark","shell","all","exploded","palette"]
+part  = "all";      // ["bezel","lid","light","mark","shell","coupon","all","exploded","palette"]
 // board build: "pillars" = as Waveshare ships it (brass corner pillars on, headers not soldered), "none" = stripped (pillars unscrewed too), "male" = down-facing headers + pillars
 headers = "pillars";   // ["pillars","none","male"]
 
@@ -331,7 +327,14 @@ opt_btn = true;
 // could be made lighter, more sensitive AND easier to find in one pass.
 pad_l      = 8.2;  // paddle length (Y) — hinge at the USB end, press pad at
                    // the free end. Longer = softer press — TUNE on print
-pad_h      = 5.4;  // paddle height (Z), centered on the actuator — a CAP,
+// 5.4 until the band went round. The paddle recess is what stands between the
+// band and a closed ring — it owns the ear's wall from z_btn - pad_rec_z/2
+// upward — so shortening the pad lifts the recess and lets the band under it.
+// 4.2 is close to the floor the boss-wrap gate sets (pad_boss_d + 1.4 = 4.0)
+// and it buys 0.6 mm of band. The pad is still 8.2 long, which is the axis a
+// fingertip actually reads, and a narrower beam is a SOFTER beam — stiffness
+// runs linearly in this dimension — so the press got lighter on the way.
+pad_h      = 4.2;  // paddle height (Z), centered on the actuator — a CAP,
                    // not a promise: shallow builds derive down from it
                    // (pad_h_eff), because the stripped board's case is a
                    // millimeter shallower and a fixed 5.4 ran the recess
@@ -425,6 +428,20 @@ pad_dot_d     = 3.0;   // base Ø of the cone; the tip draws in 1.2
 pad_dot_proud = 0.35;  // how far the dot's top stands ABOVE the ear face.
                        // Negative would sink it back under the rim, which is
                        // what every build before this one did
+// ⚠️ THE TWO DOTS ARE NOT THE SAME SHAPE, and that is the whole point. They
+// were identical cones on opposite walls, which made BOOT and RST impossible
+// to tell apart by sight or by touch — one reboots the device and the other
+// matters when flashing, and the case gave you no way to know which finger
+// was on which. Round pip on one ear, bar on the other: readable in the dark,
+// readable without looking, and free.
+// ⚠️ WHICH IS WHICH IS NOT CONFIRMED. dot_round_side says which wall carries
+// the round pip; nothing here knows which switch Waveshare put on which side.
+// MEASURE it on the board and set this, then the shapes mean something. Until
+// then they only mean "these are two different buttons", which is still more
+// than the case said before.
+dot_round_side = 1;    // +1 or -1: the ear that gets the ROUND pip — MEASURE
+pad_dot_bar    = 3.2;  // the other ear's bar length (Y), hulled from the same
+                       // cone so both pips share a profile and a height
 pad_dot_in    = 1.3;   // dot center, in from the pad's FREE end. Every mm
                        // further from the hinge is leverage: the arm is cubed
                        // in the stiffness, so this walked out from 1.8 to 1.3
@@ -462,25 +479,43 @@ btn_body_p = 0.4;  // metal body overhang past the PCB edge — MEASURE
    then black to the back. Both numbers are referenced to the GLASS FRONT
    plane (z = face_t), so the band tracks the panel, not the case. */
 light_seam = true;
-seam_dz = 1.0;       // black between the glass front and the band's start
-// The band's thickness, grown 1 mm REARWARD (away from the screen) on
-// request. Worth writing down what that millimeter does and does not buy,
-// because the reason given was "catch even more light" and the direction
-// works against it:
-//   the LED's gap runs from the glass front (z 1.2) to the PCB front (4.85).
-//   At 2.8 the band spanned 2.2 .. 5.0 and had 2.65 mm inside that gap.
-//   At 3.8 it spans 2.2 .. 6.0 and still has 2.65 mm inside it — the whole
-//   added millimeter sits alongside the PCB's edge, where the board itself
-//   is the shade.
-// It is not wasted: the band is a diffusing pipe, so more cross-section is a
-// visibly thicker, softer line whether or not that volume is directly lit.
-// But if the goal is BRIGHTER rather than THICKER, the millimeter wants to go
-// the other way — seam_dz 1.0 -> 0 puts all 3.65 mm of the light gap in white
-// and costs nothing else. One number, and it is deliberately not changed here
-// because seam_dz 1.0 is MEASURED off the real device's own band.
-seam_h  = 3.8;
-band_clear = 0.10;   // per-face drop-in clearance (pause-and-insert flow);
-                     // 0 for a co-printed band
+// ⚠️ THE BAND STARTS AT THE GLASS NOW, and that is what buys the ring.
+// This was 1.0, measured off the real device's own band, and giving it up was
+// the price of going 360 degrees: the ring has to pass the BUTTON EARS, the
+// paddle recess owns the wall above z 4.80 there, and every millimeter of
+// black gap in front of the band is a millimeter the band cannot use behind
+// it. At seam_dz 1.0 a ring caps out at 2.4 mm of white. At 0 it reaches 3.4.
+// The measured 1.0 is not lost, only spent, and it bought more than it cost:
+// the band now covers z 1.2 .. 4.6 of a light gap that runs 1.2 .. 4.85, so
+// 3.4 mm of the white is LIT where the old 3.8 mm band only had 2.65 in the
+// light and the rest in the PCB's shadow. Brighter and thicker and all the
+// way round, from one number moving to zero.
+seam_dz = 0.0;       // black between the glass front and the band's start
+// The band's thickness. 2.8 -> 3.8 grew it rearward, into the PCB's shadow;
+// 3.8 -> 3.4 gave a little back to buy the closed ring, and moving the start
+// to the glass means ALL 3.4 is inside the light gap. Net against where this
+// began: 0.75 mm more lit white, and it goes all the way around.
+seam_h  = 3.4;
+band_clear = 0;      // per-face drop-in clearance. ZERO by default now: the
+                     // ring is co-printed, and a co-printed band wants no
+                     // clearance at all — the AMS fuses filaments that meet,
+                     // and a shrunk inlay only asks it to bridge a gap that
+                     // should not exist. 0.10 is the drop-in number and it
+                     // belongs with band_ring = false; the assert below keeps
+                     // the two settings from disagreeing
+// ⚠️ A CLOSED RING SEVERS THE BEZEL, and that is not a bug to route around —
+// it is the honest consequence of white through the full wall depth for the
+// whole perimeter. With the ring on, the bezel renders as TWO solids: the
+// face plate carrying the glass, and the walls above the seam. Nothing yellow
+// joins them; the BAND joins them, fused to both across ~290 mm2 of interface
+// at each face, which co-printed is a bulk-strength PETG bond and is plenty.
+// What it kills is the single-spool path. The pause-and-insert flow drops a
+// loose U into an open pocket, and a loose RING would leave the face as a
+// separate piece sitting on the plate — so the ring is co-print only, and the
+// assert below says so rather than letting someone find out at the pause.
+// Set band_ring = false to get the old U back, face attached, single spool
+// viable, and the USB end dark.
+band_ring = true;    // true = closed ring (co-print only), false = the U
 // NO tie ribs across the seam — not the S3 stick's outer-skin webs (those
 // chop the strip into unpressable dashes) and not this file's first cut,
 // inboard ribs (those put black slats between the LED and the white: the
@@ -524,6 +559,54 @@ kh_cy    = 5.0;     // hanger center, CASE frame (+Y = up when hung). Not
                     // 5.0 clears the bosses and still puts the crown —
                     // where the screw actually ends up — at y 12.5, well
                     // above the case's middle, so it hangs plumb
+
+/* [Fit coupon] — the MEASURE list, answered in one 10-minute print.
+   Fourteen numbers in this file are tagged MEASURE and none of them has been
+   measured. Two of them — btn_force and btn_travel — now carry the gate that
+   keeps the press boss from holding RST down, so the case's safety argument
+   rests on a guess at a switch nobody has put calipers to.
+   This is not a new drawing. It is the real bezel, INTERSECTED with a box
+   around the USB end, so every number it tests is the number the case ships
+   with and the two cannot drift. It carries the chin and the USB stadium with
+   its chamfer, both button ears with their paddles and both press pips, and a
+   section of the band pocket. Print it in one color, offer it the board, and
+   the answers are: does the plug seat, do the paddles land on the switches,
+   do the pips read as two different buttons under a finger.
+   part="coupon". */
+coupon_y = 18.0;     // how much of the USB end to keep
+
+/* [Lid release] — how the lid comes OFF, which nothing built until now.
+   The header has always promised the microSD story is "the lid: four nubs,
+   off in a second, slot right there". It was a promise with no geometry
+   behind it: the skirt seats at 0.05 and the four nubs are shaped for a
+   near-square catch and firm retention, so the lid is excellent at staying
+   on and there was no way to start it coming off. A scallop in the bezel's
+   top rim exposes the lid plate's edge and gives a fingernail somewhere to
+   go. On the +Y wall — the top when the case hangs, and the end away from
+   the USB cable, the snap windows and the vents. */
+pry_notch = true;
+pry_w = 9.0;         // scallop width along the rim
+pry_d = 1.4;         // how far into the 2.2 wall — leaves 0.8 of rim standing
+pry_h = 1.7;         // how far down from the rim; the lid plate is 2.0 thick,
+                     // so this clears its underside with room for a nail
+
+/* [Board location] — take the float out instead of compensating for it.
+   The board is held by its edges in a cavity cut tol_slide wider per side, so
+   it can sit anywhere across 0.4 mm of X. That single fact has now been
+   worked around TWICE — the lid's press bosses were lengthened for it, and
+   the button bosses are sized to reach across it — and worked around is not
+   fixed. Two short ribs per side wall take it up where the board's edge runs.
+   They sit in the z gap between the light band's far face and the vents'
+   near face, which is the one stretch of that wall with nothing else in it:
+   0.5 mm of engagement on a 1.6 mm edge, which is plenty to LOCATE (the rib
+   is not carrying load, only saying where the board is).
+   loc_clear is the number to tune if a board will not seat — it is the only
+   interference in the whole cavity, and a rib that fights assembly is worse
+   than the float it removes. */
+loc_rib = true;
+loc_clear = 0.08;    // per-side clearance AT THE RIB — MEASURE on first fit
+loc_rib_l = 5.0;     // rib length in Y
+loc_rib_ys = [-2.0, 12.0];   // clear of the ears, the pillars and the corners
 
 /* [Egg outline] — two concentric rings around the hanger, inlaid flush.
    WHITE hugs the opening and BLACK sits outside it, in that order and for
@@ -897,6 +980,12 @@ vent_min_h = 1.5;
 seam_room = vent_z1 - vent_min_h - 0.8 - seam_z0;   // what the vents leave
 seam_h_eff = opt_vent ? min(seam_h, seam_room) : seam_h;
 vent_z0 = seam_z0 + seam_h_eff + 0.8;
+// the locating ribs' z band: above the band's far face, below the vents' near
+// face. Derived from both so a change to either moves the ribs rather than
+// letting them collide — the ribs are the only thing in this wall that has no
+// business being anywhere near a light path or a slot.
+loc_rib_z0 = seam_z0 + seam_h_eff + 0.25;
+loc_rib_z1 = vent_z0 - 0.05;
 vent_dy = opt_btn ? (btn_y + ear_w/2) + (vent_n-1)*vent_pitch/2 + vent_w/2 + 1.2 : 0;
 
 // ── Asserts — the gates, not the documentation ──────────────────────────────
@@ -1023,7 +1112,16 @@ assert(!light_seam || seam_z0 + seam_h_eff <= z_pcb_back,
            ", past the PCB back at ", z_pcb_back, " — beyond that plane the ",
            "board shades the white from both sides and no light reaches it. ",
            "Trim seam_h, or move the band forward with seam_dz."));
-assert(!light_seam || yc/2 - r_out - side_lo >= 8,
+// A ring is co-print or nothing. band_clear sizes a DROP-IN, and there is
+// nothing to drop a loose ring into once the face is a separate piece.
+assert(!light_seam || !band_ring || band_clear == 0,
+       str("band_ring is on with band_clear ", band_clear, " — a closed ring ",
+           "leaves the bezel in two pieces joined only by the band, so it has ",
+           "to be CO-PRINTED (band_clear = 0). At this clearance the band is a ",
+           "loose part and the face plate would come off the plate separately. ",
+           "Set band_clear = 0, or band_ring = false for the U."));
+// the U's geometry gate only means anything when there is a U
+assert(!light_seam || band_ring || yc/2 - r_out - side_lo >= 8,
        str("the U's leg run before the corner is only ", yc/2 - r_out - side_lo,
            " mm — check btn_up/ear_w"));
 assert(!light_seam || bez_h - snap_depth - snap_h/2 >= seam_z0 + seam_h_eff + 0.6,
@@ -1039,6 +1137,58 @@ assert(!light_seam || seam_h_eff >= 1.0,
            "leaves only ", seam_h_eff, " mm for the light band — under 1.0 it ",
            "is not a pipe. Deepen the case, lower vent_min_h, or turn the ",
            "vents off and take the wall back."));
+// ⚠️ THE GATE THE WHOLE RING RESTS ON, and it was missing until a sweep of
+// seam_h walked straight past it. The ring's one hard constraint is that it
+// must pass UNDER the paddle recess at the ears — that is the entire reason
+// seam_dz went to zero and pad_h came down. Without this, growing seam_h
+// silently drives white through the button flexure: a material seam across a
+// living hinge, and geometry that renders clean and prints wrong.
+assert(!light_seam || !band_ring || !opt_btn ||
+       seam_z0 + seam_h_eff <= z_btn - pad_rec_z/2 - 0.1,
+       str("the ring's far face reaches z=", seam_z0 + seam_h_eff,
+           " but the paddle recess starts at ", z_btn - pad_rec_z/2,
+           " — the band would run through the button flexure. Lower seam_h, ",
+           "lower seam_dz, shorten pad_h to lift the recess, or set ",
+           "band_ring = false and take the U."));
+assert(!light_seam || !band_ring ||
+       seam_z0 + seam_h_eff <= z_usb - usb_h/2 - usb_cham - 0.2,
+       str("the ring's far face reaches z=", seam_z0 + seam_h_eff,
+           " and the USB stadium's chamfer starts at ",
+           z_usb - usb_h/2 - usb_cham, " — the band would break into the ",
+           "connector opening on the wall it just started crossing."));
+
+// ── The three features this revision added, each with the gate it needs ────
+// The ribs' band is DERIVED from the band and the vents, which means it can
+// silently go to nothing — or to undef, which is how it first shipped in this
+// working tree: OpenSCAD rendered a cube of undefined height as no cube at
+// all, the bezel built clean, and the locating feature simply was not there.
+// A gate is the only thing that turns that into a noise.
+assert(!loc_rib || (loc_rib_z1 - loc_rib_z0 >= 0.3),
+       str("the locating ribs get z ", loc_rib_z0, "..", loc_rib_z1,
+           " — under 0.3 mm of engagement on the board's edge, or inverted. ",
+           "The band and the vents have taken the wall between them; trim ",
+           "seam_h or lower vent_z0."));
+assert(!loc_rib || (loc_rib_z0 >= z_pcb_front - 0.01 && loc_rib_z0 < z_pcb_back),
+       str("the ribs sit at z ", loc_rib_z0, " but the board's edge runs ",
+           z_pcb_front, "..", z_pcb_back, " — a rib that misses the edge ",
+           "locates nothing and just narrows the cavity."));
+assert(!loc_rib || (loc_clear > 0 && loc_clear < tol_slide),
+       str("loc_clear ", loc_clear, " must sit between 0 and tol_slide (",
+           tol_slide, "): at or above it the rib does nothing, at or below 0 ",
+           "it is an interference fit and the board may not seat at all."));
+assert(!pry_notch || pry_d <= wall - 0.6,
+       str("the pry scallop cuts ", pry_d, " into a ", wall, " mm wall, ",
+           "leaving under 0.6 of rim — it would break through into the ",
+           "cavity instead of leaving a lip for the nail to lift against."));
+assert(!pry_notch || pry_w <= xo - 2*r_out - 2.0,
+       str("the pry scallop is ", pry_w, " wide on a ", xo, " mm end wall — ",
+           "it runs into the corner radii. Narrow pry_w."));
+assert(!opt_btn || (dot_round_side == 1 || dot_round_side == -1),
+       "dot_round_side must be +1 or -1 — it names the ear that gets the round pip");
+assert(!opt_btn || pad_dot_bar >= pad_dot_d,
+       str("pad_dot_bar ", pad_dot_bar, " is shorter than the cone it is swept ",
+           "from (", pad_dot_d, ") — the bar would be indistinguishable from ",
+           "the round pip, which is the whole reason the two shapes differ."));
 assert(!opt_vent || vent_z1 - vent_z0 >= vent_min_h - 0.001,
        str("wall vents are only ", vent_z1 - vent_z0, " mm tall, under the ",
            vent_min_h, " floor — the band and the vents share one stretch of ",
@@ -1215,10 +1365,14 @@ module wall_stock() {
     }
 }
 
-// the seam volume: ONE U — up both long walls, around both far corners,
-// across the far short wall. A ring slab (outline grown 1 mm minus cavity
-// shrunk 1 mm — the overreach on both faces) masked to y ≥ side_lo, so the
-// legs, the corner bends, and the top run are a single connected volume.
+// the seam volume: ONE CLOSED RING, all four walls and all four corners. It
+// was a U masked to y ≥ side_lo, stopping above the button ears because the
+// paddle recess owned the wall there. Moving the band forward to the glass
+// dropped it under the recess, and the mask went with it — the light now runs
+// past the ears, across the USB wall and back, and the charge LED at that end
+// lights the run that used to be black.
+// A ring slab: outline grown 1 mm minus cavity shrunk 1 mm, the overreach on
+// both faces, so the pipe is white through the full wall depth everywhere.
 // `shrink` insets the mating faces (seam top/bottom, the two leg ends) so
 // one geometry serves as the CUT (0) and the BAND that fills it
 // (band_clear); the radial faces come from wall_stock exactly.
@@ -1230,12 +1384,26 @@ module seam_solid(shrink = 0) {
                     offset(delta =  1.0) shell_outline2d();
                     offset(delta = -1.0) cavity2d();
                 }
-                translate([0, (side_lo + shrink + yo)/2])
+                // the ring takes the whole perimeter; the U is masked to the
+                // run above the ears, which is where it always stopped
+                if (band_ring) square([2*(xo + ear_bump + 4), 2*(yo + 4)], center = true);
+                else translate([0, (side_lo + shrink + yo)/2])
                     square([xo + 2*ear_bump + 4, yo - (side_lo + shrink)], center = true);
             }
 }
 
 module bezel_light_seam() { seam_solid(0); }
+
+// The fit coupon: the real bezel with everything past the USB end cut away.
+// Intersected rather than redrawn, so it cannot describe a case that is not
+// the case — the failure every hand-built test piece eventually has.
+module fit_coupon() {
+    intersection() {
+        bezel();
+        translate([0, -(yo/2 + 2) + coupon_y/2, bez_h/2])
+            cube([xo + 2*ear_bump + 8, coupon_y, bez_h + 4], center = true);
+    }
+}
 
 // the white band: exactly the wall material the seam removed, minus
 // clearance — intersected with the wall stock so the U is precisely as
@@ -1291,6 +1459,13 @@ module bezel() {
             translate([usb_dx, -(yo/2 + chin_bump) + usb_cham + 0.005, z_usb]) rotate([90, 0, 0])
                 linear_extrude(0.01) stadium2d(usb_w, usb_h);
         }
+        // the lid-release scallop in the +Y rim. Centered ON z = bez_h so its
+        // upper half is air and only the lower half bites: the rim loses
+        // pry_h of height over pry_w of run, and the lid plate's edge is left
+        // standing proud of the gap with a nail's worth of room under it.
+        if (pry_notch)
+            translate([0, yo/2 + 0.01, bez_h]) rotate([90, 0, 0])
+                linear_extrude(pry_d + 0.02) rrect2d(pry_w, 2*pry_h, 1.5);
         // BOOT / RST paddles, three cuts each (see [Buttons]):
         if (opt_btn) for (sx = [1, -1]) {
             // 1 — the outer recess pocket the pad sits in (the squeeze guard)
@@ -1318,6 +1493,12 @@ module bezel() {
         // the light seam
         if (light_seam) bezel_light_seam();
     }
+    // board-locating ribs — see [Board location]. Added after the cavity is
+    // cut, in the z gap the band and the vents leave between them.
+    if (loc_rib) for (sx = [1, -1], yy = loc_rib_ys)
+        translate([sx*(xc/2 - (tol_slide - loc_clear) + 0.4), yy,
+                   (loc_rib_z0 + loc_rib_z1)/2])
+            cube([0.8, loc_rib_l, loc_rib_z1 - loc_rib_z0], center = true);
     // the paddle's working ends, added back onto the flexing beam:
     if (opt_btn) for (sx = [1, -1]) {
         // press boss on the pad's back — lands square on the actuator
@@ -1330,7 +1511,14 @@ module bezel() {
         translate([sx*(xo/2 + ear_bump - pad_recess - 0.01),
                    btn_y + pad_l/2 - pad_dot_in, z_btn])
             rotate([0, sx*90, 0])
-                cylinder(d1 = pad_dot_d, d2 = pad_dot_d - 1.2, h = pad_dot_h);
+                // same cone both sides; the bar is that cone swept along Y,
+                // so the two pips share a profile, a height and a feel and
+                // differ only in the one way a fingertip can read
+                if (sx == dot_round_side)
+                    cylinder(d1 = pad_dot_d, d2 = pad_dot_d - 1.2, h = pad_dot_h);
+                else hull() for (dy = [-1, 1])
+                    translate([0, dy*(pad_dot_bar - pad_dot_d)/2, 0])
+                        cylinder(d1 = pad_dot_d, d2 = pad_dot_d - 1.2, h = pad_dot_h);
     }
   }
 }
@@ -1506,6 +1694,7 @@ else if (part == "lid")   lid();
 else if (part == "light") light_band();
 else if (part == "mark")  lid_mark();
 else if (part == "shell") lid_egg_white();
+else if (part == "coupon") fit_coupon();
 else if (part == "palette") palette_row();
 else if (part == "exploded") {
     bezel_assembly();
