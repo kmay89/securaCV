@@ -142,7 +142,17 @@ wall   = 2.2;    // side wall thickness
 face_t = 2.0;    // bezel face (over the glass border)
 back_t = 2.0;    // rear cover plate
 r_out  = 3.0;    // outer corner radius
-lid_edge = 0.8;  // bezel face edge chamfer
+// ⚠️ NO `lid_edge` — same removal, same reason, as the C3 sibling this case
+// shares its board and panel with. The cut called itself a "face edge
+// chamfer" but was an untapered extrude, so it drew a square RABBET: off
+// the exported mesh, the first 0.80 mm of the bezel measured 25.520 x
+// 40.670 against 27.120 x 42.270 above it — a 0.80 mm ledge overhanging air
+// around the whole perimeter, on the first layers of a face-down print, on
+// the one face a person looks at. The slicer already compensates the
+// elephant foot; modeling 0.80 mm of relief over its ~0.2 mm is a second
+// helping of the same correction. Flat on the plate, full footprint. A
+// softened front edge, if ever wanted, is a REAL taper — see
+// foot_chamfer_cut() in the WAP and Vision cases.
 ear_skin = 1.2;  // wall skin left outside a button/USB clearance channel
 
 /* [Snap fit] — back skirt into the bezel walls. The skirt is SHALLOW in
@@ -297,13 +307,9 @@ module bezel() {
         linear_extrude(bez_h) shell_outline2d();                      // face + walls
         // active-area window through the face (aa_w = X, aa_l = Y)
         translate([0, 0, -0.1]) linear_extrude(face_t + 0.2) rrect2d(aa_w, aa_l, 1.5);
-        // face edge chamfer (lead-in on the viewer side)
-        if (lid_edge > 0)
-            translate([0, 0, -0.01]) linear_extrude(lid_edge + 0.01)
-                difference() {
-                    offset(delta = 0.1) shell_outline2d();
-                    offset(delta = -lid_edge) shell_outline2d();
-                }
+        // (no foot relief on the face — see [Shell]. Flat and full-size on
+        //  the plate; the slicer's elephant-foot compensation is the only
+        //  relief this part gets or needs.)
         // board cavity (with overhang channels) behind the glass ledge
         translate([0, 0, face_t]) linear_extrude(cav_d + 0.2) cavity2d();
         // USB-C stadium opening through the bottom (−Y) wall + chin

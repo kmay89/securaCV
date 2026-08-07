@@ -752,7 +752,23 @@ wall   = 2.2;    // side wall thickness
 face_t = 1.2;    // bezel face over the glass border — thin on purpose (rule 3)
 back_t = 2.0;    // lid plate
 r_out  = 3.0;    // outer corner radius
-lid_edge = 0.8;  // bezel face edge chamfer
+// ⚠️ THERE IS NO `lid_edge` HERE ANY MORE, and its absence is the design.
+// It claimed to be a "bezel face edge chamfer" and it was not one: the cut
+// was a plain linear_extrude with no taper, so it drew a square RABBET —
+// measured off the exported mesh, the first 0.80 mm of the bezel came out
+// 25.920 x 40.870 and everything above it 27.520 x 42.470. A 0.80 mm ledge,
+// hanging in air, around the entire perimeter, on the part's FIRST layers.
+// Face-down, that lands all of it on the one surface a person looks at:
+// less bed contact under a plate only face_t (1.2) thick and not yet joined
+// to anything (the light ring severs it — see band_ring), and then a
+// full-perimeter overhang to bridge at z = 0.80, which is exactly where
+// print 4 (kmay89) found a lip and a chamfer stacked on the front face.
+// It was also redundant even as relief: the slicer already applies
+// elephant-foot compensation on the first layers, and 0.80 mm of modeled
+// relief on top of a ~0.2 mm compensation is the double dip. Flat on the
+// plate, full footprint, nothing to bridge. If a softened front edge is
+// ever wanted, draw a REAL taper (see foot_chamfer_cut() in the WAP and
+// Vision cases) — never an untapered extrude, which is what this was.
 ear_skin = 1.4;  // wall skin left outside a button/USB clearance channel.
                  // At the ears this is the paddle stock: beam thickness =
                  // ear_skin − pad_recess. At the chin it is the bridge band
@@ -1474,13 +1490,9 @@ module bezel() {
         linear_extrude(bez_h) shell_outline2d();
         // active-area window through the face
         translate([0, 0, -0.1]) linear_extrude(face_t + 0.2) rrect2d(aa_w, aa_l, 1.5);
-        // face edge chamfer
-        if (lid_edge > 0)
-            translate([0, 0, -0.01]) linear_extrude(lid_edge + 0.01)
-                difference() {
-                    offset(delta = 0.1) shell_outline2d();
-                    offset(delta = -lid_edge) shell_outline2d();
-                }
+        // (no foot relief on the face — see [Shell]. The front edge is flat
+        //  and full-size on the plate; the slicer's own elephant-foot
+        //  compensation is the only relief this part gets or needs.)
         // glass relief: stand the face off the innermost lip band, so the
         // window's rim never touches the panel (rule 3)
         translate([0, 0, face_t - glass_relief]) linear_extrude(glass_relief + 0.02)
