@@ -76,3 +76,73 @@ test("the committed hatch.json is shaped the way the assembly expects", () => {
   assert.strictEqual(typeof hatch.title_chance, "number");
   assert.ok(hatch.certificate && typeof hatch.certificate === "object");
 });
+
+// ── Derived names: one bird, one name, on every surface ──────────────────
+//
+// The certificate used to live in one app's local storage, which made it a
+// nickname rather than a certificate. It is now derived from the device's key,
+// so these tests guard the property that makes that work: the SAME key must
+// produce the SAME name here, in the Mac Flasher, and in the iPhone app. The
+// Swift side is pinned to vectors generated from this very module
+// (ios/Shared/HatchSpec.swift), so a change here that isn't regenerated fails
+// the iOS build rather than shipping a bird with two names.
+
+const derive = () => import("../tools/hatchery/derive.mjs");
+
+test("the same key always derives the same certificate", async () => {
+  const { deriveCertificate } = await derive();
+  const a = deriveCertificate(hatch, { fingerprint: "a3f7c1d2e4b58690" });
+  const b = deriveCertificate(hatch, { fingerprint: "A3F7C1D2E4B58690" });
+  assert.equal(a.name, b.name, "case is presentation, not identity");
+  assert.ok(a.name.includes(a.base));
+  assert.equal(a.derived, true);
+});
+
+test("different keys spread across the name lists", async () => {
+  const { deriveCertificate } = await derive();
+  const names = new Set();
+  for (let i = 0; i < 64; i++) {
+    names.add(deriveCertificate(hatch, { fingerprint: i.toString(16).padStart(16, "0") }).name);
+  }
+  assert.ok(names.size > 20, `expected spread, got ${names.size} distinct names`);
+});
+
+test("no fingerprint means no derived certificate", async () => {
+  const { deriveCertificate } = await derive();
+  assert.equal(deriveCertificate(hatch, { fingerprint: "" }), null);
+  assert.equal(deriveCertificate(hatch, {}), null);
+});
+
+test("the ring id prefers the device's own slug, else the fingerprint", async () => {
+  const { deriveCertificate } = await derive();
+  assert.equal(
+    deriveCertificate(hatch, { fingerprint: "a3f7c1d2e4b58690", deviceId: "canary-a3f7" }).ringId,
+    "canary-a3f7");
+  assert.equal(
+    deriveCertificate(hatch, { fingerprint: "a3f7c1d2e4b58690" }).ringId,
+    "A3F7C1D2E4B58690");
+});
+
+test("mintCertificate derives when it knows the key, and rolls when it doesn't", async () => {
+  const m = await mod();
+  const first = m.mintCertificate(hatch, { fingerprint: "deadbeefcafef00d" });
+  const again = m.mintCertificate(hatch, { fingerprint: "deadbeefcafef00d" });
+  assert.equal(first.name, again.name, "a key names its bird the same way every time");
+  const rolled = m.mintCertificate(hatch, { rng: () => 0.25 });
+  assert.ok(rolled && rolled.name, "a board with no key still hatches with a name");
+});
+
+test("the committed Swift vectors match this module", async () => {
+  // The iOS app embeds vectors generated from here. If they drift, the phone
+  // and the Lab would name the same Canary differently — so the generated
+  // output is checked against a fresh derivation.
+  const { deriveCertificate } = await derive();
+  const swift = readFileSync(
+    join(__dirname, "..", "..", "ios", "Shared", "HatchSpec.swift"), "utf8");
+  const rows = [...swift.matchAll(/Vector\(fingerprint: "([0-9a-f]+)",\s*\n\s*name: "([^"]+)"/g)];
+  assert.ok(rows.length >= 4, "expected the generated vectors to be present");
+  for (const [, fp, name] of rows) {
+    assert.equal(deriveCertificate(hatch, { fingerprint: fp }).name, name,
+      `HatchSpec.swift is stale for ${fp} — re-run tools/hatchery/gen_hatch_swift.mjs`);
+  }
+});
