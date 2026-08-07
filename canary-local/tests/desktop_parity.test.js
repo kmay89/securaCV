@@ -667,6 +667,28 @@ test("the identity challenge is shown, never used as authorization", () => {
   // A valid signature from an unexpected key is not proof.
   assert.match(whoamiRs, /WrongKey/, "a foreign key answering must be its own verdict");
 
+  // THE WIRE CONTRACT. Both of these were wrong on the first attempt and
+  // neither showed up in any unit test, because the pure verifier was fed
+  // synthetic input that never touched the real route or field names. A
+  // mismatch fails as "unavailable", which is indistinguishable from old
+  // firmware — so it would have looked like a feature nobody had upgraded
+  // to yet, forever. Pinned against the firmware's own source.
+  const wapIno = read(join(ROOT,
+    "firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino"));
+  const routeMatch = /\.uri\s*=\s*"([^"]+)",\s*\.method\s*=\s*HTTP_GET,\s*\n?\s*\.handler\s*=\s*device_identity_api::handle_enroll_json/
+    .exec(wapIno);
+  assert.ok(routeMatch, "couldn't find where the firmware registers the enroll JSON handler");
+  assert.ok(fleetRs.includes(routeMatch[1]),
+    `the desktop must call the route the firmware registers (${routeMatch[1]})`);
+
+  // Every field the verifier reads must be one the firmware actually emits.
+  for (const field of ["pubkey_hex", "sig_hex"]) {
+    assert.ok(wapSig.includes(`\\"${field}\\":`) || wapSig.includes(`"${field}"`),
+      `the firmware does not emit a field named ${field}`);
+    assert.ok(fleetRs.includes(`"${field}"`),
+      `the desktop must read the firmware's field name ${field}`);
+  }
+
   // And the load-bearing negative: no gating. Identify/Update must not be
   // conditioned on the proof.
   assert.ok(!/proof\s*===\s*"answered"\s*&&[^\n]*canTalk/.test(appJs),

@@ -258,7 +258,16 @@ pub async fn device_whoami(
     let nonce: String = raw.iter().map(|b| format!("{b:02x}")).collect();
     debug_assert!(crate::whoami::nonce_ok(&nonce));
 
-    let url = format!("{}/enroll.json?nonce={}", base.trim_end_matches('/'), nonce);
+    // The route and field names below are the FIRMWARE's, verified against
+    // canary_wap.ino's httpd_register_uri_handler and render_enroll_json --
+    // not guessed from the endpoint's informal name. Getting either wrong
+    // fails silently as "unavailable", which is indistinguishable from old
+    // firmware, so nothing would ever look broken.
+    let url = format!(
+        "{}/api/device/enroll?nonce={}",
+        base.trim_end_matches('/'),
+        nonce
+    );
     let client = reqwest::Client::builder()
         .user_agent("SecuraCV-Flasher")
         .timeout(std::time::Duration::from_secs(6))
@@ -304,14 +313,14 @@ pub async fn device_whoami(
     let verdict = crate::whoami::check_answer(
         &device_id,
         &nonce,
-        &field("pubkey"),
+        &field("pubkey_hex"),
         &field("sig_hex"),
         &expected_fp,
     );
     let seen_fp = match &verdict {
         crate::whoami::Proof::WrongKey { seen_fp, .. } => seen_fp.clone(),
         _ => {
-            let pk = field("pubkey");
+            let pk = field("pubkey_hex");
             if pk.len() == 64 {
                 crate::whoami::pubkey_fingerprint(
                     &(0..64)

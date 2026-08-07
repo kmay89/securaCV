@@ -172,6 +172,10 @@ mod tests {
         (hex(k.verifying_key().as_bytes()), hex(&sig.to_bytes()))
     }
 
+    // A fixed challenge keeps these tests deterministic. It is test data,
+    // never a nonce the app uses — the real one comes from getrandom in
+    // fleet.rs::device_whoami. Same suppression the HAP KDF constants use.
+    // codeql[rust/hard-coded-cryptographic-value]
     const NONCE: &str = "0123456789abcdef";
 
     #[test]
