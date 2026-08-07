@@ -759,6 +759,8 @@ bool nightstand7_ui_handle_tap(int16_t x, int16_t y, uint32_t now) {
   if (s_lantern && !lv_obj_has_flag(s_lantern, LV_OBJ_FLAG_HIDDEN)) {
     // Lantern lit: a tap walks the scene ring (Rainbow included).
     lamp.cycle_scene(canary::color::kSceneCount);
+    // A hand on the device picks a scene too — put the wheel away.
+    canary::ui::look_set_custom_hue(-1);
     canary::care::lantern_prefs_changed();
     return true;
   }

@@ -172,6 +172,72 @@ static void test_wash() {
   CHECK(red_field, "alert wash is red-dominant top to bottom");
 }
 
+
+// ── A color the owner picked ────────────────────────────────────────────────
+//
+// The catalog is nine curated looks; a color wheel promises something else —
+// "the color I chose" — so a chosen hue becomes a synthesized scene. These
+// checks hold the two things that must stay true about it: the glass really
+// shows the chosen color, and choosing a color buys NO exemption from the
+// honesty rule. A user-picked green must not be what an alarm looks like.
+static void test_custom_hue() {
+  printf("custom hue...\n");
+
+  // Every stop sits on (or a few degrees either side of) the chosen hue —
+  // narrow on purpose, because the owner asked for THIS color, not a palette
+  // near it.
+  const int16_t kPicks[] = {0, 120, 210, 359};
+  for (size_t pick = 0; pick < sizeof(kPicks) / sizeof(kPicks[0]); pick++) {
+    const int16_t hue = kPicks[pick];
+    const Scene sc = custom_scene(hue);
+    CHECK(sc.n_stops == 4, "a custom look still has four stops to breathe with");
+    for (uint8_t i = 0; i < sc.n_stops; i++) {
+      int d = (int)sc.stops[i].h - (int)hue;
+      if (d > 180) d -= 360;
+      if (d < -180) d += 360;
+      CHECK(d <= 6 && d >= -6, "custom stop strays from the chosen hue");
+      CHECK(sc.stops[i].s > 150, "a chosen color must not wash out to gray");
+    }
+  }
+
+  // Out-of-range input wraps rather than clamping to a different color: 370
+  // is 10, and -10 is 350. A picker that hands us 360 should not silently
+  // become red-ish 359.
+  CHECK(custom_scene(370).stops[0].h == 10, "hue wraps above the circle");
+  CHECK(custom_scene(-10).stops[0].h == 350, "hue wraps below the circle");
+
+  // The calm really wears it: a strongly green pick reads green on the LED.
+  LookParams p;
+  p.custom_hue = 120;
+  p.night = false;
+  const Rgb calm = led_color(0, p, Sev::Ok, false);
+  CHECK(calm.g > calm.r && calm.g > calm.b, "a green pick should light green when all is calm");
+
+  // And the honest override still wins. This is the check that matters: no
+  // hue anyone picks may dress an alarm.
+  const Rgb alarmed = led_color(0, p, Sev::Alert, false);
+  CHECK(alarmed.r > alarmed.g, "a custom hue must never dress an alarm");
+
+  // A negative hue means "use the scene" — the stored catalog index still
+  // governs, so turning the wheel off restores the chosen look exactly.
+  LookParams off;
+  off.custom_hue = -1;
+  off.scene_idx = 4;                       // Forest
+  const Scene forest = kScenes[4 % kSceneCount];
+  const Rgb from_scene = led_color(0, off, Sev::Ok, false);
+  LookParams same = off;
+  const Rgb again = led_color(0, same, Sev::Ok, false);
+  CHECK(from_scene.r == again.r && from_scene.g == again.g && from_scene.b == again.b,
+        "scene mode is unchanged by the custom-hue path");
+  CHECK(forest.n_stops == 4, "the catalog is still intact");
+
+  // Safe dark outranks a chosen color too: darkness at night still means safe.
+  LookParams night = p;
+  night.night = true;
+  const Rgb dark = led_color(0, night, Sev::Ok, true);
+  CHECK(dark.r == 0 && dark.g == 0 && dark.b == 0, "safe dark stays dark whatever the hue");
+}
+
 int main() {
   printf("== look engine host tests ==\n");
   test_gamma();
@@ -183,6 +249,7 @@ int main() {
   test_rainbow();
   test_led_honesty();
   test_wash();
+  test_custom_hue();
   if (g_fail) { printf("\n%d CHECK(s) FAILED\n", g_fail); return 1; }
   printf("\nAll look-engine checks passed.\n");
   return 0;

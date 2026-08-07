@@ -92,19 +92,43 @@ uint8_t shape_v(uint8_t v, uint32_t now, uint32_t half, Sev worst,
 
 }  // namespace
 
+Scene custom_scene(int16_t hue) {
+  const uint16_t h = (uint16_t)(((hue % 360) + 360) % 360);
+  // Neighbors a few degrees either side, with the same gentle s/v drift the
+  // curated scenes use — enough to breathe, not enough to read as a second
+  // color. Deliberately narrow: the owner asked for THIS color.
+  const uint16_t h1 = (uint16_t)((h + 6) % 360);
+  const uint16_t h2 = (uint16_t)((h + 354) % 360);
+  Scene sc{"custom", "Your color", Motion::Breathe, 4,
+           {{h, 217, 255}, {h1, 191, 236}, {h, 230, 246}, {h2, 204, 226}}};
+  return sc;
+}
+
+// One place decides scene-or-custom, so every surface that draws the look —
+// the beacon, the glass wash, the plumage overlay — agrees about which one
+// is on.
+Scene current_look(const LookParams& p) {
+  return p.custom_hue >= 0 ? custom_scene(p.custom_hue)
+                           : kScenes[p.scene_idx % kSceneCount];
+}
+
+namespace {
+inline Motion motion_for(const LookParams& p) {
+  return p.motion_use_scene ? current_look(p).motion : p.motion;
+}
+}  // namespace
+
 Rgb led_color(uint32_t now_ms, const LookParams& p, Sev worst, bool safe_dark) {
   if (safe_dark) return {0, 0, 0};
 
-  const Motion m = p.motion_use_scene
-                       ? kScenes[p.scene_idx % kSceneCount].motion
-                       : p.motion;
+  const Motion m = motion_for(p);
   const uint32_t half = half_for(p.speed, m, worst);
 
   Hsv base;
   if (worst >= Sev::Warn) {
     base = semantic(worst, p.night);   // the honest override
   } else {
-    const Scene& sc = kScenes[p.scene_idx % kSceneCount];
+    const Scene sc = current_look(p);
     base = palette_sample(sc.stops, sc.n_stops, phase_for(now_ms, p.speed, m));
   }
   base.v = shape_v(base.v, now_ms, half, worst, p.brightness, p.night);
@@ -118,13 +142,11 @@ void wash_stops(uint32_t now_ms, const LookParams& p, Sev worst,
     for (uint8_t i = 0; i < count; i++) out[i] = {0, 0, 0};
     return;
   }
-  const Motion m = p.motion_use_scene
-                       ? kScenes[p.scene_idx % kSceneCount].motion
-                       : p.motion;
+  const Motion m = motion_for(p);
   const uint32_t half = half_for(p.speed, m, worst);
   const uint8_t phase = phase_for(now_ms, p.speed, m);
   const bool attention = worst >= Sev::Warn;
-  const Scene& sc = kScenes[p.scene_idx % kSceneCount];
+  const Scene sc = current_look(p);
   const Hsv sem = attention ? semantic(worst, p.night) : Hsv{0, 0, 0};
 
   for (uint8_t i = 0; i < count; i++) {

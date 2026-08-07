@@ -779,6 +779,8 @@ static void handle_touch(uint32_t now) {
       auto& lamp = canary::care::lantern();
       if (lamp.summoned(now)) {
         lamp.cycle_scene(canary::color::kSceneCount);
+        // A hand on the device picks a scene too — put the wheel away.
+        canary::ui::look_set_custom_hue(-1);
         canary::care::lantern_prefs_changed();
         fleet.mark_dirty();
         return;
