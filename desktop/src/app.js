@@ -1335,6 +1335,98 @@ const fleetBook = {
 
 // Dotted-version compare for "is this board behind the app's firmware train".
 // Anything non-numeric compares as NOT behind — never nag on a dev build.
+// ── the board passport (parity: flash-core.js) ───────────────────────────────
+// What the board IS and what it has lived through, read at connect time by the
+// `board_passport` command. These three helpers are pure so they can be
+// asserted without a board; the browser's originals are the reference and the
+// parity gate keeps them in step.
+
+// Map a firmware image's compiled project_name back to a catalog product, so a
+// read-back says "this is a Canary WAP" and not just a version string. Longest
+// asset_stem match wins (canary-vision-xiao-s3 must beat canary).
+function matchProjectToProduct(catalog, projectName) {
+  const pn = String(projectName || "").toLowerCase();
+  if (!pn) return null;
+  let best = null;
+  for (const p of (catalog && catalog.products) || []) {
+    const stem = String(p.asset_stem || "").toLowerCase();
+    if (!stem) continue;
+    if (pn.includes(stem) || pn.includes(stem.replace(/-/g, "_"))) {
+      if (!best || stem.length > String(best.asset_stem).length) best = p;
+    }
+  }
+  return best;
+}
+
+// Semver-ish compare returning -1/0/1, or null when either side can't be
+// parsed. A prerelease sorts BELOW its release (2.4.7-rc1 < 2.4.7).
+function compareVersions(a, b) {
+  const parse = (v) => {
+    const m = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[-+](.+))?$/.exec(String(v || "").trim());
+    if (!m) return null;
+    return { parts: [+m[1], +(m[2] || 0), +(m[3] || 0)], pre: m[4] || null };
+  };
+  const pa = parse(a), pb = parse(b);
+  if (!pa || !pb) return null;
+  for (let i = 0; i < 3; i++) {
+    if (pa.parts[i] !== pb.parts[i]) return pa.parts[i] < pb.parts[i] ? -1 : 1;
+  }
+  if (!!pa.pre !== !!pb.pre) return pa.pre ? -1 : 1;
+  if (pa.pre && pb.pre && pa.pre !== pb.pre) return pa.pre < pb.pre ? -1 : 1;
+  return 0;
+}
+
+// The one-line verdict for a candidate install, given what the board runs now.
+// A downgrade is allowed — that's what the safety copy is for — but never
+// silent, which is the whole reason this exists.
+function installVerdict({ current, currentProduct, product, version }) {
+  if (!current || current.unknown) {
+    return { kind: "fresh", icon: "✦", label: "First install",
+      detail: "Nothing SecuraCV is on this board yet — this is the one-time first setup." };
+  }
+  if (currentProduct && product && currentProduct.id !== product.id) {
+    return { kind: "switch", icon: "⇄", label: `Switch from ${currentProduct.name}`,
+      detail: `The board runs ${currentProduct.name} ${current.version || ""}`.replace(/\s+$/, "") +
+        ` today. Installing ${product.name} changes what this Canary is — settings from the old role don't carry over.` };
+  }
+  const cmp = compareVersions(current.version, version);
+  if (cmp === null) {
+    return { kind: "unknown", icon: "•", label: "Version unknown",
+      detail: "The board's current version couldn't be compared — the install itself is unaffected." };
+  }
+  if (cmp < 0) {
+    return { kind: "update", icon: "↑", label: `Update · ${current.version} → ${version}`,
+      detail: "A newer build of the same firmware. Your settings region is left alone." };
+  }
+  if (cmp > 0) {
+    return { kind: "downgrade", icon: "↓", label: `Downgrade · ${current.version} → ${version}`,
+      detail: "This is OLDER than what the board runs now. That's allowed — useful when a release " +
+        "misbehaves — but newer settings may not be understood by older firmware. The automatic " +
+        "safety copy is your way back." };
+  }
+  return { kind: "same", icon: "=", label: `Reinstall · already on ${version}`,
+    detail: "The board already runs this exact version. Installing again rewrites it byte-for-byte — " +
+      "harmless, and occasionally exactly what a misbehaving board needs." };
+}
+
+// The passport's lived-history rows, from the read-only probes.
+function passportRows({ ota, witness, coredump } = {}) {
+  const rows = [];
+  if (ota && typeof ota.updatesSeen === "number" && ota.updatesSeen > 0)
+    rows.push({ id: "updates", label: "Updates seen", value: String(ota.updatesSeen), tone: "ok" });
+  if (witness && typeof witness.boots === "number")
+    rows.push({ id: "boots", label: "Lifetime boots", value: String(witness.boots), tone: "ok" });
+  if (witness && typeof witness.seq === "number")
+    rows.push({ id: "seq", label: "Witness records", value: String(witness.seq), tone: "ok" });
+  if (witness && witness.tamper)
+    rows.push({ id: "tamper", label: "Tamper flag", value: "raised — expected if you've opened it", tone: "warn" });
+  if (coredump)
+    rows.push(coredump.present
+      ? { id: "crash", label: "Crash record", value: "one saved crash dump on board", tone: "warn" }
+      : { id: "crash", label: "Crash record", value: "none — it has never hard-crashed", tone: "ok" });
+  return rows;
+}
+
 function fwBehind(fw, train) {
   const pa = String(fw).split(".").map((n) => parseInt(n, 10));
   const pb = String(train).split(".").map((n) => parseInt(n, 10));
@@ -1631,6 +1723,11 @@ async function identify(portInfo) {
     renderProducts();
     enableCard("step-pick");
     updateLocalFlashUi();
+    // Read the board's passport in the background. Deliberately NOT awaited:
+    // the product list is already usable, and a board whose passport won't
+    // read must still be flashable — that's often exactly the board that
+    // needs it. renderProducts() runs again when the answer lands.
+    readPassport(port);
   } catch (e) {
     if (port !== state.port) return;
     state.failedPort = port;
@@ -1658,12 +1755,107 @@ async function identify(portInfo) {
   }
 }
 
+// ── read the passport, then say who this board is ────────────────────────────
+// Every field is best-effort. The one thing this must never do is report an
+// unread board as a blank one: "we couldn't look" and "there is nothing there"
+// are different answers, and only the backend can tell them apart (it returns
+// blank:true solely when the read SUCCEEDED and found no partition table).
+async function readPassport(port) {
+  state.passport = null;
+  state.resident = null;
+  try {
+    const p = await invoke("board_passport", {
+      port,
+      baud: (state.catalog && state.catalog.flash_baud) || 921600,
+    });
+    if (port !== state.port) return; // unplugged/switched while reading
+    state.passport = p;
+    if (p.blank) {
+      state.resident = { unknown: false, blank: true };
+    } else if (p.resident) {
+      state.resident = {
+        version: p.resident.version,
+        projectName: p.resident.projectName,
+        built: p.resident.built,
+        slot: p.resident.slot,
+        product: matchProjectToProduct(state.catalog, p.resident.projectName),
+      };
+    } else {
+      state.resident = { unknown: true };
+    }
+  } catch (_) {
+    if (port !== state.port) return;
+    state.resident = { unknown: true }; // read failed — NOT a blank board
+  }
+  renderPassport();
+  renderProducts(); // verdict rows depend on what's resident
+}
+
+function renderPassport() {
+  const box = $("passport");
+  if (!box) return;
+  const p = state.passport;
+  const r = state.resident;
+  box.innerHTML = "";
+  if (!r) { box.classList.add("hidden"); return; }
+  box.classList.remove("hidden");
+
+  const head = document.createElement("div");
+  head.className = "pp-head";
+  if (r.blank) {
+    head.textContent = "A blank board — nothing installed yet.";
+  } else if (r.unknown) {
+    head.textContent = "Couldn't read what's installed (the install itself is unaffected).";
+  } else {
+    const who = r.product ? r.product.name : r.projectName || "unknown firmware";
+    head.textContent = `Running ${who}${r.version ? " " + r.version : ""}` +
+      (r.slot ? ` from ${r.slot}` : "");
+  }
+  box.appendChild(head);
+
+  // The same board, met twice: the fleet book already knows this MAC. Says so
+  // before the flash, so a reflash is a choice rather than a surprise.
+  const known = state.mac && bookAll()[String(state.mac).toLowerCase()];
+  if (known) {
+    const seen = document.createElement("div");
+    seen.className = "pp-known";
+    const when = known.flashedAt ? new Date(known.flashedAt).toLocaleDateString() : null;
+    seen.textContent = `You've flashed this exact board before` +
+      (known.name ? ` — it's "${known.name}" in your fleet` : "") +
+      (when ? `, last written ${when}.` : ".");
+    box.appendChild(seen);
+  }
+
+  if (r.built) {
+    const b = document.createElement("div");
+    b.className = "pp-built muted";
+    b.textContent = "Built " + r.built;
+    box.appendChild(b);
+  }
+
+  const rows = passportRows(p || {});
+  if (rows.length) {
+    const ul = document.createElement("ul");
+    ul.className = "pp-rows";
+    for (const row of rows) {
+      const li = document.createElement("li");
+      li.className = "pp-row pp-" + row.tone;
+      li.append(Object.assign(document.createElement("span"), { className: "pp-k", textContent: row.label }),
+                Object.assign(document.createElement("span"), { className: "pp-v", textContent: row.value }));
+      ul.appendChild(li);
+    }
+    box.appendChild(ul);
+  }
+}
+
 function onDisconnect() {
   stopMonitor();
   stopBenchQuiet(); // the module (and its port) just went away
   state.port = null;
   state.portInfo = null;
   state.portKind = null;
+  state.passport = null;
+  state.resident = null;
   state.chip = null;
   state.flashBytes = null;
   state.mac = null;
@@ -1784,6 +1976,24 @@ function figureSlot(p) {
   );
 }
 
+// The install verdict as a row badge. Silent until both halves are known —
+// what the board runs (passport) and what the release offers (manifest) —
+// because a guess here is worse than a blank: "Update" on a board we never
+// read would be an invented promise.
+function verdictMarkup(product, version) {
+  if (!state.resident || !version) return "";
+  const r = state.resident;
+  const v = installVerdict({
+    current: r.blank ? null : r,
+    currentProduct: r.product || null,
+    product,
+    version,
+  });
+  return `<span class="p-verdict is-${v.kind}">` +
+    `<span class="p-verdict-label">${esc(v.icon)} ${esc(v.label)}</span>` +
+    `<span class="p-verdict-detail">${esc(v.detail)}</span></span>`;
+}
+
 function renderProducts() {
   const list = $("product-list");
   list.innerHTML = "";
@@ -1877,6 +2087,12 @@ function renderProducts() {
               `<span class="p-tier-label">${esc(p.tier.label)}</span>` +
               `<span>${esc(p.tier.line)}</span></span>`
             : ""
+        }${
+          // What installing THIS image would do to THIS board — update,
+          // downgrade, reinstall, or a change of role. Only once the passport
+          // has been read and the release version is known; an unread board
+          // says nothing rather than guessing.
+          verdictMarkup(p, ver)
         }
       </span>`;
     const radio = row.querySelector("input");

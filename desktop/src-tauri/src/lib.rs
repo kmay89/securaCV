@@ -1612,6 +1612,115 @@ async fn health_check(
     }))
 }
 
+/// The board's passport: who it is and what it has lived through, read at
+/// CONNECT time so the install verdict and the fleet book can both speak
+/// before a byte is written.
+///
+/// Deliberately not `health_check`. That command reads a descriptor for
+/// EVERY app slot plus the full partition story — the right depth for the
+/// Advanced health report a user asks for, and far too slow to sit in the
+/// path between plugging a board in and seeing what it is. This reads five
+/// regions: the partition table, otadata, the booted slot's descriptor, the
+/// coredump header, and NVS. Same parsers, same answers, a fraction of the
+/// serial traffic.
+///
+/// Every probe past the partition table is best-effort: an old board, a
+/// layout with no coredump region, or a flaky cable degrades a field to null
+/// rather than failing the connect. A passport that cannot be read must never
+/// be reported as a blank board — missing evidence is its own answer.
+#[tauri::command]
+async fn board_passport(
+    app: AppHandle,
+    port: String,
+    baud: u32,
+) -> Result<Value, String> {
+    let pt = read_region(&app, &port, 0x8000, 0xc00, baud).await?;
+    let entries = health::parse_partition_table(&pt);
+    if entries.is_empty() {
+        // Read fine, found no table: a genuinely blank (or fully erased) chip.
+        return Ok(json!({ "blank": true, "resident": Value::Null }));
+    }
+
+    let apps = health::app_partitions(&entries);
+    let slots = health::ota_slots(&apps);
+
+    // otadata first — it decides which slot's descriptor is the truth.
+    let mut ota_json = Value::Null;
+    let mut otadata: Option<health::OtaInfo> = None;
+    if let Some(otap) = entries.iter().find(|e| health::is_ota_data(e)) {
+        if !slots.is_empty() {
+            if let Ok(ob) =
+                read_region(&app, &port, otap.offset, otap.size.min(0x2000), baud).await
+            {
+                let o = health::parse_ota_data(&ob, slots.len() as u32);
+                ota_json = json!({
+                    "fresh": o.fresh, "activeOta": o.active_ota, "updatesSeen": o.updates_seen,
+                    "stateText": o.state_text, "pendingVerify": o.pending_verify,
+                });
+                otadata = Some(o);
+            }
+        }
+    }
+
+    // The firmware actually running, off the booted slot.
+    let mut resident = Value::Null;
+    if let Some(booted) = health::pick_booted_app_partition(&apps, otadata.as_ref()) {
+        if let Ok(db) = read_region(
+            &app,
+            &port,
+            booted.offset + health::APP_DESC_OFFSET,
+            256,
+            baud,
+        )
+        .await
+        {
+            if let Some(d) = health::parse_app_descriptor(&db) {
+                let built = format!("{} {}", d.date, d.time).trim().to_string();
+                resident = json!({
+                    "version": d.version,
+                    "projectName": d.project_name,
+                    "built": if built.is_empty() { Value::Null } else { json!(built) },
+                    "idf": d.idf_ver,
+                    "slot": booted.label,
+                });
+            }
+        }
+    }
+
+    // Crash record + witness counters — the passport's lived-history rows.
+    let coredump_json = match entries.iter().find(|e| health::is_coredump(e)) {
+        Some(cd) => match read_region(&app, &port, cd.offset, 16, baud).await {
+            Ok(cb) => {
+                let c = health::parse_coredump_header(&cb, cd.size);
+                json!({ "present": c.present, "size": c.size })
+            }
+            Err(_) => Value::Null,
+        },
+        None => Value::Null,
+    };
+
+    let mut witness_json = Value::Null;
+    if let Some(nv) = entries.iter().find(|e| health::is_nvs(e)) {
+        if let Ok(nb) = read_region(&app, &port, nv.offset, nv.size, baud).await {
+            let items = health::parse_nvs(&nb, &[health::WITNESS_CHAIN_BLOB_KEY]);
+            if let Some(w) = health::witness_summary(&items) {
+                witness_json = json!({
+                    "seq": w.seq, "boots": w.boots, "tamper": w.tamper,
+                    "provisioned": w.provisioned, "wifiConfigured": w.wifi_configured,
+                });
+            }
+        }
+    }
+
+    Ok(json!({
+        "blank": false,
+        "resident": resident,
+        "ota": ota_json,
+        "coredump": coredump_json,
+        "witness": witness_json,
+    }))
+}
+
 /// Where a user gets a fresh copy of the app. The versioned `flasher-v*`
 /// releases, not the rolling `flasher-latest` pointer — that one exists for
 /// the updater and carries no installer (see `docs/RELEASE_BUTTONS.md`).
@@ -1766,6 +1875,7 @@ pub fn run() {
             write_local_image,
             erase_chip,
             health_check,
+            board_passport,
             save_text_file,
             check_update,
             install_update,
