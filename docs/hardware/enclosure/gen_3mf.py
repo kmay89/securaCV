@@ -171,8 +171,13 @@ C3 = "canary_c3_lcd147.scad"
 C3_BEZEL = [("body", "bezel", 1, C3, {"headers": '"pillars"'}),
             ("band", "light", 3, C3, {"headers": '"pillars"',
                                       "band_clear": "0"})]
+# The lid is a THREE-filament part now: yellow plate, black wordmark plus the
+# egg's outer ring, white egg shell. No new spool — slot 3 is already loaded
+# for the bezel's light band, and this plate already changes tool for the
+# wordmark. The shell rides along on a color change that was happening anyway.
 C3_LID = [("lid", "lid", 1, C3, {"headers": '"pillars"'}),
-          ("mark", "mark", 2, C3, {"headers": '"pillars"'})]
+          ("mark", "mark", 2, C3, {"headers": '"pillars"'}),
+          ("shell", "shell", 3, C3, {"headers": '"pillars"'})]
 
 # A "set" is a list of OBJECTS. Each object is (name, volumes, plate center).
 # Volumes within one object are parts of it and stay registered to each other;
