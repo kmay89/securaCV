@@ -806,6 +806,13 @@ footer p { max-width: 720px; margin: 0 auto; }
 @media (max-width: 560px) { .broom-3d { height: 320px; } }
 /* ── the hub (homeassistant.html) ───────────────────────────────────── */
 #hub { max-width: 980px; margin: 0 auto 90px; padding: 0 24px; }
+/* Every page that mounts .hub-section content shares the Hub's measure.
+   Without a cap on its <main>, a page's sections run edge-to-edge — text
+   against the window edge, card grids clipping offscreen (this happened to
+   all five of these at once). tests/lab_nav.test.js gates the pattern: a
+   bench <main> either caps its own width or is allowlisted as capping inside
+   its content classes. */
+#start, #vault, #vision, #operator, #wap { max-width: 980px; margin: 0 auto 90px; padding: 0 24px; }
 .hub-hero .lede { max-width: 680px; }
 #hub-versions { margin-top: 18px; }
 .hub-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
