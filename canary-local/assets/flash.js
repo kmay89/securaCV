@@ -4037,12 +4037,30 @@ async function loadHatchSpec() {
   } catch { _hatchSpec = null; }
   return _hatchSpec;
 }
+// The certificate is DERIVED from the board's key, so the mint has to wait
+// for the board to say what its key IS. The signed self-manifest arrives on
+// the serial voice a moment after the flash finishes — the same message the
+// identity card above is already waiting for — so this waits with it rather
+// than racing it. A board that never answers (no serial, a headless restore)
+// falls through to the random mint, which is the honest outcome: no key, no
+// derived name.
+async function hatchFingerprint(waitMs = 8000) {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const fp = state.voice && state.voice.identity && state.voice.identity.pubkey_fp;
+    if (fp) return String(fp);
+    if (Date.now() > deadline) return "";
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
+
 async function renderHatchCert(slot, opts) {
   try {
     const spec = await loadHatchSpec();
     if (!spec) return;
+    const fingerprint = opts.fingerprint || await hatchFingerprint();
     let cert = mintCertificate(spec, {
-      product: opts.product, deviceId: opts.deviceId,
+      product: opts.product, deviceId: opts.deviceId, fingerprint,
       fleet: _hatchFleet, usedBases: _hatchUsed, now: Date.now(),
     });
     if (!cert) return;
@@ -4064,8 +4082,13 @@ async function renderHatchCert(slot, opts) {
       if (cert.motto) fig.append(el("div", "flash-cert-motto", "“" + cert.motto + "”"));
       if (cert.craft) fig.append(el("div", "flash-cert-craft", cert.craft));
       if (c.foot) fig.append(el("div", "flash-cert-foot", c.foot));
-      const reroll = el("button", "ghost small flash-cert-reroll", "🎲 new name");
-      reroll.addEventListener("click", () => {
+      // No re-roll for a derived name — it is a rendering of the board's key,
+      // and every other surface derives the same one. A dice button here
+      // would promise something the iPhone would immediately contradict.
+      const reroll = cert.derived
+        ? null
+        : el("button", "ghost small flash-cert-reroll", "🎲 new name");
+      if (reroll) reroll.addEventListener("click", () => {
         const next = mintCertificate(spec, {
           product: opts.product, deviceId: opts.deviceId,
           fleet: _hatchFleet, usedBases: _hatchUsed, avoidBase: cert.base, now: cert.ts,
@@ -4080,7 +4103,7 @@ async function renderHatchCert(slot, opts) {
         cert = next;
         paint();
       });
-      fig.append(reroll);
+      if (reroll) fig.append(reroll);
       slot.append(fig);
     };
     paint();

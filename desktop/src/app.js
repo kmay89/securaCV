@@ -4442,7 +4442,13 @@ function showHatchCard(product) {
   });
   $("hatch-card").classList.remove("hidden");
   if (wasHidden) {
-    const cert = mintCertificate(product); // a real birth certificate, once
+    // The boot receipt carries the board's REAL identity, and `boot` is
+    // already in hand here — so the certificate is derived from the key
+    // rather than rolled, and matches the one the iPhone will show for this
+    // same Canary. Without this the derived path was unreachable and both
+    // apps quietly went back to naming the bird twice.
+    const bootFp = (boot && boot.manifest && boot.manifest.pubkey_fp) || "";
+    const cert = mintCertificate(product, undefined, bootFp); // a real birth certificate, once
     renderCertificate(cert);
     rosterAdd({ kind: "canary", name: cert ? cert.name : (product && product.name) || "Canary", chip: state.chip || "" });
     logEvent("ok", `${cert ? cert.name : (product && product.name) || "Canary"} hatched`);
@@ -4580,6 +4586,10 @@ function renderCertificate(cert) {
   if (!fig) return;
   if (!cert) { fig.hidden = true; return; }
   lastCert = cert;
+  // The dice button retires for a derived name — it renders the board's key,
+  // so there is nothing to re-roll and every other app derives the same one.
+  const rerollBtn = $("cert-reroll");
+  if (rerollBtn) rerollBtn.hidden = !!cert.derived;
   const h = state.hatch || {};
   const c = (h.certificate) || {};
   if (c.kicker) $("cert-kicker").textContent = c.kicker;
@@ -4613,6 +4623,10 @@ function rerollCertificate() {
   }
   const product = (state.catalog && state.catalog.products || [])
     .find((p) => p.name === prev.species) || { name: prev.species };
+  // A derived name cannot be re-rolled: it is a rendering of the board's key,
+  // and every other surface derives the same one. Re-rolling would make this
+  // app the only one calling the bird by that name.
+  if (prev.derived) return;
   const next = mintCertificate(product, prev.base); // never re-roll the same name
   if (next) { next.ringId = prev.ringId; next.ts = prev.ts; renderCertificate(next); }
 }

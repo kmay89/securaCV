@@ -1490,3 +1490,32 @@ test("the native flasher derives the same certificate as the module", async () =
     assert.equal(mine.ringId, theirs.ringId, `native/module ring id drift for ${fp}`);
   }
 });
+
+// The gap this test exists for: the derivation can be perfectly correct in
+// all three languages and still never run, because no CALLER passes a
+// fingerprint. That is exactly what happened — both flashers kept rolling
+// dice while the module, the vectors and the iOS tests all agreed with each
+// other about an answer nobody asked for. So assert the wiring, not just the
+// algorithm: each flasher must source the key from the board's own receipt.
+test("both flashers feed the board's real key into the mint", () => {
+  const desktop = read(join(ROOT, "desktop", "src", "app.js"));
+  assert.match(desktop, /manifest\.pubkey_fp/,
+    "desktop/src/app.js must take the fingerprint from the boot receipt manifest");
+  assert.match(desktop, /mintCertificate\(product,\s*undefined,\s*bootFp\)/,
+    "the desktop hatch must pass that fingerprint into mintCertificate");
+
+  const browser = read(join(CANARY, "assets", "flash.js"));
+  assert.match(browser, /identity\.pubkey_fp/,
+    "flash.js must take the fingerprint from the serial self-manifest");
+  assert.match(browser, /mintCertificate\(spec,\s*\{[\s\S]*?fingerprint[,\s]/,
+    "the browser hatch must pass that fingerprint into mintCertificate");
+});
+
+test("a derived name offers no re-roll on either flasher", () => {
+  // Re-rolling a derived name would make one app the only one calling the
+  // bird by that name — the exact drift this whole change removes.
+  assert.match(read(join(ROOT, "desktop", "src", "app.js")),
+    /rerollBtn\.hidden = !!cert\.derived/, "desktop must hide the dice for a derived name");
+  assert.match(read(join(CANARY, "assets", "flash.js")),
+    /cert\.derived\s*\n?\s*\?\s*null/, "flash.js must not build a re-roll for a derived name");
+});
