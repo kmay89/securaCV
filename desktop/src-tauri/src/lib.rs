@@ -1201,6 +1201,36 @@ async fn run_sidecar_streaming(
     Ok(code)
 }
 
+/// Where the automatic pre-flash safety copy lands: a per-app backups folder,
+/// named by the board's MAC + moment, created on demand. The frontend can't
+/// know the app-data dir, and the browser flasher's equivalent (an unasked
+/// download before every write) is the parity bar this path exists to meet —
+/// the reflash-with-no-undo gap was desktop-only.
+#[tauri::command]
+fn auto_backup_path(app: AppHandle, mac: String) -> Result<String, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("no app data dir: {e}"))?
+        .join("backups");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("couldn't create backups dir: {e}"))?;
+    let safe_mac: String = mac
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    Ok(dir
+        .join(format!(
+            "canary-{}-{stamp}.bin",
+            if safe_mac.is_empty() { "unknown".into() } else { safe_mac }
+        ))
+        .to_string_lossy()
+        .to_string())
+}
+
 /// Back up the whole chip to `out_path` — a full-flash read the operator keeps
 /// and can restore later. The safety copy the one-shot flow never had.
 #[tauri::command]
@@ -1731,6 +1761,7 @@ pub fn run() {
             secret_store::secret_set,
             secret_store::secret_get,
             secret_store::secret_delete,
+            auto_backup_path,
             backup_flash,
             write_local_image,
             erase_chip,

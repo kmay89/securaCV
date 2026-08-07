@@ -17,6 +17,41 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.5.0 — 2026-08-07
+
+The browser flasher grew a lot of magic the desktop app never got. This
+release closes the first wave of that gap — six capabilities, each one
+something the web Lab did for you that this app silently didn't:
+
+- **A safety copy before every flash, unasked.** The whole chip is read to
+  a timestamped file in the app's backups folder before anything is
+  written — the undo button reflashing never had here. Once per board per
+  session; skippable under Advanced for big batches; a copy that can't be
+  read warns and continues (a board that won't read is often the one that
+  needs rescuing). Restore any copy from Rescue, as always.
+- **Failures now name themselves — and their fix.** A busy port says which
+  program is probably holding it; a vanished board says "reseat the
+  cable"; a bootloader timeout coaches the BOOT/RESET ritual; an
+  integrity failure says plainly that nothing was written. Same
+  classifications, same remedies as the web Lab.
+- **Known USB-serial bridge, missing driver? It says so** — CP210x,
+  CH340/CH343, and FTDI boards that won't open now point at the exact
+  driver instead of a mystifying nothing.
+- **Your Wi-Fi as a QR code** — one click next to the network fields, for
+  camera Canaries and phones helping with setup. Rendered locally.
+- **The board's API key is shown once after minting** — with a Copy
+  button. It's still kept in your Keychain for the fleet book; now you can
+  bank it in a password manager too, and a locked Keychain no longer
+  means the credential is simply gone.
+- **This session's nursery** — a numbered strip of every board hatched
+  since the app opened (name, firmware, MAC tail, Wi-Fi-baked and
+  key-kept flags), right where the next board gets plugged in. The batch
+  flasher's working memory, distinct from the durable fleet book.
+- Plus: a one-click **diagnostic report** to your clipboard (nothing is
+  sent anywhere), and **help dots** on key controls that read the same
+  generated help registry as the web Lab — so the explanation can't drift
+  from what the firmware actually does.
+
 ## 0.4.1 — 2026-08-07
 
 - **The fleet book now finds your displays.** Three fixes in one: newer

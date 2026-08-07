@@ -51,6 +51,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 
 - [The demo](demo.md) — `cargo run --bin demo`, then break the log and watch verification fail
 - [The litterbox witness](litterbox_witness_demo.md) — the smallest end-to-end build, starring a cat
+- [First Light](first_light_demo.md) — a Canary Vision + Canary Nightlight, no WiFi, no hub: wave at the camera and the glass answers with the trigger timing on it
 - [The Lab](https://kmay89.github.io/securaCV/canary-local/) — real firmware compiled to WebAssembly, in your browser
 - [The Lab site map](https://kmay89.github.io/securaCV/canary-local/site-map.html) — every Lab bench plus standalone HTML documentation, generated from the build-line manifest
 

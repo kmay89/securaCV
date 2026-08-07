@@ -136,6 +136,7 @@ generate_shared() {
     # not compile.
     "${FIRMWARE_ROOT}/common/fleet_link/fleet_beacon.h"
     "${FIRMWARE_ROOT}/common/fleet_link/fleet_beacon_udp.h"
+    "${FIRMWARE_ROOT}/common/fleet_link/fleet_beacon_espnow.h"
     # The performance engine + its scripts. splash.cpp plays a scene on EVERY
     # flavor (the meeting is the same bird on every board), so these are not
     # nightstand-only the way common/color is — the sketch will not compile

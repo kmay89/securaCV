@@ -32,6 +32,7 @@ bool     s_det_active = false;
 uint8_t  s_det_class  = FLEET_BEACON_DETECT_NONE;
 int      s_det_score  = -1;
 uint32_t s_generation = 0;
+uint32_t s_edge_ms    = 0;   // when the generation last bumped (trigger timing)
 
 int hex_nibble(char c) {
   if (c >= '0' && c <= '9') return c - '0';
@@ -96,7 +97,7 @@ size_t fleet_beacon_payload_build(uint8_t out[FLEET_BEACON_MFG_V2_LEN]) {
 uint32_t fleet_beacon_payload_generation() { return s_generation; }
 
 void fleet_beacon_note_detection(bool active, uint8_t detect_class,
-                                 int score_pct, uint32_t /*now*/) {
+                                 int score_pct, uint32_t now) {
   // An edge is what a display must hear NOW: presence flipping, or the class
   // changing mid-presence. A mere confidence wobble rides the next refresh.
   const bool edge = (active != s_det_active) ||
@@ -104,7 +105,12 @@ void fleet_beacon_note_detection(bool active, uint8_t detect_class,
   s_det_active = active;
   s_det_class  = detect_class;
   s_det_score  = score_pct;
-  if (edge) s_generation++;
+  if (edge) {
+    s_generation++;
+    s_edge_ms = now;
+  }
 }
+
+uint32_t fleet_beacon_payload_edge_ms() { return s_edge_ms; }
 
 }  // namespace canary::net

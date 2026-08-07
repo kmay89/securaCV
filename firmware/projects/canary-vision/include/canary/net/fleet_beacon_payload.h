@@ -50,4 +50,10 @@ uint32_t fleet_beacon_payload_generation();
 void fleet_beacon_note_detection(bool active, uint8_t detect_class,
                                  int score_pct, uint32_t now);
 
+// When the generation last bumped (the `now` a carrier's edge republish
+// measures its trigger timing against). Local instrumentation only: the wire
+// contract deliberately carries no timestamp — the frame IS the "now" — so
+// this number is for this device's own serial log, never for the beacon.
+uint32_t fleet_beacon_payload_edge_ms();
+
 }  // namespace canary::net
