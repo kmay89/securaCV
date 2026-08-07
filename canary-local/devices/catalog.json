@@ -128,6 +128,8 @@
     "lid",
     "light",
     "mark",
+    "shell",
+    "coupon",
     "exploded",
     "palette"
    ],
@@ -149,6 +151,14 @@
      "default": true
     },
     {
+     "id": "band_ring",
+     "type": "bool",
+     "label": "true = closed ring (co-print only), false = the U",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "lid_back",
      "type": "enum",
      "label": "back of the lid: brand, wall mount, or both",
@@ -162,6 +172,30 @@
      "default": "both"
     },
     {
+     "id": "pry_notch",
+     "type": "bool",
+     "label": "pry_notch",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "loc_rib",
+     "type": "bool",
+     "label": "loc_rib",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "egg_ring",
+     "type": "bool",
+     "label": "egg_ring",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "opt_vent",
      "type": "bool",
      "label": "opt_vent",
@@ -170,14 +204,14 @@
      "default": true
     }
    ],
-   "engineering_param_count": 118,
+   "engineering_param_count": 148,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 4,
-    "user_options": 4,
+    "options": 8,
+    "user_options": 8,
     "variant_axes": 1
    }
   },

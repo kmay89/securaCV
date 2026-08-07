@@ -46,6 +46,7 @@ from .const import (
 from .device_trust import TrustStore
 from . import async_record_verify
 from .voice import record_canary_event
+from .watch_runtime import async_observe_event
 from .health_metrics import (
     battery_charging,
     battery_percent,
@@ -137,14 +138,18 @@ def _record_last_event(
     if isinstance(verdict, dict):
         trusted = bool(verdict.get("trusted"))
         reason = verdict.get("reason")
+    now = time.time()
     record_canary_event(
         devices,
         device_id,
         str(event_type) if event_type is not None else None,
-        time.time(),
+        now,
         trusted=trusted,
         reason=reason,
     )
+    # Feed any watch bound to this device, so a started watch is really
+    # watching rather than only recorded (docs/design/watches.md).
+    async_observe_event(hass, device_id, now)
 
 
 def _device_type_for(

@@ -557,6 +557,12 @@ jobs:
 
           # canary (release_ha is the recommended image: full sensing + HA MQTT)
           cp firmware/canary/.pio/build/release_ha/firmware.bin "/tmp/release/canary-${VERSION}.bin"
+          # Slot-budget check on the EXACT bytes being published, not the PR
+          # build's (a tag is not a branch; fw-v2.4.6 shipped an image PR CI
+          # never measured). Deliberately fatal for the flagship: an aborted
+          # release beats stranding every fielded canary — the per-variant
+          # loops below degrade to a skip instead.
+          python firmware/scripts/check_slot_budget.py --env release_ha "/tmp/release/canary-${VERSION}.bin"
           python firmware/scripts/ota_release.py manifest \
             --private-key /tmp/releaser.pem \
             --product securacv-canary \
@@ -567,8 +573,12 @@ jobs:
             --out /tmp/release/manifest-canary.json \
             "/tmp/release/canary-${VERSION}.bin"
 
-          # canary-wap (the WAP sketch reports versions with a -wap suffix)
+          # canary-wap (the WAP sketch reports versions with a -wap suffix).
+          # Budget keyed by the env PR CI builds (canary-wap-default) — the
+          # arduino-cli sketch build here is the same product in the same
+          # default_8MB slots, and the check measures the staged bytes.
           cp /tmp/wap-build/canary_wap.ino.bin "/tmp/release/canary-wap-${VERSION}.bin"
+          python firmware/scripts/check_slot_budget.py --env canary-wap-default "/tmp/release/canary-wap-${VERSION}.bin"
           python firmware/scripts/ota_release.py manifest \
             --private-key /tmp/releaser.pem \
             --product securacv-canary-wap \
@@ -587,6 +597,12 @@ jobs:
             if [ "$B" = default ]; then SUFFIX=""; else SUFFIX="-$B"; fi
             cp "firmware/projects/canary-vision/.pio/build/canary-vision-${B}/firmware.bin" \
               "/tmp/release/canary-vision${SUFFIX}-${VERSION}.bin"
+            if ! python firmware/scripts/check_slot_budget.py --env "canary-vision-${B}" \
+                "/tmp/release/canary-vision${SUFFIX}-${VERSION}.bin"; then
+              echo "::warning::canary-vision${SUFFIX} exceeds its OTA slot budget — left out of this release rather than offering fielded boards an image their slots cannot hold"
+              rm -f "/tmp/release/canary-vision${SUFFIX}-${VERSION}.bin"
+              continue
+            fi
             python firmware/scripts/ota_release.py manifest \
               --private-key /tmp/releaser.pem \
               --product "securacv-canary-vision${SUFFIX}" \
@@ -606,6 +622,12 @@ jobs:
             if [ "$F" = default ]; then SUFFIX=""; else SUFFIX="-$F"; fi
             cp "firmware/projects/canary-sense/.pio/build/canary-sense-${F}/firmware.bin" \
               "/tmp/release/canary-sense${SUFFIX}-${VERSION}.bin"
+            if ! python firmware/scripts/check_slot_budget.py --env "canary-sense-${F}" \
+                "/tmp/release/canary-sense${SUFFIX}-${VERSION}.bin"; then
+              echo "::warning::canary-sense${SUFFIX} exceeds its OTA slot budget — left out of this release rather than offering fielded boards an image their slots cannot hold"
+              rm -f "/tmp/release/canary-sense${SUFFIX}-${VERSION}.bin"
+              continue
+            fi
             python firmware/scripts/ota_release.py manifest \
               --private-key /tmp/releaser.pem \
               --product "securacv-canary-sense${SUFFIX}" \
@@ -673,6 +695,15 @@ jobs:
             # and the device polls as plain dash forever after.
             if ! strings "$OUT" | grep -qFx "securacv-canary-display-${NAME}"; then
               echo "::warning::canary-display ${NAME} binary does not identify as 'securacv-canary-display-${NAME}' — skipping its OTA manifest rather than publishing a mislabeled image (a modes build needs 'setup.sh flavor modes' staged before compiling)"
+              rm -f "$OUT"
+              continue
+            fi
+            # The image must FIT the slot the fielded boards would install it
+            # into — measured on these exact bytes, budgets from flavors.json
+            # size_guards (the nightlight-c3 ceiling is deliberately the OLD
+            # 0x1E0000 table; see canary-display.ini before raising it).
+            if ! python firmware/scripts/check_slot_budget.py --env "canary-display-${NAME}" "$OUT"; then
+              echo "::warning::canary-display ${NAME} exceeds its OTA slot budget — skipping its OTA manifest rather than offering fielded boards an image their slots cannot hold"
               rm -f "$OUT"
               continue
             fi

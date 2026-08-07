@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+### The C6 nightstand fits its flash again — and an unbootable image can no longer ship
+
+fw-v2.4.6's `canary-display-nightstand-c6` factory image carried an app
+5 KB bigger than the OTA slot it boots from; a freshly flashed board
+boot-looped on `Image length 1971152 doesn't fit in partition length
+1966080`. Fixed, and gated so it stays fixed:
+
+- **A partition table sized for the board.** The 4 MB C6 nightstand (and the
+  C3 nightlight, which shares its budget) move from the stock `min_spiffs.csv`
+  to `partitions_display_4mb.csv`: the 128 KB spiffs region these
+  NVS-only devices never used is folded into the A/B slots, growing each
+  from 0x1E0000 to 0x1F0000 — the 2.4.6 image fits with ~60 KB to spare.
+  **Already-fielded nightstand-c6 boards need one USB re-flash** (the
+  Flasher's normal install) to pick up the new table; OTA alone cannot
+  deliver it.
+- **Byte-accurate size gates where the old ones had holes.** The build passed
+  because PlatformIO's `checkprogsize` measures the ELF, not the final
+  `.bin`, and the flavor's size guard only watched the S3 watch build.
+  `flavors.json`'s `size_guard` is now `size_guards` — a list, one entry per
+  slot budget — and the C6/C3 bins are guarded by their real slot sizes.
+  The release workflow enforces the same budgets on the exact bytes it
+  signs (`check_slot_budget.py`): fatal for the flagship canary/wap
+  manifests, a per-variant skip for the vision/sense/display loops — so a
+  tag or manual dispatch can no longer publish an OTA image no fielded
+  slot can hold.
+- **`make_factory.py` refuses to build a brick.** It always read the app
+  offset out of the partition table; now it reads the size beside it and
+  fails the merge if the app cannot boot from that slot — a per-variant
+  skip at release time instead of a published boot loop.
+- The full story, including why the C3's guard deliberately stays at the old
+  slot size, is in `.github/RELEASE_LESSONS.md` (2026-08-07) and
+  `firmware/PARTITIONS.md`.
+
 ### The Nightlight turns with the room
 
 Stand the Canary Nightlight on any of its four edges and the clock rights

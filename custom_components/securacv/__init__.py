@@ -435,6 +435,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except Exception as err:
             _LOGGER.warning("MQTT setup failed, continuing without MQTT: %s", err)
 
+    # The watch tick: evaluates every watch, delivers what fired, and
+    # announces expiry. Without it a started watch would be recorded but
+    # not actually watching, and its spoken promise would be untrue.
+    try:
+        from homeassistant.helpers.event import async_track_time_interval
+
+        from .watch_runtime import TICK_INTERVAL_SECONDS, async_tick
+
+        entry_data["unsub_mqtt"].append(
+            async_track_time_interval(
+                hass,
+                lambda _now: async_tick(hass),
+                timedelta(seconds=TICK_INTERVAL_SECONDS),
+            )
+        )
+    except Exception:  # noqa: BLE001 - watches are optional, setup is not
+        _LOGGER.debug("watch tick not scheduled", exc_info=True)
+
     # Forward to platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 

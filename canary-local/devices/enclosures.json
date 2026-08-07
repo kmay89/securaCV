@@ -7157,6 +7157,8 @@
         "lid",
         "light",
         "mark",
+        "shell",
+        "coupon",
         "all",
         "exploded",
         "palette"
@@ -7305,7 +7307,7 @@
       },
       {
        "name": "pad_h",
-       "default": "5.4",
+       "default": "4.2",
        "comment": "paddle height (Z), centered on the actuator — a CAP,"
       },
       {
@@ -7315,7 +7317,7 @@
       },
       {
        "name": "pad_recess",
-       "default": "0.6",
+       "default": "0.75",
        "comment": "pad face below the ear's outer face: the squeeze guard,"
       },
       {
@@ -7325,12 +7327,56 @@
       },
       {
        "name": "pad_boss_l",
-       "default": "0.55"
+       "default": "0.65"
+      },
+      {
+       "name": "pad_dot_d",
+       "default": "3.0",
+       "comment": "base Ø of the cone; the tip draws in 1.2"
+      },
+      {
+       "name": "pad_dot_proud",
+       "default": "0.35",
+       "comment": "how far the dot's top stands ABOVE the ear face."
+      },
+      {
+       "name": "btn_rst_side",
+       "default": "-1",
+       "comment": "MEASURED — the ear whose switch is RST"
+      },
+      {
+       "name": "dot_round_side",
+       "default": "btn_rst_side"
+      },
+      {
+       "name": "pad_dot_twin_d",
+       "default": "1.6",
+       "comment": "Ø of each of BOOT's two pips"
+      },
+      {
+       "name": "pad_dot_twin_gap",
+       "default": "2.0",
+       "comment": "their center-to-center, stacked along the pad's Z"
+      },
+      {
+       "name": "pad_dot_in",
+       "default": "1.3",
+       "comment": "dot center, in from the pad's FREE end. Every mm"
       },
       {
        "name": "btn_up",
        "default": "7.0",
        "comment": "button center up from the USB (−Y) PCB edge. The first"
+      },
+      {
+       "name": "btn_travel",
+       "default": "0.25",
+       "comment": "total actuator travel to the bottom, mm — MEASURE"
+      },
+      {
+       "name": "btn_force",
+       "default": "1.6",
+       "comment": "force at the actuation point, N — MEASURE"
       },
       {
        "name": "btn_dz",
@@ -7363,18 +7409,22 @@
       },
       {
        "name": "seam_dz",
-       "default": "1.0",
+       "default": "0.0",
        "comment": "black between the glass front and the band's start"
       },
       {
        "name": "seam_h",
-       "default": "2.8",
-       "comment": "the white band's thickness"
+       "default": "3.4"
       },
       {
        "name": "band_clear",
-       "default": "0.10",
-       "comment": "per-face drop-in clearance (pause-and-insert flow);"
+       "default": "0",
+       "comment": "per-face drop-in clearance. ZERO by default now: the"
+      },
+      {
+       "name": "band_ring",
+       "default": "true",
+       "comment": "true = closed ring (co-print only), false = the U"
       }
      ]
     },
@@ -7404,13 +7454,65 @@
       },
       {
        "name": "kh_egg_l",
-       "default": "15.0",
+       "default": "13.5",
        "comment": "egg length along the hang axis; the taper's travel"
       },
       {
        "name": "kh_cy",
        "default": "5.0",
        "comment": "hanger center, CASE frame (+Y = up when hung). Not"
+      },
+      {
+       "name": "coupon_y",
+       "default": "18.0",
+       "comment": "how much of the USB end to keep"
+      },
+      {
+       "name": "pry_notch",
+       "default": "true"
+      },
+      {
+       "name": "pry_w",
+       "default": "9.0",
+       "comment": "scallop width along the rim"
+      },
+      {
+       "name": "pry_d",
+       "default": "1.4",
+       "comment": "how far into the 2.2 wall — leaves 0.8 of rim standing"
+      },
+      {
+       "name": "pry_h",
+       "default": "1.7",
+       "comment": "how far down from the rim; the lid plate is 2.0 thick,"
+      },
+      {
+       "name": "loc_rib",
+       "default": "true"
+      },
+      {
+       "name": "loc_clear",
+       "default": "0.08",
+       "comment": "per-side clearance AT THE RIB — MEASURE on first fit"
+      },
+      {
+       "name": "loc_rib_l",
+       "default": "5.0",
+       "comment": "rib length in Y"
+      },
+      {
+       "name": "loc_rib_ys",
+       "default": "[-2.0, 12.0]",
+       "comment": "clear of the ears, the pillars and the corners"
+      },
+      {
+       "name": "egg_ring",
+       "default": "true"
+      },
+      {
+       "name": "egg_ring_w",
+       "default": "1.6",
+       "comment": "the white shell, hugging the opening"
       }
      ]
     },
@@ -7684,6 +7786,33 @@
        "default": "pad_recess - pad_press_max"
       },
       {
+       "name": "pad_dot_h",
+       "default": "pad_recess + pad_dot_proud"
+      },
+      {
+       "name": "pad_arm",
+       "default": "pad_l - pad_dot_in"
+      },
+      {
+       "name": "petg_e",
+       "default": "2000",
+       "comment": "MPa, datasheet PETG — see the caveat above"
+      },
+      {
+       "name": "pad_k",
+       "default": "3*petg_e*(pad_h_eff*pow(pad_beam, 3)/12)/pow(pad_arm, 3)",
+       "comment": "N/mm"
+      },
+      {
+       "name": "btn_k",
+       "default": "btn_force/btn_travel",
+       "comment": "N/mm"
+      },
+      {
+       "name": "pad_switch_take",
+       "default": "pad_press_max * pad_k/(pad_k + btn_k)"
+      },
+      {
        "name": "lip_l",
        "default": "(lcm_l - aa_l)/2"
       },
@@ -7758,6 +7887,14 @@
        "default": "(kh_egg_l - kh_egg_w)/2"
       },
       {
+       "name": "egg_ring_out",
+       "default": "egg_ring ? egg_ring_w : 0"
+      },
+      {
+       "name": "kh_out_w",
+       "default": "kh_egg_w + 2*egg_ring_out"
+      },
+      {
        "name": "skirt_free_y",
        "default": "skirt_y/2 - skirt_wall"
       },
@@ -7776,12 +7913,33 @@
        "comment": "the U's legs start above the ears"
       },
       {
-       "name": "vent_z0",
-       "default": "seam_z0 + seam_h + 0.8"
-      },
-      {
        "name": "vent_z1",
        "default": "bez_h - (snap_depth + snap_h/2) - 0.8"
+      },
+      {
+       "name": "vent_min_h",
+       "default": "1.5"
+      },
+      {
+       "name": "seam_room",
+       "default": "vent_z1 - vent_min_h - 0.8 - seam_z0",
+       "comment": "what the vents leave"
+      },
+      {
+       "name": "seam_h_eff",
+       "default": "opt_vent ? min(seam_h, seam_room) : seam_h"
+      },
+      {
+       "name": "vent_z0",
+       "default": "seam_z0 + seam_h_eff + 0.8"
+      },
+      {
+       "name": "loc_rib_z0",
+       "default": "seam_z0 + seam_h_eff + 0.25"
+      },
+      {
+       "name": "loc_rib_z1",
+       "default": "vent_z0 - 0.05"
       },
       {
        "name": "vent_dy",

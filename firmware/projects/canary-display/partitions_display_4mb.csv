@@ -1,0 +1,22 @@
+# SecuraCV Canary Display — 4 MB A/B table (nightstand-c6, nightlight-c3)
+# min_spiffs.csv with the filesystem given back to the app: these displays keep
+# every setting in NVS (no filesystem), so the stock table's 128 KB spiffs
+# region bought nothing — and its 0x1E0000 slots are what v2.4.6 outgrew
+# (1,971,152 B into 1,966,080; the board bricked at boot, fw-v2.4.6). Folding
+# spiffs into the slots grows each to 0x1F0000 (2,031,616 B).
+#
+# nvs + otadata sit at min_spiffs' exact offsets, so the flashers' NVS sealing
+# (find_nvs_partition parses the table, but the geometry staying put keeps old
+# and new images interchangeable at provision time) and fielded otadata both
+# carry over. coredump keeps its sector for crash forensics. App offsets must
+# stay 0x10000-aligned — 0x1F0000 slots are the 4 MB maximum under that rule.
+#
+# A device flashed with the OLD table cannot take an image bigger than its own
+# 0x1E0000 slot over the air — growing this file reaches only boards that get
+# a USB factory flash. See firmware/PARTITIONS.md for the canonical map.
+# Name,    Type, SubType,  Offset,   Size,     Flags
+nvs,       data, nvs,      0x9000,   0x5000,
+otadata,   data, ota,      0xe000,   0x2000,
+app0,      app,  ota_0,    0x10000,  0x1F0000,
+app1,      app,  ota_1,    0x200000, 0x1F0000,
+coredump,  data, coredump, 0x3F0000, 0x10000,

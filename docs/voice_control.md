@@ -115,6 +115,28 @@ then restart Home Assistant.
 
 </details>
 
+## What this is for — and what it isn't
+
+This voice is **not** a general assistant, and trying to be one would lose:
+whatever else is in that room already does timers, music, and trivia
+better. It earns its place in the handful of moments where a screen is the
+wrong answer — above all **the 2 a.m. one**, where the alternative is
+sitting up, finding your phone, and reading a dashboard before you learn
+whether you can go back to sleep.
+
+Two consequences you'll notice immediately, both enforced in code:
+
+- **At night it answers differently.** Between 22:00 and 06:00 the same
+  question gets a shorter, calmer answer with the small talk stripped —
+  no weather, no update nags. *"All quiet. Everything's online. Go back
+  to sleep."*
+- **It won't read you a list.** Past a handful of names it summarizes and
+  points at the dashboard, because a twelve-item list spoken aloud is
+  noise.
+
+The full scope — the five moments, the things deliberately not built, and
+the design laws — is in [the moments doc](design/voice_moments.md).
+
 ## How it feels to use
 
 Press the Assist button — or say the wake word — and just ask. The

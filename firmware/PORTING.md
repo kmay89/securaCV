@@ -127,9 +127,9 @@ the system working; don't delete the include.
    `compile-tested` — hardware validation is a separate, later claim (see
    [HARDWARE.md](HARDWARE.md)).
 2. **`flavors.json`** — if you added a new env, list it in the flavor's
-   `build_envs` (and set `size_guard` if the flavor OTA-updates — an image
-   bigger than its OTA slot can never be installed over the air; see
-   [PARTITIONS.md](PARTITIONS.md)).
+   `build_envs` (and add a `size_guards` entry for each env that OTA-updates,
+   with that env's own slot budget — an image bigger than its OTA slot can
+   never be installed over the air; see [PARTITIONS.md](PARTITIONS.md)).
 3. **`boards/README.md`** — add a row to the Supported Boards table.
 
 ## Step 5 — Verify locally

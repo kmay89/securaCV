@@ -171,8 +171,13 @@ C3 = "canary_c3_lcd147.scad"
 C3_BEZEL = [("body", "bezel", 1, C3, {"headers": '"pillars"'}),
             ("band", "light", 3, C3, {"headers": '"pillars"',
                                       "band_clear": "0"})]
+# The lid is a THREE-filament part now: yellow plate, black wordmark plus the
+# egg's outer ring, white egg shell. No new spool — slot 3 is already loaded
+# for the bezel's light band, and this plate already changes tool for the
+# wordmark. The shell rides along on a color change that was happening anyway.
 C3_LID = [("lid", "lid", 1, C3, {"headers": '"pillars"'}),
-          ("mark", "mark", 2, C3, {"headers": '"pillars"'})]
+          ("mark", "mark", 2, C3, {"headers": '"pillars"'}),
+          ("shell", "shell", 3, C3, {"headers": '"pillars"'})]
 
 # A "set" is a list of OBJECTS. Each object is (name, volumes, plate center).
 # Volumes within one object are parts of it and stay registered to each other;
@@ -220,6 +225,13 @@ SETS = {
     # purge tower twice for no reason.
     "c3": [("c3 bezel", C3_BEZEL, (100, 150)),
            ("c3 lid",   C3_LID,   (100, 95))],
+    # …and each half alone, for when you are iterating on one of them. The
+    # pair on one plate is still the right default — one purge tower, one job
+    # — but a fit change to the bezel does not need the lid reprinted, and a
+    # branding change to the lid does not need the bezel. Same volumes, same
+    # slots, same geometry; only the packing differs.
+    "c3-bezel": [("c3 bezel", C3_BEZEL, (128, 128))],
+    "c3-lid":   [("c3 lid",   C3_LID,   (128, 128))],
     # THE TPU FITMENTS, two of each — a spare is worth more than a second job.
     # All six are ONE material, so this plate changes tool exactly never: no
     # purge tower, no tower zone, and every volume on slot 1. That is the whole
@@ -264,7 +276,8 @@ SETS = {
 # can never overwrite each other.
 OUTPUT = {"gauges": "lcd7_gauges", "color": "lcd7_color",
           "coupon": "lcd7_coupon", "qr": "lcd7_qr", "frame": "lcd7_frame",
-          "stick": "stick_case", "c3": "c3_case", "tpu": "lcd7_tpu"}
+          "stick": "stick_case", "c3": "c3_case", "tpu": "lcd7_tpu",
+          "c3-bezel": "c3_bezel", "c3-lid": "c3_lid"}
 assert set(OUTPUT) == set(SETS), "every set needs an output name"
 # Volume tuples grew a source and a defines dict when a second case moved in
 # here, and a set written inline (rather than through one of the named lists
@@ -310,6 +323,13 @@ TOWER_ZONES = {
     # Same layout as the stick's plate, same reasoning: both objects sit left
     # of x ≈ 115, so the tower gets the whole right half of the bed.
     "c3":     (140.0, 40.0, 250.0, 210.0),
+    # One object each, centered, so the tower gets the whole right half again.
+    # It is even more lopsided here than on the paired plate: a 3-filament
+    # tower for a single 25 x 41 mm part purges several times the part's own
+    # weight, which is exactly the argument for printing the pair together
+    # when you are not iterating on one of them.
+    "c3-bezel": (150.0, 20.0, 250.0, 230.0),
+    "c3-lid":   (150.0, 20.0, 250.0, 230.0),
 }
 
 
