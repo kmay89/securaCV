@@ -505,6 +505,43 @@ test("parity wave 3b: room presets are baked in as typed NVS ints", async () => 
   }
 });
 
+test("parity wave 3c: the change map answers 'do my settings survive?'", () => {
+  // The last wave-3 item. The safety copy already holds every byte on the
+  // board and the image is verified before a write — so both sides of the
+  // comparison exist for exactly one moment, and that is where this runs.
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  const cmRs = read(join(ROOT, "desktop/src-tauri/src/changemap.rs"));
+  const libRsSrc = read(join(ROOT, "desktop/src-tauri/src/lib.rs"));
+  const flashCore = read(join(CANARY, "assets/flash-core.js"));
+
+  assert.match(cmRs, /pub fn diff_install/, "desktop lost the install diff");
+  assert.match(cmRs, /pub fn settings_verdict/, "desktop lost the settings verdict");
+  assert.match(flashCore, /export function diffInstall/, "browser lost the install diff");
+  assert.match(flashCore, /export function settingsVerdict/, "browser lost the settings verdict");
+
+  // The four verdicts must all survive on both sides. Collapsing "wiped" into
+  // "changed" would bury the one consequence a user needs — that the board
+  // comes back up on its setup network.
+  for (const v of ["untouched", "identical", "wiped", "changed"]) {
+    assert.ok(cmRs.includes(`"${v}"`), `desktop change map lost the '${v}' verdict`);
+    assert.ok(flashCore.includes(`"${v}"`), `browser change map lost the '${v}' verdict`);
+  }
+
+  // It runs where both sides exist, and never fails the install: a missing or
+  // unreadable safety copy means no map, which is the honest answer.
+  assert.match(libRsSrc, /flash:changemap/, "the change map is never emitted");
+  assert.match(libRsSrc, /backup_path: Option<String>/,
+    "flash must accept the safety copy to diff against");
+  assert.match(appJs, /flash:changemap/, "desktop never listens for the change map");
+  assert.match(appJs, /function renderChangeMap/, "desktop lost the change-map render");
+  assert.match(html, /id="change-map"/, "desktop has nowhere to show the change map");
+  // A listener per flash would stack across reflashes.
+  assert.match(appJs, /unlistenMap\(\)/, "the change-map listener must be released");
+  // A previous install's map describes bytes that are no longer true.
+  assert.match(appJs, /renderChangeMap\(null\)/, "a new flash must clear the old map");
+});
+
 test("device API token: both flashers mint the same credential shape and seed the same keys", async () => {
   // The credential that makes the desktop fleet book (and any future browser
   // surface) able to talk to a board it flashed: "cv_" + 32 base62 chars,
