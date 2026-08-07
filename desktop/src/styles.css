@@ -963,6 +963,19 @@ details.coldstart[open] > summary { margin-bottom: 8px; }
   background: var(--bg-alt); border: 1px solid var(--border);
   font-size: 12.5px; color: var(--text-secondary); max-width: 60ch;
 }
+/* The boot-log verdict: a fatal signature turned into cause + fix. A power
+   problem is not a firmware problem, so it doesn't wear the firmware color. */
+.boot-diagnosis {
+  margin: 8px 0; padding: 10px 12px; border-radius: 10px;
+  background: var(--bg-alt); border: 1px solid var(--border);
+  border-left: 3px solid var(--warn, #b7791f);
+}
+.boot-diagnosis.is-power { border-left-color: var(--accent, #3182ce); }
+.boot-diagnosis .bd-head { font-size: 13px; font-weight: 600; }
+.boot-diagnosis .bd-fix {
+  margin-top: 4px; font-size: 12.5px; color: var(--text-secondary);
+}
+
 /* ── the board passport (connect step) ───────────────────────────────────── */
 .passport {
   margin: 10px 0 4px; padding: 10px 12px; border-radius: 10px;

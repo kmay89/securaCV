@@ -1,7 +1,7 @@
 {
   "name": "securacv-flasher",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "The SecuraCV Lab as a native desktop app — flash a Canary with no browser and no terminal.",
   "scripts": {
     "tauri": "tauri",

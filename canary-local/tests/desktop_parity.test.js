@@ -18,6 +18,7 @@ const { test } = require("node:test");
 const assert = require("node:assert");
 const { readFileSync } = require("node:fs");
 const { join } = require("node:path");
+const { pathToFileURL } = require("node:url");
 
 const ROOT = join(__dirname, "..", "..");     // repo root
 const CANARY = join(__dirname, "..");         // canary-local/
@@ -311,6 +312,113 @@ test("parity wave 2: the board passport, the install verdict, and 'we've met thi
       `${name} lost the honest crash-record wording`);
     assert.ok(!src.includes("never hard-crashed"),
       `${name} claims a crash-free lifetime the probe cannot establish`);
+  }
+});
+
+test("parity wave 3a: the boot-log verdict and the self-healing baud ladder", async () => {
+  // Two self-healing behaviors the browser has had and the desktop hasn't:
+  // reading the boot log for signatures that have a specific fix, and walking
+  // down the transfer speed when a cable/hub can't hold the fast one.
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+
+  // 1. Every boot signature the browser knows, the desktop knows — and both
+  //    keep the power/firmware split, since telling someone to reinstall
+  //    firmware when their USB port can't power the board loops forever.
+  assert.match(appJs, /function diagnoseBootLog/, "desktop lost the boot-log diagnosis");
+  assert.match(html, /id="boot-diagnosis"/, "desktop has nowhere to show the verdict");
+  for (const sig of ["brownout", "panic", "no-app", "flash-error"]) {
+    assert.ok(appJs.includes(`"${sig}"`), `desktop lost the ${sig} boot signature`);
+  }
+  assert.ok(appJs.includes('"power"') && appJs.includes('"clean-install"'),
+    "desktop lost the action split — a brownout is not fixed by reflashing");
+
+  // The ported matcher must agree with the browser's on real log text.
+  const samples = {
+    "Brownout detector was triggered": "brownout",
+    "Guru Meditation Error: Core 0 panic'ed": "panic",
+    "E (204) esp_image: invalid header: 0xffffffff": "no-app",
+    "flash read err, 1000": "flash-error",
+    "I (31) boot: ESP-IDF v5.1 2nd stage bootloader": null,
+  };
+  const desktopDiagnose = new Function(
+    appJs.slice(appJs.indexOf("const BOOT_SIGNATURES"), appJs.indexOf("function clearBootDiagnosis")) +
+    "return diagnoseBootLog;")();
+  for (const [text, want] of Object.entries(samples)) {
+    const mine = desktopDiagnose(text);
+    const theirs = core.diagnoseBootLog(text);
+    assert.strictEqual(mine && mine.signature, want, `desktop misreads: ${text}`);
+    assert.strictEqual(theirs && theirs.signature, want, `browser misreads: ${text}`);
+  }
+
+  // 2. The ladder: same rungs both sides, and the desktop retries only the
+  //    failures a slower speed can actually fix.
+  assert.deepStrictEqual(core.FLASH_BAUDS, [921600, 460800, 230400, 115200],
+    "the browser's ladder moved — the desktop's copy must move with it");
+  for (const rung of core.FLASH_BAUDS) {
+    assert.ok(appJs.includes(String(rung)), `desktop ladder lost the ${rung} rung`);
+  }
+  assert.match(appJs, /BAUD_RETRY_KINDS/,
+    "desktop must not retry failures a slower speed cannot fix");
+  for (const kind of ["not-in-download", "read-stall", "device-lost"]) {
+    assert.ok(appJs.includes(`"${kind}"`), `desktop ladder lost the ${kind} trigger`);
+  }
+  // A ladder that can empty out would turn a cable fault into a dead end.
+  assert.match(appJs, /rungs\.length \? rungs :/,
+    "the baud ladder must never be empty — the slowest rung always survives");
+
+  // Review hardening (Codex on #1507).
+  // `unknown` must NOT be retried: espflash's exit code alone classifies as
+  // unknown, so retrying it would walk a busy port or a denied permission
+  // down the whole ladder, repeating the download and the full-chip erase.
+  assert.ok(!/BAUD_RETRY_KINDS = new Set\(\[[^\]]*"unknown"/.test(appJs),
+    "the baud ladder must not retry `unknown` — it would retry every sidecar failure");
+  // …which is only safe because the backend keeps espflash's own words, so a
+  // real transport fault can classify as itself.
+  assert.match(libRs, /let mut tail: Vec<String>/,
+    "espflash's output must survive into the error, or every failure is `unknown`");
+  assert.match(libRs, /tail\.join\("\\n"\)/,
+    "the espflash error must carry its tail for classification");
+  // The ceiling is a per-board remedy. Left set across a swap it would hold a
+  // healthy board at the slowest speed for the rest of the session.
+  assert.match(appJs, /state\.baudCeiling = null;\s*\n\s*state\.usedBaud = null;/,
+    "disconnect must clear the lowered baud ceiling");
+
+  // The proof that the two fixes above actually compose: run the desktop's
+  // real classifier over real espflash failures as the backend now reports
+  // them, and require that only transport faults are retried. Asserting the
+  // retry SET alone would not have caught the original bug — every one of
+  // these used to arrive as `unknown`.
+  const grabFn = (name) => {
+    const i = appJs.indexOf("function " + name);
+    let p = 0, j = appJs.indexOf("(", i);
+    for (let k = j; k < appJs.length; k++) {
+      if (appJs[k] === "(") p++;
+      else if (appJs[k] === ")") { p--; if (!p) { j = k; break; } }
+    }
+    const b = appJs.indexOf("{", j);
+    let d = 0;
+    for (let k = b; k < appJs.length; k++) {
+      if (appJs[k] === "{") d++;
+      else if (appJs[k] === "}") { d--; if (!d) return appJs.slice(i, k + 1); }
+    }
+  };
+  const classify = new Function(grabFn("classifyFlashError") + "\nreturn classifyFlashError;")();
+  const RETRY = new Set(["not-in-download", "read-stall", "device-lost"]);
+  const generic = "espflash exited with code 1. The board can't be bricked — " +
+    "put it back in download mode and try again.\n";
+  for (const [tail, kind, shouldRetry] of [
+    ["Error: Failed to open serial port\nCaused by: Device or resource busy", "port-busy", false],
+    ["Error: Permission denied (os error 13)", "permission", false],
+    ["Error: Failed to connect to the device\nCaused by: No serial data received", "not-in-download", true],
+    ["Error: Serial port disconnected\nCaused by: device not configured", "device-lost", true],
+    ["", "unknown", false],
+  ]) {
+    const got = classify(new Error(generic + tail)).kind;
+    assert.strictEqual(got, kind, `espflash tail misclassified: ${tail.slice(0, 40) || "(none)"}`);
+    assert.strictEqual(RETRY.has(got), shouldRetry,
+      `${kind} must ${shouldRetry ? "" : "NOT "}be retried down the baud ladder`);
   }
 });
 
