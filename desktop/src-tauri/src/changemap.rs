@@ -83,7 +83,13 @@ fn same_layout(a: &[Partition], b: &[Partition]) -> bool {
         })
 }
 
-fn describe(old: &[u8], new: &[u8], e: &Partition, kind_override: Option<&str>) -> Row {
+fn describe(
+    old: &[u8],
+    new: &[u8],
+    e: &Partition,
+    kind_override: Option<&str>,
+    erase_all: bool,
+) -> Row {
     let kind = kind_override
         .map(str::to_string)
         .unwrap_or_else(|| health::partition_kind(e.ptype, e.subtype));
@@ -104,12 +110,24 @@ fn describe(old: &[u8], new: &[u8], e: &Partition, kind_override: Option<&str>) 
         before: None,
         after: None,
     };
+    // A first-contact install erases the WHOLE chip before writing, so a
+    // region the image never reaches does not survive it — it comes back as
+    // erased flash. Reporting those as "untouched" would be the exact
+    // opposite of what happens, and precisely for the data that only lives
+    // outside the image.
+    let unreached = if erase_all {
+        Verdict::Wiped
+    } else {
+        Verdict::Untouched
+    };
     let off = e.offset as usize;
     if off >= new.len() {
-        return row; // the image never reaches this region
+        row.verdict = unreached;
+        return row;
     }
     let cmp_end = (off + e.size as usize).min(new.len()).min(old.len());
     if cmp_end <= off {
+        row.verdict = unreached;
         return row;
     }
     let diff = count_diff(old, new, off, cmp_end);
@@ -145,7 +163,7 @@ fn describe(old: &[u8], new: &[u8], e: &Partition, kind_override: Option<&str>) 
 /// Compare the board's current bytes against the image about to be written.
 /// Returns `None` when neither side carries a partition table — with nothing
 /// to anchor a map to, saying nothing beats inventing regions.
-pub fn diff_install(old: &[u8], new: &[u8]) -> Option<ChangeMap> {
+pub fn diff_install(old: &[u8], new: &[u8], erase_all: bool) -> Option<ChangeMap> {
     let new_pt = table_from(new);
     let old_pt = table_from(old);
     let table = if !new_pt.is_empty() { &new_pt } else { &old_pt };
@@ -172,11 +190,12 @@ pub fn diff_install(old: &[u8], new: &[u8]) -> Option<ChangeMap> {
                     label: "system".into(),
                 },
                 Some("bootloader + partition map"),
+                erase_all,
             ));
         }
     }
     for e in table {
-        rows.push(describe(old, new, e, None));
+        rows.push(describe(old, new, e, None, erase_all));
     }
     Some(ChangeMap {
         layout_changed,
@@ -185,25 +204,61 @@ pub fn diff_install(old: &[u8], new: &[u8]) -> Option<ChangeMap> {
 }
 
 /// The question people actually ask, answered from the diff.
-/// `had_wifi` decides the wording only — whether the answer is "kept" is a
-/// fact about the NVS region, not about what was in it.
-pub fn settings_verdict(map: &ChangeMap, had_wifi: bool) -> Option<(bool, String)> {
+///
+/// Three outcomes, not two. When the user typed a network on the way in, the
+/// flasher writes it into the replacement NVS before the image is staged — so
+/// that region NECESSARILY differs from the backup, and reading that
+/// difference as "your Wi-Fi is cleared, the board comes up on its setup
+/// network" is precisely backwards: the board boots straight onto the network
+/// they just entered. `baked_wifi` is what separates "replaced with what you
+/// asked for" from "genuinely reset".
+///
+/// `had_wifi` (was there a network on the board before?) decides wording only.
+pub fn settings_verdict(
+    map: &ChangeMap,
+    had_wifi: bool,
+    baked_wifi: bool,
+) -> Option<(bool, String)> {
     let nvs = map
         .rows
         .iter()
         .find(|r| r.ptype == 0x01 && r.subtype == 0x02)?;
     let kept = matches!(nvs.verdict, Verdict::Identical | Verdict::Untouched);
-    let text = match (kept, had_wifi) {
-        (true, true) => "Your settings survive — saved Wi-Fi, device identity and \
-                         witness-chain counters stay exactly as they are."
-            .to_string(),
-        (true, false) => "The settings area is untouched.".to_string(),
-        (false, true) => "Your settings are reset — the saved Wi-Fi is cleared, so the \
-                          board comes up with its setup network again, like the first day."
-            .to_string(),
-        (false, false) => "The settings area is reset to factory-fresh.".to_string(),
-    };
-    Some((kept, text))
+    if kept {
+        return Some((
+            true,
+            if had_wifi {
+                "Your settings survive — saved Wi-Fi, device identity and \
+                 witness-chain counters stay exactly as they are."
+                    .to_string()
+            } else {
+                "The settings area is untouched.".to_string()
+            },
+        ));
+    }
+    if baked_wifi {
+        // Replaced, not lost. Reported as kept=false because the OLD contents
+        // really are gone — the witness counters and any on-device tuning go
+        // with them — but the headline must not claim the board is about to
+        // ask for a network it was just given.
+        return Some((
+            false,
+            "Your settings are replaced with the ones you entered here — the board \
+             comes up already on that network. Anything it had stored itself \
+             (its own tuning, witness-chain counters) starts fresh."
+                .to_string(),
+        ));
+    }
+    Some((
+        false,
+        if had_wifi {
+            "Your settings are reset — the saved Wi-Fi is cleared, so the board \
+             comes up with its setup network again, like the first day."
+                .to_string()
+        } else {
+            "The settings area is reset to factory-fresh.".to_string()
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -240,10 +295,10 @@ mod tests {
     fn identical_settings_region_means_settings_survive() {
         let old = image(0x11, 0x22, 0x20000);
         let new = image(0x11, 0x33, 0x20000); // app differs, nvs identical
-        let map = diff_install(&old, &new).unwrap();
+        let map = diff_install(&old, &new, false).unwrap();
         let nvs = map.rows.iter().find(|r| r.label == "nvs").unwrap();
         assert_eq!(nvs.verdict, Verdict::Identical);
-        let (kept, text) = settings_verdict(&map, true).unwrap();
+        let (kept, text) = settings_verdict(&map, true, false).unwrap();
         assert!(kept);
         assert!(text.contains("survive"));
         // …and the app slot is correctly reported as changed.
@@ -261,10 +316,10 @@ mod tests {
         for b in new[0x9000..0xa000].iter_mut() {
             *b = 0xff;
         }
-        let map = diff_install(&old, &new).unwrap();
+        let map = diff_install(&old, &new, false).unwrap();
         let nvs = map.rows.iter().find(|r| r.label == "nvs").unwrap();
         assert_eq!(nvs.verdict, Verdict::Wiped);
-        let (kept, text) = settings_verdict(&map, true).unwrap();
+        let (kept, text) = settings_verdict(&map, true, false).unwrap();
         assert!(!kept);
         assert!(text.contains("setup network"));
     }
@@ -277,7 +332,7 @@ mod tests {
         let old = image(0x11, 0x22, 0x20000);
         let mut new = image(0x11, 0x22, 0x20000);
         new.truncate(0x10500); // a factory bin that stops inside the app slot
-        let map = diff_install(&old, &new).unwrap();
+        let map = diff_install(&old, &new, false).unwrap();
         let app = map.rows.iter().find(|r| r.label == "factory").unwrap();
         assert!(matches!(app.verdict, Verdict::Identical | Verdict::Changed));
         // Nothing panics on the truncated compare — the real regression risk.
@@ -289,16 +344,59 @@ mod tests {
         let old = image(0x11, 0x22, 0x20000);
         let mut new = image(0x11, 0x22, 0x20000);
         new[0x10000] ^= 0xff; // exactly one byte in a 4 KB slot
-        let map = diff_install(&old, &new).unwrap();
+        let map = diff_install(&old, &new, false).unwrap();
         let app = map.rows.iter().find(|r| r.label == "factory").unwrap();
         assert_eq!(app.verdict, Verdict::Changed);
         assert_eq!(app.changed_pct, Some(1), "0% next to 'changed' reads as nothing happened");
     }
 
     #[test]
+    fn baked_wifi_is_replaced_not_cleared() {
+        // The flasher writes the user's network into the replacement NVS
+        // BEFORE the image is staged, so this region always differs. Reading
+        // that as "your Wi-Fi is cleared, the board wants its setup network"
+        // is exactly backwards -- it boots onto the network they just typed.
+        let old = image(0x11, 0x22, 0x20000);
+        let mut new = image(0x11, 0x22, 0x20000);
+        for b in new[0x9000..0xa000].iter_mut() {
+            *b = 0x77; // provisioned NVS: differs, and is not erased flash
+        }
+        let map = diff_install(&old, &new, false).unwrap();
+        let (kept, text) = settings_verdict(&map, true, true).unwrap();
+        assert!(!kept, "the old contents really are gone");
+        assert!(text.contains("replaced"), "got: {text}");
+        assert!(!text.contains("setup network"),
+            "must not claim the board will ask for a network it was just given");
+
+        // Same bytes, but nothing baked in: now it IS a reset.
+        let (kept, text) = settings_verdict(&map, true, false).unwrap();
+        assert!(!kept);
+        assert!(text.contains("setup network"), "got: {text}");
+    }
+
+    #[test]
+    fn a_first_contact_erase_wipes_what_the_image_never_reaches() {
+        // erase_first wipes the WHOLE chip before writing, so a region beyond
+        // the image does not survive -- calling it "untouched" is the exact
+        // opposite of what happens, for precisely the data that lives only
+        // outside the image.
+        let old = image(0x11, 0x22, 0x20000);
+        let mut new = image(0x11, 0x22, 0x20000);
+        new.truncate(0x10000); // stops before the app slot
+
+        let plain = diff_install(&old, &new, false).unwrap();
+        let app = plain.rows.iter().find(|r| r.label == "factory").unwrap();
+        assert_eq!(app.verdict, Verdict::Untouched);
+
+        let erased = diff_install(&old, &new, true).unwrap();
+        let app = erased.rows.iter().find(|r| r.label == "factory").unwrap();
+        assert_eq!(app.verdict, Verdict::Wiped);
+    }
+
+    #[test]
     fn no_partition_table_anywhere_yields_no_map() {
         let blank = vec![0xff; 0x20000];
-        assert!(diff_install(&blank, &blank).is_none());
+        assert!(diff_install(&blank, &blank, false).is_none());
     }
 
     #[test]
@@ -306,7 +404,7 @@ mod tests {
         let old = image(0x11, 0x22, 0x20000);
         let mut new = image(0x11, 0x22, 0x20000);
         new[0x1000] ^= 0xff; // bootloader area
-        let map = diff_install(&old, &new).unwrap();
+        let map = diff_install(&old, &new, false).unwrap();
         let sys = map.rows.first().unwrap();
         assert_eq!(sys.label, "system");
         assert_eq!(sys.verdict, Verdict::Changed);

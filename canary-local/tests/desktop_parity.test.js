@@ -514,6 +514,7 @@ test("parity wave 3c: the change map answers 'do my settings survive?'", () => {
   const cmRs = read(join(ROOT, "desktop/src-tauri/src/changemap.rs"));
   const libRsSrc = read(join(ROOT, "desktop/src-tauri/src/lib.rs"));
   const flashCore = read(join(CANARY, "assets/flash-core.js"));
+  const flashJs = read(join(CANARY, "assets/flash.js"));
 
   assert.match(cmRs, /pub fn diff_install/, "desktop lost the install diff");
   assert.match(cmRs, /pub fn settings_verdict/, "desktop lost the settings verdict");
@@ -540,6 +541,29 @@ test("parity wave 3c: the change map answers 'do my settings survive?'", () => {
   assert.match(appJs, /unlistenMap\(\)/, "the change-map listener must be released");
   // A previous install's map describes bytes that are no longer true.
   assert.match(appJs, /renderChangeMap\(null\)/, "a new flash must clear the old map");
+
+  // Review hardening (Codex on #1509).
+  // 1. Baked Wi-Fi is REPLACED, not cleared. The flasher writes the user's
+  //    network into the replacement NVS before the image is staged, so that
+  //    region always differs — reading it as "your Wi-Fi is cleared, the
+  //    board wants its setup network" is exactly backwards.
+  assert.match(cmRs, /baked_wifi: bool/,
+    "the settings verdict must know whether we baked the network in");
+  assert.match(cmRs, /replaced with the ones you entered/,
+    "a provisioned reflash must not claim the saved Wi-Fi was cleared");
+  assert.match(libRsSrc, /let baked_wifi = provisioning/,
+    "the baked-Wi-Fi fact must reach the verdict");
+  // 2. A first-contact erase wipes what the image never reaches, so those
+  //    regions must not be reported as surviving.
+  assert.match(cmRs, /erase_all: bool/, "the diff must know about the full-chip erase");
+  assert.match(libRsSrc, /let erase_all = erase_first/,
+    "the erase mode must reach the diff");
+  // 3. No map is a thing to SAY, not a panel that quietly disappears.
+  assert.match(appJs, /function renderChangeMapUnavailable/,
+    "the desktop must explain a missing change map");
+  assert.match(appJs, /noMapReason/, "every no-map path must carry a reason");
+  assert.match(flashJs, /No change map this time/,
+    "the browser says why too — the wording is shared on purpose");
 });
 
 test("device API token: both flashers mint the same credential shape and seed the same keys", async () => {

@@ -1748,6 +1748,20 @@ function renderChangeMap(map) {
   box.appendChild(ul);
 }
 
+// Say why there is no map, rather than showing nothing. The browser does the
+// same ("No change map this time — it needs the safety copy to compare
+// against"); an empty space where a panel used to be reads as a bug.
+function renderChangeMapUnavailable(reason) {
+  const box = $("change-map");
+  if (!box || !reason) return;
+  box.innerHTML = "";
+  box.classList.remove("hidden");
+  box.append(Object.assign(document.createElement("p"), {
+    className: "cm-none",
+    textContent: reason,
+  }));
+}
+
 function clearBootDiagnosis() {
   state.diagnosedSig = null;
   const box = $("boot-diagnosis");
@@ -2697,6 +2711,24 @@ async function onFlash() {
   // board through a port silently inherit the first board's "already copied".
   const backupKey = state.mac ? String(state.mac).toLowerCase() : null;
   const skipBackup = !!($("skip-backup") && $("skip-backup").checked);
+  // Why there may be no change map. The map needs the board's CURRENT bytes,
+  // and the only copy we take is the pristine one from before the first write
+  // — reusing it on a reflash would draw the map against a "before" that
+  // stopped being true one flash ago, which is worse than drawing nothing.
+  // Whatever the reason, it gets said out loud: a panel that silently
+  // vanishes reads as a broken feature.
+  let noMapReason = null;
+  if (skipBackup) {
+    noMapReason = "No change map this time — the safety copy is switched off under Advanced, " +
+      "and the map is drawn from it.";
+  } else if (!state.flashBytes) {
+    noMapReason = "No change map this time — the board didn't report its flash size, so there " +
+      "was nothing to read a copy from.";
+  } else if (backupKey && state.backupsTaken[backupKey]) {
+    noMapReason = "No change map this time — the safety copy from earlier in this session is " +
+      "kept as your undo, and it describes the board as it was before that first install, " +
+      "not as it is now.";
+  }
   if (!skipBackup && state.flashBytes && !(backupKey && state.backupsTaken[backupKey])) {
     try {
       backupPath = await invoke("auto_backup_path", { mac: state.mac || "" });
@@ -2711,10 +2743,13 @@ async function onFlash() {
       logEvent("ok", "Safety copy saved: " + backupPath);
     } catch (e) {
       backupPath = null;
+      noMapReason = "No change map this time — the safety copy it's drawn from couldn't be " +
+        "read off this board.";
       con.textContent += "⚠ Couldn't take the safety copy (" + e + ") — continuing. " +
         "Advanced → Rescue can still try a manual backup.\n";
     }
   }
+  if (!backupPath && noMapReason) renderChangeMapUnavailable(noMapReason);
 
   try {
     const receipt = await withBaudLadder((baud) => invoke("flash", {

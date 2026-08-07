@@ -712,9 +712,19 @@ async fn flash(
     // picture of it would be absurd.
     if let Some(bp) = backup_path.as_deref().filter(|p| !p.is_empty()) {
         if let Ok(old) = std::fs::read(bp) {
-            if let Some(map) = changemap::diff_install(&old, &bytes) {
+            // Both facts the verdict needs are known right here: whether this
+            // install erases the whole chip first (so regions the image never
+            // reaches do NOT survive), and whether we just wrote the user's
+            // own network into the replacement NVS (so a differing settings
+            // region means "replaced with what you asked for", not "cleared").
+            let erase_all = erase_first.unwrap_or(false);
+            let baked_wifi = provisioning
+                .as_ref()
+                .map(|p| !p.wifi_ssid.is_empty())
+                .unwrap_or(false);
+            if let Some(map) = changemap::diff_install(&old, &bytes, erase_all) {
                 let had_wifi = old.windows(9).any(|w| w == b"wifi_ssid");
-                let verdict = changemap::settings_verdict(&map, had_wifi);
+                let verdict = changemap::settings_verdict(&map, had_wifi, baked_wifi);
                 let _ = app.emit(
                     "flash:changemap",
                     json!({
