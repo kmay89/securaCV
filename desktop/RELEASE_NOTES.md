@@ -42,7 +42,10 @@ and what to expect after updating. Heading grammar is
 
 A board whose passport can't be read is still perfectly flashable: the app
 says it couldn't look, which is deliberately not the same as saying the
-board is blank.
+board is blank — and the image rows say "can't tell yet" rather than
+claiming a first install. The Install button waits for that read to finish
+so a verdict is never skipped, and gives up waiting after a few seconds so
+a board that won't be read is never a board that can't be flashed.
 
 ## 0.5.0 — 2026-08-07
 

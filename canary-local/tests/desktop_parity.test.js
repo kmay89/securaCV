@@ -289,6 +289,29 @@ test("parity wave 2: the board passport, the install verdict, and 'we've met thi
   //    evidence is its own answer, not the cleanest verdict on the page.
   assert.match(appJs, /read failed — NOT a blank board/,
     "desktop must distinguish 'couldn't look' from 'nothing there'");
+
+  // 7. Review hardening (Codex on #1505). The verdict row must not turn an
+  //    unread board into "First install" — that contradicts the passport card
+  //    directly above it and hides a downgrade.
+  assert.match(appJs, /if \(r\.unknown\)/,
+    "desktop verdict must answer 'can't tell yet' for an unread board");
+
+  // 8. The flash button waits for the passport, so an install started during
+  //    the connect-time read can't bypass the verdict entirely — with a
+  //    bounded settle so an unreadable board is still flashable.
+  assert.match(appJs, /passportPending/,
+    "desktop lost the passport gate — a fast hand could flash with no verdict shown");
+  assert.match(appJs, /setTimeout\(\(\) => \{\s*\n?\s*if \(state\.passportPending/,
+    "the passport gate must be bounded — 'can't read' must never mean 'can't flash'");
+
+  // 9. The crash row states what was read, not a lifetime claim: an empty
+  //    dump region also follows a wipe or a fault that never persisted one.
+  for (const [name, src] of [["desktop", appJs], ["browser", flashCore]]) {
+    assert.ok(src.includes("no saved crash dump"),
+      `${name} lost the honest crash-record wording`);
+    assert.ok(!src.includes("never hard-crashed"),
+      `${name} claims a crash-free lifetime the probe cannot establish`);
+  }
 });
 
 test("device API token: both flashers mint the same credential shape and seed the same keys", async () => {

@@ -1423,7 +1423,11 @@ function passportRows({ ota, witness, coredump } = {}) {
   if (coredump)
     rows.push(coredump.present
       ? { id: "crash", label: "Crash record", value: "one saved crash dump on board", tone: "warn" }
-      : { id: "crash", label: "Crash record", value: "none — it has never hard-crashed", tone: "ok" });
+      // Only what the probe actually establishes: the dump region is empty
+      // NOW. A wipe, a cleared dump, or a fault that never got to persist one
+      // all leave it empty, so "it has never crashed" would be a lifetime
+      // claim this read cannot support.
+      : { id: "crash", label: "Crash record", value: "no saved crash dump", tone: "ok" });
   return rows;
 }
 
@@ -1763,6 +1767,20 @@ async function identify(portInfo) {
 async function readPassport(port) {
   state.passport = null;
   state.resident = null;
+  // The picker is usable while this runs, so the flash button waits on it:
+  // starting an install mid-read would show NO verdict at all, and a silent
+  // downgrade is exactly what this feature exists to prevent. The wait is
+  // bounded — see the settle timer below — because "can't read the board"
+  // must never become "can't flash the board".
+  state.passportPending = true;
+  const settle = setTimeout(() => {
+    if (state.passportPending && port === state.port) {
+      state.passportPending = false;
+      state.resident = state.resident || { unknown: true };
+      renderPassport();
+      renderProducts();
+    }
+  }, 25000);
   try {
     const p = await invoke("board_passport", {
       port,
@@ -1786,6 +1804,13 @@ async function readPassport(port) {
   } catch (_) {
     if (port !== state.port) return;
     state.resident = { unknown: true }; // read failed — NOT a blank board
+  } finally {
+    clearTimeout(settle);
+    // Settles on every path — but only for the board this call belongs to.
+    // Swap boards mid-read and a NEWER readPassport is already in flight with
+    // the flag raised; clearing it here unconditionally would open the gate
+    // while that read is still running, which is the exact hole this closes.
+    if (port === state.port) state.passportPending = false;
   }
   renderPassport();
   renderProducts(); // verdict rows depend on what's resident
@@ -1856,6 +1881,7 @@ function onDisconnect() {
   state.portKind = null;
   state.passport = null;
   state.resident = null;
+  state.passportPending = false;
   state.chip = null;
   state.flashBytes = null;
   state.mac = null;
@@ -1983,6 +2009,22 @@ function figureSlot(p) {
 function verdictMarkup(product, version) {
   if (!state.resident || !version) return "";
   const r = state.resident;
+  // A board we COULDN'T read is not a board with nothing on it. installVerdict
+  // maps both `null` and `{unknown:true}` to "First install", which is right
+  // for the browser — its probe cannot tell a blank chip from an unreadable
+  // one, so both arrive as `{unknown:true}`. This backend can (it returns
+  // blank:true only when the read SUCCEEDED and found no table), so saying
+  // "nothing SecuraCV is on this board yet" here would be an invented claim
+  // that contradicts the passport card sitting directly above it — and would
+  // hide a downgrade. Keep installVerdict byte-identical to the browser's and
+  // make the distinction at the call site, where the better information is.
+  if (r.unknown) {
+    return `<span class="p-verdict is-unknown">` +
+      `<span class="p-verdict-label">• Can't tell yet</span>` +
+      `<span class="p-verdict-detail">This board's current firmware couldn't be read, so ` +
+      `there's no telling whether this is an update, a reinstall, or a step backward. ` +
+      `The install itself is unaffected, and the automatic safety copy still runs.</span></span>`;
+  }
   const v = installVerdict({
     current: r.blank ? null : r,
     currentProduct: r.product || null,
@@ -2213,10 +2255,17 @@ function onProductChosen(p, ver) {
   if (usbSecrets || broker) $("mqtt-host").value ||= "homeassistant.local";
   profileAutofill();
   const btn = $("flash-btn");
-  btn.disabled = !ver;
-  $("flash-target").textContent = ver
-    ? `${p.name} → ${state.port}`
-    : "No published release for this one yet.";
+  // Wait for the passport before arming the button. Without this the picker
+  // is live during the connect-time read, so a quick hand could start an
+  // install while state.resident is still null — no verdict rendered, and a
+  // downgrade or a role switch goes through in silence. Bounded by
+  // readPassport's settle timer, so an unreadable board still flashes.
+  btn.disabled = !ver || !!state.passportPending;
+  $("flash-target").textContent = !ver
+    ? "No published release for this one yet."
+    : state.passportPending
+      ? `Reading the board first — ${p.name} → ${state.port}`
+      : `${p.name} → ${state.port}`;
 }
 
 function showModuleFlow() {
