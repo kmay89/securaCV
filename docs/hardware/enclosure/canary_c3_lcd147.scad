@@ -1399,7 +1399,13 @@ module bezel_light_seam() { seam_solid(0); }
 // the case — the failure every hand-built test piece eventually has.
 module fit_coupon() {
     intersection() {
-        bezel();
+        // BEZEL *AND* BAND. With the ring on, bezel() alone is two loose
+        // solids — the coupon would come off the plate in pieces and could
+        // not hold the board against the face, which is the one thing it
+        // exists to check. The band is what joins them on the real part, so
+        // the coupon takes it too; printed in one color it is simply the
+        // wall, and the geometry under test is exactly the shipping geometry.
+        union() { bezel(); light_band(); }
         translate([0, -(yo/2 + 2) + coupon_y/2, bez_h/2])
             cube([xo + 2*ear_bump + 8, coupon_y, bez_h + 4], center = true);
     }

@@ -85,16 +85,27 @@ jobs:
           #   inboard ribs made each side whole. If this ever reads 8 again,
           #   that regression is back.
           #   dev_c3_147_band.stl — the C3 pocket case's white light band:
-          #   ONE continuous U (up both long walls, around both far corners,
-          #   across the LED's end wall), so the default count of 1 applies
-          #   and it needs no case line. It was 3 strips with black corner
-          #   bends until the first print showed the pipe going dark where
-          #   it turns; if it ever reads 3 again, the corners have gone
-          #   black and that regression is back.
+          #   ONE continuous RING now, all four walls and all four corners,
+          #   so the default count of 1 still applies. It was 3 strips with
+          #   black corner bends until the first print showed the pipe going
+          #   dark where it turns, and a U after that; if it ever reads 3
+          #   again the corners have gone black, and that regression is back.
+          #   dev_c3_147_*bezel.stl — TWO, and that is the design. The C3's
+          #   light ring runs the full depth of the wall for the whole
+          #   perimeter, which severs the face plate from the walls above it.
+          #   Nothing yellow joins them; the BAND joins them, fused across
+          #   ~290 mm2 at each face in the co-print, which is why band_ring
+          #   forces band_clear = 0 and why this part is multi-material only.
+          #   The count is still a guard and it works in BOTH directions: 1
+          #   would mean the ring had broken back into a U and the USB end
+          #   had gone dark, 3 would mean something else came loose.
           expect_parts() {
             case "$1" in
-              dev_s3_147_band.stl) echo 2 ;;
-              *)                   echo 1 ;;
+              dev_s3_147_band.stl)      echo 2 ;;
+              dev_c3_147_bezel.stl)     echo 2 ;;
+              dev_c3_147_bare_bezel.stl) echo 2 ;;
+              dev_c3_147_hdr_bezel.stl) echo 2 ;;
+              *)                        echo 1 ;;
             esac
           }
           for f in *.stl; do
