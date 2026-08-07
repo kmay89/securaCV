@@ -39,7 +39,11 @@ comfortable answer when FULL needs A/B **plus** a `witness_log`-style partition.
 > (`firmware/common/ota/`) write to. CI now enforces both slot budgets
 > (`.github/workflows/firmware.yml`): the canary release image must fit
 > `0x1E0000` and the canary-wap image must fit `0x330000` — an image that
-> exceeds its slot could never be installed over the air.
+> exceeds its slot could never be installed over the air. Since 2026-08-07
+> the release workflow re-measures the exact bytes it publishes against the
+> same `flavors.json` budgets (`firmware/scripts/check_slot_budget.py`) —
+> a tag build is not the branch build, which is how fw-v2.4.6 shipped an
+> oversized nightstand-c6 image past a green PR gate.
 
 Note that **two** of the tables (`canary/partitions_ota.csv` and `partitions_secure.csv`) describe
 only a **4 MB** layout — on an 8 MB board they leave half the flash unused. They are correct for

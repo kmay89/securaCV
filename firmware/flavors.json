@@ -20,6 +20,11 @@
         "bin": ".pio/build/release/firmware.bin",
         "slot_bytes": 1966080,
         "slot_name": "0x1E0000 OTA slot (partitions_ota.csv ota_0/ota_1)"
+      },
+      {
+        "bin": ".pio/build/release_ha/firmware.bin",
+        "slot_bytes": 1966080,
+        "slot_name": "0x1E0000 OTA slot (partitions_ota.csv ota_0/ota_1 — release_ha is the published OTA image; PR CI builds `release`, so this entry fires via check_slot_budget.py at release time)"
       }
     ]
   },
@@ -30,7 +35,14 @@
       "canary-wap-default",
       "canary-wap-usbdrive"
     ],
-    "check_env": "canary-wap-default"
+    "check_env": "canary-wap-default",
+    "size_guards": [
+      {
+        "bin": ".pio/build/canary-wap-default/firmware.bin",
+        "slot_bytes": 3342336,
+        "slot_name": "0x330000 OTA slot (ESP32-S3 default_8MB.csv app0/app1)"
+      }
+    ]
   },
   {
     "name": "canary-vision",
@@ -127,6 +139,11 @@
     "size_guards": [
       {
         "bin": ".pio/build/canary-sense-default/firmware.bin",
+        "slot_bytes": 1966080,
+        "slot_name": "0x1E0000 OTA slot (ESP32-C6 min_spiffs.csv app0/app1)"
+      },
+      {
+        "bin": ".pio/build/canary-sense-wellbeing/firmware.bin",
         "slot_bytes": 1966080,
         "slot_name": "0x1E0000 OTA slot (ESP32-C6 min_spiffs.csv app0/app1)"
       }

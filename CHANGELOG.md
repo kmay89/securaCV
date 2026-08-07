@@ -22,6 +22,11 @@ boot-looped on `Image length 1971152 doesn't fit in partition length
   `.bin`, and the flavor's size guard only watched the S3 watch build.
   `flavors.json`'s `size_guard` is now `size_guards` — a list, one entry per
   slot budget — and the C6/C3 bins are guarded by their real slot sizes.
+  The release workflow enforces the same budgets on the exact bytes it
+  signs (`check_slot_budget.py`): fatal for the flagship canary/wap
+  manifests, a per-variant skip for the vision/sense/display loops — so a
+  tag or manual dispatch can no longer publish an OTA image no fielded
+  slot can hold.
 - **`make_factory.py` refuses to build a brick.** It always read the app
   offset out of the partition table; now it reads the size beside it and
   fails the merge if the app cannot boot from that slot — a per-variant

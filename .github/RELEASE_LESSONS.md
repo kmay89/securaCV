@@ -1880,17 +1880,23 @@ process: Flasher, Lab, tvOS, and the iPhone / iPad / Mac targets.
   (3) `make_factory.py` read the app **offset** out of the partition table and
   never looked at the **size** sitting 4 bytes away, so it happily merged an
   app into a slot it had just parsed as too small.
-- **Fix:** four layers, each byte-accurate. The 4 MB C6/C3 display boards get
+- **Fix:** five layers, each byte-accurate. The 4 MB C6/C3 display boards get
   their own table (`partitions_display_4mb.csv`: the unused 128 KB spiffs
   folded into the slots — state is NVS-only — growing A/B to 0x1F0000, which
   fits 2.4.6 with ~60 KB spare). flavors.json's `size_guard` became
   `size_guards`, a LIST, so every env with its own slot budget gets its own
   stat-the-bin check (nightstand-c6 guarded at the new slot; nightlight-c3
-  deliberately guarded at the OLD 0x1E0000 — see below). `make_factory.py` now
-  refuses to merge an app bigger than the slot it parsed, so an unbootable
-  factory image can never be published (build_flash_manifest.py degrades that
-  to "unavailable in the flasher", per-variant). And PARTITIONS.md states the
-  standing rule this incident bought.
+  deliberately guarded at the OLD 0x1E0000 — see below). The RELEASE path
+  measures the exact staged bytes it is about to sign
+  (`check_slot_budget.py`, budgets single-sourced from those same
+  size_guards entries) — a tag build is not the branch build, so the PR gate
+  alone could not have protected a manual dispatch or an env PR CI never
+  measured; fatal for the flagship canary/wap manifests, per-variant skip in
+  the vision/sense/display loops. `make_factory.py` now refuses to merge an
+  app bigger than the slot it parsed, so an unbootable factory image can
+  never be published (build_flash_manifest.py degrades that to "unavailable
+  in the flasher", per-variant). And PARTITIONS.md states the standing rule
+  this incident bought.
 - **The standing rule:** growing a partition table reaches only boards that
   get a USB factory flash. OTA ships app-only images into whatever table the
   board already carries — so the moment an image exceeds the OLD slot, every
