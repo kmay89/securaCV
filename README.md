@@ -46,14 +46,18 @@ Prefer to explore first? The [SecuraCV Lab](https://kmay89.github.io/securaCV/ca
 
 ## Install
 
-### Home Assistant add-on
+### Home Assistant app
 
-Requires Home Assistant 2024.4.1 or newer.
+Requires Home Assistant 2024.4.1 or newer. (Home Assistant now calls these
+**apps**; older versions call them add-ons, and the steps are the same either way.)
 
-1. In Home Assistant, install the official **Mosquitto broker** add-on.
-2. Add these repositories in **Settings → Add-ons → Add-on Store → ⋮ → Repositories**:
+1. In Home Assistant, install the official **Mosquitto broker** app.
+2. Add these repositories in **Settings → Apps → App Store → ⋮ → Repositories**:
    - `https://github.com/blakeblackshear/frigate-hass-addons`
    - `https://github.com/kmay89/securaCV`
+
+   Or add the SecuraCV repository in one click:
+   [add to my Home Assistant](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fkmay89%2FsecuraCV).
 3. Install **Frigate** and **Privacy Witness Kernel**.
 4. Open the Privacy Witness Kernel Web UI and follow the setup wizard.
 5. Point Frigate at your cameras. The wizard writes a starter config template to `/config/frigate.yml`; copy it into Frigate's config, replace the placeholder RTSP URLs, then start Frigate.

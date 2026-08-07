@@ -1,11 +1,14 @@
-# Privacy Witness Kernel - Home Assistant Add-on
+# Privacy Witness Kernel - Home Assistant App
 
 Privacy-preserving video surveillance that produces **claims, not recordings**.
+
+> Home Assistant now calls these **apps**; older Home Assistant labels the same
+> screens "Add-ons." The steps below are identical either way.
 
 ## Quick Start
 
 1. Add this repository to Home Assistant:
-   - Go to **Settings → Add-ons → Add-on Store**
+   - Go to **Settings → Apps → App Store**
    - Click ⋮ → **Repositories**
    - Add: `https://github.com/kmay89/securaCV`
 
@@ -17,12 +20,12 @@ Privacy-preserving video surveillance that produces **claims, not recordings**.
    fast even on a Raspberry Pi. No `curl | bash`. The image is built and verified entirely from this
    repo on GitHub; nothing is fetched from a third party at runtime (local-only custody, Inv. IV).
 
-3. Start the add-on and open its **Web UI** — the setup wizard handles the
+3. Start the app and open its **Web UI** — the setup wizard handles the
    rest. There is nothing to type for a standard setup:
    - **Device key**: auto-generated (persisted to
      `/config/.securacv/device_key`; included in HA backups — back it up)
    - **MQTT broker**: auto-discovered from the Supervisor when the
-     Mosquitto add-on is installed (host, port, credentials)
+     Mosquitto app is installed (host, port, credentials)
    - **HA entities**: created automatically via MQTT Discovery
 
    Manual YAML is only needed for an external broker or a non-default
@@ -52,7 +55,7 @@ emits Lovelace YAML for your live zones.
 ### Current Distribution
 
 This repository ships both:
-- A **Home Assistant add-on** (custom add-on repo URL) that runs the Privacy Witness Kernel service.
+- A **Home Assistant app** (custom app repo URL) that runs the Privacy Witness Kernel service.
 - A **Home Assistant integration via HACS** that connects to the kernel’s Event API.
 
 ### HACS Integration (Scope)
@@ -62,12 +65,12 @@ HACS support is intentionally limited:
 - **No new data fields** and no expansion of the event schema
 - No change to privacy guarantees or retention behavior
 
-### HACS vs Add-on (Quick Comparison)
+### HACS vs App (Quick Comparison)
 
-| Aspect | Add-on (today) | HACS (current) |
+| Aspect | App (today) | HACS (current) |
 |--------|----------------|----------------|
 | Runs the kernel service | ✅ Yes | ❌ No (frontend/config only) |
-| Configuration location | Add-on config UI | HA config flow |
+| Configuration location | App config UI | HA config flow |
 | Entities in HA | ✅ Yes (via MQTT/REST) | ✅ Yes (same entities) |
 | Data schema changes | ❌ Not allowed | ❌ Not planned |
 

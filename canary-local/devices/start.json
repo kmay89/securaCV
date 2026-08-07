@@ -44,36 +44,36 @@
    "chapters": [
     {
      "id": "addons",
-     "title": "1 · Install the add-ons",
-     "intro": "Everything happens in the Home Assistant UI — no terminal on this path.",
+     "title": "1 · Install the apps",
+     "intro": "Everything happens in the Home Assistant UI — no terminal on this path. (Apps are what older Home Assistant called “add-ons.”)",
      "steps": [
       {
        "title": "Install the Mosquitto broker",
        "variants": {
         "all": {
          "bullets": [
-          "Settings → Add-ons → Add-on Store.",
-          "Install the official Mosquitto broker add-on and start it."
+          "Settings → Apps → App Store.",
+          "Install the official Mosquitto broker app and start it."
          ]
         }
        },
        "note": "MQTT is the wire your witnesses speak on."
       },
       {
-       "title": "Add both add-on repositories",
+       "title": "Add both app repositories",
        "variants": {
         "all": {
          "bullets": [
-          "Add-on Store → ⋮ (top right) → Repositories.",
+          "App Store → ⋮ (top right) → Repositories.",
           "Paste each URL below, one at a time, then Add."
          ],
          "copies": [
           {
-           "label": "Frigate add-on repo",
+           "label": "Frigate app repo",
            "text": "https://github.com/blakeblackshear/frigate-hass-addons"
           },
           {
-           "label": "SecuraCV add-on repo",
+           "label": "SecuraCV app repo",
            "text": "https://github.com/kmay89/securaCV"
           }
          ]
@@ -97,14 +97,14 @@
     {
      "id": "wizard",
      "title": "2 · Run the wizard",
-     "intro": "The add-on's Web UI walks you through keys and MQTT — nothing to type.",
+     "intro": "The app's Web UI walks you through keys and MQTT — nothing to type.",
      "steps": [
       {
        "title": "Click through the setup wizard",
        "variants": {
         "all": {
          "bullets": [
-          "Open the Privacy Witness Kernel add-on → Open Web UI.",
+          "Open the Privacy Witness Kernel app → Open Web UI.",
           "Device key: auto-generated. MQTT: auto-discovered from Mosquitto.",
           "The wizard checks Mosquitto and Frigate are present and warns if not."
          ]

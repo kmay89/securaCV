@@ -115,7 +115,7 @@ say "Everything below happens on this hub. Nothing leaves it."
 if ! have_ha; then
   say ""
   say "The 'ha' command is not available here. Run this from the hub itself,"
-  say "in the Terminal & SSH add-on (Settings -> Add-ons -> Terminal & SSH)."
+  say "in the Terminal & SSH app (Settings -> Apps -> Terminal & SSH; older hubs: Add-ons)."
   exit 1
 fi
 
@@ -133,7 +133,7 @@ if [ -z "$SAT_SLUG" ] && [ "$MODE" != verify ]; then
   say "   adding the OHF-Voice apps repository..."
   # The HA CLI command is `ha store add <repository>` (store_repositories_add.go).
   if ! ha store add "$OHF_APPS_REPO" >/dev/null; then
-    warn "could not add $OHF_APPS_REPO to the store — add it under Settings -> Add-ons -> Store -> (top-right menu) Repositories"
+    warn "could not add $OHF_APPS_REPO to the store — add it under Settings -> Apps (older hubs: Add-ons) -> Store -> (top-right menu) Repositories"
   fi
   ha store reload >/dev/null 2>&1 || true
   SAT_SLUG="$(find_satellite_slug || true)"
@@ -141,7 +141,7 @@ fi
 if [ -n "$SAT_SLUG" ]; then
   ensure_addon "$SAT_SLUG" "Assist Satellite"
 else
-  warn "Assist Satellite not found in the store — add $OHF_APPS_REPO under Settings -> Add-ons -> Store -> (top-right menu) Repositories, then re-run"
+  warn "Assist Satellite not found in the store — add $OHF_APPS_REPO under Settings -> Apps (older hubs: Add-ons) -> Store -> (top-right menu) Repositories, then re-run"
 fi
 
 head_ "3. The fleet sentences"
