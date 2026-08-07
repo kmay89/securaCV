@@ -6,6 +6,7 @@
     python3 gen_3mf.py frame      # the whole 7" case
     python3 gen_3mf.py stick      # the hallway stick: bezel + band, back + mark
     python3 gen_3mf.py c3         # the C3 pocket case: yellow, branded lid
+    python3 gen_3mf.py c3-male    # …the same case cut for a HEADERED board
 
 Renders the parts it needs with OpenSCAD, then writes a single object whose
 volumes are already registered to each other and already assigned to
@@ -131,7 +132,7 @@ QR_COUPON = [("body", "coupon_qr_body", 1, LCD7, {})] + (
 # (A lid_back="keyhole" build genuinely has no mark. That is a different
 # product configuration and wants its own set — it must not be quietly
 # packaged as the branded one.)
-REQUIRE_ALL = {"QR coupon", "c3 lid"}
+REQUIRE_ALL = {"QR coupon", "c3 lid", "c3 male lid"}
 
 # ── The hallway stick (Waveshare ESP32-S3-LCD-1.47) ────────────────────────
 # Two objects, three filaments, and the whole reason it is worth packaging:
@@ -178,6 +179,34 @@ C3_BEZEL = [("body", "bezel", 1, C3, {"headers": '"pillars"'}),
 C3_LID = [("lid", "lid", 1, C3, {"headers": '"pillars"'}),
           ("mark", "mark", 2, C3, {"headers": '"pillars"'}),
           ("shell", "shell", 3, C3, {"headers": '"pillars"'})]
+
+# …and the same case for the board with its HEADERS SOLDERED — down-facing
+# pin rows plus the brass corner pillars, which is how a board comes back from
+# anyone who has breadboarded it. This is not a variant of the plate above, it
+# is a DIFFERENT CASE: the clearance below the PCB opens out TO hdr_drop (8.8)
+# to swallow the header base and its pins, the press bosses grow to match, and
+# the snap skirt goes thin (skirt_wall 1.0 against 1.6) so it clears the pin
+# rows instead of landing on them. Measured off the exported meshes, that is
+# +3.00 mm of bezel (12.250 -> 15.250) and +3.00 mm of lid (4.800 -> 7.800),
+# with the footprint unchanged at 28.200 x 42.470. Same outline, same 3
+# filaments, same slot roles — a taller box.
+#
+# It gets its OWN sets rather than a flag on the ones above, for the reason
+# the pinned define already states: a 3MF that guessed which board it was for
+# would fit exactly one of the three silently. Naming the plate is what makes
+# the choice visible on the operator's disk, where it has to be.
+#
+# ⚠️ THE TWO ARE NOT INTERCHANGEABLE ON A FINISHED PRINT. Offer a headered
+# board to the pillars case and the pins bottom out before the board seats;
+# offer a bare board to this one and it rattles by hdr_drop. That is a
+# property of the geometry, not a tolerance — print the plate that matches
+# the board in your hand.
+C3M_BEZEL = [("body", "bezel", 1, C3, {"headers": '"male"'}),
+             ("band", "light", 3, C3, {"headers": '"male"',
+                                       "band_clear": "0"})]
+C3M_LID = [("lid", "lid", 1, C3, {"headers": '"male"'}),
+           ("mark", "mark", 2, C3, {"headers": '"male"'}),
+           ("shell", "shell", 3, C3, {"headers": '"male"'})]
 
 # A "set" is a list of OBJECTS. Each object is (name, volumes, plate center).
 # Volumes within one object are parts of it and stay registered to each other;
@@ -232,6 +261,14 @@ SETS = {
     # slots, same geometry; only the packing differs.
     "c3-bezel": [("c3 bezel", C3_BEZEL, (128, 128))],
     "c3-lid":   [("c3 lid",   C3_LID,   (128, 128))],
+    # The headered board's case, packed exactly like the one above — the
+    # footprint is identical (the extra depth is all in z), so the layout that
+    # works for one works for the other, and an operator switching boards
+    # recognizes the plate.
+    "c3-male": [("c3 male bezel", C3M_BEZEL, (100, 150)),
+                ("c3 male lid",   C3M_LID,   (100, 95))],
+    "c3-male-bezel": [("c3 male bezel", C3M_BEZEL, (128, 128))],
+    "c3-male-lid":   [("c3 male lid",   C3M_LID,   (128, 128))],
     # THE TPU FITMENTS, two of each — a spare is worth more than a second job.
     # All six are ONE material, so this plate changes tool exactly never: no
     # purge tower, no tower zone, and every volume on slot 1. That is the whole
@@ -277,7 +314,13 @@ SETS = {
 OUTPUT = {"gauges": "lcd7_gauges", "color": "lcd7_color",
           "coupon": "lcd7_coupon", "qr": "lcd7_qr", "frame": "lcd7_frame",
           "stick": "stick_case", "c3": "c3_case", "tpu": "lcd7_tpu",
-          "c3-bezel": "c3_bezel", "c3-lid": "c3_lid"}
+          "c3-bezel": "c3_bezel", "c3-lid": "c3_lid",
+          # "male" is in the FILENAME, not only in the set name: these land in
+          # a downloads folder next to the pillars plates, and a name that did
+          # not say which board it was cut for is a name that gets printed for
+          # the wrong one.
+          "c3-male": "c3_male_case",
+          "c3-male-bezel": "c3_male_bezel", "c3-male-lid": "c3_male_lid"}
 assert set(OUTPUT) == set(SETS), "every set needs an output name"
 # Volume tuples grew a source and a defines dict when a second case moved in
 # here, and a set written inline (rather than through one of the named lists
@@ -330,6 +373,10 @@ TOWER_ZONES = {
     # when you are not iterating on one of them.
     "c3-bezel": (150.0, 20.0, 250.0, 230.0),
     "c3-lid":   (150.0, 20.0, 250.0, 230.0),
+    # The headered build has the same footprint, so it keeps the same zones.
+    "c3-male":       (140.0, 40.0, 250.0, 210.0),
+    "c3-male-bezel": (150.0, 20.0, 250.0, 230.0),
+    "c3-male-lid":   (150.0, 20.0, 250.0, 230.0),
 }
 
 
