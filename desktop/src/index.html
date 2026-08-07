@@ -447,6 +447,10 @@
                 <button id="diag-report-btn" class="btn btn-ghost btn-small">Copy diagnostic report</button>
                 <span id="diag-report-note" class="muted"></span>
               </div>
+              <!-- When the clipboard is unreachable the full report lands here
+                   to select by hand — the app log truncates, this doesn't. -->
+              <textarea id="diag-report-out" class="diag-report-out hidden" readonly
+                        rows="10" spellcheck="false"></textarea>
             </details>
 
             <details class="hint" id="adv-dev">

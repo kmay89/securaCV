@@ -367,10 +367,27 @@ function wifiQrString(ssid, pass) {
 // (parity: flash-core.js helpTopic + flash.js helpDot). The registry is
 // generated from the firmware's own values, so the help can't drift from
 // what the code does.
+// The settings_help registry was written for the browser page, and two of its
+// entries name browser mechanics — the address bar, the Downloads folder —
+// that are simply false in this app. Same topics, this frontend's words;
+// layered over the registry entry so its other fields still show through.
+const HELP_DESKTOP_OVERRIDES = {
+  dev_channel: {
+    what: "The checkbox below switches this app to the rolling prerelease — signed with the same key, newer, less soaked.",
+    when: "You're testing a fix the maintainer just cut. Untick it to return to stable.",
+  },
+  skip_backup: {
+    what: "Normally every byte on the board is saved into this app's backups folder before anything is written — the console names the file, and it is your undo button.",
+  },
+  wifi_bake: {
+    what: "Typed here, your network is written into the chip's settings region in the same pass as the firmware — the Canary joins it on first boot. It never leaves this app except over the USB cable.",
+  },
+};
 function helpTopic(id) {
   const reg = state.catalog && state.catalog.settings_help;
   const t = reg && typeof reg === "object" ? reg[id] : null;
-  return t && t.label && t.what ? t : null;
+  if (!(t && t.label && t.what)) return null;
+  return { ...t, ...HELP_DESKTOP_OVERRIDES[id] };
 }
 function helpDot(id) {
   const t = helpTopic(id);
@@ -585,6 +602,16 @@ async function boot() {
       box.classList.remove("hidden");
     } catch (_) { /* the QR is a bonus; typing still works */ }
   });
+  // The QR is a snapshot of the fields at click time — an edit makes it a
+  // lie, and a camera can still scan the OLD password off the screen. Any
+  // change to what it encoded clears it.
+  const wifiQrInvalidate = () => {
+    const box = $("wifi-qr-box");
+    box.classList.add("hidden");
+    box.innerHTML = "";
+  };
+  $("wifi-ssid").addEventListener("input", wifiQrInvalidate);
+  $("wifi-pass").addEventListener("input", wifiQrInvalidate);
   // One-click diagnostic report (parity: browser's diagnosticReportButton).
   $("diag-report-btn").addEventListener("click", async () => {
     const note = $("diag-report-note");
@@ -610,12 +637,21 @@ async function boot() {
       logTail: ($("console") && $("console").textContent) ||
         ($("serial-console") && $("serial-console").textContent) || undefined,
     });
+    const out = $("diag-report-out");
     try {
       await navigator.clipboard.writeText(report);
       note.textContent = "Copied ✓ — paste it into a GitHub issue or discussion.";
+      out.classList.add("hidden");
+      out.value = "";
     } catch (_) {
-      note.textContent = "Couldn't reach the clipboard — the report is in the app log instead.";
-      logEvent("info", "Diagnostic report:\n" + report);
+      // No clipboard (denied, or a locked-down webview). The app log is no
+      // home for it — logEvent truncates every entry — so show the FULL
+      // report to select by hand, the browser flasher's fallback.
+      out.value = report;
+      out.classList.remove("hidden");
+      out.focus();
+      out.select();
+      note.textContent = "Couldn't reach the clipboard — copy the report from the box below.";
     }
     setTimeout(() => { note.textContent = ""; }, 6000);
   });
@@ -2035,9 +2071,13 @@ async function onFlash() {
   // that can't be read is often exactly the one that needs rescuing.
   let backupPath = null;
   state.backupsTaken = state.backupsTaken || {};
-  const backupKey = (state.mac || state.port || "").toLowerCase();
+  // "Once per board per session" dedupes strictly by MAC — the browser's rule
+  // (haveBackupForThisBoard). A board that didn't report one gets a fresh
+  // copy every time: keying on the USB port instead would let the second
+  // board through a port silently inherit the first board's "already copied".
+  const backupKey = state.mac ? String(state.mac).toLowerCase() : null;
   const skipBackup = !!($("skip-backup") && $("skip-backup").checked);
-  if (!skipBackup && state.flashBytes && backupKey && !state.backupsTaken[backupKey]) {
+  if (!skipBackup && state.flashBytes && !(backupKey && state.backupsTaken[backupKey])) {
     try {
       backupPath = await invoke("auto_backup_path", { mac: state.mac || "" });
       con.textContent += "→ safety copy first — reading the whole chip before anything is written…\n";
@@ -2047,7 +2087,7 @@ async function onFlash() {
         flashSize: state.flashBytes,
         baud: state.catalog.flash_baud || 921600,
       });
-      state.backupsTaken[backupKey] = backupPath;
+      if (backupKey) state.backupsTaken[backupKey] = backupPath;
       logEvent("ok", "Safety copy saved: " + backupPath);
     } catch (e) {
       backupPath = null;
@@ -2266,6 +2306,10 @@ function readProvisioning(product) {
 function clearSecretFields() {
   $("wifi-pass").value = "";
   $("mqtt-pass").value = "";
+  // Wiping the field while its password stays scannable in a rendered QR
+  // would be theater — the QR goes with it.
+  const qr = $("wifi-qr-box");
+  if (qr) { qr.classList.add("hidden"); qr.innerHTML = ""; }
 }
 
 // ── module inference preview: the frame WITH its detections drawn ───────────

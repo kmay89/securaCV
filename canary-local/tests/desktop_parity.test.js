@@ -172,6 +172,7 @@ test("parity wave 1: safety copy, error kinds, QR, token card, nursery, diagnost
   const appJs = read(join(ROOT, "desktop/src/app.js"));
   const html = read(join(ROOT, "desktop/src/index.html"));
   const flashCore = read(join(CANARY, "assets/flash-core.js"));
+  const flashJs = read(join(CANARY, "assets/flash.js"));
 
   // 1. The automatic pre-flash safety copy — reachable from the ONE-SHOT
   //    flow (onFlash), not just the Advanced rescue button, with the same
@@ -217,8 +218,29 @@ test("parity wave 1: safety copy, error kinds, QR, token card, nursery, diagnost
   assert.match(appJs, /function buildDiagnosticReport/, "desktop lost the diagnostic report builder");
   assert.match(html, /id="diag-report-btn"/, "desktop lost the diagnostic report button");
 
-  // 8. The per-setting help layer reads the same generated registry.
+  // 8. The per-setting help layer reads the same generated registry —
+  //    with desktop wording where the registry copy names browser mechanics
+  //    (the address bar, the Downloads folder) that are false in the app.
   assert.match(appJs, /settings_help/, "desktop help dots no longer read settings_help");
+  assert.match(appJs, /HELP_DESKTOP_OVERRIDES/,
+    "desktop help lost its overrides — the registry's browser-only wording would show verbatim");
+
+  // 9. Review hardening (Codex on #1502). The safety-copy dedup key is the
+  //    MAC or nothing — a USB-port fallback let board B silently inherit
+  //    board A's "already copied" through the port they shared.
+  assert.ok(!appJs.includes("state.mac || state.port"),
+    "desktop backup dedup must never key on the USB port");
+
+  // 10. Clipboard-less diagnostic fallback: the FULL report in a selectable
+  //     box, both frontends (the app log truncates; a log line is not a report).
+  assert.match(html, /id="diag-report-out"/, "desktop lost the diagnostic fallback box");
+  assert.match(appJs, /diag-report-out/, "desktop diagnostic fallback is unwired");
+  assert.match(flashJs, /flash-report-ta/, "browser lost its diagnostic fallback textarea");
+
+  // 11. A rendered Wi-Fi QR must not outlive the credentials it encodes:
+  //     both frontends clear it when either field changes.
+  assert.match(appJs, /wifiQrInvalidate/, "desktop no longer invalidates a stale Wi-Fi QR");
+  assert.match(flashJs, /qrClear/, "browser no longer invalidates a stale Wi-Fi QR");
 });
 
 test("device API token: both flashers mint the same credential shape and seed the same keys", async () => {

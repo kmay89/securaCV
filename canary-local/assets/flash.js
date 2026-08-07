@@ -3618,6 +3618,14 @@ function renderWifiFields(box, product) {
   });
   qrRow.append(qrBtn);
   sec.append(qrRow, qrOut);
+  // The QR is a snapshot of the fields at click time — an edit makes it a
+  // lie, and a camera can still scan the OLD password off the screen. Any
+  // change to what it encoded clears it ("Forget" empties the fields
+  // programmatically, which fires no input event, hence its own hook).
+  const qrClear = () => { qrOut.innerHTML = ""; };
+  ssid.addEventListener("input", qrClear);
+  pass.addEventListener("input", qrClear);
+  forgetBtn.addEventListener("click", qrClear);
 
   // Home Assistant / MQTT + a device id — the SAME NVS keys the native app bakes
   // (desktop provisioning.rs), so a board flashed here is addressable on your
