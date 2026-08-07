@@ -79,6 +79,17 @@ struct DeviceIdentity {
   uint32_t boot_ms;
   uint32_t tamper_count;
   uint32_t log_seq;
+  // ── when this key was born ────────────────────────────────────────────────
+  // The device id, the AP SSID and the app's birth certificate all derive from
+  // the keypair, so "how old is this Canary" is really "how old is this key".
+  // A key is always born before any clock exists (no battery-backed RTC — the
+  // chip boots at the epoch and only learns the date from GPS/NTP later), so
+  // these are filled in on the first believable clock and then never again.
+  // See firmware/common/identity/birth_day.h for the three rules.
+  uint32_t born_day;      ///< Days since the Unix epoch; 0 = never dated.
+  bool     born_exact;    ///< False ⇒ first DATED, not born. Don't call it a birthday.
+  uint32_t key_born_ms;   ///< millis() when this boot generated the key…
+  bool     key_is_new;    ///< …meaningful only if this boot is the one that made it.
   bool     initialized;
   bool     tamper_active;
   char     device_id[32];
@@ -180,6 +191,13 @@ bool witness_verify_record(const WitnessRecord* rec);
 
 // Persist chain state to NVS
 void witness_persist_chain_state();
+
+// Offer the current wall clock to the birth-day recorder. Safe and cheap to
+// call from the main loop at any cadence: it returns immediately once a day is
+// recorded (which is once, for the life of the key) or while the clock is still
+// the boot epoch. Returns true only on the one call that actually stamped —
+// callers can log it, but nothing depends on catching that moment.
+bool witness_note_wall_clock(uint32_t unix_s);
 
 // ════════════════════════════════════════════════════════════════════════════
 // STATE MACHINE

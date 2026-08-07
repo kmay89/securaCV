@@ -74,6 +74,15 @@ struct Facts {
   const char* chain_head_hex; // 64 hex chars
   uint32_t seq;
   uint32_t boots;
+  // When this device's KEY was born, in days since the Unix epoch — a fact
+  // about the Canary rather than about whoever is holding a phone near it.
+  // 0 = never dated (an offline device that has yet to meet a clock), emitted
+  // as null so a reader can tell "not known" from "day zero".
+  // `born_exact` false means the day is when the device was first DATED, not
+  // when it was born; readers must not call that a birthday. See
+  // common/identity/birth_day.h for the three rules that produce these.
+  uint32_t born_day = 0;
+  bool born_exact = false;
   int health;                 // 0..100, or <0 = unknown → emitted as null
   int temp_c = -1000;         // die temperature °C; <= -273 = unknown → null
   bool tamper;
@@ -167,6 +176,10 @@ inline size_t build(const Facts& f, char* out, size_t cap) {
   w.key("chain_head", false);   w.str(f.chain_head_hex ? f.chain_head_hex : "");
   w.key("seq", false);          w.u32(f.seq);
   w.key("boots", false);        w.u32(f.boots);
+  w.key("born_day", false);
+  if (f.born_day == 0) w.raw("null");
+  else w.u32(f.born_day);
+  w.key("born_exact", false);   w.raw(f.born_exact ? "true" : "false");
   w.key("health", false);
   if (f.health < 0) w.raw("null");
   else { int h = f.health > 100 ? 100 : f.health; w.u32((uint32_t)h); }

@@ -39,10 +39,24 @@ struct FleetSelfDevice: Codable, Hashable, Sendable {
     var chain: String
     var product: String
     var chainHeight: Int?
+    /// The day this device's KEY was born, in days since the Unix epoch — a
+    /// fact about the Canary, not about whoever paired it. Nil when the device
+    /// has never met a believable clock, or has no witness key of its own (a
+    /// display pins other devices' keys and has no birth to report). The
+    /// firmware omits the field entirely rather than sending 0, so nil here is
+    /// "not known" and can never be rendered as 1970.
+    var bornDay: Int?
+    /// False means the day above is when the device was FIRST DATED, not when
+    /// it was born — a Canary flashed in a workshop and plugged in a week later
+    /// first learns the date a week late. The app must not call that a
+    /// birthday. See firmware/common/identity/birth_day.h.
+    var bornExact: Bool
 
     enum CodingKeys: String, CodingKey {
         case name, online, chain, product
         case chainHeight = "chain_height"
+        case bornDay = "born_day"
+        case bornExact = "born_exact"
     }
 
     /// Tolerant decode: a device that omits a field is reported, not dropped.
@@ -54,14 +68,26 @@ struct FleetSelfDevice: Codable, Hashable, Sendable {
         chain       = (try? c.decode(String.self, forKey: .chain)) ?? ""
         product     = (try? c.decode(String.self, forKey: .product)) ?? ""
         chainHeight = try? c.decodeIfPresent(Int.self, forKey: .chainHeight)
+        // A day of 0 or less is the epoch showing through, not a date. Folded
+        // to nil here so exactly one representation of "not known" reaches the
+        // UI, whichever way an older or stranger firmware phrased it.
+        let day = (try? c.decodeIfPresent(Int.self, forKey: .bornDay)) ?? nil
+        bornDay = (day ?? 0) > 0 ? day : nil
+        // Absent means not exact. A firmware that reports a day but no verdict
+        // has not earned the word "born" — the cautious reading is the only
+        // safe one, because the flag exists to hold back a claim.
+        bornExact = ((try? c.decodeIfPresent(Bool.self, forKey: .bornExact)) ?? nil) ?? false
     }
 
-    init(name: String, online: Bool, chain: String, product: String, chainHeight: Int? = nil) {
+    init(name: String, online: Bool, chain: String, product: String, chainHeight: Int? = nil,
+         bornDay: Int? = nil, bornExact: Bool = false) {
         self.name = name
         self.online = online
         self.chain = chain
         self.product = product
         self.chainHeight = chainHeight
+        self.bornDay = bornDay
+        self.bornExact = bornExact
     }
 
     /// True only for the explicit "ok". Anything else — "unknown", "degraded",
