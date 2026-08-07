@@ -1857,3 +1857,57 @@ process: Flasher, Lab, tvOS, and the iPhone / iPad / Mac targets.
   than the whole build; and a loud failure when the push is dropped, because a
   silently-stale generated artifact is exactly the drift the byte-diff gates
   exist to catch.
+
+### 2026-08-07 — fw-v2.4.6 shipped a C6 nightstand factory image 5 KB too big to boot, past three green gates
+
+- **Symptom:** a Waveshare ESP32-C6-LCD-1.47 flashed with
+  `canary-display-nightstand-c6-2.4.6-factory.bin` boot-looped from first
+  power-on: `esp_image: Image length 1971152 doesn't fit in partition length
+  1966080`, both OTA slots "not bootable", `No bootable app partitions in the
+  partition table`. The desktop Flasher had just printed "Firmware write
+  verified. Flashing is complete. ✓" — truthfully: every byte was written and
+  read back exactly as published. The published bytes were the defect.
+- **Cause:** the app outgrew its `min_spiffs.csv` 0x1E0000 (1,966,080-byte)
+  A/B slot by 5,072 bytes, and each gate that should have said so had a hole
+  the exact shape of this image. (1) PlatformIO's `checkprogsize` — the
+  backstop the env comment leaned on since the 2026-07-25 lean-budget work —
+  sums the **ELF's** flash sections; the flashed `.bin` adds the image header,
+  segment padding, and the appended hash, so a build can pass `checkprogsize`
+  while its `.bin` exceeds the slot. The ~11 KB margin the lean cuts left was
+  exactly the kind this gap eats. (2) flavors.json's `size_guard` — the
+  byte-accurate check that stats the real `.bin` — watched ONE bin per flavor,
+  and canary-display's watched the S3 watch build against a 0x330000 slot.
+  (3) `make_factory.py` read the app **offset** out of the partition table and
+  never looked at the **size** sitting 4 bytes away, so it happily merged an
+  app into a slot it had just parsed as too small.
+- **Fix:** five layers, each byte-accurate. The 4 MB C6/C3 display boards get
+  their own table (`partitions_display_4mb.csv`: the unused 128 KB spiffs
+  folded into the slots — state is NVS-only — growing A/B to 0x1F0000, which
+  fits 2.4.6 with ~60 KB spare). flavors.json's `size_guard` became
+  `size_guards`, a LIST, so every env with its own slot budget gets its own
+  stat-the-bin check (nightstand-c6 guarded at the new slot; nightlight-c3
+  deliberately guarded at the OLD 0x1E0000 — see below). The RELEASE path
+  measures the exact staged bytes it is about to sign
+  (`check_slot_budget.py`, budgets single-sourced from those same
+  size_guards entries) — a tag build is not the branch build, so the PR gate
+  alone could not have protected a manual dispatch or an env PR CI never
+  measured; fatal for the flagship canary/wap manifests, per-variant skip in
+  the vision/sense/display loops. `make_factory.py` now refuses to merge an
+  app bigger than the slot it parsed, so an unbootable factory image can
+  never be published (build_flash_manifest.py degrades that to "unavailable
+  in the flasher", per-variant). And PARTITIONS.md states the standing rule
+  this incident bought.
+- **The standing rule:** growing a partition table reaches only boards that
+  get a USB factory flash. OTA ships app-only images into whatever table the
+  board already carries — so the moment an image exceeds the OLD slot, every
+  fielded old-table board is stranded (its OTA install fails, forever) until
+  a human re-flashes it over USB. For the C6 that line was crossed AT 2.4.6
+  itself: old-table nightstand-c6 boards cannot take 2.4.6+ over the air and
+  need one USB re-flash to pick up the new table. The C3 nightlight has not
+  crossed it, which is why its guard pins the old slot: crossing must be a
+  red build a human overrides, not a side effect of link-time growth.
+- **Applies to:** every gate that reasons about firmware size, forever. The
+  number that matters is the size of the artifact a bootloader will actually
+  measure — `stat` the `.bin`; never trust an ELF-derived proxy within ~20 KB
+  of a boundary. And any tool that parses a partition table for an offset and
+  ignores the size beside it is a tool that will eventually write a brick.

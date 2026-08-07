@@ -358,7 +358,7 @@ Every future firmware flavor gets the same update process with five steps:
 4. **Add the variant to `.github/workflows/firmware-release.yml`**: build
    step, signed manifest, index entry, signature verification, version-string
    guard, release asset. For PR CI, add the variant's entry — including its
-   OTA-slot `size_guard` budget — to `firmware/flavors.json`; the
+   OTA-slot `size_guards` budget — to `firmware/flavors.json`; the
    `firmware.yml` matrix picks it up with no new jobs (see
    `firmware/ARCHITECTURE.md` § CI Flavor Manifest).
 5. **Keep identity out of the binary**: anything per-unit (device id,

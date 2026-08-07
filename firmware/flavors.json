@@ -15,11 +15,18 @@
     "isolated_core_envs": [
       "full"
     ],
-    "size_guard": {
-      "bin": ".pio/build/release/firmware.bin",
-      "slot_bytes": 1966080,
-      "slot_name": "0x1E0000 OTA slot (partitions_ota.csv ota_0/ota_1)"
-    }
+    "size_guards": [
+      {
+        "bin": ".pio/build/release/firmware.bin",
+        "slot_bytes": 1966080,
+        "slot_name": "0x1E0000 OTA slot (partitions_ota.csv ota_0/ota_1)"
+      },
+      {
+        "bin": ".pio/build/release_ha/firmware.bin",
+        "slot_bytes": 1966080,
+        "slot_name": "0x1E0000 OTA slot (partitions_ota.csv ota_0/ota_1 — release_ha is the published OTA image; PR CI builds `release`, so this entry fires via check_slot_budget.py at release time)"
+      }
+    ]
   },
   {
     "name": "canary-wap",
@@ -28,7 +35,14 @@
       "canary-wap-default",
       "canary-wap-usbdrive"
     ],
-    "check_env": "canary-wap-default"
+    "check_env": "canary-wap-default",
+    "size_guards": [
+      {
+        "bin": ".pio/build/canary-wap-default/firmware.bin",
+        "slot_bytes": 3342336,
+        "slot_name": "0x330000 OTA slot (ESP32-S3 default_8MB.csv app0/app1)"
+      }
+    ]
   },
   {
     "name": "canary-vision",
@@ -41,11 +55,13 @@
     ],
     "check_env": "canary-vision-default",
     "pre_step": "secrets_header",
-    "size_guard": {
-      "bin": ".pio/build/canary-vision-default/firmware.bin",
-      "slot_bytes": 1310720,
-      "slot_name": "0x140000 OTA slot (ESP32-C3 default.csv app0/app1)"
-    }
+    "size_guards": [
+      {
+        "bin": ".pio/build/canary-vision-default/firmware.bin",
+        "slot_bytes": 1310720,
+        "slot_name": "0x140000 OTA slot (ESP32-C3 default.csv app0/app1)"
+      }
+    ]
   },
   {
     "name": "canary-display",
@@ -77,11 +93,23 @@
       "canary-display-nightstand-c6"
     ],
     "pre_step": "secrets_header",
-    "size_guard": {
-      "bin": ".pio/build/canary-display-watch/firmware.bin",
-      "slot_bytes": 3342336,
-      "slot_name": "0x330000 OTA slot (ESP32-S3 default_8MB.csv app0/app1)"
-    },
+    "size_guards": [
+      {
+        "bin": ".pio/build/canary-display-watch/firmware.bin",
+        "slot_bytes": 3342336,
+        "slot_name": "0x330000 OTA slot (ESP32-S3 default_8MB.csv app0/app1)"
+      },
+      {
+        "bin": ".pio/build/canary-display-nightstand-c6/firmware.bin",
+        "slot_bytes": 2031616,
+        "slot_name": "0x1F0000 OTA slot (partitions_display_4mb.csv app0/app1)"
+      },
+      {
+        "bin": ".pio/build/canary-display-nightlight-c3/firmware.bin",
+        "slot_bytes": 1966080,
+        "slot_name": "0x1E0000 OTA slot (fielded old-table nightlight-c3 boards — see canary-display.ini before raising)"
+      }
+    ],
     "core_dir_groups": {
       "canary-display-dash": "display-pio3",
       "canary-display-playground": "display-pio3",
@@ -108,10 +136,17 @@
     ],
     "check_env": "canary-sense-default",
     "pre_step": "secrets_header",
-    "size_guard": {
-      "bin": ".pio/build/canary-sense-default/firmware.bin",
-      "slot_bytes": 1966080,
-      "slot_name": "0x1E0000 OTA slot (ESP32-C6 min_spiffs.csv app0/app1)"
-    }
+    "size_guards": [
+      {
+        "bin": ".pio/build/canary-sense-default/firmware.bin",
+        "slot_bytes": 1966080,
+        "slot_name": "0x1E0000 OTA slot (ESP32-C6 min_spiffs.csv app0/app1)"
+      },
+      {
+        "bin": ".pio/build/canary-sense-wellbeing/firmware.bin",
+        "slot_bytes": 1966080,
+        "slot_name": "0x1E0000 OTA slot (ESP32-C6 min_spiffs.csv app0/app1)"
+      }
+    ]
   }
 ]
