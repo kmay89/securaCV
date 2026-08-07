@@ -206,6 +206,44 @@ static void test_bounded_no_overflow() {
   CHECK(big[0] == '{' && big[n - 1] == '}');
 }
 
+// ── the birth day: absent until real, and never overstated ──────────────────
+//
+// The app decides between "Born" and "Paired" on these two keys, so the two
+// ways this can lie are both tested: claiming a day the device doesn't have,
+// and calling a first-dated day a birthday.
+static void test_born_day_is_omitted_until_the_device_has_one() {
+  char buf[512];
+  FleetSelfDevice d = sample();          // sample() leaves born_day at 0
+  fleet_selfreport_build(buf, sizeof buf, &d);
+  std::string s(buf);
+  CHECK(!has(s, "born_day"));
+  CHECK(!has(s, "born_exact"));
+
+  // A device with no witness key of its own — a display — is the same case,
+  // and must not grow a "born_day":0 that a reader could render as 1970.
+  CHECK(!has(s, "\"born_day\":0"));
+}
+
+static void test_born_day_reports_the_day_and_its_confidence() {
+  char buf[512];
+  FleetSelfDevice d = sample();
+  d.born_day = 20673;                    // 2026-08-07
+  d.born_exact = 1;
+  fleet_selfreport_build(buf, sizeof buf, &d);
+  std::string s(buf);
+  CHECK(has(s, "\"born_day\":20673"));
+  CHECK(has(s, "\"born_exact\":true"));
+
+  // The same day, learned too late to be called a birthday. Same number,
+  // different claim — a reader that ignored the flag would promote a shelf
+  // into a birth date.
+  d.born_exact = 0;
+  fleet_selfreport_build(buf, sizeof buf, &d);
+  s = buf;
+  CHECK(has(s, "\"born_day\":20673"));
+  CHECK(has(s, "\"born_exact\":false"));
+}
+
 // ── FLEET_SELFREPORT_BODY_CAP really covers the worst case ──────────────────
 static void test_body_cap_covers_worst_case() {
   // The failure this guards (Codex P2 on #1226): a device ACCEPTS a name whose
@@ -227,6 +265,12 @@ static void test_body_cap_covers_worst_case() {
   d.online = 1;
   d.chain_ok = 1;
   d.chain_height = 2147483647;                 // widest legal height
+  // Widest birth day too, or the cap stops covering the worst case the moment
+  // a device starts reporting one. A day is unix_s / 86400, so even a uint32
+  // clock maxes out near 49710 — five digits is the true ceiling, but pin the
+  // widest value the writer would accept rather than the widest that can occur.
+  d.born_day = 2147483647u;
+  d.born_exact = 0;                            // "false" is the longer literal
   char body[FLEET_SELFREPORT_BODY_CAP(NAME_MAX, PROD_MAX)];
   size_t n = fleet_selfreport_build(body, sizeof body, &d);
   CHECK(n > 0);
@@ -258,6 +302,8 @@ int main() {
   test_escaping();
   test_multi_device_compose();
   test_bounded_no_overflow();
+  test_born_day_is_omitted_until_the_device_has_one();
+  test_born_day_reports_the_day_and_its_confidence();
   test_body_cap_covers_worst_case();
   test_degenerate_caps();
 
