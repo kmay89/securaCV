@@ -574,6 +574,7 @@ test("parity wave 4a: the counterfeit-capacity check the desktop got for free", 
   // memory before the write, so this costs no serial time at all.
   const intakeRs = read(join(ROOT, "desktop/src-tauri/src/intake.rs"));
   const libRsSrc = read(join(ROOT, "desktop/src-tauri/src/lib.rs"));
+  const appJsSrc = read(join(ROOT, "desktop/src/app.js"));
   const intakeJs = read(join(CANARY, "assets/intake.js"));
 
   assert.match(intakeRs, /pub fn flash_alias_verdict/, "desktop lost the capacity check");
@@ -602,6 +603,20 @@ test("parity wave 4a: the counterfeit-capacity check the desktop got for free", 
     "the capacity check must run before the image is written");
   assert.match(libRsSrc, /Nothing was written/,
     "a counterfeit part must abort the install, not warn after it");
+
+  // Review hardening (Codex on #1510). Only a CLEAR result earns a tick: an
+  // inconclusive check is missing evidence, and the module's whole point is
+  // that missing evidence must not read as a passed check. The bug was in
+  // the presentation, one layer above the careful verdict.
+  assert.match(libRsSrc, /if f\.level == "clear"/,
+    "only a clear capacity check may show a success marker");
+
+  // The MAC check must actually be CALLED. Asserting a function exists
+  // proves nothing if nothing invokes it — this one shipped unwired.
+  assert.match(libRsSrc, /intake::mac_checks/,
+    "the MAC intake check must run, not merely exist");
+  assert.match(appJsSrc, /state\.macCheck/,
+    "the MAC finding must reach the user, not stop at the backend");
 });
 
 test("device API token: both flashers mint the same credential shape and seed the same keys", async () => {
