@@ -434,14 +434,41 @@ pad_dot_proud = 0.35;  // how far the dot's top stands ABOVE the ear face.
 // matters when flashing, and the case gave you no way to know which finger
 // was on which. Round pip on one ear, bar on the other: readable in the dark,
 // readable without looking, and free.
-// ⚠️ WHICH IS WHICH IS NOT CONFIRMED. dot_round_side says which wall carries
-// the round pip; nothing here knows which switch Waveshare put on which side.
-// MEASURE it on the board and set this, then the shapes mean something. Until
-// then they only mean "these are two different buttons", which is still more
-// than the case said before.
-dot_round_side = 1;    // +1 or -1: the ear that gets the ROUND pip — MEASURE
-pad_dot_bar    = 3.2;  // the other ear's bar length (Y), hulled from the same
-                       // cone so both pips share a profile and a height
+// ✅ WHICH IS WHICH IS NOW MEASURED, off the board itself (photo, kmay89).
+// The silkscreen settles it: viewed from the BACK with the USB at the bottom,
+// it reads RST on the left and BOOT on the right. Flipped to the view the
+// case actually presents — screen toward you, USB down — that puts BOOT on
+// your left and RST on your right.
+// The remaining step is the one worth writing down, because it is the step
+// that is easy to get backwards and expensive to get wrong: which of those is
+// +X in THIS file's frame. Derived by hand it comes out +X = viewer's left;
+// verified by rendering a marker on the +X ear and looking at the model from
+// the glass side, where it lands on the left. Both agree, so:
+//
+//     +X ear = BOOT        -X ear = RST
+//
+// btn_rst_side is the physical fact and dot_round_side is the taste call that
+// reads it. Split on purpose: if the pips ever want swapping, that is one line
+// and it does not touch the orientation this took a photo and a render to pin
+// down. A future reader changing the shapes must not have to re-derive which
+// side the reset button is on.
+btn_rst_side = -1;     // MEASURED — the ear whose switch is RST
+// The ROUND pip goes on RST: a dot is what a reset control looks like
+// everywhere else, so the case borrows a convention rather than inventing
+// one. BOOT takes TWO.
+dot_round_side = btn_rst_side;
+// BOOT gets TWO pips, not a longer one. The first cut of this was a "bar" —
+// the same cone swept along Y — and it swept all of 0.2 mm, because that is
+// the entire budget: the dot sits 1.3 in from the pad's free end, so a Y-bar
+// runs off the paddle past about 4.8. A 3.0 pip beside a 3.2 pip is a 7%
+// difference on a 3 mm feature, which is nothing to a fingertip, and the
+// assert guarding it (bar >= round) passed while guarding nothing at all.
+// Stacking two smaller pips in Z spends the pad's OTHER axis, which was free.
+// One bump against two is the distinction Braille is built on, it reads
+// without looking, and — the part that matters for the press — both ears keep
+// the same dot position, the same lever arm and the same feel.
+pad_dot_twin_d   = 1.6;  // Ø of each of BOOT's two pips
+pad_dot_twin_gap = 2.0;  // their center-to-center, stacked along the pad's Z
 pad_dot_in    = 1.3;   // dot center, in from the pad's FREE end. Every mm
                        // further from the hinge is leverage: the arm is cubed
                        // in the stiffness, so this walked out from 1.8 to 1.3
@@ -1185,10 +1212,17 @@ assert(!pry_notch || pry_w <= xo - 2*r_out - 2.0,
            "it runs into the corner radii. Narrow pry_w."));
 assert(!opt_btn || (dot_round_side == 1 || dot_round_side == -1),
        "dot_round_side must be +1 or -1 — it names the ear that gets the round pip");
-assert(!opt_btn || pad_dot_bar >= pad_dot_d,
-       str("pad_dot_bar ", pad_dot_bar, " is shorter than the cone it is swept ",
-           "from (", pad_dot_d, ") — the bar would be indistinguishable from ",
-           "the round pip, which is the whole reason the two shapes differ."));
+// The gate that the old one only pretended to be. Two pips have to FIT the
+// pad's height, and they have to be far enough apart to read as two.
+assert(!opt_btn || pad_dot_twin_d + pad_dot_twin_gap <= pad_h_eff - 0.4,
+       str("BOOT's twin pips span ", pad_dot_twin_d + pad_dot_twin_gap,
+           " mm up a pad only ", pad_h_eff, " mm tall — they would run off its ",
+           "edges. Shrink pad_dot_twin_d/_gap, or raise pad_h."));
+assert(!opt_btn || pad_dot_twin_gap >= pad_dot_twin_d*0.9,
+       str("the twin pips are ", pad_dot_twin_gap, " apart and ", pad_dot_twin_d,
+           " wide — closer than about their own width and they merge into one ",
+           "lump under a finger, which is the single thing this shape exists ",
+           "not to be."));
 assert(!opt_vent || vent_z1 - vent_z0 >= vent_min_h - 0.001,
        str("wall vents are only ", vent_z1 - vent_z0, " mm tall, under the ",
            vent_min_h, " floor — the band and the vents share one stretch of ",
@@ -1522,9 +1556,13 @@ module bezel() {
                 // differ only in the one way a fingertip can read
                 if (sx == dot_round_side)
                     cylinder(d1 = pad_dot_d, d2 = pad_dot_d - 1.2, h = pad_dot_h);
-                else hull() for (dy = [-1, 1])
-                    translate([0, dy*(pad_dot_bar - pad_dot_d)/2, 0])
-                        cylinder(d1 = pad_dot_d, d2 = pad_dot_d - 1.2, h = pad_dot_h);
+                // the twins offset in LOCAL x, which the rotate above turns
+                // into the case's z — stacked up the pad, not along it, so
+                // they cost none of the length the lever arm needs
+                else for (dz = [-1, 1])
+                    translate([dz*pad_dot_twin_gap/2, 0, 0])
+                        cylinder(d1 = pad_dot_twin_d,
+                                 d2 = pad_dot_twin_d*0.55, h = pad_dot_h);
     }
   }
 }
