@@ -907,3 +907,22 @@ kbd {
 /* the setup-profile consent row under the provisioning form */
 .prov-profile { margin-top: 10px; align-items: baseline; }
 .prov-profile .muted { font-size: 12px; }
+
+/* ── progressive disclosure: a step you haven't reached is a HEADING, not a
+   wall of text. The .disabled class already gates interaction; this makes it
+   gate READING too — the body reveals itself when the step becomes real.
+   (The dimmed header stays, so the path ahead is always visible.) */
+.card.disabled > :not(.step-head) { display: none; }
+.card.disabled { padding-bottom: 12px; }
+.card.disabled .step-head { margin-bottom: 0; }
+
+/* coldstart as a details: one calm summary line, the full brief one click in */
+details.coldstart > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; }
+details.coldstart > summary::-webkit-details-marker { display: none; }
+details.coldstart > summary::after {
+  content: "▸"; margin-left: auto; color: var(--canary-dark);
+  transition: transform .15s;
+}
+details.coldstart[open] > summary::after { transform: rotate(90deg); }
+details.coldstart > summary h3 { margin: 0; }
+details.coldstart[open] > summary { margin-bottom: 8px; }

@@ -6,7 +6,7 @@
 
 [package]
 name = "securacv-flasher"
-version = "0.4.0"
+version = "0.4.1"
 description = "SecuraCV Canary Flasher — the Lab as a native desktop app"
 authors = ["Errer Labs"]
 license = "Apache-2.0"
