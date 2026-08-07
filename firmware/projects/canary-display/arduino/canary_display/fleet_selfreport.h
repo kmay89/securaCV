@@ -38,9 +38,10 @@
 // truncation is impossible by construction (pinned by the host test's
 // worst-case check). The constant covers every fixed byte of the skeleton
 // ({"kernel":"…","verified_through":"now","devices":[{…}]}), the widest
-// chain_height, and the NUL, with headroom.
+// chain_height, the widest born_day plus its exactness flag, and the NUL, with
+// headroom.
 #define FLEET_SELFREPORT_BODY_CAP(name_max, product_max) \
-  (12u * (size_t)(name_max) + 6u * (size_t)(product_max) + 160u)
+  (12u * (size_t)(name_max) + 6u * (size_t)(product_max) + 208u)
 
 // Coarse, non-extractive self-state — presence + health only, never raw media.
 typedef struct {
@@ -49,6 +50,16 @@ typedef struct {
   int         online;       // 1 = up, 0 = offline/unknown
   int         chain_ok;     // 1 = witness chain verifies, 0 = degraded/unknown
   int         chain_height; // low bits of chain height; <0 = omit
+  // When this device's KEY was born, in days since the Unix epoch — a fact
+  // about the Canary rather than about whoever paired it, which is why it
+  // belongs on the surface every Canary answers to anyone who asks. 0 = omit
+  // (a device that has never met a believable clock, or one with no witness
+  // key of its own, such as a display). `born_exact` 0 means the day is when
+  // the device was first DATED rather than born; readers must not call that a
+  // birthday. A day carries no time of day, on purpose — see
+  // firmware/common/identity/birth_day.h for the three rules that produce it.
+  unsigned    born_day;
+  int         born_exact;
 } FleetSelfDevice;
 
 // ── clamp-safe primitives (never write past cap-1; always keep a NUL) ──
@@ -124,6 +135,15 @@ static inline size_t fleet_selfreport_append_device(char* out, size_t cap, size_
   if (d && d->chain_height >= 0) {
     o = fsr__raw(out, cap, o, ",\"chain_height\":");
     o = fsr__int(out, cap, o, d->chain_height);
+  }
+  // Omitted entirely until the device has met a clock, so a reader can tell
+  // "not known" from any particular day — an absent key and a zero are
+  // different answers, and only one of them is honest here.
+  if (d && d->born_day > 0u) {
+    o = fsr__raw(out, cap, o, ",\"born_day\":");
+    o = fsr__int(out, cap, o, (int)d->born_day);
+    o = fsr__raw(out, cap, o, ",\"born_exact\":");
+    o = fsr__raw(out, cap, o, d->born_exact ? "true" : "false");
   }
   o = fsr__raw(out, cap, o, "}");
   return o;

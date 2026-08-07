@@ -24,7 +24,7 @@
       },
       "kernel": {
         "title": "Witness Kernel Connection",
-        "description": "Enter the connection details for your SecuraCV Privacy Witness Kernel.\n\nThe kernel runs as a Home Assistant add-on, Docker container, or standalone service. The kernel rotates its API token every 10 minutes, so prefer the token file (the add-on writes it to /config/api_token); use a static token only for kernels whose token file Home Assistant cannot read.",
+        "description": "Enter the connection details for your SecuraCV Privacy Witness Kernel.\n\nThe kernel runs as a Home Assistant app, Docker container, or standalone service. The kernel rotates its API token every 10 minutes, so prefer the token file (the app writes it to /config/api_token); use a static token only for kernels whose token file Home Assistant cannot read.",
         "data": {
           "url": "Kernel URL",
           "token_file": "API token file (recommended)",
@@ -40,7 +40,7 @@
       },
       "both": {
         "title": "MQTT + Kernel Connection",
-        "description": "Configure both MQTT for Canary devices and HTTP for the Witness Kernel. The kernel rotates its API token every 10 minutes, so prefer the token file (the add-on writes it to /config/api_token).",
+        "description": "Configure both MQTT for Canary devices and HTTP for the Witness Kernel. The kernel rotates its API token every 10 minutes, so prefer the token file (the app writes it to /config/api_token).",
         "data": {
           "url": "Kernel URL",
           "token_file": "API token file (recommended)",

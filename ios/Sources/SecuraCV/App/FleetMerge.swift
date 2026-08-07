@@ -148,6 +148,16 @@ enum FleetMerge {
             w.chainLength = UInt32(clamping: h)
         }
 
+        // When the key was born. Unlike everything else here this is not a
+        // "fill gaps" field — a device that has just learned its own birth day
+        // is the authority on it, and the row we hold may predate that. It
+        // still cannot be *un*-learned: the firmware never restates a recorded
+        // day (birth_day.h), so a later row can only ever carry the same value.
+        if let day = row.bornDay, day > 0 {
+            w.bornDay = day
+            w.bornExact = row.bornExact
+        }
+
         // `row.chainVerifies` is intentionally unused: "chain":"ok" is the
         // device's claim about itself. The badge is only ever set by
         // ChainVerifier, from a signature this phone checked against a pinned

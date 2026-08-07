@@ -119,17 +119,17 @@ signed claims.
 
 By hand, it's two installs:
 
-1. **Mosquitto** — Settings → Add-ons → Add-on Store → **Mosquitto broker** →
+1. **Mosquitto** — Settings → Apps → App Store → **Mosquitto broker** →
    Install → Start.
-2. **securaCV** — add this repo as an add-on repository
+2. **securaCV** — add this repo as an app repository
    (`https://github.com/kmay89/securaCV`), then install the **Privacy Witness
-   Kernel** add-on and start it. It **auto-discovers** the broker; no MQTT config
+   Kernel** app and start it. It **auto-discovers** the broker; no MQTT config
    to type.
 3. Open the **SecuraCV** panel in the sidebar — its wizard walks the rest.
 
 Detail: [`homeassistant_setup.md`](homeassistant_setup.md).
 
-**Working looks like:** a SecuraCV panel in the sidebar, add-on healthy.
+**Working looks like:** a SecuraCV panel in the sidebar, app healthy.
 
 > **Why this order, in machine-readable form:** the whole provisioning sequence —
 > every step, what it does, *why it exists*, and what it buys you — is generated
@@ -147,8 +147,8 @@ Frigate does the vision; securaCV subscribes to it over MQTT and turns detection
 into identity-stripped, signed claims. **Pick where detection runs:**
 
 ### Option A — on the hub (simplest)
-Install the **Frigate** add-on (its store repo:
-`https://github.com/blakeblackshear/frigate-hass-addons`, add-on slug
+Install the **Frigate** app (its store repo:
+`https://github.com/blakeblackshear/frigate-hass-addons`, app slug
 `ccab4aaf_frigate`) and use our curated config as the starting point:
 [`homeassistant/frigate/config.yaml`](../homeassistant/frigate/config.yaml) →
 place it at `/addon_configs/ccab4aaf_frigate/config.yml`.
@@ -166,7 +166,7 @@ cameras:
     detect: { width: 1280, height: 720, fps: 5 }
 ```
 
-Restart the add-on. (The example camera ships **disabled** so the config is valid
+Restart the app. (The example camera ships **disabled** so the config is valid
 before you've added anything — leave it `false` and Frigate silently ignores it.)
 
 **Using a Coral USB TPU?** Plugging it in changes nothing on its own — the
@@ -187,7 +187,7 @@ A dedicated detector node — `docker compose up`, no Coral needed:
 The Jetson does the vision on its GPU and publishes to the hub's broker. (Home
 Assistant OS doesn't run on Jetson — it's the *eyes*, not a second hub.)
 
-> **Note:** go2rtc is **built into Frigate** — it is not a separate add-on.
+> **Note:** go2rtc is **built into Frigate** — it is not a separate app.
 > **Running both A and B?** Give each a distinct `mqtt.client_id` *and*
 > `topic_prefix` (Mosquitto allows one connection per client ID), and point
 > securaCV's `frigate.topic_prefix` at the one you want it to read.
@@ -226,8 +226,8 @@ microphone hardware worth buying and the honest wake-word trade:
 - **Automations & alerts:** [`homeassistant_automations.yaml`](homeassistant_automations.yaml)
   and the blueprints in [`blueprints/`](blueprints/).
 - **It maintains itself:** Home Assistant OS has an immutable A/B root that rolls
-  back a failed boot, a supervisor that restarts crashed add-ons, and hands-off
-  updates. The securaCV add-on rides that same update channel — this is why the
+  back a failed boot, a supervisor that restarts crashed apps, and hands-off
+  updates. The securaCV app rides that same update channel — this is why the
   hub is built on HAOS rather than a hand-rolled image.
 
 ## If something's stuck
@@ -237,7 +237,7 @@ microphone hardware worth buying and the honest wake-word trade:
 | Flasher write fails with `Inappropriate ioctl` (macOS) | Your build predates the rdisk cache-sync fix — get a newer Flasher |
 | `homeassistant.local` won't resolve | Use the Pi's IP from your router (mDNS is often blocked) |
 | First boot seems hung | Give it the full 20 minutes before worrying |
-| securaCV can't find the broker | Start the **Mosquitto** add-on first, then restart the kernel add-on |
+| securaCV can't find the broker | Start the **Mosquitto** app first, then restart the kernel app |
 | Frigate detections don't reach securaCV | Check `topic_prefix` matches on both sides; if two Frigates run, they need distinct `client_id`s |
 | Camera won't open in Frigate | Verify the RTSP URL in VLC first; check credentials and the `/stream` path |
 
@@ -255,7 +255,7 @@ This page is **living** — kept honest as the stack is exercised on real hardwa
 |---|---|
 | 1. Flash the hub | ✅ write + read-back verify proven on macOS (Pi 5, 64 GB card); the rdisk cache-sync fix is required |
 | 2. First boot | ⏳ Wi-Fi seed acceptance on real HAOS not yet confirmed end to end |
-| 3. Broker + securaCV | ⏳ documented from the shipped add-ons; not yet re-walked on a fresh flash. The Flasher's **self-setup** option now automates this step (see below) — same validation caveat |
+| 3. Broker + securaCV | ⏳ documented from the shipped apps; not yet re-walked on a fresh flash. The Flasher's **self-setup** option now automates this step (see below) — same validation caveat |
 | 4a. Frigate on the hub | ⏳ curated config committed **and** an executor that installs it via the Supervisor API (`hub_seed_apply.py`, host-tested, idempotent); the Flasher's first-boot companion now invokes it unattended |
 | 4b. Jetson detector | ⏳ scaffold follows Frigate's official Jetson guidance; unvalidated on an Orin |
 | 5. Canaries | ✅ shipping path, covered by its own guide |

@@ -1,6 +1,6 @@
-# Home Assistant Add-on Repository
-# Add this repository URL in Home Assistant to install the Privacy Witness Kernel add-on:
-#   Settings → Add-ons → ⋮ (overflow menu) → Repositories → https://github.com/kmay89/securaCV
+# Home Assistant App Repository
+# Add this repository URL in Home Assistant to install the Privacy Witness Kernel app:
+#   Settings → Apps → ⋮ (overflow menu) → Repositories → https://github.com/kmay89/securaCV
 
 name: "SecuraCV"
 url: "https://github.com/kmay89/securaCV"

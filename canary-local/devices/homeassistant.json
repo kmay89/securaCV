@@ -343,7 +343,7 @@
         "id": "broker",
         "title": "3 \u00b7 The broker",
         "host": "ha-ssh",
-        "intro": "Canaries speak MQTT. This prompt is the Terminal & SSH add-on \u2014 or click the same installs in the Add-on store.",
+        "intro": "Canaries speak MQTT. This prompt is the Terminal & SSH app \u2014 or click the same installs in the App Store.",
         "steps": [
           {
             "cmd": "ha core info",

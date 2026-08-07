@@ -88,6 +88,41 @@ fn journal(app: &AppHandle, line: &str) {
     }
 }
 
+/// Read the update journal back off disk, newest line first, for the Settings
+/// panel's "log of updates". Capped so a long-lived install can't hand the
+/// frontend an unbounded string; the full file stays on disk either way, and
+/// the panel names its path so it can always be opened directly.
+///
+/// A missing journal is not an error — it means nothing has happened yet.
+#[tauri::command]
+pub fn read_update_journal(app: AppHandle) -> Result<Vec<String>, String> {
+    const MAX_LINES: usize = 200;
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("no app data dir: {e}"))?;
+    let path = dir.join("update-journal.log");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("could not read the update journal: {e}")),
+    };
+    let mut lines: Vec<String> = text.lines().filter(|l| !l.trim().is_empty()).map(str::to_string).collect();
+    lines.reverse();
+    lines.truncate(MAX_LINES);
+    Ok(lines)
+}
+
+/// Where that journal lives, so the panel can show the path (and so a support
+/// question is answerable without guessing per-platform data dirs).
+#[tauri::command]
+pub fn update_journal_path(app: AppHandle) -> Result<String, String> {
+    app.path()
+        .app_data_dir()
+        .map(|d| d.join("update-journal.log").display().to_string())
+        .map_err(|e| format!("no app data dir: {e}"))
+}
+
 /// The declined-version marker: `<version> <epoch-secs>`, in the app data
 /// dir next to the journal, so a "Later" survives a relaunch.
 fn declined_path(app: &AppHandle) -> Option<std::path::PathBuf> {
@@ -113,17 +148,45 @@ fn write_declined(app: &AppHandle, version: &str) {
 
 /// Ask the release channel whether a newer signed build exists (frontend
 /// seam — the routine below uses the same underlying check). `None` = current.
+///
+/// Journals every outcome, exactly as the routine pass does. The Settings
+/// panel promises "every check and install this app has done", so a
+/// user-initiated check that left no trace would make that copy a lie — and
+/// an offline failure is the single most useful line the journal can carry.
 #[tauri::command]
 pub async fn check_update(app: AppHandle) -> Result<Option<UpdateDto>, String> {
-    let updater = app.updater().map_err(|e| e.to_string())?;
+    let updater = app.updater().map_err(|e| {
+        let msg = format!("update check unavailable: {e}");
+        journal(&app, &msg);
+        msg
+    })?;
     match updater.check().await {
-        Ok(Some(update)) => Ok(Some(UpdateDto {
-            version: update.version.clone(),
-            current_version: update.current_version.clone(),
-            notes: update.body.clone(),
-        })),
-        Ok(None) => Ok(None),
-        Err(e) => Err(format!("update check failed: {e}")),
+        Ok(Some(update)) => {
+            journal(
+                &app,
+                &format!(
+                    "checked — v{} is ready (running v{})",
+                    update.version, update.current_version
+                ),
+            );
+            Ok(Some(UpdateDto {
+                version: update.version.clone(),
+                current_version: update.current_version.clone(),
+                notes: update.body.clone(),
+            }))
+        }
+        Ok(None) => {
+            journal(
+                &app,
+                &format!("checked — v{} is current", env!("CARGO_PKG_VERSION")),
+            );
+            Ok(None)
+        }
+        Err(e) => {
+            let msg = format!("update check failed: {e}");
+            journal(&app, &msg);
+            Err(msg)
+        }
     }
 }
 
