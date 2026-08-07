@@ -1520,7 +1520,16 @@ function baudLadder() {
 // Only these failures are worth a slower retry. A bad image, a busy port or a
 // refused permission will fail identically at every speed, and retrying those
 // three more times just makes the user wait longer for the same answer.
-const BAUD_RETRY_KINDS = new Set(["not-in-download", "read-stall", "device-lost", "unknown"]);
+//
+// `unknown` is deliberately NOT here. Every espflash exit used to arrive as
+// "exited with code 1" with its real output dropped, so everything classified
+// as `unknown` — and including it would have retried a busy port or a denied
+// permission down the whole ladder, repeating the download, the verification
+// and (on first contact) the full-chip erase each time. The backend now keeps
+// espflash's last lines in the error, so genuine transport faults classify as
+// device-lost / not-in-download / read-stall on their own merits and this set
+// can stay honest.
+const BAUD_RETRY_KINDS = new Set(["not-in-download", "read-stall", "device-lost"]);
 
 // Run `fn(baud)` down the ladder until it succeeds or the rungs run out.
 async function withBaudLadder(fn, con) {
@@ -2024,6 +2033,11 @@ function onDisconnect() {
   state.passport = null;
   state.resident = null;
   state.passportPending = false;
+  // The lowered speed belonged to THAT board and THAT cable. Carrying it to
+  // the next board would quietly hold a healthy one at 115200 for the rest of
+  // the session — the ladder is a per-board remedy, not a session-wide verdict.
+  state.baudCeiling = null;
+  state.usedBaud = null;
   state.chip = null;
   state.flashBytes = null;
   state.mac = null;

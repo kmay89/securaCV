@@ -749,12 +749,25 @@ async fn flash(
     let (mut rx, _child, _ticket) = launch_guard::spawn_tracked(&app, cmd, ESPFLASH)?;
 
     let mut code = -1;
+    // Keep espflash's last words. They stream to the console for the user to
+    // read, but the FAILURE needs them too: the frontend classifies errors by
+    // their text ("permission denied", "resource busy", "no serial data"), and
+    // an error saying only "exited with code 1" classifies as `unknown` —
+    // indistinguishable from a bad cable. That makes a busy port look like a
+    // transport fault and get retried down the whole baud ladder, re-erasing
+    // and re-downloading each time. A few lines of tail is the difference
+    // between a diagnosis and a shrug. (read_region already did this.)
+    let mut tail: Vec<String> = Vec::new();
     while let Some(event) = rx.recv().await {
         match event {
             CommandEvent::Stdout(bytes) | CommandEvent::Stderr(bytes) => {
                 let text = String::from_utf8_lossy(&bytes);
                 for line in text.split(['\r', '\n']).filter(|l| !l.trim().is_empty()) {
                     emit(&app, line.to_string());
+                    tail.push(line.trim().to_string());
+                    if tail.len() > 8 {
+                        tail.remove(0);
+                    }
                 }
             }
             CommandEvent::Terminated(payload) => {
@@ -786,7 +799,8 @@ async fn flash(
         })
     } else {
         Err(format!(
-            "espflash exited with code {code}. The board can't be bricked — put it back in download mode and try again."
+            "espflash exited with code {code}. The board can't be bricked — put it back in download mode and try again.\n{}",
+            tail.join("\n")
         ))
     }
 }
@@ -933,12 +947,25 @@ async fn flash_local_file(
     let (mut rx, _child, _ticket) = launch_guard::spawn_tracked(&app, cmd, ESPFLASH)?;
 
     let mut code = -1;
+    // Keep espflash's last words. They stream to the console for the user to
+    // read, but the FAILURE needs them too: the frontend classifies errors by
+    // their text ("permission denied", "resource busy", "no serial data"), and
+    // an error saying only "exited with code 1" classifies as `unknown` —
+    // indistinguishable from a bad cable. That makes a busy port look like a
+    // transport fault and get retried down the whole baud ladder, re-erasing
+    // and re-downloading each time. A few lines of tail is the difference
+    // between a diagnosis and a shrug. (read_region already did this.)
+    let mut tail: Vec<String> = Vec::new();
     while let Some(event) = rx.recv().await {
         match event {
             CommandEvent::Stdout(bytes) | CommandEvent::Stderr(bytes) => {
                 let text = String::from_utf8_lossy(&bytes);
                 for line in text.split(['\r', '\n']).filter(|l| !l.trim().is_empty()) {
                     emit(&app, line.to_string());
+                    tail.push(line.trim().to_string());
+                    if tail.len() > 8 {
+                        tail.remove(0);
+                    }
                 }
             }
             CommandEvent::Terminated(payload) => {
@@ -968,7 +995,8 @@ async fn flash_local_file(
         })
     } else {
         Err(format!(
-            "espflash exited with code {code}. The board can't be bricked — put it back in download mode and try again."
+            "espflash exited with code {code}. The board can't be bricked — put it back in download mode and try again.\n{}",
+            tail.join("\n")
         ))
     }
 }

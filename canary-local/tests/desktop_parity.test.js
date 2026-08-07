@@ -367,6 +367,59 @@ test("parity wave 3a: the boot-log verdict and the self-healing baud ladder", as
   // A ladder that can empty out would turn a cable fault into a dead end.
   assert.match(appJs, /rungs\.length \? rungs :/,
     "the baud ladder must never be empty — the slowest rung always survives");
+
+  // Review hardening (Codex on #1507).
+  // `unknown` must NOT be retried: espflash's exit code alone classifies as
+  // unknown, so retrying it would walk a busy port or a denied permission
+  // down the whole ladder, repeating the download and the full-chip erase.
+  assert.ok(!/BAUD_RETRY_KINDS = new Set\(\[[^\]]*"unknown"/.test(appJs),
+    "the baud ladder must not retry `unknown` — it would retry every sidecar failure");
+  // …which is only safe because the backend keeps espflash's own words, so a
+  // real transport fault can classify as itself.
+  assert.match(libRs, /let mut tail: Vec<String>/,
+    "espflash's output must survive into the error, or every failure is `unknown`");
+  assert.match(libRs, /tail\.join\("\\n"\)/,
+    "the espflash error must carry its tail for classification");
+  // The ceiling is a per-board remedy. Left set across a swap it would hold a
+  // healthy board at the slowest speed for the rest of the session.
+  assert.match(appJs, /state\.baudCeiling = null;\s*\n\s*state\.usedBaud = null;/,
+    "disconnect must clear the lowered baud ceiling");
+
+  // The proof that the two fixes above actually compose: run the desktop's
+  // real classifier over real espflash failures as the backend now reports
+  // them, and require that only transport faults are retried. Asserting the
+  // retry SET alone would not have caught the original bug — every one of
+  // these used to arrive as `unknown`.
+  const grabFn = (name) => {
+    const i = appJs.indexOf("function " + name);
+    let p = 0, j = appJs.indexOf("(", i);
+    for (let k = j; k < appJs.length; k++) {
+      if (appJs[k] === "(") p++;
+      else if (appJs[k] === ")") { p--; if (!p) { j = k; break; } }
+    }
+    const b = appJs.indexOf("{", j);
+    let d = 0;
+    for (let k = b; k < appJs.length; k++) {
+      if (appJs[k] === "{") d++;
+      else if (appJs[k] === "}") { d--; if (!d) return appJs.slice(i, k + 1); }
+    }
+  };
+  const classify = new Function(grabFn("classifyFlashError") + "\nreturn classifyFlashError;")();
+  const RETRY = new Set(["not-in-download", "read-stall", "device-lost"]);
+  const generic = "espflash exited with code 1. The board can't be bricked — " +
+    "put it back in download mode and try again.\n";
+  for (const [tail, kind, shouldRetry] of [
+    ["Error: Failed to open serial port\nCaused by: Device or resource busy", "port-busy", false],
+    ["Error: Permission denied (os error 13)", "permission", false],
+    ["Error: Failed to connect to the device\nCaused by: No serial data received", "not-in-download", true],
+    ["Error: Serial port disconnected\nCaused by: device not configured", "device-lost", true],
+    ["", "unknown", false],
+  ]) {
+    const got = classify(new Error(generic + tail)).kind;
+    assert.strictEqual(got, kind, `espflash tail misclassified: ${tail.slice(0, 40) || "(none)"}`);
+    assert.strictEqual(RETRY.has(got), shouldRetry,
+      `${kind} must ${shouldRetry ? "" : "NOT "}be retried down the baud ladder`);
+  }
 });
 
 test("device API token: both flashers mint the same credential shape and seed the same keys", async () => {
