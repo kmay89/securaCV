@@ -1496,6 +1496,144 @@ function diagnoseBootLog(text) {
   return null;
 }
 
+// ── flash-time dials: catalog → clamped typed NVS ints ───────────────────────
+// Vision's detection dials and Sense's radar reflexes are NVS-backed — the
+// same live numbers Home Assistant retunes later — so seeding them at install
+// time means a Canary is already right for its room on first boot. Ports of
+// flash-core.js's detectDials/detectValuesToNvs/reflexDials/reflexValuesToNvs;
+// pure, so the parity gate can run them against the browser's originals.
+//
+// The catalog owns every key, bound and default. Clamping here is not
+// belt-and-braces: a value outside the firmware's range is a setting the
+// device will reject or misread, and silently writing one is worse than
+// writing nothing.
+function detectDials(catalog, product) {
+  if (!product || !catalog) return null;
+  const p = (catalog.products || []).find((x) => x.id === product.id);
+  return (p && p.detect) || null;
+}
+
+function detectValuesToNvs(values, dials) {
+  const b = (dials && dials.bounds) || {};
+  const clamp = (v, [lo, hi] = [0, 0xffffffff]) => Math.min(Math.max(Math.round(v), lo), hi);
+  const out = { u8: {}, u32: {} };
+  if (values == null) return out;
+  if (Number.isFinite(values.target)) out.u8.det_target = clamp(values.target, b.target || [0, 255]);
+  if (Number.isFinite(values.score)) out.u8.det_score = clamp(values.score, b.score || [0, 100]);
+  if (Number.isFinite(values.lost_ms)) out.u32.det_lost = clamp(values.lost_ms, b.lost_ms);
+  if (Number.isFinite(values.dwell_ms)) out.u32.det_dwell = clamp(values.dwell_ms, b.dwell_ms);
+  return out;
+}
+
+function reflexDials(catalog, product) {
+  if (!product || !catalog) return null;
+  const p = (catalog.products || []).find((x) => x.id === product.id);
+  const r = p && p.reflexes;
+  return (r && r.applies === "runtime" && r.nvs) ? r : null;
+}
+
+function reflexValuesToNvs(values, reflexes) {
+  const out = { u32: {} };
+  if (!values || !reflexes || !Array.isArray(reflexes.knobs)) return out;
+  for (const k of reflexes.knobs) {
+    const v = values[k.id];
+    if (!Number.isFinite(v) || !k.nvs) continue;
+    const [lo, hi] = Array.isArray(k.bounds) && k.bounds.length === 2 ? k.bounds : [0, 0xffffffff];
+    out.u32[k.nvs] = Math.min(Math.max(Math.round(v), lo), hi);
+  }
+  return out;
+}
+
+// Render the room presets for whichever dial family this product has. The
+// browser offers fine-tune sliders too; this ships the presets, which is where
+// the value is — the numbers behind them stay retunable from Home Assistant.
+//
+// "As it ships" is the default and writes NOTHING: the firmware's own defaults
+// are already the answer, and seeding them explicitly would turn a value the
+// maintainer can change in a future release into one frozen at flash time.
+function renderDials(product) {
+  const box = $("dials");
+  if (!box) return;
+  // Keep a choice that still belongs to THIS product. renderProducts() re-runs
+  // whenever the manifest or the board passport lands, and each re-run calls
+  // onProductChosen() for the selected row — so an unconditional reset here
+  // silently discarded a preset picked during those seconds, and the flash
+  // then wrote no dials at all. The passport read is exactly when a user has
+  // time to pick one, because the Install button is disabled until it lands.
+  if (!state.dialChoice || state.dialChoice.productId !== product.id) {
+    state.dialChoice = null;
+  }
+  box.innerHTML = "";
+  const detect = detectDials(state.catalog, product);
+  const reflexes = reflexDials(state.catalog, product);
+  const spec = detect || reflexes;
+  if (!spec || !Array.isArray(spec.presets) || !spec.presets.length) {
+    box.classList.add("hidden");
+    return;
+  }
+  box.classList.remove("hidden");
+  box.append(Object.assign(document.createElement("h3"), {
+    textContent: detect ? "Tune it for the room (optional)" : "Radar reflexes (optional)",
+  }));
+  box.append(Object.assign(document.createElement("p"), {
+    className: "fineprint",
+    textContent: detect
+      ? "Bake a starting point into the chip so it behaves right where it's going. " +
+        "These are the same numbers Home Assistant retunes live — nothing is locked in."
+      : "A starting point for the radar's reflexes, written with the firmware. " +
+        "Home Assistant retunes all of them live afterward.",
+  }));
+  const grid = document.createElement("div");
+  grid.className = "dial-grid";
+  for (const preset of spec.presets) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "dial-card";
+    b.dataset.preset = preset.id;
+    b.append(
+      Object.assign(document.createElement("span"), { className: "dial-icon", textContent: preset.icon || "•" }),
+      Object.assign(document.createElement("span"), { className: "dial-title", textContent: preset.title }),
+      Object.assign(document.createElement("span"), { className: "dial-blurb", textContent: preset.blurb || "" }),
+    );
+    b.addEventListener("click", () => {
+      grid.querySelectorAll(".dial-card").forEach((c) => c.classList.remove("selected"));
+      b.classList.add("selected");
+      // The shipped preset means "write nothing" — see above. (Both that and
+      // "nothing picked yet" are null, which is fine: they mean the same
+      // thing to the flash and both show the shipped card selected.)
+      state.dialChoice = preset.id === "ships"
+        ? null
+        : {
+            productId: product.id,
+            presetId: preset.id,
+            kind: detect ? "detect" : "reflex",
+            values: preset.values,
+            title: preset.title,
+          };
+    });
+    grid.appendChild(b);
+  }
+  box.appendChild(grid);
+  // Restore the surviving choice, else the shipped default.
+  const keep = state.dialChoice && grid.querySelector(`[data-preset="${state.dialChoice.presetId}"]`);
+  const show = keep || grid.querySelector('[data-preset="ships"]') || grid.firstElementChild;
+  if (show) show.classList.add("selected");
+}
+
+// The chosen preset as typed NVS ints for the backend, or null when the user
+// left it as it ships.
+function dialsForFlash(product) {
+  const c = state.dialChoice;
+  if (!c) return null;
+  const out = c.kind === "detect"
+    ? detectValuesToNvs(c.values, detectDials(state.catalog, product))
+    : reflexValuesToNvs(c.values, reflexDials(state.catalog, product));
+  const u8 = out.u8 || {};
+  const u32 = out.u32 || {};
+  if (!Object.keys(u8).length && !Object.keys(u32).length) return null;
+  return { u8, u32 };
+}
+
 // ── self-healing: the flash baud ladder ──────────────────────────────────────
 // Transfer speeds to try, fastest first. Flaky cables, unpowered hubs and long
 // USB runs sync the ROM fine at 115200 and then choke on the high-speed
@@ -2038,6 +2176,9 @@ function onDisconnect() {
   // the session — the ladder is a per-board remedy, not a session-wide verdict.
   state.baudCeiling = null;
   state.usedBaud = null;
+  // A preset was chosen for the board that just left. The next one starts
+  // from its firmware's own defaults, not the last board's room.
+  state.dialChoice = null;
   state.chip = null;
   state.flashBytes = null;
   state.mac = null;
@@ -2410,6 +2551,7 @@ function onProductChosen(p, ver) {
   // Canaries flashed today find it by themselves the day it exists.
   if (usbSecrets || broker) $("mqtt-host").value ||= "homeassistant.local";
   profileAutofill();
+  renderDials(p); // room presets, for the products whose firmware reads them
   const btn = $("flash-btn");
   // Wait for the passport before arming the button. Without this the picker
   // is live during the connect-time read, so a quick hand could start an
@@ -2690,7 +2832,12 @@ function readProvisioning(product) {
   const broker = product.broker_nvs === true;
   // Wi-Fi-only boards: an empty SSID just means "skip the preload" — the
   // board's own setup path still works, so nothing to validate or write.
-  if (!usbSecrets && !$("wifi-ssid").value && !$("mqtt-host").value) return null;
+  // A chosen room preset is a thing to write, exactly like a network or a
+  // broker. Today every dial-carrying product is usb-secrets so this arm can't
+  // be reached by one — but relying on that coincidence would mean a future
+  // dial product silently drops the preset the user picked.
+  const dials = dialsForFlash(product);
+  if (!usbSecrets && !$("wifi-ssid").value && !$("mqtt-host").value && !dials) return null;
   const fields = ["wifi-ssid", "wifi-pass"]
     .concat(usbSecrets || broker ? ["device-id"] : [])
     .concat(broker ? ["mqtt-host", "mqtt-port", "mqtt-user", "mqtt-pass"] : []);
@@ -2721,6 +2868,9 @@ function readProvisioning(product) {
     // Which NVS encoding this firmware reads (catalog, from the source):
     // "blob" for canary/wap, "string" for sense/vision/display.
     wifiNvs: product.wifi_nvs || "string",
+    // Room presets as clamped typed ints, or empty when the user left the
+    // dials as they ship (the backend writes no dial keys at all then).
+    dials: dials || { u8: {}, u32: {} },
   };
 }
 

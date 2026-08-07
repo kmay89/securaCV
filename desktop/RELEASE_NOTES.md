@@ -17,6 +17,29 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.8.0 — 2026-08-07
+
+**Tune it for the room before it ever boots.**
+
+- **Room presets, baked in with the firmware.** Camera Canaries (Vision) and
+  radar Canaries (Sense) read their detection dials out of the chip's
+  settings, so the app now offers the same room presets the web Lab does —
+  Entryway, Living room, Hallway, Garage/workshop, Home office and the rest
+  — written in the same pass as the firmware. The board comes up already
+  behaving right for where it's going, instead of needing a trip through
+  Home Assistant first.
+- **Nothing is locked in.** These are the very numbers Home Assistant
+  retunes live afterward; a preset is a starting point. And **"as it ships"
+  writes nothing at all** — the firmware's own defaults stay the answer, so
+  a value the maintainer improves in a later release isn't frozen into your
+  board by today's flash.
+
+Under the hood this needed a new settings type (a full-width integer): a
+dwell of ten minutes doesn't fit in the narrow one, and written narrower the
+firmware reads it back as absent and quietly uses its built-in default. Both
+flashers now clamp every dial to the same published range, checked
+value-for-value against each other.
+
 ## 0.7.0 — 2026-08-07
 
 **Two things that used to need a person who knows ESP32s.**

@@ -36,6 +36,40 @@ pub struct Provisioning {
     // don't seed; the firmware derives one from its own key as always.
     #[serde(default)]
     pub api_token: String,
+    // Detection dials / radar reflexes, baked in the same write as the
+    // firmware so a Canary is already tuned for its room on first boot. The
+    // catalog owns every key, bound and default (products[].detect and
+    // products[].reflexes); the frontend clamps to those bounds and sends
+    // NOTHING when the user left the shipped defaults alone, so an untouched
+    // install writes no dial keys at all. These are the same keys Home
+    // Assistant retunes live afterward — seeding is a starting point, not a
+    // lock.
+    #[serde(default)]
+    pub dials: Dials,
+}
+
+/// Typed integer NVS entries, split by width because ESP-IDF Preferences
+/// stores the type alongside the value: a key the firmware reads with
+/// `getULong` must have been written as one (0x04), or it reads back as
+/// missing and silently falls back to its compiled default.
+#[derive(Debug, Default, Clone, serde::Deserialize)]
+pub struct Dials {
+    #[serde(default)]
+    pub u8: std::collections::BTreeMap<String, u8>,
+    #[serde(default)]
+    pub u32: std::collections::BTreeMap<String, u32>,
+}
+
+/// NVS keys are at most 15 characters (the 16-byte slot keeps a NUL). Longer
+/// keys are silently TRUNCATED by the writer's zip, which would land the
+/// value under a neighboring name — so refuse them here instead. Restricting
+/// the alphabet keeps a catalog typo from producing an unreadable page.
+pub(crate) fn dial_key_ok(key: &str) -> bool {
+    !key.is_empty()
+        && key.len() <= 15
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
 // Identity, broker, and network are INDEPENDENT capabilities (PR #1351's
@@ -290,6 +324,21 @@ impl NvsWriter {
         Ok(())
     }
 
+    // Preferences `putULong` — item type 0x04, four bytes LE inline. The
+    // detection dials need it: a dwell of 600000 ms does not fit in a u16, so
+    // writing those keys as anything narrower silently truncates the number
+    // the user chose into a different setting.
+    fn u32(&mut self, key: &str, value: u32) -> Result<(), String> {
+        self.ensure(1)?;
+        let index = self.next;
+        self.header(index, 1, 0x04, 1, key);
+        let offset = Self::item_offset(index);
+        self.page[offset + 24..offset + 28].copy_from_slice(&value.to_le_bytes());
+        self.finish_item(index);
+        self.next += 1;
+        Ok(())
+    }
+
     fn finish(mut self, partition_size: usize) -> Vec<u8> {
         self.page[0..4].copy_from_slice(&0xffff_fffeu32.to_le_bytes());
         self.page[4..8].copy_from_slice(&0u32.to_le_bytes());
@@ -349,6 +398,23 @@ fn build_nvs(config: &Provisioning, partition_size: usize) -> Result<Vec<u8>, St
         writer.blob("api_token", config.api_token.as_bytes())?;
         writer.blob("api_tkn", config.api_token.as_bytes())?;
     }
+    // The dials last, so a malformed key can't cost the user their Wi-Fi:
+    // everything above is already staged by the time we get here. A bad key
+    // is a hard error rather than a skip — silently dropping a setting the
+    // user deliberately chose is the failure mode this whole feature exists
+    // to avoid.
+    for (key, value) in &config.dials.u8 {
+        if !dial_key_ok(key) {
+            return Err(format!("dial key '{key}' is not a valid NVS key"));
+        }
+        writer.u8(key, *value)?;
+    }
+    for (key, value) in &config.dials.u32 {
+        if !dial_key_ok(key) {
+            return Err(format!("dial key '{key}' is not a valid NVS key"));
+        }
+        writer.u32(key, *value)?;
+    }
     Ok(writer.finish(partition_size))
 }
 
@@ -378,6 +444,7 @@ mod tests {
             mqtt_pass: "broker-secret".into(),
             wifi_nvs: String::new(),
             api_token: String::new(),
+            dials: Dials::default(),
         }
     }
 
@@ -644,6 +711,57 @@ mod tests {
             - 8;
         assert_eq!(nvs[wifi_header + 1], 0x21);
         assert!(nvs[wifi_header + 2] >= 2);
+    }
+
+    #[test]
+    fn dial_keys_write_typed_ints_the_firmware_can_read_back() {
+        let mut cfg = config();
+        // A dwell of 600000 ms is the catalog's upper bound and does not fit
+        // in a u16 — the reason the u32 writer exists at all.
+        cfg.dials.u8.insert("det_score".into(), 70);
+        cfg.dials.u32.insert("det_dwell".into(), 600_000);
+        let nvs = build_nvs(&cfg, 0x5000).unwrap();
+
+        let header_of = |key: &str| {
+            nvs.windows(key.len()).position(|w| w == key.as_bytes()).unwrap() - 8
+        };
+        // Preferences putUChar → item type 0x01, value inline at +24.
+        let score = header_of("det_score");
+        assert_eq!(nvs[score + 1], 0x01, "det_score must be a u8 entry");
+        assert_eq!(nvs[score + 24], 70);
+        // Preferences putULong → item type 0x04, four bytes LE at +24. Read
+        // as anything narrower this is 27392, a completely different setting.
+        let dwell = header_of("det_dwell");
+        assert_eq!(nvs[dwell + 1], 0x04, "det_dwell must be a u32 entry");
+        assert_eq!(
+            u32::from_le_bytes(nvs[dwell + 24..dwell + 28].try_into().unwrap()),
+            600_000
+        );
+    }
+
+    #[test]
+    fn dial_keys_are_validated_rather_than_silently_truncated() {
+        // The writer zips the key into a 16-byte slot, so an over-long key
+        // would land the value under a neighboring name instead of failing.
+        assert!(dial_key_ok("det_dwell"));
+        assert!(dial_key_ok("sns_debounce"));
+        assert!(!dial_key_ok(""));
+        assert!(!dial_key_ok("this_key_is_far_too_long"));
+        assert!(!dial_key_ok("bad key"));
+        assert!(!dial_key_ok("bad-key"));
+
+        let mut cfg = config();
+        cfg.dials.u32.insert("this_key_is_far_too_long".into(), 1);
+        assert!(build_nvs(&cfg, 0x5000).is_err(), "a bad dial key must fail loudly");
+    }
+
+    #[test]
+    fn no_dials_chosen_writes_no_dial_keys() {
+        // "As it ships" must write nothing — the firmware's own defaults are
+        // the answer, and an empty seed is not the same as seeding zeros.
+        let nvs = build_nvs(&config(), 0x5000).unwrap();
+        assert!(nvs.windows(9).all(|w| w != b"det_score"));
+        assert!(nvs.windows(9).all(|w| w != b"det_dwell"));
     }
 
     #[test]
