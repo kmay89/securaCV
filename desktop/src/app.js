@@ -1554,7 +1554,15 @@ function reflexValuesToNvs(values, reflexes) {
 function renderDials(product) {
   const box = $("dials");
   if (!box) return;
-  state.dialChoice = null;
+  // Keep a choice that still belongs to THIS product. renderProducts() re-runs
+  // whenever the manifest or the board passport lands, and each re-run calls
+  // onProductChosen() for the selected row — so an unconditional reset here
+  // silently discarded a preset picked during those seconds, and the flash
+  // then wrote no dials at all. The passport read is exactly when a user has
+  // time to pick one, because the Install button is disabled until it lands.
+  if (!state.dialChoice || state.dialChoice.productId !== product.id) {
+    state.dialChoice = null;
+  }
   box.innerHTML = "";
   const detect = detectDials(state.catalog, product);
   const reflexes = reflexDials(state.catalog, product);
@@ -1590,16 +1598,26 @@ function renderDials(product) {
     b.addEventListener("click", () => {
       grid.querySelectorAll(".dial-card").forEach((c) => c.classList.remove("selected"));
       b.classList.add("selected");
-      // The shipped preset means "write nothing" — see above.
+      // The shipped preset means "write nothing" — see above. (Both that and
+      // "nothing picked yet" are null, which is fine: they mean the same
+      // thing to the flash and both show the shipped card selected.)
       state.dialChoice = preset.id === "ships"
         ? null
-        : { kind: detect ? "detect" : "reflex", values: preset.values, title: preset.title };
+        : {
+            productId: product.id,
+            presetId: preset.id,
+            kind: detect ? "detect" : "reflex",
+            values: preset.values,
+            title: preset.title,
+          };
     });
     grid.appendChild(b);
   }
   box.appendChild(grid);
-  const first = grid.querySelector('[data-preset="ships"]') || grid.firstElementChild;
-  if (first) first.classList.add("selected");
+  // Restore the surviving choice, else the shipped default.
+  const keep = state.dialChoice && grid.querySelector(`[data-preset="${state.dialChoice.presetId}"]`);
+  const show = keep || grid.querySelector('[data-preset="ships"]') || grid.firstElementChild;
+  if (show) show.classList.add("selected");
 }
 
 // The chosen preset as typed NVS ints for the backend, or null when the user
@@ -2158,6 +2176,9 @@ function onDisconnect() {
   // the session — the ladder is a per-board remedy, not a session-wide verdict.
   state.baudCeiling = null;
   state.usedBaud = null;
+  // A preset was chosen for the board that just left. The next one starts
+  // from its firmware's own defaults, not the last board's room.
+  state.dialChoice = null;
   state.chip = null;
   state.flashBytes = null;
   state.mac = null;

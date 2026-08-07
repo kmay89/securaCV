@@ -447,6 +447,15 @@ test("parity wave 3b: room presets are baked in as typed NVS ints", async () => 
   // freeze at flash time a value the maintainer can still change by release.
   assert.match(appJs, /preset\.id === "ships"/,
     "the shipped preset must write nothing at all");
+  // Review hardening (Codex on #1508): renderProducts() re-runs when the
+  // manifest or the passport lands, re-entering onProductChosen for the
+  // selected row. An unconditional reset there discarded a preset picked
+  // during those seconds — which is precisely when the user has time to pick
+  // one, since Install is disabled until the passport lands.
+  assert.match(appJs, /state\.dialChoice\.productId !== product\.id/,
+    "a re-render must keep the preset chosen for the same product");
+  assert.match(appJs, /\[data-preset="\$\{state\.dialChoice\.presetId\}"\]/,
+    "a preserved preset must stay visibly selected, not silently held");
 
   // 3. The clamping agrees with the browser's, value for value. This is the
   //    part worth testing: an out-of-range dial is a setting the firmware
