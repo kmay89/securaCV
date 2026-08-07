@@ -166,6 +166,61 @@ test("provisioning NVS: the browser writes the same key-set as native build_nvs"
     "desktop/src-tauri/src/provisioning.rs:build_nvs");
 });
 
+test("parity wave 1: safety copy, error kinds, QR, token card, nursery, diagnostics ship on desktop too", () => {
+  // The 2026-08 parity inventory's wave 1, gated so it can't regrow: each of
+  // these was a browser-only capability the desktop user silently lacked.
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  const flashCore = read(join(CANARY, "assets/flash-core.js"));
+
+  // 1. The automatic pre-flash safety copy — reachable from the ONE-SHOT
+  //    flow (onFlash), not just the Advanced rescue button, with the same
+  //    failure tolerance the browser applies.
+  assert.match(libRs, /fn auto_backup_path/,
+    "desktop lost the auto-backup path helper");
+  assert.match(appJs, /auto_backup_path/,
+    "desktop one-shot flash no longer takes the safety copy first");
+  assert.match(html, /id="skip-backup"/,
+    "the skip-backup choice must exist (batch operators) — and default to COPYING");
+  assert.ok(!/id="skip-backup"[^>]*checked/.test(html),
+    "skip-backup must default to unchecked — the safety copy is the default");
+
+  // 2. Structured failure classification: same kinds, same remedies, both
+  //    frontends (the browser's classifyFlashError was the reference).
+  assert.match(appJs, /function classifyFlashError/,
+    "desktop lost classifyFlashError — raw String(e) is not a diagnosis");
+  for (const kind of ["port-busy", "device-lost", "permission", "integrity",
+                      "download", "not-in-download", "read-stall"]) {
+    assert.ok(appJs.includes(`"${kind}"`), `desktop lost the ${kind} error kind`);
+    assert.ok(flashCore.includes(`"${kind}"`), `browser lost the ${kind} error kind`);
+  }
+
+  // 3. USB bridge driver hints — same vendor table both sides.
+  for (const vid of ["0x10c4", "0x1a86", "0x0403"]) {
+    assert.ok(appJs.includes(vid), `desktop bridge table lost ${vid}`);
+    assert.ok(flashCore.includes(vid), `browser bridge table lost ${vid}`);
+  }
+
+  // 4. Wi-Fi QR from the same escaped WIFI: payload.
+  assert.match(appJs, /function wifiQrString/, "desktop lost the Wi-Fi QR payload builder");
+  assert.match(html, /id="wifi-qr-btn"/, "desktop lost the Wi-Fi QR control");
+
+  // 5. The minted API credential is SHOWN, not only banked in the keychain.
+  assert.match(html, /id="token-once"/, "desktop hides the minted API token from its owner");
+  assert.match(appJs, /renderTokenOnce/, "desktop token show-once is unwired");
+
+  // 6. The session nursery strip — the batch operator's working memory.
+  assert.match(html, /id="nursery-strip"/, "desktop lost the nursery strip");
+  assert.match(appJs, /renderNurseryStrip/, "desktop nursery strip is unwired");
+
+  // 7. One-click diagnostic report.
+  assert.match(appJs, /function buildDiagnosticReport/, "desktop lost the diagnostic report builder");
+  assert.match(html, /id="diag-report-btn"/, "desktop lost the diagnostic report button");
+
+  // 8. The per-setting help layer reads the same generated registry.
+  assert.match(appJs, /settings_help/, "desktop help dots no longer read settings_help");
+});
+
 test("device API token: both flashers mint the same credential shape and seed the same keys", async () => {
   // The credential that makes the desktop fleet book (and any future browser
   // surface) able to talk to a board it flashed: "cv_" + 32 base62 chars,

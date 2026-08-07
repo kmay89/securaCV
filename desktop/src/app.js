@@ -246,6 +246,151 @@ function mintApiToken() {
   }
 }
 
+// ── flash-failure classification (parity with the browser flasher) ──────────
+// The browser's classifyFlashError (flash-core.js) turns a raw error into a
+// named kind + a specific fix; the desktop used to print String(e) and hope.
+// Same kinds, same fixes, with the match patterns widened for espflash and
+// serialport-rs phrasings alongside esptool-js ones.
+function classifyFlashError(err) {
+  const msg = String((err && (err.message || err.name)) || err || "").toLowerCase();
+  const has = (...subs) => subs.some((s) => msg.includes(s));
+
+  if (has("failed to open serial port", "port is already open", "already open",
+          "resource temporarily unavailable", "resource busy", "device or resource busy") ||
+      (has("open") && has("access", "busy", "in use")))
+    return { kind: "port-busy", title: "That port is busy",
+      hint: "Another program is holding the board. Close the Arduino IDE / PlatformIO " +
+        "serial monitor and any browser-flasher tab, then unplug, replug, and try " +
+        "again. On Linux the holder is often ModemManager probing a just-plugged " +
+        "board — wait ~30 s, or add the udev rule from INSTALL.md (Linux section) " +
+        "so it ignores Canaries for good." };
+
+  if (has("device has been lost", "device lost", "no device", "disconnected",
+          "device not configured", "input/output error", "broken pipe"))
+    return { kind: "device-lost", title: "The board disappeared",
+      hint: "The connection dropped — usually the cable, the port, or the board " +
+        "resetting. Reseat the USB-C cable (a data cable, not charge-only) and " +
+        "reconnect. Nothing was harmed — you can't brick it from here." };
+
+  if (has("access denied", "permission denied", "permission", "not allowed"))
+    return { kind: "permission", title: "The system wouldn't grant access to the port",
+      hint: "On Linux, add yourself to the dialout group (sudo usermod -aG dialout " +
+        "$USER, then log out and back in); on Windows, install the board's USB-serial " +
+        "driver. Then reconnect." };
+
+  // Integrity BEFORE the generic download case, so a checksum message never
+  // reads as a network problem.
+  if (has("checksum", "sha-256", "sha256", "md5", "hash mismatch", "failed its", "signature"))
+    return { kind: "integrity", title: "The image failed its integrity check",
+      hint: "Nothing was written. The download may have been corrupted, or the signed " +
+        "release is mid-update — wait a moment and try again." };
+
+  if (has("download failed", "http ", "failed to fetch", "couldn't reach", "manifest", "dns"))
+    return { kind: "download", title: "Couldn't download the firmware image",
+      hint: "That's a network or release issue, not your board. Check your connection " +
+        "and try again; if it persists, the signed release may be mid-update. You can " +
+        "also install a local .bin under Advanced." };
+
+  if (has("timed out", "timeout", "no serial data", "failed to sync", "failed to connect",
+          "invalid head of packet", "wrong boot mode"))
+    return { kind: "not-in-download", title: "The board isn't answering the bootloader",
+      hint: "It's almost certainly not in download mode. Hold BOOT, tap RESET, release " +
+        "BOOT, then reconnect." };
+
+  if (has("short read", "stalled", "read timeout"))
+    return { kind: "read-stall", title: "A read stalled partway",
+      hint: "Reseat the cable and try again — a shorter, known-good USB-C data cable is " +
+        "the usual fix." };
+
+  return { kind: "unknown", title: null,
+    hint: "If this keeps happening: unplug the board, plug it back in, put it in download " +
+      "mode (hold BOOT, tap RESET, release BOOT), and retry." };
+}
+
+// USB-serial bridge chips that need an OS driver (parity: flash-core.js
+// usbBridgeInfo). The XIAO boards use Espressif's native USB (0x303A) — no
+// driver, no note.
+const USB_BRIDGES = {
+  0x10c4: { name: "Silicon Labs CP210x", driverUrl: "https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers" },
+  0x1a86: { name: "WCH CH340/CH343", driverUrl: "https://www.wch-ic.com/downloads/CH341SER_EXE.html" },
+  0x0403: { name: "FTDI FT232", driverUrl: "https://ftdichip.com/drivers/vcp-drivers/" },
+};
+const NATIVE_USB_VENDORS = new Set([0x303a]);
+function usbBridgeInfo(vid, pid) {
+  if (vid == null) return null;
+  if (NATIVE_USB_VENDORS.has(vid)) return null;
+  const b = USB_BRIDGES[vid];
+  if (!b) return null;
+  return {
+    name: b.name, driverUrl: b.driverUrl, vid, pid: pid == null ? null : pid,
+    note: `This board talks over a ${b.name} USB-serial chip. If it won't connect, ` +
+      `install that chip's driver (Windows and older macOS need it), then reconnect.`,
+  };
+}
+
+// One-click copyable diagnostic (parity: flash-core.js buildDiagnosticReport)
+// — everything a bug report needs, gathered instead of asked for.
+function buildDiagnosticReport(info = {}) {
+  const lines = ["SecuraCV Flasher diagnostic", "==========================="];
+  const add = (label, val) => {
+    if (val === undefined || val === null || val === "") return;
+    lines.push(`${label}: ${val}`);
+  };
+  add("when", info.when);
+  add("app", info.app);
+  add("platform", info.platform);
+  add("firmware train", info.catalogVersion);
+  add("chip", info.chip);
+  add("MAC", info.mac);
+  add("flash size", info.flashBytes ? info.flashBytes + " bytes" : undefined);
+  add("USB device", info.usb);
+  add("chosen product", info.product);
+  add("stage", info.stage);
+  add("error", info.error);
+  if (info.logTail) {
+    lines.push("--- last console output ---");
+    lines.push(String(info.logTail).split("\n").slice(-12).join("\n"));
+  }
+  return lines.join("\n") + "\n";
+}
+
+// The standard Wi-Fi QR payload (parity: flash-core.js wifiQrString) — WPA
+// assumed unless the password is empty; backslash-escape \ ; , " :
+function wifiQrString(ssid, pass) {
+  const esc2 = (s) => String(s).replace(/([\\;,":])/g, "\\$1");
+  return pass
+    ? `WIFI:T:WPA;S:${esc2(ssid)};P:${esc2(pass)};;`
+    : `WIFI:T:nopass;S:${esc2(ssid)};;`;
+}
+
+// Per-setting help topics from the embedded catalog's settings_help registry
+// (parity: flash-core.js helpTopic + flash.js helpDot). The registry is
+// generated from the firmware's own values, so the help can't drift from
+// what the code does.
+function helpTopic(id) {
+  const reg = state.catalog && state.catalog.settings_help;
+  const t = reg && typeof reg === "object" ? reg[id] : null;
+  return t && t.label && t.what ? t : null;
+}
+function helpDot(id) {
+  const t = helpTopic(id);
+  if (!t) return null;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "help-dot";
+  btn.textContent = "?";
+  btn.setAttribute("aria-label", "About " + t.label);
+  btn.addEventListener("click", () => {
+    let pop = btn.nextElementSibling;
+    if (pop && pop.classList.contains("help-pop")) { pop.remove(); return; }
+    pop = document.createElement("span");
+    pop.className = "help-pop";
+    pop.textContent = t.what + (t.why ? " " + t.why : "");
+    btn.after(pop);
+  });
+  return btn;
+}
+
 // ── the fleet book ───────────────────────────────────────────────────────────
 // A durable record of every Canary this app flashed: who they are, what they
 // run, when they were last seen on the network. Keyed by MAC when the chip
@@ -419,9 +564,77 @@ async function boot() {
   loadAppInfo();          // build number, rev, build date, firmware train
   restoreProv();          // remember the non-secret fields from last time
   restoreSession();       // land back where you left off
+  // The nursery strip counts hatchlings from THIS app session.
+  state.sessionStart = Date.now();
   // Which secret store this platform offers decides the consent wording —
   // ask first, then word the profile notes from the real answer.
   secretStore.init().then(profileNoteRefresh);
+  // Wi-Fi as a QR (parity with the browser flasher) — rendered on demand,
+  // never automatically: a password on screen is a choice, not a default.
+  $("wifi-qr-btn").addEventListener("click", async () => {
+    const box = $("wifi-qr-box");
+    if (!box.classList.contains("hidden")) { box.classList.add("hidden"); box.innerHTML = ""; return; }
+    const ssid = $("wifi-ssid").value.trim();
+    if (!ssid) { setStatus("flash-result", "Type the Wi-Fi name first — the QR encodes it.", "err"); return; }
+    try {
+      const { default: qrcode } = await import("./vendor/qrcode/qrcode.mjs");
+      const qr = qrcode(0, "M");
+      qr.addData(wifiQrString(ssid, $("wifi-pass").value));
+      qr.make();
+      box.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2 });
+      box.classList.remove("hidden");
+    } catch (_) { /* the QR is a bonus; typing still works */ }
+  });
+  // One-click diagnostic report (parity: browser's diagnosticReportButton).
+  $("diag-report-btn").addEventListener("click", async () => {
+    const note = $("diag-report-note");
+    const info = state.appInfo || {};
+    const bridge = state.portInfo && usbBridgeInfo(state.portInfo.vid, state.portInfo.pid);
+    const usb = state.portInfo
+      ? [state.portInfo.product, state.portInfo.vid != null
+          ? `vid 0x${Number(state.portInfo.vid).toString(16)} pid 0x${Number(state.portInfo.pid || 0).toString(16)}`
+          : null, bridge ? `bridge: ${bridge.name}` : null].filter(Boolean).join(" · ")
+      : undefined;
+    const report = buildDiagnosticReport({
+      when: new Date().toISOString(),
+      app: "SecuraCV Flasher v" + (info.version || "?") + " (" + (info.build_rev || "source") + ")",
+      platform: navigator.platform + " · " + navigator.userAgent,
+      catalogVersion: (state.catalog && state.catalog.fw_train) || undefined,
+      chip: state.chip || undefined,
+      mac: state.mac || undefined,
+      flashBytes: state.flashBytes || undefined,
+      usb,
+      product: state.product ? state.product.id : undefined,
+      stage: state.busy ? "mid-flash" : "idle",
+      error: state.lastError || undefined,
+      logTail: ($("console") && $("console").textContent) ||
+        ($("serial-console") && $("serial-console").textContent) || undefined,
+    });
+    try {
+      await navigator.clipboard.writeText(report);
+      note.textContent = "Copied ✓ — paste it into a GitHub issue or discussion.";
+    } catch (_) {
+      note.textContent = "Couldn't reach the clipboard — the report is in the app log instead.";
+      logEvent("info", "Diagnostic report:\n" + report);
+    }
+    setTimeout(() => { note.textContent = ""; }, 6000);
+  });
+  // Per-setting help dots from the embedded catalog's settings_help registry
+  // (parity: the browser's teaching layer). Attached where a desktop control
+  // matches a registry topic; a catalog without the registry degrades to none.
+  for (const [sel, topic] of [
+    ["#adv-dev summary", "dev_channel"],
+    ["#adv-backup summary", "skip_backup"],
+    ['label[for="wifi-ssid"], #provisioning label:has(#wifi-ssid)', "wifi_bake"],
+    ["#serial-monitor summary", "serial_monitor"],
+    ["#adv-local summary", "local_file"],
+  ]) {
+    try {
+      const host = document.querySelector(sel);
+      const dot = host && helpDot(topic);
+      if (dot) host.appendChild(dot);
+    } catch (_) { /* :has() unavailable or control absent — help stays optional */ }
+  }
   $("prov-remember").addEventListener("change", profileNoteRefresh);
   $("hub-remember").addEventListener("change", profileNoteRefresh);
   // A changed network name means a possibly-known password — offer it.
@@ -1394,9 +1607,14 @@ async function identify(portInfo) {
     // in classifyFlashError — two frontends, same diagnostic.)
     const firstLine = String(e).split("\n")[0].trim();
     const osLevel = /Linux blocked opening|holding the board's serial port/i.test(firstLine);
+    // A known USB-serial bridge that won't talk is usually a missing OS
+    // driver — name the chip and the driver instead of coaching BOOT/RESET
+    // at a port the OS can't even open properly (parity: usbBridgeInfo).
+    const bridge = state.portInfo && usbBridgeInfo(state.portInfo.vid, state.portInfo.pid);
+    const bridgeNote = !osLevel && bridge ? " " + bridge.note : "";
     setConn("failed", osLevel
       ? `Found ${port} — ${firstLine}`
-      : `Found ${port} — couldn't read the chip. Put it in download mode.`);
+      : `Found ${port} — couldn't read the chip. Put it in download mode.${bridgeNote}`);
     $("download-mode").classList.toggle("hidden", osLevel);
     $("recheck").classList.remove("hidden");
   } finally {
@@ -1805,6 +2023,38 @@ async function onFlash() {
     con.textContent += ev.payload + "\n";
     con.scrollTop = con.scrollHeight;
   });
+  const unlistenRescue = await listen("rescue:log", (ev) => {
+    con.textContent += ev.payload + "\n";
+    con.scrollTop = con.scrollHeight;
+  });
+
+  // Safety copy FIRST — the undo the desktop one-shot flow never had (the
+  // browser has done this unasked for ages; parity at last). Once per board
+  // per session, skippable under Advanced, and a failed copy is a warning
+  // rather than a blocker: the browser makes the same call, because a board
+  // that can't be read is often exactly the one that needs rescuing.
+  let backupPath = null;
+  state.backupsTaken = state.backupsTaken || {};
+  const backupKey = (state.mac || state.port || "").toLowerCase();
+  const skipBackup = !!($("skip-backup") && $("skip-backup").checked);
+  if (!skipBackup && state.flashBytes && backupKey && !state.backupsTaken[backupKey]) {
+    try {
+      backupPath = await invoke("auto_backup_path", { mac: state.mac || "" });
+      con.textContent += "→ safety copy first — reading the whole chip before anything is written…\n";
+      await invoke("backup_flash", {
+        port: state.port,
+        outPath: backupPath,
+        flashSize: state.flashBytes,
+        baud: state.catalog.flash_baud || 921600,
+      });
+      state.backupsTaken[backupKey] = backupPath;
+      logEvent("ok", "Safety copy saved: " + backupPath);
+    } catch (e) {
+      backupPath = null;
+      con.textContent += "⚠ Couldn't take the safety copy (" + e + ") — continuing. " +
+        "Advanced → Rescue can still try a manual backup.\n";
+    }
+  }
 
   try {
     const receipt = await invoke("flash", {
@@ -1837,6 +2087,8 @@ async function onFlash() {
         fw: receipt.version,
         flashedAt: Date.now(),
         hasToken: !!apiToken,
+        wifiBaked: !!(provisioning && provisioning.wifiSsid),
+        backupPath: backupPath || "",
       });
       lastBookKey = entry ? entry.key : null;
       state.lastProvisionedId = provisioning ? provisioning.deviceId : "";
@@ -1853,6 +2105,8 @@ async function onFlash() {
     } catch (_) { /* the book must never break a flash */ }
     clearSecretFields();
     renderReceipts();
+    renderTokenOnce(apiToken);    // the credential, shown once (parity: browser done card)
+    renderNurseryStrip();         // this session's hatchlings, where the next board plugs in
     announceToWitness(product);   // instant, so the wall reacts right away
     discoverAndPopulate(product); // then replace with the REAL fleet off the LAN
     // A device id names ONE board: clear the field so the next board gets a
@@ -1883,11 +2137,21 @@ async function onFlash() {
       startMonitor({ postFlash: true });
     }
   } catch (e) {
-    setStatus("flash-result", String(e), "err");
-    logEvent("err", "Flash failed: " + e);
+    // Name the failure and its fix, never just the raw error (parity with the
+    // browser's classifyFlashError — same kinds, same remedies).
+    const c = classifyFlashError(e);
+    state.lastError = String(e);
+    setStatus(
+      "flash-result",
+      (c.title ? c.title + ". " : "The flash didn't finish. ") + c.hint +
+        " (Details: " + e + ")",
+      "err"
+    );
+    logEvent("err", "Flash failed [" + c.kind + "]: " + e);
     hideHatchCard();
   } finally {
     unlisten();
+    unlistenRescue();
     btn.disabled = false;
     btn.textContent = "Flash my Canary";
     $("dev-channel").disabled = false;
@@ -1896,6 +2160,60 @@ async function onFlash() {
     state.chip = null;
     state.failedPort = null;
   }
+}
+
+// ── the token, shown once (parity: the browser's done-card token panel) ─────
+// The desktop mints the credential and banks it in the OS keychain — but the
+// owner deserves to SEE it too: the keychain can refuse (locked), and a copy
+// in a password manager is the honest backstop. Shown after each flash that
+// minted one; cleared by resetOutcome like every other per-flash artifact.
+function renderTokenOnce(apiToken) {
+  const box = $("token-once");
+  if (!box) return;
+  if (!apiToken) { box.classList.add("hidden"); box.innerHTML = ""; return; }
+  box.innerHTML =
+    `<b>This board's local API key — shown once.</b> ` +
+    `<span class="muted">Written into the board with the Wi-Fi, and kept in ${esc(secretStore.where())} ` +
+    `for the fleet book. Copy it if you want it somewhere else too — a reflash mints a new one.</span>` +
+    `<span class="token-row"><code>${esc(apiToken)}</code>` +
+    `<button type="button" class="btn btn-ghost btn-small" id="token-copy">Copy</button></span>`;
+  box.classList.remove("hidden");
+  const btn = $("token-copy");
+  if (btn) btn.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(apiToken); btn.textContent = "Copied ✓"; }
+    catch (_) { btn.textContent = "Select + copy by hand"; }
+    setTimeout(() => { btn.textContent = "Copy"; }, 2500);
+  });
+}
+
+// ── this session's nursery (parity: the browser's roster strip) ─────────────
+// A batch flasher's working memory: every board hatched since the app opened,
+// numbered, with the facts that matter mid-batch — right where the next board
+// gets plugged in. Distinct from the durable fleet book (the fleet view):
+// this is "how far through the pile am I", not "what exists".
+function renderNurseryStrip() {
+  const box = $("nursery-strip");
+  if (!box) return;
+  const since = state.sessionStart || 0;
+  const batch = Object.values(bookAll())
+    .filter((e) => (e.flashedAt || 0) >= since)
+    .sort((a, b) => (a.flashedAt || 0) - (b.flashedAt || 0));
+  if (!batch.length) { box.classList.add("hidden"); box.innerHTML = ""; return; }
+  const rows = batch.map((e, i) => {
+    const ago = Math.max(0, Math.round((Date.now() - e.flashedAt) / 60000));
+    const when = ago < 1 ? "just now" : ago === 1 ? "1 min ago" : `${ago} min ago`;
+    const macTail = e.mac ? e.mac.split(":").slice(-2).join(":") : "";
+    const extras = [e.wifiBaked ? "Wi-Fi baked ✓" : null, e.hasToken ? "API key kept ✓" : null]
+      .filter(Boolean).join(" · ");
+    return `<div class="nursery-row"><span class="nursery-n">${i + 1}</span>` +
+      `<b>${esc(e.ringName || e.deviceId || e.productLabel || "Canary")}</b>` +
+      `<span class="muted">${esc([e.productLabel, e.fw ? "v" + e.fw : "", macTail ? "…" + macTail : ""].filter(Boolean).join(" · "))}</span>` +
+      (extras ? `<span class="nursery-extras">${esc(extras)}</span>` : "") +
+      `<span class="muted nursery-ago">${esc(when)}</span></div>`;
+  }).join("");
+  box.innerHTML = `<div class="nursery-head">🐣 This session's nursery — ` +
+    `${batch.length} hatchling${batch.length === 1 ? "" : "s"} so far</div>` + rows;
+  box.classList.remove("hidden");
 }
 
 function readProvisioning(product) {
@@ -2994,6 +3312,7 @@ function setMonitorButtons(running) {
 function resetOutcome() {
   setStatus("flash-result", "");
   setStatus("local-result", "");
+  try { renderTokenOnce(null); } catch (_) {}
   try { hideHatchCard(); } catch (_) {}
   // Host receipts belong to the image being overwritten — clear them. The
   // MODULE receipt survives: the model lives in the camera module's own

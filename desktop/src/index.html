@@ -243,6 +243,14 @@
                 <span id="prov-remember-note" class="muted"></span>
               </div>
               <p id="prov-autofill-note" class="muted hidden" role="status"></p>
+              <!-- The same Wi-Fi as a scannable QR (parity with the browser
+                   flasher): point a camera Canary — or a phone helping with
+                   setup — at it instead of retyping the password. Rendered
+                   locally by the vendored generator; nothing leaves the app. -->
+              <div class="row">
+                <button type="button" id="wifi-qr-btn" class="btn btn-ghost btn-small">Show Wi-Fi as a QR code</button>
+              </div>
+              <div id="wifi-qr-box" class="wifi-qr hidden" aria-label="Wi-Fi network QR code"></div>
             </section>
             <div class="row" id="host-flash-controls">
               <button id="flash-btn" class="btn btn-primary" disabled>Flash my Canary</button>
@@ -299,6 +307,13 @@
             </section>
             <pre id="console" class="console hidden" aria-live="polite"></pre>
             <p id="flash-result" class="status"></p>
+            <!-- The freshly minted local-API credential, shown once per flash
+                 (parity with the browser done card): the keychain holds it for
+                 the fleet book, but the owner deserves to see and copy it. -->
+            <div id="token-once" class="token-once hidden" aria-live="polite"></div>
+            <!-- This session's nursery — the batch flasher's working memory,
+                 placed exactly where the next board gets plugged in. -->
+            <div id="nursery-strip" class="nursery-strip hidden" aria-live="polite"></div>
 
             <section id="receipts" class="receipts hidden" aria-live="polite">
               <h3>Installation receipts</h3>
@@ -411,6 +426,28 @@
 
           <section class="card" id="step-advanced">
             <div class="step-head"><span class="step-n">⚙</span><h2>Advanced — you can skip all of this</h2></div>
+
+            <details class="hint" id="adv-backup">
+              <summary>The automatic safety copy</summary>
+              <p>Before every write, the whole chip is read to a timestamped file in this
+                app's backups folder — the undo button. Restore any copy from Rescue below.
+                Skipping saves ~a minute per board on a big batch; the board you're
+                erasing anyway loses nothing, but a provisioned Canary loses its undo.</p>
+              <label class="check"><input type="checkbox" id="skip-backup">
+                Skip the safety copy this session</label>
+            </details>
+
+            <details class="hint" id="adv-diag">
+              <summary>Something's wrong — copy a diagnostic report</summary>
+              <p>One click gathers what a bug report needs — app build, platform, chip,
+                USB device, chosen firmware, the last error, and the console tail —
+                and puts it on your clipboard. Nothing is sent anywhere; you decide
+                where it goes.</p>
+              <div class="row">
+                <button id="diag-report-btn" class="btn btn-ghost btn-small">Copy diagnostic report</button>
+                <span id="diag-report-note" class="muted"></span>
+              </div>
+            </details>
 
             <details class="hint" id="adv-dev">
               <summary>Dev channel — flash the rolling prerelease</summary>
