@@ -109,9 +109,15 @@ jobs:
   #   pre_step           — named setup hook; "secrets_header" writes a
   #                        CI-only secrets/secrets.h (build verification,
   #                        not deployment)
-  #   size_guard         — fail if `bin` exceeds `slot_bytes` (an image
-  #                        bigger than its OTA A/B slot can never be
-  #                        installed over the air)
+  #   size_guards        — list of {bin, slot_bytes, slot_name}: fail if
+  #                        `bin` exceeds `slot_bytes` (an image bigger
+  #                        than its OTA A/B slot can never be installed
+  #                        over the air). A LIST because one flavor can
+  #                        span boards with different slot budgets — the
+  #                        v2.4.6 C6 nightstand shipped 5 KB over its
+  #                        slot precisely because only the S3 watch bin
+  #                        was guarded. Each entry runs right after the
+  #                        env whose .pio/build/<env>/ dir it names.
   # ──────────────────────────────────────────────────────────────────
   flavors:
     name: Load flavor manifest
@@ -203,18 +209,21 @@ jobs:
           FLAVOR_JSON: ${{ toJSON(matrix.flavor) }}
         run: |
           set -euo pipefail
-          SG_BIN=$(jq -r '.size_guard.bin // empty' <<< "$FLAVOR_JSON")
+          # size_guards is a LIST (one flavor can guard several bins with
+          # different slot budgets); each entry fires right after the env
+          # that produces its bin, before a later env can clobber .pio/build.
           size_guard() {
-            local SLOT SLOT_NAME SIZE
-            SLOT=$(jq -r '.size_guard.slot_bytes' <<< "$FLAVOR_JSON")
-            SLOT_NAME=$(jq -r '.size_guard.slot_name // "OTA slot"' <<< "$FLAVOR_JSON")
-            SIZE=$(stat -c%s "$SG_BIN" 2>/dev/null || echo 0)
+            local GUARD="$1" BIN SLOT SLOT_NAME SIZE
+            BIN=$(jq -r '.bin' <<< "$GUARD")
+            SLOT=$(jq -r '.slot_bytes' <<< "$GUARD")
+            SLOT_NAME=$(jq -r '.slot_name // "OTA slot"' <<< "$GUARD")
+            SIZE=$(stat -c%s "$BIN" 2>/dev/null || echo 0)
             if [ "$SIZE" -eq 0 ]; then
-              echo "::error::$SG_BIN not found — size guard cannot run."
+              echo "::error::$BIN not found — size guard cannot run."
               exit 1
             fi
             if [ "$SIZE" -gt "$SLOT" ]; then
-              echo "::error::Firmware binary ($SIZE bytes) exceeds the $SLOT_NAME ($SLOT bytes). It could never be installed over the air — trim features or grow the slots."
+              echo "::error::Firmware binary $BIN ($SIZE bytes) exceeds the $SLOT_NAME ($SLOT bytes). It could never be installed over the air — trim features or grow the slots."
               exit 1
             fi
             echo "Firmware size: $SIZE / $SLOT bytes ($((SIZE * 100 / SLOT))% of $SLOT_NAME)"
@@ -231,9 +240,12 @@ jobs:
               echo "── pio run -e $e ──"
               pio run -e "$e"
             fi
-            case "$SG_BIN" in
-              .pio/build/$e/*) size_guard ;;
-            esac
+            while IFS= read -r GUARD; do
+              [ -n "$GUARD" ] || continue
+              case "$(jq -r '.bin' <<< "$GUARD")" in
+                .pio/build/$e/*) size_guard "$GUARD" ;;
+              esac
+            done < <(jq -c '.size_guards // [] | .[]' <<< "$FLAVOR_JSON")
           done
 
   pio-check:
