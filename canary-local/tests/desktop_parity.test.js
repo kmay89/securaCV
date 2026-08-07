@@ -18,6 +18,7 @@ const { test } = require("node:test");
 const assert = require("node:assert");
 const { readFileSync } = require("node:fs");
 const { join } = require("node:path");
+const { pathToFileURL } = require("node:url");
 
 const ROOT = join(__dirname, "..", "..");     // repo root
 const CANARY = join(__dirname, "..");         // canary-local/
@@ -312,6 +313,60 @@ test("parity wave 2: the board passport, the install verdict, and 'we've met thi
     assert.ok(!src.includes("never hard-crashed"),
       `${name} claims a crash-free lifetime the probe cannot establish`);
   }
+});
+
+test("parity wave 3a: the boot-log verdict and the self-healing baud ladder", async () => {
+  // Two self-healing behaviors the browser has had and the desktop hasn't:
+  // reading the boot log for signatures that have a specific fix, and walking
+  // down the transfer speed when a cable/hub can't hold the fast one.
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+
+  // 1. Every boot signature the browser knows, the desktop knows — and both
+  //    keep the power/firmware split, since telling someone to reinstall
+  //    firmware when their USB port can't power the board loops forever.
+  assert.match(appJs, /function diagnoseBootLog/, "desktop lost the boot-log diagnosis");
+  assert.match(html, /id="boot-diagnosis"/, "desktop has nowhere to show the verdict");
+  for (const sig of ["brownout", "panic", "no-app", "flash-error"]) {
+    assert.ok(appJs.includes(`"${sig}"`), `desktop lost the ${sig} boot signature`);
+  }
+  assert.ok(appJs.includes('"power"') && appJs.includes('"clean-install"'),
+    "desktop lost the action split — a brownout is not fixed by reflashing");
+
+  // The ported matcher must agree with the browser's on real log text.
+  const samples = {
+    "Brownout detector was triggered": "brownout",
+    "Guru Meditation Error: Core 0 panic'ed": "panic",
+    "E (204) esp_image: invalid header: 0xffffffff": "no-app",
+    "flash read err, 1000": "flash-error",
+    "I (31) boot: ESP-IDF v5.1 2nd stage bootloader": null,
+  };
+  const desktopDiagnose = new Function(
+    appJs.slice(appJs.indexOf("const BOOT_SIGNATURES"), appJs.indexOf("function clearBootDiagnosis")) +
+    "return diagnoseBootLog;")();
+  for (const [text, want] of Object.entries(samples)) {
+    const mine = desktopDiagnose(text);
+    const theirs = core.diagnoseBootLog(text);
+    assert.strictEqual(mine && mine.signature, want, `desktop misreads: ${text}`);
+    assert.strictEqual(theirs && theirs.signature, want, `browser misreads: ${text}`);
+  }
+
+  // 2. The ladder: same rungs both sides, and the desktop retries only the
+  //    failures a slower speed can actually fix.
+  assert.deepStrictEqual(core.FLASH_BAUDS, [921600, 460800, 230400, 115200],
+    "the browser's ladder moved — the desktop's copy must move with it");
+  for (const rung of core.FLASH_BAUDS) {
+    assert.ok(appJs.includes(String(rung)), `desktop ladder lost the ${rung} rung`);
+  }
+  assert.match(appJs, /BAUD_RETRY_KINDS/,
+    "desktop must not retry failures a slower speed cannot fix");
+  for (const kind of ["not-in-download", "read-stall", "device-lost"]) {
+    assert.ok(appJs.includes(`"${kind}"`), `desktop ladder lost the ${kind} trigger`);
+  }
+  // A ladder that can empty out would turn a cable fault into a dead end.
+  assert.match(appJs, /rungs\.length \? rungs :/,
+    "the baud ladder must never be empty — the slowest rung always survives");
 });
 
 test("device API token: both flashers mint the same credential shape and seed the same keys", async () => {

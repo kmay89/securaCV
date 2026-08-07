@@ -17,6 +17,26 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.7.0 — 2026-08-07
+
+**Two things that used to need a person who knows ESP32s.**
+
+- **A slow cable no longer means "it won't flash."** If the transfer fails
+  partway — the board stops answering, a read stalls, the port drops — the
+  app now retries at a gentler speed on its own, and again slower after
+  that, telling you in the log what it's doing. Long USB runs, unpowered
+  hubs and tired cables sync fine at low speed and choke at high speed, and
+  that was previously an unexplained failure. It only retries the failures a
+  slower speed can actually fix: a bad image or a busy port fails the same
+  way at every speed, so those still stop immediately instead of making you
+  wait through four attempts for the same answer.
+- **The boot log gets read for you.** After a flash, the monitor watches for
+  the four failures that have a specific fix and says what happened in plain
+  language — a brownout, a startup crash, no bootable app, or a flash read
+  error — with the fix beside it. A brownout is called out as a **power**
+  problem, not a firmware one: it isn't fixed by reinstalling, and being
+  told otherwise sends you around the same loop.
+
 ## 0.6.0 — 2026-08-07
 
 **The app now reads your board before it writes to it.**

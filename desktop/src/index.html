@@ -378,6 +378,9 @@
                 </div>
               </div>
 
+              <!-- A fatal boot signature turned into a plain-language cause and
+                   fix — filled by maybeDiagnose() from the live serial stream. -->
+              <div id="boot-diagnosis" class="boot-diagnosis hidden"></div>
               <pre id="serial-console" class="console" aria-live="polite"></pre>
               <form id="monitor-cmd-form" class="row monitor-cmd" autocomplete="off">
                 <input id="monitor-cmd" class="input" type="text" placeholder="Type a command and press Enter…"

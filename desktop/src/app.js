@@ -716,7 +716,10 @@ async function boot() {
     b.setAttribute("aria-pressed", String(state.monitorPaused));
     if (!state.monitorPaused) { const c = $("serial-console"); c.scrollTop = c.scrollHeight; }
   });
-  $("monitor-clear").addEventListener("click", () => { $("serial-console").textContent = ""; });
+  $("monitor-clear").addEventListener("click", () => {
+    $("serial-console").textContent = "";
+    clearBootDiagnosis(); // clearing the log clears its verdict too
+  });
   $("monitor-expand").addEventListener("click", () => {
     const on = $("serial-monitor").classList.toggle("monitor-expanded");
     const b = $("monitor-expand");
@@ -781,6 +784,12 @@ async function boot() {
   await listen("serial:log", (ev) => {
     feedSenseTune(ev.payload); // the tuning panel reads [cfg]/[tune] replies
     appendConsole("serial-console", ev.payload);
+    // Watch the boot log for the fatal signatures that have a specific fix
+    // (parity: the browser's maybeDiagnose on the same stream). Fed the whole
+    // console, not the one line, because a backtrace's giveaway can arrive
+    // several lines after the line that doomed it.
+    const con = $("serial-console");
+    if (con) maybeDiagnose(con.textContent);
   });
   await listen("serial:status", (ev) => {
     $("monitor-status").textContent = ev.payload;
@@ -1429,6 +1438,139 @@ function passportRows({ ota, witness, coredump } = {}) {
       // claim this read cannot support.
       : { id: "crash", label: "Crash record", value: "no saved crash dump", tone: "ok" });
   return rows;
+}
+
+// ── self-healing: turn a boot log into a diagnosis + fix ─────────────────────
+// After a flash the board boots and prints to serial. A handful of fatal
+// signatures have specific, actionable fixes — surface those instead of raw
+// scroll. Ported verbatim from flash-core.js (the two frontends share no code,
+// and a diagnostic in only one of them is a diagnostic half the users never
+// get). `action` is a machine hint: "clean-install" (reflash with a full
+// erase) or "power" — which is NOT a reflash, and the distinction matters:
+// telling someone to reinstall firmware when their USB port can't power the
+// board sends them around the loop forever. Ordered most-specific first.
+const BOOT_SIGNATURES = [
+  {
+    signature: "brownout",
+    test: /brownout detector was triggered|\bBROWNOUT_RST\b|rst:0x[0-9a-f]+ \(BROWNOUT/i,
+    means: "The board browned out — it isn't getting enough power to boot.",
+    fix: "This isn't the firmware. Use a different USB port (straight into the " +
+      "computer, not a hub), or a powered hub, and a shorter good-quality data " +
+      "cable. Then reconnect.",
+    action: "power",
+  },
+  {
+    signature: "panic",
+    test: /guru meditation|backtrace:|panic'?ed|abort\(\) was called|assert failed/i,
+    means: "The new firmware crashed as it started up.",
+    fix: "A clean install usually clears this — it wipes stale settings a previous " +
+      "firmware may have left behind. Reconnect and tick first contact.",
+    action: "clean-install",
+  },
+  {
+    signature: "no-app",
+    test: /invalid header: 0x|no bootable app partitions|ota_data partition|not found any bootable/i,
+    means: "The bootloader couldn't find a complete, valid app to run.",
+    fix: "Reconnect and flash again with a full erase (tick first contact) so a " +
+      "whole image is laid down from scratch.",
+    action: "clean-install",
+  },
+  {
+    signature: "flash-error",
+    test: /flash read err|checksum failed|corrupt|e \(\d+\) esp_image/i,
+    means: "The board had trouble reading its own flash.",
+    fix: "Reseat the cable and do a clean install. If it keeps happening across " +
+      "several boards, that one's flash chip may be failing.",
+    action: "clean-install",
+  },
+];
+
+function diagnoseBootLog(text) {
+  const t = String(text || "");
+  if (t.length < 8) return null;
+  for (const s of BOOT_SIGNATURES) {
+    if (s.test.test(t)) {
+      return { signature: s.signature, means: s.means, fix: s.fix, action: s.action };
+    }
+  }
+  return null;
+}
+
+// ── self-healing: the flash baud ladder ──────────────────────────────────────
+// Transfer speeds to try, fastest first. Flaky cables, unpowered hubs and long
+// USB runs sync the ROM fine at 115200 and then choke on the high-speed
+// transfer — a rung down just works. The browser walks this during connect
+// (esptool-js connects and writes separately); espflash does both in one shot,
+// so here the ladder wraps the whole invocation. Same constant, same policy.
+const FLASH_BAUDS = [921600, 460800, 230400, 115200];
+
+// The rungs to try this attempt: the catalog's speed first, then every slower
+// rung, never anything above the ceiling a previous failure set. Never empty —
+// the slowest rung always survives, because "no speed left to try" would turn
+// a recoverable cable problem into a dead end.
+function baudLadder() {
+  const top = (state.catalog && state.catalog.flash_baud) || 921600;
+  const ceiling = state.baudCeiling || Infinity;
+  const rungs = [top, ...FLASH_BAUDS.filter((b) => b !== top)]
+    .filter((b) => b <= ceiling)
+    .sort((a, b) => b - a);
+  return rungs.length ? rungs : [FLASH_BAUDS[FLASH_BAUDS.length - 1]];
+}
+
+// Only these failures are worth a slower retry. A bad image, a busy port or a
+// refused permission will fail identically at every speed, and retrying those
+// three more times just makes the user wait longer for the same answer.
+const BAUD_RETRY_KINDS = new Set(["not-in-download", "read-stall", "device-lost", "unknown"]);
+
+// Run `fn(baud)` down the ladder until it succeeds or the rungs run out.
+async function withBaudLadder(fn, con) {
+  const rungs = baudLadder();
+  let lastErr;
+  for (let i = 0; i < rungs.length; i++) {
+    const baud = rungs[i];
+    if (i > 0 && con) con.textContent += `→ trying a gentler speed (${baud})…\n`;
+    try {
+      const out = await fn(baud);
+      state.usedBaud = baud;
+      state.baudCeiling = null; // it worked — stop handicapping later attempts
+      return out;
+    } catch (e) {
+      lastErr = e;
+      const kind = classifyFlashError(e).kind;
+      if (!BAUD_RETRY_KINDS.has(kind) || i === rungs.length - 1) throw e;
+      // Remember the ceiling even if the user gives up here, so the NEXT
+      // attempt doesn't start by repeating the speed that just failed.
+      state.baudCeiling = rungs[i + 1];
+      logEvent("warn", `Flash failed at ${baud} (${kind}) — dropping to ${rungs[i + 1]}`);
+    }
+  }
+  throw lastErr;
+}
+
+function clearBootDiagnosis() {
+  state.diagnosedSig = null;
+  const box = $("boot-diagnosis");
+  if (box) { box.classList.add("hidden"); box.innerHTML = ""; }
+}
+
+// Show the diagnosis once per signature — a boot loop reprints the same panic
+// forever, and a banner that re-renders on every line is noise, not help.
+function maybeDiagnose(text) {
+  const d = diagnoseBootLog(text);
+  const box = $("boot-diagnosis");
+  if (!box || !d || state.diagnosedSig === d.signature) return;
+  state.diagnosedSig = d.signature;
+  box.innerHTML = "";
+  box.className = "boot-diagnosis is-" + d.action;
+  box.append(
+    Object.assign(document.createElement("div"), {
+      className: "bd-head",
+      textContent: (d.action === "power" ? "🔌 " : "🩺 ") + d.means,
+    }),
+    Object.assign(document.createElement("div"), { className: "bd-fix", textContent: d.fix }),
+  );
+  box.classList.remove("hidden");
+  logEvent("warn", "Boot diagnosis: " + d.signature + " — " + d.means);
 }
 
 function fwBehind(fw, train) {
@@ -2362,11 +2504,11 @@ async function onFlash() {
   }
 
   try {
-    const receipt = await invoke("flash", {
+    const receipt = await withBaudLadder((baud) => invoke("flash", {
       port: state.port,
       productId: product.id,
       manifestUrl,
-      baud: state.catalog.flash_baud || 921600,
+      baud,
       detectedChip: state.chip,
       provisioning,
       // First contact with a board we've never written: wipe the whole chip
@@ -2375,7 +2517,7 @@ async function onFlash() {
       // browser flasher decides this by reading the board; espflash can't
       // report what's resident, so here it's the user's answer on step 1.
       eraseFirst: !!($("first-contact") && $("first-contact").checked),
-    });
+    }), con);
     state.vision.hostFlash = receipt;
     state.vision.hostBoot = null;
     // The flash succeeded — that's the consent moment the "Remember" box
@@ -3576,6 +3718,7 @@ async function startMonitor(opts) {
   }
   $("serial-monitor").classList.remove("hidden");
   $("serial-console").textContent = "";
+  clearBootDiagnosis(); // a fresh boot gets a fresh verdict
   $("monitor-status").textContent = "Waiting for the board to reappear after reboot…";
   renderSenseTune(); // the radar tuning suite rides the monitor on Sense boards
   setMonitorButtons(true);
