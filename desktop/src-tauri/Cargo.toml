@@ -6,7 +6,7 @@
 
 [package]
 name = "securacv-flasher"
-version = "0.10.0"
+version = "0.11.0"
 description = "SecuraCV Canary Flasher — the Lab as a native desktop app"
 authors = ["Errer Labs"]
 license = "Apache-2.0"
@@ -40,6 +40,9 @@ hub-core = { path = "../hub-core" }
 hub-io = { path = "../hub-io" }
 base64 = "0.22"
 ed25519-dalek = "2"
+# OS randomness for the whoami challenge nonce. Already in the lock via
+# transitive deps, so declaring it directly adds no new tree.
+getrandom = "0.2"
 sha2 = "0.10"
 tempfile = "3"
 # Native serial-port enumeration — the whole point of going native: no

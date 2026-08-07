@@ -979,6 +979,12 @@ const fleetBook = {
   // /api/fleet listen on :80 — one unauthenticated probe upgrades them.
   webPorts: {},
   probedAt: {},      // deviceId → last probe attempt (retry sparsely)
+  // book key → the device's answer to a fresh challenge, SHOWN and never
+  // gating. See whoami.rs: the proof is relay-able, so it says which key
+  // answered, not who holds the socket. Gating a token on it would trade
+  // an honest "unverified" for false confidence.
+  proof: {},
+  proofAt: {},       // book key → last challenge (re-ask sparsely)
   lastScanAt: 0,
   hubUp: null,       // last hub_probe_hub answer (null = never asked)
   opBusy: {},        // book key → an identify/update is running
@@ -1026,6 +1032,7 @@ const fleetBook = {
       // advert) while their glass page listens on :80 — probe once per device
       // (sparsely thereafter) so their rows gain a real address + Open button.
       await this.probeWebPorts();
+      await this.probeIdentity();
       // The hub row, if the book has one, gets its own reachability probe.
       if (book["id:hub"]) {
         try { this.hubUp = await invoke("hub_probe_hub", { host: HUB_HOST }); }
@@ -1056,6 +1063,37 @@ const fleetBook = {
         if (r && r.httpStatus >= 200 && r.httpStatus < 300) this.webPorts[id] = 80;
       } catch (_) { /* nothing listening — exactly what the advert said */ }
     }
+  },
+  // Ask each reachable, known device to sign a fresh nonce. Best-effort and
+  // sparse: firmware without the endpoint 404s (reported as "unavailable",
+  // never as a failed check), and nothing here blocks or gates anything.
+  async probeIdentity() {
+    const now = Date.now();
+    for (const e of Object.values(bookAll())) {
+      if (!e || !e.deviceId) continue;
+      const base = this.baseFor(e);
+      if (!base) continue;
+      if (this.proofAt[e.key] && now - this.proofAt[e.key] < 10 * 60 * 1000) continue;
+      this.proofAt[e.key] = now;
+      try {
+        const r = await invoke("device_whoami", {
+          base,
+          deviceId: e.deviceId,
+          expectedFp: e.pubkeyFp || "",
+        });
+        if (!r || !r.proof) continue;
+        this.proof[e.key] = r;
+        // Trust on first sight: record the fingerprint the first time a
+        // device proves itself, so a LATER change shows up as wrong-key.
+        if (r.proof === "answered" && !e.pubkeyFp && r.seenFp) {
+          bookUpsert({ mac: e.mac, deviceId: e.deviceId, pubkeyFp: r.seenFp });
+        }
+        if (r.proof === "wrong-key") {
+          logEvent("warn", `${e.name || e.deviceId}: ${r.detail}`);
+        }
+      } catch (_) { /* unreachable or refused — absence of proof, not disproof */ }
+    }
+    this.renderSoon();
   },
   schedule() {
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
@@ -1279,12 +1317,26 @@ const fleetBook = {
           : e.fw && train && !fwBehind(e.fw, train)
             ? `<span class="fb-badge ok">up to date</span>`
             : "";
+      // The identity proof, SHOWN and never gating. A relay can forward a
+      // genuine device's answer, so this says who answered, not who is
+      // holding the socket — see whoami.rs and the fleet-book doc. The one
+      // loud case is wrong-key: a different identity answering for this
+      // device id is worth interrupting for.
+      const pr = this.proof[e.key];
+      const proofBadge = !pr ? ""
+        : pr.proof === "answered"
+          ? `<span class="fb-badge proof" title="Signed a fresh challenge with the identity key recorded at flash time. This does not prove the address is genuine — a relay can forward a real device's answer.">identity answered</span>`
+          : pr.proof === "wrong-key"
+            ? `<span class="fb-badge bad" title="${esc(pr.detail || "")}">different key answered</span>`
+            : pr.proof === "bad-signature"
+              ? `<span class="fb-badge bad" title="${esc(pr.detail || "")}">bad signature</span>`
+              : "";
       const note = this.opNote[e.key]
         ? `<p class="fb-note" data-book-note="${esc(e.key)}">${esc(this.opNote[e.key])}</p>`
         : `<p class="fb-note hidden" data-book-note="${esc(e.key)}"></p>`;
       return `<div class="fb-row">
         <div class="fb-main">
-          <div class="fb-name">${esc(name)} ${badge}</div>
+          <div class="fb-name">${esc(name)} ${badge} ${proofBadge}</div>
           <div class="fb-sub">${esc(sub)}</div>
           <div class="fb-seen">${seen}</div>
         </div>

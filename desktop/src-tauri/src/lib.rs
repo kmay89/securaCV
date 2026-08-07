@@ -31,6 +31,7 @@ mod release;
 mod rescue;
 mod secret_store;
 mod serial_monitor;
+mod whoami;
 mod sscma;
 mod we2;
 mod we2_bench;
@@ -1996,6 +1997,7 @@ pub fn run() {
             we2_bench::we2_bench_stop,
             fleet::fleet_scan,
             fleet::fleet_device_call,
+            fleet::device_whoami,
             secret_store::secret_backend,
             secret_store::secret_set,
             secret_store::secret_get,
