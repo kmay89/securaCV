@@ -6,11 +6,17 @@
 #   Everything SecuraCV keeps in iCloud is in ONE container, in the USER's own
 #   PRIVATE database. SecuraCV runs no server and cannot read any of it
 #   (Invariant IV, realized as infrastructure rather than promised in copy).
-#   Two record types, and they are the whole list:
+#   Three record types, and they are the whole list:
 #
 #     * WitnessWake  — the content-free away-alert wake. A CKQuerySubscription
 #                      on this type is what makes Apple push a wake to the
 #                      user's other devices (Native/AwayPush.swift).
+#     * EscalationWake — the same content-free wake, in the ONE shared zone
+#                      (HouseholdEscalations). Written only when a top-tier
+#                      alarm went unanswered, so somebody the owner invited is
+#                      told (Cloud/HouseholdShare.swift). It is the only thing
+#                      in this container another person can read, and the zone
+#                      is the boundary: docs/design/cloudkit_backend.md §6.5.
 #     * PairedDevice — the fleet list, so a second iPhone or an iPad "just has
 #                      your fleet" (Cloud/CloudSync.swift).
 #
@@ -83,6 +89,7 @@ note(){ printf '    %s\n' "$*"; }
 requirements() {
   cat <<'EOF'
 WitnessWake|sev|-|createdTimestamp
+EscalationWake|sev|-|createdTimestamp
 PairedDevice|name deviceType baseURL pairedAt|recordName|-
 EOF
 }
@@ -94,6 +101,8 @@ why_type() {
   case "$1" in
     WitnessWake)
       echo "away alerts never arrive — the wake write is rejected, so no push is ever sent" ;;
+    EscalationWake)
+      echo "nobody else is ever told — an unanswered alarm reaches the owner's devices and stops there" ;;
     PairedDevice)
       echo "the fleet never appears on a second iPhone or iPad — the sync read comes back empty, forever" ;;
     *)
@@ -105,6 +114,8 @@ why_index() {
   case "$1.$2" in
     WitnessWake.createdTimestamp)
       echo "AwayPush.sweepOldWakes queries 'creationDate < cutoff'; without the index the query fails and spent wakes accumulate in the user's iCloud" ;;
+    EscalationWake.createdTimestamp)
+      echo "HouseholdShare.sweepOldEscalations queries 'creationDate < cutoff'; without the index the query fails and spent escalations pile up in the shared zone the household can read" ;;
     PairedDevice.recordName)
       echo "CloudSync.pull() queries every PairedDevice with a match-all predicate, which production refuses without a queryable index; the error is swallowed, so fleet sync reads empty and looks like 'you have no devices'" ;;
     *)
@@ -120,6 +131,12 @@ how_to_seed() {
       note "Fix: on a device signed into iCloud, open a development build, set an"
       note "     alert rule to \"Anywhere\" in Alerts -> Tell me when…, and run a"
       note "     test alert. Then re-run this script." ;;
+    EscalationWake)
+      note "Fix: on a device signed into iCloud, open a development build, go to"
+      note "     Alerts -> Tell me when… -> If nobody answers, and invite someone"
+      note "     (a second Apple account you control is enough). Let a tamper"
+      note "     alert go unacknowledged past the escalation window so one record"
+      note "     is written. Then re-run this script." ;;
     PairedDevice)
       note "Fix: on a device signed into iCloud, open a development build and pair"
       note "     one Canary. The first pair writes the record type. Then re-run"

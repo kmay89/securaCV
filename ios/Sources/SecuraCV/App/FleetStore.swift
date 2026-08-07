@@ -140,6 +140,17 @@ final class FleetStore: ObservableObject {
                 await AwayPush.shared.sweepOldWakes()
             }
         }
+        // The household legs, re-armed the same way and for the same reason.
+        // Both directions have to be asked rather than remembered: a device
+        // that ACCEPTED an invitation must re-subscribe after a reinstall,
+        // and an owner only ever learns that somebody joined — or left — by
+        // looking. Nothing here creates a share; a household nobody was
+        // invited to stays a zone that was never made.
+        Task {
+            await HouseholdShare.shared.refreshParticipation()
+            await HouseholdShare.shared.refreshMembers()
+            await HouseholdShare.shared.sweepOldEscalations()
+        }
         recordDemoBeatIfHarmless()
         // The dead-man's-switch may only count silence it could have heard:
         // the app hears nothing in the background by design, so the window
@@ -1059,6 +1070,22 @@ final class FleetStore: ObservableObject {
         }
         if alerts.reachesAnywhere(severity: w.effectiveSeverity) {
             AwayPush.shared.publishWake(WakeClass(witness: w))
+        }
+        // And the last rung: somebody who is not the owner. Asked as its own
+        // question, in its own file, because reaching a second person is the
+        // highest-cost thing this app can do with an alert — `escalated: true`
+        // is this call site's statement that the alarm already went
+        // unanswered, and HouseholdRelay independently refuses anything below
+        // the top tier rather than trusting that flag.
+        //
+        // Note what is NOT gated on here: the away-reach rule, the Focus, the
+        // quiet hours. Those govern whether THIS user is interrupted. A
+        // household member is a different person with their own phone and
+        // their own settings, and the owner's quiet hours are not theirs.
+        if HouseholdRelay.mayReachHousehold(severity: w.displaySeverity,
+                                            integrityFailed: w.badge == .failed,
+                                            escalated: true) {
+            HouseholdShare.shared.publishEscalation(WakeClass(witness: w))
         }
     }
 

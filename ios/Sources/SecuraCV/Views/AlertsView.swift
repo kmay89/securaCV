@@ -344,7 +344,9 @@ struct AlertRulesSheet: View {
     @EnvironmentObject var store: FleetStore
     @ObservedObject var center: AlertCenter
     @ObservedObject private var away = AwayPush.shared
+    @ObservedObject private var household = HouseholdShare.shared
     @Environment(\.dismiss) private var dismiss
+    @State private var showingHousehold = false
 
     var body: some View {
         NavigationStack {
@@ -410,6 +412,21 @@ struct AlertRulesSheet: View {
                     }
                 }
 
+                // The last rung of the ladder, one tap away from the rules
+                // that decide the rungs below it.
+                Section {
+                    Button { showingHousehold = true } label: {
+                        HStack {
+                            Label("If nobody answers", systemImage: "person.2")
+                            Spacer()
+                            Text(household.members.isEmpty ? "Nobody" : "\(household.reachableCount)")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } footer: {
+                    Text(HouseholdRelay.summary(household.members))
+                }
+
                 Section {
                     Label(away.reach.explanation,
                           systemImage: away.reach.isReady
@@ -435,7 +452,13 @@ struct AlertRulesSheet: View {
                     Button("Done") { dismiss() }
                 }
             }
-            .task { if !away.reach.isReady { await away.enable() } }
+            .sheet(isPresented: $showingHousehold) { HouseholdSheet() }
+            .task {
+                if !away.reach.isReady { await away.enable() }
+                // Who is actually on the share is only ever learned by
+                // asking — acceptance happens on someone else's device.
+                await household.refreshMembers()
+            }
         }
     }
 
