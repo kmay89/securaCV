@@ -17,6 +17,34 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.11.0 — 2026-08-07
+
+**Your Canaries can now answer "prove it" — and the app is careful about
+what that proves.**
+
+Newer canary-wap firmware can sign a fresh, random challenge with the
+identity key it generated on its very first boot. The fleet book asks, and
+shows the answer:
+
+- **"identity answered"** — a device holding the key recorded at flash time
+  was reachable and signed a challenge it could not have prepared in
+  advance.
+- **"different key answered"** — something answered for this device's name
+  using a *different* identity. That one is worth stopping for.
+- Nothing at all, for firmware that predates the feature. Silence here means
+  "not asked yet", never "failed".
+
+**What it deliberately does not do is unlock anything.** A neighbor on your
+network could forward your challenge to the real Canary and pass its answer
+back as their own, so a good answer tells you which key replied — not who
+is on the other end of the connection. Treating it as a password would be
+worse than not having it, because it would look like proof. So it is shown
+and never used to decide anything; the honest limits of local-network trust
+are unchanged and written down in the fleet-book documentation.
+
+The first time a device proves itself, its fingerprint is remembered — so if
+that ever changes later, you see it.
+
 ## 0.10.0 — 2026-08-07
 
 **It now catches a fake flash chip before writing to it.**
