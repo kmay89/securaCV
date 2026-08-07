@@ -174,6 +174,59 @@ void test_b64url_output_truncation_is_safe() {
   check(enc[0] == '\0', "tight buffer → empty");
 }
 
+
+/* ââ whoami presence proof: canonical + the nonce gate âââââââââââ */
+
+void test_whoami_canonical_known_input() {
+  /* The Flasher's Rust verifier rebuilds this exact byte sequence before
+   * checking the device's Ed25519 sig over it â a drift here silently
+   * breaks fleet-book verification, so the bytes are pinned. */
+  char out[256];
+  const size_t n = device_signature::build_whoami_canonical(
+      "00112233445566778899aabbccddeeff", "canary_wap_a1b2", out, sizeof(out));
+  check(n > 0, "build_whoami_canonical wrote something");
+  check_eq(std::string(out, n),
+           "securacv-canary-sig|v1|whoami|canary_wap_a1b2|"
+           "00112233445566778899aabbccddeeff",
+           "whoami canonical bytes");
+}
+
+void test_whoami_nonce_gate() {
+  /* The identity key must never sign attacker-shaped bytes: 16-64 chars,
+   * lowercase hex only. Everything else is refused before the signer. */
+  check(device_signature::whoami_nonce_ok("00112233445566778899aabbccddeeff"),
+        "32-char lowercase hex accepted");
+  check(device_signature::whoami_nonce_ok("0123456789abcdef"),
+        "16-char minimum accepted");
+  check(device_signature::whoami_nonce_ok(std::string(64, 'a').c_str()),
+        "64-char maximum accepted");
+  check(!device_signature::whoami_nonce_ok("0123456789abcde"),
+        "15 chars refused (too short)");
+  check(!device_signature::whoami_nonce_ok(std::string(65, 'a').c_str()),
+        "65 chars refused (too long)");
+  check(!device_signature::whoami_nonce_ok("0123456789ABCDEF"),
+        "uppercase hex refused (canonical must be deterministic)");
+  check(!device_signature::whoami_nonce_ok("0123456789abcdeg"),
+        "non-hex char refused");
+  check(!device_signature::whoami_nonce_ok("0123456789abcd|f"),
+        "canonical separator char refused");
+  check(!device_signature::whoami_nonce_ok(""), "empty refused");
+  check(!device_signature::whoami_nonce_ok(nullptr), "null refused");
+}
+
+void test_whoami_sign_refuses_bad_nonce_even_direct() {
+  /* Belt and suspenders: sign_whoami itself re-validates, so no future
+   * caller can route an unvalidated nonce to the key. (On the host the
+   * sign path stubs to false anyway; the refusal must come first and
+   * must not touch the output buffer size contract.) */
+  char sig[device_signature::SIG_HEX_CAP];
+  check(!device_signature::sign_whoami("NOT-HEX!", sig, sizeof(sig)),
+        "malformed nonce refused by sign_whoami");
+  check(!device_signature::sign_whoami("00112233445566778899aabbccddeeff",
+                                       sig, 10),
+        "undersized sig buffer refused");
+}
+
 }  /* anonymous namespace */
 
 int main() {
@@ -184,6 +237,9 @@ int main() {
   test_b64url_known_vectors();
   test_b64url_url_safe_alphabet();
   test_b64url_output_truncation_is_safe();
+  test_whoami_canonical_known_input();
+  test_whoami_nonce_gate();
+  test_whoami_sign_refuses_bad_nonce_even_direct();
   std::printf("OK  all device_signature tests passed\n");
   return 0;
 }

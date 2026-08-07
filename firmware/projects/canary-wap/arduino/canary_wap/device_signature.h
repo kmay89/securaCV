@@ -84,6 +84,49 @@ bool sign_counts(uint32_t total,
                  char*    sig_b64url_out,
                  size_t   sig_cap);
 
+/* Ed25519 sig as hex: 64 bytes → 128 chars + NUL. */
+constexpr size_t SIG_HEX_CAP = 129;
+
+/* Sign the canonical "whoami" presence proof — a caller-supplied nonce
+ * bound to this device's identity:
+ *
+ *   securacv-canary-sig|v1|whoami|<device_id>|<nonce_hex>
+ *
+ * What this DOES prove: a device holding this key was reachable and
+ * signed the caller's fresh challenge. That defeats an impersonator who
+ * cannot reach the genuine device — a stale announcement for a Canary
+ * that has left the network, or a peer on a segment that cannot talk to
+ * it.
+ *
+ * What it does NOT prove, and must not be claimed to: that the socket
+ * answering the caller is the one holding the key. A hostile peer on the
+ * same LAN can spoof the mDNS record, take the caller's nonce, replay it
+ * to the genuine device's (unauthenticated, by design) endpoint, and
+ * relay the signature back. Verification then succeeds against an
+ * attacker-controlled socket. A signature over a nonce is not channel
+ * binding, and over plain HTTP nothing here binds the proof to the
+ * connection that later carries a bearer token — so a caller MUST NOT
+ * treat a valid proof as permission to hand credentials to whoever
+ * returned it. Closing that needs the token exchange itself to be
+ * authenticated to this key (a session key signed by it, or a channel
+ * keyed to it); this endpoint is a building block for that, not the
+ * whole of it.
+ *
+ * The nonce is the CALLER's freshness — the
+ * HTTP handler validates it as 16-64 lowercase hex chars before this is
+ * reached, so the canonical stays deterministic and this key never signs
+ * arbitrary attacker bytes (the domain prefix + kind field separate it
+ * from every other message this key signs: 32-byte chain hashes, the
+ * beacon canonicals under "securacv:beacon:canonical:v0", and the
+ * chain/event/counts kinds above).
+ *
+ * The signature is returned as 128 hex chars, not b64url: its consumer
+ * is the Flasher's Rust verifier and hex round-trips through every stack
+ * without an alphabet argument. sig_cap must be >= SIG_HEX_CAP. */
+bool sign_whoami(const char* nonce_hex,
+                 char*       sig_hex_out,
+                 size_t      sig_cap);
+
 /* Identity accessors — both return pointers into module-local storage
  * with static lifetime. Callers must not free. fingerprint_hex is the
  * 16-char hex of g_device.pubkey_fp; pubkey_hex is the 64-char hex of
@@ -117,6 +160,16 @@ size_t build_counts_canonical(uint32_t      total,
                               const char*   device_id,
                               char*         out,
                               size_t        cap);
+
+size_t build_whoami_canonical(const char*   nonce_hex,
+                              const char*   device_id,
+                              char*         out,
+                              size_t        cap);
+
+/* Test-only: the nonce gate the HTTP handler applies before signing —
+ * 16-64 chars, lowercase hex only, so the proof canonical is
+ * deterministic and the identity key never signs arbitrary bytes. */
+bool whoami_nonce_ok(const char* nonce_hex);
 
 /* Test-only: base64url-encode (no padding) `len` bytes from `in` into
  * `out`. Returns the number of chars written (excluding NUL). Exposed
