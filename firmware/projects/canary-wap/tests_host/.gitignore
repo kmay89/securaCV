@@ -17,3 +17,4 @@ test_gps_coarsen
 test_gnss_time
 test_csi_features
 test_fleet_beacon
+test_wifi_channel_activity_privacy

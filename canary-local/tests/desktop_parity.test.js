@@ -566,6 +566,59 @@ test("parity wave 3c: the change map answers 'do my settings survive?'", () => {
     "the browser says why too — the wording is shared on purpose");
 });
 
+test("parity wave 4a: the counterfeit-capacity check the desktop got for free", () => {
+  // The 2026-08 wave-4 re-scout's top finding. A relabeled flash part — a
+  // 4 MB die sold as 16 MB — ACCEPTS writes past its real end and discards
+  // them, so the install reports success and the board cannot boot, with no
+  // error at any layer. The safety copy already holds the whole chip in
+  // memory before the write, so this costs no serial time at all.
+  const intakeRs = read(join(ROOT, "desktop/src-tauri/src/intake.rs"));
+  const libRsSrc = read(join(ROOT, "desktop/src-tauri/src/lib.rs"));
+  const appJsSrc = read(join(ROOT, "desktop/src/app.js"));
+  const intakeJs = read(join(CANARY, "assets/intake.js"));
+
+  assert.match(intakeRs, /pub fn flash_alias_verdict/, "desktop lost the capacity check");
+  assert.match(intakeJs, /export function flashAliasVerdict/, "browser lost the capacity check");
+  assert.match(intakeRs, /pub fn mac_checks/, "desktop lost the MAC sanity check");
+  assert.match(intakeJs, /export function macChecks/, "browser lost the MAC sanity check");
+
+  // Both sides probe the CAPACITIES, not the two ends. Comparing offset zero
+  // against `declared - 4K` passes a counterfeit: that address wraps to the
+  // top of the real part, whose bytes differ from the head.
+  assert.match(intakeRs, /pub fn alias_candidates/,
+    "the desktop must probe capacities — an end-to-end compare passes counterfeits");
+  assert.match(intakeJs, /export function flashAliasCandidates/,
+    "the browser must probe capacities too");
+
+  // A blank chip is inconclusive, never clean: on a blank part a mirror and
+  // an honest chip read identically, and missing evidence must not read as a
+  // passed check.
+  for (const [name, src] of [["desktop", intakeRs], ["browser", intakeJs]]) {
+    assert.ok(src.includes("inconclusive"),
+      `${name} must not call a blank chip's capacity confirmed`);
+  }
+
+  // And it runs where it can still stop the write.
+  assert.match(libRsSrc, /intake::flash_alias_verdict/,
+    "the capacity check must run before the image is written");
+  assert.match(libRsSrc, /Nothing was written/,
+    "a counterfeit part must abort the install, not warn after it");
+
+  // Review hardening (Codex on #1510). Only a CLEAR result earns a tick: an
+  // inconclusive check is missing evidence, and the module's whole point is
+  // that missing evidence must not read as a passed check. The bug was in
+  // the presentation, one layer above the careful verdict.
+  assert.match(libRsSrc, /if f\.level == "clear"/,
+    "only a clear capacity check may show a success marker");
+
+  // The MAC check must actually be CALLED. Asserting a function exists
+  // proves nothing if nothing invokes it — this one shipped unwired.
+  assert.match(libRsSrc, /intake::mac_checks/,
+    "the MAC intake check must run, not merely exist");
+  assert.match(appJsSrc, /state\.macCheck/,
+    "the MAC finding must reach the user, not stop at the backend");
+});
+
 test("device API token: both flashers mint the same credential shape and seed the same keys", async () => {
   // The credential that makes the desktop fleet book (and any future browser
   // surface) able to talk to a board it flashed: "cv_" + 32 base62 chars,

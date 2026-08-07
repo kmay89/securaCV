@@ -113,9 +113,30 @@ Security posture of the bridge (`fleet.rs`, unit-tested):
   inherits, rather than widens, "LAN admission is the boundary." What a
   stolen token yields is bounded: Bearer-gated reads (status, diagnostics,
   chain heads) and a signed-only, anti-rollback update trigger — never
-  firmware the pinned release key didn't sign, and never a raw frame. The
-  structural fix is firmware-side authenticated discovery — an
-  unauthenticated challenge endpoint the device answers by signing a nonce
-  with its Ed25519 identity key, verified against the `pubkey_fp` the book
-  already stores from the serial receipt — and belongs in a firmware PR,
-  tracked as follow-up.
+  firmware the pinned release key didn't sign, and never a raw frame.
+
+  **What has shipped since, and what it does not fix.** canary-wap now
+  answers `GET /enroll.json?nonce=<hex>` with an Ed25519 signature over
+  `securacv-canary-sig|v1|whoami|<device_id>|<nonce>`. This page previously
+  called that endpoint "the structural fix"; **it is not**, and the fleet
+  book does not use it to gate anything. A signature over a nonce is not
+  channel binding: a hostile peer can spoof the announcement, relay your
+  nonce to the genuine device's (deliberately unauthenticated) endpoint, and
+  return the signature as its own — and that peer is by assumption already
+  on your LAN, which is exactly what let it spoof in the first place, so
+  relaying costs it nothing. Verifying such a proof and then handing over a
+  token would authenticate the key while telling you nothing about the
+  socket receiving the credential.
+
+  What the endpoint genuinely provides is narrower and still useful: proof
+  that a device holding that key was reachable and answered a challenge it
+  could not have precomputed. That rules out an impersonator who *cannot*
+  reach the real device — a stale announcement for a Canary that has left
+  the network, or a peer on a segment that cannot talk to it.
+
+  The structural fix requires the token exchange **itself** to be
+  authenticated to the device key — sealing the credential to that key, or
+  keying the channel with it — so that a relay cannot read what it forwards.
+  That is a protocol design decision, not a patch, and it is open. Until it
+  lands, this row of the trust model stands as written: LAN admission is the
+  boundary.

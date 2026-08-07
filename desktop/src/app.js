@@ -2077,6 +2077,8 @@ async function identify(portInfo) {
     state.chip = info.chip;
     state.flashBytes = info.flash_bytes; // may be null if board-info didn't report it
     state.mac = info.mac; // may be null
+    // The read-only MAC intake check, straight off the connect read.
+    state.macCheck = info.mac_check || null;
     setConn("connected", `Connected · ${info.chip} on ${port}`);
     $("recheck").classList.remove("hidden");
 
@@ -2213,6 +2215,16 @@ function renderPassport() {
     b.className = "pp-built muted";
     b.textContent = "Built " + r.built;
     box.appendChild(b);
+  }
+  // The MAC intake finding, but only when it is worth saying: a normal
+  // factory address is the expected case and needs no line of its own.
+  const mc = state.macCheck;
+  if (mc && mc.level && mc.level !== "clear" && mc.level !== "unknown") {
+    const w = document.createElement("div");
+    w.className = "pp-macwarn is-" + mc.level;
+    w.textContent = (mc.level === "stop" ? "✗ " : "⚠ ") + mc.label +
+      (mc.detail ? " " + mc.detail : "");
+    box.appendChild(w);
   }
 
   const rows = passportRows(p || {});
