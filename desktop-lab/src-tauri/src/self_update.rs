@@ -88,6 +88,41 @@ fn journal(app: &AppHandle, line: &str) {
     }
 }
 
+/// Read the update journal back off disk, newest line first, for the Settings
+/// panel's "log of updates". Capped so a long-lived install can't hand the
+/// frontend an unbounded string; the full file stays on disk either way, and
+/// the panel names its path so it can always be opened directly.
+///
+/// A missing journal is not an error — it means nothing has happened yet.
+#[tauri::command]
+pub fn read_update_journal(app: AppHandle) -> Result<Vec<String>, String> {
+    const MAX_LINES: usize = 200;
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("no app data dir: {e}"))?;
+    let path = dir.join("update-journal.log");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("could not read the update journal: {e}")),
+    };
+    let mut lines: Vec<String> = text.lines().filter(|l| !l.trim().is_empty()).map(str::to_string).collect();
+    lines.reverse();
+    lines.truncate(MAX_LINES);
+    Ok(lines)
+}
+
+/// Where that journal lives, so the panel can show the path (and so a support
+/// question is answerable without guessing per-platform data dirs).
+#[tauri::command]
+pub fn update_journal_path(app: AppHandle) -> Result<String, String> {
+    app.path()
+        .app_data_dir()
+        .map(|d| d.join("update-journal.log").display().to_string())
+        .map_err(|e| format!("no app data dir: {e}"))
+}
+
 /// The declined-version marker: `<version> <epoch-secs>`, in the app data
 /// dir next to the journal, so a "Later" survives a relaunch.
 fn declined_path(app: &AppHandle) -> Option<std::path::PathBuf> {
