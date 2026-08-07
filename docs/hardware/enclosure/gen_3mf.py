@@ -144,10 +144,22 @@ REQUIRE_ALL = {"QR coupon", "c3 lid", "c3 male lid"}
 # than its own pocket in every direction and leave the AMS to bridge a gap
 # that should not exist. At 0 the band exactly fills the slot it was cut from
 # and fuses to the walls, which is what an AMS is for.
-STICK_BEZEL = [("body", "bezel", 1, STICK, {}),
-               ("band", "fil_light", 3, STICK, {"band_clear": "0"})]
-STICK_BACK = [("body", "fil_body", 1, STICK, {}),
-              ("mark", "fil_accent", 2, STICK, {})]
+#
+# headers is PINNED on every volume, the same doctrine the C3 plates already
+# follow: this board is sold bare but advertises GPIO expansion, so a soldered
+# row is a build somebody really has, and the two cases differ by 5.85 mm of
+# depth (bezel 9.200 -> 15.050). A plate that inherited the default would fit
+# exactly one of them and never say which.
+STICK_BEZEL = [("body", "bezel", 1, STICK, {"headers": '"none"'}),
+               ("band", "fil_light", 3, STICK, {"headers": '"none"',
+                                                "band_clear": "0"})]
+STICK_BACK = [("body", "fil_body", 1, STICK, {"headers": '"none"'}),
+              ("mark", "fil_accent", 2, STICK, {"headers": '"none"'})]
+STICKM_BEZEL = [("body", "bezel", 1, STICK, {"headers": '"male"'}),
+                ("band", "fil_light", 3, STICK, {"headers": '"male"',
+                                                 "band_clear": "0"})]
+STICKM_BACK = [("body", "fil_body", 1, STICK, {"headers": '"male"'}),
+               ("mark", "fil_accent", 2, STICK, {"headers": '"male"'})]
 
 # ── The C3 pocket case (Waveshare ESP32-C3-LCD-1.47) ───────────────────────
 # Same ROLE convention as the stick — slot 1 body, slot 2 mark, slot 3 light
@@ -249,6 +261,11 @@ SETS = {
     # tower twice for no reason.
     "stick": [("stick bezel", STICK_BEZEL, (100, 150)),
               ("stick back",  STICK_BACK,  (100, 95))],
+    # …and the same stick for a board with its GPIO rows soldered on. Deeper
+    # by 5.85 mm, identical footprint, so the layout and the tower zone carry
+    # over — see the note on the volumes above for why it is its own plate.
+    "stick-male": [("stick male bezel", STICKM_BEZEL, (100, 150)),
+                   ("stick male back",  STICKM_BACK,  (100, 95))],
     # Both halves of the C3 case on one plate, same argument as the stick:
     # 25 x 41 mm parts, the pair is light, and a second job would build the
     # purge tower twice for no reason.
@@ -314,6 +331,7 @@ SETS = {
 OUTPUT = {"gauges": "lcd7_gauges", "color": "lcd7_color",
           "coupon": "lcd7_coupon", "qr": "lcd7_qr", "frame": "lcd7_frame",
           "stick": "stick_case", "c3": "c3_case", "tpu": "lcd7_tpu",
+          "stick-male": "stick_male_case",
           "c3-bezel": "c3_bezel", "c3-lid": "c3_lid",
           # "male" is in the FILENAME, not only in the set name: these land in
           # a downloads folder next to the pillars plates, and a name that did
@@ -363,6 +381,7 @@ TOWER_ZONES = {
     # purges far more plastic than the part itself weighs, and cramping it is
     # the one way to make a 20 g print fail.
     "stick":  (140.0, 40.0, 250.0, 210.0),
+    "stick-male": (140.0, 40.0, 250.0, 210.0),
     # Same layout as the stick's plate, same reasoning: both objects sit left
     # of x ≈ 115, so the tower gets the whole right half of the bed.
     "c3":     (140.0, 40.0, 250.0, 210.0),

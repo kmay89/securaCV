@@ -511,9 +511,9 @@
   {
    "id": "s3-hallway-stick-case",
    "name": "S3 hallway stick case",
-   "for": "Waveshare ESP32-S3-LCD-1.47 (the USB-A STICK, not the C6 header board). The hallway nightlight body: plugs into a wall adapter, the 172x320 glass faces the corridor, and the WS2812 leaves through a lit white seam down both long walls. Screwless — four cantilever beams cut into the bezel wall, sized by strain (ε printed at render, PETG budget 1.8%), with ASYMMETRIC return angles: steep at the plug end so it never lets go, shallow at the far end so a thumb pops it for the microSD. The plug end is the whole design problem: the opening is a RECTANGLE (series-A is not a stadium — that is USB-C), the wall is thin and relieved so a recessed receptacle clears it, an assert fails the render if under 11 mm of insertion length survives, and the drop buttress reaches INWARD (outward would eat the very length it protects). The RGB does not fire backwards — Waveshare's \"clear acrylic sandwich panel\" is the tell, the LED glows out the edge gap between the LCD module and the PCB — so the light gets a seam along the side walls at exactly that band rather than a hole in the back, which frees the back for the mark. The seam is filled with unfilled white PETG, a light pipe rather than a slot, and its x span is derived from the cavity face and asserted: the first version stopped 0.65 mm short and would have shipped a light pipe with no light in it. The side elevation reads 1 mm black / 3 mm white / black. Ties are hidden ribs in the inner 1.2 mm of the wall, so the white line is unbroken and each side presses in as ONE strip. No vents — the case is 8.2 mm of measured stack in a 9.2 mm shell, and the thumb scoop to the USB opening is the airway. Black PETG, yellow mark, white band",
+   "for": "Waveshare ESP32-S3-LCD-1.47 (the USB-A STICK, not the C6 header board). The hallway nightlight body: plugs into a wall adapter, the 172x320 glass faces the corridor, and the WS2812 leaves through a lit white seam down both long walls. Screwless — four cantilever beams cut into the bezel wall, sized by strain (ε printed at render, PETG budget 1.8%), with ASYMMETRIC return angles: steep at the plug end so it never lets go, shallow at the far end so a thumb pops it for the microSD. The plug end is the whole design problem: the opening is a RECTANGLE (series-A is not a stadium — that is USB-C), the wall is thin and relieved so a recessed receptacle clears it, an assert fails the render if under 11 mm of insertion length survives, and the drop buttress reaches INWARD (outward would eat the very length it protects). The RGB does not fire backwards — Waveshare's \"clear acrylic sandwich panel\" is the tell, the LED glows out the edge gap between the LCD module and the PCB — so the light gets a seam along the side walls at exactly that band rather than a hole in the back, which frees the back for the mark. The seam is filled with unfilled white PETG, a light pipe rather than a slot, and its x span is derived from the cavity face and asserted: the first version stopped 0.65 mm short and would have shipped a light pipe with no light in it. The side elevation reads 1 mm black / 3 mm white / black. Ties are hidden ribs in the inner 1.2 mm of the wall, so the white line is unbroken and each side presses in as ONE strip. No vents — the case is 8.2 mm of measured stack in a 9.2 mm shell, and the thumb scoop to the USB opening is the airway. Black PETG, yellow mark, white band. Two board builds since the board is sold bare but advertises GPIO expansion: `headers=\"none\"` and `headers=\"male\"` (the 2.54 mm rows soldered pointing down). The plug end does not move — headers add depth behind the PCB, so the insertion length and the drop collar are untouched and the case simply gets 5.85 mm deeper (bezel 9.200 → 15.050). What the axis does turn on is the compliant PCB ribs: they land on the same long edges the pin rows run down, and at the unmeasured `hdr_inset` candidates they clear by 0.20 mm or overlap by 0.20, so that arithmetic is an assert rather than a comment",
    "status": "in-development",
-   "note": "screwless snap, thumb-release, 3 filaments, `gen_3mf.py stick`",
+   "note": "screwless snap, thumb-release, 3 filaments, 2 board builds, `gen_3mf.py stick` / `stick-male`",
    "device": null,
    "preview": "preview_dev_s3_147.png",
    "parts": [],
@@ -6133,6 +6133,14 @@
         "fil_light",
         "fit_section"
        ]
+      },
+      {
+       "name": "headers",
+       "default": "none",
+       "enum": [
+        "none",
+        "male"
+       ]
       }
      ]
     },
@@ -6189,6 +6197,27 @@
        "name": "back_stack",
        "default": "stack_total - lcd_rise - pcb_t",
        "comment": "derived, not guessed"
+      }
+     ]
+    },
+    {
+     "name": "Headers",
+     "note": "the \"male\" build only",
+     "params": [
+      {
+       "name": "hdr_drop",
+       "default": "8.8",
+       "comment": "cavity depth below the PCB back swallowing base + pins —"
+      },
+      {
+       "name": "hdr_inset",
+       "default": "1.6",
+       "comment": "PCB long edge → header row centerline — MEASURE"
+      },
+      {
+       "name": "hdr_pin_w",
+       "default": "1.2",
+       "comment": "width the solder fillet + pin occupies across the row"
       }
      ]
     },
@@ -6538,6 +6567,15 @@
        "name": "preload",
        "default": "0.25",
        "comment": "compliant squeeze on the PCB (rib crush), not a clamp"
+      },
+      {
+       "name": "rib_inset",
+       "default": "3.2"
+      },
+      {
+       "name": "rib_w",
+       "default": "1.2",
+       "comment": "rib thickness across the board — the crushing face"
       }
      ]
     },
@@ -6586,8 +6624,12 @@
        "default": "max(0.6, r_out - wall)"
       },
       {
+       "name": "stack_eff",
+       "default": "(headers == \"male\") ? max(back_stack, hdr_drop) : back_stack"
+      },
+      {
        "name": "cav_d",
-       "default": "lcd_rise + pcb_t + back_stack",
+       "default": "lcd_rise + pcb_t + stack_eff",
        "comment": "glass ledge -> back plate inner"
       },
       {
@@ -6619,6 +6661,16 @@
       {
        "name": "lip_w",
        "default": "(lcm_w - aa_w)/2"
+      },
+      {
+       "name": "rib_out",
+       "default": "xc/2 - rib_inset + rib_w/2",
+       "comment": "rib's outboard face"
+      },
+      {
+       "name": "pin_in",
+       "default": "board_w/2 - hdr_inset - hdr_pin_w/2",
+       "comment": "pin row's inboard face"
       },
       {
        "name": "usb_free",
