@@ -505,6 +505,67 @@ test("parity wave 3b: room presets are baked in as typed NVS ints", async () => 
   }
 });
 
+test("parity wave 3c: the change map answers 'do my settings survive?'", () => {
+  // The last wave-3 item. The safety copy already holds every byte on the
+  // board and the image is verified before a write — so both sides of the
+  // comparison exist for exactly one moment, and that is where this runs.
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  const cmRs = read(join(ROOT, "desktop/src-tauri/src/changemap.rs"));
+  const libRsSrc = read(join(ROOT, "desktop/src-tauri/src/lib.rs"));
+  const flashCore = read(join(CANARY, "assets/flash-core.js"));
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+
+  assert.match(cmRs, /pub fn diff_install/, "desktop lost the install diff");
+  assert.match(cmRs, /pub fn settings_verdict/, "desktop lost the settings verdict");
+  assert.match(flashCore, /export function diffInstall/, "browser lost the install diff");
+  assert.match(flashCore, /export function settingsVerdict/, "browser lost the settings verdict");
+
+  // The four verdicts must all survive on both sides. Collapsing "wiped" into
+  // "changed" would bury the one consequence a user needs — that the board
+  // comes back up on its setup network.
+  for (const v of ["untouched", "identical", "wiped", "changed"]) {
+    assert.ok(cmRs.includes(`"${v}"`), `desktop change map lost the '${v}' verdict`);
+    assert.ok(flashCore.includes(`"${v}"`), `browser change map lost the '${v}' verdict`);
+  }
+
+  // It runs where both sides exist, and never fails the install: a missing or
+  // unreadable safety copy means no map, which is the honest answer.
+  assert.match(libRsSrc, /flash:changemap/, "the change map is never emitted");
+  assert.match(libRsSrc, /backup_path: Option<String>/,
+    "flash must accept the safety copy to diff against");
+  assert.match(appJs, /flash:changemap/, "desktop never listens for the change map");
+  assert.match(appJs, /function renderChangeMap/, "desktop lost the change-map render");
+  assert.match(html, /id="change-map"/, "desktop has nowhere to show the change map");
+  // A listener per flash would stack across reflashes.
+  assert.match(appJs, /unlistenMap\(\)/, "the change-map listener must be released");
+  // A previous install's map describes bytes that are no longer true.
+  assert.match(appJs, /renderChangeMap\(null\)/, "a new flash must clear the old map");
+
+  // Review hardening (Codex on #1509).
+  // 1. Baked Wi-Fi is REPLACED, not cleared. The flasher writes the user's
+  //    network into the replacement NVS before the image is staged, so that
+  //    region always differs — reading it as "your Wi-Fi is cleared, the
+  //    board wants its setup network" is exactly backwards.
+  assert.match(cmRs, /baked_wifi: bool/,
+    "the settings verdict must know whether we baked the network in");
+  assert.match(cmRs, /replaced with the ones you entered/,
+    "a provisioned reflash must not claim the saved Wi-Fi was cleared");
+  assert.match(libRsSrc, /let baked_wifi = provisioning/,
+    "the baked-Wi-Fi fact must reach the verdict");
+  // 2. A first-contact erase wipes what the image never reaches, so those
+  //    regions must not be reported as surviving.
+  assert.match(cmRs, /erase_all: bool/, "the diff must know about the full-chip erase");
+  assert.match(libRsSrc, /let erase_all = erase_first/,
+    "the erase mode must reach the diff");
+  // 3. No map is a thing to SAY, not a panel that quietly disappears.
+  assert.match(appJs, /function renderChangeMapUnavailable/,
+    "the desktop must explain a missing change map");
+  assert.match(appJs, /noMapReason/, "every no-map path must carry a reason");
+  assert.match(flashJs, /No change map this time/,
+    "the browser says why too — the wording is shared on purpose");
+});
+
 test("device API token: both flashers mint the same credential shape and seed the same keys", async () => {
   // The credential that makes the desktop fleet book (and any future browser
   // surface) able to talk to a board it flashed: "cv_" + 32 base62 chars,

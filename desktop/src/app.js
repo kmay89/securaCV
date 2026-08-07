@@ -1694,6 +1694,74 @@ async function withBaudLadder(fn, con) {
   throw lastErr;
 }
 
+// ── the change map ───────────────────────────────────────────────────────────
+// What this install actually touches, computed by the backend from the safety
+// copy and the verified image (parity: the browser's diffInstall render). The
+// headline is the question people ask — do my settings survive? — and it goes
+// first, because it is the only line most people need.
+function renderChangeMap(map) {
+  const box = $("change-map");
+  if (!box) return;
+  box.innerHTML = "";
+  if (!map || !Array.isArray(map.rows) || !map.rows.length) {
+    box.classList.add("hidden");
+    return;
+  }
+  box.classList.remove("hidden");
+  box.append(Object.assign(document.createElement("h3"), {
+    textContent: "What this install changes",
+  }));
+  if (map.settings) {
+    const s = document.createElement("p");
+    s.className = "cm-verdict " + (map.settings.kept ? "is-kept" : "is-reset");
+    s.textContent = map.settings.text;
+    box.appendChild(s);
+  }
+  if (map.layoutChanged) {
+    box.append(Object.assign(document.createElement("p"), {
+      className: "cm-layout",
+      textContent: "The partition layout itself changes with this image — the board's " +
+        "regions are being rearranged, not just rewritten.",
+    }));
+  }
+  const WORDS = {
+    untouched: "left alone — the image doesn't reach it",
+    identical: "already byte-for-byte identical",
+    wiped: "reset to factory-fresh",
+    changed: "rewritten",
+  };
+  const ul = document.createElement("ul");
+  ul.className = "cm-rows";
+  for (const r of map.rows) {
+    const li = document.createElement("li");
+    li.className = "cm-row is-" + r.verdict;
+    const what = r.verdict === "changed" && r.changedPct
+      ? `${WORDS.changed} (${r.changedPct}% of its bytes differ)`
+      : WORDS[r.verdict] || r.verdict;
+    const detail = r.before && r.after && r.before !== r.after ? ` · ${r.before} → ${r.after}` : "";
+    li.append(
+      Object.assign(document.createElement("span"), { className: "cm-k", textContent: r.label }),
+      Object.assign(document.createElement("span"), { className: "cm-v", textContent: what + detail }),
+    );
+    ul.appendChild(li);
+  }
+  box.appendChild(ul);
+}
+
+// Say why there is no map, rather than showing nothing. The browser does the
+// same ("No change map this time — it needs the safety copy to compare
+// against"); an empty space where a panel used to be reads as a bug.
+function renderChangeMapUnavailable(reason) {
+  const box = $("change-map");
+  if (!box || !reason) return;
+  box.innerHTML = "";
+  box.classList.remove("hidden");
+  box.append(Object.assign(document.createElement("p"), {
+    className: "cm-none",
+    textContent: reason,
+  }));
+}
+
 function clearBootDiagnosis() {
   state.diagnosedSig = null;
   const box = $("boot-diagnosis");
@@ -2626,6 +2694,9 @@ async function onFlash() {
     con.textContent += ev.payload + "\n";
     con.scrollTop = con.scrollHeight;
   });
+  // The change map arrives once, after the image is verified and before a
+  // byte is written — the moment both sides of the comparison exist.
+  const unlistenMap = await listen("flash:changemap", (ev) => renderChangeMap(ev.payload));
 
   // Safety copy FIRST — the undo the desktop one-shot flow never had (the
   // browser has done this unasked for ages; parity at last). Once per board
@@ -2640,6 +2711,24 @@ async function onFlash() {
   // board through a port silently inherit the first board's "already copied".
   const backupKey = state.mac ? String(state.mac).toLowerCase() : null;
   const skipBackup = !!($("skip-backup") && $("skip-backup").checked);
+  // Why there may be no change map. The map needs the board's CURRENT bytes,
+  // and the only copy we take is the pristine one from before the first write
+  // — reusing it on a reflash would draw the map against a "before" that
+  // stopped being true one flash ago, which is worse than drawing nothing.
+  // Whatever the reason, it gets said out loud: a panel that silently
+  // vanishes reads as a broken feature.
+  let noMapReason = null;
+  if (skipBackup) {
+    noMapReason = "No change map this time — the safety copy is switched off under Advanced, " +
+      "and the map is drawn from it.";
+  } else if (!state.flashBytes) {
+    noMapReason = "No change map this time — the board didn't report its flash size, so there " +
+      "was nothing to read a copy from.";
+  } else if (backupKey && state.backupsTaken[backupKey]) {
+    noMapReason = "No change map this time — the safety copy from earlier in this session is " +
+      "kept as your undo, and it describes the board as it was before that first install, " +
+      "not as it is now.";
+  }
   if (!skipBackup && state.flashBytes && !(backupKey && state.backupsTaken[backupKey])) {
     try {
       backupPath = await invoke("auto_backup_path", { mac: state.mac || "" });
@@ -2654,10 +2743,13 @@ async function onFlash() {
       logEvent("ok", "Safety copy saved: " + backupPath);
     } catch (e) {
       backupPath = null;
+      noMapReason = "No change map this time — the safety copy it's drawn from couldn't be " +
+        "read off this board.";
       con.textContent += "⚠ Couldn't take the safety copy (" + e + ") — continuing. " +
         "Advanced → Rescue can still try a manual backup.\n";
     }
   }
+  if (!backupPath && noMapReason) renderChangeMapUnavailable(noMapReason);
 
   try {
     const receipt = await withBaudLadder((baud) => invoke("flash", {
@@ -2673,6 +2765,8 @@ async function onFlash() {
       // browser flasher decides this by reading the board; espflash can't
       // report what's resident, so here it's the user's answer on step 1.
       eraseFirst: !!($("first-contact") && $("first-contact").checked),
+      // Absent when the copy was skipped or failed: no map, honestly.
+      backupPath: backupPath || "",
     }), con);
     state.vision.hostFlash = receipt;
     state.vision.hostBoot = null;
@@ -2755,6 +2849,7 @@ async function onFlash() {
   } finally {
     unlisten();
     unlistenRescue();
+    unlistenMap(); // or every reflash stacks another map listener
     btn.disabled = false;
     btn.textContent = "Flash my Canary";
     $("dev-channel").disabled = false;
@@ -3929,6 +4024,9 @@ function resetOutcome() {
   setStatus("flash-result", "");
   setStatus("local-result", "");
   try { renderTokenOnce(null); } catch (_) {}
+  // The previous install's map describes bytes that are about to stop being
+  // true — showing it beside a new flash would be a lie by staleness.
+  try { renderChangeMap(null); } catch (_) {}
   try { hideHatchCard(); } catch (_) {}
   // Host receipts belong to the image being overwritten — clear them. The
   // MODULE receipt survives: the model lives in the camera module's own
