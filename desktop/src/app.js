@@ -716,7 +716,10 @@ async function boot() {
     b.setAttribute("aria-pressed", String(state.monitorPaused));
     if (!state.monitorPaused) { const c = $("serial-console"); c.scrollTop = c.scrollHeight; }
   });
-  $("monitor-clear").addEventListener("click", () => { $("serial-console").textContent = ""; });
+  $("monitor-clear").addEventListener("click", () => {
+    $("serial-console").textContent = "";
+    clearBootDiagnosis(); // clearing the log clears its verdict too
+  });
   $("monitor-expand").addEventListener("click", () => {
     const on = $("serial-monitor").classList.toggle("monitor-expanded");
     const b = $("monitor-expand");
@@ -781,6 +784,12 @@ async function boot() {
   await listen("serial:log", (ev) => {
     feedSenseTune(ev.payload); // the tuning panel reads [cfg]/[tune] replies
     appendConsole("serial-console", ev.payload);
+    // Watch the boot log for the fatal signatures that have a specific fix
+    // (parity: the browser's maybeDiagnose on the same stream). Fed the whole
+    // console, not the one line, because a backtrace's giveaway can arrive
+    // several lines after the line that doomed it.
+    const con = $("serial-console");
+    if (con) maybeDiagnose(con.textContent);
   });
   await listen("serial:status", (ev) => {
     $("monitor-status").textContent = ev.payload;
@@ -1335,6 +1344,244 @@ const fleetBook = {
 
 // Dotted-version compare for "is this board behind the app's firmware train".
 // Anything non-numeric compares as NOT behind — never nag on a dev build.
+// ── the board passport (parity: flash-core.js) ───────────────────────────────
+// What the board IS and what it has lived through, read at connect time by the
+// `board_passport` command. These three helpers are pure so they can be
+// asserted without a board; the browser's originals are the reference and the
+// parity gate keeps them in step.
+
+// Map a firmware image's compiled project_name back to a catalog product, so a
+// read-back says "this is a Canary WAP" and not just a version string. Longest
+// asset_stem match wins (canary-vision-xiao-s3 must beat canary).
+function matchProjectToProduct(catalog, projectName) {
+  const pn = String(projectName || "").toLowerCase();
+  if (!pn) return null;
+  let best = null;
+  for (const p of (catalog && catalog.products) || []) {
+    const stem = String(p.asset_stem || "").toLowerCase();
+    if (!stem) continue;
+    if (pn.includes(stem) || pn.includes(stem.replace(/-/g, "_"))) {
+      if (!best || stem.length > String(best.asset_stem).length) best = p;
+    }
+  }
+  return best;
+}
+
+// Semver-ish compare returning -1/0/1, or null when either side can't be
+// parsed. A prerelease sorts BELOW its release (2.4.7-rc1 < 2.4.7).
+function compareVersions(a, b) {
+  const parse = (v) => {
+    const m = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[-+](.+))?$/.exec(String(v || "").trim());
+    if (!m) return null;
+    return { parts: [+m[1], +(m[2] || 0), +(m[3] || 0)], pre: m[4] || null };
+  };
+  const pa = parse(a), pb = parse(b);
+  if (!pa || !pb) return null;
+  for (let i = 0; i < 3; i++) {
+    if (pa.parts[i] !== pb.parts[i]) return pa.parts[i] < pb.parts[i] ? -1 : 1;
+  }
+  if (!!pa.pre !== !!pb.pre) return pa.pre ? -1 : 1;
+  if (pa.pre && pb.pre && pa.pre !== pb.pre) return pa.pre < pb.pre ? -1 : 1;
+  return 0;
+}
+
+// The one-line verdict for a candidate install, given what the board runs now.
+// A downgrade is allowed — that's what the safety copy is for — but never
+// silent, which is the whole reason this exists.
+function installVerdict({ current, currentProduct, product, version }) {
+  if (!current || current.unknown) {
+    return { kind: "fresh", icon: "✦", label: "First install",
+      detail: "Nothing SecuraCV is on this board yet — this is the one-time first setup." };
+  }
+  if (currentProduct && product && currentProduct.id !== product.id) {
+    return { kind: "switch", icon: "⇄", label: `Switch from ${currentProduct.name}`,
+      detail: `The board runs ${currentProduct.name} ${current.version || ""}`.replace(/\s+$/, "") +
+        ` today. Installing ${product.name} changes what this Canary is — settings from the old role don't carry over.` };
+  }
+  const cmp = compareVersions(current.version, version);
+  if (cmp === null) {
+    return { kind: "unknown", icon: "•", label: "Version unknown",
+      detail: "The board's current version couldn't be compared — the install itself is unaffected." };
+  }
+  if (cmp < 0) {
+    return { kind: "update", icon: "↑", label: `Update · ${current.version} → ${version}`,
+      detail: "A newer build of the same firmware. Your settings region is left alone." };
+  }
+  if (cmp > 0) {
+    return { kind: "downgrade", icon: "↓", label: `Downgrade · ${current.version} → ${version}`,
+      detail: "This is OLDER than what the board runs now. That's allowed — useful when a release " +
+        "misbehaves — but newer settings may not be understood by older firmware. The automatic " +
+        "safety copy is your way back." };
+  }
+  return { kind: "same", icon: "=", label: `Reinstall · already on ${version}`,
+    detail: "The board already runs this exact version. Installing again rewrites it byte-for-byte — " +
+      "harmless, and occasionally exactly what a misbehaving board needs." };
+}
+
+// The passport's lived-history rows, from the read-only probes.
+function passportRows({ ota, witness, coredump } = {}) {
+  const rows = [];
+  if (ota && typeof ota.updatesSeen === "number" && ota.updatesSeen > 0)
+    rows.push({ id: "updates", label: "Updates seen", value: String(ota.updatesSeen), tone: "ok" });
+  if (witness && typeof witness.boots === "number")
+    rows.push({ id: "boots", label: "Lifetime boots", value: String(witness.boots), tone: "ok" });
+  if (witness && typeof witness.seq === "number")
+    rows.push({ id: "seq", label: "Witness records", value: String(witness.seq), tone: "ok" });
+  if (witness && witness.tamper)
+    rows.push({ id: "tamper", label: "Tamper flag", value: "raised — expected if you've opened it", tone: "warn" });
+  if (coredump)
+    rows.push(coredump.present
+      ? { id: "crash", label: "Crash record", value: "one saved crash dump on board", tone: "warn" }
+      // Only what the probe actually establishes: the dump region is empty
+      // NOW. A wipe, a cleared dump, or a fault that never got to persist one
+      // all leave it empty, so "it has never crashed" would be a lifetime
+      // claim this read cannot support.
+      : { id: "crash", label: "Crash record", value: "no saved crash dump", tone: "ok" });
+  return rows;
+}
+
+// ── self-healing: turn a boot log into a diagnosis + fix ─────────────────────
+// After a flash the board boots and prints to serial. A handful of fatal
+// signatures have specific, actionable fixes — surface those instead of raw
+// scroll. Ported verbatim from flash-core.js (the two frontends share no code,
+// and a diagnostic in only one of them is a diagnostic half the users never
+// get). `action` is a machine hint: "clean-install" (reflash with a full
+// erase) or "power" — which is NOT a reflash, and the distinction matters:
+// telling someone to reinstall firmware when their USB port can't power the
+// board sends them around the loop forever. Ordered most-specific first.
+const BOOT_SIGNATURES = [
+  {
+    signature: "brownout",
+    test: /brownout detector was triggered|\bBROWNOUT_RST\b|rst:0x[0-9a-f]+ \(BROWNOUT/i,
+    means: "The board browned out — it isn't getting enough power to boot.",
+    fix: "This isn't the firmware. Use a different USB port (straight into the " +
+      "computer, not a hub), or a powered hub, and a shorter good-quality data " +
+      "cable. Then reconnect.",
+    action: "power",
+  },
+  {
+    signature: "panic",
+    test: /guru meditation|backtrace:|panic'?ed|abort\(\) was called|assert failed/i,
+    means: "The new firmware crashed as it started up.",
+    fix: "A clean install usually clears this — it wipes stale settings a previous " +
+      "firmware may have left behind. Reconnect and tick first contact.",
+    action: "clean-install",
+  },
+  {
+    signature: "no-app",
+    test: /invalid header: 0x|no bootable app partitions|ota_data partition|not found any bootable/i,
+    means: "The bootloader couldn't find a complete, valid app to run.",
+    fix: "Reconnect and flash again with a full erase (tick first contact) so a " +
+      "whole image is laid down from scratch.",
+    action: "clean-install",
+  },
+  {
+    signature: "flash-error",
+    test: /flash read err|checksum failed|corrupt|e \(\d+\) esp_image/i,
+    means: "The board had trouble reading its own flash.",
+    fix: "Reseat the cable and do a clean install. If it keeps happening across " +
+      "several boards, that one's flash chip may be failing.",
+    action: "clean-install",
+  },
+];
+
+function diagnoseBootLog(text) {
+  const t = String(text || "");
+  if (t.length < 8) return null;
+  for (const s of BOOT_SIGNATURES) {
+    if (s.test.test(t)) {
+      return { signature: s.signature, means: s.means, fix: s.fix, action: s.action };
+    }
+  }
+  return null;
+}
+
+// ── self-healing: the flash baud ladder ──────────────────────────────────────
+// Transfer speeds to try, fastest first. Flaky cables, unpowered hubs and long
+// USB runs sync the ROM fine at 115200 and then choke on the high-speed
+// transfer — a rung down just works. The browser walks this during connect
+// (esptool-js connects and writes separately); espflash does both in one shot,
+// so here the ladder wraps the whole invocation. Same constant, same policy.
+const FLASH_BAUDS = [921600, 460800, 230400, 115200];
+
+// The rungs to try this attempt: the catalog's speed first, then every slower
+// rung, never anything above the ceiling a previous failure set. Never empty —
+// the slowest rung always survives, because "no speed left to try" would turn
+// a recoverable cable problem into a dead end.
+function baudLadder() {
+  const top = (state.catalog && state.catalog.flash_baud) || 921600;
+  const ceiling = state.baudCeiling || Infinity;
+  const rungs = [top, ...FLASH_BAUDS.filter((b) => b !== top)]
+    .filter((b) => b <= ceiling)
+    .sort((a, b) => b - a);
+  return rungs.length ? rungs : [FLASH_BAUDS[FLASH_BAUDS.length - 1]];
+}
+
+// Only these failures are worth a slower retry. A bad image, a busy port or a
+// refused permission will fail identically at every speed, and retrying those
+// three more times just makes the user wait longer for the same answer.
+//
+// `unknown` is deliberately NOT here. Every espflash exit used to arrive as
+// "exited with code 1" with its real output dropped, so everything classified
+// as `unknown` — and including it would have retried a busy port or a denied
+// permission down the whole ladder, repeating the download, the verification
+// and (on first contact) the full-chip erase each time. The backend now keeps
+// espflash's last lines in the error, so genuine transport faults classify as
+// device-lost / not-in-download / read-stall on their own merits and this set
+// can stay honest.
+const BAUD_RETRY_KINDS = new Set(["not-in-download", "read-stall", "device-lost"]);
+
+// Run `fn(baud)` down the ladder until it succeeds or the rungs run out.
+async function withBaudLadder(fn, con) {
+  const rungs = baudLadder();
+  let lastErr;
+  for (let i = 0; i < rungs.length; i++) {
+    const baud = rungs[i];
+    if (i > 0 && con) con.textContent += `→ trying a gentler speed (${baud})…\n`;
+    try {
+      const out = await fn(baud);
+      state.usedBaud = baud;
+      state.baudCeiling = null; // it worked — stop handicapping later attempts
+      return out;
+    } catch (e) {
+      lastErr = e;
+      const kind = classifyFlashError(e).kind;
+      if (!BAUD_RETRY_KINDS.has(kind) || i === rungs.length - 1) throw e;
+      // Remember the ceiling even if the user gives up here, so the NEXT
+      // attempt doesn't start by repeating the speed that just failed.
+      state.baudCeiling = rungs[i + 1];
+      logEvent("warn", `Flash failed at ${baud} (${kind}) — dropping to ${rungs[i + 1]}`);
+    }
+  }
+  throw lastErr;
+}
+
+function clearBootDiagnosis() {
+  state.diagnosedSig = null;
+  const box = $("boot-diagnosis");
+  if (box) { box.classList.add("hidden"); box.innerHTML = ""; }
+}
+
+// Show the diagnosis once per signature — a boot loop reprints the same panic
+// forever, and a banner that re-renders on every line is noise, not help.
+function maybeDiagnose(text) {
+  const d = diagnoseBootLog(text);
+  const box = $("boot-diagnosis");
+  if (!box || !d || state.diagnosedSig === d.signature) return;
+  state.diagnosedSig = d.signature;
+  box.innerHTML = "";
+  box.className = "boot-diagnosis is-" + d.action;
+  box.append(
+    Object.assign(document.createElement("div"), {
+      className: "bd-head",
+      textContent: (d.action === "power" ? "🔌 " : "🩺 ") + d.means,
+    }),
+    Object.assign(document.createElement("div"), { className: "bd-fix", textContent: d.fix }),
+  );
+  box.classList.remove("hidden");
+  logEvent("warn", "Boot diagnosis: " + d.signature + " — " + d.means);
+}
+
 function fwBehind(fw, train) {
   const pa = String(fw).split(".").map((n) => parseInt(n, 10));
   const pb = String(train).split(".").map((n) => parseInt(n, 10));
@@ -1631,6 +1878,11 @@ async function identify(portInfo) {
     renderProducts();
     enableCard("step-pick");
     updateLocalFlashUi();
+    // Read the board's passport in the background. Deliberately NOT awaited:
+    // the product list is already usable, and a board whose passport won't
+    // read must still be flashable — that's often exactly the board that
+    // needs it. renderProducts() runs again when the answer lands.
+    readPassport(port);
   } catch (e) {
     if (port !== state.port) return;
     state.failedPort = port;
@@ -1658,12 +1910,134 @@ async function identify(portInfo) {
   }
 }
 
+// ── read the passport, then say who this board is ────────────────────────────
+// Every field is best-effort. The one thing this must never do is report an
+// unread board as a blank one: "we couldn't look" and "there is nothing there"
+// are different answers, and only the backend can tell them apart (it returns
+// blank:true solely when the read SUCCEEDED and found no partition table).
+async function readPassport(port) {
+  state.passport = null;
+  state.resident = null;
+  // The picker is usable while this runs, so the flash button waits on it:
+  // starting an install mid-read would show NO verdict at all, and a silent
+  // downgrade is exactly what this feature exists to prevent. The wait is
+  // bounded — see the settle timer below — because "can't read the board"
+  // must never become "can't flash the board".
+  state.passportPending = true;
+  const settle = setTimeout(() => {
+    if (state.passportPending && port === state.port) {
+      state.passportPending = false;
+      state.resident = state.resident || { unknown: true };
+      renderPassport();
+      renderProducts();
+    }
+  }, 25000);
+  try {
+    const p = await invoke("board_passport", {
+      port,
+      baud: (state.catalog && state.catalog.flash_baud) || 921600,
+    });
+    if (port !== state.port) return; // unplugged/switched while reading
+    state.passport = p;
+    if (p.blank) {
+      state.resident = { unknown: false, blank: true };
+    } else if (p.resident) {
+      state.resident = {
+        version: p.resident.version,
+        projectName: p.resident.projectName,
+        built: p.resident.built,
+        slot: p.resident.slot,
+        product: matchProjectToProduct(state.catalog, p.resident.projectName),
+      };
+    } else {
+      state.resident = { unknown: true };
+    }
+  } catch (_) {
+    if (port !== state.port) return;
+    state.resident = { unknown: true }; // read failed — NOT a blank board
+  } finally {
+    clearTimeout(settle);
+    // Settles on every path — but only for the board this call belongs to.
+    // Swap boards mid-read and a NEWER readPassport is already in flight with
+    // the flag raised; clearing it here unconditionally would open the gate
+    // while that read is still running, which is the exact hole this closes.
+    if (port === state.port) state.passportPending = false;
+  }
+  renderPassport();
+  renderProducts(); // verdict rows depend on what's resident
+}
+
+function renderPassport() {
+  const box = $("passport");
+  if (!box) return;
+  const p = state.passport;
+  const r = state.resident;
+  box.innerHTML = "";
+  if (!r) { box.classList.add("hidden"); return; }
+  box.classList.remove("hidden");
+
+  const head = document.createElement("div");
+  head.className = "pp-head";
+  if (r.blank) {
+    head.textContent = "A blank board — nothing installed yet.";
+  } else if (r.unknown) {
+    head.textContent = "Couldn't read what's installed (the install itself is unaffected).";
+  } else {
+    const who = r.product ? r.product.name : r.projectName || "unknown firmware";
+    head.textContent = `Running ${who}${r.version ? " " + r.version : ""}` +
+      (r.slot ? ` from ${r.slot}` : "");
+  }
+  box.appendChild(head);
+
+  // The same board, met twice: the fleet book already knows this MAC. Says so
+  // before the flash, so a reflash is a choice rather than a surprise.
+  const known = state.mac && bookAll()[String(state.mac).toLowerCase()];
+  if (known) {
+    const seen = document.createElement("div");
+    seen.className = "pp-known";
+    const when = known.flashedAt ? new Date(known.flashedAt).toLocaleDateString() : null;
+    seen.textContent = `You've flashed this exact board before` +
+      (known.name ? ` — it's "${known.name}" in your fleet` : "") +
+      (when ? `, last written ${when}.` : ".");
+    box.appendChild(seen);
+  }
+
+  if (r.built) {
+    const b = document.createElement("div");
+    b.className = "pp-built muted";
+    b.textContent = "Built " + r.built;
+    box.appendChild(b);
+  }
+
+  const rows = passportRows(p || {});
+  if (rows.length) {
+    const ul = document.createElement("ul");
+    ul.className = "pp-rows";
+    for (const row of rows) {
+      const li = document.createElement("li");
+      li.className = "pp-row pp-" + row.tone;
+      li.append(Object.assign(document.createElement("span"), { className: "pp-k", textContent: row.label }),
+                Object.assign(document.createElement("span"), { className: "pp-v", textContent: row.value }));
+      ul.appendChild(li);
+    }
+    box.appendChild(ul);
+  }
+}
+
 function onDisconnect() {
   stopMonitor();
   stopBenchQuiet(); // the module (and its port) just went away
   state.port = null;
   state.portInfo = null;
   state.portKind = null;
+  state.passport = null;
+  state.resident = null;
+  state.passportPending = false;
+  // The lowered speed belonged to THAT board and THAT cable. Carrying it to
+  // the next board would quietly hold a healthy one at 115200 for the rest of
+  // the session — the ladder is a per-board remedy, not a session-wide verdict.
+  state.baudCeiling = null;
+  state.usedBaud = null;
   state.chip = null;
   state.flashBytes = null;
   state.mac = null;
@@ -1784,6 +2158,40 @@ function figureSlot(p) {
   );
 }
 
+// The install verdict as a row badge. Silent until both halves are known —
+// what the board runs (passport) and what the release offers (manifest) —
+// because a guess here is worse than a blank: "Update" on a board we never
+// read would be an invented promise.
+function verdictMarkup(product, version) {
+  if (!state.resident || !version) return "";
+  const r = state.resident;
+  // A board we COULDN'T read is not a board with nothing on it. installVerdict
+  // maps both `null` and `{unknown:true}` to "First install", which is right
+  // for the browser — its probe cannot tell a blank chip from an unreadable
+  // one, so both arrive as `{unknown:true}`. This backend can (it returns
+  // blank:true only when the read SUCCEEDED and found no table), so saying
+  // "nothing SecuraCV is on this board yet" here would be an invented claim
+  // that contradicts the passport card sitting directly above it — and would
+  // hide a downgrade. Keep installVerdict byte-identical to the browser's and
+  // make the distinction at the call site, where the better information is.
+  if (r.unknown) {
+    return `<span class="p-verdict is-unknown">` +
+      `<span class="p-verdict-label">• Can't tell yet</span>` +
+      `<span class="p-verdict-detail">This board's current firmware couldn't be read, so ` +
+      `there's no telling whether this is an update, a reinstall, or a step backward. ` +
+      `The install itself is unaffected, and the automatic safety copy still runs.</span></span>`;
+  }
+  const v = installVerdict({
+    current: r.blank ? null : r,
+    currentProduct: r.product || null,
+    product,
+    version,
+  });
+  return `<span class="p-verdict is-${v.kind}">` +
+    `<span class="p-verdict-label">${esc(v.icon)} ${esc(v.label)}</span>` +
+    `<span class="p-verdict-detail">${esc(v.detail)}</span></span>`;
+}
+
 function renderProducts() {
   const list = $("product-list");
   list.innerHTML = "";
@@ -1877,6 +2285,12 @@ function renderProducts() {
               `<span class="p-tier-label">${esc(p.tier.label)}</span>` +
               `<span>${esc(p.tier.line)}</span></span>`
             : ""
+        }${
+          // What installing THIS image would do to THIS board — update,
+          // downgrade, reinstall, or a change of role. Only once the passport
+          // has been read and the release version is known; an unread board
+          // says nothing rather than guessing.
+          verdictMarkup(p, ver)
         }
       </span>`;
     const radio = row.querySelector("input");
@@ -1997,10 +2411,17 @@ function onProductChosen(p, ver) {
   if (usbSecrets || broker) $("mqtt-host").value ||= "homeassistant.local";
   profileAutofill();
   const btn = $("flash-btn");
-  btn.disabled = !ver;
-  $("flash-target").textContent = ver
-    ? `${p.name} → ${state.port}`
-    : "No published release for this one yet.";
+  // Wait for the passport before arming the button. Without this the picker
+  // is live during the connect-time read, so a quick hand could start an
+  // install while state.resident is still null — no verdict rendered, and a
+  // downgrade or a role switch goes through in silence. Bounded by
+  // readPassport's settle timer, so an unreadable board still flashes.
+  btn.disabled = !ver || !!state.passportPending;
+  $("flash-target").textContent = !ver
+    ? "No published release for this one yet."
+    : state.passportPending
+      ? `Reading the board first — ${p.name} → ${state.port}`
+      : `${p.name} → ${state.port}`;
 }
 
 function showModuleFlow() {
@@ -2097,11 +2518,11 @@ async function onFlash() {
   }
 
   try {
-    const receipt = await invoke("flash", {
+    const receipt = await withBaudLadder((baud) => invoke("flash", {
       port: state.port,
       productId: product.id,
       manifestUrl,
-      baud: state.catalog.flash_baud || 921600,
+      baud,
       detectedChip: state.chip,
       provisioning,
       // First contact with a board we've never written: wipe the whole chip
@@ -2110,7 +2531,7 @@ async function onFlash() {
       // browser flasher decides this by reading the board; espflash can't
       // report what's resident, so here it's the user's answer on step 1.
       eraseFirst: !!($("first-contact") && $("first-contact").checked),
-    });
+    }), con);
     state.vision.hostFlash = receipt;
     state.vision.hostBoot = null;
     // The flash succeeded — that's the consent moment the "Remember" box
@@ -3311,6 +3732,7 @@ async function startMonitor(opts) {
   }
   $("serial-monitor").classList.remove("hidden");
   $("serial-console").textContent = "";
+  clearBootDiagnosis(); // a fresh boot gets a fresh verdict
   $("monitor-status").textContent = "Waiting for the board to reappear after reboot…";
   renderSenseTune(); // the radar tuning suite rides the monitor on Sense boards
   setMonitorButtons(true);

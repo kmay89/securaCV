@@ -18,6 +18,7 @@ const { test } = require("node:test");
 const assert = require("node:assert");
 const { readFileSync } = require("node:fs");
 const { join } = require("node:path");
+const { pathToFileURL } = require("node:url");
 
 const ROOT = join(__dirname, "..", "..");     // repo root
 const CANARY = join(__dirname, "..");         // canary-local/
@@ -241,6 +242,184 @@ test("parity wave 1: safety copy, error kinds, QR, token card, nursery, diagnost
   //     both frontends clear it when either field changes.
   assert.match(appJs, /wifiQrInvalidate/, "desktop no longer invalidates a stale Wi-Fi QR");
   assert.match(flashJs, /qrClear/, "browser no longer invalidates a stale Wi-Fi QR");
+});
+
+test("parity wave 2: the board passport, the install verdict, and 'we've met this board'", () => {
+  // Wave 2 of the 2026-08 inventory. The browser has always read the board
+  // before writing to it; the desktop app flashed blind — no idea what was
+  // resident, so no way to say "this is a downgrade" or "you've flashed this
+  // one before". These assertions keep that eyesight.
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  const healthRs = read(join(ROOT, "desktop/src-tauri/src/health.rs"));
+  const flashCore = read(join(CANARY, "assets/flash-core.js"));
+
+  // 1. A connect-time passport command, distinct from the deep health report.
+  assert.match(libRs, /fn board_passport/, "desktop lost the board passport command");
+  assert.match(appJs, /board_passport/, "desktop passport is never read");
+  assert.match(html, /id="passport"/, "desktop has nowhere to show the passport");
+
+  // 2. The booted slot is chosen from otadata, both sides. Reading the wrong
+  //    slot silently turns a downgrade into an "update" — the one direction
+  //    a user most needs named.
+  assert.match(healthRs, /fn pick_booted_app_partition/,
+    "desktop lost the booted-slot picker — it would judge by table order");
+  assert.match(flashCore, /export function pickBootedAppPartition/,
+    "browser lost the booted-slot picker");
+
+  // 3. The install verdict: same kinds, same meaning, both frontends.
+  for (const kind of ["fresh", "update", "downgrade", "same", "switch", "unknown"]) {
+    assert.ok(appJs.includes(`"${kind}"`), `desktop lost the ${kind} install verdict`);
+    assert.ok(flashCore.includes(`"${kind}"`), `browser lost the ${kind} install verdict`);
+  }
+  assert.match(appJs, /function installVerdict/, "desktop lost installVerdict");
+  assert.match(appJs, /function compareVersions/,
+    "desktop lost compareVersions — the verdict cannot tell up from down without it");
+  assert.match(appJs, /function matchProjectToProduct/,
+    "desktop cannot name the resident firmware without the project→product map");
+
+  // 4. Passport history rows, same shape as the browser's.
+  assert.match(appJs, /function passportRows/, "desktop lost the passport rows");
+  assert.match(flashCore, /export function passportRows/, "browser lost the passport rows");
+
+  // 5. A board the fleet book already knows is announced BEFORE the flash.
+  assert.match(appJs, /You've flashed this exact board before/,
+    "desktop no longer recognizes a board it has already written");
+
+  // 6. An unreadable board must never render as a blank one — missing
+  //    evidence is its own answer, not the cleanest verdict on the page.
+  assert.match(appJs, /read failed — NOT a blank board/,
+    "desktop must distinguish 'couldn't look' from 'nothing there'");
+
+  // 7. Review hardening (Codex on #1505). The verdict row must not turn an
+  //    unread board into "First install" — that contradicts the passport card
+  //    directly above it and hides a downgrade.
+  assert.match(appJs, /if \(r\.unknown\)/,
+    "desktop verdict must answer 'can't tell yet' for an unread board");
+
+  // 8. The flash button waits for the passport, so an install started during
+  //    the connect-time read can't bypass the verdict entirely — with a
+  //    bounded settle so an unreadable board is still flashable.
+  assert.match(appJs, /passportPending/,
+    "desktop lost the passport gate — a fast hand could flash with no verdict shown");
+  assert.match(appJs, /setTimeout\(\(\) => \{\s*\n?\s*if \(state\.passportPending/,
+    "the passport gate must be bounded — 'can't read' must never mean 'can't flash'");
+
+  // 9. The crash row states what was read, not a lifetime claim: an empty
+  //    dump region also follows a wipe or a fault that never persisted one.
+  for (const [name, src] of [["desktop", appJs], ["browser", flashCore]]) {
+    assert.ok(src.includes("no saved crash dump"),
+      `${name} lost the honest crash-record wording`);
+    assert.ok(!src.includes("never hard-crashed"),
+      `${name} claims a crash-free lifetime the probe cannot establish`);
+  }
+});
+
+test("parity wave 3a: the boot-log verdict and the self-healing baud ladder", async () => {
+  // Two self-healing behaviors the browser has had and the desktop hasn't:
+  // reading the boot log for signatures that have a specific fix, and walking
+  // down the transfer speed when a cable/hub can't hold the fast one.
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+
+  // 1. Every boot signature the browser knows, the desktop knows — and both
+  //    keep the power/firmware split, since telling someone to reinstall
+  //    firmware when their USB port can't power the board loops forever.
+  assert.match(appJs, /function diagnoseBootLog/, "desktop lost the boot-log diagnosis");
+  assert.match(html, /id="boot-diagnosis"/, "desktop has nowhere to show the verdict");
+  for (const sig of ["brownout", "panic", "no-app", "flash-error"]) {
+    assert.ok(appJs.includes(`"${sig}"`), `desktop lost the ${sig} boot signature`);
+  }
+  assert.ok(appJs.includes('"power"') && appJs.includes('"clean-install"'),
+    "desktop lost the action split — a brownout is not fixed by reflashing");
+
+  // The ported matcher must agree with the browser's on real log text.
+  const samples = {
+    "Brownout detector was triggered": "brownout",
+    "Guru Meditation Error: Core 0 panic'ed": "panic",
+    "E (204) esp_image: invalid header: 0xffffffff": "no-app",
+    "flash read err, 1000": "flash-error",
+    "I (31) boot: ESP-IDF v5.1 2nd stage bootloader": null,
+  };
+  const desktopDiagnose = new Function(
+    appJs.slice(appJs.indexOf("const BOOT_SIGNATURES"), appJs.indexOf("function clearBootDiagnosis")) +
+    "return diagnoseBootLog;")();
+  for (const [text, want] of Object.entries(samples)) {
+    const mine = desktopDiagnose(text);
+    const theirs = core.diagnoseBootLog(text);
+    assert.strictEqual(mine && mine.signature, want, `desktop misreads: ${text}`);
+    assert.strictEqual(theirs && theirs.signature, want, `browser misreads: ${text}`);
+  }
+
+  // 2. The ladder: same rungs both sides, and the desktop retries only the
+  //    failures a slower speed can actually fix.
+  assert.deepStrictEqual(core.FLASH_BAUDS, [921600, 460800, 230400, 115200],
+    "the browser's ladder moved — the desktop's copy must move with it");
+  for (const rung of core.FLASH_BAUDS) {
+    assert.ok(appJs.includes(String(rung)), `desktop ladder lost the ${rung} rung`);
+  }
+  assert.match(appJs, /BAUD_RETRY_KINDS/,
+    "desktop must not retry failures a slower speed cannot fix");
+  for (const kind of ["not-in-download", "read-stall", "device-lost"]) {
+    assert.ok(appJs.includes(`"${kind}"`), `desktop ladder lost the ${kind} trigger`);
+  }
+  // A ladder that can empty out would turn a cable fault into a dead end.
+  assert.match(appJs, /rungs\.length \? rungs :/,
+    "the baud ladder must never be empty — the slowest rung always survives");
+
+  // Review hardening (Codex on #1507).
+  // `unknown` must NOT be retried: espflash's exit code alone classifies as
+  // unknown, so retrying it would walk a busy port or a denied permission
+  // down the whole ladder, repeating the download and the full-chip erase.
+  assert.ok(!/BAUD_RETRY_KINDS = new Set\(\[[^\]]*"unknown"/.test(appJs),
+    "the baud ladder must not retry `unknown` — it would retry every sidecar failure");
+  // …which is only safe because the backend keeps espflash's own words, so a
+  // real transport fault can classify as itself.
+  assert.match(libRs, /let mut tail: Vec<String>/,
+    "espflash's output must survive into the error, or every failure is `unknown`");
+  assert.match(libRs, /tail\.join\("\\n"\)/,
+    "the espflash error must carry its tail for classification");
+  // The ceiling is a per-board remedy. Left set across a swap it would hold a
+  // healthy board at the slowest speed for the rest of the session.
+  assert.match(appJs, /state\.baudCeiling = null;\s*\n\s*state\.usedBaud = null;/,
+    "disconnect must clear the lowered baud ceiling");
+
+  // The proof that the two fixes above actually compose: run the desktop's
+  // real classifier over real espflash failures as the backend now reports
+  // them, and require that only transport faults are retried. Asserting the
+  // retry SET alone would not have caught the original bug — every one of
+  // these used to arrive as `unknown`.
+  const grabFn = (name) => {
+    const i = appJs.indexOf("function " + name);
+    let p = 0, j = appJs.indexOf("(", i);
+    for (let k = j; k < appJs.length; k++) {
+      if (appJs[k] === "(") p++;
+      else if (appJs[k] === ")") { p--; if (!p) { j = k; break; } }
+    }
+    const b = appJs.indexOf("{", j);
+    let d = 0;
+    for (let k = b; k < appJs.length; k++) {
+      if (appJs[k] === "{") d++;
+      else if (appJs[k] === "}") { d--; if (!d) return appJs.slice(i, k + 1); }
+    }
+  };
+  const classify = new Function(grabFn("classifyFlashError") + "\nreturn classifyFlashError;")();
+  const RETRY = new Set(["not-in-download", "read-stall", "device-lost"]);
+  const generic = "espflash exited with code 1. The board can't be bricked — " +
+    "put it back in download mode and try again.\n";
+  for (const [tail, kind, shouldRetry] of [
+    ["Error: Failed to open serial port\nCaused by: Device or resource busy", "port-busy", false],
+    ["Error: Permission denied (os error 13)", "permission", false],
+    ["Error: Failed to connect to the device\nCaused by: No serial data received", "not-in-download", true],
+    ["Error: Serial port disconnected\nCaused by: device not configured", "device-lost", true],
+    ["", "unknown", false],
+  ]) {
+    const got = classify(new Error(generic + tail)).kind;
+    assert.strictEqual(got, kind, `espflash tail misclassified: ${tail.slice(0, 40) || "(none)"}`);
+    assert.strictEqual(RETRY.has(got), shouldRetry,
+      `${kind} must ${shouldRetry ? "" : "NOT "}be retried down the baud ladder`);
+  }
 });
 
 test("device API token: both flashers mint the same credential shape and seed the same keys", async () => {

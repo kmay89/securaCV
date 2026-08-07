@@ -17,6 +17,56 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.7.0 — 2026-08-07
+
+**Two things that used to need a person who knows ESP32s.**
+
+- **A slow cable no longer means "it won't flash."** If the transfer fails
+  partway — the board stops answering, a read stalls, the port drops — the
+  app now retries at a gentler speed on its own, and again slower after
+  that, telling you in the log what it's doing. Long USB runs, unpowered
+  hubs and tired cables sync fine at low speed and choke at high speed, and
+  that was previously an unexplained failure. It only retries the failures a
+  slower speed can actually fix: a bad image or a busy port fails the same
+  way at every speed, so those still stop immediately instead of making you
+  wait through four attempts for the same answer.
+- **The boot log gets read for you.** After a flash, the monitor watches for
+  the four failures that have a specific fix and says what happened in plain
+  language — a brownout, a startup crash, no bootable app, or a flash read
+  error — with the fix beside it. A brownout is called out as a **power**
+  problem, not a firmware one: it isn't fixed by reinstalling, and being
+  told otherwise sends you around the same loop.
+
+## 0.6.0 — 2026-08-07
+
+**The app now reads your board before it writes to it.**
+
+- **A passport, the moment you plug in.** The connect step says what the
+  board is actually running — the firmware, its version, when it was built,
+  and which slot it boots from — instead of showing you a chip name and a
+  list of images. It reads the slot the bootloader will really run, so a
+  board that has updated itself over the air is judged by the firmware it
+  runs, not the older copy still sitting in the other slot.
+- **Every image now says what installing it would do.** Update, downgrade,
+  reinstall, or a change of role, named on the row before you choose it. A
+  downgrade is still allowed — that is what the automatic safety copy is
+  for — but it is never silent, and switching a board from one product to
+  another warns you that settings from the old role don't carry over.
+- **"You've flashed this exact board before."** If your fleet book already
+  knows the board's MAC, the app says so, with its name and when it was
+  last written. Reflashing the wrong one of two identical boards on the
+  bench used to be invisible until afterward.
+- **What it has lived through.** Lifetime boots, updates seen, witness
+  records, whether a crash dump is stored, and whether the tamper flag is
+  raised — read-only, from the board itself.
+
+A board whose passport can't be read is still perfectly flashable: the app
+says it couldn't look, which is deliberately not the same as saying the
+board is blank — and the image rows say "can't tell yet" rather than
+claiming a first install. The Install button waits for that read to finish
+so a verdict is never skipped, and gives up waiting after a few seconds so
+a board that won't be read is never a board that can't be flashed.
+
 ## 0.5.0 — 2026-08-07
 
 The browser flasher grew a lot of magic the desktop app never got. This
