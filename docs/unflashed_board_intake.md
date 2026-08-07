@@ -225,10 +225,23 @@ it — a missing check reads as a passed check — the desktop app states the ga
 on the connect step. Closing it means either bundling `espefuse` or waiting for
 `espflash` to grow the command.
 
-The desktop app also can't read what firmware is resident (`espflash
-board-info` reports chip, revision, crystal and MAC, not the app descriptor),
-so its first-contact decision is a **checkbox that defaults to on** rather than
-a reading. The safe default for a board of unknown provenance is to wipe it.
+The desktop app **can** now read what firmware is resident: `board_passport`
+reads the partition table, otadata and the booted slot's `esp_app_desc_t` over
+the same serial link, so the connect step names the firmware, its version and
+the slot it boots from. (Superseded claim: this section used to say it could
+not, because `espflash board-info` reports only chip, revision, crystal and
+MAC.) The first-contact decision remains a **checkbox that defaults to on**
+rather than an inference — the safe default for a board of unknown provenance
+is to wipe it, and the passport tells you what you would be wiping.
+
+The desktop app also checks the flash **capacity** claim during its automatic
+safety copy: the whole chip is already in memory at that moment, so it compares
+the head against each power-of-two capacity below the declared size and refuses
+the install if one of them mirrors offset zero. That is the relabeled-part
+failure (a 4 MB die sold as 16 MB), which otherwise accepts writes past the
+real end and discards them — a "successful" flash onto a board that cannot
+boot. The check is free in serial time and runs at the last moment a write can
+still be stopped.
 
 **Known gap:** the desktop app's *local-file* flash path
 (`flash_local_file`) does not yet take the first-contact erase. The catalog

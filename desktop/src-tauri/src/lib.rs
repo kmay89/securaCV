@@ -23,6 +23,7 @@ mod changemap;
 mod fleet;
 mod health;
 mod hub;
+mod intake;
 mod launch_guard;
 mod port_hint;
 mod provisioning;
@@ -722,6 +723,31 @@ async fn flash(
                 .as_ref()
                 .map(|p| !p.wifi_ssid.is_empty())
                 .unwrap_or(false);
+
+            // Free intake check while we hold the whole chip: does the flash
+            // really hold what it claims? A relabeled part (a 4 MB die sold as
+            // 16 MB) ACCEPTS writes past its real end and discards them, so
+            // the install "succeeds" and the board can't boot, with no error
+            // at any layer. This costs no serial time — the bytes are already
+            // here — and it is the last moment the write can still be stopped.
+            // The safety copy was read with the chip's DECLARED size, so the
+            // dump's own length is that claim — no extra argument needed.
+            let declared = old.len() as u64;
+            if declared >= 0x2000 {
+                let f = intake::flash_alias_verdict(&old, declared);
+                if f.level == "stop" {
+                    emit(&app, format!("✗ {}", f.label));
+                    if let Some(d) = &f.detail {
+                        emit(&app, format!("  {d}"));
+                    }
+                    return Err(format!(
+                        "{} {} Nothing was written.",
+                        f.label,
+                        f.detail.unwrap_or_default()
+                    ));
+                }
+                emit(&app, format!("✓ {}", f.label));
+            }
             if let Some(map) = changemap::diff_install(&old, &bytes, erase_all) {
                 let had_wifi = old.windows(9).any(|w| w == b"wifi_ssid");
                 let verdict = changemap::settings_verdict(&map, had_wifi, baked_wifi);
