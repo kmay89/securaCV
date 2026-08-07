@@ -963,6 +963,30 @@ details.coldstart[open] > summary { margin-bottom: 8px; }
   background: var(--bg-alt); border: 1px solid var(--border);
   font-size: 12.5px; color: var(--text-secondary); max-width: 60ch;
 }
+/* ── the board passport (connect step) ───────────────────────────────────── */
+.passport {
+  margin: 10px 0 4px; padding: 10px 12px; border-radius: 10px;
+  background: var(--bg-alt); border: 1px solid var(--border);
+}
+.passport .pp-head { font-size: 13.5px; font-weight: 600; }
+.passport .pp-known {
+  margin-top: 4px; font-size: 12.5px; color: var(--text-secondary);
+}
+.passport .pp-built { margin-top: 2px; font-size: 11.5px; }
+.passport .pp-rows { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 3px; }
+.passport .pp-row { display: flex; gap: 8px; font-size: 12px; }
+.passport .pp-k { color: var(--text-muted); min-width: 11ch; }
+.passport .pp-v { color: var(--text-secondary); }
+.passport .pp-warn .pp-v { color: var(--warn, #b7791f); }
+
+/* The install verdict, inside a product row. */
+.p-verdict { display: block; margin-top: 6px; font-size: 12px; }
+.p-verdict-label { display: block; font-weight: 600; }
+.p-verdict-detail { display: block; color: var(--text-muted); font-size: 11.5px; margin-top: 1px; }
+.p-verdict.is-downgrade .p-verdict-label,
+.p-verdict.is-switch .p-verdict-label { color: var(--warn, #b7791f); }
+.p-verdict.is-update .p-verdict-label { color: var(--ok, #2f855a); }
+
 /* The clipboard-less diagnostic fallback: the whole report, selectable. */
 .diag-report-out {
   width: 100%; margin-top: 8px; padding: 8px 10px; border-radius: 8px;

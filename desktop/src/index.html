@@ -195,6 +195,12 @@
                 it re-ticks itself for the next board.</span>
             </label>
 
+            <!-- The board's passport: what it runs, whether your fleet has
+                 met it before, and what it has lived through. Filled by
+                 readPassport() from the read-only `board_passport` command;
+                 stays hidden until a board is actually read. -->
+            <div id="passport" class="passport hidden"></div>
+
             <!-- Boards whose flashing port isn't the one you can see. Filled
                  from the embedded catalog (products[].access) — see
                  renderAccessNotes(); hidden when no such board ships. -->

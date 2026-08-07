@@ -243,6 +243,77 @@ test("parity wave 1: safety copy, error kinds, QR, token card, nursery, diagnost
   assert.match(flashJs, /qrClear/, "browser no longer invalidates a stale Wi-Fi QR");
 });
 
+test("parity wave 2: the board passport, the install verdict, and 'we've met this board'", () => {
+  // Wave 2 of the 2026-08 inventory. The browser has always read the board
+  // before writing to it; the desktop app flashed blind — no idea what was
+  // resident, so no way to say "this is a downgrade" or "you've flashed this
+  // one before". These assertions keep that eyesight.
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  const healthRs = read(join(ROOT, "desktop/src-tauri/src/health.rs"));
+  const flashCore = read(join(CANARY, "assets/flash-core.js"));
+
+  // 1. A connect-time passport command, distinct from the deep health report.
+  assert.match(libRs, /fn board_passport/, "desktop lost the board passport command");
+  assert.match(appJs, /board_passport/, "desktop passport is never read");
+  assert.match(html, /id="passport"/, "desktop has nowhere to show the passport");
+
+  // 2. The booted slot is chosen from otadata, both sides. Reading the wrong
+  //    slot silently turns a downgrade into an "update" — the one direction
+  //    a user most needs named.
+  assert.match(healthRs, /fn pick_booted_app_partition/,
+    "desktop lost the booted-slot picker — it would judge by table order");
+  assert.match(flashCore, /export function pickBootedAppPartition/,
+    "browser lost the booted-slot picker");
+
+  // 3. The install verdict: same kinds, same meaning, both frontends.
+  for (const kind of ["fresh", "update", "downgrade", "same", "switch", "unknown"]) {
+    assert.ok(appJs.includes(`"${kind}"`), `desktop lost the ${kind} install verdict`);
+    assert.ok(flashCore.includes(`"${kind}"`), `browser lost the ${kind} install verdict`);
+  }
+  assert.match(appJs, /function installVerdict/, "desktop lost installVerdict");
+  assert.match(appJs, /function compareVersions/,
+    "desktop lost compareVersions — the verdict cannot tell up from down without it");
+  assert.match(appJs, /function matchProjectToProduct/,
+    "desktop cannot name the resident firmware without the project→product map");
+
+  // 4. Passport history rows, same shape as the browser's.
+  assert.match(appJs, /function passportRows/, "desktop lost the passport rows");
+  assert.match(flashCore, /export function passportRows/, "browser lost the passport rows");
+
+  // 5. A board the fleet book already knows is announced BEFORE the flash.
+  assert.match(appJs, /You've flashed this exact board before/,
+    "desktop no longer recognizes a board it has already written");
+
+  // 6. An unreadable board must never render as a blank one — missing
+  //    evidence is its own answer, not the cleanest verdict on the page.
+  assert.match(appJs, /read failed — NOT a blank board/,
+    "desktop must distinguish 'couldn't look' from 'nothing there'");
+
+  // 7. Review hardening (Codex on #1505). The verdict row must not turn an
+  //    unread board into "First install" — that contradicts the passport card
+  //    directly above it and hides a downgrade.
+  assert.match(appJs, /if \(r\.unknown\)/,
+    "desktop verdict must answer 'can't tell yet' for an unread board");
+
+  // 8. The flash button waits for the passport, so an install started during
+  //    the connect-time read can't bypass the verdict entirely — with a
+  //    bounded settle so an unreadable board is still flashable.
+  assert.match(appJs, /passportPending/,
+    "desktop lost the passport gate — a fast hand could flash with no verdict shown");
+  assert.match(appJs, /setTimeout\(\(\) => \{\s*\n?\s*if \(state\.passportPending/,
+    "the passport gate must be bounded — 'can't read' must never mean 'can't flash'");
+
+  // 9. The crash row states what was read, not a lifetime claim: an empty
+  //    dump region also follows a wipe or a fault that never persisted one.
+  for (const [name, src] of [["desktop", appJs], ["browser", flashCore]]) {
+    assert.ok(src.includes("no saved crash dump"),
+      `${name} lost the honest crash-record wording`);
+    assert.ok(!src.includes("never hard-crashed"),
+      `${name} claims a crash-free lifetime the probe cannot establish`);
+  }
+});
+
 test("device API token: both flashers mint the same credential shape and seed the same keys", async () => {
   // The credential that makes the desktop fleet book (and any future browser
   // surface) able to talk to a board it flashed: "cv_" + 32 base62 chars,

@@ -93,6 +93,44 @@ pub fn app_partitions(entries: &[Partition]) -> Vec<Partition> {
         .collect()
 }
 
+/// The OTA slots among the app partitions (subtype 0x10..0x1f = ota_0..ota_15).
+pub fn ota_slots(apps: &[Partition]) -> Vec<Partition> {
+    apps.iter()
+        .filter(|a| (0x10..0x20).contains(&a.subtype))
+        .cloned()
+        .collect()
+}
+
+/// The slot the bootloader will actually run, given parsed otadata: fresh
+/// otadata boots factory (else ota_0); otherwise ota_<active_ota>.
+///
+/// Judging by the wrong slot is not a cosmetic error. A board that OTA'd into
+/// ota_1 still has the older image sitting in ota_0, so reading ota_0's
+/// descriptor reports a version the board is not running — and the install
+/// verdict then calls a downgrade an update, which is the one direction the
+/// user most needs named out loud. Mirrors the browser's
+/// pickBootedAppPartition (flash-core.js); the two must agree.
+pub fn pick_booted_app_partition<'a>(
+    apps: &'a [Partition],
+    otadata: Option<&OtaInfo>,
+) -> Option<&'a Partition> {
+    if apps.is_empty() {
+        return None;
+    }
+    let factory = || apps.iter().find(|a| a.subtype == 0x00);
+    let ota_n = |n: u32| apps.iter().find(|a| a.subtype == 0x10 + (n as u8));
+    match otadata {
+        // No otadata read at all: prefer ota_0, else factory, else first —
+        // the plain "which app is this" fallback.
+        None => ota_n(0).or_else(factory).or_else(|| apps.first()),
+        Some(o) if o.fresh => factory().or_else(|| ota_n(0)).or_else(|| apps.first()),
+        Some(o) => ota_n(o.active_ota)
+            .or_else(|| ota_n(0))
+            .or_else(factory)
+            .or_else(|| apps.first()),
+    }
+}
+
 pub fn is_ota_data(e: &Partition) -> bool {
     e.ptype == 0x01 && e.subtype == 0x00
 }
@@ -813,5 +851,71 @@ mod tests {
         assert_eq!(healthy.level, "ok");
         assert_eq!(healthy.findings.len(), 1);
         assert_eq!(healthy.findings[0].severity, "ok");
+    }
+
+    fn part(subtype: u8, label: &str) -> Partition {
+        Partition {
+            ptype: 0x00,
+            subtype,
+            offset: 0x10000,
+            size: 0x100000,
+            label: label.into(),
+        }
+    }
+    fn ota(fresh: bool, active_ota: u32) -> OtaInfo {
+        OtaInfo {
+            fresh,
+            active_ota,
+            updates_seen: 0,
+            state_text: "valid".into(),
+            pending_verify: false,
+        }
+    }
+
+    #[test]
+    fn booted_slot_follows_otadata_not_table_order() {
+        let apps = vec![part(0x00, "factory"), part(0x10, "ota_0"), part(0x11, "ota_1")];
+        assert_eq!(ota_slots(&apps).len(), 2, "factory is not an OTA slot");
+
+        // Fresh otadata → the bootloader runs factory, whatever else exists.
+        let booted = pick_booted_app_partition(&apps, Some(&ota(true, 0))).unwrap();
+        assert_eq!(booted.label, "factory");
+
+        // The case that makes this function worth having: a board that has
+        // OTA'd into ota_1 must be judged by ota_1, never by the older image
+        // still sitting in ota_0 — that misread turns a downgrade into an
+        // "update" and the user is never warned.
+        let booted = pick_booted_app_partition(&apps, Some(&ota(false, 1))).unwrap();
+        assert_eq!(booted.label, "ota_1");
+
+        let booted = pick_booted_app_partition(&apps, Some(&ota(false, 0))).unwrap();
+        assert_eq!(booted.label, "ota_0");
+    }
+
+    #[test]
+    fn booted_slot_degrades_without_otadata_and_on_odd_layouts() {
+        let apps = vec![part(0x00, "factory"), part(0x10, "ota_0")];
+        // otadata unreadable: prefer ota_0 — the plain "which app is this".
+        assert_eq!(
+            pick_booted_app_partition(&apps, None).unwrap().label,
+            "ota_0"
+        );
+        // A factory-only layout has no ota_N to point at; the answer is the
+        // factory app, not None (an ESP32 with no otadata boots factory).
+        let only_factory = vec![part(0x00, "factory")];
+        assert_eq!(
+            pick_booted_app_partition(&only_factory, Some(&ota(false, 1)))
+                .unwrap()
+                .label,
+            "factory"
+        );
+        // An active_ota pointing past the slots that exist still resolves to
+        // something bootable rather than dropping the passport entirely.
+        let two = vec![part(0x10, "ota_0"), part(0x11, "ota_1")];
+        assert_eq!(
+            pick_booted_app_partition(&two, Some(&ota(false, 7))).unwrap().label,
+            "ota_0"
+        );
+        assert!(pick_booted_app_partition(&[], Some(&ota(true, 0))).is_none());
     }
 }

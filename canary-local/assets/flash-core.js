@@ -2041,7 +2041,11 @@ export function passportRows({ otadata, witness, coredump } = {}) {
   if (coredump) {
     rows.push(coredump.present
       ? { id: "crash", label: "Crash record", value: "one saved crash dump on board", tone: "warn" }
-      : { id: "crash", label: "Crash record", value: "none — it has never hard-crashed", tone: "ok" });
+      // Only what the probe actually establishes: the dump region is empty
+      // NOW. A wipe, a cleared dump, or a fault that never got to persist one
+      // all leave it empty, so "it has never crashed" would be a lifetime
+      // claim this read cannot support.
+      : { id: "crash", label: "Crash record", value: "no saved crash dump", tone: "ok" });
   }
   return rows;
 }
