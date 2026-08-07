@@ -24,6 +24,9 @@
 #include "canary/care/nightlight_glue.h"
 #include "canary/fleet/fleet_instance.h"
 #include "color/look_engine.h"
+// The shared look controls — the color wheel writes here, and /api/settings
+// reads the live value back so the app never has to remember what it sent.
+#include "canary/ui/look_state.h"
 #endif
 
 namespace canary {
@@ -208,12 +211,18 @@ void handle_settings_get() {
         body + o, sizeof(body) - o,
         ",\"lamp_scene\":%u,\"lamp_auto\":%u,\"lamp_pct\":%u,"
         "\"lamp_max_duty_pct\":%d,\"clock_12h\":%u,"
-        "\"orientation\":%u,\"auto_rotate\":%u,\"scenes\":[",
+        "\"orientation\":%u,\"auto_rotate\":%u,"
+        // The wheel and the timer. lamp_hue is -1 when a catalog scene is on,
+        // so the app can show WHICH control is currently the answer instead
+        // of guessing from a color it sent earlier.
+        "\"lamp_hue\":%d,\"lamp_minutes\":%u,\"scenes\":[",
         lamp.scene(), lamp.auto_mode(),
         (unsigned)(((uint16_t)canary::care::nightlight_lamp_bri() * 100 + 127) / 255),
         CD_BL_MAX_PCT, canary::care::nightlight_clock_12h() ? 1u : 0u,
         canary::care::nightlight_rotation(),
-        canary::care::nightlight_auto_rotate() ? 1u : 0u);
+        canary::care::nightlight_auto_rotate() ? 1u : 0u,
+        (int)canary::ui::look_params().custom_hue,
+        (unsigned)lamp.minutes());
     for (uint8_t i = 0; i < canary::color::kSceneCount && o < sizeof(body); i++) {
       o += (size_t)snprintf(body + o, sizeof(body) - o, "%s\"%s\"",
                             i ? "," : "", canary::color::kScenes[i].name);
@@ -265,6 +274,25 @@ void handle_settings_set() {
     return;
   } else if (k == "lamp_pct" && v >= 10 && v <= 100) {
     canary::care::nightlight_set_lamp_bri((uint8_t)((v * 255) / 100));
+    canary::fleet::the_fleet().mark_dirty();
+    s_server->send(200, "application/json", "{\"ok\":true}");
+    return;
+  } else if (k == "lamp_hue" && v >= -1 && v <= 359) {
+    // The color wheel. -1 hands the glass back to the chosen scene, which is
+    // how the app turns the wheel OFF without inventing a tenth scene.
+    canary::ui::look_set_custom_hue((int16_t)v);
+    canary::care::lantern_prefs_changed();
+    canary::fleet::the_fleet().mark_dirty();
+    s_server->send(200, "application/json", "{\"ok\":true}");
+    return;
+  } else if (k == "lamp_minutes" && v >= 0 && v <= 480) {
+    // How long the lamp stays on. It was settable on the panel and by MQTT
+    // but had no web key, so "rainbow for 15 minutes" could be asked for
+    // everywhere except from the app the owner actually holds. 0 means "no
+    // timer" — the lantern's own meaning, not a new one.
+    auto& l = canary::care::lantern();
+    l.configure(l.scene(), (uint16_t)v, l.auto_mode());
+    canary::care::lantern_prefs_changed();
     canary::fleet::the_fleet().mark_dirty();
     s_server->send(200, "application/json", "{\"ok\":true}");
     return;
