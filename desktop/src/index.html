@@ -257,6 +257,12 @@
                 <button type="button" id="wifi-qr-btn" class="btn btn-ghost btn-small">Show Wi-Fi as a QR code</button>
               </div>
               <div id="wifi-qr-box" class="wifi-qr hidden" aria-label="Wi-Fi network QR code"></div>
+
+              <!-- Room presets for the boards whose firmware reads its
+                   detection dials (Vision) or radar reflexes (Sense) out of
+                   NVS. Filled by renderDials(); hidden for every other
+                   product. "As it ships" writes nothing at all. -->
+              <div id="dials" class="dials hidden"></div>
             </section>
             <div class="row" id="host-flash-controls">
               <button id="flash-btn" class="btn btn-primary" disabled>Flash my Canary</button>
