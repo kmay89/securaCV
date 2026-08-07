@@ -318,6 +318,10 @@
               </div>
             </section>
             <pre id="console" class="console hidden" aria-live="polite"></pre>
+            <!-- What this install touches, from the safety copy vs the verified
+                 image. Filled by renderChangeMap() off the flash:changemap
+                 event; absent when no safety copy was taken. -->
+            <div id="change-map" class="change-map hidden"></div>
             <p id="flash-result" class="status"></p>
             <!-- The freshly minted local-API credential, shown once per flash
                  (parity with the browser done card): the keychain holds it for

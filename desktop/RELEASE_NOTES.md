@@ -17,6 +17,28 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.9.0 — 2026-08-07
+
+**Before it writes anything, the app now tells you what will change.**
+
+The safety copy it already takes holds every byte that's on your board, and
+the firmware is verified before a byte is written — so for one moment both
+halves exist, and that's where this happens.
+
+- **"Do my settings survive?"** — answered in a sentence, first, because for
+  most people it's the only line that matters. Either your saved Wi-Fi,
+  device identity and witness-chain counters stay exactly as they are, or
+  the board comes back up on its setup network like the first day. No more
+  finding out afterward.
+- **A region-by-region map** of what's rewritten, what's already identical,
+  what's reset to factory-fresh, and what the image doesn't reach at all —
+  with the firmware version being replaced named next to the slot it's in.
+- **A changed layout is called out**, because rearranged partitions are a
+  different kind of install from rewritten ones.
+
+If you skipped the safety copy, or the board wouldn't be read, there's no
+map — and the app says nothing rather than guessing.
+
 ## 0.8.0 — 2026-08-07
 
 **Tune it for the room before it ever boots.**

@@ -963,6 +963,25 @@ details.coldstart[open] > summary { margin-bottom: 8px; }
   background: var(--bg-alt); border: 1px solid var(--border);
   font-size: 12.5px; color: var(--text-secondary); max-width: 60ch;
 }
+/* ── the change map ──────────────────────────────────────────────────────── */
+.change-map {
+  margin: 10px 0; padding: 10px 12px; border-radius: 10px;
+  background: var(--bg-alt); border: 1px solid var(--border);
+}
+.change-map h3 { font-size: 13.5px; margin: 0 0 6px; }
+.change-map .cm-verdict { font-size: 12.5px; font-weight: 600; margin: 0 0 6px; }
+.change-map .cm-none { font-size: 12.5px; color: var(--text-muted); margin: 0; }
+.change-map .cm-verdict.is-kept { color: var(--ok, #2f855a); }
+.change-map .cm-verdict.is-reset { color: var(--warn, #b7791f); }
+.change-map .cm-layout { font-size: 12px; color: var(--warn, #b7791f); margin: 0 0 6px; }
+.change-map .cm-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.change-map .cm-row { display: flex; gap: 8px; font-size: 12px; }
+.change-map .cm-k { color: var(--text-muted); min-width: 14ch; }
+.change-map .cm-v { color: var(--text-secondary); }
+.change-map .cm-row.is-wiped .cm-v { color: var(--warn, #b7791f); }
+.change-map .cm-row.is-identical .cm-v,
+.change-map .cm-row.is-untouched .cm-v { color: var(--text-muted); }
+
 /* ── room presets (detection dials / radar reflexes) ─────────────────────── */
 .dials { margin-top: 12px; }
 .dials h3 { font-size: 13.5px; margin: 0 0 2px; }

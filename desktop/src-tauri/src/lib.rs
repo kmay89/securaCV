@@ -19,6 +19,7 @@
 //! Everything the user watches scroll by during a flash is `espflash`'s own
 //! output, relayed verbatim over the `flash:log` event.
 
+mod changemap;
 mod fleet;
 mod health;
 mod hub;
@@ -516,6 +517,10 @@ async fn flash(
     detected_chip: String,
     provisioning: Option<Provisioning>,
     erase_first: Option<bool>,
+    // The safety copy taken moments ago, if there is one. Present = draw the
+    // change map from it; absent = the user skipped the copy or the board
+    // wouldn't read, and no map is the truthful outcome.
+    backup_path: Option<String>,
 ) -> Result<FlashReceipt, String> {
     let emit = |app: &AppHandle, line: String| {
         let _ = app.emit("flash:log", line);
@@ -695,6 +700,51 @@ async fn flash(
             &installed_sha[..16]
         ),
     );
+
+    // 2a) The change map, computed HERE because this is the only moment both
+    // sides exist: the safety copy has every byte that is on the board, and
+    // `bytes` is the verified image about to replace them. A separate command
+    // would have to download and verify the image a second time.
+    //
+    // Entirely best-effort and never fatal: a missing or unreadable backup
+    // (the copy was skipped, or the board wouldn't read) means no map, which
+    // is the honest answer. Failing the install because we couldn't draw a
+    // picture of it would be absurd.
+    if let Some(bp) = backup_path.as_deref().filter(|p| !p.is_empty()) {
+        if let Ok(old) = std::fs::read(bp) {
+            // Both facts the verdict needs are known right here: whether this
+            // install erases the whole chip first (so regions the image never
+            // reaches do NOT survive), and whether we just wrote the user's
+            // own network into the replacement NVS (so a differing settings
+            // region means "replaced with what you asked for", not "cleared").
+            let erase_all = erase_first.unwrap_or(false);
+            let baked_wifi = provisioning
+                .as_ref()
+                .map(|p| !p.wifi_ssid.is_empty())
+                .unwrap_or(false);
+            if let Some(map) = changemap::diff_install(&old, &bytes, erase_all) {
+                let had_wifi = old.windows(9).any(|w| w == b"wifi_ssid");
+                let verdict = changemap::settings_verdict(&map, had_wifi, baked_wifi);
+                let _ = app.emit(
+                    "flash:changemap",
+                    json!({
+                        "layoutChanged": map.layout_changed,
+                        "settings": verdict.map(|(kept, text)| json!({ "kept": kept, "text": text })),
+                        "rows": map.rows.iter().map(|r| json!({
+                            "label": r.label,
+                            "kind": r.kind,
+                            "offset": r.offset,
+                            "size": r.size,
+                            "verdict": r.verdict.as_str(),
+                            "changedPct": r.changed_pct,
+                            "before": r.before,
+                            "after": r.after,
+                        })).collect::<Vec<_>>(),
+                    }),
+                );
+            }
+        }
+    }
 
     // 2b) First contact: wipe the WHOLE chip before writing. `write-bin` only
     //     touches the regions the image covers, so a board that arrived
