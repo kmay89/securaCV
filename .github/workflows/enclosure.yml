@@ -102,6 +102,7 @@ jobs:
           expect_parts() {
             case "$1" in
               dev_s3_147_band.stl)      echo 2 ;;
+              dev_s3_147_hdr_band.stl)  echo 2 ;;
               dev_c3_147_bezel.stl)     echo 2 ;;
               dev_c3_147_bare_bezel.stl) echo 2 ;;
               dev_c3_147_hdr_bezel.stl) echo 2 ;;
@@ -120,6 +121,28 @@ jobs:
             fi
           done
           exit $status
+
+      # Print 4 (kmay89) found this in the slicer, not here: both display
+      # bezels carried a knob called `lid_edge`, commented "face edge
+      # chamfer", whose cut had no taper in it — so it drew a square RABBET,
+      # 0.80 mm deep, around the whole first-layer perimeter of a part that
+      # prints face-down. An overhang, on the visible face, and it cost the
+      # C3's face plate a fifth of its bed contact. A real foot chamfer is
+      # fine and several cases have one; the script tells them apart by how
+      # the footprint grows (continuously = taper, a jump = ledge).
+      #
+      # The parts are NAMED, not globbed, and the script's header says why:
+      # a flat foot is a decision about the face-down bezels — where the
+      # first layers ARE the finished front surface — and not a law the rest
+      # of the catalog agreed to. Globbing would have meant either redrawing
+      # other cases' deliberate flanges and roundovers or carrying a list of
+      # exemptions, and an exempted gate is a gate that stops meaning
+      # anything. Add a part here when you decide the rule binds it.
+      - name: The face-down bezels have no modeled foot relief
+        run: |
+          python3 check_foot_relief.py \
+            dev_c3_147_bezel.stl dev_c3_147_bare_bezel.stl dev_c3_147_hdr_bezel.stl \
+            dev_c6_147_bezel.stl dev_c6_147_hdr_bezel.stl
 
       - name: Invalid configs must fail their assertions
         run: |
