@@ -47,6 +47,14 @@ struct HouseholdSheet: View {
                     Text("Only an alarm that has gone unanswered reaches them — never your everyday alerts, and never more than once for the same alarm.")
                 }
 
+                // The condition the whole ladder rests on, said before it is
+                // relied on rather than discovered the night it mattered.
+                Section {
+                    Label(HouseholdRelay.watchRequirement, systemImage: "eye")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
                 if case .unavailable(let why) = household.state {
                     Section {
                         Label(why, systemImage: "exclamationmark.triangle")
@@ -87,9 +95,18 @@ struct HouseholdSheet: View {
 
                 if household.isHelpingSomeone {
                     Section {
-                        Label("You'll be told if an alarm there goes unanswered.",
-                              systemImage: "bell.badge")
-                            .font(.footnote)
+                        if let blocked = household.participantBlocked {
+                            // Being on the share is not the same as being
+                            // reachable, and only this device can know the
+                            // difference. The owner's screen can't see it.
+                            Label(blocked, systemImage: "exclamationmark.triangle")
+                                .font(.footnote)
+                                .foregroundStyle(Theme.color(.warn))
+                        } else {
+                            Label("You'll be told if an alarm there goes unanswered.",
+                                  systemImage: "bell.badge")
+                                .font(.footnote)
+                        }
                     } header: {
                         Text("You help watch someone's fleet")
                     } footer: {

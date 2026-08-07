@@ -98,6 +98,63 @@ final class HouseholdRelayTests: XCTestCase {
                        "owner first, then who can actually be reached, then who can't yet")
     }
 
+    // MARK: - one alarm, one buzz, however many devices the owner holds
+
+    func testEveryOwnerDeviceNamesTheSameEscalationRecord() {
+        let bucket = Date(timeIntervalSince1970: 1_800_000_000)
+        let iphone = HouseholdRelay.occurrenceRecordName(recordID: "canary-a3f7|4|Tamper detected",
+                                                         alarmBucket: bucket)
+        let ipad = HouseholdRelay.occurrenceRecordName(recordID: "canary-a3f7|4|Tamper detected",
+                                                       alarmBucket: bucket)
+        XCTAssertEqual(iphone, ipad,
+                       "the ‘once per occurrence’ stamp is per-device; without a shared name the "
+                       + "owner's iPad buzzes every household phone a second time")
+    }
+
+    func testADifferentOccurrenceIsADifferentRecord() {
+        let first = HouseholdRelay.occurrenceRecordName(
+            recordID: "canary-a3f7|4|Tamper detected",
+            alarmBucket: Date(timeIntervalSince1970: 1_800_000_000))
+        let monthsLater = HouseholdRelay.occurrenceRecordName(
+            recordID: "canary-a3f7|4|Tamper detected",
+            alarmBucket: Date(timeIntervalSince1970: 1_805_000_000))
+        let otherCanary = HouseholdRelay.occurrenceRecordName(
+            recordID: "canary-b2c9|4|Tamper detected",
+            alarmBucket: Date(timeIntervalSince1970: 1_800_000_000))
+        XCTAssertNotEqual(first, monthsLater, "it came BACK — that is news again, not a duplicate")
+        XCTAssertNotEqual(first, otherCanary)
+    }
+
+    func testTheRecordNameCarriesNothingReadable() {
+        let name = HouseholdRelay.occurrenceRecordName(recordID: "canary-a3f7|4|Tamper detected",
+                                                       alarmBucket: Date())
+        // A participant can read record names in the zone they were invited
+        // to. The ledger id carries a device name and a status line, so it is
+        // hashed rather than sanitized.
+        XCTAssertFalse(name.localizedCaseInsensitiveContains("Tamper"), name)
+        XCTAssertFalse(name.localizedCaseInsensitiveContains("canary-a3f7"), name)
+        XCTAssertTrue(name.hasPrefix("esc-"), name)
+        XCTAssertLessThanOrEqual(name.count, 40, "CloudKit record names are not a place for essays")
+    }
+
+    // MARK: - the limits, said rather than discovered
+
+    func testTheWatchRequirementIsStatedInPlainWords() {
+        // The household leg exists for the moment the owner is not looking at
+        // their phone — which is also the moment their phone can't notice
+        // that nobody answered. That limit has to be on the screen.
+        let text = HouseholdRelay.watchRequirement
+        XCTAssertTrue(text.localizedCaseInsensitiveContains("Apple TV"), text)
+        XCTAssertTrue(text.localizedCaseInsensitiveContains("locked phone"), text)
+    }
+
+    func testTheParticipantIsToldWhenNotificationsWouldStopThem() {
+        XCTAssertTrue(HouseholdRelay.participantNeedsNotifications
+            .localizedCaseInsensitiveContains("notifications"),
+                      "being on the share is not the same as being reachable, and only their own "
+                      + "device can know the difference")
+    }
+
     // MARK: - the boundary is the zone
 
     func testTheHouseholdZoneIsNotWhereOrdinaryWakesGo() {

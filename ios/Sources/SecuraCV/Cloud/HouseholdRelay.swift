@@ -35,6 +35,7 @@
 //   become routine, they are the noise this whole design has been removing.
 
 import Foundation
+import CryptoKit
 
 /// One person the owner invited. A projection of CloudKit's participant list,
 /// kept as a plain value so the roster's arithmetic and copy are testable
@@ -80,6 +81,32 @@ enum HouseholdRelay {
                                   escalated: Bool) -> Bool {
         guard escalated else { return false }
         return EscalationPolicy.isTopTier(severity: severity, integrityFailed: integrityFailed)
+    }
+
+    /// The record name for ONE occurrence, computed identically by every
+    /// device the owner holds.
+    ///
+    /// The "at most once" stamp lives in each device's own alert ledger, so an
+    /// iPhone and an iPad watching the same alarm each believe they are the
+    /// first to escalate. With a random record name CloudKit accepts both
+    /// writes and every participant's phone buzzes twice — the promise held
+    /// locally and broke on somebody else's nightstand. A deterministic name
+    /// makes the second write collide with the first and fail, which is
+    /// exactly the outcome wanted: no new record, so no second push.
+    ///
+    /// Keyed by the occurrence (the ledger's collapse id plus the bucket the
+    /// alarm landed in), never by the escalation's own clock — two devices
+    /// deciding to escalate a few seconds apart must still name the same
+    /// record. A condition that returns months later lands in a different
+    /// bucket and is honestly a different occurrence.
+    static func occurrenceRecordName(recordID: String, alarmBucket: Date) -> String {
+        let seed = "\(recordID)|\(Int(alarmBucket.timeIntervalSince1970))"
+        let digest = SHA256.hash(data: Data(seed.utf8))
+        // Hashed rather than sanitized: a record name has a restricted
+        // character set and the ledger's id carries device names and status
+        // lines, which have no business in a CloudKit key that a participant
+        // could read.
+        return "esc-" + digest.map { String(format: "%02x", $0) }.joined().prefix(32)
     }
 
     // MARK: - the words a participant's own device writes
@@ -144,6 +171,31 @@ enum HouseholdRelay {
             return "\(people) if an alarm goes unanswered. \(rest)"
         }
     }
+
+    /// The condition the whole ladder rests on, stated where an owner is
+    /// deciding to rely on it. Escalation is decided by a device that is
+    /// awake and watching the fleet — this iPhone in the foreground, or a
+    /// resident that stayed home (the Apple TV's "stand watch"). A phone
+    /// locked in a pocket with nothing else home cannot notice that nobody
+    /// answered, so it cannot tell anyone.
+    ///
+    /// This is the same limit the away path already states ("with nothing
+    /// home, away alerts cannot happen"), and it is stated here rather than
+    /// discovered, because the household leg exists precisely for the moment
+    /// the owner is not looking at their phone.
+    static let watchRequirement = """
+        Someone has to be awake to notice that nobody answered: this iPhone \
+        with SecuraCV open, or an Apple TV standing watch at home. A locked \
+        phone with nothing else home can't tell anyone.
+        """
+
+    /// Why a household alert wouldn't reach THIS device — the participant's
+    /// side of the same honesty. Notifications being off is the whole failure,
+    /// and it is invisible unless somebody says it.
+    static let participantNeedsNotifications = """
+        Turn on notifications for SecuraCV, or you won't be told when an alarm \
+        goes unanswered.
+        """
 
     /// What the household may be told, stated for the invite screen. Written
     /// as a promise the invited person can check rather than a reassurance —

@@ -55,11 +55,12 @@ server of ours to compromise because there is no server of ours.
 
 One container — `iCloud.com.securacv.witness`, named in exactly one place
 (`ios/Sources/SecuraCV/Cloud/CloudContainer.swift`) and cross-checked against
-both entitlements files by `scripts/lint_cloudkit_container.py`. **Private
-database only.** No public database, no shared database, no zones (§5).
+both entitlements files by `scripts/lint_cloudkit_container.py`. **Private database, plus exactly one shared zone** — `HouseholdEscalations`,
+which exists so somebody who is not the owner can be told when an alarm goes
+unanswered. No public database (§5), and no other zone.
 
-Two record types. This is the entire list, and the linter above fails the build
-if a third appears without being declared.
+Three record types. This is the entire list, and the linter above fails the
+build if a fourth appears without being declared.
 
 ### `WitnessWake` — the away alert
 
@@ -357,8 +358,25 @@ Even the wording of a household alert never crosses the wire.
   wasn't answered" and nothing else.** This is the direct answer to §5's
   surviving worry ("a sharing mechanism we would then have to secure"): the
   mechanism is Apple's, and what it guards is worth approximately nothing.
-- **Escalation records are swept within a day**, same bound and same worth as
-  `sweepOldWakes`.
+- **Escalation records outlive the day-long bound the ordinary wake gets**,
+  and this one is worth reading twice. A shared database offers no
+  create-only *visible* subscription — query subscriptions, the kind that can
+  fire on creation alone, do not exist there — so a participant's
+  subscription fires on every change to the zone, deletions included.
+  Sweeping a day-old record would therefore push "Nobody answered" at every
+  participant again, at an arbitrary app launch, about an alarm from
+  yesterday: the household channel crying wolf, on the one channel whose
+  whole value is that it stays quiet. The alternative was a silent
+  subscription plus a fetch-and-post dance on the participant's side, which
+  trades a reliable alarm for a best-effort one (iOS budgets silent pushes) —
+  the wrong trade for the last rung of an escalation ladder. So the sweep
+  runs only while nobody is subscribed, and `stopSharing` deletes the whole
+  zone at a moment when no subscriber remains to be woken. **What this costs:
+  while sharing is on, a participant can see the creation dates of past
+  unanswered alarms, not merely the current one.** They still learn no
+  *what*, no *which* and no *where* — but the timing residual of §6.4 becomes
+  a short history rather than a single point, and that is the honest price of
+  not crying wolf.
 - **It only exists if the owner invited someone**, and deleting the share
   revokes everyone at once, with no per-person bookkeeping of ours to get
   wrong.

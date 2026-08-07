@@ -257,6 +257,17 @@ reversal is argued in that doc's new §6.5 rather than performed quietly; the
 old row's real justification was "not needed for anything above", and this is
 the thing that needed it.
 
+**The condition the whole ladder rests on**, found in review and now stated
+on the household screen itself: escalation is decided by a device that is
+awake and watching — this iPhone in the foreground, or a resident that stayed
+home (the Apple TV's "stand watch"). A phone locked in a pocket with nothing
+else home cannot notice that nobody answered, so it cannot tell anyone. That
+is the same limit the away path already carries ("with nothing home, away
+alerts cannot happen"), and it bites hardest here, because the household leg
+exists precisely for the moment the owner is not looking at their phone.
+Making the resident escalate on its own is the next real slice of this work
+and is deliberately not smuggled into this one.
+
 **Still not built, deliberately:** an ack that travels back from the household.
 It would matter if escalation could fire twice, and it can't — the ledger's
 stamp makes it at most once per occurrence — so the owner's app has nothing

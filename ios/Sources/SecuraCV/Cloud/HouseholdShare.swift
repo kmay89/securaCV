@@ -71,6 +71,24 @@ final class HouseholdShare: ObservableObject {
     /// a zone nobody joined.
     var reachableCount: Int { HouseholdRelay.reachableCount(members) }
 
+    /// Why a household alert wouldn't reach THIS device, if something would
+    /// stop it. nil when the path is clear.
+    ///
+    /// The case this exists for: somebody installs SecuraCV *only* to help
+    /// watch a relative's fleet. They pair nothing, so the app's ordinary
+    /// "you have devices, so let's ask about notifications" moment never
+    /// arrives — and registering for remote notifications is not the same as
+    /// being allowed to show one. Without this, their subscription saves,
+    /// every household alert is silently suppressed, and the owner's roster
+    /// cheerfully says "1 person is told."
+    @Published private(set) var participantBlocked: String?
+
+    /// Set by FleetStore so the participant path can ask for notification
+    /// permission at the moment of need — the moment they accept — using the
+    /// app's one authorization request rather than a second copy of the
+    /// options list.
+    var requestNotificationAuthorization: (() async -> Bool)?
+
     private init() {}
 
     #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
@@ -154,10 +172,17 @@ final class HouseholdShare: ObservableObject {
     /// the only revoke that needs no per-person bookkeeping.
     func stopSharing() async {
         #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
+        let db = CloudContainer.shared.privateCloudDatabase
         if let share {
-            _ = try? await CloudContainer.shared.privateCloudDatabase.deleteRecord(withID: share.recordID)
+            _ = try? await db.deleteRecord(withID: share.recordID)
         }
         share = nil
+        // Now — and only now — the zone can be emptied without waking
+        // anybody: the share is gone, so there is no subscriber left for a
+        // deletion to push at (see `sweepOldEscalations` for why that
+        // ordering is the whole design). Deleting the zone takes every
+        // escalation record with it in one operation.
+        _ = try? await db.deleteRecordZone(withID: zoneID)
         #endif
         members = []
         state = .notSetUp
@@ -173,10 +198,16 @@ final class HouseholdShare: ObservableObject {
     /// (`HouseholdRelay.mayReachHousehold`); this end refuses to write when
     /// there is nobody to read it, which keeps the zone empty in the common
     /// case where the owner never invited anyone.
-    func publishEscalation(_ wake: WakeClass) {
+    /// `occurrenceKey` names the alarm, not this write: every device the
+    /// owner holds computes the same one, so a second device escalating the
+    /// same alarm collides with the first record and its write simply fails.
+    /// That failure IS the deduplication — no new record, so no second push
+    /// on a participant's phone. (The "at most once" stamp lives in each
+    /// device's own ledger, which is why it needed help crossing devices.)
+    func publishEscalation(_ wake: WakeClass, occurrenceKey: String) {
         #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
         guard state == .sharing, reachableCount > 0 else { return }
-        let id = CKRecord.ID(recordName: UUID().uuidString, zoneID: zoneID)
+        let id = CKRecord.ID(recordName: occurrenceKey, zoneID: zoneID)
         let record = CKRecord(recordType: HouseholdRelay.escalationRecordType, recordID: id)
         // The same one field the ordinary wake carries, and for the same
         // reason: a participant's app can say which KIND of trouble went
@@ -186,11 +217,29 @@ final class HouseholdShare: ObservableObject {
         #endif
     }
 
-    /// Escalation records are litter once read. Sweep anything older than a
-    /// day, exactly as the ordinary wake path does.
+    /// Escalation records are litter once read — but sweeping them is only
+    /// safe while NOBODY is subscribed, and that is the whole subtlety here.
+    ///
+    /// A shared database offers no create-only visible subscription: query
+    /// subscriptions (the ones that can fire on creation alone) don't exist
+    /// there, so the participant's is a database subscription, which fires on
+    /// every change INCLUDING deletions. Sweeping a day-old record would
+    /// therefore push "Nobody answered" to every participant again, at app
+    /// launch, about an alarm from yesterday — the household channel crying
+    /// wolf, on the one channel whose entire value is that it stays quiet.
+    ///
+    /// The alternative was a silent subscription plus a fetch-and-post dance
+    /// on the participant's side. That trades a reliable alarm for a
+    /// best-effort one (iOS budgets silent pushes), which is the wrong trade
+    /// for the last rung of an escalation ladder.
+    ///
+    /// So: sweep freely while nobody is listening, hold while somebody is,
+    /// and `stopSharing` deletes the whole zone at a moment when no
+    /// subscriber remains to be woken by it. What that leaves is costed in
+    /// docs/design/cloudkit_backend.md §6.5.
     func sweepOldEscalations(now: Date = Date()) async {
         #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
-        guard state == .sharing else { return }
+        guard state == .sharing, reachableCount == 0 else { return }
         let db = CloudContainer.shared.privateCloudDatabase
         let cutoff = now.addingTimeInterval(-86_400) as NSDate
         let query = CKQuery(recordType: HouseholdRelay.escalationRecordType,
@@ -212,6 +261,11 @@ final class HouseholdShare: ObservableObject {
         do {
             _ = try await CloudContainer.shared.accept(metadata)
             isHelpingSomeone = true
+            // Moment of need: they just agreed to be told something. Asking
+            // now is both the best time to be allowed and the only time we
+            // can honestly find out whether this device can be told at all.
+            let allowed = await requestNotificationAuthorization?() ?? false
+            participantBlocked = allowed ? nil : HouseholdRelay.participantNeedsNotifications
             await subscribeAsParticipant()
         } catch {
             state = .unavailable("That invitation couldn't be accepted. Ask them to send it again.")
@@ -247,7 +301,16 @@ final class HouseholdShare: ObservableObject {
         guard let zones = try? await db.allRecordZones() else { return }
         let helping = zones.contains { $0.zoneID.zoneName == HouseholdRelay.zoneName }
         isHelpingSomeone = helping
-        if helping { await subscribeAsParticipant() }
+        if helping {
+            // Re-checked every launch, not just at accept: notifications can
+            // be turned off in Settings months later, and this device would
+            // otherwise go on quietly counting as somebody who gets told.
+            let allowed = await requestNotificationAuthorization?() ?? false
+            participantBlocked = allowed ? nil : HouseholdRelay.participantNeedsNotifications
+            await subscribeAsParticipant()
+        } else {
+            participantBlocked = nil
+        }
         #endif
     }
 
