@@ -1,19 +1,50 @@
 /* lab-settings — the Lab's Settings panel: which build is running, whether a
    newer one exists, and the log of every update the app has ever done.
 
-   App-only by construction. The browser Lab has no updater and no app data
-   dir, so `IN_APP` is false there, the shell never offers the entry, and
-   nothing below runs. Everything it shows comes from the native side
-   (desktop-lab/src-tauri): `app_info` for the build stamp, `check_update` /
-   `install_update` for the release channel, `read_update_journal` /
-   `update_journal_path` for the journal `self_update.rs` has always written.
+   Desktop-app-only by construction, and gated on the CAPABILITY rather than
+   on "is there a Tauri runtime". Three surfaces share this frontend and only
+   one of them self-updates:
+
+     the website        no Tauri at all
+     iOS / iPadOS       Tauri IS present, but updates ride the App Store, so
+                        lib.rs's `#[cfg(not(desktop))]` handler registers
+                        none of the update commands
+     macOS / Linux      the real thing
+
+   Gating on `window.__TAURI__` alone would light the entry up on an iPad and
+   then fail every invoke behind it, rendering an empty journal and a false
+   "couldn't reach the release channel" — the exact hollow page this module
+   exists to avoid on the website. So we ask `native_capabilities()` (which
+   IS registered on mobile) whether `self_update` is true, and believe it.
+
+   Everything shown comes from the native side (desktop-lab/src-tauri):
+   `app_info` for the build stamp, `check_update` / `install_update` for the
+   release channel, `read_update_journal` / `update_journal_path` for the
+   journal `self_update.rs` has always written.
 
    The journal is the record — "last checked" is derived from its newest line
    rather than tracked separately, so the panel can't claim a check that isn't
    written down. canary-local/tests/lab_settings.test.js is the parity gate
    against the Flasher's About panel. */
 
-export const IN_APP = !!(window.__TAURI__ && window.__TAURI__.core);
+/* Live binding: false until `probeSettings()` has asked the native side.
+   lab-shell.js awaits that probe before its first render, so the sidebar is
+   never built against a stale answer. */
+export let SETTINGS_AVAILABLE = false;
+
+/** Ask the native shell whether this build can actually self-update.
+    Safe to call anywhere — resolves false off-app and on mobile. */
+export async function probeSettings() {
+  SETTINGS_AVAILABLE = false;
+  if (!(window.__TAURI__ && window.__TAURI__.core)) return false;
+  try {
+    const caps = await window.__TAURI__.core.invoke("native_capabilities");
+    SETTINGS_AVAILABLE = !!(caps && caps.self_update);
+  } catch {
+    SETTINGS_AVAILABLE = false;   // no capability seam at all → no panel
+  }
+  return SETTINGS_AVAILABLE;
+}
 
 const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
 const listen = (evt, cb) =>

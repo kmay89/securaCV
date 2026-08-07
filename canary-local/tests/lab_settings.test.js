@@ -84,18 +84,61 @@ test("app_info's build stamp is actually stamped by build.rs", () => {
   }
 });
 
-test("the panel is app-only, and so is the way in", () => {
-  assert.match(settingsJs, /export const IN_APP\s*=\s*!!\(?window\.__TAURI__/,
-    "lab-settings.js must gate on window.__TAURI__ — the browser Lab has no updater");
+test("the panel is gated on the self_update CAPABILITY, not on Tauri's presence", () => {
+  // Three surfaces share this frontend and only one self-updates. On
+  // iOS/iPadOS `window.__TAURI__` exists but lib.rs's `#[cfg(not(desktop))]`
+  // handler registers none of the update commands, so a bare `__TAURI__`
+  // check would light the entry up on an iPad and fail every invoke behind
+  // it — an empty journal and a false "couldn't reach the release channel".
+  assert.match(settingsJs, /invoke\("native_capabilities"\)/,
+    "lab-settings.js must ask native_capabilities() whether this build self-updates");
+  assert.match(settingsJs, /caps\.self_update/,
+    "the gate must key off the self_update capability the Lab already reports");
   assert.ok(shellJs.includes('from "./lab-settings.js"'),
     "lab-shell.js must import the settings module it renders");
-  // The sidebar entry and the route allowlist both have to be app-gated, or
-  // the website shows a Settings page that can't answer anything.
-  assert.match(shellJs, /IN_APP\s*\?\s*navItem\("settings"/,
-    "the Settings sidebar entry must be behind IN_APP in lab-shell.js");
-  assert.match(shellJs, /IN_APP\s*\?\s*\["settings"\]\s*:\s*\[\]/,
-    "\"settings\" must only join VALID_IDS in the app, so the browser Lab's #settings " +
+  assert.match(shellJs, /await probeSettings\(\)/,
+    "lab-shell.js must await probeSettings() before its first render, or the sidebar " +
+    "is built against a stale answer");
+  // The sidebar entry and the route allowlist must BOTH be gated, or a
+  // non-updating build shows a Settings page that can't answer anything.
+  assert.match(shellJs, /SETTINGS_AVAILABLE\s*\?\s*navItem\("settings"/,
+    "the Settings sidebar entry must be behind SETTINGS_AVAILABLE in lab-shell.js");
+  assert.match(shellJs, /SETTINGS_AVAILABLE\s*\?\s*\["settings"\]\s*:\s*\[\]/,
+    "\"settings\" must only join VALID_IDS where updates exist, so #settings elsewhere " +
     "falls back to the overview through the existing sanitizer");
+});
+
+test("the capability the gate reads is one the Lab reports everywhere", () => {
+  // native_capabilities must be registered on BOTH handlers — the probe runs
+  // on mobile too, and an unregistered command there would throw, which the
+  // module treats as "no panel". Correct outcome, wrong reason; assert the
+  // seam exists so the gate is answering, not failing.
+  assert.match(libRs, /"self_update":\s*cfg!\(desktop\)/,
+    "lib.rs must report self_update as a capability for the panel to gate on");
+  const handlers = [...libRs.matchAll(/invoke_handler\(tauri::generate_handler!\[([\s\S]*?)\]\)/g)];
+  assert.strictEqual(handlers.length, 2, "expected a desktop and a non-desktop invoke_handler");
+  for (const h of handlers) {
+    assert.ok(h[1].includes("native_capabilities"),
+      "every invoke_handler must register native_capabilities — the Settings gate probes it " +
+      "on mobile as well as desktop");
+  }
+});
+
+test("a manual check is journaled, or the panel's promise is a lie", () => {
+  // The panel and the release notes both say "every check and install". The
+  // routine pass journaled; the command the buttons call did not, so opening
+  // Settings, pressing "Check now" or retrying offline left no trace — and
+  // the offline failure is the single most useful line the journal carries.
+  const body = /pub async fn check_update\([\s\S]*?\n}/.exec(selfUpdateRs);
+  assert.ok(body, "couldn't find check_update in self_update.rs");
+  // `journal(\n    &app,` — rustfmt splits the longer calls across lines.
+  const journalCalls = (body[0].match(/journal\(\s*&app,/g) || []).length;
+  assert.ok(
+    journalCalls >= 3,
+    `check_update journals ${journalCalls} of its outcomes; it must record all three ` +
+    `(update ready, already current, check failed) or the Settings panel's "every check ` +
+    `and install this app has done" is false for every user-initiated check.`
+  );
 });
 
 test("the Settings panel reports the same build facts as the Flasher's About", () => {

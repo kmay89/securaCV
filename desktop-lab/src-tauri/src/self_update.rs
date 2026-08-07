@@ -148,17 +148,45 @@ fn write_declined(app: &AppHandle, version: &str) {
 
 /// Ask the release channel whether a newer signed build exists (frontend
 /// seam — the routine below uses the same underlying check). `None` = current.
+///
+/// Journals every outcome, exactly as the routine pass does. The Settings
+/// panel promises "every check and install this app has done", so a
+/// user-initiated check that left no trace would make that copy a lie — and
+/// an offline failure is the single most useful line the journal can carry.
 #[tauri::command]
 pub async fn check_update(app: AppHandle) -> Result<Option<UpdateDto>, String> {
-    let updater = app.updater().map_err(|e| e.to_string())?;
+    let updater = app.updater().map_err(|e| {
+        let msg = format!("update check unavailable: {e}");
+        journal(&app, &msg);
+        msg
+    })?;
     match updater.check().await {
-        Ok(Some(update)) => Ok(Some(UpdateDto {
-            version: update.version.clone(),
-            current_version: update.current_version.clone(),
-            notes: update.body.clone(),
-        })),
-        Ok(None) => Ok(None),
-        Err(e) => Err(format!("update check failed: {e}")),
+        Ok(Some(update)) => {
+            journal(
+                &app,
+                &format!(
+                    "checked — v{} is ready (running v{})",
+                    update.version, update.current_version
+                ),
+            );
+            Ok(Some(UpdateDto {
+                version: update.version.clone(),
+                current_version: update.current_version.clone(),
+                notes: update.body.clone(),
+            }))
+        }
+        Ok(None) => {
+            journal(
+                &app,
+                &format!("checked — v{} is current", env!("CARGO_PKG_VERSION")),
+            );
+            Ok(None)
+        }
+        Err(e) => {
+            let msg = format!("update check failed: {e}");
+            journal(&app, &msg);
+            Err(msg)
+        }
     }
 }
 
