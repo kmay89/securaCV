@@ -446,6 +446,39 @@
 
 ## Build System
 
+### A new file under `canary-display/src/ui/` changes the committed emulator wasm — even one that compiles to nothing
+- **What happened:** The First Light pair demo added
+  `src/ui/pair_demo_ui.cpp`, whose entire translation unit sits behind
+  `#if FEATURE_PAIR_DEMO` (off in the emulator build). CI's
+  "firmware → wasm → boots in a browser" gate still went red: the committed
+  `canary-local/emulator/dist/*.js` no longer matched a rebuild from the
+  tree.
+- **Root cause:** `canary-local/emulator/build.sh` globs the whole directory
+  — `"$PROJ"/src/ui/*.cpp` — so the new TU joins the wasm link whether or
+  not it emits code. An empty object file still moved the output by 4 bytes
+  per display artifact (`canary-display-dash.js` 975983 → 975987,
+  `canary-display-watch.js` 983326 → 983330), and the dist gate is a
+  **byte** diff, not a behavior diff.
+- **Fix:** dispatch **Actions → "Rebuild emulator dist (pinned emsdk)"** on
+  your branch; it rebuilds with the pinned emsdk 6.0.3 and pushes the result.
+  The rebuild is not optional for any `src/ui/` addition, and it cannot be
+  done in most working environments — the gate's own fixer needs a toolchain
+  that a network-restricted sandbox or an ordinary laptop generally lacks.
+- **Two traps that cost a round each here:**
+  - **Push before you dispatch.** The workflow rebuilds the ref it was
+    dispatched on and pushes back; if you push anything while it runs, its
+    push is rejected non-fast-forward and the job fails with nothing to show
+    for the build minutes.
+  - **Its push collects no checks.** GitHub's recursion guard means a
+    `GITHUB_TOKEN` push does not retrigger workflows, so the refreshed head
+    lands with **zero** check runs — a PR that looks unvalidated rather than
+    green. It needs one ordinary push on top (this entry was that push).
+    The workflow header says so; believe it.
+- **Regression check:** the dist gate itself, which is why it exists. Nothing
+  to add — just remember that `src/ui/` and byte-exact committed artifacts
+  are the same decision.
+- **Date learned:** 2026-08
+
 ### Whether `common/` needs an explicit build_src_filter depends on the env's LDF mode — and getting it wrong fails at LINK, in either direction
 - **What happened:** `canary-display-nightstand7` was added with the same
   `build_src_filter` block its siblings carry:
