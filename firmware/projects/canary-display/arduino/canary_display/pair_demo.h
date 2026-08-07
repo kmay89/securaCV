@@ -9,7 +9,12 @@
 //     lock the owner confirms on the button),
 //   * what counts as a detection EDGE (alert rising, or the class changing
 //     while alert holds — the same edge rule the sender's beacon payload
-//     uses, so the two ends of the wire agree on what "now" means),
+//     uses, so the two ends of the wire agree on what "now" means), with
+//     the followed witness's FIRST status observation as a silent baseline:
+//     a camera already holding presence when the card opens must never be
+//     counted — or timed — as a fresh trigger (review catch: the refresh
+//     that happened to arrive first was producing a fabricated near-zero
+//     react number, which is the one dishonesty this surface cannot carry),
 //   * the trigger-timing bookkeeping (edge count, when, and the receive
 //     timestamp the UI measures its radio-to-glass react time against),
 //   * the open gesture (BOOT held 5 s — the classifier's grammar is full,
@@ -73,6 +78,7 @@ class PairDemo {
       locked_ = true;
     }
     heard_ = false;
+    baselined_ = false;
     alert_ = false;
     prev_alert_ = false;
     detect_class_ = 0;
@@ -118,6 +124,21 @@ class PairDemo {
 
     if (!have_status) return false;  // v1 beacon: freshness only
 
+    if (!baselined_) {
+      // The FIRST status observation is a silent baseline, never an edge: a
+      // camera already holding presence when the card opens (or when this
+      // witness is adopted) reports state the demo did not witness change.
+      // Counting it — or worse, timing it — would print a react number for
+      // a routine 5 s refresh, and a fabricated timing figure is the one
+      // dishonesty this surface cannot carry (review catch).
+      baselined_ = true;
+      prev_alert_ = s.alert;
+      alert_ = s.alert;
+      detect_class_ = s.detect_class;
+      detect_score_ = s.detect_score;
+      return false;
+    }
+
     const bool edge =
         s.alert && (!prev_alert_ || s.detect_class != detect_class_);
     prev_alert_ = s.alert;
@@ -140,11 +161,13 @@ class PairDemo {
   void lock() {
     if (can_lock()) locked_ = true;
   }
-  // Forget the lock (and the candidate): back to open listening.
+  // Forget the lock (and the candidate): back to open listening. The next
+  // witness adopted starts from its own baseline.
   void forget() {
     locked_ = false;
     fp4_[0] = '\0';
     heard_ = false;
+    baselined_ = false;
     alert_ = false;
     prev_alert_ = false;
     detect_class_ = 0;
@@ -184,6 +207,7 @@ class PairDemo {
   bool locked_ = false;
   char fp4_[5] = {0};
   bool heard_ = false;
+  bool baselined_ = false;
   bool alert_ = false;
   bool prev_alert_ = false;
   uint8_t detect_class_ = 0;
@@ -239,13 +263,20 @@ class HoldGate {
 // onboarding screen (never provisioned), the beacon arrived on the
 // router-free band (a camera is actually on the desk — a LAN datagram would
 // mean a network already exists and the owner has a real setup underway),
-// and nothing urgent owns the glass. A provisioned nightlight never
-// auto-opens: a working bedside clock must not swap its face because a
-// camera powered up somewhere.
+// nothing urgent owns the glass, and the session's ONE auto-open hasn't been
+// spent. A provisioned nightlight never auto-opens: a working bedside clock
+// must not swap its face because a camera powered up somewhere.
+//
+// `already_spent` is the review catch: the Vision refreshes every 5 s, so
+// without it, closing the card ("hold: leave") lasted five seconds and the
+// demo kept burying the onboarding wizard. Any open — automatic or manual —
+// spends it; after that, reopening is the explicit hold gesture (or a
+// reboot), never the radio's idea.
 inline bool pair_should_auto_open(bool unprovisioned, canary::fleet::Via via,
-                                  bool already_active, bool urgent) {
+                                  bool already_active, bool urgent,
+                                  bool already_spent) {
   return unprovisioned && via == canary::fleet::Via::Mesh && !already_active &&
-         !urgent;
+         !urgent && !already_spent;
 }
 
 }  // namespace pair

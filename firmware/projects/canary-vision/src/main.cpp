@@ -165,7 +165,10 @@ static void identify_tick(uint32_t now_ms) {
 // solid LED pulse the instant the presence FSM flips. Standing next to the
 // pair, the eye compares this flash against the glass lighting up — the
 // trigger timing made visible with no bench gear. Identify owns the LED
-// while its 10 s window runs; the pulse yields rather than fight it.
+// while its 10 s window runs; the pulse yields rather than fight it. On
+// hosts without a user LED (the XIAO ESP32-C3 — see IDENTIFY_HAS_LED) this
+// is a silent no-op and the serial PAIR line is the camera-side cue; the
+// runbook says so rather than promising a light the board can't make.
 static uint32_t g_pair_blink_until_ms = 0;  // 0 = idle
 static uint32_t g_last_invoke_us = 0;       // last SSCMA invoke round-trip
 

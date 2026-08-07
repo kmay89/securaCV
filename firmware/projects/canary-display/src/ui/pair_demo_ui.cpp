@@ -32,6 +32,9 @@
 #include "canary/pair/pair_demo.h"
 #include "canary/fleet/fleet_instance.h"
 #include "canary/net/wifi_mgr.h"
+#if defined(FEATURE_ONBOARDING) && FEATURE_ONBOARDING
+#include "canary/net/provision.h"  // join-in-flight — that association owns the radio
+#endif
 #include "canary/runtime_config.h"
 #include "canary/log.h"
 #include "fleet_link/fleet_beacon_espnow.h"  // fallback-channel contract
@@ -57,6 +60,10 @@ lv_obj_t* s_hint = nullptr;    // button hints
 uint32_t s_pulse_until_ms = 0;
 bool s_edge_paint_pending = false;
 bool s_auto_open_req = false;
+// One auto-open per boot: any open — automatic or manual — spends it, so
+// "hold: leave" means left (the Vision refreshes every 5 s; without this
+// the card re-buried the onboarding wizard five seconds after every exit).
+bool s_auto_open_spent = false;
 canary::pair::PairStage s_built_stage = canary::pair::PairStage::Idle;
 
 constexpr const char* NVS_NS = "scv-nl";   // the nightlight's own namespace
@@ -110,10 +117,19 @@ lv_obj_t* mk_label(lv_obj_t* parent, const lv_font_t* f, lv_color_t c) {
 
 // Park the radio on the shared fallback channel while nothing owns it, so
 // this glass hears a factory-fresh Vision (which parks on the same channel —
-// the contract in fleet_beacon_espnow.h). Associated STA = the radio is
-// spoken for; never retune under it.
+// the contract in fleet_beacon_espnow.h). "Owns it" is read strictly, the
+// same rule the Vision-side carrier applies: an associated STA is spoken
+// for; a PROVISIONED unit's radio belongs to the reconnect machinery even
+// while the link is down; and a portal join test's WiFi.begin() owns the
+// channel for the whole association attempt (review catch — parking under
+// an in-flight join was turning valid provisioning attempts into
+// timeouts). Only a genuinely idle, never-provisioned radio gets parked.
 void park_channel_if_idle() {
   if (canary::net::wifi_connected()) return;
+  if (!canary::cfg::wifi_is_placeholder()) return;
+#if defined(FEATURE_ONBOARDING) && FEATURE_ONBOARDING
+  if (canary::net::provision_join_in_flight()) return;
+#endif
   uint8_t ch = 0;
   wifi_second_chan_t sec = WIFI_SECOND_CHAN_NONE;
   if (esp_wifi_get_channel(&ch, &sec) != ESP_OK) return;
@@ -255,6 +271,7 @@ void refresh(uint32_t now) {
 
 void pair_demo_ui_open(uint32_t now) {
   if (s_scr) return;
+  s_auto_open_spent = true;  // this boot's one walk-up is used, however opened
   char remembered[5];
   load_lock(remembered);
   s_demo.open(now, remembered);
@@ -326,7 +343,8 @@ void pair_demo_note_beacon(const char* fp4,
     const bool urgent = fleet.worst(now) >= canary::fleet::Sev::Alert &&
                         !fleet.ack_active(now);
     if (canary::pair::pair_should_auto_open(canary::cfg::wifi_is_placeholder(),
-                                            via, false, urgent)) {
+                                            via, false, urgent,
+                                            s_auto_open_spent)) {
       s_auto_open_req = true;
     }
     return;

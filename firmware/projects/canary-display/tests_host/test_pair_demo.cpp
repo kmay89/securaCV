@@ -96,6 +96,10 @@ static void test_edge_rule_matches_sender() {
   PairDemo d;
   d.open(0, "3fa2");
 
+  // The first status observation is a silent baseline, never an edge.
+  CHECK(!d.observe("3fa2", status(false, 0, -1), true, 50, Via::Mesh, 9),
+        "first observation baselines, no edge");
+
   // alert rising = edge
   CHECK(d.observe("3fa2", status(true, 1, 87), true, 100, Via::Mesh, 10),
         "alert rising = edge");
@@ -127,6 +131,35 @@ static void test_edge_rule_matches_sender() {
   // react time parks where the UI put it
   d.note_react_us(41000);
   CHECK(d.react_us() == 41000, "react time parked for the card");
+}
+
+static void test_already_present_camera_never_fakes_an_edge() {
+  // The review catch behind the baseline: open the card while the camera is
+  // ALREADY holding presence. The first alert-bearing refresh reports state
+  // the demo never witnessed change — counting it would print a fabricated
+  // near-zero react number for a routine 5 s refresh.
+  PairDemo d;
+  d.open(0, "3fa2");
+  CHECK(!d.observe("3fa2", status(true, 1, 92), true, 100, Via::Mesh, 10),
+        "already-present camera: first observation is baseline, not edge");
+  CHECK(d.edges() == 0, "no trigger counted");
+  CHECK(d.alert_now(), "the live state still shows the presence honestly");
+
+  // A held alert keeps refreshing without ever becoming an edge…
+  CHECK(!d.observe("3fa2", status(true, 1, 90), true, 5100, Via::Mesh, 11),
+        "held presence refresh: still not an edge");
+  // …and only a transition the demo actually witnessed counts.
+  CHECK(!d.observe("3fa2", status(false, 0, -1), true, 9000, Via::Mesh, 12),
+        "presence ending is not a pulse edge");
+  CHECK(d.observe("3fa2", status(true, 1, 88), true, 12000, Via::Mesh, 13),
+        "the witnessed rise is the first real edge");
+  CHECK(d.edges() == 1, "exactly one witnessed trigger");
+
+  // forget() then re-adopt: the new witness starts from its own baseline.
+  d.forget();
+  CHECK(!d.observe("beef", status(true, 2, 70), true, 13000, Via::Mesh, 14),
+        "re-adopted witness baselines again");
+  CHECK(d.edges() == 1, "re-adoption cannot mint an edge");
 }
 
 static void test_staleness_reads_like_the_fleet() {
@@ -171,26 +204,33 @@ static void test_hold_gate() {
 }
 
 static void test_auto_open_rule() {
-  // The one true auto-open: unprovisioned + router-free band + calm.
-  CHECK(pair_should_auto_open(true, Via::Mesh, false, false),
+  // The one true auto-open: unprovisioned + router-free band + calm +
+  // this boot's walk-up not yet spent.
+  CHECK(pair_should_auto_open(true, Via::Mesh, false, false, false),
         "boxed pair: auto-open");
   // Everything else refuses.
-  CHECK(!pair_should_auto_open(false, Via::Mesh, false, false),
+  CHECK(!pair_should_auto_open(false, Via::Mesh, false, false, false),
         "provisioned clock never auto-opens");
-  CHECK(!pair_should_auto_open(true, Via::Wifi, false, false),
+  CHECK(!pair_should_auto_open(true, Via::Wifi, false, false, false),
         "a LAN datagram never auto-opens (a network already exists)");
-  CHECK(!pair_should_auto_open(true, Via::Ble, false, false),
+  CHECK(!pair_should_auto_open(true, Via::Ble, false, false, false),
         "ble never auto-opens");
-  CHECK(!pair_should_auto_open(true, Via::Mesh, true, false),
+  CHECK(!pair_should_auto_open(true, Via::Mesh, true, false, false),
         "already open: no re-open");
-  CHECK(!pair_should_auto_open(true, Via::Mesh, false, true),
+  CHECK(!pair_should_auto_open(true, Via::Mesh, false, true, false),
         "an urgent glass is never interrupted");
+  // The review catch: the Vision refreshes every 5 s, so a spent session
+  // must never re-open — or "hold: leave" lasts five seconds and the card
+  // keeps burying the onboarding wizard.
+  CHECK(!pair_should_auto_open(true, Via::Mesh, false, false, true),
+        "one walk-up per boot: spent means spent");
 }
 
 int main() {
   test_stage_ladder_and_adopt();
   test_remembered_lock_skips_adopt();
   test_edge_rule_matches_sender();
+  test_already_present_camera_never_fakes_an_edge();
   test_staleness_reads_like_the_fleet();
   test_hold_gate();
   test_auto_open_rule();

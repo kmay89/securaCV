@@ -497,6 +497,14 @@ bool provision_needed() {
   return canary::cfg::wifi_is_placeholder();
 }
 
+bool provision_join_in_flight() {
+  // St::Testing is the window where WiFi.begin() owns the shared radio for a
+  // candidate network — the channel is that association's, and nothing else
+  // (the pair demo's fallback parking, above all) may retune it. g is nulled
+  // when the portal exits, so this is false whenever the wizard isn't up.
+  return g && g->st == St::Testing;
+}
+
 void provision_run(bool glass_ok) {
   Ctx ctx;
   g = &ctx;

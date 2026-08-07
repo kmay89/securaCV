@@ -27,10 +27,16 @@ with the two boards can run it today.
    names the class and confidence, and prints **glass react** — the time
    from its own radio receive to the paint that showed you the edge,
    measured on its own clock.
-4. **The camera's side of the clock.** The Vision pulses its status LED on
-   every edge (stand where you can see both: the LED fires, then the glass)
-   and logs its own numbers on serial: the NPU invoke round-trip in
-   microseconds, and detection-edge-to-air in milliseconds.
+4. **The camera's side of the clock.** The Vision logs its own numbers on
+   serial: the NPU invoke round-trip in microseconds, and
+   detection-edge-to-air in milliseconds. On host boards **with a user LED**
+   it also pulses that LED on every edge — stand where you can see both and
+   the LED-to-glass gap is the whole latency story, no instruments needed.
+   Know your host before promising the LED: the ESP32-C3 DevKit
+   (`canary-vision-default`) and the XIAO ESP32-S3 Sense
+   (`canary-vision-xiao-s3`) have one; the **XIAO ESP32-C3 — the kit board —
+   has no user LED**, so there the serial `PAIR` lines are the camera-side
+   record and the glass carries the show.
 
 ## What the numbers honestly are
 
@@ -44,7 +50,7 @@ measured on its own clock:
 | `invoke took N us` | Vision serial (`PAIR` lines) | One SSCMA invoke round-trip to the NPU module |
 | `detection edge on air N ms` | Vision serial (`PAIR` lines) | FSM edge → ESP-NOW frame handed to the radio |
 | `glass react N ms` | Nightlight card | Radio receive drain → the paint that shows the edge (the panel flush after it costs at most one more frame) |
-| the LED → glass gap | Your eyes | The only true end-to-end reading in the room, and it needs no clock at all |
+| the LED → glass gap | Your eyes | The only true end-to-end reading in the room, and it needs no clock at all — hosts with a user LED only (the XIAO ESP32-C3 has none) |
 
 Performance varies by hardware, distance, and channel congestion. Run it
 before quoting it.
@@ -76,7 +82,9 @@ data or the Lab's Vision bench).
    (`SCV-XXXX`). **Tap** to keep it — the lock is remembered across
    reboots, and the card ignores every other camera from then on.
    **Double-press** forgets it; **hold** leaves the demo.
-4. Wave at the camera. Watch the LED, then the glass.
+4. Wave at the camera. On a host with a user LED, watch the LED, then the
+   glass; on the XIAO ESP32-C3, watch the glass and read the camera's side
+   on serial.
 
 ## Where the seams are (read before demoing to a customer)
 
