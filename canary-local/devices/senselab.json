@@ -10,8 +10,8 @@
     "model_wellbeing": "Canary Sense Wellbeing (XIAO ESP32-C6 + MR60BHA2)",
     "board": "Seeed XIAO ESP32-C6 (MR60BHA2 kit)",
     "board_short": "XIAO ESP32-C6 + MR60BHA2",
-    "fw_version": "2.4.6",
-    "fw_train": "2.4.6",
+    "fw_version": "2.4.7",
+    "fw_train": "2.4.7",
     "modality": "radar",
     "status": "phase 2 complete \u2014 signing witness, bench items open",
     "heartbeat_ms": 5000
