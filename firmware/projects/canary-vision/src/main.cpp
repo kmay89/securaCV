@@ -43,6 +43,7 @@
 #endif
 #if defined(FEATURE_FLEET_UDP) && FEATURE_FLEET_UDP
 #include "canary/net/fleet_udp.h"             // carrier: LAN multicast
+#include "canary/net/fleet_espnow.h"          // carrier: ESP-NOW (router-free)
 #endif
 #if defined(FEATURE_FLEET_ROSTER) && FEATURE_FLEET_ROSTER
 #include "canary/net/fleet_roster_scan.h" // RX twin: track the other Canaries
@@ -158,6 +159,37 @@ static void identify_tick(uint32_t now_ms) {
   }
   // 2 Hz flash — unmistakable against a steady status LED.
   identify_led(((now_ms / 250) & 1) == 0);
+}
+
+// Trigger blink (the First Light pair demo's camera-side cue): one short
+// solid LED pulse the instant the presence FSM flips. Standing next to the
+// pair, the eye compares this flash against the glass lighting up — the
+// trigger timing made visible with no bench gear. Identify owns the LED
+// while its 10 s window runs; the pulse yields rather than fight it.
+static uint32_t g_pair_blink_until_ms = 0;  // 0 = idle
+static uint32_t g_last_invoke_us = 0;       // last SSCMA invoke round-trip
+
+static void pair_blink_start(uint32_t now_ms) {
+  if (g_identify_until_ms) return;  // identify session owns the LED
+#if IDENTIFY_HAS_LED
+  pinMode(LED_BUILTIN, OUTPUT);
+#endif
+  g_pair_blink_until_ms = now_ms + 150UL;
+  if (g_pair_blink_until_ms == 0) g_pair_blink_until_ms = 1;  // wrap guard
+}
+
+static void pair_blink_tick(uint32_t now_ms) {
+  if (!g_pair_blink_until_ms) return;
+  if (g_identify_until_ms) {  // identify started mid-pulse: stand down
+    g_pair_blink_until_ms = 0;
+    return;
+  }
+  if ((int32_t)(now_ms - g_pair_blink_until_ms) >= 0) {
+    g_pair_blink_until_ms = 0;
+    identify_led(false);
+    return;
+  }
+  identify_led(true);
 }
 
 static void set_last_event(const char* e) {
@@ -559,6 +591,13 @@ void setup() {
   canary::net::fleet_udp_begin(canary::ms_now());
 #endif
 
+#if defined(FEATURE_FLEET_ESPNOW) && FEATURE_FLEET_ESPNOW
+  // The router-free band for the same beacon. The WiFi driver is up in STA
+  // mode even on an unprovisioned unit (wifi_init_or_reboot), which is all
+  // ESP-NOW needs — this is the carrier a factory-fresh pair meets on.
+  canary::net::fleet_espnow_begin(canary::ms_now());
+#endif
+
   // Bounded boot attempt: if the broker is down at boot the device still
   // finishes setup — the loop's backoff supervisor brings the link (and
   // every retained surface, discovery included) up when the broker returns.
@@ -658,7 +697,9 @@ static bool vision_tick(uint32_t now_ms) {
   last_invoke_ms = now_ms;
 
   VisionSample vs{};
+  const uint32_t invoke_t0_us = micros();
   if (!canary::vision::sample(vs)) return false;
+  g_last_invoke_us = micros() - invoke_t0_us;
 
   if (g_aim_on) aim_publish(vs, now_ms);
 
@@ -677,8 +718,22 @@ static bool vision_tick(uint32_t now_ms) {
   // budget also silenced the detection on the LAN.
   {
     const auto snap = fsm.snapshot(now_ms, last_event_name);
+    const uint32_t gen_before = canary::net::fleet_beacon_payload_generation();
     canary::net::fleet_beacon_note_detection(
         snap.presence, FLEET_BEACON_DETECT_PERSON, snap.confidence, now_ms);
+    if (canary::net::fleet_beacon_payload_generation() != gen_before) {
+      // A beacon-visible edge: make the trigger timing observable on the
+      // bench. The LED pulse is the camera-side cue the pair demo's glass
+      // is compared against; the invoke number is the NPU round-trip this
+      // pass actually measured (each side reports only its own clock — the
+      // wire stays timestamp-free by contract).
+      pair_blink_start(now_ms);
+      canary::log_header("PAIR");
+      canary::dbg_serial().printf(
+          "detection edge (%s) - invoke took %lu us this pass\n",
+          snap.presence ? "presence on" : "presence off",
+          (unsigned long)g_last_invoke_us);
+    }
   }
 
   if (emitted && ev.event_name) {
@@ -716,6 +771,13 @@ void loop() {
   // so a down link costs this call nothing (the C3 lesson: a fleet transport
   // must never be the reason a rejoin stalls).
   canary::net::fleet_udp_tick(canary::ms_now());
+#endif
+
+#if defined(FEATURE_FLEET_ESPNOW) && FEATURE_FLEET_ESPNOW
+  // The router-free band. Same placement, same reasoning as the two ticks
+  // above: an edge must reach a nearby display whether or not any network
+  // or broker exists — that broker-free reach is the whole band.
+  canary::net::fleet_espnow_tick(canary::ms_now());
 #endif
 
 #if defined(FEATURE_FLEET_ROSTER) && FEATURE_FLEET_ROSTER
@@ -810,6 +872,7 @@ void loop() {
   // Identify: drain the button press and drive the blink window.
   if (canary::net::take_pending_identify()) identify_start(now_ms);
   identify_tick(now_ms);
+  pair_blink_tick(now_ms);
 
   if ((now_ms - last_heartbeat_ms) > HEARTBEAT_MS) {
     last_heartbeat_ms = now_ms;

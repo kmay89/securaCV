@@ -32,6 +32,7 @@
 
 #include "canary/net/beacon_frame.h"       // shared decode (all bands)
 #include "canary/fleet/fleet_instance.h"
+#include "canary/ui/pair_demo_ui.h"  // First Light demo tap (inert unless FEATURE_PAIR_DEMO)
 #include "canary/log.h"
 
 namespace canary {
@@ -156,6 +157,13 @@ void fleet_udp_loop(uint32_t now) {
     // timestamp — not a second witness and not a second alert.
     canary::fleet::the_fleet().on_beacon(fp4, st, have_status, now,
                                          canary::fleet::Via::Wifi);
+    // The First Light demo hears every frame UN-deduped (trigger timing is
+    // its whole point). Inert unless FEATURE_PAIR_DEMO — and on this band it
+    // only ever feeds an OPEN demo card: the auto-open rule is
+    // router-free-band-only, so a LAN datagram can never swap a working
+    // clock's face.
+    canary::ui::pair_demo_note_beacon(fp4, st, have_status, now,
+                                      canary::fleet::Via::Wifi);
   }
 }
 

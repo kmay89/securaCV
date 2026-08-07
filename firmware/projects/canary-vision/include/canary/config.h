@@ -39,6 +39,24 @@
 #define FEATURE_FLEET_UDP 1
 #endif
 
+// -------------------- Fleet-link presence beacon (ESP-NOW) ----------------
+// The same beacon on the router-free band (src/net/fleet_espnow.cpp): raw
+// broadcast frames between devices that may have no network at all. This is
+// the carrier the First Light pair demo rides — a boxed Vision + Nightlight
+// on a desk, no WiFi, no hub, no app (docs/first_light_demo.md). The display
+// side (espnow_peer.cpp) has decoded these frames since it was written; this
+// flag adds the transmitter.
+//
+// It carries bytes built by src/net/fleet_beacon_payload.cpp — identical to
+// the other carriers' — so enabling or disabling any band never changes what
+// the beacon says, only how far it goes. Cheap: the WiFi driver is already
+// linked, esp_now adds no stack of its own. Default ON; guarded so CI can
+// flip it OFF per board with -DFEATURE_FLEET_ESPNOW=0 if the OTA-slot size
+// guard vetoes it. The module + its call sites compile out when 0.
+#ifndef FEATURE_FLEET_ESPNOW
+#define FEATURE_FLEET_ESPNOW 1
+#endif
+
 // -------------------- Fleet-link roster scanner (BLE) --------------------
 // The RX twin of the beacon (src/net/fleet_roster_scan.cpp): a low-duty passive
 // BLE scan that hears the OTHER Canaries' presence beacons + chirps and keeps a

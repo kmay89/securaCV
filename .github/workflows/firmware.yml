@@ -959,6 +959,24 @@ jobs:
           /tmp/espnow_peer | tee /tmp/espnow_peer.log
           grep -q "ALL .* PASSED" /tmp/espnow_peer.log
 
+      - name: Build + run canary-display pair demo host test
+        # The First Light pair demo's pure core (canary/pair/pair_demo.h):
+        # adopt-first-heard + the lock (the card can never silently switch
+        # cameras), the detection-edge rule mirrored from the sender's beacon
+        # payload (both ends of the wire agree on what "now" means), the
+        # fleet-aligned staleness read, the 5 s HoldGate open gesture, and
+        # the boxed-pair auto-open rule (unprovisioned + router-free band
+        # ONLY — a working bedside clock never swaps its face). The LVGL/NVS
+        # shell is compile-checked by the canary-display-nightlight-c3 env.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_pair_demo.cpp \
+              -o /tmp/pair_demo
+          /tmp/pair_demo | tee /tmp/pair_demo.log
+          grep -q "ALL .* PASSED" /tmp/pair_demo.log
+
       - name: Build + run canary-display mode registry host test
         # The glass's gears (docs/hardware/display_modes.md): boot-gear
         # resolution from the NVS token + the legacy devmode-bool migration,

@@ -126,6 +126,10 @@ static canary::mode::Mode s_active_mode = canary::mode::Mode::Fleet;
 #include "splash.h"
 #include "settings_ui.h"
 #include "commission_ui.h"
+#include "pair_demo_ui.h"  // First Light pair demo (inert unless FEATURE_PAIR_DEMO)
+#if defined(FEATURE_PAIR_DEMO) && FEATURE_PAIR_DEMO
+#include "pair_demo.h"   // HoldGate — the open gesture's pure core
+#endif
 #ifdef CD_FLAVOR_WATCH
 #include "glance_ui.h"
 #endif
@@ -404,6 +408,13 @@ static void apply_brightness(uint32_t now, bool night) {
   // A commissioning code needs a bright glass: a camera lens is squinting
   // at it from a hand-width away.
   if (canary::ui::commission_ui_active()) {
+    canary::hal::backlight_set(CD_BRIGHT_DAY);
+    return;
+  }
+  // The First Light demo card is a showroom surface: full requested
+  // brightness while it is open (the HAL's thermal ceiling still clips —
+  // no modal outranks a heat budget).
+  if (canary::ui::pair_demo_ui_active()) {
     canary::hal::backlight_set(CD_BRIGHT_DAY);
     return;
   }
@@ -868,7 +879,8 @@ static void render(uint32_t now) {
     if ((canary::ui::character_night() != s_ground_night ||
          canary::ui::active_character() != s_ground_char || orient_changed) &&
         !canary::ui::settings_ui_active() &&
-        !canary::ui::commission_ui_active()) {
+        !canary::ui::commission_ui_active() &&
+        !canary::ui::pair_demo_ui_active()) {
       s_ground_night = canary::ui::character_night();
       s_ground_char = canary::ui::active_character();
 #ifdef CD_FLAVOR_DASH
@@ -1037,7 +1049,8 @@ static void render(uint32_t now) {
       using canary::fleet::Sev;
       const bool calm = fleet.worst(now) < Sev::Warn;
       const bool idle = !canary::ui::settings_ui_active() &&
-                        !canary::ui::commission_ui_active();
+                        !canary::ui::commission_ui_active() &&
+                        !canary::ui::pair_demo_ui_active();
       const int minute_of_day =
           st.time_valid ? st.clock_hh * 60 + st.clock_mm : -1;
       st.visit = canary::care::nightlight_visits().step(
@@ -1210,7 +1223,13 @@ void setup() {
   // boards. INPUT_PULLUP matches BOOT_BUTTON_ACTIVE == LOW on every board
   // that carries one today; the classifier debounces in software.
   pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
+#if defined(FEATURE_PAIR_DEMO) && FEATURE_PAIR_DEMO
+  boot_kv("Button",
+          "BOOT: tap = peek, double = lantern, hold = acknowledge, keep "
+          "holding 5 s = pair demo");
+#else
   boot_kv("Button", "BOOT: tap = peek, double = lantern, hold = acknowledge");
+#endif
 #endif
 
   // Trust store before the network: retained chain payloads replay the
@@ -1693,6 +1712,15 @@ void loop() {
   canary::net::fleet_udp_loop(now);
 #endif
 
+  // First Light pair demo (inert stubs unless FEATURE_PAIR_DEMO): drive the
+  // open card, and drain the boxed-pair auto-open the receive hooks mailbox
+  // (an unprovisioned glass that hears a camera on the router-free band IS
+  // the out-of-box experience — the wizard walks up to the user).
+  canary::ui::pair_demo_ui_tick(now);
+  if (canary::ui::pair_demo_take_auto_open()) {
+    canary::ui::pair_demo_ui_open(now);
+  }
+
 #if defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
   // Fleet enumeration straight off the LAN, hub or no hub (the WiFi analog of
   // the BLE presence beacon). Runs ALWAYS, not just when the broker is down:
@@ -1801,8 +1829,13 @@ void loop() {
   // settled-gravity commits. Modal surfaces park auto-orient: a wizard
   // mid-flow must never have the glass turned under it.
   {
-    const int req = canary::care::nightlight_take_rotation_request();
-    if (req >= 0) nightlight_apply_orientation((uint8_t)req, now);
+    // Left in the mailbox while a modal owns the glass (the apply path
+    // cleans the ACTIVE screen — under a modal that would be the modal) and
+    // drained on the first pass after it closes.
+    if (!canary::ui::pair_demo_ui_active()) {
+      const int req = canary::care::nightlight_take_rotation_request();
+      if (req >= 0) nightlight_apply_orientation((uint8_t)req, now);
+    }
   }
 #if defined(FEATURE_AUTO_ORIENT) && FEATURE_AUTO_ORIENT && \
     defined(HAS_IMU) && HAS_IMU
@@ -1812,7 +1845,8 @@ void loop() {
     int32_t ax = 0, ay = 0, az = 0;
     if (canary::hal::imu_read_accel(&ax, &ay, &az) &&
         !canary::ui::settings_ui_active() &&
-        !canary::ui::commission_ui_active()) {
+        !canary::ui::commission_ui_active() &&
+        !canary::ui::pair_demo_ui_active()) {
       // Chip axes -> native-portrait screen axes (pins.h owns the map;
       // bench-verify note lives there).
       int32_t sx = ax, sy = ay;
@@ -1847,7 +1881,48 @@ void loop() {
     }
 #endif
     const bool pressed = digitalRead(BOOT_BUTTON_PIN) == BOOT_BUTTON_ACTIVE;
-    switch (s_btn.step(pressed, now)) {
+
+#if defined(FEATURE_PAIR_DEMO) && FEATURE_PAIR_DEMO
+    // The First Light open gesture rides BESIDE the classifier on the same
+    // raw level: keep holding past the acknowledge and at 5 s the demo
+    // opens (or closes). The 900 ms acknowledge having already fired en
+    // route is accepted — an ack is idempotent and quiet, and gating it on
+    // the release would break the half-asleep rule for everyone else.
+    static canary::pair::HoldGate s_pair_hold;
+    if (s_pair_hold.step(pressed, now)) {
+      if (canary::ui::pair_demo_ui_active()) {
+        canary::ui::pair_demo_ui_close();
+      } else {
+        canary::ui::pair_demo_ui_open(now);
+      }
+      fleet.mark_dirty();
+      boot_line("[input] BOOT held 5 s -> pair demo");
+    }
+#endif
+
+    const auto btn_ev = s_btn.step(pressed, now);
+
+    // While the demo card is open it owns the grammar (the modal contract):
+    // tap keeps the camera on stage, double forgets it, hold leaves. The
+    // wake window stays pinned so the glass never dims mid-demo.
+    if (canary::ui::pair_demo_ui_active()) {
+      g_wake_until_ms = now + CD_TOUCH_WAKE_MS;
+      switch (btn_ev) {
+        case canary::io::ButtonEvent::Short:
+          canary::ui::pair_demo_ui_button_short(now);
+          break;
+        case canary::io::ButtonEvent::Double:
+          canary::ui::pair_demo_ui_button_double(now);
+          break;
+        case canary::io::ButtonEvent::Long:
+          canary::ui::pair_demo_ui_close();
+          boot_line("[input] long-press (BOOT) -> leave pair demo");
+          break;
+        default:
+          break;
+      }
+    } else
+    switch (btn_ev) {
       case canary::io::ButtonEvent::Short: {
         const bool night_now = in_quiet_hours();
         g_wake_until_ms = now + wake_window_ms(night_now);
@@ -1906,7 +1981,8 @@ void loop() {
     const bool calm = fleet.worst(now) < Sev::Warn && links_ok;
     const bool idle = (int32_t)(now - g_wake_until_ms) >= 0 &&
                       !canary::ui::settings_ui_active() &&
-                      !canary::ui::commission_ui_active();
+                      !canary::ui::commission_ui_active() &&
+                      !canary::ui::pair_demo_ui_active();
     bool lit = !life_night;
 #if defined(FEATURE_LANTERN) && FEATURE_LANTERN
     if (life_night) lit = lantern_lit(now, life_night);
