@@ -217,6 +217,34 @@ size_t build_counts_canonical(uint32_t      total,
   return (size_t)n;
 }
 
+size_t build_whoami_canonical(const char*   nonce_hex,
+                              const char*   device_id,
+                              char*         out,
+                              size_t        cap) {
+  if (!out || cap == 0) return 0;
+  int n = snprintf(out, cap, "%s|v%d|whoami|%s|%s",
+                   SIG_PREFIX, SCHEMA_V,
+                   device_id ? device_id : "",
+                   nonce_hex ? nonce_hex : "");
+  if (n <= 0 || (size_t)n >= cap) {
+    out[0] = '\0';
+    return 0;
+  }
+  return (size_t)n;
+}
+
+bool whoami_nonce_ok(const char* nonce_hex) {
+  if (!nonce_hex) return false;
+  size_t len = 0;
+  while (nonce_hex[len]) {
+    const char c = nonce_hex[len];
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+    len++;
+    if (len > 64) return false;
+  }
+  return len >= 16;
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * Public sign_*() — caller hands us scalar fields; we build the
  * canonical string + sign + encode in one call. */
@@ -256,6 +284,30 @@ bool sign_counts(uint32_t total,
   size_t n = build_counts_canonical(total, s_device_id, canon, sizeof(canon));
   if (n == 0) return false;
   return sign_and_encode(canon, n, sig_b64url_out, sig_cap);
+}
+
+bool sign_whoami(const char* nonce_hex,
+                 char*       sig_hex_out,
+                 size_t      sig_cap) {
+  if (!s_ready || !sig_hex_out || sig_cap < SIG_HEX_CAP) return false;
+  /* Belt and suspenders: the HTTP handler validates before calling, but
+   * this key must never sign an unvalidated nonce through ANY caller. */
+  if (!whoami_nonce_ok(nonce_hex)) return false;
+  char canon[160];
+  size_t n = build_whoami_canonical(nonce_hex, s_device_id, canon, sizeof(canon));
+  if (n == 0) return false;
+#ifdef ARDUINO
+  uint8_t sig_bin[64] = {};
+  Ed25519::sign(sig_bin, s_priv, s_pub,
+                reinterpret_cast<const uint8_t*>(canon), n);
+  hex_encode(sig_bin, sizeof(sig_bin), sig_hex_out, sig_cap);
+  return true;
+#else
+  /* Host build: the canonical + nonce gate are tested directly; the full
+   * sign/verify round-trip is exercised by the Flasher's Rust verifier. */
+  sig_hex_out[0] = '\0';
+  return false;
+#endif
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -309,6 +361,11 @@ size_t b64url_encode_nopad(const uint8_t* in,
  */
 #ifdef ARDUINO
 #include <esp_http_server.h>
+/* esp_timer, not Arduino's millis(): this translation unit deliberately
+ * stays off Arduino.h (it pulls Ed25519 from the Crypto library and
+ * mbedtls directly), and the throttle below only needs a monotonic
+ * clock. esp_timer_get_time() is microseconds since boot. */
+#include <esp_timer.h>
 
 namespace device_identity_api {
 
@@ -349,11 +406,76 @@ size_t render_enroll_json(char* out, size_t cap) {
 }  /* namespace */
 
 esp_err_t handle_enroll_json(httpd_req_t* req) {
-  char body[320];
-  const size_t n = render_enroll_json(body, sizeof(body));
+  /* Optional ?nonce=<16-64 lowercase hex>: the identity card gains a
+   * PROOF — an Ed25519 signature over the whoami canonical binding this
+   * device's key to the caller's fresh nonce. It turns "the card's static
+   * fields, which anyone on the LAN can copy" into "a device holding this
+   * key answered a challenge it could not have precomputed".
+   *
+   * It is NOT channel binding, and the caller must not treat it as such:
+   * a peer on the same LAN can spoof the announcement, relay the nonce to
+   * this endpoint, and pass the signature on as its own. See the header
+   * for the full limitation — it is the reason this is a building block
+   * rather than the whole answer. Unauthenticated on purpose, like the
+   * card itself
+   * — the proof only ever discloses PUBLIC identity, and the strict
+   * nonce gate (whoami_nonce_ok) plus the fixed canonical prefix mean
+   * the key never signs attacker-shaped bytes. */
+  char nonce[80] = {0};
+  bool with_proof = false;
+  {
+    char query[128];
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK &&
+        httpd_query_key_value(query, "nonce", nonce, sizeof(nonce)) == ESP_OK &&
+        nonce[0] != '\0') {
+      if (!device_signature::whoami_nonce_ok(nonce)) {
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req,
+          "{\"error\":\"bad_nonce\",\"hint\":\"16-64 lowercase hex chars\"}");
+        return ESP_OK;
+      }
+      /* A signing endpoint with no auth deserves its own throttle, even
+       * a cheap one: at most ~4 proofs a second, self-contained so this
+       * file stays free of the api_auth stack. Discovery flows ask once
+       * per device per session; only a hammering client ever sees 429. */
+      static uint32_t s_last_proof_ms = 0;
+      const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+      if (s_last_proof_ms != 0 && (now - s_last_proof_ms) < 250) {
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_status(req, "429 Too Many Requests");
+        httpd_resp_sendstr(req, "{\"error\":\"slow_down\"}");
+        return ESP_OK;
+      }
+      s_last_proof_ms = now;
+      with_proof = true;
+    }
+  }
+
+  char body[608];
+  size_t n = render_enroll_json(body, sizeof(body));
   if (n == 0 || n >= sizeof(body)) {
     httpd_resp_send_500(req);
     return ESP_FAIL;
+  }
+  if (with_proof) {
+    char sig_hex[device_signature::SIG_HEX_CAP];
+    if (!device_signature::sign_whoami(nonce, sig_hex, sizeof(sig_hex))) {
+      httpd_resp_send_500(req);
+      return ESP_FAIL;
+    }
+    /* Splice the proof fields in before the closing brace — the base
+     * render stays byte-identical for proof-less callers (HA's TOFU
+     * flow), and a truncation here clears the body like every other
+     * builder in this file. */
+    const int m = snprintf(body + (n - 1), sizeof(body) - (n - 1),
+                           ",\"nonce\":\"%s\",\"sig_hex\":\"%s\"}",
+                           nonce, sig_hex);
+    if (m <= 0 || (size_t)m >= sizeof(body) - (n - 1)) {
+      httpd_resp_send_500(req);
+      return ESP_FAIL;
+    }
+    n = (n - 1) + (size_t)m;
   }
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");

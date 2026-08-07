@@ -55,11 +55,12 @@ server of ours to compromise because there is no server of ours.
 
 One container — `iCloud.com.securacv.witness`, named in exactly one place
 (`ios/Sources/SecuraCV/Cloud/CloudContainer.swift`) and cross-checked against
-both entitlements files by `scripts/lint_cloudkit_container.py`. **Private
-database only.** No public database, no shared database, no zones (§5).
+both entitlements files by `scripts/lint_cloudkit_container.py`. **Private database, plus exactly one shared zone** — `HouseholdEscalations`,
+which exists so somebody who is not the owner can be told when an alarm goes
+unanswered. No public database (§5), and no other zone.
 
-Two record types. This is the entire list, and the linter above fails the build
-if a third appears without being declared.
+Three record types. This is the entire list, and the linter above fails the
+build if a fourth appears without being declared.
 
 ### `WitnessWake` — the away alert
 
@@ -74,6 +75,15 @@ user's own data, by the notification service extension. A stolen phone's lock
 screen never says which Canary or what happened.
 Vocabulary and copy live in one short file, `ios/Shared/WakePayload.swift`, so a
 reviewer can check that claim by reading it.
+
+### `EscalationWake` — the one thing another person can see
+
+Lives in the `HouseholdEscalations` zone, which is the only shared thing in
+this container. Same single field as the wake above (`sev`), same absence of
+everything else — and written only when a top-tier alarm has already gone
+unanswered by the owner. Participants are read-only, the zone is the access
+boundary, and §6.5 argues the whole trade (including why §5's old "never a
+shared database" row was reversed rather than quietly ignored).
 
 ### `PairedDevice` — the fleet list
 
@@ -177,7 +187,8 @@ Not "what we haven't gotten to" — what is refused, with the reason:
 | **Event content** — what happened, in which zone, at what time | Invariant III. A wake says *a kind of trouble*, never the trouble. |
 | **Event times, at any precision** | Invariant III. No record carries a time we wrote *about an event*. The log buckets events to 10-minute windows, and none of that is put in a record at all. This row is narrower than it looks, though — two timestamps reach iCloud regardless, one of them event-correlated. They are named and costed in §6.4 rather than hidden behind this line. |
 | **Per-device tokens, pinned keys, the vault private key** | Keychain, device-bound. The sealed-snapshot promise is that only the phone can open a snapshot; a synced key softens that to "any of your phones," which may be an acceptable *opt-in* but is never a default and never silent. |
-| **A public or shared database** | A public database is a database we could read. A shared one is a sharing mechanism we would then have to secure. Neither is needed for anything above. |
+| **A public database** | A public database is a database we could read. Nothing here needs one. |
+| ~~**A shared database**~~ — **reversed, deliberately; see §6.5** | This row used to read "a shared one is a sharing mechanism we would then have to secure. Neither is needed for anything above." The second sentence was the real argument, and it stopped being true the day the product needed a *second person* to be told when nobody answers an alarm. The first sentence still stands as a cost, and §6.5 pays it explicitly: one zone, one record type, read-only participants, and nothing in it worth stealing. A reversal like this belongs in the open — if a later change wants to put anything else in that zone, it has to argue with §6.5 first. |
 | **An APNs key or a device-token registry of ours** | The whole point of §1. Holding one recreates the server we refused, and "this household got some alerts" becomes learnable by whoever holds it. |
 | **Analytics, telemetry, crash-adjacent user data** | There is no telemetry anywhere in this project ([FAQ](../FAQ.md)); a container is not a loophole in that. |
 
@@ -306,6 +317,74 @@ companion RFC's phrase "Apple end-to-end protects it" was doing more work than
 standard CloudKit fields support. **"SecuraCV has no server in the loop and
 cannot read any of it"** is exact and is the claim that matters. This doc is
 the canonical statement of the finer point.
+
+### 6.5 A shared zone exists now, and it is the only thing anyone else can see
+
+The escalation ladder ends at a person who is not the owner: if a top-tier
+alarm goes unanswered, somebody the owner invited is told. On Apple devices
+the honest mechanism for that is CloudKit sharing, which means this container
+now has a **shared** database — the thing §5 used to refuse. What follows is
+the argument, because a reversal that isn't argued is just a slide.
+
+**What was built.** One custom zone, `HouseholdEscalations`, holding one
+record type (`EscalationWake`) carrying one field — the same coarse `sev`
+class the ordinary wake carries. The owner shares the **zone**, invitations go
+out through Apple's own sharing sheet, and participants are **read-only**.
+
+**Why a zone share rather than a record share.** The zone is the access
+boundary, so "a household member cannot see your fleet, your Canary names,
+your history, or your ordinary alerts" is a fact about CloudKit's access
+control rather than a promise about our filtering. Ordinary wakes keep going
+to the owner's default zone, which nobody is invited to. The rule that keeps
+this true is short enough to enforce in review: **nothing but escalations may
+ever be written into that zone.**
+
+**What a participant actually receives.** A push whose words their own device
+wrote. Shared-database subscriptions carry no per-record fields, so the
+sentence comes from the subscription the participant's app created locally
+("Nobody answered — an alarm on a fleet you help watch hasn't been answered").
+Even the wording of a household alert never crosses the wire.
+
+**The residuals, in the same spirit as §6.1–6.4:**
+
+- **The participant learns that an alarm here went unanswered, and roughly
+  when.** That is the entire point of telling them, and it is the same
+  timing residual as §6.4 pointed at a second person instead of at Apple.
+  They learn no *what*, no *which*, and no *where*.
+- **The owner and the participant learn each other's Apple ID handles.** That
+  is inherent to inviting a specific human, it is what the sharing sheet
+  shows before anyone taps accept, and it stays on device.
+- **A compromised participant account gains a zone containing "an alarm
+  wasn't answered" and nothing else.** This is the direct answer to §5's
+  surviving worry ("a sharing mechanism we would then have to secure"): the
+  mechanism is Apple's, and what it guards is worth approximately nothing.
+- **Escalation records outlive the day-long bound the ordinary wake gets**,
+  and this one is worth reading twice. A shared database offers no
+  create-only *visible* subscription — query subscriptions, the kind that can
+  fire on creation alone, do not exist there — so a participant's
+  subscription fires on every change to the zone, deletions included.
+  Sweeping a day-old record would therefore push "Nobody answered" at every
+  participant again, at an arbitrary app launch, about an alarm from
+  yesterday: the household channel crying wolf, on the one channel whose
+  whole value is that it stays quiet. The alternative was a silent
+  subscription plus a fetch-and-post dance on the participant's side, which
+  trades a reliable alarm for a best-effort one (iOS budgets silent pushes) —
+  the wrong trade for the last rung of an escalation ladder. So the sweep
+  runs only while nobody is subscribed, and `stopSharing` deletes the whole
+  zone at a moment when no subscriber remains to be woken. **What this costs:
+  while sharing is on, a participant can see the creation dates of past
+  unanswered alarms, not merely the current one.** They still learn no
+  *what*, no *which* and no *where* — but the timing residual of §6.4 becomes
+  a short history rather than a single point, and that is the honest price of
+  not crying wolf.
+- **It only exists if the owner invited someone**, and deleting the share
+  revokes everyone at once, with no per-person bookkeeping of ours to get
+  wrong.
+
+**What this does not become.** Not a household account, not shared fleet
+access, not a second person who can see or acknowledge anything. If a later
+feature wants those, it is a new design with a new argument — not an extra
+field on this record.
 
 ---
 

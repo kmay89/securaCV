@@ -6,10 +6,10 @@ turn it into something a user experiences — the all-clear, chosen snooze
 durations, "while you were away", heartbeat ingestion, escalation,
 local actioned-rate tuning, and per-witness rules with quiet hours — shipped
 in the change that rewrote §6 into a code map. See §5 for what is code and
-where. What is left is exactly one thing, and it is somebody else's leg:
-reaching a SECOND PERSON, which needs the relay
-([`alert_relay.md`](alert_relay.md) R1). Everything reachable from this phone
-is done.
+where. The last rung — reaching a SECOND PERSON when nobody answers — is built
+too (§6), over CloudKit sharing rather than the hub relay, which is why
+[`cloudkit_backend.md`](cloudkit_backend.md) §5 now carries a reversed
+"never" and a §6.5 arguing it.
 
 This doc answers one product question: **how does the Alerts surface stay
 useful for years — showing what needs you and what you missed, never a museum
@@ -219,28 +219,70 @@ wake the widgets and the watch to say the same thing. Flooring can only make
 a beat look *older* than it is, which is the honest direction for a liveness
 claim to round.
 
-## 6. What is left, and why it isn't here
+## 6. The last rung: somebody who is not the owner
 
-One item, and it is a transport problem rather than a design one:
+Built. If a top-tier alarm goes unanswered past the escalation window, a
+person the owner invited is told.
 
-1. **The second person.** Escalation today re-alerts the user's own devices —
-   the phone on the kitchen counter is worth reaching, and it is the leg we
-   have. Reaching a *different household member* needs a relay that can
-   address someone else's devices ([`alert_relay.md`](alert_relay.md) R1);
-   the iCloud wake path we use is per-account by construction. The policy
-   side is already written and rationed (`EscalationPolicy`), so R1 landing
-   means wiring a second recipient into `escalateIfUnanswered`, not
-   redesigning escalation.
+The mechanism is CloudKit sharing rather than the hub relay
+([`alert_relay.md`](alert_relay.md) §3), because for an Apple household it
+needs no server, no account, and no third party: the owner invites people
+through Apple's own sharing sheet, and their devices subscribe to one shared
+zone. The hub relay remains the answer for reaching somebody who isn't on
+Apple hardware, and for channels the owner picks themselves.
 
-Two smaller things deliberately left as they are:
+| Piece | Where |
+|---|---|
+| The rationing (only an escalation, only the top tier — asked independently of the caller that already passed `EscalationPolicy`), the roster's arithmetic, and every sentence anyone reads | `ios/Sources/SecuraCV/Cloud/HouseholdRelay.swift` |
+| Zone + share lifecycle, publishing an escalation, the participant's own subscription, the sweep | `ios/Sources/SecuraCV/Cloud/HouseholdShare.swift` |
+| Invite / roster / revoke, and what an invited person is told they are accepting | `ios/Sources/SecuraCV/Views/HouseholdSheet.swift` |
+| The invitation's landing pad (`userDidAcceptCloudKitShareWith`) and `CKSharingSupported` | `SecuraCVApp.swift`, `ios/Support/Info.plist` |
+| Wired at the end of the escalation, gated twice | `FleetStore.escalateIfUnanswered` |
+| Tests: the rationing, the roster's refusal to count an invitation as a person, the zone boundary, and the copy's silence | `HouseholdRelayTests.swift` |
+
+**Three properties worth keeping.** *One:* the shared zone holds one record
+type and nothing else, so "a household member can't see your fleet" is
+CloudKit's access control rather than our filtering — the moment anything else
+is written there, the promise becomes a claim. *Two:* the participant's push
+is worded by the participant's own device, because shared-database
+subscriptions carry no record fields; nothing about the alert, not even its
+sentence, crosses the wire. *Three:* the owner's quiet hours, Focus and
+away-reach rules are deliberately **not** consulted — those govern whether
+*this* user is interrupted, and a household member is a different person with
+their own phone and their own settings.
+
+This reverses a documented "never" in
+[`cloudkit_backend.md`](cloudkit_backend.md) §5 (no shared database). The
+reversal is argued in that doc's new §6.5 rather than performed quietly; the
+old row's real justification was "not needed for anything above", and this is
+the thing that needed it.
+
+**The condition the whole ladder rests on**, found in review and now stated
+on the household screen itself: escalation is decided by a device that is
+awake and watching — this iPhone in the foreground, or a resident that stayed
+home (the Apple TV's "stand watch"). A phone locked in a pocket with nothing
+else home cannot notice that nobody answered, so it cannot tell anyone. That
+is the same limit the away path already carries ("with nothing home, away
+alerts cannot happen"), and it bites hardest here, because the household leg
+exists precisely for the moment the owner is not looking at their phone.
+Making the resident escalate on its own is the next real slice of this work
+and is deliberately not smuggled into this one.
+
+**Still not built, deliberately:** an ack that travels back from the household.
+It would matter if escalation could fire twice, and it can't — the ledger's
+stamp makes it at most once per occurrence — so the owner's app has nothing
+left to stop. A household member who wants to *do* something opens their own
+phone and calls the owner, which is what actually happens at 3am anyway.
+
+Two smaller things left as they are:
 
 - **Notification actions stay "Acknowledge" and "Mute 1 hour".** Durations
   live in the app, not on the lock screen: "until morning" tapped at 9am is a
-  22-hour silence, and a notification action can't show what it would cost
-  the way a menu can.
-- **The wrist's swipe-to-mute is still one hour.** The duration menu is on
-  the witness screen where there is room to read it; a swipe on a 40mm screen
-  should do the safest thing, and an hour is the safest thing.
+  22-hour silence, and a notification action can't show what it would cost the
+  way a menu can.
+- **The wrist's swipe-to-mute is still one hour.** The duration menu is on the
+  witness screen where there is room to read it; a swipe on a 40mm screen
+  should do the safest thing.
 
 Deliberately **not** adopted, with reasons: familiar-face suppression (Nest's
 best anti-fatigue feature is an identity substrate — Invariant II forbids the
