@@ -23,6 +23,7 @@ mod changemap;
 mod fleet;
 mod health;
 mod hub;
+mod intake;
 mod launch_guard;
 mod port_hint;
 mod provisioning;
@@ -404,6 +405,11 @@ pub struct ChipInfo {
     chip: String,
     flash_bytes: Option<u64>,
     mac: Option<String>,
+    /// The read-only MAC sanity check (blank / multicast / locally
+    /// administered). Reported here rather than kept to ourselves: a board
+    /// whose address was never programmed is a clone or a reject, and the
+    /// user deserves to know before they trust it with a network.
+    mac_check: Option<serde_json::Value>,
 }
 
 /// Ask the connected board which ESP32 it is (and how much flash it carries).
@@ -431,11 +437,19 @@ async fn detect_chip(app: AppHandle, port: String) -> Result<ChipInfo, String> {
         ));
     }
     match canonical_chip(&out) {
-        Some(chip) => Ok(ChipInfo {
-            chip: chip.to_string(),
-            flash_bytes: rescue::parse_flash_size(&out),
-            mac: rescue::parse_mac(&out),
-        }),
+        Some(chip) => {
+            let mac = rescue::parse_mac(&out);
+            let mac_check = mac.as_deref().map(|m| {
+                let f = intake::mac_checks(m);
+                json!({ "level": f.level, "label": f.label, "detail": f.detail })
+            });
+            Ok(ChipInfo {
+                chip: chip.to_string(),
+                flash_bytes: rescue::parse_flash_size(&out),
+                mac,
+                mac_check,
+            })
+        }
         None => Err(format!(
             "couldn't recognize the chip from espflash's output:\n{}",
             out.trim()
@@ -722,6 +736,44 @@ async fn flash(
                 .as_ref()
                 .map(|p| !p.wifi_ssid.is_empty())
                 .unwrap_or(false);
+
+            // Free intake check while we hold the whole chip: does the flash
+            // really hold what it claims? A relabeled part (a 4 MB die sold as
+            // 16 MB) ACCEPTS writes past its real end and discards them, so
+            // the install "succeeds" and the board can't boot, with no error
+            // at any layer. This costs no serial time — the bytes are already
+            // here — and it is the last moment the write can still be stopped.
+            // The safety copy was read with the chip's DECLARED size, so the
+            // dump's own length is that claim — no extra argument needed.
+            let declared = old.len() as u64;
+            if declared >= 0x2000 {
+                let f = intake::flash_alias_verdict(&old, declared);
+                if f.level == "stop" {
+                    emit(&app, format!("✗ {}", f.label));
+                    if let Some(d) = &f.detail {
+                        emit(&app, format!("  {d}"));
+                    }
+                    return Err(format!(
+                        "{} {} Nothing was written.",
+                        f.label,
+                        f.detail.unwrap_or_default()
+                    ));
+                }
+                // "clear" is the only level that earns a tick. An
+                // inconclusive check (a blank chip, where a mirror and an
+                // honest part read identically) is missing evidence, and
+                // missing evidence dressed as a pass is the failure this
+                // whole module exists to avoid — so it gets a warning marker
+                // and keeps its explanation.
+                if f.level == "clear" {
+                    emit(&app, format!("✓ {}", f.label));
+                } else {
+                    emit(&app, format!("⚠ {}", f.label));
+                    if let Some(d) = &f.detail {
+                        emit(&app, format!("  {d}"));
+                    }
+                }
+            }
             if let Some(map) = changemap::diff_install(&old, &bytes, erase_all) {
                 let had_wifi = old.windows(9).any(|w| w == b"wifi_ssid");
                 let verdict = changemap::settings_verdict(&map, had_wifi, baked_wifi);

@@ -17,6 +17,31 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.10.0 — 2026-08-07
+
+**It now catches a fake flash chip before writing to it.**
+
+Counterfeit and relabeled ESP32 boards are common — a 4 MB chip sold as
+16 MB. The nasty part is how quietly they fail: the chip *accepts*
+everything written past its real end and throws it away, so the install
+reports success and the board simply never boots, with no error anywhere to
+explain it.
+
+The app now catches that. During the safety copy it already takes, it checks
+whether the chip really holds what it claims, and **refuses the install**
+if it doesn't — naming the real size it found. Nothing is written, so
+there's nothing to undo.
+
+This costs no extra time at all: the whole chip is already in memory at that
+moment, so the check is a comparison rather than another read. It's also
+done in the one way that actually works — comparing the start of the chip
+against each candidate capacity, not against the far end. (The far end of a
+fake part holds *different* data, so the obvious check passes counterfeits.)
+
+On a blank chip the answer is "can't confirm yet" rather than "fine" — a
+blank mirror and an honest blank chip look identical, and a check that
+couldn't run must never read as a check that passed.
+
 ## 0.9.0 — 2026-08-07
 
 **Before it writes anything, the app now tells you what will change.**
