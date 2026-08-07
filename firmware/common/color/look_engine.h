@@ -63,6 +63,12 @@ struct LookParams {
 // the same way.
 Scene custom_scene(int16_t hue);
 
+// THE look these params describe — a catalog scene, or the owner's own color.
+// Every renderer must go through this rather than indexing kScenes directly,
+// or a surface that forgets will quietly paint the old scene over a chosen
+// color (which is exactly what the plumage overlay did before this existed).
+Scene current_look(const LookParams& p);
+
 // The scene catalog (defined in look_engine.cpp).
 extern const Scene kScenes[];
 extern const uint8_t kSceneCount;

@@ -261,6 +261,11 @@ void handle_settings_set() {
   else if (k == "lamp_scene" && v >= 0 && v < canary::color::kSceneCount) {
     auto& lamp = canary::care::lantern();
     lamp.configure((uint8_t)v, lamp.minutes(), lamp.auto_mode());
+    // Choosing a scene puts the wheel away. Without this the chosen hue keeps
+    // winning in current_look(), so the new scene is invisible and
+    // /api/settings still reports the old color — two answers to "what color
+    // is it?", which is the thing this pair of controls must never do.
+    canary::ui::look_set_custom_hue(-1);
     canary::care::lantern_prefs_changed();
     canary::fleet::the_fleet().mark_dirty();
     s_server->send(200, "application/json", "{\"ok\":true}");
@@ -285,11 +290,15 @@ void handle_settings_set() {
     canary::fleet::the_fleet().mark_dirty();
     s_server->send(200, "application/json", "{\"ok\":true}");
     return;
-  } else if (k == "lamp_minutes" && v >= 0 && v <= 480) {
+  } else if (k == "lamp_minutes" && v >= 1 && v <= 480) {
     // How long the lamp stays on. It was settable on the panel and by MQTT
     // but had no web key, so "rainbow for 15 minutes" could be asked for
-    // everywhere except from the app the owner actually holds. 0 means "no
-    // timer" — the lantern's own meaning, not a new one.
+    // everywhere except from the app the owner actually holds.
+    //
+    // The floor is 1, not 0: LanternModel clamps anything below a minute up
+    // to one, so accepting 0 here would have promised an untimed lamp and
+    // delivered a 60-second one. The device has no untimed state, and the
+    // app must not invent one for it.
     auto& l = canary::care::lantern();
     l.configure(l.scene(), (uint16_t)v, l.auto_mode());
     canary::care::lantern_prefs_changed();

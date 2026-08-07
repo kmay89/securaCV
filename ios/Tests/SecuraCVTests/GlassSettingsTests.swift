@@ -106,8 +106,11 @@ final class GlassSettingsTests: XCTestCase {
         if case .percent(let min, let max)? = byKey["lamp_pct"]?.kind {
             XCTAssertEqual(min, 10); XCTAssertEqual(max, 100)
         } else { XCTFail("lamp_pct should be a percent") }
-        if case .minutes(let max)? = byKey["lamp_minutes"]?.kind {
+        if case .minutes(let min, let max)? = byKey["lamp_minutes"]?.kind {
             XCTAssertEqual(max, 480, "the glass accepts up to 8 hours")
+            XCTAssertEqual(min, 1,
+                           "LanternModel clamps anything under a minute up to one, so a zero here "
+                           + "would promise an untimed lamp and deliver a 60-second one")
         } else { XCTFail("lamp_minutes should be minutes") }
     }
 
@@ -121,5 +124,28 @@ final class GlassSettingsTests: XCTestCase {
         XCTAssertTrue(s.usesCustomHue, "hue 0 is red, not 'no hue' — an off-by-one here loses red")
         s.lampHue = 359
         XCTAssertTrue(s.usesCustomHue)
+    }
+}
+
+// ── The wiring, not just the client ─────────────────────────────────────────
+//
+// The gap this guards is the one the previous PR shipped: a correct API that
+// no production code calls. A settings client with tests and no screen is a
+// feature nobody can reach, and it passes every other test in this file.
+extension GlassSettingsTests {
+
+    func testEveryDisplayTypeOffersTheSettingsScreen() {
+        // The whole point of the change: the controls used to appear only on
+        // a nightlight, so a Watch Station or a Dash served a brightness and
+        // a night window to nobody.
+        XCTAssertTrue(DeviceType.display.servesGlassSettings)
+        XCTAssertTrue(DeviceType.nightlight.servesGlassSettings)
+    }
+
+    func testAWitnessWithNoGlassOffersNoScreenSettings() {
+        for type in [DeviceType.wap, .vision, .sense, .unknown] {
+            XCTAssertFalse(type.servesGlassSettings,
+                           "\(type) has no screen — the row would be a tap that 404s")
+        }
     }
 }

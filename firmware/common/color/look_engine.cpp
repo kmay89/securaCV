@@ -104,15 +104,17 @@ Scene custom_scene(int16_t hue) {
   return sc;
 }
 
-namespace {
-// One place decides scene-or-custom, so the beacon and the glass wash can
-// never disagree about which look is on.
-inline Scene look_for(const LookParams& p) {
+// One place decides scene-or-custom, so every surface that draws the look —
+// the beacon, the glass wash, the plumage overlay — agrees about which one
+// is on.
+Scene current_look(const LookParams& p) {
   return p.custom_hue >= 0 ? custom_scene(p.custom_hue)
                            : kScenes[p.scene_idx % kSceneCount];
 }
+
+namespace {
 inline Motion motion_for(const LookParams& p) {
-  return p.motion_use_scene ? look_for(p).motion : p.motion;
+  return p.motion_use_scene ? current_look(p).motion : p.motion;
 }
 }  // namespace
 
@@ -126,7 +128,7 @@ Rgb led_color(uint32_t now_ms, const LookParams& p, Sev worst, bool safe_dark) {
   if (worst >= Sev::Warn) {
     base = semantic(worst, p.night);   // the honest override
   } else {
-    const Scene sc = look_for(p);
+    const Scene sc = current_look(p);
     base = palette_sample(sc.stops, sc.n_stops, phase_for(now_ms, p.speed, m));
   }
   base.v = shape_v(base.v, now_ms, half, worst, p.brightness, p.night);
@@ -144,7 +146,7 @@ void wash_stops(uint32_t now_ms, const LookParams& p, Sev worst,
   const uint32_t half = half_for(p.speed, m, worst);
   const uint8_t phase = phase_for(now_ms, p.speed, m);
   const bool attention = worst >= Sev::Warn;
-  const Scene sc = look_for(p);
+  const Scene sc = current_look(p);
   const Hsv sem = attention ? semantic(worst, p.night) : Hsv{0, 0, 0};
 
   for (uint8_t i = 0; i < count; i++) {

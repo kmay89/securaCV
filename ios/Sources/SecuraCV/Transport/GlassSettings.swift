@@ -32,7 +32,7 @@ struct GlassKnob: Identifiable, Hashable, Sendable {
         case toggle
         case choice(labels: [String])       // index-valued
         case hourOfDay
-        case minutes(max: Int)
+        case minutes(min: Int, max: Int)
         case hue                            // -1 = off, else 0…359
     }
 
@@ -160,8 +160,8 @@ enum GlassAPI {
                       blurb: "The lamp's own strength, up to this device's \(s.lampMaxDutyPct)% ceiling — a limit the glass sets for heat, not one the app invented.",
                       kind: .percent(min: 10, max: 100), value: s.lampPct),
             GlassKnob(key: "lamp_minutes", title: "Lamp runs for",
-                      blurb: "It turns itself off after this. Zero means it stays on until you stop it.",
-                      kind: .minutes(max: 480), value: s.lampMinutes),
+                      blurb: "It turns itself off after this. The glass has no always-on setting, so the shortest is a minute — the app doesn't offer one the device can't keep.",
+                      kind: .minutes(min: 1, max: 480), value: max(1, s.lampMinutes)),
             GlassKnob(key: "lamp_auto", title: "Lamp follows the night",
                       blurb: "The lamp comes on by itself when night starts.",
                       kind: .toggle, value: s.lampAuto ? 1 : 0),
