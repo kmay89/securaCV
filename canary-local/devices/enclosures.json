@@ -7340,14 +7340,23 @@
        "comment": "how far the dot's top stands ABOVE the ear face."
       },
       {
-       "name": "dot_round_side",
-       "default": "1",
-       "comment": "+1 or -1: the ear that gets the ROUND pip — MEASURE"
+       "name": "btn_rst_side",
+       "default": "-1",
+       "comment": "MEASURED — the ear whose switch is RST"
       },
       {
-       "name": "pad_dot_bar",
-       "default": "3.2",
-       "comment": "the other ear's bar length (Y), hulled from the same"
+       "name": "dot_round_side",
+       "default": "btn_rst_side"
+      },
+      {
+       "name": "pad_dot_twin_d",
+       "default": "1.6",
+       "comment": "Ø of each of BOOT's two pips"
+      },
+      {
+       "name": "pad_dot_twin_gap",
+       "default": "2.0",
+       "comment": "their center-to-center, stacked along the pad's Z"
       },
       {
        "name": "pad_dot_in",
@@ -7445,7 +7454,7 @@
       },
       {
        "name": "kh_egg_l",
-       "default": "15.0",
+       "default": "13.5",
        "comment": "egg length along the hang axis; the taper's travel"
       },
       {
@@ -7501,14 +7510,9 @@
        "default": "true"
       },
       {
-       "name": "egg_ring_w1",
-       "default": "0.8",
-       "comment": "WHITE, against the opening — the shell"
-      },
-      {
-       "name": "egg_ring_w2",
-       "default": "0.8",
-       "comment": "BLACK, outside the white — the depth"
+       "name": "egg_ring_w",
+       "default": "1.6",
+       "comment": "the white shell, hugging the opening"
       }
      ]
     },
@@ -7884,7 +7888,7 @@
       },
       {
        "name": "egg_ring_out",
-       "default": "egg_ring ? egg_ring_w1 + egg_ring_w2 : 0"
+       "default": "egg_ring ? egg_ring_w : 0"
       },
       {
        "name": "kh_out_w",

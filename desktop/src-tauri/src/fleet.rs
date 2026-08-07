@@ -186,6 +186,11 @@ fn action_route(action: &str) -> Option<(reqwest::Method, &'static str)> {
         "ota-install" => Some((reqwest::Method::POST, "/api/ota/install")),
         "status" => Some((reqwest::Method::GET, "/api/status")),
         "identify" => Some((reqwest::Method::POST, "/api/identify")),
+        // The one deliberately unauthenticated read (the endpoint itself is
+        // public by design): the fleet book probes it on :80 to recognize a
+        // display that announced the old port-1 "formality" advert but does
+        // in fact serve its glass page + /api/fleet there.
+        "fleet" => Some((reqwest::Method::GET, "/api/fleet")),
         _ => None,
     }
 }
@@ -288,6 +293,7 @@ mod tests {
             "ota-install",
             "status",
             "identify",
+            "fleet",
         ] {
             assert!(action_route(a).is_some());
         }

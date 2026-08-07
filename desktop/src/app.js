@@ -708,7 +708,19 @@ const fleetBook = {
   scanning: false,
   burstUntil: 0,
   inFlight: false,
-  sightings: {},     // deviceId → sighting from the last browse
+  // deviceId → last sighting (+ seenAt). STICKY across scans: ESP32 mDNS
+  // responders are lossy on busy Wi-Fi, and one missed 2.5 s browse window
+  // must not flicker a live device "offline". A device is online while its
+  // last answer is fresh (STALE_MS) and drops off the map only after
+  // PRUNE_MS of silence.
+  sightings: {},
+  STALE_MS: 45 * 1000,
+  PRUNE_MS: 3 * 60 * 1000,
+  // deviceId → discovered web port. Displays on older firmware announce
+  // the port-1 "formality" advert even though their glass page +
+  // /api/fleet listen on :80 — one unauthenticated probe upgrades them.
+  webPorts: {},
+  probedAt: {},      // deviceId → last probe attempt (retry sparsely)
   lastScanAt: 0,
   hubUp: null,       // last hub_probe_hub answer (null = never asked)
   opBusy: {},        // book key → an identify/update is running
@@ -726,11 +738,16 @@ const fleetBook = {
     this.inFlight = true;
     try {
       const found = await invoke("fleet_scan", { timeoutMs: 2500 });
-      this.sightings = {};
+      const now = Date.now();
+      // MERGE, never replace: a missed browse window keeps the previous
+      // sighting; only prolonged silence prunes it.
       for (const s of found || []) {
-        if (s && s.deviceId) this.sightings[s.deviceId] = s;
+        if (s && s.deviceId) this.sightings[s.deviceId] = { ...s, seenAt: now };
       }
-      this.lastScanAt = Date.now();
+      for (const [id, s] of Object.entries(this.sightings)) {
+        if (now - s.seenAt > this.PRUNE_MS) delete this.sightings[id];
+      }
+      this.lastScanAt = now;
       // Fold what the network says back into the book: a row's firmware and
       // address follow the DEVICE (it may have updated itself), and last-seen
       // becomes a real timestamp instead of a guess.
@@ -738,7 +755,7 @@ const fleetBook = {
       for (const entry of Object.values(book)) {
         const s = entry.deviceId && this.sightings[entry.deviceId];
         if (!s) continue;
-        entry.lastSeenAt = Date.now();
+        entry.lastSeenAt = s.seenAt;
         if (s.fw) entry.fw = s.fw;
         if (s.ip) entry.ip = s.ip;
         if (s.host) entry.host = s.host;
@@ -747,6 +764,10 @@ const fleetBook = {
         if (s.role) entry.role = s.role;
       }
       savePrefs();
+      // Fielded displays on older firmware announce port 1 (the "formality"
+      // advert) while their glass page listens on :80 — probe once per device
+      // (sparsely thereafter) so their rows gain a real address + Open button.
+      await this.probeWebPorts();
       // The hub row, if the book has one, gets its own reachability probe.
       if (book["id:hub"]) {
         try { this.hubUp = await invoke("hub_probe_hub", { host: HUB_HOST }); }
@@ -757,6 +778,26 @@ const fleetBook = {
     this.inFlight = false;
     this.renderSoon();
     this.schedule();
+  },
+
+  // One cheap unauthenticated GET /api/fleet on :80 per port-1 advertiser —
+  // the endpoint is public by design, and answering it proves a web surface
+  // the advert didn't admit to. Re-tried only every 10 minutes so a truly
+  // serverless device (vision/sense) costs one connection attempt, rarely.
+  async probeWebPorts() {
+    const now = Date.now();
+    for (const [id, s] of Object.entries(this.sightings)) {
+      if (s.port > 1 || this.webPorts[id]) continue;
+      const host = s.ip || s.host;
+      if (!host) continue;
+      if (this.probedAt[id] && now - this.probedAt[id] < 10 * 60 * 1000) continue;
+      this.probedAt[id] = now;
+      try {
+        const base = "http://" + (host.includes(":") && !host.startsWith("[") ? "[" + host + "]" : host);
+        const r = await invoke("fleet_device_call", { base, token: "", action: "fleet" });
+        if (r && r.httpStatus >= 200 && r.httpStatus < 300) this.webPorts[id] = 80;
+      } catch (_) { /* nothing listening — exactly what the advert said */ }
+    }
   },
   schedule() {
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
@@ -777,26 +818,38 @@ const fleetBook = {
     try { this.burstUntil = Date.now() + 45000; this.tick().catch(() => {}); } catch (_) {}
   },
 
+  fresh(entry) {
+    const s = entry.deviceId && this.sightings[entry.deviceId];
+    return s && Date.now() - s.seenAt <= this.STALE_MS ? s : null;
+  },
   online(entry) {
-    return !!(entry.deviceId && this.sightings[entry.deviceId]) ||
+    return !!this.fresh(entry) ||
       (entry.key === "id:hub" && this.hubUp === true);
   },
-  // vision/sense advertise port 1 as a formality — they run no HTTP server,
-  // so their rows are presence-and-version only (their OTA rides MQTT).
-  httpCapable(entry) {
+  // The port a device actually answers HTTP on: its own advert when honest
+  // (canary/wap :80, displays on newer firmware), else the probed :80
+  // upgrade (fielded displays that still announce the port-1 formality).
+  // Vision and sense really have no server — their rows stay
+  // presence-and-version only (their OTA rides MQTT).
+  webPortFor(entry) {
     const s = entry.deviceId && this.sightings[entry.deviceId];
-    return !!(s && s.port > 1 && (s.ip || s.host));
+    if (!s || !(s.ip || s.host)) return 0;
+    if (s.port > 1) return s.port;
+    return this.webPorts[entry.deviceId] || 0;
+  },
+  httpCapable(entry) {
+    return this.webPortFor(entry) > 0;
   },
   baseFor(entry) {
     const s = entry.deviceId && this.sightings[entry.deviceId];
-    if (!s) return null;
+    const port = this.webPortFor(entry);
+    if (!s || !port) return null;
     let host = s.ip || s.host;
-    if (!host) return null;
     // An IPv6 literal (the IPv6-only-LAN case) must ride in brackets or the
     // URL is malformed — with or without a port. The Rust base guard already
     // unwraps brackets before its private-host check.
     if (host.includes(":") && !host.startsWith("[")) host = "[" + host + "]";
-    return "http://" + host + (s.port && s.port !== 80 && s.port > 1 ? ":" + s.port : "");
+    return "http://" + host + (port !== 80 ? ":" + port : "");
   },
   tokenKey(entry) {
     return secretStore.key("canary", entry.mac || entry.deviceId, "token");
@@ -928,7 +981,8 @@ const fleetBook = {
       .sort((a, b) => (b.flashedAt || b.addedAt || 0) - (a.flashedAt || a.addedAt || 0));
     const train = state.catalog && state.catalog.fw_train;
     const known = new Set(book.map((e) => e.deviceId).filter(Boolean));
-    const strangers = Object.values(this.sightings).filter((s) => !known.has(s.deviceId));
+    const strangers = Object.values(this.sightings).filter(
+      (s) => !known.has(s.deviceId) && Date.now() - s.seenAt <= this.STALE_MS);
 
     const rows = book.map((e) => {
       const online = this.online(e);
@@ -947,10 +1001,15 @@ const fleetBook = {
           ? `<span class="fb-dot off"></span> last seen ${relativeTime(e.lastSeenAt)}`
           : `<span class="fb-dot off"></span> not seen on the network yet`;
       const canTalk = online && this.httpCapable(e) && e.hasToken;
+      // Any web-capable device gets an Open button to its own page — the
+      // display's glass mirror, the wap's dashboard. No token needed to
+      // open a browser at it; the device's own auth takes it from there.
+      const canOpen = online && !isHub && this.httpCapable(e);
       const busy = !!this.opBusy[e.key];
       const buttons = isHub
         ? `<button class="btn btn-ghost btn-small" data-book-open="${esc(e.key)}">Open</button>`
         : [
+            canOpen ? `<button class="btn btn-ghost btn-small" data-book-visit="${esc(e.key)}">Open</button>` : "",
             canTalk ? `<button class="btn btn-ghost btn-small" data-book-identify="${esc(e.key)}" ${busy ? "disabled" : ""}>Identify</button>` : "",
             canTalk && behind ? `<button class="btn btn-primary btn-small" data-book-update="${esc(e.key)}" ${busy ? "disabled" : ""}>Update over the air</button>` : "",
             `<button class="link-btn" data-book-remove="${esc(e.key)}">Remove</button>`,
@@ -1005,6 +1064,12 @@ const fleetBook = {
       b.addEventListener("click", () => bookRemove(b.dataset.bookRemove)));
     host.querySelectorAll("[data-book-open]").forEach((b) =>
       b.addEventListener("click", () => openExternal("http://" + HUB_HOST)));
+    host.querySelectorAll("[data-book-visit]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const e = bookAll()[b.dataset.bookVisit];
+        const base = e && this.baseFor(e);
+        if (base) openExternal(base);
+      }));
     host.querySelectorAll("[data-book-adopt]").forEach((b) =>
       b.addEventListener("click", () => {
         const s = this.sightings[b.dataset.bookAdopt];

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.4.7] - 2026-08-07
+
 ### The C6 nightstand fits its flash again — and an unbootable image can no longer ship
 
 fw-v2.4.6's `canary-display-nightstand-c6` factory image carried an app

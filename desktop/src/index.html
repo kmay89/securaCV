@@ -141,8 +141,13 @@
                  app can intercept that — the OS enumerates the device before we
                  hear about it. Holding BOOT is what stops it, in mask ROM.
                  Mirrors the browser flasher's coldStartCard() (canary-local). -->
-            <section class="coldstart" id="coldstart">
-              <h3>🛡 New board from a shop or marketplace? Do this first</h3>
+            <!-- Collapsed by default: the full why-and-how lives one click in,
+                 so the page shows one calm line instead of five paragraphs.
+                 Every safety sentence is intact inside (drift-gated by
+                 desktop_parity.test.js), and the wipe default stays ON
+                 whether or not anyone opens this. -->
+            <details class="coldstart" id="coldstart">
+              <summary><h3>🛡 New board from a shop or marketplace? Do this first — hold <kbd>BOOT</kbd> while plugging in</h3></summary>
               <p>It arrives running somebody else's firmware. On a board with
                 native USB (the S3 and C-series Canaries) that firmware can
                 introduce itself to your computer as anything it likes, including
@@ -168,19 +173,27 @@
                 the firmware it shipped with never runs a single instruction. That's
                 not a promise this app is making — it's unerasable ROM, the same
                 property that makes the board impossible to brick from here.</p>
-              <label class="coldstart-ask">
-                <input type="checkbox" id="first-contact" checked>
-                <span>This board is new to me — wipe the whole chip before writing.
-                  Leave this ticked for anything bought unflashed: a normal install
-                  only overwrites the parts it needs, so whatever a previous owner
-                  left in the other partitions would survive.</span>
-              </label>
               <p class="fineprint" id="coldstart-efuse">The browser flasher can also read
                 this chip's security fuses to tell you whether a previous owner locked
                 it. The <code>espflash</code> tool this app drives has no fuse-read
                 command, so that one check is browser-only for now — it isn't being
                 run and reported as clean here.</p>
-            </section>
+            </details>
+            <!-- Deliberately OUTSIDE the folded brief above: this checkbox is a
+                 destructive choice (a full-chip wipe, re-armed for every board
+                 that attaches — see resetSteps), so it must be seen before every
+                 flash, not discovered inside a disclosure aimed at new boards.
+                 Review catch on this PR: folding it away meant reflashing a
+                 known Canary would erase its identity key unannounced. -->
+            <label class="coldstart-ask">
+              <input type="checkbox" id="first-contact" checked>
+              <span>This board is new to me — wipe the whole chip before writing.
+                Leave this ticked for anything bought unflashed: a normal install
+                only overwrites the parts it needs, so whatever a previous owner
+                left in the other partitions would survive. Reflashing a Canary
+                you set up here and want to keep the identity of? Untick it —
+                it re-ticks itself for the next board.</span>
+            </label>
 
             <!-- Boards whose flashing port isn't the one you can see. Filled
                  from the embedded catalog (products[].access) — see
@@ -305,12 +318,15 @@
                 <button id="monitor-manifest" class="btn btn-small" disabled>Print receipt (j)</button>
                 <button id="monitor-expand" class="btn btn-small" aria-pressed="false">Expand</button>
               </div>
-              <p class="muted monitor-lede">Every line the firmware prints, live over the same
-                USB cable — watch it boot, see why something isn’t working, and talk back
-                (press <kbd>h</kbd> for the firmware’s own menu). After a flash it starts by
-                itself, reboots the board so you see the boot from the first line, and
-                reconnects on its own across resets and replugs. Read-only unless you type;
-                closing it changes nothing on the board.</p>
+              <details class="hint">
+                <summary>What am I looking at?</summary>
+                <p class="muted monitor-lede">Every line the firmware prints, live over the same
+                  USB cable — watch it boot, see why something isn’t working, and talk back
+                  (press <kbd>h</kbd> for the firmware’s own menu). After a flash it starts by
+                  itself, reboots the board so you see the boot from the first line, and
+                  reconnects on its own across resets and replugs. Read-only unless you type;
+                  closing it changes nothing on the board.</p>
+              </details>
               <p id="monitor-status" class="muted">Not connected.</p>
 
               <!-- Radar tuning suite (Sense boards): every runtime knob, live
