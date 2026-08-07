@@ -173,19 +173,27 @@
                 the firmware it shipped with never runs a single instruction. That's
                 not a promise this app is making — it's unerasable ROM, the same
                 property that makes the board impossible to brick from here.</p>
-              <label class="coldstart-ask">
-                <input type="checkbox" id="first-contact" checked>
-                <span>This board is new to me — wipe the whole chip before writing.
-                  Leave this ticked for anything bought unflashed: a normal install
-                  only overwrites the parts it needs, so whatever a previous owner
-                  left in the other partitions would survive.</span>
-              </label>
               <p class="fineprint" id="coldstart-efuse">The browser flasher can also read
                 this chip's security fuses to tell you whether a previous owner locked
                 it. The <code>espflash</code> tool this app drives has no fuse-read
                 command, so that one check is browser-only for now — it isn't being
                 run and reported as clean here.</p>
             </details>
+            <!-- Deliberately OUTSIDE the folded brief above: this checkbox is a
+                 destructive choice (a full-chip wipe, re-armed for every board
+                 that attaches — see resetSteps), so it must be seen before every
+                 flash, not discovered inside a disclosure aimed at new boards.
+                 Review catch on this PR: folding it away meant reflashing a
+                 known Canary would erase its identity key unannounced. -->
+            <label class="coldstart-ask">
+              <input type="checkbox" id="first-contact" checked>
+              <span>This board is new to me — wipe the whole chip before writing.
+                Leave this ticked for anything bought unflashed: a normal install
+                only overwrites the parts it needs, so whatever a previous owner
+                left in the other partitions would survive. Reflashing a Canary
+                you set up here and want to keep the identity of? Untick it —
+                it re-ticks itself for the next board.</span>
+            </label>
 
             <!-- Boards whose flashing port isn't the one you can see. Filled
                  from the embedded catalog (products[].access) — see
