@@ -151,6 +151,38 @@ button{font:inherit;color:inherit;cursor:pointer;}
 .allcol a:hover{background:var(--hover);color:var(--brand);}
 .allcol a .rf{width:6px;height:6px;border-radius:50%;background:var(--canary);margin-left:auto;flex:none;}
 
+/* ===== Settings — updates & about (app only, see lab-settings.js) ===== */
+.settings .set-sec{margin-top:28px;}
+.settings .set-sec h2{font-size:15px;font-weight:660;letter-spacing:-.01em;margin:0 0 10px;}
+.set-lede{font-size:13.5px;color:var(--text-2);line-height:1.6;max-width:66ch;margin:0 0 12px;}
+
+.set-specs{display:grid;grid-template-columns:auto 1fr;gap:7px 18px;margin:0;
+  border:1px solid var(--sep);border-radius:12px;padding:14px 16px;background:var(--surface);width:fit-content;min-width:min(380px,100%);}
+.set-specs dt{font-size:12.5px;color:var(--muted);}
+.set-specs dd{margin:0;font-family:var(--mono);font-size:12.5px;color:var(--text);}
+
+.set-card{border:1px solid var(--sep);border-radius:12px;padding:16px;background:var(--surface);box-shadow:var(--shadow);}
+.set-status{margin:0;font-size:14.5px;font-weight:600;}
+.set-status.ok{color:var(--good);}
+.set-status.warn{color:var(--canary);}
+.set-card .set-lede{margin:8px 0 0;}
+.set-card .actions{margin-top:14px;}
+
+.set-notes{margin-top:12px;border-left:2px solid var(--sep-strong);padding-left:12px;}
+.set-notes b{font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);}
+.set-notes p{font-size:13.5px;color:var(--text-2);margin:6px 0 0;}
+.set-notes ul{margin:6px 0 0;padding-left:18px;}
+.set-notes li{font-size:13.5px;color:var(--text-2);line-height:1.55;margin-top:3px;}
+
+.set-log{border:1px solid var(--sep);border-radius:12px;background:var(--surface);
+  max-height:340px;overflow-y:auto;}
+.set-log-row{display:flex;gap:12px;align-items:baseline;padding:7px 14px;border-top:1px solid var(--sep);font-size:12.5px;}
+.set-log-row:first-child{border-top:0;}
+.set-log-row time{font-family:var(--mono);font-size:11.5px;color:var(--muted);flex:none;}
+.set-log-row .l-msg{color:var(--text-2);min-width:0;overflow-wrap:anywhere;}
+.set-log-row .muted{color:var(--muted);}
+.set-path{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin:8px 0 0;overflow-wrap:anywhere;}
+
 /* status footer strip */
 .foot{margin-top:auto;border-top:1px solid var(--sep);padding:12px 40px;font-family:var(--mono);font-size:11.5px;color:var(--muted);display:flex;gap:10px;}
 .foot .grow{flex:1;}

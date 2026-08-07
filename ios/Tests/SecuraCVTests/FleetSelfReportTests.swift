@@ -116,4 +116,103 @@ final class FleetSelfReportTests: XCTestCase {
         XCTAssertFalse(DeviceAPI.isPrivate(url), "normalizing must not widen what we are willing to contact")
         XCTAssertNil(DeviceAPI.url(forDiscoveredHost: "   "), "an empty host is not a URL")
     }
+
+    // ── The birth day ───────────────────────────────────────────────────────
+    //
+    // These two bodies are also verbatim `fleet_selfreport_build()` output, so
+    // the app's reading of `born_day`/`born_exact` is pinned to the bytes the
+    // firmware actually writes rather than to what this file assumes.
+
+    /// A Canary that was provisioned and online the same evening.
+    static let bornBody = #"""
+    {"kernel":"Front Door","verified_through":"now","devices":[{"name":"Front Door","online":true,"chain":"ok","product":"canary-wap","chain_height":42,"born_day":20673,"born_exact":true}]}
+    """#
+
+    /// One that sat in a workshop for a week before it first met a clock.
+    static let firstDatedBody = #"""
+    {"kernel":"Shed","verified_through":"now","devices":[{"name":"Shed","online":true,"chain":"ok","product":"canary-wap","chain_height":7,"born_day":20666,"born_exact":false}]}
+    """#
+
+    func testABirthDayIsReadFromTheDevicesOwnBytes() throws {
+        let r = try FleetSelfReport.decode(Data(Self.bornBody.utf8))
+        let d = try XCTUnwrap(r.devices.first)
+        XCTAssertEqual(d.bornDay, 20673)
+        XCTAssertTrue(d.bornExact)
+
+        var w = Witness(id: "canary-a3f7")
+        FleetMerge.fold(d, into: &w)
+        XCTAssertEqual(w.bornDay, 20673)
+        XCTAssertTrue(w.bornExact)
+        // Days since the epoch, rendered at UTC midnight — a birth day carries
+        // no time of day, so the date must land exactly on the day boundary.
+        let born = try XCTUnwrap(w.bornOn)
+        XCTAssertEqual(born.timeIntervalSince1970, 20673 * 86_400, accuracy: 0.5)
+    }
+
+    func testAFirstDatedDayIsNotPromotedToABirthday() throws {
+        let r = try FleetSelfReport.decode(Data(Self.firstDatedBody.utf8))
+        let d = try XCTUnwrap(r.devices.first)
+        XCTAssertEqual(d.bornDay, 20666)
+        XCTAssertFalse(d.bornExact,
+                       "the device said it learned the date late — the app must carry that through")
+
+        var w = Witness(id: "canary-b1c2")
+        FleetMerge.fold(d, into: &w)
+        XCTAssertNotNil(w.bornOn, "a late day is still worth showing — it bounds the device's age")
+        XCTAssertFalse(w.bornExact)
+    }
+
+    /// The device that has never met a clock omits both keys. Nil must survive
+    /// as nil: a 0 here would render as 1 January 1970 on the certificate.
+    func testADeviceWithNoClockYetReportsNoBirthDay() throws {
+        let r = try FleetSelfReport.decode(Data(Self.displayBody.utf8))
+        let d = try XCTUnwrap(r.devices.first)
+        XCTAssertNil(d.bornDay)
+        XCTAssertFalse(d.bornExact, "absent is not exact")
+
+        var w = Witness(id: "lan:nightstand.local#0")
+        FleetMerge.fold(d, into: &w)
+        XCTAssertNil(w.bornOn, "no born line at all, rather than the epoch")
+    }
+
+    /// A firmware that reports a day but no verdict has not earned the word
+    /// "born" — the cautious reading is the only safe one, because the flag
+    /// exists precisely to hold a claim back.
+    func testADayWithoutAVerdictIsNotExact() throws {
+        let body = #"""
+        {"kernel":"K","verified_through":"now","devices":[{"name":"K","online":true,"chain":"ok","product":"canary-wap","born_day":20673}]}
+        """#
+        let r = try FleetSelfReport.decode(Data(body.utf8))
+        let d = try XCTUnwrap(r.devices.first)
+        XCTAssertEqual(d.bornDay, 20673)
+        XCTAssertFalse(d.bornExact)
+    }
+
+    /// Zero and negatives are the boot epoch showing through, not dates. Folded
+    /// to nil at the decoder so exactly one representation of "not known"
+    /// reaches the UI.
+    func testTheEpochIsNotABirthDay() throws {
+        for value in ["0", "-1"] {
+            let body = #"{"kernel":"K","verified_through":"now","devices":[{"name":"K","online":true,"chain":"ok","product":"canary-wap","born_day":\#(value),"born_exact":true}]}"#
+            let r = try FleetSelfReport.decode(Data(body.utf8))
+            let d = try XCTUnwrap(r.devices.first)
+            XCTAssertNil(d.bornDay, "born_day \(value) must not become a date")
+        }
+    }
+
+    /// A birth day is written once on the device and never restated, so a later
+    /// row can only ever repeat it. What must NOT happen is the reverse: a row
+    /// that has yet to learn the day erasing one the app already holds.
+    func testALaterRowCannotUnlearnABirthDay() throws {
+        var w = Witness(id: "canary-a3f7")
+        let known = try XCTUnwrap(try FleetSelfReport.decode(Data(Self.bornBody.utf8)).devices.first)
+        FleetMerge.fold(known, into: &w)
+        XCTAssertEqual(w.bornDay, 20673)
+
+        let silent = FleetSelfDevice(name: "Front Door", online: true,
+                                     chain: "ok", product: "canary-wap")
+        FleetMerge.fold(silent, into: &w)
+        XCTAssertEqual(w.bornDay, 20673, "a row with no birth day says nothing, it does not say 'none'")
+        XCTAssertTrue(w.bornExact)
+    }
 }

@@ -9,11 +9,20 @@
 // THE RULE THIS CARD FOLLOWS: every line is a fact the device or this phone
 // can produce, labeled as what it actually is.
 //
-//   * "Paired" is when YOU added it — not a birthday. A Canary's real
-//     born-on is the moment its key was generated, which lives on the device;
-//     until it tells us, this card says "paired", because a birthday we
-//     inferred would be the first decorative thing on a screen whose whole
-//     job is being checkable.
+//   * "Born" is the device's own answer, and only when the device has earned
+//     the word. A Canary's real born-on is the day its key was generated,
+//     which lives on the device — so it reports it (`/api/fleet` `born_day`)
+//     and this card shows it. Three cases, three different lines:
+//       - the device says born, exactly    → "Born"
+//       - the device says it was first dated later than it was made
+//         → "First dated", with the reason, because calling a week on a
+//           workshop shelf a birthday would be a guess wearing a fact's
+//           clothes
+//       - the device has never met a clock → no born line at all
+//     "Paired" is shown alongside and is never a substitute: it is when YOU
+//     added it, a fact about this phone. Two people looking at the same
+//     Canary see the same birth day and different pairing dates, which is
+//     exactly right.
 //   * The name is shown with its derivation, not as a label: it comes from
 //     the key, so it can be recomputed by anyone, and it changes only if the
 //     key changes — which would honestly be a different bird.
@@ -75,6 +84,12 @@ struct BirthCertificateCard: View {
                 if !witness.firmware.isEmpty {
                     CertificateRow(label: "Firmware", value: witness.firmware)
                 }
+                // The device's own day, labeled as precisely as the device
+                // earned. Above "Paired" because it is the older fact.
+                if let bornOn = witness.bornOn {
+                    CertificateRow(label: witness.bornExact ? "Born" : "First dated",
+                                   value: bornOn.formatted(date: .abbreviated, time: .omitted))
+                }
                 if let pairedAt {
                     CertificateRow(label: "Paired",
                                    value: pairedAt.formatted(date: .abbreviated, time: .omitted))
@@ -89,6 +104,14 @@ struct BirthCertificateCard: View {
                 Text("This name comes from the device's own key — any SecuraCV app derives the same one, and it changes only if the key does.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+
+                // Said once, where the claim is, rather than left for someone
+                // to wonder why one Canary says "Born" and another doesn't.
+                if witness.bornOn != nil, !witness.bornExact {
+                    Text("This Canary met a clock later than it was made, so this is the first day it could date itself — its real birthday is on or before it.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, Theme.xs)

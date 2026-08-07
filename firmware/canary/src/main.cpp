@@ -242,6 +242,14 @@ static void syncClockFromGps() {
 
   time_t sys_now = time(nullptr);
   bool clock_set = (sys_now >= WALL_CLOCK_FLOOR);
+
+  // The first believable clock is also the first chance this device has ever
+  // had to know its own birthday — the key was generated long before any clock
+  // existed. Offered here rather than in the loop because this is the one
+  // function that knows the clock is real; the recorder stamps once for the
+  // life of the key and costs a comparison on every call after that.
+  if (clock_set) witness_note_wall_clock((uint32_t)sys_now);
+
   if (clock_set && (now_ms - s_last_sync_attempt_ms) < CLOCK_RESYNC_INTERVAL_MS) {
     return;  // already trustworthy and not due for a drift-correction check
   }
@@ -265,6 +273,11 @@ static void syncClockFromGps() {
   settimeofday(&tv, nullptr);
   Serial.printf("[CLOCK] system clock %s from GPS (epoch=%lld)\n",
                 clock_set ? "corrected" : "set", (long long)gps_epoch);
+
+  // The clock only just became real on the "set" path — offer it now rather
+  // than waiting for the next call, so a device that gets one fix and then
+  // loses the sky still records the day it was dated.
+  witness_note_wall_clock((uint32_t)gps_epoch);
 }
 
 #if FEATURE_HA_MQTT
@@ -2617,6 +2630,8 @@ static void emit_self_manifest() {
   f.chain_head_hex = ch;
   f.seq            = dev.seq;
   f.boots          = dev.boot_count;
+  f.born_day       = dev.born_day;
+  f.born_exact     = dev.born_exact;
   f.health         = health;
   {
     // Heat, from the shared thermal provider (never Arduino's temperatureRead()

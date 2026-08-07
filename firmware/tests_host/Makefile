@@ -130,6 +130,13 @@ FLEETSR_BIN = $(BUILD_DIR)/test_fleet_selfreport
 MANIFEST_HDR = ../common/attest/self_manifest.h
 MANIFEST_BIN = $(BUILD_DIR)/test_self_manifest
 
+# Birth-day decision (common/identity/birth_day.h): when a device may record
+# the day its key was born, and when that day may be CALLED a birth day rather
+# than the day it was first dated. Every test is a way the certificate could
+# misstate the device's age. Pure header, no Arduino deps.
+BIRTHDAY_HDR = ../common/identity/birth_day.h
+BIRTHDAY_BIN = $(BUILD_DIR)/test_birth_day
+
 # Coarse optical feature classifiers (canary-vision optical_features.h): pins
 # the invariant-safe coarsening of the person-detection model's box geometry —
 # aspect ratio -> posture, area fraction -> proximity, count -> occupancy
@@ -262,6 +269,9 @@ $(FLEETSR_BIN): test_fleet_selfreport.cpp $(FLEETSR_HDR) Makefile | $(BUILD_DIR)
 $(MANIFEST_BIN): test_self_manifest.cpp $(MANIFEST_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_self_manifest.cpp -o $@
 
+$(BIRTHDAY_BIN): test_birth_day.cpp $(BIRTHDAY_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_birth_day.cpp -o $@
+
 $(OPTFEAT_BIN): test_optical_features.cpp $(OPTFEAT_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(OPTFEAT_INC) test_optical_features.cpp -o $@
 
@@ -289,7 +299,7 @@ $(PLUMAGE_BIN): test_plumage.cpp $(PLUMAGE_SRC) $(PLUMAGE_HDRS) Makefile | $(BUI
 $(TUNECON_BIN): test_tuning_console.cpp $(TUNECON_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_tuning_console.cpp -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(WIFIJOIN_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(WIFIJOIN_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -304,6 +314,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(FLEETVIEW_BIN)
 	./$(FLEETSR_BIN)
 	./$(MANIFEST_BIN)
+	./$(BIRTHDAY_BIN)
 	./$(OPTFEAT_BIN)
 	./$(VISION_PIPE_BIN)
 	./$(FUSION_BIN)

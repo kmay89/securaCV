@@ -142,6 +142,7 @@
 #include "catchall_logic.h"          // pure, host-tested canary.local claim decisions
 #include "witness_store.h"           // pure, host-tested /WITNESS jsonl format + recovery
 #include "fleet_selfreport.h"        // shared /api/fleet body builder (parity by architecture)
+#include "birth_day.h"               // pure, host-tested "when was this key born" rules
 #include "camera_gate_logic.h"       // pure, host-tested camera standby/peek gating
 #include "power_gate_logic.h"        // pure, host-tested round-two power gate decisions
 #include "health_store_logic.h"      // pure, host-tested /HEALTH jsonl format
@@ -506,6 +507,10 @@ static const char* NVS_KEY_BOOTS    = "boots";
 static const char* NVS_KEY_CHAIN    = "chain";
 static const char* NVS_KEY_TAMPER   = "tamper";
 static const char* NVS_KEY_LOGSEQ   = "logseq";
+// The day this device's key was born, and whether that day may be called a
+// birthday — written exactly once, never overwritten (birth_day.h).
+static const char* NVS_KEY_BORN     = "born_day";
+static const char* NVS_KEY_BORN_EX  = "born_exact";
 static const char* NVS_KEY_WIFI_SSID = "wifi_ssid";
 static const char* NVS_KEY_WIFI_PASS = "wifi_pass";
 static const char* NVS_KEY_WIFI_EN   = "wifi_en";
@@ -632,6 +637,17 @@ struct DeviceIdentity {
   uint32_t boot_ms;
   uint32_t tamper_count;
   uint32_t log_seq;
+  // ── when this key was born ────────────────────────────────────────────────
+  // The device id, the AP SSID, the mDNS name and the app's birth certificate
+  // all derive from the keypair, so "how old is this Canary" is really "how old
+  // is this key". A key is always born before any clock exists (no RTC — the
+  // chip boots at the epoch and only learns the date from GPS), so these are
+  // filled in on the first believable clock and then never again. See
+  // birth_day.h for the three rules.
+  uint32_t born_day;      // Days since the Unix epoch; 0 = never dated.
+  bool     born_exact;    // False ⇒ first DATED, not born. Not a birthday.
+  uint32_t key_born_ms;   // millis() when this boot generated the key…
+  bool     key_is_new;    // …meaningful only if this boot is the one that made it.
   bool     initialized;
   bool     tamper_active;
   char     device_id[32];
@@ -1064,12 +1080,26 @@ static const time_t GPS_CLOCK_FLOOR = 1700000000;  // ~2023-11-14; below this, "
 static const uint32_t GPS_CLOCK_RESYNC_INTERVAL_MS = 10UL * 60UL * 1000UL;
 static const uint32_t GPS_CLOCK_FIX_STALE_MS = 30UL * 1000UL;  // RMC arrives ~1 Hz
 
+// Offer the current wall clock to the birth-day recorder. Cheap and safe to
+// call at any cadence: it returns immediately once a day is recorded (once, for
+// the life of the key) or while the clock is still the boot epoch. Defined down
+// with the NVS helpers it writes through; declared here because the clock sync
+// is the caller and sits above them.
+static bool note_wall_clock(uint32_t unix_s);
+
 static void sync_clock_from_gps() {
   static uint32_t s_last_sync_attempt_ms = 0;
   uint32_t now_ms = millis();
 
   time_t sys_now = time(nullptr);
   bool clock_set = (sys_now >= GPS_CLOCK_FLOOR);
+
+  // The first believable clock is also the first chance this device has ever
+  // had to know its own birthday — the key was generated long before any clock
+  // existed. Offered here rather than in the loop because this is the one
+  // function that knows the clock is real.
+  if (clock_set) note_wall_clock((uint32_t)sys_now);
+
   if (clock_set && (now_ms - s_last_sync_attempt_ms) < GPS_CLOCK_RESYNC_INTERVAL_MS) {
     return;  // already trustworthy and not due for a drift-correction check
   }
@@ -1287,6 +1317,38 @@ static bool nvs_store_u32(const char* key, uint32_t val) {
   if (!nvs.beginReadWrite()) return false;
   nvs.putUInt(key, val);
   nvs.end();
+  return true;
+}
+
+// Declared up beside sync_clock_from_gps (its only caller); defined here
+// because it writes through the two NVS helpers directly above. The decision
+// itself lives in birth_day.h — this function owns only the persistence.
+static bool note_wall_clock(uint32_t unix_s) {
+  birth::Stamp stored;
+  stored.day = g_device.born_day;
+  stored.exact = g_device.born_exact;
+
+  birth::Observation now;
+  now.unix_s = unix_s;
+  now.key_age_known = g_device.key_is_new;
+  now.key_age_s = g_device.key_is_new
+                      ? (millis() - g_device.key_born_ms) / 1000u
+                      : 0u;
+
+  birth::Stamp fresh;
+  if (!birth::consider(stored, now, &fresh)) return false;
+
+  // Order matters: the day is what `recorded()` tests, so writing it last means
+  // a power cut between the two writes leaves no half-stamped birth — the next
+  // boot simply tries again.
+  nvs_store_u32(NVS_KEY_BORN_EX, fresh.exact ? 1 : 0);
+  nvs_store_u32(NVS_KEY_BORN, fresh.day);
+  g_device.born_day = fresh.day;
+  g_device.born_exact = fresh.exact;
+
+  Serial.printf("[BIRTH] key %s day %lu (UTC)\n",
+                fresh.exact ? "born on" : "first dated",
+                (unsigned long)fresh.day);
   return true;
 }
 
@@ -6549,6 +6611,10 @@ static esp_err_t handle_fleet(httpd_req_t* req) {
   // failed verification. No hashes, no seq internals leaked beyond the height.
   self.chain_ok     = (!g_device.tamper_active && g_health.verify_failures == 0) ? 1 : 0;
   self.chain_height = (int)(g_device.seq & 0x7fffffff);
+  // When this device's key was born. Left at 0 — and so omitted entirely —
+  // until this Canary has met a believable clock; see birth_day.h.
+  self.born_day   = g_device.born_day;
+  self.born_exact = g_device.born_exact ? 1 : 0;
   // Sized by the shared macro for the WORST case: a stored 32-byte name of
   // all-escaping bytes (the rename path bounds length, not content) expands
   // 6x and is written twice — a smaller fixed buffer would truncate that
@@ -7080,7 +7146,7 @@ static esp_err_t handle_device_info(httpd_req_t* req) {
   g_health.http_requests++;
 
   const char* dev_name = setup_wizard::get_device_name();
-  char json[640];
+  char json[768];
   // Privacy (Invariant III): salted pseudonym, never the raw MAC.
   char hw_token[device_pseudonym::HEX_LEN + 1];
   if (!device_pseudonym::device_id_hex(hw_token, sizeof(hw_token))) hw_token[0] = '\0';
@@ -7094,6 +7160,13 @@ static esp_err_t handle_device_info(httpd_req_t* req) {
     "\"hw_token\":\"%s\","
     "\"uptime_ms\":%lu,"
     "\"chain_length\":%lu,"
+    // When this device's KEY was born, in days since the Unix epoch — a fact
+    // about the Canary, not about whoever paired it. `born_day` is 0 until the
+    // device has met a believable clock, and `born_exact` false means the day
+    // is when it was first DATED rather than born, so a reader must not call
+    // it a birthday. A day carries no time of day, on purpose (birth_day.h).
+    "\"born_day\":%lu,"
+    "\"born_exact\":%s,"
     "\"auth_required\":true,"
     "\"tls_enabled\":%s,"
     "\"provisioning_gate\":\"physical_button\""
@@ -7106,6 +7179,8 @@ static esp_err_t handle_device_info(httpd_req_t* req) {
     hw_token,
     (unsigned long)millis(),
     (unsigned long)g_device.seq,
+    (unsigned long)g_device.born_day,
+    g_device.born_exact ? "true" : "false",
     g_tls_enabled ? "true" : "false"
   );
 
@@ -9272,7 +9347,17 @@ static bool provision_device() {
     }
     Serial.println("[PROV] Keypair stored in NVS");
     g_device.first_boot = true;
+    // This boot made the key, so this boot is the only one that can honestly
+    // say how old it is when a clock finally arrives.
+    g_device.key_is_new = true;
+    g_device.key_born_ms = millis();
   }
+
+  // What we already know about when this key was born. Loaded before anything
+  // can offer a clock, so the "already recorded" rule is in force from the
+  // first opportunity to stamp.
+  g_device.born_day = nvs_load_u32(NVS_KEY_BORN, 0);
+  g_device.born_exact = nvs_load_u32(NVS_KEY_BORN_EX, 0) != 0;
 
   // Derive public key and fingerprint
   Ed25519::derivePublicKey(g_device.pubkey, g_device.privkey);

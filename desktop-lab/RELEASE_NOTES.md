@@ -16,6 +16,23 @@ version, newest first. Same contract as the Flasher's
 
 Heading grammar is `## <version> — <YYYY-MM-DD>`.
 
+## 0.2.2 — 2026-08-07
+
+- **A Settings page that tells you what the app is doing.** New "Updates &
+  about" in the sidebar: the exact version and build you're running, when it
+  was built, and the firmware train it teaches.
+- **Check for updates yourself.** The Lab has always checked on its own —
+  shortly after launch and every six hours it stays open — but now there's a
+  "Check now" button for when you don't want to wait, and a "Update &
+  relaunch" button when one is ready, with that release's notes shown before
+  you agree to anything.
+- **The update log is visible at last.** Every check and install the app has
+  ever done was already written to a journal on disk; now you can read it in
+  the app, newest first, with the file's path shown so you can open it
+  directly. If an update ever fails, the reason is in there.
+- Offline is reported as what it is — "couldn't reach the release channel",
+  not an error — since the Lab works entirely offline either way.
+
 ## 0.2.1 — 2026-08-07
 
 - **Every bench now carries the Lab's navigation.** The bar at the top of

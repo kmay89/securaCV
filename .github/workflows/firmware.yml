@@ -542,6 +542,19 @@ jobs:
           chmod +x firmware/scripts/check_fleet_selfreport_sync.sh
           firmware/scripts/check_fleet_selfreport_sync.sh
 
+      - name: Verify birth-day header copies match the canonical rules
+        # birth_day.h decides when a device may record the day its key was born
+        # and when that day may be CALLED a birth day. The rules are what make
+        # the app's birth certificate non-rottable: a tree that drifted to allow
+        # overwriting would let a device restate its own age, and one that
+        # drifted on the grace window would call a week on a shelf a birthday.
+        # Canonical at firmware/common/identity/ (included directly by the PIO
+        # builds via -I, host-tested there) and committed byte-identical next to
+        # the canary-wap Arduino sketch.
+        run: |
+          chmod +x firmware/scripts/check_birth_day_sync.sh
+          firmware/scripts/check_birth_day_sync.sh
+
       - name: Verify OTA engine copies in the canary-wap + canary-display sketch dirs match canonical source
         # The signed pull-OTA engine is canonical at firmware/common/ota/src/
         # and committed byte-identical next to BOTH Arduino sketches (canary-wap
