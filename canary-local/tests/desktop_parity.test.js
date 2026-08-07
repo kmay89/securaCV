@@ -422,6 +422,89 @@ test("parity wave 3a: the boot-log verdict and the self-healing baud ladder", as
   }
 });
 
+test("parity wave 3b: room presets are baked in as typed NVS ints", async () => {
+  // Vision's detection dials and Sense's radar reflexes are NVS-backed, so
+  // seeding them at flash time means a Canary is right for its room on first
+  // boot instead of after a trip to Home Assistant.
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  const provRs = read(join(ROOT, "desktop/src-tauri/src/provisioning.rs"));
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+
+  // 1. The NVS writer can express a u32 at all. Without it the dwell and
+  //    every sns_* key would have to be written narrower, which the firmware
+  //    reads back as missing — falling silently to its compiled default.
+  assert.match(provRs, /fn u32\(&mut self/, "the NVS writer lost its u32 entry type");
+  assert.match(provRs, /0x04/, "Preferences putULong is item type 0x04");
+  assert.match(provRs, /fn dial_key_ok/,
+    "dial keys must be validated — the writer truncates a long key into its neighbor");
+
+  // 2. The UI and the payload exist on the desktop side.
+  assert.match(html, /id="dials"/, "desktop has nowhere to show the room presets");
+  assert.match(appJs, /function renderDials/, "desktop lost the preset picker");
+  assert.match(appJs, /function dialsForFlash/, "desktop preset choice never reaches the flash");
+  // "As it ships" must write nothing — seeding the shipped defaults would
+  // freeze at flash time a value the maintainer can still change by release.
+  assert.match(appJs, /preset\.id === "ships"/,
+    "the shipped preset must write nothing at all");
+  // Review hardening (Codex on #1508): renderProducts() re-runs when the
+  // manifest or the passport lands, re-entering onProductChosen for the
+  // selected row. An unconditional reset there discarded a preset picked
+  // during those seconds — which is precisely when the user has time to pick
+  // one, since Install is disabled until the passport lands.
+  assert.match(appJs, /state\.dialChoice\.productId !== product\.id/,
+    "a re-render must keep the preset chosen for the same product");
+  assert.match(appJs, /\[data-preset="\$\{state\.dialChoice\.presetId\}"\]/,
+    "a preserved preset must stay visibly selected, not silently held");
+
+  // 3. The clamping agrees with the browser's, value for value. This is the
+  //    part worth testing: an out-of-range dial is a setting the firmware
+  //    rejects or misreads, so the two frontends must clamp identically.
+  const grab = (name) => {
+    const i = appJs.indexOf("function " + name);
+    let p = 0, j = appJs.indexOf("(", i);
+    for (let k = j; k < appJs.length; k++) {
+      if (appJs[k] === "(") p++;
+      else if (appJs[k] === ")") { p--; if (!p) { j = k; break; } }
+    }
+    const b = appJs.indexOf("{", j);
+    let d = 0;
+    for (let k = b; k < appJs.length; k++) {
+      if (appJs[k] === "{") d++;
+      else if (appJs[k] === "}") { d--; if (!d) return appJs.slice(i, k + 1); }
+    }
+  };
+  const mod = new Function(grab("detectValuesToNvs") + "\n" + grab("reflexValuesToNvs") +
+    "\nreturn {detectValuesToNvs, reflexValuesToNvs};")();
+
+  const vision = catalog.products.find((p) => p.detect);
+  assert.ok(vision, "the catalog still carries a product with detection dials");
+  for (const preset of vision.detect.presets) {
+    assert.deepStrictEqual(
+      mod.detectValuesToNvs(preset.values, vision.detect),
+      core.detectValuesToNvs(preset.values, vision.detect),
+      `detect preset '${preset.id}' clamps differently on the two frontends`);
+  }
+  // Out-of-range input must be clamped, not passed through, on both sides.
+  const wild = { target: 9999, score: -5, lost_ms: 1, dwell_ms: 99_999_999 };
+  const mine = mod.detectValuesToNvs(wild, vision.detect);
+  assert.deepStrictEqual(mine, core.detectValuesToNvs(wild, vision.detect),
+    "out-of-range dials must clamp the same way on both frontends");
+  const [scoreLo] = vision.detect.bounds.score;
+  assert.strictEqual(mine.u8.det_score, scoreLo, "a below-range score must clamp to the floor");
+  assert.ok(mine.u32.det_dwell <= vision.detect.bounds.dwell_ms[1],
+    "an above-range dwell must clamp to the ceiling");
+
+  const sense = catalog.products.find((p) => p.reflexes && p.reflexes.nvs);
+  if (sense) {
+    const values = Object.fromEntries((sense.reflexes.knobs || []).map((k) => [k.id, 999999]));
+    assert.deepStrictEqual(
+      mod.reflexValuesToNvs(values, sense.reflexes),
+      core.reflexValuesToNvs(values, sense.reflexes),
+      "reflex clamping differs between the frontends");
+  }
+});
+
 test("device API token: both flashers mint the same credential shape and seed the same keys", async () => {
   // The credential that makes the desktop fleet book (and any future browser
   // surface) able to talk to a board it flashed: "cv_" + 32 base62 chars,
