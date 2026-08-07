@@ -361,6 +361,11 @@ size_t b64url_encode_nopad(const uint8_t* in,
  */
 #ifdef ARDUINO
 #include <esp_http_server.h>
+/* esp_timer, not Arduino's millis(): this translation unit deliberately
+ * stays off Arduino.h (it pulls Ed25519 from the Crypto library and
+ * mbedtls directly), and the throttle below only needs a monotonic
+ * clock. esp_timer_get_time() is microseconds since boot. */
+#include <esp_timer.h>
 
 namespace device_identity_api {
 
@@ -429,7 +434,7 @@ esp_err_t handle_enroll_json(httpd_req_t* req) {
        * file stays free of the api_auth stack. Discovery flows ask once
        * per device per session; only a hammering client ever sees 429. */
       static uint32_t s_last_proof_ms = 0;
-      const uint32_t now = millis();
+      const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
       if (s_last_proof_ms != 0 && (now - s_last_proof_ms) < 250) {
         httpd_resp_set_type(req, "application/json");
         httpd_resp_set_status(req, "429 Too Many Requests");
