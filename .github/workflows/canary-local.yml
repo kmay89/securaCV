@@ -240,6 +240,14 @@ jobs:
         # embeds the picker tier into flash.json, so a stale figure would
         # otherwise surface as a confusing catalog diff instead of here.
         run: node canary-local/tools/figures/gen_figures.mjs --check
+      - name: Hatchery spec drift (the iPhone's copy of the name lists + proof vectors)
+        # The birth certificate is DERIVED from a device's key, by three
+        # independent implementations (this Lab, the Mac Flasher, the iPhone
+        # app). ios/Shared/HatchSpec.swift is generated from hatch.json and
+        # carries fingerprint -> name vectors computed HERE; the Swift tests
+        # assert they reproduce. A hatch.json edit that isn't regenerated
+        # would ship a Canary with two names, so it fails here first.
+        run: node canary-local/tools/hatchery/gen_hatch_swift.mjs --check
       - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
         run: |
           python3 canary-local/tools/gen_enclosures.py

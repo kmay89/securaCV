@@ -12,6 +12,15 @@
 //
 // Pure + RNG-injectable, so it's host-tested and deterministic (tests/
 // hatchery.test.js). The default RNG is Math.random; tests pass a seeded one.
+//
+// UPDATE — a name that can't drift: when the caller knows the device's
+// fingerprint, the certificate is DERIVED from it rather than rolled, so
+// every surface computes one name for one bird and nothing has to be stored
+// or synced. See tools/hatchery/derive.mjs for the argument and the
+// algorithm; the random assembly below is now only for a board that has no
+// key yet.
+
+import { deriveCertificate } from "../tools/hatchery/derive.mjs";
 
 // A ring code — the certificate's id when a board wasn't provisioned with a real
 // device id. PREFIX-XXX-XXX from a 24-bit value.
@@ -46,6 +55,15 @@ export function pickFreshBase(first, usedBases, avoid, rng = Math.random) {
  * @returns {object|null}  the certificate, or null if the spec has no names
  */
 export function mintCertificate(hatch, opts = {}) {
+  // A device with a KEY names itself: the certificate is derived from its
+  // fingerprint, so the phone, this Lab and the Mac Flasher all render the
+  // same bird without syncing anything (tools/hatchery/derive.mjs). The
+  // random path below survives for the only case that has no identity yet —
+  // a blank chip mid-flash. Re-roll retires with it: you can't re-roll a key.
+  if (opts && opts.fingerprint) {
+    const derived = deriveCertificate(hatch, opts);
+    if (derived) return { ...derived, ts: opts.now || 0 };
+  }
   const h = hatch;
   if (!h || !Array.isArray(h.first) || !h.first.length) return null;
   const rng = opts.rng || Math.random;

@@ -270,7 +270,7 @@ to the other. → [browser flasher](browser_flasher.md)
 **The Lab desktop app** — [`desktop-lab/`](../desktop-lab) — a Tauri shell
 around the browser Lab for Mac/Linux. A different app from the Flasher.
 
-**The Hub** — Home Assistant on a Raspberry Pi, running the kernel as an add-on
+**The Hub** — Home Assistant on a Raspberry Pi, running the kernel as an app
 ([`privacy_witness_kernel/`](../privacy_witness_kernel)) plus the integration
 ([`custom_components/securacv/`](../custom_components)).
 → [the full stack, end to end](full_stack_setup.md),

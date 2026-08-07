@@ -15,7 +15,7 @@ only one that can *prove* — cryptographically — that nobody edited the recor
 
 Per persona (see [04-user-stories.md](04-user-stories.md)):
 
-- **Priya (HA prosumer):** *"You already run Frigate. Five minutes in the add-on store gets you
+- **Priya (HA prosumer):** *"You already run Frigate. Five minutes in the App Store gets you
   a tamper-evident witness log and a verified-✓ timeline — $0/month, nothing leaves your LAN."*
 - **Marcus (needs proof that holds):** *"A record your landlord, an abuser, or a deepfake
   challenge can't quietly rewrite — and that can't be turned into surveillance of you."*
@@ -62,8 +62,8 @@ Reading the table:
 | Eufy | ~30–45 min | Phone app + HomeBase | Yes (account), footage local |
 | Reolink / UniFi | 1–2 hr | Browser/NVR config, wiring | Optional |
 | Frigate alone | 2–6 hr | Docker, `config.yml`, MQTT by hand | No |
-| **SecuraCV on HA + Frigate** | **~5 min** | Add-on store → wizard (key auto-generated, MQTT auto-discovered, `frigate.yml` generated) | **No** |
-| **SecuraCV greenfield** | 1–2 hr | HA OS image + add-on wizard; the wizard absorbs most of Frigate's YAML friction | **No** |
+| **SecuraCV on HA + Frigate** | **~5 min** | App Store → wizard (key auto-generated, MQTT auto-discovered, `frigate.yml` generated) | **No** |
+| **SecuraCV greenfield** | 1–2 hr | HA OS image + app wizard; the wizard absorbs most of Frigate's YAML friction | **No** |
 
 The honest caveat we keep in the pitch: a cloud camera is still faster *from zero* than a
 greenfield self-host stack. Our claim is narrower and stronger — **for the ~10% of the market
@@ -78,8 +78,8 @@ against what's actually in the tree today.
 
 | # | Friction item (ranked) | Status | Evidence in-repo |
 |---|---|---|---|
-| 1 | **The terminal** | **Largely fixed** | HA add-on store install with a setup wizard: device key auto-generated, MQTT auto-discovered, `frigate.yml` generated (README §Install). Docker sidecar is a one-file compose + `doctor` end-to-end check. `curl \| bash` is now the *alternative*, not the path. API token rotation is automatic. |
-| 2 | **The invisible payoff** | **Partially fixed** | "SecuraCV Verified Timeline" Lovelace card with a strict verified-✓ badge ([docs/lovelace_timeline.md](../lovelace_timeline.md)); daily-digest, chain-integrity sensors and a Verify Now button created automatically; add-on can generate a dashboard from live zones. **Still missing:** out-of-the-box mobile digest/alert, and screenshots of the payoff in the README — the most persuasive asset is still not in the pitch. |
+| 1 | **The terminal** | **Largely fixed** | HA App Store install with a setup wizard: device key auto-generated, MQTT auto-discovered, `frigate.yml` generated (README §Install). Docker sidecar is a one-file compose + `doctor` end-to-end check. `curl \| bash` is now the *alternative*, not the path. API token rotation is automatic. |
+| 2 | **The invisible payoff** | **Partially fixed** | "SecuraCV Verified Timeline" Lovelace card with a strict verified-✓ badge ([docs/lovelace_timeline.md](../lovelace_timeline.md)); daily-digest, chain-integrity sensors and a Verify Now button created automatically; app can generate a dashboard from live zones. **Still missing:** out-of-the-box mobile digest/alert, and screenshots of the payoff in the README — the most persuasive asset is still not in the pitch. |
 | 3 | **The unbuyable device** | **Open (DIY much improved)** | BOOT-tap pairing wizard, QR scan-to-pair, unique mDNS hostnames, Identify button, fleet manager ([docs/onboarding_workflow_evaluation.md](../onboarding_workflow_evaluation.md)). Builders are well served now; non-builders still can't buy a pre-flashed Canary. |
 | 4 | **The unusable proof** | **Open** | Break-glass trustees and signed export remain CLI-only. The moat still can't be *demonstrated* by a non-engineer under stress. |
 | 5 | **v1 credibility gap** | **Nearly closed** | README badge is `v1-rc`; the roadmap's CI gates (Frigate→HA e2e, RTSP e2e, audit-boundary doc) are closed per [v1-roadmap.md](../v1-roadmap.md). Remaining: on-device hardware validation, then tag and align `CHANGELOG.md`. |
@@ -104,7 +104,7 @@ who hasn't already installed*. That is the gap to close next.
    The daily "all clear" is the retention product; today it requires assembly.
 5. **Pre-flashed Canary kit pilot** (small batch). First revenue, and the only fix for
    friction item 3; the DIY onboarding work has already de-risked the UX.
-6. **Instrument the funnel goal:** measure time from add-on install to first verified-✓ event
+6. **Instrument the funnel goal:** measure time from app install to first verified-✓ event
    against the 15-minute target in [08 §10](08-product-strategy.md) — it's the one number
    that tells us whether friction is actually falling for new users.
 

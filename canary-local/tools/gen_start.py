@@ -13,7 +13,7 @@ Sources of truth (never re-stated here):
      {{integration}}, {{min_ha}}), the upstream snapshot date, and the
      Linux flash/boot chapters, imported VERBATIM. The Hub's drift gate is
      therefore this page's drift gate too.
-  2. README.md — the two add-on repository URLs and the curl one-liner
+  2. README.md — the two app (add-on) repository URLs and the curl one-liner
      are EXTRACTED from the README's install section. Change the README
      and this guide re-lines; delete them and this generator fails loudly
      rather than teach a dead path.
@@ -52,12 +52,12 @@ def extract_readme_facts(text):
     facts = {}
     m = re.search(r"https://github\.com/blakeblackshear/frigate-hass-addons", text)
     if not m:
-        fail("README no longer names the Frigate add-on repository URL")
+        fail("README no longer names the Frigate app repository URL")
     facts["frigate_addons_repo"] = m.group(0)
 
     m = re.search(r"`(https://github\.com/kmay89/securaCV)`", text)
     if not m:
-        fail("README no longer names the SecuraCV add-on repository URL")
+        fail("README no longer names the SecuraCV app repository URL")
     facts["securacv_repo"] = m.group(1)
 
     m = re.search(r"`(curl -fsSL https://raw\.githubusercontent\.com/kmay89/securaCV/[^`]+install\.sh \| bash)`", text)
@@ -144,27 +144,27 @@ def main():
             "chapters": [
                 {
                     "id": "addons",
-                    "title": "1 · Install the add-ons",
-                    "intro": "Everything happens in the Home Assistant UI — no terminal on this path.",
+                    "title": "1 · Install the apps",
+                    "intro": "Everything happens in the Home Assistant UI — no terminal on this path. (Apps are what older Home Assistant called “add-ons.”)",
                     "steps": [
                         {
                             "title": "Install the Mosquitto broker",
                             "variants": {"all": {"bullets": [
-                                "Settings → Add-ons → Add-on Store.",
-                                "Install the official Mosquitto broker add-on and start it.",
+                                "Settings → Apps → App Store.",
+                                "Install the official Mosquitto broker app and start it.",
                             ]}},
                             "note": "MQTT is the wire your witnesses speak on.",
                         },
                         {
-                            "title": "Add both add-on repositories",
+                            "title": "Add both app repositories",
                             "variants": {"all": {
                                 "bullets": [
-                                    "Add-on Store → ⋮ (top right) → Repositories.",
+                                    "App Store → ⋮ (top right) → Repositories.",
                                     "Paste each URL below, one at a time, then Add.",
                                 ],
                                 "copies": [
-                                    {"label": "Frigate add-on repo", "text": readme["frigate_addons_repo"]},
-                                    {"label": "SecuraCV add-on repo", "text": readme["securacv_repo"]},
+                                    {"label": "Frigate app repo", "text": readme["frigate_addons_repo"]},
+                                    {"label": "SecuraCV app repo", "text": readme["securacv_repo"]},
                                 ],
                             }},
                             "note": "These strings are lifted straight from the README — if they change there, this page re-lines itself.",
@@ -181,12 +181,12 @@ def main():
                 {
                     "id": "wizard",
                     "title": "2 · Run the wizard",
-                    "intro": "The add-on's Web UI walks you through keys and MQTT — nothing to type.",
+                    "intro": "The app's Web UI walks you through keys and MQTT — nothing to type.",
                     "steps": [
                         {
                             "title": "Click through the setup wizard",
                             "variants": {"all": {"bullets": [
-                                "Open the Privacy Witness Kernel add-on → Open Web UI.",
+                                "Open the Privacy Witness Kernel app → Open Web UI.",
                                 "Device key: auto-generated. MQTT: auto-discovered from Mosquitto.",
                                 "The wizard checks Mosquitto and Frigate are present and warns if not.",
                             ]}},

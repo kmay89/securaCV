@@ -307,16 +307,16 @@ Cameras → Frigate (detection) → MQTT → PWK (privacy logging)
 - Uses Frigate's superior ML detection (Coral TPU, TensorFlow)
 - PWK receives event notifications, not video
 - Best accuracy, minimal resource usage
-- The add-on always starts the Event API service in Frigate mode, even if MQTT publishing is disabled
+- The app always starts the Event API service in Frigate mode, even if MQTT publishing is disabled
 
 #### Frigate + MQTT Configuration Checklist
 
-- [ ] **Mode set to frigate**: `mode: "frigate"` is configured in the add-on options.
+- [ ] **Mode set to frigate**: `mode: "frigate"` is configured in the app options.
 - [ ] **Frigate MQTT broker details match**: `frigate.mqtt_host`, `frigate.mqtt_port`, `frigate.mqtt_username`, and `frigate.mqtt_password` match the broker that Frigate uses.
 - [ ] **Frigate event topic is correct**: `frigate.mqtt_topic` matches Frigate’s configured event topic (default `frigate/events`).
 - [ ] **Home Assistant MQTT publish settings are aligned**: if you enable `mqtt_publish.enabled`, ensure `mqtt_publish.host`, `mqtt_publish.port`, `mqtt_publish.username`, and `mqtt_publish.password` match the same broker.
 - [ ] **Topic + discovery prefixes are consistent**: `mqtt_publish.topic_prefix` is the prefix you expect for PWK events, and `mqtt_publish.discovery_prefix` matches Home Assistant’s discovery prefix (default `homeassistant`).
-- [ ] **Required add-on options from the Configuration tab are configured**: `device_key_seed` is set, `mode` is still `frigate`, and any Frigate-specific options (`frigate.cameras`, `frigate.labels`, `frigate.min_confidence`) are configured as needed.
+- [ ] **Required app options from the Configuration tab are configured**: `device_key_seed` is set, `mode` is still `frigate`, and any Frigate-specific options (`frigate.cameras`, `frigate.labels`, `frigate.min_confidence`) are configured as needed.
 - [ ] **MQTT transport expectations are understood**: the current bridges speak MQTT 3.1.1 over TCP with no TLS support.
 
 **Follow-up task**: If you require TLS or MQTT v5, the bridge code must be modified to use a standard MQTT client library that supports these features. When making this change, ensure the bridge still avoids introducing new privacy metadata.
@@ -346,8 +346,8 @@ Cameras → go2rtc → PWK (detection + logging)
 
 Choose one runtime option (you'll configure it in **frigate** or **standalone** mode in Step 4):
 
-**Option A: Home Assistant add-on (custom repository)**
-1. Go to **Settings → Add-ons → Add-on Store**
+**Option A: Home Assistant app (custom repository)**
+1. Go to **Settings → Apps → App Store**
 2. Click **⋮ → Repositories** → Add: `https://github.com/kmay89/securaCV`
 3. Install **Privacy Witness Kernel**
 
@@ -399,7 +399,7 @@ Click **Start** (or start your container). Check logs for any errors.
 3. Provide the Event API URL and authentication (MQTT is optional):
    - **API token file (recommended):** the kernel rotates its capability token
      every 10 minutes and rewrites the token file. When the kernel runs as the
-     add-on, that file is `/config/api_token` (the default), which Home
+     app, that file is `/config/api_token` (the default), which Home
      Assistant can read directly — the integration re-reads it automatically
      whenever the token rotates.
    - **Static token:** only for kernels on another host whose token file Home
@@ -412,15 +412,15 @@ Click **Start** (or start your container). Check logs for any errors.
 ## Distribution
 
 - **HACS integration (current):** install the SecuraCV integration in Home Assistant.
-- **Kernel runtime:** run the Privacy Witness Kernel as an add-on, container, or service. The integration connects to its Event API.
+- **Kernel runtime:** run the Privacy Witness Kernel as an app, container, or service. The integration connects to its Event API.
 
 ---
 
-## Kernel Installation (Optional Add-on)
+## Kernel Installation (Optional App)
 
-### Option 1: Add-on Repository
+### Option 1: App Repository
 
-1. In Home Assistant, go to **Settings → Add-ons → Add-on Store**
+1. In Home Assistant, go to **Settings → Apps → App Store**
 2. Click the menu (⋮) → **Repositories**
 3. Add: `https://github.com/kmay89/securaCV`
 4. Find "Privacy Witness Kernel" and click **Install**
@@ -432,10 +432,10 @@ Click **Start** (or start your container). Check logs for any errors.
 git clone https://github.com/kmay89/securaCV.git
 cd securaCV
 
-# Build the add-on container (from the repo root)
+# Build the app container (from the repo root)
 docker build -f privacy_witness_kernel/Dockerfile -t privacy-witness-kernel .
 
-# Copy to HA add-ons folder
+# Copy to the HA /addons folder (the path keeps the historical name)
 cp -r privacy_witness_kernel /addons/privacy_witness_kernel
 ```
 
@@ -453,9 +453,9 @@ openssl rand -hex 32
 
 Save this key securely. If you lose it, you cannot verify old event signatures.
 
-### Step 2: Configure the Add-on
+### Step 2: Configure the App
 
-In the add-on configuration panel:
+In the app configuration panel:
 
 ```yaml
 # Required: Your unique device key (generate with openssl rand -hex 32)
@@ -489,7 +489,7 @@ time_bucket_minutes: 10
 log_level: info
 ```
 
-### Step 3: Start the Add-on
+### Step 3: Start the App
 
 Click **Start**. Check the logs for any errors.
 
@@ -501,19 +501,19 @@ Click **Start**. Check the logs for any errors.
 
 ### If You Already Use go2rtc
 
-1. Enable discovery in the add-on config:
+1. Enable discovery in the app config:
    ```yaml
    go2rtc_discovery: true
    go2rtc_url: "http://homeassistant.local:1984"
    ```
 
-2. The add-on will automatically find your cameras
+2. The app will automatically find your cameras
 
 ### If You Don't Use go2rtc
 
 Either:
-1. Install the [go2rtc add-on](https://github.com/AlexxIT/go2rtc) (recommended)
-2. Or configure cameras manually in the PWK add-on
+1. Install the [go2rtc app](https://github.com/AlexxIT/go2rtc) (recommended)
+2. Or configure cameras manually in the PWK app
 
 ### Frigate Users
 
@@ -621,12 +621,12 @@ automation:
 
 If you prefer not to use MQTT Discovery, you can create sensors manually using the REST API.
 
-The add-on exposes an Event API on port 8799. When Home Assistant is running
-alongside the add-on, use the add-on hostname (its slug) so HA can reach it over
+The app exposes an Event API on port 8799. When Home Assistant is running
+alongside the app, use the app hostname (its slug) so HA can reach it over
 the Supervisor network. The default slug for this repository is
 `privacy_witness_kernel`, which results in `http://privacy_witness_kernel:8799`.
-You can confirm the hostname in **Settings → Add-ons → Privacy Witness Kernel →
-Info**, where Home Assistant lists the add-on hostname/slug.
+You can confirm the hostname in **Settings → Apps → Privacy Witness Kernel →
+Info**, where Home Assistant lists the app hostname/slug.
 
 ### REST Sensor (Basic)
 
@@ -681,13 +681,13 @@ automation:
 ## API Reference
 
 The Event API is available at `http://privacy_witness_kernel:8799` when running
-as a Home Assistant add-on (or your configured port), as this hostname is
+as a Home Assistant app (or your configured port), as this hostname is
 automatically resolved by the Supervisor. If the kernel runs elsewhere, replace
 the hostname with the reachable IP/DNS name for that host.
 
 ### Authentication
 
-The API uses short-lived capability tokens as **Bearer** credentials. The token is written to `/config/api_token` when the add-on starts and rotates every 10 minutes; read it from the configured token file whenever you need to authenticate. If you run the kernel elsewhere, use the token path or secrets location configured for that deployment. The SecuraCV integration handles rotation automatically when configured with the token-file path (its default); scripts and other clients must re-read the file on every `401`.
+The API uses short-lived capability tokens as **Bearer** credentials. The token is written to `/config/api_token` when the app starts and rotates every 10 minutes; read it from the configured token file whenever you need to authenticate. If you run the kernel elsewhere, use the token path or secrets location configured for that deployment. The SecuraCV integration handles rotation automatically when configured with the token-file path (its default); scripts and other clients must re-read the file on every `401`.
 The `/health` endpoint is unauthenticated and only reachable on the local loopback interface. Query-string tokens are rejected—send the token only in the `Authorization: Bearer` header.
 
 ```bash
@@ -772,13 +772,13 @@ curl -H "Authorization: Bearer $TOKEN" http://privacy_witness_kernel:8799/events
 
 ## Privacy Features
 
-### What the Add-on DOES:
+### What the App DOES:
 - Detects motion/boundary crossing events
 - Records coarse-grained event claims (zone + 10-minute bucket)
 - Stores cryptographically signed event log locally
 - Expires old events according to retention policy
 
-### What the Add-on DOES NOT:
+### What the App DOES NOT:
 - Export raw video frames
 - Record faces, license plates, or identifying features
 - Send data to any cloud service
@@ -805,9 +805,9 @@ See [Break-Glass Documentation](../spec/break_glass.md) for details.
 
 ## Troubleshooting
 
-### Add-on Won't Start
+### App Won't Start
 
-1. Check logs: **Settings → Add-ons → Privacy Witness Kernel → Logs**
+1. Check logs: **Settings → Apps → Privacy Witness Kernel → Logs**
 2. Verify `device_key_seed` is set and valid (64 hex characters)
 3. Ensure cameras are reachable
 
@@ -821,7 +821,7 @@ See [Break-Glass Documentation](../spec/break_glass.md) for details.
 
 1. Check the camera is streaming (view in HA)
 2. Verify zone_id format: `zone:[a-z0-9_-]{1,64}`
-3. Check add-on logs for errors
+3. Check app logs for errors
 
 ### High Resource Usage
 
@@ -833,15 +833,15 @@ See [Break-Glass Documentation](../spec/break_glass.md) for details.
 
 ## Architecture Notes
 
-The Privacy Witness Kernel runs as a separate process (add-on) for isolation:
+The Privacy Witness Kernel runs as a separate process (app) for isolation:
 
-1. **No HA core access**: The add-on cannot access HA internals
+1. **No HA core access**: The app cannot access HA internals
 2. **Local storage only**: All data stays on your HA instance
 3. **Sandboxed modules**: Detection modules run in seccomp sandbox
 4. **API isolation**: Only the Event API is exposed
 
-This design means even if the add-on is compromised, it cannot:
-- Access other HA add-ons
+This design means even if the app is compromised, it cannot:
+- Access other HA apps
 - Export raw video
 - Modify HA configuration
 
@@ -849,9 +849,9 @@ This design means even if the add-on is compromised, it cannot:
 
 ## Updates
 
-The add-on updates independently of Home Assistant:
+The app updates independently of Home Assistant:
 
-1. Go to **Settings → Add-ons → Privacy Witness Kernel**
+1. Go to **Settings → Apps → Privacy Witness Kernel**
 2. Click **Update** when available
 
 Update notes are in the [CHANGELOG](../CHANGELOG.md).

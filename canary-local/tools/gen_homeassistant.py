@@ -206,7 +206,7 @@ TERMINAL = {
             "title": "3 · The broker",
             "host": "ha-ssh",
             "intro": "Canaries speak MQTT. This prompt is the Terminal & SSH "
-                     "add-on — or click the same installs in the Add-on store.",
+                     "app — or click the same installs in the App Store.",
             "steps": [
                 {"cmd": "ha core info",
                  "out": ["arch: aarch64",

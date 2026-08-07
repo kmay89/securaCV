@@ -15,7 +15,7 @@ if you want the full contract; the short version binds everything below:
 2. **Command audio and transcripts are transient** — parsed for an intent,
    then gone. Never journaled, sealed, or exported.
 3. **Everything is local.** The pipeline below is Home Assistant's own
-   Wyoming stack running as add-ons on the hub.
+   Wyoming stack running as apps on the hub.
 4. **Voice may ask; it may not act.** The SecuraCV intents are read-only by
    construction — there is no sentence that arms, disarms, mutes, or unseals
    anything, because a spoken word carries no signature.
@@ -47,7 +47,7 @@ wake word (openWakeWord)  ─►  STT (Whisper)  ─►  SecuraCV intent  ─►
 ## Set it up — one command, then two clicks
 
 The wizard does the repetitive part for you. Open the hub's terminal
-(**Settings → Add-ons → Terminal & SSH**) and run:
+(**Settings → Apps → Terminal & SSH**) and run:
 
 ```sh
 wget -q https://raw.githubusercontent.com/kmay89/securaCV/main/tools/hub_voice_setup.sh
@@ -79,9 +79,9 @@ it, so the script and this page cannot tell you two different stories.
 <summary><strong>By hand — every move the wizard makes, spelled out</strong>
 (the trust here is transparency, so nothing above is magic)</summary>
 
-### 1. Install the three add-ons
+### 1. Install the three apps
 
-**Settings → Add-ons → Add-on Store**, install and start:
+**Settings → Apps → App Store**, install and start:
 
 - **Whisper** — speech-to-text (the `faster-whisper` engine).
 - **Piper** — text-to-speech.
@@ -91,7 +91,7 @@ it, so the script and this page cannot tell you two different stories.
 Home Assistant discovers each one as a **Wyoming** integration —
 **Settings → Devices & Services** will prompt; accept all.
 
-On model size: the Whisper add-on's model is a dropdown. Start with the
+On model size: the Whisper app's model is a dropdown. Start with the
 smallest (`tiny`/`tiny-int8`) and move up only if your hub keeps pace —
 which size is *usable* on your Pi is something you find out on your Pi,
 not something this page can promise.
@@ -102,7 +102,7 @@ not something this page can promise.
 
 - **Conversation agent:** Home Assistant (the built-in, local agent — this
   is what routes sentences to the SecuraCV intents).
-- **Speech-to-text:** the Whisper add-on.
+- **Speech-to-text:** the Whisper app.
 - **Text-to-speech:** Piper.
 - **Wake word:** leave off for push-to-talk; see §4 to opt in.
 
@@ -110,7 +110,7 @@ not something this page can promise.
 
 Copy [`voice_sentences_en.yaml`](voice_sentences_en.yaml) from this repo to
 the hub as `/config/custom_sentences/en/securacv.yaml` (create the folders
-if they don't exist — the **File editor** or **Samba** add-on both work),
+if they don't exist — the **File editor** or **Samba** app both work),
 then restart Home Assistant.
 
 </details>
@@ -241,7 +241,7 @@ nothing is watched by design everywhere else.
 
 **Honest status: you mint this one yourself, today.** No pre-trained
 "Hey Canary" model exists yet in the community wake-word collection, and
-the openWakeWord add-on ships with well-tested built-ins (e.g. "Okay
+the openWakeWord app ships with well-tested built-ins (e.g. "Okay
 Nabu") that work now. To mint the brand wake word:
 
 1. Train a model with the [openWakeWord training notebook](https://www.home-assistant.io/voice_control/create_wake_word/)
@@ -273,7 +273,7 @@ rather than not at all:
   Canaries and the mic-free promise of every other surface are untouched
   either way.
 
-Enable it by assigning the openWakeWord add-on's wake word (e.g. "okay
+Enable it by assigning the openWakeWord app's wake word (e.g. "okay
 nabu") to your satellite in the assistant's settings.
 
 ## Which microphone — the short list
@@ -287,7 +287,7 @@ the time of writing — verify before buying, they drift.
 |---|---|---|
 | **Seeed ReSpeaker Lite Voice Assistant Kit** (~$25–40) | 2-mic array + XMOS XU-316 audio DSP with a pre-soldered **XIAO ESP32-S3**, optional speaker + enclosure | **The recommended satellite.** Runs ESPHome as an Assist satellite with the wake word on-device, so audio streams to the hub only after the wake fires — the cleanest possible fit for the contract's rule 1. The DSP does echo cancellation and noise suppression in hardware. And it's the same XIAO ESP32-S3 family half this project's boards already use — a board we know. |
 | **Home Assistant Voice Preview Edition** (~$59) | The first-party box: XMOS DSP, dual mics, mute switch | The zero-build alternative. Buy it if you'd rather not flash anything; it exists to be exactly this satellite. |
-| **Seeed ReSpeaker XVF3800 USB 4-Mic Array** (~$35–60) | Circular 4-mic array, XMOS XVF3800: AEC, beamforming, 360° far-field to ~5 m, **plain USB audio device** | The hub-attached option. Because it enumerates as standard USB audio, it works on Home Assistant OS with no drivers — pair it with the **Assist Satellite** add-on (the successor to the deprecated Assist Microphone / Wyoming Satellite stack) and the hub itself becomes the room's listening device. Only right if the Pi actually sits in the living space (a hub in a closet can't hear you), and note the transparency shift: the wake-word honesty section above then applies to the hub. |
+| **Seeed ReSpeaker XVF3800 USB 4-Mic Array** (~$35–60) | Circular 4-mic array, XMOS XVF3800: AEC, beamforming, 360° far-field to ~5 m, **plain USB audio device** | The hub-attached option. Because it enumerates as standard USB audio, it works on Home Assistant OS with no drivers — pair it with the **Assist Satellite** app (the successor to the deprecated Assist Microphone / Wyoming Satellite stack) and the hub itself becomes the room's listening device. Only right if the Pi actually sits in the living space (a hub in a closet can't hear you), and note the transparency shift: the wake-word honesty section above then applies to the hub. |
 | **ReSpeaker 2-Mics Pi HAT (v1/v2)** (~$13) | GPIO HAT for the Pi | **Avoid on Home Assistant OS.** The `seeed-voicecard` kernel driver is not in the HAOS build and the request to add it has been open for years — the cheap HAT is the classic trap. It's fine on a *separate* Pi Zero satellite running Raspberry Pi OS + Wyoming, but that's a harder build than the ReSpeaker Lite for similar money. |
 
 Two rules of thumb fall out: **USB beats HAT on Home Assistant OS** (no
@@ -316,7 +316,7 @@ transcripts transient, queries only, and never a Canary.
 |---|---|
 | "Sorry, I couldn't understand that" | Sentences file not at `/config/custom_sentences/en/securacv.yaml`, or HA not restarted since copying it. |
 | Sentence matches but errors | SecuraCV integration not loaded, or an older version without `intent.py` — update the integration. |
-| Answers are slow | Whisper model too big for the hub — drop a size in the add-on config. |
+| Answers are slow | Whisper model too big for the hub — drop a size in the app config. |
 | Wake word never fires | openWakeWord not assigned to the satellite, or the satellite has no mic path configured. |
 
 ## How this page stays true
