@@ -232,6 +232,113 @@ pub async fn fleet_device_call(
     Ok(json!({ "httpStatus": status, "body": body }))
 }
 
+/// Ask a device to prove it holds its identity key, by signing a nonce we
+/// mint right now. Reuses the same private-host guard as every other device
+/// call — this must never reach off the LAN.
+///
+/// Returns `{ proof, detail, seenFp }`; `proof` is one of `answered`,
+/// `wrong-key`, `bad-signature`, `unavailable`.
+///
+/// The caller SHOWS this and gates nothing on it. See whoami.rs for why: the
+/// proof is relay-able, so treating it as authorization would authenticate
+/// the key while saying nothing about the socket that receives a token.
+#[tauri::command]
+pub async fn device_whoami(
+    base: String,
+    device_id: String,
+    expected_fp: String,
+) -> Result<Value, String> {
+    if !base_ok(&base) {
+        return Err("device address must be a local/private host".into());
+    }
+    // 32 hex chars of OS randomness: inside the firmware's 16-64 gate, and
+    // far past any birthday concern for a per-session challenge.
+    let mut raw = [0u8; 16];
+    getrandom::getrandom(&mut raw).map_err(|e| format!("no system randomness: {e}"))?;
+    let nonce: String = raw.iter().map(|b| format!("{b:02x}")).collect();
+    debug_assert!(crate::whoami::nonce_ok(&nonce));
+
+    let url = format!("{}/enroll.json?nonce={}", base.trim_end_matches('/'), nonce);
+    let client = reqwest::Client::builder()
+        .user_agent("SecuraCV-Flasher")
+        .timeout(std::time::Duration::from_secs(6))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = match client.get(&url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(json!({
+                "proof": "unavailable",
+                "detail": format!("couldn't reach the device: {e}"),
+            }))
+        }
+    };
+    let status = resp.status().as_u16();
+    if status == 404 {
+        // Older firmware without the endpoint. Absence of proof, and it must
+        // read as exactly that rather than as a failed check.
+        return Ok(json!({
+            "proof": "unavailable",
+            "detail": "this firmware doesn't offer the challenge endpoint yet",
+        }));
+    }
+    if status != 200 {
+        return Ok(json!({
+            "proof": "unavailable",
+            "detail": format!("the device answered HTTP {status}"),
+        }));
+    }
+    let body: Value = match resp.json().await {
+        Ok(b) => b,
+        Err(e) => {
+            return Ok(json!({
+                "proof": "unavailable",
+                "detail": format!("the device's answer wasn't JSON: {e}"),
+            }))
+        }
+    };
+    let field = |k: &str| body.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    // Bind to the device_id WE expected, not the one the answer claims —
+    // otherwise a responder could sign for whatever identity it liked and
+    // the canonical would happily agree with it.
+    let verdict = crate::whoami::check_answer(
+        &device_id,
+        &nonce,
+        &field("pubkey"),
+        &field("sig_hex"),
+        &expected_fp,
+    );
+    let seen_fp = match &verdict {
+        crate::whoami::Proof::WrongKey { seen_fp, .. } => seen_fp.clone(),
+        _ => {
+            let pk = field("pubkey");
+            if pk.len() == 64 {
+                crate::whoami::pubkey_fingerprint(
+                    &(0..64)
+                        .step_by(2)
+                        .filter_map(|i| u8::from_str_radix(&pk[i..i + 2], 16).ok())
+                        .collect::<Vec<u8>>(),
+                )
+            } else {
+                String::new()
+            }
+        }
+    };
+    let detail = match &verdict {
+        crate::whoami::Proof::Answered => {
+            "answered a fresh challenge with its identity key".to_string()
+        }
+        crate::whoami::Proof::WrongKey { seen_fp, expected_fp } => format!(
+            "a DIFFERENT key answered for this device id (saw {seen_fp}, expected {expected_fp})"
+        ),
+        crate::whoami::Proof::BadSignature => {
+            "the answer did not verify against the key it presented".to_string()
+        }
+        crate::whoami::Proof::Unavailable(why) => why.clone(),
+    };
+    Ok(json!({ "proof": verdict.as_str(), "detail": detail, "seenFp": seen_fp }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

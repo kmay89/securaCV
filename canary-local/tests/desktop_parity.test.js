@@ -619,6 +619,64 @@ test("parity wave 4a: the counterfeit-capacity check the desktop got for free", 
     "the MAC finding must reach the user, not stop at the backend");
 });
 
+test("the identity challenge is shown, never used as authorization", () => {
+  // The fleet book asks each device to sign a fresh nonce and displays the
+  // answer. It must NOT gate anything on it: the proof is relay-able (a peer
+  // can forward a genuine device's answer), so treating it as permission
+  // would authenticate the KEY while saying nothing about the SOCKET that
+  // receives a bearer token — worse than the honest "unverified" it replaces.
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const whoamiRs = read(join(ROOT, "desktop/src-tauri/src/whoami.rs"));
+  const fleetRs = read(join(ROOT, "desktop/src-tauri/src/fleet.rs"));
+  const libRsSrc = read(join(ROOT, "desktop/src-tauri/src/lib.rs"));
+
+  // It exists, and it is actually CALLED and REGISTERED — the mac_checks
+  // lesson from #1510: a tested function nothing invokes is decoration.
+  assert.match(whoamiRs, /pub fn check_answer/, "the verifier is gone");
+  assert.match(fleetRs, /pub async fn device_whoami/, "the challenge command is gone");
+  assert.match(libRsSrc, /fleet::device_whoami/, "the command is never registered");
+  assert.match(appJs, /device_whoami/, "the frontend never asks for a proof");
+  assert.match(appJs, /probeIdentity/, "the challenge is never run");
+
+  // The canonical and the nonce gate must match the firmware exactly, or the
+  // verifier checks a string the device never signed.
+  // The firmware COMPOSES the canonical from constants, so the joined
+  // literal never appears in its source — check the parts and, crucially,
+  // the field ORDER. device_id before nonce: swap them and every signature
+  // still verifies against itself while agreeing with nothing real.
+  const wapSig = read(join(ROOT,
+    "firmware/projects/canary-wap/arduino/canary_wap/device_signature.cpp"));
+  const wapHdr = read(join(ROOT,
+    "firmware/projects/canary-wap/arduino/canary_wap/device_signature.h"));
+  assert.ok(whoamiRs.includes("securacv-canary-sig|v1|whoami|{device_id}|{nonce}"),
+    "desktop canonical drifted — it must be prefix|v1|whoami|<device_id>|<nonce>");
+  assert.match(wapHdr, /SIG_PREFIX\s*=\s*"securacv-canary-sig"/,
+    "firmware signing prefix moved");
+  assert.match(wapHdr, /SCHEMA_V\s*=\s*1\b/, "firmware schema version moved");
+  assert.match(wapSig, /"%s\|v%d\|whoami\|%s\|%s"/,
+    "firmware whoami canonical shape moved");
+  assert.match(wapSig, /whoami\|%s\|%s",\s*\n?\s*SIG_PREFIX, SCHEMA_V,\s*\n?\s*device_id/,
+    "firmware must sign device_id BEFORE nonce, as the desktop verifier expects");
+
+  // The fingerprint derivation includes the 0x00 domain separator. Dropping
+  // it still compiles and still looks right, and fails against every real
+  // board — so it is asserted rather than assumed.
+  assert.match(whoamiRs, /update\(\[0x00u8\]\)/,
+    "the fingerprint must hash domain || 0x00 || pubkey, as the firmware does");
+
+  // A valid signature from an unexpected key is not proof.
+  assert.match(whoamiRs, /WrongKey/, "a foreign key answering must be its own verdict");
+
+  // And the load-bearing negative: no gating. Identify/Update must not be
+  // conditioned on the proof.
+  assert.ok(!/proof\s*===\s*"answered"\s*&&[^\n]*canTalk/.test(appJs),
+    "the identity proof must not gate device actions");
+  assert.ok(!/canTalk\s*&&[^\n]*proof\s*===\s*"answered"/.test(appJs),
+    "the identity proof must not gate device actions");
+  assert.match(appJs, /SHOWN and never|never\s*\n?\s*\/\/ gating|and never gating/i,
+    "the no-gating rule must be stated where the next reader will change it");
+});
+
 test("device API token: both flashers mint the same credential shape and seed the same keys", async () => {
   // The credential that makes the desktop fleet book (and any future browser
   // surface) able to talk to a board it flashed: "cv_" + 32 base62 chars,
