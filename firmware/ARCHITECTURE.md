@@ -149,7 +149,7 @@ and one static-analysis leg (`pio check --fail-on-defect=medium`).
    comment block at the top of `firmware.yml`.
 
 The manifest fields (`pip_extras`, `isolated_core_envs`, `pre_step`,
-`size_guard`) cover the per-flavor quirks that previously required hand-written
+`size_guards`) cover the per-flavor quirks that previously required hand-written
 jobs; extend the workflow's named `pre_step` hooks rather than adding
 flavor-specific jobs.
 

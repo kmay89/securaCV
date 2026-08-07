@@ -38,8 +38,8 @@ APP_SUBTYPE_NAME = {0x00: "factory", 0x10: "ota_0", 0x11: "ota_1"}
 PARTITION_TABLE_OFFSET = 0x8000   # standard on all ESP32 variants
 
 
-def parse_app_offset(partitions_bin: bytes) -> tuple[int, str]:
-    """Return (offset, label) of the app partition to flash the app into.
+def parse_app_offset(partitions_bin: bytes) -> tuple[int, int, str]:
+    """Return (offset, size, label) of the app partition to flash the app into.
 
     Prefers factory, then ota_0/app0, then the first app partition — the same
     order the browser reader uses to decide which slot to read a version from.
@@ -54,15 +54,15 @@ def parse_app_offset(partitions_bin: bytes) -> tuple[int, str]:
         (offset, size) = struct.unpack_from("<II", partitions_bin, o + 4)
         label = partitions_bin[o + 12:o + 28].split(b"\x00")[0].decode("ascii", "replace")
         if ptype == APP_TYPE:
-            apps.append((subtype, offset, label))
+            apps.append((subtype, offset, size, label))
     if not apps:
         raise SystemExit("make_factory: no app partition found in partitions.bin")
     for want in (0x00, 0x10):  # factory, then ota_0
-        for subtype, offset, label in apps:
+        for subtype, offset, size, label in apps:
             if subtype == want:
-                return offset, label or APP_SUBTYPE_NAME.get(want, "app")
-    subtype, offset, label = apps[0]
-    return offset, label or "app"
+                return offset, size, label or APP_SUBTYPE_NAME.get(want, "app")
+    subtype, offset, size, label = apps[0]
+    return offset, size, label or "app"
 
 
 def main() -> None:
@@ -100,7 +100,20 @@ def main() -> None:
         app_off = int(args.app_offset, 0)
         app_label = "override"
     else:
-        app_off, app_label = parse_app_offset(partitions.read_bytes())
+        app_off, app_size, app_label = parse_app_offset(partitions.read_bytes())
+        # The slot the bootloader will read from must actually hold the app.
+        # fw-v2.4.6 shipped a nightstand-c6 factory image whose app was 5 KB
+        # bigger than its 0x1E0000 slot — the flasher wrote it faithfully and
+        # every board it touched boot-looped on "Image length … doesn't fit in
+        # partition length …". A factory image that cannot boot must never be
+        # merged, let alone published; failing here drops just this variant
+        # (build_flash_manifest.py treats it as a per-variant hiccup).
+        actual = app.stat().st_size
+        if actual > app_size:
+            raise SystemExit(
+                f"make_factory: {app} is {actual} bytes but the {app_label} slot at "
+                f"{hex(app_off)} holds only {app_size} — this image could never boot. "
+                f"Trim features or grow the partition table (firmware/PARTITIONS.md).")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
