@@ -21,6 +21,7 @@
 #include "espnow_peer.h"
 #include "espnow_peer_logic.h"  // pure decode (shared with host test)
 #include "fleet_instance.h"
+#include "pair_demo_ui.h"  // First Light demo tap (inert unless FEATURE_PAIR_DEMO)
 #include "log.h"
 
 namespace canary {
@@ -114,6 +115,11 @@ void espnow_loop(uint32_t now) {
     // these frames used to be reported as "(ble)", which they never were.
     canary::fleet::the_fleet().on_beacon(m.fp4, m.payload, m.have_status, now,
                                          canary::fleet::Via::Mesh);
+    // The First Light demo hears every frame UN-deduped: trigger timing is
+    // the demo's whole point, and the fleet model's 60 s semantic dedupe
+    // would hide exactly the edges it exists to show.
+    canary::ui::pair_demo_note_beacon(m.fp4, m.payload, m.have_status, now,
+                                      canary::fleet::Via::Mesh);
   }
 }
 

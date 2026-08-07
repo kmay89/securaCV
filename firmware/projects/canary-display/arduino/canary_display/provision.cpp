@@ -35,6 +35,27 @@
 #include "provision_core.h"
 #include "runtime_config.h"
 #include "wifi_join_policy.h"  // shared join-failure vocabulary (common/)
+#if defined(FEATURE_ESPNOW) && FEATURE_ESPNOW
+#include "fleet_beacon_espnow.h"  // portal channel = fleet fallback
+#endif
+#if defined(FEATURE_PAIR_DEMO) && FEATURE_PAIR_DEMO && \
+    defined(FEATURE_ESPNOW) && FEATURE_ESPNOW
+// The First Light boxed-pair moment lives HERE, not only in loop(): a
+// factory-fresh glass spends its whole life inside this portal's for(;;),
+// so if the demo could only open from the main loop it would be dead code
+// in the exact scenario it exists for. The portal starts the ESP-NOW
+// listener (the AP already pins the radio to the fleet fallback channel,
+// above), drains it, and lets the demo card take the glass; the wizard
+// keeps serving the phone underneath and takes the glass back when the
+// card closes — or the moment provisioning completes.
+#include "espnow_peer.h"
+#include "pair_demo_ui.h"
+#include "boot_button.h"
+#include "pins.h"  // BOOT_BUTTON_PIN — the card's grammar needs the button
+#define CD_PORTAL_PAIR_DEMO 1
+#else
+#define CD_PORTAL_PAIR_DEMO 0
+#endif
 #include "chime.h"
 #include "display.h"
 #include "onboard_ui.h"
@@ -476,6 +497,14 @@ bool provision_needed() {
   return canary::cfg::wifi_is_placeholder();
 }
 
+bool provision_join_in_flight() {
+  // St::Testing is the window where WiFi.begin() owns the shared radio for a
+  // candidate network — the channel is that association's, and nothing else
+  // (the pair demo's fallback parking, above all) may retune it. g is nulled
+  // when the portal exits, so this is false whenever the wizard isn't up.
+  return g && g->st == St::Testing;
+}
+
 void provision_run(bool glass_ok) {
   Ctx ctx;
   g = &ctx;
@@ -547,18 +576,31 @@ void provision_run(bool glass_ok) {
   canary::dbg_serial().printf("Pre-AP sweep done: %d network(s) cached\n",
                               g->scan_n);
 
-  // Raise the AP. Channel 1, max 1 client (hardening), WPA2. The radio's
-  // AP bring-up (TX calibration burst) is the steepest current spike of
-  // the whole boot, and on the 7" glass it lands on top of a full-day
-  // backlight from one USB feed — dip the light through the raise so a
-  // marginal supply never browns out mid-wizard. The Hello->Join scene
-  // change masks the dip entirely.
+  // Raise the AP. Max 1 client (hardening), WPA2. The radio's AP bring-up
+  // (TX calibration burst) is the steepest current spike of the whole boot,
+  // and on the 7" glass it lands on top of a full-day backlight from one
+  // USB feed — dip the light through the raise so a marginal supply never
+  // browns out mid-wizard. The Hello->Join scene change masks the dip
+  // entirely.
+  //
+  // Channel: 1 by default. An ESP-NOW-listening build parks the portal on
+  // the fleet fallback channel instead — the ESP-NOW receiver hears only
+  // the channel this AP pins the radio to, and a factory-fresh Vision
+  // parks its beacon on that fallback (fleet_beacon_espnow.h), so channel
+  // 1 here would make the boxed pair deaf to each other exactly when both
+  // are unprovisioned. Phones scan every channel for an SSID; they do not
+  // care which one the portal sits on.
+#if defined(FEATURE_ESPNOW) && FEATURE_ESPNOW
+  constexpr int kApChannel = FLEET_BEACON_ESPNOW_FALLBACK_CHANNEL;
+#else
+  constexpr int kApChannel = 1;
+#endif
   if (s_glass) canary::hal::backlight_set(CD_BRIGHT_AMBIENT);
   WiFi.mode(WIFI_AP_STA);
-  WiFi.softAP(ap_ssid, ap_pass, /*channel=*/1, /*hidden=*/0, /*max_conn=*/1);
+  WiFi.softAP(ap_ssid, ap_pass, kApChannel, /*hidden=*/0, /*max_conn=*/1);
   if (s_glass) canary::hal::backlight_set(CD_BRIGHT_DAY);
-  canary::dbg_serial().printf("AP up: \"%s\" on channel 1 - portal live\n",
-                              ap_ssid);
+  canary::dbg_serial().printf("AP up: \"%s\" on channel %d - portal live\n",
+                              ap_ssid, kApChannel);
   ctx.dns.begin(53);
 
   ctx.server.on("/", HTTP_GET, send_portal);
@@ -568,6 +610,12 @@ void provision_run(bool glass_ok) {
   ctx.server.onNotFound(handle_not_found);
   ctx.server.begin();
 
+#if CD_PORTAL_PAIR_DEMO
+  // Listen for a boxed sibling from the first portal pass. Idempotent —
+  // setup()'s own espnow_begin() after provisioning is then a no-op.
+  canary::net::espnow_begin();
+#endif
+
   enter(St::Waiting, millis());
   ui_stage(canary::ui::ObStage::Join, nullptr);
 
@@ -576,6 +624,42 @@ void provision_run(bool glass_ok) {
     wdt_feed();
     dns_pump();
     ctx.server.handleClient();
+
+#if CD_PORTAL_PAIR_DEMO
+    // The demo card over the wizard: drain the router-free band, let the
+    // auto-open mailbox fire (unprovisioned + ESP-NOW beacon = a boxed
+    // Vision is on the desk), and while the card is up give it the button
+    // grammar the main loop would. The portal's own machinery keeps
+    // running underneath the whole time.
+    canary::net::espnow_loop(now);
+    canary::ui::pair_demo_ui_tick(now);
+    if (canary::ui::pair_demo_take_auto_open()) {
+      canary::ui::pair_demo_ui_open(now);
+      if (s_glass && ctx.dimmed) {
+        canary::hal::backlight_set(CD_BRIGHT_DAY);
+        ctx.dimmed = false;
+      }
+    }
+#if defined(BOOT_BUTTON_PIN) && (BOOT_BUTTON_PIN >= 0)
+    if (canary::ui::pair_demo_ui_active()) {
+      static canary::io::ButtonClassifier s_demo_btn;
+      const bool pressed = digitalRead(BOOT_BUTTON_PIN) == BOOT_BUTTON_ACTIVE;
+      switch (s_demo_btn.step(pressed, now)) {
+        case canary::io::ButtonEvent::Short:
+          canary::ui::pair_demo_ui_button_short(now);
+          break;
+        case canary::io::ButtonEvent::Double:
+          canary::ui::pair_demo_ui_button_double(now);
+          break;
+        case canary::io::ButtonEvent::Long:
+          canary::ui::pair_demo_ui_close();
+          break;
+        default:
+          break;
+      }
+    }
+#endif
+#endif  // CD_PORTAL_PAIR_DEMO
 
     const int stations = WiFi.softAPgetStationNum();
 
@@ -592,6 +676,10 @@ void provision_run(bool glass_ok) {
             ctx.dimmed = false;
           }
         } else if (s_glass && !ctx.dimmed &&
+#if CD_PORTAL_PAIR_DEMO
+                   // A live demo card is being WATCHED — never dim under it.
+                   !canary::ui::pair_demo_ui_active() &&
+#endif
                    (int32_t)(now - ctx.st_since) > (int32_t)IDLE_DIM_MS) {
           // Unattended for a long while: politeness dim. Any phone joining
           // (or a touch) restores full brightness — never a dead end.
@@ -682,6 +770,12 @@ void provision_run(bool glass_ok) {
         if (acked_beat || cap) {
           ctx.server.stop();
           ctx.dns.stop();
+#if CD_PORTAL_PAIR_DEMO
+          // Provisioning outranks the demo: hand the glass back to the
+          // wizard's finish scene while its screen still exists (the
+          // card's close path returns to the screen it opened over).
+          canary::ui::pair_demo_ui_close();
+#endif
           WiFi.softAPdisconnect(/*wifioff=*/true);
           WiFi.mode(WIFI_STA);
           if (s_glass) {

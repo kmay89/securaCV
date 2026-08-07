@@ -39,4 +39,11 @@ bool provision_needed();
 // sheet, and join flow all still work — the SSID/password print on serial.
 void provision_run(bool glass_ok);
 
+// True while the portal is actively testing a candidate network (the join's
+// WiFi.begin() association is in flight). The shared radio belongs to that
+// join for the duration — nothing may retune its channel. Always false when
+// the portal isn't running. Defined only in FEATURE_ONBOARDING builds, like
+// the rest of this surface — gate the call site.
+bool provision_join_in_flight();
+
 }  // namespace canary::net
