@@ -8,6 +8,9 @@ import SwiftUI
 #if canImport(UIKit)
 import UIKit
 #endif
+#if canImport(CloudKit)
+import CloudKit
+#endif
 
 @main
 struct SecuraCVApp: App {
@@ -64,6 +67,19 @@ final class PushDelegate: NSObject, UIApplicationDelegate {
             await AwayPush.shared.noteRegistrationFailure()
         }
     }
+
+    #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
+    /// Somebody tapped an invitation to help watch a fleet. iOS hands us the
+    /// share metadata here and nowhere else — there is no URL to parse and no
+    /// link of ours to handle, because the whole invitation flow belongs to
+    /// Apple. Accepting is what turns this device into a participant.
+    func application(_ application: UIApplication,
+                     userDidAcceptCloudKitShareWith metadata: CKShare.Metadata) {
+        Task { @MainActor in
+            await HouseholdShare.shared.acceptInvitation(metadata)
+        }
+    }
+    #endif
 
     /// A wake landed. The NSE already composed what the user sees; our job is
     /// to make the app's own state true — pull the fleet so that opening the

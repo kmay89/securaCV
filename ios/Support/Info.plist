@@ -49,6 +49,14 @@
   <key>NSMicrophoneUsageDescription</key>
   <string>Talk through a Canary that supports two-way audio. The mic is used only while you're talking.</string>
 
+  <!-- CloudKit sharing: without this key iOS opens an invitation link in
+       Safari instead of handing it to the app, so "someone else can be told
+       if nobody answers" would end at a web page. It only declares that the
+       app can ACCEPT a share; what a share may contain is decided in
+       HouseholdRelay (one zone, escalations only). -->
+  <key>CKSharingSupported</key>
+  <true/>
+
   <!-- Local notifications + background delivery for alerts and heartbeat. -->
   <key>UIBackgroundModes</key>
   <array>

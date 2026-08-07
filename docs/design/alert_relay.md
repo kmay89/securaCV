@@ -14,6 +14,18 @@ ntfy lane ships without it and the per-sink postures are: ntfy = coarse
 owner-facing sentence, iPhone lane = contentless `{sev}` wake (the stricter
 contract from the iPhone RFC §5).
 
+**The second-person leg is built, on a different substrate than this doc
+assumed.** "If nobody answers, tell someone else" now ships in the iPhone app
+over CloudKit sharing (`docs/design/alerts_event_history.md` §6,
+`cloudkit_backend.md` §6.5): the owner invites people through Apple's own
+sharing sheet and their devices subscribe to one shared zone holding nothing
+but "an alarm wasn't answered". For an Apple household that beats every option
+below — no server, no account, no third party, and the participant's push is
+worded by the participant's own device. What this doc still owns is everyone
+that route cannot reach: a household member on Android, a neighbor, a channel
+the owner picked themselves, and the outage path in §5 where the house has no
+internet at all.
+
 This scopes *how a Canary tells you something while you're
 away* without breaking the local-first, own-nothing promise. It builds directly on the invariant the
 [iPhone companion RFC](./iphone_companion_app.md) §5 already set: **the only acceptable cloud touch is

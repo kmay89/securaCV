@@ -108,8 +108,18 @@ What never goes in: footage, frames, anything reversible to them, event content,
 precise times, or any key or token. Those are Invariants I and III, and they are
 not negotiable for convenience.
 
+There is now a third thing, and it is the only one another person can see. If
+you ask someone to be told when an alarm of yours goes **unanswered**, they are
+invited to one folder in your iCloud that holds nothing but "an alarm wasn't
+answered" — and the folder is the boundary, so they cannot see your Canaries,
+their names, your history, or any footage. Not because we filter it: because
+that is all they were invited to. Their phone writes the words they read; even
+the sentence never travels. You invite people through Apple's own sharing
+sheet, and removing them is one tap.
+
 It's opt-in and reversible — away alerts stay off until you arm an "Anywhere"
-rule, and turning them off deletes the subscription outright. Not signed into
+rule, and turning them off deletes the subscription outright; nobody else is
+ever told anything until you invite them. Not signed into
 iCloud at all? The app works locally; iCloud is convenience, never a gate.
 → [iCloud as the backend we don't have](design/cloudkit_backend.md), which also
 argues the parts that are imperfect rather than only the parts that are good

@@ -91,6 +91,18 @@ final class FleetStore: ObservableObject {
         alerts.onMute = { [weak self] id in self?.mute(id) }
         alerts.onAck = { [weak self] id in self?.acknowledgeAlert(for: id) }
 
+        // Someone who installs this app ONLY to help watch a relative's fleet
+        // pairs nothing, so the launch-time "you have devices, let's ask about
+        // notifications" moment never comes for them — and their household
+        // alerts would be suppressed while the owner's screen said they were
+        // being told. Hand the participant path the app's one authorization
+        // request so it can ask at the moment they accept.
+        HouseholdShare.shared.requestNotificationAuthorization = { [weak self] in
+            guard let self else { return false }
+            if !self.alerts.authorized { await self.alerts.requestAuthorization() }
+            return self.alerts.authorized
+        }
+
         // The news-dedupe ledgers are rebuilt from the persisted history, so
         // an alarm that outlives a relaunch stays ONE alert: still on the
         // tab, still open, but never re-posted as if the app had just found
@@ -139,6 +151,17 @@ final class FleetStore: ObservableObject {
                 await AwayPush.shared.enable()
                 await AwayPush.shared.sweepOldWakes()
             }
+        }
+        // The household legs, re-armed the same way and for the same reason.
+        // Both directions have to be asked rather than remembered: a device
+        // that ACCEPTED an invitation must re-subscribe after a reinstall,
+        // and an owner only ever learns that somebody joined — or left — by
+        // looking. Nothing here creates a share; a household nobody was
+        // invited to stays a zone that was never made.
+        Task {
+            await HouseholdShare.shared.refreshParticipation()
+            await HouseholdShare.shared.refreshMembers()
+            await HouseholdShare.shared.sweepOldEscalations()
         }
         recordDemoBeatIfHarmless()
         // The dead-man's-switch may only count silence it could have heard:
@@ -1059,6 +1082,28 @@ final class FleetStore: ObservableObject {
         }
         if alerts.reachesAnywhere(severity: w.effectiveSeverity) {
             AwayPush.shared.publishWake(WakeClass(witness: w))
+        }
+        // And the last rung: somebody who is not the owner. Asked as its own
+        // question, in its own file, because reaching a second person is the
+        // highest-cost thing this app can do with an alert — `escalated: true`
+        // is this call site's statement that the alarm already went
+        // unanswered, and HouseholdRelay independently refuses anything below
+        // the top tier rather than trusting that flag.
+        //
+        // Note what is NOT gated on here: the away-reach rule, the Focus, the
+        // quiet hours. Those govern whether THIS user is interrupted. A
+        // household member is a different person with their own phone and
+        // their own settings, and the owner's quiet hours are not theirs.
+        if HouseholdRelay.mayReachHousehold(severity: w.displaySeverity,
+                                            integrityFailed: w.badge == .failed,
+                                            escalated: true) {
+            // Named after the OCCURRENCE, so the owner's iPad escalating the
+            // same alarm writes the same record and its write loses — one
+            // buzz on a household phone, not one per device the owner owns.
+            HouseholdShare.shared.publishEscalation(
+                WakeClass(witness: w),
+                occurrenceKey: HouseholdRelay.occurrenceRecordName(recordID: recordID,
+                                                                   alarmBucket: record.lastBucket))
         }
     }
 
