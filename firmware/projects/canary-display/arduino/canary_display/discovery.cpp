@@ -101,9 +101,13 @@ bool discovery_init(const char* device_id, const char* device_type,
   }
   s_up = true;
 
-  // Presence advert. The service port is a formality (nothing listens);
-  // the payload is the TXT set.
-  MDNS.addService(SVC, PROTO, 1);
+  // Presence advert. Unlike vision/sense (whose port 1 is a formality —
+  // they run no server), a display DOES listen: glass_web serves the live
+  // mirror, help, and /api/fleet on :80, unconditionally (main.cpp starts
+  // it right after provisioning). Advertise the REAL port so a fleet
+  // browser (the Flasher's fleet book, the iPhone app) knows this device
+  // answers HTTP without a guess-and-probe round.
+  MDNS.addService(SVC, PROTO, 80);
   // Canonical fleet TXT identity — the same vocabulary the witness
   // variants (canary-wap/vision/sense) advertise, so one browser can
   // label every SecuraCV advertiser without special-casing displays.

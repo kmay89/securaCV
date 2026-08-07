@@ -17,6 +17,23 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.4.1 — 2026-08-07
+
+- **The fleet book now finds your displays.** Three fixes in one: newer
+  display firmware announces its real web port instead of the "nothing
+  listens here" formality; the app probes displays already in the
+  field (which keep the old announcement until updated) and recognizes
+  their glass page anyway; and network presence is now sticky — a device
+  that misses one scan window on busy Wi-Fi no longer flickers offline.
+  Every web-capable device's row also gains an **Open** button straight to
+  its own page: the display's live mirror, the wap's dashboard.
+- **The Flash-a-Canary page calmed down.** Steps you haven't reached yet
+  show as a heading, not a wall of text — each one reveals itself when it
+  becomes real. The new-board safety brief folds to one line (every word
+  still inside, one click away, and the wipe-on-first-contact default is
+  unchanged), and the serial monitor's explainer tucked itself away too.
+  Nothing was removed — it just stopped arriving all at once.
+
 ## 0.4.0 — 2026-08-06
 
 - **Type your home's setup once — every later flash fills itself in.** The
