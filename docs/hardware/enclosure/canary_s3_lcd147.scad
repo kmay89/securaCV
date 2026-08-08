@@ -95,6 +95,8 @@ use <canary_mark_lib.scad>  // the house mark: bird + wordmark lockup
 
 /* [What to render] */
 part = "all";   // ["bezel","back","light","all","exploded","palette","fil_body","fil_accent","fil_light","fit_section"]
+// board build: "none" = as Waveshare ships it (bare pads), "male" = GPIO headers soldered pointing DOWN, away from the glass
+headers = "none";   // ["none","male"]
 
 /* [Board] — ESP32-S3-LCD-1.47, from the Waveshare drawing (mm) */
 board_l = 36.37;   // PCB long axis (Y), EXCLUDING the USB-A plug
@@ -116,6 +118,31 @@ lcm_w = 19.39;     // LCD module outline, short
 // is the difference between snug and chunky.
 stack_total = 8.2;   // MEASURED — glass front to board back
 back_stack = stack_total - lcd_rise - pcb_t;   // derived, not guessed
+
+/* [Headers] — the "male" build only */
+// Waveshare sell this board bare and advertise "expansion of multiple
+// peripherals via GPIO header": two 2.54 mm rows of pads down the long edges
+// (5V/GND/3V3/GP1-GP6 on one side, TXD/RXD/GP13-GP7 on the other). Solder
+// them and the board grows a second stack BEHIND it, which is a different
+// case — the same way the C3 sibling's "male" build is a different case from
+// its "pillars" one.
+//
+// The plug end does NOT move. That is the whole reason this build is cheap
+// here: headers add depth behind the PCB, and the USB-A plug's insertion
+// length is measured along the board's long axis, so `usb_free` and the drop
+// collar are untouched. The case gets deeper, not longer.
+//
+// ⚠️ BOTH NUMBERS ARE MEASURE ITEMS, and one of them has already bitten this
+//    project once. hdr_drop is carried over from the C3/C6 file, where 8.8 is
+//    FIT-TESTED against the same 2.54 mm down-facing rows on the same PCB
+//    outline — a defensible starting point, not a measurement of this board.
+//    hdr_inset is the one to check first: the C3 file still lists 1.27 and
+//    2.00 as unresolved drawing candidates, and the rib assert below is
+//    sensitive to which it is.
+hdr_drop  = 8.8;   // cavity depth below the PCB back swallowing base + pins —
+                   // MEASURE (8.8 is the C3/C6's fit-tested figure)
+hdr_inset = 1.6;   // PCB long edge → header row centerline — MEASURE
+hdr_pin_w = 1.2;   // width the solder fillet + pin occupies across the row
 
 /* [USB-A plug] — the standard, plus what the board does with it */
 // USB-A series-A plug shell, per the USB 2.0 mechanical drawing. These are
@@ -344,6 +371,13 @@ face_t = 1.0;        // bezel face over the glass border
 back_t = 2.0;        // rear plate
 r_out = 3.2;         // outer corner radius
 preload = 0.25;      // compliant squeeze on the PCB (rib crush), not a clamp
+// Where the compliant ribs land, measured in from the cavity wall. A knob
+// rather than a literal because the headered build is what decides whether it
+// is still free: the pin rows run down the long edges, and the rib has to
+// stand INBOARD of them. The assert in the derived block is what checks it,
+// and this is the number it tells you to change.
+rib_inset = 3.2;
+rib_w = 1.2;         // rib thickness across the board — the crushing face
 
 /* [Tolerances] */
 tol_slide = 0.20;    // board into its cavity
@@ -364,7 +398,13 @@ xo = xc + 2*wall;
 yo = yc + 2*wall;
 r_in = max(0.6, r_out - wall);
 
-cav_d = lcd_rise + pcb_t + back_stack;   // glass ledge -> back plate inner
+// The clearance behind the PCB. On the bare board that is the measured stack;
+// with headers soldered it opens out to swallow the base and the pins, and
+// max() rather than a swap is what keeps the bare figure the FLOOR — a
+// hdr_drop mis-measured shallow can only ever make the case as tight as the
+// bare one, never tighter than the hardware.
+stack_eff = (headers == "male") ? max(back_stack, hdr_drop) : back_stack;
+cav_d = lcd_rise + pcb_t + stack_eff;    // glass ledge -> back plate inner
 bez_h = face_t + cav_d;                  // bezel wall height
 
 z_pcb_front = face_t + lcd_rise;
@@ -386,6 +426,31 @@ lip_w = (lcm_w - aa_w)/2;
 // What is left of the plug once the case's plug-end wall has taken its cut.
 // USB-A needs ~12 mm; below 11 the plug will not seat in a deep receptacle
 // and the whole device is useless, so this is an assert and not a comment.
+// ── THE HEADERED BUILD'S GATES ─────────────────────────────────────────────
+// A "male" build that is no deeper than the bare one is a define that did
+// nothing, and it would render clean and print a case the pins hold open.
+assert(headers != "male" || hdr_drop > back_stack,
+       str("headers=\"male\" but hdr_drop (", hdr_drop, ") is no deeper than ",
+           "the bare board's clearance (", back_stack, ") — the pins would ",
+           "hold the back plate off. MEASURE hdr_drop."));
+// The ribs press on the PCB, and the pin rows run down the same long edges.
+// This is the collision that a comment would not have caught: at the file's
+// own hdr_inset default the ribs clear the row by 0.20 mm, and at the OTHER
+// candidate the C3 file still lists (2.00) they overlap it by 0.20. Which of
+// the two is real is unmeasured, so the arithmetic is an assert.
+rib_out = xc/2 - rib_inset + rib_w/2;              // rib's outboard face
+pin_in  = board_w/2 - hdr_inset - hdr_pin_w/2;     // pin row's inboard face
+assert(headers != "male" || rib_out <= pin_in - 0.15,
+       str("the compliant ribs reach x=", rib_out, " and the header pin row ",
+           "starts at x=", pin_in, " — the ribs would land on the pins ",
+           "instead of the board. Raise rib_inset, or MEASURE hdr_inset ",
+           "(1.27 and 2.00 are both still on the table)."));
+// A rib is a column now, not a bump. Slenderness is what turns a compliant
+// crush into something that folds over on assembly instead of pushing back.
+assert(stack_eff - preload <= 9.0 * rib_w,
+       str("the compliant ribs would stand ", stack_eff - preload, " mm on a ",
+           rib_w, " mm section — too slender to load. Widen rib_w."));
+
 usb_free = usb_proud - usb_wall;
 assert(usb_free >= 11.0,
        str("USB-A insertion length is only ", usb_free,
@@ -921,14 +986,20 @@ module back_groove() {
 // hard boss. `preload` is the interference. A rigid clamp would make every
 // drop a bending moment across the board; a rib that gives 0.25 mm turns the
 // same impact into a squeeze the PCB does not care about.
+// On the headered build these grow from 3.0 mm to 8.55 — and that is a
+// gentler preload, not a harsher one. A rib loaded along its length is an
+// axial spring, k = EA/L, so tripling the length cuts the force the same 0.25
+// mm of interference produces to a third of it. The compliance argument above
+// gets stronger with depth; what needs watching is the rib's slenderness, and
+// the assert below watches it.
 module back_ribs() {
     // Extruded a hair PAST z=0 into the plate: a rib that merely touches the
     // underside is a separate solid to CGAL, and the mesh gate counts it as
     // another part. Same reason as the hook pedestal above.
-    rib_h = back_stack - preload;
+    rib_h = stack_eff - preload;
     for (sy = [-1, 1], sx = [-1, 1])
-        translate([sx * (xc/2 - 3.2), sy * (yc/2 - 4.5), -rib_h])
-            linear_extrude(rib_h + kJoin) square([1.2, 5.0], center = true);
+        translate([sx * (xc/2 - rib_inset), sy * (yc/2 - 4.5), -rib_h])
+            linear_extrude(rib_h + kJoin) square([rib_w, 5.0], center = true);
 }
 
 // The thumb-flick ramp. The plate's far end carries a wedge that stands proud

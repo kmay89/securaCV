@@ -161,6 +161,13 @@ devstl dev_c3_147_hdr_lid.stl   canary_c3_lcd147.scad -D 'headers="male"' -D 'pa
 devstl dev_s3_147_bezel.stl  canary_s3_lcd147.scad -D 'part="bezel"'
 devstl dev_s3_147_back.stl   canary_s3_lcd147.scad -D 'part="back"'
 devstl dev_s3_147_band.stl   canary_s3_lcd147.scad -D 'part="fil_light"'
+# …and the same stick for a board with its GPIO rows soldered on. Rendered
+# here rather than trusted, because the headers axis moves the cavity, the
+# compliant ribs and the band's slot together — and the rib/pin-row clearance
+# it turns on is decided by a number (hdr_inset) nobody has measured yet.
+devstl dev_s3_147_hdr_bezel.stl canary_s3_lcd147.scad -D 'headers="male"' -D 'part="bezel"'
+devstl dev_s3_147_hdr_back.stl  canary_s3_lcd147.scad -D 'headers="male"' -D 'part="back"'
+devstl dev_s3_147_hdr_band.stl  canary_s3_lcd147.scad -D 'headers="male"' -D 'part="fil_light"'
 devstl dev_lcd7_bezel.stl    canary_s3_lcd7.scad -D 'part="bezel"'
 devstl dev_lcd7_back.stl     canary_s3_lcd7.scad -D 'part="back"'
 devstl dev_lcd7_frame.stl    canary_s3_lcd7.scad -D 'part="frame"'
