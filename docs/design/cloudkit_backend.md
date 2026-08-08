@@ -110,6 +110,18 @@ published. A household member checking their phone for nothing is a smaller
 harm than an unanswered alarm reaching no one, and that is the direction this
 ladder errs in everywhere else too.
 
+**Written only for alarms that could actually escalate, and swept after a
+day.** Both bounds are privacy, not tidiness. Nothing below the top tier is
+ever escalated, so a marker for a Notice can suppress nothing — it would be a
+record that buys the owner no protection at all. And because CloudKit stamps a
+precise creation date we do not control (§6.4), an unbounded pile of them is a
+timestamped account of *when the owner was awake to answer an alarm* — the
+event-correlated history this project coarsens everywhere else. They exist to
+stop a sibling device escalating within minutes; a day is already generous.
+`HouseholdShare.sweepOldAnswered` runs at every launch, and unlike the shared
+zone's sweep it needs no subscriber subtlety: these live in the owner's own
+private database, where nobody is subscribed and a deletion pushes at no one.
+
 ### `PairedDevice` — the fleet list
 
 | Field | Value |

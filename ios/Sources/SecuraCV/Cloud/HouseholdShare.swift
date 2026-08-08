@@ -90,6 +90,17 @@ final class HouseholdShare: ObservableObject {
     /// cheerfully says "1 person is told."
     @Published private(set) var participantBlocked: String?
 
+    /// Have we ever actually asked iCloud whether a share exists?
+    ///
+    /// `state` cannot answer this: it starts at `.notSetUp`, which is
+    /// indistinguishable from "asked, and there is no share". The difference
+    /// matters exactly once — an Ack tapped from a notification during a cold
+    /// launch, before the launch-time refresh has returned, which is the
+    /// ordinary way people answer an alarm. Without this, `noteAnswered` would
+    /// read `.notSetUp`, decide there is no household to protect, and drop the
+    /// marker in the commonest case it exists for.
+    private var hasResolvedShareState = false
+
     /// Set by FleetStore so the participant path can ask for notification
     /// permission at the moment of need — the moment they accept — using the
     /// app's one authorization request rather than a second copy of the
@@ -157,6 +168,9 @@ final class HouseholdShare: ObservableObject {
     /// someone else's device and we only ever learn about it by asking.
     func refreshMembers() async {
         #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
+        // Set on both paths below, including the "no share" one: the point is
+        // that we LOOKED, not what we found (see `hasResolvedShareState`).
+        defer { hasResolvedShareState = true }
         guard let share = try? await existingShare(in: CloudContainer.shared.privateCloudDatabase) else {
             members = []
             // No share means nothing to publish into. Saying so here is what
@@ -189,29 +203,39 @@ final class HouseholdShare: ObservableObject {
     func stopSharing() async -> Bool {
         #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
         let db = CloudContainer.shared.privateCloudDatabase
-        do {
-            if let share {
-                _ = try await db.deleteRecord(withID: share.recordID)
+
+        // STEP ONE IS THE ONLY ONE THAT GOVERNS ACCESS. Deleting the share is
+        // what removes every participant; the zone deletion after it is
+        // housekeeping. So they get separate error handling — folding both
+        // into one `do` made a failed zone deletion report "everyone still has
+        // access" when nobody did, and left `share` uncleared so the retry
+        // re-deleted a record that was already gone, errored again, and never
+        // reached the zone. A revoke that cannot be retried is barely a revoke.
+        if let existing = share {
+            do {
+                _ = try await db.deleteRecord(withID: existing.recordID)
+            } catch let error as CKError where error.code == .unknownItem {
+                // Already gone — a previous attempt got this far. Not a failure.
+            } catch {
+                // Access really is intact. Say so, change nothing, stay retryable.
+                state = .unavailable("Sharing wasn't stopped — iCloud couldn't be reached. Everyone still has access. Try again.")
+                return false
             }
-            // Now — and only now — the zone can be emptied without waking
-            // anybody: the share is gone, so there is no subscriber left for a
-            // deletion to push at (see `sweepOldEscalations` for why that
-            // ordering is the whole design). Deleting the zone takes every
-            // escalation record with it in one operation.
-            //
-            // Inside the same `do` on purpose: if the share deletion succeeded
-            // but the zone deletion did not, access IS revoked (that is what
-            // the share governs) but litter remains, and reporting success
-            // would leave nothing to retry. The next call deletes the zone —
-            // `share` is already nil by then, so it is a no-op plus a sweep.
-            _ = try await db.deleteRecordZone(withID: zoneID)
-        } catch {
-            // Keep `share`, `members` and `state` exactly as they were: the
-            // screen still shows who has access, because they still do.
-            state = .unavailable("Sharing wasn't stopped — iCloud couldn't be reached. Everyone still has access. Try again.")
-            return false
         }
+        // Past this line nobody can read the zone any more, so the local state
+        // is now telling the truth and is safe to clear.
         share = nil
+
+        // Housekeeping: the zone still holds spent escalation records. Safe to
+        // empty only now — the share is gone, so no subscriber is left for a
+        // deletion to push at (see `sweepOldEscalations` for why that ordering
+        // is the whole design).
+        //
+        // A failure here does NOT make the revoke a failure: access is already
+        // revoked, and saying otherwise would be the same lie in the other
+        // direction. The records are unreachable litter, and the next
+        // `stopSharing` or `sweepOldEscalations` clears them.
+        _ = try? await db.deleteRecordZone(withID: zoneID)
         #endif
         members = []
         state = .notSetUp
@@ -313,7 +337,31 @@ final class HouseholdShare: ObservableObject {
     /// no household to protect is a record for nobody.
     func noteAnswered(occurrenceKey: String) {
         #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
-        guard state == .sharing else { return }
+        // `state` starts at `.notSetUp` and only becomes `.sharing` after the
+        // launch-time `refreshMembers()` has answered. Acking from a
+        // notification action during a COLD LAUNCH runs before that — and
+        // acking from the notification is the ordinary way people answer an
+        // alarm, so a bare `guard state == .sharing` would drop the marker in
+        // the commonest case and let a sibling device escalate anyway. That is
+        // the whole bug this method exists to prevent, reintroduced by its own
+        // guard.
+        //
+        // So: "not sharing" only counts once we have actually looked.
+        if state == .sharing {
+            writeAnswered(occurrenceKey)
+            return
+        }
+        guard !hasResolvedShareState else { return }
+        Task { [weak self] in
+            await self?.refreshMembers()
+            guard let self, self.state == .sharing else { return }
+            self.writeAnswered(occurrenceKey)
+        }
+        #endif
+    }
+
+    #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
+    private func writeAnswered(_ occurrenceKey: String) {
         let id = CKRecord.ID(recordName: HouseholdRelay.answeredRecordName(for: occurrenceKey))
         // Named `marker`, not `record`: the container linter attributes field
         // writes by local name, and a second `record` in this file holding a
@@ -323,8 +371,8 @@ final class HouseholdShare: ObservableObject {
         // device acking the same alarm writes the same name and simply loses,
         // exactly like the escalation record it guards.
         CloudContainer.shared.privateCloudDatabase.save(marker) { _, _ in }
-        #endif
     }
+    #endif
 
     /// Escalation records are litter once read — but sweeping them is only
     /// safe while NOBODY is subscribed, and that is the whole subtlety here.
@@ -348,12 +396,37 @@ final class HouseholdShare: ObservableObject {
     /// docs/design/cloudkit_backend.md §6.5.
     func sweepOldEscalations(now: Date = Date()) async {
         #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
-        guard state == .sharing, reachableCount == 0 else { return }
+        guard state == .sharing, joinedCount == 0 else { return }
         let db = CloudContainer.shared.privateCloudDatabase
         let cutoff = now.addingTimeInterval(-86_400) as NSDate
         let query = CKQuery(recordType: HouseholdRelay.escalationRecordType,
                             predicate: NSPredicate(format: "creationDate < %@", cutoff))
         guard let result = try? await db.records(matching: query, inZoneWith: zoneID) else { return }
+        for (id, _) in result.matchResults {
+            _ = try? await db.deleteRecord(withID: id)
+        }
+        #endif
+    }
+
+    /// The answered markers are litter too, and unlike the escalations they
+    /// are also a RECORD OF WHEN THE OWNER WAS AWAKE. CloudKit stamps a
+    /// precise creation date on every record and we cannot switch it off
+    /// (§6.4), so an unbounded pile of "answered at 03:14, answered at 02:51"
+    /// is exactly the event-correlated history this project coarsens
+    /// everywhere else. They exist to stop a sibling device escalating within
+    /// minutes; a day is already generous.
+    ///
+    /// Sweeping these is far simpler than sweeping the shared zone: they live
+    /// in the owner's PRIVATE default database, where nobody is subscribed, so
+    /// a deletion cannot push anything at anyone. None of the cry-wolf
+    /// subtlety in `sweepOldEscalations` applies.
+    func sweepOldAnswered(now: Date = Date()) async {
+        #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
+        let db = CloudContainer.shared.privateCloudDatabase
+        let cutoff = now.addingTimeInterval(-86_400) as NSDate
+        let query = CKQuery(recordType: HouseholdRelay.answeredRecordType,
+                            predicate: NSPredicate(format: "creationDate < %@", cutoff))
+        guard let result = try? await db.records(matching: query) else { return }
         for (id, _) in result.matchResults {
             _ = try? await db.deleteRecord(withID: id)
         }

@@ -90,7 +90,7 @@ requirements() {
   cat <<'EOF'
 WitnessWake|sev|-|createdTimestamp
 EscalationWake|sev|-|createdTimestamp
-AlertAnswered|-|-|-
+AlertAnswered|-|createdTimestamp|-
 PairedDevice|name deviceType baseURL pairedAt|recordName|-
 EOF
 }
@@ -119,6 +119,8 @@ why_index() {
       echo "AwayPush.sweepOldWakes queries 'creationDate < cutoff'; without the index the query fails and spent wakes accumulate in the user's iCloud" ;;
     EscalationWake.createdTimestamp)
       echo "HouseholdShare.sweepOldEscalations queries 'creationDate < cutoff'; without the index the query fails and spent escalations pile up in the shared zone the household can read" ;;
+    AlertAnswered.createdTimestamp)
+      echo "HouseholdShare.sweepOldAnswered queries 'creationDate < cutoff'; without the index the query fails and the answered markers accumulate forever — each one carrying a precise CloudKit creation time, which turns a suppression aid into a timestamped record of when the owner was awake" ;;
     PairedDevice.recordName)
       echo "CloudSync.pull() queries every PairedDevice with a match-all predicate, which production refuses without a queryable index; the error is swallowed, so fleet sync reads empty and looks like 'you have no devices'" ;;
     *)

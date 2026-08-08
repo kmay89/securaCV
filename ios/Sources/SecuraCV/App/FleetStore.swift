@@ -162,6 +162,12 @@ final class FleetStore: ObservableObject {
             await HouseholdShare.shared.refreshParticipation()
             await HouseholdShare.shared.refreshMembers()
             await HouseholdShare.shared.sweepOldEscalations()
+            // The answered markers get swept unconditionally, unlike the
+            // escalations: they live in the owner's own private database where
+            // nobody is subscribed, so deleting one cannot push anything at
+            // anyone, and leaving them would accumulate a timestamped record of
+            // when the owner was awake to answer an alarm.
+            await HouseholdShare.shared.sweepOldAnswered()
         }
         recordDemoBeatIfHarmless()
         // The dead-man's-switch may only count silence it could have heard:
@@ -748,7 +754,17 @@ final class FleetStore: ObservableObject {
         // cry-wolf failure on the one channel whose value is staying quiet.
         // Keyed by the occurrence, exactly like the escalation it guards, so
         // both sides compute the same name with nothing to sync.
-        for record in alertLog.liveRecords(forWitness: id) {
+        //
+        // ONLY for alarms that could actually reach the household. A marker
+        // for a Notice can never suppress anything (nothing below the top tier
+        // is ever escalated), so writing one buys nothing and costs a record
+        // in iCloud carrying a precise creation time we don't control — an
+        // "answered at 03:14" trail of exactly the kind this project coarsens
+        // everywhere else. The cheapest privacy is the write you don't make.
+        let integrityFailed = witnesses.first(where: { $0.id == id })?.badge == .failed
+        for record in alertLog.liveRecords(forWitness: id)
+        where EscalationPolicy.isTopTier(severity: record.severity,
+                                         integrityFailed: integrityFailed) {
             HouseholdShare.shared.noteAnswered(
                 occurrenceKey: HouseholdRelay.occurrenceRecordName(recordID: record.id,
                                                                   alarmBucket: record.lastBucket))
