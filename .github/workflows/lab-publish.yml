@@ -89,7 +89,7 @@ jobs:
             esac
             if ! printf '%s\n' "$drafts" | grep -qx "${tag#app-v}"; then
               echo "::error::${tag} is not an unpublished draft. Drafts available:"
-              printf 'app-v%s\n' $drafts
+              printf '%s\n' "$drafts" | sed 's/^/app-v/'
               exit 1
             fi
           else
@@ -114,11 +114,19 @@ jobs:
 
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "version=${ver}" >> "$GITHUB_OUTPUT"
+          # Captured, not piped: a pipeline's status is the LAST command's, so
+          # `… | grep -vx | sed … || echo "(none)"` never fires the fallback —
+          # sed exits 0 on empty input and the summary silently says nothing.
+          others="$(printf '%s\n' "$drafts" | sed 's/^/app-v/' | grep -vx "$tag" || true)"
           {
             echo "### Publishing \`${tag}\`"
             echo
             echo "Other unpublished drafts left alone (superseded):"
-            printf 'app-v%s\n' $drafts | grep -vx "$tag" | sed 's/^/- /' || echo "- (none)"
+            if [ -n "$others" ]; then
+              printf '%s\n' "$others" | sed 's/^/- /'
+            else
+              echo "- (none)"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish it — never as releases/latest
