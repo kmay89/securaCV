@@ -109,6 +109,15 @@
      ],
      "default": "pillars",
      "audience": "user"
+    },
+    {
+     "param": "port",
+     "values": [
+      "usb_c",
+      "usb_a"
+     ],
+     "default": "usb_c",
+     "audience": "user"
     }
    ],
    "variants": [
@@ -212,7 +221,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 162,
+   "engineering_param_count": 161,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -220,7 +229,7 @@
     "released": 0,
     "options": 9,
     "user_options": 9,
-    "variant_axes": 1
+    "variant_axes": 2
    }
   },
   {

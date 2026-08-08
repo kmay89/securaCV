@@ -1302,13 +1302,21 @@ assert(!is_a || !light_seam || !band_ring || band_under >= 1.0,
            z_usb - usb_oh/2 - band_notch, "). Under 1.0 mm it is not a pipe ",
            "and the ring is dark across the whole plug wall. Lower seam_dz, ",
            "shrink band_notch, or re-MEASURE usb_dz."));
-// …and that the notch is at least as generous as the insertion slot, or the
-// slot cuts white the notch did not account for and the band ends up with a
-// bitten edge that nothing checks.
-assert(!is_a || !light_seam || usb_ow + 2*band_notch >= usb_slide,
-       str("the band notch is ", usb_ow + 2*band_notch, " wide but the ",
-           "insertion slot is ", usb_slide, " — the slot would cut into ",
-           "white the notch left standing. Raise band_notch."));
+// The collar is added AFTER the cavity now, so nothing clips it in XY — which
+// means nothing stops it growing out through the side walls either. This is
+// the assert that replaced that clip.
+assert(!is_a || !collar_on ||
+       usb_a_w + 2*collar_gap + 2*collar_t <= xc - 1.0,
+       str("the drop collar is ", usb_a_w + 2*collar_gap + 2*collar_t,
+           " wide in a ", xc, " mm cavity — it would break out through the ",
+           "side walls. Thin collar_t."));
+// …and that it fits UNDER the lid. It stands in the cavity, so a collar
+// taller than the case is one the lid closes onto.
+assert(!is_a || !collar_on ||
+       z_usb + usb_a_h/2 + collar_gap + collar_t <= bez_h - 0.3,
+       str("the drop collar reaches z=",
+           z_usb + usb_a_h/2 + collar_gap + collar_t, " in a case ", bez_h,
+           " deep — the lid would land on it. Thin collar_t."));
 // "pillars" is a claim about a SPECIFIC board: that Waveshare ship it with
 // brass M2 corner standoffs installed, brass_h (3.0) tall, MEASURED off a
 // printed C3 case. The S3 stick's product photos show plated corner holes and
@@ -1547,6 +1555,19 @@ module usb_port2d(w, h, r = usb_a_r) {
 // the board is. So it is an inverted U over the shell's top and upper flanks
 // rather than a closed ring — which is also the half that matters, since a
 // case dropped on its plug levers the shell toward the glass.
+// ⚠️ IT IS ADDED AFTER THE CAVITY IS CUT, not with the shell stock, and the
+// first cut of this got that wrong in a way nothing caught: the collar stands
+// INBOARD of the plug wall, so it lives inside cavity2d() — and the bezel
+// subtracts that cavity through the case's whole height afterward. The ring
+// was modeled, rendered, and then deleted in the same pass. Every assert
+// still passed, the mesh was watertight, the part count was right, and the
+// load-bearing feature simply was not in the part. A probe cut inboard of the
+// wall is what proved it (Codex flagged it first — credit where due).
+//
+// The clip is in Z ONLY for the same reason. Clipping it to cavity2d() in XY
+// also strips the 0.01 mm of overlap that welds it to the wall, which is how
+// a collar becomes a floating ring the mesh gate then counts as a second
+// part. The width instead gets an assert.
 module usb_collar() {
     if (is_a && collar_on)
         intersection() {
@@ -1559,9 +1580,9 @@ module usb_collar() {
                         usb_port2d(usb_a_w + 2*collar_gap,
                                    usb_a_h + 2*collar_gap);
                     }
-            // above the board, and inside the cavity it is standing in
-            translate([0, 0, z_pcb_back]) linear_extrude(bez_h - z_pcb_back)
-                cavity2d();
+            // above the PCB's back face — below that plane is the board
+            translate([-2*xo, -2*yo, z_pcb_back])
+                cube([4*xo, 4*yo, bez_h - z_pcb_back]);
         }
 }
 
@@ -1590,9 +1611,25 @@ module cavity2d() {
 
 // the USB insertion slot: from the stadium's floor up through the rim, the
 // shell's path down to its seat during the glass-first drop
+// The insertion channel — usb_c ONLY, and the port axis is what makes that a
+// decision rather than an oversight.
+//
+// On the C build the board drops straight down and the back-mounted shell
+// needs a channel to descend through. On the A build it cannot: the drop
+// collar's web sits directly in that channel's path (bore top z 8.15, ring
+// top 10.35, both inside the slot's x span), so a slot and a collar cannot
+// both exist. One of them has to go, and it is not the collar — the collar is
+// the reason this case survives being dropped on its plug.
+//
+// It costs nothing, because a 14 mm plug is assembled PLUG-FIRST anyway:
+// offer the plug out through its opening with the board tilted, then lower
+// the far end. That is the natural motion for a protruding connector, and it
+// leaves the plug-end wall at full thickness — which is the stock the collar
+// anchors into.
 module usb_slot() {
-    translate([usb_dx, -yc/2, (z_slot0 + bez_h + 0.2)/2])
-        cube([usb_slide, 2*usb_reach, bez_h + 0.2 - z_slot0], center = true);
+    if (!is_a)
+        translate([usb_dx, -yc/2, (z_slot0 + bez_h + 0.2)/2])
+            cube([usb_slide, 2*usb_reach, bez_h + 0.2 - z_slot0], center = true);
 }
 
 // the wall material as stock — what the band is allowed to occupy. Built
@@ -1704,13 +1741,7 @@ module pad_face2d() { rrect2d(pad_l, pad_h_eff, 1.0); }
 module bezel() {
   union() {
     difference() {
-        union() {
-            linear_extrude(bez_h) shell_outline2d();
-            // the drop collar is part of the STOCK, not an addition after the
-            // fact: the opening has to be cut through it in the same pass, or
-            // the ring is a solid plug over the port
-            usb_collar();
-        }
+        linear_extrude(bez_h) shell_outline2d();
         // active-area window through the face
         translate([0, 0, -0.1]) linear_extrude(face_t + 0.2) rrect2d(aa_w, aa_l, 1.5);
         // (no foot relief on the face — see [Shell]. The front edge is flat
@@ -1782,6 +1813,10 @@ module bezel() {
         // the light seam
         if (light_seam) bezel_light_seam();
     }
+    // the drop collar, added here for the same reason the ribs are: the
+    // cavity has been cut by now, and the collar stands inside it. It carries
+    // its own bore, so nothing has to be cut back through it.
+    usb_collar();
     // board-locating ribs — see [Board location]. Added after the cavity is
     // cut, in the z gap the band and the vents leave between them.
     if (loc_rib) for (sx = [1, -1], yy = loc_rib_ys)
