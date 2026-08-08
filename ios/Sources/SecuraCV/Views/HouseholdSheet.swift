@@ -64,9 +64,21 @@ struct HouseholdSheet: View {
                 }
 
                 if !household.members.isEmpty {
-                    Section("Who") {
+                    Section {
                         ForEach(household.members) { member in
                             HouseholdMemberRow(member: member)
+                        }
+                    } header: {
+                        Text("Who")
+                    } footer: {
+                        // Said once, here, rather than hedged into every
+                        // count: joining is what this device can observe;
+                        // whether their phone will actually alert them is a
+                        // setting on THEIR phone that the owner cannot see.
+                        // The roster used to say "N people are told", which
+                        // claimed exactly the knowledge we don't have.
+                        if HouseholdRelay.joinedCount(household.members) > 0 {
+                            Text(HouseholdRelay.reachIsTheirsToKnow)
                         }
                     }
                 }

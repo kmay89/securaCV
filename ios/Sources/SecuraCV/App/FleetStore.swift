@@ -741,6 +741,18 @@ final class FleetStore: ObservableObject {
         for record in alertLog.liveRecords(forWitness: id) {
             tuning.recordActed(record.severity)
         }
+        // Tell the owner's OTHER devices, before marking, that this one is
+        // dealt with. Without it, acknowledging here leaves an iPad's
+        // escalation timer running on a stale belief, and a household member
+        // gets "Nobody answered" about an alarm that was answered — the
+        // cry-wolf failure on the one channel whose value is staying quiet.
+        // Keyed by the occurrence, exactly like the escalation it guards, so
+        // both sides compute the same name with nothing to sync.
+        for record in alertLog.liveRecords(forWitness: id) {
+            HouseholdShare.shared.noteAnswered(
+                occurrenceKey: HouseholdRelay.occurrenceRecordName(recordID: record.id,
+                                                                  alarmBucket: record.lastBucket))
+        }
         alertLog.mark(.acknowledged, forWitness: id)
         syncBadge()
         // An ack changes the story (the bird may return to the stage) —

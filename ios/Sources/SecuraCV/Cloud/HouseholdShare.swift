@@ -66,10 +66,17 @@ final class HouseholdShare: ObservableObject {
     /// up lying about one of them.
     @Published private(set) var isHelpingSomeone = false
 
-    /// How many people an escalation would actually reach. The one number
-    /// FleetStore consults before publishing, so a wake is never written into
-    /// a zone nobody joined.
-    var reachableCount: Int { HouseholdRelay.reachableCount(members) }
+    /// How many people have joined, from the roster this device last fetched.
+    ///
+    /// Read by the UI, and NOT by the publish path. `publishEscalation` used to
+    /// gate on this cached number, which turned a "don't write into an empty
+    /// zone" optimization into a way to silently drop an escalation: an invitee
+    /// who accepted after the owner's last refresh still reads as invited here,
+    /// and there is no participant-change subscription to correct it. An
+    /// always-on iPad that hasn't opened the household sheet since before the
+    /// invitation was accepted would simply never tell anyone. The publish path
+    /// now re-reads the share itself and fails open.
+    var joinedCount: Int { HouseholdRelay.joinedCount(members) }
 
     /// Why a household alert wouldn't reach THIS device, if something would
     /// stop it. nil when the path is clear.
@@ -170,22 +177,45 @@ final class HouseholdShare: ObservableObject {
     /// Stop sharing entirely — the share is deleted, so every participant
     /// loses access at once. Opt-out has to be as real as opt-in, and this is
     /// the only revoke that needs no per-person bookkeeping.
-    func stopSharing() async {
+    /// Returns true when CloudKit confirmed the revoke. On false the local
+    /// state is left ALONE and `state` carries a sentence the screen shows —
+    /// because the failure this guards is the worst one this feature has: both
+    /// deletes discarded with `try?`, `members` cleared, `state` set to
+    /// `.notSetUp`, and an owner who tapped "Stop sharing" on a plane told
+    /// that sharing had stopped while every participant kept access, with no
+    /// retry and no trace. Opt-out has to be as real as opt-in; a revoke that
+    /// only *looks* like it worked is worse than one that admits it didn't.
+    @discardableResult
+    func stopSharing() async -> Bool {
         #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
         let db = CloudContainer.shared.privateCloudDatabase
-        if let share {
-            _ = try? await db.deleteRecord(withID: share.recordID)
+        do {
+            if let share {
+                _ = try await db.deleteRecord(withID: share.recordID)
+            }
+            // Now — and only now — the zone can be emptied without waking
+            // anybody: the share is gone, so there is no subscriber left for a
+            // deletion to push at (see `sweepOldEscalations` for why that
+            // ordering is the whole design). Deleting the zone takes every
+            // escalation record with it in one operation.
+            //
+            // Inside the same `do` on purpose: if the share deletion succeeded
+            // but the zone deletion did not, access IS revoked (that is what
+            // the share governs) but litter remains, and reporting success
+            // would leave nothing to retry. The next call deletes the zone —
+            // `share` is already nil by then, so it is a no-op plus a sweep.
+            _ = try await db.deleteRecordZone(withID: zoneID)
+        } catch {
+            // Keep `share`, `members` and `state` exactly as they were: the
+            // screen still shows who has access, because they still do.
+            state = .unavailable("Sharing wasn't stopped — iCloud couldn't be reached. Everyone still has access. Try again.")
+            return false
         }
         share = nil
-        // Now — and only now — the zone can be emptied without waking
-        // anybody: the share is gone, so there is no subscriber left for a
-        // deletion to push at (see `sweepOldEscalations` for why that
-        // ordering is the whole design). Deleting the zone takes every
-        // escalation record with it in one operation.
-        _ = try? await db.deleteRecordZone(withID: zoneID)
         #endif
         members = []
         state = .notSetUp
+        return true
     }
 
     // MARK: - owner: publishing an escalation
@@ -206,14 +236,93 @@ final class HouseholdShare: ObservableObject {
     /// device's own ledger, which is why it needed help crossing devices.)
     func publishEscalation(_ wake: WakeClass, occurrenceKey: String) {
         #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
-        guard state == .sharing, reachableCount > 0 else { return }
-        let id = CKRecord.ID(recordName: occurrenceKey, zoneID: zoneID)
-        let record = CKRecord(recordType: HouseholdRelay.escalationRecordType, recordID: id)
-        // The same one field the ordinary wake carries, and for the same
-        // reason: a participant's app can say which KIND of trouble went
-        // unanswered once they open it. No name, no id, no time of ours.
-        record[WakePayload.classKey] = wake.rawValue as CKRecordValue
-        CloudContainer.shared.privateCloudDatabase.save(record) { _, _ in }
+        guard state == .sharing else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            let db = CloudContainer.shared.privateCloudDatabase
+
+            // 1. DID SOMEBODY ALREADY ANSWER THIS, ON ANOTHER OF THE OWNER'S
+            //    DEVICES? Acknowledging is device-local, so the iPad's timer
+            //    can expire still believing nobody answered — and wake a
+            //    household member at 3am about an alarm the owner dealt with
+            //    on their iPhone twenty minutes ago. On the one channel whose
+            //    entire value is that it stays quiet, that is the cry-wolf
+            //    failure, arriving by a different road than the sweep did.
+            //
+            //    Fail OPEN, deliberately: if the check itself errors we
+            //    publish. A missed escalation is the failure this whole ladder
+            //    exists to prevent; a duplicate one is a household member
+            //    checking their phone for nothing.
+            if await self.wasAnsweredElsewhere(occurrenceKey: occurrenceKey, in: db) { return }
+
+            // 2. IS THERE ANYBODY TO READ IT? Re-read the share rather than
+            //    trusting the cached roster. The cached number exists to avoid
+            //    writing into a zone nobody joined; consulting it here turned
+            //    that optimization into a silent drop, because acceptance
+            //    happens on someone else's device and nothing pushes it back.
+            //    Also fails open — one wasted write costs nothing, and the
+            //    alternative costs the escalation.
+            if let fresh = try? await self.existingShare(in: db) {
+                self.share = fresh
+                self.members = HouseholdRelay.sorted(fresh.participants.map(Self.member(from:)))
+                guard self.joinedCount > 0 else { return }
+            }
+
+            let id = CKRecord.ID(recordName: occurrenceKey, zoneID: self.zoneID)
+            let record = CKRecord(recordType: HouseholdRelay.escalationRecordType, recordID: id)
+            // The same one field the ordinary wake carries, and for the same
+            // reason: a participant's app can say which KIND of trouble went
+            // unanswered once they open it. No name, no id, no time of ours.
+            record[WakePayload.classKey] = wake.rawValue as CKRecordValue
+            // Still fire-and-forget from the caller's point of view, for the
+            // same reason AwayPush.publishWake is: a household wake that fails
+            // to write must never stall the alert already reaching the owner.
+            _ = try? await db.save(record)
+        }
+        #endif
+    }
+
+    /// Has one of the owner's OTHER devices already marked this occurrence
+    /// answered? Read from the owner's private default zone, where the marker
+    /// lives — never the shared zone, which participants can read and which
+    /// holds exactly one kind of record.
+    ///
+    /// Returns false when the answer is unknown, so an unreachable iCloud
+    /// escalates rather than staying quiet.
+    private func wasAnsweredElsewhere(occurrenceKey: String, in db: CKDatabase) async -> Bool {
+        #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
+        let id = CKRecord.ID(recordName: HouseholdRelay.answeredRecordName(for: occurrenceKey))
+        do {
+            _ = try await db.record(for: id)
+            return true                     // the record exists ⇒ answered
+        } catch let error as CKError where error.code == .unknownItem {
+            return false                    // definitively not answered
+        } catch {
+            return false                    // unknown ⇒ fail open, escalate
+        }
+        #else
+        return false
+        #endif
+    }
+
+    /// The owner answered an alarm on THIS device. Tell their other devices,
+    /// so a slower one doesn't escalate something already dealt with.
+    ///
+    /// Cheap and safe to call for every acknowledged alert: it writes nothing
+    /// unless the owner actually shares with somebody, because a marker with
+    /// no household to protect is a record for nobody.
+    func noteAnswered(occurrenceKey: String) {
+        #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
+        guard state == .sharing else { return }
+        let id = CKRecord.ID(recordName: HouseholdRelay.answeredRecordName(for: occurrenceKey))
+        // Named `marker`, not `record`: the container linter attributes field
+        // writes by local name, and a second `record` in this file holding a
+        // different type makes every write in it unattributable.
+        let marker = CKRecord(recordType: HouseholdRelay.answeredRecordType, recordID: id)
+        // No payload at all. Existence IS the fact — which also means a second
+        // device acking the same alarm writes the same name and simply loses,
+        // exactly like the escalation record it guards.
+        CloudContainer.shared.privateCloudDatabase.save(marker) { _, _ in }
         #endif
     }
 

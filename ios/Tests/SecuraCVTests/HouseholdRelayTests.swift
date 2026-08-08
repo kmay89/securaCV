@@ -65,7 +65,7 @@ final class HouseholdRelayTests: XCTestCase {
 
     func testAnInvitationIsNotAPerson() {
         let roster = [member("You", .owner), member("Sam", .invited)]
-        XCTAssertEqual(HouseholdRelay.reachableCount(roster), 0,
+        XCTAssertEqual(HouseholdRelay.joinedCount(roster), 0,
                        "somebody who never tapped the link reaches nobody")
         XCTAssertEqual(HouseholdRelay.summary(roster),
                        "1 person is invited but hasn't joined yet, so nobody else can be reached.")
@@ -73,7 +73,7 @@ final class HouseholdRelayTests: XCTestCase {
 
     func testTheOwnerIsNotSomebodyElse() {
         let roster = [member("You", .owner)]
-        XCTAssertEqual(HouseholdRelay.reachableCount(roster), 0,
+        XCTAssertEqual(HouseholdRelay.joinedCount(roster), 0,
                        "your own devices are already told directly; you are not your own backstop")
         XCTAssertEqual(HouseholdRelay.summary(roster),
                        "Nobody else is set up. If an alarm goes unanswered, only your own devices will know.")
@@ -81,14 +81,14 @@ final class HouseholdRelayTests: XCTestCase {
 
     func testItCountsOnlyThePeopleWhoJoined() {
         let roster = [member("You", .owner), member("Sam", .accepted), member("Alex", .accepted)]
-        XCTAssertEqual(HouseholdRelay.reachableCount(roster), 2)
-        XCTAssertEqual(HouseholdRelay.summary(roster), "2 people are told if an alarm goes unanswered.")
+        XCTAssertEqual(HouseholdRelay.joinedCount(roster), 2)
+        XCTAssertEqual(HouseholdRelay.summary(roster), "2 people have joined and will be sent an alarm nobody answered.")
     }
 
     func testAMixedRosterNamesBothHalvesHonestly() {
         let roster = [member("You", .owner), member("Sam", .accepted), member("Alex", .invited)]
         XCTAssertEqual(HouseholdRelay.summary(roster),
-                       "1 person is told if an alarm goes unanswered. 1 more hasn't joined yet.")
+                       "1 person has joined and will be sent an alarm nobody answered. 1 more hasn't joined yet.")
     }
 
     func testTheRosterReadsOwnerThenJoinedThenInvited() {
@@ -185,5 +185,77 @@ final class HouseholdRelayTests: XCTestCase {
         let text = HouseholdRelay.invitationExplanation
         XCTAssertTrue(text.localizedCaseInsensitiveContains("can't see"), text)
         XCTAssertTrue(text.localizedCaseInsensitiveContains("remove anyone"), text)
+    }
+
+    // MARK: - the roster claims only what this device can observe
+    //
+    // The bug these pin: a participant who joins and then denies or disables
+    // notifications still reads `.accepted` in CloudKit, so the owner's screen
+    // said "1 person is told" in exactly the case the app already knew they
+    // weren't — `participantBlocked` exists for it, and lives on the
+    // participant's device where the owner cannot see it.
+
+    func testTheRosterSaysJoinedRatherThanTold() {
+        let roster = [member("You", .owner), member("Sam", .accepted)]
+        let line = HouseholdRelay.summary(roster)
+        XCTAssertTrue(line.localizedCaseInsensitiveContains("joined"), line)
+        XCTAssertFalse(line.localizedCaseInsensitiveContains("is told"),
+                       "“told” claims their notification settings, which this device cannot see: \(line)")
+    }
+
+    func testTheLimitOfWhatTheOwnerCanKnowIsStatedSomewhere() {
+        // If the count no longer promises reach, something has to say why —
+        // otherwise the screen is merely vaguer, which is not the same as
+        // more honest.
+        let text = HouseholdRelay.reachIsTheirsToKnow
+        XCTAssertTrue(text.localizedCaseInsensitiveContains("notification"), text)
+        XCTAssertTrue(text.localizedCaseInsensitiveContains("can't see"), text)
+    }
+
+    // MARK: - the answered marker
+
+    func testAnsweredAndEscalationNamesCanNeverCollide() {
+        // They key the same occurrence and live in different databases, but a
+        // shared name would make "has this been answered?" depend on which
+        // record happened to be written first.
+        let key = HouseholdRelay.occurrenceRecordName(recordID: "canary-a3f7|warn|door",
+                                                      alarmBucket: Date(timeIntervalSince1970: 1_786_000_000))
+        let answered = HouseholdRelay.answeredRecordName(for: key)
+        XCTAssertNotEqual(answered, key)
+        XCTAssertTrue(key.hasPrefix("esc-"))
+        XCTAssertTrue(answered.hasPrefix("ans-"))
+        XCTAssertEqual(answered.dropFirst(4), key.dropFirst(4),
+                       "same occurrence, same hash — only the prefix distinguishes them")
+    }
+
+    func testEveryOwnerDeviceDerivesTheSameAnsweredName() {
+        // The whole mechanism rests on this: the iPhone that acks and the iPad
+        // that would escalate never talk to each other, they just compute the
+        // same name. Nothing is synced, so nothing can be out of sync.
+        let bucket = Date(timeIntervalSince1970: 1_786_000_000)
+        let a = HouseholdRelay.answeredRecordName(
+            for: HouseholdRelay.occurrenceRecordName(recordID: "canary-a3f7|alarm", alarmBucket: bucket))
+        let b = HouseholdRelay.answeredRecordName(
+            for: HouseholdRelay.occurrenceRecordName(recordID: "canary-a3f7|alarm", alarmBucket: bucket))
+        XCTAssertEqual(a, b)
+
+        // A different occurrence must not be silenced by this one's answer.
+        let later = HouseholdRelay.answeredRecordName(
+            for: HouseholdRelay.occurrenceRecordName(recordID: "canary-a3f7|alarm",
+                                                     alarmBucket: bucket.addingTimeInterval(86_400)))
+        XCTAssertNotEqual(a, later,
+                          "a condition that returns tomorrow is a different alarm and must still escalate")
+    }
+
+    func testTheAnsweredNameIsSafeAsACloudKitRecordName() {
+        // Same discipline as the escalation name: the ledger id carries device
+        // names and status lines, and none of that belongs in a key.
+        let key = HouseholdRelay.occurrenceRecordName(recordID: "Sam's Front Door 🚪|alarm|opened",
+                                                      alarmBucket: Date(timeIntervalSince1970: 1_786_000_000))
+        let answered = HouseholdRelay.answeredRecordName(for: key)
+        XCTAssertTrue(answered.allSatisfy { $0.isHexDigit || $0 == "-" || $0 == "a" || $0 == "n" || $0 == "s" },
+                      "record names must stay in a restricted character set: \(answered)")
+        XCTAssertFalse(answered.localizedCaseInsensitiveContains("Front"), answered)
+        XCTAssertFalse(answered.localizedCaseInsensitiveContains("Sam"), answered)
     }
 }

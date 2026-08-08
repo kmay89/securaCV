@@ -419,7 +419,7 @@ struct AlertRulesSheet: View {
                         HStack {
                             Label("If nobody answers", systemImage: "person.2")
                             Spacer()
-                            Text(household.members.isEmpty ? "Nobody" : "\(household.reachableCount)")
+                            Text(household.members.isEmpty ? "Nobody" : "\(household.joinedCount)")
                                 .foregroundStyle(.secondary)
                         }
                     }

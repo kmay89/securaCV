@@ -59,8 +59,8 @@ both entitlements files by `scripts/lint_cloudkit_container.py`. **Private datab
 which exists so somebody who is not the owner can be told when an alarm goes
 unanswered. No public database (§5), and no other zone.
 
-Three record types. This is the entire list, and the linter above fails the
-build if a fourth appears without being declared.
+Four record types. This is the entire list, and the linter above fails the
+build if a fifth appears without being declared.
 
 ### `WitnessWake` — the away alert
 
@@ -84,6 +84,31 @@ everything else — and written only when a top-tier alarm has already gone
 unanswered by the owner. Participants are read-only, the zone is the access
 boundary, and §6.5 argues the whole trade (including why §5's old "never a
 shared database" row was reversed rather than quietly ignored).
+
+### `AlertAnswered` — "one of my devices dealt with this"
+
+| Field | Value | Why it is the minimum |
+|---|---|---|
+| *(nothing at all)* | — | **Existence is the entire fact.** The record's *name* is the occurrence hash, and there is no payload, so there is nothing to read but "some alarm, identified only by a hash, was answered." |
+
+In the owner's **private default zone** — deliberately *not* the shared
+`HouseholdEscalations` zone, which participants can read and which holds
+exactly one record type. A household member must never learn that the owner
+answered something; they are only ever told when nobody did.
+
+Why it exists: acknowledging an alert is device-local. The owner acks on their
+iPhone, and their iPad's escalation timer expires still believing nobody
+answered — waking a household member at 3am about an alarm that *was* answered.
+The deterministic occurrence name already stops two devices writing two
+escalations, but a name can only dedupe *writes*; it cannot represent an
+*answer*. So the answer gets a record, keyed by the same occurrence
+(`ans-<hash>` beside `esc-<hash>`) so every one of the owner's devices computes
+it identically with nothing to sync.
+
+The check **fails open**: if iCloud can't be reached, the escalation is
+published. A household member checking their phone for nothing is a smaller
+harm than an unanswered alarm reaching no one, and that is the direction this
+ladder errs in everywhere else too.
 
 ### `PairedDevice` — the fleet list
 
