@@ -108,6 +108,51 @@ any platform.
 
 ## Entries
 
+### 2026-08-08 — Five Lab releases built green and shipped to nobody, because "publish" was a human click no automation could make
+
+- **Symptom:** the Lab's self-updater, shipped in 0.2.0, had never delivered a
+  single update. Nothing was red. `desktop-release.yml` had succeeded every
+  time, the installers were built and signed, and `docs/RELEASE_BUTTONS.md`
+  said the release was done. But `app-v0.1.0` was the only Lab release ever
+  published; drafts for **0.1.1, 0.1.2, 0.2.0, 0.2.1 and 0.2.2** were all
+  sitting unpublished, and there was no `lab-latest` tag at all.
+- **Cause:** the Lab is released as a draft on purpose, and a draft reaches
+  nobody — no git tag, no public asset URLs, and `lab-latest` (the pointer the
+  app polls) never moves. Finishing it was a human clicking Publish in the
+  GitHub UI. That is not a step a release button, a script, or an agent can
+  perform, so every release that nobody hand-finished simply stopped there,
+  looking complete. The failure mode is silence: a *successful* build is
+  indistinguishable from a shipped one.
+  The reason it had to be a human is real, and it is the trap anyone
+  automating this will hit: **GitHub suppresses `release:` events for releases
+  published with the default `GITHUB_TOKEN`** (its recursion guard). A human
+  publish fires `release: published`; a CI publish does not. Both
+  `desktop-lab-updater-pointer.yml` (advances `lab-latest`) and
+  `release-latest-guard.yml` (puts `releases/latest` back on the firmware)
+  triggered on that event — so naively adding a publish step to CI would have
+  made the release public while *silently* leaving the pointer stale. That is
+  worse than the original bug: it looks shipped and still updates nobody.
+- **Fix:** `lab-publish.yml` — a dispatchable button that publishes the newest
+  draft and then **calls** both follow-ups instead of waiting for an event that
+  will not come. Two details are load-bearing:
+  - it publishes with `--latest=false`, so an app release can never take
+    `releases/latest` from the firmware the fleet polls, and runs
+    `keep-firmware-latest` anyway because the action is idempotent;
+  - it invokes the pointer as a **reusable workflow** (`uses:`), not
+    `gh workflow run`. A fire-and-forget dispatch would let a broken updater
+    manifest pass for a successful publish — exactly the silent failure the
+    pointer workflow exists to prevent. As a `uses:` call, its failure fails
+    the publish.
+  It also refuses to publish a draft older than what `lab-latest` already
+  serves, since publishing is irreversible and would strand the installed base.
+- **Applies to:** every target that leaves a draft or defers a publish step.
+  The Flasher already had this shape — `desktop-flasher-release.yml` publishes
+  from CI and calls both follow-ups directly — which is why it never
+  accumulated drafts. The Lab was the outlier. **If a release path ends in a
+  human action, that path has an unbounded queue in front of it; give it a
+  button, and make the button call whatever the human's click used to
+  trigger.**
+
 ### 2026-08-08 — A compile-time flag meant to protect the simulator hid an entire subsystem from the compiler, and the App Store release was its first type-check
 
 - **Symptom:** `ios-release.yml` failed at **Archive**, three minutes into a

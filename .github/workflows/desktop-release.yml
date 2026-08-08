@@ -8,19 +8,23 @@
 #
 # On `releases/latest`: this workflow needs no keep-firmware-latest step (unlike
 # desktop-flasher-release.yml) because it only ever creates a DRAFT, and a draft
-# is never GitHub's "latest". The moment a human publishes that draft it DOES
-# take `latest` — the URL every Canary polls for OTA — but a human-published
-# release fires a `release:` event, so release-latest-guard.yml catches it and
-# re-points `latest` at the firmware. CI-published releases don't fire that
-# event, which is why the Flasher has to call the action itself.
+# is never GitHub's "latest". Publishing that draft could take `latest` — the
+# URL every Canary polls for OTA — so both publish paths defend it: a human
+# publish fires a `release:` event and release-latest-guard.yml re-points it,
+# and lab-publish.yml publishes with `--latest=false` and calls the same action
+# directly, because CI-published releases fire no event.
 #
 # Self-update: the Lab polls the rolling `lab-latest` prerelease pointer (its
 # own — NEVER `releases/latest`, and never the Flasher's). This workflow builds
 # the signed updater artifacts and hardens the draft's latest.json; the pointer
-# itself only advances when a human PUBLISHES the draft, via
-# desktop-lab-updater-pointer.yml (a `release: published` event fires for human
-# publishes — the case CI-created releases can't rely on). A draft's assets have
-# no public URLs, so the resolve-every-URL guard also lives there, after publish.
+# advances only once the draft is PUBLISHED, via
+# desktop-lab-updater-pointer.yml — triggered by the `release: published` event
+# for a human publish, and called directly by lab-publish.yml for a CI one. A
+# draft's assets have no public URLs, so the resolve-every-URL guard also lives
+# there, after publish.
+#
+# So this workflow's output is deliberately unfinished. Finish it with
+# Actions → "Publish the Lab (draft → live)", or click Publish in the UI.
 name: Desktop app release
 
 on:

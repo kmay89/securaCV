@@ -4,14 +4,17 @@
 # `flasher-latest` belongs to the Flasher. This workflow is what advances it.
 #
 # Why a separate workflow instead of the build's finalize job: the Lab is
-# released as a DRAFT on purpose (a human clicks Publish — see
-# docs/RELEASE_BUTTONS.md), and a draft's assets have no public download URLs,
-# so neither the resolve-every-URL consistency guard nor the pointer advance
-# can run before the publish. A human publish DOES fire `release: published`
-# (GitHub only suppresses events for GITHUB_TOKEN-created releases), so this
-# is the rare place in this repo where a release-event trigger is reliable.
-# The manual dispatch input exists for backfills and for re-running after a
-# transient failure.
+# released as a DRAFT (see docs/RELEASE_BUTTONS.md), and a draft's assets have
+# no public download URLs, so neither the resolve-every-URL consistency guard
+# nor the pointer advance can run before the publish.
+#
+# Three ways in, because the publish can happen three ways:
+#   · `release: published` — a HUMAN publishing the draft in the UI. GitHub
+#     only suppresses release events for GITHUB_TOKEN-created releases, so a
+#     human publish is the one case where this trigger is reliable.
+#   · `workflow_call` — lab-publish.yml, immediately after publishing from CI.
+#     That publish fires no event, so it calls this instead of waiting for one.
+#   · `workflow_dispatch` — backfills, and re-running after a transient failure.
 #
 # Order of operations is load-bearing: harden (idempotent — also repairs a
 # hand-made release), then verify every updater URL resolves, and only then
@@ -28,6 +31,16 @@ on:
         description: "Published Lab release tag to point lab-latest at (e.g. app-v0.2.0)"
         type: string
         required: true
+  # Called by lab-publish.yml straight after it publishes a draft. A CI publish
+  # fires no `release:` event (GitHub's recursion guard), so the pointer has to
+  # be invoked rather than awaited — and invoked as a reusable workflow, so a
+  # failure here fails the publish run instead of being lost in a dispatch.
+  workflow_call:
+    inputs:
+      tag:
+        description: "Published Lab release tag to point lab-latest at"
+        type: string
+        required: true
 
 permissions:
   contents: write
@@ -40,8 +53,11 @@ concurrency:
 jobs:
   advance:
     name: Verify manifest, advance lab-latest
-    # Fires for every published release; only Lab tags proceed.
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'app-v')
+    # Fires for every published release; only Lab tags proceed. Keyed on the
+    # input rather than on `event_name`: under `workflow_call` the event name
+    # is the CALLER's, so matching on it would pass only by coincidence.
+    # `inputs` is empty for a `release` trigger, which falls through to the tag.
+    if: inputs.tag != '' || startsWith(github.event.release.tag_name, 'app-v')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
