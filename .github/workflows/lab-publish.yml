@@ -129,6 +129,71 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # Publishing is irreversible AND one-way out of this workflow's reach: a
+      # published release is no longer a draft, so the picker above can never
+      # select it again to retry. So prove the draft is FINISHED first.
+      #
+      # The race this closes: desktop-release.yml builds in a two-leg matrix
+      # and BOTH legs create the release with `releaseDraft: true`, so the
+      # first leg to finish creates a draft carrying only its own platform —
+      # and `finalize` (which rewrites latest.json) runs after both. Dispatch
+      # this button mid-build and you would publish, permanently, a release
+      # missing an entire platform's installers or its updater manifest.
+      #
+      # Checked against the artifacts rather than against workflow state on
+      # purpose: the assets ARE the release, whereas "is a run in progress"
+      # has its own race — a build can start the moment after you look.
+      - name: Refuse an incomplete draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.pick.outputs.tag }}
+          VER: ${{ steps.pick.outputs.version }}
+        run: |
+          set -euo pipefail
+          have="$(gh release view "$TAG" --json assets --jq '.assets[].name' | sort)"
+          # One name per thing the release must carry. The .dmg proves the
+          # macOS leg finished, .deb/.AppImage prove the Linux leg did, the
+          # .sig files are what the updater verifies, and latest.json is the
+          # manifest installed Labs actually read.
+          missing=0
+          for want in \
+            "SecuraCV.Lab_${VER}_universal.dmg" \
+            "SecuraCV.Lab_${VER}_universal.app.tar.gz" \
+            "SecuraCV.Lab_${VER}_universal.app.tar.gz.sig" \
+            "SecuraCV.Lab_${VER}_amd64.AppImage" \
+            "SecuraCV.Lab_${VER}_amd64.AppImage.sig" \
+            "SecuraCV.Lab_${VER}_amd64.deb" \
+            "SecuraCV.Lab_${VER}_amd64.deb.sig" \
+            "latest.json"; do
+            if ! printf '%s\n' "$have" | grep -qxF "$want"; then
+              echo "::error::${TAG} is missing ${want} — the build that produces it has not finished"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "Assets present on the draft:"
+            printf '%s\n' "$have" | sed 's/^/  /'
+            echo "::error::refusing to publish an incomplete draft. Wait for desktop-release.yml to finish, then run this again."
+            exit 1
+          fi
+
+          # The manifest must also be complete and for THIS version — a draft
+          # whose latest.json still describes an earlier build would publish an
+          # updater that hands installs the wrong bundle.
+          work="$(mktemp -d)"
+          gh release download "$TAG" -p latest.json -D "$work" --clobber
+          mver="$(jq -r '.version // ""' "$work/latest.json")"
+          if [ "$mver" != "$VER" ]; then
+            echo "::error::latest.json on ${TAG} says version '${mver}', expected '${VER}'"; exit 1
+          fi
+          for plat in darwin-aarch64 darwin-x86_64 linux-x86_64; do
+            if [ "$(jq -r --arg p "$plat" '.platforms[$p].url // ""' "$work/latest.json")" = "" ]; then
+              echo "::error::latest.json on ${TAG} has no entry for ${plat} — finalize has not run"; exit 1
+            fi
+          done
+          echo "${TAG} carries a complete, self-consistent set — safe to publish"
+
       - name: Publish it — never as releases/latest
         shell: bash
         env:
