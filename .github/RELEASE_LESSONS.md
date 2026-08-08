@@ -134,13 +134,21 @@ any platform.
   `CKContainer` trap never gets the launch it needs. Own derived data
   (`build-cloudkit/`) so it cannot disturb the products the watch-app embed
   proof reads out of `build/`.
-- **Applies to:** every target that compiles code out for CI. The same shape
-  exists in `tvos.yml`, which sets `SECURACV_NO_CLOUDKIT` for the same reason
-  — if the tvOS app grows CloudKit code, it needs the same compile-only pass.
+- **Applies to:** every target that compiles code out for CI — and that meant
+  **tvOS today, not someday.** The first draft of this entry said tvOS "will
+  need the same pass if that app grows CloudKit code"; review pointed out it
+  already has, in `ResidentWatch.swift`, which carries four
+  `#if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT` branches that
+  `tvos.yml` has never compiled. `tvos.yml` now runs the same non-running,
+  flag-free `xcodebuild build` pass.
   **The general rule: a compile-time flag that exists to protect a build from
   RUNNING code must never be the only build that TYPE-CHECKS it.** When you
   add a `#if` around a subsystem for CI's benefit, add the pass that still
   compiles it, in the same change.
+  And the meta-lesson, which is why this bullet reads the way it does: when
+  you write "applies to X **if** Y", go and check whether Y is already true.
+  Here it was, and the phrasing would have left a live hole behind a sentence
+  that sounded like diligence.
 
 ### 2026-08-06 — A shared library's host tests were linkable all along; the first project to `#include` it linked three `main()`s into the firmware
 
