@@ -165,3 +165,28 @@ jobs:
             -destination 'platform=tvOS Simulator,OS=latest,name=Apple TV' \
             CODE_SIGNING_ALLOWED=NO \
             SWIFT_ACTIVE_COMPILATION_CONDITIONS='$(inherited) SECURACV_NO_CLOUDKIT'
+
+      # …AND THEN TYPE-CHECK WHAT THAT FLAG JUST DELETED.
+      #
+      # The decision above is about RUNTIME. But `#if` does not hide code from
+      # the runtime, it hides it from the COMPILER — so ResidentWatch's four
+      # CloudKit branches were never compiled by CI at all, and a signed
+      # release build would have been their first and only type-check.
+      #
+      # That is not a hypothetical: the identical hole in the iPhone app let
+      # `db.record(for: zone.share)` — a CKRecord.Reference where a
+      # CKRecord.ID belongs — reach main through two green PRs and fail the
+      # App Store release at Archive (RELEASE_LESSONS 2026-08-08).
+      #
+      # `build` rather than `test` is the whole trick: compiling and linking
+      # an unsigned app is fine, it just cannot RUN, and nothing here runs it,
+      # so the CKContainer trap never gets the launch it needs.
+      - name: Type-check the CloudKit paths the simulator build compiles out
+        working-directory: tvos/WitnessWall
+        run: |
+          xcodebuild build \
+            -project WitnessWall.xcodeproj \
+            -scheme WitnessWall \
+            -destination 'platform=tvOS Simulator,OS=latest,name=Apple TV' \
+            -derivedDataPath build-cloudkit \
+            CODE_SIGNING_ALLOWED=NO
