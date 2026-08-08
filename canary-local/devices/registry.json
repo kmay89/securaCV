@@ -1,6 +1,6 @@
 {
   "$schema_note": "canary.local device registry — one entry per device flavor. The page renders a pairing card per entry; entries with an `emulator` block get the live wasm firmware on their glass. `fw_train` names the release train this registry snapshot teaches; per-version emulator artifacts are named dist/<id>@<version>.js when built from a release tag (see canary-local/README.md §Versioning).",
-  "fw_train": "2.4.7",
+  "fw_train": "2.4.8",
   "devices": [
     {
       "id": "canary-display-watch",

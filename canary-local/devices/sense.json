@@ -15,8 +15,8 @@
     "board": "Seeed XIAO ESP32-C6 (MR60BHA2 kit)",
     "board_short": "XIAO ESP32C6",
     "board_id": "xiao-esp32c6-mr60",
-    "fw_version": "2.4.7",
-    "fw_train": "2.4.7",
+    "fw_version": "2.4.8",
+    "fw_train": "2.4.8",
     "ota_product": "securacv-canary-sense",
     "senses": [
       "mmWave radar",
@@ -259,7 +259,7 @@
       "              ,_,          Waking up...",
       "             (o.o)",
       "             /| |\\         SecuraCV Canary Sense",
-      "              d b          v2.4.7",
+      "              d b          v2.4.8",
       "",
       "    This is your privacy witness device.",
       "    It creates tamper-proof records of what it",
@@ -432,14 +432,14 @@
         "suffix": "health",
         "retained": true,
         "cadence": "~60 s + on reconnect",
-        "payload": "{\"battery\":100,\"battery_present\":false,\"memory_free\":145120,\"uptime\":312,\"firmware_version\":\"2.4.7\",\"public_key\":\"\u2026\"}",
+        "payload": "{\"battery\":100,\"battery_present\":false,\"memory_free\":145120,\"uptime\":312,\"firmware_version\":\"2.4.8\",\"public_key\":\"\u2026\"}",
         "note": "carries the pubkey Home Assistant TOFU-pins on first sight \u2014 the green-badge trust anchor"
       },
       {
         "suffix": "update/state",
         "retained": true,
         "cadence": "on OTA state change",
-        "payload": "{\"installed_version\":\"2.4.7\",\"latest_version\":\"2.4.7\",\"in_progress\":false,\"update_percentage\":null}"
+        "payload": "{\"installed_version\":\"2.4.8\",\"latest_version\":\"2.4.8\",\"in_progress\":false,\"update_percentage\":null}"
       },
       {
         "suffix": "update/auto",
@@ -508,7 +508,7 @@
         "name": "SecuraCV Canary Sense <id>",
         "mf": "SecuraCV",
         "mdl": "Canary Sense (XIAO ESP32-C6 + MR60BHA2)",
-        "sw": "2.4.7"
+        "sw": "2.4.8"
       },
       "entities": [
         {

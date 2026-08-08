@@ -2,6 +2,53 @@
 
 ## [Unreleased]
 
+## [2.4.8] - 2026-08-07
+
+### A Canary can say when it was born, and you can pick the color it glows
+
+Two things the hardware could nearly do and the app could not reach.
+
+- **A born-on date the device stands behind.** The certificate card could
+  only say when *this phone* paired, which is a fact about the phone — two
+  people looking at the same Canary saw two different "born" dates, and one
+  re-paired after a phone restore looked newborn. A Canary's identity is its
+  keypair, so its age is its key's age; but the key is generated before any
+  clock exists (no battery-backed RTC — the chip boots at the epoch and
+  learns the date from GPS later). `common/identity/birth_day.h` decides
+  under three rules, each named for the lie it prevents: **written once**
+  (a device that can restate its birth day launders its age), **only a
+  believable clock** (below the floor is the boot epoch showing through),
+  and **exact only when it's exact** — a Canary flashed in a workshop and
+  plugged in a week later records the day it was *first dated* and says so.
+  A day, never a timestamp: coarser than Invariant III's buckets, and by
+  construction it cannot carry a time of day. `/api/fleet` carries
+  `born_day`/`born_exact`, omitted entirely until real, so a display with no
+  key of its own reports none rather than 1970.
+- **A color the glass can actually honor.** The look engine spoke HSV but
+  had no way to be told a hue outside its nine curated scenes, so a color
+  wheel would have been the app promising more than the device could do.
+  `LookParams.custom_hue` and `custom_scene()` build four stops around the
+  chosen hue with the same gentle drift the curated scenes use, so a picked
+  color still breathes instead of sitting flat. Every renderer — the WS2812
+  beacon, the glass wash, and the plumage note overlay — now routes through
+  one public `current_look()`, so nobody indexes the scene catalog directly
+  and the point of light and the pane can never disagree. **The honesty rule
+  is untouched and now tested against the new path:** at Warn and above the
+  semantic override still wins, so no hue anyone picks can dress an alarm in
+  a friendly color, and safe dark still outranks everything.
+- **Every display setting reachable from the app.** `/api/settings` and
+  `/api/set` are served by every display, but the app only ever spoke to them
+  through the nightlight's lamp keys — so a Watch Station or a Dash served a
+  screen brightness, a night window, a red shift and a peek duration that
+  nothing in the app could touch. The app now renders whatever the glass
+  *reports*, so a display without a lamp offers no lamp controls and firmware
+  that grows a capability appears on the phone with no App Store update.
+- Two API keys that existed everywhere but the web: `lamp_hue` (−1 = a
+  catalog scene is on) and `lamp_minutes`. The lamp's floor is one minute,
+  not zero — `LanternModel` clamps anything under a minute up to one, so a
+  "0 = stays on" would have promised an untimed lamp and delivered a
+  60-second one.
+
 ## [2.4.7] - 2026-08-07
 
 ### The C6 nightstand fits its flash again — and an unbootable image can no longer ship

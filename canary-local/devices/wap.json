@@ -10,8 +10,8 @@
     "model": "Seeed XIAO ESP32-S3 Sense",
     "board_short": "XIAO ESP32S3",
     "board_id": "seeed_xiao_esp32s3_sense",
-    "fw_version": "2.4.7-wap",
-    "fw_train": "2.4.7",
+    "fw_version": "2.4.8-wap",
+    "fw_train": "2.4.8",
     "ota_product": "securacv-canary-wap",
     "senses": [
       "WiFi CSI (radio field)",
@@ -308,7 +308,7 @@
       "              ,_,          Waking up...",
       "             (o.o)",
       "             /| |\\         SecuraCV Canary WAP",
-      "              d b          v2.4.7-wap",
+      "              d b          v2.4.8-wap",
       "",
       "    This is your privacy witness device.",
       "    It creates tamper-proof records of what it",
@@ -418,7 +418,7 @@
       },
       {
         "tag": "[OK]",
-        "text": "Pull-OTA engine ready (product=securacv-canary-wap, version=2.4.7-wap)"
+        "text": "Pull-OTA engine ready (product=securacv-canary-wap, version=2.4.8-wap)"
       }
     ],
     "ready": [
@@ -502,7 +502,7 @@
         "suffix": "health",
         "retained": true,
         "cadence": "~60 s",
-        "payload": "{\"battery\":100,\"battery_present\":false,\"memory_free\":204800,\"uptime\":312,\"firmware_version\":\"2.4.7-wap\",\"public_key\":\"\u2026\"}"
+        "payload": "{\"battery\":100,\"battery_present\":false,\"memory_free\":204800,\"uptime\":312,\"firmware_version\":\"2.4.8-wap\",\"public_key\":\"\u2026\"}"
       },
       {
         "suffix": "counts",
@@ -540,7 +540,7 @@
         "suffix": "update/state",
         "retained": true,
         "cadence": "on OTA state change",
-        "payload": "{\"installed_version\":\"2.4.7-wap\",\"latest_version\":\"2.4.7-wap\",\"in_progress\":false,\"update_percentage\":null}"
+        "payload": "{\"installed_version\":\"2.4.8-wap\",\"latest_version\":\"2.4.8-wap\",\"in_progress\":false,\"update_percentage\":null}"
       },
       {
         "suffix": "update/auto",
@@ -579,7 +579,7 @@
         "name": "Canary <id>",
         "mf": "SecuraCV",
         "mdl": "Canary WAP",
-        "sw": "2.4.7-wap"
+        "sw": "2.4.8-wap"
       },
       "entities": [
         {

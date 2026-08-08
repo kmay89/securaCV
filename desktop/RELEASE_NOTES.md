@@ -17,6 +17,26 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.11.1 — 2026-08-07
+
+**Your Canary gets the same name here as it does on your phone.**
+
+A Canary's name isn't assigned, it's derived from the device's own key — so
+every SecuraCV app should arrive at the same name for the same bird, with
+nothing stored and nothing synced. The Flasher was rolling a name at random
+instead: the derived path existed but never received the board's key, so a
+Canary you flashed here introduced itself by one name and the iPhone app
+called it another. Both are now derived from the fingerprint the board
+reports in its own boot receipt.
+
+If you flashed a Canary with 0.11.0 and its name doesn't match what your
+phone shows, the phone is right — the board's key never changed, only what
+this app did with it. The certificate here now matches.
+
+The "roll again" button is hidden for a derived certificate, on purpose: a
+name that comes from the key isn't a name you can re-roll. It stays for
+boards that haven't produced a key yet.
+
 ## 0.11.0 — 2026-08-07
 
 **Your Canaries can now answer "prove it" — and the app is careful about
