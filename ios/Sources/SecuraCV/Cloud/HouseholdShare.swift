@@ -321,8 +321,12 @@ final class HouseholdShare: ObservableObject {
     /// would tell us the zone exists; only the share record says who is on it.
     private func existingShare(in db: CKDatabase) async throws -> CKShare? {
         let zone = try? await db.recordZone(for: zoneID)
-        guard let shareID = zone?.share else { return nil }
-        return try await db.record(for: shareID) as? CKShare
+        // `CKRecordZone.share` is a REFERENCE to the share record, not its id —
+        // `db.record(for:)` takes the id, so the reference has to be unwrapped.
+        // This did not compile, and nothing said so until a signed build tried:
+        // see heal.sh for why CI never type-checked this file.
+        guard let shareRef = zone?.share else { return nil }
+        return try await db.record(for: shareRef.recordID) as? CKShare
     }
 
     /// Names come from the participant's own Apple account and stay on this

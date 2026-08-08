@@ -11,6 +11,10 @@ local.yml
 
 # Build output
 build/
+# The second, CloudKit-enabled type-check pass in scripts/heal.sh keeps its own
+# derived data so it cannot disturb the products build/ holds for the
+# watch-app embed proof.
+build-cloudkit/
 DerivedData/
 *.ipa
 *.dSYM.zip

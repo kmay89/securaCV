@@ -108,6 +108,40 @@ any platform.
 
 ## Entries
 
+### 2026-08-08 — A compile-time flag meant to protect the simulator hid an entire subsystem from the compiler, and the App Store release was its first type-check
+
+- **Symptom:** `ios-release.yml` failed at **Archive**, three minutes into a
+  real publish, with `cannot convert value of type 'CKRecord.Reference' to
+  expected argument type 'CKRecord.ID'` in `HouseholdShare.swift`. Every other
+  check was green, on that commit and on the two PRs that introduced the file.
+  The remaining publish steps — export, watch-app embed proof, upload, tag —
+  were skipped, so the app simply did not ship.
+- **Cause:** `ios/scripts/heal.sh` builds the simulator app with
+  `SWIFT_ACTIVE_COMPILATION_CONDITIONS=… SECURACV_NO_CLOUDKIT`, for a good
+  reason that is documented at length beside it: an unsigned build carries no
+  iCloud entitlement, and constructing a `CKContainer` without one does not
+  fail, it **traps** — uncatchable from Swift, so the app aborts at launch and
+  every test "fails" for reasons unrelated to iCloud.
+  That reasoning is about **runtime**. But `#if` does not hide code from the
+  runtime — it hides it from the **compiler**. So every CloudKit path in the
+  app (`HouseholdShare`, `CloudSync`, `AwayPush`'s cloud branches) was never
+  compiled by CI at all, and a signed release build was its first and only
+  compiler. A type error sat in `main` through two green PRs.
+- **Fix:** keep the flag on the build that *runs*, and add a second pass that
+  only *compiles*. `heal.sh` now builds the same scheme a second time with the
+  flag absent and `build` instead of `build test`. Compiling and linking an
+  unsigned app is fine — it just cannot run, and nothing runs it, so the
+  `CKContainer` trap never gets the launch it needs. Own derived data
+  (`build-cloudkit/`) so it cannot disturb the products the watch-app embed
+  proof reads out of `build/`.
+- **Applies to:** every target that compiles code out for CI. The same shape
+  exists in `tvos.yml`, which sets `SECURACV_NO_CLOUDKIT` for the same reason
+  — if the tvOS app grows CloudKit code, it needs the same compile-only pass.
+  **The general rule: a compile-time flag that exists to protect a build from
+  RUNNING code must never be the only build that TYPE-CHECKS it.** When you
+  add a `#if` around a subsystem for CI's benefit, add the pass that still
+  compiles it, in the same change.
+
 ### 2026-08-06 — A shared library's host tests were linkable all along; the first project to `#include` it linked three `main()`s into the firmware
 
 - **Symptom:** `PlatformIO Build (canary-display)` failed at the very end, in

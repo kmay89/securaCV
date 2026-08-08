@@ -83,6 +83,36 @@ build() {
     SWIFT_ACTIVE_COMPILATION_CONDITIONS='$(inherited) SECURACV_NO_CLOUDKIT' \
     clean build test
 
+  # …AND THEN TYPE-CHECK THE CODE THAT FLAG JUST DELETED.
+  #
+  # The reasoning above is about RUNTIME: an unsigned app cannot construct a
+  # CKContainer without dying. But `#if` does not hide code from the runtime,
+  # it hides it from the COMPILER — so every CloudKit path in this app
+  # (HouseholdShare, CloudSync, AwayPush's cloud branches) was never compiled
+  # by CI at all. A signed release build was its first and only compiler, which
+  # is a terrible place to learn you have a type error: it fails after the
+  # archive step, minutes into a publish, on the one build a human can't run.
+  #
+  # That is not hypothetical. `db.record(for: zone.share)` — passing a
+  # CKRecord.Reference where a CKRecord.ID belongs — sat in main through two
+  # green PRs and only surfaced when the App Store release tried to archive it.
+  #
+  # So: build the same scheme WITHOUT the flag, and never launch it. `build`
+  # rather than `build test` is the whole trick — compiling and linking an
+  # unsigned app is fine, it just cannot RUN, and nothing here runs it. The
+  # CKContainer trap needs a launch it never gets.
+  echo "── type-checking the CloudKit paths the simulator build compiles out ──"
+  xcodebuild \
+    -project SecuraCV.xcodeproj \
+    -scheme SecuraCV \
+    -destination "$(sim_destination)" \
+    -configuration Debug \
+    -derivedDataPath build-cloudkit \
+    SECURACV_BUILD_REV="${SECURACV_BUILD_REV:-dev}" \
+    SECURACV_FW_TRAIN="${SECURACV_FW_TRAIN:-0.x}" \
+    CODE_SIGNING_ALLOWED=NO \
+    build
+
   # Prove the watch app actually EMBEDDED (Embed Watch Content), not merely
   # compiled — a watch app missing from the bundle ships an iPhone-only app
   # with nothing red anywhere (RELEASE_LESSONS Principle 4: verify a bundled
