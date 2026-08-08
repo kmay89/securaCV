@@ -90,6 +90,7 @@ requirements() {
   cat <<'EOF'
 WitnessWake|sev|-|createdTimestamp
 EscalationWake|sev|-|createdTimestamp
+AlertAnswered|-|createdTimestamp|-
 PairedDevice|name deviceType baseURL pairedAt|recordName|-
 EOF
 }
@@ -103,6 +104,8 @@ why_type() {
       echo "away alerts never arrive — the wake write is rejected, so no push is ever sent" ;;
     EscalationWake)
       echo "nobody else is ever told — an unanswered alarm reaches the owner's devices and stops there" ;;
+    AlertAnswered)
+      echo "a household member is woken about an alarm the owner already answered on another device: acknowledging is device-local, and this marker is how the owner's iPhone tells their iPad to stand down before its escalation timer fires" ;;
     PairedDevice)
       echo "the fleet never appears on a second iPhone or iPad — the sync read comes back empty, forever" ;;
     *)
@@ -116,6 +119,8 @@ why_index() {
       echo "AwayPush.sweepOldWakes queries 'creationDate < cutoff'; without the index the query fails and spent wakes accumulate in the user's iCloud" ;;
     EscalationWake.createdTimestamp)
       echo "HouseholdShare.sweepOldEscalations queries 'creationDate < cutoff'; without the index the query fails and spent escalations pile up in the shared zone the household can read" ;;
+    AlertAnswered.createdTimestamp)
+      echo "HouseholdShare.sweepOldAnswered queries 'creationDate < cutoff'; without the index the query fails and the answered markers accumulate forever — each one carrying a precise CloudKit creation time, which turns a suppression aid into a timestamped record of when the owner was awake" ;;
     PairedDevice.recordName)
       echo "CloudSync.pull() queries every PairedDevice with a match-all predicate, which production refuses without a queryable index; the error is swallowed, so fleet sync reads empty and looks like 'you have no devices'" ;;
     *)

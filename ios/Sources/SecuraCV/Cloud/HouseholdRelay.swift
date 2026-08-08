@@ -67,6 +67,19 @@ enum HouseholdRelay {
     /// The participant's subscription on their SHARED database.
     static let subscriptionID = "securacv-household-escalation-v1"
 
+    /// "The owner answered this one." Written to the owner's OWN private
+    /// default zone — deliberately NOT the shared zone, which participants can
+    /// read and which is allowed to hold exactly one kind of record.
+    ///
+    /// It exists because acknowledging is device-local. The owner acks on their
+    /// iPhone; their iPad's escalation timer expires still believing nobody
+    /// answered, and tells a household member "Nobody answered" about an alarm
+    /// that WAS answered. The deterministic occurrence name dedupes two
+    /// *writes*, but it cannot represent an *answer* — so the answer needs a
+    /// record of its own, keyed by the same occurrence so any of the owner's
+    /// devices can ask "has this one been dealt with?" before waking anybody.
+    static let answeredRecordType = "AlertAnswered"
+
     /// May this reach a second person? Deliberately a separate gate from the
     /// one `escalateIfUnanswered` already passed, asked in its own file with
     /// its own test: reaching someone who is not the owner is the highest-cost
@@ -109,6 +122,15 @@ enum HouseholdRelay {
         return "esc-" + digest.map { String(format: "%02x", $0) }.joined().prefix(32)
     }
 
+    /// The "answered" marker's name for the same occurrence. Same hash, a
+    /// different prefix — so the two records can never collide, and reading
+    /// one never depends on having written the other. Derived rather than
+    /// stored for the same reason the escalation name is: every device the
+    /// owner holds computes it identically, with nothing to sync.
+    static func answeredRecordName(for occurrenceKey: String) -> String {
+        "ans-" + occurrenceKey.dropFirst("esc-".count)
+    }
+
     // MARK: - the words a participant's own device writes
 
     /// Title and body for the participant's locally-created subscription.
@@ -136,10 +158,19 @@ enum HouseholdRelay {
         }
     }
 
-    /// How many people would actually be reached — the owner is not one of
-    /// them (their own devices are already told directly), and an invitation
-    /// nobody accepted reaches nobody.
-    static func reachableCount(_ members: [HouseholdMember]) -> Int {
+    /// How many people have JOINED — the owner is not one of them (their own
+    /// devices are already told directly), and an invitation nobody accepted
+    /// reaches nobody.
+    ///
+    /// Note the word. This used to be called `reachableCount`, and the roster
+    /// said "N people are told", which is a claim this app cannot support: a
+    /// participant who joined and then denied or disabled notifications still
+    /// reads as `.accepted` in CloudKit, so the owner was told somebody would
+    /// be woken in exactly the case the code already knew they wouldn't be
+    /// (`HouseholdShare.participantBlocked` — which lives on the participant's
+    /// device, where the owner cannot see it). Joining is what the owner's
+    /// device can actually observe, so joining is what it now says.
+    static func joinedCount(_ members: [HouseholdMember]) -> Int {
         members.filter { $0.status == .accepted }.count
     }
 
@@ -147,14 +178,24 @@ enum HouseholdRelay {
         members.filter { $0.status == .invited }.count
     }
 
-    /// The one line the Alerts screen shows. Never overstates: an invitation
-    /// that hasn't been accepted is named as such, because "2 people can be
-    /// reached" when one of them never tapped the link is exactly the kind of
-    /// comfortable lie this app exists not to tell.
+    /// The one line the Alerts screen shows. Never overstates, which now means
+    /// two different things it did not before:
+    ///
+    ///   * an invitation nobody accepted is named as such — "2 people can be
+    ///     reached" when one never tapped the link is the comfortable lie this
+    ///     app exists not to tell;
+    ///   * and somebody who HAS joined is described as having joined, not as
+    ///     being "told". Whether their phone will actually alert them is their
+    ///     notification setting, which lives on their device and is not
+    ///     something the owner's device can see. Saying "told" claimed
+    ///     knowledge we don't have, in precisely the case where it fails.
+    ///
+    /// `notedUnknownReach` carries that second point once, rather than
+    /// repeating a hedge in every branch.
     static func summary(_ members: [HouseholdMember]) -> String {
-        let reachable = reachableCount(members)
+        let joined = joinedCount(members)
         let pending = pendingCount(members)
-        switch (reachable, pending) {
+        switch (joined, pending) {
         case (0, 0):
             return "Nobody else is set up. If an alarm goes unanswered, only your own devices will know."
         case (0, let waiting):
@@ -163,14 +204,26 @@ enum HouseholdRelay {
                 : "\(waiting) people are invited but haven't joined yet, so nobody else can be reached."
         case (let count, 0):
             return count == 1
-                ? "1 person is told if an alarm goes unanswered."
-                : "\(count) people are told if an alarm goes unanswered."
+                ? "1 person has joined and will be sent an alarm nobody answered."
+                : "\(count) people have joined and will be sent an alarm nobody answered."
         case (let count, let waiting):
-            let people = count == 1 ? "1 person is told" : "\(count) people are told"
+            let people = count == 1
+                ? "1 person has joined"
+                : "\(count) people have joined"
             let rest = waiting == 1 ? "1 more hasn't joined yet." : "\(waiting) more haven't joined yet."
-            return "\(people) if an alarm goes unanswered. \(rest)"
+            return "\(people) and will be sent an alarm nobody answered. \(rest)"
         }
     }
+
+    /// The limit of what the owner's device can know about the other end,
+    /// said once on the household screen instead of hedged into every count.
+    /// A participant can join and then turn notifications off; their CloudKit
+    /// acceptance still reads `.accepted`, and nothing tells the owner.
+    static let reachIsTheirsToKnow = """
+        Whether their phone actually alerts them is their own notification \
+        setting — SecuraCV can't see it from here. Ask them to check if it \
+        matters.
+        """
 
     /// The condition the whole ladder rests on, stated where an owner is
     /// deciding to rely on it. Escalation is decided by a device that is
