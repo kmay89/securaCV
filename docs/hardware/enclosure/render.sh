@@ -152,6 +152,16 @@ devstl dev_c3_147_bare_bezel.stl canary_c3_lcd147.scad -D 'headers="none"' -D 'p
 devstl dev_c3_147_bare_lid.stl   canary_c3_lcd147.scad -D 'headers="none"' -D 'part="lid"'
 devstl dev_c3_147_hdr_bezel.stl canary_c3_lcd147.scad -D 'headers="male"' -D 'part="bezel"'
 devstl dev_c3_147_hdr_lid.stl   canary_c3_lcd147.scad -D 'headers="male"' -D 'part="lid"'
+# …and the same case cut for the OTHER board: the ESP32-S3-LCD-1.47, whose
+# PCB ends in a series-A male plug. Rendered because the port axis moves the
+# opening, the insertion slot, the drop collar and the light ring's notch
+# together — and the ring surviving that notch as ONE piece is exactly what
+# the band's part count below proves.
+devstl dev_c3_147_usba_bezel.stl canary_c3_lcd147.scad -D 'port="usb_a"' -D 'headers="none"' -D 'part="bezel"'
+devstl dev_c3_147_usba_lid.stl   canary_c3_lcd147.scad -D 'port="usb_a"' -D 'headers="none"' -D 'part="lid"'
+devstl dev_c3_147_usba_band.stl  canary_c3_lcd147.scad -D 'port="usb_a"' -D 'headers="none"' -D 'part="light"'
+devstl dev_c3_147_usba_hdr_bezel.stl canary_c3_lcd147.scad -D 'port="usb_a"' -D 'headers="male"' -D 'part="bezel"'
+devstl dev_c3_147_usba_hdr_lid.stl   canary_c3_lcd147.scad -D 'port="usb_a"' -D 'headers="male"' -D 'part="lid"'
 # The USB-A stick (hallway nightlight body). Three printed parts — bezel, back
 # plate, and the white light-band strips that fill the seam. The mesh gate
 # below is what actually proves the snap beams, the seam's hidden ribs and the

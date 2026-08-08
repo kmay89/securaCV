@@ -132,7 +132,8 @@ QR_COUPON = [("body", "coupon_qr_body", 1, LCD7, {})] + (
 # (A lid_back="keyhole" build genuinely has no mark. That is a different
 # product configuration and wants its own set — it must not be quietly
 # packaged as the branded one.)
-REQUIRE_ALL = {"QR coupon", "c3 lid", "c3 male lid"}
+REQUIRE_ALL = {"QR coupon", "c3 lid", "c3 male lid",
+               "c3 usba lid", "c3 usba male lid"}
 
 # ── The hallway stick (Waveshare ESP32-S3-LCD-1.47) ────────────────────────
 # Two objects, three filaments, and the whole reason it is worth packaging:
@@ -220,6 +221,34 @@ C3M_LID = [("lid", "lid", 1, C3, {"headers": '"male"'}),
            ("mark", "mark", 2, C3, {"headers": '"male"'}),
            ("shell", "shell", 3, C3, {"headers": '"male"'})]
 
+# ── …and the same case cut for the USB-A board (ESP32-S3-LCD-1.47) ─────────
+# Same 36.37 x 20.32 PCB, same 1.47" panel, same buttons on the same edges —
+# the board just ends in a series-A male plug instead of carrying a receptacle.
+# So it is the same case with a different port, and the .scad says so with one
+# axis rather than a second file.
+#
+# NOT offered in the "pillars" build, and the .scad asserts it: pillars is a
+# claim that Waveshare ship THAT board with brass standoffs on, measured off a
+# printed C3 case. Nobody has had an S3 in hand to say the same of it.
+#
+# The plug end is where the two differ, and one difference reaches the plate:
+# a series-A plug straddles the PCB, so its opening sits low enough to land on
+# the light ring. The ring dives UNDER it rather than stopping short, which
+# keeps the white continuous all the way round — 1.55 mm of it under the plug.
+# That is why the band is still one volume here and not two.
+C3A_BEZEL = [("body", "bezel", 1, C3, {"port": '"usb_a"', "headers": '"none"'}),
+             ("band", "light", 3, C3, {"port": '"usb_a"', "headers": '"none"',
+                                       "band_clear": "0"})]
+C3A_LID = [("lid", "lid", 1, C3, {"port": '"usb_a"', "headers": '"none"'}),
+           ("mark", "mark", 2, C3, {"port": '"usb_a"', "headers": '"none"'}),
+           ("shell", "shell", 3, C3, {"port": '"usb_a"', "headers": '"none"'})]
+C3AM_BEZEL = [("body", "bezel", 1, C3, {"port": '"usb_a"', "headers": '"male"'}),
+              ("band", "light", 3, C3, {"port": '"usb_a"', "headers": '"male"',
+                                        "band_clear": "0"})]
+C3AM_LID = [("lid", "lid", 1, C3, {"port": '"usb_a"', "headers": '"male"'}),
+            ("mark", "mark", 2, C3, {"port": '"usb_a"', "headers": '"male"'}),
+            ("shell", "shell", 3, C3, {"port": '"usb_a"', "headers": '"male"'})]
+
 # A "set" is a list of OBJECTS. Each object is (name, volumes, plate center).
 # Volumes within one object are parts of it and stay registered to each other;
 # separate objects are independent and get their own place on the plate.
@@ -286,6 +315,12 @@ SETS = {
                 ("c3 male lid",   C3M_LID,   (100, 95))],
     "c3-male-bezel": [("c3 male bezel", C3M_BEZEL, (128, 128))],
     "c3-male-lid":   [("c3 male lid",   C3M_LID,   (128, 128))],
+    # The USB-A board's case, both of ITS builds. Same footprint again, so the
+    # same layout and the same tower zone.
+    "c3-usba": [("c3 usba bezel", C3A_BEZEL, (100, 150)),
+                ("c3 usba lid",   C3A_LID,   (100, 95))],
+    "c3-usba-male": [("c3 usba male bezel", C3AM_BEZEL, (100, 150)),
+                     ("c3 usba male lid",   C3AM_LID,   (100, 95))],
     # THE TPU FITMENTS, two of each — a spare is worth more than a second job.
     # All six are ONE material, so this plate changes tool exactly never: no
     # purge tower, no tower zone, and every volume on slot 1. That is the whole
@@ -338,7 +373,8 @@ OUTPUT = {"gauges": "lcd7_gauges", "color": "lcd7_color",
           # not say which board it was cut for is a name that gets printed for
           # the wrong one.
           "c3-male": "c3_male_case",
-          "c3-male-bezel": "c3_male_bezel", "c3-male-lid": "c3_male_lid"}
+          "c3-male-bezel": "c3_male_bezel", "c3-male-lid": "c3_male_lid",
+          "c3-usba": "c3_usba_case", "c3-usba-male": "c3_usba_male_case"}
 assert set(OUTPUT) == set(SETS), "every set needs an output name"
 # Volume tuples grew a source and a defines dict when a second case moved in
 # here, and a set written inline (rather than through one of the named lists
@@ -394,6 +430,8 @@ TOWER_ZONES = {
     "c3-lid":   (150.0, 20.0, 250.0, 230.0),
     # The headered build has the same footprint, so it keeps the same zones.
     "c3-male":       (140.0, 40.0, 250.0, 210.0),
+    "c3-usba":      (140.0, 40.0, 250.0, 210.0),
+    "c3-usba-male": (140.0, 40.0, 250.0, 210.0),
     "c3-male-bezel": (150.0, 20.0, 250.0, 230.0),
     "c3-male-lid":   (150.0, 20.0, 250.0, 230.0),
 }

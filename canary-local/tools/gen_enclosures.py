@@ -724,6 +724,13 @@ VARIANT_SELECTOR_PARAMS = {
     "preset", "host", "radar", "stack", "model", "variant", "mode", "mount",
     "headers",  # C6 display: stripped board vs as-shipped (headers + pillars)
     "panel_variant",  # 7" dashboard: the -7 and the -7B, half a turn apart
+    # C3 pocket case: WHICH BOARD, not which option. usb_c is the
+    # ESP32-C3-LCD-1.47 (receptacle on the PCB back); usb_a is the
+    # ESP32-S3-LCD-1.47, whose PCB ends in a series-A male plug. Same outline,
+    # same panel, same buttons — a different connector and therefore a
+    # different case. It belongs here rather than in OPTION_ENUM_PARAMS for
+    # exactly that reason: a buyer does not choose it, their board does.
+    "port",
 }
 OPTION_ENUM_PARAMS = {
     "mount_style", "battery", "side_exit",

@@ -238,6 +238,8 @@ use <canary_vent_lib.scad>   // the house egg — here it is the hanger, not a v
 part  = "all";      // ["bezel","lid","light","mark","shell","coupon","all","exploded","palette"]
 // board build: "pillars" = as Waveshare ships it (brass corner pillars on, headers not soldered), "none" = stripped (pillars unscrewed too), "male" = down-facing headers + pillars
 headers = "pillars";   // ["pillars","none","male"]
+// which board this case is cut for: "usb_c" = ESP32-C3-LCD-1.47 (USB-C receptacle on the PCB back), "usb_a" = ESP32-S3-LCD-1.47 (the PCB ENDS in a series-A male plug)
+port = "usb_c";   // ["usb_c","usb_a"]
 
 /* [Board] — ESP32-C3-LCD-1.47, from the Waveshare drawing (mm) */
 board_l = 36.37;   // PCB long axis (Y, portrait height)
@@ -290,6 +292,63 @@ usb_h  = 3.35;     // stadium opening height — shell + 0.09 total
 usb_dx = 0.0;      // sideways offset of the connector center — MEASURE
 usb_dz = 0.0;      // depth offset from shell-on-back-face nominal — MEASURE
 usb_proud  = 1.9;  // shell overhang past the PCB edge — MEASURE
+/* [USB-A] — the `port = "usb_a"` build only: the ESP32-S3-LCD-1.47.
+   Same 36.37 x 20.32 PCB and the same 1.47" panel as the C3, same buttons on
+   the same edges — but the board does not carry a receptacle, it ENDS IN A
+   PLUG. That changes four things and nothing else, which is why this is an
+   axis on this file rather than a second case:
+
+     1. THE OPENING IS A RECTANGLE. Series-A is not a stadium. Cut a stadium
+        for it and the shell's four square corners have nowhere to go; the
+        plug does not pass, and the instinct is then to open the hole until
+        it does, which ends as a sloppy oval around a square connector.
+     2. THE SHELL STRADDLES THE BOARD. The PCB tongue runs down the middle of
+        the 4.50 mm shell — it does not sit under it, the way the C3's
+        back-mounted receptacle does. So z_usb centers on the PCB mid-plane,
+        ~2.4 mm LOWER than the C build, which is what collides with the light
+        ring (see the seam notch).
+     3. INSERTION LENGTH IS A HARD STANDARD. ~12 mm of shell has to enter a
+        receptacle, and every millimeter the case adds past the PCB edge
+        comes straight off it. Hence a thin end wall, a relieved outer face,
+        and an assert rather than a comment.
+     4. IT GETS DROPPED ON THE PLUG. The failure is not the case cracking, it
+        is the plug levering against the PCB and tearing its solder joints —
+        so the plug root gets a collar that bottoms out before the shell can
+        rotate far enough to load the joint.
+
+   The shell dimensions are the USB 2.0 mechanical standard and are NOT to be
+   "adjusted to fit": if the plug will not pass, the opening is wrong. */
+usb_a_w = 12.00;    // series-A shell width — the standard
+usb_a_h = 4.50;     // series-A shell height — the standard
+usb_a_proud = 14.0; // shell overhang past the PCB edge — MEASURE. This is the
+                    // number the whole plug end is built on. A series-A shell
+                    // is ~14 mm long overall and solders overlapping the
+                    // board, so ~14 past the edge is the realistic start, NOT
+                    // the 12 mm insertion figure (that is what must survive
+                    // AFTER the end wall takes its cut).
+usb_a_clear = 0.35; // per-side clearance around the shell in its opening
+                    // (the plug-end wall is NOT a knob here: it is this case's
+                    //  ordinary `wall`, and the assert below proves 14.0 - 2.2
+                    //  still leaves 11.8 mm of insertion length. A thinner
+                    //  special-case wall would buy 0.4 mm nobody needs and
+                    //  cost the drop collar the stock it anchors into.)
+usb_a_relief = 0.5; // outer-face relief so a receptacle recessed in a wall-
+                    // wart housing meets air instead of meeting this case
+usb_a_r = 0.35;     // corner break on the opening only — a series-A shell's
+                    // corners are near-sharp; a few tenths keeps the printed
+                    // opening off an elephant-foot allowance and is invisible
+                    // against the shell
+collar_on  = true;  // the drop collar — see 4 above. The single most load-
+                    // bearing feature on this build; everything else is
+                    // comfort.
+collar_t   = 2.2;   // ring thickness around the shell at its root
+collar_l   = 3.0;   // how far the ring reaches ALONG the plug from the wall
+collar_gap = 0.25;  // ring-to-shell gap: small enough to bottom out early,
+                    // large enough that the ring is not a press fit
+band_notch = 0.3;   // black left between the white ring and the plug opening
+                    // where the ring dives under it — see the notch in
+                    // seam_solid(). Zero would leave white breaking the edge
+                    // of the hole, which reads as a defect rather than a line.
 usb_cham   = 0.6;  // outer-rim CHAMFER around the stadium — the plug's
                    // lead-in. This was a 0.8-deep stadium RECESS until print
                    // 2 exposed the flaw: the recess floor over the insertion
@@ -843,29 +902,55 @@ r_in  = max(0.6, r_out - wall);
 
 z_pcb_front = face_t + lcd_rise;
 z_pcb_back  = z_pcb_front + pcb_t;
-// the opening centers on the SHELL (nominal 3.26, resting on the PCB back),
-// not on the opening height — tightening usb_h never shifts it off the port
-z_usb = z_pcb_back + 3.26/2 + usb_dz;
+// ── THE PORT, whichever board this is cut for ──────────────────────────────
+// One switch, read everywhere below, so nothing downstream has to know which
+// connector it is looking at. `is_a` rather than repeated string compares:
+// a typo in one of a dozen `port == "usb_a"` tests would silently give the
+// C build's geometry to an A board, which is the exact class of quiet wrong
+// answer the pinned defines in gen_3mf.py exist to prevent.
+is_a = (port == "usb_a");
+usb_ow = is_a ? usb_a_w + 2*usb_a_clear : usb_w;   // opening width
+usb_oh = is_a ? usb_a_h + 2*usb_a_clear : usb_h;   // opening height
+// The opening centers on the SHELL, and WHERE the shell is differs by board:
+//   usb_c — a receptacle resting ON the PCB back face, so the shell's center
+//           sits half its nominal 3.26 height behind that face. Tightening
+//           usb_h never shifts it off the port.
+//   usb_a — a plug the PCB tongue runs down the MIDDLE of. It straddles the
+//           board, so the center is the PCB's own mid-plane. Getting this
+//           wrong stacks the opening 2.4 mm too high and breaks the case out
+//           through its rim.
+z_usb = is_a ? z_pcb_front + pcb_t/2 + usb_dz
+             : z_pcb_back + 3.26/2 + usb_dz;
 z_btn = z_pcb_back + btn_dz;
 
 btn_y     = -board_l/2 + btn_up;         // button center (Y)
 btn_reach = btn_proud + tol_slide;
 btn_body_reach = btn_body_p + tol_slide;
-usb_reach = usb_proud + tol_slide;
-usb_slide = usb_w + 0.1;                 // insertion slot — a hair looser than
-                                         // the stadium (0.13/side over the
-                                         // shell), and flush-walled with it
-z_slot0   = z_usb - usb_h/2;             // the slot starts AT the stadium's
+// How far the connector overhangs the PCB edge. On the C build that is a
+// receptacle sticking out 1.9; on the A build it is a whole 14 mm plug, and
+// the case must not add to it — which is why usb_a_reach is NOT what sets the
+// chin. See chin_bump.
+usb_reach = (is_a ? wall : usb_proud) + tol_slide;
+usb_free  = usb_a_proud - wall;          // insertion length left to the plug
+usb_slide = usb_ow + 0.1;                // insertion slot — a hair looser than
+                                         // the opening, and flush-walled with
+                                         // it, so the connector drops down it
+z_slot0   = z_usb - usb_oh/2;            // the slot starts AT the opening's
                                          // floor and runs up to the rim: the
                                          // shell drops down it to its seat,
                                          // and the wall below the port stays
                                          // FULL thickness (print 2's chin was
                                          // needlessly hollowed to the face)
 ear_bump  = max(0, btn_reach + ear_skin - wall);
-chin_bump = max(0, usb_reach + ear_skin - wall);
+// On the C build the chin bulges outward to swallow the receptacle's 1.9 mm
+// of overhang. On the A build there is nothing to swallow — the plug goes
+// THROUGH and stands outside — and a bulge there would be 14 mm of insertion
+// length spent on decoration. So the A build has no chin at all, and its end
+// wall is usb_a_wall thin by construction.
+chin_bump = is_a ? 0 : max(0, usb_reach + ear_skin - wall);
 ear_w  = pad_l + pad_slot + 2.4;         // the ear wraps the paddle recess
                                          // with 1.2 mm of wall each side
-chin_w = usb_w + 4;
+chin_w = usb_ow + 4;
 
 // paddle frame (per ±X ear): the beam hinges at its USB-end face and its
 // free end carries the press dot. All in case coordinates.
@@ -1199,12 +1284,65 @@ assert(!light_seam || !band_ring || !opt_btn ||
            " — the band would run through the button flexure. Lower seam_h, ",
            "lower seam_dz, shorten pad_h to lift the recess, or set ",
            "band_ring = false and take the U."));
-assert(!light_seam || !band_ring ||
+// usb_c: the ring and the opening must never meet — there is room, so use it.
+assert(is_a || !light_seam || !band_ring ||
        seam_z0 + seam_h_eff <= z_usb - usb_h/2 - usb_cham - 0.2,
        str("the ring's far face reaches z=", seam_z0 + seam_h_eff,
            " and the USB stadium's chamfer starts at ",
            z_usb - usb_h/2 - usb_cham, " — the band would break into the ",
            "connector opening on the wall it just started crossing."));
+// usb_a: they DO meet, by design, and the ring dives under. What has to hold
+// is that something survives down there — a notch that ate the whole run
+// would leave the plug wall black and the ring severed, and it would render
+// perfectly clean either way.
+band_under = (z_usb - usb_oh/2 - band_notch) - seam_z0;
+assert(!is_a || !light_seam || !band_ring || band_under >= 1.0,
+       str("the plug opening leaves only ", band_under, " mm of light ring ",
+           "under it (band starts z=", seam_z0, ", the notch reaches down to ",
+           z_usb - usb_oh/2 - band_notch, "). Under 1.0 mm it is not a pipe ",
+           "and the ring is dark across the whole plug wall. Lower seam_dz, ",
+           "shrink band_notch, or re-MEASURE usb_dz."));
+// The collar is added AFTER the cavity now, so nothing clips it in XY — which
+// means nothing stops it growing out through the side walls either. This is
+// the assert that replaced that clip.
+assert(!is_a || !collar_on ||
+       usb_a_w + 2*collar_gap + 2*collar_t <= xc - 1.0,
+       str("the drop collar is ", usb_a_w + 2*collar_gap + 2*collar_t,
+           " wide in a ", xc, " mm cavity — it would break out through the ",
+           "side walls. Thin collar_t."));
+// …and that it fits UNDER the lid. It stands in the cavity, so a collar
+// taller than the case is one the lid closes onto.
+assert(!is_a || !collar_on ||
+       z_usb + usb_a_h/2 + collar_gap + collar_t <= bez_h - 0.3,
+       str("the drop collar reaches z=",
+           z_usb + usb_a_h/2 + collar_gap + collar_t, " in a case ", bez_h,
+           " deep — the lid would land on it. Thin collar_t."));
+// "pillars" is a claim about a SPECIFIC board: that Waveshare ship it with
+// brass M2 corner standoffs installed, brass_h (3.0) tall, MEASURED off a
+// printed C3 case. The S3 stick's product photos show plated corner holes and
+// no standoffs, and nobody here has had one in hand — so the pillars build is
+// not offered for it rather than quietly reusing the C3's number. That is the
+// same rule the panel registry states: a record is a claim somebody measured.
+assert(!is_a || headers != "pillars",
+       str("port=\"usb_a\" with headers=\"pillars\" would cut the press bosses ",
+           "to brass_h=", brass_h, ", which is a MEASURED fact about the C3 ",
+           "board and not about this one. Use \"none\" or \"male\"; if the S3 ",
+           "really does ship with pillars, MEASURE them and delete this."));
+// THE INSERTION LENGTH, and it is an assert because the failure is total: a
+// plug that will not seat makes the whole device useless, and it is invisible
+// until someone tries to plug it in.
+assert(!is_a || usb_free >= 11.0,
+       str("USB-A insertion length is only ", usb_free, " mm (plug stands ",
+           usb_a_proud, " past the PCB edge, wall takes ", wall,
+           ") — the plug will not seat. MEASURE usb_a_proud."));
+// The collar reaches INWARD, so it must fit in the depth above the PCB back
+// face — below that plane is the board. A collar taller than the room it has
+// simply gets clipped to nothing by its own intersection, silently.
+assert(!is_a || !collar_on || bez_h - z_pcb_back >= usb_a_h/2 + collar_gap + collar_t,
+       str("the drop collar needs ", usb_a_h/2 + collar_gap + collar_t,
+           " mm above the PCB back face and the case has ", bez_h - z_pcb_back,
+           " — it would be clipped away to nothing. Thin collar_t, or take ",
+           "the deeper headers build."));
 
 // ── The three features this revision added, each with the gate it needs ────
 // The ribs' band is DERIVED from the band and the vents, which means it can
@@ -1329,6 +1467,14 @@ echo(str("Canary C3-LCD-1.47 (headers=", headers, ") v0.2-dev — outer ",
          " (land X ", land_w_x, " / Y ", land_w_y, "), band ", seam_h_eff,
          " mm white starting ", seam_dz, " mm behind the glass",
          "  (IN DEVELOPMENT — MEASURE)"));
+// The plug end, printed rather than left to be worked out from the source.
+// usb_free is the number the whole build turns on and it is a MEASURE
+// derivative, so it goes where an operator sees it before starting a print.
+if (is_a)
+    echo(str("  USB-A: opening ", usb_ow, " x ", usb_oh,
+             " (series-A shell 12.00 x 4.50 + ", usb_a_clear, "/side), ",
+             usb_free, " mm of insertion length left clear (need >= 11), ",
+             "light ring dives to ", band_under, " mm under the plug"));
 
 // The wordmark as it must be DRAWN in the lid's own frame.
 //
@@ -1375,6 +1521,71 @@ module rrect2d(x, y, r) { offset(r = r) offset(r = -r) square([x, y], center = t
 // stadium: full-round ends, the USB-C shell's own profile
 module stadium2d(w, h) { rrect2d(w, h, h/2 - 0.05); }
 
+// The port's opening profile. USB-C is a stadium (full-round ends, like the
+// receptacle); series-A is a RECTANGLE with a corner break and nothing more.
+// One module so the opening, the relief and the collar cannot disagree about
+// what shape the connector is — which is the mistake that leaves a stadium
+// cut for a square shell and a plug that will not pass.
+// w and h are the FINISHED size — r rounds the corners without changing it.
+// The first cut of this took a `grow` instead, and every call site then
+// passed pre-grown dimensions AND a grow, so each shape came out twice its
+// stated margin. Nothing rendered wrong; what broke was the arithmetic in the
+// assert beside it, which went on reporting the number the code was supposed
+// to produce (1.55 mm of ring under the plug) while the mesh had 1.25. A
+// probe cut through the band is what caught it. Size in, size out — there is
+// nothing left to double.
+module usb_port2d(w, h, r = usb_a_r) {
+    if (is_a) offset(r = r) offset(r = -r) square([w, h], center = true);
+    else stadium2d(w, h);
+}
+
+// The drop collar — usb_a only, and it reaches INWARD from the plug-end wall,
+// never outward. That is the whole subtlety, and the first cut of this got it
+// wrong: an outward ring is the obvious shape, and every millimeter of it
+// comes straight off the plug's usable insertion length — 3 mm of handsome
+// ring is 3 mm the plug no longer reaches into the socket. The assert caught
+// it (8.8 mm left against a 11.0 floor) before it reached a plate.
+//
+// Built inward it costs nothing and does the job better: it lengthens the run
+// of shell the case BEARS ON, so a case dropped on its plug pivots the shell
+// against a long bearing in the case instead of against its own solder
+// joints — which is the failure this feature exists for.
+//
+// Clipped to sit ABOVE the PCB's back face, because below that plane is where
+// the board is. So it is an inverted U over the shell's top and upper flanks
+// rather than a closed ring — which is also the half that matters, since a
+// case dropped on its plug levers the shell toward the glass.
+// ⚠️ IT IS ADDED AFTER THE CAVITY IS CUT, not with the shell stock, and the
+// first cut of this got that wrong in a way nothing caught: the collar stands
+// INBOARD of the plug wall, so it lives inside cavity2d() — and the bezel
+// subtracts that cavity through the case's whole height afterward. The ring
+// was modeled, rendered, and then deleted in the same pass. Every assert
+// still passed, the mesh was watertight, the part count was right, and the
+// load-bearing feature simply was not in the part. A probe cut inboard of the
+// wall is what proved it (Codex flagged it first — credit where due).
+//
+// The clip is in Z ONLY for the same reason. Clipping it to cavity2d() in XY
+// also strips the 0.01 mm of overlap that welds it to the wall, which is how
+// a collar becomes a floating ring the mesh gate then counts as a second
+// part. The width instead gets an assert.
+module usb_collar() {
+    if (is_a && collar_on)
+        intersection() {
+            translate([usb_dx, -(yc/2 + 0.01), z_usb]) rotate([-90, 0, 0])
+                linear_extrude(collar_l)
+                    difference() {
+                        usb_port2d(usb_a_w + 2*collar_gap + 2*collar_t,
+                                   usb_a_h + 2*collar_gap + 2*collar_t,
+                                   usb_a_r + collar_t);
+                        usb_port2d(usb_a_w + 2*collar_gap,
+                                   usb_a_h + 2*collar_gap);
+                    }
+            // above the PCB's back face — below that plane is the board
+            translate([-2*xo, -2*yo, z_pcb_back])
+                cube([4*xo, 4*yo, bez_h - z_pcb_back]);
+        }
+}
+
 // bezel outline: body + ear/chin bulges (the bulges belong to the bezel; the
 // lid plate keeps the plain outline)
 module shell_outline2d() {
@@ -1400,9 +1611,25 @@ module cavity2d() {
 
 // the USB insertion slot: from the stadium's floor up through the rim, the
 // shell's path down to its seat during the glass-first drop
+// The insertion channel — usb_c ONLY, and the port axis is what makes that a
+// decision rather than an oversight.
+//
+// On the C build the board drops straight down and the back-mounted shell
+// needs a channel to descend through. On the A build it cannot: the drop
+// collar's web sits directly in that channel's path (bore top z 8.15, ring
+// top 10.35, both inside the slot's x span), so a slot and a collar cannot
+// both exist. One of them has to go, and it is not the collar — the collar is
+// the reason this case survives being dropped on its plug.
+//
+// It costs nothing, because a 14 mm plug is assembled PLUG-FIRST anyway:
+// offer the plug out through its opening with the board tilted, then lower
+// the far end. That is the natural motion for a protruding connector, and it
+// leaves the plug-end wall at full thickness — which is the stock the collar
+// anchors into.
 module usb_slot() {
-    translate([usb_dx, -yc/2, (z_slot0 + bez_h + 0.2)/2])
-        cube([usb_slide, 2*usb_reach, bez_h + 0.2 - z_slot0], center = true);
+    if (!is_a)
+        translate([usb_dx, -yc/2, (z_slot0 + bez_h + 0.2)/2])
+            cube([usb_slide, 2*usb_reach, bez_h + 0.2 - z_slot0], center = true);
 }
 
 // the wall material as stock — what the band is allowed to occupy. Built
@@ -1427,19 +1654,46 @@ module wall_stock() {
 // one geometry serves as the CUT (0) and the BAND that fills it
 // (band_clear); the radial faces come from wall_stock exactly.
 module seam_solid(shrink = 0) {
-    translate([0, 0, seam_z0 + shrink])
-        linear_extrude(seam_h_eff - 2*shrink)
-            intersection() {
-                difference() {
-                    offset(delta =  1.0) shell_outline2d();
-                    offset(delta = -1.0) cavity2d();
+    difference() {
+        translate([0, 0, seam_z0 + shrink])
+            linear_extrude(seam_h_eff - 2*shrink)
+                intersection() {
+                    difference() {
+                        offset(delta =  1.0) shell_outline2d();
+                        offset(delta = -1.0) cavity2d();
+                    }
+                    // the ring takes the whole perimeter; the U is masked to
+                    // the run above the ears, where it always stopped
+                    if (band_ring) square([2*(xo + ear_bump + 4), 2*(yo + 4)], center = true);
+                    else translate([0, (side_lo + shrink + yo)/2])
+                        square([xo + 2*ear_bump + 4, yo - (side_lo + shrink)], center = true);
                 }
-                // the ring takes the whole perimeter; the U is masked to the
-                // run above the ears, which is where it always stopped
-                if (band_ring) square([2*(xo + ear_bump + 4), 2*(yo + 4)], center = true);
-                else translate([0, (side_lo + shrink + yo)/2])
-                    square([xo + 2*ear_bump + 4, yo - (side_lo + shrink)], center = true);
-            }
+        // ── THE PLUG NOTCH — usb_a only, and the most interesting thing on
+        // this build. A series-A plug straddles the PCB, so its opening sits
+        // ~2.4 mm lower than the C build's receptacle — low enough to land
+        // ON the light ring. The C build asserts the two never meet; here
+        // they must share a wall.
+        //
+        // The tempting fix is to shorten the band until it clears, which
+        // costs every wall 1.75 mm of white to solve a problem on one of
+        // them. The other is to stop the ring short of this wall — but that
+        // is the U this case abandoned after print 3 showed the pipe going
+        // dark exactly where it turns, and it would put the dark run at the
+        // end you look at while it charges.
+        //
+        // So the ring DIVES UNDER the plug instead of yielding to it: the
+        // opening is cut out of the band with a margin, and what survives
+        // beneath it carries the light across. Still one closed ring, still
+        // full height on three walls and both pairs of corners, locally
+        // thinner for the width of the connector. The assert below is what
+        // holds the surviving run above the file's own 1.0 mm "not a pipe"
+        // floor.
+        if (is_a)
+            translate([usb_dx, -yo/2, z_usb]) rotate([90, 0, 0])
+                linear_extrude(2*(wall + collar_l + 4), center = true)
+                    usb_port2d(usb_ow + 2*band_notch, usb_oh + 2*band_notch,
+                               usb_a_r + band_notch);
+    }
 }
 
 module bezel_light_seam() { seam_solid(0); }
@@ -1501,11 +1755,25 @@ module bezel() {
         translate([0, 0, face_t]) linear_extrude(cav_d + 0.2) cavity2d();
         // USB insertion slot (stadium floor → rim; solid wall below)
         usb_slot();
-        // USB-C stadium through the bottom wall + chin, tight on the shell
+        // the port opening through the bottom wall + chin, tight on the shell
         translate([usb_dx, -yo/2, z_usb]) rotate([90, 0, 0])
-            linear_extrude(2*(wall + chin_bump + 1), center = true) stadium2d(usb_w, usb_h);
-        // …and the rim chamfer: the plug's lead-in, no thin floor anywhere
-        hull() {
+            linear_extrude(2*(wall + chin_bump + collar_l + 2), center = true)
+                usb_port2d(usb_ow, usb_oh);
+        // …and the outer-face relief. Two different jobs, hence two shapes:
+        //   usb_c — a CHAMFER, the plug's overmold lead-in. It was a recessed
+        //           ring until print 2 exposed the flaw (a 0.4 mm floor over
+        //           the insertion slot that broke out); a chamfer thins
+        //           progressively and leaves nothing to break.
+        //   usb_a — a straight RELIEF, and it is not a lead-in at all: this
+        //           plug goes into a receptacle, not the other way round, so
+        //           what the relief buys is clearance for a receptacle sunk
+        //           in a wall-wart housing to meet air instead of this case.
+        if (is_a)
+            translate([usb_dx, -(yo/2) - 0.01, z_usb]) rotate([-90, 0, 0])
+                linear_extrude(usb_a_relief + 0.02)
+                    usb_port2d(usb_ow + 2*usb_a_relief, usb_oh + 2*usb_a_relief,
+                               usb_a_r + usb_a_relief);
+        else hull() {
             translate([usb_dx, -(yo/2 + chin_bump) + 0.005, z_usb]) rotate([90, 0, 0])
                 linear_extrude(0.01) stadium2d(usb_w + 2*usb_cham, usb_h + 2*usb_cham);
             translate([usb_dx, -(yo/2 + chin_bump) + usb_cham + 0.005, z_usb]) rotate([90, 0, 0])
@@ -1545,6 +1813,10 @@ module bezel() {
         // the light seam
         if (light_seam) bezel_light_seam();
     }
+    // the drop collar, added here for the same reason the ribs are: the
+    // cavity has been cut by now, and the collar stands inside it. It carries
+    // its own bore, so nothing has to be cut back through it.
+    usb_collar();
     // board-locating ribs — see [Board location]. Added after the cavity is
     // cut, in the z gap the band and the vents leave between them.
     if (loc_rib) for (sx = [1, -1], yy = loc_rib_ys)
