@@ -108,6 +108,45 @@ any platform.
 
 ## Entries
 
+### 2026-08-09 — A committed build number of `1` meant every marketing version got exactly one upload, ever
+
+- **Symptom:** an App Store Connect / TestFlight build could never be respun.
+  Re-uploading the same marketing version is rejected as a duplicate, so a
+  transient upload failure, a signing hiccup, or a one-line fix all cost a
+  **marketing version bump** — and the version that failed is burned, because
+  the workflow's own guard refuses a tag that already exists.
+- **Cause:** `ios/project.yml` and `tvos/WitnessWall/project.yml` both commit
+  `CURRENT_PROJECT_VERSION: "1"`, and neither release workflow overrode it. App
+  Store Connect identifies a build by **(marketing version, build number)**, so
+  a constant build number collapses that pair to just the marketing version.
+  It looked harmless because the marketing version was bumped every time
+  anyway — the constraint was invisible until someone needed a second build of
+  one version.
+- **Fix:** pass `CURRENT_PROJECT_VERSION="$BUILD_NUMBER"` on the `xcodebuild`
+  command line at archive time, sourced from `${{ github.run_number }}`.
+  Three details that are the whole point:
+  - **The command line, not the project file.** It reaches every target in the
+    scheme, and the watch app and widget extension MUST carry the same build
+    number as the host app or App Store validation rejects the bundle.
+  - **`<run_number>.<run_attempt>`, not a commit count and not either half
+    alone.** The counter has to count **attempts, not content**: the respin
+    case is "same commit, upload again", so a commit count emits the same
+    value twice and is rejected identically — it looks like a fix and isn't
+    one. And `run_number` alone fails the same way, because GitHub's **Re-run
+    jobs** reuses the run: `run_number` does not move, only `run_attempt`
+    does, and a re-run after an accepted upload with a failed later step is
+    exactly the retry an operator reaches for. Composed they only ever
+    increase (42.1 → 42.2 → 43.1), and a dotted `CFBundleVersion` is compared
+    component by component. *(The first version of this fix used `run_number`
+    alone and had to be corrected in review — the trap is convincing.)*
+  - **A local fallback** (`: "${BUILD_NUMBER:=1}"` in the tvOS script) so a
+    developer run still works, where uniqueness is nobody's problem.
+- **Applies to:** both Apple targets, fixed together. The iPhone app is where
+  it was noticed; tvOS carried the identical setting and would have hit the
+  identical wall on its first respin. Any future signed target that inherits a
+  committed `CURRENT_PROJECT_VERSION` needs the same override — the value in
+  the project file should be read as a placeholder, never as the build number.
+
 ### 2026-08-08 — Five Lab releases built green and shipped to nobody, because "publish" was a human click no automation could make
 
 - **Symptom:** the Lab's self-updater, shipped in 0.2.0, had never delivered a
