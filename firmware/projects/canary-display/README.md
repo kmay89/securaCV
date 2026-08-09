@@ -209,6 +209,33 @@ include/canary/
 src/                  implementations; hal+ui TUs are flavor-gated
 ```
 
+## Text on the glass: the font has a fixed alphabet
+
+LVGL's built-in Montserrat is generated over one range — `0x20-0x7F`, `0xB0`
+(°), `0x2022` (•), plus the FontAwesome glyphs the `LV_SYMBOL_*` macros expand
+to. There is no fallback font. A codepoint outside that set draws a **hollow
+box**, with no build error and nothing in the log.
+
+So the obvious separator is a trap: U+00B7 MIDDLE DOT is not in the range, and
+it shipped — every date line read `Sunday [] Aug 9` on real hardware. It sits
+one codepoint from the degree sign that *is* in the range, and the WASM
+emulator hides it entirely, because a browser has real fonts.
+
+Reach for these instead:
+
+| Want | Use | Not |
+|---|---|---|
+| separator dot | `\xE2\x80\xA2` (•, U+2022) | `\xC2\xB7` (·) |
+| a dash | ASCII `-` | em/en dash |
+| ellipsis | `...` | `…` |
+| a check | `LV_SYMBOL_OK`, or `\xEF\x80\x8C` where including `lvgl.h` would be wrong layering | `✓` (U+2713) |
+
+`firmware/scripts/check_display_glyphs.py` enforces this over `src/` and
+`include/canary/`, and runs in `firmware.yml`. Text bound for the serial log
+(`log_line`, `boot_kv`, `say_evt`), for the compiler (`#error`), or for a
+browser (`*_html.h`, raw string literals) is exempt — those are read where
+real fonts exist.
+
 ## Roadmap (post-v0.2)
 
 - **Mode system waves 1–4** ([spec](../../../docs/hardware/display_modes.md)):
