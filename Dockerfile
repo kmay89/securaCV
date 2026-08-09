@@ -31,7 +31,7 @@ COPY README.md LICENSE CHANGELOG.md CONTRIBUTING.md SECURITY.md ./
 ARG CARGO_FEATURES=rtsp-gstreamer
 RUN cargo build --release --features "${CARGO_FEATURES}"
 
-FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
+FROM debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
 
 # libssl3 provides the libcrypto.so.3 the SQLCipher-linked binary loads at
 # runtime (listed explicitly rather than relying on transitive dependencies).
