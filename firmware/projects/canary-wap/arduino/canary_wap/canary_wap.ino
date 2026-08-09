@@ -295,7 +295,7 @@ static volatile bool g_vault_test_pending = false;
 // ════════════════════════════════════════════════════════════════════════════
 
 static const char* DEVICE_TYPE        = "canary";
-static const char* FIRMWARE_VERSION   = "2.4.8-wap";  // Vision runtime config release train
+static const char* FIRMWARE_VERSION   = "2.4.9-wap";  // Vision runtime config release train
 static const char* RULESET_ID         = "securacv:canary:v1.0";
 static const char* PROTOCOL_VERSION   = "pwk:v0.3.0";
 static const char* CHAIN_ALGORITHM    = "sha256-domain-sep";

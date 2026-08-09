@@ -8,7 +8,7 @@
     "min_ha": "2024.4.1",
     "source": "custom_components/securacv/manifest.json + hacs.json"
   },
-  "fw_train": "2.4.8",
+  "fw_train": "2.4.9",
   "upstream": {
     "haos_version": "18.1",
     "ha_version": "2026.7.2",
