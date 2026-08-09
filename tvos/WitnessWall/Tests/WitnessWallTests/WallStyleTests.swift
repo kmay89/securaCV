@@ -19,7 +19,7 @@ final class WallStyleTests: XCTestCase {
         let devices = [
             device("Studio"),
             device("Garage", online: false),
-            device("Back Gate", chain: "unknown"),
+            device("Back Gate", chain: "degraded"),
         ]
         for profile in WallProfile.allCases {
             let sorted = profile.sorted(devices)
@@ -27,6 +27,28 @@ final class WallStyleTests: XCTestCase {
                            "\(profile.rawValue): a chain that didn't verify must lead")
             XCTAssertEqual(sorted[1].name, "Garage",
                            "\(profile.rawValue): offline comes before healthy")
+        }
+    }
+
+    /// The counterpart, and the reason the fixture above says "degraded" rather
+    /// than "unknown": a device that holds no witness chain of its own says
+    /// "unknown", which is an ABSENT CLAIM, not a failure. Ranking it as
+    /// trouble sorted every display in the fleet to the top of the wall under
+    /// an orange "Record didn't verify" — a sentence about a chain those
+    /// devices never had. A profile may choose which honest thing leads; it
+    /// must not promote a device by inventing a fault for it.
+    func testAChainlessDeviceDoesNotJumpTheQueue() {
+        let devices = [
+            device("Garage", online: false),
+            device("Back Gate", chain: "unknown"),
+            device("Studio"),
+        ]
+        for profile in WallProfile.allCases {
+            let sorted = profile.sorted(devices)
+            XCTAssertFalse(sorted[0].chainIsTroubled,
+                           "\(profile.rawValue): nothing here is a chain failure")
+            XCTAssertEqual(sorted.first?.name, "Garage",
+                           "\(profile.rawValue): offline is what actually needs a person here")
         }
     }
 
