@@ -94,6 +94,20 @@ the LVGL faces and `care/`/`fleet/`/`trust`, **not** the `net/` layer:
   are compiled too — the `net/` exclusion is specifically `glass_web.cpp` and
   `discovery.cpp`, not the whole layer.
 
+**THE REBUILD IS UPSTREAM OF THE CATALOG GENERATORS — order matters.**
+`gen_flash.py` embeds each artifact's `fw_version` (read from
+`dist/*.meta.json`) into `flash.json`. So running the generators BEFORE
+dispatching the emulator rebuild bakes in the old stamp, and the rebuild then
+moves `meta.json` out from under it. The catalog goes stale in the same push
+that fixed the dist, and it fails as *"generated flash catalog stale — a
+board's chip changed"*, which names a cause that has nothing to do with what
+happened. Right order, every time:
+
+```
+bump/edit → ./setup.sh regen → dispatch the dist rebuild → pull it
+          → run the gen_*.py catalogs → commit
+```
+
 **Two different gates catch a stale dist, and only one of them is the drift
 check.** `canary-local.yml`'s "Dist drift check" compares the BUNDLE bytes and
 deliberately ignores `meta.json` (it carries the checkout sha). The version
