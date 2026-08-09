@@ -197,11 +197,18 @@ void handle_settings_get() {
       body, sizeof(body),
       "{\"day_pct\":%u,\"night_screen\":%u,\"red_shift\":%u,"
       "\"peek_s\":%u,\"night_start_hh\":%u,\"night_end_hh\":%u,"
-      "\"night_step\":%d,\"night_steps\":%d,\"tz\":\"%s\"",
+      "\"night_step\":%d,\"night_steps\":%d",
       gs.day_pct, gs.night_screen, gs.red_shift, gs.peek_s,
       gs.night_start_hh, gs.night_end_hh,
       canary::glass::night_duty_step(floor_duty_now(), gs.night_duty),
-      canary::glass::NIGHT_STEPS, tz);
+      canary::glass::NIGHT_STEPS);
+  // The zone is operator-supplied text, so it leaves through the same escaper
+  // the MQTT-sourced names use. The setter refuses anything unprintable, but
+  // a value stored by an older build must not be able to break the document
+  // this page parses — an unparseable /api/settings would take the settings
+  // UI down until someone reflashed.
+  o = bappend(body, sizeof(body), o, ",\"tz\":");
+  o = bappend_jstr(body, sizeof(body), o, tz);
 #ifdef CD_NIGHTLIGHT
   // The nightlight's own knobs, plus the scene catalog BY NAME — the app
   // renders the device's own list, so a new scene in the look engine shows
@@ -352,11 +359,18 @@ void handle_settings_set() {
 // reboots and future updates.
 void handle_tz_set() {
   const String v = s_server->arg("v");
-  // Quote and backslash are the only characters that could break the JSON
-  // this value is read back out in; no POSIX TZ rule contains either, so
-  // refusing them costs nothing and closes the hole.
-  if (v.length() == 0 || v.indexOf('"') >= 0 || v.indexOf('\\') >= 0 ||
-      !canary::net::tz_set_manual(v.c_str())) {
+  // A POSIX TZ rule is printable ASCII and nothing else: letters, digits, and
+  // + - : , . / < >. Refuse anything outside that rather than sanitize it,
+  // because a "cleaned" zone is not the zone anyone meant. Control bytes are
+  // the case that matters — this value is persisted to NVS and read back on
+  // every boot, so a smuggled newline would be a durable break, not a
+  // transient one. (The reader escapes it too; this is the other half.)
+  bool printable = v.length() > 0;
+  for (unsigned i = 0; printable && i < v.length(); i++) {
+    const unsigned char c = (unsigned char)v[i];
+    if (c < 0x20 || c > 0x7E || c == '"' || c == '\\') printable = false;
+  }
+  if (!printable || !canary::net::tz_set_manual(v.c_str())) {
     s_server->send(400, "application/json", "{\"ok\":false}");
     return;
   }

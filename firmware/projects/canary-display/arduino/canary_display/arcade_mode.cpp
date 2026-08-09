@@ -73,7 +73,7 @@ void build_face() {
   s_title = lv_label_create(scr);
   lv_obj_set_style_text_font(s_title, &lv_font_montserrat_20, 0);
   lv_obj_set_style_text_color(s_title, c_warn(), 0);
-  lv_label_set_text(s_title, "ARCADE  ·  Canary Catch  ·  hold 3s to exit");
+  lv_label_set_text(s_title, "ARCADE  •  Canary Catch  •  hold 3s to exit");
   lv_obj_set_pos(s_title, 14, 10);
 
   s_body = lv_label_create(scr);
@@ -153,7 +153,7 @@ void show_report(uint32_t now) {
            "%s\n\n"
            "zones  %u/%u\n"
            "stray taps  %u\n"
-           "latency  avg %u ms · worst %u ms (bar %u)\n"
+           "latency  avg %u ms • worst %u ms (bar %u)\n"
            "seed  %lu\n\n"
            "tap to play again",
            pass ? "PASS" : "FAIL", (unsigned)s_stats.zones_hit(ZONES),

@@ -73,7 +73,7 @@ void make_demo_chip() {
   lv_label_set_text(chip, "DEMO");  // 240 px round glass: the word alone
   lv_obj_align(chip, LV_ALIGN_TOP_MID, 0, 6);
 #else
-  lv_label_set_text(chip, "DEMO  ·  hold 3s to exit");
+  lv_label_set_text(chip, "DEMO  •  hold 3s to exit");
   lv_obj_align(chip, LV_ALIGN_BOTTOM_RIGHT, -10, -8);
 #endif
 }

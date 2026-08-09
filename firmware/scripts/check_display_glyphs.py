@@ -30,16 +30,39 @@ import sys
 import unicodedata
 from pathlib import Path
 
+# The FontAwesome glyphs LVGL bakes into the same font files — what the
+# LV_SYMBOL_* macros expand to. Written out because code may spell a symbol as
+# raw UTF-8 bytes rather than through the macro, and those bytes are legal:
+# the glyph really is there.
+SYMBOLS = {
+    61441, 61448, 61451, 61452, 61453, 61457, 61459, 61461, 61465, 61468,
+    61473, 61478, 61479, 61480, 61502, 61507, 61512, 61515, 61516, 61517,
+    61521, 61522, 61523, 61524, 61543, 61544, 61550, 61552, 61553, 61556,
+    61559, 61560, 61561, 61563, 61587, 61589, 61636, 61637, 61639, 61641,
+    61664, 61671, 61674, 61683, 61724, 61732, 61787, 61931, 62016, 62017,
+    62018, 62019, 62020, 62087, 62099, 62189, 62212, 62810, 63426, 63650,
+}
+
 # The built-in Montserrat range, verified against the generator options in the
-# header of lvgl/src/font/lv_font_montserrat_*.c.
-ALLOWED = set(range(0x20, 0x80)) | {0xB0, 0x2022}
+# header of lvgl/src/font/lv_font_montserrat_*.c:
+#   -r 0x20-0x7F,0xB0,0x2022  (plus the FontAwesome list above)
+ALLOWED = set(range(0x20, 0x80)) | {0xB0, 0x2022} | SYMBOLS
 
 ROOT = Path(__file__).resolve().parents[2]
 PROJ = ROOT / "firmware/projects/canary-display"
 
-# The faces and the modules that build label text for them. Browser-served
-# payloads are excluded by construction: they live in *_html.h.
-SCAN_DIRS = [PROJ / "src/ui", PROJ / "src/care", PROJ / "src/fleet"]
+# Everything that runs on the device. Naming the few directories that "render
+# LVGL text" was the first draft of this guard and it was wrong: src/mode and
+# src/playground call lv_label_set_text too, so the check passed while those
+# screens still drew boxes — a gate that reports success without enforcing its
+# invariant is worse than no gate. Scan it all; exclude by what the text is
+# FOR, not where it lives (see EXCLUDE_SUFFIXES and the raw-string skip).
+SCAN_DIRS = [PROJ / "src", PROJ / "include/canary"]
+
+# Browser-served payloads: system fonts apply, so typography is free there.
+# The captive portal's PORTAL_HTML is caught by the raw-string skip in
+# strip_comments rather than by filename.
+EXCLUDE_SUFFIXES = ("_html.h",)
 
 # Text that never reaches the glass. The serial/web log is read in a terminal
 # or a browser, and #error/#warning strings are consumed by the compiler — all
@@ -49,6 +72,9 @@ NOT_ON_GLASS = (
     "log_header(",
     "dbg_serial(",
     "Serial.print",
+    "boot_kv(",       # the serial boot banner (firmware/common/boot)
+    "boot_kvf(",
+    "say_evt(",       # mic_alarm's Serial.printf event trace
     "#error",
     "#warning",
     "#pragma message",
@@ -77,6 +103,25 @@ def strip_comments(text: str) -> str:
     i, n = 0, len(text)
     while i < n:
         c = text[i]
+        # A raw string literal, R"delim(...)delim". In this tree that is only
+        # ever an HTML/JS payload for a browser, so drop it whole rather than
+        # scan it. The guard on the preceding character keeps an ordinary
+        # identifier ending in R from being mistaken for one.
+        if (
+            c == "R"
+            and i + 1 < n
+            and text[i + 1] == '"'
+            and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_"))
+        ):
+            j = text.find("(", i + 2)
+            if j != -1:
+                delim = text[i + 2 : j]
+                close = ")" + delim + '"'
+                end = text.find(close, j + 1)
+                if end != -1:
+                    out.append("\n" * text.count("\n", i, end + len(close)))
+                    i = end + len(close)
+                    continue
         if c == '"':  # a string literal: copy it whole, escapes and all
             out.append(c)
             i += 1
@@ -134,6 +179,16 @@ def literals(text: str):
             line += 1
             i += 1
             continue
+        # Step over char literals. '"' is a real thing this code writes (the
+        # JSON escapers test for it), and treating that quote as the start of
+        # a string desynchronizes everything after it — which showed up as
+        # impossible "raw newline inside a string literal" findings.
+        if text[i] == "'":
+            i += 1
+            while i < n and text[i] != "'":
+                i += 2 if text[i] == "\\" else 1
+            i += 1
+            continue
         if text[i] != '"':
             i += 1
             continue
@@ -177,7 +232,7 @@ def main() -> int:
         for path in sorted(directory.rglob("*")):
             if path.suffix not in (".cpp", ".h", ".hpp"):
                 continue
-            if path.name.endswith("_html.h"):
+            if path.name.endswith(EXCLUDE_SUFFIXES):
                 continue
             source = path.read_text(encoding="utf-8", errors="replace")
             src_lines = source.splitlines()
@@ -189,6 +244,12 @@ def main() -> int:
                 for ch in value:
                     cp = ord(ch)
                     if cp in ALLOWED or cp == 0xFFFD:
+                        continue
+                    # A raw control byte cannot legally sit in a narrow string
+                    # literal, so seeing one means this parser lost its place,
+                    # not that the font is missing a glyph. Never report it as
+                    # a finding — a guard that cries wolf gets switched off.
+                    if cp < 0x20 or cp == 0x7F:
                         continue
                     findings.append((path.relative_to(ROOT), line_no, cp, ch))
 

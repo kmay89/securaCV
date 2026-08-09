@@ -95,11 +95,15 @@ class RhythmModel {
     switch (v) {
       case Rhythm::Learning:
         if (days_ == 0 && today_first_min_ < 0) return 0;
-        return snprintf(buf, cap, "Learning this home's rhythm · day %d of %d",
+        return snprintf(buf, cap, "Learning this home's rhythm • day %d of %d",
                         days_ + 1, (int)LEARN_DAYS);
       case Rhythm::Routine:
         if (today_first_min_ >= 0) {
-          return snprintf(buf, cap, "Morning rhythm \xE2\x9C\x93 · first stir %02d:%02d",
+          // U+F00C, the check LVGL bakes into its fonts (what LV_SYMBOL_OK
+          // expands to) — spelled as bytes because this is a care header and
+          // has no business including lvgl.h. It is NOT U+2713 CHECK MARK,
+          // which lives outside the font's range and drew a hollow box here.
+          return snprintf(buf, cap, "Morning rhythm \xEF\x80\x8C • first stir %02d:%02d",
                           today_first_min_ / 60, today_first_min_ % 60);
         }
         return 0;  // nothing due yet — silence is the calm answer
@@ -108,7 +112,7 @@ class RhythmModel {
                         exp / 60, exp % 60);
       case Rhythm::Unusual:
       default:
-        return snprintf(buf, cap, "Still quiet — well past usual (%02d:%02d)",
+        return snprintf(buf, cap, "Still quiet - well past usual (%02d:%02d)",
                         exp / 60, exp % 60);
     }
   }
