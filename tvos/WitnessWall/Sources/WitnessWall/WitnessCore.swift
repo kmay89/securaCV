@@ -43,16 +43,63 @@ struct FleetSnapshot: Decodable, Equatable, Sendable {
         let online: Bool
         let chain: String?
         let product: String?
+        /// WHICH BOARD this is, as the device published it (`hw`). The only
+        /// field that pins the device's SHAPE — several products share one
+        /// `product` string — so it is what resolves the figure the Wall
+        /// draws. Nil on firmware older than the field.
+        let hw: String?
+        /// Where the device stands with its hub ("none" / "down" / "ok"), or
+        /// nil when it did not say. Never rendered as "fine" when nil.
+        let hub: String?
 
         /// Stable within a snapshot: the fleet endpoint has no device ids, and
         /// names are what a person actually distinguishes Canaries by.
         var id: String { name }
 
-        /// `chain` is optional; absent means "not reported", which is not the
-        /// same as "broken" and must never be drawn as an alarm.
+        /// Does this device's own report describe a chain FAILURE?
+        ///
+        /// Three answers, not two — and the missing third one was a lie the
+        /// Wall told about every display in the fleet. A display holds no
+        /// witness chain of its own (it renders other devices'), so it
+        /// honestly answers "unknown"; the old `!= "ok"` test painted it
+        /// orange with "Record didn't verify" and counted it toward the
+        /// needs-attention total. An absent claim is not a broken chain, and
+        /// the explicit "unknown" is exactly as absent as a missing field.
+        ///
+        /// Mirrors `Device::chain_is_troubled` in witness-core's fleet.rs; the
+        /// Rust tests and these must agree, since the same bytes reach both.
         var chainIsTroubled: Bool {
             guard let chain else { return false }
-            return chain != "ok"
+            return chain != "ok" && chain != "unknown"
+        }
+
+        /// The product name to show a person, resolved the same way the iPhone
+        /// resolves it — board first (it is sometimes more product-precise
+        /// than the type), then the shipped-product table. Nil when nothing
+        /// pins a product, and the caller then says something coarse rather
+        /// than printing the wire string.
+        ///
+        /// The Wall used to print `product` raw, so a television showed
+        /// "canary-nightstand7" where the phone showed "Canary Nightstand 7".
+        var productName: String? {
+            DeviceNaming.productName(published: product, hardware: hw)
+        }
+
+        /// This device's hub standing, folded through the same enum the phone
+        /// uses. Silence is `.unknown`, which renders as nothing.
+        var hubState: HubState { HubState(tolerant: hub) }
+
+        /// The coarse device family, decoded with the shared tolerant decoder
+        /// so the Wall and the phone can never disagree about what a device
+        /// IS — including the whole display line, which a strict rawValue
+        /// lookup drops to `.unknown`.
+        var deviceType: DeviceType { DeviceType(tolerant: product) }
+
+        /// The figure to draw, at the same three honest precisions the phone
+        /// uses: board, then published type, then the coarse family. Nil means
+        /// draw the generic marker — never a guess.
+        var figure: FleetFigure? {
+            FleetFigure.resolve(deviceType: deviceType, published: product, hardware: hw)
         }
     }
 
