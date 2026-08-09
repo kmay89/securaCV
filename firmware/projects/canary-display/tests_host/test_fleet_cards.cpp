@@ -157,7 +157,7 @@ int main() {
     CHECK(pres && !pres->absent, "presence card present in every build");
   }
 
-  // ── null-vs-zero honesty: an unknown radar renders "—", not "0" ─────────
+  // ── null-vs-zero honesty: an unknown radar renders "-", not "0" ─────────
   {
     Witness w = mk_sense(0 /*unknown*/, 0, 0 /*unknown*/, false,
                          false, false, false, false, 0, 0, -1);
@@ -166,13 +166,13 @@ int main() {
     const Card* pres = find(s, "presence");
     char v[32];
     format_card_value(*pres, v, sizeof(v));
-    CHECK(strcmp(v, "—") == 0, "unknown presence formats as — (not clear/present)");
+    CHECK(strcmp(v, "-") == 0, "unknown presence formats as a dash (not clear/present)");
     const Card* rng = find(s, "range_band");
     format_card_value(*rng, v, sizeof(v));
-    CHECK(strcmp(v, "—") == 0, "unknown range formats as —");
+    CHECK(strcmp(v, "-") == 0, "unknown range formats as a dash");
     const Card* lux = find(s, "illuminance");
     format_card_value(*lux, v, sizeof(v));
-    CHECK(strcmp(v, "—") == 0, "unpublished lux formats as — (not 0 lx)");
+    CHECK(strcmp(v, "-") == 0, "unpublished lux formats as a dash (not 0 lx)");
   }
 
   // ── per-kind value formatting ──────────────────────────────────────────
@@ -189,7 +189,7 @@ int main() {
     format_card_value(*find(s, "illuminance"), v, sizeof(v));
     CHECK(strcmp(v, "200 lx") == 0, "stat formats value + unit '200 lx'");
     format_card_value(*find(s, "breath_rate"), v, sizeof(v));
-    CHECK(strcmp(v, "—") == 0, "P1 sparkline with invalid bpm formats — even when offered");
+    CHECK(strcmp(v, "-") == 0, "P1 sparkline with invalid bpm formats a dash even when offered");
     format_card_value(*find(s, "chain"), v, sizeof(v));
     CHECK(strcmp(v, "verified 42") == 0, "trust formats badge + chain length");
   }
@@ -272,16 +272,16 @@ int main() {
     CHECK(strcmp(v, "3200 ppm") == 0, "TDS formats as integer ppm");
   }
 
-  // ── null-vs-zero honesty: an unpublished field is —, not 0.0 ───────────
+  // ── null-vs-zero honesty: an unpublished field is "-", not 0.0 ───────────
   {
     Witness w = mk_pool(false, 0, false, 0, false, 0, false, 0);
     CardSet s;
     build_cards(w, 1000, limits, s);
     char v[32];
     format_card_value(*find(s, "ph"), v, sizeof(v));
-    CHECK(strcmp(v, "—") == 0, "absent pH formats as — (not 0.0)");
+    CHECK(strcmp(v, "-") == 0, "absent pH formats as a dash (not 0.0)");
     format_card_value(*find(s, "orp"), v, sizeof(v));
-    CHECK(strcmp(v, "—") == 0, "absent ORP formats as — (not 0 mV)");
+    CHECK(strcmp(v, "-") == 0, "absent ORP formats as a dash (not 0 mV)");
     const Card* ph = find(s, "ph");
     CHECK(ph && ph->sev == CardSev::None,
           "absent pH carries no severity accent (nothing to warn about)");
@@ -346,7 +346,7 @@ int main() {
     CHECK(w && w->pool_present, "the device stays pool-bearing after the clear");
     CardSet s; build_cards(*w, 3000, limits, s);
     char v[32]; format_card_value(*find(s, "ph"), v, sizeof(v));
-    CHECK(strcmp(v, "—") == 0, "cleared pH renders — on the card, not a stale value");
+    CHECK(strcmp(v, "-") == 0, "cleared pH renders a dash on the card, not a stale value");
   }
 
   if (g_failures == 0) printf("ALL FLEET CARDS TESTS PASSED\n");

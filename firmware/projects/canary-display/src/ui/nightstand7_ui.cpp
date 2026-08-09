@@ -483,7 +483,7 @@ void nightstand7_ui_update(const Fleet& fleet, uint32_t now,
                                  "Thursday", "Friday", "Saturday"};
       static const char* MO[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-      lv_label_set_text_fmt(s_date, "%s \xC2\xB7 %s %d", WD[lt.tm_wday],
+      lv_label_set_text_fmt(s_date, "%s \xE2\x80\xA2 %s %d", WD[lt.tm_wday],
                             MO[lt.tm_mon], lt.tm_mday);
     } else {
       lv_label_set_text(s_date, "waiting for the clock");
@@ -549,7 +549,7 @@ void nightstand7_ui_update(const Fleet& fleet, uint32_t now,
     }
     if (s_wx_alert && s_wx_alert_label) {
       if (have_wxa) {
-        lv_label_set_text_fmt(s_wx_alert_label, "%s \xC2\xB7 %s", wxa.text,
+        lv_label_set_text_fmt(s_wx_alert_label, "%s \xE2\x80\xA2 %s", wxa.text,
                               wxa.sev ? "warning" : "advisory");
         // A warning borrows the semantic amber; an advisory stays chrome.
         lv_obj_set_style_text_color(
@@ -573,7 +573,7 @@ void nightstand7_ui_update(const Fleet& fleet, uint32_t now,
       char tl[72];
       if (canary::care::bedside_tomorrow_line(tl, sizeof(tl)) &&
           o < sizeof(line)) {
-        snprintf(line + o, sizeof(line) - o, "%s%s", o ? " \xC2\xB7 " : "",
+        snprintf(line + o, sizeof(line) - o, "%s%s", o ? " \xE2\x80\xA2 " : "",
                  tl);
       }
       lv_label_set_text(s_night_wx, line);
@@ -582,7 +582,7 @@ void nightstand7_ui_update(const Fleet& fleet, uint32_t now,
     }
     if (s_wx_alert_label) {
       if (have_wxa) {
-        lv_label_set_text_fmt(s_wx_alert_label, "%s \xC2\xB7 %s", wxa.text,
+        lv_label_set_text_fmt(s_wx_alert_label, "%s \xE2\x80\xA2 %s", wxa.text,
                               wxa.sev ? "warning" : "advisory");
         lv_obj_set_style_text_color(
             s_wx_alert_label,
@@ -701,7 +701,7 @@ void nightstand7_ui_update(const Fleet& fleet, uint32_t now,
       lv_label_set_text(s_glance, "no canaries yet");
       lv_obj_set_style_text_color(s_glance, col_muted(), 0);
     } else {
-      lv_label_set_text_fmt(s_glance, "%d %s \xC2\xB7 online", fleet.count(),
+      lv_label_set_text_fmt(s_glance, "%d %s \xE2\x80\xA2 online", fleet.count(),
                             fleet.count() == 1 ? "canary" : "canaries");
       lv_obj_set_style_text_color(s_glance, bright ? col_text() : col_muted(),
                                   0);
@@ -732,12 +732,12 @@ void nightstand7_ui_update(const Fleet& fleet, uint32_t now,
       const uint32_t rem = lamp.remaining_s(now);
       if (rem) {
         lv_label_set_text_fmt(s_lantern_note,
-                              "lantern \xC2\xB7 %lu min \xC2\xB7 tap for the "
-                              "next look \xC2\xB7 hold to put it out",
+                              "lantern \xE2\x80\xA2 %lu min \xE2\x80\xA2 tap for the "
+                              "next look \xE2\x80\xA2 hold to put it out",
                               (unsigned long)((rem + 59) / 60));
       } else {
         lv_label_set_text(s_lantern_note,
-                          "lantern hours \xC2\xB7 tap for the next look");
+                          "lantern hours \xE2\x80\xA2 tap for the next look");
       }
       lv_obj_clear_flag(s_lantern, LV_OBJ_FLAG_HIDDEN);
     } else {

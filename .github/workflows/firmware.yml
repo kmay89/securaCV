@@ -587,6 +587,15 @@ jobs:
           chmod +x firmware/scripts/check_display_arduino_sync.sh
           firmware/scripts/check_display_arduino_sync.sh
 
+      - name: Verify on-glass text stays inside the display font's glyph range
+        # LVGL's built-in Montserrat covers 0x20-0x7F, 0xB0 and U+2022 only, and
+        # draws a hollow box for anything else — no build error, and the browser
+        # emulator hides it because it has real fonts. A middle dot in a date
+        # line shipped exactly that way. This guard checks the faces instead.
+        run: |
+          chmod +x firmware/scripts/check_display_glyphs.py
+          python3 firmware/scripts/check_display_glyphs.py
+
   regression-check:
     name: Regression Guards
     runs-on: ubuntu-latest

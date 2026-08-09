@@ -359,6 +359,16 @@ void display_set_rotation(uint8_t rot) {
   s_bus->writeCommand(0x36);
   s_bus->write(kMadctl[rot]);
   s_bus->endWrite();
+  // Clear the frame memory, because re-addressing it is not the same as
+  // repainting it. The ST7789 still holds the PREVIOUS orientation's image,
+  // now read out along transposed axes, and LVGL only ever flushes regions
+  // it believes are dirty — so every pixel the rebuilt face doesn't happen
+  // to cover survives as a leftover streak. The bird's yellow and the
+  // clock's white are the brightest things on the old frame, so they are
+  // what a user actually sees. A rotation invalidates the whole frame by
+  // definition; the face is rebuilt immediately after, so this costs one
+  // black frame and removes the entire class of artifact.
+  s_panel->fillScreen(0x0000);
 }
 
 // ── QMI8658 IMU (shared I2C bus with the EXIO expander) ─────────────────

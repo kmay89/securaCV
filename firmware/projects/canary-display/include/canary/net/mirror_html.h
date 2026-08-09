@@ -121,6 +121,8 @@ here stays inside your home network.</p>
     <option>5</option><option>10</option></select></label>
   <label>Night starts <select id="night_start_hh"></select></label>
   <label>Night ends <select id="night_end_hh"></select></label>
+  <label>Time zone <select id="tz"></select></label>
+  <p class="sub" id="tzsub"></p>
   <p class="sub">Changes apply on the glass right away, exactly as if you
   had set them there.</p>
 </div>
@@ -214,6 +216,33 @@ st.addEventListener("pointerup",function(){drag=null});
 ["night_start_hh","night_end_hh"].forEach(function(id){var s=$(id);
 for(var h=0;h<24;h++){var o=document.createElement("option");o.value=h;
 o.textContent=(h%12||12)+(h<12?" am":" pm");s.appendChild(o)}});
+// Time zone: the POSIX rules carry their own DST transitions, so a zone
+// picked once stays right across the spring and fall changes. Values match
+// the table the auto-learner maps to (net/tz_auto.cpp) — keep them in step.
+var TZS=[["New York (US Eastern)","EST5EDT,M3.2.0,M11.1.0"],
+["Chicago (US Central)","CST6CDT,M3.2.0,M11.1.0"],
+["Denver (US Mountain)","MST7MDT,M3.2.0,M11.1.0"],
+["Phoenix (no DST)","MST7"],
+["Los Angeles (US Pacific)","PST8PDT,M3.2.0,M11.1.0"],
+["Anchorage","AKST9AKDT,M3.2.0,M11.1.0"],["Honolulu","HST10"],
+["Mexico City","CST6"],["Bogota","<-05>5"],
+["Sao Paulo / Buenos Aires","<-03>3"],
+["London / Dublin","GMT0BST,M3.5.0/1,M10.5.0"],
+["Central Europe","CET-1CEST,M3.5.0,M10.5.0/3"],
+["Eastern Europe","EET-2EEST,M3.5.0/3,M10.5.0/4"],["Moscow","MSK-3"],
+["Dubai","<+04>-4"],["India","IST-5:30"],["China","CST-8"],
+["Hong Kong","HKT-8"],["Singapore","<+08>-8"],["Perth","AWST-8"],
+["Tokyo","JST-9"],["Seoul","KST-9"],["Brisbane","AEST-10"],
+["Sydney / Melbourne","AEST-10AEDT,M10.1.0,M4.1.0/3"],
+["Auckland","NZST-12NZDT,M9.5.0,M4.1.0/3"],["UTC","UTC0"]];
+(function(){var s=$("tz");TZS.forEach(function(z){
+var o=document.createElement("option");o.value=z[1];o.textContent=z[0];
+s.appendChild(o)});
+s.addEventListener("change",function(){
+fetch("/api/tz?v="+encodeURIComponent(s.value),{method:"POST"})
+.then(function(r){$("tzsub").textContent=r.ok?
+"Saved. The clock is on this zone now, daylight saving included.":
+"The display would not take that zone."})})})();
 // settings wiring: one knob per change, the glass validates
 function send(k,v){fetch("/api/set?k="+k+"&v="+v,{method:"POST"})}
 ["day_pct","night_step"].forEach(function(id){var e=$(id);
@@ -226,7 +255,16 @@ fetch("/api/settings").then(function(r){return r.json()}).then(function(s){
 ["day_pct","night_step","night_screen","red_shift","peek_s",
 "night_start_hh","night_end_hh"].forEach(function(id){
 if(s[id]!==undefined)$(id).value=s[id];
-var v=$(id+"v");if(v)v.textContent=$(id).value})});
+var v=$(id+"v");if(v)v.textContent=$(id).value});
+// Show the zone actually in force. A rule this list doesn't carry is still
+// a valid zone — say what it is rather than silently showing the wrong
+// entry, and leave the picker unset so nothing is claimed on its behalf.
+if(s.tz!==undefined){var t=$("tz");t.value=s.tz;
+if(t.value!==s.tz){t.selectedIndex=-1;
+$("tzsub").textContent="Set to "+s.tz+" (not one of the presets)."}
+else if(s.tz==="UTC0"){$("tzsub").textContent=
+"This display is on UTC — pick your zone or the clock reads the "+
+"wrong hour and night mode starts at the wrong time."}}});
 // live mirror
 function pad(n){return(n<10?"0":"")+n}
 function tick(){fetch("/api/glass").then(function(r){return r.json()})

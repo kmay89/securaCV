@@ -9,6 +9,7 @@
 
 #include "glass_web.h"
 #include "wifi_mgr.h"
+#include "tz_auto.h"
 #include "mirror_html.h"
 #include "tv_html.h"
 #include "character.h"
@@ -189,16 +190,18 @@ uint16_t floor_duty_now() {
 
 void handle_settings_get() {
   const auto& gs = canary::glass::settings();
-  char body[704];
+  char tz[48];
+  canary::net::tz_current(tz, sizeof(tz));
+  char body[768];
   size_t o = (size_t)snprintf(
       body, sizeof(body),
       "{\"day_pct\":%u,\"night_screen\":%u,\"red_shift\":%u,"
       "\"peek_s\":%u,\"night_start_hh\":%u,\"night_end_hh\":%u,"
-      "\"night_step\":%d,\"night_steps\":%d",
+      "\"night_step\":%d,\"night_steps\":%d,\"tz\":\"%s\"",
       gs.day_pct, gs.night_screen, gs.red_shift, gs.peek_s,
       gs.night_start_hh, gs.night_end_hh,
       canary::glass::night_duty_step(floor_duty_now(), gs.night_duty),
-      canary::glass::NIGHT_STEPS);
+      canary::glass::NIGHT_STEPS, tz);
 #ifdef CD_NIGHTLIGHT
   // The nightlight's own knobs, plus the scene catalog BY NAME — the app
   // renders the device's own list, so a new scene in the look engine shows
@@ -335,6 +338,32 @@ void handle_settings_set() {
                  ok ? "{\"ok\":true}" : "{\"ok\":false}");
 }
 
+// POST /api/tz?v=EST5EDT,M3.2.0,M11.1.0 — the wall clock's zone.
+//
+// Separate from /api/set because that endpoint's contract is one INTEGER
+// knob per request, and a POSIX TZ rule is a string. It gets its own route
+// rather than a string escape hatch in the integer parser.
+//
+// Why it exists at all: OTA release binaries are generic (runtime_config.h),
+// so they ship the CD_TZ default of UTC0. Before this, a household whose
+// display showed the wrong hour had exactly one remedy — rebuild the
+// firmware with its zone compiled in — which is not a thing a household
+// does. The zone lands in the same NVS the learner writes, so it outlives
+// reboots and future updates.
+void handle_tz_set() {
+  const String v = s_server->arg("v");
+  // Quote and backslash are the only characters that could break the JSON
+  // this value is read back out in; no POSIX TZ rule contains either, so
+  // refusing them costs nothing and closes the hole.
+  if (v.length() == 0 || v.indexOf('"') >= 0 || v.indexOf('\\') >= 0 ||
+      !canary::net::tz_set_manual(v.c_str())) {
+    s_server->send(400, "application/json", "{\"ok\":false}");
+    return;
+  }
+  canary::log_line("TZ", "Timezone set by hand from the web page.");
+  s_server->send(200, "application/json", "{\"ok\":true}");
+}
+
 }  // namespace
 
 // The receipt: what this unit IS — chip, memory, radio, firmware, and the
@@ -468,6 +497,7 @@ void glass_web_init() {
   s_server->on("/api/log", HTTP_GET, handle_log);
   s_server->on("/api/settings", HTTP_GET, handle_settings_get);
   s_server->on("/api/set", HTTP_POST, handle_settings_set);
+  s_server->on("/api/tz", HTTP_POST, handle_tz_set);
   s_server->onNotFound([]() { s_server->send(404, "text/plain", "not here"); });
   s_server->begin();
   canary::log_line("WEB", "Glass mirror serving on :80");

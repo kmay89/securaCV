@@ -301,7 +301,7 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
       strftime(buf, sizeof(buf), "%a %b %d", &lt);
       lv_label_set_text(s_date, buf);
     } else {
-      lv_label_set_text(s_date, "setting the clock…");
+      lv_label_set_text(s_date, "setting the clock...");
     }
     lv_obj_set_style_text_color(s_date, night ? ncol_muted() : col_muted(), 0);
   }
@@ -401,7 +401,7 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
       lv_label_set_text(s_glance, "no canaries yet");
       lv_obj_set_style_text_color(s_glance, col_muted(), 0);
     } else {
-      lv_label_set_text_fmt(s_glance, "%d %s \xC2\xB7 online", fleet.count(),
+      lv_label_set_text_fmt(s_glance, "%d %s \xE2\x80\xA2 online", fleet.count(),
                             fleet.count() == 1 ? "canary" : "canaries");
       lv_obj_set_style_text_color(s_glance, bright ? col_text() : col_muted(), 0);
     }
@@ -426,10 +426,10 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
         }
         if (wx.cond && wx.cond[0] && o < sizeof(line))
           o += (size_t)snprintf(line + o, sizeof(line) - o, "%s%s",
-                                o ? " \xC2\xB7 " : "", wx.cond);
+                                o ? " \xE2\x80\xA2 " : "", wx.cond);
         if (o < sizeof(line))
           snprintf(line + o, sizeof(line) - o, "%s%d\xC2\xB0/%d\xC2\xB0",
-                   o ? " \xC2\xB7 " : "",
+                   o ? " \xE2\x80\xA2 " : "",
                    (wx.hi_c10 + (wx.hi_c10 >= 0 ? 5 : -5)) / 10,
                    (wx.lo_c10 + (wx.lo_c10 >= 0 ? 5 : -5)) / 10);
         lv_label_set_text(s_wx, line);

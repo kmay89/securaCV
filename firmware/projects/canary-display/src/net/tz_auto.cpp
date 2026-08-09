@@ -170,6 +170,25 @@ void tz_boot_string(const char* seed, char* out, unsigned cap) {
 
 bool tz_learned() { return s_learned; }
 
+bool tz_set_manual(const char* posix) {
+  if (!posix || !posix[0]) return false;
+  // 48 is the buffer every reader of this value uses (tz_boot_string's
+  // callers, the ZONES table's widest rule); refuse rather than store a
+  // string that would come back truncated into an invalid TZ.
+  if (strlen(posix) >= 48) return false;
+  // final_rule=true: a human said so. That marks the zone learned, which
+  // also stops tz_auto_tick from ever looking it up again — an explicit
+  // choice outranks the network, the same way CD_TZ_EXPLICIT does.
+  apply_and_persist(posix, nullptr, /*final_rule=*/true);
+  s_gave_up = true;
+  return true;
+}
+
+void tz_current(char* out, unsigned cap) {
+  if (!out || cap == 0) return;
+  tz_boot_string(CD_TZ, out, cap);
+}
+
 void tz_auto_tick(uint32_t now_ms) {
 #if !defined(CD_TZ_WEB_LOOKUP) || !CD_TZ_WEB_LOOKUP
   // PRIVACY DEFAULT (review catch): the lookup sends the household's
