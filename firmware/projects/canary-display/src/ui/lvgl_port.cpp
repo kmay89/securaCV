@@ -182,6 +182,12 @@ void lvgl_port_set_rotation(uint8_t rot) {
       default:                               r = LV_DISPLAY_ROTATION_0;   break;
     }
     lv_display_set_rotation(s_disp, r);
+    // Same stale-frame hazard as the SPI nightlight path below: the RGB
+    // panel keeps scanning the framebuffer it already has, and LVGL only
+    // repaints dirty regions — so the previous orientation's pixels survive
+    // wherever the new layout doesn't reach. Repaint the whole canvas.
+    lv_obj_t* scr = lv_scr_act();
+    if (scr) lv_obj_invalidate(scr);
   }
   // Un-rotate raw touch to match, so a tap lands in the logical frame.
   canary::hal::touch_set_rotation(rot, SCR_W, SCR_H);
@@ -212,6 +218,13 @@ void lvgl_port_set_panel_rotation(uint8_t rot) {
   lv_disp_t* d = lv_disp_get_default();
   if (d) lv_disp_drv_update(d, &s_disp_drv);
   if (s_scrim) lv_obj_set_size(s_scrim, 960, 960);
+  // Nothing LVGL still thinks is clean actually is: the HAL just cleared the
+  // panel under us, and every coordinate in the pre-rotation dirty list was
+  // measured on the other axis. Ask for the whole glass back rather than
+  // trusting that list — without this, regions the rebuilt face doesn't cover
+  // keep whatever the previous orientation left in the panel's RAM.
+  lv_obj_t* scr = lv_scr_act();
+  if (scr) lv_obj_invalidate(scr);
 }
 #endif  // CD_NIGHTLIGHT && v8
 

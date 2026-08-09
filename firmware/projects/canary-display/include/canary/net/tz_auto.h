@@ -29,4 +29,19 @@ bool tz_learned();
 // applies it via configTzTime re-arm, and persists it.
 void tz_auto_tick(uint32_t now_ms);
 
+// Set the zone BY HAND at runtime (the display's web page). Same storage
+// the learner writes, so it survives reboots and OTA the same way — which
+// is the point: released binaries are generic and carry the CD_TZ default,
+// so without this a household could only fix its clock by rebuilding the
+// firmware. Takes a POSIX TZ string ("EST5EDT,M3.2.0,M11.1.0"); applies it
+// immediately, persists it, and stands the learner down so nothing
+// overrides a choice a human made. Returns false if the string is empty or
+// too long to store, leaving the current zone untouched.
+bool tz_set_manual(const char* posix);
+
+// The POSIX TZ in force right now (stored value if there is one, else the
+// compile-time seed). Never returns a partial string; out is always
+// NUL-terminated.
+void tz_current(char* out, unsigned cap);
+
 }  // namespace canary::net

@@ -164,7 +164,7 @@ void build_face() {
 
 void title_update() {
   if (!s_title) return;
-  lv_label_set_text_fmt(s_title, "DEBUG %d/%d  ·  %s  ·  tap top = next",
+  lv_label_set_text_fmt(s_title, "DEBUG %d/%d  •  %s  •  tap top = next",
                         s_page + 1, PG_COUNT, page_name(s_page));
 }
 
@@ -189,7 +189,7 @@ void page_update(uint32_t now) {
 
   switch (s_page) {
     case PG_SYSTEM: {
-      snprintf(b, sizeof(b), "fw %s  ·  %s", CANARY_FW_VERSION, BOARD_NAME);
+      snprintf(b, sizeof(b), "fw %s  •  %s", CANARY_FW_VERSION, BOARD_NAME);
       set_line(i++, b, c_text());
       const esp_partition_t* part = esp_ota_get_running_partition();
       snprintf(b, sizeof(b), "uptime %lus  reset %s  slot %s",
@@ -234,9 +234,9 @@ void page_update(uint32_t now) {
       break;
     }
     case PG_FLEET: {
-      snprintf(b, sizeof(b), "%d witnesses  ·  worst %s%s", fleet.count(),
+      snprintf(b, sizeof(b), "%d witnesses  •  worst %s%s", fleet.count(),
                canary::fleet::sev_name(fleet.worst(now)),
-               fleet.ack_active(now) ? "  ·  acked" : "");
+               fleet.ack_active(now) ? "  •  acked" : "");
       set_line(i++, b, c_text());
       for (int w = 0; w < fleet.count() && i < LINE_CAP; w++) {
         const auto* wit = fleet.at(w);
@@ -333,7 +333,7 @@ void debug_mode_setup() {
 
   Serial.printf("DBG1 HELLO fw=%s board=%s\r\n", CANARY_FW_VERSION, BOARD_ID);
   boot_scene_ready(
-      "Debug up. Every page is self-labeled — a photo of the glass",
+      "Debug up. Every page is self-labeled - a photo of the glass",
       "is a support report. DBG1 snapshots on this console, 1 Hz.",
       NULL);
 }

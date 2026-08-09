@@ -456,7 +456,7 @@ void nightlight_ui_update(const Fleet& fleet, uint32_t now,
                                    "thu", "fri", "sat"};
       static const char* kMo[12] = {"jan", "feb", "mar", "apr", "may", "jun",
                                     "jul", "aug", "sep", "oct", "nov", "dec"};
-      lv_label_set_text_fmt(s_date, "%s \xC2\xB7 %s %d", kWd[st.wday % 7],
+      lv_label_set_text_fmt(s_date, "%s \xE2\x80\xA2 %s %d", kWd[st.wday % 7],
                             kMo[(st.mon - 1) % 12], st.mday);
     } else {
       lv_label_set_text(s_date, "");

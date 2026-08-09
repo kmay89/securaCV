@@ -125,9 +125,31 @@ pushes the bytes back. Two things to know before you rely on it:
 1. **It pushes to the branch it was dispatched on.** Dispatch it on `main` and
    it commits to `main`; prefer a feature branch.
 2. **Its push does not retrigger CI** (default `GITHUB_TOKEN`), so the PR
-   keeps showing the old failure until you make one ordinary push. Re-running
+   keeps showing the old failure until you push again yourself. Re-running
    the failed job does *not* work — a re-run checks out the original commit,
    which still has the stale `dist/`.
+3. **That push must touch a path the workflow watches, or nothing runs.**
+   "One ordinary push" is not enough and this bullet used to say it was.
+   `canary-local.yml` (the job that fails, "firmware → wasm → boots in a
+   browser") filters on `firmware/projects/canary-display/**`,
+   `firmware/common/**`, `firmware/envs/**` and friends; `firmware.yml`
+   filters on `firmware/**`. A docs-only commit at the repo root matches
+   neither, so the PR sits at **zero** check runs — which looks like CI is
+   still queued, not like it never started. If you have nothing real to
+   change under those paths, say so and hand the PR over red rather than
+   inventing a no-op commit; a reviewer can re-run from a merge commit.
+4. **And the bot's push can park the whole PR behind an approval gate.**
+   Bullet 2 undersells this: the push does not *silently* do nothing — it
+   creates a full set of runs whose `triggering_actor` is
+   `github-actions[bot]`, and GitHub parks those at
+   `conclusion: action_required`, meaning "waiting for a human to press
+   Approve". Until someone with write access clears them in the PR's
+   checks panel, pushing again does not help. So the two symptoms look
+   identical from the API (`state: pending`, zero check runs on the head
+   commit) but have opposite fixes: **zero runs anywhere** on the branch is
+   the path-filter problem above, and **runs sitting at `action_required`**
+   is a human-approval problem no commit of yours can solve. Check which
+   before you push a third time. (Both happened in #1536, in that order.)
 
 ## Enclosure CAD
 

@@ -209,6 +209,64 @@ include/canary/
 src/                  implementations; hal+ui TUs are flavor-gated
 ```
 
+## Text on the glass: the font has a fixed alphabet
+
+LVGL's built-in Montserrat is generated over one range — `0x20-0x7F`, `0xB0`
+(°), `0x2022` (•), plus the FontAwesome glyphs the `LV_SYMBOL_*` macros expand
+to. There is no fallback font. A codepoint outside that set draws a **hollow
+box**, with no build error and nothing in the log.
+
+So the obvious separator is a trap: U+00B7 MIDDLE DOT is not in the range, and
+it shipped — every date line read `Sunday [] Aug 9` on real hardware. It sits
+one codepoint from the degree sign that *is* in the range, and the WASM
+emulator hides it entirely, because a browser has real fonts.
+
+Reach for these instead:
+
+| Want | Use | Not |
+|---|---|---|
+| separator dot | `\xE2\x80\xA2` (•, U+2022) | `\xC2\xB7` (·) |
+| a dash | ASCII `-` | em/en dash |
+| ellipsis | `...` | `…` |
+| a check | `LV_SYMBOL_OK`, or `\xEF\x80\x8C` where including `lvgl.h` would be wrong layering | `✓` (U+2713) |
+
+`firmware/scripts/check_display_glyphs.py` enforces this over `src/` and
+`include/canary/`, and runs in `firmware.yml`. Text bound for the serial log
+(`log_line`, `boot_kv`, `say_evt`), for the compiler (`#error`), or for a
+browser (`*_html.h`, raw string literals) is exempt — those are read where
+real fonts exist.
+
+## Editing these sources moves a file you didn't open
+
+`canary-local/emulator/dist/*.js` is generated **and committed**, and it is
+compiled from these sources — `src/main.cpp`, the LVGL faces, `care/`,
+`fleet/`, `trust`. Not `net/`. So an ordinary C++ edit here can leave `dist/`
+stale and fail `canary-local.yml`'s "firmware → wasm → boots in a browser" on
+a file that isn't in your diff.
+
+Rebuilding it needs emsdk **6.0.3** exactly. Don't fight that locally — use
+**Actions → "Rebuild emulator dist (pinned emsdk)"**, dispatched on your
+branch. Three things it will not tell you:
+
+- It pushes to the branch it was dispatched on. Prefer a feature branch.
+- **Don't push while it runs.** It checks out, installs emsdk, compiles, then
+  pushes. Any push of yours inside that window used to make its push a
+  non-fast-forward and throw the whole build away with `fetch first` — which
+  reads as "the emulator failed to compile" when it compiled fine. It rebases
+  and retries now, but the window is still yours to avoid.
+- Its push does not retrigger CI *usefully*, and cleaning up after it has two
+  distinct failure modes that look identical from the outside (PR status
+  `pending`, zero check runs on the head commit):
+  - The push you make afterwards must **touch a watched path** — this
+    directory qualifies, a repo-root doc does not. A docs-only commit runs
+    nothing at all.
+  - The bot's own push creates a full set of runs that GitHub parks at
+    `action_required`, waiting for a human to press Approve in the checks
+    panel. No commit of yours clears that; ask a maintainer.
+
+  Look at whether runs exist on the branch before pushing again: none at all
+  means paths, parked ones mean approval.
+
 ## Roadmap (post-v0.2)
 
 - **Mode system waves 1–4** ([spec](../../../docs/hardware/display_modes.md)):

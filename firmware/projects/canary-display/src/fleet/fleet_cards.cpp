@@ -41,7 +41,7 @@ static const char* badge_word(Badge b) {
     case Badge::Signed:   return "signed";
     case Badge::Unsigned: return "unsigned";
     case Badge::Failed:   return "FAILED";
-    case Badge::Unknown: default: return "…";
+    case Badge::Unknown: default: return "...";
   }
 }
 
@@ -68,7 +68,7 @@ bool has_cards(const Witness& w) {
 //
 // One entity, one card. `absent` marks entities compiled out of a build (the
 // presence-only BPM story); `*_known`/band_sel == -1 marks a value the device
-// has not published yet, rendered "—" not zero.
+// has not published yet, rendered "-" not zero.
 static void build_sense_cards(const Witness& w, CardSet& out) {
   const bool have_state = w.sense_present;
   // Reset each slot on push so a reused CardSet can't leak stale fields from a
@@ -137,7 +137,7 @@ static void build_sense_cards(const Witness& w, CardSet& out) {
     Card& c = push();
     c.kind = CardKind::Binary; c.id = "breathing"; c.title = "Breathing";
     c.icon = "lungs"; c.privacy = CardPrivacy::P0;
-    c.on_label = "locked"; c.off_label = "—";
+    c.on_label = "locked"; c.off_label = "-";
     c.absent = !w.wb_present;
     c.b_known = w.wb_present; c.b_state = w.wb_breathing;
     c.sev = (w.wb_present && w.wb_breathing) ? CardSev::Ok : CardSev::None;
@@ -186,7 +186,7 @@ static void build_sense_cards(const Witness& w, CardSet& out) {
 // event-driven (the node's threshold/hysteresis machine emits named events that
 // classify_event maps). Bands come straight from the research doc's targets so
 // nothing here invents a number: pH 7.2–7.6 (warn outside 7.0–7.8), sanitizer
-// healthy at ORP ≥ 650 mV. A field the node didn't publish this row renders "—"
+// healthy at ORP ≥ 650 mV. A field the node didn't publish this row renders "-"
 // (have_* false), never a zero — pH 0 or 0 mV would read as an emergency.
 static const int16_t POOL_PH_LO  = 70;   // pH ×10 — below this, warn
 static const int16_t POOL_PH_HI  = 78;   // pH ×10 — above this, warn
@@ -280,13 +280,13 @@ size_t format_card_value(const Card& c, char* buf, size_t cap) {
 
   switch (c.kind) {
     case CardKind::Binary:
-      if (!c.b_known) snprintf(buf, cap, "—");
+      if (!c.b_known) snprintf(buf, cap, "-");
       else snprintf(buf, cap, "%s", c.b_state ? c.on_label : c.off_label);
       break;
     case CardKind::Stat:
     case CardKind::Sparkline:
       if (!c.num_known) {
-        snprintf(buf, cap, "—");
+        snprintf(buf, cap, "-");
       } else if (c.num_decimals > 0) {
         // Fixed-point: num is scaled by 10^decimals (pH 74 -> "7.4"). Split so
         // a negative value keeps its sign on the whole part and a magnitude
@@ -311,11 +311,11 @@ size_t format_card_value(const Card& c, char* buf, size_t cap) {
       }
       break;
     case CardKind::Band:
-      if (c.band_sel < 0 || c.band_sel >= (int)c.band_count) snprintf(buf, cap, "—");
+      if (c.band_sel < 0 || c.band_sel >= (int)c.band_count) snprintf(buf, cap, "-");
       else snprintf(buf, cap, "%s", c.band_options[c.band_sel]);
       break;
     case CardKind::Event:
-      snprintf(buf, cap, "%s", c.ev ? c.ev : "—");
+      snprintf(buf, cap, "%s", c.ev ? c.ev : "-");
       break;
     case CardKind::Trust:
       snprintf(buf, cap, "%s %lu", badge_word(c.badge), (unsigned long)c.chain);
@@ -335,13 +335,13 @@ int format_card_strip(const CardSet& set, bool skip_shown, char* buf,
     if (c.absent) continue;                       // provably-absent: not on the strip
     if (skip_shown && (c.kind == CardKind::Event || c.kind == CardKind::Trust))
       continue;                                   // chrome already shows these
-    // Skip cards whose value is unknown so the strip stays glanceable — a "—"
+    // Skip cards whose value is unknown so the strip stays glanceable — a "-"
     // for every unpublished field is noise on a wall dash.
     char val[32];
     format_card_value(c, val, sizeof(val));
-    if (strcmp(val, "—") == 0) continue;
+    if (strcmp(val, "-") == 0) continue;
 
-    const char* sep = (shown == 0) ? "" : "  ·  ";
+    const char* sep = (shown == 0) ? "" : "  \xE2\x80\xA2  ";
     int n = snprintf(buf + off, cap - off, "%s%s %s", sep, c.title, val);
     if (n < 0 || (size_t)n >= cap - off) break;   // out of room — stop cleanly
     off += (size_t)n;
