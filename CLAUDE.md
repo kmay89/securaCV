@@ -95,9 +95,20 @@ pushes the bytes back. Two things to know before you rely on it:
 1. **It pushes to the branch it was dispatched on.** Dispatch it on `main` and
    it commits to `main`; prefer a feature branch.
 2. **Its push does not retrigger CI** (default `GITHUB_TOKEN`), so the PR
-   keeps showing the old failure until you make one ordinary push. Re-running
+   keeps showing the old failure until you push again yourself. Re-running
    the failed job does *not* work — a re-run checks out the original commit,
    which still has the stale `dist/`.
+3. **That push must touch a path the workflow watches, or nothing runs.**
+   "One ordinary push" is not enough and this bullet used to say it was.
+   `canary-local.yml` (the job that fails, "firmware → wasm → boots in a
+   browser") filters on `firmware/projects/canary-display/**`,
+   `firmware/common/**`, `firmware/envs/**` and friends; `firmware.yml`
+   filters on `firmware/**`. A docs-only commit at the repo root matches
+   neither, so the PR sits at **zero** check runs — which looks like CI is
+   still queued, not like it never started. If you have nothing real to
+   change under those paths, say so and hand the PR over red rather than
+   inventing a no-op commit; a reviewer can re-run from a merge commit.
+   (Costs an hour to learn: two "retrigger" pushes in #1536 ran nothing.)
 
 ## Enclosure CAD
 

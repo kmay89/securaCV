@@ -134,9 +134,16 @@ any platform.
   matters too: a job called `rebuild` that fails at its push step reads as a
   build failure to every human and every notification.
 - **Note for operators:** this workflow's push still does not retrigger CI
-  (default `GITHUB_TOKEN`), so after it lands you owe the branch one ordinary
-  push. Don't make that push while a rebuild is in flight — that is exactly
-  the race above.
+  (default `GITHUB_TOKEN`), so after it lands you owe the branch another push
+  of your own — and it **must touch a path the workflow filters on** or
+  nothing runs at all. `canary-local.yml` watches
+  `firmware/projects/canary-display/**`, `firmware/common/**`,
+  `firmware/envs/**`; `firmware.yml` watches `firmware/**`. A docs-only
+  commit at the repo root matches neither and leaves the PR at zero check
+  runs, which reads as "queued" rather than "never started". Don't make that
+  push while a rebuild is in flight either — that is the race above. The two
+  failures compose: a docs push that retriggers nothing can still land
+  mid-rebuild and destroy it, costing you the build AND the signal.
 
 
 ### 2026-08-08 — Five Lab releases built green and shipped to nobody, because "publish" was a human click no automation could make

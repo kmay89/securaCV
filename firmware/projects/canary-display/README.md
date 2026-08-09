@@ -236,6 +236,29 @@ Reach for these instead:
 browser (`*_html.h`, raw string literals) is exempt — those are read where
 real fonts exist.
 
+## Editing these sources moves a file you didn't open
+
+`canary-local/emulator/dist/*.js` is generated **and committed**, and it is
+compiled from these sources — `src/main.cpp`, the LVGL faces, `care/`,
+`fleet/`, `trust`. Not `net/`. So an ordinary C++ edit here can leave `dist/`
+stale and fail `canary-local.yml`'s "firmware → wasm → boots in a browser" on
+a file that isn't in your diff.
+
+Rebuilding it needs emsdk **6.0.3** exactly. Don't fight that locally — use
+**Actions → "Rebuild emulator dist (pinned emsdk)"**, dispatched on your
+branch. Three things it will not tell you:
+
+- It pushes to the branch it was dispatched on. Prefer a feature branch.
+- **Don't push while it runs.** It checks out, installs emsdk, compiles, then
+  pushes. Any push of yours inside that window used to make its push a
+  non-fast-forward and throw the whole build away with `fetch first` — which
+  reads as "the emulator failed to compile" when it compiled fine. It rebases
+  and retries now, but the window is still yours to avoid.
+- Its push does not retrigger CI, and **the push you make afterwards has to
+  touch a watched path** — this directory qualifies, a repo-root doc does not.
+  A docs-only commit leaves the PR at zero check runs, which looks queued
+  rather than never-started.
+
 ## Roadmap (post-v0.2)
 
 - **Mode system waves 1–4** ([spec](../../../docs/hardware/display_modes.md)):
