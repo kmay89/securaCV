@@ -86,6 +86,36 @@ the LVGL faces and `care/`/`fleet/`/`trust`, **not** the `net/` layer:
 - editing `common/fleet_selfreport/fleet_selfreport.h` → `dist/` does **not**
   change, even though `net/glass_web.cpp` includes it, because that file is
   never compiled into the emulator.
+- **bumping the firmware VERSION → `dist/` changes**, for every flavor, even
+  if you touched no other line. `build.sh` compiles `src/net/mqtt_mgr.cpp`
+  (which embeds `CANARY_FW_VERSION`) and stamps `fw_version` into each
+  `dist/*.meta.json` from `include/canary/version.h`. So a release commit is
+  always a dist commit. `src/runtime_config.cpp` and `src/glass_settings.cpp`
+  are compiled too — the `net/` exclusion is specifically `glass_web.cpp` and
+  `discovery.cpp`, not the whole layer.
+
+**THE REBUILD IS UPSTREAM OF THE CATALOG GENERATORS — order matters.**
+`gen_flash.py` embeds each artifact's `fw_version` (read from
+`dist/*.meta.json`) into `flash.json`. So running the generators BEFORE
+dispatching the emulator rebuild bakes in the old stamp, and the rebuild then
+moves `meta.json` out from under it. The catalog goes stale in the same push
+that fixed the dist, and it fails as *"generated flash catalog stale — a
+board's chip changed"*, which names a cause that has nothing to do with what
+happened. Right order, every time:
+
+```
+bump/edit → ./setup.sh regen → dispatch the dist rebuild → pull it
+          → run the gen_*.py catalogs → commit
+```
+
+**Two different gates catch a stale dist, and only one of them is the drift
+check.** `canary-local.yml`'s "Dist drift check" compares the BUNDLE bytes and
+deliberately ignores `meta.json` (it carries the checkout sha). The version
+stamp is caught somewhere else entirely — `canary_local.test.js` ("artifact fw
+(x) matches registry train (y)") and `vision.test.js` ("Vision generated data
+is stale against its firmware core") — which run in the **page logic tests**
+job. So a version bump goes red in a job whose name says nothing about the
+emulator, and reading only the drift check will tell you the dist is fine.
 
 Fixing it needs emsdk **6.0.3** exactly, which most working environments can't
 install. Don't fight that — use **Actions → "Rebuild emulator dist (pinned

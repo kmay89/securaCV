@@ -19,6 +19,25 @@ struct Witness: Identifiable, Codable, Hashable, Sendable {
     /// moment the generated map carries it, with no app change. Nil when no
     /// transport told us.
     var publishedType: String?
+    /// WHICH BOARD this is — the `hw` a device publishes on `/api/fleet` and
+    /// in its mDNS advert, spelled the way its pins header does
+    /// (`CANARY_FIGURE_HARDWARE`). Nil when no transport told us, which is
+    /// every device on firmware older than this field.
+    ///
+    /// Kept beside `publishedType` because it answers a different question,
+    /// and a stricter one: the type says what a device CALLS itself, the board
+    /// says what it IS. Several products share one type and one board can
+    /// serve two products, so only this pins down the shape — it is the first
+    /// thing `FleetFigure.resolve` asks. It is NOT a product name: see
+    /// `FleetFigure.sharesBoardAcrossProducts` before printing a figure's
+    /// title beside one.
+    var hardware: String?
+    /// Where this Canary stands with its MQTT hub, as it reported it. The
+    /// fleet can run entirely without one — a display renders from the LAN and
+    /// this phone talks to devices directly — so `.none` is a state to EXPLAIN,
+    /// never an error to raise. `.unknown` means the device said nothing, which
+    /// is every device on firmware older than the field.
+    var hub: HubState = .unknown
     var name: String = ""                // user-assigned display name
     var room: String = ""
     var fingerprint: String = ""         // 16-hex pubkey fp; first 4 = chirp id

@@ -10,6 +10,7 @@
 #include "glass_web.h"
 #include "wifi_mgr.h"
 #include "tz_auto.h"
+#include "mqtt_mgr.h"   // hub state for the /api/fleet self-report
 #include "mirror_html.h"
 #include "tv_html.h"
 #include "character.h"
@@ -18,6 +19,7 @@
 #include "version.h"
 #include "log.h"
 #include "fleet_selfreport.h"  // shared /api/fleet body builder
+#include "pins.h"  // CANARY_FIGURE_HARDWARE — which board this is (board -I path)
 #ifdef CD_NIGHTLIGHT
 // The nightlight's /api/settings extras: the lamp (lantern prefs), the
 // nightlight glue prefs, and the scene catalog served by name.
@@ -209,6 +211,32 @@ void handle_settings_get() {
   // UI down until someone reflashed.
   o = bappend(body, sizeof(body), o, ",\"tz\":");
   o = bappend_jstr(body, sizeof(body), o, tz);
+#ifdef CD_FLAVOR_DASH
+  // THE BRIGHTNESS KNOB THAT WORKS ON THIS GLASS.
+  //
+  // `day_pct` above scales what backlight_set() is given — and on this panel
+  // the backlight is a CH422G expander line, which is BINARY. Any nonzero
+  // level is simply "on". So day_pct has always been served here, has always
+  // been settable from the app, and has always done nothing you can see: the
+  // owner drags a brightness slider on their phone and the screen in front of
+  // them does not change. That is not a bug in the app; it is this endpoint
+  // never having offered the control that does work.
+  //
+  // On a binary-backlight board the sustained brightness is `bright_pct`, a
+  // RENDERED dim — a black scrim over the glass (lvgl_port_set_dim), applied
+  // every frame by the main loop. It was reachable only from the on-glass
+  // settings menu, so the phone had no way to write it.
+  //
+  // Sent only on the boards that HAVE it, exactly like the lamp block below:
+  // its presence is how the app knows this glass dims by scrim rather than by
+  // backlight, so it can offer one honest brightness control instead of two
+  // that disagree. A display with a real dimmable backlight omits it and
+  // keeps day_pct as the brightness knob.
+  o += (size_t)snprintf(
+      body + o, sizeof(body) - o,
+      ",\"bright_pct\":%u,\"bright_min_pct\":%u",
+      gs.bright_pct, canary::glass::BRIGHT_PCT_MIN);
+#endif
 #ifdef CD_NIGHTLIGHT
   // The nightlight's own knobs, plus the scene catalog BY NAME — the app
   // renders the device's own list, so a new scene in the look engine shows
@@ -254,6 +282,22 @@ void handle_settings_set() {
   auto gs = canary::glass::settings();  // copy; setters below persist
   bool ok = true;
   if (k == "day_pct" && v >= 20 && v <= 100) gs.day_pct = (uint8_t)v;
+#ifdef CD_FLAVOR_DASH
+  // The rendered-dim brightness — see handle_settings_get. Stored and nothing
+  // more: the main loop reads settings().bright_pct every frame and drives the
+  // scrim from it, so the glass follows on the next tick without a web handler
+  // ever touching LVGL from inside a request (the same discipline the
+  // orientation mailbox keeps, and for the same reason).
+  //
+  // Clamped through the glass's own bright_pct_clamp rather than range-checked
+  // here, so the phone and the panel can never disagree about what a given
+  // number means. Any value in [50..100] is legal and renders exactly —
+  // bright_scrim_opa is continuous, and the settings blob's sanitizer checks
+  // the RANGE, not step membership. The on-glass stepper's tens are the
+  // thumb's granularity, not the setting's, so a slider is free to send 63.
+  else if (k == "bright_pct" && v >= 0 && v <= 100)
+    gs.bright_pct = canary::glass::bright_pct_clamp((int)v);
+#endif
   // Two stored modes only (glow / off) — what "off" does on tap (peek vs
   // wake) is per-flavor behavior, not a third value (review catch: a 2
   // would be silently sanitized back to glow).
@@ -467,24 +511,51 @@ void handle_fleet() {
   const auto& cfg = canary::cfg::get();
   FleetSelfDevice self{};
   self.name         = (cfg.device_id[0]) ? cfg.device_id : "Canary";
-#ifdef CD_NIGHTLIGHT
-  // The nightlight self-reports as WHAT IT IS ("canary-nightlight", the
-  // same dt its mDNS TXT carries), so the iPhone's LAN self-report path
-  // types it correctly and shows the Nightlight settings card (Codex P2 on
-  // this PR). The other display flavors keep the family string below —
-  // their CD_DEVICE_TYPEs predate the wire and the apps type them off it.
+  // EVERY display self-reports as WHAT IT IS — the same DEVICE_TYPE its mDNS
+  // TXT already carries — not as the family string "canary-display".
+  //
+  // Only the nightlight used to do this, and the flattening cost the rest of
+  // the line their picture. "canary-display" is deliberately unmapped in the
+  // figure ledger (four different products wear that one type, so a figure
+  // chosen from it would be a coin flip), so a Nightstand or a Dash answering
+  // with the family string could never resolve to anything and drew the
+  // generic marker on every surface — while the ledger held a drawing of it
+  // the whole time. Publishing the real type also lets the apps offer the
+  // screen controls this glass actually serves.
+  //
+  // A reader that has never heard of this particular type still degrades to
+  // the coarse family (the apps fold the display line themselves), so an
+  // older app meets a newer flavor and sees a display, not nothing.
   self.product      = DEVICE_TYPE;
-#else
-  self.product      = "canary-display";
-#endif
   self.online       = 1;   // we are answering this request, so we are up
   self.chain_ok     = 0;   // a display holds no witness chain of its own
   self.chain_height = -1;  // omit chain_height
+  // And the board, which is exact about the SHAPE where the type cannot be:
+  // the 7" glass is both a Dash 7 and a Nightstand 7, so its product names
+  // one of two products while its board names the one thing to draw.
+#ifdef CANARY_FIGURE_HARDWARE
+  self.hardware     = CANARY_FIGURE_HARDWARE;
+#endif
+  // And where this display stands with its hub, so the owner can be TOLD they
+  // need one instead of discovering it by noticing nothing works. A display
+  // with a placeholder broker is not broken and not misconfigured — it is a
+  // device nobody has pointed at a hub yet, which is a different sentence and
+  // a different fix from a hub that is simply down.
+  self.hub          = canary::net::mqtt_broker_is_placeholder() ? FSR_HUB_NONE
+                      : canary::net::mqtt_connected()           ? FSR_HUB_OK
+                                                                : FSR_HUB_DOWN;
   // Sized by the shared macro for the worst case: device_id[48] of
   // all-escaping bytes expands 6x and is written twice (kernel + name) — a
   // smaller fixed buffer would truncate an accepted name into invalid JSON
   // served with a 200 (Codex P2 on #1226).
-  char body[FLEET_SELFREPORT_BODY_CAP(sizeof(cfg.device_id), 16)];
+  //
+  // The product bound is 24, not the 16 it used to be. 16 was already under
+  // the truth — the nightlight has answered "canary-nightlight" (17) since it
+  // started reporting its real type — and now every flavor reports one, the
+  // longest being "canary-nightstand7" (18). The macro's promise is that
+  // truncation is impossible BY CONSTRUCTION, and a bound smaller than the
+  // string it bounds only kept that promise by accident of headroom.
+  char body[FLEET_SELFREPORT_BODY_CAP(sizeof(cfg.device_id), 24)];
   fleet_selfreport_build(body, sizeof(body), &self);
   s_server->sendHeader("Access-Control-Allow-Origin", "*");
   s_server->send(200, "application/json", body);

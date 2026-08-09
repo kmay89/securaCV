@@ -18,6 +18,7 @@
 #include "fleet_instance.h"  // the_fleet()
 #include "fleet_model.h"     // on_status / on_meta
 #include "device_pseudonym.h"  // MAC-free hostname suffix (Invariant III)
+#include "pins.h"  // CANARY_FIGURE_HARDWARE — which board this is (board -I path)
 
 namespace canary::net {
 
@@ -118,6 +119,15 @@ bool discovery_init(const char* device_id, const char* device_type,
   MDNS.addServiceTxt(SVC, PROTO, "model", MODEL);
   MDNS.addServiceTxt(SVC, PROTO, "role", role ? role : "display");
   MDNS.addServiceTxt(SVC, PROTO, "dt", device_type ? device_type : "");
+  // WHICH BOARD, beside what it calls itself. `dt` names the product and
+  // several products share a board (and one board, the 7" glass, serves two
+  // products) — so `dt` cannot pin down the SHAPE and this can. A browser
+  // draws the right hardware from the advert alone, before it has asked the
+  // device anything. Omitted rather than sent empty on a build with no pins
+  // header to name: absent means "cannot say", which "" does not.
+#ifdef CANARY_FIGURE_HARDWARE
+  MDNS.addServiceTxt(SVC, PROTO, "hw", CANARY_FIGURE_HARDWARE);
+#endif
 
   log_header("MDNS");
   canary::dbg_serial().printf("Fleet advert up as %s.local (_%s._%s)\n",

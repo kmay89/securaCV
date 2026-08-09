@@ -475,11 +475,27 @@ const HARDWARE_FIGURE = {
   'xiao-esp32c3': 'device.canary-vision',
   'xiao-esp32s3': 'device.canary-vision',
   'esp32-c3': 'device.canary-vision-devkit',
-  // The C3 1.47" pocket board is one product — the Nightlight in its pocket
-  // case (canary_c3_lcd147.scad). Its S3 and C6 siblings stay unmapped: the
-  // S3 stick is a bare USB-A stick with no case record, and the C6 board is
-  // not a device in registry.json.
+  // Three boards carry the same 1.47" panel, and they are three DIFFERENT
+  // shapes — same glass, same product name in two cases, three cases on disk.
+  //   C3  the Nightlight's pocket case      (canary_c3_lcd147.scad)
+  //   S3  the Nightstand's USB-A wall stick (canary_s3_lcd147.scad)
+  //   C6  a header board with a USB-C port  (canary_c6_display.scad)
+  //
+  // The S3 was unmapped with the reason "no panel record on disk to size it
+  // from" — true when it was written, and not any more: canary_s3_lcd147.scad
+  // carries the whole record (board outline, the MEASURED 8.2 mm stack, the
+  // derived outer shell it echoes at render time), so its figure is traced
+  // rather than invented.
+  //
+  // The C6 stays unmapped, and NOT because we lack a drawing of it. Its case
+  // file opens with "⚠️ NOT the C6 case … a header board with a USB-C PORT on
+  // its short edge", where the S3's defining feature is a 12 mm USB-A male
+  // plug. Handing the C6 the stick's figure would draw a plug onto a device
+  // that has a socket — the exact wrong-picture failure the ladder exists to
+  // prevent. It needs its own registry entry and its own massing; until then
+  // the generic marker is the honest answer.
   'waveshare-esp32c3-lcd147': 'device.canary-nightlight',
+  'waveshare-esp32s3-lcd147': 'device.canary-display-nightstand',
 };
 
 /* Hardware we can name but cannot yet draw. Listed so the gap is data, with
@@ -839,6 +855,18 @@ for (const r of uniqueRows) {
   swiftTypeRows.set(key, r.fig.id);
 }
 
+// The board map, carried across to Swift for the same reason the firmware has
+// one: it is the only lookup that is EXACT about the shape. Several device
+// types are published by more than one board and are therefore absent from
+// the map above — which left the phone drawing a generic marker for hardware
+// the ledger holds a perfectly good drawing of. A device that names its board
+// gets its picture; `shared` travels with the row so a caller knows when the
+// figure's TITLE names one of several products and must not be printed as
+// this device's name.
+const swiftHardwareRows = hardwareRows.map((r) => ({
+  hardware: r.hardware, figure: r.fig.id, shared: r.shared,
+}));
+
 const swiftFigures = built.map((f) => {
   const ops = f.plan.ops.map((op) => {
     const pts = op.pts.map(([x, y]) => `${r2(x)},${r2(y)}`).join(' ');
@@ -923,6 +951,34 @@ public struct FleetFigure: Sendable {
     return all[id]
   }
 
+  /// The figure for a BOARD — the \`hw\` a device publishes on \`/api/fleet\` and
+  /// in its mDNS advert, which each board's pins header spells as
+  /// \`CANARY_FIGURE_HARDWARE\`. Mirror of the firmware's own
+  /// \`figure_for_hardware\` (common/core/fleet_figures.h).
+  ///
+  /// This is the EXACT lookup, and it is exact for a load-bearing reason: a
+  /// build compiles against exactly one pins header, and the wrong one is a
+  /// dead device — so the board id is a true statement about the physical
+  /// thing in a way a product name is not. Several products share one device
+  /// type (the whole display line answered to "canary-display"), and one
+  /// board can serve several products, so \`forDeviceType\` is absent for those
+  /// by design and this is what fills the gap.
+  ///
+  /// It names the BOARD, never the product: see \`sharesBoardAcrossProducts\`
+  /// before printing the returned title as this device's name.
+  public static func forHardware(_ hardware: String) -> FleetFigure? {
+    guard let id = hardwareToFigure[hardware] else { return nil }
+    return all[id]
+  }
+
+  /// True when this board carries more than one product. The drawing is right
+  /// for all of them; the figure's TITLE is right for one — so a caller that
+  /// wants to NAME the device must ask the device type (or the device's own
+  /// name), not the figure.
+  public static func sharesBoardAcrossProducts(_ hardware: String) -> Bool {
+    sharedBoards.contains(hardware)
+  }
+
   /// The wire-canonical form of a published device type — the one spelling
   /// \`deviceTypeToFigure\` is keyed on.
   public static func canonicalDeviceType(_ raw: String) -> String {
@@ -937,6 +993,19 @@ ${swiftFigures.join('\n')}
   /// resolve through \`forDeviceType\`, which canonicalizes its input.
   public static let deviceTypeToFigure: [String: String] = [
 ${[...swiftTypeRows.entries()].sort().map(([t, id]) => `    "${t}": "${id}",`).join('\n')}
+  ]
+
+  /// Board id -> figure id. Not canonicalized: unlike a device type, a board
+  /// id has exactly one spelling — the generator writes it into the pins
+  /// header and the firmware publishes that same token back.
+  public static let hardwareToFigure: [String: String] = [
+${swiftHardwareRows.map((r) => `    "${r.hardware}": "${r.figure}",`).join('\n')}
+  ]
+
+  /// The boards that serve more than one product — see
+  /// \`sharesBoardAcrossProducts\`.
+  public static let sharedBoards: Set<String> = [
+${swiftHardwareRows.filter((r) => r.shared).map((r) => `    "${r.hardware}",`).join('\n')}
   ]
 }
 

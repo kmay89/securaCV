@@ -65,6 +65,72 @@ final class FleetFigureTests: XCTestCase {
         XCTAssertNil(FleetFigure.resolve(deviceType: .unknown, published: nil))
     }
 
+    /// The BOARD outranks everything, because it is the only input that is
+    /// exact about the shape.
+    ///
+    /// This is the tier that gave the display line its picture back. Every
+    /// non-nightlight display used to self-report the family string
+    /// "canary-display" — unmapped on purpose, since four products wear it —
+    /// so a Nightstand resolved to nothing and drew the generic marker while
+    /// the ledger held a drawing of it the whole time.
+    func testResolveAsksTheBoardBeforeTheProduct() {
+        // The exact case from the field: a 7" Nightstand. Its type is shared
+        // (the 7" glass is also a Dash 7) and its family string pins nothing,
+        // but its board pins the shape.
+        XCTAssertEqual(FleetFigure.resolve(deviceType: .display,
+                                           published: "canary-display",
+                                           hardware: "waveshare-esp32s3-lcd7")?.id,
+                       "device.canary-display-dash7")
+        // The board wins even when the published type would have resolved,
+        // because it is the stricter statement — not because the type is
+        // wrong.
+        XCTAssertEqual(FleetFigure.resolve(deviceType: .unknown,
+                                           published: "canary-watch",
+                                           hardware: "waveshare-esp32s3-lcd147")?.id,
+                       "device.canary-display-nightstand")
+        // A board this build has never heard of falls through to the type
+        // rather than dropping to nothing.
+        XCTAssertEqual(FleetFigure.resolve(deviceType: .unknown,
+                                           published: "canary-watch",
+                                           hardware: "some-future-board")?.id,
+                       "device.canary-display-watch")
+        // And an empty board id is the same as no board id.
+        XCTAssertEqual(FleetFigure.resolve(deviceType: .sense,
+                                           published: nil, hardware: "")?.id,
+                       "device.canary-sense")
+    }
+
+    /// A right picture may still carry a wrong name. One board can serve two
+    /// products, and the figure's title names one of them — so callers must
+    /// ask before printing it as this device's product.
+    func testAFigureFromASharedBoardMayNotNameTheProduct() {
+        // The 7" glass is both the Dash 7 and the Nightstand 7.
+        XCTAssertTrue(FleetFigure.sharesBoardAcrossProducts("waveshare-esp32s3-lcd7"))
+        XCTAssertFalse(FleetFigure.namesItsProduct(hardware: "waveshare-esp32s3-lcd7"))
+        // A board that serves one product names it fine.
+        XCTAssertFalse(FleetFigure.sharesBoardAcrossProducts("waveshare-esp32s3-lcd147"))
+        XCTAssertTrue(FleetFigure.namesItsProduct(hardware: "waveshare-esp32s3-lcd147"))
+        // No board id at all: nothing to object to, so the title stands.
+        XCTAssertTrue(FleetFigure.namesItsProduct(hardware: nil))
+        XCTAssertTrue(FleetFigure.namesItsProduct(hardware: ""))
+    }
+
+    /// Every board the generator mapped must resolve, and to a figure that
+    /// exists — the Swift mirror of the firmware's kHardware table.
+    func testEveryMappedBoardResolvesToARealFigure() {
+        XCTAssertFalse(FleetFigure.hardwareToFigure.isEmpty)
+        for (board, figureID) in FleetFigure.hardwareToFigure {
+            XCTAssertNotNil(FleetFigure.all[figureID],
+                            "board \(board) maps to \(figureID), which is not a figure")
+            XCTAssertEqual(FleetFigure.forHardware(board)?.id, figureID)
+        }
+        // Every shared board is a board we actually carry.
+        for board in FleetFigure.sharedBoards {
+            XCTAssertNotNil(FleetFigure.hardwareToFigure[board],
+                            "\(board) is marked shared but has no figure")
+        }
+    }
+
     /// An idea must never render as something you can buy. The generator emits
     /// only ghost faces for that rung; this asserts the rule survives the trip
     /// into Swift, so a concept can't come out solid on the wrist and dashed on

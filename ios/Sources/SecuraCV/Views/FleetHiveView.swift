@@ -79,7 +79,8 @@ struct HiveCell: View {
                 // Severity still reads from the ring and never from the figure:
                 // the figure's colors are the object's, not the theme's.
                 if let figure = FleetFigure.resolve(deviceType: witness.deviceType,
-                                                    published: witness.publishedType) {
+                                                    published: witness.publishedType,
+                                                    hardware: witness.hardware) {
                     FleetFigureView(figure)
                         .frame(width: 34, height: 34)
                         .accessibilityLabel(figure.title)

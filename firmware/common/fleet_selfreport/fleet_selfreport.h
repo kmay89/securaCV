@@ -38,10 +38,17 @@
 // truncation is impossible by construction (pinned by the host test's
 // worst-case check). The constant covers every fixed byte of the skeleton
 // ({"kernel":"…","verified_through":"now","devices":[{…}]}), the widest
-// chain_height, the widest born_day plus its exactness flag, and the NUL, with
-// headroom.
-#define FLEET_SELFREPORT_BODY_CAP(name_max, product_max) \
-  (12u * (size_t)(name_max) + 6u * (size_t)(product_max) + 208u)
+// chain_height, the widest born_day plus its exactness flag, the widest
+// hardware id, and the NUL, with headroom.
+//
+// `hardware` is NOT a parameter, unlike name and product: it is never a
+// runtime string. It is a compile-time token out of the generator's own
+// vocabulary (see FLEET_SELFREPORT_HW_MAX), so one fixed worst case covers
+// every board and no call site has to know its own length.
+#define FLEET_SELFREPORT_HW_MAX 48u
+#define FLEET_SELFREPORT_BODY_CAP(name_max, product_max)             \
+  (12u * (size_t)(name_max) + 6u * (size_t)(product_max)             \
+   + 6u * FLEET_SELFREPORT_HW_MAX + 208u)
 
 // Coarse, non-extractive self-state — presence + health only, never raw media.
 typedef struct {
@@ -60,7 +67,48 @@ typedef struct {
   // firmware/common/identity/birth_day.h for the three rules that produce it.
   unsigned    born_day;
   int         born_exact;
+  // WHICH BOARD THIS IS — the `boards/<id>/pins` header the build compiled
+  // against, as each pins header's CANARY_FIGURE_HARDWARE spells it. 0 or ""
+  // = omit.
+  //
+  // This is the only field on the wire that is exact about the device's
+  // SHAPE, and it is here because `product` cannot be. Several products share
+  // one device type (the 7" glass answers to both Dash 7 and Nightstand 7),
+  // and the whole display line used to flatten to "canary-display" — so a
+  // reader asking "what does this look like?" from the product string got
+  // either a coin flip or nothing, and drew a generic marker for a device it
+  // had the drawing for. The board is load-bearing (wrong pins, dead device),
+  // which makes it a true statement rather than a label somebody typed.
+  //
+  // It names the BOARD, never the product: a reader draws the shape from this
+  // and takes the NAME from `product` (see common/core/fleet_figures.h, whose
+  // `shared_across_products` flag says exactly when the two differ).
+  const char* hardware;
+  // WHERE THIS DEVICE STANDS WITH ITS HUB — the one thing an owner has to
+  // know to finish setting a fleet up, and the one thing nothing on the wire
+  // used to say. Values, and what each is FOR:
+  //
+  //   FSR_HUB_UNKNOWN  omit the key. This device has no broker link to
+  //                    report, or does not know — never rendered as "fine".
+  //   FSR_HUB_NONE     no broker is configured at all. This is the state that
+  //                    needs a person: the device is working, on the network,
+  //                    and standing alone because nobody has pointed it at a
+  //                    hub yet. A reader should say where to set one up.
+  //   FSR_HUB_DOWN     a broker IS configured and this device cannot reach it.
+  //                    A different problem with a different fix (the hub is
+  //                    off, or the address moved) — and NOT the same as none,
+  //                    which is why this is three values and not a bool.
+  //   FSR_HUB_OK       connected.
+  //
+  // Deliberately coarse and deliberately address-free: the point is to let an
+  // owner be TOLD they need a hub, not to publish where theirs lives.
+  int hub;
 } FleetSelfDevice;
+
+#define FSR_HUB_UNKNOWN 0
+#define FSR_HUB_NONE    1
+#define FSR_HUB_DOWN    2
+#define FSR_HUB_OK      3
 
 // ── clamp-safe primitives (never write past cap-1; always keep a NUL) ──
 static inline size_t fsr__raw(char* out, size_t cap, size_t o, const char* s) {
@@ -120,7 +168,9 @@ static inline size_t fsr__int(char* out, size_t cap, size_t o, int v) {
   return o;
 }
 
-// One device object: {"name":..,"online":..,"chain":..,"product":..[,"chain_height":..]}
+// One device object:
+//   {"name":..,"online":..,"chain":..,"product":..
+//    [,"chain_height":..][,"born_day":..,"born_exact":..][,"hw":".."]}
 static inline size_t fleet_selfreport_append_device(char* out, size_t cap, size_t o,
                                                     const FleetSelfDevice* d) {
   o = fsr__raw(out, cap, o, "{\"name\":\"");
@@ -144,6 +194,27 @@ static inline size_t fleet_selfreport_append_device(char* out, size_t cap, size_
     o = fsr__int(out, cap, o, (int)d->born_day);
     o = fsr__raw(out, cap, o, ",\"born_exact\":");
     o = fsr__raw(out, cap, o, d->born_exact ? "true" : "false");
+  }
+  // Omitted when the build has no pins header of its own to name, for the
+  // same reason born_day is: absent means "this device cannot tell you", and
+  // a reader must be able to tell that from any particular board.
+  if (d && d->hardware && d->hardware[0]) {
+    o = fsr__raw(out, cap, o, ",\"hw\":\"");
+    o = fsr__jstr(out, cap, o, d->hardware);
+    o = fsr__raw(out, cap, o, "\"");
+  }
+  // A word, not a number, for the same reason `chain` is a word: a reader
+  // that meets a value this firmware never sent must be able to fall back to
+  // "unknown", and an unrecognized integer looks exactly like a recognized
+  // one. Omitted entirely at UNKNOWN — see the field's note.
+  if (d && d->hub != FSR_HUB_UNKNOWN) {
+    o = fsr__raw(out, cap, o, ",\"hub\":\"");
+    o = fsr__raw(out, cap, o,
+                 d->hub == FSR_HUB_OK   ? "ok"
+                 : d->hub == FSR_HUB_DOWN ? "down"
+                 : d->hub == FSR_HUB_NONE ? "none"
+                                          : "unknown");
+    o = fsr__raw(out, cap, o, "\"");
   }
   o = fsr__raw(out, cap, o, "}");
   return o;

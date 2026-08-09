@@ -58,24 +58,52 @@ extension DeviceType {
 }
 
 extension FleetFigure {
-    /// The figure for a witness, resolved at two honest precisions — mirror
-    /// of the firmware's own two lookups in fleet_figures.h:
+    /// The figure for a witness, resolved at three honest precisions — mirror
+    /// of the firmware's own lookups in fleet_figures.h, most exact first:
     ///
-    ///   1. The RAW published device type, through the generated map. Exact:
-    ///      the map carries every type the firmware's own vocabulary can pin
-    ///      to one product, and grows in lockstep with the pipeline — a
-    ///      witness that says "canary-watch" gets the round drum even though
-    ///      the coarse enum collapses it to `.unknown`.
-    ///   2. The coarse `DeviceType` default (`figureID` above).
+    ///   1. The BOARD it published (`hw`). The only lookup that is exact
+    ///      about the SHAPE, because a build compiles against exactly one
+    ///      pins header and the wrong one is a dead device. This tier is what
+    ///      finally gave the display line its picture: every non-nightlight
+    ///      display used to self-report the family string "canary-display",
+    ///      which is unmapped ON PURPOSE (four products wear it), so a
+    ///      Nightstand drew the generic marker while the ledger held a
+    ///      drawing of it the whole time.
+    ///   2. The RAW published device type, through the generated map. Exact
+    ///      where a type pins down one product — a witness that says
+    ///      "canary-watch" gets the round drum even though the coarse enum
+    ///      collapses it to `.display`.
+    ///   3. The coarse `DeviceType` default (`figureID` above).
     ///
-    /// Nil when neither pins one product; the caller draws the generic
-    /// symbol, never a guess. New device types resolve here with no app
-    /// change the moment the generated map carries them.
-    static func resolve(deviceType: DeviceType, published: String?) -> FleetFigure? {
+    /// Nil when none of them pins one product; the caller draws the generic
+    /// symbol, never a guess. New boards and new device types resolve here
+    /// with no app change the moment the generated maps carry them.
+    ///
+    /// What this returns is a SHAPE, not a name. One board can serve two
+    /// products (the 7" glass is both the Dash 7 and the Nightstand 7), so a
+    /// caller that wants to name the device must use the device's own name or
+    /// its published type — never the figure's title. `namesItsProduct` below
+    /// is the check.
+    static func resolve(deviceType: DeviceType, published: String?,
+                        hardware: String? = nil) -> FleetFigure? {
+        if let board = hardware, !board.isEmpty, let f = FleetFigure.forHardware(board) {
+            return f
+        }
         if let raw = published, !raw.isEmpty, let f = FleetFigure.forDeviceType(raw) {
             return f
         }
         return deviceType.figure
+    }
+
+    /// May this figure's title be shown as the device's product name?
+    ///
+    /// False when the figure was resolved from a board that carries more than
+    /// one product — the drawing is right for all of them, the title names
+    /// one. Printing "Canary Dash 7" under a Nightstand 7 would be a wrong
+    /// label attached to a right picture, which is worse than no label.
+    static func namesItsProduct(hardware: String?) -> Bool {
+        guard let board = hardware, !board.isEmpty else { return true }
+        return !FleetFigure.sharesBoardAcrossProducts(board)
     }
 }
 
@@ -87,16 +115,20 @@ extension FleetFigure {
 struct DeviceFigureIcon: View {
     let deviceType: DeviceType
     var published: String?
+    var hardware: String?
     var size: CGFloat = 26
 
-    init(_ deviceType: DeviceType, published: String? = nil, size: CGFloat = 26) {
+    init(_ deviceType: DeviceType, published: String? = nil,
+         hardware: String? = nil, size: CGFloat = 26) {
         self.deviceType = deviceType
         self.published = published
+        self.hardware = hardware
         self.size = size
     }
 
     private var resolved: FleetFigure? {
-        FleetFigure.resolve(deviceType: deviceType, published: published)
+        FleetFigure.resolve(deviceType: deviceType, published: published,
+                            hardware: hardware)
     }
 
     var body: some View {

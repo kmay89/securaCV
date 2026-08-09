@@ -58,6 +58,14 @@ static bool has(const std::string& s, const char* sub) {
   return s.find(sub) != std::string::npos;
 }
 
+// Build a single-device body and hand it back as a string — the shape most of
+// these tests assert against, without a buffer at every call site.
+static std::string build(const FleetSelfDevice& d) {
+  char buf[512];
+  fleet_selfreport_build(buf, sizeof buf, &d);
+  return std::string(buf);
+}
+
 static FleetSelfDevice sample() {
   FleetSelfDevice d{};
   d.name = "Front Door";
@@ -244,6 +252,52 @@ static void test_born_day_reports_the_day_and_its_confidence() {
   CHECK(has(s, "\"born_exact\":false"));
 }
 
+// ── the board id: exact about the shape, absent when there is none ──────────
+static void test_hardware_is_omitted_until_the_board_names_itself() {
+  FleetSelfDevice d = sample();          // sample() leaves hardware null
+  std::string s = build(d);
+  // A build with no pins header of its own says nothing rather than "". An
+  // empty string would read as a board id nobody can draw, and a reader
+  // would spend a lookup proving it isn't one.
+  CHECK(!has(s, "\"hw\""));
+
+  d.hardware = "";                       // present-but-empty is the same answer
+  CHECK(!has(build(d), "\"hw\""));
+}
+
+static void test_hardware_reports_the_board_not_the_product() {
+  FleetSelfDevice d = sample();
+  // The 7" glass: ONE board, two products. What it publishes as `product` is
+  // the product; what it publishes here is the board — and the reader draws
+  // the shape from this one precisely because the product cannot pin it.
+  d.product = "canary-nightstand7";
+  d.hardware = "waveshare-esp32s3-lcd7";
+  const std::string s = build(d);
+  CHECK(has(s, "\"product\":\"canary-nightstand7\""));
+  CHECK(has(s, "\"hw\":\"waveshare-esp32s3-lcd7\""));
+  // Ordering is part of the wire shape: hw closes the object, after birth.
+  CHECK(has(s, "\"hw\":\"waveshare-esp32s3-lcd7\"}"));
+}
+
+// ── the hub state: three answers, and silence is not one of the three ───────
+static void test_hub_is_omitted_when_the_device_has_no_opinion() {
+  FleetSelfDevice d = sample();          // sample() leaves hub at UNKNOWN (0)
+  CHECK(!has(build(d), "\"hub\""));
+}
+
+static void test_hub_distinguishes_none_from_down() {
+  FleetSelfDevice d = sample();
+  // The distinction that makes this field worth having: "nobody has given me
+  // a hub" and "my hub is unreachable" are different problems with different
+  // fixes, and a bool would have collapsed them into one unhelpful warning.
+  d.hub = FSR_HUB_NONE;
+  CHECK(has(build(d), "\"hub\":\"none\""));
+  d.hub = FSR_HUB_DOWN;
+  CHECK(has(build(d), "\"hub\":\"down\""));
+  d.hub = FSR_HUB_OK;
+  CHECK(has(build(d), "\"hub\":\"ok\""));
+}
+
 // ── FLEET_SELFREPORT_BODY_CAP really covers the worst case ──────────────────
 static void test_body_cap_covers_worst_case() {
   // The failure this guards (Codex P2 on #1226): a device ACCEPTS a name whose
@@ -271,6 +325,16 @@ static void test_body_cap_covers_worst_case() {
   // widest value the writer would accept rather than the widest that can occur.
   d.born_day = 2147483647u;
   d.born_exact = 0;                            // "false" is the longer literal
+  // And the widest hardware id, all-escaping. Real board ids are lowercase
+  // ASCII out of the generator's vocabulary and could never escape — but the
+  // cap's promise is "truncation is impossible by construction", and a
+  // constant proven only against friendly bytes does not keep it.
+  char hw[FLEET_SELFREPORT_HW_MAX + 1];
+  for (size_t i = 0; i < FLEET_SELFREPORT_HW_MAX; ++i) hw[i] = '\x03';
+  hw[FLEET_SELFREPORT_HW_MAX] = '\0';
+  d.hardware = hw;
+  d.hub = FSR_HUB_UNKNOWN + 99;                // an unknown value -> "unknown",
+                                               // the longest literal this emits
   char body[FLEET_SELFREPORT_BODY_CAP(NAME_MAX, PROD_MAX)];
   size_t n = fleet_selfreport_build(body, sizeof body, &d);
   CHECK(n > 0);
@@ -304,6 +368,10 @@ int main() {
   test_bounded_no_overflow();
   test_born_day_is_omitted_until_the_device_has_one();
   test_born_day_reports_the_day_and_its_confidence();
+  test_hardware_is_omitted_until_the_board_names_itself();
+  test_hardware_reports_the_board_not_the_product();
+  test_hub_is_omitted_when_the_device_has_no_opinion();
+  test_hub_distinguishes_none_from_down();
   test_body_cap_covers_worst_case();
   test_degenerate_caps();
 

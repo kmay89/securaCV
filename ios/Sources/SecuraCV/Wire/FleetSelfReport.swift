@@ -51,12 +51,30 @@ struct FleetSelfDevice: Codable, Hashable, Sendable {
     /// first learns the date a week late. The app must not call that a
     /// birthday. See firmware/common/identity/birth_day.h.
     var bornExact: Bool
+    /// WHICH BOARD this is (`hw`) — the `boards/<id>/pins` header the build
+    /// compiled against, as `CANARY_FIGURE_HARDWARE` spells it. Nil when the
+    /// device omitted it, which is every device on firmware older than the
+    /// field and every build with no pins header of its own.
+    ///
+    /// It is here because `product` cannot answer the question it answers.
+    /// Several products share one device type, and one board can serve two
+    /// products, so only this pins down the SHAPE — it is what lets the app
+    /// draw the actual hardware instead of a generic marker. It names the
+    /// BOARD, never the product.
+    var hardware: String?
+    /// Where this device stands with its hub, verbatim (`hub`). Kept as a raw
+    /// string with a computed verdict, exactly like `chain` beside it, so a
+    /// word from newer firmware degrades to `.unknown` instead of failing the
+    /// decode.
+    var hub: String
 
     enum CodingKeys: String, CodingKey {
         case name, online, chain, product
         case chainHeight = "chain_height"
         case bornDay = "born_day"
         case bornExact = "born_exact"
+        case hardware = "hw"
+        case hub
     }
 
     /// Tolerant decode: a device that omits a field is reported, not dropped.
@@ -77,10 +95,17 @@ struct FleetSelfDevice: Codable, Hashable, Sendable {
         // has not earned the word "born" — the cautious reading is the only
         // safe one, because the flag exists to hold back a claim.
         bornExact = ((try? c.decodeIfPresent(Bool.self, forKey: .bornExact)) ?? nil) ?? false
+        // Empty and absent are one answer here ("this device cannot say"),
+        // folded to nil so a caller never spends a map lookup proving that an
+        // empty string is not a board id.
+        let hw = (try? c.decodeIfPresent(String.self, forKey: .hardware)) ?? nil
+        hardware = (hw?.isEmpty == false) ? hw : nil
+        hub = (try? c.decode(String.self, forKey: .hub)) ?? ""
     }
 
     init(name: String, online: Bool, chain: String, product: String, chainHeight: Int? = nil,
-         bornDay: Int? = nil, bornExact: Bool = false) {
+         bornDay: Int? = nil, bornExact: Bool = false, hardware: String? = nil,
+         hub: String = "") {
         self.name = name
         self.online = online
         self.chain = chain
@@ -88,6 +113,8 @@ struct FleetSelfDevice: Codable, Hashable, Sendable {
         self.chainHeight = chainHeight
         self.bornDay = bornDay
         self.bornExact = bornExact
+        self.hardware = hardware
+        self.hub = hub
     }
 
     /// True only for the explicit "ok". Anything else — "unknown", "degraded",
@@ -99,6 +126,40 @@ struct FleetSelfDevice: Codable, Hashable, Sendable {
     /// tolerant decoder the rest of the app uses so an unknown product renders
     /// as `.unknown` rather than being dropped.
     var deviceType: DeviceType { DeviceType(tolerant: product) }
+
+    /// This device's hub standing, folded to the app's enum. Anything this
+    /// build has never heard of — including silence — is `.unknown`, which
+    /// renders as nothing rather than as reassurance.
+    var hubState: HubState { HubState(tolerant: hub) }
+}
+
+/// Where a Canary stands with its MQTT broker.
+///
+/// Three states rather than a flag, because "nobody has given me a hub" and
+/// "my hub is unreachable" want different sentences and different fixes, and
+/// collapsing them would send an owner to restart a hub they never set up.
+enum HubState: String, Codable, Sendable {
+    /// No broker configured — this device is standing alone because nobody
+    /// has pointed it at one yet. The state that wants an explanation.
+    ///
+    /// Spelled `absent`, not `none`, though the wire word IS "none". A case
+    /// literally named `none` collides with `Optional.none` at every optional
+    /// call site: `XCTAssertEqual(row?.hubState, .none)` compares against nil
+    /// and quietly passes for the wrong reason, and `hub == .none` on an
+    /// optional means "is nil". The rawValue keeps the contract with the
+    /// firmware; the case name keeps the ambiguity out of the app.
+    case absent = "none"
+    /// A broker is configured and unreachable.
+    case down
+    case ok
+    /// Not reported. Never rendered as "fine": a device that didn't say is a
+    /// device we know nothing about.
+    case unknown
+
+    init(tolerant raw: String?) { self = HubState(rawValue: raw ?? "") ?? .unknown }
+
+    /// Does this state want the owner to go and do something?
+    var needsAttention: Bool { self == .absent || self == .down }
 }
 
 /// The whole `/api/fleet` body.

@@ -130,6 +130,17 @@ enum FleetMerge {
         // figure lookup resolves at full precision, and a row that already
         // has one keeps it (fill gaps, never replace).
         if w.publishedType == nil, !row.product.isEmpty { w.publishedType = row.product }
+        // Which board it is, same rule: fill the gap, never replace. This is
+        // what the figure lookup asks first, so a row that already carries one
+        // (from the mDNS advert) keeps it — two transports reporting the same
+        // device must not be able to make its picture flicker.
+        if w.hardware == nil, let hw = row.hardware, !hw.isEmpty { w.hardware = hw }
+        // The hub standing, which unlike the two above is NOT a fill-the-gap
+        // field: it is live state, and the device is the only authority on it.
+        // A row that said "none" an hour ago must be replaced the moment the
+        // device says "ok", or the app keeps telling the owner to set up a hub
+        // they have just finished setting up. Only silence is ignored.
+        if row.hubState != .unknown { w.hub = row.hubState }
 
         if row.online {
             w.link = .online

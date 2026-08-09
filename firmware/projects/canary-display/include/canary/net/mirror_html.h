@@ -108,8 +108,16 @@ here stays inside your home network.</p>
 
 <h2>Master settings</h2>
 <div class="card" id="set">
-  <label>Day brightness <input type="range" id="day_pct" min="20" max="100"
+  <!-- TWO brightness rows, and exactly ONE of them is ever shown. This glass
+       may dim its backlight (day_pct) or, where the backlight is a binary
+       expander line, dim by drawing a scrim (bright_pct). Serving both would
+       put a slider on this page that does nothing you can see — which is
+       precisely what this page did on a 4.3"/7" panel until now. The settings
+       fetch below picks the row the device actually reported. -->
+  <label id="day_row">Day brightness <input type="range" id="day_pct" min="20" max="100"
     step="5"><span class="sub" id="day_pctv"></span></label>
+  <label id="bright_row" style="display:none">Day brightness <input type="range"
+    id="bright_pct" min="50" max="100" step="5"><span class="sub" id="bright_pctv"></span></label>
   <label>Night glow (level) <input type="range" id="night_step" min="1"
     max="10"><span class="sub" id="night_stepv"></span></label>
   <label>Night screen <select id="night_screen">
@@ -245,14 +253,14 @@ fetch("/api/tz?v="+encodeURIComponent(s.value),{method:"POST"})
 "The display would not take that zone."})})})();
 // settings wiring: one knob per change, the glass validates
 function send(k,v){fetch("/api/set?k="+k+"&v="+v,{method:"POST"})}
-["day_pct","night_step"].forEach(function(id){var e=$(id);
+["day_pct","bright_pct","night_step"].forEach(function(id){var e=$(id);
 e.addEventListener("input",function(){$(id+"v").textContent=e.value});
 e.addEventListener("change",function(){send(id,e.value)})});
 ["night_screen","red_shift","peek_s","night_start_hh","night_end_hh"]
 .forEach(function(id){$(id).addEventListener("change",function(){
 send(id,$(id).value)})});
 fetch("/api/settings").then(function(r){return r.json()}).then(function(s){
-["day_pct","night_step","night_screen","red_shift","peek_s",
+["day_pct","bright_pct","night_step","night_screen","red_shift","peek_s",
 "night_start_hh","night_end_hh"].forEach(function(id){
 if(s[id]!==undefined)$(id).value=s[id];
 var v=$(id+"v");if(v)v.textContent=$(id).value});
@@ -264,7 +272,12 @@ if(t.value!==s.tz){t.selectedIndex=-1;
 $("tzsub").textContent="Set to "+s.tz+" (not one of the presets)."}
 else if(s.tz==="UTC0"){$("tzsub").textContent=
 "This display is on UTC — pick your zone or the clock reads the "+
-"wrong hour and night mode starts at the wrong time."}}});
+"wrong hour and night mode starts at the wrong time."}}
+// Presence is the tell, exactly as it is for the app: a glass that reports
+// bright_pct dims by scrim, and its day_pct would be a dead control.
+if(s.bright_pct!==undefined){$("day_row").style.display="none";
+$("bright_row").style.display="";
+if(s.bright_min_pct!==undefined)$("bright_pct").min=s.bright_min_pct}});
 // live mirror
 function pad(n){return(n<10?"0":"")+n}
 function tick(){fetch("/api/glass").then(function(r){return r.json()})

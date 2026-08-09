@@ -39,7 +39,7 @@ struct DeviceDetailView: View {
     /// route exists — the section says "not reachable" instead of guessing.
     private var nightlightBaseURL: URL? {
         if let url = liveWitness.baseURL { return url }
-        if let host = store.discovery.found.first(where: { $0.id == witness.id })?.host {
+        if let host = store.discovery.found.first(where: { $0.deviceID == witness.id })?.host {
             return DeviceAPI.url(forDiscoveredHost: host)
         }
         if witness.id.hasPrefix("lan:") {
@@ -93,6 +93,14 @@ struct DeviceDetailView: View {
                         else if let v = verdict { Spacer(); Text(verdictLabel(v)).foregroundStyle(.secondary) }
                     }
                 }
+            }
+
+            // Where this one stands with a hub, and what to do about it —
+            // shown only when there is something to do (HubGuidanceCard draws
+            // nothing for a connected hub, and nothing for a device that
+            // never said).
+            if liveWitness.hub.needsAttention {
+                Section { HubGuidanceCard(hub: liveWitness.hub) }
             }
 
             Section("Health") {

@@ -69,6 +69,34 @@ public struct FleetFigure: Sendable {
     return all[id]
   }
 
+  /// The figure for a BOARD — the `hw` a device publishes on `/api/fleet` and
+  /// in its mDNS advert, which each board's pins header spells as
+  /// `CANARY_FIGURE_HARDWARE`. Mirror of the firmware's own
+  /// `figure_for_hardware` (common/core/fleet_figures.h).
+  ///
+  /// This is the EXACT lookup, and it is exact for a load-bearing reason: a
+  /// build compiles against exactly one pins header, and the wrong one is a
+  /// dead device — so the board id is a true statement about the physical
+  /// thing in a way a product name is not. Several products share one device
+  /// type (the whole display line answered to "canary-display"), and one
+  /// board can serve several products, so `forDeviceType` is absent for those
+  /// by design and this is what fills the gap.
+  ///
+  /// It names the BOARD, never the product: see `sharesBoardAcrossProducts`
+  /// before printing the returned title as this device's name.
+  public static func forHardware(_ hardware: String) -> FleetFigure? {
+    guard let id = hardwareToFigure[hardware] else { return nil }
+    return all[id]
+  }
+
+  /// True when this board carries more than one product. The drawing is right
+  /// for all of them; the figure's TITLE is right for one — so a caller that
+  /// wants to NAME the device must ask the device type (or the device's own
+  /// name), not the figure.
+  public static func sharesBoardAcrossProducts(_ hardware: String) -> Bool {
+    sharedBoards.contains(hardware)
+  }
+
   /// The wire-canonical form of a published device type — the one spelling
   /// `deviceTypeToFigure` is keyed on.
   public static func canonicalDeviceType(_ raw: String) -> String {
@@ -423,6 +451,59 @@ public struct FleetFigure: Sendable {
     FleetFigure.Face(kind: .face, hex: "#2d517b", pts: "53.24,48.1 52.82,48.06 52.48,48.26 52.9,48.3"),
     FleetFigure.Face(kind: .face, hex: "#254366", pts: "52.82,48.06 52.47,48.17 52.12,48.37 52.48,48.26"),
     FleetFigure.Face(kind: .face, hex: "#1a2f47", pts: "183.6,210.14 184.04,210.33 184.46,210.37 184.82,210.26 185.09,210.01 185.26,209.62 185.32,209.14 185.32,126.68 185.26,126.13 185.09,125.55 184.82,124.98 184.46,124.46 184.04,124.02 183.6,123.69 53.34,48.49 52.9,48.3 52.48,48.26 52.12,48.37 51.85,48.63 51.67,49.01 51.62,49.49 51.62,131.95 51.67,132.5 51.85,133.08 52.12,133.65 52.48,134.17 52.9,134.61 53.34,134.94")
+  ]),
+  "device.canary-display-nightstand": FleetFigure(
+    id: "device.canary-display-nightstand", title: "Canary Nightstand", rev: "c361481b",
+    confidence: .prototype, size: 256, faces: [
+    FleetFigure.Face(kind: .shadow, hex: "#00000024", pts: "177.67,194.41 181.1,197 183.26,200 184,203.23 183.26,206.46 181.1,209.47 177.67,212.05 168.73,217.21 164.26,219.19 159.05,220.44 153.46,220.86 147.87,220.44 142.66,219.19 138.19,217.21 78.33,182.65 74.9,180.07 72.74,177.06 72,173.84 72.74,170.61 74.9,167.6 78.33,165.02 87.27,159.86 91.74,157.88 96.95,156.63 102.54,156.21 108.13,156.63 113.34,157.88 117.81,159.86"),
+    FleetFigure.Face(kind: .face, hex: "#292b30", pts: "157.47,239.59 157.47,193.77 142.9,202.19 142.9,248"),
+    FleetFigure.Face(kind: .face, hex: "#33363c", pts: "157.47,193.77 118.61,171.33 104.03,179.75 142.9,202.19"),
+    FleetFigure.Face(kind: .face, hex: "#181a1d", pts: "104.03,225.56 142.9,248 142.9,202.19 104.03,179.75"),
+    FleetFigure.Face(kind: .face, hex: "#61615e", pts: "180.22,197.97 181.87,196.45 155.31,211.78 153.66,213.31"),
+    FleetFigure.Face(kind: .face, hex: "#777673", pts: "181.87,196.45 182.9,194.16 156.34,209.49 155.31,211.78"),
+    FleetFigure.Face(kind: .face, hex: "#969591", pts: "182.9,194.16 183.26,191.26 156.7,206.6 156.34,209.49"),
+    FleetFigure.Face(kind: .face, hex: "#a5a39f", pts: "183.26,191.26 183.26,61.97 156.7,77.31 156.7,206.6"),
+    FleetFigure.Face(kind: .face, hex: "#b2b1ac", pts: "183.26,61.97 182.9,58.67 156.34,74.01 156.7,77.31"),
+    FleetFigure.Face(kind: .face, hex: "#c8c7c2", pts: "182.9,58.67 181.87,55.19 155.31,70.52 156.34,74.01"),
+    FleetFigure.Face(kind: .face, hex: "#d8d6d0", pts: "181.87,55.19 180.22,51.76 153.66,67.09 155.31,70.52"),
+    FleetFigure.Face(kind: .face, hex: "#dfddd7", pts: "180.22,51.76 178.07,48.62 151.51,63.95 153.66,67.09"),
+    FleetFigure.Face(kind: .face, hex: "#dedcd6", pts: "178.07,48.62 175.57,45.98 149.01,61.31 151.51,63.95"),
+    FleetFigure.Face(kind: .face, hex: "#d4d2cd", pts: "175.57,45.98 172.89,44.02 146.33,59.35 149.01,61.31"),
+    FleetFigure.Face(kind: .face, hex: "#cccac5", pts: "172.89,44.02 112.91,9.39 86.35,24.72 146.33,59.35"),
+    FleetFigure.Face(kind: .face, hex: "#c2c1bc", pts: "112.91,9.39 110.22,8.25 83.66,23.58 86.35,24.72"),
+    FleetFigure.Face(kind: .face, hex: "#aaa9a4", pts: "110.22,8.25 107.72,8 81.17,23.33 83.66,23.58"),
+    FleetFigure.Face(kind: .face, hex: "#8d8c88", pts: "107.72,8 105.58,8.66 79.02,24 81.17,23.33"),
+    FleetFigure.Face(kind: .face, hex: "#61615e", pts: "146.33,212.58 149.01,213.72 151.51,213.97 153.66,213.31 155.31,211.78 156.34,209.49 156.7,206.6 156.7,77.31 156.34,74.01 155.31,70.52 153.66,67.09 151.51,63.95 149.01,61.31 146.33,59.35 86.35,24.72 83.66,23.58 81.17,23.33 79.02,24 77.37,25.52 76.34,27.81 75.98,30.71 75.98,160 76.34,163.3 77.37,166.78 79.02,170.21 81.17,173.35 83.66,175.99 86.35,177.95"),
+    FleetFigure.Face(kind: .face, hex: "#0b0d12", pts: "146.32,202.16 147.09,201.44 144.18,203.13 143.4,203.84"),
+    FleetFigure.Face(kind: .face, hex: "#0e1016", pts: "147.09,201.44 147.58,200.37 144.66,202.05 144.18,203.13"),
+    FleetFigure.Face(kind: .face, hex: "#11141b", pts: "147.58,200.37 147.74,199.02 144.83,200.7 144.66,202.05"),
+    FleetFigure.Face(kind: .face, hex: "#13161e", pts: "147.74,199.02 147.74,74.55 144.83,76.23 144.83,200.7"),
+    FleetFigure.Face(kind: .face, hex: "#151820", pts: "147.74,74.55 147.58,73 144.66,74.68 144.83,76.23"),
+    FleetFigure.Face(kind: .face, hex: "#171b24", pts: "147.58,73 147.09,71.37 144.18,73.05 144.66,74.68"),
+    FleetFigure.Face(kind: .face, hex: "#191d27", pts: "147.09,71.37 146.32,69.76 143.4,71.44 144.18,73.05"),
+    FleetFigure.Face(kind: .face, hex: "#1a1e28", pts: "146.32,69.76 145.31,68.29 142.4,69.97 143.4,71.44"),
+    FleetFigure.Face(kind: .face, hex: "#1a1e28", pts: "145.31,68.29 144.14,67.05 141.23,68.73 142.4,69.97"),
+    FleetFigure.Face(kind: .face, hex: "#191c26", pts: "144.14,67.05 142.88,66.13 139.97,67.82 141.23,68.73"),
+    FleetFigure.Face(kind: .face, hex: "#181b25", pts: "142.88,66.13 89.8,35.48 86.88,37.17 139.97,67.82"),
+    FleetFigure.Face(kind: .face, hex: "#171a23", pts: "89.8,35.48 88.54,34.95 85.62,36.63 86.88,37.17"),
+    FleetFigure.Face(kind: .face, hex: "#14171f", pts: "88.54,34.95 87.37,34.83 84.45,36.52 85.62,36.63"),
+    FleetFigure.Face(kind: .face, hex: "#10131a", pts: "87.37,34.83 86.36,35.14 83.45,36.83 84.45,36.52"),
+    FleetFigure.Face(kind: .face, hex: "#0b0d12", pts: "139.97,203.5 141.23,204.04 142.4,204.15 143.4,203.84 144.18,203.13 144.66,202.05 144.83,200.7 144.83,76.23 144.66,74.68 144.18,73.05 143.4,71.44 142.4,69.97 141.23,68.73 139.97,67.82 86.88,37.17 85.62,36.63 84.45,36.52 83.45,36.83 82.67,37.54 82.19,38.62 82.02,39.97 82.02,164.44 82.19,165.99 82.67,167.62 83.45,169.23 84.45,170.7 85.62,171.94 86.88,172.85"),
+    FleetFigure.Face(kind: .face, hex: "#1a2f47", pts: "141.61,194.89 142.13,194.41 140.83,195.16 140.31,195.63"),
+    FleetFigure.Face(kind: .face, hex: "#1f3956", pts: "142.13,194.41 142.45,193.69 141.15,194.44 140.83,195.16"),
+    FleetFigure.Face(kind: .face, hex: "#28486d", pts: "142.45,193.69 142.56,192.79 141.26,193.54 141.15,194.44"),
+    FleetFigure.Face(kind: .face, hex: "#2b4f77", pts: "142.56,192.79 142.56,79.28 141.26,80.03 141.26,193.54"),
+    FleetFigure.Face(kind: .face, hex: "#2f5581", pts: "142.56,79.28 142.45,78.25 141.15,79 141.26,80.03"),
+    FleetFigure.Face(kind: .face, hex: "#356091", pts: "142.45,78.25 142.13,77.16 140.83,77.91 141.15,79"),
+    FleetFigure.Face(kind: .face, hex: "#39679c", pts: "142.13,77.16 141.61,76.09 140.31,76.84 140.83,77.91"),
+    FleetFigure.Face(kind: .face, hex: "#3b6ba1", pts: "141.61,76.09 140.94,75.11 139.64,75.85 140.31,76.84"),
+    FleetFigure.Face(kind: .face, hex: "#3a6aa0", pts: "140.94,75.11 140.16,74.28 138.86,75.03 139.64,75.85"),
+    FleetFigure.Face(kind: .face, hex: "#386599", pts: "140.16,74.28 139.32,73.67 138.02,74.42 138.86,75.03"),
+    FleetFigure.Face(kind: .face, hex: "#366294", pts: "139.32,73.67 89.47,44.89 88.18,45.64 138.02,74.42"),
+    FleetFigure.Face(kind: .face, hex: "#335d8d", pts: "89.47,44.89 88.63,44.53 87.34,45.28 88.18,45.64"),
+    FleetFigure.Face(kind: .face, hex: "#2d517b", pts: "88.63,44.53 87.85,44.46 86.56,45.2 87.34,45.28"),
+    FleetFigure.Face(kind: .face, hex: "#254366", pts: "87.85,44.46 87.18,44.66 85.89,45.41 86.56,45.2"),
+    FleetFigure.Face(kind: .face, hex: "#1a2f47", pts: "138.02,195.41 138.86,195.76 139.64,195.84 140.31,195.63 140.83,195.16 141.15,194.44 141.26,193.54 141.26,80.03 141.15,79 140.83,77.91 140.31,76.84 139.64,75.85 138.86,75.03 138.02,74.42 88.18,45.64 87.34,45.28 86.56,45.2 85.89,45.41 85.37,45.89 85.05,46.6 84.94,47.51 84.94,161.02 85.05,162.05 85.37,163.14 85.89,164.21 86.56,165.19 87.34,166.02 88.18,166.63")
   ]),
   "device.canary-display-touch169": FleetFigure(
     id: "device.canary-display-touch169", title: "Canary Nightstand Touch", rev: "72fa8cf1",
@@ -1686,6 +1767,29 @@ public struct FleetFigure: Sendable {
     "canary-wap": "device.canary-wap",
     "canary-wap-mobile": "device.canary-wap",
     "canary-watch": "device.canary-display-watch",
+  ]
+
+  /// Board id -> figure id. Not canonicalized: unlike a device type, a board
+  /// id has exactly one spelling — the generator writes it into the pins
+  /// header and the firmware publishes that same token back.
+  public static let hardwareToFigure: [String: String] = [
+    "board:seeed_xiao_esp32s3": "device.canary-wap",
+    "esp32-c3": "device.canary-vision-devkit",
+    "waveshare-esp32c3-lcd147": "device.canary-nightlight",
+    "waveshare-esp32s3-lcd147": "device.canary-display-nightstand",
+    "waveshare-esp32s3-lcd43": "device.canary-display-dash",
+    "waveshare-esp32s3-lcd7": "device.canary-display-dash7",
+    "waveshare-esp32s3-touch-lcd169": "device.canary-display-touch169",
+    "xiao-esp32c3": "device.canary-vision",
+    "xiao-esp32c6-mr60": "device.canary-sense",
+    "xiao-esp32s3": "device.canary-vision",
+    "xiao-esp32s3-round": "device.canary-display-watch",
+  ]
+
+  /// The boards that serve more than one product — see
+  /// `sharesBoardAcrossProducts`.
+  public static let sharedBoards: Set<String> = [
+    "waveshare-esp32s3-lcd7",
   ]
 }
 
