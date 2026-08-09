@@ -86,6 +86,22 @@ the LVGL faces and `care/`/`fleet/`/`trust`, **not** the `net/` layer:
 - editing `common/fleet_selfreport/fleet_selfreport.h` → `dist/` does **not**
   change, even though `net/glass_web.cpp` includes it, because that file is
   never compiled into the emulator.
+- **bumping the firmware VERSION → `dist/` changes**, for every flavor, even
+  if you touched no other line. `build.sh` compiles `src/net/mqtt_mgr.cpp`
+  (which embeds `CANARY_FW_VERSION`) and stamps `fw_version` into each
+  `dist/*.meta.json` from `include/canary/version.h`. So a release commit is
+  always a dist commit. `src/runtime_config.cpp` and `src/glass_settings.cpp`
+  are compiled too — the `net/` exclusion is specifically `glass_web.cpp` and
+  `discovery.cpp`, not the whole layer.
+
+**Two different gates catch a stale dist, and only one of them is the drift
+check.** `canary-local.yml`'s "Dist drift check" compares the BUNDLE bytes and
+deliberately ignores `meta.json` (it carries the checkout sha). The version
+stamp is caught somewhere else entirely — `canary_local.test.js` ("artifact fw
+(x) matches registry train (y)") and `vision.test.js` ("Vision generated data
+is stale against its firmware core") — which run in the **page logic tests**
+job. So a version bump goes red in a job whose name says nothing about the
+emulator, and reading only the drift check will tell you the dist is fine.
 
 Fixing it needs emsdk **6.0.3** exactly, which most working environments can't
 install. Don't fight that — use **Actions → "Rebuild emulator dist (pinned
