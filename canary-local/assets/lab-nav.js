@@ -165,11 +165,26 @@ function rebuildBar(bar, M, route, at) {
 async function boot() {
   appAdapt();
 
-  // The Lab shell has its own sidebar, and the isometric room hides its bar
-  // when embedded — neither wants a rebuilt bar on top.
-  if (document.getElementById("lab-shell") || window !== window.top) return;
+  if (document.getElementById("lab-shell")) return;   // the shell has a sidebar
+
   const bar = document.querySelector("nav.scv-bar");
   if (!bar) return;
+
+  // Embedded in the Lab shell (which frames a bench so it can be USED rather
+  // than described): the shell already shows where you are and the way onward,
+  // so a second bar inside the frame is duplicate chrome that also steals a
+  // strip off every bench. Hide it and leave the rest of the page alone —
+  // `document` is enough to mark, so a page with its own styles can key off it.
+  if (window !== window.top) {
+    document.documentElement.classList.add("scv-embedded");
+    // `hidden` alone loses: every page styles `.scv-bar { display: flex }`, and
+    // a class selector outranks the [hidden] UA rule, so the bar stays visible
+    // while reporting hidden === true. An important inline style is the one
+    // thing no page stylesheet can outrank.
+    bar.hidden = true;
+    bar.style.setProperty("display", "none", "important");
+    return;
+  }
 
   // Layout for the rebuilt bar rides its own stylesheet (a real file, not an
   // injected <style> block — flash.html's CSP allows only same-origin sheets).

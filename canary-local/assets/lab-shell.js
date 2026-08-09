@@ -6,6 +6,11 @@ import { SETTINGS_AVAILABLE, probeSettings, settingsView } from "./lab-settings.
 
 const MANIFEST_URL = "build-line.json";
 const SITE_ORIGIN = "https://securacv.com";
+// True exactly where lab-nav.js hides the "still on SecuraCV" strip (it sets
+// .scv-app on the same condition). The two useful links off that strip move
+// into the sidebar only here — on the website the strip is still showing, and
+// listing them in both places would be the duplication this pass is removing.
+const IN_APP = !!(window.__TAURI__ && window.__TAURI__.core);
 const PKEY = "scv-lab-progress";
 
 const ICONS = {
@@ -67,6 +72,15 @@ function depthsFor(bench) {
   return [{ label: bench.noun, lab: bench.lab, desc: bench.desc, real: bench.real }, ...bench.depths];
 }
 
+// A depth label in the manifest is authored as "Name — what it is", and the
+// tail can be a whole sentence ("Dev — the Proving Ground: test your flashed
+// Sense, live or emulated"). That reads well in a paragraph and terribly in a
+// tab strip: three of them in a 420px row all truncate to "D…". The head alone
+// is the ladder the author meant — Basic / Advanced / Dev — so tabs and tree
+// rows show that, and the full text stays one hover away.
+const depthTab = (d) => d.label.split(" — ")[0];
+const depthTitle = (d) => d.label + (d.desc ? "\n" + d.desc : "");
+
 /* ---- navigation ---- */
 // Turn a raw (user-controlled) hash into a known-safe route id. Following a
 // manifest redirect first, then validating against an allowlist with
@@ -124,13 +138,21 @@ function stageRow(stage, curEntry, done) {
       h("span", { class: "lb", html: benchLabel(b) }),
       h("span", { class: "meta" }, b.real ? h("span", { class: "rf", title: "boots real firmware" }) : null),
     ));
+    // Sub-rows for the depths that are genuinely OTHER pages. A depth whose
+    // `lab` is the bench's own page is the bench — listing it here produced
+    // the "Meet the fleet › Meet the fleet" duplicate, because depthsFor()
+    // synthesizes exactly such an entry so the parent stays reachable. The
+    // bench row above already selects it, and the content's segmented control
+    // still names it, so the tree stays one row per destination.
     const bd = depthsFor(b);
     if (sel && bd) {
       const sub = h("div", { class: "children lvl2" });
-      bd.forEach((d, i) =>
-        sub.append(h("button", { class: "item" + ((depthSel[b.slug] || 0) === i ? " sel" : ""), onclick: () => { depthSel[b.slug] = i; navigate(b.slug, false); } },
-          h("span", { class: "lb" }, d.label))));
-      kids.append(sub);
+      bd.forEach((d, i) => {
+        if (d.lab === b.lab) return;
+        sub.append(h("button", { class: "item" + ((depthSel[b.slug] || 0) === i ? " sel" : ""), title: depthTitle(d), onclick: () => { depthSel[b.slug] = i; navigate(b.slug, false); } },
+          h("span", { class: "lb" }, depthTab(d))));
+      });
+      if (sub.childElementCount) kids.append(sub);
     }
   }
   return h("div", {}, row, kids);
@@ -157,6 +179,13 @@ function renderSidebar(view, entry) {
       h("div", { class: "side-sec" }, "Reference"),
       navItem("all", view === "all", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 6h16M4 12h16M4 18h16"/></svg>', "All benches, by stage"),
       navLink("site-map.html", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M9 18l6-12M4 6h5v5H4zM15 13h5v5h-5z"/></svg>', "Complete site map"),
+      // The two references people actually reach for. On the website these sit
+      // in the "still on SecuraCV" strip along the top, which earns its place
+      // there (you are on a different origin, this is the way back). In the app
+      // that strip is a second bar above the sidebar saying what the sidebar
+      // already says, so it is hidden and its two useful links live here.
+      IN_APP ? navLink(SITE_ORIGIN + "/glossary", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5A2.5 2.5 0 016.5 3H19v15H6.5A2.5 2.5 0 004 20.5z"/><path d="M8 7h7M8 11h7"/></svg>', "Glossary", true) : null,
+      IN_APP ? navLink(SITE_ORIGIN + "/canary", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 113.5 2.3V13"/><path d="M12 16.5v.5" stroke-linecap="round"/></svg>', "Your Canary — help", true) : null,
       // App only: the browser Lab has no updater and no update journal, so it
       // gets no Settings entry rather than one that answers "—" to everything.
       SETTINGS_AVAILABLE ? h("div", { class: "side-sec" }, "This app") : null,
@@ -169,9 +198,15 @@ function renderSidebar(view, entry) {
 const navItem = (id, sel, icoHtml, label) =>
   h("button", { class: "item" + (sel ? " sel" : ""), onclick: () => navigate(id) },
     h("span", { html: icoHtml }), h("span", { class: "lb" }, label));
-const navLink = (href, icoHtml, label) =>
-  h("a", { class: "item", href },
-    h("span", { html: icoHtml }), h("span", { class: "lb" }, label));
+// `external` marks a link off this origin. In the app, lab-nav.js's capture-
+// phase handler sends those to the OS browser so the window never leaves the
+// bundled Lab; on the website the target is what opens a new tab.
+const navLink = (href, icoHtml, label, external) =>
+  h("a", { class: "item", href, target: external ? "_blank" : null,
+           rel: external ? "noopener" : null },
+    h("span", { html: icoHtml }), h("span", { class: "lb" }, label),
+    external ? h("span", { class: "ext", "aria-hidden": "true", html:
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M9 7h8v8"/></svg>' }) : null);
 
 function onSearch(e) {
   const q = e.target.value.trim().toLowerCase();
@@ -221,47 +256,92 @@ function renderContent(view, entry) {
   else if (view === "all") c.replaceChildren(allView());
   else if (view === "settings") c.replaceChildren(settingsView());
   else c.replaceChildren(benchView(entry));
+  // A bench fills the window; the reading views keep their measure. Toggled
+  // here rather than with `.content:has(.bench-wrap)` because the app supports
+  // macOS back to 10.15 (tauri.conf.json), whose WebView predates :has() — the
+  // selector would silently no-op there and leave the bench in a 1020px column.
+  c.classList.toggle("content-full", view === "bench");
+  // On a phone the depth strip scrolls sideways rather than clipping labels,
+  // so the tab you are actually on can start off-screen. Bring it into the
+  // strip after the paint that put it there.
+  const on = c.querySelector(".bench-bar .seg button.on");
+  if (on && on.scrollIntoView) on.scrollIntoView({ inline: "nearest", block: "nearest" });
 }
+
+/* A bench IS the bench. Selecting one used to land on a card describing it,
+   with an "Open bench" button that navigated away — a click-through that left
+   most of a large window empty and made the app feel like a table of contents.
+   Now the bench itself fills the pane, the way the isometric room already
+   filled the Overview, and the shell keeps only a slim toolbar above it:
+   where you are, which depth you're reading, and the way onward.
+
+   Everything the old card duplicated is gone: "Open bench" (you're already
+   there), "Walk the line →" and the prev/next booklet (both are the › arrow),
+   and the standalone description (each bench opens with its own). */
+const ARROW = (d) =>
+  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="${d}"/></svg>`;
 
 function benchView(entry) {
   const { stage, track, bench } = entry;
   const depths = depthsFor(bench);
-  const di = depthSel[bench.slug] || 0;
+  const di = Math.min(depthSel[bench.slug] || 0, depths ? depths.length - 1 : 0);
   const depth = depths ? depths[di] : null;
   const real = depth?.real ?? bench.real;
-  const openHref = depth ? depth.lab : bench.lab;
+  const src = depth ? depth.lab : bench.lab;
   const idx = ROUTE.indexOf(entry);
   const prev = ROUTE[idx - 1], next = ROUTE[idx + 1];
 
-  return h("div", {},
-    h("div", { class: "crumbs" },
-      h("b", {}, "The build line"), h("span", { class: "sep" }, "›"),
-      h("b", {}, stage.name),
-      track ? [h("span", { class: "sep" }, "›"), h("b", {}, track.label.replace(" path", ""))] : null,
-      h("span", { class: "sep" }, "›"), bench.noun),
-    h("div", { class: "c-h" },
-      h("h1", {}, bench.noun),
-      real ? h("span", { class: "badge" }, "Real firmware") : null),
-    (stage.options || stage.fork) ? h("div", { class: "forknote" }, "✦ " + (stage.optionsNote || "Options at this stage — pick the sense your Canary carries. The line runs straight on to Home.")) : null,
-    depths ? h("div", { class: "seg", role: "tablist" },
-      ...depths.map((d, i) => h("button", { class: i === di ? "on" : "", role: "tab", "aria-selected": i === di,
-        onclick: () => { depthSel[bench.slug] = i; navigate(bench.slug, false); } }, d.label))) : null,
-    h("p", { class: "lead" }, depth?.desc || bench.desc || ""),
-    h("div", { class: "actions" },
-      h("a", { class: "btn primary", href: openHref },
-        "Open bench",
-        h("span", { html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M9 7h8v8"/></svg>' })),
-      next ? h("button", { class: "btn ghost", onclick: () => navigate(next.bench.slug) }, "Walk the line →") : null),
-    stage.site && stage.site.length ? h("div", { class: "sitelinks" },
-      h("span", { class: "k" }, "read more on the site — "),
-      ...stage.site.map(s => h("a", { class: "chip", href: siteHref(s.href), target: "_blank", rel: "noopener" }, s.noun))) : null,
-    h("nav", { class: "booklet", "aria-label": "Sequential" },
-      prev ? h("a", { class: "pn prev", href: "#" + prev.bench.slug, onclick: linkNav(prev.bench.slug) },
-        h("div", { class: "k" }, h("span", { html: "‹" }), " Previous · " + prev.stage.name),
-        h("div", { class: "t" }, prev.bench.noun)) : h("span", { class: "pn prev", hidden: true }),
-      next ? h("a", { class: "pn next", href: "#" + next.bench.slug, onclick: linkNav(next.bench.slug) },
-        h("div", { class: "k" }, "Next · " + next.stage.name + " ", h("span", { html: "›" })),
-        h("div", { class: "t" }, next.bench.noun)) : h("span", { class: "pn next", hidden: true })),
+  const step = (e, label, glyph, cls) =>
+    e ? h("button", { class: "stepper " + cls, title: `${label}: ${e.bench.noun}`,
+          "aria-label": `${label}: ${e.bench.noun}`, onclick: () => navigate(e.bench.slug) },
+        h("span", { html: ARROW(glyph) }))
+      : h("button", { class: "stepper " + cls, disabled: true, "aria-hidden": "true" },
+          h("span", { html: ARROW(glyph) }));
+
+  const bar = h("header", { class: "bench-bar" },
+    h("div", { class: "bb-where" },
+      h("div", { class: "crumbs" },
+        h("b", {}, stage.n + " · " + stage.name),
+        track ? [h("span", { class: "sep" }, "›"), track.label.replace(" path", "")] : null),
+      h("div", { class: "bb-title" },
+        h("h1", {}, bench.noun),
+        real ? h("span", { class: "badge" }, "Real firmware") : null)),
+    // Depths are how one bench teaches at two levels (overview vs. deep lab).
+    // Kept as a segmented control because switching should feel like changing
+    // channel on the same bench, not like navigating somewhere else.
+    depths && depths.length > 1
+      ? h("div", { class: "seg", role: "tablist", "aria-label": "Depth" },
+          ...depths.map((d, i) => h("button", { class: i === di ? "on" : "", role: "tab",
+            "aria-selected": i === di ? "true" : "false", title: depthTitle(d),
+            onclick: () => { depthSel[bench.slug] = i; navigate(bench.slug, false); } }, depthTab(d))))
+      : null,
+    h("div", { class: "bb-go" },
+      step(prev, "Previous", "M15 6l-6 6 6 6", "prev"),
+      step(next, "Next", "M9 6l6 6-6 6", "next"),
+      // Website only. A new tab is a real place in a browser; in the app the
+      // window IS the Lab, and a `target="_blank"` there would ask Tauri for a
+      // second webview that no capability grants — the button would sit there
+      // looking live and do nothing. Better absent than dead.
+      IN_APP ? null
+        : h("a", { class: "stepper out", href: src, target: "_blank", rel: "noopener",
+            title: "Open this bench in its own tab", "aria-label": "Open in a new tab" },
+            h("span", { html: ARROW("M7 17L17 7M9 7h8v8") }))),
+  );
+
+  // The bench, live. Same-origin, so it inherits the app's theme and the
+  // permissions it needs — serial for the flasher, camera for the eyes bench,
+  // microphone for the acoustic ones — which a bare iframe would withhold.
+  const frame = h("iframe", {
+    class: "bench-frame", src, title: bench.noun, loading: "eager",
+    allow: "serial; camera; microphone; usb; bluetooth; clipboard-write",
+  });
+
+  return h("div", { class: "bench-wrap" },
+    bar,
+    (stage.options || stage.fork)
+      ? h("div", { class: "forknote" }, "✦ " + (stage.optionsNote || "Options at this stage — pick the sense your Canary carries. The line runs straight on to Home."))
+      : null,
+    frame,
   );
 }
 const linkNav = (slug) => (e) => { e.preventDefault(); navigate(slug); };
@@ -302,7 +382,18 @@ function allView() {
     return h("div", { class: "allcol" },
       h("h4", {}, s.n + " · " + s.name),
       ...benches.map(b => h("a", { href: "#" + b.slug, onclick: linkNav(b.slug) },
-        b.noun, b.real ? h("span", { class: "rf" }) : null)));
+        b.noun, b.real ? h("span", { class: "rf" }) : null)),
+      // The stage's pages on securacv.com. They used to hang off each bench
+      // card, which is gone now that a bench opens as itself — but they are a
+      // property of the STAGE, not of any one bench, so this per-stage index is
+      // where they belong, and listing them once beats repeating them under
+      // every bench in the stage.
+      s.site && s.site.length
+        ? h("div", { class: "sitelinks" },
+            h("span", { class: "k" }, "on securacv.com"),
+            h("div", {}, ...s.site.map(x => h("a", { class: "chip", href: siteHref(x.href),
+              target: "_blank", rel: "noopener" }, x.noun))))
+        : null);
   });
   return h("div", {},
     h("div", { class: "crumbs" }, h("b", {}, "Reference")),

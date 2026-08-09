@@ -80,9 +80,43 @@ button{font:inherit;color:inherit;cursor:pointer;}
 .lvl2 .item .lb{font-weight:450;}
 
 /* ===== content ===== */
-.main{min-width:0;display:flex;flex-direction:column;}
+.main{min-width:0;display:flex;flex-direction:column;min-height:0;}
 .topbar{display:none;} /* phone only */
-.content{flex:1;padding:30px 40px 40px;max-width:1020px;width:100%;}
+.content{flex:1;padding:30px 40px 40px;max-width:1020px;width:100%;min-height:0;}
+/* A bench fills the pane instead of sitting in a reading column — it is an
+   application surface, not prose, and the 1020px cap left most of a desktop
+   window empty. The reading views (overview, start, all, settings) keep it.
+   Class set by renderContent, not `:has()`, which macOS 10.15's WebView lacks. */
+.content.content-full{max-width:none;padding:0;display:flex;flex-direction:column;}
+
+/* ===== a bench, embedded ===== */
+.bench-wrap{flex:1;display:flex;flex-direction:column;min-height:0;}
+/* One row, always. A depth label in the manifest doubles as its description
+   ("Dev — the Proving Ground: test your flashed Sense, live or emulated"), so
+   left to wrap they shove the steppers onto a second line and tear a gap
+   across the top of every multi-depth bench. Each cell truncates instead; the
+   full text is on the button's title. */
+.bench-bar{display:flex;align-items:center;gap:16px;flex-wrap:nowrap;
+  padding:12px 22px;border-bottom:1px solid var(--sep);background:var(--surface);}
+.bb-where{min-width:0;flex:0 1 auto;}
+.bb-where .crumbs{font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.bb-title{display:flex;align-items:center;gap:9px;margin-top:2px;min-width:0;}
+.bb-title h1{font-size:19px;font-weight:680;letter-spacing:-.02em;margin:0;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.bench-bar .seg{margin:0 0 0 auto;flex:0 1 auto;min-width:0;flex-wrap:nowrap;}
+.bench-bar .seg button{padding:5px 12px;font-size:12.5px;
+  max-width:20ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.bb-go{display:flex;align-items:center;gap:6px;flex:none;}
+
+.stepper{display:grid;place-items:center;width:32px;height:32px;border-radius:9px;
+  border:1px solid var(--sep-strong);background:var(--surface);color:var(--text-2);}
+.stepper svg{width:16px;height:16px;}
+.stepper:hover:not(:disabled){border-color:var(--brand);color:var(--brand);}
+.stepper:disabled{opacity:.32;cursor:default;}
+.stepper.out{margin-left:6px;}
+
+.bench-wrap .forknote{margin:10px 22px 0;}
+.bench-frame{flex:1;width:100%;border:0;display:block;min-height:0;background:var(--bg);}
 
 /* isometric room, embedded as the Overview */
 .room-wrap{border:1px solid var(--sep);border-radius:16px;overflow:hidden;box-shadow:var(--shadow);background:var(--surface);}
@@ -101,7 +135,6 @@ button{font:inherit;color:inherit;cursor:pointer;}
 .seg button{border:0;background:transparent;font-size:13px;font-weight:550;color:var(--text-2);padding:6px 14px;border-radius:6px;}
 .seg button.on{background:var(--surface);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.12);}
 
-.lead{font-size:15.5px;color:var(--text-2);line-height:1.6;max-width:66ch;margin:16px 0 0;}
 .forknote{display:flex;align-items:center;gap:8px;margin-top:18px;font-size:13px;color:var(--canary);
   background:color-mix(in srgb,var(--canary-strong) 13%,transparent);
   border:1px solid color-mix(in srgb,var(--canary-strong) 32%,transparent);padding:9px 13px;border-radius:10px;width:fit-content;max-width:100%;}
@@ -119,15 +152,8 @@ button{font:inherit;color:inherit;cursor:pointer;}
 .chip{display:inline-block;font-size:12px;padding:3px 10px;border-radius:999px;background:var(--bg-alt);border:1px solid var(--sep);margin:3px 4px 0 0;color:var(--text-2);}
 .chip:hover{border-color:var(--brand);color:var(--brand);}
 
-/* booklet prev/next */
-.booklet{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:38px;border-top:1px solid var(--sep);padding-top:22px;}
-.pn{border:1px solid var(--sep-strong);border-radius:12px;padding:12px 15px;background:var(--surface);display:block;}
-.pn:hover{border-color:var(--brand);}
-.pn .k{font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:6px;}
-.pn .t{font-size:14.5px;font-weight:620;margin-top:3px;}
-.pn.next{text-align:right;}
-.pn.next .k{justify-content:flex-end;}
-.pn[hidden]{visibility:hidden;}
+/* The prev/next booklet that used to close a bench card lives on as the two
+   arrow steppers in .bench-bar — its rules are gone rather than orphaned. */
 
 /* overview + all-index views */
 .hero-o{padding:8px 0 0;}
@@ -150,6 +176,12 @@ button{font:inherit;color:inherit;cursor:pointer;}
 .allcol a{display:flex;align-items:center;gap:7px;padding:6px 8px;border-radius:7px;font-size:13.5px;}
 .allcol a:hover{background:var(--hover);color:var(--brand);}
 .allcol a .rf{width:6px;height:6px;border-radius:50%;background:var(--canary);margin-left:auto;flex:none;}
+/* The stage's securacv.com pages sit in the same column as its benches, so the
+   full-width row style above would claim them too — chips have to say chip
+   louder than `.allcol a` says row. */
+.allcol .sitelinks{margin-top:12px;}
+.allcol .sitelinks a.chip{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;}
+.allcol .sitelinks a.chip:hover{background:var(--bg-alt);border-color:var(--brand);color:var(--brand);}
 
 /* ===== Settings — updates & about (app only, see lab-settings.js) ===== */
 .settings .set-sec{margin-top:28px;}
@@ -203,9 +235,36 @@ button{font:inherit;color:inherit;cursor:pointer;}
   .content{padding:20px 18px 96px;}
   .room{height:min(64vh,500px);}
   .foot{display:none;}
-  .booklet{grid-template-columns:1fr;}
 
-  .tabbar{display:flex;position:fixed;bottom:0;left:0;right:0;z-index:20;
+  /* The bench bar on a phone. At 420px the desktop layout collapsed into
+     nonsense — the title ellipsed to one letter, the badge wrapped to two
+     lines, and each depth button read "M…". Nothing there was lost by
+     dropping it: the sticky .topbar directly above already names the bench,
+     and the sidebar's crumb trail is not on screen to be echoed. What's left
+     is what only this bar offers — the depth switcher, which now shares the
+     row evenly instead of truncating, and the prev/next/open steppers. */
+  .bench-bar{gap:10px;padding:9px 14px;}
+  .bb-where{display:none;}
+  /* Not every depth head is short — "What the mic hears (4.3C)" has no tail to
+     drop — so squeezing them all into one 420px row clips whichever is longest.
+     The strip scrolls sideways instead: every label stays whole, and it takes
+     any number of depths without re-tuning. */
+  .bench-bar .seg{margin:0;flex:1 1 auto;overflow-x:auto;scrollbar-width:none;}
+  .bench-bar .seg::-webkit-scrollbar{display:none;}
+  .bench-bar .seg button{flex:0 0 auto;max-width:none;padding:6px 10px;font-size:12px;}
+  /* 32px is a mouse target, not a thumb one. */
+  .stepper{width:36px;height:36px;}
+  .bench-wrap .forknote{margin:9px 14px 0;font-size:12px;}
+
+  /* The tab bar's box is stated once, as a number, because something else has
+     to reserve exactly it: a full-bleed bench has no padding of its own, so a
+     hand-guessed reserve ran short and the bar sat on the last strip of the
+     framed page. Explicit height + the global border-box makes this token the
+     single source, not a description of what the padding happens to produce. */
+  :root{--tabbar-h:calc(48px + 6px + max(6px,env(safe-area-inset-bottom)));}
+  .content.content-full{padding-bottom:var(--tabbar-h);}
+
+  .tabbar{display:flex;position:fixed;bottom:0;left:0;right:0;z-index:20;height:var(--tabbar-h);
     background:color-mix(in srgb,var(--surface) 90%,transparent);backdrop-filter:saturate(1.5) blur(12px);
     border-top:1px solid var(--sep);padding:6px 4px;padding-bottom:max(6px,env(safe-area-inset-bottom));
     justify-content:space-around;}
@@ -235,3 +294,15 @@ button{font:inherit;color:inherit;cursor:pointer;}
 .scv-bar .scv-sep { color: var(--muted); }
 .scv-bar .scv-where { margin-left: auto; color: var(--muted); font-weight: 500; }
 @media (max-width: 560px) { .scv-bar .scv-where { display: none; } }
+
+/* In the native app this strip is a second bar stacked above the sidebar,
+   repeating the wordmark the sidebar already shows and offering links that
+   leave the app. Its two useful destinations (Glossary, Help) moved into the
+   sidebar's Reference section, so the strip is hidden here — on the website it
+   stays, because there it is the way back to securacv.com from another origin.
+   `.scv-app` is set by lab-nav.js when window.__TAURI__ exists. */
+.scv-app .scv-bar { display: none; }
+
+.item .ext{margin-left:auto;flex:none;opacity:.45;}
+.item .ext svg{width:11px;height:11px;display:block;}
+.item:hover .ext{opacity:.8;}
