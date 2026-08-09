@@ -15,7 +15,8 @@ struct DeviceFigureCard: View {
 
     private var figure: FleetFigure? {
         FleetFigure.resolve(deviceType: witness.deviceType,
-                            published: witness.publishedType)
+                            published: witness.publishedType,
+                            hardware: witness.hardware)
     }
 
     var body: some View {
@@ -25,7 +26,7 @@ struct DeviceFigureCard: View {
                     .frame(height: 200)
                     .frame(maxWidth: .infinity)
                 VStack(spacing: 2) {
-                    Text(figure.title)
+                    Text(productName(figure))
                         .font(.subheadline.weight(.medium))
                     Text(rungLine(figure.confidence) + dimsLine(massing.envelope))
                         .font(.caption)
@@ -46,6 +47,23 @@ struct DeviceFigureCard: View {
             }
         }
         .padding(.vertical, Theme.s)
+    }
+
+    /// What to CALL this device, which is not always what to call its figure.
+    ///
+    /// One board can carry more than one product — the 7" glass is both the
+    /// Dash 7 and the Nightstand 7 — so when the figure was resolved from a
+    /// shared board its title names one of them and would be a wrong label on
+    /// a right picture. In that case the device's own published type wins,
+    /// prettied only as far as stripping the family prefix; if it published
+    /// nothing usable, the honest fallback is the family word rather than a
+    /// product it might not be.
+    private func productName(_ figure: FleetFigure) -> String {
+        if FleetFigure.namesItsProduct(hardware: witness.hardware) { return figure.title }
+        guard let raw = witness.publishedType, !raw.isEmpty else {
+            return witness.deviceType.role
+        }
+        return DeviceNaming.productTitle(forPublishedType: raw) ?? witness.deviceType.role
     }
 
     /// The ladder rung, in the ladder's own words (docs/design/

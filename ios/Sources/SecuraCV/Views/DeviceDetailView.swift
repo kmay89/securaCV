@@ -95,6 +95,14 @@ struct DeviceDetailView: View {
                 }
             }
 
+            // Where this one stands with a hub, and what to do about it —
+            // shown only when there is something to do (HubGuidanceCard draws
+            // nothing for a connected hub, and nothing for a device that
+            // never said).
+            if liveWitness.hub.needsAttention {
+                Section { HubGuidanceCard(hub: liveWitness.hub) }
+            }
+
             Section("Health") {
                 LabeledContent("Liveness", value: witness.link.label)
                 if let r = witness.rssiDBM { LabeledContent("Wi-Fi", value: "\(r) dBm") }

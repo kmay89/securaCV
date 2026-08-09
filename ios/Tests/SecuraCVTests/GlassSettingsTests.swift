@@ -84,12 +84,84 @@ final class GlassSettingsTests: XCTestCase {
             "night_start_hh", "night_end_hh", "night_step",
             "lamp_scene", "lamp_auto", "lamp_pct", "lamp_hue", "lamp_minutes",
             "clock_12h", "orientation", "auto_rotate",
+            // Served and accepted only by glass that dims by scrim — see
+            // the CD_FLAVOR_DASH block in handle_settings_set.
+            "bright_pct",
         ]
         var s = GlassSettings()
         s.hasLamp = true
         for knob in GlassAPI.knobs(for: s) {
             XCTAssertTrue(accepted.contains(knob.key),
                           "the app offers “\(knob.key)”, which the glass's settings engine would reject")
+        }
+        // And the same for the other kind of glass, whose brightness knob is
+        // a different key entirely.
+        var scrim = GlassSettings()
+        scrim.hasRenderedDim = true
+        for knob in GlassAPI.knobs(for: scrim) {
+            XCTAssertTrue(accepted.contains(knob.key),
+                          "the app offers “\(knob.key)”, which the glass's settings engine would reject")
+        }
+    }
+
+    // MARK: - one brightness control, and it is the one that works
+
+    /// The 7" bug, pinned.
+    ///
+    /// That panel's backlight is a CH422G expander line — binary in hardware,
+    /// so `backlight_set()` is `level > 0`. `day_pct` scales a value that can
+    /// only ever be on or off, which is why dragging the app's brightness
+    /// slider changed nothing an owner could see. Glass like that dims by
+    /// drawing a scrim and says so by serving `bright_pct`.
+    func testGlassThatDimsByScrimGetsTheKnobThatMovesIt() {
+        var s = GlassSettings()
+        s.hasRenderedDim = true
+        s.brightPct = 70
+        s.brightMinPct = 50
+        let keys = GlassAPI.knobs(for: s).map(\.key)
+
+        XCTAssertTrue(keys.contains("bright_pct"))
+        XCTAssertFalse(keys.contains("day_pct"),
+                       "day_pct does nothing on this hardware — offering it too would put two "
+                       + "brightness sliders on one screen, one of which silently does nothing")
+        // Exactly one control called brightness, wherever it came from.
+        XCTAssertEqual(GlassAPI.knobs(for: s).filter { $0.title.contains("brightness") }.count, 1)
+
+        guard let knob = GlassAPI.knobs(for: s).first(where: { $0.key == "bright_pct" }) else {
+            return XCTFail("bright_pct should be offered")
+        }
+        XCTAssertEqual(knob.value, 70)
+        // The floor is the glass's own, not one the app invented: below it the
+        // scrim is Night's job, and the device says where that line is.
+        if case .percent(let min, let max) = knob.kind {
+            XCTAssertEqual(min, 50)
+            XCTAssertEqual(max, 100)
+        } else { XCTFail("bright_pct should be a percent") }
+    }
+
+    /// A display with a genuinely dimmable backlight keeps day_pct, and never
+    /// grows a second brightness control.
+    func testGlassWithARealBacklightKeepsDayPct() {
+        var s = GlassSettings()
+        s.dayPct = 60
+        let keys = GlassAPI.knobs(for: s).map(\.key)
+        XCTAssertTrue(keys.contains("day_pct"))
+        XCTAssertFalse(keys.contains("bright_pct"),
+                       "a device that didn't report bright_pct hasn't got one")
+    }
+
+    /// The tell is the device's own answer, never an inference from a product
+    /// name — same rule as the lamp block beside it.
+    func testTheScrimTellComesFromTheDeviceNotFromAGuess() {
+        XCTAssertFalse(GlassSettings().hasRenderedDim,
+                       "a display that said nothing about bright_pct hasn't got one")
+        // Both brightness values go on the wire unchanged — only peek_s is
+        // translated (see wireValue).
+        var s = GlassSettings()
+        s.hasRenderedDim = true
+        s.brightPct = 80
+        for knob in GlassAPI.knobs(for: s) where knob.key == "bright_pct" {
+            XCTAssertEqual(GlassAPI.wireValue(for: knob), 80)
         }
     }
 

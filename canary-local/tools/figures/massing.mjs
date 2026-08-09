@@ -457,6 +457,53 @@ export const FIGURES = [
     ],
   },
   {
+    id: 'device.canary-display-nightstand',
+    title: 'Canary Nightstand',
+    role: 'device', of: 'canary-display-nightstand-s3',
+    // The S3-LCD-1.47 hallway body (canary_s3_lcd147.scad): a USB-A stick that
+    // plugs straight into a wall outlet, portrait glass on its face. Every
+    // number below is the SCAD's own derived outer shell, which it echoes at
+    // render time — "Outer shell: xo x yo x bez_h mm (the back plate seats
+    // FLUSH with the rim, so the bezel height is the whole thickness); plug
+    // adds usb_proud mm" — rather than a proportion guessed to look right:
+    //   xo    = board_w 20.32 + 2*tol_slide 0.20 + 2*wall 2.1 = 24.92
+    //   yo    = board_l 36.37 + 2*tol_slide 0.20 + 2*wall 2.1 = 40.97
+    //   bez_h = face_t 1.0 + cav_d 8.20                       =  9.20
+    // The case is still in development (its STL export is gitignored, like the
+    // rest of the display line), so this is a sketch and the ledger says so.
+    sketch: { w: 24.92, d: 9.2, h: 40.97 },
+    sketchNote: 'the S3-LCD-1.47 wall body in canary_s3_lcd147.scad: outer shell '
+      + '24.92 x 40.97 (board cavity + 2.1 mm walls), 9.20 mm thick (the back '
+      + 'plate seats flush with the rim), plus the 12.2 mm of USB-A plug that '
+      + 'stands clear of the plug-end wall; no committed case STL yet',
+    build: (E) => {
+      // The plug is not a detail — it is 12.2 mm on a 41 mm body and the
+      // reason this product is shaped the way it is (it hangs off an outlet
+      // rather than standing on a surface). A figure that left it off would
+      // read as a different, free-standing device.
+      const usbW = 12.0;                 // series-A shell width  (usb_w)
+      const usbH = 4.5;                  // series-A shell height (usb_h)
+      const usbFree = 12.2;              // usb_proud 14.0 - usb_wall 1.8
+      // The shell straddles the PCB, so it centers on the board's mid-plane:
+      // z_usb = face_t + lcd_rise + pcb_t/2 back from the face.
+      const usbY = E.d - (1.0 + 3.65 + 1.6 / 2) - usbH / 2;
+      return [
+        { kind: 'box', m: 'shell', face: 'y', at: [0, 0, 0], size: [E.w, E.d - 1.0, E.h], r: 3.2 },
+        // the plug, below the body — its own material so the metal shell does
+        // not read as more case
+        { kind: 'box', m: 'dark', face: 'y', at: [(E.w - usbW) / 2, usbY, -usbFree],
+          size: [usbW, usbH, usbFree + EPS] },
+        // the 1.47" portrait window: the bezel face overlaps the module
+        // border (lcm 19.39 x 36.28) and the window shows the active area
+        // (aa 17.39 x 32.35)
+        { kind: 'box', m: 'glass', face: 'y', at: [(E.w - 19.39) / 2, E.d - 1.0, (E.h - 36.28) / 2],
+          size: [19.39, 0.9, 36.28], r: 1.5 },
+        { kind: 'box', m: 'lit', face: 'y', at: [(E.w - 17.39) / 2, E.d - 0.4, (E.h - 32.35) / 2],
+          size: [17.39, 0.4, 32.35], r: 1 },
+      ];
+    },
+  },
+  {
     id: 'device.canary-nightlight',
     title: 'Canary Nightlight',
     role: 'device', of: 'canary-nightlight',

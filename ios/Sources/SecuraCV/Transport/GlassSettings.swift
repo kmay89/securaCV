@@ -59,6 +59,20 @@ struct GlassSettings: Sendable, Equatable {
     var nightEndHH = 7
     var nightStep = 2
 
+    // Served only by glass whose backlight cannot dim (the 4.3" and 7" panels
+    // drive theirs through a CH422G expander line, which is on/off in
+    // hardware). There, sustained brightness is a RENDERED dim — a black scrim
+    // over the face — and `bright_pct` is the knob that moves it.
+    //
+    // The presence of this block is the tell, exactly like the lamp block
+    // below. It matters because `day_pct` is served by every display and does
+    // nothing visible on these boards: it scales a backlight level that can
+    // only ever be on or off. Offering both would put two brightness sliders
+    // on one screen, one of which silently does nothing.
+    var hasRenderedDim = false
+    var brightPct = 100
+    var brightMinPct = 50        // the floor the glass sets; darker is Night's job
+
     // Served by displays with a lamp (the nightlight today).
     var hasLamp = false
     var lampScene = 0
@@ -100,6 +114,9 @@ enum GlassAPI {
         if let v = obj["night_start_hh"] as? Int { s.nightStartHH = v }
         if let v = obj["night_end_hh"] as? Int { s.nightEndHH = v }
         if let v = obj["night_step"] as? Int { s.nightStep = v }
+        // The rendered-dim block: present only on glass that dims by scrim.
+        if let v = obj["bright_pct"] as? Int { s.brightPct = v; s.hasRenderedDim = true }
+        if let v = obj["bright_min_pct"] as? Int { s.brightMinPct = v }
         // The lamp block is the tell: a display without one simply doesn't
         // send these, and the app then offers no lamp controls rather than
         // offering ones that would fail.
@@ -132,10 +149,29 @@ enum GlassAPI {
     /// without a lamp shows no lamp section and nothing has to know which
     /// product it is talking to.
     static func knobs(for s: GlassSettings) -> [GlassKnob] {
+        // ONE brightness control, and it is whichever one this glass can
+        // actually obey.
+        //
+        // Every display serves `day_pct`, so the app offered it everywhere —
+        // but on a panel whose backlight is a binary expander line it scales a
+        // value that is only ever on or off, and dragging the slider changed
+        // nothing the owner could see. Those boards dim by drawing a scrim
+        // instead and say so by serving `bright_pct`; that is the knob to
+        // show them. Rendering both would be two sliders that disagree, and
+        // rendering only day_pct is what made the 7" look broken.
+        let brightness: GlassKnob = s.hasRenderedDim
+            ? GlassKnob(key: "bright_pct", title: "Daytime brightness",
+                        blurb: "How bright the face is during the day. This screen's backlight "
+                             + "is on or off in hardware, so the glass dims by drawing darker "
+                             + "rather than by drawing less power — it bottoms out at "
+                             + "\(s.brightMinPct)%, and going darker than that is the night "
+                             + "window's job.",
+                        kind: .percent(min: s.brightMinPct, max: 100), value: s.brightPct)
+            : GlassKnob(key: "day_pct", title: "Daytime brightness",
+                        blurb: "How bright the glass is during the day.",
+                        kind: .percent(min: 20, max: 100), value: s.dayPct)
         var out: [GlassKnob] = [
-            GlassKnob(key: "day_pct", title: "Daytime brightness",
-                      blurb: "How bright the glass is during the day.",
-                      kind: .percent(min: 20, max: 100), value: s.dayPct),
+            brightness,
             GlassKnob(key: "night_screen", title: "At night",
                       blurb: "A glow keeps the face readable in the dark; off blanks it until you look.",
                       kind: .choice(labels: ["Keep a glow", "Go dark"]), value: s.nightScreen),

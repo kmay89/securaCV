@@ -15,6 +15,11 @@ struct DiscoveredCanary: Identifiable, Hashable, Sendable {
     var name: String
     var deviceType: DeviceType
     var publishedType: String   // the TXT `dt` verbatim — the enum is coarser
+    /// The TXT `hw` — WHICH BOARD this is, as its pins header spells it.
+    /// Empty when the device runs firmware older than the field. This is the
+    /// only advert key that pins down the SHAPE, so it is what draws the
+    /// figure in a discovery row (see FleetFigure.resolve).
+    var hardware: String
     var host: String?           // mDNS hostname, preferred over IP
     var firmware: String
     var model: String
@@ -58,7 +63,23 @@ final class Discovery: ObservableObject {
     }
 
     private func ingest(_ results: Set<NWBrowser.Result>) {
-        var seen: [DiscoveredCanary] = []
+        // ONE ROW PER DEVICE, keyed on identity rather than on the browse
+        // result. NWBrowser reports a result per (service, interface), and
+        // `includePeerToPeer` adds the peer-to-peer interface on top — so a
+        // single Canary sitting on Wi-Fi routinely arrives two or three
+        // times. Appending them all is what put the same Canary in the list
+        // twice, with the same name and the same id, which reads as two
+        // devices you own rather than one device seen twice.
+        //
+        // It is also an `Identifiable` violation: SwiftUI's ForEach reuses or
+        // drops rows when two of them share an id, so the duplicate was not
+        // merely ugly — the "+" on one row could act on the other.
+        //
+        // Keyed on device_id when the advert carries one, falling back to the
+        // service name, which is what `id` itself does — so the key is the
+        // identity we go on to render, and two rows that would collide in the
+        // list collapse here instead.
+        var byID: [String: DiscoveredCanary] = [:]
         for result in results {
             guard case let .service(name, _, _, _) = result.endpoint else { continue }
             var txt: [String: String] = [:]
@@ -70,13 +91,26 @@ final class Discovery: ObservableObject {
                 name: txt["name"] ?? name,
                 deviceType: DeviceType(tolerant: txt["dt"]),
                 publishedType: txt["dt"] ?? "",
+                hardware: txt["hw"] ?? "",
                 host: txt["host"],
                 firmware: txt["fw"] ?? "",
                 model: txt["model"] ?? ""
             )
-            seen.append(dc)
+            // Prefer the copy that can actually be reached. The interfaces a
+            // service is seen on do not all carry the same TXT payload in
+            // practice, and a row with no `host` is a row nothing can poll —
+            // so an earlier complete advert must not be replaced by a later
+            // bare one just because it arrived second.
+            if let existing = byID[dc.id], existing.host != nil, dc.host == nil { continue }
+            byID[dc.id] = dc
         }
         // Stable ordering so the list doesn't jump around as adverts refresh.
-        found = seen.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        // Tie-broken by id: two devices CAN still share a name (every unit
+        // flashed from one config seeds the same one), and a sort that left
+        // them in dictionary order would reshuffle them on every advert.
+        found = byID.values.sorted {
+            let byName = $0.name.localizedCaseInsensitiveCompare($1.name)
+            return byName == .orderedSame ? $0.id < $1.id : byName == .orderedAscending
+        }
     }
 }

@@ -46,9 +46,32 @@ struct FleetView: View {
         }
     }
 
+    /// Canaries on the network that are NOT already in the fleet above.
+    ///
+    /// "Already in the fleet" is a bigger set than "paired", and treating them
+    /// as the same thing is what put a Nightstand in both lists at once — once
+    /// under "Your fleet", online and badged, and again under "Discovered on
+    /// your network" with a "+" beside it. A display never pairs over HTTP
+    /// (it serves no pairing route at all); it JOINS by answering /api/fleet,
+    /// and it is a full member of the fleet the moment it does. Offering to
+    /// add a device that is already there is an invitation to a flow that
+    /// cannot complete, on a device that needs nothing.
+    ///
+    /// Matched on the id AND on the route, because the two halves of the app
+    /// name the same device differently: a self-reported display becomes a
+    /// witness keyed `lan:<host>#<index>`, which will never equal the
+    /// `device_id` its advert carries. Comparing only ids is precisely why
+    /// the filter looked like it was working and wasn't.
     private var unpaired: [DiscoveredCanary] {
-        store.discovery.found.filter { d in
-            !store.devices.devices.contains { $0.id == d.id }
+        let joined = Set(store.witnesses.map(\.id))
+        let joinedHosts = Set(store.witnesses.compactMap { w -> String? in
+            guard w.id.hasPrefix("lan:") else { return nil }
+            return w.id.dropFirst(4).split(separator: "#").first.map(String.init)
+        })
+        return store.discovery.found.filter { d in
+            if joined.contains(d.id) { return false }
+            if let host = d.host, joinedHosts.contains(host) { return false }
+            return !store.devices.devices.contains { $0.id == d.id }
         }
     }
 
@@ -200,7 +223,8 @@ struct WitnessRow: View {
             // published type resolves first (a "canary-watch" gets the round
             // drum even though the enum collapses it to .unknown); the symbol
             // is the honest fallback — see FleetFigure.resolve.
-            DeviceFigureIcon(witness.deviceType, published: witness.publishedType, size: 30)
+            DeviceFigureIcon(witness.deviceType, published: witness.publishedType,
+                             hardware: witness.hardware, size: 30)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(witness.displayName).font(.body)
@@ -231,7 +255,8 @@ struct DiscoveredRow: View {
     let canary: DiscoveredCanary
     var body: some View {
         HStack(spacing: Theme.m) {
-            DeviceFigureIcon(canary.deviceType, published: canary.publishedType, size: 30)
+            DeviceFigureIcon(canary.deviceType, published: canary.publishedType,
+                             hardware: canary.hardware, size: 30)
             VStack(alignment: .leading, spacing: 2) {
                 Text(canary.name).font(.body)
                 Text("\(canary.deviceType.role) · tap to pair").font(.caption).foregroundStyle(.secondary)

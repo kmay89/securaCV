@@ -12,6 +12,43 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-08-09 — a wire field that only the firmware could read
+
+**Symptom.** Every display in the fleet drew a generic symbol in the iPhone
+app instead of its own picture, on hardware whose drawing had been in the
+figure ledger for months.
+
+**Cause.** Two lookups existed for "what does this device look like": by
+device type, and by BOARD. The firmware had both (`common/core/fleet_figures.h`
+— `figure_for` and `figure_for_hardware`). The apps had only the first. And the
+first is deliberately incomplete: several products share one device type, so
+those types are absent from the map on purpose, and every non-nightlight
+display self-reported the family string `canary-display`, which is one of them.
+So the app asked the only question it could ask, got the correct answer "I
+cannot tell", and drew the honest fallback — forever.
+
+**Lesson — a capability that exists on one side of the wire is not shipped.**
+The board-precise lookup was real, tested, and unreachable by any client,
+because nothing put the board id on the wire. When you add a second, stricter
+way to identify something, check every consumer can actually obtain the input
+it needs; a generator that emits a C++ table and no Swift one has shipped half
+a feature, and the half that is missing is invisible from the half that works.
+
+**Applies to every target.** The fix emits the board map to Swift alongside
+the C++ header from the same generator run, so the two cannot drift; the iOS,
+watch and widget bundles all compile `ios/Shared`, so they gained it together.
+Anything that later grows its own copy of the figure lookup should read it
+from the generator, never hand-maintain a third table.
+
+**Related, same day.** The 7" display's brightness control had the mirror-image
+problem: `/api/set` accepted `day_pct` on a board whose backlight is binary in
+hardware, so the app's slider wrote a value that could not do anything, while
+the knob that DOES dim that glass (`bright_pct`, a rendered scrim) was reachable
+only from the on-glass menu. Same shape of bug — a working mechanism with no
+path to the client — and the same fix: serve the capability, let the device
+declare it, and let the app render what the device says it has.
+
+
 ## Principles (hold these on every app target)
 
 1. **Dereference symlinks when copying a payload into a bundle.** Use

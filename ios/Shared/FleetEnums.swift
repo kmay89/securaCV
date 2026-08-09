@@ -126,7 +126,49 @@ enum DeviceType: String, Codable {
     case nightlight = "canary-nightlight"
     case unknown
 
-    init(tolerant raw: String?) { self = DeviceType(rawValue: raw ?? "") ?? .unknown }
+    /// Decode whatever a device published into the coarse family it belongs
+    /// to. Tolerant in three ways, each of which was a real gap:
+    ///
+    ///   1. **Spelling.** Canonicalized exactly the way `FleetFigure`
+    ///      canonicalizes a device type (lowercase; underscores and spaces to
+    ///      hyphens), so the `canary_wap` a config spells and the `canary-wap`
+    ///      the wire carries are one type.
+    ///   2. **The display line.** A display publishes what it IS —
+    ///      `canary-dash`, `canary-nightstand`, `canary-nightstand7`,
+    ///      `canary-watch` — none of which is a case here, and all of which
+    ///      used to land on `.unknown`. That is what drew the generic bird and
+    ///      the "Canary" role beside a Nightstand on the Fleet tab, and it also
+    ///      switched OFF `servesGlassSettings`, hiding the screen controls on
+    ///      the very devices that serve them.
+    ///   3. **The future.** Anything else in the `canary-` vocabulary this
+    ///      build has never heard of still decodes to `.unknown` rather than
+    ///      being dropped — a newer fleet renders as an unnamed Canary, which
+    ///      is honest, instead of vanishing.
+    ///
+    /// The coarse answer is deliberately all this returns. Which display it
+    /// is — and therefore what it LOOKS like — is a finer question than the
+    /// family, and it is answered from the published string and the hardware
+    /// id, never from this enum (see FleetFigure.resolve).
+    init(tolerant raw: String?) {
+        let canonical = String((raw ?? "").lowercased().map { $0 == "_" || $0 == " " ? "-" : $0 })
+        if let exact = DeviceType(rawValue: canonical) {
+            self = exact
+            return
+        }
+        self = DeviceType.displayLine.contains(canonical) ? .display : .unknown
+    }
+
+    /// The device types the display firmware publishes, all of which are one
+    /// coarse `.display`. Listed rather than prefix-matched: a prefix rule
+    /// would silently swallow a future `canary-dashcam` into the display line
+    /// and offer it a screen it hasn't got.
+    ///
+    /// `canary-nightlight` is NOT here — it is its own case, because it has a
+    /// lamp and therefore a whole section of controls no other display has.
+    static let displayLine: Set<String> = [
+        "canary-dash", "canary-dash7", "canary-nightstand",
+        "canary-nightstand7", "canary-nightstand-touch", "canary-watch",
+    ]
 
     var role: String {
         switch self {

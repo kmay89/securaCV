@@ -6,6 +6,7 @@
 
 #include "canary/config.h"
 #include "canary/log.h"
+#include "identity/device_pseudonym.h"  // the per-unit suffix (MAC-free, Invariant III)
 
 // Prefer local dev secrets if present; otherwise use the CI stub. Two
 // spellings because the secrets dir may reach the compiler either as an
@@ -31,6 +32,34 @@ void copy_str(char* dst, size_t cap, const char* src) {
   if (src == nullptr) { dst[0] = '\0'; return; }
   strncpy(dst, src, cap - 1);
   dst[cap - 1] = '\0';
+}
+
+/* THIS UNIT'S OWN NAME, not its model's.
+ *
+ * DEVICE_ID is a compile-time constant, one per config — so every Canary
+ * Nightstand ever flashed seeds the identical "canary_nightstand_001", and
+ * two of them on one network are two rows with one name, one mDNS TXT
+ * `device_id`, and one set of MQTT topics. The owner cannot tell which is
+ * which and neither can anything else.
+ *
+ * The fix is the suffix the mDNS HOSTNAME has always carried (make_hostname
+ * in net/discovery.cpp): six characters of the salted device pseudonym, which
+ * is stable, per-unit, and derived from a random NVS salt rather than from
+ * the MAC — so this buys uniqueness without touching a trackable identifier
+ * (Invariant III). The hostname was already unique; it was the identity every
+ * surface actually SHOWS that collided.
+ *
+ * Returns false if the pseudonym is unavailable (a broken NVS on the very
+ * first boot), in which case the caller keeps the bare compiled id — a
+ * colliding name is a far smaller problem than no name.
+ */
+bool personalized_device_id(char* out, size_t cap) {
+  if (out == nullptr || cap == 0) return false;
+  char devid_hex[device_pseudonym::HEX_LEN + 1] = {0};
+  if (!device_pseudonym::device_id_hex(devid_hex, sizeof(devid_hex))) return false;
+  if (devid_hex[0] == '\0') return false;
+  const int n = snprintf(out, cap, "%s-%.6s", DEVICE_ID, devid_hex);
+  return n > 0 && (size_t)n < cap;
 }
 
 /* Placeholder credentials must never overwrite a unit's real NVS values.
@@ -109,14 +138,37 @@ const RuntimeConfig& get() {
     return g_cfg;
   }
 
-  // Identity is sticky: NVS always wins; compiled DEVICE_ID seeds first boot.
+  // Identity is sticky: NVS always wins; the compiled DEVICE_ID seeds first
+  // boot — personalized, so two units of the same model are two names.
   {
     String stored = prefs.getString("dev_id", "");
-    if (stored.length() > 0) {
-      copy_str(g_cfg.device_id, sizeof(g_cfg.device_id), stored.c_str());
-    } else {
-      copy_str(g_cfg.device_id, sizeof(g_cfg.device_id), DEVICE_ID);
+    char personal[sizeof(g_cfg.device_id)] = {0};
+    const bool have_personal =
+        personalized_device_id(personal, sizeof(personal));
+
+    if (stored.length() == 0) {
+      // First boot: seed the personalized id, never the bare model name.
+      copy_str(g_cfg.device_id, sizeof(g_cfg.device_id),
+               have_personal ? personal : DEVICE_ID);
       prefs.putString("dev_id", g_cfg.device_id);
+    } else if (have_personal && strcmp(stored.c_str(), DEVICE_ID) == 0) {
+      // ONE-TIME MIGRATION, for units seeded before this existed.
+      //
+      // Safe precisely because the stored value is byte-equal to the compiled
+      // default: nothing in this firmware writes dev_id except the seed above,
+      // so an id that still equals DEVICE_ID is one nobody ever chose. A unit
+      // whose id differs — because it was renamed, or seeded from a different
+      // config — is left exactly alone, which is why this compares rather than
+      // detecting a missing suffix.
+      //
+      // It does change what this display publishes and which MQTT topics it
+      // owns, once. That is the point: it is the change from a name shared
+      // with every other unit of its model to a name that is its own.
+      copy_str(g_cfg.device_id, sizeof(g_cfg.device_id), personal);
+      prefs.putString("dev_id", g_cfg.device_id);
+      log_line("CFG", "device id personalized (was the shared model default).");
+    } else {
+      copy_str(g_cfg.device_id, sizeof(g_cfg.device_id), stored.c_str());
     }
   }
 

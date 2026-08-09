@@ -25,6 +25,73 @@ final class FleetSelfReportTests: XCTestCase {
     {"kernel":"Nightstand","verified_through":"now","devices":[{"name":"Nightstand","online":true,"chain":"unknown","product":"canary-display"}]}
     """#
 
+    /// The user's own 7" Nightstand, as the display firmware now describes
+    /// itself: its REAL product type (not the flattened "canary-display"), the
+    /// board it compiles against, and a hub nobody has set up yet. Verbatim
+    /// stdout of fleet_selfreport_build(), like every literal in this file.
+    static let nightstand7Body = #"""
+    {"kernel":"canary_nightstand7_001","verified_through":"now","devices":[{"name":"canary_nightstand7_001","online":true,"chain":"unknown","product":"canary-nightstand7","hw":"waveshare-esp32s3-lcd7","hub":"none"}]}
+    """#
+
+    /// The same board once its hub is configured and reachable.
+    static let nightstand7WithHubBody = #"""
+    {"kernel":"canary_nightstand7_001","verified_through":"now","devices":[{"name":"canary_nightstand7_001","online":true,"chain":"unknown","product":"canary-nightstand7","hw":"waveshare-esp32s3-lcd7","hub":"ok"}]}
+    """#
+
+    /// The whole point of the board field, end to end: these bytes have to
+    /// come out of the decoder as a device that can be DRAWN.
+    ///
+    /// Before this, a display reported "canary-display" — deliberately
+    /// unmapped, because four products share it — so the figure lookup
+    /// correctly returned nil and every display in the fleet wore the generic
+    /// symbol. The board is what makes the shape knowable.
+    func testADisplayNowCarriesEnoughToDrawItself() throws {
+        let report = try JSONDecoder().decode(
+            FleetSelfReport.self,
+            from: Data(Self.nightstand7Body.utf8))
+        let row = try XCTUnwrap(report.devices.first)
+
+        XCTAssertEqual(row.product, "canary-nightstand7")
+        XCTAssertEqual(row.hardware, "waveshare-esp32s3-lcd7")
+        // The coarse enum folds the whole display line to one case, so the
+        // screen controls are offered and the row is labeled a display.
+        XCTAssertEqual(row.deviceType, .display)
+        XCTAssertTrue(row.deviceType.servesGlassSettings)
+        // And it resolves to a real drawing.
+        let figure = FleetFigure.resolve(deviceType: row.deviceType,
+                                         published: row.product,
+                                         hardware: row.hardware)
+        XCTAssertEqual(figure?.id, "device.canary-display-dash7")
+        // But that figure's title must NOT be printed as this device's name:
+        // the 7" board is also the Dash 7.
+        XCTAssertFalse(FleetFigure.namesItsProduct(hardware: row.hardware))
+        XCTAssertEqual(DeviceNaming.productTitle(forPublishedType: row.product),
+                       "Canary Nightstand 7")
+    }
+
+    /// The hub standing, and the one thing it must never do: read as "fine"
+    /// when the device never said.
+    func testHubStateIsDecodedAndSilenceIsNotReassurance() throws {
+        let absent = try JSONDecoder().decode(
+            FleetSelfReport.self, from: Data(Self.nightstand7Body.utf8))
+        XCTAssertEqual(absent.devices.first?.hubState, HubState.absent)
+        XCTAssertEqual(absent.devices.first?.hubState.needsAttention, true)
+
+        let ok = try JSONDecoder().decode(
+            FleetSelfReport.self, from: Data(Self.nightstand7WithHubBody.utf8))
+        XCTAssertEqual(ok.devices.first?.hubState, HubState.ok)
+        XCTAssertEqual(ok.devices.first?.hubState.needsAttention, false)
+
+        // A device on older firmware omits the key entirely. That is
+        // `.unknown`, and `.unknown` must not claim a working hub — nor nag
+        // about a missing one it knows nothing about.
+        let silent = try JSONDecoder().decode(
+            FleetSelfReport.self, from: Data(Self.displayBody.utf8))
+        XCTAssertEqual(silent.devices.first?.hubState, HubState.unknown)
+        XCTAssertEqual(silent.devices.first?.hubState.needsAttention, false)
+        XCTAssertNil(silent.devices.first?.hardware)
+    }
+
     func testDecodesTheFirmwaresOwnOutput() throws {
         let r = try FleetSelfReport.decode(Data(Self.wapBody.utf8))
         XCTAssertEqual(r.kernel, #"Front "Door""#, "escaped quotes survive the round trip")
