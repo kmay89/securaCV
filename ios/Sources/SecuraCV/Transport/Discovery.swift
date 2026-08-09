@@ -97,9 +97,17 @@ final class Discovery: ObservableObject {
         found = Self.rows(from: adverts)
     }
 
-    /// Fold the raw adverts into one row per physical device. Pure and
-    /// static — `DiscoveryTests` drives it directly.
-    static func rows(from adverts: [(service: String, txt: [String: String])]) -> [DiscoveredCanary] {
+    /// Fold the raw adverts into one row per physical device.
+    ///
+    /// `nonisolated` because it is pure: values in, values out, no access to
+    /// anything this actor owns. Without it the method inherits the class's
+    /// `@MainActor` isolation and a test — which is not on the main actor —
+    /// cannot call it at all, which would have left this logic exactly as
+    /// untestable as it was inside the NWBrowser callback. The keyword is the
+    /// declaration that this needs no actor, not a workaround for the test.
+    nonisolated static func rows(
+        from adverts: [(service: String, txt: [String: String])]
+    ) -> [DiscoveredCanary] {
         // ONE ROW PER PHYSICAL DEVICE — which is the whole difficulty, because
         // the two obvious keys are each wrong in one direction.
         //
@@ -124,12 +132,15 @@ final class Discovery: ObservableObject {
         var byRow: [String: DiscoveredCanary] = [:]
         for (name, txt) in adverts {
             let host = txt["host"]
+            // An empty host is the same as no host: nothing can be dialed at
+            // "", so it must not become a row identity either.
+            let reachableHost = (host?.isEmpty == false) ? host : nil
             let deviceID = txt["device_id"] ?? name
             let dc = DiscoveredCanary(
                 // Host first — see the note on `id`. Only an advert with no
                 // host at all falls back to a value two units might share,
                 // and such a row cannot be polled anyway.
-                id: (host?.isEmpty == false ? host! : nil) ?? deviceID,
+                id: reachableHost ?? deviceID,
                 deviceID: deviceID,
                 name: txt["name"] ?? name,
                 deviceType: DeviceType(tolerant: txt["dt"]),
