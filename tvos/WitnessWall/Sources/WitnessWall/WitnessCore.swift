@@ -151,8 +151,14 @@ extension FleetSnapshot.Device {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = (try? c.decode(String.self, forKey: .name)) ?? ""
-        // Absent is not "online". The cautious reading is the only safe one
-        // for a presence claim we were never given.
+        // Absent is not "online" — the cautious reading is the only safe one
+        // for a presence claim we were never given, and it is the reading the
+        // phone's FleetSelfDevice already uses. Rust's normalizer defaults the
+        // other way (`default_online`), which is not a contradiction in the
+        // real path: the firmware's `_append_device` always writes the field,
+        // and Rust always re-serializes it, so neither default can fire on a
+        // body that actually crossed the wire. This one is the backstop for
+        // the day that stops being true.
         online = (try? c.decode(Bool.self, forKey: .online)) ?? false
         chain = (try? c.decodeIfPresent(String.self, forKey: .chain)) ?? nil
         product = (try? c.decodeIfPresent(String.self, forKey: .product)) ?? nil
