@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <Preferences.h>
+#include <cstdio>   // snprintf — personalized_device_id
 #include <cstring>
 
 #include "config.h"
