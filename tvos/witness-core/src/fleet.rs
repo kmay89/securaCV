@@ -179,7 +179,10 @@ mod tests {
         // trouble — reading it as trouble painted every display on the Wall
         // orange with "Record didn't verify".
         assert_eq!(d.chain.as_deref(), Some("unknown"));
-        assert!(!d.chain_is_troubled(), "\"unknown\" is an absent claim, not a failure");
+        assert!(
+            !d.chain_is_troubled(),
+            "\"unknown\" is an absent claim, not a failure"
+        );
         assert!(!fleet.has_chain_trouble());
     }
 
@@ -188,7 +191,8 @@ mod tests {
         // Every device on firmware older than these fields, which is all of
         // them until the fleet takes an update. Absent must stay absent —
         // never "" and never a default that reads as an answer.
-        let fleet = parse_fleet(r#"{"devices":[{"name":"Porch","product":"canary-wap"}]}"#).unwrap();
+        let fleet =
+            parse_fleet(r#"{"devices":[{"name":"Porch","product":"canary-wap"}]}"#).unwrap();
         assert_eq!(fleet.devices[0].hw, None);
         assert_eq!(fleet.devices[0].hub, None);
     }
