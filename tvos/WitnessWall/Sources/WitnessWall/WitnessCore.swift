@@ -47,10 +47,15 @@ struct FleetSnapshot: Decodable, Equatable, Sendable {
         /// field that pins the device's SHAPE — several products share one
         /// `product` string — so it is what resolves the figure the Wall
         /// draws. Nil on firmware older than the field.
-        let hw: String?
+        ///
+        /// Defaulted, unlike the fields above it, so that adding an optional
+        /// wire field does not break every construction site — which is
+        /// exactly what adding these two did to ResidentWatchTests. A field
+        /// the device may omit should be a field a caller may omit.
+        var hw: String? = nil
         /// Where the device stands with its hub ("none" / "down" / "ok"), or
         /// nil when it did not say. Never rendered as "fine" when nil.
-        let hub: String?
+        var hub: String? = nil
 
         /// Stable within a snapshot: the fleet endpoint has no device ids, and
         /// names are what a person actually distinguishes Canaries by.
@@ -124,6 +129,40 @@ struct FleetSnapshot: Decodable, Equatable, Sendable {
             return "\(devices.count) \(noun), all online"
         }
         return "\(onlineCount) of \(devices.count) \(noun) online"
+    }
+}
+
+// MARK: - Tolerant decode (the same tolerance the phone applies)
+
+/// The phone's `FleetSelfDevice` decodes every field with a fallback on the
+/// principle that *a device that omits a field is reported, not dropped* — a
+/// Canary that answered at all is telling us something worth showing. The Wall
+/// used strict synthesis instead, which is a stricter promise than the wire
+/// makes: one device omitting `online` threw, and a throw here loses the WHOLE
+/// snapshot, so a single old Canary could blank the television.
+///
+/// Written in an extension deliberately: an initializer in the type's own body
+/// suppresses the memberwise `Device(name:online:…)` the tests construct with.
+extension FleetSnapshot.Device {
+    enum CodingKeys: String, CodingKey {
+        case name, online, chain, product, hw, hub
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = (try? c.decode(String.self, forKey: .name)) ?? ""
+        // Absent is not "online". The cautious reading is the only safe one
+        // for a presence claim we were never given.
+        online = (try? c.decode(Bool.self, forKey: .online)) ?? false
+        chain = (try? c.decodeIfPresent(String.self, forKey: .chain)) ?? nil
+        product = (try? c.decodeIfPresent(String.self, forKey: .product)) ?? nil
+        // Empty and absent are one answer ("this device cannot say"), folded to
+        // nil so no caller spends a lookup proving "" is not a board id. Same
+        // fold as the phone's `hardware`.
+        let board = (try? c.decodeIfPresent(String.self, forKey: .hw)) ?? nil
+        hw = (board?.isEmpty == false) ? board : nil
+        let standing = (try? c.decodeIfPresent(String.self, forKey: .hub)) ?? nil
+        hub = (standing?.isEmpty == false) ? standing : nil
     }
 }
 

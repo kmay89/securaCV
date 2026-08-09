@@ -106,6 +106,30 @@ final class DeviceParityTests: XCTestCase {
         XCTAssertFalse(d.hubState.needsAttention, "silence is not a problem to report")
     }
 
+    /// The phone reports a device that omits a field rather than dropping it.
+    /// The Wall used strict synthesis, where one silent Canary throws — and a
+    /// throw here loses the whole snapshot, blanking the television for the
+    /// devices that DID answer.
+    func testASilentFieldCostsTheDeviceNothing() throws {
+        let snapshot = try JSONDecoder().decode(
+            FleetSnapshot.self,
+            from: Data(#"{"devices":[{"name":"Attic"},{"name":"Porch","online":true}]}"#.utf8))
+        XCTAssertEqual(snapshot.devices.map(\.name), ["Attic", "Porch"],
+                       "a device that omits a field is reported, not dropped")
+        XCTAssertFalse(snapshot.devices[0].online,
+                       "absent is not a presence claim — never rendered as online")
+        XCTAssertEqual(snapshot.onlineCount, 1)
+    }
+
+    /// An empty string is the same absent answer as a missing key, folded once
+    /// here so no caller has to prove that "" is not a board id.
+    func testAnEmptyBoardIsAbsentRatherThanABoardNamedNothing() throws {
+        let d = try device(from: #"{"devices":[{"name":"A","hw":"","hub":""}]}"#)
+        XCTAssertNil(d.hw)
+        XCTAssertNil(d.hub)
+        XCTAssertEqual(d.hubState, HubState.unknown)
+    }
+
     // MARK: - the hub
 
     func testHubStateIsReadTheSameWayThePhoneReadsIt() throws {
