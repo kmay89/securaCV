@@ -69,6 +69,60 @@ function appAdapt() {
   }, true);
 }
 
+/* ---- embedded: local links belong to the shell, not to this frame ----
+   A bench is a whole page with its own links — to other benches (fleet.html
+   points at flash.html and house.html), and the "‹ The Lab" back-link every
+   one of them carries. Followed inside the frame they navigate only the frame:
+   the shell's sidebar, crumbs, depth control, prev/next and the address hash
+   all stay on the bench you left, so the app claims to be somewhere it isn't.
+   The back-link is worse — lab.html inside the frame loads a SECOND complete
+   Lab shell inside the first.
+
+   So the frame doesn't take a same-origin destination, it hands it up and lets
+   the shell move. If nothing up there answers within HANDOFF_MS — a plain
+   <iframe> on some other page, a shell too old to know the protocol — the
+   click goes through here after all. A hand-off that can swallow a link would
+   be a worse bug than the duplicate chrome this module exists to remove. */
+const HANDOFF_MS = 400;
+
+function handOffLocalLinks() {
+  let pending = null;
+
+  // The shell's answer when it has no place for the destination. Note what
+  // does NOT cross back: the URL. The frame navigates using the href it read
+  // from its own DOM, so nothing from outside this document steers it.
+  window.addEventListener("message", (e) => {
+    if (e.origin !== location.origin || e.source !== window.parent) return;
+    const d = e.data;
+    if (!d || d.source !== "scv-lab-shell" || d.type !== "proceed" || !pending) return;
+    const go = pending;
+    pending = null;
+    location.href = go;
+  });
+
+  document.addEventListener("click", (e) => {
+    if (e.defaultPrevented || e.button !== 0) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; // "open in a new tab" means it
+    const a = e.target && e.target.closest && e.target.closest("a[href]");
+    if (!a || a.hasAttribute("download")) return;
+    const target = a.getAttribute("target");
+    if (target && target !== "_self") return;
+    let url;
+    try { url = new URL(a.getAttribute("href"), location.href); } catch { return; }
+    if (url.origin !== location.origin) return;      // appAdapt's handler owns those
+    if (url.pathname === location.pathname) return;  // an anchor inside this very page
+
+    e.preventDefault();
+    pending = url.href;
+    window.parent.postMessage({ source: "scv-lab", type: "navigate", href: url.href }, location.origin);
+    setTimeout(() => {
+      if (pending !== url.href) return;              // the shell took it; this frame is gone
+      pending = null;
+      location.href = url.href;
+    }, HANDOFF_MS);
+  }, true);
+}
+
 /* ---- progress (shared with the shell's sidebar checkmarks) ---- */
 function markVisited(stageId) {
   try {
@@ -183,6 +237,7 @@ async function boot() {
     // thing no page stylesheet can outrank.
     bar.hidden = true;
     bar.style.setProperty("display", "none", "important");
+    handOffLocalLinks();
     return;
   }
 

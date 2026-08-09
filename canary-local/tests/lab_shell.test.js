@@ -124,6 +124,63 @@ test("every depth head fits the tab strip it is shown in", () => {
   }
 });
 
+test("a framed bench hands its local links up instead of taking them", () => {
+  // Both halves, or the frame swallows clicks / the shell mis-captions itself.
+  assert.match(navJs, /window\.parent\.postMessage\(\{ source: "scv-lab", type: "navigate"/,
+    "lab-nav.js must hand same-origin destinations up to the shell when embedded");
+  assert.match(navJs, /if \(url\.pathname === location\.pathname\) return;/,
+    "an anchor inside the framed page must stay in the frame, not bounce the shell");
+  assert.match(shellJs, /addEventListener\("message"/,
+    "lab-shell.js must listen for the hand-off");
+  // A message listener without an origin check is a same-page XSS vector: any
+  // framed or opener window could drive the shell's navigation.
+  const listener = shellJs.slice(shellJs.indexOf('addEventListener("message"'));
+  assert.match(listener.slice(0, 400), /e\.origin !== location\.origin/,
+    "the shell's message listener must reject other origins before reading the payload");
+  assert.match(listener.slice(0, 700), /e\.source !== frame\.contentWindow/,
+    "the shell must only take navigation from the bench it is actually showing");
+  const navListener = navJs.slice(navJs.indexOf('window.addEventListener("message"'));
+  assert.match(navListener.slice(0, 400), /e\.origin !== location\.origin \|\| e\.source !== window\.parent/,
+    "the frame must only accept the shell's answer from its own parent, same origin");
+});
+
+test("every local link inside a framed bench is a place the shell can go", () => {
+  // The bug this pins: a link inside the frame that the shell has no route for
+  // falls back to navigating the frame alone, which is exactly the desync the
+  // hand-off exists to end — the sidebar, crumbs and prev/next keep describing
+  // the bench you left. Today every local link resolves, so the fallback is
+  // unreachable; a new link to a page outside the manifest is a decision to
+  // make (add it to the manifest, or allowlist it here with the reason), not
+  // something to discover from a stale toolbar.
+  const ALLOWED = new Map([
+    // file -> why it is fine for the frame to navigate to it on its own
+  ]);
+  const routable = new Set(["lab.html", manifest.onramp.lab]);
+  for (const stage of manifest.stages) {
+    const benches = stage.tracks ? stage.tracks.flatMap((t) => t.benches) : stage.benches || [];
+    for (const b of benches) {
+      routable.add(b.lab);
+      for (const d of b.depths || []) routable.add(d.lab);
+    }
+  }
+
+  const offenders = [];
+  for (const page of [...framedPages].sort()) {
+    const src = read(join(CANARY, page));
+    for (const m of src.matchAll(/<a\b[^>]*\shref="([^"]+)"/g)) {
+      const href = m[1];
+      if (/^(#|https?:|mailto:|tel:|data:|\/\/)/.test(href)) continue; // anchors and off-origin
+      const file = href.split(/[#?]/)[0];
+      if (!file || !file.endsWith(".html")) continue;
+      if (routable.has(file) || ALLOWED.has(file)) continue;
+      offenders.push(`${page} → ${href}`);
+    }
+  }
+  assert.deepStrictEqual(offenders, [],
+    "these links inside framed benches have no shell route, so following one would " +
+    "leave the sidebar and toolbar describing the bench you left");
+});
+
 test("the phone tab bar's height is one token, used by both sides", () => {
   assert.match(shellRules, /--tabbar-h:/,
     "the tab bar's box must be declared once as --tabbar-h");

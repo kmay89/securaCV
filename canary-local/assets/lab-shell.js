@@ -24,7 +24,7 @@ const ICONS = {
 const CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>';
 const CHEV = '<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>';
 
-let M, ROUTE = [], BY_SLUG = new Map();
+let M, ROUTE = [], BY_SLUG = new Map(), PAGE_ROUTE = new Map();
 let depthSel = {}; // benchSlug -> depth index
 
 /* ---- tiny hyperscript ---- */
@@ -52,13 +52,22 @@ function markVisited(id) { const s = visited(); s.add(id); try { localStorage.se
 
 /* ---- model ---- */
 function flatten() {
-  ROUTE = []; BY_SLUG = new Map();
+  ROUTE = []; BY_SLUG = new Map(); PAGE_ROUTE = new Map();
   for (const stage of M.stages) {
     const list = stage.tracks
       ? stage.tracks.flatMap(t => t.benches.map(b => ({ stage, track: t, bench: b })))
       : (stage.benches || []).map(b => ({ stage, bench: b }));
-    for (const e of list) { ROUTE.push(e); BY_SLUG.set(e.bench.slug, e); }
+    for (const e of list) {
+      ROUTE.push(e); BY_SLUG.set(e.bench.slug, e);
+      // bench.lab/depth.lab read backwards: which route SHOWS a given page. A
+      // framed bench links to its neighbors by file name, and this is how one
+      // of those turns back into a place in the sidebar.
+      PAGE_ROUTE.set(e.bench.lab, { id: e.bench.slug });
+      const ds = depthsFor(e.bench);
+      if (ds) ds.forEach((d, i) => PAGE_ROUTE.set(d.lab, { id: e.bench.slug, depth: i }));
+    }
   }
+  if (M.onramp) PAGE_ROUTE.set(M.onramp.lab, { id: "start" });
 }
 const firstOf = (stage) => (stage.tracks ? stage.tracks[0].benches[0] : stage.benches[0]);
 const siteHref = (href) => (href && href.startsWith("/") ? SITE_ORIGIN + href : href);
@@ -335,6 +344,21 @@ function benchView(entry) {
     class: "bench-frame", src, title: bench.noun, loading: "eager",
     allow: "serial; camera; microphone; usb; bluetooth; clipboard-write",
   });
+  // Second line of defense, and the one that does not depend on the frame
+  // cooperating: if the framed page ends up somewhere other than where we put
+  // it — a link that got past the hand-off, a page that navigates itself, a
+  // bench that somehow shipped without lab-nav.js — the shell resyncs to where
+  // the frame actually IS rather than keep captioning the bench it left.
+  // `dataset.at` is written BEFORE the resync so this can never re-enter.
+  frame.dataset.at = src;
+  frame.addEventListener("load", () => {
+    let here;
+    try { here = frame.contentWindow.location.href; } catch { return; } // same-origin, but never assume
+    const file = here.split("#")[0].split("?")[0].split("/").pop();
+    if (file === frame.dataset.at) return;
+    frame.dataset.at = file;
+    followFramed(here);
+  });
 
   return h("div", { class: "bench-wrap" },
     bar,
@@ -345,6 +369,40 @@ function benchView(entry) {
   );
 }
 const linkNav = (slug) => (e) => { e.preventDefault(); navigate(slug); };
+
+/* ---- the framed bench hands its local links up to here ----
+   lab-nav.js, running inside the frame, refuses same-origin destinations and
+   posts them here instead. Without that the frame navigates alone and the
+   shell keeps describing the bench you left; with it, following a link inside
+   a bench moves the whole app — sidebar, crumbs, depth control, prev/next and
+   the address hash — the same as clicking that bench in the sidebar. */
+function followFramed(href) {
+  let url;
+  try { url = new URL(href, location.href); } catch { return false; }
+  if (url.origin !== location.origin) return false;
+  const file = url.pathname.split("/").pop() || "index.html";
+  // The "‹ The Lab" back-link every bench carries. Inside the frame it loads a
+  // second complete Lab shell into the first; up here it is one route change,
+  // and lab.html#slug lands on that bench. routeId() is the allowlist, so an
+  // unknown slug becomes the overview rather than reaching navigate() raw.
+  if (file === "lab.html") { navigate(routeId(url.hash.slice(1))); return true; }
+  const r = PAGE_ROUTE.get(file);
+  if (!r) return false;
+  if (r.depth != null) depthSel[r.id] = r.depth;
+  navigate(r.id);
+  return true;
+}
+
+window.addEventListener("message", (e) => {
+  if (e.origin !== location.origin) return;
+  const d = e.data;
+  if (!d || d.source !== "scv-lab" || d.type !== "navigate") return;
+  const frame = document.querySelector(".bench-frame");
+  if (!frame || e.source !== frame.contentWindow) return; // only the bench actually on screen
+  // No place for it here: tell the frame to go on its own. The destination is
+  // never sent back — the frame still holds the href it read from its own DOM.
+  if (!followFramed(d.href)) e.source.postMessage({ source: "scv-lab-shell", type: "proceed" }, location.origin);
+});
 
 function overviewView() {
   const cards = M.stages.map(s => {
