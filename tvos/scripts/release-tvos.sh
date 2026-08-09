@@ -122,7 +122,22 @@ asc_auth=(
 )
 
 # ── 6. Archive ──────────────────────────────────────────────────────────────
-echo "── archiving WitnessWall (tvOS) ──"
+# THE BUILD NUMBER, WHICH project.yml CANNOT SUPPLY.
+#
+# `CURRENT_PROJECT_VERSION: "1"` is committed, so without an override every
+# upload carries build 1 — and App Store Connect identifies a build by
+# (marketing version, build number), so it can accept exactly ONE upload per
+# version. There is no "build 2 of 0.1.0": respinning the same version after a
+# transient upload failure, or with a one-line fix, is impossible without a
+# marketing version bump. The iPhone app hit this first (RELEASE_LESSONS
+# 2026-08-09); tvOS carries the identical setting and gets the identical fix.
+#
+# BUILD_NUMBER comes from the workflow's run number rather than a commit count,
+# deliberately: it increases on every run even when the commit is unchanged,
+# which is exactly the respin case a commit count would fail. Falls back to 1
+# for a local run, where uniqueness is nobody's problem.
+: "${BUILD_NUMBER:=1}"
+echo "── archiving WitnessWall (tvOS), build $BUILD_NUMBER ──"
 rm -rf "$ARCHIVE" "$EXPORT_DIR"
 xcodebuild -project "$PROJECT_DIR/WitnessWall.xcodeproj" \
   -scheme "$SCHEME" \
@@ -131,6 +146,7 @@ xcodebuild -project "$PROJECT_DIR/WitnessWall.xcodeproj" \
   -archivePath "$ARCHIVE" \
   "${asc_auth[@]}" \
   DEVELOPMENT_TEAM="$APPLE_DEVELOPMENT_TEAM" \
+  CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
   SECURACV_BUILD_REV="${SECURACV_BUILD_REV:-dev}" \
   SECURACV_FW_TRAIN="${SECURACV_FW_TRAIN:-0.x}" \
   archive

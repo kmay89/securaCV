@@ -159,6 +159,10 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           CRITICAL_ALERTS: ${{ inputs.critical_alerts }}
+          # Monotonic across every run of this workflow, including re-runs on an
+          # unchanged commit — see the note beside the xcodebuild call.
+          BUILD_NUMBER: ${{ github.run_number }}
+          MARKETING_VERSION: ${{ steps.plan.outputs.version }}
         run: |
           # NOTE: automatic signing archives with a DEVELOPMENT profile, and
           # Apple won't mint one for a team with ZERO registered devices —
@@ -177,6 +181,25 @@ jobs:
             ENTITLEMENTS="Support/SecuraCV.dev.entitlements"
             echo "::notice title=Critical Alerts off::Signing without the Apple-granted Critical Alerts entitlement (flip the critical_alerts input once Apple approves it)."
           fi
+          # THE BUILD NUMBER, WHICH project.yml CANNOT SUPPLY.
+          #
+          # `CURRENT_PROJECT_VERSION: "1"` is committed, so without this every
+          # upload carried build 1 and App Store Connect — which identifies a
+          # build by (marketing version, build number) — could only ever accept
+          # ONE upload per version. There is no "build 2 of 0.5.2": the ordinary
+          # TestFlight move of respinning the same version with a small fix was
+          # impossible, and every retry, including one after a transient upload
+          # failure, cost a marketing version bump.
+          #
+          # `github.run_number` rather than a commit count, deliberately: it
+          # increases on every run of this workflow even when the commit is
+          # unchanged, which is exactly the respin case. A commit count would
+          # produce the same number twice and be rejected again.
+          #
+          # Passed on the command line so it reaches EVERY target in the scheme
+          # — the watch app and the widget extension must carry the same build
+          # number as the host app or App Store validation rejects the bundle.
+          echo "::notice title=Build number::${MARKETING_VERSION:-build-only} ($BUILD_NUMBER) — from workflow run #$BUILD_NUMBER"
           xcodebuild \
             -project SecuraCV.xcodeproj \
             -scheme SecuraCV \
@@ -184,6 +207,7 @@ jobs:
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/SecuraCV.xcarchive" \
             DEVELOPMENT_TEAM="$APPLE_DEVELOPMENT_TEAM" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             SECURACV_APP_ENTITLEMENTS="$ENTITLEMENTS" \
             SECURACV_BUILD_REV="${SECURACV_BUILD_REV:-dev}" \
             SECURACV_FW_TRAIN="${SECURACV_FW_TRAIN:-0.x}" \
