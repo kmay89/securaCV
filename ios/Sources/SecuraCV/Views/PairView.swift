@@ -35,15 +35,16 @@ struct PairView: View {
     /// while this very sheet is open, and the honest thing then is to say so
     /// rather than keep offering to add it.
     private var alreadyJoined: Bool {
-        store.witnesses.contains { $0.id == canary.id }
-            || store.devices.devices.contains { $0.id == canary.id }
+        store.witnesses.contains { $0.id == canary.deviceID }
+            || store.devices.devices.contains { $0.id == canary.deviceID }
     }
 
     /// The product name when this build knows it, else the coarse family.
     /// Never the raw wire string: "canary-nightstand7" under a picture of the
     /// device reads like a bug, not like a name.
     private var productLine: String {
-        DeviceNaming.productTitle(forPublishedType: canary.publishedType)
+        DeviceNaming.productName(published: canary.publishedType,
+                                 hardware: canary.hardware)
             ?? canary.deviceType.role
     }
 
@@ -122,7 +123,7 @@ struct PairView: View {
             error = "That receipt couldn't be read, or points off your local network."
             return
         }
-        let ref = PairedDeviceRef(id: receipt.deviceID.isEmpty ? canary.id : receipt.deviceID,
+        let ref = PairedDeviceRef(id: receipt.deviceID.isEmpty ? canary.deviceID : receipt.deviceID,
                                   name: canary.name, deviceType: canary.deviceType,
                                   baseURL: receipt.baseURL, pairedAt: Date())
         store.devices.add(ref, token: receipt.token)

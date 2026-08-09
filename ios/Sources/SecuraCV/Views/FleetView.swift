@@ -69,9 +69,9 @@ struct FleetView: View {
             return w.id.dropFirst(4).split(separator: "#").first.map(String.init)
         })
         return store.discovery.found.filter { d in
-            if joined.contains(d.id) { return false }
+            if joined.contains(d.deviceID) { return false }
             if let host = d.host, joinedHosts.contains(host) { return false }
-            return !store.devices.devices.contains { $0.id == d.id }
+            return !store.devices.devices.contains { $0.id == d.deviceID }
         }
     }
 

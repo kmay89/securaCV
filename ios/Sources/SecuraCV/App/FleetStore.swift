@@ -314,7 +314,7 @@ final class FleetStore: ObservableObject {
         // up over Wi-Fi at all — it serves no /api/v1 device-api.
         let pairedIDs = Set(devices.devices.map(\.id))
         let unpairedHosts: [String] = discovery.found
-            .filter { !pairedIDs.contains($0.id) }
+            .filter { !pairedIDs.contains($0.deviceID) }
             .compactMap(\.host)
         if !unpairedHosts.isEmpty {
             let reports = await withTaskGroup(of: (String, FleetSelfReport)?.self) { group -> [(String, FleetSelfReport)] in
@@ -379,7 +379,7 @@ final class FleetStore: ObservableObject {
         // Fill gaps, never replace: a stronger tier that already said what
         // this device is outranks an advert.
         for i in next.indices {
-            guard let advert = discovery.found.first(where: { $0.id == next[i].id })
+            guard let advert = discovery.found.first(where: { $0.deviceID == next[i].id })
             else { continue }
             if next[i].publishedType == nil, !advert.publishedType.isEmpty {
                 next[i].publishedType = advert.publishedType

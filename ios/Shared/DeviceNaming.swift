@@ -20,15 +20,21 @@
 import Foundation
 
 enum DeviceNaming {
-    /// The product names, keyed on the wire-canonical device type. These are
-    /// the CD_DEVICE_TYPE values in firmware/configs/canary-display/*/config.h
-    /// and their siblings across the fleet.
+    /// The product names, keyed on the wire-canonical device type.
+    ///
+    /// EVERY KEY HERE IS A VALUE SOME BUILD ACTUALLY PUBLISHES — the
+    /// CD_DEVICE_TYPE values in firmware/configs/canary-display/*/config.h and
+    /// their siblings across the fleet. That constraint is the point: an
+    /// earlier cut of this table carried "canary-dash7" and
+    /// "canary-nightstand-touch", which read like precision and were fiction.
+    /// No device publishes either — the Dash 7 answers "canary-dash" and the
+    /// Nightstand Touch answers "canary-nightstand", because those flavors
+    /// share an OTA product identity with their siblings. A table entry for a
+    /// string nothing sends is dead code that looks like a feature.
     private static let titles: [String: String] = [
         "canary-dash": "Canary Dash",
-        "canary-dash7": "Canary Dash 7",
         "canary-nightstand": "Canary Nightstand",
         "canary-nightstand7": "Canary Nightstand 7",
-        "canary-nightstand-touch": "Canary Nightstand Touch",
         "canary-nightlight": "Canary Nightlight",
         "canary-watch": "Canary Watch Station",
         "canary-display": "Canary display",
@@ -46,5 +52,34 @@ enum DeviceNaming {
     /// show then is the coarse family ("Fleet display"), not an identifier.
     static func productTitle(forPublishedType raw: String) -> String? {
         titles[FleetFigure.canonicalDeviceType(raw)]
+    }
+
+    /// What to call this device, from everything it told us — the ONE resolver
+    /// every surface uses, so the picture card and the birth certificate can
+    /// never print two different names for one Canary.
+    ///
+    /// Asks the board before the type, because the board is sometimes MORE
+    /// product-precise than the type is. A Nightstand Touch publishes the same
+    /// `canary-nightstand` as the plain Nightstand, but compiles against its
+    /// own pins header, so its figure names it exactly — and reading the name
+    /// off the type alone would have called it a Nightstand on its own
+    /// certificate while its picture said Nightstand Touch.
+    ///
+    /// The reverse case is why this is not simply "always use the figure": a
+    /// shared board's figure title names ONE of the products it serves, so a
+    /// Dash 7 (board shared with the Nightstand 7) must not take it. There the
+    /// type is all we have, and it resolves to "Canary Dash" — less specific
+    /// than the truth, and not wrong. Saying "Canary Dash 7" would require the
+    /// device to say so, and it doesn't.
+    ///
+    /// Nil when nothing pins a product; callers show the coarse family.
+    static func productName(published: String?, hardware: String?) -> String? {
+        if let board = hardware, !board.isEmpty,
+           FleetFigure.namesItsProduct(hardware: board),
+           let figure = FleetFigure.forHardware(board) {
+            return figure.title
+        }
+        guard let raw = published, !raw.isEmpty else { return nil }
+        return productTitle(forPublishedType: raw)
     }
 }

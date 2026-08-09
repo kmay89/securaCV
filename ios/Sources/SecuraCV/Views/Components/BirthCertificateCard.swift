@@ -58,11 +58,9 @@ struct BirthCertificateCard: View {
     /// build has never heard of falls back to the coarse family, which is
     /// less specific and still true.
     private var species: String {
-        if let published = witness.publishedType, !published.isEmpty,
-           let title = DeviceNaming.productTitle(forPublishedType: published) {
-            return title
-        }
-        return witness.deviceType.role
+        DeviceNaming.productName(published: witness.publishedType,
+                                 hardware: witness.hardware)
+            ?? witness.deviceType.role
     }
 
     var body: some View {

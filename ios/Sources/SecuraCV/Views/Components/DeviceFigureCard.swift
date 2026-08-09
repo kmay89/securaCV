@@ -26,7 +26,7 @@ struct DeviceFigureCard: View {
                     .frame(height: 200)
                     .frame(maxWidth: .infinity)
                 VStack(spacing: 2) {
-                    Text(productName(figure))
+                    Text(productName)
                         .font(.subheadline.weight(.medium))
                     Text(rungLine(figure.confidence) + dimsLine(massing.envelope))
                         .font(.caption)
@@ -49,21 +49,15 @@ struct DeviceFigureCard: View {
         .padding(.vertical, Theme.s)
     }
 
-    /// What to CALL this device, which is not always what to call its figure.
-    ///
-    /// One board can carry more than one product — the 7" glass is both the
-    /// Dash 7 and the Nightstand 7 — so when the figure was resolved from a
-    /// shared board its title names one of them and would be a wrong label on
-    /// a right picture. In that case the device's own published type wins,
-    /// prettied only as far as stripping the family prefix; if it published
-    /// nothing usable, the honest fallback is the family word rather than a
-    /// product it might not be.
-    private func productName(_ figure: FleetFigure) -> String {
-        if FleetFigure.namesItsProduct(hardware: witness.hardware) { return figure.title }
-        guard let raw = witness.publishedType, !raw.isEmpty else {
-            return witness.deviceType.role
-        }
-        return DeviceNaming.productTitle(forPublishedType: raw) ?? witness.deviceType.role
+    /// What to CALL this device, which is not always what to call its figure:
+    /// a shared board's title names one of the products it serves. Resolved
+    /// through DeviceNaming so this card and the birth certificate below it
+    /// can never disagree, and falling back to the coarse family rather than
+    /// to a product the device never claimed.
+    private var productName: String {
+        DeviceNaming.productName(published: witness.publishedType,
+                                 hardware: witness.hardware)
+            ?? witness.deviceType.role
     }
 
     /// The ladder rung, in the ladder's own words (docs/design/

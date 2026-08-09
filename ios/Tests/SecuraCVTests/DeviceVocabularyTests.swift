@@ -19,6 +19,8 @@ final class DeviceVocabularyTests: XCTestCase {
     /// Keep this list matched to CD_DEVICE_TYPE across
     /// firmware/configs/canary-display/*/config.h.
     func testTheWholeDisplayLineDecodesAsADisplay() {
+        // Every CD_DEVICE_TYPE a display config publishes, plus the family
+        // string and the two spellings kept for forward tolerance.
         for raw in ["canary-dash", "canary-dash7", "canary-nightstand",
                     "canary-nightstand7", "canary-nightstand-touch",
                     "canary-watch", "canary-display"] {
@@ -71,6 +73,60 @@ final class DeviceVocabularyTests: XCTestCase {
         // true, rather than to "canary-something-new" on a card.
         XCTAssertNil(DeviceNaming.productTitle(forPublishedType: "canary-something-new"))
         XCTAssertNil(DeviceNaming.productTitle(forPublishedType: ""))
+    }
+
+    /// Every key in the naming table must be a string some build actually
+    /// publishes. An entry for a type nothing sends reads like precision and
+    /// is fiction — "canary-dash7" and "canary-nightstand-touch" were both in
+    /// here once, and no device has ever answered to either.
+    ///
+    /// Keep this list matched to CD_DEVICE_TYPE across
+    /// firmware/configs/canary-display/*/config.h.
+    func testTheNamingTableOnlyCarriesTypesThatArePublished() {
+        for published in ["canary-dash", "canary-nightstand", "canary-nightstand7",
+                          "canary-nightlight", "canary-watch"] {
+            XCTAssertNotNil(DeviceNaming.productTitle(forPublishedType: published),
+                            "\(published) is published by a display config and needs a name")
+        }
+        // These are NOT published by anything — the Dash 7 answers
+        // "canary-dash" and the Nightstand Touch answers "canary-nightstand",
+        // because those flavors share an OTA product with their siblings.
+        for fiction in ["canary-dash7", "canary-nightstand-touch"] {
+            XCTAssertNil(DeviceNaming.productTitle(forPublishedType: fiction),
+                         "\(fiction) is not a device type any build publishes")
+        }
+    }
+
+    /// The board is asked BEFORE the type, because it is sometimes the more
+    /// product-precise of the two — and both surfaces that name a device go
+    /// through this, so they cannot disagree.
+    func testNamingAsksTheBoardBeforeTheTypeWhereTheBoardKnowsBetter() {
+        // The Nightstand Touch: same published type as the plain Nightstand,
+        // its own pins header. The board names it exactly.
+        XCTAssertEqual(DeviceNaming.productName(published: "canary-nightstand",
+                                                hardware: "waveshare-esp32s3-touch-lcd169"),
+                       "Canary Nightstand Touch")
+        // A shared board must NOT lend its title: the 7" glass serves both the
+        // Dash 7 and the Nightstand 7, so the type is all we have. "Canary
+        // Dash" is less specific than the truth and is not wrong; claiming
+        // "Canary Dash 7" would need the device to say so, and it doesn't.
+        XCTAssertEqual(DeviceNaming.productName(published: "canary-dash",
+                                                hardware: "waveshare-esp32s3-lcd7"),
+                       "Canary Dash")
+        // The Nightstand 7 on that same shared board DOES publish a precise
+        // type, so it gets the precise name.
+        XCTAssertEqual(DeviceNaming.productName(published: "canary-nightstand7",
+                                                hardware: "waveshare-esp32s3-lcd7"),
+                       "Canary Nightstand 7")
+        // No board, or a board this build never heard of: fall through.
+        XCTAssertEqual(DeviceNaming.productName(published: "canary-watch", hardware: nil),
+                       "Canary Watch Station")
+        XCTAssertEqual(DeviceNaming.productName(published: "canary-watch",
+                                                hardware: "some-future-board"),
+                       "Canary Watch Station")
+        // Nothing pins a product → nil, and the caller says something coarse.
+        XCTAssertNil(DeviceNaming.productName(published: nil, hardware: nil))
+        XCTAssertNil(DeviceNaming.productName(published: "canary-something-new", hardware: nil))
     }
 
     // MARK: - the merge rules for the two new fields

@@ -39,7 +39,7 @@ struct DeviceDetailView: View {
     /// route exists — the section says "not reachable" instead of guessing.
     private var nightlightBaseURL: URL? {
         if let url = liveWitness.baseURL { return url }
-        if let host = store.discovery.found.first(where: { $0.id == witness.id })?.host {
+        if let host = store.discovery.found.first(where: { $0.deviceID == witness.id })?.host {
             return DeviceAPI.url(forDiscoveredHost: host)
         }
         if witness.id.hasPrefix("lan:") {
