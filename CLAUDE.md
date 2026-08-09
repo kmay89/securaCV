@@ -108,7 +108,18 @@ pushes the bytes back. Two things to know before you rely on it:
    still queued, not like it never started. If you have nothing real to
    change under those paths, say so and hand the PR over red rather than
    inventing a no-op commit; a reviewer can re-run from a merge commit.
-   (Costs an hour to learn: two "retrigger" pushes in #1536 ran nothing.)
+4. **And the bot's push can park the whole PR behind an approval gate.**
+   Bullet 2 undersells this: the push does not *silently* do nothing — it
+   creates a full set of runs whose `triggering_actor` is
+   `github-actions[bot]`, and GitHub parks those at
+   `conclusion: action_required`, meaning "waiting for a human to press
+   Approve". Until someone with write access clears them in the PR's
+   checks panel, pushing again does not help. So the two symptoms look
+   identical from the API (`state: pending`, zero check runs on the head
+   commit) but have opposite fixes: **zero runs anywhere** on the branch is
+   the path-filter problem above, and **runs sitting at `action_required`**
+   is a human-approval problem no commit of yours can solve. Check which
+   before you push a third time. (Both happened in #1536, in that order.)
 
 ## Enclosure CAD
 

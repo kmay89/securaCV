@@ -254,10 +254,18 @@ branch. Three things it will not tell you:
   non-fast-forward and throw the whole build away with `fetch first` — which
   reads as "the emulator failed to compile" when it compiled fine. It rebases
   and retries now, but the window is still yours to avoid.
-- Its push does not retrigger CI, and **the push you make afterwards has to
-  touch a watched path** — this directory qualifies, a repo-root doc does not.
-  A docs-only commit leaves the PR at zero check runs, which looks queued
-  rather than never-started.
+- Its push does not retrigger CI *usefully*, and cleaning up after it has two
+  distinct failure modes that look identical from the outside (PR status
+  `pending`, zero check runs on the head commit):
+  - The push you make afterwards must **touch a watched path** — this
+    directory qualifies, a repo-root doc does not. A docs-only commit runs
+    nothing at all.
+  - The bot's own push creates a full set of runs that GitHub parks at
+    `action_required`, waiting for a human to press Approve in the checks
+    panel. No commit of yours clears that; ask a maintainer.
+
+  Look at whether runs exist on the branch before pushing again: none at all
+  means paths, parked ones mean approval.
 
 ## Roadmap (post-v0.2)
 
