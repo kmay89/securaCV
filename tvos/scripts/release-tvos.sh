@@ -132,10 +132,15 @@ asc_auth=(
 # marketing version bump. The iPhone app hit this first (RELEASE_LESSONS
 # 2026-08-09); tvOS carries the identical setting and gets the identical fix.
 #
-# BUILD_NUMBER comes from the workflow's run number rather than a commit count,
-# deliberately: it increases on every run even when the commit is unchanged,
-# which is exactly the respin case a commit count would fail. Falls back to 1
-# for a local run, where uniqueness is nobody's problem.
+# BUILD_NUMBER is `<run_number>.<run_attempt>`, not a commit count and not
+# either half alone. The number has to count ATTEMPTS, not content: the respin
+# case is "same commit, upload again", so a commit count emits the same value
+# twice and is rejected identically. And run_number alone is not enough because
+# GitHub's "Re-run jobs" reuses the run — run_number stays put and only
+# run_attempt moves, which is exactly the retry an operator reaches for when an
+# upload was accepted but a later step failed. Together they only ever
+# increase, and a dotted CFBundleVersion is compared component by component.
+# Falls back to 1 for a local run, where uniqueness is nobody's problem.
 : "${BUILD_NUMBER:=1}"
 echo "── archiving WitnessWall (tvOS), build $BUILD_NUMBER ──"
 rm -rf "$ARCHIVE" "$EXPORT_DIR"

@@ -159,9 +159,12 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           CRITICAL_ALERTS: ${{ inputs.critical_alerts }}
-          # Monotonic across every run of this workflow, including re-runs on an
-          # unchanged commit — see the note beside the xcodebuild call.
-          BUILD_NUMBER: ${{ github.run_number }}
+          # `<run>.<attempt>`, because neither half is enough on its own:
+          # run_number does NOT change when an operator uses "Re-run jobs", and
+          # run_attempt resets to 1 on every fresh dispatch. Together they only
+          # ever increase — 42.1 → 42.2 (a re-run) → 43.1 (a new dispatch) —
+          # and a dotted CFBundleVersion is compared component by component.
+          BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}
           MARKETING_VERSION: ${{ steps.plan.outputs.version }}
         run: |
           # NOTE: automatic signing archives with a DEVELOPMENT profile, and
@@ -191,10 +194,15 @@ jobs:
           # impossible, and every retry, including one after a transient upload
           # failure, cost a marketing version bump.
           #
-          # `github.run_number` rather than a commit count, deliberately: it
-          # increases on every run of this workflow even when the commit is
-          # unchanged, which is exactly the respin case. A commit count would
-          # produce the same number twice and be rejected again.
+          # `<run_number>.<run_attempt>` rather than a commit count: the number
+          # has to count ATTEMPTS, not content, because the respin case is
+          # "same commit, upload again". A commit count emits the same value
+          # twice and is rejected identically — it looks like a fix and isn't.
+          #
+          # And run_number alone is not enough either: GitHub's "Re-run jobs"
+          # reuses the run, so run_number stays put and only run_attempt moves.
+          # That is precisely the retry an operator reaches for when an upload
+          # was accepted but a later step failed.
           #
           # Passed on the command line so it reaches EVERY target in the scheme
           # — the watch app and the widget extension must carry the same build

@@ -128,10 +128,17 @@ any platform.
   - **The command line, not the project file.** It reaches every target in the
     scheme, and the watch app and widget extension MUST carry the same build
     number as the host app or App Store validation rejects the bundle.
-  - **Run number, not commit count.** The run number increases even when the
-    commit is unchanged, which is exactly the respin case. A commit count
-    produces the same number twice and is rejected all over again — it looks
-    like a fix and isn't one.
+  - **`<run_number>.<run_attempt>`, not a commit count and not either half
+    alone.** The counter has to count **attempts, not content**: the respin
+    case is "same commit, upload again", so a commit count emits the same
+    value twice and is rejected identically — it looks like a fix and isn't
+    one. And `run_number` alone fails the same way, because GitHub's **Re-run
+    jobs** reuses the run: `run_number` does not move, only `run_attempt`
+    does, and a re-run after an accepted upload with a failed later step is
+    exactly the retry an operator reaches for. Composed they only ever
+    increase (42.1 → 42.2 → 43.1), and a dotted `CFBundleVersion` is compared
+    component by component. *(The first version of this fix used `run_number`
+    alone and had to be corrected in review — the trap is convincing.)*
   - **A local fallback** (`: "${BUILD_NUMBER:=1}"` in the tvOS script) so a
     developer run still works, where uniqueness is nobody's problem.
 - **Applies to:** both Apple targets, fixed together. The iPhone app is where

@@ -230,10 +230,10 @@ jobs:
           EXPORT_METHOD: ${{ steps.plan.outputs.export_method }}
           PUBLISH: ${{ steps.plan.outputs.publish }}
           EXPECTED_VERSION: ${{ steps.plan.outputs.version }}
-          # Monotonic across every run of this workflow, including a re-run on
-          # an unchanged commit — see the note in release-tvos.sh for why a
-          # commit count would not do.
-          BUILD_NUMBER: ${{ github.run_number }}
+          # `<run>.<attempt>` — see release-tvos.sh for why neither half alone
+          # is enough (run_number does not move on "Re-run jobs"; run_attempt
+          # resets on every fresh dispatch).
+          BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}
         run: bash scripts/release-tvos.sh
 
       # Tag AFTER the upload succeeded, never before: the tag is this repo's
