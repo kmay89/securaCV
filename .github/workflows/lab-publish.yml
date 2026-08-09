@@ -1,0 +1,232 @@
+# Publish the Lab's draft release — the button that finishes the job.
+#
+# `desktop-release.yml` builds the Lab and leaves a DRAFT. Until someone
+# publishes that draft nothing reaches anyone: a draft has no git tag, its
+# assets have no public URLs, and `lab-latest` — the pointer every installed
+# Lab polls — never advances. That gate was a human clicking Publish in the
+# GitHub UI, and the drafts piled up: 0.1.1, 0.1.2, 0.2.0, 0.2.1 and 0.2.2 all
+# built successfully and all sat unpublished, so the self-updater shipped in
+# 0.2.0 had never once delivered an update.
+#
+# This is that click, as a dispatchable workflow.
+#
+# THE TRAP THIS WORKFLOW EXISTS TO AVOID: GitHub suppresses `release:` events
+# for releases published with the default GITHUB_TOKEN (its recursion guard).
+# A human publish fires `release: published`; a CI publish does not. So the two
+# things that used to happen *because of* that event have to be CALLED here
+# instead of waited for:
+#
+#   · desktop-lab-updater-pointer.yml — hardens latest.json, proves every
+#     updater URL resolves, then advances `lab-latest`. Invoked below as a
+#     reusable workflow (not `gh workflow run`) so that if it fails, THIS run
+#     goes red. A fire-and-forget dispatch would let a broken updater manifest
+#     pass for a successful publish, which is the exact silent failure the
+#     pointer workflow was written to prevent.
+#   · keep-firmware-latest — puts `releases/latest` back on the firmware. Every
+#     Canary in the field polls `releases/latest/download/manifest-*.json`; an
+#     app release taking that slot 404s the whole fleet's update check without
+#     failing anything. We publish with `--latest=false` so it never moves, and
+#     run the action anyway because it is idempotent and cheap insurance.
+#
+# This is the same shape desktop-flasher-release.yml has always used — the
+# Flasher publishes from CI and calls both follow-ups directly. The Lab was the
+# outlier, not the pattern.
+name: Publish the Lab (draft → live)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Draft tag to publish (blank = the newest app-v* draft)"
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+# Never kill a run mid-publish, and never let two publishes race the pointer.
+concurrency:
+  group: lab-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish the draft, keep releases/latest on the firmware
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.pick.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Pick the draft to publish
+        id: pick
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_INPUT: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          # Every unpublished Lab draft, newest version first. `gh release list`
+          # reports drafts with an empty publishedAt, which is how we tell a
+          # draft from a release that is merely old.
+          drafts="$(gh release list --limit 100 --json tagName,isDraft \
+            --jq '.[] | select(.isDraft) | select(.tagName | startswith("app-v")) | .tagName' \
+            | sed 's/^app-v//' | sort -V -r || true)"
+          if [ -z "$drafts" ]; then
+            echo "::error::no unpublished app-v* draft exists — nothing to publish"
+            exit 1
+          fi
+
+          if [ -n "$TAG_INPUT" ]; then
+            tag="$TAG_INPUT"
+            case "$tag" in
+              app-v*) ;;
+              *) echo "::error::'${tag}' is not a Lab release tag (app-v*)"; exit 1 ;;
+            esac
+            if ! printf '%s\n' "$drafts" | grep -qx "${tag#app-v}"; then
+              echo "::error::${tag} is not an unpublished draft. Drafts available:"
+              printf '%s\n' "$drafts" | sed 's/^/app-v/'
+              exit 1
+            fi
+          else
+            tag="app-v$(printf '%s\n' "$drafts" | head -1)"
+          fi
+          ver="${tag#app-v}"
+
+          # Publishing is irreversible, so refuse to go BACKWARD here rather
+          # than let the pointer silently decline to move afterward — that
+          # combination publishes a stale version and still reads as success.
+          cur="$(mktemp -d)"
+          if gh release download lab-latest -p latest.json -D "$cur" --clobber 2>/dev/null; then
+            current="$(jq -r '.version // ""' "$cur/latest.json" 2>/dev/null || true)"
+            # `sort -V` puts the lower version first; equal versions are fine
+            # (a re-cut refreshes URLs, signatures and notes).
+            if [ -n "$current" ] && [ "$ver" != "$current" ] &&
+               [ "$(printf '%s\n%s\n' "$ver" "$current" | sort -V | head -1)" = "$ver" ]; then
+              echo "::error::${tag} is older than the ${current} that lab-latest already serves — publishing it would strand installs. Publish the newer draft instead."
+              exit 1
+            fi
+          fi
+
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${ver}" >> "$GITHUB_OUTPUT"
+          # Captured, not piped: a pipeline's status is the LAST command's, so
+          # `… | grep -vx | sed … || echo "(none)"` never fires the fallback —
+          # sed exits 0 on empty input and the summary silently says nothing.
+          others="$(printf '%s\n' "$drafts" | sed 's/^/app-v/' | grep -vx "$tag" || true)"
+          {
+            echo "### Publishing \`${tag}\`"
+            echo
+            echo "Other unpublished drafts left alone (superseded):"
+            if [ -n "$others" ]; then
+              printf '%s\n' "$others" | sed 's/^/- /'
+            else
+              echo "- (none)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Publishing is irreversible AND one-way out of this workflow's reach: a
+      # published release is no longer a draft, so the picker above can never
+      # select it again to retry. So prove the draft is FINISHED first.
+      #
+      # The race this closes: desktop-release.yml builds in a two-leg matrix
+      # and BOTH legs create the release with `releaseDraft: true`, so the
+      # first leg to finish creates a draft carrying only its own platform —
+      # and `finalize` (which rewrites latest.json) runs after both. Dispatch
+      # this button mid-build and you would publish, permanently, a release
+      # missing an entire platform's installers or its updater manifest.
+      #
+      # Checked against the artifacts rather than against workflow state on
+      # purpose: the assets ARE the release, whereas "is a run in progress"
+      # has its own race — a build can start the moment after you look.
+      - name: Refuse an incomplete draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.pick.outputs.tag }}
+          VER: ${{ steps.pick.outputs.version }}
+        run: |
+          set -euo pipefail
+          have="$(gh release view "$TAG" --json assets --jq '.assets[].name' | sort)"
+          # One name per thing the release must carry. The .dmg proves the
+          # macOS leg finished, .deb/.AppImage prove the Linux leg did, the
+          # .sig files are what the updater verifies, and latest.json is the
+          # manifest installed Labs actually read.
+          missing=0
+          for want in \
+            "SecuraCV.Lab_${VER}_universal.dmg" \
+            "SecuraCV.Lab_${VER}_universal.app.tar.gz" \
+            "SecuraCV.Lab_${VER}_universal.app.tar.gz.sig" \
+            "SecuraCV.Lab_${VER}_amd64.AppImage" \
+            "SecuraCV.Lab_${VER}_amd64.AppImage.sig" \
+            "SecuraCV.Lab_${VER}_amd64.deb" \
+            "SecuraCV.Lab_${VER}_amd64.deb.sig" \
+            "latest.json"; do
+            if ! printf '%s\n' "$have" | grep -qxF "$want"; then
+              echo "::error::${TAG} is missing ${want} — the build that produces it has not finished"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "Assets present on the draft:"
+            printf '%s\n' "$have" | sed 's/^/  /'
+            echo "::error::refusing to publish an incomplete draft. Wait for desktop-release.yml to finish, then run this again."
+            exit 1
+          fi
+
+          # The manifest must also be complete and for THIS version — a draft
+          # whose latest.json still describes an earlier build would publish an
+          # updater that hands installs the wrong bundle.
+          work="$(mktemp -d)"
+          gh release download "$TAG" -p latest.json -D "$work" --clobber
+          mver="$(jq -r '.version // ""' "$work/latest.json")"
+          if [ "$mver" != "$VER" ]; then
+            echo "::error::latest.json on ${TAG} says version '${mver}', expected '${VER}'"; exit 1
+          fi
+          for plat in darwin-aarch64 darwin-x86_64 linux-x86_64; do
+            if [ "$(jq -r --arg p "$plat" '.platforms[$p].url // ""' "$work/latest.json")" = "" ]; then
+              echo "::error::latest.json on ${TAG} has no entry for ${plat} — finalize has not run"; exit 1
+            fi
+          done
+          echo "${TAG} carries a complete, self-consistent set — safe to publish"
+
+      - name: Publish it — never as releases/latest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.pick.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # --latest=false is load-bearing: `releases/latest` belongs to the
+          # firmware the fleet polls. --draft=false creates the git tag from
+          # the draft's target commit.
+          gh release edit "$TAG" --draft=false --latest=false
+          published="$(gh release view "$TAG" --json isDraft --jq '.isDraft')"
+          if [ "$published" != "false" ]; then
+            echo "::error::${TAG} is still a draft after the publish call"; exit 1
+          fi
+          echo "published ${TAG}"
+
+      # CI publishes fire no `release:` event, so release-latest-guard.yml will
+      # not wake up. Same reason desktop-flasher-release.yml calls this action.
+      - name: Keep releases/latest on the firmware
+        uses: ./.github/actions/keep-firmware-latest
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          context: ${{ steps.pick.outputs.tag }} publish (Lab)
+
+  # Reusable-workflow call, not a dispatch: a failure here fails this run, so a
+  # publish can never be reported green while the updater manifest is broken.
+  pointer:
+    name: Advance the lab-latest updater pointer
+    needs: publish
+    uses: ./.github/workflows/desktop-lab-updater-pointer.yml
+    with:
+      tag: ${{ needs.publish.outputs.tag }}
+    permissions:
+      contents: write
+    secrets: inherit

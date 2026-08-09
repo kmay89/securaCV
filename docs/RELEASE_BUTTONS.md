@@ -124,6 +124,29 @@ reject the whole manifest).
 The two desktop app pipelines, nothing else. Superseded by the master button for
 most purposes; keep for a macOS-only smoke run.
 
+### Publish the Lab (draft → live)
+
+Takes the Lab's newest `app-v*` **draft** and finishes it: publishes it (never
+as `releases/latest`), puts `releases/latest` back on the firmware, then
+verifies the updater manifest and advances **`lab-latest`** — the pointer every
+installed Lab polls. Blank `tag` publishes the newest draft; pass one to be
+explicit.
+
+**Use it:** after the master button has cut a Lab release, to actually ship it.
+This is the step that makes installed Labs see the update; without it the
+release exists only as a draft nobody can download.
+
+**Don't:** expect it to build anything — it only finishes a draft the build
+already produced. It refuses a draft older than what `lab-latest` serves, since
+publishing that would strand the installed base on a stale manifest.
+
+**Why it's a separate button.** GitHub suppresses `release:` events for
+releases published with `GITHUB_TOKEN`, so the pointer and the latest-guard
+can't be *triggered* by a CI publish — they have to be **called**. This
+workflow calls both, and calls the pointer as a reusable workflow so a broken
+updater manifest fails the publish run instead of passing quietly. (A human
+clicking Publish in the UI *does* fire the event, so that path still works.)
+
 ---
 
 ## The three things that bite
@@ -274,10 +297,13 @@ You don't have to remember these; CI does. Listed so a red run makes sense.
   `bash desktop/scripts/set-desktop-signing-secrets.sh`.
   Note `ENABLE_MACOS_SIGNING` must be exactly `true` or the desktop apps build
   **unsigned and still go green** — the release body states which you got.
-- **Publishing the Lab's release.** It's created as a **draft** on purpose;
-  a human clicks Publish. (`release-latest-guard.yml` then puts
-  `releases/latest` back on the firmware, and
-  `desktop-lab-updater-pointer.yml` verifies the updater manifest and
-  advances `lab-latest` — the pointer every installed Lab polls — so
-  publishing the draft is also what makes the fleet of installed Labs see
-  the update.)
+- **Publishing the Lab's release.** It's created as a **draft** on purpose, so
+  the build can be looked at before it goes public — but a draft reaches
+  nobody. It has no git tag, its assets have no public URLs, and `lab-latest`
+  (the pointer every installed Lab polls) does not move. **Finish it with
+  Actions → "Publish the Lab (draft → live)"**, or click Publish in the UI;
+  either way is fine, and the button is the one to reach for when nobody is
+  around to click.
+  Left unfinished it is silent, not loud: drafts for 0.1.1, 0.1.2, 0.2.0,
+  0.2.1 and 0.2.2 all built green and all sat unpublished, so the
+  self-updater shipped in 0.2.0 had never once delivered an update.
