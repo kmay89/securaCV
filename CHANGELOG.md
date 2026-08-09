@@ -2,6 +2,46 @@
 
 ## [Unreleased]
 
+## [2.4.9] - 2026-08-09
+
+### Every display draws itself, names itself, and the 7" brightness works
+
+Four things an owner could see on the Fleet tab. Three were firmware-side,
+and each was the same shape: a capability that worked on one side of the wire
+with no path to the client.
+
+- **Displays publish what they are, and which board they are.** A display
+  self-reported the family string `canary-display`, which the figure ledger
+  leaves unmapped on purpose — four products wear it, so a picture chosen
+  from it would be a coin flip. Every display therefore drew a generic marker
+  while the ledger held a drawing of it. Each flavor now reports its real
+  device type, plus `hw`: the `boards/<id>/pins` header it compiled against.
+  That is the only value on the wire that is exact about the SHAPE, because a
+  build compiles against exactly one pins header and the wrong one is a dead
+  device. It names the board, never the product — one board can serve two
+  products (the 7" glass is both the Dash 7 and the Nightstand 7), so a
+  reader draws from it and takes the name from elsewhere.
+- **The 7" brightness control does something.** On the 4.3" and 7" panels the
+  backlight is a CH422G expander line, which is binary in hardware — so
+  `day_pct` scaled a value that can only ever be on or off, and the slider on
+  the phone and the one on the device's own web page both did nothing you
+  could see. Those boards dim by drawing a scrim, and that knob (`bright_pct`)
+  was reachable only from the on-glass menu. It is now served by
+  `/api/settings`, accepted by `/api/set`, and its presence is how a client
+  knows which of the two brightness controls this glass can honor.
+- **A device id per unit, not per model.** `CD_DEVICE_ID` is a compile-time
+  constant seeded into NVS on first boot, so every Canary Nightstand ever
+  flashed answered to `canary_nightstand_001` — one name, one set of MQTT
+  topics, and no way to tell two of them apart. First boot now seeds the
+  salted per-unit suffix the mDNS *hostname* has always carried, and a unit
+  still holding the bare model default migrates once. A device id somebody
+  chose is never touched.
+- **A display says where it stands with its hub.** `/api/fleet` carries
+  `hub`, in three states rather than a flag: no broker configured, one
+  configured and unreachable, or connected. "Nobody has given me a hub" and
+  "mine is down" are different problems with different fixes, and a bool
+  would have sent an owner to restart a hub they never set up.
+
 ## [2.4.8] - 2026-08-07
 
 ### A Canary can say when it was born, and you can pick the color it glows

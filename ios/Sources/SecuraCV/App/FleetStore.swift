@@ -314,7 +314,7 @@ final class FleetStore: ObservableObject {
         // up over Wi-Fi at all — it serves no /api/v1 device-api.
         let pairedIDs = Set(devices.devices.map(\.id))
         let unpairedHosts: [String] = discovery.found
-            .filter { !pairedIDs.contains($0.id) }
+            .filter { !pairedIDs.contains($0.deviceID) }
             .compactMap(\.host)
         if !unpairedHosts.isEmpty {
             let reports = await withTaskGroup(of: (String, FleetSelfReport)?.self) { group -> [(String, FleetSelfReport)] in
@@ -368,6 +368,25 @@ final class FleetStore: ObservableObject {
             next.append(contentsOf: DemoFleet.witnesses())
             events.append(contentsOf: DemoFleet.timeline())
             recordDemoBeatIfHarmless()
+        }
+
+        // What each row IS, from the mDNS advert, for any row that didn't
+        // learn it from the transport that built it. A paired device is
+        // polled over /api/v1, which carries no product string and no board
+        // id at all — so without this a paired Canary would be the one kind
+        // that never draws its own picture, which is exactly backwards.
+        //
+        // Fill gaps, never replace: a stronger tier that already said what
+        // this device is outranks an advert.
+        for i in next.indices {
+            guard let advert = discovery.found.first(where: { $0.deviceID == next[i].id })
+            else { continue }
+            if next[i].publishedType == nil, !advert.publishedType.isEmpty {
+                next[i].publishedType = advert.publishedType
+            }
+            if next[i].hardware == nil, !advert.hardware.isEmpty {
+                next[i].hardware = advert.hardware
+            }
         }
 
         // Durable mutes survive the rebuild (tamper still punches through —

@@ -43,14 +43,24 @@ struct BirthCertificateCard: View {
                                                deviceID: witness.id)
     }
 
-    /// What the device said it is, at full precision when it published one —
-    /// the same string the figure lookup resolves against, so the picture and
-    /// the species line can never name two different products.
+    /// What the device said it is, at full precision when it published one.
+    ///
+    /// Named from the shipped-product table rather than from the figure's
+    /// title, and the difference is not cosmetic: a figure's title names ONE
+    /// product, and some boards serve two (the 7" glass is both the Dash 7
+    /// and the Nightstand 7), so reading the species off the picture would
+    /// print "Canary Dash 7" on a Nightstand's own certificate — a wrong fact
+    /// on the one card whose entire job is being checkable.
+    ///
+    /// The raw wire string is not a fallback either. It used to be, and it
+    /// put "canary-nightstand7" on the certificate for any type the figure
+    /// map didn't carry — an identifier where a name belongs. A type this
+    /// build has never heard of falls back to the coarse family, which is
+    /// less specific and still true.
     private var species: String {
-        if let published = witness.publishedType, !published.isEmpty {
-            return FleetFigure.forDeviceType(published)?.title ?? published
-        }
-        return witness.deviceType.role
+        DeviceNaming.productName(published: witness.publishedType,
+                                 hardware: witness.hardware)
+            ?? witness.deviceType.role
     }
 
     var body: some View {

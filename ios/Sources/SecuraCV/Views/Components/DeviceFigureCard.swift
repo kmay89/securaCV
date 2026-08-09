@@ -15,7 +15,8 @@ struct DeviceFigureCard: View {
 
     private var figure: FleetFigure? {
         FleetFigure.resolve(deviceType: witness.deviceType,
-                            published: witness.publishedType)
+                            published: witness.publishedType,
+                            hardware: witness.hardware)
     }
 
     var body: some View {
@@ -25,7 +26,7 @@ struct DeviceFigureCard: View {
                     .frame(height: 200)
                     .frame(maxWidth: .infinity)
                 VStack(spacing: 2) {
-                    Text(figure.title)
+                    Text(productName)
                         .font(.subheadline.weight(.medium))
                     Text(rungLine(figure.confidence) + dimsLine(massing.envelope))
                         .font(.caption)
@@ -46,6 +47,17 @@ struct DeviceFigureCard: View {
             }
         }
         .padding(.vertical, Theme.s)
+    }
+
+    /// What to CALL this device, which is not always what to call its figure:
+    /// a shared board's title names one of the products it serves. Resolved
+    /// through DeviceNaming so this card and the birth certificate below it
+    /// can never disagree, and falling back to the coarse family rather than
+    /// to a product the device never claimed.
+    private var productName: String {
+        DeviceNaming.productName(published: witness.publishedType,
+                                 hardware: witness.hardware)
+            ?? witness.deviceType.role
     }
 
     /// The ladder rung, in the ladder's own words (docs/design/

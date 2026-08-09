@@ -145,6 +145,15 @@ public struct FleetMassing: Sendable {
       FleetSolid(kind: .box, material: "glass", axis: "y", at: [6, 19, 6], size: [192.96, 2.6, 110.76], r: 3, h: 0, fullDetailOnly: false),
       FleetSolid(kind: .box, material: "lit", axis: "y", at: [25, 21.6, 18], size: [154.88, 0.4, 86.72], r: 2, h: 0, fullDetailOnly: false),
   ]),
+  "device.canary-display-nightstand": FleetMassing(
+    id: "device.canary-display-nightstand", rev: "c361481b", ghost: false,
+    envelope: [24.92, 9.2, 53.17],
+    solids: [
+      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 0, 0], size: [24.92, 8.2, 40.97], r: 3.2, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "dark", axis: "y", at: [6.460000000000001, 1.4999999999999991, -12.2], size: [12, 4.5, 12.25], r: 0, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "glass", axis: "y", at: [2.7650000000000006, 8.2, 2.344999999999999], size: [19.39, 0.9, 36.28], r: 1.5, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "lit", axis: "y", at: [3.7650000000000006, 8.799999999999999, 4.309999999999999], size: [17.39, 0.4, 32.35], r: 1, h: 0, fullDetailOnly: false),
+  ]),
   "device.canary-display-touch169": FleetMassing(
     id: "device.canary-display-touch169", rev: "72fa8cf1", ghost: false,
     envelope: [46.13, 17, 38.13],
