@@ -1201,6 +1201,52 @@
 
 ---
 
+## Display: what the glass actually shows
+
+### Re-addressing a panel is not repainting it — a rotation leaves the old frame behind
+
+- **What happened:** A Nightlight on a bedside table showed thin yellow
+  streaks beside the canary and white ones beside the clock digits, and they
+  stayed there. Not tearing, not a camera artifact: leftovers of the previous
+  orientation's image.
+- **Root cause:** `display_set_rotation` wrote MADCTL and
+  `lvgl_port_set_panel_rotation` reshaped LVGL's canvas, but nothing repainted
+  the ST7789's frame memory. It still held the pre-rotation image, now read
+  out along transposed axes, and LVGL only flushes regions it believes are
+  dirty — so every pixel the rebuilt face didn't happen to cover survived.
+  The bird's yellow and the digits' white are the brightest things on the old
+  frame, so they are what a person actually sees.
+- **Fix:** the HAL clears the frame on rotation (it is invalid by definition),
+  and the port invalidates the whole screen instead of trusting a dirty list
+  whose coordinates were measured on the other axis. The dash's
+  software-rotation path had the same hazard against its scanned framebuffer
+  and got the same full invalidate.
+- **Regression check:** none automatable on host — it needs a panel. When a
+  code path changes the display's coordinate space, clear and fully
+  invalidate; a partial-render pipeline has no other way to know.
+- **Date learned:** 2026-08
+
+### LVGL draws a hollow box for any glyph outside the built-in font's range, silently
+
+- **What happened:** Every date line on the glass read "Sunday [] Aug 9".
+- **Root cause:** the faces used U+00B7 MIDDLE DOT as a separator. LVGL's
+  built-in Montserrat is generated over `0x20-0x7F,0xB0,0x2022` (see the
+  generator options in the header of `lv_font_montserrat_*.c`). U+00B7 is not
+  in it. There is no fallback and no build error — LVGL renders the
+  missing-glyph box. It sits one codepoint away from the degree sign that IS
+  in range, which is why it looked safe, and the WASM emulator hid it because
+  a browser has real fonts.
+- **Fix:** U+2022 BULLET is in range and does the same job. The same sweep
+  caught U+2026 in two "unknown value" placeholders and the em dashes the
+  Canary Cards used for a null reading; those became plain ASCII.
+- **Regression check:** `firmware/scripts/check_display_glyphs.py`, wired into
+  `firmware.yml`. String literals in the faces and the code feeding them must
+  stay inside the font's range. Serial-log and `#error` text is exempt — it is
+  read where real fonts exist.
+- **Date learned:** 2026-08
+
+---
+
 ## How to Add an Entry
 
 When you encounter a bug, regression, or hard-won lesson:
