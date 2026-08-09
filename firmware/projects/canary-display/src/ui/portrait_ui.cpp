@@ -343,7 +343,7 @@ void portrait_ui_update(const Fleet& fleet, uint32_t now,
     // An ambient-life check-in brightens this line for a few seconds, then
     // it settles back to muted — the whole visible half of a "moment".
     const bool bright = (int32_t)(now - s_glance_bright_until) < 0;
-    lv_label_set_text_fmt(s_glance, "%d %s \xC2\xB7 online", count,
+    lv_label_set_text_fmt(s_glance, "%d %s \xE2\x80\xA2 online", count,
                           count == 1 ? "canary" : "canaries");
     lv_obj_set_style_text_color(s_glance, bright ? col_text() : col_muted(), 0);
   }

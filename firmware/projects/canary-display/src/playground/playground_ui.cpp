@@ -256,7 +256,7 @@ void detail_open(int st) {
   const StationMeta& m = META[st];
 
   char title[48];
-  snprintf(title, sizeof(title), "%s  ·  %s", m.title, m.where);
+  snprintf(title, sizeof(title), "%s  •  %s", m.title, m.where);
   lv_obj_t* t = mk_label(s_detail, &lv_font_montserrat_24, c_text(), title);
   lv_obj_align(t, LV_ALIGN_TOP_LEFT, 0, 0);
 
@@ -265,7 +265,7 @@ void detail_open(int st) {
   lv_obj_align(back, LV_ALIGN_TOP_RIGHT, 0, 4);
   s_back_rect = {GRID_X + 300, HDR_H, W - GRID_X - 300, 60};
 
-  s_detail_val = mk_label(s_detail, &lv_font_montserrat_36, c_accent(), "—");
+  s_detail_val = mk_label(s_detail, &lv_font_montserrat_36, c_accent(), "-");
   lv_obj_align(s_detail_val, LV_ALIGN_TOP_LEFT, 0, 40);
 
   lv_obj_t* body = mk_label(s_detail, &lv_font_montserrat_14, c_muted(),
@@ -345,32 +345,32 @@ void update_tracker(const PgState& g) {
         int ext = 0;
         for (int i = 0; i < g.bus.count; i++)
           if (!i2c_addr_reserved(g.bus.addrs[i])) ext++;
-        snprintf(b, sizeof(b), "shared bus · %d guest%s", ext,
+        snprintf(b, sizeof(b), "shared bus • %d guest%s", ext,
                  ext == 1 ? "" : "s");
         set_row(r, LV_SYMBOL_OK, ext ? c_ok() : c_muted(), b,
                 ext ? c_ok() : c_muted());
         break;
       }
       case ROW_VOUT:
-        set_row(r, LV_SYMBOL_WARNING, c_warn(), "5V dflt · check!", c_warn());
+        set_row(r, LV_SYMBOL_WARNING, c_warn(), "5V dflt • check!", c_warn());
         break;
       case ROW_RS485:
         if (g.rs485.replies) {
-          snprintf(b, sizeof(b), "RTU · reg0=%u", (unsigned)g.rs485.last_val);
+          snprintf(b, sizeof(b), "RTU • reg0=%u", (unsigned)g.rs485.last_val);
           set_row(r, LV_SYMBOL_OK, c_ok(), b, c_ok());
         } else {
           set_row(r, LV_SYMBOL_MINUS, g.rs485.polls ? c_warn() : c_faint(),
-                  g.rs485.polls ? "no reply · check A/B" : "Modbus · tap to probe",
+                  g.rs485.polls ? "no reply • check A/B" : "Modbus • tap to probe",
                   g.rs485.polls ? c_warn() : c_faint());
         }
         break;
       case ROW_CAN:
         if (g.can.rx) {
-          snprintf(b, sizeof(b), "CAN · rx=%lu", (unsigned long)g.can.rx);
+          snprintf(b, sizeof(b), "CAN • rx=%lu", (unsigned long)g.can.rx);
           set_row(r, LV_SYMBOL_OK, c_ok(), b, c_ok());
         } else {
           set_row(r, LV_SYMBOL_MINUS, g.can.tx ? c_warn() : c_faint(),
-                  g.can.tx ? "sent · no rx yet" : "TWAI · tap to send",
+                  g.can.tx ? "sent • no rx yet" : "TWAI • tap to send",
                   g.can.tx ? c_warn() : c_faint());
         }
         break;
@@ -387,10 +387,10 @@ void update_tracker(const PgState& g) {
         set_row(r, LV_SYMBOL_OK, c_muted(), "console/flash", c_faint());
         break;
       case ROW_SD:
-        set_row(r, LV_SYMBOL_MINUS, c_faint(), "reserved · unused", c_faint());
+        set_row(r, LV_SYMBOL_MINUS, c_faint(), "reserved • unused", c_faint());
         break;
       case ROW_FREE:
-        set_row(r, LV_SYMBOL_CLOSE, c_alert(), "none — fully loaded",
+        set_row(r, LV_SYMBOL_CLOSE, c_alert(), "none - fully loaded",
                 c_alert());
         break;
       default:
@@ -417,12 +417,12 @@ void card_value(int st, const PgState& g, char* out, size_t cap,
       break;
     case ST_CHIME:
       snprintf(out, cap, "%s", g.do0.sinking ? "ON" : "off");
-      *sub = g.do0.latched ? "latched · auto-off" : "tap for controls";
+      *sub = g.do0.latched ? "latched • auto-off" : "tap for controls";
       *col = g.do0.sinking ? c_warn() : c_text();
       break;
     case ST_STROBE:
       snprintf(out, cap, "%s", g.do1.sinking ? "ON" : "off");
-      *sub = g.do1.latched ? "latched · auto-off" : "tap for controls";
+      *sub = g.do1.latched ? "latched • auto-off" : "tap for controls";
       *col = g.do1.sinking ? c_warn() : c_text();
       break;
     case ST_LIGHT:
@@ -431,7 +431,7 @@ void card_value(int st, const PgState& g, char* out, size_t cap,
         *sub = g.light.addr == 0x10 ? "VEML7700" : "BH1750@0x5C";
         *col = c_text();
       } else {
-        snprintf(out, cap, "—");
+        snprintf(out, cap, "-");
         *sub = "not attached";
       }
       break;
@@ -444,7 +444,7 @@ void card_value(int st, const PgState& g, char* out, size_t cap,
         snprintf(out, cap, "> range");
         *sub = "ranging";
       } else {
-        snprintf(out, cap, "—");
+        snprintf(out, cap, "-");
         *sub = "not attached";
       }
       break;
@@ -456,17 +456,17 @@ void card_value(int st, const PgState& g, char* out, size_t cap,
         *sub = pad_preset_name(g.pad.preset);
         *col = n ? c_ok() : c_text();
       } else {
-        snprintf(out, cap, "—");
+        snprintf(out, cap, "-");
         *sub = "not attached";
       }
       break;
     case ST_RS485:
       if (g.rs485.last_ok) {
         snprintf(out, cap, "%u", (unsigned)g.rs485.last_val);
-        *sub = "reg0 · slave 1";
+        *sub = "reg0 • slave 1";
         *col = c_ok();
       } else {
-        snprintf(out, cap, "%s", g.rs485.polls ? "?" : "—");
+        snprintf(out, cap, "%s", g.rs485.polls ? "?" : "-");
         *sub = g.rs485.polls ? "no reply" : "tap to probe";
         *col = g.rs485.polls ? c_warn() : c_text();
       }
@@ -477,8 +477,8 @@ void card_value(int st, const PgState& g, char* out, size_t cap,
         *sub = "frames in";
         *col = c_ok();
       } else {
-        snprintf(out, cap, "%s", g.can.tx ? "tx" : "—");
-        *sub = g.can.tx ? "sent · listening" : "tap to send";
+        snprintf(out, cap, "%s", g.can.tx ? "tx" : "-");
+        *sub = g.can.tx ? "sent • listening" : "tap to send";
         *col = g.can.tx ? c_warn() : c_text();
       }
       break;
@@ -511,13 +511,13 @@ void playground_ui_create() {
   // Header.
   lv_obj_t* title = mk_label(s_scr, &lv_font_montserrat_20, c_text(),
 #if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE && !(defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND)
-                             "DEV MODE  ·  hold 3s to exit");
+                             "DEV MODE  •  hold 3s to exit");
 #else
                              "DEV PLAYGROUND");
 #endif
   lv_obj_set_pos(title, 10, 8);
   s_hdr_status = mk_label(s_scr, &lv_font_montserrat_14, c_muted(),
-                          "bench mode · no network · " BOARD_NAME);
+                          "bench mode • no network • " BOARD_NAME);
   lv_obj_align(s_hdr_status, LV_ALIGN_TOP_RIGHT, -10, 12);
 
   // Pin tracker panel.
@@ -525,7 +525,7 @@ void playground_ui_create() {
   lv_obj_set_pos(track, 4, HDR_H + 4);
   lv_obj_set_size(track, TRACK_W, H - HDR_H - 10);
   lv_obj_t* th = mk_label(track, &lv_font_montserrat_14, c_faint(),
-                          "PIN TRACKER — used " LV_SYMBOL_OK "  open "
+                          "PIN TRACKER - used " LV_SYMBOL_OK "  open "
                           LV_SYMBOL_MINUS "  check " LV_SYMBOL_WARNING);
   lv_obj_set_pos(th, 2, 0);
   for (int r = 0; r < ROW_COUNT; r++) {
@@ -551,10 +551,10 @@ void playground_ui_create() {
     s_card_rect[i] = {x, y, CARD_W, CARD_H};
 
     char t[40];
-    snprintf(t, sizeof(t), "%s · %s", META[i].title, META[i].where);
+    snprintf(t, sizeof(t), "%s • %s", META[i].title, META[i].where);
     lv_obj_t* tl = mk_label(s_card[i], &lv_font_montserrat_14, c_muted(), t);
     lv_obj_align(tl, LV_ALIGN_TOP_LEFT, 0, 0);
-    s_card_val[i] = mk_label(s_card[i], &lv_font_montserrat_28, c_text(), "—");
+    s_card_val[i] = mk_label(s_card[i], &lv_font_montserrat_28, c_text(), "-");
     lv_obj_align(s_card_val[i], LV_ALIGN_LEFT_MID, 0, 8);
     s_card_sub[i] = mk_label(s_card[i], &lv_font_montserrat_12, c_faint(), "");
     lv_obj_align(s_card_sub[i], LV_ALIGN_BOTTOM_LEFT, 0, 0);

@@ -553,6 +553,28 @@ fi
 
 echo ""
 
+# ── Check: on-glass text stays inside the display font's alphabet ──
+echo "── Display: font glyph range ──"
+
+# LVGL's built-in Montserrat covers 0x20-0x7F, 0xB0, U+2022 and the
+# FontAwesome symbols — nothing else. An out-of-range codepoint draws a
+# hollow box with no build error, which is how a middle dot shipped and
+# every date line on the glass read "Sunday [] Aug 9". The check runs in
+# firmware.yml too; having it here means you see it before you push.
+GLYPH_CHECK="$SCRIPT_DIR/check_display_glyphs.py"
+if [ -f "$GLYPH_CHECK" ]; then
+  if python3 "$GLYPH_CHECK" >/dev/null 2>&1; then
+    check_pass "on-glass text stays inside the font's glyph range"
+  else
+    check_fail "on-glass text uses characters the display font cannot draw"
+    python3 "$GLYPH_CHECK" 2>&1 | sed 's/^/    /' || true
+  fi
+else
+  check_warn "check_display_glyphs.py missing — glyph range unchecked"
+fi
+
+echo ""
+
 # ── Check: LESSONS_LEARNED.md exists ──────────────────────────
 echo "── Documentation: Lessons Learned ──"
 
