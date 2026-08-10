@@ -7,7 +7,7 @@
  },
  "pricing": {
   "source": "docs/hardware/pricing.json",
-  "as_of": "2026-08-09T09:54:10Z",
+  "as_of": "2026-08-10T10:35:41Z",
   "note": "Nightly distributor snapshot (scripts/bom_pricing.py); rows without a live match keep the CSV's indicative price."
  },
  "devices": {
@@ -500,7 +500,7 @@
     "full_usd": 101.98,
     "required_usd_live": 27.9,
     "full_usd_live": 116.49,
-    "pricing_as_of": "2026-08-09T09:54:10Z",
+    "pricing_as_of": "2026-08-10T10:35:41Z",
     "recipes": [
      {
       "label": "Required-only",
@@ -869,7 +869,7 @@
     "full_usd": 80.15,
     "required_usd_live": 29.49,
     "full_usd_live": 91.83,
-    "pricing_as_of": "2026-08-09T09:54:10Z",
+    "pricing_as_of": "2026-08-10T10:35:41Z",
     "recipes": [
      {
       "label": "Required-only",
@@ -1028,7 +1028,7 @@
     "full_usd": 40.0,
     "required_usd_live": 36.4,
     "full_usd_live": 41.96,
-    "pricing_as_of": "2026-08-09T09:54:10Z",
+    "pricing_as_of": "2026-08-10T10:35:41Z",
     "recipes": [
      {
       "label": "Required-only",
@@ -1162,7 +1162,7 @@
     "full_usd": 41.94,
     "required_usd_live": 34.99,
     "full_usd_live": 44.14,
-    "pricing_as_of": "2026-08-09T09:54:10Z"
+    "pricing_as_of": "2026-08-10T10:35:41Z"
    }
   },
   "canary-display-dash": {
@@ -1258,7 +1258,7 @@
     "full_usd": 45.5,
     "required_usd_live": 42.5,
     "full_usd_live": 45.5,
-    "pricing_as_of": "2026-08-09T09:54:10Z"
+    "pricing_as_of": "2026-08-10T10:35:41Z"
    }
   }
  }
