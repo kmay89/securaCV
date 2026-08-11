@@ -2,7 +2,7 @@
   "generated_by": "scripts/gen_board_design.py",
   "board": "canary-witness-s3",
   "confidence": "idea",
-  "pricing_as_of": "2026-08-10T10:35:41Z",
+  "pricing_as_of": "2026-08-11T10:09:34Z",
   "qty_basis": 1000,
   "carrier": {
     "parts_usd": 9.6795,
@@ -182,7 +182,7 @@
   },
   "module_build_replaced": {
     "csv": "bom_canary_wap.csv",
-    "unit_usd": 16.2576,
+    "unit_usd": 16.2542,
     "lines": [
       {
         "ref": "U1",
@@ -248,8 +248,8 @@
         "ref": "C1",
         "mpn": "CL21B104KBCNNNC",
         "qty": 1,
-        "unit_usd": 0.019,
-        "ext_usd": 0.019,
+        "unit_usd": 0.0156,
+        "ext_usd": 0.0156,
         "provenance": "digikey",
         "verified": true,
         "price_at_qty": 500,
@@ -297,7 +297,7 @@
   "contested_upside": {
     "note": "Excluded from saving_per_unit_usd on purpose. Each line is a part the carrier's design choice removes, where this repo's own sources disagree about whether the module build needed it. Settle them on a bench, then move them into `absorbs` or drop them — do not let them drift into the headline unresolved.",
     "usd_per_unit": 2.2,
-    "saving_if_all_upheld_usd": 6.7781,
+    "saving_if_all_upheld_usd": 6.7747,
     "lines": [
       {
         "ref": "ANT1",
@@ -312,7 +312,7 @@
     ]
   },
   "delta": {
-    "saving_per_unit_usd": 4.5781,
+    "saving_per_unit_usd": 4.5747,
     "nre_usd": 154.0,
     "nre_breakdown": {
       "design_usd": 0.0,
@@ -326,7 +326,7 @@
   "decision": {
     "state": "UNRESOLVED",
     "why": "102010469 is priced at $15.90 at qty 1 (digikey), which cannot answer a 1000-unit question: that is a catalog price for one piece, not the price we would pay. Add a quote at qty 1000 to board.json `volume_quotes` and this becomes GO or STOP automatically.",
-    "crossover_unit_usd": 11.3219,
+    "crossover_unit_usd": 11.3253,
     "depends_on_mpn": "102010469",
     "how_to_resolve": "Cheapest first: (1) set MOUSER_API_KEY as an Actions secret — the nightly bom-pricing job then fetches Mouser's published breaks for a SKU it already resolves, and if those reach the basis volume the question answers itself with no human in the loop; (2) failing that, ask Seeed directly (they sell the XIAO and quote volume readily) for 100/500/1000 pricing on 102010469; (3) Digi-Key/Mouser will both quote a volume price on request even when they publish none. Any of the three lands as one row above."
   },
@@ -335,15 +335,15 @@
     "dominant_replaced_mpn": "102010469",
     "modeled_unit_usd": 15.9,
     "modeled_at_qty": 1,
-    "crossover_unit_usd": 11.3219,
-    "verdict": "The carrier is cheaper while 102010469 costs more than $11.32/unit. It is modeled at $15.90 at qty 1. This is the number to re-check against a real volume quote before committing NRE — it needs no estimate to compute, only the price of one part."
+    "crossover_unit_usd": 11.3253,
+    "verdict": "The carrier is cheaper while 102010469 costs more than $11.33/unit. It is modeled at $15.90 at qty 1. This is the number to re-check against a real volume quote before committing NRE — it needs no estimate to compute, only the price of one part."
   },
   "confidence_accounting": {
     "note": "Share of the compared dollars that a distributor actually resolved this snapshot, versus a human's stated estimate. Read the saving with this number next to it.",
-    "priced_usd": 25.9371,
-    "distributor_verified_usd": 16.2771,
+    "priced_usd": 25.9337,
+    "distributor_verified_usd": 16.2737,
     "estimated_usd": 9.66,
-    "verified_share": 0.6276,
+    "verified_share": 0.6275,
     "unverified_mpns": [
       "AP2112K-3.3TRG1",
       "DM3AT-SF-PEJM5",
@@ -361,7 +361,7 @@
     ],
     "volume_mismatch": {
       "note": "Lines the snapshot could only price below the 1000-unit basis. On the replaced side this OVERSTATES the saving (we credit ourselves a low-volume price for a part we are dropping); on the carrier side it understates it. Any line here is a volume quote waiting to be got.",
-      "replaced_side_overstates_by_at_most_usd": 16.209,
+      "replaced_side_overstates_by_at_most_usd": 16.2056,
       "replaced_side_mpns": [
         "102010469",
         "1N4148",
