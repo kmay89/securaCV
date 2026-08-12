@@ -793,11 +793,21 @@ static void handle_touch(uint32_t now) {
     }
 #endif
 #ifdef CD_NIGHTSTAND7
-    // Bedside tap grammar: the face gets first refusal (summon the lantern
-    // from its corner after dark; walk the scene ring while it's lit). A
-    // tap it doesn't claim is just the wake it already was.
+    // Bedside tap grammar: the face gets first refusal (open settings from
+    // the gear corner by day; summon the lantern from its corner after
+    // dark; walk the scene ring while it's lit). A tap it doesn't claim is
+    // just the wake it already was.
     if (g_display_ok && !dash_is_portrait() &&
         canary::ui::nightstand7_ui_handle_tap(g_touch_x, g_touch_y, now)) {
+      fleet.mark_dirty();
+      return;
+    }
+#endif
+#ifdef CD_FLAVOR_DASH
+    // The portrait column's own tap grammar (the settings gear), shared by
+    // both 7" personalities. A tap it doesn't claim stays the wake it was.
+    if (was_awake && g_display_ok && dash_is_portrait() &&
+        canary::ui::portrait7_ui_handle_tap(g_touch_x, g_touch_y)) {
       fleet.mark_dirty();
       return;
     }
@@ -857,6 +867,28 @@ static void render(uint32_t now) {
   // point, so the light Almanac can never glow in a bedroom. Set before
   // anything below reads a col_* accessor.
   canary::ui::character_set_night(night);
+  // Settings changed from OFF the glass (the phone's /api/set) land in the
+  // blob only — the web handler keeps the mailbox discipline and never
+  // touches LVGL from a request. This is where they take effect, on the
+  // loop task, through the exact same paths an on-glass tap uses.
+  {
+    const auto& gs = canary::glass::settings();
+    const auto want_char = (canary::ui::Character)gs.character;
+    if (want_char != canary::ui::active_character()) {
+      // The flip tracker below sees the change and rebuilds the face.
+      canary::ui::character_apply(want_char);
+    }
+#ifdef CD_FLAVOR_DASH
+    static uint8_t s_applied_rot = canary::glass::settings().rotation;
+    if (gs.rotation != s_applied_rot) {
+      s_applied_rot = gs.rotation;
+      canary::ui::lvgl_port_set_rotation(gs.rotation);
+      // A landscape<->portrait turn also flips the face via orient_changed
+      // below; a 180° flip re-renders in place, exactly like the on-glass
+      // orientation editor.
+    }
+#endif
+  }
   // A live screen wears the ground that was true when it was BUILT; when
   // the effective ground flips — quiet hours begin/end, or a new
   // Character was picked — rebuild the face in place so the floor
@@ -875,11 +907,18 @@ static void render(uint32_t now) {
     // a Settings rotation to/from portrait swaps the poster for the column.
     static bool s_ground_portrait = dash_is_portrait();
     const bool orient_changed = (dash_is_portrait() != s_ground_portrait);
+    // And the clock style is the fourth: the hero is BUILT per style
+    // (segment geometry vs the Analog dial), so a flip rebuilds the face.
+    static uint8_t s_ground_clock = canary::glass::settings().clock_style;
+    const bool clock_changed =
+        (canary::glass::settings().clock_style != s_ground_clock);
 #else
     const bool orient_changed = false;
+    const bool clock_changed = false;
 #endif
     if ((canary::ui::character_night() != s_ground_night ||
-         canary::ui::active_character() != s_ground_char || orient_changed) &&
+         canary::ui::active_character() != s_ground_char || orient_changed ||
+         clock_changed) &&
         !canary::ui::settings_ui_active() &&
         !canary::ui::commission_ui_active() &&
         !canary::ui::pair_demo_ui_active()) {
@@ -887,6 +926,7 @@ static void render(uint32_t now) {
       s_ground_char = canary::ui::active_character();
 #ifdef CD_FLAVOR_DASH
       s_ground_portrait = dash_is_portrait();
+      s_ground_clock = canary::glass::settings().clock_style;
 #endif
       lv_obj_clean(lv_scr_act());
 #ifdef CD_FLAVOR_WATCH

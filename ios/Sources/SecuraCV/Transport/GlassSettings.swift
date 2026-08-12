@@ -73,6 +73,18 @@ struct GlassSettings: Sendable, Equatable {
     var brightPct = 100
     var brightMinPct = 50        // the floor the glass sets; darker is Night's job
 
+    // Served only by the dash-family glass (the 4.3" and 7" panels): the
+    // curated Character ring (face + colors) and the clock-face ring, BY
+    // NAME — the device describes its own catalog exactly like the lamp
+    // scenes below, so a new look ships to the phone with no app update.
+    // These used to be on-glass-only settings; owning a 7" display and
+    // being unable to change its face from the phone was the gap.
+    var hasLook = false
+    var character = 0
+    var characterNames: [String] = []
+    var clockStyle = 0
+    var clockStyleNames: [String] = []
+
     // Served by displays with a lamp (the nightlight today).
     var hasLamp = false
     var lampScene = 0
@@ -117,6 +129,14 @@ enum GlassAPI {
         // The rendered-dim block: present only on glass that dims by scrim.
         if let v = obj["bright_pct"] as? Int { s.brightPct = v; s.hasRenderedDim = true }
         if let v = obj["bright_min_pct"] as? Int { s.brightMinPct = v }
+        // The look block: the tell is the device's own catalog of names.
+        if let v = obj["character"] as? Int { s.character = v }
+        if let v = obj["characters"] as? [String], !v.isEmpty {
+            s.characterNames = v
+            s.hasLook = true
+        }
+        if let v = obj["clock_style"] as? Int { s.clockStyle = v }
+        if let v = obj["clock_styles"] as? [String] { s.clockStyleNames = v }
         // The lamp block is the tell: a display without one simply doesn't
         // send these, and the app then offers no lamp controls rather than
         // offering ones that would fail.
@@ -170,8 +190,35 @@ enum GlassAPI {
             : GlassKnob(key: "day_pct", title: "Daytime brightness",
                         blurb: "How bright the glass is during the day.",
                         kind: .percent(min: 20, max: 100), value: s.dayPct)
-        var out: [GlassKnob] = [
-            brightness,
+        var out: [GlassKnob] = [brightness]
+        if s.hasLook {
+            // The look ring, by the device's own names — same catalog the
+            // on-glass flip-through walks, so phone and panel can never
+            // disagree about what a look is called.
+            out.append(GlassKnob(
+                key: "character", title: "Face & colors",
+                blurb: "The glass's curated look ring — ground, colors, type and the "
+                     + "bird's temperament travel together as one named style. Alarms "
+                     + "keep their own colors in every look, and night still outranks "
+                     + "the style.",
+                kind: .choice(labels: s.characterNames), value: s.character))
+            if !s.clockStyleNames.isEmpty {
+                out.append(GlassKnob(
+                    key: "clock_style", title: "Clock face",
+                    blurb: "How the time is drawn — the segment family or the analog "
+                         + "dial. A face changes the drawing, never the message: the "
+                         + "honesty lines and night behavior are unchanged.",
+                    kind: .choice(labels: s.clockStyleNames), value: s.clockStyle))
+            }
+            out.append(GlassKnob(
+                key: "orientation", title: "Orientation",
+                blurb: "How the glass is turned. Portrait swaps the wall poster for "
+                     + "the tall column face.",
+                kind: .choice(labels: ["Landscape", "Portrait",
+                                       "Landscape flipped", "Portrait flipped"]),
+                value: s.orientation))
+        }
+        out.append(contentsOf: [
             GlassKnob(key: "night_screen", title: "At night",
                       blurb: "A glow keeps the face readable in the dark; off blanks it until you look.",
                       kind: .choice(labels: ["Keep a glow", "Go dark"]), value: s.nightScreen),
@@ -189,7 +236,7 @@ enum GlassAPI {
                       blurb: "How long the face stays lit when you glance at it in the dark.",
                       kind: .choice(labels: ["3 seconds", "5 seconds", "10 seconds"]),
                       value: s.peekSeconds == 3 ? 0 : (s.peekSeconds == 10 ? 2 : 1)),
-        ]
+        ])
         guard s.hasLamp else { return out }
         out.append(contentsOf: [
             GlassKnob(key: "lamp_pct", title: "Lamp brightness",

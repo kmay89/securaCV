@@ -85,8 +85,9 @@ final class GlassSettingsTests: XCTestCase {
             "lamp_scene", "lamp_auto", "lamp_pct", "lamp_hue", "lamp_minutes",
             "clock_12h", "orientation", "auto_rotate",
             // Served and accepted only by glass that dims by scrim — see
-            // the CD_FLAVOR_DASH block in handle_settings_set.
-            "bright_pct",
+            // the CD_FLAVOR_DASH block in handle_settings_set — which is
+            // also the glass that serves the look ring and the clock ring.
+            "bright_pct", "character", "clock_style",
         ]
         var s = GlassSettings()
         s.hasLamp = true
@@ -95,13 +96,59 @@ final class GlassSettingsTests: XCTestCase {
                           "the app offers “\(knob.key)”, which the glass's settings engine would reject")
         }
         // And the same for the other kind of glass, whose brightness knob is
-        // a different key entirely.
+        // a different key entirely — and which carries the look ring.
         var scrim = GlassSettings()
         scrim.hasRenderedDim = true
+        scrim.hasLook = true
+        scrim.characterNames = ["Quiet Glass"]
+        scrim.clockStyleNames = ["Segment"]
         for knob in GlassAPI.knobs(for: scrim) {
             XCTAssertTrue(accepted.contains(knob.key),
                           "the app offers “\(knob.key)”, which the glass's settings engine would reject")
         }
+    }
+
+    // MARK: - the look ring mirrors the on-glass settings
+
+    /// The 7" gap, pinned from the other side: `character` (the face/color
+    /// ring) and `clock_style` were on-glass-only, so the app could not
+    /// change a display's face. The device now serves both BY NAME and the
+    /// app renders its catalog — never a hard-coded list.
+    func testGlassThatServesALookRingGetsFaceAndClockKnobs() {
+        var s = GlassSettings()
+        s.hasLook = true
+        s.character = 2
+        s.characterNames = ["Quiet Glass", "Heirloom", "Aqua"]
+        s.clockStyle = 1
+        s.clockStyleNames = ["Segment", "Slab", "Hairline", "Analog"]
+        s.orientation = 1
+        let byKey = Dictionary(uniqueKeysWithValues: GlassAPI.knobs(for: s).map { ($0.key, $0) })
+
+        guard case .choice(let faces)? = byKey["character"]?.kind else {
+            return XCTFail("character should be a choice")
+        }
+        XCTAssertEqual(faces, s.characterNames,
+                       "the labels are the device's own names, not the app's guesses")
+        XCTAssertEqual(byKey["character"]?.value, 2)
+
+        guard case .choice(let clocks)? = byKey["clock_style"]?.kind else {
+            return XCTFail("clock_style should be a choice")
+        }
+        XCTAssertEqual(clocks, s.clockStyleNames)
+        XCTAssertEqual(byKey["clock_style"]?.value, 1)
+
+        // The dash glass also mirrors its orientation editor.
+        XCTAssertEqual(byKey["orientation"]?.value, 1)
+    }
+
+    func testGlassWithoutALookRingOffersNoLookKnobs() {
+        // A Watch Station or a nightlight never serves `characters`; the
+        // knobs would be taps that 400. Same rule as the lamp block.
+        var s = GlassSettings()
+        s.hasLamp = true
+        let keys = GlassAPI.knobs(for: s).map(\.key)
+        XCTAssertFalse(keys.contains("character"))
+        XCTAssertFalse(keys.contains("clock_style"))
     }
 
     // MARK: - one brightness control, and it is the one that works

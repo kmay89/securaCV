@@ -123,6 +123,10 @@ generate_shared() {
     "${FIRMWARE_ROOT}/common/boot/boot_banner.cpp"
     "${FIRMWARE_ROOT}/common/identity/device_pseudonym.h"
     "${FIRMWARE_ROOT}/common/core/feature_sanity.h"
+    # The fleet-figure ledger ids + the pre-triangulated glyph art the roll
+    # call / fleet strip draw beside each witness (ui/fleet_figure.cpp).
+    "${FIRMWARE_ROOT}/common/core/fleet_figures.h"
+    "${FIRMWARE_ROOT}/common/core/fleet_figures_art.h"
     "${FIRMWARE_ROOT}/common/ota/src/securacv_ota.h"
     "${FIRMWARE_ROOT}/common/ota/src/securacv_ota.cpp"
     "${FIRMWARE_ROOT}/common/ota/src/ota_release_key.h"

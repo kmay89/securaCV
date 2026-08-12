@@ -14,6 +14,7 @@
 #include "canary/net/mirror_html.h"
 #include "canary/net/tv_html.h"
 #include "canary/ui/character.h"
+#include "canary/ui/clock_styles.h"
 #include "canary/glass_settings.h"
 #include "canary/runtime_config.h"
 #include "canary/version.h"
@@ -194,7 +195,7 @@ void handle_settings_get() {
   const auto& gs = canary::glass::settings();
   char tz[48];
   canary::net::tz_current(tz, sizeof(tz));
-  char body[768];
+  char body[1152];
   size_t o = (size_t)snprintf(
       body, sizeof(body),
       "{\"day_pct\":%u,\"night_screen\":%u,\"red_shift\":%u,"
@@ -236,6 +237,34 @@ void handle_settings_get() {
       body + o, sizeof(body) - o,
       ",\"bright_pct\":%u,\"bright_min_pct\":%u",
       gs.bright_pct, canary::glass::BRIGHT_PCT_MIN);
+  // THE LOOK OF THE GLASS, FROM THE PHONE. The Character (the curated
+  // face/color ring) and the clock style were on-glass-only settings; the
+  // app the owner actually holds could not change either. Served BY NAME —
+  // the device describes, the app renders (the same contract the nightlight
+  // scene catalog keeps) — so a new Character or clock face shows up on the
+  // phone with no app update. `orientation` mirrors the on-glass editor for
+  // the same reason; it shares the nightlight's key on purpose (one word,
+  // one meaning, and the two flavors never serve it twice).
+  o += (size_t)snprintf(
+      body + o, sizeof(body) - o,
+      ",\"orientation\":%u,\"character\":%u,\"clock_style\":%u,"
+      "\"characters\":[",
+      gs.rotation, gs.character, gs.clock_style);
+  for (uint8_t i = 0; i < canary::ui::character_count() && o < sizeof(body);
+       i++) {
+    o += (size_t)snprintf(
+        body + o, sizeof(body) - o, "%s\"%s\"", i ? "," : "",
+        canary::ui::character_name((canary::ui::Character)i));
+  }
+  if (o < sizeof(body))
+    o += (size_t)snprintf(body + o, sizeof(body) - o, "],\"clock_styles\":[");
+  for (uint8_t i = 0; i < canary::ui::clock_style_count() && o < sizeof(body);
+       i++) {
+    o += (size_t)snprintf(body + o, sizeof(body) - o, "%s\"%s\"",
+                          i ? "," : "", canary::ui::clock_style_name(i));
+  }
+  if (o < sizeof(body))
+    o += (size_t)snprintf(body + o, sizeof(body) - o, "]");
 #endif
 #ifdef CD_NIGHTLIGHT
   // The nightlight's own knobs, plus the scene catalog BY NAME — the app
@@ -297,6 +326,17 @@ void handle_settings_set() {
   // thumb's granularity, not the setting's, so a slider is free to send 63.
   else if (k == "bright_pct" && v >= 0 && v <= 100)
     gs.bright_pct = canary::glass::bright_pct_clamp((int)v);
+  // The look knobs (see handle_settings_get). Stored and nothing more — the
+  // render loop applies a Character/clock/rotation change on the loop task
+  // through the exact paths an on-glass tap uses (character_apply + the
+  // ground-flip rebuild; lvgl_port rotation). A web handler never touches
+  // LVGL from inside a request — the same mailbox discipline as bright_pct.
+  else if (k == "character" && v >= 0 && v < canary::ui::character_count())
+    gs.character = (uint8_t)v;
+  else if (k == "clock_style" && v >= 0 && v < canary::ui::clock_style_count())
+    gs.clock_style = (uint8_t)v;
+  else if (k == "orientation" && v >= 0 && v <= 3)
+    gs.rotation = (uint8_t)v;
 #endif
   // Two stored modes only (glow / off) — what "off" does on tap (peek vs
   // wake) is per-flavor behavior, not a third value (review catch: a 2

@@ -368,6 +368,26 @@ everything else on these boards):
   same retained blob (`display_nightstand.md` § Optional fields), visual-only by rule.
 - **A Rainbow scene** in the look engine (10 now, not 9).
 
+**Landed in the clock-face wave** (the 7" touch-and-settings pass):
+
+- **A settings doorway on the 7" faces.** The bedside face and the portrait column carry a
+  quiet `⚙ settings` corner (day only — after dark the corner grammar belongs to the lantern
+  and the wake tap). Before this, the Nightstand 7 compiled out the wall dashboard's only
+  doorway (the transparency-sheet gear), so the shared settings surface existed on the build
+  but no touch path reached it: the glass read as touch-dead.
+- **The clock-face ring** (`ui/clock_styles.h`, `Settings.clock_style`, blob v4): four named,
+  curated faces — Segment / Slab / Hairline / the drawn Analog dial (`ui/clock_face.cpp`) —
+  flip-through picker on the settings sheet, same design law as the Character ring. A face
+  changes the drawing, never the message; night still outranks everything.
+- **The look, from the phone.** `/api/settings` on the dash family now serves `character`,
+  `clock_style` and `orientation` (with the Character and clock catalogs BY NAME), and
+  `/api/set` accepts them — applied on the loop task through the same paths an on-glass tap
+  uses. The iPhone/iPad settings sheet renders the device's own catalog (GlassSettings).
+- **Figures on the glass** (FLEET_FIGURES.md §10, closed): the fleet strip, the portrait
+  witness list and the wall dashboard's roll call draw each witness's own generated figure
+  (`ui/fleet_figure.cpp` over `common/core/fleet_figures_art.h`) beside its severity dot and
+  name — an unresolvable wire type keeps a hidden fixed-size slot, never a guessed product.
+
 **Still staged (honestly deferred, needs a toolchain the CI container lacks or a follow-up):**
 - **A WASM twin for the Nightstand 7.** It shares the 7" glass with dash7 but not its face, so
   the dash7 twin would misrepresent it — the flasher catalog therefore ships the product with

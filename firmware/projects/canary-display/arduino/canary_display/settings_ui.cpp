@@ -43,6 +43,7 @@
 #include "commission_ui.h"
 #include "theme.h"
 #include "character.h"
+#include "clock_styles.h"
 #include "glass_settings.h"
 #include "display.h"
 #include "pins.h"                    // HAS_ISOLATED_IO (board -I path)
@@ -90,6 +91,7 @@ enum class Page {
 #ifdef CD_FLAVOR_DASH
   EditDisplay,  // orientation: landscape / portrait / their flips (live)
   EditBright,   // rendered daytime brightness (binary-backlight glass)
+  EditClock,    // the clock-face ring (segment family / Analog dial)
   EditFirmware, // installed version + signed OTA (check / install / auto)
 #endif
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
@@ -120,7 +122,7 @@ enum : int {
   IT_ROW_DAY, IT_ROW_NIGHT, IT_ROW_HOURS, IT_ROW_LOOK, IT_ROW_SCREEN,
   IT_ROW_STYLE, IT_ROW_CAL, IT_ROW_RESET, IT_ROW_ADD,
 #ifdef CD_FLAVOR_DASH
-  IT_ROW_DISPLAY, IT_ROW_BRIGHT, IT_ROW_FW,
+  IT_ROW_DISPLAY, IT_ROW_BRIGHT, IT_ROW_FW, IT_ROW_CLOCK,
   IT_ROT_0, IT_ROT_90, IT_ROT_180, IT_ROT_270,   // orientation options
   IT_ROW_FW_AUTO,                                 // auto-update toggle
 #endif
@@ -152,11 +154,11 @@ Page s_page = Page::Root;
 // objects (name+value), plus the board's siren or mic row. The sizes below
 // clear that with margin so add_item never silently drops a hit zone.
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
-Item s_items[24];
+Item s_items[26];
 #elif defined(CD_SET_MIC)
-Item s_items[22];
+Item s_items[24];
 #else
-Item s_items[20];
+Item s_items[22];
 #endif
 int s_item_n = 0;
 bool s_owns_backlight = false;
@@ -379,6 +381,12 @@ void build_root() {
   mk_row(y, "style", character_name(active_character()), IT_ROW_STYLE);
   y += step;
 #ifdef CD_FLAVOR_DASH
+  // The clock-face ring (drawn-clock glass only): segment family + the
+  // Analog dial, curated and named like the Character ring.
+  mk_row(y, "clock", clock_style_name(settings().clock_style), IT_ROW_CLOCK);
+  y += step;
+#endif
+#ifdef CD_FLAVOR_DASH
   // The 7"/dash RGB glass: how it's turned, how bright it sits, and what it's
   // running. Weekly-or-rarer, so they land on the root one tap from an editor
   // (Zero Layer) — never behind an "Advanced" door.
@@ -561,6 +569,41 @@ void build_edit_bright() {
   mk_stepper();
   // Dim to the current setting right now, so the hero and the glass agree.
   lvgl_port_set_dim(bright_scrim_opa(settings().bright_pct));
+}
+
+// The clock-face picker: a flip-through on the same ring idiom as the
+// Character picker — every stop is a validated face, flipping IS choosing.
+// The hero digits live UNDER this sheet, so the caption says when the new
+// face shows; the ground-flip tracker in main.cpp rebuilds the face the
+// moment the sheet closes.
+void build_edit_clock() {
+  mk_back("clock");
+  const uint8_t cur = settings().clock_style;
+  lv_obj_t* name = mk_label(s_host, font_title(), col_text());
+  lv_label_set_text(name, clock_style_name(cur));
+  lv_obj_align(name, LV_ALIGN_CENTER, 0, -30);
+  lv_obj_t* cap = mk_label(s_host, font_caption(), col_muted());
+  lv_label_set_text(cap, clock_style_caption(cur));
+  lv_obj_align(cap, LV_ALIGN_CENTER, 0, 2);
+  char dots[2 * 8 + 4];
+  int n = 0;
+  for (uint8_t i = 0; i < clock_style_count() && n < (int)sizeof(dots) - 4; i++)
+    n += snprintf(dots + n, sizeof(dots) - n, "%s%s", i ? " " : "",
+                  i == cur ? "\xE2\x80\xA2" : "o");
+  lv_obj_t* ring = mk_label(s_host, font_body(), col_accent());
+  lv_label_set_text(ring, dots);
+  lv_obj_align(ring, LV_ALIGN_CENTER, 0, 34);
+  lv_obj_t* note = mk_label(s_host, font_caption(), col_faint());
+  lv_label_set_text(note, "the face wears it when you leave settings");
+  lv_obj_align(note, LV_ALIGN_CENTER, 0, 62);
+  lv_obj_t* l = mk_label(s_host, font_title(), col_text());
+  lv_label_set_text(l, LV_SYMBOL_LEFT);
+  lv_obj_t* r = mk_label(s_host, font_title(), col_text());
+  lv_label_set_text(r, LV_SYMBOL_RIGHT);
+  lv_obj_align(l, LV_ALIGN_BOTTOM_LEFT, 72, -40);
+  lv_obj_align(r, LV_ALIGN_BOTTOM_RIGHT, -72, -40);
+  add_item(l, IT_MINUS);
+  add_item(r, IT_PLUS);
 }
 
 // Firmware: the version this glass is running, and the one signed-and-
@@ -928,6 +971,7 @@ void build(Page pg) {
 #ifdef CD_FLAVOR_DASH
     case Page::EditDisplay:  build_edit_display(); break;
     case Page::EditBright:   build_edit_bright(); break;
+    case Page::EditClock:    build_edit_clock(); break;
     case Page::EditFirmware: build_edit_firmware(); break;
 #endif
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
@@ -1042,6 +1086,7 @@ void dispatch(int id) {
 #ifdef CD_FLAVOR_DASH
         case IT_ROW_DISPLAY: build(Page::EditDisplay); return;
         case IT_ROW_BRIGHT:  build(Page::EditBright); return;
+        case IT_ROW_CLOCK:   build(Page::EditClock); return;
         case IT_ROW_FW:      build(Page::EditFirmware); return;
 #endif
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
@@ -1130,6 +1175,21 @@ void dispatch(int id) {
       if (id == IT_BACK) { build(Page::Root); return; }
       if (id == IT_MINUS) step_value(-1);
       if (id == IT_PLUS) step_value(+1);
+      return;
+
+    case Page::EditClock:
+      if (id == IT_BACK) { build(Page::Root); return; }
+      if (id == IT_MINUS || id == IT_PLUS) {
+        // Landing IS choosing: persist on every flip. The face itself
+        // rebuilds when the sheet closes (main.cpp's ground-flip tracker) —
+        // the hero lives under this sheet, so there is nothing to preview
+        // here beyond the name and its caption.
+        Settings& gs = settings_mut();
+        gs.clock_style =
+            clock_style_step(gs.clock_style, id == IT_PLUS ? +1 : -1);
+        settings_mark_dirty();
+        build(Page::EditClock);
+      }
       return;
 
     case Page::EditFirmware:

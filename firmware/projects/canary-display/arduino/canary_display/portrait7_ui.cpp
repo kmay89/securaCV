@@ -19,6 +19,12 @@
 #include "theme.h"
 #include "canary_mark.h"
 #include "character.h"
+#include "clock_styles.h"
+#include "clock_face.h"
+#include "fleet_figure.h"
+#include "settings_ui.h"
+#include "glass_settings.h"
+#include "fleet_figures.h"
 #ifdef CD_NIGHTSTAND7
 // The bedside column borrows the same hub weather + comfort source the
 // landscape bedside face uses (nightstand7_ui.cpp). Only the Nightstand 7
@@ -82,12 +88,16 @@ lv_obj_t* mk_digit(lv_obj_t* parent, SegDigit* d, int x, int y, int w, int h,
 
 void set_digit(SegDigit* d, int value, lv_color_t color, bool night) {
   const uint8_t map = (value >= 0 && value <= 9) ? DIGIT_MAP[value] : 0;
+  const bool ghost_day =
+      seg_style(canary::glass::settings().clock_style).ghost_day;
   for (int i = 0; i < 7; i++) {
     if (!d->seg[i]) continue;
     lv_obj_set_style_bg_color(d->seg[i], color, 0);
     const bool lit = (map >> i) & 1;
     lv_obj_set_style_bg_opa(
-        d->seg[i], lit ? LV_OPA_COVER : (night ? LV_OPA_0 : LV_OPA_10), 0);
+        d->seg[i],
+        lit ? LV_OPA_COVER
+            : ((night || !ghost_day) ? LV_OPA_0 : LV_OPA_10), 0);
   }
 }
 
@@ -116,10 +126,14 @@ lv_obj_t* s_date = nullptr;
 lv_obj_t* s_state = nullptr;     // one-word household state, in its own hue
 lv_obj_t* s_link = nullptr;      // link/health line under the state
 lv_obj_t* s_bird = nullptr;
+lv_obj_t* s_fig[ROWS] = {nullptr};   // the witness's figure (fleet ledger)
 lv_obj_t* s_dot[ROWS] = {nullptr};
 lv_obj_t* s_name[ROWS] = {nullptr};
 lv_obj_t* s_word[ROWS] = {nullptr};
 lv_obj_t* s_glance = nullptr;
+lv_obj_t* s_gear = nullptr;          // settings doorway, top-right by day
+constexpr int ROW_FIG = 28;          // fixed figure slot per witness row
+AnalogClock s_analog;                // ClockStyle::Analog dial (else null)
 #ifdef CD_NIGHTSTAND7
 lv_obj_t* s_wx = nullptr;        // "21.4° · some clouds · 24°/13°" (day)
 lv_obj_t* s_comfort = nullptr;   // "bedroom 18.5° · just right" (day)
@@ -166,10 +180,23 @@ const char* state_word(Sev s) {
 // Clock digits, centered across the column. Bigger at night — a dark room's
 // one instrument. Colon between HH and MM.
 void build_clock(lv_obj_t* scr) {
-  const int dw = 92, dh = 156, t = 18, gap = 10, cw = 22;
+  const uint8_t style = canary::glass::settings().clock_style;
+  const int dw = 92, dh = 156, gap = 10, cw = 22;
+  const SegStyle ss = seg_style(style);
+  int t = 18 * ss.t_pct / 100;
+  if (t < 6) t = 6;
   const int total = 4 * dw + 3 * gap + cw + 2 * gap;
   const int x0 = (W - total) / 2;
   const int y0 = 78;
+
+  if (clock_style_is_analog(style)) {
+    // The dial replaces the digit row; the date keeps its y=250 line, so
+    // the radius stops short of it.
+    analog_clock_build(&s_analog, scr, W / 2, y0 + 80, 80);
+    (void)dh;
+    return;
+  }
+
   int x = x0;
   for (int i = 0; i < 4; i++) {
     s_digit_box[i] = mk_digit(scr, &s_digit[i], x, y0, dw, dh, t);
@@ -202,6 +229,17 @@ void portrait7_ui_create() {
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
   lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
+  // Reset every handle: main.cpp rebuilds the face with lv_obj_clean() on a
+  // ground flip, which deletes the old objects out from under these statics
+  // — and a style switch away from Analog must not leave its dial handles
+  // dangling into freed memory.
+  s_analog = AnalogClock{};
+  for (auto& d : s_digit) d = SegDigit{};
+  for (auto& b : s_digit_box) b = nullptr;
+  s_colon = nullptr;
+  for (int i = 0; i < ROWS; i++) s_fig[i] = nullptr;
+  s_gear = nullptr;
+
   // Wash behind everything — the semantic hue when something wants a look,
   // otherwise invisible. A single full-glass rect; opacity carries meaning.
   s_wash = lv_obj_create(scr);
@@ -227,24 +265,34 @@ void portrait7_ui_create() {
   s_bird = canary_mark_create(scr, 128);
   lv_obj_align(s_bird, LV_ALIGN_TOP_MID, 0, 360);
 
-  // Witness list: dot + name (left), state word (right), worst at top.
+  // Witness list: figure + dot + name (left), state word (right), worst at
+  // top. The figure slot is fixed-size and hidden until a witness's wire
+  // type resolves in the ledger — rows never reflow as pictures land.
   const int y0 = LIST_Y0, pitch = LIST_PITCH;
   for (int i = 0; i < ROWS; i++) {
     const int y = y0 + i * pitch;
+    s_fig[i] = fleet_figure_create(scr, nullptr, ROW_FIG);
+    if (s_fig[i]) lv_obj_align(s_fig[i], LV_ALIGN_TOP_LEFT, 28, y - 2);
     s_dot[i] = lv_obj_create(scr);
     lv_obj_set_size(s_dot[i], 14, 14);
     lv_obj_set_style_radius(s_dot[i], LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(s_dot[i], 0, 0);
     lv_obj_set_style_pad_all(s_dot[i], 0, 0);
-    lv_obj_align(s_dot[i], LV_ALIGN_TOP_LEFT, 40, y + 6);
+    lv_obj_align(s_dot[i], LV_ALIGN_TOP_LEFT, 64, y + 6);
     lv_obj_add_flag(s_dot[i], LV_OBJ_FLAG_HIDDEN);
     s_name[i] = mk_label(scr, font_label(), col_text());
-    lv_obj_align(s_name[i], LV_ALIGN_TOP_LEFT, 66, y);
+    lv_obj_align(s_name[i], LV_ALIGN_TOP_LEFT, 86, y);
     lv_obj_add_flag(s_name[i], LV_OBJ_FLAG_HIDDEN);
     s_word[i] = mk_label(scr, font_label(), col_muted());
     lv_obj_align(s_word[i], LV_ALIGN_TOP_RIGHT, -40, y);
     lv_obj_add_flag(s_word[i], LV_OBJ_FLAG_HIDDEN);
   }
+
+  // The settings doorway: the same quiet gear the bedside face carries,
+  // top-right, above the clock. Day only — update() hides it after dark.
+  s_gear = mk_label(scr, font_caption(), col_faint());
+  lv_label_set_text(s_gear, LV_SYMBOL_SETTINGS " settings");
+  lv_obj_align(s_gear, LV_ALIGN_TOP_RIGHT, -16, 12);
 
 #ifdef CD_NIGHTSTAND7
   // Bedside foot: the day's weather + how the bedroom actually feels, stacked
@@ -277,6 +325,8 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
 
   // Clock + colon.
   const lv_color_t clk = night ? ncol_text() : col_text();
+  analog_clock_update(&s_analog, st.clock_hh, st.clock_mm, clk,
+                      night ? ncol_muted() : col_muted(), st.time_valid);
   const int hh = st.time_valid ? st.clock_hh : -1;
   const int mm = st.time_valid ? st.clock_mm : -1;
   set_digit(&s_digit[0], hh < 0 ? -1 : hh / 10, clk, quiet);
@@ -343,6 +393,12 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
     if (quiet) lv_obj_add_flag(s_bird, LV_OBJ_FLAG_HIDDEN);
     else       lv_obj_clear_flag(s_bird, LV_OBJ_FLAG_HIDDEN);
   }
+  if (s_gear) {
+    // The doorway is a day affordance; the dark room keeps only the clock
+    // and the honest state channel.
+    if (quiet) lv_obj_add_flag(s_gear, LV_OBJ_FLAG_HIDDEN);
+    else       lv_obj_clear_flag(s_gear, LV_OBJ_FLAG_HIDDEN);
+  }
   canary_mark_mood(quiet ? CanaryMood::Asleep : st.bird);
 
   // Witness list. When the fleet overflows the cap, the LAST shown slot
@@ -359,6 +415,11 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
       if (i < witnesses) {
         const Witness* w = fleet.at(order[i]);
         const Sev s = w ? fleet.witness_sev(*w, now) : Sev::Ok;
+        // The witness's own picture, resolved from its published wire type
+        // exactly like the phone resolves it; unresolvable stays hidden.
+        const auto* fig =
+            w ? canary::figures::figure_for(w->device_type) : nullptr;
+        if (s_fig[i]) fleet_figure_set(s_fig[i], fig ? fig->figure_id : nullptr);
         lv_obj_set_style_bg_color(s_dot[i], sev_color(s, false), 0);
         lv_label_set_text_fmt(s_name[i], "%.14s", w ? Fleet::display_name(*w) : "-");
         lv_obj_set_style_text_color(
@@ -371,10 +432,12 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
       } else if (overflow && i == witnesses) {
         lv_label_set_text_fmt(s_name[i], "+%d more", total - witnesses);
         lv_obj_set_style_text_color(s_name[i], col_muted(), 0);
+        if (s_fig[i]) lv_obj_add_flag(s_fig[i], LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_dot[i], LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(s_name[i], LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_word[i], LV_OBJ_FLAG_HIDDEN);
       } else {
+        if (s_fig[i]) lv_obj_add_flag(s_fig[i], LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_dot[i], LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_name[i], LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_word[i], LV_OBJ_FLAG_HIDDEN);
@@ -382,6 +445,7 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
     }
   } else {
     for (int i = 0; i < ROWS; i++) {
+      if (s_fig[i]) lv_obj_add_flag(s_fig[i], LV_OBJ_FLAG_HIDDEN);
       lv_obj_add_flag(s_dot[i], LV_OBJ_FLAG_HIDDEN);
       lv_obj_add_flag(s_name[i], LV_OBJ_FLAG_HIDDEN);
       lv_obj_add_flag(s_word[i], LV_OBJ_FLAG_HIDDEN);
@@ -445,6 +509,17 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
 #else
   (void)st.bedside;  // the wall column is fleet-first; no weather foot
 #endif
+}
+
+bool portrait7_ui_handle_tap(int16_t x, int16_t y) {
+  // The settings doorway: the gear corner, day only (after dark the column
+  // is a clock; a tap is just the wake it already was). The hit zone is
+  // deliberately larger than the glyph — a thumb, not a cursor.
+  if (!character_night() && x >= W - 170 && y <= 56) {
+    settings_ui_open();
+    return true;
+  }
+  return false;
 }
 
 void portrait7_ui_ack_hold(bool) {

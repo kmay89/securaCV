@@ -21,10 +21,10 @@ avoidable — once — by making the picture part of the data.
 > | Web | the SVGs + the ledger | **Yes** — the website's `/figures` catalog |
 > | iPhone · Watch · widgets | `ios/Shared/FleetFigures.swift` + `FleetSolids.swift` | **Yes** — the witness roster, the pairing rows, the hive cells, and the device detail's turntable hero (§7b) |
 > | Both flashers | `figure` in `canary-local/devices/flash.json` | **Yes** — the firmware picker, in the browser and the desktop app |
-> | Firmware | `firmware/common/core/fleet_figures.h` | Not yet — the lookup is wired and each board names itself, but no screen draws it |
-> | Emulator | the same SVGs | Not yet |
+> | Firmware | `firmware/common/core/fleet_figures.h` + `fleet_figures_art.h` | **Yes** — the display's roll call, 7" fleet strip and portrait witness list (`ui/fleet_figure.cpp`) |
+> | Emulator | the same firmware renderer, compiled to WASM | **Yes** — the dash twin draws the same roll-call figures |
 >
-> §10 is what wiring the remaining two involves.
+> §10 records what wiring each surface involved.
 ---
 
 ## 1. What was wrong
@@ -435,16 +435,26 @@ with a note saying what the sketch is based on, and sits at `confirmed`.
 The bindings exist; making a surface *use* one is a change in that surface's
 own render path, and belongs in that surface's own review:
 
-- **The glass.** `#include "core/fleet_figures.h"` in the display firmware,
-  then draw the figure beside a witness in the roll call. The lookup is wired
-  and every mapped board already names itself, so what's left is the renderer:
-  a device that can't draw polygons can still use the *ids* to pick a bitmap.
-  Costs flash for the two tables (~14 rows of `constexpr` pointers).
+- **The glass** — **done.** The generator emits a third firmware artifact,
+  `common/core/fleet_figures_art.h`: the glyph-tier faces of every figure the
+  kFigures/kHardware lookups can resolve, decimated and pre-triangulated (ear
+  clipping runs in the generator, so the firmware never carries a
+  tessellator). `canary-display`'s `ui/fleet_figure.cpp` paints them as plain
+  triangles on both LVGL majors, and the roll call, the 7" fleet strip and
+  the portrait witness list draw each witness's figure beside its severity
+  dot. Honesty rules carried over intact: an unresolvable type keeps a
+  hidden fixed-size slot (rows never reflow, nothing false is drawn), faces
+  keep their physical-object colors in every Character, and the night face
+  hides figures rather than recoloring them.
+  `firmware/tests_host/test_fleet_figures_art.cpp` pins coverage, rev
+  lockstep and geometry sanity.
 - **The emulator.** It already loads from `canary-local/`; the SVGs sit next
-  to what it reads.
+  to what it reads — and the dash twin now compiles the on-glass renderer
+  above, so the emulated roll call draws the same figures.
 
-Each wants its own before/after and its own visual check, which is why neither
-rides along with the generator. The Apple side is **done** — see §7.
+Each wanted its own before/after and its own visual check, which is why
+neither rode along with the generator originally. The Apple side is **done**
+— see §7.
 
 ---
 

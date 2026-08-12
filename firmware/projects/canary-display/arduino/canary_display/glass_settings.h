@@ -55,6 +55,8 @@ struct Settings {
   uint8_t  character;      // canary::ui::Character; 0 = Quiet Glass (default)
   uint8_t  rotation;       // Rotation; 0 = landscape (default). Dash glass only.
   uint8_t  bright_pct;     // 50..100 rendered daytime luminance. Dash glass only.
+  uint8_t  clock_style;    // canary::ui::ClockStyle; 0 = Segment (default).
+                           // Drawn-clock faces only (7"/portrait column).
 };
 
 struct NightCal {
