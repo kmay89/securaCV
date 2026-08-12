@@ -626,7 +626,7 @@ void build_edit_clock() {
   const uint8_t cur = settings().clock_style;
   // The 12/24 decision lives with the faces it changes; the AM/PM marker
   // is deliberately quiet (caption-sized, faint) on every face.
-  mk_row(ROOT_Y0, "12-hour â¢ quiet AM/PM",
+  mk_row(ROOT_Y0, "12-hour \xE2\x80\xA2 quiet AM/PM",
          settings().clock_12h ? "on" : "off", IT_ROW_12H,
          settings().clock_12h != 0);
   lv_obj_t* name = mk_label(s_host, font_title(), col_text());
@@ -673,7 +673,7 @@ void build_edit_weather() {
 #if !defined(EMU_BUILD_FLAVOR)
   switch (canary::net::wx_direct_status()) {
     case 2:
-      lv_label_set_text(st, "your hub provides weather â¢ this stays idle");
+      lv_label_set_text(st, "your hub provides weather \xE2\x80\xA2 this stays idle");
       break;
     case 1:
       lv_label_set_text(st, "set a coarse location from the app");
@@ -685,7 +685,7 @@ void build_edit_weather() {
       break;
     }
     case 4:
-      lv_label_set_text(st, "last fetch failed â¢ retrying");
+      lv_label_set_text(st, "last fetch failed \xE2\x80\xA2 retrying");
       break;
     default:
       lv_label_set_text(st, "");

@@ -1271,6 +1271,27 @@
   read where real fonts exist.
 - **Date learned:** 2026-08
 
+### A tool that interprets escape sequences turns "\xE2\x80\xA2" into mojibake on the way through
+
+- **What happened:** three settings-sheet strings that were written with the
+  BULLET spelled as the hex escapes `\xE2\x80\xA2` reached the file as the
+  six-byte sequence for `â` + U+0080 + `¢` — mojibake that the glyph guard
+  (correctly) failed three CI jobs on.
+- **Root cause:** the edit was piped through a scripting language whose own
+  string parser consumed the `\xNN` escapes as *its* escapes and wrote the
+  decoded characters into the C++ source, instead of the twelve ASCII
+  characters the C compiler was meant to see. Any templating or heredoc layer
+  with C-style escape syntax has this failure mode; the diff even LOOKS right
+  in viewers that render the decoded bytes.
+- **Fix:** write the literal backslash sequences with the escape layer
+  defused (raw strings, single-quoted heredocs, or editing tools that do no
+  interpolation), then byte-check the result: the three faces' UI sources
+  should contain no bytes above 0x7F inside string literals.
+- **Regression check:** `firmware/scripts/check_display_glyphs.py` already
+  catches it — U+00E2/U+0080/U+00A2 are outside the font range. Trust it
+  locally before pushing: it is the same gate CI runs.
+- **Date learned:** 2026-08
+
 ---
 
 ## How to Add an Entry
