@@ -44,7 +44,8 @@ default HACS store yet):
 
 1. Open HACS in Home Assistant
 2. Click **⋮ → Custom repositories**
-3. Add `https://github.com/kmay89/securaCV` with type **Integration**
+3. Add `https://github.com/kmay89/securacv-homeassistant` (the integration's
+   distribution repository) with type **Integration**
 4. Search HACS for "SecuraCV" and install it
 5. Restart Home Assistant
 
@@ -339,7 +340,8 @@ Cameras → go2rtc → PWK (detection + logging)
 
 1. Open **HACS → Integrations**
 2. Click **⋮ → Custom repositories**
-3. Add `https://github.com/kmay89/securaCV` as an **Integration**
+3. Add `https://github.com/kmay89/securacv-homeassistant` (the integration's
+   distribution repository) as an **Integration**
 4. Install **SecuraCV** and restart Home Assistant when prompted
 
 ### Step 2: Install the Kernel

@@ -155,7 +155,7 @@ export function wizardSteps(facts) {
       link: { label: "The full written walkthrough →", href: "homeassistant.html" },
       stuck: [
         "MQTT step asks for a broker? Enter host “core-mosquitto”, port " + BROKER_PORT + ", and the user/password from Step 3.",
-        "Can’t find SecuraCV in HACS? Add this repo as a custom repository in HACS → three-dots → Custom repositories.",
+        "Can’t find SecuraCV in HACS? Add github.com/kmay89/securacv-homeassistant as a custom repository in HACS → three-dots → Custom repositories.",
       ],
       check: "MQTT and SecuraCV both show under Devices & Services.",
     },
