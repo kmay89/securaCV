@@ -1,7 +1,7 @@
 {
   "flavor": "touch169",
   "fw_version": "2.4.9",
-  "git": "a286236",
+  "git": "3b3edfc",
   "lvgl": "v8.4.0",
   "arduinojson": "7.4.1"
 }
