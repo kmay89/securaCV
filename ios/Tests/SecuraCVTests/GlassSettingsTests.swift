@@ -88,6 +88,9 @@ final class GlassSettingsTests: XCTestCase {
             // the CD_FLAVOR_DASH block in handle_settings_set — which is
             // also the glass that serves the look ring and the clock ring.
             "bright_pct", "character", "clock_style",
+            // The hub-less standalone-weather pair: the opt-in toggle, and
+            // the coarse location as ONE combined integer (atomic store).
+            "wx_direct", "wx_loc",
         ]
         var s = GlassSettings()
         s.hasLamp = true
@@ -139,6 +142,29 @@ final class GlassSettingsTests: XCTestCase {
 
         // The dash glass also mirrors its orientation editor.
         XCTAssertEqual(byKey["orientation"]?.value, 1)
+    }
+
+    /// The standalone-weather switch appears only when the device serves it,
+    /// and its story changes honestly when a hub owns weather.
+    func testDirectWeatherKnobFollowsTheDevicesAnswer() {
+        var s = GlassSettings()
+        s.hasDirectWeather = true
+        s.wxDirect = false
+        s.wxHub = false
+        let knob = GlassAPI.knobs(for: s).first { $0.key == "wx_direct" }
+        XCTAssertNotNil(knob, "a glass that serves wx_direct gets the switch")
+        XCTAssertEqual(knob?.value, 0, "off by default — the opt-in is real")
+
+        var hub = GlassSettings()
+        hub.hasDirectWeather = true
+        hub.wxHub = true
+        let hubKnob = GlassAPI.knobs(for: hub).first { $0.key == "wx_direct" }
+        XCTAssertEqual(hubKnob?.blurb.contains("hub") , true,
+                       "with a hub, the blurb says why the fetcher stands down")
+
+        let none = GlassAPI.knobs(for: GlassSettings())
+        XCTAssertFalse(none.contains { $0.key == "wx_direct" },
+                       "a glass that never mentioned wx_direct gets no switch")
     }
 
     func testGlassWithoutALookRingOffersNoLookKnobs() {

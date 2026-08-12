@@ -63,6 +63,21 @@
 #include "wifi_mgr.h"
 #include "tz_auto.h"
 #include "glass_web.h"
+#if defined(FEATURE_STANDALONE_WEATHER) && FEATURE_STANDALONE_WEATHER && \
+    defined(FEATURE_HUB_WEATHER) && FEATURE_HUB_WEATHER &&               \
+    !defined(EMU_BUILD_FLAVOR)
+#include "wx_direct.h"
+#endif
+#if defined(FEATURE_SNTP) && FEATURE_SNTP && !defined(EMU_BUILD_FLAVOR)
+// The clock-trust tracker: SNTP tells us when it actually stepped/slewed
+// the clock, and the faces render a quiet hint when that proof grows old —
+// a bedside clock must never be silently stale (esp_sntp is present on
+// both arduino-esp32 majors; the wasm shim has no SNTP, so the emulator
+// treats its host clock as always-verified).
+#include <esp_sntp.h>
+static volatile uint32_t g_last_sntp_sync_ms = 0;
+static void on_sntp_sync(struct timeval*) { g_last_sntp_sync_ms = millis(); }
+#endif
 #include "mqtt_mgr.h"
 #include "ota_mgr.h"
 #if defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
@@ -858,6 +873,18 @@ static void dash_face_create() {
 // Render
 // ----------------------------------------------------------------------------
 
+#if defined(FEATURE_SNTP) && FEATURE_SNTP && !defined(EMU_BUILD_FLAVOR)
+static uint16_t clock_sync_age_h(uint32_t now) {
+  const uint32_t t = g_last_sntp_sync_ms;
+  if (!t) return 0xFFFF;
+  return (uint16_t)((now - t) / 3600000UL);
+}
+#else
+static uint16_t clock_sync_age_h(uint32_t) { return 0; }  // emulator/no-SNTP:
+                                                          // host clock is the
+                                                          // authority
+#endif
+
 static void render(uint32_t now) {
   if (!g_display_ok) return;
   auto& fleet = canary::fleet::the_fleet();
@@ -1004,6 +1031,7 @@ static void render(uint32_t now) {
     st.mqtt_ok = canary::net::mqtt_connected();
     st.acked = fleet.ack_active(now);
     st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
+    st.sync_age_h = clock_sync_age_h(now);
     st.bird = bird;
     canary::ui::portrait7_ui_update(fleet, now, st);
   } else {
@@ -1017,6 +1045,7 @@ static void render(uint32_t now) {
     st.mqtt_ok = canary::net::mqtt_connected();
     st.acked = fleet.ack_active(now);
     st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
+    st.sync_age_h = clock_sync_age_h(now);
     st.bird = bird;
     canary::ui::nightstand7_ui_update(fleet, now, st);
 #else
@@ -1428,6 +1457,11 @@ void setup() {
   {
     char tz[48];
     canary::net::tz_boot_string(CD_TZ, tz, sizeof(tz));
+#if !defined(EMU_BUILD_FLAVOR)
+    // Register BEFORE the first sync can land, so the very first proof of
+    // wall time is on the record too.
+    sntp_set_time_sync_notification_cb(on_sntp_sync);
+#endif
     configTzTime(tz, "pool.ntp.org", "time.nist.gov");
   }
 #endif
@@ -1621,6 +1655,13 @@ void loop() {
   canary::glass::settings_loop(now);
 #if defined(FEATURE_SNTP) && FEATURE_SNTP
   canary::net::tz_auto_tick(now);  // learn the wall-clock zone once online
+#endif
+#if defined(FEATURE_STANDALONE_WEATHER) && FEATURE_STANDALONE_WEATHER && \
+    defined(FEATURE_HUB_WEATHER) && FEATURE_HUB_WEATHER &&               \
+    !defined(EMU_BUILD_FLAVOR)
+  // Standalone weather (opt-in, hub-less homes only — see wx_direct.h for
+  // the three gates). Feeds the same retained-blob store the hub would.
+  canary::net::wx_direct_loop(now);
 #endif
   canary::net::glass_web_tick(now);  // serve the phone mirror
   {

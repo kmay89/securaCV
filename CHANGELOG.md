@@ -36,6 +36,25 @@ gaps around it, on both sides of the wire.
   carries a tessellator); a host test pins coverage, rev lockstep and
   geometry sanity. An unresolvable wire type keeps a hidden fixed-size
   slot — a wrong picture is worse than no picture.
+- **The clock you can trust at 3 a.m.** Twelve-hour digits with a quiet
+  AM/PM beside the clock (`clock_12h`, default on; 24-hour is one flip
+  away), a fifth clock face — **Calendar**, slimmer digits sharing the
+  hero with a mini month grid, today in the Character's accent — and a
+  clock-trust whisper on the date line: SNTP sync is now tracked, and a
+  clock that has not been verified against its time sources for days says
+  so instead of drifting in silence. Calendar arithmetic is host-tested
+  against independently-known dates.
+- **Standalone weather, without breaking the egress story.** Hub-less
+  homes can OPT IN (off by default, forever) to the glass fetching its
+  own forecast: an anonymous HTTPS query to Open-Meteo (pinned root CA)
+  over a location the phone coarsens to a ~11 km grid point before the
+  device stores it. Three gates, all load-bearing: the opt-in, a stored
+  location, and no hub ever configured — with a hub, the hub stays the
+  single egress point and the fetcher never becomes a quiet fallback.
+  The result feeds the exact retained-blob shape a hub would publish, so
+  every face and line behaves identically either way. Disclosed in
+  SECURITY_MODEL.md; the request shape is pinned by a host test so it
+  cannot quietly grow an identifier.
 - **The chain answer got honest, and its orphaned gate got resurrected.**
   Two firmware "chain ok" signals were proxies that never looked at the
   chain (the diagnostics self-test returned `crypto_healthy`; the WAP's

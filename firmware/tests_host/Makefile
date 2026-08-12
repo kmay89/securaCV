@@ -187,6 +187,22 @@ PRESET_LITE_BIN = $(BUILD_DIR)/test_sentinel_preset_mailbox_lite
 FIGART_HDRS = ../common/core/fleet_figures.h ../common/core/fleet_figures_art.h
 FIGART_BIN  = $(BUILD_DIR)/test_fleet_figures_art
 
+# Mini-calendar arithmetic (canary-display ui/calendar_math.h): leap rules,
+# Sakamoto weekdays against independently-known dates, grid geometry, and
+# the 6-row layout budget. A bedside calendar that misplaces a weekday is a
+# quiet lie in the most trusted spot in the house. Pure header.
+CALMATH_HDR = ../projects/canary-display/include/canary/ui/calendar_math.h
+CALMATH_BIN = $(BUILD_DIR)/test_calendar_math
+
+# Standalone-weather request/blob contract (canary-display net/wx_core.h +
+# the combined-location codec in glass_settings.h): the URL is the privacy
+# disclosure — coarse 0.1-degree coordinate and field names, nothing
+# identifier-shaped — and the fetched values leave through the hub blob's
+# exact JSON shape so every face behaves identically either way. Pure headers.
+WXCORE_HDRS = ../projects/canary-display/include/canary/net/wx_core.h \
+              ../projects/canary-display/include/canary/glass_settings.h
+WXCORE_BIN = $(BUILD_DIR)/test_wx_core
+
 # Serial tuning console (common/console/tuning_console.h): the line-based
 # knob console the canary-sense bench speaks over USB serial. Proves the
 # command vocabulary (help/cfg/set/reset/stream/raw), clamping through the
@@ -310,7 +326,13 @@ $(TUNECON_BIN): test_tuning_console.cpp $(TUNECON_HDR) Makefile | $(BUILD_DIR)
 $(FIGART_BIN): test_fleet_figures_art.cpp $(FIGART_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_fleet_figures_art.cpp -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(WIFIJOIN_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN)
+$(CALMATH_BIN): test_calendar_math.cpp $(CALMATH_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../projects/canary-display/include test_calendar_math.cpp -o $@
+
+$(WXCORE_BIN): test_wx_core.cpp $(WXCORE_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../projects/canary-display/include test_wx_core.cpp -o $@
+
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(WIFIJOIN_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -336,6 +358,8 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(STORY_BIN)
 	./$(TUNECON_BIN)
 	./$(FIGART_BIN)
+	./$(CALMATH_BIN)
+	./$(WXCORE_BIN)
 
 clean:
 	rm -rf $(BUILD_DIR)

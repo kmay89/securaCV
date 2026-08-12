@@ -122,6 +122,7 @@ lv_obj_t* s_wash = nullptr;      // full-glass severity/scene tint
 SegDigit  s_digit[4];
 lv_obj_t* s_digit_box[4] = {nullptr};
 lv_obj_t* s_colon = nullptr;
+lv_obj_t* s_ampm = nullptr;      // the quiet 12-hour marker (clock_12h)
 lv_obj_t* s_date = nullptr;
 lv_obj_t* s_state = nullptr;     // one-word household state, in its own hue
 lv_obj_t* s_link = nullptr;      // link/health line under the state
@@ -193,6 +194,8 @@ void build_clock(lv_obj_t* scr) {
     // The dial replaces the digit row; the date keeps its y=250 line, so
     // the radius stops short of it.
     analog_clock_build(&s_analog, scr, W / 2, y0 + 80, 80);
+    s_ampm = mk_label(scr, font_caption(), col_faint());
+    lv_obj_set_pos(s_ampm, W / 2 + 92, y0 + 140);
     (void)dh;
     return;
   }
@@ -219,6 +222,9 @@ void build_clock(lv_obj_t* scr) {
       x += cw + 2 * gap;
     }
   }
+  // The quiet 12-hour marker, tucked under the last digit (clock_12h).
+  s_ampm = mk_label(scr, font_caption(), col_faint());
+  lv_obj_set_pos(s_ampm, x0 + total - 30, y0 + dh + 8);
 }
 
 }  // namespace
@@ -237,6 +243,7 @@ void portrait7_ui_create() {
   for (auto& d : s_digit) d = SegDigit{};
   for (auto& b : s_digit_box) b = nullptr;
   s_colon = nullptr;
+  s_ampm = nullptr;
   for (int i = 0; i < ROWS; i++) s_fig[i] = nullptr;
   s_gear = nullptr;
 
@@ -327,12 +334,28 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
   const lv_color_t clk = night ? ncol_text() : col_text();
   analog_clock_update(&s_analog, st.clock_hh, st.clock_mm, clk,
                       night ? ncol_muted() : col_muted(), st.time_valid);
-  const int hh = st.time_valid ? st.clock_hh : -1;
+  const bool twelve = canary::glass::settings().clock_12h != 0;
+  bool pm = false;
+  const int hh = st.time_valid
+                     ? clock_display_hour(st.clock_hh, twelve, &pm)
+                     : -1;
   const int mm = st.time_valid ? st.clock_mm : -1;
-  set_digit(&s_digit[0], hh < 0 ? -1 : hh / 10, clk, quiet);
+  // 12-hour blanks the leading zero (" 9:41"); 24-hour keeps it (09:41).
+  set_digit(&s_digit[0], hh < 0 ? -1 : ((twelve && hh < 10) ? -1 : hh / 10),
+            clk, quiet);
   set_digit(&s_digit[1], hh < 0 ? -1 : hh % 10, clk, quiet);
   set_digit(&s_digit[2], mm < 0 ? -1 : mm / 10, clk, quiet);
   set_digit(&s_digit[3], mm < 0 ? -1 : mm % 10, clk, quiet);
+  if (s_ampm) {
+    if (twelve && st.time_valid) {
+      lv_label_set_text(s_ampm, pm ? "PM" : "AM");
+      lv_obj_set_style_text_color(s_ampm, night ? ncol_muted() : col_faint(),
+                                  0);
+      lv_obj_clear_flag(s_ampm, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(s_ampm, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
   if (s_colon) {
     lv_obj_t* c0 = lv_obj_get_child(s_colon, 0);
     lv_obj_t* c1 = lv_obj_get_child(s_colon, 1);
@@ -346,9 +369,21 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
       time_t t = time(nullptr);
       struct tm lt;
       localtime_r(&t, &lt);
-      char buf[24];
+      char buf[56];
       // %d (zero-padded) not %-d: the glibc no-pad flag isn't in ESP newlib.
       strftime(buf, sizeof(buf), "%a %b %d", &lt);
+      // The clock-trust whisper rides the date line (day only): a clock
+      // that has not been verified against its time sources says so.
+      if (!quiet) {
+        const size_t o = strlen(buf);
+        if (st.sync_age_h == 0xFFFF) {
+          snprintf(buf + o, sizeof(buf) - o, " \xE2\x80\xA2 clock unverified");
+        } else if (st.sync_age_h >= 48) {
+          snprintf(buf + o, sizeof(buf) - o,
+                   " \xE2\x80\xA2 checked %ud ago",
+                   (unsigned)(st.sync_age_h / 24));
+        }
+      }
       lv_label_set_text(s_date, buf);
     } else {
       lv_label_set_text(s_date, "setting the clock...");

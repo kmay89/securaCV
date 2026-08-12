@@ -84,6 +84,16 @@ struct GlassSettings: Sendable, Equatable {
     var characterNames: [String] = []
     var clockStyle = 0
     var clockStyleNames: [String] = []
+    var clock12h = true
+
+    // Served only by glass that can fetch its own forecast when no hub was
+    // ever configured (FEATURE_STANDALONE_WEATHER — the 7" line). `wxHub`
+    // means a hub owns weather and the fetcher stands down regardless; the
+    // app says so instead of rendering a switch that appears dead.
+    var hasDirectWeather = false
+    var wxDirect = false
+    var wxLocSet = false
+    var wxHub = false
 
     // Served by displays with a lamp (the nightlight today).
     var hasLamp = false
@@ -94,7 +104,6 @@ struct GlassSettings: Sendable, Equatable {
     var lampMinutes = 15
     /// -1 when a catalog scene is on; 0…359 when the owner picked a color.
     var lampHue = -1
-    var clock12h = true
     var orientation = 0
     var autoRotate = true
     var scenes: [String] = []
@@ -137,6 +146,11 @@ enum GlassAPI {
         }
         if let v = obj["clock_style"] as? Int { s.clockStyle = v }
         if let v = obj["clock_styles"] as? [String] { s.clockStyleNames = v }
+        if let v = obj["clock_12h"] as? Int { s.clock12h = v == 1 }
+        // The standalone-weather block: presence of wx_direct is the tell.
+        if let v = obj["wx_direct"] as? Int { s.wxDirect = v == 1; s.hasDirectWeather = true }
+        if let v = obj["wx_loc_set"] as? Int { s.wxLocSet = v == 1 }
+        if let v = obj["wx_hub"] as? Int { s.wxHub = v == 1 }
         // The lamp block is the tell: a display without one simply doesn't
         // send these, and the app then offers no lamp controls rather than
         // offering ones that would fail.
@@ -146,7 +160,6 @@ enum GlassAPI {
         if let v = obj["lamp_max_duty_pct"] as? Int { s.lampMaxDutyPct = v }
         if let v = obj["lamp_minutes"] as? Int { s.lampMinutes = v }
         if let v = obj["lamp_hue"] as? Int { s.lampHue = v }
-        if let v = obj["clock_12h"] as? Int { s.clock12h = v == 1 }
         if let v = obj["orientation"] as? Int { s.orientation = v }
         if let v = obj["auto_rotate"] as? Int { s.autoRotate = v == 1 }
         if let v = obj["scenes"] as? [String] { s.scenes = v }
@@ -211,12 +224,31 @@ enum GlassAPI {
                     kind: .choice(labels: s.clockStyleNames), value: s.clockStyle))
             }
             out.append(GlassKnob(
+                key: "clock_12h", title: "12-hour clock",
+                blurb: "Twelve-hour digits with a quiet AM/PM beside the clock; "
+                     + "off shows 24-hour time.",
+                kind: .toggle, value: s.clock12h ? 1 : 0))
+            out.append(GlassKnob(
                 key: "orientation", title: "Orientation",
                 blurb: "How the glass is turned. Portrait swaps the wall poster for "
                      + "the tall column face.",
                 kind: .choice(labels: ["Landscape", "Portrait",
                                        "Landscape flipped", "Portrait flipped"]),
                 value: s.orientation))
+        }
+        if s.hasDirectWeather {
+            out.append(GlassKnob(
+                key: "wx_direct", title: "Fetch weather itself",
+                blurb: s.wxHub
+                    ? "Your hub provides weather, so this stays idle — the hub "
+                    + "remains the one thing in the house that talks to the "
+                    + "internet."
+                    : "Hub-less homes only: the glass asks a public forecast "
+                    + "service directly, using a coarse ~11 km location and "
+                    + "nothing else — no account, no identifiers. "
+                    + (s.wxLocSet ? "Location is set."
+                                  : "Set a location below to complete it."),
+                kind: .toggle, value: s.wxDirect ? 1 : 0))
         }
         out.append(contentsOf: [
             GlassKnob(key: "night_screen", title: "At night",

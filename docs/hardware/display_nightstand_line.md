@@ -387,6 +387,20 @@ everything else on these boards):
   witness list and the wall dashboard's roll call draw each witness's own generated figure
   (`ui/fleet_figure.cpp` over `common/core/fleet_figures_art.h`) beside its severity dot and
   name — an unresolvable wire type keeps a hidden fixed-size slot, never a guessed product.
+- **The trustworthy bedside clock.** 12-hour digits with a quiet AM/PM (`clock_12h`,
+  default on), a fifth clock face — **Calendar**: slimmer digits sharing the day hero with
+  a mini month grid (`ui/calendar_math.h`, host-tested), night unchanged (a dark room keeps
+  the clock as its one instrument) — and a clock-trust whisper on the date line once SNTP
+  hasn't re-proved the wall clock for 48 h (or never has). Time still arrives via the
+  two-source SNTP + `tz_auto`/`/api/tz` zone ladder; the whisper is the honesty layer on top.
+- **Standalone weather (hub-less homes, opt-in).** `FEATURE_STANDALONE_WEATHER` +
+  `net/wx_direct.cpp`: three gates (owner opt-in, stored coarse location, no hub ever
+  configured), anonymous Open-Meteo HTTPS with a pinned root CA, feeding
+  `bedside_on_weather` the exact retained-blob JSON a hub would publish — so the weather
+  lines, tomorrow line and advisories behave identically either way. The app stores the
+  location as a ~11 km grid point (typed place, geocoded on the phone — never the phone's
+  own fix). Disclosed in `docs/security/SECURITY_MODEL.md`; request shape pinned by
+  `tests_host/test_wx_core.cpp`.
 
 **Still staged (honestly deferred, needs a toolchain the CI container lacks or a follow-up):**
 - **A WASM twin for the Nightstand 7.** It shares the 7" glass with dash7 but not its face, so

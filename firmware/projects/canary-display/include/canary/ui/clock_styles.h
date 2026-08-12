@@ -25,7 +25,9 @@ enum class ClockStyle : uint8_t {
   Slab     = 1,   // the same digits, heavyset — read from across the room
   Hairline = 2,   // thin strokes, no resting ghost — the minimal face
   Analog   = 3,   // a drawn dial: ring, twelve marks, two hands
-  Count    = 4,
+  Calendar = 4,   // slimmer digits + the month at a glance (day face only;
+                  // night keeps the room's one instrument, the clock)
+  Count    = 5,
 };
 
 inline uint8_t clock_style_count() { return (uint8_t)ClockStyle::Count; }
@@ -35,6 +37,7 @@ inline const char* clock_style_name(uint8_t s) {
     case ClockStyle::Slab:     return "Slab";
     case ClockStyle::Hairline: return "Hairline";
     case ClockStyle::Analog:   return "Analog";
+    case ClockStyle::Calendar: return "Calendar";
     default:                   return "Segment";
   }
 }
@@ -44,6 +47,7 @@ inline const char* clock_style_caption(uint8_t s) {
     case ClockStyle::Slab:     return "heavyset \xE2\x80\xA2 reads across the room";
     case ClockStyle::Hairline: return "thin \xE2\x80\xA2 quiet \xE2\x80\xA2 no scaffolding";
     case ClockStyle::Analog:   return "a dial \xE2\x80\xA2 twelve marks \xE2\x80\xA2 two hands";
+    case ClockStyle::Calendar: return "the month at a glance \xE2\x80\xA2 by day";
     default:                   return "the classic instrument";
   }
 }
@@ -61,12 +65,27 @@ inline SegStyle seg_style(uint8_t s) {
   switch ((ClockStyle)s) {
     case ClockStyle::Slab:     return {150, true};
     case ClockStyle::Hairline: return {55, false};
+    case ClockStyle::Calendar: return {84, true};    // slimmer, to share the hero
     default:                   return {100, true};   // Segment (and Analog's fallback)
   }
 }
 
 inline bool clock_style_is_analog(uint8_t s) {
   return (ClockStyle)s == ClockStyle::Analog;
+}
+
+inline bool clock_style_is_calendar(uint8_t s) {
+  return (ClockStyle)s == ClockStyle::Calendar;
+}
+
+// The one 12-hour conversion, shared by every drawn face so a digit and its
+// AM/PM word can never disagree. Returns the hour to DRAW; *pm is the quiet
+// marker's truth. 0 -> 12 AM, 12 -> 12 PM (the two everyone gets wrong).
+inline int clock_display_hour(int hh, bool twelve, bool* pm) {
+  if (pm) *pm = hh >= 12;
+  if (!twelve) return hh;
+  const int h = hh % 12;
+  return h == 0 ? 12 : h;
 }
 
 // The flip-through ring: display order IS enum order here (unlike the

@@ -39,6 +39,18 @@
 #include "mic_alarm.h"
 #endif
 
+#if defined(CD_FLAVOR_DASH) && defined(FEATURE_STANDALONE_WEATHER) && \
+    FEATURE_STANDALONE_WEATHER && defined(FEATURE_HUB_WEATHER) && \
+    FEATURE_HUB_WEATHER
+// The standalone-weather opt-in rides Settings like the siren and the mic:
+// off by default, honest about its gates. The fetcher itself is absent from
+// the emulator build, so status degrades to the stored knobs there.
+#define CD_SET_WX 1
+#if !defined(EMU_BUILD_FLAVOR)
+#include "wx_direct.h"
+#endif
+#endif
+
 #include "settings_ui.h"
 #include "commission_ui.h"
 #include "theme.h"
@@ -96,7 +108,10 @@ enum class Page {
 #ifdef CD_FLAVOR_DASH
   EditDisplay,  // orientation: landscape / portrait / their flips (live)
   EditBright,   // rendered daytime brightness (binary-backlight glass)
-  EditClock,    // the clock-face ring (segment family / Analog dial)
+  EditClock,    // the clock-face ring (segment family / Analog / Calendar)
+#ifdef CD_SET_WX
+  EditWeather,  // hub-less standalone forecast: the opt-in and its gates
+#endif
   EditFirmware, // installed version + signed OTA (check / install / auto)
 #endif
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
@@ -127,7 +142,8 @@ enum : int {
   IT_ROW_DAY, IT_ROW_NIGHT, IT_ROW_HOURS, IT_ROW_LOOK, IT_ROW_SCREEN,
   IT_ROW_STYLE, IT_ROW_CAL, IT_ROW_RESET, IT_ROW_ADD,
 #ifdef CD_FLAVOR_DASH
-  IT_ROW_DISPLAY, IT_ROW_BRIGHT, IT_ROW_FW, IT_ROW_CLOCK,
+  IT_ROW_DISPLAY, IT_ROW_BRIGHT, IT_ROW_FW, IT_ROW_CLOCK, IT_ROW_12H,
+  IT_ROW_WX,
   IT_ROT_0, IT_ROT_90, IT_ROT_180, IT_ROT_270,   // orientation options
   IT_ROW_FW_AUTO,                                 // auto-update toggle
 #endif
@@ -159,11 +175,11 @@ Page s_page = Page::Root;
 // objects (name+value), plus the board's siren or mic row. The sizes below
 // clear that with margin so add_item never silently drops a hit zone.
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
-Item s_items[26];
+Item s_items[28];
 #elif defined(CD_SET_MIC)
-Item s_items[24];
+Item s_items[26];
 #else
-Item s_items[22];
+Item s_items[24];
 #endif
 int s_item_n = 0;
 bool s_owns_backlight = false;
@@ -362,10 +378,10 @@ void build_root() {
 #endif
 #else
   // The dash root packs tighter than the editors (the watch does the same):
-  // up to eleven rows must fit the sheet with the back line above them.
-  // 52 + 10*38 + a label's height = ~452 clears SHEET_H = 460; editors keep
+  // up to twelve rows must fit the sheet with the back line above them.
+  // 52 + 11*34 + a label's height = ~446 clears SHEET_H = 460; editors keep
   // the roomier ROW_H — none of them exceeds five rows.
-  const int y0 = 52, step = 38;
+  const int y0 = 52, step = 34;
 #endif
   int y = y0;
   const Settings& gs = settings();
@@ -394,6 +410,26 @@ void build_root() {
   // Analog dial, curated and named like the Character ring.
   mk_row(y, "clock", clock_style_name(settings().clock_style), IT_ROW_CLOCK);
   y += step;
+#endif
+#ifdef CD_SET_WX
+  {
+    // The honest one-word state of the standalone forecast: who owns
+    // weather right now, not just which way the switch points.
+    const char* wxv;
+#if !defined(EMU_BUILD_FLAVOR)
+    switch (canary::net::wx_direct_status()) {
+      case 2:  wxv = "hub"; break;         // a hub owns weather; fetcher stands down
+      case 1:  wxv = "needs a spot"; break; // opted in, no location stored yet
+      case 3:  wxv = "on"; break;
+      case 4:  wxv = "retrying"; break;
+      default: wxv = "off"; break;
+    }
+#else
+    wxv = settings().wx_direct ? "on" : "off";
+#endif
+    mk_row(y, "weather", wxv, IT_ROW_WX);
+    y += step;
+  }
 #endif
 #ifdef CD_FLAVOR_DASH
   // The 7"/dash RGB glass: how it's turned, how bright it sits, and what it's
@@ -588,6 +624,11 @@ void build_edit_bright() {
 void build_edit_clock() {
   mk_back("clock");
   const uint8_t cur = settings().clock_style;
+  // The 12/24 decision lives with the faces it changes; the AM/PM marker
+  // is deliberately quiet (caption-sized, faint) on every face.
+  mk_row(ROOT_Y0, "12-hour â¢ quiet AM/PM",
+         settings().clock_12h ? "on" : "off", IT_ROW_12H,
+         settings().clock_12h != 0);
   lv_obj_t* name = mk_label(s_host, font_title(), col_text());
   lv_label_set_text(name, clock_style_name(cur));
   lv_obj_align(name, LV_ALIGN_CENTER, 0, -30);
@@ -614,6 +655,55 @@ void build_edit_clock() {
   add_item(l, IT_MINUS);
   add_item(r, IT_PLUS);
 }
+
+#ifdef CD_SET_WX
+// The standalone-weather page: one decision (fetch itself / don't), and the
+// truth about its gates. The caption carries the whole privacy contract in
+// the fewest honest words — what is sent, when it never runs, and where the
+// location comes from.
+void build_edit_weather() {
+  mk_back("weather");
+  const bool on = settings().wx_direct != 0;
+  int y = ROOT_Y0 + ROW_H / 2;
+  mk_row(y, "fetch itself", on ? "on" : nullptr, IT_OPT_A, on);
+  y += ROW_H;
+  mk_row(y, "off", !on ? "on" : nullptr, IT_OPT_B, !on);
+  y += ROW_H;
+  lv_obj_t* st = mk_label(s_host, font_label(), col_muted());
+#if !defined(EMU_BUILD_FLAVOR)
+  switch (canary::net::wx_direct_status()) {
+    case 2:
+      lv_label_set_text(st, "your hub provides weather â¢ this stays idle");
+      break;
+    case 1:
+      lv_label_set_text(st, "set a coarse location from the app");
+      break;
+    case 3: {
+      const uint16_t age = canary::net::wx_direct_age_min(millis());
+      if (age == 0xFFFF) lv_label_set_text(st, "waiting for the first fetch");
+      else lv_label_set_text_fmt(st, "last fetched %um ago", (unsigned)age);
+      break;
+    }
+    case 4:
+      lv_label_set_text(st, "last fetch failed â¢ retrying");
+      break;
+    default:
+      lv_label_set_text(st, "");
+      break;
+  }
+#else
+  lv_label_set_text(st, "");
+#endif
+  lv_obj_align(st, LV_ALIGN_TOP_MID, 0, y + 6);
+  lv_obj_t* cap = mk_label(s_host, font_caption(), col_faint());
+  lv_label_set_text(cap,
+      "hub-less homes only - with a hub, the hub\n"
+      "stays the one thing that talks to the internet.\n"
+      "sends a ~11 km coarse spot to a public\n"
+      "forecast service. no account, no identifiers.");
+  lv_obj_align(cap, LV_ALIGN_TOP_MID, 0, y + 40);
+}
+#endif  // CD_SET_WX
 
 // Firmware: the version this glass is running, and the one signed-and-
 // rollback-safe path to a newer one (same engine HA drives). No raw version
@@ -981,6 +1071,9 @@ void build(Page pg) {
     case Page::EditDisplay:  build_edit_display(); break;
     case Page::EditBright:   build_edit_bright(); break;
     case Page::EditClock:    build_edit_clock(); break;
+#ifdef CD_SET_WX
+    case Page::EditWeather:  build_edit_weather(); break;
+#endif
     case Page::EditFirmware: build_edit_firmware(); break;
 #endif
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
@@ -1096,6 +1189,9 @@ void dispatch(int id) {
         case IT_ROW_DISPLAY: build(Page::EditDisplay); return;
         case IT_ROW_BRIGHT:  build(Page::EditBright); return;
         case IT_ROW_CLOCK:   build(Page::EditClock); return;
+#ifdef CD_SET_WX
+        case IT_ROW_WX:      build(Page::EditWeather); return;
+#endif
         case IT_ROW_FW:      build(Page::EditFirmware); return;
 #endif
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
@@ -1188,6 +1284,15 @@ void dispatch(int id) {
 
     case Page::EditClock:
       if (id == IT_BACK) { build(Page::Root); return; }
+      if (id == IT_ROW_12H) {
+        // Toggle-on-tap: the running face re-reads the store every tick,
+        // so the digits and their AM/PM follow without a rebuild.
+        Settings& gs = settings_mut();
+        gs.clock_12h = gs.clock_12h ? 0 : 1;
+        settings_mark_dirty();
+        build(Page::EditClock);
+        return;
+      }
       if (id == IT_MINUS || id == IT_PLUS) {
         // Landing IS choosing: persist on every flip. The face itself
         // rebuilds when the sheet closes (main.cpp's ground-flip tracker) —
@@ -1200,6 +1305,19 @@ void dispatch(int id) {
         build(Page::EditClock);
       }
       return;
+
+#ifdef CD_SET_WX
+    case Page::EditWeather:
+      if (id == IT_BACK) { build(Page::Root); return; }
+      if (id == IT_OPT_A || id == IT_OPT_B) {
+        // Landing IS choosing: persist the opt-in; the fetcher's own three
+        // gates (opt-in, location, hub-less) decide whether anything runs.
+        settings_mut().wx_direct = (id == IT_OPT_A) ? 1 : 0;
+        settings_mark_dirty();
+        build(Page::EditWeather);
+      }
+      return;
+#endif
 
     case Page::EditFirmware:
       if (id == IT_BACK) { build(Page::Root); return; }

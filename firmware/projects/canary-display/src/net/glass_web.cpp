@@ -15,6 +15,12 @@
 #include "canary/net/tv_html.h"
 #include "canary/ui/character.h"
 #include "canary/ui/clock_styles.h"
+#if defined(CD_FLAVOR_DASH) && defined(FEATURE_STANDALONE_WEATHER) && \
+    FEATURE_STANDALONE_WEATHER && defined(FEATURE_HUB_WEATHER) && \
+    FEATURE_HUB_WEATHER
+#define GW_WX 1
+#include "canary/net/wx_direct.h"
+#endif
 #include "canary/glass_settings.h"
 #include "canary/runtime_config.h"
 #include "canary/version.h"
@@ -195,7 +201,7 @@ void handle_settings_get() {
   const auto& gs = canary::glass::settings();
   char tz[48];
   canary::net::tz_current(tz, sizeof(tz));
-  char body[1152];
+  char body[1280];
   size_t o = (size_t)snprintf(
       body, sizeof(body),
       "{\"day_pct\":%u,\"night_screen\":%u,\"red_shift\":%u,"
@@ -337,6 +343,25 @@ void handle_settings_set() {
     gs.clock_style = (uint8_t)v;
   else if (k == "orientation" && v >= 0 && v <= 3)
     gs.rotation = (uint8_t)v;
+  else if (k == "clock_12h" && (v == 0 || v == 1))
+    gs.clock_12h = (uint8_t)v;
+#ifdef GW_WX
+  else if (k == "wx_direct" && (v == 0 || v == 1))
+    gs.wx_direct = (uint8_t)v;
+  else if (k == "wx_loc") {
+    // The coarse location arrives as ONE combined integer (wx_loc_encode in
+    // glass_settings.h) so half a coordinate can never be stored. The app
+    // coarsens to the 0.1-degree grid before encoding; anything outside the
+    // grid is refused here, exactly like every other knob.
+    int16_t la, lo;
+    if (!canary::glass::wx_loc_decode(v, &la, &lo)) ok = false;
+    else {
+      gs.wx_lat10 = la;
+      gs.wx_lon10 = lo;
+      gs.wx_loc_set = 1;
+    }
+  }
+#endif
 #endif
   // Two stored modes only (glow / off) — what "off" does on tap (peek vs
   // wake) is per-flavor behavior, not a third value (review catch: a 2

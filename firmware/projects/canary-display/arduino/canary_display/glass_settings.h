@@ -57,6 +57,16 @@ struct Settings {
   uint8_t  bright_pct;     // 50..100 rendered daytime luminance. Dash glass only.
   uint8_t  clock_style;    // canary::ui::ClockStyle; 0 = Segment (default).
                            // Drawn-clock faces only (7"/portrait column).
+  uint8_t  clock_12h;      // 1 = 12-hour digits with a quiet AM/PM (default);
+                           // 0 = 24-hour. Drawn-clock faces only.
+  // Standalone weather (FEATURE_STANDALONE_WEATHER, hub-less homes only):
+  // the OPT-IN for the device to fetch its own forecast — an anonymous,
+  // coarse-location query, and only while no hub was ever configured
+  // (mqtt_broker_is_placeholder). Never a fallback when a hub exists.
+  uint8_t  wx_direct;      // 0 = off (default; the hub is the egress point)
+  uint8_t  wx_loc_set;     // 1 once a coarse location has been stored
+  int16_t  wx_lat10;       // latitude  x10 (-900..900) — ~11 km grid, by design
+  int16_t  wx_lon10;       // longitude x10 (-1800..1800)
 };
 
 struct NightCal {
@@ -205,6 +215,25 @@ inline void rotation_map_touch(uint8_t rot, int native_w, int native_h,
       *out_y = raw_y;
       break;
   }
+}
+
+// ── Standalone-weather location (host-testable) ──────────────────────────
+
+// The app sends the coarse location as ONE integer so the store can never
+// hold half a coordinate: v = (lat10 + 900) * 4000 + (lon10 + 1800).
+// Decode returns false (and stores nothing) outside the valid grid.
+constexpr long WX_LOC_MAX = 1800L * 4000L + 3600L;
+inline long wx_loc_encode(int lat10, int lon10) {
+  return (long)(lat10 + 900) * 4000L + (long)(lon10 + 1800);
+}
+inline bool wx_loc_decode(long v, int16_t* lat10, int16_t* lon10) {
+  if (v < 0 || v > WX_LOC_MAX) return false;
+  const long la = v / 4000L - 900L;
+  const long lo = v % 4000L - 1800L;
+  if (la < -900 || la > 900 || lo < -1800 || lo > 1800) return false;
+  *lat10 = (int16_t)la;
+  *lon10 = (int16_t)lo;
+  return true;
 }
 
 // ── Rendered brightness (host-testable) ──────────────────────────────────
