@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use ed25519_dalek::{Signer, SigningKey};
+use ed25519_dalek::SigningKey;
 use witness_kernel::{
     Approval, BreakGlass, BreakGlassToken, CandidateEvent, EventType, ExportOptions,
     InferenceBackend, Kernel, KernelConfig, ModuleDescriptor, QuorumPolicy, TimeBucket,
@@ -16,7 +16,11 @@ fn main() -> Result<()> {
         ruleset_hash,
         kernel_version: env!("CARGO_PKG_VERSION").to_string(),
         retention: std::time::Duration::from_secs(60),
-        device_key_seed: "devkey:ci-conformance".to_string(),
+        // A fixture seed, deliberately fixed and clearly not a secret: the
+        // kernel now enforces a 32-char minimum on seeds (real deployments
+        // generate theirs from urandom), and this example predates the
+        // check — the first thing the resurrected conformance gate caught.
+        device_key_seed: "devkey:ci-conformance-fixture-not-a-secret".to_string(),
         zone_policy: ZonePolicy::default(),
     })?;
 
@@ -62,11 +66,14 @@ fn seed_break_glass(kernel: &mut Kernel, ruleset_hash: [u8; 32]) -> Result<Break
     let bucket = TimeBucket::now(600)?;
     let request = UnlockRequest::new(EXPORT_EVENTS_ENVELOPE_ID, ruleset_hash, "audit", bucket)?;
     let signing_key = SigningKey::from_bytes(&[3u8; 32]);
-    let signature = signing_key.sign(&request.request_hash());
-    let approval = Approval::new(
+    // Approval::signed produces the DOMAIN-SEPARATED trustee signature the
+    // verifier requires; a raw Ed25519 signature over the bare request hash
+    // is rejected by design (cross-context replay). The second thing the
+    // resurrected conformance gate caught.
+    let approval = Approval::signed(
         TrusteeId::new("alice"),
         request.request_hash(),
-        signature.to_bytes().to_vec(),
+        &signing_key,
     );
     let policy = QuorumPolicy::new(
         1,
@@ -75,6 +82,10 @@ fn seed_break_glass(kernel: &mut Kernel, ruleset_hash: [u8; 32]) -> Result<Break
             public_key: signing_key.verifying_key().to_bytes(),
         }],
     )?;
+    // The unseal gate re-derives the quorum against the kernel's CONFIGURED
+    // policy (Invariant V) — authorizing against a policy the kernel never
+    // stored now fails closed. Third catch of the resurrected gate.
+    kernel.set_break_glass_policy(&policy)?;
     let (result, receipt) =
         BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
     let mut token = result?;

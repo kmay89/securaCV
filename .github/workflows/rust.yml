@@ -82,6 +82,23 @@ jobs:
     - name: Test with C2PA export feature
       run: cargo test --features c2pa-export
 
+  conformance:
+    name: Chain conformance (fixture DB round-trip through log_verify)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v7
+    - uses: Swatinem/rust-cache@v2
+    - name: Install libseccomp
+      run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
+    # scripts/ci/conformance.sh existed but no workflow ran it — the one
+    # end-to-end gate that generates a sealed-log fixture DB and drives the
+    # shipping verifier binary over it (plus the compile-fail suite that
+    # pins the privacy invariants at the type level). An orphaned
+    # conformance gate protects nothing.
+    - name: Conformance fixture -> log_verify
+      run: bash scripts/ci/conformance.sh
+
   adapters:
     name: Adapters (behavioral tests, all features)
     runs-on: ubuntu-latest

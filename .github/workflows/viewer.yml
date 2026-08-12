@@ -64,6 +64,12 @@ jobs:
     - name: Envelope-bridge tests (build + shared-verifier reuse)
       working-directory: canary-vision
       run: node --test tests/api/envelope-bridge.test.js
+    # The device-side witness-chain endpoint suites existed but no workflow
+    # ran them — the chain is the product, and its device API tests were the
+    # one chain surface without a CI gate.
+    - name: Witness-chain endpoint tests (device API)
+      working-directory: canary-vision
+      run: node --test tests/api/witness.test.js tests/api/witness-simulate.test.js
     - name: SPA verified-timeline tests (in-app envelope rendering)
       working-directory: canary-vision
       run: node --test tests/spa/verified-timeline.test.js
