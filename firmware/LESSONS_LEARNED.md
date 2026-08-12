@@ -7,6 +7,32 @@
 
 ---
 
+## A diagnostic named after a thing must test that thing
+
+### chain_ok never looked at the chain — on two products at once (2026-08, PR #1540)
+- **What happened:** The diagnostics self-test named `chain_ok` returned
+  `crypto_healthy`, and canary-wap's `/api/fleet` coarse chain answer was
+  `!tamper && verify_failures == 0`. Neither ever read a chain byte, so a
+  silently rewritten tail that tripped no verify still scored green on the
+  Witness Wall, in the apps, and in the health score.
+- **Second layer (the Codex catch):** the first fix re-walked
+  `witness_get_last_record()` — but on the canary product records were
+  created into CALLER-owned structs and the static that getter returns
+  stayed at seq 0 forever, so the fixed test's "record not in RAM" bypass
+  was the permanent path. A test that can never reach its assert is the
+  same lie with more steps. `witness_create_record_gps` now retains the
+  newest record; the tail check recomputes the canonical chain hash,
+  matches it against the head, and verifies the signature.
+- **Guidance:** when a check is a proxy (flag, counter, neighbor's health),
+  either make it test the named thing or rename it to what it actually
+  tests. And prove the check can FAIL: if no reachable state flips it red,
+  it is decoration. Same lesson at CI scale in the same PR:
+  `scripts/ci/conformance.sh` existed for months, ran in no workflow, and
+  had quietly rotted against three kernel API changes — an unexecuted gate
+  protects nothing.
+
+---
+
 ## Blocking I/O vs the Task Watchdog
 
 ### SD.begin() has no deadline — a bad card crash-looped the device, and safe mode too
