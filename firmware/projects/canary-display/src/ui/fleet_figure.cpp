@@ -107,8 +107,11 @@ void fleet_figure_set(lv_obj_t* obj, const char* figure_id) {
   const FigureArt* art = canary::figures::figure_art(figure_id);
   const FigureArt* cur = (const FigureArt*)lv_obj_get_user_data(obj);
   if (art == cur) {
-    // Same picture (or same nothing): keep the object's flags as they are.
-    if (!art) lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+    // Same picture — but the SLOT may have been hidden while its row was
+    // empty, and a recycled row with the same figure must come back
+    // visible (Codex P2: the equal-art path kept a stale HIDDEN flag).
+    if (art) lv_obj_clear_flag(obj, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
     return;
   }
   lv_obj_set_user_data(obj, (void*)art);

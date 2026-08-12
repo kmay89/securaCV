@@ -74,7 +74,12 @@ constexpr int HIT_PAD = 8;
 constexpr uint32_t IDLE_CLOSE_MS = 60000;
 #else
 constexpr int PANEL_W = 800;
-constexpr int SHEET_W = 480, SHEET_H = 420;
+// The sheet is deliberately non-scrollable (every row visible, always), so
+// its height has to clear the tallest root: back + six shared rows + the
+// display/brightness/clock/firmware quartet + the board's siren-or-mic row
+// + reset + the modes doorway (Codex P2: the clock row pushed reset off a
+// 420 px sheet). 460 on the 480 glass leaves a 10 px reveal of the face.
+constexpr int SHEET_W = 480, SHEET_H = 460;
 constexpr int ROW_H = 46;
 constexpr int ROOT_Y0 = 64;
 constexpr int HIT_PAD = 10;
@@ -356,7 +361,11 @@ void build_root() {
   const int y0 = 36, step = 22;
 #endif
 #else
-  const int y0 = ROOT_Y0, step = ROW_H;
+  // The dash root packs tighter than the editors (the watch does the same):
+  // up to eleven rows must fit the sheet with the back line above them.
+  // 52 + 10*38 + a label's height = ~452 clears SHEET_H = 460; editors keep
+  // the roomier ROW_H — none of them exceeds five rows.
+  const int y0 = 52, step = 38;
 #endif
   int y = y0;
   const Settings& gs = settings();
