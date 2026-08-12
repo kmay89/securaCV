@@ -8,6 +8,9 @@
 // alarm" (a firmware lint, scripts/lint_no_impersonation.sh) is respected on
 // every Apple surface too.
 
+// SecuraCV-Parity: every Apple surface that shows a device compiles this.
+// (the one place a severity becomes a color)
+
 import SwiftUI
 
 enum Theme {

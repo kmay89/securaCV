@@ -17,6 +17,9 @@
 // make. An unknown type returns nil and the caller says something coarser and
 // true instead.
 
+// SecuraCV-Parity: every Apple surface that shows a device compiles this.
+// (what a device is CALLED)
+
 import Foundation
 
 enum DeviceNaming {

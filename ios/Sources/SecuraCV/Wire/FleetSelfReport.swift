@@ -133,35 +133,6 @@ struct FleetSelfDevice: Codable, Hashable, Sendable {
     var hubState: HubState { HubState(tolerant: hub) }
 }
 
-/// Where a Canary stands with its MQTT broker.
-///
-/// Three states rather than a flag, because "nobody has given me a hub" and
-/// "my hub is unreachable" want different sentences and different fixes, and
-/// collapsing them would send an owner to restart a hub they never set up.
-enum HubState: String, Codable, Sendable {
-    /// No broker configured — this device is standing alone because nobody
-    /// has pointed it at one yet. The state that wants an explanation.
-    ///
-    /// Spelled `absent`, not `none`, though the wire word IS "none". A case
-    /// literally named `none` collides with `Optional.none` at every optional
-    /// call site: `XCTAssertEqual(row?.hubState, .none)` compares against nil
-    /// and quietly passes for the wrong reason, and `hub == .none` on an
-    /// optional means "is nil". The rawValue keeps the contract with the
-    /// firmware; the case name keeps the ambiguity out of the app.
-    case absent = "none"
-    /// A broker is configured and unreachable.
-    case down
-    case ok
-    /// Not reported. Never rendered as "fine": a device that didn't say is a
-    /// device we know nothing about.
-    case unknown
-
-    init(tolerant raw: String?) { self = HubState(rawValue: raw ?? "") ?? .unknown }
-
-    /// Does this state want the owner to go and do something?
-    var needsAttention: Bool { self == .absent || self == .down }
-}
-
 /// The whole `/api/fleet` body.
 struct FleetSelfReport: Codable, Hashable, Sendable {
     /// The answering device's own name (a hub names itself here, then lists

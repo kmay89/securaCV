@@ -43,16 +43,68 @@ struct FleetSnapshot: Decodable, Equatable, Sendable {
         let online: Bool
         let chain: String?
         let product: String?
+        /// WHICH BOARD this is, as the device published it (`hw`). The only
+        /// field that pins the device's SHAPE — several products share one
+        /// `product` string — so it is what resolves the figure the Wall
+        /// draws. Nil on firmware older than the field.
+        ///
+        /// Defaulted, unlike the fields above it, so that adding an optional
+        /// wire field does not break every construction site — which is
+        /// exactly what adding these two did to ResidentWatchTests. A field
+        /// the device may omit should be a field a caller may omit.
+        var hw: String? = nil
+        /// Where the device stands with its hub ("none" / "down" / "ok"), or
+        /// nil when it did not say. Never rendered as "fine" when nil.
+        var hub: String? = nil
 
         /// Stable within a snapshot: the fleet endpoint has no device ids, and
         /// names are what a person actually distinguishes Canaries by.
         var id: String { name }
 
-        /// `chain` is optional; absent means "not reported", which is not the
-        /// same as "broken" and must never be drawn as an alarm.
+        /// Does this device's own report describe a chain FAILURE?
+        ///
+        /// Three answers, not two — and the missing third one was a lie the
+        /// Wall told about every display in the fleet. A display holds no
+        /// witness chain of its own (it renders other devices'), so it
+        /// honestly answers "unknown"; the old `!= "ok"` test painted it
+        /// orange with "Record didn't verify" and counted it toward the
+        /// needs-attention total. An absent claim is not a broken chain, and
+        /// the explicit "unknown" is exactly as absent as a missing field.
+        ///
+        /// Mirrors `Device::chain_is_troubled` in witness-core's fleet.rs; the
+        /// Rust tests and these must agree, since the same bytes reach both.
         var chainIsTroubled: Bool {
             guard let chain else { return false }
-            return chain != "ok"
+            return chain != "ok" && chain != "unknown"
+        }
+
+        /// The product name to show a person, resolved the same way the iPhone
+        /// resolves it — board first (it is sometimes more product-precise
+        /// than the type), then the shipped-product table. Nil when nothing
+        /// pins a product, and the caller then says something coarse rather
+        /// than printing the wire string.
+        ///
+        /// The Wall used to print `product` raw, so a television showed
+        /// "canary-nightstand7" where the phone showed "Canary Nightstand 7".
+        var productName: String? {
+            DeviceNaming.productName(published: product, hardware: hw)
+        }
+
+        /// This device's hub standing, folded through the same enum the phone
+        /// uses. Silence is `.unknown`, which renders as nothing.
+        var hubState: HubState { HubState(tolerant: hub) }
+
+        /// The coarse device family, decoded with the shared tolerant decoder
+        /// so the Wall and the phone can never disagree about what a device
+        /// IS — including the whole display line, which a strict rawValue
+        /// lookup drops to `.unknown`.
+        var deviceType: DeviceType { DeviceType(tolerant: product) }
+
+        /// The figure to draw, at the same three honest precisions the phone
+        /// uses: board, then published type, then the coarse family. Nil means
+        /// draw the generic marker — never a guess.
+        var figure: FleetFigure? {
+            FleetFigure.resolve(deviceType: deviceType, published: product, hardware: hw)
         }
     }
 
@@ -77,6 +129,46 @@ struct FleetSnapshot: Decodable, Equatable, Sendable {
             return "\(devices.count) \(noun), all online"
         }
         return "\(onlineCount) of \(devices.count) \(noun) online"
+    }
+}
+
+// MARK: - Tolerant decode (the same tolerance the phone applies)
+
+/// The phone's `FleetSelfDevice` decodes every field with a fallback on the
+/// principle that *a device that omits a field is reported, not dropped* — a
+/// Canary that answered at all is telling us something worth showing. The Wall
+/// used strict synthesis instead, which is a stricter promise than the wire
+/// makes: one device omitting `online` threw, and a throw here loses the WHOLE
+/// snapshot, so a single old Canary could blank the television.
+///
+/// Written in an extension deliberately: an initializer in the type's own body
+/// suppresses the memberwise `Device(name:online:…)` the tests construct with.
+extension FleetSnapshot.Device {
+    enum CodingKeys: String, CodingKey {
+        case name, online, chain, product, hw, hub
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = (try? c.decode(String.self, forKey: .name)) ?? ""
+        // Absent is not "online" — the cautious reading is the only safe one
+        // for a presence claim we were never given, and it is the reading the
+        // phone's FleetSelfDevice already uses. Rust's normalizer defaults the
+        // other way (`default_online`), which is not a contradiction in the
+        // real path: the firmware's `_append_device` always writes the field,
+        // and Rust always re-serializes it, so neither default can fire on a
+        // body that actually crossed the wire. This one is the backstop for
+        // the day that stops being true.
+        online = (try? c.decode(Bool.self, forKey: .online)) ?? false
+        chain = (try? c.decodeIfPresent(String.self, forKey: .chain)) ?? nil
+        product = (try? c.decodeIfPresent(String.self, forKey: .product)) ?? nil
+        // Empty and absent are one answer ("this device cannot say"), folded to
+        // nil so no caller spends a lookup proving "" is not a board id. Same
+        // fold as the phone's `hardware`.
+        let board = (try? c.decodeIfPresent(String.self, forKey: .hw)) ?? nil
+        hw = (board?.isEmpty == false) ? board : nil
+        let standing = (try? c.decodeIfPresent(String.self, forKey: .hub)) ?? nil
+        hub = (standing?.isEmpty == false) ? standing : nil
     }
 }
 

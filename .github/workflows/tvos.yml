@@ -26,12 +26,30 @@ on:
     branches: [main]
     paths:
       - "tvos/**"
+      # The Wall COMPILES these — they are tvOS build inputs, not just the
+      # iPhone's. Without them here, editing a shared file could break the TV
+      # and nothing would run to say so until someone opened this app weeks
+      # later. (WakePayload and CloudContainer were shared this way from the
+      # start and were never listed; the device vocabulary made the gap worse
+      # by sharing five more.) scripts/lint_apple_parity.py asserts this list
+      # stays in step with what the target actually compiles.
+      - "ios/Shared/**"
+      - "ios/Sources/SecuraCV/Cloud/CloudContainer.swift"
       - "tests/fixtures/envelope/domain_separation_vectors.json"
       - ".github/workflows/tvos.yml"
   pull_request:
     branches: [main]
     paths:
       - "tvos/**"
+      # The Wall COMPILES these — they are tvOS build inputs, not just the
+      # iPhone's. Without them here, editing a shared file could break the TV
+      # and nothing would run to say so until someone opened this app weeks
+      # later. (WakePayload and CloudContainer were shared this way from the
+      # start and were never listed; the device vocabulary made the gap worse
+      # by sharing five more.) scripts/lint_apple_parity.py asserts this list
+      # stays in step with what the target actually compiles.
+      - "ios/Shared/**"
+      - "ios/Sources/SecuraCV/Cloud/CloudContainer.swift"
       - "tests/fixtures/envelope/domain_separation_vectors.json"
       - ".github/workflows/tvos.yml"
 

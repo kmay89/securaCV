@@ -67,6 +67,29 @@ targets:
       # takes in CKContainer.default(). Both are Foundation-only.
       - path: ../../ios/Shared/WakePayload.swift
       - path: ../../ios/Sources/SecuraCV/Cloud/CloudContainer.swift
+      # THE DEVICE VOCABULARY — the same rule, applied to the thing this app
+      # spends its whole life doing: showing devices.
+      #
+      # The Wall used to describe devices in its own words, and drifted exactly
+      # as you would expect from a target nobody touches for weeks: it printed
+      # the raw wire string ("canary-nightstand7") where the phone printed a
+      # product name, drew a colored dot where the phone drew the device, and
+      # read `chain: "unknown"` as a verification FAILURE — painting every
+      # display in the fleet orange for a chain it never claimed to have.
+      #
+      # Each of those is a copy of a decision that already existed, made worse.
+      # So the decisions are compiled here rather than re-made: how a device
+      # type decodes, what a product is called, and what it looks like.
+      #
+      # EVERY FILE BELOW CARRIES THE `SecuraCV-Parity` MARKER, and
+      # scripts/lint_apple_parity.py fails the build when a marked file is not
+      # listed here — so a new one added for the phone cannot silently skip
+      # the Wall. Add the marker to share; leave it off to keep it iPhone-only.
+      - path: ../../ios/Shared/Theme.swift
+      - path: ../../ios/Shared/FleetEnums.swift
+      - path: ../../ios/Shared/FleetFigures.swift
+      - path: ../../ios/Shared/FleetFigureBridge.swift
+      - path: ../../ios/Shared/DeviceNaming.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.securacv.witnesswall

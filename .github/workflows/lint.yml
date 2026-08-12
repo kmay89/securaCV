@@ -129,6 +129,20 @@ jobs:
         # on purpose. PairedDevice was missing from that table for its whole
         # life. See docs/design/cloudkit_backend.md.
         run: python3 scripts/lint_cloudkit_container.py
+      - name: Apple surfaces show a device the same way
+        # The Witness Wall gets a few hours of attention every several weeks,
+        # and it drifted the way an infrequently-visited target does: not by
+        # breaking, but by re-deciding things the iPhone had already decided.
+        # It printed the raw wire string ("canary-nightstand7") on a
+        # television, drew a colored dot where the phone drew the device, and
+        # read chain:"unknown" as a verification FAILURE — painting every
+        # display in the fleet orange for a chain they never claimed to have.
+        # The files that make those decisions are now COMPILED by both targets
+        # rather than re-implemented, and this gate is what keeps it that way:
+        # a shared file carrying the SecuraCV-Parity marker must appear in
+        # every device-rendering target's sources. Adding one for the phone
+        # therefore forces a decision instead of a silent divergence.
+        run: python3 scripts/lint_apple_parity.py
       - name: Agent entrypoints match AGENTS.md
         # Every AI tool reads a different filename (GEMINI.md, QWEN.md,
         # copilot-instructions.md, .cursor/rules, .clinerules, .windsurfrules).

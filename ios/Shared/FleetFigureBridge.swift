@@ -7,6 +7,9 @@
 //
 // It is deliberately thin, and deliberately incomplete. See `figureID`.
 
+// SecuraCV-Parity: every Apple surface that shows a device compiles this.
+// (which figure a device resolves to)
+
 import SwiftUI
 
 extension DeviceType {

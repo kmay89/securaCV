@@ -271,6 +271,16 @@ struct DeviceCard: View {
                 Circle()
                     .fill(dotColor)
                     .frame(width: 18, height: 18)
+                // The device itself, drawn from the SAME resolver the phone
+                // uses (board, then published type, then the coarse family) —
+                // so a Canary that has a picture has it on every screen, and
+                // one that doesn't falls back to the same honest marker rather
+                // than to a different one. This card used to carry no figure
+                // at all: a dot stood in for the hardware.
+                DeviceFigureIcon(device.deviceType,
+                                 published: device.product,
+                                 hardware: device.hw,
+                                 size: hero ? 46 : 34)
                 Text(device.name)
                     .font(hero ? .title.weight(.bold) : .title2.weight(.semibold))
                     .foregroundStyle(skin.ink)
@@ -279,8 +289,20 @@ struct DeviceCard: View {
             Text(statusLine)
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            if let product = device.product {
+            // The product NAME, never the wire string. A television showing
+            // "canary-nightstand7" reads as a bug from across the room; the
+            // shared resolver says "Canary Nightstand 7", and says nothing at
+            // all rather than guessing for a type this build doesn't know.
+            if let product = device.productName {
                 Text(product)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            // A hub the owner hasn't set up is worth one quiet line on the
+            // wall — never an alarm, and nothing at all when the device is
+            // connected or didn't say (HubState.unknown).
+            if device.hubState.needsAttention {
+                Text(hubLine)
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
@@ -297,7 +319,21 @@ struct DeviceCard: View {
 
     private var statusLine: String {
         if device.chainIsTroubled { return "Record didn't verify" }
+        // "record ok" is a claim about a chain, so it may only be said by a
+        // device that HAS one. A display holds none — it renders other
+        // devices' — and answers "unknown"; saying "record ok" there would
+        // invent a verification, exactly as calling it trouble invented a
+        // failure.
+        guard device.chain == "ok" else { return device.online ? "Online" : "Offline" }
         return device.online ? "Online · record ok" : "Offline"
+    }
+
+    private var hubLine: String {
+        switch device.hubState {
+        case .absent: return "No hub yet — it works on its own"
+        case .down:   return "Can't reach its hub"
+        case .ok, .unknown: return ""
+        }
     }
 }
 
