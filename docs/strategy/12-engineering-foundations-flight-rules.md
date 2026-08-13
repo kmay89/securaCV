@@ -170,6 +170,10 @@ monitor, and with the default `panic = "unwind"` a dead thread (e.g. the API
 thread) leaves a half-alive process. Fix: verify the tail (bounded to the last
 checkpoint) before the first append; add a watchdog thread over main-loop
 progress + systemd `WatchdogSec`; see K5.
+*Resolution (PR #990, issue #918): `witnessd` now verifies the sealed-log
+tail at startup and drops to a recorded safe mode on mismatch, and a
+watchdog task tracks main-loop liveness. Still open from this finding:
+systemd `WatchdogSec` integration (FR-9).*
 
 **K5 · P1 — No `[profile.release]`.** Verified absent from `Cargo.toml`:
 release builds run with `overflow-checks = false` (Ariane 5's exact failure

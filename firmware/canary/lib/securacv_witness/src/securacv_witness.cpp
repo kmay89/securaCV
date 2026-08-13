@@ -455,6 +455,14 @@ bool witness_create_record_gps(const uint8_t* payload, size_t len, RecordType ty
   if (g_record_ring_count < WITNESS_RECORD_RING_SIZE) g_record_ring_count++;
   portEXIT_CRITICAL(&g_record_ring_mux);
 
+  // Retain the newest record in the static witness_get_last_record()
+  // returns. Records are created into CALLER-owned storage, so without
+  // this copy that static stayed at seq 0 forever and the diagnostics
+  // chain self-test (chain_ok) could never re-walk the tail — its
+  // "record not in RAM" bypass would have been the permanent path on
+  // this product (Codex P1 on the chain_ok fix).
+  g_last_record = *out;
+
   // Durable tier FIRST, NVS second (ordering is load-bearing): the SD
   // append must precede the NVS persist so a crash between the two leaves
   // SD ahead — exactly the state the boot recovery (SD-wins) repairs. If

@@ -8,6 +8,9 @@
 //   canary-local/figures/<id>.svg          the full figure
 //   canary-local/figures/<id>.glyph.svg    the small-size figure
 //   firmware/common/core/fleet_figures.h   what a device says it is
+//   firmware/common/core/fleet_figures_art.h  the glyph-tier faces, pre-
+//                                          triangulated so a display can draw
+//                                          a witness's figure on the glass
 //   ios/Shared/FleetFigures.swift          what the phone and wrist draw
 //   ios/Shared/FleetSolids.swift           the mm massing behind each figure,
 //                                          for the phone's turntable viewer
@@ -33,6 +36,12 @@ const ENCLOSURE = join(ROOT, 'docs/hardware/enclosure');
 const OUT_JSON = join(ROOT, 'canary-local/devices/figures.json');
 const OUT_SVG = join(ROOT, 'canary-local/figures');
 const OUT_H = join(ROOT, 'firmware/common/core/fleet_figures.h');
+// The on-glass tier: the same glyph-detail faces the .glyph.svg carries, but
+// decimated and pre-triangulated, because the one thing an ESP32 display
+// cannot afford at render time is a polygon tessellator. Only figures a
+// device can actually RESOLVE (the kFigures/kHardware rows) are emitted —
+// art for a figure nothing can look up is flash spent on nothing.
+const OUT_ART = join(ROOT, 'firmware/common/core/fleet_figures_art.h');
 const OUT_SWIFT = join(ROOT, 'ios/Shared/FleetFigures.swift');
 const OUT_SOLIDS = join(ROOT, 'ios/Shared/FleetSolids.swift');
 // The picker tier: one compact SVG per figure, small enough to be EMBEDDED
@@ -830,6 +839,221 @@ inline const HardwareRef* my_figure() {
 #else
   return nullptr;
 #endif
+}
+
+}  // namespace canary::figures
+`);
+
+/* ── firmware: the glyph faces a display can afford to draw ──────────────
+ *
+ * The same glyph-detail plan the .glyph.svg is rendered from, prepared for a
+ * microcontroller: vertices decimated (an arc that reads at 256 px is noise
+ * at 28 px), faces below visibility dropped, and every face pre-triangulated
+ * (ear clipping here, in JS, so the firmware never carries a tessellator).
+ * Coordinates are quarter-units in the glyph's 64-unit box (int16), so the
+ * renderer's only job is one multiply per vertex. Emitted only for figures
+ * the firmware lookups can resolve — kFigures + kHardware — which are never
+ * ideas, so there are no ghost ops to represent. */
+
+// Drop a vertex whose removal moves the outline by less than eps units.
+// Iterative and order-stable, so the emitted bytes are reproducible.
+function decimateRing(pts, eps) {
+  const out = pts.slice();
+  let changed = true;
+  while (changed && out.length > 3) {
+    changed = false;
+    for (let i = 0; i < out.length && out.length > 3; i++) {
+      const a = out[(i + out.length - 1) % out.length];
+      const b = out[i];
+      const c = out[(i + 1) % out.length];
+      const dx = c[0] - a[0];
+      const dy = c[1] - a[1];
+      const len = Math.hypot(dx, dy) || 1e-9;
+      const dist = Math.abs(dx * (a[1] - b[1]) - dy * (a[0] - b[0])) / len;
+      if (dist < eps) {
+        out.splice(i, 1);
+        changed = true;
+        i--;
+      }
+    }
+  }
+  return out;
+}
+
+function ringArea2(pts) {  // signed, doubled
+  let s = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const [x0, y0] = pts[i];
+    const [x1, y1] = pts[(i + 1) % pts.length];
+    s += x0 * y1 - x1 * y0;
+  }
+  return s;
+}
+
+// Ear-clip a simple polygon into triangles (vertex index triples). The
+// projected faces are convex or nearly so; the guard falls back to a fan
+// rather than looping forever on a degenerate ring.
+function earClip(pts) {
+  const n = pts.length;
+  if (n < 3) return [];
+  const ccw = ringArea2(pts) > 0;
+  const idx = pts.map((_, i) => i);
+  const tris = [];
+  const cross = (a, b, c) => (pts[b][0] - pts[a][0]) * (pts[c][1] - pts[a][1])
+    - (pts[b][1] - pts[a][1]) * (pts[c][0] - pts[a][0]);
+  const inside = (a, b, c, p) => {
+    const s1 = cross(a, b, p);
+    const s2 = cross(b, c, p);
+    const s3 = cross(c, a, p);
+    return (s1 >= 0 && s2 >= 0 && s3 >= 0) || (s1 <= 0 && s2 <= 0 && s3 <= 0);
+  };
+  let guard = n * n + 8;
+  while (idx.length > 3 && guard-- > 0) {
+    let clipped = false;
+    for (let i = 0; i < idx.length; i++) {
+      const a = idx[(i + idx.length - 1) % idx.length];
+      const b = idx[i];
+      const c = idx[(i + 1) % idx.length];
+      const conv = ccw ? cross(a, b, c) > 0 : cross(a, b, c) < 0;
+      if (!conv) continue;
+      let ear = true;
+      for (const p of idx) {
+        if (p === a || p === b || p === c) continue;
+        if (inside(a, b, c, p)) { ear = false; break; }
+      }
+      if (!ear) continue;
+      tris.push([a, b, c]);
+      idx.splice(i, 1);
+      clipped = true;
+      break;
+    }
+    if (!clipped) break;  // degenerate: fall through to the fan below
+  }
+  if (idx.length === 3) {
+    tris.push([idx[0], idx[1], idx[2]]);
+  } else {
+    for (let i = 1; i + 1 < idx.length; i++) tris.push([idx[0], idx[i], idx[i + 1]]);
+  }
+  return tris;
+}
+
+const ART_SIZE = 64;   // the glyph tier's box
+const ART_Q = 4;       // quarter-unit fixed point; 64 * 4 = 256 fits int16
+const artIds = [...new Set([
+  ...uniqueRows.map((r) => r.fig.id),
+  ...hardwareRows.map((r) => r.fig.id),
+])].sort();
+
+const cId = (id) => id.replace(/[^A-Za-z0-9]/g, '_');
+const artBlocks = [];
+const artRows = [];
+for (const id of artIds) {
+  const f = byIdBuilt.get(id);
+  const plan = planFigure({ id: f.id, solids: f.massing },
+    { size: ART_SIZE, pad: 3, detail: 'glyph', ghost: f.ghost });
+  const faces = [];
+  for (const op of plan.ops) {
+    if (op.kind !== 'face') {
+      throw new Error(`figures: art for "${id}" met a ${op.kind} op — the art `
+        + 'tier only carries built figures, which draw solid faces.');
+    }
+    const ring = decimateRing(op.pts, 0.6);
+    if (Math.abs(ringArea2(ring)) / 2 < 1.5) continue;  // invisible at 28 px
+    const tris = earClip(ring);
+    if (!tris.length) continue;
+    const q = (v) => {
+      const s = Math.round(v * ART_Q);
+      return Math.max(-32768, Math.min(32767, s));
+    };
+    // Quantization can flatten a sliver into a zero-area triangle; drop
+    // those (and, below, any face left with none) so the renderer never
+    // meets a degenerate — the host test asserts exactly this.
+    const flatTris = tris.flatMap(([a, b, c]) => {
+      const t6 = [
+        q(ring[a][0]), q(ring[a][1]), q(ring[b][0]), q(ring[b][1]),
+        q(ring[c][0]), q(ring[c][1]),
+      ];
+      const area2 = (t6[2] - t6[0]) * (t6[5] - t6[1])
+        - (t6[3] - t6[1]) * (t6[4] - t6[0]);
+      return area2 === 0 ? [] : t6;
+    });
+    if (!flatTris.length) continue;
+    if (!/^#[0-9a-fA-F]{6}$/.test(op.fill)) {
+      throw new Error(`figures: art face fill "${op.fill}" on "${id}" is not #RRGGBB.`);
+    }
+    faces.push({ rgb: op.fill.slice(1).toUpperCase(), tris: flatTris });
+  }
+  if (!faces.length) throw new Error(`figures: art for "${id}" came out empty.`);
+  const base = `kArt_${cId(id)}`;
+  const triLines = faces.map((fa, i) =>
+    `inline constexpr int16_t ${base}_t${i}[] = {${fa.tris.join(',')}};`);
+  const faceLines = faces.map((fa, i) =>
+    `  { 0x${fa.rgb}, ${fa.tris.length / 6}, ${base}_t${i} },`);
+  artBlocks.push(`${triLines.join('\n')}
+inline constexpr ArtFace ${base}_faces[] = {
+${faceLines.join('\n')}
+};`);
+  artRows.push(`  { "${id}", "${f.rev}", ${faces.length}, ${base}_faces },`);
+}
+
+emit(OUT_ART, `#pragma once
+// GENERATED by canary-local/tools/figures/gen_figures.mjs — do not edit.
+// Spec: docs/design/FLEET_FIGURES.md (§10, drawing the fleet on the glass).
+//
+// The glyph tier of each RESOLVABLE figure (every id the kFigures/kHardware
+// rows in fleet_figures.h can return), as painter-ordered faces that are
+// already triangulated — the same projector, camera and palette as every
+// other surface, so the picture beside a witness on a display is the same
+// picture the phone and the catalog draw.
+//
+// Geometry is quarter-units in the glyph's 64-unit box: multiply a
+// coordinate by the pixel size, then divide by kFigureArtScale. Faces are
+// solid physical-object colors on purpose — a Canary's case is off-white in
+// every theme (the same rule FleetSolids.swift states) — so a renderer tints
+// nothing and the night face simply hides the art instead of recoloring it.
+//
+// Pure C++, no LVGL, no Arduino, no allocation: host-testable like
+// fleet_figures.h, renderer-agnostic by design.
+
+#include <stdint.h>
+#include <stddef.h>
+
+#include "fleet_figures.h"  // figure ids + figure_streq
+
+namespace canary::figures {
+
+struct ArtFace {
+  uint32_t rgb;             // 0xRRGGBB, the face's own physical color
+  uint16_t tri_count;       // triangles in tris (tris holds tri_count * 6)
+  const int16_t* tris;      // x0,y0,x1,y1,x2,y2 per triangle, quarter-units
+};
+
+struct FigureArt {
+  const char* figure_id;    // the ledger id, e.g. "device.canary-sense"
+  const char* rev;          // matches the figure's rev in fleet_figures.h
+  uint16_t face_count;
+  const ArtFace* faces;     // painter-ordered: draw first to last
+};
+
+// One denominator for every coordinate: px = coord * size_px / kFigureArtScale.
+inline constexpr int kFigureArtScale = ${ART_SIZE * ART_Q};
+
+${artBlocks.join('\n\n')}
+
+inline constexpr FigureArt kFigureArt[] = {
+${artRows.join('\n')}
+};
+inline constexpr size_t kFigureArtCount =
+    sizeof(kFigureArt) / sizeof(kFigureArt[0]);
+
+// The art for a ledger figure id, or nullptr — the same honest fallback the
+// lookups in fleet_figures.h keep (draw nothing rather than a guess).
+inline const FigureArt* figure_art(const char* figure_id) {
+  if (!figure_id || !figure_id[0]) return nullptr;
+  for (size_t i = 0; i < kFigureArtCount; i++) {
+    if (figure_streq(kFigureArt[i].figure_id, figure_id)) return &kFigureArt[i];
+  }
+  return nullptr;
 }
 
 }  // namespace canary::figures

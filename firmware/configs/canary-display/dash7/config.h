@@ -60,6 +60,10 @@
 #define FEATURE_NIGHT_BLACKOUT      0
 #define FEATURE_COMFORT_WORDS       1
 #define FEATURE_HUB_WEATHER         1
+#define FEATURE_STANDALONE_WEATHER  1   // hub-less homes may OPT IN to the glass
+                                        // fetching its own coarse forecast
+                                        // (net/wx_direct.h - three gates, off by
+                                        // default, never a hub fallback)
 #define FEATURE_WAKE_ALARM          0
 
 // Features NOT used by this device — a display witnesses nothing itself.

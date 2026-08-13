@@ -7,6 +7,32 @@
 
 ---
 
+## A diagnostic named after a thing must test that thing
+
+### chain_ok never looked at the chain — on two products at once (2026-08, PR #1540)
+- **What happened:** The diagnostics self-test named `chain_ok` returned
+  `crypto_healthy`, and canary-wap's `/api/fleet` coarse chain answer was
+  `!tamper && verify_failures == 0`. Neither ever read a chain byte, so a
+  silently rewritten tail that tripped no verify still scored green on the
+  Witness Wall, in the apps, and in the health score.
+- **Second layer (the Codex catch):** the first fix re-walked
+  `witness_get_last_record()` — but on the canary product records were
+  created into CALLER-owned structs and the static that getter returns
+  stayed at seq 0 forever, so the fixed test's "record not in RAM" bypass
+  was the permanent path. A test that can never reach its assert is the
+  same lie with more steps. `witness_create_record_gps` now retains the
+  newest record; the tail check recomputes the canonical chain hash,
+  matches it against the head, and verifies the signature.
+- **Guidance:** when a check is a proxy (flag, counter, neighbor's health),
+  either make it test the named thing or rename it to what it actually
+  tests. And prove the check can FAIL: if no reachable state flips it red,
+  it is decoration. Same lesson at CI scale in the same PR:
+  `scripts/ci/conformance.sh` existed for months, ran in no workflow, and
+  had quietly rotted against three kernel API changes — an unexecuted gate
+  protects nothing.
+
+---
+
 ## Blocking I/O vs the Task Watchdog
 
 ### SD.begin() has no deadline — a bad card crash-looped the device, and safe mode too
@@ -1243,6 +1269,27 @@
   `firmware.yml`. String literals in the faces and the code feeding them must
   stay inside the font's range. Serial-log and `#error` text is exempt — it is
   read where real fonts exist.
+- **Date learned:** 2026-08
+
+### A tool that interprets escape sequences turns "\xE2\x80\xA2" into mojibake on the way through
+
+- **What happened:** three settings-sheet strings that were written with the
+  BULLET spelled as the hex escapes `\xE2\x80\xA2` reached the file as the
+  six-byte sequence for `â` + U+0080 + `¢` — mojibake that the glyph guard
+  (correctly) failed three CI jobs on.
+- **Root cause:** the edit was piped through a scripting language whose own
+  string parser consumed the `\xNN` escapes as *its* escapes and wrote the
+  decoded characters into the C++ source, instead of the twelve ASCII
+  characters the C compiler was meant to see. Any templating or heredoc layer
+  with C-style escape syntax has this failure mode; the diff even LOOKS right
+  in viewers that render the decoded bytes.
+- **Fix:** write the literal backslash sequences with the escape layer
+  defused (raw strings, single-quoted heredocs, or editing tools that do no
+  interpolation), then byte-check the result: the three faces' UI sources
+  should contain no bytes above 0x7F inside string literals.
+- **Regression check:** `firmware/scripts/check_display_glyphs.py` already
+  catches it — U+00E2/U+0080/U+00A2 are outside the font range. Trust it
+  locally before pushing: it is the same gate CI runs.
 - **Date learned:** 2026-08
 
 ---

@@ -33,6 +33,8 @@ struct Portrait7State {
   bool time_valid = false;
   int clock_hh = 0;
   int clock_mm = 0;
+  // Hours since SNTP last PROVED the wall clock (0xFFFF = never this boot).
+  uint16_t sync_age_h = 0;
   CanaryMood bird = CanaryMood::Idle;
 };
 
@@ -40,6 +42,11 @@ void portrait7_ui_create();
 void portrait7_ui_update(const canary::fleet::Fleet& fleet, uint32_t now,
                          const Portrait7State& st);
 void portrait7_ui_ack_hold(bool active);
+
+// A lit tap the column claims (today: the gear corner, which opens the
+// settings surface — day only). Returns false for taps that should stay the
+// wake they already were; main.cpp routes accordingly.
+bool portrait7_ui_handle_tap(int16_t x, int16_t y);
 
 // Ambient-life moment (care/ambient_life.h): brighten the glance line for a
 // few seconds so an idle check-in is visible, then let it settle back.
