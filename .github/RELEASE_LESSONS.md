@@ -2134,12 +2134,25 @@ process: Flasher, Lab, tvOS, and the iPhone / iPad / Mac targets.
   iPhones registered (which is the only reason the iOS archive step ever
   worked) and no Apple TV, so Apple refuses the profile, and Xcode 26
   renders the refusal as the bearer-token error above.
-- **Fix:** store builds now archive signed as `Apple Distribution`
-  (override passed by `tvos/scripts/release-tvos.sh` for every non-debugging
-  export method). App Store distribution profiles need no registered
-  devices, and the account demonstrably mints them — the iPhone export does
-  it on every release. The debugging export keeps development signing,
-  because that is what a debugging export is for.
+- **The fix that does NOT work:** overriding `CODE_SIGN_IDENTITY="Apple
+  Distribution"` on the archive command. Automatic signing rejects it by
+  name — *"conflicting provisioning settings … automatically signed for
+  development, but a conflicting code signing identity Apple Distribution
+  has been manually specified"* — because automatic signing owns the
+  identity choice and will not be argued with one setting at a time.
+- **The fix:** store builds archive **unsigned**
+  (`CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO`, passed by
+  `tvos/scripts/release-tvos.sh` for every non-debugging export method), and
+  `-exportArchive` signs from scratch with the App Store distribution
+  profile — which needs no registered devices, and which the account
+  demonstrably mints (the iPhone export does it on every release; export
+  re-signs every archive anyway, so nothing store-bound ever shipped
+  carrying archive-time signatures). The export pins
+  `signingCertificate = Apple Distribution` like the iPhone's does, per (m)
+  — doubly load-bearing here, since that export is now the only signing
+  pass a store build gets. The debugging export keeps development signing
+  end to end, because a development build is the one thing that genuinely
+  needs it.
 - **Why iOS was left alone:** its archive works today only because iPhones
   happen to be registered — the same latent fragility, one deregistration
   away. It was deliberately NOT switched in the same change: its archive

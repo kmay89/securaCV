@@ -121,20 +121,30 @@ asc_auth=(
   -authenticationKeyIssuerID "$APPLE_API_ISSUER"
 )
 
-# Store builds archive signed for DISTRIBUTION, not development. Automatic
-# signing's default is to archive with an "Apple Development" identity, and
+# Store builds archive UNSIGNED; the export step does all the signing.
+#
+# Automatic signing archives with an "Apple Development" identity, and
 # minting a *tvOS App Development* profile requires at least one registered
 # Apple TV on the account — a thing this account has never needed (the iPhone
 # archives fine because iPhones are registered; nobody ever pairs an Apple TV
 # with Xcode just to ship). Apple's refusal surfaces as the baffling pair
 # "Authentication failed: bearer token" + "No profiles for '<bundle id>'".
-# App Store profiles need no devices, and this account demonstrably mints
-# them — the iPhone export does it on every release. The debugging export
-# keeps development signing, because that is what a debugging export is.
+# And the obvious dodge — overriding CODE_SIGN_IDENTITY to "Apple
+# Distribution" at archive — is rejected by name: "conflicting provisioning
+# settings … automatically signed for development, but … Apple Distribution
+# has been manually specified."
+#
+# So the archive skips signing entirely, and `-exportArchive` signs from
+# scratch with the App Store *distribution* profile — which needs no
+# registered devices, and which this account demonstrably mints (the iPhone
+# export does it on every release; export re-signs every archive anyway, so
+# nothing store-bound ever ships carrying archive-time signatures). The
+# debugging export keeps development signing end to end, because a
+# development build is the one thing that genuinely needs it.
 # RELEASE_LESSONS 2026-08-13.
 sign_overrides=()
 if [ "$export_method" != "debugging" ]; then
-  sign_overrides=(CODE_SIGN_IDENTITY="Apple Distribution")
+  sign_overrides=(CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO)
 fi
 
 # ── 6. Archive ──────────────────────────────────────────────────────────────
@@ -190,6 +200,15 @@ printf '%s' '{}' > "$PLIST"
 /usr/libexec/PlistBuddy -c "Add :method string $export_method" "$PLIST"
 /usr/libexec/PlistBuddy -c "Add :teamID string $APPLE_DEVELOPMENT_TEAM" "$PLIST"
 /usr/libexec/PlistBuddy -c "Add :signingStyle string automatic" "$PLIST"
+# Pin the certificate type for store exports, exactly as the iPhone export
+# does — RELEASE_LESSONS (m): Apple's two certificate types have
+# near-identical names, and letting the export guess is how the wrong one
+# gets picked only after a full build. Doubly load-bearing here because the
+# archive arrives unsigned (see the archive step), so this export is the ONLY
+# signing pass a store build gets.
+if [ "$export_method" = "app-store-connect" ]; then
+  /usr/libexec/PlistBuddy -c "Add :signingCertificate string Apple Distribution" "$PLIST"
+fi
 # Upload the symbols so a crash on a customer's Apple TV symbolicates. Only
 # meaningful for a store build, and harmless otherwise.
 /usr/libexec/PlistBuddy -c "Add :uploadSymbols bool true" "$PLIST"
