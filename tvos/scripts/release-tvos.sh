@@ -121,6 +121,22 @@ asc_auth=(
   -authenticationKeyIssuerID "$APPLE_API_ISSUER"
 )
 
+# Store builds archive signed for DISTRIBUTION, not development. Automatic
+# signing's default is to archive with an "Apple Development" identity, and
+# minting a *tvOS App Development* profile requires at least one registered
+# Apple TV on the account — a thing this account has never needed (the iPhone
+# archives fine because iPhones are registered; nobody ever pairs an Apple TV
+# with Xcode just to ship). Apple's refusal surfaces as the baffling pair
+# "Authentication failed: bearer token" + "No profiles for '<bundle id>'".
+# App Store profiles need no devices, and this account demonstrably mints
+# them — the iPhone export does it on every release. The debugging export
+# keeps development signing, because that is what a debugging export is.
+# RELEASE_LESSONS 2026-08-13.
+sign_overrides=()
+if [ "$export_method" != "debugging" ]; then
+  sign_overrides=(CODE_SIGN_IDENTITY="Apple Distribution")
+fi
+
 # ── 6. Archive ──────────────────────────────────────────────────────────────
 # THE BUILD NUMBER, WHICH project.yml CANNOT SUPPLY.
 #
@@ -150,6 +166,7 @@ xcodebuild -project "$PROJECT_DIR/WitnessWall.xcodeproj" \
   -destination 'generic/platform=tvOS' \
   -archivePath "$ARCHIVE" \
   "${asc_auth[@]}" \
+  ${sign_overrides[@]+"${sign_overrides[@]}"} \
   DEVELOPMENT_TEAM="$APPLE_DEVELOPMENT_TEAM" \
   CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
   SECURACV_BUILD_REV="${SECURACV_BUILD_REV:-dev}" \

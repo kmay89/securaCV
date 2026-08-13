@@ -2111,3 +2111,45 @@ process: Flasher, Lab, tvOS, and the iPhone / iPad / Mac targets.
   measure — `stat` the `.bin`; never trust an ELF-derived proxy within ~20 KB
   of a boundary. And any tool that parses a partition table for an offset and
   ignores the size beside it is a tool that will eventually write a brick.
+
+### 2026-08-13 — the first tvOS release ever: no registered Apple TV means no development profile, reported as an auth failure
+
+- **Symptom:** the first real run of `tvos-release.yml` (gate finally open)
+  failed at `xcodebuild … archive` in seconds with TWO errors that both point
+  the wrong way: *"Authentication failed: Make sure a bearer token was
+  provided…"* and *"No profiles for 'com.securacv.witnesswall' were found:
+  Xcode couldn't find any tvOS App Development provisioning profiles."*
+  Registering the bundle ID and creating the App Store Connect app record
+  changed nothing — same failure, byte for byte.
+- **What the errors are NOT:** the API key was fine. The decisive experiment
+  was dispatching `ios-release.yml` build-only in the same hour — the iPhone
+  archived and exported cleanly with the same `APPLE_*` secrets on the same
+  runner image, so auth, key role, and Xcode were all healthy. Do that
+  experiment FIRST next time a store pipeline fails at provisioning: the
+  sibling pipeline is a free control group.
+- **Cause:** under `CODE_SIGN_STYLE: Automatic`, `xcodebuild archive` signs
+  with an "Apple Development" identity, and cloud-signing therefore has to
+  mint a *tvOS App Development* provisioning profile — which requires at
+  least one **registered Apple TV device** on the team. This team has
+  iPhones registered (which is the only reason the iOS archive step ever
+  worked) and no Apple TV, so Apple refuses the profile, and Xcode 26
+  renders the refusal as the bearer-token error above.
+- **Fix:** store builds now archive signed as `Apple Distribution`
+  (override passed by `tvos/scripts/release-tvos.sh` for every non-debugging
+  export method). App Store distribution profiles need no registered
+  devices, and the account demonstrably mints them — the iPhone export does
+  it on every release. The debugging export keeps development signing,
+  because that is what a debugging export is for.
+- **Why iOS was left alone:** its archive works today only because iPhones
+  happen to be registered — the same latent fragility, one deregistration
+  away. It was deliberately NOT switched in the same change: its archive
+  carries the entitlements dance (`SECURACV_APP_ENTITLEMENTS`, Critical
+  Alerts) that this fix was not tested against, and changing a shipping
+  pipeline as a side effect of fixing a broken one is how (m) happened. If
+  the iPhone ever fails at archive with this signature, this entry is the
+  diagnosis and the tvOS script is the template.
+- **Applies to:** any NEW Apple platform target this repo grows (visionOS,
+  a Mac Catalyst split, …). The first release of a new platform runs on an
+  account that has never registered a device of that platform — so archive
+  distribution-signed from day one, and expect the first provisioning
+  failure to blame authentication.
