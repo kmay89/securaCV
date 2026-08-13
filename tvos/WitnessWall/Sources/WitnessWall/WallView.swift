@@ -83,7 +83,7 @@ struct WallView: View {
             ProgressView()
             Text("Looking for your Canaries…")
                 .font(.system(size: 56, weight: .semibold))
-            Text("The Wall is checking your network — a hub at canary.local answers by itself, and so does every Canary announcing itself, hub or not. Nothing leaves this room.")
+            Text("The Wall is checking your network — a hub at canary.local answers by itself, and so does every Canary that publishes a fleet report, hub or not. Nothing leaves this room.")
                 .font(.title3)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -165,7 +165,7 @@ struct WallView: View {
                 // element on screen, rather than letting old data read as now.
                 StatusBanner(
                     tone: .warning,
-                    title: "Showing the last verified record from \(asOf.formatted(date: .omitted, time: .shortened))",
+                    title: "Showing the last report received at \(asOf.formatted(date: .omitted, time: .shortened))",
                     detail: stale
                 )
             } else if fleet.hasChainTrouble {

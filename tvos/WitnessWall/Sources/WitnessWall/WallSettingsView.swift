@@ -85,7 +85,11 @@ struct WallSettingsView: View {
                     // remote hub URL is a supported input, and the promise
                     // must survive it. What IS always true: one address,
                     // nothing else, no cloud of ours.
-                    Text("The Wall finds your Canaries by itself — a hub at canary.local, or any Canary announcing itself on your network. This field is only for a hub that lives somewhere else; typing one replaces the found set. Wherever it points, the Wall talks to your Canaries and nothing else — never a cloud of ours.")
+                    // "Publishes a fleet report", not "announces itself":
+                    // Vision- and Sense-class Canaries announce the service
+                    // but serve no fleet endpoint, and a promise that finds
+                    // them would be false. A hub is how THOSE reach a wall.
+                    Text("The Wall finds your Canaries by itself — a hub at canary.local, or any Canary that publishes a fleet report on your network. This field is only for a hub that lives somewhere else; typing one replaces the found set. Wherever it points, the Wall talks to your Canaries and nothing else — never a cloud of ours.")
                 }
 
                 Section("About") {

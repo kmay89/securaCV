@@ -68,10 +68,19 @@ final class WallModel {
 
     private static let hubKey = "SecuraCVHubAddress"
     private static let sourcesKey = "SecuraCVWallSources"
+    /// True when `sources` came from the Canaries' own announcements rather
+    /// than a typed address or a found hub — the mode where the Wall keeps
+    /// listening (see `reconcileDiscovered`), because a fleet you didn't
+    /// configure is a fleet that grows without telling you.
+    private static let discoveredKey = "SecuraCVWallSourcesDiscovered"
     /// How long one Bonjour browse listens before reporting. Announcements
     /// arrive within a second or two on a healthy LAN; four is patience, not
     /// hope — the search loop comes back around anyway.
     private static let browseWindow: TimeInterval = 4
+    /// Poll cycles between re-browses in discovered mode — about a minute at
+    /// the steady interval. A Canary plugged in later joins the wall on the
+    /// next reconcile, not after a settings reset.
+    private static let reconcileEvery = 6
 
     /// Where a fleet answers on a standard install, most-specific first: the
     /// hub's kernel port, then a lone canary-wap fronting its own fleet at
@@ -100,9 +109,10 @@ final class WallModel {
         self.resident = ResidentWatch(defaults: defaults)
     }
 
-    private func persist(_ sources: [String]) {
+    private func persist(_ sources: [String], discovered: Bool = false) {
         self.sources = sources
         defaults.set(sources, forKey: Self.sourcesKey)
+        defaults.set(discovered, forKey: Self.discoveredKey)
         // Keep the legacy key coherent for anything still reading it.
         defaults.set(sources.first ?? "", forKey: Self.hubKey)
     }
@@ -198,9 +208,16 @@ final class WallModel {
             parts.append(snapshot)
         }
         if !confirmed.isEmpty {
-            persist(confirmed)
+            // Tag each part with its source before merging, so two units
+            // sharing a stale default name stay two rows (see merged()).
+            // A single discovered Canary stays untagged, same as a hub.
+            let tagged = confirmed.count > 1
+                ? zip(confirmed, parts).map { $1.tagged(bySource: $0) }
+                : parts
+            for (host, part) in zip(confirmed, tagged) { lastAnswer[host] = part }
+            persist(confirmed, discovered: true)
             backoff.reset()
-            state = .live(FleetSnapshot.merged(parts), asOf: Date())
+            state = .live(FleetSnapshot.merged(tagged), asOf: Date())
             return true
         }
 
@@ -226,12 +243,22 @@ final class WallModel {
         }
     }
 
+    /// The last fleet each source served, so a source that goes dark can be
+    /// SHOWN dark instead of silently vanishing from the merge. In-memory
+    /// only: after a reboot a source that never answers again is simply
+    /// absent, which is the truth a fresh boot actually knows.
+    private var lastAnswer: [String: FleetSnapshot] = [:]
+
     /// One fetch-verify-publish cycle over EVERY source. A hub is one source
     /// answering for everyone; a hubless fleet is several, merged
     /// (FleetSnapshot.merged). Partial answers count as live — one dark
-    /// Canary must not blank the ones still talking — and the wall only
-    /// degrades to stale when NOBODY answers. Exposed (internal) so tests can
-    /// step the machine deterministically instead of racing a real loop.
+    /// Canary must not blank the ones still talking — but the dark one is
+    /// not DROPPED either: its last-known devices stay on the wall, marked
+    /// offline, because "this Canary is not answering" is a fact the Wall
+    /// knows and hiding it would let the merge read as all-online. The wall
+    /// only degrades to stale when NOBODY answers. Exposed (internal) so
+    /// tests can step the machine deterministically instead of racing a
+    /// real loop.
     func refreshOnce() async {
         guard !sources.isEmpty else {
             state = .unreachable(reason: "No hub or Canary address is set.")
@@ -239,18 +266,27 @@ final class WallModel {
         }
 
         var parts: [FleetSnapshot] = []
+        var anyAnswered = false
         var lastError = "unreachable"
+        let multi = sources.count > 1
         for source in sources {
             do {
                 let address = try FleetAddress.normalize(source)
                 let body = try await transport.fetchFleet(from: address)
-                parts.append(try WitnessCore.parseFleet(json: body))
+                let snapshot = try WitnessCore.parseFleet(json: body)
+                let part = multi ? snapshot.tagged(bySource: source) : snapshot
+                lastAnswer[source] = part
+                parts.append(part)
+                anyAnswered = true
             } catch {
                 lastError = error.localizedDescription
+                if let remembered = lastAnswer[source] {
+                    parts.append(remembered.withEveryDeviceOffline())
+                }
             }
         }
 
-        if parts.isEmpty {
+        if !anyAnswered {
             degrade(reason: lastError)
             return
         }
@@ -277,9 +313,38 @@ final class WallModel {
         }
     }
 
+    /// Discovered mode keeps an ear open: every few poll cycles, re-browse
+    /// and probe anything NEW that announced itself. A Canary plugged in
+    /// next month joins the wall by itself — the same promise the first
+    /// search makes, kept continuously. Dead sources are not removed here;
+    /// they stay on the wall as offline (see refreshOnce), because absence
+    /// of an announcement is not proof of absence.
+    func reconcileDiscovered() async {
+        guard defaults.bool(forKey: Self.discoveredKey) else { return }
+        let announced = await discover(Self.browseWindow)
+        var grew = false
+        for host in announced where !sources.contains(host) {
+            guard let url = try? FleetAddress.normalize(host),
+                  let body = try? await transport.fetchFleet(from: url),
+                  let snapshot = try? WitnessCore.parseFleet(json: body) else { continue }
+            lastAnswer[host] = snapshot.tagged(bySource: host)
+            persist(sources + [host], discovered: true)
+            grew = true
+        }
+        if grew { await refreshOnce() }
+    }
+
+    private var pollsSinceReconcile = 0
+
     private func pollLoop() async {
         while !Task.isCancelled {
             await refreshOnce()
+
+            pollsSinceReconcile += 1
+            if pollsSinceReconcile >= Self.reconcileEvery {
+                pollsSinceReconcile = 0
+                await reconcileDiscovered()
+            }
 
             // Healthy: poll at the steady interval. Degraded: back off, so an
             // unplugged hub settles into a slow retry rather than hammering.
