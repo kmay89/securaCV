@@ -31,8 +31,12 @@ BRAND = os.path.join(
 
 LAYERS = ("Back", "Middle", "Front")
 
-# (stack folder, expected size) — every layer of a stack is that size.
-STACKS = [("App Icon", 400, 240), ("App Icon - App Store", 1280, 768)]
+# (stack folder, base size, scales) — every layer of a stack exists at every
+# scale. The home-screen stack needs @1x AND @2x: App Store Connect rejects
+# an archive whose layers lack the 2x (error 90709, "missing an image for the
+# background layer with a scale value of '2'"), and it says so only at upload
+# validation, minutes after a green build. The App Store stack is @1x only.
+STACKS = [("App Icon", 400, 240, (1, 2)), ("App Icon - App Store", 1280, 768, (1,))]
 # (imageset folder, base size) — @1x and @2x.
 SHELVES = [("Top Shelf Image", 1920, 720), ("Top Shelf Image Wide", 2320, 720)]
 
@@ -70,7 +74,7 @@ def main() -> int:
         if (got_w, got_h) != (want_w, want_h):
             problems.append(f"{label}: is {got_w}x{got_h}, Apple requires {want_w}x{want_h}")
 
-    for name, w, h in STACKS:
+    for name, w, h, scales in STACKS:
         stack = os.path.join(root, f"{name}.imagestack")
         manifest = os.path.join(stack, "Contents.json")
         if not os.path.exists(manifest):
@@ -92,11 +96,48 @@ def main() -> int:
                 f"{name}: layers are declared {declared} — Apple's imagestack "
                 f"order is front-to-back, so it must be {want_order}"
             )
-            png = os.path.join(
-                stack, f"{layer}.imagestacklayer", "Content.imageset",
-                f"{name.replace(' ', '_')}_{layer}.png",
-            )
-            check(png, w, h, f"{name} / {layer}")
+        # Every layer, at every scale. This loop used to sit INSIDE the
+        # wrong-order branch above (one indentation level too deep), so the
+        # per-layer size checks only ran when the catalog was ALREADY broken
+        # a different way — which is how a stack with no @2x sailed through
+        # CI and died at App Store Connect validation (90709).
+        for layer in LAYERS:
+            image_set = os.path.join(stack, f"{layer}.imagestacklayer", "Content.imageset")
+            for scale in scales:
+                suffix = "" if scale == 1 else f"@{scale}x"
+                png = os.path.join(image_set, f"{name.replace(' ', '_')}_{layer}{suffix}.png")
+                check(png, w * scale, h * scale, f"{name} / {layer} @{scale}x")
+            # The manifest is load-bearing, not optional: a PNG on disk that
+            # Contents.json does not declare (or declares under another
+            # filename) fills no slot, and actool/App Store validation fails
+            # on the "missing" scale while every expected file exists. So a
+            # missing manifest is a failure, and the comparison covers the
+            # whole declaration — filename, idiom, scale — not just scales.
+            layer_manifest = os.path.join(image_set, "Contents.json")
+            if not os.path.exists(layer_manifest):
+                problems.append(
+                    f"{name} / {layer}: Content.imageset has no Contents.json — "
+                    "its PNGs fill no slots without one"
+                )
+            else:
+                with open(layer_manifest, encoding="utf-8") as handle:
+                    declared = sorted(
+                        (image.get("filename", ""), image.get("idiom", ""), image.get("scale", ""))
+                        for image in json.load(handle).get("images", [])
+                    )
+                want = sorted(
+                    (
+                        f"{name.replace(' ', '_')}_{layer}{'' if scale == 1 else f'@{scale}x'}.png",
+                        "tv",
+                        f"{scale}x",
+                    )
+                    for scale in scales
+                )
+                if declared != want:
+                    problems.append(
+                        f"{name} / {layer}: Contents.json declares {declared}, "
+                        f"Apple requires {want}"
+                    )
 
     for name, w, h in SHELVES:
         for scale in (1, 2):
@@ -110,7 +151,7 @@ def main() -> int:
         print("\nRegenerate it with: python3 tvos/scripts/make_app_icon.py")
         return 1
 
-    total = len(STACKS) * len(LAYERS) + len(SHELVES) * 2
+    total = sum(len(LAYERS) * len(scales) for *_rest, scales in STACKS) + len(SHELVES) * 2
     print(f"tvOS asset catalog complete — {total} images, all at the sizes Apple requires. ✅")
     return 0
 

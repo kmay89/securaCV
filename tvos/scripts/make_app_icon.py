@@ -216,7 +216,12 @@ LAYERS = [("Back", layer_back), ("Middle", layer_feeder), ("Front", layer_bird)]
 # the order structurally.
 STACK_ORDER = ["Front", "Middle", "Back"]
 
-STACKS = [("App Icon", 400, 240), ("App Icon - App Store", 1280, 768)]
+# (stack, base size, scales). The HOME-SCREEN icon needs every layer at @1x
+# AND @2x — App Store Connect rejects the archive by name without the 2x
+# ("missing an image for the background layer with a scale value of '2'",
+# error 90709, and it says so only at upload validation, minutes after a
+# green build). The App Store icon is 1280x768 @1x only, per Apple's spec.
+STACKS = [("App Icon", 400, 240, (1, 2)), ("App Icon - App Store", 1280, 768, (1,))]
 SHELVES = [("Top Shelf Image", 1920, 720), ("Top Shelf Image Wide", 2320, 720)]
 
 INFO = {"version": 1, "author": "xcode"}
@@ -267,7 +272,7 @@ def main() -> int:
         },
     )
 
-    for name, w, h in STACKS:
+    for name, w, h, scales in STACKS:
         stack = os.path.join(brand, f"{name}.imagestack")
         write_json(
             os.path.join(stack, "Contents.json"),
@@ -277,12 +282,16 @@ def main() -> int:
             layer_dir = os.path.join(stack, f"{layer}.imagestacklayer")
             write_json(os.path.join(layer_dir, "Contents.json"), {"info": INFO})
             image_set = os.path.join(layer_dir, "Content.imageset")
-            png = f"{name.replace(' ', '_')}_{layer}.png"
+            images = []
+            for scale in scales:
+                suffix = "" if scale == 1 else f"@{scale}x"
+                png = f"{name.replace(' ', '_')}_{layer}{suffix}.png"
+                images.append({"filename": png, "idiom": "tv", "scale": f"{scale}x"})
+                save(render(make, w * scale, h * scale), os.path.join(image_set, png))
             write_json(
                 os.path.join(image_set, "Contents.json"),
-                {"images": [{"filename": png, "idiom": "tv", "scale": "1x"}], "info": INFO},
+                {"images": images, "info": INFO},
             )
-            save(render(make, w, h), os.path.join(image_set, png))
 
     for name, w, h in SHELVES:
         image_set = os.path.join(brand, f"{name}.imageset")
