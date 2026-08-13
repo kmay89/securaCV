@@ -21,7 +21,7 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.1.0"
+    MARKETING_VERSION: "0.2.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
     DEVELOPMENT_TEAM: "$(APPLE_DEVELOPMENT_TEAM)"   # from env / CI, never committed
@@ -90,6 +90,12 @@ targets:
       - path: ../../ios/Shared/FleetFigures.swift
       - path: ../../ios/Shared/FleetFigureBridge.swift
       - path: ../../ios/Shared/DeviceNaming.swift
+      # The 3D half of the same vocabulary: the mm massing behind each figure
+      # and the projector that turns it. On the phone the turntable is
+      # drag-to-spin; on the Wall it turns by itself (a television has no
+      # drag) — one projector, one massing, two hands.
+      - path: ../../ios/Shared/FleetSolids.swift
+      - path: ../../ios/Shared/FleetIsoProjector.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.securacv.witnesswall

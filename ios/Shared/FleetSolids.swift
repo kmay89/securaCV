@@ -14,6 +14,10 @@
 // viewer (a screen, a lens, a wall plate). `at` is the min corner for a
 // box and the base-cap center for a cyl/disc, in mm, +X right / +Y front /
 // +Z up.
+//
+// SecuraCV-Parity: every Apple surface that shows a device compiles this.
+// (The marker lives in gen_figures.mjs's template — a marker hand-added to
+// generated output survives exactly one regen.)
 
 import Foundation
 

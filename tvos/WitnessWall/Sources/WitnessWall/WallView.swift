@@ -14,11 +14,15 @@ import UIKit
 struct WallView: View {
     @State private var model = WallModel()
     @State private var typedAddress = ""
+    @State private var showSettings = false
+    @State private var selectedDevice: FleetSnapshot.Device?
 
     // The room this TV serves, and how it dresses. Persisted like the hub
     // address: a power cut must not reset a bar's board to the home wall.
     @AppStorage("SecuraCVWallProfile") private var profileRaw = WallProfile.home.rawValue
     @AppStorage("SecuraCVWallSkin") private var skinRaw = WallSkin.midnight.rawValue
+    /// The one banner that is a choice (WallSettingsView). Chain trouble is not.
+    @AppStorage("SecuraCVWallOfflineBanner") private var offlineBanner = false
 
     private var profile: WallProfile { WallProfile(rawValue: profileRaw) ?? .home }
     private var skin: WallSkin { WallSkin(rawValue: skinRaw) ?? .midnight }
@@ -50,6 +54,15 @@ struct WallView: View {
             }
         }
         .preferredColorScheme(skin.isLight ? .light : .dark)
+        .fullScreenCover(isPresented: $showSettings) {
+            WallSettingsView(model: model)
+        }
+        .fullScreenCover(item: $selectedDevice) { device in
+            // The cover gets the device's IDENTITY; the view reads the live
+            // row out of the model each render, so a detail screen left open
+            // across a poll can never keep an out-of-date sentence up.
+            DeviceDetailView(model: model, deviceID: device.id, skin: skin)
+        }
         .onAppear {
             // Furniture must not doze: the whole point of a wall is that it
             // is still there when you look up.
@@ -114,7 +127,16 @@ struct WallView: View {
             // The profile sets density and ordering; the data is the data.
             LazyVGrid(columns: [GridItem(.adaptive(minimum: profile.tileMinimum), spacing: 28)], spacing: 28) {
                 ForEach(profile.sorted(fleet.devices)) { device in
-                    DeviceCard(device: device, skin: skin, hero: profile == .apartment && WallProfile.isDoorish(device.name))
+                    // A card is a button: click it and the device opens up
+                    // close, with the same turntable the phone shows. The
+                    // .card style is what makes it feel like tvOS — focus
+                    // lift, motion, the remote's native vocabulary.
+                    Button {
+                        selectedDevice = device
+                    } label: {
+                        DeviceCard(device: device, skin: skin, hero: profile == .apartment && WallProfile.isDoorish(device.name))
+                    }
+                    .buttonStyle(.card)
                 }
             }
 
@@ -152,6 +174,16 @@ struct WallView: View {
                     title: "A Canary's record didn't verify",
                     detail: "One or more devices report a chain that isn't ok. Open the Canary's page on your hub to see why."
                 )
+            } else if offlineBanner, !offlineNames(fleet).isEmpty {
+                // The one banner that is a CHOICE (settings → Attention): a
+                // bar wants to hear about a dark Canary, a bedroom doesn't.
+                // It ranks below chain trouble and never above it — a device
+                // that is merely asleep must not outshout one that is lying.
+                StatusBanner(
+                    tone: .warning,
+                    title: offlineTitle(fleet),
+                    detail: nil
+                )
             } else if let verifiedThrough = fleet.verifiedThrough {
                 StatusBanner(
                     tone: .calm,
@@ -177,8 +209,24 @@ struct WallView: View {
         }
     }
 
-    /// Profile + skin chips, tucked at the header's edge. Focusable with the
-    /// remote; a click cycles. Two controls, zero settings screens.
+    /// The devices that are dark right now, for the opt-in banner. Chain
+    /// trouble is excluded — those devices already own the louder banner.
+    private func offlineNames(_ fleet: FleetSnapshot) -> [String] {
+        fleet.devices.filter { !$0.online && !$0.chainIsTroubled }.map(\.name)
+    }
+
+    private func offlineTitle(_ fleet: FleetSnapshot) -> String {
+        let names = offlineNames(fleet)
+        switch names.count {
+        case 1: return "\(names[0]) is offline"
+        case 2: return "\(names[0]) and \(names[1]) are offline"
+        default: return "\(names.count) Canaries are offline"
+        }
+    }
+
+    /// Profile + skin chips, tucked at the header's edge — a click cycles,
+    /// no screen opened. The gear is the third chip: the full panel, for when
+    /// you want to see the choices instead of cycling through them.
     private var stylePicker: some View {
         HStack(spacing: 14) {
             Button(profile.label) {
@@ -187,6 +235,12 @@ struct WallView: View {
             Button(skin.label) {
                 skinRaw = next(after: skin, in: WallSkin.allCases).rawValue
             }
+            Button {
+                showSettings = true
+            } label: {
+                Image(systemName: "gearshape")
+            }
+            .accessibilityLabel("Settings")
         }
         .font(.caption)
         .buttonStyle(.bordered)
@@ -258,6 +312,29 @@ struct WallView: View {
 
 // MARK: - Pieces
 
+/// The two sentences the Wall says about a device, defined once so the card
+/// on the grid and the detail view can never phrase the same state two ways.
+extension FleetSnapshot.Device {
+    var wallStatusLine: String {
+        if chainIsTroubled { return "Record didn't verify" }
+        // "record ok" is a claim about a chain, so it may only be said by a
+        // device that HAS one. A display holds none — it renders other
+        // devices' — and answers "unknown"; saying "record ok" there would
+        // invent a verification, exactly as calling it trouble invented a
+        // failure.
+        guard chain == "ok" else { return online ? "Online" : "Offline" }
+        return online ? "Online · record ok" : "Offline"
+    }
+
+    var wallHubLine: String {
+        switch hubState {
+        case .absent: return "No hub yet — it works on its own"
+        case .down:   return "Can't reach its hub"
+        case .ok, .unknown: return ""
+        }
+    }
+}
+
 struct DeviceCard: View {
     let device: FleetSnapshot.Device
     let skin: WallSkin
@@ -286,7 +363,7 @@ struct DeviceCard: View {
                     .foregroundStyle(skin.ink)
                     .lineLimit(1)
             }
-            Text(statusLine)
+            Text(device.wallStatusLine)
                 .font(.callout)
                 .foregroundStyle(.secondary)
             // The product NAME, never the wire string. A television showing
@@ -302,7 +379,7 @@ struct DeviceCard: View {
             // wall — never an alarm, and nothing at all when the device is
             // connected or didn't say (HubState.unknown).
             if device.hubState.needsAttention {
-                Text(hubLine)
+                Text(device.wallHubLine)
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
@@ -315,25 +392,6 @@ struct DeviceCard: View {
     private var dotColor: Color {
         if device.chainIsTroubled { return .orange }
         return device.online ? skin.ok : Color(white: 0.4)
-    }
-
-    private var statusLine: String {
-        if device.chainIsTroubled { return "Record didn't verify" }
-        // "record ok" is a claim about a chain, so it may only be said by a
-        // device that HAS one. A display holds none — it renders other
-        // devices' — and answers "unknown"; saying "record ok" there would
-        // invent a verification, exactly as calling it trouble invented a
-        // failure.
-        guard device.chain == "ok" else { return device.online ? "Online" : "Offline" }
-        return device.online ? "Online · record ok" : "Offline"
-    }
-
-    private var hubLine: String {
-        switch device.hubState {
-        case .absent: return "No hub yet — it works on its own"
-        case .down:   return "Can't reach its hub"
-        case .ok, .unknown: return ""
-        }
     }
 }
 

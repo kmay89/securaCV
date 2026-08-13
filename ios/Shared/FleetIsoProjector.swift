@@ -19,6 +19,8 @@
 // The rotation is a turntable: the object spins about the vertical axis
 // through its footprint's center, under a camera and a light that stay put —
 // exactly like turning a printed part in your hand under a desk lamp.
+//
+// SecuraCV-Parity: every Apple surface that shows a device compiles this.
 
 import Foundation
 import SwiftUI
@@ -325,7 +327,54 @@ public struct FleetFigureTurntable: View {
         self.title = title
     }
 
+    /// How fast the ambient turntable turns where nobody can drag it —
+    /// shelf pace, one lap in ~24 seconds, slow enough to read as an object
+    /// on display rather than a loading spinner.
+    private static let ambientRadiansPerSecond = 0.26
+
+    #if os(tvOS)
+    /// Reduce Motion means the part holds still. The pose it holds is the
+    /// canonical camera (yaw zero) — the fleet's one shared picture — so the
+    /// still view is exactly the committed figure, not a frozen mid-spin.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    #endif
+
     public var body: some View {
+        #if os(tvOS)
+        // A television has no drag. The part turns by itself, the way a piece
+        // on a shelf turntable does — the same massing, palette and light as
+        // the phone, at couch distance. The phase comes from the clock so
+        // every card on screen turns in step.
+        if reduceMotion {
+            turntable(at: 0)
+                .accessibilityLabel(title)
+        } else {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
+                turntable(at: context.date.timeIntervalSinceReferenceDate
+                    .truncatingRemainder(dividingBy: 86_400) * Self.ambientRadiansPerSecond)
+            }
+            .accessibilityLabel(title)
+        }
+        #else
+        turntable(at: yaw)
+            .gesture(
+                DragGesture(minimumDistance: 2)
+                    .onChanged { g in
+                        let start = yawAtDragStart ?? yaw
+                        yawAtDragStart = start
+                        yaw = start + Double(g.translation.width) * 0.012
+                    }
+                    .onEnded { _ in yawAtDragStart = nil }
+            )
+            .onTapGesture(count: 2) {
+                withAnimation(.spring(duration: 0.5)) { yaw = 0 }
+            }
+            .accessibilityLabel(title)
+            .accessibilityHint("Drag to turn the part; double-tap to reset")
+        #endif
+    }
+
+    private func turntable(at yaw: Double) -> some View {
         Canvas { ctx, size in
             let side = min(size.width, size.height)
             let s = side / 256
@@ -350,20 +399,6 @@ public struct FleetFigureTurntable: View {
                 }
             }
         }
-        .gesture(
-            DragGesture(minimumDistance: 2)
-                .onChanged { g in
-                    let start = yawAtDragStart ?? yaw
-                    yawAtDragStart = start
-                    yaw = start + Double(g.translation.width) * 0.012
-                }
-                .onEnded { _ in yawAtDragStart = nil }
-        )
-        .onTapGesture(count: 2) {
-            withAnimation(.spring(duration: 0.5)) { yaw = 0 }
-        }
-        .accessibilityLabel(title)
-        .accessibilityHint("Drag to turn the part; double-tap to reset")
     }
 
     private static func color(fromHex hex: String) -> Color {
