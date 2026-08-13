@@ -2166,3 +2166,33 @@ process: Flasher, Lab, tvOS, and the iPhone / iPad / Mac targets.
   account that has never registered a device of that platform — so archive
   distribution-signed from day one, and expect the first provisioning
   failure to blame authentication.
+
+### 2026-08-13 (b) — the tvOS home-screen icon needs every layer at @2x, and the gate that should have said so had never actually run
+
+- **Symptom:** the first tvOS publish attempt with working signing got a
+  signed `.ipa` all the way to App Store Connect validation, which rejected
+  it: *"Invalid Image Asset. The image asset 'App Icon' … is missing an
+  image for the background layer with a scale value of '2'." (90709)* —
+  minutes after a green build, in the last step before upload.
+- **Cause, in two halves:**
+  1. `make_app_icon.py` emitted every imagestack layer at @1x only. The
+     top-shelf images already did @1x+@2x; the layered home-screen icon
+     (400×240 base) needs the same per LAYER, and nothing in the repo knew.
+  2. `check_app_icon.py` — whose whole job is naming this in CI before
+     Apple names it at upload — had its per-layer size checks indented one
+     level too deep, INSIDE the wrong-layer-order error branch. So the
+     layer images were only checked when the catalog was already broken a
+     different way. The gate existed, passed for months, and had never
+     checked a single layer PNG.
+- **Fix:** the generator takes scales per stack — home-screen `(1, 2)`,
+  App Store 1280×768 `(1,)` per Apple's spec — and the checker requires
+  every layer PNG at every scale AND the `Contents.json` scale declarations
+  to match, with the loop de-indented so it actually runs. Verified by
+  running the fixed checker against the old catalog (6 named failures) and
+  the regenerated one (green).
+- **Applies to:** every generated-asset gate. A checker that shares an
+  error branch with another check is a checker that may never have run —
+  when a gate is added, break the thing it guards ONCE and watch it go red
+  (the same rule (x) states for lints). And upload-validation errors are
+  the gate's requirements list: every 90xxx Apple has ever thrown at a
+  target belongs in that target's preflight checker.
